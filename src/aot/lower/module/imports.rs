@@ -9,7 +9,7 @@ use super::test_run_ways::{
 };
 use crate::builtins::id::{BuiltinId, BuiltinName};
 use crate::builtins::{BuiltinPath, Mutability, Resolved, table};
-use crate::ir::generated::ImportPhase;
+use crate::ir::generated::{ImportPhase, ModuleKind};
 use crate::ir::{Edge, ModuleId, PropertyKeyId, StringId, TypeTable, ValueId, VariableKey};
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, commonjs};
@@ -174,8 +174,37 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             _ => None,
         };
+        let mocked_built_in = match module {
+            ModuleRef::Runtime(built_in) if phase == ImportPhase::Evaluation => {
+                let modules = self.file.inputs.modules;
+                let reader = self.file.file;
+                let is_code_of_bun =
+                    modules.kind(reader) == ModuleKind::RuntimeSource || modules.is_library(reader);
+                (!is_code_of_bun && modules.is_named_by_mock(module)).then_some(built_in)
+            }
+            _ => None,
+        };
         let module = self.file.inputs.modules.face(module).unwrap_or(module);
         let module = self.file.fragment.declare_module(module);
+        if let Some(built_in) = mocked_built_in {
+            let result = self.builder.create_variable(None);
+            let join = self.create_block();
+            let key = VariableKey::MockOfRuntimeModule(built_in);
+            let variable = self.file.ensure_variable(key);
+            let word = self.builder.get_module_variable(variable);
+            let split = self.split_on_type(word, TypeTable::ABSENT);
+            self.builder.switch_to(split.taken);
+            let object = self.builder.module_namespace(module, phase, false, false);
+            self.builder.write_variable(result, object);
+            self.jump(join);
+            self.builder.switch_to(split.not_taken);
+            let importer = self.file.module_id();
+            let object = self.builder.namespace_seen_by(module, importer);
+            self.builder.write_variable(result, object);
+            self.jump(join);
+            self.continue_in(join);
+            return self.builder.read_variable(result);
+        }
         let Some(mocked) = mocked else {
             return self.builder.module_namespace(module, phase, false, false);
         };

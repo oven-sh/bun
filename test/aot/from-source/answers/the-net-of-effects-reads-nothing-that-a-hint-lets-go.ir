@@ -1,0 +1,16 @@
+# -- source: main.js
+# function make() { return { id: 1, payload: new Array(1000000).fill(1.5) }; }
+# let sum = 0;
+# function use(thing, more) { sum += (thing?.payload.length ?? 0) + more; }
+# function first(x, floor) { use(x, 0); use(x, 1); x = null; return collect() - floor < 4000000; }
+# function inLoop() { let all = true; const floor = collect(); for (let i = 0; i < 9; i++) { const gone = first(make(), floor); all = gone && all; } return all; }
+# print(inLoop() ? "collected" : "KEPT");
+# -- end of source
+# Where a program stores over the last name of an object, a hint tells the back end to clear the places where the object waited, so that a collection behind it finds none. The net under effects held the hint to
+# its row, as it holds every operation of which the walk believes something, and hashed its operand in front of it and behind it. The body of first() is copied into the loop, and a second hint stands behind the
+# copy, so behind the collection: the net's read there kept eight megabytes alive that the program had let go. Under the net alone: a WeakRef that plain Bun finds empty was full.
+# RUN: run-in-shell globalThis.collect = () => fullGC(); testing=CheckEffectsAtRunTime mechanisms=all
+# CHECK: collected
+# CHECK-NEXT: exited with 0
+# RUN(WALK): walk f4:Body mechanisms=all
+# WALK: = ReleaseHint {{*}}isBehindCopiedBody

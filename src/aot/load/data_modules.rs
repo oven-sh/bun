@@ -16,6 +16,7 @@ pub(crate) struct ParsedDataModule<'s> {
     pub host_values: &'s [(ExprId, HostValue<'s>)],
     pub web_assembly: Option<Vec<u8>>,
     pub failure: Option<Vec<u8>>,
+    pub failed_at: Option<Location>,
 }
 
 pub(crate) fn parse_data_module<'s>(
@@ -25,13 +26,14 @@ pub(crate) fn parse_data_module<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> ParsedDataModule<'s> {
-    let mut failure = None;
+    let (mut failure, mut failed_at) = (None, None);
     let module = messages.with_log(|log| {
         let module = provider.parse_data(source, arena, atoms, log);
         if matches!(module, Err(DataFailure::InvalidText))
             && let Some(first) = log.msgs.iter().position(|it| it.kind == Kind::Err)
         {
             failure = Some(log.msgs[first].data.text.to_vec());
+            failed_at.clone_from(&log.msgs[first].data.location);
             for message in log.msgs.iter_mut().filter(|it| it.kind == Kind::Err) {
                 message.kind = Kind::Warn;
             }
@@ -57,6 +59,7 @@ pub(crate) fn parse_data_module<'s>(
         host_values,
         web_assembly: is_web_assembly.then(|| source.contents.to_vec()),
         failure,
+        failed_at,
     }
 }
 
@@ -81,6 +84,7 @@ pub(crate) fn create_module_without_text<'s>(
         host_values,
         web_assembly: None,
         failure: None,
+        failed_at: None,
     }
 }
 

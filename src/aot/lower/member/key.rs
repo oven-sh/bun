@@ -10,7 +10,7 @@ use crate::builtins::{
     find_symbol_key,
 };
 use crate::ir::generated::NameClass;
-use crate::ir::{PropertyKey, PropertyKeyId, PropertyKeyKind, StringId, ValueId};
+use crate::ir::{PropertyKey, PropertyKeyId, PropertyKeyKind, StringId, ValueId, WellKnownSymbol};
 use crate::lower::{FileLowering, FunctionLowering, expression};
 use crate::modules::ModuleRef;
 
@@ -59,6 +59,19 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(self.fragment.property_keys.intern(key))
     }
 
+    pub(in crate::lower) fn symbol_key_of_member(&mut self, name: Atom) -> Option<PropertyKeyId> {
+        if let Some(created) = self.created_symbol_key(name) {
+            return Some(created);
+        }
+        let member = self.queries.member_of_symbol_constructor(name)?;
+        let (&head, tail) = self.queries.atom_bytes(member).split_first()?;
+        let symbol = WellKnownSymbol::ALL.into_iter().find(|symbol| {
+            let (first, rest) = symbol.name().split_at(1);
+            first.as_bytes() == [head.to_ascii_uppercase()] && rest.as_bytes() == tail
+        })?;
+        Some(self.symbol_key(symbol))
+    }
+
     pub(in crate::lower) fn find_name_that_key_spells(
         &mut self,
         member: MemberId,
@@ -100,7 +113,7 @@ impl FileLowering<'_, '_, '_, '_> {
         constant.or_else(|| self.find_signed_enum_member(key))
     }
 
-    fn find_constant_key(&mut self, key: ExprId) -> Option<PropertyKeyId> {
+    pub(in crate::lower) fn find_constant_key(&mut self, key: ExprId) -> Option<PropertyKeyId> {
         match self.find_constant_in_brackets(key) {
             Some(constant) => self.find_key_of_constant(constant),
             None => self.find_locked_symbol_key(key),
@@ -141,7 +154,10 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_locked_symbol_key(&mut self, key: ExprId) -> Option<PropertyKeyId> {
+    pub(in crate::lower) fn find_locked_symbol_key(
+        &mut self,
+        key: ExprId,
+    ) -> Option<PropertyKeyId> {
         let path = match self.builtins.of_pure_expr(self.skip_type_syntax(key)) {
             Some(Resolved::Builtin(path)) => path,
             Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => return None,

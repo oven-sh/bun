@@ -1,6 +1,6 @@
 // A variable that the program sets to null lets go of what it held while the function still runs, also in the version of the function that runs where its guard turns away.
 // The bodies of local() and parameter() name no built-in: what makes the reference, collects and asks stands in functions of its own.
-// Todo on win32 x64: in each of four runs of CI plain Bun printed "a parameter: KEPT | KEPT" and the executable "a parameter: KEPT | collected": native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them, in plain Bun too. The line "a local" is left out there: plain Bun itself printed "KEPT | KEPT" three times and "collected | KEPT" once in those runs
+// Todo on win32 x64: "collected" | "KEPT": in each of four runs of CI plain Bun printed "a parameter: KEPT | KEPT" and the executable "a parameter: KEPT | collected": native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them, in plain Bun too. The line "a local" is left out there: plain Bun itself printed "KEPT | KEPT" three times and "collected | KEPT" once in those runs
 type Thing = { id: number; payload: number[] };
 class Tag { n = 1; m = 2; }
 const unseen = (x: any): any => [x][JSON.parse("0")];

@@ -60,6 +60,15 @@ impl TypeRanges {
         kept
     }
 
+    pub fn texts_written_over(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        (self.written_over.iter()).map(|(at, text)| (*at, *at + text.len() as u32))
+    }
+
+    pub fn removes(&self, offset: u32) -> bool {
+        let next = self.ranges.partition_point(|range| range.end <= offset);
+        (self.ranges.get(next)).is_some_and(|range| range.start <= offset)
+    }
+
     pub fn pack(&self) -> PackedTypeRanges {
         let mut bytes = Vec::with_capacity(self.ranges.len() * 2);
         let mut at = 0;

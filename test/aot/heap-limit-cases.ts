@@ -1734,7 +1734,9 @@ console.log(fill() > 500_000);
             expect.stringMatching(
               /^AOT full heap \| a list of \d+ elements \| a second collection from the same place keeps it too$/,
             ),
-            "AOT full heap |   a root refers to this Object: CodeBlocks",
+            // "Output" is the collector's word for what it visits because something else is alive: a variable of a module is kept for its realm,
+            // and is visited once the global object of that realm is marked (visitRootsOfCompiledCode in aot/runtime/AOTHeapHooks.cpp).
+            "AOT full heap |   a root refers to this Object: Output",
             "AOT full heap |   Object .inner > Object",
             "AOT full heap |   Object .list > Array",
             "",

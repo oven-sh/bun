@@ -81,6 +81,11 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     reason: "an identifier that begins with % is the build's own too: what is asked is who made the variable",
   },
   {
+    paths: /^src\/aot\/lower\/function\/text_read_back\.rs$/,
+    reason:
+      "a check of the compiler on itself: it holds the words of a kept text that it reads back against the tree's, and nothing is compiled by what it finds",
+  },
+  {
     paths:
       /^src\/aot\/load\/(contents\/(entry_points|load_names|worker_entries)|data_modules|disk_delegation|externals|host|loaders|manual_mocks|module_paths|plugin_modules|project|runtime_\w+|source_provider|sources)(\.rs$|\/)|^src\/aot\/compile\/(load_stage|paths)\.rs$|^src\/aot\/(load\/contents|module_keys|modules\/requests)\.rs$/,
     reason: "Load: what a file extension or a module specifier loads is a question about a path",

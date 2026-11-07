@@ -1,0 +1,28 @@
+# -- source: a-call-laid-on-one-of-five-other-functions-that-join-the-five-later-is-seen.js
+# class Box { constructor(n) { this.count = n; this.note = 0; } }
+# function a1() { return this.count + 1; }
+# function a2() { return this.count + 2; }
+# function a3() { return this.count + 3; }
+# function a4() { return this.count + 4; }
+# function a5() { return through(pickOther(hidden()), this); }
+# function b1() { return 10; }
+# function b2() { return 20; }
+# function b3() { return 30; }
+# function b4() { return 40; }
+# function b5() { return 50; }
+# b3.call = function (box) { box.count = "text"; box.note = { deep: 1 }; return "own"; };
+# function through(handed, box) { return handed.call(box); }
+# function pick(i) { return i === 0 ? a1 : i === 1 ? a2 : i === 2 ? a3 : i === 3 ? a4 : a5; }
+# function pickOther(i) { return i === 0 ? b1 : i === 1 ? b2 : i === 2 ? b3 : i === 3 ? b4 : b5; }
+# function direct(handed) { return handed(); }
+# let sum = "";
+# for (let i = 0; i < 5; i++) sum += direct(pickOther(i)) + ";";
+# const box = new Box(10);
+# for (let i = 0; i < 5; i++) sum += through(pick(i), box) + ",";
+# print(sum + box.count + "," + typeof box.count);
+# -- end of source
+# L0 = Box. Two families of lost functions, each with a pool. The name is called on the first; the second, tied by direct calls, comes to the same parameter only through one of the first five: the families are united behind the call, and nothing tells the call again: the pools are tied, and what is laid on the closures of the one is found through the other.
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: "count" proven=i32|string
+# RUN(ANSWERS): run-in-shell globalThis.hidden = () => 2;
+# ANSWERS: 10;20;30;40;50;11,12,13,14,own,text,string

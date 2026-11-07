@@ -72,6 +72,7 @@ fn source_text_file(file: FileId) -> FileRow {
         exports: Vec::new(),
         ambiguous_names: Vec::new(),
         unread_exports: Vec::new(),
+        names_left_out: Vec::new(),
         is_left_to_loader: false,
         required_names: Vec::new(),
         names_searched_behind_stars: Vec::new(),
@@ -715,10 +716,12 @@ fn external_module_keeps_no_name_of_a_data_file_that_the_build_links() {
     remove_unread_data_exports(&mut linked_by_build);
     assert_eq!(linked_by_build[1].exports.len(), 2);
     assert_eq!(linked_by_build[1].unread_exports, [SymbolId(2)]);
+    assert_eq!(linked_by_build[1].names_left_out, [known::r#type]);
     let mut left_to_loader = rows(true);
     remove_unread_data_exports(&mut left_to_loader);
     assert_eq!(left_to_loader[1].exports.len(), 3);
     assert!(left_to_loader[1].unread_exports.is_empty());
+    assert!(left_to_loader[1].names_left_out.is_empty());
 }
 
 #[test]

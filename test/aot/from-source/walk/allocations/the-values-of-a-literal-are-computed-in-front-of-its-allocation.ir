@@ -1,0 +1,16 @@
+# -- source: the-values-of-a-literal-are-computed-in-front-of-its-allocation.js
+# class Order { constructor({ side, type = 'limit', price = 0, tif = 'GTC' }) { this.side = side; this.type = type; this.price = price; this.tif = tif; } }
+# class Book { constructor() { this.orders = []; } submit(fields) { const order = new Order(fields); this.orders.push(order); return order; } }
+# function act(book, r, mid) { return book.submit({ side: r < 0.5 ? 'buy' : 'sell', type: r > 0.9 ? 'market' : 'limit', price: r < 0.5 ? mid - 1 : mid + 1, tif: r > 0.8 ? 'FOK' : undefined }); }
+# sink(act(new Book(), sink(), sink()));
+# -- end of source
+# Nobody can see a literal before it is whole. Its values branch; the cell is made behind the last of them and the four definitions stand side by side.
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: = NewObject
+# CHECK-NOT: Branch
+# CHECK: = PutSlotOrAdd {{*}}key="type"
+# CHECK-NOT: Branch
+# CHECK: = PutSlotOrAdd {{*}}key="price"
+# CHECK-NOT: Branch
+# CHECK: = PutSlotOrAdd {{*}}key="tif"

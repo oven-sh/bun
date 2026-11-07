@@ -22,6 +22,7 @@ pub use self::module_values::{
 };
 pub use self::resolver::FileFacts;
 pub use self::runtime_dialect::set_natives;
+pub use self::unnamed_uses::can_lay_key_that_native_code_asks_of_process;
 use super::names::BuiltinNames;
 use super::runtime_uses::RuntimeUses;
 use super::table::{
@@ -211,10 +212,18 @@ impl CommonJsBuiltins {
     }
 }
 
-struct WhereHooksOfInstanceofExist {
+struct WhereMoreIsHandedOn {
     uses: RuntimeUses,
     loads_unknown_modules: bool,
     hands_on_loader_of_paths: bool,
+}
+
+struct WhereTestsLayNamesAbove {
+    names_asked_for: Box<[(BuiltinId, Atom)]>,
+    held: WhereMoreIsHandedOn,
+    replaced_members: Box<[BuiltinId]>,
+    opened_holders: Box<[BuiltinId]>,
+    stores_loader_functions: bool,
 }
 
 #[derive(Default)]
@@ -223,6 +232,7 @@ pub struct ResolvedBuiltins {
     expr_bits: Box<[u64]>,
     exprs_with_side_effects: Box<[ExprId]>,
     symbols: Box<[(SymbolId, BuiltinPath)]>,
+    names_in_patterns: Box<[(SymbolId, BuiltinPath)]>,
     commonjs: CommonJsBuiltins,
     evaluated_texts: Box<[EvaluatedText]>,
     module_object_mentions: Box<[ModuleObjectMention]>,
@@ -247,10 +257,14 @@ pub struct ResolvedBuiltins {
     uses: RuntimeUses,
     loads_unknown_modules: bool,
     hands_on_loader_of_paths: bool,
-    where_hooks_of_instanceof_exist: Option<Box<WhereHooksOfInstanceofExist>>,
+    where_hooks_of_instanceof_exist: Option<Box<WhereMoreIsHandedOn>>,
     hooks_of_instanceof_may_exist: OnceLock<()>,
+    where_tests_lay_names_above: Option<Box<WhereTestsLayNamesAbove>>,
+    tests_lay_names_above: OnceLock<()>,
     can_come_by_hook_of_instanceof: bool,
     keys_taken_out_of_module_cache: Box<[KeyOfModuleCache]>,
+    entries_deleted_from_module_cache: Box<[ExprId]>,
+    keys_of_entries_handed_on: Box<[KeyOfModuleCache]>,
     loses_sight_of_module_cache: bool,
     hands_module_cache_on: bool,
     names_plugin: bool,
@@ -278,8 +292,8 @@ impl ResolvedBuiltins {
             Resolved::Builtin(path) | Resolved::DynamicGlobal(path) => Some(path),
             Resolved::Intrinsic(_) => None,
         });
-        let of_symbols = self.symbols.iter().map(|entry| entry.1);
-        for path in of_exprs.chain(of_symbols) {
+        let of_symbols = self.symbols.iter().chain(&self.names_in_patterns);
+        for path in of_exprs.chain(of_symbols.map(|entry| entry.1)) {
             if let Some(builtin) = self.apply_unlocked_list(path).locked_builtin() {
                 take(builtin);
             }
@@ -372,6 +386,12 @@ impl ResolvedBuiltins {
         let at = self.symbols.binary_search_by_key(&symbol, |entry| entry.0);
         at.ok()
             .map(|at| self.apply_unlocked_list(self.symbols[at].1))
+    }
+
+    pub fn of_name_in_pattern(&self, symbol: SymbolId) -> Option<BuiltinPath> {
+        let names = &self.names_in_patterns;
+        let at = names.binary_search_by_key(&symbol, |entry| entry.0);
+        at.ok().map(|at| self.apply_unlocked_list(names[at].1))
     }
 
     pub fn commonjs_variable(&self, variable: CommonJsVariable) -> Option<BuiltinPath> {
@@ -482,7 +502,13 @@ impl ResolvedBuiltins {
         &self.exposed
     }
 
-    fn find_what_holds_where_hooks_exist(&self) -> Option<&WhereHooksOfInstanceofExist> {
+    fn find_what_holds_where_more_is_handed_on(&self) -> Option<&WhereMoreIsHandedOn> {
+        if self.tests_lay_names_above.get().is_some() {
+            return self
+                .where_tests_lay_names_above
+                .as_deref()
+                .map(|it| &it.held);
+        }
         self.hooks_of_instanceof_may_exist.get()?;
         self.where_hooks_of_instanceof_exist.as_deref()
     }
@@ -499,8 +525,35 @@ impl ResolvedBuiltins {
         self.hooks_of_instanceof_may_exist.get_or_init(|| ());
     }
 
+    pub fn names_asked_for_that_are_not_listed(&self) -> &[(BuiltinId, Atom)] {
+        match &self.where_tests_lay_names_above {
+            Some(found) => &found.names_asked_for,
+            None => &[],
+        }
+    }
+
+    pub fn note_that_tests_lay_names_above(&self) -> (&[BuiltinId], &[BuiltinId], bool) {
+        self.tests_lay_names_above.get_or_init(|| ());
+        match &self.where_tests_lay_names_above {
+            Some(found) => (
+                &found.replaced_members,
+                &found.opened_holders,
+                found.stores_loader_functions,
+            ),
+            None => (&[], &[], false),
+        }
+    }
+
+    pub fn is_told_that_tests_lay_names_above(&self) -> bool {
+        self.tests_lay_names_above.get().is_some()
+    }
+
+    pub fn is_told_that_hooks_of_instanceof_may_exist(&self) -> bool {
+        self.hooks_of_instanceof_may_exist.get().is_some()
+    }
+
     pub fn uses(&self) -> &RuntimeUses {
-        match self.find_what_holds_where_hooks_exist() {
+        match self.find_what_holds_where_more_is_handed_on() {
             Some(held) => &held.uses,
             None => &self.uses,
         }
@@ -511,21 +564,29 @@ impl ResolvedBuiltins {
     }
 
     pub fn loads_unknown_modules(&self) -> bool {
-        match self.find_what_holds_where_hooks_exist() {
+        match self.find_what_holds_where_more_is_handed_on() {
             Some(held) => held.loads_unknown_modules,
             None => self.loads_unknown_modules,
         }
     }
 
     pub fn hands_on_loader_of_paths(&self) -> bool {
-        match self.find_what_holds_where_hooks_exist() {
+        match self.find_what_holds_where_more_is_handed_on() {
             Some(held) => held.hands_on_loader_of_paths,
             None => self.hands_on_loader_of_paths,
         }
     }
 
+    pub fn keys_of_entries_handed_on(&self) -> &[KeyOfModuleCache] {
+        &self.keys_of_entries_handed_on
+    }
+
     pub fn keys_taken_out_of_module_cache(&self) -> &[KeyOfModuleCache] {
         &self.keys_taken_out_of_module_cache
+    }
+
+    pub fn entries_deleted_from_module_cache(&self) -> &[ExprId] {
+        &self.entries_deleted_from_module_cache
     }
 
     pub fn reaches_module_cache(&self) -> bool {

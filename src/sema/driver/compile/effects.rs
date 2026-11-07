@@ -98,7 +98,6 @@ const ENDINGS_OF_A_RELATIVE_IMPORT: [&[u8]; 10] = [
     b".json",
 ];
 
-const REFUSED_MERGE_CODES: [u32; 3] = [2300, 2451, 2567];
 const AUGMENTATION_OF_UNKNOWN_MODULE_CODE: u32 = 2664;
 const UMD_GLOBAL_IN_MODULE_CODE: u32 = 2686;
 const THIS_IS_UNDEFINED_CODES: [u32; 2] = [2407, 2532];
@@ -111,7 +110,6 @@ const UNUSED_EXPECT_ERROR_CODE: u32 = 2578;
 const BODY_TOO_LARGE_FOR_FLOW_ANALYSIS_CODE: u32 = 2563;
 
 const EXACT_OPTIONAL_PROPERTY_CODES: [u32; 3] = [2375, 2379, 2412];
-const DEFINED_CLASS_FIELD_CODES: [u32; 2] = [2612, 2729];
 
 const UNKNOWN_MEMBER_CODES: [u32; 6] = [2305, 2339, 2551, 2614, 2694, 2724];
 
@@ -121,6 +119,11 @@ const UNKNOWN_NAME_CODES: [u32; 25] = [
 ];
 
 const DECLARATION_OF_ANOTHER_KIND_CODES: [u32; 2] = [2315, 2749];
+
+pub fn says_that_name_is_not_found(code: u32) -> bool {
+    matches!(code, 2693 | 2708)
+        || !matches!(code, 2550 | 2812) && UNKNOWN_NAME_CODES.contains(&code)
+}
 
 fn is_about_exact_optional_property(code: u32, chain: &[MessageChain]) -> bool {
     EXACT_OPTIONAL_PROPERTY_CODES.contains(&code)
@@ -166,21 +169,12 @@ impl ProgramOrigins<'_, '_> {
         if missing.is_some_and(|missing| had_declaration_with_bun_types(missing, diagnostic)) {
             return true;
         }
-        if missing.is_none()
-            && !UNKNOWN_NAME_CODES.contains(&code)
-            && !DECLARATION_OF_ANOTHER_KIND_CODES.contains(&code)
-            && self.rests_on_brought_declaration(diagnostic)
-        {
-            return true;
-        }
         if UNKNOWN_MODULE_CODES.contains(&code) {
             match diagnostic.subject {
                 DiagnosticSubject::ModuleSpecifier(specifier) => {
                     self.is_import_that_the_build_loads(diagnostic.file, specifier)
                 }
-                DiagnosticSubject::None
-                | DiagnosticSubject::MemberContainer(_)
-                | DiagnosticSubject::BroughtDeclaration => false,
+                DiagnosticSubject::None | DiagnosticSubject::MemberContainer(_) => false,
             }
         } else if UNKNOWN_MEMBER_CODES.contains(&code) {
             match (missing, diagnostic.subject) {
@@ -190,37 +184,12 @@ impl ProgramOrigins<'_, '_> {
                         || self.is_declared_for_browsers(container)
                 }
                 (None, DiagnosticSubject::MemberContainer(_))
-                | (
-                    _,
-                    DiagnosticSubject::None
-                    | DiagnosticSubject::ModuleSpecifier(_)
-                    | DiagnosticSubject::BroughtDeclaration,
-                ) => false,
+                | (_, DiagnosticSubject::None | DiagnosticSubject::ModuleSpecifier(_)) => false,
             }
         } else if diagnostic.class == DiagnosticClass::Style {
             !self.has_configuration_file
         } else {
             USES_OF_WHAT_HAS_NO_DECLARATION_CODES.contains(&code)
-        }
-    }
-
-    fn rests_on_brought_declaration(&self, diagnostic: &Diagnostic) -> bool {
-        let is_brought = |other: &Diagnostic| {
-            let file = self.files.zip(other.file);
-            file.is_some_and(|(files, file)| files.is_brought(file))
-        };
-        if REFUSED_MERGE_CODES.contains(&diagnostic.code)
-            && !diagnostic.related.is_empty()
-            && diagnostic.related.iter().all(is_brought)
-        {
-            return true;
-        }
-        match diagnostic.subject {
-            DiagnosticSubject::BroughtDeclaration => true,
-            DiagnosticSubject::MemberContainer(container) => {
-                (self.files).is_some_and(|files| files.is_brought(container.file))
-            }
-            DiagnosticSubject::None | DiagnosticSubject::ModuleSpecifier(_) => false,
         }
     }
 
@@ -276,8 +245,6 @@ impl ProgramOrigins<'_, '_> {
         let options = files.module_options(file);
         !options.exact_optional_property_types
             && is_about_exact_optional_property(diagnostic.code, &diagnostic.message_chain)
-            || options.defines_class_fields_for_build_alone
-                && DEFINED_CLASS_FIELD_CODES.contains(&diagnostic.code)
     }
 
     fn comes_of_running_a_script_as_a_module(&self, diagnostic: &Diagnostic) -> bool {

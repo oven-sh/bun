@@ -1,0 +1,12 @@
+# -- source: main.js
+# function count(box) { let s = 0; for (let r = 0; r < box.rows.length; r++) for (let c = 0; c < box.rows[r].length; c++) if (box.rows[r][c]) s++; return s; }
+# const go = { count }[JSON.parse('"count"')];
+# console.log(go({ rows: [[true, false], [true]] }));
+# -- end of source
+# In the inner loop the row is found under `r` off what `box.rows` finds: the second read takes what the first finds, and the first takes only what stands in front. Both count as reads from in front: the inner loop is bought as a quiet one and the row is asked in front of its typed copy.
+# RUN(WALK): walk f1 mechanisms=all
+# REQUIRES(WALK): entries-of-bun
+# WALK-COUNT-5: isLoopHead=true
+# RUN(READS): walk f1 mechanisms=all
+# REQUIRES(READS): entries-of-bun
+# READS-COUNT-2: = GetArrayElement {{*}}level=Proven

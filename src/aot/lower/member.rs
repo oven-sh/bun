@@ -12,6 +12,7 @@ use bun_sema::program::Sym;
 use super::{FunctionLowering, parameters};
 use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
+use crate::ir::generated::ECMAMode;
 use crate::ir::{BlockId, FunctionKey, PropertyKeyId, StringId, TypeTable, ValueId, VariableKey};
 
 pub(in crate::lower) use self::key::find_function_name;
@@ -96,6 +97,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(crate) fn emit_set(&mut self, object: ValueId, name: PropertyName, value: ValueId) {
         let mode = self.mode();
+        self.emit_set_in_mode(object, name, value, mode);
+    }
+
+    pub(crate) fn emit_set_in_mode(
+        &mut self,
+        object: ValueId,
+        name: PropertyName,
+        value: ValueId,
+        mode: ECMAMode,
+    ) {
         match self.resolve_access(name) {
             PropertyName::Constant(key) => {
                 self.file.fragment.note_write(key);
@@ -151,6 +162,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         exit: Option<BlockId>,
     ) -> ValueId {
         let base = self.lower_chain_base(object, exit);
+        let base = self.claim_member_read_like_an_object(object, base);
         let kind = self.file.hir[access].kind;
         let (ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. }) = kind else {
             unreachable!("lower_member_base takes a Dot or an Index expression");

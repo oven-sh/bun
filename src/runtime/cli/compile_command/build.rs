@@ -213,6 +213,7 @@ fn write_product(
             root_on_build_machine: (build.holds_source_paths && !options.runs_in_place)
                 .then(|| trim_trailing_separators(&build.root_directory)),
             assets_named_at_root: &assets_named_at_root,
+            refused_data: &build.refused_data,
             levels_above_root: build.levels_above_root as u32,
             further_package_names: &build.further_package_names,
             root_folders_spelled: match options.runs_in_place {

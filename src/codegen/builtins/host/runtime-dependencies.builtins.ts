@@ -320,7 +320,7 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   // In an executable the getter is native code.
   "%ModuleRequirePrototype%.main": moduleChildrenFunctions,
   "%ModuleRequirePrototype%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
-  "Array.prototype.sort": functionsIn("prelude/array-sort", "sortByDifference", "sortByReversedDifference").map(
+  "Array.prototype.sort": functionsIn("prelude/array-sort", "sort", "sortByDifference", "sortByReversedDifference").map(
     called => ({
       ...called,
       when: b.whenCallRunsOtherCode,
@@ -632,7 +632,7 @@ const nativeCalls = [
       {
         file: inBindings("webcore/JSEventTarget.cpp"),
         caller: "jsEventTargetPrototypeFunction_addEventListenerBody",
-        onBehalfOf: eventTargetSources,
+        onBehalfOf: ["EventTarget.prototype.addEventListener", "addEventListener"],
       },
       {
         file: inBindings("webcore/MessagePort.cpp"),
@@ -864,6 +864,7 @@ export default b.declarations(
     otherNames: b.string,
     keepsStringsOfStoredValues: true,
     nativeAccessors: ["TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH"],
+    locked: { holder: "process.env", names: [] },
     platforms: ["Darwin", "Linux", "FreeBSD", "Android"],
   }),
   b.hostObject(windowsEnvironmentStorageCell, { otherNames: b.string }),

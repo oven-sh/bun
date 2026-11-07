@@ -244,14 +244,14 @@ fn list_code_that_run_does_not_reach(disk: &CodeOnDisk<'_>) -> Vec<Vec<u8>> {
     unread
 }
 
-fn spells(written: &[u8], file: &[u8]) -> bool {
-    written == file
-        || written == without_extension(file)
-        || (without_extension(written) == without_extension(file)
-            && [&b".js"[..], b".jsx", b".mjs", b".cjs"]
-                .iter()
-                .any(|it| written.ends_with(it)))
-        || (without_extension(file).strip_suffix(b"/index")).is_some_and(|it| it == written)
+fn list_spellings(file: &[u8]) -> Vec<Vec<u8>> {
+    let stem = without_extension(file);
+    let mut spellings = vec![file.to_vec(), stem.to_vec()];
+    for end in [&b".js"[..], b".jsx", b".mjs", b".cjs"] {
+        spellings.push([stem, end].concat());
+    }
+    spellings.extend(stem.strip_suffix(b"/index").map(<[u8]>::to_vec));
+    spellings
 }
 
 #[derive(Default)]
@@ -335,9 +335,75 @@ fn find_last_word(file: &[u8]) -> &[u8] {
     }
 }
 
-fn may_write_path_to(text: &[u8], last_words: &FxHashSet<&[u8]>) -> bool {
-    let mut parts = strings::split_any(text, b"/\"'`");
-    parts.any(|part| last_words.contains(part) || last_words.contains(without_extension(part)))
+struct LastWords<'a> {
+    numbers: FxHashMap<&'a [u8], u32>,
+    longest: usize,
+    number_asked: u32,
+}
+
+fn find_last_words_written(text: &[u8], words: &LastWords<'_>) -> Option<WordsWritten> {
+    const LONGEST_EXTENSION: usize = 4;
+    let mut written: Vec<u32> = Vec::new();
+    let mut levels_of_index_files: Vec<u32> = Vec::new();
+    let mut climbed: Option<u32> = None;
+    for part in strings::split_any(text, b"/\"'`") {
+        if let Some(levels) = climbed
+            && without_extension(part) == b"index"
+        {
+            levels_of_index_files.push(levels);
+        }
+        climbed = match part {
+            b"." => Some(climbed.unwrap_or(0)),
+            b".." => Some(climbed.unwrap_or(0) + 1),
+            b"" => climbed,
+            _ => None,
+        };
+        if let Some(levels) = climbed {
+            let end = part.as_ptr() as usize - text.as_ptr() as usize + part.len();
+            if text.get(end).is_some_and(|&behind| behind != b'/') {
+                levels_of_index_files.push(levels);
+            }
+        }
+        if part.len() > words.longest + LONGEST_EXTENSION {
+            continue;
+        }
+        let shorter = without_extension(part);
+        let shorter = (shorter.len() < part.len()).then_some(shorter);
+        for spelled in [Some(part), shorter].into_iter().flatten() {
+            if let Some(&number) = words.numbers.get(spelled) {
+                if number < words.number_asked {
+                    return None;
+                }
+                written.push(number);
+            }
+        }
+    }
+    written.sort_unstable();
+    written.dedup();
+    Some(WordsWritten {
+        numbers: written,
+        levels_of_index_files,
+    })
+}
+
+#[derive(Default)]
+struct WordsWritten {
+    numbers: Vec<u32>,
+    levels_of_index_files: Vec<u32>,
+}
+
+enum FirstReading {
+    Words(WordsWritten),
+    Parsed(Written),
+}
+
+type ImportersBySpelling = FxHashMap<Vec<u8>, Vec<(usize, bool)>>;
+
+fn note_paths_written(importers: &mut ImportersBySpelling, file: usize, written: Written) {
+    for (path, takes_for_itself) in written.paths {
+        let importers = importers.entry(path).or_default();
+        importers.push((file, takes_for_itself));
+    }
 }
 
 fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<Option<Vec<u8>>> {
@@ -347,43 +413,89 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
     let mut is_imported = vec![false; sought.len()];
     let mut imports: Vec<Vec<(usize, bool)>> = vec![Vec::new(); sought.len()];
     let mut place_in_sought: Vec<Option<usize>> = vec![None; unread.len()];
-    let mut written_by: Vec<Option<Written>> = unread.iter().map(|_| None).collect();
+    let mut words = LastWords {
+        numbers: FxHashMap::default(),
+        longest: 0,
+        number_asked: 0,
+    };
+    for (place, file) in asked.iter().chain(&unread).enumerate() {
+        let (number, word) = (words.numbers.len() as u32, find_last_word(file));
+        words.numbers.entry(word).or_insert(number);
+        words.longest = words.longest.max(word.len());
+        if place < asked.len() {
+            words.number_asked = words.numbers.len() as u32;
+        }
+    }
+    let numbers = &words.numbers;
+    let read_first = |path: &Vec<u8>| -> FirstReading {
+        let Some(text) = read_file(in_memory_files, path) else {
+            return FirstReading::Words(WordsWritten::default());
+        };
+        match find_last_words_written(&text, &words) {
+            Some(written) => FirstReading::Words(written),
+            None => FirstReading::Parsed(read_what_file_writes(path, &text)),
+        }
+    };
+    let first_readings = map_each(unread.iter().collect(), disk.in_parallel, &read_first);
+    let mut writers: Vec<Vec<u32>> = vec![Vec::new(); numbers.len()];
+    let mut writers_of_index_files: FxHashMap<Vec<u8>, Vec<u32>> = FxHashMap::default();
+    let mut is_parsed = vec![false; unread.len()];
+    let mut takes_from_test_runner = vec![false; unread.len()];
+    let mut importers_by_spelling: ImportersBySpelling = FxHashMap::default();
+    for (file, reading) in first_readings.into_iter().enumerate() {
+        match reading {
+            FirstReading::Words(written) => {
+                for word in written.numbers {
+                    writers[word as usize].push(file as u32);
+                }
+                for levels in written.levels_of_index_files {
+                    let mut folders = ancestors(dirname::<Posix>(&unread[file]));
+                    if let Some(folder) = folders.nth(levels as usize) {
+                        let writers = writers_of_index_files.entry(inside(folder, b"index"));
+                        writers.or_default().push(file as u32);
+                    }
+                }
+            }
+            FirstReading::Parsed(written) => {
+                is_parsed[file] = true;
+                takes_from_test_runner[file] = written.takes_from_test_runner;
+                note_paths_written(&mut importers_by_spelling, file, written);
+            }
+        }
+    }
     let mut first_unread = 0;
     while first_unread < sought.len() && !unread.is_empty() {
         let round = first_unread..sought.len();
         first_unread = sought.len();
-        let last_words = sought[round.clone()].iter();
-        let last_words: FxHashSet<&[u8]> = last_words.map(|it| find_last_word(it)).collect();
-        let read = |path: &Vec<u8>| -> Option<Written> {
-            let text = read_file(in_memory_files, path)?;
-            may_write_path_to(&text, &last_words).then(|| read_what_file_writes(path, &text))
-        };
-        let unparsed = unread.iter().zip(&written_by);
-        let unparsed = unparsed.filter(|it| it.1.is_none()).map(|it| it.0);
-        let mut parsed = map_each(unparsed.collect(), disk.in_parallel, &read).into_iter();
-        for written in written_by.iter_mut().filter(|it| it.is_none()) {
-            *written = parsed.next().flatten();
+        let mut to_parse: Vec<u32> = Vec::new();
+        for file in &sought[round.clone()] {
+            if let Some(&number) = numbers.get(find_last_word(file)) {
+                to_parse.append(&mut writers[number as usize]);
+            }
+            if let Some(mut writers) = writers_of_index_files.remove(without_extension(file)) {
+                to_parse.append(&mut writers);
+            }
         }
-        let mut sought_under: FxHashMap<&[u8], Vec<usize>> = FxHashMap::default();
-        for place in round {
-            let without = without_extension(&sought[place]);
-            sought_under.entry(without).or_default().push(place);
-            if let Some(folder) = without.strip_suffix(b"/index") {
-                sought_under.entry(folder).or_default().push(place);
+        to_parse.sort_unstable();
+        to_parse.retain(|&file| !replace(&mut is_parsed[file as usize], true));
+        let parse = |file: u32| -> Option<Written> {
+            let path = &unread[file as usize];
+            let text = read_file(in_memory_files, path)?;
+            Some(read_what_file_writes(path, &text))
+        };
+        let parsed = map_each(to_parse.clone(), disk.in_parallel, &parse);
+        for (file, written) in to_parse.into_iter().zip(parsed) {
+            if let Some(written) = written {
+                takes_from_test_runner[file as usize] = written.takes_from_test_runner;
+                note_paths_written(&mut importers_by_spelling, file as usize, written);
             }
         }
         let mut found: Vec<(usize, usize, bool)> = Vec::new();
-        for (importer, written) in written_by.iter().enumerate() {
-            for (spelled, takes_for_itself) in written.iter().flat_map(|it| &it.paths) {
-                let shorter =
-                    Some(without_extension(spelled)).filter(|it| it.len() < spelled.len());
-                for under in [Some(&spelled[..]), shorter].into_iter().flatten() {
-                    let places = sought_under.get(under).map_or(&[][..], Vec::as_slice);
-                    let places = places
-                        .iter()
-                        .filter(|&&place| spells(spelled, &sought[place]));
-                    found.extend(places.map(|&place| (importer, place, *takes_for_itself)));
-                }
+        for place in round {
+            for spelling in list_spellings(&sought[place]) {
+                let importers = importers_by_spelling.get(&spelling);
+                let importers = importers.map_or(&[][..], Vec::as_slice).iter();
+                found.extend(importers.map(|&(importer, takes)| (importer, place, takes)));
             }
         }
         found.shared_sort_unstable();
@@ -394,7 +506,7 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
                 continue;
             }
             is_imported[imported] = true;
-            if (written_by[importer].as_ref()).is_none_or(|it| it.takes_from_test_runner) {
+            if takes_from_test_runner[importer] {
                 continue;
             }
             let place = *place_in_sought[importer].get_or_insert_with(|| {
@@ -426,11 +538,11 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
 }
 
 #[cfg(not(test))]
-pub(crate) fn find_importer_outside_run(
+pub(crate) fn find_importers_on_disk(
     root: &[u8],
-    file: &[u8],
+    files: &[Vec<u8>],
     is_compiled: &(dyn Fn(&[u8]) -> bool + Sync),
-) -> Option<Vec<u8>> {
+) -> Vec<Option<Vec<u8>>> {
     let no_ways = FxHashSet::default();
     let disk = CodeOnDisk {
         root: &from_native(root),
@@ -439,8 +551,11 @@ pub(crate) fn find_importer_outside_run(
         is_compiled: &|path| is_compiled(to_native(path)),
         in_parallel: &crate::ir::parallel::run_serially,
     };
-    let importer = find_importers_outside_run(&disk, &[from_native(file)]).pop()??;
-    Some(to_native(&importer).to_vec())
+    let asked: Vec<Vec<u8>> = files.iter().map(|file| from_native(file)).collect();
+    let importers = find_importers_outside_run(&disk, &asked).into_iter();
+    importers
+        .map(|importer| Some(to_native(&importer?).to_vec()))
+        .collect()
 }
 
 struct FilesByImports<'a, 's> {
@@ -730,4 +845,118 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
         count_of(WhoseFile::OfNeither),
     );
     (whose, loads_compiled_files_alone)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LastWords, find_last_words_written, list_spellings, without_extension};
+    use bun_sema::util::FxHashMap;
+
+    fn spells(written: &[u8], file: &[u8]) -> bool {
+        written == file
+            || written == without_extension(file)
+            || (without_extension(written) == without_extension(file)
+                && [&b".js"[..], b".jsx", b".mjs", b".cjs"]
+                    .iter()
+                    .any(|it| written.ends_with(it)))
+            || (without_extension(file).strip_suffix(b"/index")).is_some_and(|it| it == written)
+    }
+
+    #[test]
+    fn spellings_are_the_paths_that_spell_the_file() {
+        let stems = [&b"/a/b"[..], b"/a/b/index", b"/a/c", b"/a/b.d"];
+        let ends = [
+            &b""[..],
+            b".ts",
+            b".tsx",
+            b".js",
+            b".jsx",
+            b".mjs",
+            b".cjs",
+            b".json",
+        ];
+        let paths = stems
+            .iter()
+            .flat_map(|stem| ends.map(|end| [*stem, end].concat()));
+        let paths: Vec<Vec<u8>> = paths.collect();
+        for file in &paths {
+            let spellings = list_spellings(file);
+            for written in &paths {
+                let is_listed = spellings.contains(written);
+                assert_eq!(is_listed, spells(written, file), "{written:?} {file:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_text_writes_the_last_words_of_the_paths_in_it() {
+        let mut numbers: FxHashMap<&[u8], u32> = FxHashMap::default();
+        for (number, word) in (0..).zip([&b"one"[..], b"two", b"three"]) {
+            numbers.insert(word, number);
+        }
+        let text = b"import \"./deep/one.js\"; require('../two'); `three.txt`; 'threethree.js'";
+        let mut words = LastWords {
+            numbers,
+            longest: 5,
+            number_asked: 0,
+        };
+        let find = |words: &LastWords<'_>| Some(find_last_words_written(text, words)?.numbers);
+        assert_eq!(find(&words), Some(vec![0, 1]));
+        words.number_asked = 1;
+        assert_eq!(find(&words), None);
+        words.numbers.insert(b"threethree", 3);
+        words.number_asked = 0;
+        assert_eq!(find(&words), Some(vec![0, 1]));
+        words.longest = 10;
+        assert_eq!(find(&words), Some(vec![0, 1, 3]));
+    }
+
+    #[test]
+    fn a_text_says_how_far_above_it_the_index_files_lie_that_it_names_without_their_folder() {
+        let words = LastWords {
+            numbers: FxHashMap::default(),
+            longest: 0,
+            number_asked: 0,
+        };
+        for (text, levels) in [
+            (&b"import \"./index\";"[..], &[0][..]),
+            (b"require('../index.js')", &[1]),
+            (b"import(`../../index.mjs`)", &[2]),
+            (b"import \"./index\"; import \"../index.ts\";", &[0, 1]),
+            (b"import \"..\";", &[1]),
+            (b"require('.')", &[0]),
+            (b"import(`../`)", &[1]),
+            (b"import \"./\";", &[0]),
+            (b"import \"../..\";", &[2]),
+            (b"import \"../lib\"; import \"./lib/\"; [...list]", &[]),
+            (b"import \"../lib/index\";", &[]),
+            (b"import \"index\"; list.index; \"./indexes\"", &[]),
+        ] {
+            let written = find_last_words_written(text, &words).unwrap();
+            assert_eq!(
+                written.levels_of_index_files,
+                levels,
+                "{}",
+                text.escape_ascii()
+            );
+        }
+    }
+
+    #[test]
+    fn an_extension_is_one_of_eight() {
+        for (path, stem) in [
+            (&b"a.ts"[..], &b"a"[..]),
+            (b"a.tsx", b"a"),
+            (b"a.mjs", b"a"),
+            (b"a.cts", b"a"),
+            (b".js", b""),
+            (b"a.json", b"a.json"),
+            (b"a.d", b"a.d"),
+            (b"ts", b"ts"),
+            (b"", b""),
+            (b"a.test.js", b"a.test"),
+        ] {
+            assert_eq!(without_extension(path), stem, "{path:?}");
+        }
+    }
 }

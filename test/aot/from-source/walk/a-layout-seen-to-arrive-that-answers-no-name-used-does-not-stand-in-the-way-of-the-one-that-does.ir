@@ -1,0 +1,14 @@
+# -- source: main.cjs
+# 'use strict';
+# const shared = {}; Object.defineProperty(shared, 'depth', { get() { return this._core.depth; } });
+# function wrap(core) { const made = Object.create(shared); made._core = core; return made; }
+# const floor = { depth: 3 }, pair = [wrap(floor), wrap(floor)];
+# function run(turns) { let c = 0; for (let i = 0; i < turns; i++) c += pair[i & 1].depth; return c; }
+# console.log(run(9), run(0));
+# -- end of source
+# The getter was handed to Object.defineProperty with `shared`, so `shared` is what was seen to arrive as its `this`; it answers none of the names that the getter uses off `this`. Such a word is dropped as it
+# was, and the names find the layout that does hold `_core`: the objects that wrap() makes.
+# RUN: walk f3 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: GetSlot {{*}} key="_core" receivers=[L{{*}}] level=Expected
+# CHECK: GetSlot {{*}} key="depth" receivers=[L{{*}}] level=Expected

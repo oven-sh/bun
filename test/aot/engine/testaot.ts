@@ -142,7 +142,7 @@ async function printOutputOfFailedTests(lines: string[], cwd?: string) {
 // Each is what a FAIL line has between "FAIL " and ": ", with forward slashes, under a TODO that says what it waits for.
 const failsToday: string[] = [];
 
-/** How many passed. */
+/** How many were run: those that passed, and those that fail under a `# TODO:`. ./what-a-todo-of-an-ir-test-stands-for.test.ts shows what such a line stands for. */
 export async function expectEveryTestPasses(args: string[], cwd?: string, env?: Record<string, string>) {
   const { lines, stderr, exitCode } = await runTool([testaot!, ...args], cwd, env);
   await printOutputOfFailedTests(lines, cwd);
@@ -168,7 +168,7 @@ export async function expectEveryTestPasses(args: string[], cwd?: string, env?: 
 
 export const skipOrFail = (why: string) =>
   // CI packs the tools wherever Bun has the compiler.
-  isCI && !isWindows && !unsupported
+  isCI && !unsupported
     ? test(`${why}: does ../harness/tests-that-start-tools-of-the-engine.ts see that this file imports ./testaot.ts?`, () =>
         expect(why).toBeUndefined())
     : test.skip(`${why}: test/aot/engine/testaot.ts says where it is looked for`, () => {});

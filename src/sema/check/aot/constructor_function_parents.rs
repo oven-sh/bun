@@ -6,6 +6,7 @@ use super::answers::{
 use super::prototype_links::{LinkEnd, PrototypeLink, PrototypeLinks, list_in};
 use super::queries::Queries;
 use super::type_identity::ObjectOrigin;
+use super::type_shape::ShapeKind;
 use crate::atom::{Atom, known};
 use crate::bind::{Decl, SymFlags};
 use crate::hir::{
@@ -161,6 +162,17 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let heritage = self.c.hir(class.file)[class.class].extends.some()?;
         let parent = self.end_finder(class.file).find_parent(heritage)?;
         (parent != ClassParent::Declared(ClassDeclaration::Class(class))).then_some(parent)
+    }
+
+    pub fn nearest_class_joined_in(&mut self, ty: TypeId) -> Option<ClassRef> {
+        let TypeData::Intersection(parts) = self.c.data(ty) else {
+            return None;
+        };
+        let first = *parts.first()?;
+        match self.type_shape(first).ok()?.kind {
+            ShapeKind::ClassConstructor(class) => Some(class),
+            _ => None,
+        }
     }
 
     pub fn library_declarations_of_type(&mut self, ty: TypeId) -> SmallVec<[ClassDeclaration; 1]> {
@@ -402,7 +414,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             members: self.list(&members),
             names_stored_in_prototype,
             has_computed_instance_name: own.is_some_and(|own| own.has_computed_instance_name),
-            has_computed_static_name: own.is_some_and(|own| own.has_computed_static_name),
         });
         Some(shape)
     }

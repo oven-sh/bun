@@ -24,6 +24,7 @@ pub use threads::{
 };
 
 use self::effects::ProgramOrigins;
+pub use self::effects::says_that_name_is_not_found;
 #[cfg(test)]
 use crate::RoundReport;
 use crate::{CompilerOption, Diagnostic, Incomplete, Libs, Progress};

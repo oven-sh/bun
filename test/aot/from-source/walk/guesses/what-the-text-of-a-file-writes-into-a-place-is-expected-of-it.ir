@@ -1,0 +1,36 @@
+# -- source: stranger.js
+# import { run } from "./main.js";
+# run({ handler: x => String(x), bias: "text" }, 3);
+# -- source: main.js
+# import { turns } from "./counted.js";
+# const kept = { handler: x => x + 5 };
+# export function run(table, times) { let sum = 0; for (let i = 0; i < times; i++) sum = (table.handler(sum) + table.bias) | 0; return sum; }
+# function runKept(times) { let sum = 0; for (let i = 0; i < times; i++) sum = kept.handler(sum) | 0; return sum; }
+# function runMixed(pair, times) { let sum = 0; for (let i = 0; i < times; i++) sum = (sum + pair.mixed) | 0; return sum; }
+# function main() {
+#   const table = { handler: x => x + 3, bias: 1 };
+#   globalThis.seen = [table, run, kept, runKept, runMixed];
+#   return run(table, turns) + runKept(turns) + runMixed({ mixed: 1, other: 2 }, turns) + runMixed({ mixed: globalThis.seen.length, other: 2 }, turns);
+# }
+# main();
+# -- source: counted.js
+# export const turns = 10;
+# -- end of source
+# Nothing is declared in these files. What is expected of a place is what the text writes into it: of the parameter `table` the record of the literal that the one call written in the function's own file hands over;
+# of the fields `handler` and `bias` the arrow and the number that the literals written in the files in sight of the reader lay there; of the constant `kept` the record that its own file stores into it.
+# All of it is only expected: each is tested, here in front of the loops. A file that the reader's text does not name says nothing: stranger.js hands over a text under `bias` and another arrow, and run() is compiled as without it.
+# Where one of the values written is not told by its own text (`globalThis.seen.length`), nothing is said of the place.
+# TODO: what the file of a function says: the guess here rested on what the whole program was seen to hand over, store or return; it comes back with what the calls and stores written in the function's own file say
+# RUN: walk f2 mechanisms=all
+# CHECK: b0(v0: L1?{{*}}
+# CHECK: TypeTest {{*}} testedType=f7
+# CHECK: TypeTest {{*}} testedType=i32
+# CHECK: Add {{*}} form=Integers
+# CHECK: ToInt32
+# RUN(KEPT): walk f3 mechanisms=all
+# KEPT: ShapeTest {{*}} layouts=[L2]
+# KEPT: TypeTest {{*}} testedType=f6
+# RUN(MIXED): walk f4 mechanisms=all
+# MIXED: b0(v0: L0?{{*}}
+# MIXED-NOT: testedType=i32
+# MIXED: Add {{*}} form=Generic

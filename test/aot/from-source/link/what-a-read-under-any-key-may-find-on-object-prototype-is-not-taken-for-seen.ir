@@ -1,0 +1,20 @@
+# -- source: main.cjs
+# 'use strict';
+# function go(x) { return x + 1; }
+# const table = { go }, key = JSON.parse('"go"');
+# function run(turns) { let s = 0; const h = table[key]; for (let i = 0; i < turns; i++) s += h(i); return s; }
+# console.log(run(3));
+# -- end of source
+# A read under a key that nobody knows may find a member of Object.prototype, so nothing is proven of what it gives. That was counted as seen too: the reading that says what is expected said "anything" of
+# `table[key]`, listed no callee at `h(i)` and let nothing arrive at go()'s parameter. What was seen is what the table holds; the rest is unknown, and is not taken for seen.
+# RUN: link calls held mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: call f2 {{*}} -> f1
+# RUN(ARRIVES): link functions held mechanisms=all
+# REQUIRES(ARRIVES): entries-of-bun
+# ARRIVES: function f1
+# ARRIVES-NEXT: parameter 0 expected=int
+# The proving reading lists no callee there, as before.
+# RUN(PROVEN): link calls mechanisms=all
+# REQUIRES(PROVEN): entries-of-bun
+# PROVEN-NOT: call f2 {{*}} -> f1

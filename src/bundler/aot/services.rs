@@ -5,17 +5,20 @@ use crate::options_impl::BundleOptions;
 use crate::{BundleV2, OutputFile, Transpiler, Worker};
 use bun_alloc::Arena;
 use bun_aot::load::source_provider::{
-    ComponentFile, DataFailure, DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution,
-    ResolveRequest, SourceFile,
+    ComponentFile, DataFailure, DeferredLoad, Failed, LoadRequest, Loaded, ModuleName,
+    PathsOfProgram, RefusedText, Resolution, ResolveRequest, SourceFile,
 };
 use bun_aot::{SourceProvider, WithoutServices};
 use bun_ast::{ASTMemoryAllocator, Loader, Log};
 use bun_js_parser::{Define, ExpandedImportMetaGlob};
 use bun_paths::resolve_path::posix_to_platform_in_place;
 use bun_react_compiler::Observer;
+use bun_resolver::compiled_program::{RefusedData, encode_refused_data};
 use bun_resolver::options::{ExternalModules, Packages};
 use bun_resolver::package_json::Status;
-use bun_resolver::package_names::RefusedName;
+use bun_resolver::package_names::{
+    BuildPaths, FurtherPackageName, PackageName, PathAlias, RefusedName,
+};
 use bun_resolver::{DataURL, GlobalCache, Resolver, ResultUnion};
 use bun_sema::atom::Interner;
 use bun_sema::fold::FoldOptions;
@@ -223,6 +226,25 @@ pub(crate) struct BundlerServices {
     /// Those that no thread holds.
     file_finders: Guarded<Vec<FileFinder>>,
     refused_names: Guarded<Vec<RefusedName>>,
+    /// `CompiledProgram::refused_data`
+    refused_data: Guarded<Vec<u8>>,
+    names_wanted: NamesWanted,
+    names_of_packages: Guarded<NamesOfPackages>,
+}
+
+pub(crate) struct NamesWanted {
+    pub(crate) runs_in_place: bool,
+    pub(crate) loads_code_from_disk: bool,
+    pub(crate) root_directory: Box<[u8]>,
+}
+
+#[derive(Default)]
+pub(crate) struct NamesOfPackages {
+    pub(crate) of_entry_points_and_folders: Vec<PackageName>,
+    pub(crate) path_aliases: Vec<PathAlias>,
+    pub(crate) nearer: Vec<PackageName>,
+    pub(crate) that_lead_outside: Vec<PackageName>,
+    pub(crate) further: Vec<FurtherPackageName>,
 }
 
 impl BundlerServices {
@@ -230,6 +252,7 @@ impl BundlerServices {
         bundle: NonNull<BundleV2<'static>>,
         module_prefix: &[u8],
         user_defined_names: &[Box<[u8]>],
+        names_wanted: NamesWanted,
     ) -> BundlerServices {
         let context = BuildContext {
             bundle,
@@ -247,11 +270,22 @@ impl BundlerServices {
             embedded: EmbeddedFiles::default(),
             file_finders: Guarded::new(Vec::new()),
             refused_names: Guarded::new(Vec::new()),
+            refused_data: Guarded::new(Vec::new()),
+            names_wanted,
+            names_of_packages: Guarded::new(NamesOfPackages::default()),
         }
+    }
+
+    pub(crate) fn take_names_of_packages(&self) -> NamesOfPackages {
+        core::mem::take(&mut *self.names_of_packages.lock())
     }
 
     pub(crate) fn take_refused_names(&self) -> Vec<RefusedName> {
         core::mem::take(&mut *self.refused_names.lock())
+    }
+
+    pub(crate) fn take_refused_data(&self) -> Vec<u8> {
+        core::mem::take(&mut *self.refused_data.lock())
     }
 
     pub(crate) fn shut_down(self) -> Vec<OutputFile> {
@@ -263,6 +297,51 @@ impl BundlerServices {
 }
 
 impl SourceProvider for BundlerServices {
+    fn work_beside_engine(&self, paths: &PathsOfProgram<'_>) {
+        let wanted = &self.names_wanted;
+        let pair = |source_path, public_path| BuildPaths {
+            source_path,
+            public_path,
+        };
+        let entry_points = paths.entry_points.iter();
+        let entry_points: Vec<BuildPaths<'_>> = entry_points
+            .map(|it| pair(&it.source_path, &it.public_path))
+            .collect();
+        let folders = paths.folders.iter();
+        let folders: Vec<BuildPaths<'_>> = folders
+            .map(|it| pair(&it.source_path, &it.public_path))
+            .collect();
+        let files = paths.program_files.iter();
+        let files: Vec<BuildPaths<'_>> = files
+            .map(|it| pair(&it.source_path, &it.public_path))
+            .collect();
+        // SAFETY: the front end has ended, so no thread resolves or loads; `build`, which owns the carrier, waits in `bun_aot::compile`.
+        let resolver = unsafe {
+            &mut (*self.context.bundle_pointer().as_ptr())
+                .transpiler
+                .resolver
+        };
+        let mut names = NamesOfPackages::default();
+        with_ast_scope(|_| {
+            // A program that runs in place asks the disk, and one entry point is loaded by nobody.
+            if !wanted.runs_in_place && entry_points.len() > 1 {
+                names.of_entry_points_and_folders =
+                    resolver.find_package_names(&entry_points, &folders);
+                names.path_aliases = resolver.find_path_aliases(&folders);
+            }
+            if !wanted.runs_in_place {
+                names.nearer = resolver.find_nearer_packages(&folders);
+                names.that_lead_outside =
+                    resolver.find_names_that_lead_outside(&files, &entry_points);
+            }
+            if wanted.loads_code_from_disk && !files.is_empty() {
+                let root = pair(&wanted.root_directory, &self.context.module_prefix);
+                names.further = resolver.find_further_package_names(&files, root);
+            }
+        });
+        *self.names_of_packages.lock() = names;
+    }
+
     fn fold_options<'s>(
         &self,
         arena: &'s Arena,
@@ -397,6 +476,19 @@ impl SourceProvider for BundlerServices {
         self.embedded.set_contents(&self.context, file, log)
     }
 
+    fn keep_where_text_is_refused(&self, refused: &RefusedText<'_>) {
+        let record = RefusedData {
+            is_syntax_error: refused.is_syntax_error,
+            message: refused.message,
+            line: refused.line,
+            column: refused.column,
+            offset: refused.offset as u32,
+            length: refused.length as u32,
+        };
+        let record = encode_refused_data(refused.path, &record);
+        self.refused_data.lock().extend_from_slice(&record);
+    }
+
     fn parse_data<'s>(
         &self,
         file: &SourceFile<'_>,
@@ -426,7 +518,7 @@ impl SourceProvider for BundlerServices {
 
 #[cfg(test)]
 mod tests {
-    use super::{BundlerServices, with_ast_scope, with_test_context};
+    use super::{BundlerServices, NamesWanted, with_ast_scope, with_test_context};
     use bun_aot::SourceProvider;
     use bun_aot::load::source_provider::ModuleName;
     use bun_ast::{E, Expr, ExprData, Loc};
@@ -441,8 +533,16 @@ mod tests {
         with_test_context(
             |_| {},
             |context| {
-                let services =
-                    BundlerServices::new(context.bundle_pointer(), &context.module_prefix, &[]);
+                let services = BundlerServices::new(
+                    context.bundle_pointer(),
+                    &context.module_prefix,
+                    &[],
+                    NamesWanted {
+                        runs_in_place: true,
+                        loads_code_from_disk: false,
+                        root_directory: Box::default(),
+                    },
+                );
                 for namespace in [&b"file"[..], b"virtual"] {
                     assert!(!services.has_load_plugin(ModuleName {
                         namespace,

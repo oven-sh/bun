@@ -1,0 +1,11 @@
+# -- source: main.js
+# function sum(box) { let s = 0; for (let i = 0; i < box.a.length; i++) s += box.a[i] + box.b[i]; return s; }
+# const go = { sum }[JSON.parse('"sum"')];
+# console.log(go({ a: new Uint8Array(300).fill(3), b: new Uint8Array(300).fill(4) }));
+# -- end of source
+# Of each field the front end says "a text or a list": drawn from use. The first is read once in front of the loop and told apart as a parameter with that word is; in the copy for byte arrays the other field is read in front too and asked for a byte array, and no turn reads a slot.
+# RUN(WALK): walk f1 mechanisms=all
+# REQUIRES(WALK): entries-of-bun
+# WALK: [[given]]: {{*}} = GetSlot {{*}}key="a"
+# WALK: = TypeTest [[given]] testedType=Uint8Array
+# WALK-COUNT-2: = GetTypedArrayElement {{*}}typedArrayType=2 {{*}}isInsideView

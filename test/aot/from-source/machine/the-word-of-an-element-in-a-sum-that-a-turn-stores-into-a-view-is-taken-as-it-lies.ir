@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# 'use strict';
+# const xs = new Array(64); for (let i = 0; i < 64; i++) xs[i] = (i * 3 + 1) & 255; const out = new Int32Array(64);
+# function f(t) { let s = t & 7; for (let i = 0; i < xs.length; i++) { s = (s + xs[i]) | 0; out[i] = s; } return out[t & 63] & 1023; }
+# let all = 0; for (let t = 0; t < 5; t++) all = (all + f(t)) % 1000003; console.log(all);
+# -- end of source
+# The list holds int32s by Link, and what it gives is cut to an int32. Whoever cuts takes the word as it lies in the list while it is no hole's. A number that is converted and held against itself to
+# show that it is whole counts as an integer found too, and costs four to seven instructions more.
+# The sizes are what the loops of f1 hold (the turns laid out, the written turn, the closed copy), and two more. While the number of the element was a join they held 114, 20 and 32:
+# every count of the road stayed as it was, and the loops were a third slower.
+# RUN(COUNT): compile Int32ElementsBehindCutNumbers mechanisms=all
+# COUNT-NOT: statistic Int32ElementsBehindCutNumbers 0
+# RUN(X64): loops most:79,18,34 f1 mechanisms=all
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 79
+# X64-NEXT: loop: at most 18
+# X64-NEXT: loop: at most 34

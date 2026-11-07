@@ -1,0 +1,35 @@
+# `const x = rows[i]; s = s + lerp(x, 100, 0.25)` over a list out of JSON.parse. A list of which nothing is expected is asked in front of a loop what it holds where the loop's text sends its elements through an operator that makes numbers.
+# The element's first user is a call here, so it "went through no operator": the loop was built once, `rows.length` and `rows[i]` read by stubs each turn and every operator of the copy in line by its stub: 13,884 instructions a call of 96.
+# Where the linker names the callee, the callee's parameter that takes the element is followed in the callee's own body, through casts, to its first operator that makes numbers or relation: 1,701; `clamp` 13,237 > 1,971.
+# `label` asks `typeof` first: `named` stays as it is. `mixed` reads a list that holds a text and null: the front fails and it answers as plain does.
+# f1 = lerp, f2 = clamp, f3 = label, f4 = eased, f5 = held, f6 = named, f7 = mixed
+# LIBRARY: own
+# -- source: main.js
+# const rows = take(0), odd = take(1);
+# function lerp(a, b, k) { return a + (b - a) * k; }
+# function clamp(x, lo, hi) { return x < lo ? lo : x > hi ? hi : x; }
+# function label(x) { return typeof x === "number" ? 1 : 2; }
+# function eased() { let s = 0; for (let i = 0; i < rows.length; i++) { const x = rows[i]; s = s + lerp(x, 100, 0.25); } return s; }
+# function held() { let s = 0; for (let i = 0; i < rows.length; i++) { const x = rows[i]; s = s + clamp(x, 2, 3); } return s; }
+# function named() { let s = 0; for (let i = 0; i < rows.length; i++) { const x = rows[i]; s = s + label(x); } return s; }
+# function mixed() { let s = 0; for (let i = 0; i < odd.length; i++) { const x = odd[i]; s = s + lerp(x, 100, 0.25); } return s; }
+# publish(eased, held, named, mixed, rows, odd);
+# -- end of source
+# RUN(EASED): walk f4 mechanisms=all
+# EASED: = GetArrayElement
+# EASED: = Add {{*}}form=Numbers
+# RUN(HELD): walk f5 mechanisms=all
+# HELD: = GetArrayElement
+# RUN(NAMED): walk f6 mechanisms=all
+# NAMED-NOT: = GetArrayElement
+# RUN(SHELL): run-in-shell let asked = 0; globalThis.take = which => JSON.parse(["[1.5,2.5,3.5,4.5]", "[1.5,\"2\",3.5,null]"][which]); globalThis.publish = (eased, held, named, mixed, rows, odd) => { const tell = () => print(eased(), held(), named(), String(mixed())); tell(); tell(); rows[1] = "7"; tell(); rows[1] = { valueOf() { asked++; return 9; } }; tell(); print(asked); rows.length = 2; tell(); rows.push(0.5, 1, 2); tell(); delete rows[0]; tell(); rows.length = 0; tell(); odd.length = 0; odd.push(1, 2); tell(); };
+# SHELL: 109 10.5 4 26.125224.527.62525
+# SHELL-NEXT: 109 10.5 4 26.125224.527.62525
+# SHELL-NEXT: 26.125723.2527.62528.375 11 5 26.125224.527.62525
+# SHELL-NEXT: 113.875 11 5 26.125224.527.62525
+# SHELL-NEXT: 4
+# SHELL-NEXT: 57.875 5 3 26.125224.527.62525
+# SHELL-NEXT: 135.5 11 6 26.125224.527.62525
+# SHELL-NEXT: NaN NaN 7 26.125224.527.62525
+# SHELL-NEXT: 0 0 0 26.125224.527.62525
+# SHELL-NEXT: 0 0 0 52.25

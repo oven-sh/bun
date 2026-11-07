@@ -1,0 +1,40 @@
+# -- source: main.ts
+# declare function print(value: unknown): void;
+# declare function count(): number;
+# let total = 0;
+# function run(n: number) {
+#   for (let i = 0; i < n; i++) total += i & 7;
+# }
+# run(count());
+# print(total);
+# -- end of source
+# f1 = run. The turns read `total` for nothing but the sum that they store back, so the typed copy keeps it a number and does not hold it to int32 by a test a turn. Then the turn is an addition, a box,
+# a store and a step, and the back end takes it for a counted loop: in the eight turns that it lays out the box and the store are left out; the store is made in front of each poll (one in 2^20 turns),
+# so that whoever ends the run there finds what plain Bun leaves, and where the laid-out turns hand over to the loop as written. It was 13.0 instructions a turn against 3.5 for a local variable.
+# The `& 7` stands there ten times: eight turns laid out, the loop as written, the closed copy. The stores are four: in the loop as written, in the closed copy, in front of the poll (the third as
+# they are printed: the poll's patch stands on the next line), at the hand-over.
+# RUN(NUMBER): walk f1 mechanisms=all
+# NUMBER-LABEL: code f1:Body
+# NUMBER: int|whole @Double) isInLoop=true isLoopHead=true:
+# RUN(TURNS): emit f1 mechanisms=all
+# TURNS-LABEL: unit f1:Body
+# TURNS-COUNT-10: = BitAnd(
+# TURNS-NOT: = BitAnd(
+# RUN(STORES): emit f1 mechanisms=all
+# STORES-LABEL: unit f1:Body
+# STORES-COUNT-4: = Store(
+# STORES-NOT: = Store(
+# RUN(POLL): emit f1 mechanisms=all
+# POLL-LABEL: unit f1:Body
+# POLL-COUNT-3: = Store(
+# POLL-NEXT: = Patch(earlyClobbered = [{{*}}], lateClobbered = [{{*}}], effects = ExitsSideways
+# RUN(EVENT): compile LoopsWhoseTurnsAreLaidOut StoresLeftOutOfTurnsLaidOut SumsOfIntegersInTurnsLaidOut mechanisms=all
+# EVENT: statistic LoopsWhoseTurnsAreLaidOut 1
+# EVENT: statistic StoresLeftOutOfTurnsLaidOut 1
+# EVENT: statistic SumsOfIntegersInTurnsLaidOut 1
+# RUN(RIGHT): run-in-shell globalThis.count = () => 40;
+# RIGHT: 140
+# RIGHT-NEXT: exited with 0
+# RUN(NONE): run-in-shell globalThis.count = () => 0;
+# NONE: 0
+# NONE-NEXT: exited with 0

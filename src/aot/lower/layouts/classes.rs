@@ -4,7 +4,9 @@ use bun_sema::check::aot::{
     ClassDeclaration, ClassMemberSource, ClassParent, ClassRef, ClassShape, FunctionRef,
     MemberLookup, MemberName, ObjectMember, ObjectMemberKind, PositionTypes, ShapeKind,
 };
-use bun_sema::hir::{self, ClassId, ExprKind, Flags, FnId, FnKind, MemberId, PropKey};
+use bun_sema::hir::{
+    self, BinOp, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, MemberId, PropKey,
+};
 use bun_sema::program::FileId;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
@@ -16,8 +18,9 @@ use crate::ir::generated::{
     Field, FieldFlags, FieldForm, Layout, LayoutFlags, LayoutKind, LimitId, StaticField,
 };
 use crate::ir::{
-    ClassSlot, DeclaredType, FunctionId, FunctionKey, LayoutId, LayoutKey, OpaqueKind, PropertyKey,
-    PropertyKeyId, StringId, Type, TypeTable, VariableKey,
+    ClassSlot, DeclaredType, FunctionId, FunctionKey, LayoutId, LayoutKey, OpaqueKind,
+    PositionFlags, Primitives, PropertyKey, PropertyKeyId, StringId, Type, TypeId, TypeTable,
+    VariableKey,
 };
 use crate::lower::class::ClassElement;
 use crate::lower::module::LibraryFunctionForm;
@@ -188,7 +191,64 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             if known.is_none() || types.written.written().is_some() {
                 field.declared = match is_declared {
-                    true => self.create_position_of_declared_field(home, types),
+                    true => {
+                        let declared = self.create_position_of_declared_field(home, types);
+                        let says_nothing = home == self.file
+                            && declared.ty == TypeTable::ANYTHING
+                            && types.written.written().is_none();
+                        let mut drawn = declared;
+                        if says_nothing {
+                            let checked = self.queries.what_uses_of_field_say(shape, entry);
+                            let types = PositionTypes { checked, ..types };
+                            let expected = self.create_expected_position(types, false);
+                            let said = self.fragment.types.get(expected.ty);
+                            let names_built_in_classes_alone = !said.classes.is_empty()
+                                && said.layouts.is_empty()
+                                && said.functions.is_empty()
+                                && said.primitives & Primitives::NULLISH == said.primitives;
+                            if expected.is_expected() && names_built_in_classes_alone {
+                                drawn = DeclaredType {
+                                    ty: self.without_contents_that_are_never(expected.ty),
+                                    ..expected
+                                };
+                            }
+                        }
+                        drawn
+                    }
+                    false if home == self.file && types.written.written().is_none() => {
+                        let mut expected = self.create_expected_position(types, false);
+                        if !expected.is_expected()
+                            && let Some(default) = self.find_default_of_store(entry.source)
+                        {
+                            let checked = self.queries.expression_type(default);
+                            let types = PositionTypes { checked, ..types };
+                            expected = self.create_expected_position(types, false);
+                        }
+                        let mut is_drawn_from_use = false;
+                        if !expected.is_expected() {
+                            let checked = self.queries.what_uses_of_field_say(shape, entry);
+                            let types = PositionTypes { checked, ..types };
+                            expected = self.create_expected_position(types, false);
+                            is_drawn_from_use = expected.is_expected();
+                        }
+                        let said = self.fragment.types.get(expected.ty);
+                        let names_built_in_classes_alone = !said.classes.is_empty()
+                            && said.layouts.is_empty()
+                            && said.functions.is_empty()
+                            && said.primitives & Primitives::NULLISH == said.primitives;
+                        match expected.is_expected() && names_built_in_classes_alone {
+                            true if is_drawn_from_use => DeclaredType {
+                                ty: self.without_contents_that_are_never(expected.ty),
+                                ..expected
+                            },
+                            true => DeclaredType {
+                                ty: self.without_contents_that_are_never(expected.ty),
+                                flags: expected.flags | PositionFlags::IS_FROM_COMPILER,
+                                ..expected
+                            },
+                            false => DeclaredType::untyped(),
+                        }
+                    }
                     false => self.create_field_position(home, types),
                 };
                 if declared_member.is_some_and(|member| member.is_optional) {
@@ -199,6 +259,67 @@ impl FileLowering<'_, '_, '_, '_> {
                 Some(index) => fields.replace(index, field),
                 None => _ = fields.add(field),
             }
+        }
+    }
+
+    fn without_contents_that_are_never(&mut self, ty: TypeId) -> TypeId {
+        let said = self.fragment.types.get(ty);
+        if said.classes.iter().all(|part| part.contents.is_empty()) {
+            return ty;
+        }
+        let mut rebuilt = Type {
+            primitives: said.primitives,
+            flags: said.flags,
+            opaque: said.opaque,
+            environment: said.environment,
+            minimum: said.minimum,
+            maximum: said.maximum,
+            strings: said.strings.to_vec(),
+            layouts: said.layouts.to_vec(),
+            classes: said.classes.to_vec(),
+            builtins: said.builtins.to_vec(),
+            functions: said.functions.to_vec(),
+        };
+        let mut is_changed = false;
+        for part in &mut rebuilt.classes {
+            for held in &mut part.contents {
+                let said_of_contents = match *held {
+                    TypeTable::NEVER => TypeTable::ANYTHING,
+                    other => self.without_contents_that_are_never(other),
+                };
+                is_changed |= said_of_contents != *held;
+                *held = said_of_contents;
+            }
+        }
+        match is_changed {
+            true => self.fragment.types.intern(rebuilt),
+            false => ty,
+        }
+    }
+
+    fn find_default_of_store(&self, source: ClassMemberSource) -> Option<ExprId> {
+        let ClassMemberSource::ThisStore(store) = source else {
+            return None;
+        };
+        let assignment = match self.bound.parent_of_expr(store) {
+            Parent::Expr(parent) if !matches!(self.hir[store].kind, ExprKind::Assign { .. }) => {
+                parent
+            }
+            _ => store,
+        };
+        let ExprKind::Assign {
+            op: None, value, ..
+        } = self.hir[assignment].kind
+        else {
+            return None;
+        };
+        match self.hir[value].kind {
+            ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                right,
+                ..
+            } => Some(right),
+            _ => None,
         }
     }
 
@@ -528,6 +649,12 @@ impl FileLowering<'_, '_, '_, '_> {
         let members = match self.queries.type_shape(ty).map(|shape| shape.kind) {
             Ok(ShapeKind::Union(members)) => members,
             Ok(ShapeKind::ClassConstructor(parent)) if parent != derived => return vec![parent],
+            Ok(ShapeKind::TypeVariable { .. }) => {
+                let most = MOST_PARENTS_THAT_A_CLASS_HAS_ROOM_FOR;
+                let mut parents = self.queries.classes_handed_to_mixin(extends, most);
+                parents.retain(|&parent| parent != derived);
+                return parents;
+            }
             _ => return Vec::new(),
         };
         let parents =
@@ -581,8 +708,7 @@ impl FileLowering<'_, '_, '_, '_> {
             if keys.insert(key) {
                 let slot = ClassSlot::StaticField(node);
                 static_fields.push(StaticField {
-                    key: Some(key),
-                    computed_key: None,
+                    key,
                     variable: self.ensure_variable(VariableKey::ClassSlot { class, slot }),
                 });
             }
@@ -682,14 +808,18 @@ pub(in crate::lower) fn define_class_layout(
     let base_class = base_class.filter(|_| !is_parent_left_out);
     let base = match base_class {
         Some(base) => Some(file.class_layout(base)),
-        None if file.source != SourceKind::Program || is_parent_left_out => None,
+        None if is_parent_left_out => None,
         None => {
+            let is_of_program = file.source == SourceKind::Program;
             let parent = file.queries.class_parent(reference);
             let parent = parent.filter(|&parent| match parent {
-                ClassParent::Declared(ClassDeclaration::Class(parent)) => is_defined(file, parent),
-                ClassParent::Declared(ClassDeclaration::Function(_)) | ClassParent::Library(_) => {
-                    true
+                ClassParent::Declared(ClassDeclaration::Class(parent)) => {
+                    is_of_program && is_defined(file, parent)
                 }
+                ClassParent::Declared(ClassDeclaration::Function(parent)) => {
+                    is_of_program || file.has_module(parent.file)
+                }
+                ClassParent::Library(_) => is_of_program,
             });
             parent.and_then(|parent| file.find_layout_of_parent(parent))
         }

@@ -1,0 +1,19 @@
+# f1 = turn
+# -- source: array-of-objects-field-sum.ts
+# const items: { worth: number; name: string }[] = [];
+# for (let k = 0; k < 512; k++) items.push({ worth: k, name: "item" });
+# function turn(i: number): number {
+#   let sum = i & 1;
+#   for (let k = 0; k < items.length; k++) sum += items[k]!.worth;
+#   return sum;
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 6 instructions, 1 of them patches, a turn of the written loop steps by 1.
+# When the bound was taken: loop: operations 11, patches 2, moves 0, unlikely 0.
+# RUN(X64): loops most:11 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 11

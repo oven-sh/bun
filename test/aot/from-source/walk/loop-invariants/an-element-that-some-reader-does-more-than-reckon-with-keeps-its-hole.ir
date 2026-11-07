@@ -1,0 +1,23 @@
+# -- source: an-element-that-some-reader-does-more-than-reckon-with-keeps-its-hole.ts
+# declare function sink(value: unknown): void;
+# function weigh(x: number[], y: number[]): number { let p = 0, holes = 0; for (let i = 0; i < x.length; i++) { p += x[i] * y[i]; if (x[i] === undefined) holes++; } return holes * 1000000 + (p === p ? p : -1); }
+# sink(weigh);
+# -- end of source
+# The second mention of `x[i]` asks whether anything is there, and a number that took NaN for a hole cannot say. So the first keeps the hole, is remembered as the element and answers the second:
+# one read of `x[i]` a turn. Were the first given NaN because the list beside it is tested in front, the place would be read twice.
+# f1 = weigh
+# RUN: walk f1 mechanisms=all
+# REQUIRES: as-written
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: GetArrayElement {{*}}level=Proven
+# CHECK-NOT: GetArrayElement {{*}}level=Proven
+# RUN(SHELL): run-in-shell globalThis.sink = weigh => { const halves = Array.from({ length: 40 }, (_, i) => i + 0.5), wholes = Array.from({ length: 40 }, (_, i) => i), holed = halves.slice(), holedWholes = wholes.slice(); delete holed[21]; delete holed[22]; delete holedWholes[3]; for (const [x, y] of [[halves, halves], [wholes, halves], [holed, halves], [halves, holed], [holedWholes, wholes], [wholes, holedWholes], [[1.5, NaN], [2, 3]], [[, 1], [1, 1]], [[], halves]]) print(weigh(x, y)); };
+# SHELL: 21330
+# SHELL: 20930
+# SHELL: 1999999
+# SHELL: -1
+# SHELL: 999999
+# SHELL: -1
+# SHELL: -1
+# SHELL: 999999
+# SHELL: 0

@@ -12,8 +12,10 @@ use crate::known_helpers::KnownHelpers;
 use crate::link::run_steps_beside;
 use crate::load::contents::worker_entries::source_path_of;
 use crate::load::loaders::{gives_data, loader_by_path};
+use crate::load::source_provider::{RefusedText, SourceProvider};
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProjectId};
+use crate::module_keys::type_attribute_of;
 use crate::modules::{
     self, BindInput, BoundModules, DeferredExports, ModuleGraph, ModuleKind, ModuleRef, Shape,
 };
@@ -87,7 +89,7 @@ fn name_data_files_found_by_patterns(
     let is_kept = |file: FileId| left_out.files.binary_search(&file).is_err();
     let is_data = |file: FileId| {
         let by_name = loader_by_path(loaders, files.file_name(file), CodeImportKind::Import);
-        gives_data(sources.loader(file)) && gives_data(by_name)
+        gives_data(by_name) && gives_data(sources.loader(file))
     };
     for &file in files.compiled_files().iter().filter(|&&file| is_kept(file)) {
         let Some((answers, _)) = files.answers(file) else {
@@ -115,6 +117,37 @@ fn name_data_files_found_by_patterns(
             let note = Diagnostic::new(code, Some(span), &[&names.join(&b", "[..])]);
             diagnostics.add(Some(view), note);
         }
+    }
+}
+
+fn keep_where_parsers_refused_data(
+    view: ProgramView<'_, '_>,
+    left_out: &LeftOutCode,
+    provider: &dyn SourceProvider,
+) {
+    let (files, sources) = (view.files(), view.sources);
+    let is_kept = |file: FileId| left_out.files.binary_search(&file).is_err();
+    for &file in files.compiled_files().iter().filter(|&&file| is_kept(file)) {
+        let refused_at = parsed_source(files, file).and_then(|it| it.refused_at.as_ref());
+        let Some((loader, place)) = refused_at else {
+            continue;
+        };
+        let paths = sources.module_paths(file);
+        let message = [
+            &b"\""[..],
+            paths.display_path,
+            b"\" could not be parsed as ",
+            type_attribute_of(*loader).as_bytes(),
+        ];
+        provider.keep_where_text_is_refused(&RefusedText {
+            path: paths.public_path,
+            is_syntax_error: *loader == Loader::Json,
+            message: &message.concat(),
+            line: place.line,
+            column: place.column,
+            offset: place.offset,
+            length: place.length,
+        });
     }
 }
 
@@ -437,6 +470,15 @@ impl Build<'_> {
                         self.diagnostics.add(Some(view), warning);
                     }
                 }
+                if !self.options.load.runs_tests && !self.options.aot.runs_in_place {
+                    for &(file, entry) in &reached.deletions_from_module_cache {
+                        let hir = view.files().hir(file);
+                        let span = Span::of_node(hir, file, NodeData::Expr(entry));
+                        let code = Code::DeletionFromModuleCacheDoesNothing;
+                        let warning = Diagnostic::new(code, Some(span), &[]);
+                        self.diagnostics.add(Some(view), warning);
+                    }
+                }
                 if !reached.found_by_name.is_empty() {
                     self.started_workers.root_folders_spelled = find_root_folders_spelled(
                         view.files(),
@@ -455,6 +497,7 @@ impl Build<'_> {
                         &left_out,
                         loaders,
                     );
+                    keep_where_parsers_refused_data(view, &left_out, self.provider);
                 }
                 crate::test_run_loads::warn_where_every_file_may_load_again(
                     &mut self.diagnostics,

@@ -473,10 +473,30 @@ fn what_a_program_lays_under_a_name_that_some_runs_give_process_answers_native_c
         "class Descriptors { constructor(public noDeprecation: PropertyDescriptor) {} }",
         "Object.defineProperty(x, 'no\\x44eprecation', y);",
         "Object.defineProperties(x, { no\\u0044eprecation: y });",
+        "Object.defineProperty(x, 'no\\Deprecation', y);",
+        "Object.defineProperty(x, 'no\\\nDeprecation', y);",
+        "Object.defineProperties(x, { 'no\\Deprecation': y });",
+        "class Above { get 'no\\Deprecation'() {} }",
+        "Object.defineProperty(x, `no\\Deprecation`, y);",
+        "Object.defineProperty(x, `no\\Deprecation${z}`, y);",
+        "Object.defineProperty(x, `no\\x44eprecation${z}`, y);",
+        "Object.defineProperty(x, tag`no\\Deprecation`, y);",
+        "x.no\\u0044eprecation = y;",
+        "x = { no\\u0044eprecation };",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(
+                case.can_lay_key_that_native_code_asks_of_process(),
+                "{source}"
+            );
+            assert!(!case.exposes(BuiltinId::Process), "{source}");
+        });
+    }
+    for source in [
         "new Proxy(x, y);",
         "Proxy.revocable(x, y);",
         "Reflect.construct(Proxy, [x, y]);",
-        "const Made = Proxy;",
+        "const Made = Proxy; new Made(x, y);",
     ] {
         with_case(PROGRAM, source, |case| {
             assert!(
@@ -500,11 +520,16 @@ fn what_a_program_lays_under_a_name_that_some_runs_give_process_answers_native_c
         "Object.defineProperties(x, { default: y, AbortController: y });",
         "class Above { get madeUp() {} }",
         "typeof Proxy === 'function';",
+        "const Made = Proxy;",
         "Proxy !== undefined;",
     ] {
         with_case(PROGRAM, source, |case| {
             assert!(
                 !case.resolved.process_reaches_code_on_its_prototypes(),
+                "{source}"
+            );
+            assert!(
+                !case.can_lay_key_that_native_code_asks_of_process(),
                 "{source}"
             );
         });
@@ -684,6 +709,57 @@ fn a_file_says_whether_it_can_come_by_the_hook_of_instanceof() {
     ] {
         with_case(PROGRAM, source, |case| {
             assert!(!case.resolved.can_come_by_hook_of_instanceof(), "{source}");
+        });
+    }
+}
+
+#[test]
+fn in_a_test_run_a_file_notes_the_names_that_a_named_object_is_asked_for_and_does_not_list() {
+    let noted = |case: &Case<'_, '_>| -> Vec<BuiltinId> {
+        let names = case.resolved.names_asked_for_that_are_not_listed();
+        names.iter().map(|asked| asked.0).collect()
+    };
+    for (source, id) in [
+        ("Bun.madeUp;", BuiltinId::Bun),
+        ("f(process.madeUp);", BuiltinId::Process),
+        ("const a = console.madeUp;", BuiltinId::Console),
+        (
+            "var kept; (kept = Bun).madeUp ?? (kept.madeUp = {});",
+            BuiltinId::Bun,
+        ),
+        ("const { madeUp } = Bun;", BuiltinId::Bun),
+        ("process.madeUp = 1;", BuiltinId::Process),
+    ] {
+        with_case(TEST_RUN, source, |case| {
+            assert!(noted(case).iter().all(|&asked| asked == id), "{source}");
+            assert!(!noted(case).is_empty(), "{source}");
+            assert!(!case.exposes(id), "{source}");
+        });
+        with_case(PROGRAM, source, |case| {
+            assert!(noted(case).is_empty(), "{source}")
+        });
+    }
+    for source in [
+        "Bun[\"made\" + \"Up\"];",
+        "const key = \"madeUp\"; Bun[key];",
+        "Bun[\"made\" + \"Up\"] = 1;",
+    ] {
+        with_case(TEST_RUN, source, |case| {
+            assert_eq!(noted(case), [BuiltinId::Bun], "{source}");
+        });
+        with_case(PROGRAM, source, |case| {
+            assert!(noted(case).is_empty(), "{source}")
+        });
+    }
+    for source in [
+        "process.title;",
+        "Bun.version;",
+        "Bun.madeUp();",
+        "Bun[\"ver\" + \"sion\"];",
+        "Bun[key];",
+    ] {
+        with_case(TEST_RUN, source, |case| {
+            assert!(noted(case).is_empty(), "{source}")
         });
     }
 }

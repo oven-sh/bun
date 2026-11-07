@@ -32,6 +32,7 @@ pub(crate) enum FileLeavesOpen {
     MocksUnspelledModule,
     HandsOnUnspelledModule,
     LetsSpyOnGo,
+    MayStoreLoaderFunction,
     SpiesUnderNamesFromOutside { texts_passed: usize },
     HoldsTextThatSpies { loads_by_unknown_path: bool },
 }
@@ -212,6 +213,9 @@ fn line_of_file_that_leaves_open(path: &[u8], what: FileLeavesOpen) -> String {
         FileLeavesOpen::LetsSpyOnGo => {
             format!("AOT test run | {path} lets spyOn go where nobody sees what it is called with")
         }
+        FileLeavesOpen::MayStoreLoaderFunction => format!(
+            "AOT test run | {path} stores a function that the loader calls, or hands on an object that takes one"
+        ),
         FileLeavesOpen::SpiesUnderNamesFromOutside { texts_passed } => format!(
             "AOT test run | {path} spies on an object from somewhere under a name that it does not spell: {texts_passed} texts are passed to it"
         ),

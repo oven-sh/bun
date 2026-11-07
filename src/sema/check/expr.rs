@@ -1862,11 +1862,22 @@ impl<'p, 's> Checker<'p, 's> {
             None => TypeId::ERROR,
         };
         // `getPropertyTypeForIndexType`. Each member of a union of keys is a property name.
-        if self.can_mark_properties_as_referenced(file) && !self.is_generic(key) {
+        if self.can_mark_properties_as_referenced(file)
+            && !self.is_generic(key)
+            && !self
+                .keys_that_name_no_private_member
+                .contains(&(receiver, key))
+        {
+            let mut none_is_private = true;
             for &k in self.parts(key) {
                 if let Some(name) = self.property_name_of_type(k) {
-                    self.mark_property_as_referenced(file, receiver, name, Some(e));
+                    none_is_private &=
+                        self.mark_property_as_referenced(file, receiver, name, Some(e));
                 }
+            }
+            if none_is_private {
+                self.keys_that_name_no_private_member
+                    .insert((receiver, key));
             }
         }
         // `getResolvedSymbolOrNil(node)`: the property `getPropertyTypeForIndexType` found for a

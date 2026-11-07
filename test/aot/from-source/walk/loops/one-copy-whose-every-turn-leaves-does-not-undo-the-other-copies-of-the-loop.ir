@@ -1,0 +1,15 @@
+# -- source: main.js
+# function sum(box) { let s = 0; for (let i = 0; i < box.inner.bytes.length; i++) s += box.inner.bytes[i]; return s; }
+# const go = { sum }[JSON.parse('"sum"')];
+# const box = { inner: { bytes: new Uint8Array(300).fill(3) } };
+# if (process.argv.length > 99) box.inner.bytes = [1.5];
+# console.log(go(box));
+# -- end of source
+# The field is stored elsewhere in the file too. In the copy for lists of anything the element is asked nothing, so every turn of that copy leaves at the sum. That is a word about one copy: the copies for lists of numbers and for byte arrays keep their turns.
+# RUN(WALK): walk f1 mechanisms=all
+# REQUIRES(WALK): entries-of-bun
+# WALK: [[given]]: {{*}} = GetSlot {{*}}key="bytes"
+# WALK: = TypeTest [[given]] testedType=Array<number>
+# WALK: = TypeTest [[given]] testedType=Uint8Array
+# WALK: number @Double = GetArrayElement {{*}}arrayStorage=Double level=Proven
+# WALK: = GetTypedArrayElement {{*}}typedArrayType=2 {{*}}isInsideView

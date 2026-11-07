@@ -1,0 +1,13 @@
+# -- source: main.ts
+# declare function sink(value: unknown): void;
+# declare const width: number;
+# function product(m: number[][], w: number): number { let s = 0; for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) for (let k = 0; k < w; k++) s += m[i]![k]! * m[j]![k]!; return s; }
+# const rows: number[][] = []; for (let r = 0; r < 8; r++) rows.push([r + 0.5, r + 1.5, r + 2.5]);
+# sink(product(rows, width)); sink(product([[1, 2, 3], [4, 5, 6], [1, 2, 3], [4, 5, 6], [1, 2, 3], [4, 5, 6], [1, 2, 3], [4, 5, 6]], width));
+# -- end of source
+# The innermost loop reads two lists at places that nobody has held against their lengths. The first eight turns are entered where both hold doubles and ask no kind; the second eight read both kinds
+# once in front and branch on them: whole numbers beside fractions stay in turns laid out.
+# REQUIRES: entries-of-bun as-written
+# RUN: compile LoopsLaidOutForOneKindOfStorage KindsOfListsReadInFrontOfTurnsLaidOut mechanisms=all
+# CHECK: statistic LoopsLaidOutForOneKindOfStorage 2
+# CHECK: statistic KindsOfListsReadInFrontOfTurnsLaidOut 4

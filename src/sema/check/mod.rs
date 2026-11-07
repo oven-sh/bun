@@ -1045,6 +1045,10 @@ impl<'s> Program<'s> {
             names_of_small_numbers: Default::default(),
             names_of_other_numbers: std::cell::RefCell::new(Box::new([(0, Atom::NONE); 256])),
             interface_declarations: Default::default(),
+            identical_inherited_properties: Default::default(),
+            local_properties: Default::default(),
+            modifiers_of_type_parameters: Default::default(),
+            symbols_with_identical_type_parameters: Default::default(),
             counted_export_declarations: Default::default(),
             has_class_or_function_declaration: Default::default(),
             generic_mapped_types_in_progress: Vec::new(),
@@ -1056,6 +1060,7 @@ impl<'s> Program<'s> {
             unions_without_subtypes: Default::default(),
             unrelated_classes: Default::default(),
             grown_unions: Default::default(),
+            unions_less_a_member: Default::default(),
             grown_signatures: Default::default(),
             union_members_compared: 0,
             union_calls: Default::default(),
@@ -1113,6 +1118,8 @@ impl<'s> Program<'s> {
             undefined_properties: Default::default(),
             synthetic_default_import_types: Default::default(),
             referenced_properties: Default::default(),
+            types_of_properties_under_keys: Default::default(),
+            keys_that_name_no_private_member: Default::default(),
             tracked_names: Default::default(),
             unused_private_members: Vec::new(),
             widening_contexts: Vec::new(),
@@ -1840,6 +1847,11 @@ pub struct Checker<'p, 's> {
     /// `resolvedConstraintOfDistributive`. `None` is `noConstraintType`.
     cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
     interface_declarations: FxHashMap<Sym, std::rc::Rc<errors_heritage::InterfaceDeclarations>>,
+    /// What `check_inherited_properties_are_identical` has answered for an interface.
+    identical_inherited_properties: FxHashMap<Sym, bool>,
+    local_properties: FxHashMap<TypeId, std::rc::Rc<errors_heritage::LocalProperties>>,
+    modifiers_of_type_parameters: std::cell::RefCell<FxHashMap<(Sym, TypeId), Flags>>,
+    symbols_with_identical_type_parameters: crate::util::FxHashSet<Sym>,
     /// For `check_namespace_merge_order`: whether a class or a function is among the declarations of a symbol.
     has_class_or_function_declaration: FxHashMap<Sym, bool>,
     /// For `check_external_module_exports`: how many declarations of an exported symbol count as duplicates.
@@ -1851,6 +1863,7 @@ pub struct Checker<'p, 's> {
     unions_without_subtypes: FxHashMap<TypeId, bool>,
     unrelated_classes: unions::UnrelatedClasses,
     grown_unions: FxHashMap<TypeId, unions::Growth>,
+    unions_less_a_member: FxHashMap<TypeId, unions::Loss>,
     /// The same for the signature of a union of function types: the signature that combines one fewer, and the one more.
     grown_signatures: FxHashMap<SigId, (SigId, SigId)>,
     /// `spread_indices` of the array literals and the calls with many elements or arguments.
@@ -1867,6 +1880,12 @@ pub struct Checker<'p, 's> {
     /// `symbolReferenceLinks` of the private members marked by an access in a file other than the
     /// one that declares them (`mark_property_as_referenced`).
     referenced_properties: crate::util::FxHashSet<Sym>,
+    /// By a holder and a union of keys that each name a property of it: the declared types of those properties, each
+    /// once. An element access that reads under the union narrows each of them by its own flow.
+    types_of_properties_under_keys: FxHashMap<(TypeId, TypeId), std::sync::Arc<[TypeId]>>,
+    /// A receiver and a union of keys of which none names a private member: `mark_property_as_referenced` has nothing
+    /// to mark for them, wherever the access stands.
+    keys_that_name_no_private_member: crate::util::FxHashSet<(TypeId, TypeId)>,
     /// `Resolve` with `isUse` in `trackComputedName` and `trackExistingEntityName`, by the file it
     /// starts from: the scope, the name and the meaning. `check_unused` of that file resolves it
     /// again.

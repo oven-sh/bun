@@ -1,0 +1,13 @@
+# -- source: main.cjs
+# 'use strict';
+# class Tally { static next = 1; }
+# function take() { const was = Tally.next; Tally.next = was + 1; return was; }
+# console.log(take() + take());
+# -- end of source
+# The static fields of a class that is evaluated once lie in variables for as long as its class object is bare. A read or a store by name files an answer at its site, and for that it makes the class
+# object whole: the fields move out of their variables for good, and every look at a variable fails from then on, in every loop of the program. So where the receiver is proven to be the class object
+# the field is read and stored in its variable behind the look, outside of loops as in them.
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: GetStaticFieldOrAbsent {{*}} variable=g
+# CHECK: PutStaticField {{*}} variable=g

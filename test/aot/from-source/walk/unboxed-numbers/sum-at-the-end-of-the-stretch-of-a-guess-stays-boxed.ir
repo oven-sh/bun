@@ -1,6 +1,7 @@
 # `s += pair[0] + pair[1]`: that both are numbers is a guess, and its stretch ends behind the inner sum: the arms meet in front of the outer one, and the closed arm brings a box. So the sum stays boxed: int32s are added as int32s.
 # built on doubles, both numbers were unboxed, added, and the sum asked whether it is an int32 to be boxed for the meeting: eleven instructions more
 # The list leaves the program, so that Link has seen nothing of what comes out of it (LinkTables::resultsOfReadsByKey).
+# Where the loop is built twice each pair is asked in the turn for its storage and the typed copy adds raw numbers; the other copy keeps this form: NEVER is asked of the loop built once.
 # f1 = both. Control: f2 = halved: `(pair[0] + pair[1]) * 0.5`: the product stands in the stretch and takes the sum raw, as ever
 # -- source: ends.ts
 # function both(list: [number, number][]): number {
@@ -29,7 +30,7 @@
 # REQUIRES(BOTH): entries-of-bun
 # BOTH-LABEL: code f1:Body
 # BOTH: number @JSValue = Add {{*}}form=Numbers
-# RUN(NEVER): walk f1 mechanisms=all-Inlining
+# RUN(NEVER): walk f1 mechanisms=all-Inlining-LoopInvariants
 # REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: @Double = Add
 # RUN(HALVED): walk f2 mechanisms=all-Inlining

@@ -3012,6 +3012,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// into `never`, a tuple with a `...T` (`createNormalizedTupleType`), or an instantiation of
     /// such a class or interface with a generic type argument.
     fn inherits_from_type_arguments(&mut self, sym: Sym) -> bool {
+        self.inherits_from_type_arguments_past(sym, &mut Default::default())
+    }
+
+    fn inherits_from_type_arguments_past(
+        &mut self,
+        sym: Sym,
+        asked: &mut crate::util::FxHashSet<Sym>,
+    ) -> bool {
         for &base in self.base_types(sym).iter() {
             let is_keyed_by_arguments = match self.data(base) {
                 TypeData::TypeParam(..) => true,
@@ -3022,7 +3030,8 @@ impl<'p, 's> Checker<'p, 's> {
                 &TypeData::Ref { target, .. } => {
                     target != sym
                         && self.has_type_variables(base)
-                        && self.inherits_from_type_arguments(target)
+                        && asked.insert(target)
+                        && self.inherits_from_type_arguments_past(target, asked)
                 }
                 _ => false,
             };
@@ -3081,10 +3090,21 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn has_base_type_among(&mut self, sym: Sym, types: &[TypeId]) -> bool {
+        self.has_base_type_among_past(sym, types, &mut Default::default())
+    }
+
+    fn has_base_type_among_past(
+        &mut self,
+        sym: Sym,
+        types: &[TypeId],
+        asked: &mut crate::util::FxHashSet<Sym>,
+    ) -> bool {
         for &base in self.base_types(sym).iter() {
             let is_among = types.contains(&base)
                 || matches!(*self.data(base), TypeData::Ref { target, .. }
-                    if target != sym && self.has_base_type_among(target, types));
+                    if target != sym
+                        && asked.insert(target)
+                        && self.has_base_type_among_past(target, types, asked));
             if is_among {
                 return true;
             }
@@ -3484,6 +3504,8 @@ impl<'p, 's> Checker<'p, 's> {
         let passes_by_stored_ancestries =
             by_name.is_on && !by_name.with_stored_ancestry.contains(&sym);
         let mut is_all_stored = by_name.is_on;
+        // Whether all that was visited is one row: each class but the last has the next as its one base type.
+        let mut is_one_row = by_name.is_on;
         // FOR SPEED: a target that several paths lead to is visited once.
         let mut seen: SmallVec<[Sym; 16]> = SmallVec::new();
         // The targets seen after the first 16.
@@ -3493,7 +3515,14 @@ impl<'p, 's> Checker<'p, 's> {
         while let Some(next) = todo.pop() {
             match *self.data(next) {
                 TypeData::Ref { target, .. } => {
-                    if target == sym {
+                    let is_known = self.class_members_by_name.is_on
+                        && (self.class_members_by_name.rows_known).contains(&(target, sym));
+                    if target == sym || is_known {
+                        if is_one_row && is_all_stored {
+                            let below = seen.into_iter().chain(seen_later);
+                            let known = below.map(|class| (class, sym));
+                            self.class_members_by_name.rows_known.extend(known);
+                        }
                         return true;
                     }
                     if passes_by_stored_ancestries
@@ -3511,6 +3540,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if is_new {
                         let bases = self.base_types(target);
                         is_all_stored &= matches!(bases, List::Permanent(_));
+                        is_one_row &= bases.len() == 1;
                         todo.extend(bases.iter().rev().copied());
                     }
                 }
@@ -3523,7 +3553,10 @@ impl<'p, 's> Checker<'p, 's> {
                     let elems = self.type_arguments(next);
                     todo.push(self.tuple_base_type(elems, flags, readonly));
                 }
-                TypeData::Intersection(ref parts) => todo.extend(parts.iter().rev().copied()),
+                TypeData::Intersection(ref parts) => {
+                    is_one_row = false;
+                    todo.extend(parts.iter().rev().copied());
+                }
                 _ => {}
             }
         }
@@ -3839,11 +3872,7 @@ impl<'p, 's> Checker<'p, 's> {
             Some(&sig) => self.sig_return(sig),
             None => {
                 if let Some(at) = self.span_to_report_base_at(file, c) {
-                    let is_brought = self.is_expression_brought(file, hir[c].extends);
-                    let diagnostic = self.error_at(at, 2508, &[]);
-                    if is_brought {
-                        diagnostic.subject = super::aot::DiagnosticSubject::BroughtDeclaration;
-                    }
+                    self.error_at(at, 2508, &[]);
                 }
                 TypeId::ERROR
             }
@@ -5859,6 +5888,9 @@ impl<'p, 's> Checker<'p, 's> {
         let grown = self.types_of_property_of_grown_union(whole, prop, parts);
         match grown {
             Some(so_far_and_added) => types.extend(so_far_and_added),
+            None if let Some(left) = self.type_of_property_of_union_less_a_member(whole, prop) => {
+                types.push(left);
+            }
             None => {
                 for part in parts.iter() {
                     let ty = self.type_of_prop(part, MapperId::IDENTITY);
@@ -5881,6 +5913,31 @@ impl<'p, 's> Checker<'p, 's> {
                 .insert(&self.task, key, all, stored);
         }
         all
+    }
+
+    fn type_of_property_of_union_less_a_member(
+        &mut self,
+        whole: TypeId,
+        prop: &Prop,
+    ) -> Option<TypeId> {
+        let loss = *self.unions_less_a_member.get(&whole)?;
+        if loss.name != prop.name {
+            return None;
+        }
+        let key = (loss.from, prop.name);
+        let so_far = self.p.intersected_props.get(&self.task, &key)?;
+        let TypeData::Union(members) = self.data(so_far) else {
+            return None;
+        };
+        let literals = tf::STRING_LITERAL | tf::NUMBER_LITERAL | tf::BIGINT_LITERAL;
+        if members.len() != self.parts(loss.from).len()
+            || self.types().member_flags(so_far) & !literals != 0
+            || self.types().has_fresh_literal(so_far)
+            || !self.contains_type(members, loss.key)
+        {
+            return None;
+        }
+        Some(self.filter(so_far, |_, m| m != loss.key))
     }
 
     /// For `prop`, the property of the union `whole` that combines `parts`: the type of that property of the union that

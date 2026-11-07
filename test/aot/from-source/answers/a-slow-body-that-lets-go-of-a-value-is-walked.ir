@@ -14,7 +14,7 @@
 # RUN(HINT): print
 # HINT: ReleaseHint
 # RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
-# REQUIRES(STRAIGHT): faulting-loop-polls
+# REQUIRES(STRAIGHT): faulting-loop-polls as-written
 # STRAIGHT: statistic UnitsWrittenStraight 1
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 9 9 6 6

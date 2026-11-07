@@ -30,7 +30,7 @@ pub(super) struct FinishScratch {
     incoming: Vec<u32>,
     goes_on_in_target: Vec<bool>,
     places: Vec<u32>,
-    is_passed_by: Vec<bool>,
+    last_passed_by: Vec<Option<BlockId>>,
 }
 
 #[derive(Default)]
@@ -55,6 +55,7 @@ impl FunctionBuilder {
             mut targets,
             listed_values,
             ssa,
+            targets_by_block,
             finish_scratch: mut scratch,
             ..
         } = self;
@@ -62,7 +63,9 @@ impl FunctionBuilder {
             (0..blocks.len()).all(|index| ssa.is_sealed(BlockId::new(index))),
             "an unsealed block has parameters without arguments"
         );
-        for (narrowed, block) in ssa.unread_names() {
+        let mut unread: Vec<(ValueId, BlockId)> = ssa.unread_names().collect();
+        unread.sort_unstable_by_key(|(narrowed, _)| narrowed.index());
+        for (narrowed, block) in unread {
             let pending = &mut blocks[block.index()];
             if pending.first_value != narrowed.to_word() {
                 continue;
@@ -115,6 +118,7 @@ impl FunctionBuilder {
             targets: recycle_vector(targets, MAX_SPARE_BLOCKS),
             listed_values: recycle_vector(listed_values, MAX_SPARE_VALUES),
             ssa: ssa.recycle(),
+            targets_by_block: targets_by_block.recycle(),
             finish: scratch.recycle(),
         };
         (function, scratch)
@@ -301,26 +305,6 @@ fn add_block(block: &mut PendingBlock, targets: &[PendingTarget]) -> u32 {
     successor_count(block) as u32
 }
 
-#[inline]
-fn find_last_passed_by(
-    is_passed_by: &[bool],
-    blocks: &[PendingBlock],
-    targets: &[PendingTarget],
-    block: BlockId,
-) -> Option<BlockId> {
-    if !is_passed_by[block.index()] {
-        return None;
-    }
-    let mut last = block;
-    loop {
-        let target = first_target_of(&blocks[last.index()], targets).block;
-        if !is_passed_by[target.index()] {
-            return Some(last);
-        }
-        last = target;
-    }
-}
-
 impl FinishScratch {
     fn order_blocks(
         &mut self,
@@ -377,7 +361,7 @@ impl FinishScratch {
             order,
             incoming,
             places,
-            is_passed_by,
+            last_passed_by,
             ..
         } = self;
         if order.len() == 1 {
@@ -400,8 +384,8 @@ impl FinishScratch {
                 }
             });
         }
-        is_passed_by.clear();
-        is_passed_by.resize(blocks.len(), false);
+        last_passed_by.clear();
+        last_passed_by.resize(blocks.len(), None);
         let mut is_any_passed_by = false;
         for id in order.iter().rev() {
             if *id == ENTRY_BLOCK {
@@ -420,7 +404,7 @@ impl FinishScratch {
             {
                 continue;
             }
-            let last = find_last_passed_by(is_passed_by, blocks, targets, target.block);
+            let last = last_passed_by[target.block.index()];
             let target = match last {
                 Some(last) => first_target_of(&blocks[last.index()], targets),
                 None => target,
@@ -436,7 +420,7 @@ impl FinishScratch {
             {
                 continue;
             }
-            is_passed_by[id.index()] = true;
+            last_passed_by[id.index()] = Some(last.unwrap_or(*id));
             is_any_passed_by = true;
         }
         incoming.clear();
@@ -446,7 +430,7 @@ impl FinishScratch {
 
         let end_of = |targets: &[PendingTarget], place: u32| {
             let block = targets[place as usize].block;
-            match find_last_passed_by(is_passed_by, blocks, targets, block) {
+            match last_passed_by[block.index()] {
                 Some(last) => first_target_of(&blocks[last.index()], targets).block,
                 None => block,
             }
@@ -456,7 +440,9 @@ impl FinishScratch {
         let mut is_any_moved = false;
         for id in order.iter() {
             let own = terminator_of(&blocks[id.index()]).targets.clone();
-            if !(own.clone()).any(|place| is_passed_by[targets[place as usize].block.index()]) {
+            if !(own.clone())
+                .any(|place| last_passed_by[targets[place as usize].block.index()].is_some())
+            {
                 continue;
             }
             for place in own.clone() {
@@ -464,10 +450,11 @@ impl FinishScratch {
             }
             for place in own.clone() {
                 let passed = targets[place as usize].block;
-                let Some(last) = find_last_passed_by(is_passed_by, blocks, targets, passed) else {
+                let Some(last) = last_passed_by[passed.index()] else {
                     continue;
                 };
                 let moved = first_target_of(&blocks[last.index()], targets).clone();
+                debug_assert!(last_passed_by[moved.block.index()].is_none());
                 if edges_that_end_at[moved.block.index()] > 1 {
                     continue;
                 }
@@ -548,7 +535,7 @@ impl FinishScratch {
             incoming: recycle_vector(self.incoming, MAX_SPARE_BLOCKS),
             goes_on_in_target: recycle_vector(self.goes_on_in_target, MAX_SPARE_BLOCKS),
             places: recycle_vector(self.places, MAX_SPARE_BLOCKS),
-            is_passed_by: recycle_vector(self.is_passed_by, MAX_SPARE_BLOCKS),
+            last_passed_by: recycle_vector(self.last_passed_by, MAX_SPARE_BLOCKS),
         }
     }
 }

@@ -471,8 +471,20 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
     fs.lutimesCb(callback, path, atime, mtime);
   },
   accessSync = fs.accessSync.bind(fs),
-  appendFileSync = fs.appendFileSync.bind(fs),
-  closeSync = fs.closeSync.bind(fs),
+  appendFileSync = IS_COMPILED_AHEAD_OF_TIME
+    ? ({
+        appendFileSync(_path, _data, _options) {
+          return fs.appendFileSync.$apply(fs, arguments);
+        },
+      }.appendFileSync as never)
+    : fs.appendFileSync.bind(fs),
+  closeSync = IS_COMPILED_AHEAD_OF_TIME
+    ? ({
+        closeSync(_fd) {
+          return fs.closeSync.$apply(fs, arguments);
+        },
+      }.closeSync as never)
+    : fs.closeSync.bind(fs),
   copyFileSync = fs.copyFileSync.bind(fs),
   // This behavior - never throwing -- matches Node.js behavior.
   // https://github.com/nodejs/node/blob/c82f3c9e80f0eeec4ae5b7aedd1183127abda4ad/lib/fs.js#L275C1-L295C1
@@ -484,10 +496,22 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
     }
   },
   chownSync = fs.chownSync.bind(fs),
-  chmodSync = fs.chmodSync.bind(fs),
+  chmodSync = IS_COMPILED_AHEAD_OF_TIME
+    ? ({
+        chmodSync(_path, _mode) {
+          return fs.chmodSync.$apply(fs, arguments);
+        },
+      }.chmodSync as never)
+    : fs.chmodSync.bind(fs),
   fchmodSync = fs.fchmodSync.bind(fs),
   fchownSync = fs.fchownSync.bind(fs),
-  fstatSync = fs.fstatSync.bind(fs),
+  fstatSync = IS_COMPILED_AHEAD_OF_TIME
+    ? ({
+        fstatSync(_fd) {
+          return fs.fstatSync.$apply(fs, arguments);
+        },
+      }.fstatSync as never)
+    : fs.fstatSync.bind(fs),
   fsyncSync = fs.fsyncSync.bind(fs),
   ftruncateSync = fs.ftruncateSync.bind(fs),
   futimesSync = fs.futimesSync.bind(fs),
@@ -557,7 +581,13 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
   writeFileSync = fs.writeFileSync.bind(fs),
   readlinkSync = fs.readlinkSync.bind(fs),
   renameSync = fs.renameSync.bind(fs),
-  statSync = fs.statSync.bind(fs),
+  statSync = IS_COMPILED_AHEAD_OF_TIME
+    ? ({
+        statSync(_path) {
+          return fs.statSync.$apply(fs, arguments);
+        },
+      }.statSync as never)
+    : fs.statSync.bind(fs),
   statfsSync = fs.statfsSync.bind(fs),
   symlinkSync = fs.symlinkSync.bind(fs),
   truncateSync = fs.truncateSync.bind(fs),

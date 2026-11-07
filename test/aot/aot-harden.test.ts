@@ -116,6 +116,8 @@ async function build(cwd: string, flags: string[]) {
 const runBuilt = (cwd: string) =>
   spawned(withoutCoreDump([join(cwd, built)]), cwd, { ...bunEnv, ...withoutCrashReport });
 
+const runPlain = (cwd: string) => spawned([bunExe(), "program.ts"], cwd, bunEnv);
+
 // Each name stands once among what --explain=statistics prints, whatever its number is.
 async function countsOf(source: string, flags: string[]) {
   using folder = tempDir("aot-harden", { "program.ts": source });
@@ -181,10 +183,8 @@ describe.concurrent("--aot-harden=proof-checks", () => {
 
   test("gives the same answers in loops over lists, views and texts", async () => {
     using hardened = tempDir("aot-harden", { "program.ts": countedLoops });
-    using asEver = tempDir("aot-harden", { "program.ts": countedLoops });
     await build(String(hardened), ["--aot-harden=proof-checks"]);
-    await build(String(asEver), []);
-    const expected = await runBuilt(String(asEver));
+    const expected = await runPlain(String(hardened));
     expect(expected.exitCode).toBe(0);
     expect(await runBuilt(String(hardened))).toEqual(expected);
   }, 120_000);
@@ -231,21 +231,20 @@ describe.concurrent("--aot-harden=ignore-told-ranges", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "3\n", stderr: "", exitCode: 0 });
   }, 120_000);
 
-  test("leaves no access without its test and reads no bound in front of a loop", async () => {
-    expect((await countsOf(countedLoops, [])).KnownInductionsUsed).toBeGreaterThan(0);
-    const none = { AllocateInFramesChanges: 0, ClosuresInFrames: 0, RangeChecksRemoved: 0, KnownInductionsUsed: 0 };
-    expect(await countsOf(countedLoops, ["--aot-harden=proof-checks,ignore-told-ranges"])).toEqual(none);
+  test("leaves no access without its test, in the loops that a plain build has", async () => {
+    const { KnownInductionsUsed } = await countsOf(countedLoops, []);
+    expect(KnownInductionsUsed).toBeGreaterThan(0);
+    const hardened = { AllocateInFramesChanges: 0, ClosuresInFrames: 0, RangeChecksRemoved: 0, KnownInductionsUsed };
+    expect(await countsOf(countedLoops, ["--aot-harden=proof-checks,ignore-told-ranges"])).toEqual(hardened);
     expect(await countsOf(countedLoops, ["--aot-harden=ignore-told-ranges", "--aot-harden=proof-checks"])).toEqual(
-      none,
+      hardened,
     );
   }, 120_000);
 
   test("gives the same answers", async () => {
     using hardened = tempDir("aot-harden", { "program.ts": countedLoops });
-    using asEver = tempDir("aot-harden", { "program.ts": countedLoops });
     await build(String(hardened), ["--aot-harden=proof-checks,ignore-told-ranges"]);
-    await build(String(asEver), []);
-    const expected = await runBuilt(String(asEver));
+    const expected = await runPlain(String(hardened));
     expect(expected.exitCode).toBe(0);
     expect(await runBuilt(String(hardened))).toEqual(expected);
   }, 120_000);

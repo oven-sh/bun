@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# 'use strict';
+# function home() { return process.env.HOME; }
+# function level() { return process.env.LOG_LEVEL || 'info'; }
+# function count(turns) { let sum = 0; for (let i = 0; i < turns; i++) sum += level().length + (home() === undefined ? 1 : 2); return sum; }
+# console.log(count(3));
+# -- end of source
+# The table of built-ins says of the object behind `process.env` that its names hold texts alone. Anybody may put another object in its place or lay something else on it by a descriptor, so nothing is proven of a
+# read off it. What was seen is a text or nothing; all the rest is unknown by escape alone. So the reading that says what is expected gives the two functions a result, and their callers test for it.
+# RUN: link functions held mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: function f1 {{*}} result=undefined|string
+# CHECK: function f2 {{*}} result=undefined|string
+# The proving reading says what it said: nothing.
+# RUN(PROVEN): link functions mechanisms=all
+# REQUIRES(PROVEN): entries-of-bun
+# PROVEN-NOT: function f1 {{*}} result=
+# PROVEN-NOT: function f2 {{*}} result=
+# RUN(WALK): walk f3 mechanisms=all
+# REQUIRES(WALK): entries-of-bun
+# WALK: TypeTest {{*}} testedType=string
+# WALK: GetStringLength

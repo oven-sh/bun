@@ -15,8 +15,13 @@ use crate::builtins::Platforms;
 use crate::diagnostics::LoadMessages;
 use crate::load::data_modules::parse_json;
 use crate::load::locked_builtin_defines::{locked_builtin_defines, runtime_identity_defines};
+use crate::statistics::{Architecture, LimitId};
 
-pub(crate) const MAX_FOLDED_STRING_BYTES: usize = 1 << 16;
+pub(crate) const MAX_FOLDED_STRING_BYTES: usize =
+    LimitId::MaxFoldedStringBytes.value(Architecture::ARM64) as usize;
+const _: () = assert!(
+    MAX_FOLDED_STRING_BYTES as u64 == LimitId::MaxFoldedStringBytes.value(Architecture::X86_64)
+);
 const MAX_FOLDED_PATTERN_BYTES: usize = 1 << 20;
 
 #[derive(Copy, Clone)]
@@ -27,6 +32,7 @@ pub(crate) struct ProgramFacts {
     pub can_replace_builtins: bool,
     pub process_reaches_code_on_its_prototypes: bool,
     pub warnings_load_events: bool,
+    pub warnings_ask_path: bool,
     pub takes_first_texts: bool,
 }
 
@@ -135,6 +141,7 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
             facts.process_reaches_code_on_its_prototypes,
         ),
         define_fact(b"WARNINGS_LOAD_NODE_EVENTS", facts.warnings_load_events),
+        define_fact(b"WARNINGS_ASK_NODE_PATH", facts.warnings_ask_path),
         define_fact(b"IS_COMPILED_AHEAD_OF_TIME", !facts.takes_first_texts),
     ]);
     let held_in_every_run = collect_defines_held_in_every_run(platform, arena, atoms);
@@ -291,6 +298,7 @@ mod tests {
         can_replace_builtins: false,
         process_reaches_code_on_its_prototypes: false,
         warnings_load_events: false,
+        warnings_ask_path: false,
         takes_first_texts: false,
     };
 
@@ -522,6 +530,17 @@ mod tests {
             "if (WARNINGS_LOAD_NODE_EVENTS) import('./events');",
             |warnings_load_events| ProgramFacts {
                 warnings_load_events,
+                ..NO_FACTS
+            },
+        );
+    }
+
+    #[test]
+    fn build_decides_whether_runtime_sources_ask_node_path_where_they_print_a_warning() {
+        assert_fact_decides_import(
+            "if (WARNINGS_ASK_NODE_PATH) import('./path');",
+            |warnings_ask_path| ProgramFacts {
+                warnings_ask_path,
                 ..NO_FACTS
             },
         );

@@ -52,7 +52,24 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
     for &(symbol, _) in &walk.made_at_first_read {
         is_made_at_first_read[symbol.idx()] = true;
     }
+    let mut symbols_declared_at_module_level = Vec::new();
+    let mut bindings_declared_in_front_of_scopes = vec![0; context.input.bound.scopes.len() + 1];
+    for symbol in (0..parts.forms.len() as u32).map(SymbolId) {
+        let scope = context.declaring_scope(symbol).idx();
+        bindings_declared_in_front_of_scopes[scope + 1] += 1;
+        if context.is_module_level_scope[scope] {
+            symbols_declared_at_module_level.push(symbol);
+        }
+    }
+    let mut in_front = 0;
+    for declared in &mut bindings_declared_in_front_of_scopes {
+        in_front += *declared;
+        *declared = in_front;
+        in_front += 2;
+    }
     ScopeAnalysis {
+        symbols_declared_at_module_level,
+        bindings_declared_in_front_of_scopes,
         file: context.input.file,
         max_captures: context.input.max_captures,
         bindings: GroupedList::new(context.input.bound.scopes.len(), &bindings),

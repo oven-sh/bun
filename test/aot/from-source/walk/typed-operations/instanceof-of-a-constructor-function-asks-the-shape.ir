@@ -29,10 +29,14 @@
 # RUN(ROW): walk f7 mechanisms=all
 # REQUIRES(ROW): entries-of-bun
 # ROW: = InstanceOf
-# Tagged has a Symbol.hasInstance of its own: the shape is asked only behind the guard of that name, which the program's own deed ends.
+# Tagged has a Symbol.hasInstance of its own, and the statement that lays it is in sight: no shape is asked and no guard is laid that the program's own deed would end: the operation stands as written.
 # RUN(OWN): walk f8 mechanisms=all
 # REQUIRES(OWN): entries-of-bun
 # OWN-NOT: ShapeTest
-# OWN: = AreMembersUnchanged {{*}}key=@@hasInstance
-# OWN: = ShapeTest
+# OWN-NOT: AreMembersUnchanged
 # OWN: = InstanceOf
+# The test lies on Tagged and on no other function.
+# RUN(LISTED): link members mechanisms=all
+# LISTED-NOT: on-function {{*}} @@hasInstance
+# LISTED: on-function f4 @@hasInstance
+# LISTED-NOT: on-function {{*}} @@hasInstance

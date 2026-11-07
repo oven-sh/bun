@@ -1,0 +1,48 @@
+# -- source: main.js
+# let turns = 0, last = -1;
+# function running(from, into) { for (let i = 1; i < from.length; i++) { turns += 1; if (from[i] > 2) last = i; into[i] = into[i - 1] + from[i]; } return into.length; }
+# const fractions = n => JSON.parse("[" + Array.from({ length: n }, (_, i) => (i % 5) + 0.25).join() + "]");
+# function once(from, into) { turns = 0; last = -1; const end = running(from, into); print(end, turns, last, String(into[into.length - 1])); }
+# for (let round = 0; round < 3; round++) { once(fractions(16), fractions(16)); once(fractions(16), fractions(9)); once(fractions(16), JSON.parse("[0.5]")); once(fractions(16), JSON.parse("[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]")); }
+# -- end of source
+# `turns += 1` and, in an arm, `last = i` stand in front of `into[i] = ..`. The store into the list needs a test, and where the test fails the turn begins again in the closed copy; a turn that had stored into a variable of its file could not, so the list was stored into as written, and read as written with it.
+# The variables of files that the text of the loop stores are read at the head of each turn of the typed copy. A store into one of them leaves the turn able to begin again, also where the ways of a branch meet; where it begins again each is stored back, so that the closed copy counts the turn once.
+# f1 = running
+# RUN: walk f1:Body mechanisms=all
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: [[held]]: {{*}}= GetModuleVariable variable=[[turns]]
+# CHECK: = PutModuleVariable {{*}}variable=[[turns]]
+# CHECK: = PutDoubleIndex
+# CHECK: frequency=Rare
+# CHECK: = PutModuleVariable [[held]] variable=[[turns]]
+# RUN(COUNT): compile StoresPutBackWhereTurnsBeginAgain mechanisms=all
+# COUNT-NOT: StoresPutBackWhereTurnsBeginAgain 0
+# COUNT: statistic StoresPutBackWhereTurnsBeginAgain
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 16 15 14 34
+# SHELL-NEXT: 16 15 14 34
+# SHELL-NEXT: 16 15 14 34.25
+# SHELL-NEXT: 16 15 14 34.75
+# SHELL-NEXT: 16 15 14 34
+# SHELL-NEXT: 16 15 14 34
+# SHELL-NEXT: 16 15 14 34.25
+# SHELL-NEXT: 16 15 14 34.75
+# SHELL-NEXT: 16 15 14 34
+# SHELL-NEXT: 16 15 14 34
+# SHELL-NEXT: 16 15 14 34.25
+# SHELL-NEXT: 16 15 14 34.75
+# SHELL-NEXT: exited with 0
+# RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# NET: 16 15 14 34
+# NET-NEXT: 16 15 14 34
+# NET-NEXT: 16 15 14 34.25
+# NET-NEXT: 16 15 14 34.75
+# NET-NEXT: 16 15 14 34
+# NET-NEXT: 16 15 14 34
+# NET-NEXT: 16 15 14 34.25
+# NET-NEXT: 16 15 14 34.75
+# NET-NEXT: 16 15 14 34
+# NET-NEXT: 16 15 14 34
+# NET-NEXT: 16 15 14 34.25
+# NET-NEXT: 16 15 14 34.75
+# NET-NEXT: exited with 0

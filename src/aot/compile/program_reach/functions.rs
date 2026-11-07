@@ -242,6 +242,7 @@ impl FileScan<'_, '_> {
             | Interest::LinkedName(..)
             | Interest::ModuleObject(..)
             | Interest::EntryOfModuleCache
+            | Interest::DeletionFromModuleCache(_)
             | Interest::LoadByUnknownName
             | Interest::NameReadFromLoadByUnknownName(_)
             | Interest::LoadOfIsolatedCode
@@ -303,6 +304,7 @@ impl FileScan<'_, '_> {
             | Interest::RequiredName(..)
             | Interest::ModuleObject(..)
             | Interest::EntryOfModuleCache
+            | Interest::DeletionFromModuleCache(_)
             | Interest::LoadByUnknownName
             | Interest::NameReadFromLoadByUnknownName(_)
             | Interest::LoadOfIsolatedCode

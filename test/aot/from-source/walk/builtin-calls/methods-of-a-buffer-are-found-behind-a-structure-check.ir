@@ -1,5 +1,5 @@
 # a method of a Buffer is found behind a comparison of the cell's Structure with the one the realm gives its Buffers, so reads, writes and copies of bytes use their inline code
-# every caller is in sight: Link proves the parameters Buffers
+# every caller is in sight: Link proves the parameters Buffers; both Buffers are handed to code that nobody has seen, which may have laid a method of its own on them
 # f1 = sumWords, f2 = fillWords, f3 = copyInto
 # -- source: methods-of-a-buffer-are-found-behind-a-structure-check.ts
 # declare function sink(...values: unknown[]): void;
@@ -8,6 +8,7 @@
 # function copyInto(from: Buffer, to: Buffer, n: number): number { let c = 0; for (let i = 0; i < n; i++) c += from.copy(to, 0, 0, 16); return c; }
 # const buf = Buffer.alloc(4096);
 # const other = Buffer.alloc(4096);
+# sink(buf, other);
 # for (let turn = 0; turn < 3; turn++) { fillWords(buf, 4096); sink(sumWords(buf, 4096), copyInto(buf, other, 100)); }
 # -- end of source
 # RUN(READ): walk f1 mechanisms=all

@@ -64,7 +64,6 @@ struct StoreCandidates {
 #[derive(Default)]
 struct ComputedNames {
     has_instance_name: bool,
-    has_static_name: bool,
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
@@ -94,7 +93,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             members: self.list(&members),
             names_stored_in_prototype: self.list(&names_stored_in_prototype),
             has_computed_instance_name: computed.has_instance_name,
-            has_computed_static_name: computed.has_static_name,
         })
     }
 
@@ -120,11 +118,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             bound.declared_symbol(Decl::Fn(function)).some(),
             None,
         );
-        if !candidates
+        let stores_like_constructor = candidates
             .stores
             .iter()
-            .any(StoreCandidate::is_of_constructor_function)
-        {
+            .any(StoreCandidate::is_of_constructor_function);
+        if !stores_like_constructor && !self.is_named_by_new(FunctionRef { file, function }) {
             return None;
         }
         let stores_by_itself = candidates
@@ -148,7 +146,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 ClassMemberSource::ThisStore(_) | ClassMemberSource::PrototypeStore(_)
             )
         });
-        if !is_constructor {
+        if !is_constructor && stores_like_constructor {
             return None;
         }
         let shape: &'c ClassShape<'c> = self.arena.alloc(ClassShape {
@@ -156,7 +154,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             members: self.list(&members),
             names_stored_in_prototype: self.list(&names_stored_in_prototype),
             has_computed_instance_name: false,
-            has_computed_static_name: false,
         });
         Some(shape)
     }
@@ -228,9 +225,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let member = &hir[id];
             match hir.runtime_member_key(id) {
                 PropKey::None => {}
-                PropKey::Computed(_) if member.flags.contains(Flags::STATIC) => {
-                    computed.has_static_name = true;
-                }
+                PropKey::Computed(_) if member.flags.contains(Flags::STATIC) => {}
                 PropKey::Computed(key) => {
                     let is_field = member.kind == MemberKind::Property
                         && !member.flags.contains(Flags::ACCESSOR);

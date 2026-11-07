@@ -359,8 +359,8 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     return release;
 }
 
-// False: script may run no longer.
-static bool runWhatRunsWhenProcessExits(JSC::JSGlobalObject* globalObject, Process* process)
+// False: script may run no longer. What the function throws is handed back, cleared: it is reported behind the listeners of 'exit'.
+static bool runWhatRunsWhenProcessExits(JSC::JSGlobalObject* globalObject, Process* process, JSC::Exception*& thrown)
 {
     auto* function = process->runsWhenProcessExits();
     if (!function)
@@ -368,7 +368,8 @@ static bool runWhatRunsWhenProcessExits(JSC::JSGlobalObject* globalObject, Proce
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
     MarkedArgumentBuffer noArguments;
     JSC::call(globalObject, function, noArguments, "What runs when the process exits is not a function"_s);
-    return !scope.exception() || scope.tryClearException();
+    thrown = scope.exception();
+    return !thrown || scope.tryClearException();
 }
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
@@ -382,18 +383,21 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return;
 
-    if (!runWhatRunsWhenProcessExits(globalObject, process))
+    JSC::Exception* thrown = nullptr;
+    if (!runWhatRunsWhenProcessExits(globalObject, process, thrown))
         return;
 
     putDirectNamed(vm, process, "_exiting"_s, jsBoolean(true));
     auto event = Identifier::fromString(vm, "exit"_s);
-    if (!emitter.hasEventListeners(event)) {
-        return;
+    if (emitter.hasEventListeners(event)) {
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsNumber(exitCode));
+        emitter.emit(event, arguments);
     }
 
-    MarkedArgumentBuffer arguments;
-    arguments.append(jsNumber(exitCode));
-    emitter.emit(event, arguments);
+    // A handler of 'uncaughtException' may exit: the listeners of 'exit' have run by now.
+    if (thrown && !vm.hasTerminationRequest()) [[unlikely]]
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, thrown);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -4862,8 +4866,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     // m_isExiting so dispatchExitInternal (via Bun__Process__exit) skips them
     // while native shutdown (profiles, cleanup hooks, SQLite close) still runs.
     auto* process = zigGlobal->processObject();
-    if (!std::exchange(process->m_isExiting, true))
-        runWhatRunsWhenProcessExits(zigGlobal, process);
+    if (!std::exchange(process->m_isExiting, true)) {
+        JSC::Exception* thrown = nullptr;
+        if (runWhatRunsWhenProcessExits(zigGlobal, process, thrown) && thrown) [[unlikely]]
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(zigGlobal, thrown);
+    }
     Bun__Process__exit(zigGlobal, exitCode);
     // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
     // WebWorker exit path it called requests JSC termination (guarded so it's a

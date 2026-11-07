@@ -200,7 +200,6 @@ pub(super) struct OrderParts {
     pub is_es_module_to_imports: Vec<bool>,
     pub prefix_roots: Vec<FileId>,
     pub required_prefix_roots: Vec<FileId>,
-    pub first_requests_of_host: Vec<FileId>,
     pub texts_that_spell_files: Option<Vec<TextThatSpellsFile>>,
 }
 
@@ -220,7 +219,6 @@ impl OrderParts {
             is_es_module_to_imports: vec![false; file_count],
             prefix_roots: Vec::new(),
             required_prefix_roots: Vec::new(),
-            first_requests_of_host: Vec::new(),
             texts_that_spell_files: None,
         }
     }
@@ -1141,10 +1139,6 @@ pub(super) fn compute_order(
         is_es_module_to_imports,
         prefix_roots,
         required_prefix_roots,
-        first_requests_of_host: (input.sources.entry_points().iter())
-            .filter(|entry| entry.kind != EntryPointKind::Library)
-            .map(|entry| entry.file)
-            .collect(),
         texts_that_spell_files,
     };
     let order = EvaluationOrder {

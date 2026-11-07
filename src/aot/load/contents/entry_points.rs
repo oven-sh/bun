@@ -4,7 +4,7 @@ use std::mem::take;
 
 use bun_ast::Loader;
 use bun_core::strings;
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::hir::{ExprKind, StmtKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, ResolvedForm};
 use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files, NamingLoad};
@@ -81,6 +81,7 @@ struct Question {
     file_name: Vec<u8>,
     read_as: ReadAs,
     names: Vec<NameKnownInPart>,
+    is_guess: bool,
 }
 
 enum Named {
@@ -230,6 +231,13 @@ fn spell_names(
         .collect()
 }
 
+fn find_loaded_file(code: &dyn CodeView<'_>, importer: FileId, site: u32) -> Option<FileId> {
+    match *code.answers(importer)?.0.get(site as usize)? {
+        CodeAnswer::File(file) => Some(file),
+        _ => None,
+    }
+}
+
 fn find_embedded_file(code: &dyn CodeView<'_>, importer: FileId, site: u32) -> Option<Named> {
     let &CodeAnswer::File(copy) = code.answers(importer)?.0.get(site as usize)? else {
         return None;
@@ -278,6 +286,7 @@ impl Mention {
                     file_name: code.file_name(file).to_vec(),
                     read_as,
                     names,
+                    is_guess: false,
                 })
             })
         };
@@ -362,10 +371,15 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                             Some(false) | None => ReadAs::Import,
                         },
                         names: vec![(code.atoms().bytes(name).to_vec(), None)],
+                        is_guess: false,
                     }),
                     because: FoundBecause::NamedByData,
                     started_at: None,
-                    named_by: requires.map(|requires| NamingLoad { file, requires }),
+                    named_by: requires.map(|requires| NamingLoad {
+                        file,
+                        requires,
+                        is_guess: false,
+                    }),
                 });
             }
             if let Some(source) = parsed_source_in(code, file) {
@@ -383,7 +397,10 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 (held.texts).extend_from_slice(&contents.texts_behind_object_urls);
                 sought.extend(contents.names.sought_from_unknown_folders.iter().copied());
                 let arms = contents.names.written_arms_of_unknown_names.iter();
-                mentions.extend(arms.map(|&(name, requires)| Mention {
+                let arms = arms.map(|&(name, requires)| (name, requires, false));
+                let guessed = contents.names.guessed_arms.iter();
+                let arms = arms.chain(guessed.map(|&name| (name, true, true)));
+                mentions.extend(arms.map(|(name, requires, is_guess)| Mention {
                     named: Named::ByName(Question {
                         file_name: code.file_name(file).to_vec(),
                         read_as: match requires {
@@ -391,10 +408,15 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                             false => ReadAs::Import,
                         },
                         names: vec![(code.atoms().bytes(name).to_vec(), None)],
+                        is_guess,
                     }),
                     because: FoundBecause::WrittenInArm,
                     started_at: None,
-                    named_by: Some(NamingLoad { file, requires }),
+                    named_by: Some(NamingLoad {
+                        file,
+                        requires,
+                        is_guess,
+                    }),
                 }));
                 for load in &contents.names.under_parameters {
                     let under_name = loads.entry((load.property, load.place)).or_default();
@@ -409,12 +431,48 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             false => code.compiled_files(),
         };
         let callers = callers.iter();
-        let callers = callers.filter_map(|&file| parsed_source_in(code, file));
-        let passed = callers.flat_map(|it| &it.contents.names.texts_passed_to_properties);
-        let mut seen: FxHashSet<(Atom, u32, Atom)> = FxHashSet::default();
-        for passed in passed.filter(|it| seen.insert((it.property, it.place, it.text))) {
-            let under_name = loads.get(&(passed.property, passed.place));
-            for &(file, requires) in under_name.into_iter().flatten() {
+        let callers = callers.filter_map(|&file| Some((file, parsed_source_in(code, file)?)));
+        let passed = callers.flat_map(|(caller, source)| {
+            let passed = source.contents.names.texts_passed_to_properties.iter();
+            passed.map(move |passed| (caller, passed))
+        });
+        let mut loaders: FxHashMap<(Atom, u32, FileId), Vec<bool>> = FxHashMap::default();
+        for (&(property, place), under_name) in &loads {
+            for &(file, requires) in under_name {
+                (loaders.entry((property, place, file)).or_default()).push(requires);
+            }
+        }
+        let mut seen: FxHashSet<(Atom, u32, Atom, Option<FileId>)> = FxHashSet::default();
+        for (caller, passed) in passed {
+            let (property, place) = (passed.property, passed.place);
+            if !loads.contains_key(&(property, place)) {
+                continue;
+            }
+            let called = (passed.loaded_at).and_then(|site| find_loaded_file(code, caller, site));
+            let is_whole = passed.loaded_at.is_some() && property == known::exports;
+            if (passed.loaded_at.is_some() && called.is_none())
+                || !seen.insert((property, place, passed.text, called))
+            {
+                continue;
+            }
+            let mut found: Vec<(FileId, bool)> = Vec::new();
+            let mut gone_through: Vec<FileId> = Vec::new();
+            let mut next = called;
+            while let Some(file) = next.filter(|it| !gone_through.contains(it)) {
+                gone_through.push(file);
+                let requires = loaders.get(&(property, place, file)).into_iter().flatten();
+                found.extend(requires.map(|&requires| (file, requires)));
+                let source = parsed_source_in(code, file);
+                let site = source.and_then(|it| it.contents.names.whole_exports_at);
+                next = site.and_then(|site| find_loaded_file(code, file, site));
+            }
+            let is_guess = found.is_empty() && !is_whole;
+            if is_guess {
+                found.extend(loads.get(&(property, place)).into_iter().flatten());
+            }
+            found.shared_sort_unstable();
+            found.dedup();
+            for (file, requires) in found {
                 mentions.push(Mention {
                     named: Named::ByName(Question {
                         file_name: code.file_name(file).to_vec(),
@@ -423,10 +481,15 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                             false => ReadAs::Import,
                         },
                         names: vec![(code.atoms().bytes(passed.text).to_vec(), None)],
+                        is_guess,
                     }),
                     because: FoundBecause::PassedForParameter,
                     started_at: None,
-                    named_by: Some(NamingLoad { file, requires }),
+                    named_by: Some(NamingLoad {
+                        file,
+                        requires,
+                        is_guess,
+                    }),
                 });
             }
         }
@@ -449,6 +512,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                         false => ReadAs::Import,
                     },
                     names: vec![(code.atoms().bytes(name).to_vec(), None)],
+                    is_guess: false,
                 }),
                 because: FoundBecause::PassedForParameter,
                 started_at: None,

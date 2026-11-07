@@ -711,7 +711,12 @@ export function createOnWarning(
 
   // path.basename() of a string, without node:path.
   function basename(path: string) {
-    if (typeof path !== "string") return require("node:path").basename(path);
+    if (typeof path !== "string")
+      return IS_COMPILED_AHEAD_OF_TIME && !WARNINGS_ASK_NODE_PATH
+        ? (process.platform === "win32"
+            ? $bindgen("node_path.bind.ts", "basenameWin32")
+            : $bindgen("node_path.bind.ts", "basenamePosix"))(path)
+        : require("node:path").basename(path);
     const isWindows = process.platform === "win32";
     let start = 0;
     if (isWindows && path.length >= 2 && path.charCodeAt(1) === 58 /* : */) {

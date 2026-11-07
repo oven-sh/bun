@@ -123,6 +123,8 @@ allows src/aot/options.rs option words, which are the build's own
     return key == "threads";
 allows src/aot/load/test_runner_names.rs a name that no program can write
     return name.starts_with(b"%");
+allows src/aot/lower/function/text_read_back.rs a word of a kept text that the compiler reads back to check itself
+    return part.name == b"await";
 allows src/aot/load/loaders.rs file extensions and module specifiers in Load
     return specifier.ends_with(".json");
 allows src/aot/compile/program_reach.rs a string that begins like a relative path

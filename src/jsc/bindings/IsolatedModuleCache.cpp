@@ -10,6 +10,10 @@
 
 namespace Bun {
 
+#if ENABLE(AOT)
+void didKeepText(JSC::VM&, const WTF::String& key, bool isOfPlugin);
+#endif
+
 bool IsolatedModuleCache::canUse(JSC::VM&, void* bunVM, const BunString* typeAttribute)
 {
     if (!isBunTest)
@@ -52,6 +56,9 @@ void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::Sourc
         return;
     provider.m_madeFromHash = madeFromHash(vm, key, pluginContents);
     WebCore::clientData(vm)->isolationSourceProviderCache.set(key, &provider);
+#if ENABLE(AOT)
+    didKeepText(vm, key, !!pluginContents);
+#endif
 }
 
 const IsolatedInternalModule* IsolatedModuleCache::lookupInternalModule(JSC::VM& vm, uint32_t id)

@@ -102,6 +102,9 @@ export function sameProgram(part: number) {
     );
     return built;
   }
+  // A file that is not there hashes to "", and "" equals "": a build that is held against others has written both.
+  const hash = expect.stringMatching(/^[0-9a-f]{64}$/);
+  const whole = { exitCode: 0, errors: 0, program: hash, executable: hash };
 
   if (part === 1)
     test("how many of the listed files are read by the time the code is loaded changes nothing", async () => {
@@ -115,7 +118,7 @@ export function sameProgram(part: number) {
       });
       for (const length of lengths) {
         const first = await build(String(dir), `main${length}.ts`, 1);
-        expect({ length, ...first }).toEqual({ length, ...first, exitCode: 0, errors: 0 });
+        expect({ length, ...first }).toEqual({ length, ...first, ...whole });
         for (const threads of [4, 16])
           expect({ length, threads, ...(await build(String(dir), `main${length}.ts`, threads)) }).toEqual({
             length,
@@ -162,7 +165,7 @@ export function sameProgram(part: number) {
     `,
       });
       const first = await build(String(dir), "main.js", 1);
-      expect(first).toEqual({ ...first, exitCode: 0, errors: 0 });
+      expect(first).toEqual({ ...first, ...whole });
       for (const threads of [4, 64])
         expect({ threads, ...(await build(String(dir), "main.js", threads)) }).toEqual({ threads, ...first });
     });
@@ -181,7 +184,7 @@ export function sameProgram(part: number) {
           `console.log(${nests.map(nest => `(left = 2000, nest${nest}({ weight: ${nest + 1} }))`).join(", ")});\n`,
       });
       const first = await build(String(dir), "main.js", 1);
-      expect(first).toEqual({ ...first, exitCode: 0, errors: 0 });
+      expect(first).toEqual({ ...first, ...whole });
       for (const threads of [2, 16, 16])
         expect({ threads, ...(await build(String(dir), "main.js", threads)) }).toEqual({ threads, ...first });
     });
@@ -231,7 +234,7 @@ if ((typeof exports.default === "function" || (typeof exports.default === "objec
         ),
       });
       const first = await build(String(dir), "main.ts", 1);
-      expect(first).toEqual({ ...first, exitCode: 0, errors: 0 });
+      expect(first).toEqual({ ...first, ...whole });
       for (const threads of [2, 4, 8, 16])
         expect({ threads, ...(await build(String(dir), "main.ts", threads)) }).toEqual({ threads, ...first });
     });
@@ -310,7 +313,7 @@ exports.Farther = Farther;
           `exports.steps = [${steps.map(step => `step${step}(${step})`).join(", ")}];\n`,
       });
       const first = await build(String(dir), "main.ts", 1);
-      expect(first).toEqual({ ...first, exitCode: 0, errors: 0 });
+      expect(first).toEqual({ ...first, ...whole });
       for (const threads of [2, 8])
         expect({ threads, ...(await build(String(dir), "main.ts", threads)) }).toEqual({ threads, ...first });
     });
@@ -328,7 +331,7 @@ exports.Farther = Farther;
         "junction",
       );
       const first = await build(String(dir), "typescript-check.ts", 1);
-      expect(first).toEqual({ ...first, exitCode: 0, errors: 0 });
+      expect(first).toEqual({ ...first, ...whole });
       expect({ threads: 4, ...(await build(String(dir), "typescript-check.ts", 4)) }).toEqual({ threads: 4, ...first });
     });
 }

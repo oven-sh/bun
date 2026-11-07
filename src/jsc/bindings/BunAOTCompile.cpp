@@ -31,6 +31,7 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
+#include <zstd.h>
 
 #if OS(WINDOWS)
 #include <fcntl.h>
@@ -94,6 +95,25 @@ extern "C" size_t Bun__AOT__applyOptionWord(Wire::CompileOptions* options, BunAO
     return utf8.length();
 }
 
+static size_t mostBytesCompressed(size_t sizeOfText)
+{
+    return ZSTD_compressBound(sizeOfText);
+}
+
+static size_t compressText(std::span<uint8_t> compressed, std::span<const uint8_t> text)
+{
+    size_t written = ZSTD_compress(compressed.data(), compressed.size(), text.data(), text.size(), 3);
+    return ZSTD_isError(written) ? 0 : written;
+}
+
+static bool openCompressedText(std::span<uint8_t> text, std::span<const uint8_t> compressed)
+{
+    ZSTD_DCtx* context = ZSTD_createDCtx();
+    bool isOpened = context && ZSTD_decompressDCtx(context, text.data(), text.size(), compressed.data(), compressed.size()) == text.size();
+    ZSTD_freeDCtx(context);
+    return isOpened;
+}
+
 static void ensureHostBindings()
 {
     static std::once_flag onceFlag;
@@ -113,7 +133,7 @@ extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::
 #endif
 
     auto* result = new BunAOTResult;
-    result->output = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::compileProgram>(std::span { program.ptr, program.len }, *options, threadPool, JSC::AOT::ProgramOwner { releaseProgram, programOwner, externalBodies, { programOwner, sizeOfFunctionText, copyFunctionText }, releaseBytesOfProgram });
+    result->output = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::compileProgram>(std::span { program.ptr, program.len }, *options, threadPool, JSC::AOT::ProgramOwner { releaseProgram, programOwner, externalBodies, { programOwner, sizeOfFunctionText, copyFunctionText, mostBytesCompressed, compressText }, releaseBytesOfProgram });
     return result;
 }
 
@@ -145,7 +165,7 @@ extern "C" void Bun__AOT__relocateImage(uint8_t* image, size_t size, uint64_t ad
 
 extern "C" uint32_t Bun__AOT__readStoredStrings(const uint8_t* file, size_t size, void* stored, void (*take)(void* stored, const uint8_t* strings, size_t sizeOfStrings, const uint8_t* report, size_t sizeOfReport))
 {
-    JSC::AOT::StoredStrings read = JSC::AOT::readStoredStrings({ file, size });
+    JSC::AOT::StoredStrings read = JSC::AOT::readStoredStrings({ file, size }, openCompressedText);
     take(stored, read.strings.span().data(), read.strings.size(), read.report.span().data(), read.report.size());
     return static_cast<uint32_t>(read.verdict);
 }

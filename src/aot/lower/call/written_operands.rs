@@ -1,14 +1,19 @@
-use bun_sema::bind::Binding;
+use bun_sema::atom::Atom;
+use bun_sema::bind::{Binding, SymbolId};
 use bun_sema::check::aot::ObjectMemberKind;
 use bun_sema::fold::{TreeNode, push_children};
-use bun_sema::hir::{Call, Chain, ExprId, ExprKind, IdList, PatId, PatKind, StmtId};
+use bun_sema::hir::{
+    Call, CallId, Chain, ExprId, ExprKind, IdList, PatId, PatKind, StmtId, is_private_name_at,
+};
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 use super::{Arguments, Callee, emit_call, emit_call_of};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{Mutability, Resolved, table};
 use crate::ir::generated::{Layout, LayoutFlags, LayoutKind};
-use crate::ir::{LayoutKey, PropertyKeyId, ValueId};
+use crate::ir::{LayoutId, LayoutKey, PropertyKeyId, ValueId};
+use crate::lower::context::StoresByNameInList;
 use crate::lower::expression::Tail;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, object};
@@ -22,7 +27,7 @@ impl FileLowering<'_, '_, '_, '_> {
         pattern: PatId,
         initializer: ExprId,
         behind: IdList<StmtId>,
-    ) -> Option<ExprId> {
+    ) -> Option<(ExprId, Vec<Atom>)> {
         let (hir, bound) = (self.hir, self.bound);
         let mut made = self.skip_type_syntax(initializer);
         while let ExprKind::Assign {
@@ -43,28 +48,115 @@ impl FileLowering<'_, '_, '_, '_> {
         let Binding::Symbol(symbol) = bound.initialized_binding(pattern) else {
             return None;
         };
-        let mut pending: Vec<TreeNode> = hir.ids(behind).map(TreeNode::Stmt).collect();
-        while let Some(node) = pending.pop() {
-            if let TreeNode::Expr(expression) = node {
-                match hir[expression].kind {
-                    ExprKind::Fn(_) | ExprKind::Class(_) => continue,
-                    ExprKind::Assign {
-                        op: None, target, ..
-                    } => {
-                        if let ExprKind::Dot { obj, .. } = hir[self.skip_type_syntax(target)].kind
-                            && let holder = self.skip_type_syntax(obj)
-                            && matches!(hir[holder].kind, ExprKind::Ident(_))
-                            && bound.binding(holder) == Binding::Symbol(symbol)
-                        {
-                            return Some(made);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            push_children(hir, node, &mut pending);
+        let end = behind.start + behind.len;
+        let mut lists = self.stores_by_name_in_lists.borrow_mut();
+        let list = lists.entry(end).or_insert_with(|| StoresByNameInList {
+            looked_at_from: end,
+            last_store_of: FxHashMap::default(),
+            kept_plain_below_null: FxHashSet::default(),
+            names_stored_on: FxHashMap::default(),
+        });
+        if behind.start < list.looked_at_from {
+            let added = IdList::new(behind.start, list.looked_at_from - behind.start);
+            self.note_stores_by_name_in(
+                added,
+                &mut list.last_store_of,
+                &mut list.kept_plain_below_null,
+                &mut list.names_stored_on,
+            );
+            list.looked_at_from = behind.start;
         }
-        None
+        let is_below_null = self.find_only_argument(hir[number]).is_some_and(|parent| {
+            matches!(hir[self.skip_type_syntax(parent)].kind, ExprKind::Null)
+        });
+        if is_below_null && list.kept_plain_below_null.contains(&symbol) {
+            return None;
+        }
+        let last = *list.last_store_of.get(&symbol)?;
+        (last >= behind.start).then(|| (made, list.names_stored_on[&symbol].clone()))
+    }
+
+    fn note_stores_by_name_in(
+        &self,
+        statements: IdList<StmtId>,
+        last_store_of: &mut FxHashMap<SymbolId, u32>,
+        kept_plain_below_null: &mut FxHashSet<SymbolId>,
+        names_stored_on: &mut FxHashMap<SymbolId, Vec<Atom>>,
+    ) {
+        let (hir, bound) = (self.hir, self.bound);
+        let mut pending: Vec<TreeNode> = Vec::new();
+        let mut inside_functions: Vec<TreeNode> = Vec::new();
+        for (place, statement) in (statements.start..).zip(hir.ids(statements)) {
+            pending.push(TreeNode::Stmt(statement));
+            while let Some(node) = pending.pop() {
+                if let TreeNode::Expr(expression) = node {
+                    self.note_what_keeps_plain(expression, kept_plain_below_null);
+                    match hir[expression].kind {
+                        ExprKind::Fn(_) | ExprKind::Class(_) => {
+                            push_children(hir, node, &mut inside_functions);
+                            continue;
+                        }
+                        ExprKind::Assign {
+                            op: None, target, ..
+                        } => {
+                            let target = self.skip_type_syntax(target);
+                            if let ExprKind::Dot { obj, name, .. } = hir[target].kind
+                                && !is_private_name_at(hir, hir.name_pos(target))
+                                && let holder = self.skip_type_syntax(obj)
+                                && matches!(hir[holder].kind, ExprKind::Ident(_))
+                                && let Binding::Symbol(symbol) = bound.binding(holder)
+                            {
+                                let last = last_store_of.entry(symbol).or_insert(place);
+                                *last = (*last).max(place);
+                                let names = names_stored_on.entry(symbol).or_default();
+                                if !names.contains(&name) {
+                                    names.push(name);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                push_children(hir, node, &mut pending);
+            }
+        }
+        while let Some(node) = inside_functions.pop() {
+            if let TreeNode::Expr(expression) = node {
+                self.note_what_keeps_plain(expression, kept_plain_below_null);
+            }
+            push_children(hir, node, &mut inside_functions);
+        }
+    }
+
+    fn note_what_keeps_plain(
+        &self,
+        expression: ExprId,
+        kept_plain_below_null: &mut FxHashSet<SymbolId>,
+    ) {
+        let (hir, bound) = (self.hir, self.bound);
+        let named = match hir[expression].kind {
+            ExprKind::Assign { target, .. } => match hir[self.skip_type_syntax(target)].kind {
+                ExprKind::Index { obj, .. } => Some(obj),
+                _ => None,
+            },
+            ExprKind::Call(number) => match find_locked_builtin(self, hir[number].callee) {
+                Some(
+                    BuiltinId::ObjectCreate
+                    | BuiltinId::ObjectDefineProperty
+                    | BuiltinId::ObjectDefineProperties
+                    | BuiltinId::ReflectDefineProperty,
+                ) => hir.ids(hir[number].args).next(),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(named) = named
+            && let holder = self.skip_type_syntax(named)
+            && matches!(hir[holder].kind, ExprKind::Ident(_))
+            && let Binding::Symbol(symbol) = bound.binding(holder)
+        {
+            kept_plain_below_null.insert(symbol);
+        }
     }
 }
 
@@ -297,13 +389,40 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ExprKind::Dot { name, .. } => self.file.queries.atom_bytes(name) == b"prototype",
             _ => false,
         };
-        if is_prototype_of_function || matches!(self.file.hir[written].kind, ExprKind::Null) {
+        let is_below_null = matches!(self.file.hir[written].kind, ExprKind::Null);
+        if is_prototype_of_function {
             return None;
         }
         self.lower_expression(site.callee);
         let parent = self.lower_expression(parent);
         self.set_position(self.file.call_position(site));
         self.quote_if_next_fails(call);
+        let layout = match is_below_null {
+            true => self.layout_of_record_below_null(call),
+            false => self.layout_of_created_object(call, number),
+        };
+        self.file.fragment.note_allocation(layout);
+        let head = self.builder.new_object(layout, &[], None, &[]);
+        let outer = self
+            .builder
+            .set_tail_position(matches!(tail, Tail::Yes { .. }));
+        self.builder.set_literal_prototype(head, parent, true);
+        self.builder.set_tail_position(outer);
+        let made = self.builder.finish_object(head);
+        self.set_position(self.file.hir[call].pos);
+        Some(self.claim_call_result(call, made))
+    }
+
+    fn layout_of_record_below_null(&mut self, call: ExprId) -> LayoutId {
+        let names = core::mem::take(&mut self.names_that_maker_stores_under);
+        let members: Vec<(PropertyKeyId, ObjectMemberKind)> = names
+            .into_iter()
+            .map(|name| (self.file.name_key(name), ObjectMemberKind::Field))
+            .collect();
+        self.file.layout_of_names_made_at(call, &members)
+    }
+
+    fn layout_of_created_object(&mut self, call: ExprId, number: CallId) -> LayoutId {
         let layout = self.file.fragment.declare_layout(LayoutKey::CreatedObject {
             file: self.file.file,
             call: u32::from(number),
@@ -318,16 +437,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             };
             self.file.fragment.define_layout(layout, definition);
         }
-        self.file.fragment.note_allocation(layout);
-        let head = self.builder.new_object(layout, &[], None, &[]);
-        let outer = self
-            .builder
-            .set_tail_position(matches!(tail, Tail::Yes { .. }));
-        self.builder.set_literal_prototype(head, parent, true);
-        self.builder.set_tail_position(outer);
-        let made = self.builder.finish_object(head);
-        self.set_position(self.file.hir[call].pos);
-        Some(self.claim_call_result(call, made))
+        layout
     }
 
     fn emit_empty_collection(

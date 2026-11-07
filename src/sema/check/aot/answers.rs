@@ -359,7 +359,6 @@ pub struct ClassShape<'c> {
     pub members: &'c [ClassMember],
     pub names_stored_in_prototype: &'c [MemberName],
     pub has_computed_instance_name: bool,
-    pub has_computed_static_name: bool,
 }
 
 #[cfg(test)]

@@ -1,10 +1,11 @@
 use super::aliases::declared_names;
 use super::mentions::expose_in;
 use super::unnamed_uses::SyntaxOutsideExpressions;
+use super::written_members::find_what_opens_where_handed_on;
 use super::{
     BuiltinPath, CommonJsBuiltins, EvaluatedText, GLOBALS_LEFT_ALONE, KeyOfModuleCache,
     LOADED_BELOW_VITEST, LOADED_BY_WORKER, ModuleObjectMention, ResolveInput, Resolved,
-    ResolvedBuiltins, SourceDialect, SpyCall, WhereHooksOfInstanceofExist,
+    ResolvedBuiltins, SourceDialect, SpyCall, WhereMoreIsHandedOn, WhereTestsLayNamesAbove,
 };
 use crate::builtins::runtime_uses::{
     ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF, Mentions, RuntimeUses, SyntaxWithHelpers, is_evaluator,
@@ -125,6 +126,20 @@ pub struct FileFacts {
     syntax_outside_expressions: OnceLock<SyntaxOutsideExpressions>,
 }
 
+fn list_names_by_variable(input: &ResolveInput<'_, '_>) -> Vec<(u32, u32)> {
+    let (hir, bound) = (input.hir, input.bound);
+    let names = (0..hir.exprs.len() as u32).map(ExprId);
+    let names = names.filter(|&name| matches!(hir[name].kind, ExprKind::Ident(_)));
+    let mut names_by_variable: Vec<(u32, u32)> = names
+        .filter_map(|name| match bound.binding(name) {
+            Binding::Symbol(variable) => Some((variable.0, name.0)),
+            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => None,
+        })
+        .collect();
+    names_by_variable.sort_unstable();
+    names_by_variable
+}
+
 fn entries_within(entries: &[(u32, u32)], keys: Range<u32>) -> &[(u32, u32)] {
     let start = entries.partition_point(|entry| entry.0 < keys.start);
     let end = entries.partition_point(|entry| entry.0 < keys.end);
@@ -204,6 +219,7 @@ pub(super) struct ResolverOutput {
     pub(super) loaded: Vec<BuiltinId>,
     pub(super) exposed: Vec<BuiltinId>,
     pub(super) handed_to_hooks_of_instanceof: Vec<BuiltinId>,
+    pub(super) names_asked_for_that_are_not_listed: Vec<(BuiltinId, Atom)>,
     pub(super) reads_name_leading_to_hook_of_instanceof: bool,
     pub(super) linked_functions: Vec<RuntimeFunction>,
     pub(super) evaluated_texts: Vec<EvaluatedText>,
@@ -223,6 +239,8 @@ pub(super) struct ResolverOutput {
     pub(super) method_that_hands_out_global_object_may_come_out: bool,
     pub(super) tables_of_loaders_written: Vec<ExprId>,
     pub(super) keys_taken_out_of_module_cache: Vec<KeyOfModuleCache>,
+    pub(super) entries_deleted_from_module_cache: Vec<ExprId>,
+    pub(super) keys_of_entries_handed_on: Vec<KeyOfModuleCache>,
     pub(super) loses_sight_of_module_cache: bool,
     pub(super) hands_module_cache_on: bool,
     pub(super) gets_at_entries_of_module_cache: bool,
@@ -265,7 +283,9 @@ pub(super) struct Resolver<'a, 's> {
     pub(super) output: ResolverOutput,
     within: Option<&'a [Range<u32>]>,
     named_outside: OnceCell<FxHashSet<SymbolId>>,
+    names_by_variable: OnceCell<Vec<(u32, u32)>>,
     pub(super) kept_variables: RefCell<FxHashMap<(SymbolId, BuiltinId), bool>>,
+    pub(super) variables_let_out_of_sight: OnceCell<FxHashSet<SymbolId>>,
     known_sets: RefCell<KnownSets<'a, 's>>,
     evaluated: Range<u32>,
     pub(super) computed: Vec<ExprId>,
@@ -291,9 +311,8 @@ fn can_stand_for_builtin(kind: ExprKind) -> bool {
     )
 }
 
-fn leads_to_hook_of_instanceof(id: BuiltinId) -> bool {
-    let id = table::canonical_id(id);
-    is_evaluator(id) || ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF.contains(&id)
+fn lists_or_traps_symbols(id: BuiltinId) -> bool {
+    ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF.contains(&table::canonical_id(id))
 }
 
 fn holds_what_leads_to_hook_of_instanceof(id: BuiltinId) -> bool {
@@ -358,10 +377,9 @@ pub(super) fn run(
     resolver.collect_module_object_mentions();
     resolver.visit_implicit_references();
     resolver.visit_import_sites();
-    if input.is_text_asked || resolver.spells_method_that_hands_out_global_object() {
+    if input.is_text_asked || resolver.spells_name_that_every_file_is_asked_for() {
         resolver.collect_what_is_reached_without_a_name();
     }
-    resolver.note_keys_that_program_can_lay();
     resolver.finish()
 }
 
@@ -397,7 +415,9 @@ impl<'a, 's> Resolver<'a, 's> {
             facts,
             has_seen_declarations: false,
             named_outside: OnceCell::new(),
+            names_by_variable: OnceCell::new(),
             kept_variables: RefCell::default(),
+            variables_let_out_of_sight: OnceCell::new(),
             known_sets: RefCell::new(KnownSets::new(
                 input.hir,
                 input.bound,
@@ -554,6 +574,14 @@ impl<'a, 's> Resolver<'a, 's> {
                 following > 0 && position < ranges[following - 1].end
             }
         }
+    }
+
+    pub(super) fn names_of(&self, variable: SymbolId) -> impl Iterator<Item = ExprId> + use<'_> {
+        let names_by_variable = self
+            .names_by_variable
+            .get_or_init(|| list_names_by_variable(self.input));
+        let names = entries_within(names_by_variable, variable.0..variable.0 + 1);
+        names.iter().map(|name| ExprId(name.1))
     }
 
     pub(super) fn is_named_outside(&self, symbol: SymbolId) -> bool {
@@ -807,6 +835,7 @@ impl<'a, 's> Resolver<'a, 's> {
 
     fn finish(self) -> ResolvedBuiltins {
         let symbols = self.collect_symbol_paths();
+        let names_in_patterns = self.collect_paths_read_by_patterns();
         let (input, mut output) = (self.input, self.output);
         output
             .mentioned
@@ -857,10 +886,9 @@ impl<'a, 's> Resolver<'a, 's> {
         };
         let hands_on_loader_of_paths = loads_unknown_modules
             && reaches_loader_of_paths(&output.loaded, &called, &handed_on, input.platform);
-        let handed_to_hooks = &output.handed_to_hooks_of_instanceof;
-        let where_hooks_of_instanceof_exist = (!handed_to_hooks.is_empty()).then(|| {
+        let hold_where_handed_on = |handed_on: &[BuiltinId]| {
             let (mut called, mut exposed) = (output.called.clone(), exposed.to_vec());
-            for &id in handed_to_hooks {
+            for &id in handed_on {
                 expose_in(&mut called, &mut exposed, id);
             }
             let exposed = sorted_unique(exposed);
@@ -873,19 +901,42 @@ impl<'a, 's> Resolver<'a, 's> {
             let (called, handed_on) = (without_what_leads(&called), without_what_leads(&exposed));
             let loads_unknown_modules =
                 reaches_unknown_module_loader(&output.loaded, &called, &handed_on, input.platform);
-            Box::new(WhereHooksOfInstanceofExist {
+            WhereMoreIsHandedOn {
                 uses,
                 loads_unknown_modules,
                 hands_on_loader_of_paths: loads_unknown_modules
                     && reaches_loader_of_paths(&output.loaded, &called, &handed_on, input.platform),
+            }
+        };
+        let handed_to_hooks = &output.handed_to_hooks_of_instanceof;
+        let where_hooks_of_instanceof_exist =
+            (!handed_to_hooks.is_empty()).then(|| Box::new(hold_where_handed_on(handed_to_hooks)));
+        let names_asked_for = &output.names_asked_for_that_are_not_listed;
+        let where_tests_lay_names_above = (!names_asked_for.is_empty()).then(|| {
+            let objects = sorted_unique(names_asked_for.iter().map(|asked| asked.0).collect());
+            let (replaced_members, opened_holders, stores_loader_functions) =
+                find_what_opens_where_handed_on(&objects);
+            Box::new(WhereTestsLayNamesAbove {
+                held: hold_where_handed_on(&objects),
+                names_asked_for: names_asked_for.clone().into_boxed_slice(),
+                replaced_members: sorted_unique(replaced_members),
+                opened_holders: sorted_unique(opened_holders),
+                stores_loader_functions,
             })
         });
-        let can_come_by_hook_of_instanceof = input.dialect == SourceDialect::Program
+        let can_list_symbols_of_objects = input.dialect == SourceDialect::Program
             && (input.runs_tests
-                || uses.lets_in_what_nobody_names
                 || output.reads_name_leading_to_hook_of_instanceof
-                || mentioned.iter().any(|&id| leads_to_hook_of_instanceof(id))
+                || mentioned.iter().any(|&id| lists_or_traps_symbols(id))
                 || (exposed.iter()).any(|&id| holds_what_leads_to_hook_of_instanceof(id)));
+        let can_come_by_hook_of_instanceof = can_list_symbols_of_objects
+            || (input.dialect == SourceDialect::Program
+                && (uses.lets_in_what_nobody_names
+                    || mentioned
+                        .iter()
+                        .any(|&id| is_evaluator(table::canonical_id(id)))));
+        let may_make_proxy = input.dialect == SourceDialect::Program
+            && (output.called.iter()).any(|&id| table::root_of(id) == BuiltinId::Proxy);
         let reaches_module_cache =
             input.dialect == SourceDialect::Program && output.gets_at_entries_of_module_cache;
         let mut ids = mentioned.iter();
@@ -928,6 +979,7 @@ impl<'a, 's> Resolver<'a, 's> {
             expr_bits: expr_bits.into_boxed_slice(),
             exprs_with_side_effects: exprs_with_side_effects.into_boxed_slice(),
             symbols: symbols.into_boxed_slice(),
+            names_in_patterns: names_in_patterns.into_boxed_slice(),
             commonjs: self.commonjs,
             evaluated_texts: output.evaluated_texts.into_boxed_slice(),
             module_object_mentions: output.module_object_mentions.into_boxed_slice(),
@@ -941,7 +993,8 @@ impl<'a, 's> Resolver<'a, 's> {
             hands_mock_on: output.hands_mock_on,
             resets_modules: output.resets_modules,
             stores_loader_functions: output.stores_loader_functions,
-            process_reaches_code_on_its_prototypes: output.process_reaches_code_on_its_prototypes,
+            process_reaches_code_on_its_prototypes: output.process_reaches_code_on_its_prototypes
+                || may_make_proxy,
             inspects_prototype_chain_of_process: output.inspects_prototype_chain_of_process,
             method_that_hands_out_global_object_may_come_out: output
                 .method_that_hands_out_global_object_may_come_out,
@@ -955,7 +1008,13 @@ impl<'a, 's> Resolver<'a, 's> {
             hands_on_loader_of_paths,
             where_hooks_of_instanceof_exist,
             hooks_of_instanceof_may_exist: OnceLock::new(),
+            where_tests_lay_names_above,
+            tests_lay_names_above: OnceLock::new(),
             can_come_by_hook_of_instanceof,
+            keys_of_entries_handed_on: output.keys_of_entries_handed_on.into_boxed_slice(),
+            entries_deleted_from_module_cache: output
+                .entries_deleted_from_module_cache
+                .into_boxed_slice(),
             keys_taken_out_of_module_cache: output
                 .keys_taken_out_of_module_cache
                 .into_boxed_slice(),

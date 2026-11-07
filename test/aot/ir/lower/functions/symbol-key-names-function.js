@@ -1,11 +1,10 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}kind=Module
 // CHECK: [[wellKnown]] = NewClosure function=
-// CHECK-NEXT: [[head]] = NewObject
-// CHECK-NEXT: PropDefine [[head]], [[wellKnown]] key=@@iterator
-// CHECK: PropDefine {{*}}key="plain"
+// CHECK-NEXT: [[plain]] = NewClosure function=
 // CHECK: [[made]] = NewClosure function=
-// CHECK: SetFunctionName [[made]], {{*}}
+// CHECK-NEXT: SetFunctionName [[made]], {{*}}
+// CHECK-NEXT: = NewObject -, [[wellKnown]], [[plain]] {{*}}fields=[1, 0]
 
 // RUN(ONCE): lower
 // ONCE-COUNT-1: SetFunctionName

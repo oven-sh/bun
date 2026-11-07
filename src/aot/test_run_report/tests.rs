@@ -439,6 +439,10 @@ fn file_leaves_open() {
         line_of(FileLeavesOpen::LetsSpyOnGo)
             .contains("asks/index.js lets spyOn go where nobody sees what it is called with")
     );
+    assert!(
+        line_of(FileLeavesOpen::MayStoreLoaderFunction)
+            .ends_with("asks/index.js stores a function that the loader calls, or hands on an object that takes one")
+    );
     let marks = "spies on an object from somewhere under a name that it does not spell";
     let with_texts = line_of(FileLeavesOpen::SpiesUnderNamesFromOutside { texts_passed: 2 });
     assert!(with_texts.contains(marks) && with_texts.ends_with(": 2 texts are passed to it"));

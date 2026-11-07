@@ -13,20 +13,26 @@
 # `point.sum()` stands behind the guard of the member. In a loop that is built once the other arm of that guess boxes the object, reads by name, calls and comes back, so every turn makes the object: x2.1 to x3.1 on five rows.
 # The guards that the turns ask of objects of their own are a test in front of the loop, so it is built twice: in the typed copy the failing way begins the turn again in the other copy, nobody takes the object, and it is never made.
 # The typed turns make no object, so the guards of the constructor function are begun in front of the test. A store into an object of the turn (`this.b = b` behind `Base.call(this, a)`) does not count as done in the turn.
+# The plain walk begins the guards in every turn, and to begin them is to write them. The turns of the typed copy write none, so what its front has asked holds in every turn and no turn asks again.
 # f4 = run, f5 = row
 # RUN: walk f4 mechanisms=all
 # REQUIRES: entries-of-bun
 # CHECK: = BeginMemberGuards layout=L0
-# CHECK-NEXT: = AreMembersUnchanged conditions=[{layout=L0 key="sum"}]
+# CHECK-NEXT: = AreMembersUnchanged conditions=[{layout=L0 key="sum"}, {kind=ClassEvaluatedOnce layout=L0}]
 # CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: AreMembersUnchanged
 # CHECK: = BitAnd
-# CHECK-NEXT: = AreMembersUnchanged conditions=[{layout=L0 key="sum"}]
+# CHECK-NOT: AreMembersUnchanged
 # RUN(ROW): walk f5 mechanisms=all
 # REQUIRES(ROW): entries-of-bun
+# The birth of a Below asks whether `call` is still the built-in on Base: that guard, too, is begun and asked in front, in the same test.
 # ROW: = BeginMemberGuards layout=L2
+# ROW-NEXT: = BeginMemberGuards layout=L1
+# ROW-NEXT: = AreMembersUnchanged conditions=[{layout=L2 key="second"}, {layout=L1 side=Static key="call"}, {kind=ClassEvaluatedOnce layout=L2}]
+# ROW: = AreMembersUnchanged conditions=[{layout=L2 key="first"}]
 # ROW: isInLoop=true isLoopHead=true
 # ROW-NOT: = NewObject
+# ROW-NOT: AreMembersUnchanged
 # ROW: = BitAnd
 # ROW-NOT: = NewObject
-# ROW: = AreMembersUnchanged conditions=[{layout=L2 key="second"}]
-# ROW: = AreMembersUnchanged conditions=[{layout=L2 key="first"}]
+# ROW-NOT: AreMembersUnchanged

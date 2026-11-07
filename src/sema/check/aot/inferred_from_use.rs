@@ -1,15 +1,17 @@
-use super::answers::{CheckedType, GaveUp, MemberLookup, QueryLimit};
+use super::answers::{CheckedType, ClassRef, GaveUp, MemberLookup, QueryLimit};
 use super::builtin_types::BuiltinClassIndex;
 use super::prototype_links::{NamedValue, PrototypeOperation};
 use super::queries::Queries;
 use super::type_identity::ObjectOrigin;
+use super::type_shape::ShapeKind;
 use crate::atom::{Atom, known};
 use crate::bind::{Binding, Bound, Decl, FnOwner, Parent, PatParent, StoreKind, SymbolId};
 use crate::check::root_declaration;
 use crate::check::shape::PropertyHolder;
 use crate::hir::{
-    self, BinOp, CallId, Chain, ExprFlags, ExprId, ExprKind, ExprTag, Flags, FnBody, FnId, FnKind,
-    MemberKey, ParamId, PatId, PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind,
+    self, BinOp, CallId, Chain, ClassId, ExprFlags, ExprId, ExprKind, ExprTag, Flags, FnBody, FnId,
+    FnKind, MemberKey, ParamId, PatId, PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp,
+    VarKind,
 };
 use crate::program::{FileId, FileRole};
 use crate::session::vec_from_iter_in;
@@ -27,6 +29,7 @@ pub(super) enum Subject {
     Binding(SymbolId),
     Pattern(PatId),
     This(FnId),
+    Field(u32),
     Result(FnId),
     Expression(ExprId),
     Number(SymbolId),
@@ -1281,6 +1284,13 @@ fn find_use_in_expression(
             value: stored,
         } if target == value => Use::Stored { op, value: stored },
         ExprKind::Assign {
+            op: Some(op),
+            target,
+            ..
+        } if !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) => {
+            find_use_as_binary_operand(op, parent, Side::Right, target)
+        }
+        ExprKind::Assign {
             op: None, target, ..
         } if matches!(hir[target].kind, ExprKind::Array(_)) => Use::Iterated(None),
         ExprKind::Assign {
@@ -1783,6 +1793,11 @@ struct CallWithReceiver {
 }
 
 type TypeParts = SmallVec<[TypeId; 4]>;
+
+pub(super) struct ArgumentsGiven {
+    pub(super) written: SmallVec<[ExprId; 4]>,
+    others_may_call: bool,
+}
 type ContentsOfLiteral = (FileId, SmallVec<[(Atom, PropFlags, TypeId); 4]>);
 type ReturnedExpressions = SmallVec<[(ExprId, TypeId); 4]>;
 
@@ -1792,6 +1807,19 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             FileRole::Inferred => true,
             FileRole::Checked | FileRole::TypesOnly => false,
         }
+    }
+
+    fn is_null_or_undefined_alone(&self, ty: TypeId) -> bool {
+        match self.c.data(ty) {
+            TypeData::Union(members) => members.iter().all(|&member| self.c.is_nullish(member)),
+            _ => self.c.is_nullish(ty),
+        }
+    }
+
+    fn says_nothing_of_what_is_stored_later(&self, checked: TypeId) -> bool {
+        self.c.is_any(checked)
+            || self.are_positions_only_expected(self.file)
+                && self.is_null_or_undefined_alone(checked)
     }
 
     pub(super) fn infer_parameter_type(
@@ -1820,7 +1848,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if checked == TypeId::NUMBER {
             return self.inferred_type_or(Subject::Number(symbol), checked);
         }
-        if !self.c.is_any(checked) {
+        if !self.says_nothing_of_what_is_stored_later(checked) {
             return checked;
         }
         match bound.pat_parent[pattern.idx()] {
@@ -1885,6 +1913,41 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(false)
     }
 
+    pub fn classes_handed_to_mixin(&mut self, heritage: ExprId, most: usize) -> Vec<ClassRef> {
+        let (hir, bound) = (self.hir(), self.bound());
+        if !matches!(hir[heritage].kind, ExprKind::Ident(_)) {
+            return Vec::new();
+        }
+        let Binding::Symbol(symbol) = bound.binding(heritage) else {
+            return Vec::new();
+        };
+        let &[Decl::Param(name)] = bound.symbol(symbol).decls else {
+            return Vec::new();
+        };
+        let PatParent::Param(parameter) = bound.pat_parent[name.idx()] else {
+            return Vec::new();
+        };
+        let mut classes: Vec<ClassRef> = Vec::new();
+        for argument in self.find_arguments_in_sight(parameter) {
+            let Ok(ty) = self.expression_type(argument) else {
+                continue;
+            };
+            let class = match self.type_shape(ty).map(|shape| shape.kind) {
+                Ok(ShapeKind::ClassConstructor(class)) => Some(class),
+                _ => self.nearest_class_joined_in(ty),
+            };
+            if let Some(class) = class
+                && !classes.contains(&class)
+            {
+                classes.push(class);
+            }
+            if classes.len() > most {
+                return Vec::new();
+            }
+        }
+        classes
+    }
+
     fn find_arguments_in_sight(&mut self, parameter: ParamId) -> SmallVec<[ExprId; 2]> {
         let (hir, bound) = (self.hir(), self.bound());
         let function = bound.param_fn[parameter.idx()];
@@ -1907,6 +1970,33 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             find_argument_of_call(hir, bound, first_spreads, callee, index)?.some()
         });
         arguments.collect()
+    }
+
+    pub(super) fn are_names_alone_read_off_field(&mut self, class: ClassRef, field: Atom) -> bool {
+        let (hir, bound) = (self.hir(), self.bound());
+        let reads = self.reads_of_field_off_this(class.class, field);
+        reads.into_iter().all(|access| {
+            let found = find_use(hir, bound, access);
+            matches!(
+                found,
+                Use::Member { .. } | Use::Stored { .. } | Use::Nothing
+            )
+        })
+    }
+
+    pub(super) fn infer_field_type(
+        &mut self,
+        class: ClassRef,
+        field: Atom,
+        position: u32,
+    ) -> TypeId {
+        if class.file != self.file || !self.are_positions_only_expected(class.file) {
+            return TypeId::ANY;
+        }
+        self.memo
+            .names_of_fields_asked_about
+            .insert(position, (class.class, field));
+        self.inferred_type(Subject::Field(position))
     }
 
     pub(super) fn infer_this_type(&mut self, of: FileId, function: FnId) -> TypeId {
@@ -1958,6 +2048,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let inferred = self.inferred_type(subject);
         match self.c.is_any(inferred) {
             true => checked,
+            false if self.is_null_or_undefined_alone(checked) => self.c.union(&[checked, inferred]),
             false => inferred,
         }
     }
@@ -1977,7 +2068,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return None;
         }
         match hir[node.pat].kind {
-            PatKind::Ident(_) if self.c.is_any(checked) => {
+            PatKind::Ident(_) if self.says_nothing_of_what_is_stored_later(checked) => {
                 find_initialized_symbol(bound, node.pat).map(Subject::Binding)
             }
             PatKind::Object(_) if self.is_implied_by_pattern(checked, node.pat) => {
@@ -2072,6 +2163,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Some(
                 Subject::Pattern(_)
                 | Subject::This(_)
+                | Subject::Field(_)
                 | Subject::Result(_)
                 | Subject::Expression(_)
                 | Subject::Number(_),
@@ -2248,7 +2340,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 Subject::Result(function) => queries.compute_result_type(function),
                 Subject::Number(symbol) => queries.compute_number_type(symbol),
                 Subject::Binding(symbol) => queries.compute_binding_type(symbol),
-                Subject::Pattern(_) | Subject::This(_) => queries.compute_type_from_uses(subject),
+                Subject::Pattern(_) | Subject::This(_) | Subject::Field(_) => {
+                    queries.compute_type_from_uses(subject)
+                }
             })
         });
         let inferred = inferred.unwrap_or(TypeId::ANY);
@@ -2284,7 +2378,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn take_cycle_of(&mut self, subject: Subject) -> Option<Box<[Subject]>> {
-        if matches!(subject, Subject::Pattern(_) | Subject::This(_)) {
+        if matches!(
+            subject,
+            Subject::Pattern(_) | Subject::This(_) | Subject::Field(_)
+        ) {
             return None;
         }
         let mut state = self.memo.inferred_types.get(&subject);
@@ -2400,7 +2497,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 self.holds_integers(&mut walk, symbol);
                 return walk.numbers_listed.unwrap_or_default();
             }
-            Subject::Pattern(_) | Subject::This(_) => {}
+            Subject::Pattern(_) | Subject::This(_) | Subject::Field(_) => {}
         }
         asked_for
     }
@@ -2423,11 +2520,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             && !usage.is_incomplete()
         {
             let used_as = self.type_of_usage(&usage);
-            if !self.c.is_any(used_as) {
+            if !self.c.is_any(used_as) && used_as != TypeId::OBJECT {
                 return;
             }
         }
-        for argument in self.find_arguments_given(name).unwrap_or_default() {
+        let given = self.find_arguments_given(name);
+        for argument in given.map(|given| given.written).unwrap_or_default() {
             if let Some(argument) = argument.some()
                 && let Ok(checked) = self.expression_type(argument)
             {
@@ -2449,17 +2547,29 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let mut walk = Walk::new(self.inputs.max_inference_nodes);
         let Some(usage) = self.usage_of(&mut walk, Subject::Binding(symbol)) else {
-            return self.compute_type_from_arguments(name);
+            return self.compute_type_from_arguments(name).0;
         };
         if usage.members.is_empty() && !usage.is_incomplete() {
             let used_as = self.type_of_usage(&usage);
-            return match self.c.is_any(used_as) {
-                true => self.compute_type_from_arguments(name),
+            if !self.c.is_any(used_as) && used_as != TypeId::OBJECT {
+                return used_as;
+            }
+            let (given, _) = self.compute_type_from_arguments(name);
+            let says_more = used_as != TypeId::OBJECT
+                || self.c.every_type(given, |c, part| {
+                    c.flags(part) & crate::types::tf::OBJECT != 0
+                });
+            return match !self.c.is_any(given) && says_more {
+                true => given,
                 false => used_as,
             };
         }
-        let given = self.compute_type_from_arguments(name);
-        if !self.c.is_any(given) && self.has_every_member(given, &usage.members) {
+        let (given, others_may_call) = self.compute_type_from_arguments(name);
+        let is_named_whole = others_may_call
+            && (self.c.members(given))
+                .is_some_and(|members| members.shape().props.len() == usage.members.len());
+        if !self.c.is_any(given) && !is_named_whole && self.has_every_member(given, &usage.members)
+        {
             return given;
         }
         let used_as = self.type_of_usage(&usage);
@@ -2492,7 +2602,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    fn find_arguments_given(&mut self, name: PatId) -> Option<SmallVec<[ExprId; 4]>> {
+    fn find_arguments_given(&mut self, name: PatId) -> Option<ArgumentsGiven> {
         let (hir, bound) = (self.hir(), self.bound());
         let PatParent::Param(parameter) = bound.pat_parent[name.idx()] else {
             return None;
@@ -2504,20 +2614,32 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let index = hir[function].params.position_of(parameter.idx())?;
         let callee = find_name_of_function(hir, bound, function)?;
         let references = references_to(self.references_to_bindings(), callee);
-        if self.is_exported(callee) {
-            return None;
-        }
+        let is_exported = self.is_exported(callee);
         let first_spreads = &mut self.memo.first_spread_arguments;
-        let arguments = references.iter().map(|&(_, reference)| {
+        let arguments = references.iter().filter_map(|&(_, reference)| {
             find_argument_of_call(hir, bound, first_spreads, reference, index)
         });
-        arguments.collect()
+        let written: SmallVec<[ExprId; 4]> = arguments.collect();
+        let others_may_call = is_exported || written.len() < references.len();
+        (!written.is_empty()).then_some(ArgumentsGiven {
+            written,
+            others_may_call,
+        })
     }
 
-    fn compute_type_from_arguments(&mut self, name: PatId) -> TypeId {
-        let Some(arguments) = self.find_arguments_given(name) else {
-            return TypeId::ANY;
+    fn compute_type_from_arguments(&mut self, name: PatId) -> (TypeId, bool) {
+        let Some(given) = self.find_arguments_given(name) else {
+            return (TypeId::ANY, true);
         };
+        let others_may_call = given.others_may_call;
+        let handed = self.compute_type_of_arguments(given.written);
+        match others_may_call && self.c.is_union(handed) {
+            true => (TypeId::ANY, true),
+            false => (handed, others_may_call),
+        }
+    }
+
+    fn compute_type_of_arguments(&mut self, arguments: SmallVec<[ExprId; 4]>) -> TypeId {
         let is_called_once = arguments.len() == 1;
         let mut parts = TypeParts::new();
         let mut literals_listed = FxHashMap::default();
@@ -2925,6 +3047,43 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         references
     }
 
+    #[inline(never)]
+    fn add_uses_of_field(&mut self, walk: &mut Walk, position: u32, usage: &mut Usage) {
+        let Some(&(class, field)) = self.memo.names_of_fields_asked_about.get(&position) else {
+            return;
+        };
+        for access in self.reads_of_field_off_this(class, field) {
+            self.add_evidence(walk, access, usage);
+        }
+    }
+
+    #[inline(never)]
+    fn reads_of_field_off_this(&mut self, class: ClassId, field: Atom) -> Vec<ExprId> {
+        if self.memo.reads_of_fields_off_this.is_none() {
+            let (file, hir, bound) = (self.file, self.hir(), self.bound());
+            let mut reads: FxHashMap<(ClassId, Atom), Vec<ExprId>> = FxHashMap::default();
+            for &(function, reference) in self.references_to_this() {
+                let FnOwner::Member(member) = bound.fns[function.idx()].owner else {
+                    continue;
+                };
+                if hir[member].flags.contains(Flags::STATIC) {
+                    continue;
+                }
+                let Some(owner) = self.c.class_of_member_fn(file, function) else {
+                    continue;
+                };
+                if let Use::Member { access, name, .. } = find_use(hir, bound, reference) {
+                    reads.entry((owner, name)).or_default().push(access);
+                }
+            }
+            self.memo.reads_of_fields_off_this = Some(reads);
+        }
+        let reads = self.memo.reads_of_fields_off_this.as_ref();
+        reads
+            .and_then(|reads| reads.get(&(class, field)).cloned())
+            .unwrap_or_default()
+    }
+
     fn references_to_this(&mut self) -> &'c [(FnId, ExprId)] {
         if let Some(references) = self.memo.reference_index.to_this {
             return references;
@@ -3062,7 +3221,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     ) -> Option<Rc<Usage>> {
         let (subject, is_outermost) = (entered.subject, entered.is_outermost);
         let can_be_merged = match subject {
-            Subject::Binding(_) | Subject::Pattern(_) | Subject::This(_) => true,
+            Subject::Binding(_) | Subject::Pattern(_) | Subject::This(_) | Subject::Field(_) => {
+                true
+            }
             Subject::Result(_) | Subject::Expression(_) | Subject::Number(_) => false,
         };
         let (usage, is_stable, is_entry_of_cycle) = loop {
@@ -3221,6 +3382,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     }
                 }
             }
+            Subject::Field(position) => self.add_uses_of_field(walk, position, &mut usage),
             Subject::Pattern(pattern) => self.add_uses_of_pattern(walk, pattern, &mut usage),
             Subject::Expression(expression) => self.add_evidence(walk, expression, &mut usage),
             Subject::Result(_) | Subject::Number(_) => {
@@ -3250,7 +3412,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let own_stores = Facts::STORED | Facts::OBJECT_LITERAL_STORED | Facts::UINT32_STORED;
         let is_stored = usage.facts & own_stores;
+        let own_arms = found
+            .facts
+            .contains(Facts::STORED)
+            .then(|| usage.arms.clone());
         usage.merge(walk, &found);
+        if let Some(own_arms) = own_arms {
+            usage.arms = own_arms;
+        }
         usage.facts = (usage.facts - own_stores) | is_stored;
     }
 
@@ -3273,7 +3442,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         };
         if !self.c.is_any(checked) {
             self.add_arm(usage, checked);
-            return;
+            if checked != TypeId::NEVER && !self.says_nothing_of_what_is_stored_later(checked) {
+                return;
+            }
         }
         match find_use(self.hir(), self.bound(), value) {
             Use::Nothing => {}
@@ -3304,10 +3475,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 self.add_keyed_access(walk, access, key, usage);
             }
             Use::Key { object } => {
-                usage.facts |= match self.is_list(object) {
-                    true => Facts::NUMBER_AT_EVERY_VALUE | Facts::INT32,
-                    false => Facts::KEY,
-                };
+                usage.facts |=
+                    match self.is_list(object) || self.finds_what_is_read_by_number(value) {
+                        true => Facts::NUMBER_AT_EVERY_VALUE | Facts::INT32,
+                        false => Facts::KEY,
+                    };
             }
             Use::Called { is_optional } => {
                 usage.facts |= Facts::FUNCTION;
@@ -3325,6 +3497,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 usage.facts |= Facts::OBJECT;
                 usage.facts |= required_if(is_required);
             }
+            Use::Number | Use::Int32 if self.is_combined_into_what_is_no_number(value) => {}
             Use::Number => usage.facts |= self.number_fact_of_operand(value),
             Use::Int32 => {
                 usage.facts |= self.number_fact_of_operand(value);
@@ -3430,6 +3603,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         taking_elements
     }
 
+    fn is_combined_into_what_is_no_number(&mut self, value: ExprId) -> bool {
+        let Parent::Expr(parent) = self.bound().parent_of_expr(value) else {
+            return false;
+        };
+        let Some(ExprKind::Assign {
+            op: Some(_),
+            target,
+            value: stored,
+        }) = parent.some().map(|parent| self.hir()[parent].kind)
+        else {
+            return false;
+        };
+        stored == value
+            && self.expression_type(target).is_ok_and(|ty| {
+                !self.c.is_any(ty) && !self.c.some_type(ty, |c, part| c.is_number_like(part))
+            })
+    }
+
     fn number_fact_of_operand(&self, operand: ExprId) -> Facts {
         match is_evaluated_for_some_values_only(self.hir(), self.bound(), operand) {
             true => Facts::NUMBER,
@@ -3460,6 +3651,21 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     fn is_string_type(&self, ty: TypeId) -> bool {
         self.c.every_type(ty, |c, part| c.is_string_like(part))
+    }
+
+    fn finds_what_is_read_by_number(&mut self, key: ExprId) -> bool {
+        let (hir, bound) = (self.hir(), self.bound());
+        let Parent::Expr(access) = bound.parent_of_expr(key) else {
+            return false;
+        };
+        let Some(access) = access.some() else {
+            return false;
+        };
+        let Use::Keyed { key: inner, .. } = find_use(hir, bound, access) else {
+            return false;
+        };
+        let inner = self.type_for_evidence(inner);
+        inner.is_some_and(|inner| self.is_number_type(inner))
     }
 
     fn is_list(&mut self, object: ExprId) -> bool {
@@ -3824,6 +4030,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let any_array = self.c.array_of(TypeId::ANY);
         if can_be_array && let Some(at) = parts.iter().position(|&part| part == any_array) {
             parts[at] = array;
+            if can_be_string && elements.is_some() && !parts.contains(&TypeId::STRING) {
+                parts.push(TypeId::STRING);
+            }
             return;
         }
         let mut fitting = TypeParts::new();

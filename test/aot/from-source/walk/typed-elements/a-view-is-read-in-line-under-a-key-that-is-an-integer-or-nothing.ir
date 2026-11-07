@@ -1,0 +1,20 @@
+# -- source: main.js
+# function Bank(size) {
+#   this.data = null;
+#   this.order = new Array(size >> 1);
+#   for (let j = 0; j < this.order.length; j++) { this.order[j] = 0; this.order[j] |= (j * 3) & 15; }
+# }
+# Bank.prototype.one = function (off) { const data = this.data; return data[off] + data[off + 1]; };
+# Bank.prototype.all = function (view, n) { this.data = view; const order = this.order; let s = 0; for (let t = 0; t < n; t++) s += this.one(order[t]); this.data = null; return s; };
+# const B = new Bank(16), V = new Float64Array(16);
+# for (let i = 0; i < 16; i++) V[i] = i / 4;
+# console.log(B.all(V, 8), B.all(V, 11));
+# -- end of source
+# `off` is an integer or nothing, and the view comes out of a field that may hold null. The view is read under the integer in line; the read under nothing stands on the rare side, by the key as it is.
+# RUN(WALK): walk f2 mechanisms=all
+# REQUIRES(WALK): entries-of-bun
+# WALK: undefined|i32 @JSValue
+# WALK: = TypeTest {{*}}testedType=i32
+# WALK: frequency=Rare
+# WALK: = ElemGet
+# WALK-COUNT-2: = GetTypedArrayElement {{*}}level=Proven

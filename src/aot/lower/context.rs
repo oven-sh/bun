@@ -117,6 +117,7 @@ impl FileInputs<'_> {
 pub struct LoweringOptions {
     pub platform: Platforms,
     pub embeds_function_text: bool,
+    pub reads_function_texts_back: bool,
     pub removable: RemovableOptions,
     pub minifies_identifiers: bool,
     pub obfuscates: bool,
@@ -174,6 +175,13 @@ impl<'a> LoweringInputs<'a> {
     }
 }
 
+pub(in crate::lower) struct StoresByNameInList {
+    pub(in crate::lower) looked_at_from: u32,
+    pub(in crate::lower) last_store_of: FxHashMap<SymbolId, u32>,
+    pub(in crate::lower) kept_plain_below_null: FxHashSet<SymbolId>,
+    pub(in crate::lower) names_stored_on: FxHashMap<SymbolId, Vec<Atom>>,
+}
+
 pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(crate) inputs: &'a LoweringInputs<'a>,
     pub(crate) file: FileId,
@@ -199,6 +207,7 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     functions: FunctionTable,
     pub(in crate::lower) levels_of_literals_inside_built_ones: FxHashMap<ExprId, u64>,
     pub(in crate::lower) literals_named_as_prototype_objects: OnceCell<FxHashSet<ExprId>>,
+    pub(in crate::lower) stores_by_name_in_lists: RefCell<FxHashMap<u32, StoresByNameInList>>,
     shown_names: ShownNames,
     pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
     pub(in crate::lower) enums_that_stay_as_born: Option<EnumsThatStayAsBorn>,
@@ -206,6 +215,7 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) quoted_texts: QuotedTexts,
     pub(in crate::lower) written_path: Vec<u8>,
     pub(in crate::lower) known_helpers_lowered: KnownHelpersLowered,
+    pub(in crate::lower) texts_read_back: u64,
     scratch: BuilderScratch,
 }
 
@@ -304,6 +314,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             functions,
             levels_of_literals_inside_built_ones: FxHashMap::default(),
             literals_named_as_prototype_objects: OnceCell::new(),
+            stores_by_name_in_lists: RefCell::default(),
             shown_names: ShownNames::new(inputs.options, file_inputs.source, hir, bound),
             enum_member_reads: FxHashMap::default(),
             enums_that_stay_as_born: None,
@@ -311,6 +322,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             quoted_texts: QuotedTexts::default(),
             written_path: Vec::new(),
             known_helpers_lowered: KnownHelpersLowered::default(),
+            texts_read_back: 0,
             scratch: BuilderScratch::default(),
         }
     }
@@ -377,6 +389,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             layouts,
             functions,
             known_helpers_lowered,
+            texts_read_back,
             shown_names,
             ..
         } = self;
@@ -387,6 +400,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             diagnostics,
             queries,
             known_helpers: known_helpers_lowered,
+            texts_read_back,
             written_function_names: shown_names.written_function_names,
         }
     }

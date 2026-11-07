@@ -25,6 +25,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.count_statement(statement);
                 continue;
             }
+            if self.lower_store_at_birth(statement) {
+                continue;
+            }
             if dispose::find_resource_declarations(hir, statement).is_some() {
                 let rest = IdList::new(statements.start + index, statements.len - index);
                 self.lower_statements_with_resources(rest);

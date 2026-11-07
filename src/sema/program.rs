@@ -727,6 +727,16 @@ pub struct Files<'s> {
     /// The global `Array` or `ReadonlyArray` declares a member whose name begins with a digit. Only
     /// then can `T[][0]` be anything but `T`.
     pub arrays_have_numeric_members: bool,
+    /// `note_types_that_program_leads_to`
+    leads_to_bun_types: bool,
+}
+
+/// A package of declarations that a build names by itself where the project's `types` do not.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum TypesNamedByBuild {
+    Bun,
+    /// Bun's types refer to Node's, which refer to undici's.
+    Node,
 }
 
 /// `Files::global_type`
@@ -7060,6 +7070,7 @@ impl<'s> Files<'s> {
             components: Components::EMPTY,
             global_types: &[],
             arrays_have_numeric_members: false,
+            leads_to_bun_types: false,
             program_errors: session.keep(program_errors),
             include_errors: session.keep(include_errors),
             package_jsons: map_in(arena),
@@ -7269,19 +7280,23 @@ impl<'s> Files<'s> {
         bind_time: BindTime,
     ) -> (hir::File<'s>, Bound<'s>) {
         let _work = bun_core::current_work::working_on(bun_core::current_work::Step::Load, path);
+        let mut whole = None;
         if bind_time == BindTime::WhenReached
             && !is_lib
             && let Some(mut hir) = host.parse_top_level(arena, path, &text, atoms, options)
-            && hir.has_module_syntax
-            && let Some(specifiers) = bind::specifiers_of_closed_module(&hir)
         {
-            if !options.keeps_comments {
-                hir.comments = Default::default();
+            if hir.has_module_syntax
+                && let Some(specifiers) = bind::specifiers_of_closed_module(&hir)
+            {
+                if !options.keeps_comments {
+                    hir.comments = Default::default();
+                }
+                hir.text = text;
+                return (hir, Bound::unbound_in(arena, specifiers));
             }
-            hir.text = text;
-            return (hir, Bound::unbound_in(arena, specifiers));
+            whole = (hir.rare_syntax & hir::rare::LEFT_OUT == 0).then_some(hir);
         }
-        let mut hir = host.parse(arena, path, &text, atoms, options);
+        let mut hir = whole.unwrap_or_else(|| host.parse(arena, path, &text, atoms, options));
         if !options.keeps_comments {
             hir.comments = Default::default();
         }
@@ -10049,23 +10064,75 @@ impl<'s> Files<'s> {
 
     /// True if some file may be `is_brought`.
     pub fn brings_declarations(&self) -> bool {
-        self.options.type_root_of_last_resort.is_some() || self.options.names_bun_types_by_itself
+        self.options.type_root_of_last_resort.is_some() || self.names_types_that_nothing_leads_to()
+    }
+
+    fn names_types_that_nothing_leads_to(&self) -> bool {
+        self.options.names_bun_types_by_itself && !self.leads_to_bun_types
+    }
+
+    fn types_named_by_build(&self, file: FileId) -> Option<TypesNamedByBuild> {
+        let package = self.module(file).package_json_directory;
+        let is_named = |name: &[u8]| self.atoms.bytes(package).ends_with(name);
+        if package.is_none() {
+            None
+        } else if is_named(b"/@types/bun") || is_named(b"/bun-types") {
+            Some(TypesNamedByBuild::Bun)
+        } else if is_named(b"/@types/node") || is_named(b"/undici-types") {
+            Some(TypesNamedByBuild::Node)
+        } else {
+            None
+        }
+    }
+
+    /// TypeScript reads installed declarations that `types` do not name where its own program leads to them: from the
+    /// roots of the project by an import in any form or by a `/// <reference types>`, in a package's declarations too. They
+    /// are the project's own then. A build loads more than that: the source that a package runs, an entry point that the
+    /// project leaves out. And it resolves otherwise: of a package that offers its source to a build, and of a referenced
+    /// project, it reads the source where TypeScript reads the declarations. So the walk passes through the project's own
+    /// sources and through declarations, and through nothing else: a hole here costs a report, never a build.
+    pub fn note_types_that_program_leads_to(&mut self, is_root_of_project: &dyn Fn(&[u8]) -> bool) {
+        if !self.options.names_bun_types_by_itself {
+            return;
+        }
+        let is_read = |&file: &FileId| {
+            let module = self.module(file);
+            let is_of_project =
+                !module.is_from_external_library && module.redirect_for_resolution.is_none();
+            match module.role {
+                FileRole::TypesOnly => true,
+                FileRole::Checked => is_of_project,
+                FileRole::Inferred => is_of_project && self.options.allow_js,
+            }
+        };
+        let is_root = |&file: &FileId| is_root_of_project(self.module(file).file_name());
+        let file_ids = (0..self.modules.len()).map(|index| FileId(index as u32));
+        let mut pending: Vec<FileId> = file_ids.filter(is_root).filter(is_read).collect();
+        let mut is_reached = vec![false; self.modules.len()];
+        let mut leads_to_bun_types = false;
+        while let Some(file) = pending.pop() {
+            if self.types_named_by_build(file) == Some(TypesNamedByBuild::Bun) {
+                leads_to_bun_types = true;
+                break;
+            }
+            if !std::mem::replace(&mut is_reached[file.idx()], true) {
+                pending.extend(self.module(file).edges.iter().copied().filter(is_read));
+            }
+        }
+        self.leads_to_bun_types = leads_to_bun_types;
     }
 
     /// A file of the declarations that a build brings along where the project has not installed them
-    /// (`Options::type_root_of_last_resort`), or has not named them (`Options::names_bun_types_by_itself`).
+    /// (`Options::type_root_of_last_resort`), or has neither named them (`Options::names_bun_types_by_itself`) nor leads to
+    /// them.
     pub fn is_brought(&self, file: FileId) -> bool {
-        let package = self.module(file).package_json_directory;
-        if self.options.names_bun_types_by_itself && package.is_some() {
-            let is_named = |name: &[u8]| self.atoms.bytes(package).ends_with(name);
+        if self.names_types_that_nothing_leads_to() {
             let types = self.options.types.as_deref().unwrap_or_default();
             let names_node = types.iter().any(|name| name == b"node");
-            // Bun's types refer to Node's, which refer to undici's.
-            if is_named(b"/@types/bun")
-                || is_named(b"/bun-types")
-                || !names_node && (is_named(b"/@types/node") || is_named(b"/undici-types"))
-            {
-                return true;
+            match self.types_named_by_build(file) {
+                Some(TypesNamedByBuild::Bun) => return true,
+                Some(TypesNamedByBuild::Node) if !names_node => return true,
+                Some(TypesNamedByBuild::Node) | None => {}
             }
         }
         let Some(root) = &self.options.type_root_of_last_resort else {

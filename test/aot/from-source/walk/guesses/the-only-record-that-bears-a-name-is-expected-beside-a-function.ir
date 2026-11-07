@@ -1,0 +1,17 @@
+# -- source: main.js
+# function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
+# var mathModule = { __esModule: true, default: { add: function (a, b) { return a + b; } }, twice: function (x) { return x * 2; } };
+# var plainModule = function (x) { return x + 1; };
+# var _math = _interopRequireDefault(mathModule), _plain = _interopRequireDefault(plainModule);
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) total += (0, _math.default.add)(i & 7, 1) + (0, _plain.default)(i & 3) + (0, mathModule.twice)(2); return total; }
+# print(run(1000));
+# -- end of source
+# The helper hands back its parameter or a record made for it, so `_plain` is proven to hold the function or the record. One of the two bears the name `default`: that one is expected where the name is read, and behind one test
+# its slot is read; the read by the name stands on the rare side of that test. It used to be the only way, because the proven type is not layouts alone.
+# f2 = run
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[plain]]: {{*}} = GetModuleVariable variable=g2
+# CHECK-NEXT: = ShapeTest [[plain]] layouts=[L4]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 11000

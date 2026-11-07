@@ -11,7 +11,7 @@ use bun_sema::bind::{
 use bun_sema::check::aot::{
     ListedMember, MemberLookup, MemberName, ObjectMemberKind, ObjectOrigin, ShapeKind, TypeIdentity,
 };
-use bun_sema::hir::{BinOp, ExprId, ExprKind, File, PatKind, PropKey, PropKind};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, File, FnId, PatKind, PropKey, PropKind};
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -22,7 +22,7 @@ use crate::builtins::id::BuiltinId;
 use crate::builtins::resolve::SourceDialect;
 use crate::builtins::table;
 use crate::ir::generated::{
-    Field, FieldFlags, Layout, LayoutKind, LimitId, NameClass, PositionFlags,
+    DeclaredRecord, Field, FieldFlags, Layout, LayoutKind, LimitId, NameClass, PositionFlags,
 };
 use crate::ir::{
     DeclaredType, Id, LayoutId, LayoutKey, PropertyKeyId, PropertyKeyKind, TypeId, WellKnownSymbol,
@@ -35,6 +35,18 @@ const _: () = assert!(PropertyKeyKind::COUNT <= 1 << u8::BITS);
 const _: () = assert!(WellKnownSymbol::COUNT <= 1 << u8::BITS);
 
 const KIND_OF_TEXT: u8 = PropertyKeyKind::Text.to_wire() as u8;
+
+fn literal_writes_functions_alone(hir: &File<'_>, literal: ExprId) -> bool {
+    let ExprKind::Object(properties) = hir[literal].kind else {
+        return false;
+    };
+    properties.iter().next().is_some()
+        && properties.iter().all(|property| match hir[property].kind {
+            PropKind::Method => true,
+            PropKind::Init => matches!(hir[hir[property].value].kind, ExprKind::Fn(_)),
+            _ => false,
+        })
+}
 
 type Member = (PropertyKeyId, ObjectMemberKind);
 type Members = SmallVec<[Member; 8]>;
@@ -400,6 +412,17 @@ impl FileLowering<'_, '_, '_, '_> {
         self.layouts.described_names = described;
     }
 
+    fn holder_of_what_member_says(
+        &mut self,
+        ty: CheckerTypeId,
+        member: ListedMember,
+    ) -> Option<CheckerTypeId> {
+        let hangs_on_arguments = self
+            .queries
+            .listed_member_hangs_on_type_arguments(ty, member);
+        hangs_on_arguments.then_some(ty)
+    }
+
     fn grows_without_end(&mut self, ty: CheckerTypeId) -> bool {
         let holder = match self.layouts.holder_in_progress {
             Some(holder) if holder != ty => holder,
@@ -418,6 +441,39 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         path.reverse();
         self.queries.grows_along(&path)
+    }
+
+    pub(in crate::lower) fn note_declared_record(
+        &mut self,
+        function: FnId,
+        parameter: u32,
+        ty: CheckerTypeId,
+    ) {
+        let is_written_by_declaration = matches!(
+            self.queries.object_origin(ty),
+            ObjectOrigin::Symbol(_)
+                | ObjectOrigin::TypeLiteral { .. }
+                | ObjectOrigin::MappedType { .. }
+        );
+        if !is_written_by_declaration || self.is_dictionary_type(ty) {
+            return;
+        }
+        let Ok(members) = self.queries.listed_members(ty) else {
+            return;
+        };
+        let fields = self.sort_listed_fields(ty, members);
+        let required = fields.iter().filter(|field| !field.1.is_optional);
+        let names: Vec<PropertyKeyId> = required.map(|field| self.find_key(field.0)).collect();
+        if !names.is_empty() {
+            let module = self.module_id();
+            let start = self.hir[function].text_start;
+            self.fragment.add_declared_record(DeclaredRecord {
+                module,
+                start,
+                parameter,
+                names,
+            });
+        }
     }
 
     pub(crate) fn object_type_layout(&mut self, ty: CheckerTypeId) -> Option<LayoutId> {
@@ -460,7 +516,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 (MemberName::String(name), SourceDialect::Runtime) => {
                     FieldName::Key(self.name_key(name))
                 }
-                (MemberName::Symbol(name), _) => match self.created_symbol_key(name) {
+                (MemberName::Symbol(name), _) => match self.symbol_key_of_member(name) {
                     Some(key) => FieldName::Key(key),
                     None => continue,
                 },
@@ -697,7 +753,8 @@ impl FileLowering<'_, '_, '_, '_> {
         ty: CheckerTypeId,
         member: ListedMember,
     ) -> DeclaredType {
-        let outer = self.layouts.holder_in_progress.replace(ty);
+        let outer = self.layouts.holder_in_progress;
+        self.layouts.holder_in_progress = self.holder_of_what_member_says(ty, member);
         let types = self.queries.listed_member_types(ty, member);
         let declared = self.create_member_position(types);
         self.layouts.holder_in_progress = outer;
@@ -856,8 +913,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let listed = self.sort_listed_fields(ty, members);
         let mut fields = Vec::with_capacity(listed.len());
         let mut is_kept = true;
-        let outer = self.layouts.holder_in_progress.replace(ty);
+        let outer = self.layouts.holder_in_progress;
         for &(name, member) in listed.iter() {
+            self.layouts.holder_in_progress = self.holder_of_what_member_says(ty, member);
             let types = self.queries.listed_member_types(ty, member);
             is_kept = is_kept && self.queries.keeps_listed_member_types(ty, member);
             let declared = self.create_member_position(types);
@@ -1203,7 +1261,12 @@ impl FileLowering<'_, '_, '_, '_> {
             };
             match hir.runtime_property_key(property) {
                 PropKey::Name(name) => members.push((self.name_key(name), kind)),
-                PropKey::None | PropKey::Private(_) | PropKey::Computed(_) => {}
+                PropKey::Computed(computed) => {
+                    if let Some(key) = self.find_locked_symbol_key(computed) {
+                        members.push((key, kind));
+                    }
+                }
+                PropKey::None | PropKey::Private(_) => {}
             }
         }
         members
@@ -1313,12 +1376,14 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         };
         let mut copied = Members::new();
+        let mut holds_spread = false;
         for property in properties.iter() {
             if hir[property].kind == PropKind::Spread {
+                holds_spread = true;
                 self.collect_names_copied_from_literal(hir[property].value, &mut copied);
             }
         }
-        if copied.is_empty() {
+        if !holds_spread {
             return None;
         }
         let ty = self.queries.expression_type(literal).ok()?;
@@ -1327,7 +1392,17 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         }
         let members = self.collect_literal_members(literal);
+        if members.is_empty() {
+            return None;
+        }
+        if copied.is_empty() {
+            self.layouts.literals_opened_at_once.insert(literal);
+        }
         Some(self.untyped_layout_made_at(&members, Some(literal)))
+    }
+
+    pub(in crate::lower) fn is_opened_at_once(&self, literal: ExprId) -> bool {
+        self.layouts.literals_opened_at_once.contains(&literal)
     }
 
     pub(in crate::lower) fn literal_layout(&mut self, literal: ExprId) -> LayoutId {
@@ -1359,6 +1434,20 @@ impl FileLowering<'_, '_, '_, '_> {
         let members = self.queries.listed_members(ty).ok()?;
         let (identity, is_empty) = self.describe_names(ty, members);
         let origin = origin.unwrap_or_else(|| self.queries.object_origin(ty));
+        let home_of_functions = match (origin, literal) {
+            (_, Some(expression)) => {
+                literal_writes_functions_alone(self.hir, expression).then_some(self.file)
+            }
+            (ObjectOrigin::ObjectLiteral { file, expression }, None) => {
+                literal_writes_functions_alone(self.queries.files().hir(file), expression)
+                    .then_some(file)
+            }
+            (_, None) => None,
+        };
+        let identity = match home_of_functions {
+            Some(file) if !is_empty => identity.in_file(file),
+            _ => identity,
+        };
         let origin = match (origin, literal) {
             _ if !is_empty => ObjectOrigin::Computed,
             (_, Some(expression)) => ObjectOrigin::ObjectLiteral {

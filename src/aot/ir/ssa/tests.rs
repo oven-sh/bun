@@ -12,6 +12,26 @@ struct Diamond {
     join: BlockId,
 }
 
+#[test]
+fn what_is_built_at_the_empty_entry_stands_behind_the_undefined_values_in_front_of_it() {
+    let mut builder = create_builder(&[]);
+    let place = builder.place();
+    let first = builder.create_variable(None);
+    let second = builder.create_variable(None);
+    let undefined_first = builder.read_variable(first);
+    let own = builder.integer(1);
+    let undefined_second = builder.read_variable(second);
+    let placed = builder.build_at(place, |builder| builder.integer(2));
+    let mut order = Vec::new();
+    let mut next = builder.blocks[ENTRY_BLOCK.index()].first_value;
+    while next != NO_VALUE {
+        order.push(next);
+        next = builder.values[next as usize].next;
+    }
+    let expected = [undefined_second, undefined_first, placed, own].map(|value| value.to_word());
+    assert_eq!(order, expected);
+}
+
 fn enter_blocks(builder: &mut FunctionBuilder, count: usize) -> BlockId {
     for _ in 0..count {
         enter_block(builder, None);
@@ -1082,6 +1102,54 @@ fn removed_handler_parameter_pops_handler_arguments() {
     assert_eq!(builder.values.len(), value_count);
 }
 
+fn narrow(builder: &mut FunctionBuilder, variable: LocalVariable) {
+    let value = builder.read_variable(variable);
+    let origin = builder.value_behind_tests(value);
+    let narrowed = builder.type_of(origin);
+    builder.write_narrowed_variable(variable, narrowed, value);
+}
+
+#[test]
+fn every_edge_of_a_switch_with_many_keys_into_a_block_gets_the_argument_of_that_block() {
+    for key_count in [7, 8, 9, 40] {
+        let mut builder = create_builder(&[TypeTable::NUMBER]);
+        let subject = builder.parameter(0);
+        let variable = builder.create_variable(None);
+        let above = builder.integer(1);
+        builder.write_variable(variable, above);
+        let entry = builder.current_block();
+        let [even, odd, otherwise] = create_blocks(&mut builder);
+        let keys: Vec<i64> = (0..key_count as i64).collect();
+        let cases: Vec<Edge<'_>> = (0..key_count)
+            .map(|key| Edge::to([even, odd][key % 2]))
+            .collect();
+        builder.switch(subject, &keys, &cases, Edge::to(otherwise));
+        builder.seal(otherwise);
+        builder.switch_to(otherwise);
+        builder.return_value(None);
+        builder.seal(odd);
+        builder.switch_to(odd);
+        let stored = builder.integer(2);
+        builder.write_variable(variable, stored);
+        builder.jump(Edge::to(even));
+        builder.seal(even);
+        builder.switch_to(even);
+        let read = builder.read_variable(variable);
+        assert_eq!(variable_parameters(&builder, even), [read]);
+        assert_eq!(variable_arguments(&builder, odd, 0), [stored]);
+        let mut edge_count = 0;
+        for target in 0..key_count + 1 {
+            let terminator = builder.blocks[entry.index()].terminator.as_ref();
+            let first = terminator.expect("the block is terminated").targets.start as usize;
+            let leads_to_reader = builder.targets[first + target].block == even;
+            let expected: &[ValueId] = if leads_to_reader { &[above] } else { &[] };
+            assert_eq!(variable_arguments(&builder, entry, target), expected);
+            edge_count += usize::from(leads_to_reader);
+        }
+        assert_eq!(edge_count, key_count.div_ceil(2));
+    }
+}
+
 fn fill_nested(
     builder: &mut FunctionBuilder,
     generator: &mut Generator,
@@ -1092,7 +1160,11 @@ fn fill_nested(
 ) {
     for _ in 0..1 + generator.below(5) {
         let condition = builder.parameter(0);
-        let kind = generator.below(if depth == 0 { 2 } else { 7 });
+        let kind = generator.below(if depth == 0 { 2 } else { 8 });
+        if kind == 0 && generator.one_in(3) {
+            narrow(builder, all[generator.below(all.len())]);
+            continue;
+        }
         if kind == 0 {
             let value = builder.integer(generator.below(1000) as i64);
             builder.write_variable(written[generator.below(written.len())], value);
@@ -1142,6 +1214,17 @@ fn fill_nested(
                     None => builder.return_value(None),
                 }
             }
+            7 => {
+                let tested = all[generator.below(all.len())];
+                let arms = [create(builder), create(builder)];
+                builder.branch(condition, Edge::to(arms[0]), Edge::to(arms[1]));
+                for arm in arms {
+                    enter(builder, arm);
+                    narrow(builder, tested);
+                    fill_nested(builder, generator, all, written, exits, depth - 1);
+                    builder.jump(Edge::to(after));
+                }
+            }
             5 => {
                 let handler = builder.create_handler(BlockRole::CatchHandler, None, covering);
                 let inside = builder.create_block(Some(handler));
@@ -1170,6 +1253,7 @@ fn fill_nested(
 fn body_is_the_same_with_shortcuts_in_the_order_of_ends_and_step_by_step() {
     let mut definition_counts = [0, 0];
     let mut ordered_variable_count = 0;
+    let mut narrowed_and_ordered_variable_count = 0;
     for seed in 1..=300 {
         let bodies = [false, true].map(|steps_through_every_join| {
             let function = build_function(&[TypeTable::BOOLEAN], |builder| {
@@ -1190,7 +1274,9 @@ fn body_is_the_same_with_shortcuts_in_the_order_of_ends_and_step_by_step() {
                 definition_counts[usize::from(steps_through_every_join)] += definition_count;
                 let variables = builder.ssa.variables.iter();
                 let ordered = variables.filter(|variable| variable.are_definitions_ordered);
-                ordered_variable_count += ordered.count();
+                ordered_variable_count += ordered.clone().count();
+                narrowed_and_ordered_variable_count +=
+                    ordered.filter(|variable| variable.is_narrowed).count();
             });
             (
                 function.body.code,
@@ -1201,5 +1287,6 @@ fn body_is_the_same_with_shortcuts_in_the_order_of_ends_and_step_by_step() {
         assert_eq!(bodies[0], bodies[1], "seed {seed}");
     }
     assert!(ordered_variable_count > 300);
+    assert!(narrowed_and_ordered_variable_count > 300);
     assert!(definition_counts[0] < definition_counts[1]);
 }

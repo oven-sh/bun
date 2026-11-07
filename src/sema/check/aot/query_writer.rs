@@ -661,10 +661,7 @@ impl<'c, 'p, 's> Writer<'_, 'c, 'p, 's> {
     }
 
     fn write_class_shape(&mut self, site: &Site, query: &[u8], shape: &ClassShape<'_>) {
-        let header = format!(
-            "computed instance {} computed static {}",
-            shape.has_computed_instance_name, shape.has_computed_static_name
-        );
+        let header = format!("computed instance {}", shape.has_computed_instance_name);
         self.emit(site, query, Ok(header.into_bytes()));
         let member_query = [query, b" member"].concat();
         let file = shape.declaration.file();
@@ -773,6 +770,17 @@ mod tests {
 
     #[test]
     fn line_of_first_and_last_byte() {
+        let of_separator = compute_ecma_line_starts("a\u{2028}b\nc".as_bytes());
+        assert_eq!(of_separator, [0, 4, 6]);
+        assert_eq!(compute_ecma_line_starts(b"a\r\nb\rc\nd"), [0, 3, 5, 7]);
+        let of_dash = compute_ecma_line_starts("\u{2014}\nb".as_bytes());
+        assert_eq!(of_dash, [0, 4]);
+        let mut long = "line \u{2014}\n".as_bytes().repeat(40);
+        let mut expected = compute_ecma_line_starts(&long);
+        assert_eq!(expected.len(), 41);
+        long.push(b'\r');
+        expected.push(long.len() as u32);
+        assert_eq!(compute_ecma_line_starts(&long), expected);
         let line_starts = compute_ecma_line_starts(b"ab\ncd\n");
         assert_eq!(line_number(&line_starts, 0), 1);
         assert_eq!(line_number(&line_starts, 2), 1);

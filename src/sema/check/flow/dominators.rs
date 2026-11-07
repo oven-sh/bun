@@ -17,6 +17,7 @@ pub(super) struct FlowDominators {
     tests: Vec<(u32, u32, u32)>,
     tests_by_property: Vec<(u32, u32, u32, u32)>,
     about_anything: Vec<(u32, u32)>,
+    conditions: Option<Vec<(u32, u32)>>,
     calls: Vec<(u32, u32)>,
     last_busy_call: Vec<u32>,
 }
@@ -124,10 +125,12 @@ impl FlowDominators {
     }
 
     fn find_last_about_anything(&self, start: u32, up_to: u32) -> u32 {
-        let after = self
-            .about_anything
-            .partition_point(|&it| it <= (start, up_to));
-        match self.about_anything[..after].last() {
+        Self::find_last_of(&self.about_anything, start, up_to)
+    }
+
+    fn find_last_of(nodes: &[(u32, u32)], start: u32, up_to: u32) -> u32 {
+        let after = nodes.partition_point(|&it| it <= (start, up_to));
+        match nodes[..after].last() {
             Some(&(its_start, node)) if its_start == start => node,
             _ => 0,
         }
@@ -138,6 +141,10 @@ impl FlowDominators {
 impl Checker<'_, '_> {
     pub fn set_far_walk(&mut self, steps: u32) {
         self.flow_memo.far_walk = Some(steps);
+    }
+
+    pub fn count_kept_walks(&self) -> usize {
+        self.flow_memo.evolved_arrays.len()
     }
 
     pub fn count_cached_loop_types(&self) -> usize {
@@ -230,6 +237,22 @@ impl Checker<'_, '_> {
         index.calls.shared_sort_unstable();
         index.last_busy_call = (0..index.calls.len() as u32).collect();
         self.flow_memo.dominators = index;
+    }
+
+    fn find_last_condition(&mut self, file: FileId, start: u32, up_to: u32) -> u32 {
+        let flow = &self.bound(file).flow;
+        let index = &mut self.flow_memo.dominators;
+        let (nodes, starts_of_many) = (&index.nodes, &index.starts_of_many);
+        let conditions = index.conditions.get_or_insert_with(|| {
+            let mut conditions: Vec<(u32, u32)> = (flow.iter().zip(nodes).enumerate())
+                .filter(|(_, (node, _))| matches!(node, Flow::Cond { .. }))
+                .map(|(i, (_, it))| (it.start, i as u32))
+                .filter(|it| starts_of_many.binary_search(&it.0).is_ok())
+                .collect();
+            conditions.shared_sort_unstable();
+            conditions
+        });
+        FlowDominators::find_last_of(conditions, start, up_to)
     }
 
     fn find_last_call_not_known_to_be_idle(
@@ -325,17 +348,12 @@ impl Checker<'_, '_> {
             || reference.unresolved.get() != 0
             || self.task.file != Some(file)
             || !walk.reduced.is_empty()
-            || self.is_automatic_type(walk.declared)
         {
             return None;
         }
         if self.flow_memo.runs.file != Some(file) {
             self.index_flow_runs(file);
         }
-        if self.flow_memo.dominators.file != Some(file) {
-            self.index_flow_dominators(file);
-        }
-        let index = &self.flow_memo.dominators;
         let up_to = match self.bound(file).flow[flow.idx()] {
             Flow::Loop { start, len } => {
                 let edges = self.bound(file).edges(start, len).iter();
@@ -345,12 +363,25 @@ impl Checker<'_, '_> {
             }
             _ => flow.0,
         };
+        let (last_assignment, _) =
+            (self.flow_memo.runs).nodes_about(root, reference, FlowId(up_to));
+        let is_automatic = self.is_automatic_type(walk.declared);
+        let last_change = match is_automatic {
+            true => last_assignment.max(self.flow_memo.runs.last_mutation_about(root, up_to)),
+            false => last_assignment,
+        };
+        let worthwhile = self.flow_memo.far_walk.unwrap_or(WORTHWHILE_FAR_SKIP);
+        if is_automatic && flow.0.saturating_sub(last_change) <= worthwhile {
+            return None;
+        }
+        if self.flow_memo.dominators.file != Some(file) {
+            self.index_flow_dominators(file);
+        }
+        let index = &self.flow_memo.dominators;
         let start = index.nodes[flow.idx()].start;
         if index.starts_of_many.binary_search(&start).is_err() {
             return None;
         }
-        let (last_assignment, _) =
-            (self.flow_memo.runs).nodes_about(root, reference, FlowId(up_to));
         let last_test = match reference.path.first().map(|first| first.name.get()) {
             None => index.find_last_test_about(root, start, up_to),
             Some(AccessedName::Some(name)) => index
@@ -365,10 +396,15 @@ impl Checker<'_, '_> {
                 index.find_last_test_about_property(root, 0, start, up_to)
             }
         };
-        let least = last_assignment
+        let least = last_change
             .max(index.enclosing_loop[flow.idx()])
             .max(last_test)
             .max(index.find_last_about_anything(start, up_to));
+        let least = match is_automatic {
+            true => least.max(self.find_last_condition(file, start, up_to)),
+            false => least,
+        };
+        let index = &self.flow_memo.dominators;
         if index.nodes[flow.idx()].dominator < least || least > flow.0 {
             return None;
         }

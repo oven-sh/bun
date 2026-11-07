@@ -10,8 +10,9 @@ use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, JsxImport, OwnRequire, RequireCallForm,
     ResolvedForm, ResolvedFrom, does_import_meta_resolve_ask_resolver,
     find_base_that_a_call_made_of_own_file, find_holder_of_require_made_for_choice,
-    find_module_printed_as_require, find_other_values_of_own_require, find_own_require,
-    find_require_call, holds_import_meta_require, is_call_of_create_require,
+    find_module_printed_as_require, find_names_folded_by_transpiler,
+    find_other_values_of_own_require, find_own_require, find_require_call,
+    holds_import_meta_require, is_call_of_create_require,
     is_create_require_behind_get_builtin_module, is_create_require_called_through_call,
     is_made_require, is_require_made_for_own_file, may_call_have_made_base_of_require,
     may_call_have_made_path, may_require_get_members, may_still_be_undefined,
@@ -25,7 +26,9 @@ use crate::builtins::id::{BuiltinId, RuntimeModule};
 use crate::builtins::table::{self, Platforms, Scope};
 use crate::builtins::{Mutability, Resolved};
 use crate::ir::generated::{BlockRole, ModuleRequestKind};
-use crate::ir::{BlockId, Edge, ModuleId, StringId, TypeTable, ValueId, VariableKey};
+use crate::ir::{
+    BlockId, Edge, LocalVariable, ModuleId, StringId, TypeTable, ValueId, VariableKey,
+};
 use crate::load::contents::load_names::{
     PathAlone, modules_named_in, resolve_loads_through_imported_loaders,
 };
@@ -101,6 +104,7 @@ struct AnsweredSite<'g> {
     resolved_from: Option<FileId>,
     looks_in_cache: bool,
     is_read_by_transpiler: bool,
+    has_arm_for_transpiler_alone: bool,
     maker_of_asked_require: Option<FileId>,
 }
 
@@ -236,6 +240,34 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn is_read_by_transpiler(&self, callee: ExprId, name: ExprId) -> bool {
+        self.is_callee_read_by_transpiler(callee) && self.is_name_read_by_transpiler(name)
+    }
+
+    fn has_arm_for_transpiler_alone(&self, name: ExprId) -> bool {
+        let is_choice = |name: ExprId| matches!(self.hir[name].kind, ExprKind::Cond { .. });
+        name.is_some()
+            && is_choice(self.hir.skip_type_assertions(name))
+            && !self.is_name_read_by_transpiler(name)
+            && find_names_folded_by_transpiler(self.hir, self.decisions(), name)
+                .iter()
+                .any(|&arm| self.is_name_for_transpiler_alone(arm))
+    }
+
+    fn find_name_printed_by_transpiler(&self, arm: ExprId, joins_texts: bool) -> Option<&[u8]> {
+        let is_one_text = match self.hir[arm].kind {
+            ExprKind::String(_) => true,
+            ExprKind::Template { exprs } => exprs.len() == 0,
+            _ => false,
+        };
+        if !(joins_texts || is_one_text)
+            || !(self.decisions()).is_constant_under_minify_syntax(self.hir, arm)
+        {
+            return None;
+        }
+        Alias::bun_prefixed_builtin(self.queries.atom_bytes(self.find_constant_text(arm)?))
+    }
+
+    fn is_callee_read_by_transpiler(&self, callee: ExprId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let mut callee = hir.skip_type_assertions(callee);
         while let ExprKind::Binary {
@@ -248,8 +280,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         let is_require_of_file = matches!(hir[callee].kind, ExprKind::Ident(_))
             && bound.binding(callee) == Binding::CommonJs(CommonJsVariable::Require);
-        (is_require_of_file || find_module_printed_as_require(hir, bound, callee).is_some())
-            && self.is_name_read_by_transpiler(name)
+        is_require_of_file || find_module_printed_as_require(hir, bound, callee).is_some()
     }
 
     fn is_name_read_by_transpiler(&self, name: ExprId) -> bool {
@@ -326,7 +357,9 @@ pub(crate) fn lower_import_call(
         SiteAnswer::Computed(candidates) => {
             let mut arguments = hir.ids(args);
             let node = arguments.next().unwrap_or(ExprId::NONE);
-            let specifier = if node.is_some() {
+            let specifier = if lowering.file.has_arm_for_transpiler_alone(node) {
+                lowering.lower_name_as_transpiler_prints_it(node, true)
+            } else if node.is_some() {
                 lowering.lower_expression(node)
             } else {
                 lowering.builder.undefined()
@@ -370,6 +403,19 @@ pub(crate) fn lower_import_call(
                     false,
                     false,
                 );
+            }
+            let analysis = &lowering.file.compiled.analysis;
+            let site = analysis.import_site_index(ImportSiteKind::ImportCall(call));
+            let written = site.map(|site| analysis.import_sites[site].specifier);
+            if let (Some(first), Some(ImportSpecifier::Constant(name))) =
+                (hir.ids(args).next(), written)
+                && modules.is_name_without_code_that_mocks_give(name)
+            {
+                let specifier = lowering.lower_expression(first);
+                lowering.lower_arguments_for_effect(args, 1);
+                lowering.set_position(position);
+                let referrer = lowering.file.module_id();
+                return (lowering.builder).import_dynamic(specifier, None, referrer, false, false);
             }
             lowering.lower_arguments_for_effect(args, 0);
             lowering.set_position(position);
@@ -583,6 +629,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             is_read_by_transpiler: matches!(site.kind, ImportSiteKind::Require(_))
                 && require_call.is_none_or(|found| matches!(found.form, RequireCallForm::Direct))
                 && self.file.is_read_by_transpiler(callee, site.specifier_node),
+            has_arm_for_transpiler_alone: matches!(answer, SiteAnswer::Computed(_))
+                && require_call.is_none_or(|found| matches!(found.form, RequireCallForm::Direct))
+                && match (site.kind, hir.member_key(callee)) {
+                    (ImportSiteKind::Require(_), _) => {
+                        self.file.is_callee_read_by_transpiler(callee)
+                    }
+                    (ImportSiteKind::RequireResolve(_), Some((require, _))) => {
+                        self.file.is_callee_read_by_transpiler(require)
+                    }
+                    _ => false,
+                }
+                && (self.file).has_arm_for_transpiler_alone(site.specifier_node),
             maker_of_asked_require,
         };
         if matches!(operation, ModuleOperation::RequireResolve) && given.len() > 1 {
@@ -1095,6 +1153,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             resolved_from: None,
             looks_in_cache: true,
             is_read_by_transpiler: false,
+            has_arm_for_transpiler_alone: false,
             maker_of_asked_require: None,
         };
         let operation = ModuleOperation::Require;
@@ -1141,6 +1200,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             resolved_from: None,
             looks_in_cache: false,
             is_read_by_transpiler: false,
+            has_arm_for_transpiler_alone: false,
             maker_of_asked_require: None,
         };
         let test = match self.file.classify_callee(hir[id].callee) {
@@ -1181,6 +1241,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             resolved_from: None,
             looks_in_cache: true,
             is_read_by_transpiler: true,
+            has_arm_for_transpiler_alone: false,
             maker_of_asked_require: None,
         };
         let written = match (site.answer, site.specifier) {
@@ -1747,9 +1808,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 };
                 self.emit_computed_load(load, referrer, name, specifier, candidates)
             }
-            SiteAnswer::Failed(failure) => {
-                self.emit_require_failure(site, specifier, failure, true)
-            }
+            SiteAnswer::Failed(failure) => match site.specifier {
+                ImportSpecifier::Constant(name)
+                    if (self.file.inputs.modules).is_name_without_code_that_mocks_give(name) =>
+                {
+                    let name = self.emit_name_as_given(name, specifier);
+                    let referrer = self.referrer_of(site);
+                    self.emit_require_by_name(name, referrer)
+                }
+                _ => self.emit_require_failure(site, specifier, failure, true),
+            },
             SiteAnswer::Erased => self.builder.undefined(),
         }
     }
@@ -2489,11 +2557,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         module: ModuleRef,
         is_url: bool,
     ) -> ValueId {
+        let is_path = bun_paths::is_absolute_loose(self.file.queries.atom_bytes(name));
         let name = self.file.intern_atom(name);
         let referrer = self.file.module_id();
-        let is_code_outside = matches!(module, ModuleRef::External { .. })
-            && self.file.inputs.modules.external_kind(module) != Some(ExternalKind::HostValue);
-        if is_code_outside && !is_url {
+        let is_host_value =
+            self.file.inputs.modules.external_kind(module) == Some(ExternalKind::HostValue);
+        let is_file_outside =
+            matches!(module, ModuleRef::External { .. }) && (is_path || !is_host_value);
+        if is_file_outside && !is_url {
             let specifier = given.unwrap_or_else(|| self.builder.string(name));
             return self
                 .builder
@@ -2582,10 +2653,57 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> ValueId {
         let hir = self.file.hir;
         let first = (arguments.len() > 0).then(|| hir.id_at(arguments, 0));
-        let specifier = self.lower_computed_specifier(site.answer, first);
+        let specifier = match first {
+            Some(name) if site.has_arm_for_transpiler_alone => {
+                let joins_texts = !matches!(operation, ModuleOperation::RequireResolve);
+                Some(self.lower_name_as_transpiler_prints_it(name, joins_texts))
+            }
+            _ => self.lower_computed_specifier(site.answer, first),
+        };
         self.lower_arguments_for_effect(arguments, 1);
         self.set_position(self.file.load_position(call));
         self.emit_operation(operation, site, specifier)
+    }
+
+    fn lower_name_as_transpiler_prints_it(&mut self, name: ExprId, joins_texts: bool) -> ValueId {
+        let printed = self.builder.create_variable(None);
+        let done = self.create_block();
+        self.lower_arms_as_transpiler_prints_them(name, joins_texts, printed, done);
+        self.continue_in(done);
+        self.builder.read_variable(printed)
+    }
+
+    fn lower_arms_as_transpiler_prints_them(
+        &mut self,
+        name: ExprId,
+        joins_texts: bool,
+        printed: LocalVariable,
+        done: BlockId,
+    ) {
+        let name = self.file.hir.skip_type_assertions(name);
+        self.lower_conditional_arms(name, false, &mut |this, arm| {
+            let inner = this.file.hir.skip_type_assertions(arm);
+            let is_choice = matches!(this.file.hir[inner].kind, ExprKind::Cond { .. });
+            if let Some(text) = this
+                .file
+                .find_name_printed_by_transpiler(inner, joins_texts)
+            {
+                let text = text.to_vec();
+                let text = this.emit_text(&text);
+                this.builder.write_variable(printed, text);
+            } else if is_choice && inner != name && !this.file.is_statically_resolved(inner) {
+                return this.lower_arms_as_transpiler_prints_them(
+                    inner,
+                    joins_texts,
+                    printed,
+                    done,
+                );
+            } else {
+                let value = this.lower_expression(arm);
+                this.builder.write_variable(printed, value);
+            }
+            this.jump(done);
+        });
     }
 
     fn lower_computed_specifier(
@@ -2692,7 +2810,18 @@ fn lower_tested_call(
         }
         Chain::No | Chain::Continue => {}
     }
-    let Arguments::Values(values) = lowering.lower_arguments(hir[id].args) else {
+    let values = match site.has_arm_for_transpiler_alone {
+        true => {
+            let mut arguments = hir.ids(hir[id].args);
+            let name = arguments.next().expect("the name has arms");
+            let joins_texts = !matches!(operation, ModuleOperation::RequireResolve);
+            let name = lowering.lower_name_as_transpiler_prints_it(name, joins_texts);
+            let others = arguments.map(|argument| lowering.lower_expression(argument));
+            Arguments::Values(std::iter::once(name).chain(others).collect())
+        }
+        false => lowering.lower_arguments(hir[id].args),
+    };
+    let Arguments::Values(values) = values else {
         unreachable!("a module call with a spread argument is an ordinary call");
     };
     lowering.set_position(lowering.file.load_position(call));

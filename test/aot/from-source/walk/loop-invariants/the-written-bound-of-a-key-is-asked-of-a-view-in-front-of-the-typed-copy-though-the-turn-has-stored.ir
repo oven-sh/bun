@@ -1,0 +1,34 @@
+# -- source: the-written-bound-of-a-key-is-asked-of-a-view-in-front-of-the-typed-copy-though-the-turn-has-stored.ts
+# declare function sink(value: unknown): void;
+# const widths = new Uint16Array([0, 1, 1, 1, 1, 1, 1, 1, 1, 2]);
+# let swapped = new Uint16Array([0, 1, 1, 1, 1, 1, 1, 1, 1, 2]);
+# const room = new ArrayBuffer(20, { maxByteLength: 40 }), tracking = new Uint16Array(room);
+# class Reader { seen: number; constructor() { this.seen = 0; } step(): number { this.seen = (this.seen + 5) & 7; return this.seen & 1; } }
+# function decode(reader: Reader): number { let code = 0, first = 0; for (let width = 1; width < 10; width++) { code |= reader.step(); const count = widths[width]!; if (code - count < first) return code * 16 + width; first = (first + count) << 1; code <<= 1; } return -1; }
+# function decodeSwapped(reader: Reader): number { let code = 0, sum = 0; for (let width = 1; width < 10; width++) { code |= reader.step(); const count = swapped[width]!; sum += count; code <<= 1; } return sum; }
+# function decodeShrinking(reader: Reader, at: number): number { let code = 0, sum = 0; for (let width = 1; width < 10; width++) { code |= reader.step(); if (width === at) room.resize(4); const count = tracking[width]!; sum += count + 1; code <<= 1; } return sum; }
+# const said = [decode(new Reader()), decodeSwapped(new Reader())];
+# swapped = new Uint16Array([0, 1, 1]);
+# said.push(decodeSwapped(new Reader()), decodeShrinking(new Reader(), 99), decodeShrinking(new Reader(), 3));
+# sink(said.join(" "));
+# -- end of source
+# `widths[width]!` with width in 1 .. 9: nothing said that 9 lies inside the view, so the read gave undefined|int and count, first and `code - count` went as doubles with a test for NaN in every turn.
+# Two rules refused the proof. A counter is held below the room of a view only where the view is a VALUE from in front of the loop, and `widths` is a variable of the module, read in the turn. And at the
+# read itself nothing was asked in front of the typed copy, nor could the turn begin again, because step(), copied in line, has stored into the reader. A test in front runs before the first turn: what the
+# turn has WRITTEN does not touch it; only other code could. So "9 < the length" is asked there, as it is of a list, and the read lies inside.
+# decodeSwapped: the variable holds a shorter view at the second call: the test fails and the other copy answers NaN as plain does. decodeShrinking: a turn resizes the buffer: the turns do not leave
+# views as they are, nothing is asked in front, and the reads behind the resize give undefined.
+# f1 = decode, f2 = decodeSwapped, f3 = decodeShrinking
+# OPTIONS: testing=CheckProofsAtRunTime check=Validate
+# RUN: walk f1 f2 f3 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetTypedArrayElement {{*}}[keyIsIntegral, isInsideView]
+# CHECK-LABEL: code f2:Body
+# CHECK: = GetTypedArrayElement {{*}}[keyIsIntegral, isInsideView]
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: isInsideView
+# RUN(COUNT): compile BoundsAskedOfViewsInFrontOfTypedCopies
+# COUNT: statistic BoundsAskedOfViewsInFrontOfTypedCopies 2
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 34 10 NaN 9 NaN
+# SHELL: exited with 0

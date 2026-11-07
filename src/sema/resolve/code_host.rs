@@ -68,6 +68,10 @@ pub trait CodeHost: Host {
     ) {
     }
 
+    fn stands_for_text_that_cannot_be_read(&self, _payload: &HostPayload) -> bool {
+        false
+    }
+
     fn kind_of_file_missing_at_build(&self) -> Option<ExternalKind> {
         None
     }

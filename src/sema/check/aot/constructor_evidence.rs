@@ -410,6 +410,46 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         functions.binary_search(&function.function).is_ok()
     }
 
+    fn compute_declarations_named_by_new(&mut self, file: FileId) -> &'s [SymbolId] {
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let expressions = self.c.exprs_by_kind(file);
+        let mut named = Vec::new();
+        for &construction in expressions.of(ExprTag::New) {
+            let ExprKind::New(site) = hir[construction].kind else {
+                continue;
+            };
+            let callee = hir.skip_type_assertions(hir[site].callee);
+            if matches!(hir[callee].kind, ExprKind::Ident(_))
+                && let Binding::Symbol(symbol) = bound.binding(callee)
+            {
+                named.push(symbol);
+            }
+        }
+        named.sort_unstable();
+        named.dedup();
+        list_in(self.c.arena, &named)
+    }
+
+    pub(super) fn is_named_by_new(&mut self, function: FunctionRef) -> bool {
+        let FunctionRef { file, function } = function;
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let symbol = match bound.fns[function.idx()].owner {
+            FnOwner::Expr(_) => {
+                find_constant_holding(hir, bound, function).map(|(symbol, _)| symbol)
+            }
+            FnOwner::Stmt(_) => Some(bound.declared_symbol(Decl::Fn(function))),
+            FnOwner::None | FnOwner::Member(_) | FnOwner::Type(_) => None,
+        };
+        let Some(symbol) = symbol else {
+            return false;
+        };
+        let of_file = self.prototype_links(file);
+        let named = *of_file
+            .declarations_named_by_new
+            .get_or_init(|| self.compute_declarations_named_by_new(file));
+        named.binary_search(&symbol).is_ok()
+    }
+
     pub(super) fn is_held_by_name_or_returned(&self, function: FunctionRef) -> bool {
         let FunctionRef { file, function } = function;
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));

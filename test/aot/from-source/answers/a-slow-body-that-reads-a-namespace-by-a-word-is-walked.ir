@@ -15,7 +15,7 @@
 # That of tell() reads a namespace object, which the walked form takes out of a word of the instance: what lies there is what the importer was bound to. Straight code has only the question to the run time,
 # which answers the namespace of now. So the read has no straight form, and the body is walked.
 # RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
-# REQUIRES(STRAIGHT): faulting-loop-polls
+# REQUIRES(STRAIGHT): faulting-loop-polls as-written
 # STRAIGHT: statistic UnitsWrittenStraight 2
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 8 8 6 6

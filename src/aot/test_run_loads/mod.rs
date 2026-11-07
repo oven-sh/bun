@@ -40,6 +40,7 @@ pub(crate) enum WhyEveryFile {
     NamesPlugin,
     LoadsFileUnderQuery,
     TakesOutUnderUnknownKey,
+    HandsEntryOnUnderUnknownKey,
     HandsTableOn,
     StoresLoader,
     ResetsModules,
@@ -53,6 +54,9 @@ impl WhyEveryFile {
             WhyEveryFile::TakesOutUnderUnknownKey => {
                 "takes a key out of require.cache that it does not spell"
             }
+            WhyEveryFile::HandsEntryOnUnderUnknownKey => {
+                "hands on an entry of require.cache under a key that it does not spell"
+            }
             WhyEveryFile::HandsTableOn => "hands require.cache on",
             WhyEveryFile::StoresLoader => "stores a loader into Module._extensions",
             WhyEveryFile::ResetsModules => "names resetModules of the test runner",
@@ -62,6 +66,7 @@ impl WhyEveryFile {
     pub(crate) fn takes_files_out(self) -> bool {
         match self {
             WhyEveryFile::TakesOutUnderUnknownKey
+            | WhyEveryFile::HandsEntryOnUnderUnknownKey
             | WhyEveryFile::HandsTableOn
             | WhyEveryFile::ResetsModules => true,
             WhyEveryFile::NamesPlugin
@@ -76,6 +81,9 @@ impl WhyEveryFile {
             WhyEveryFile::LoadsFileUnderQuery => Some(b"This loads a file under a query"),
             WhyEveryFile::TakesOutUnderUnknownKey => Some(
                 b"This takes a module out of the table of loaded modules under a key that the build can't tell",
+            ),
+            WhyEveryFile::HandsEntryOnUnderUnknownKey => Some(
+                b"This hands on an entry of the table of loaded modules under a key that the build can't tell",
             ),
             WhyEveryFile::HandsTableOn => Some(
                 b"This file hands the table of loaded modules on to code that may take anything out of it",

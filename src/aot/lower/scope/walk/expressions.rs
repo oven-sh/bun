@@ -237,7 +237,8 @@ impl Walker<'_, '_> {
         binding: Binding,
     ) -> Option<CommonJsVariable> {
         let builtins = self.input.builtins;
-        if !self.walk.has_values_of_each_run || !matches!(binding, Binding::Symbol(_)) {
+        let has_values_of_run = self.walk.has_values_of_each_run || self.walk.keeps_first_exports;
+        if !has_values_of_run || !matches!(binding, Binding::Symbol(_)) {
             return None;
         }
         let Some(Resolved::Builtin(path)) = builtins.of_pure_expr(identifier) else {
@@ -248,6 +249,9 @@ impl Walker<'_, '_> {
     }
 
     fn is_value_of_run(&self, variable: CommonJsVariable, context: Context) -> bool {
+        if variable == CommonJsVariable::Exports && self.walk.keeps_first_exports {
+            return true;
+        }
         self.walk.has_values_of_each_run
             && match variable {
                 CommonJsVariable::Exports => true,
@@ -410,7 +414,7 @@ impl Walker<'_, '_> {
                 CodeUnit::Function(constructor) => {
                     binds_this_for_what_follows = self.walk.function_of_fn[constructor.idx()]
                         == Some(context.function)
-                        && self.unconditional_statements.contains(&expression);
+                        && self.unconditional_calls_of_super.contains(&expression);
                     self.record_slot_use(context.function, scope, ScopeSlot::Callee);
                     let reference = (context.function, constructor);
                     self.walk.function_references.push(reference);

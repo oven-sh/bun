@@ -1,0 +1,15 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function fixed(n: unknown): string { return typeof Number(n).toFixed(2); }
+# print(fixed(JSON.parse("1.5")));
+# print("went on");
+# -- end of source
+# The door behind a call of a built-in asks the kinds and the classes that the record names. THE LIE: the row writes null alone.
+# RUN: run-in-shell mechanisms=all
+# CHECK: string
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Number.prototype.toFixed/KindOfResult
+# LIE: Number.prototype.toFixed (call) is declared as null, and native code answered with something else: string. This is a bug in Bun.
+# LIE-NOT: went on
+# LIE: crashed

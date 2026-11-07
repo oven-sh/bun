@@ -1,0 +1,33 @@
+# -- source: instanceof-of-a-function-that-no-statement-lays-a-test-on-keeps-its-guard.js
+# function Top(t) { this.t = t; }
+# function Mid(m) { this.m = m; }
+# function Low(l) { this.l = l; }
+# function isTop(r) { return r instanceof Top; }
+# function isMid(r) { return r instanceof Mid; }
+# function isLow(r) { return r instanceof Low; }
+# function One() {}
+# function Two() {}
+# Object.setPrototypeOf(Mid.prototype, Top.prototype);
+# Object.setPrototypeOf(Low.prototype, Mid.prototype);
+# for (const each of [One, Two]) { try { each[Symbol.hasInstance] = function () { return false; }; } catch (error) { } }
+# for (const each of [Top, Mid, Low]) each.tag = 1;
+# Object.defineProperty(Mid, Symbol.hasInstance, { value: function () { return true; } });
+# sink(isTop(new Top(1)), isMid(new Mid(1)), isLow(new Low(1)), isTop(sink()), isMid(sink()), isLow(sink()));
+# -- end of source
+# The second loop stores through a value that may be any of the three functions, so each of them may hold what the program stores under Symbol.hasInstance on some function that nobody can tell apart: the function of the first loop.
+# That is a word that says "may": no record expects that function on one of the three. The shape is asked behind the guard of the name, and the guard answers at run time for whoever lays a test.
+# f2 = Mid, f4 = isTop, f5 = isMid, f6 = isLow
+# RUN: walk f4 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: = AreMembersUnchanged {{*}}key=@@hasInstance
+# RUN(LOW): walk f6 mechanisms=all
+# REQUIRES(LOW): entries-of-bun
+# LOW: = AreMembersUnchanged {{*}}key=@@hasInstance
+# What the statement lays on Mid nobody can replace and no record names: the program's own deed ends the guard.
+# RUN(MID): walk f5 mechanisms=all
+# REQUIRES(MID): entries-of-bun
+# MID: = AreMembersUnchanged {{*}}key=@@hasInstance
+# RUN(LINK): link members mechanisms=all
+# LINK-NOT: on-function {{*}} @@hasInstance
+# LINK: on-function f2 @@hasInstance
+# LINK-NOT: on-function {{*}} @@hasInstance

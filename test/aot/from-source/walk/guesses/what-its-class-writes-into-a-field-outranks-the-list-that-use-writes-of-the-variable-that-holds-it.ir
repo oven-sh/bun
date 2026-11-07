@@ -1,0 +1,14 @@
+# -- source: what-its-class-writes-into-a-field-outranks-the-list-that-use-writes-of-the-variable-that-holds-it.js
+# class Grid { constructor(n) { this.cells = new Float64Array(n); for (let i = 0; i < n; i++) this.cells[i] = i % 5; } }
+# function go(g, k) { const c = g.cells; let s = 0; for (let i = 0; i < c.length; i++) if (c[i] === 3) s += k; return s; }
+# const data = new Grid(40), found = { go }[JSON.parse('"go"')];
+# print(found(data, 1), found(data, 2));
+# -- end of source
+# Use writes of `c` no more than "a text or a list": it is read under an index and asked for its length. But `c` holds what is read off a field, and the field's own class writes floats into it: the text of the
+# file. The two do not meet, and a bare word of use says less: the floats are expected, tested once in front of the loop.
+# f1 = go
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Float64Array
+# CHECK: = GetTypedArrayElement
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 8 16

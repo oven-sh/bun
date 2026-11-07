@@ -1,0 +1,17 @@
+# The file's own start fills ROW in the next statement and calls fill(): neither list is put off: g1 = ROW, g2 = COL. LATER (g3) is named by a function that the body hands out and does not call: it is put off as before.
+# -- source: tables.cjs
+# var ROW = [], COL = [], LATER = [];
+# (function () { for (var i = 0; i < 9; i++) ROW[i] = i * 2; })();
+# function fill() { for (var i = 0; i < 9; i++) COL[i] = i; }
+# fill();
+# function at(i) { return ROW[i] + COL[i]; }
+# function later(i) { return LATER[i]; }
+# globalThis.kept = later;
+# console.log(at(process.argv.length));
+# -- end of source
+# REQUIRES: entries-of-bun
+# RUN: plan deferred mechanisms=all
+# CHECK-NOT: deferred g1 made-by
+# CHECK-NOT: deferred g2 made-by
+# RUN(LATER): plan deferred mechanisms=all
+# LATER: deferred g3 made-by f0 {{*}} Data mark=null

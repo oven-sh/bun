@@ -195,6 +195,8 @@ pub(crate) struct ScopeAnalysis {
     pub(super) names_called: Vec<SymbolId>,
     pub(super) symbol_placements: Vec<Placement>,
     pub(super) slot_placements: Vec<(SlotKey, Placement)>,
+    pub(super) symbols_declared_at_module_level: Vec<SymbolId>,
+    pub(super) bindings_declared_in_front_of_scopes: Vec<u32>,
     pub(super) lexical_owners: Vec<ScopeId>,
     pub(super) bindings: GroupedList<BindingRef>,
     pub(super) environment_fields: GroupedList<BindingRef>,
@@ -300,6 +302,19 @@ impl ScopeAnalysis {
     #[inline]
     pub(in crate::lower) fn environment_fields(&self, scope: ScopeId) -> &[BindingRef] {
         self.environment_fields.get(scope.idx())
+    }
+
+    pub(in crate::lower) fn bindings_declared_in_front_of(&self, scope: ScopeId) -> u32 {
+        self.bindings_declared_in_front_of_scopes[scope.idx()]
+    }
+
+    pub(in crate::lower) fn place_at_module_level(&self, symbol: SymbolId) -> Option<u32> {
+        let place = self.symbols_declared_at_module_level.binary_search(&symbol);
+        place.ok().map(|place| place as u32)
+    }
+
+    pub(in crate::lower) fn number_of_symbols_at_module_level(&self) -> u32 {
+        self.symbols_declared_at_module_level.len() as u32
     }
 
     #[inline]

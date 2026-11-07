@@ -27,14 +27,17 @@ last section.
 - **This folder has no steps of its own.** The `test-bun` shards of every platform run all of it on every pull request, under the
   rules of every other test: the same retries, the same time limits, and a red holds up the merge. What a pull request touches
   decides nothing.
-- **A program that compiles all of Bun's library, or much of it in a checking mode, lies under `library-sweeps/`**, not under `parallel/`:
-  each takes from half a minute to minutes of processor time. `scripts/rust-test.ts` hands them to `run-parallel.ts` in the step `cargo-test`, which has sixteen
+- **A program that compiles all of Bun's library, or much of it, lies under `library-sweeps/`**, not under `parallel/`:
+  thousands of functions each, in seconds. `scripts/rust-test.ts` hands them to `run-parallel.ts` in the step `cargo-test`, which has sixteen
   processors and which no shard of the tests waits for: `bun test/aot/run-parallel.ts --root=test/aot/library-sweeps test/aot/library-sweeps/*.*[jt]s`.
+  They are built as every program is, and none in a checking mode: `every-library-module-runs-under-the-checks.test.ts`
+  builds the library under the compiler's own checks.
 - **The programs under `parallel/` are dealt out like test files**: `run-parallel.ts --deal` says what the build of each takes, and
   `getRelevantTests()` in `scripts/runner.node.ts` deals them by cost, the number of the shard and the number of shards, never by
   the commit. Only a program that took 0.7 s or more has a line in `test/expected-durations.json`. A program that fails is not run again.
 - **Every program is built by itself**, as anybody builds it, and in each way of `harness/ways.ts`: as written and with its types erased.
-  In CI only Ubuntu without a sanitizer makes the
+  Behind those it is built once more with `--aot-testing=FailGuesses:<n>`, where one guess in n fails on purpose and the program walks from its
+  typed copies into the closed ones: the head of `run-parallel.ts` says which n. In CI only Ubuntu without a sanitizer makes the
   builds behind the first: elsewhere `flagsOfAotDriver()` in `scripts/runner.node.ts` says `--no-erased`. What a build makes of a
   program goes by all that the build holds, and beside others a fault may not show. `// Runs by itself: <why>` is for a program that
   keeps more threads busy than a machine has processors: its runs come last, each with nothing beside it.
@@ -43,9 +46,9 @@ last section.
   they are built with the sanitizer and with assertions.
 - **A platform or a sanitizer that cannot run a program** has a line for it in `test/expectations.txt`, with the reason. Such a line
   takes the file out of the run there and does nothing else.
-- **A program that does not pass today** says so in itself: `// Todo: <why>`. It is run all the same, and fails once it passes. An
+- **A program that does not pass today** says so in itself: `// Todo: <what differs>: <why>`. It is run all the same, fails once it passes, and fails by any other difference. An
   `.ir` file has `# TODO: <why>` for the same. In a test file: `test.todo(..)` with its body under a line `// TODO: <what happens today>`,
-  or `eachRow([.. gap("<what happens today>", [..]) ..])` of `supported.ts` for a row of a table.
+  or `eachRow([.. gap("<what happens today>", [..]) ..])` of `supported.ts` for a row of a table: such a row is run all the same, and fails once it has come true.
 - **A test that needs another build of Bun skips itself** on every build but that one: a sanitizer (`isASAN`), `--hardened=on`
   (`isHardened` of `hardened.ts`). The lane of the hardened build runs
   what its row in `testPlatforms` of `.buildkite/ci.ts` names. `the-build-under-test-is-the-one-its-step-names.test.ts` never skips

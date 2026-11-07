@@ -1,0 +1,41 @@
+# -- source: two-classes-have-the-names-asked-and-nobody-is-expected.js
+# class Reply {
+#   constructor(start) { this.replyCode = start; this.replySent = false; }
+#   askHeader(name) { return name.length + this.replyCode; }
+# }
+# class Echo {
+#   constructor(start) { this.replyCode = start; this.replySent = false; }
+#   askHeader(name) { return name.length - this.replyCode; }
+# }
+# class Other {
+#   constructor(start) { this.otherMark = start; }
+# }
+# const shell = {
+#   get status() { return this.inner.replyCode; },
+#   ask(name) { return this.inner.askHeader(name); },
+# };
+# function wrap(inner) {
+#   const made = Object.create(shell);
+#   made.inner = inner;
+#   return made;
+# }
+# const listeners = {};
+# function on(name, listener) { listeners[name] = listener; }
+# function emit(name, value) { return listeners[name](value); }
+# on("reply", inner => { const made = wrap(inner); return made.status + made.ask("abc"); });
+# on("other", other => other.otherMark);
+# let sum = 0;
+# for (let i = 0; i < 4; i++) sum += emit("reply", i % 2 ? new Reply(i) : new Echo(i)) + emit("other", new Other(i));
+# print(sum);
+# -- end of source
+# The twin: two allocated classes have both names.
+# RUN(HELD): link held fields mechanisms=all
+# HELD-NOT: "inner" appended proven=L
+# RUN(COUNTS): link held counts mechanisms=all
+# COUNTS: counts cells of fields expected by the names asked of what lies in them | 0
+# RUN(PROVING): link fields mechanisms=all
+# PROVING-NOT: "inner" appended proven=L
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 26
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 26

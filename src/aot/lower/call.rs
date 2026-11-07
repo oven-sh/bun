@@ -17,9 +17,10 @@ use super::{FileLowering, FunctionLowering, scope};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{Resolved, builtin_value_of, table};
 use crate::ir::{
-    DeclaredType, ExpectedResultId, PositionFlags, PropertyKey, PropertyKeyId, StringId, TypeTable,
-    ValueId,
+    DeclaredType, Edge, ExpectedResultId, PositionFlags, PropertyKey, PropertyKeyId, StringId,
+    TypeTable, ValueId,
 };
+use crate::load::SourceKind;
 
 use crate::modules::ModuleRef;
 
@@ -225,7 +226,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let function = self.lower_expression(site.callee);
         let callee = Callee::without_key(function, None, self.file.find_callee_name(site.callee));
+        let hir = self.file.hir;
+        let mut handed = hir
+            .ids(site.args)
+            .map(|argument| hir.skip_type_assertions(argument));
+        let only = handed.next().filter(|_| handed.next().is_none());
+        let around = std::mem::replace(&mut self.only_argument_of_construction, only);
         let arguments = self.lower_arguments_of_construction(site);
+        self.only_argument_of_construction = around;
         let value = self.emit_new_expression(expression, callee, arguments);
         self.record_state_creation(expression, function, value);
         value
@@ -398,15 +406,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         call: ExprId,
         site: Call,
         named: Option<BuiltinId>,
-        callee: Callee,
+        mut callee: Callee,
         mut arguments: Arguments,
         tail: Tail<'_>,
     ) -> ValueId {
         let hir = self.file.hir;
         self.convert_argument_values(call, &mut arguments);
+        let is_of_program = self.file.inputs.sources.kind(self.file.file) == SourceKind::Program;
+        if named == Some(BuiltinId::NodeModuleCreateRequire) && is_of_program {
+            callee.this = Some(self.emit_this_by_which_the_program_vouches(&callee));
+        }
         if matches!(hir[call].kind, ExprKind::Call(_)) && named.is_some_and(table::stubs_global) {
             arguments = self.hand_global_object_to_stub(arguments);
         }
+        self.file.intern_key_written_at_definition(site, named);
         let options = CallOptions {
             tail: Tail::No,
             is_never_inlined: false,
@@ -436,6 +449,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.emit_call_with_expected_result(callee, arguments, options, expected)
             }
         }
+    }
+
+    fn emit_this_by_which_the_program_vouches(&mut self, callee: &Callee) -> ValueId {
+        let this = self.builder.create_variable(None);
+        let written = callee.this.unwrap_or_else(|| self.builder.undefined());
+        self.builder.write_variable(this, written);
+        let real = self.emit_builtin_itself(BuiltinId::NodeModuleCreateRequire);
+        let is_real = self.builder.strict_eq(callee.function, real);
+        let by_real = self.create_block();
+        let done = self.create_block();
+        self.builder
+            .branch(is_real, Edge::to(by_real), Edge::to(done));
+
+        self.continue_in(by_real);
+        let word = self.emit_builtin_itself(BuiltinId::PrivateGlobalsCreateCommonJSModule);
+        self.builder.write_variable(this, word);
+        self.jump(done);
+
+        self.continue_in(done);
+        self.builder.read_variable(this)
     }
 
     fn emit_new_expression(
@@ -519,6 +552,20 @@ impl FileLowering<'_, '_, '_, '_> {
             self.fragment.property_keys.intern(key);
         }
         Some(number)
+    }
+
+    fn intern_key_written_at_definition(&mut self, site: Call, named: Option<BuiltinId>) {
+        let place = match named {
+            Some(BuiltinId::ObjectDefineProperty | BuiltinId::ReflectDefineProperty) => 1,
+            Some(
+                BuiltinId::ObjectPrototype__defineGetter__
+                | BuiltinId::ObjectPrototype__defineSetter__,
+            ) => 0,
+            _ => return,
+        };
+        if let Some(written) = self.hir.ids(site.args).nth(place) {
+            self.find_constant_key(written);
+        }
     }
 
     fn intern_key_of_registered_symbol(&mut self, call: ExprId) {

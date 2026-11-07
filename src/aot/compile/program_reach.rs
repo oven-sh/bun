@@ -109,6 +109,7 @@ enum Interest {
     LinkedName(SyntheticExportId, ModuleRef),
     ModuleObject(ModuleObjectOwner, ModuleObjectUse),
     EntryOfModuleCache,
+    DeletionFromModuleCache(ExprId),
     LoadByUnknownName,
     NameReadFromLoadByUnknownName(Atom),
     LoadOfIsolatedCode,
@@ -1882,6 +1883,10 @@ impl<'a, 's> FileScan<'a, 's> {
                 self.add_interest(self.hir[mention.expr].pos, interest);
             }
         }
+        for &entry in source.builtins.entries_deleted_from_module_cache() {
+            let interest = Interest::DeletionFromModuleCache(entry);
+            self.add_interest(self.hir[entry].pos, interest);
+        }
         let only_reads_entries = source.builtins.keys_taken_out_of_module_cache().is_empty()
             && !source.builtins.loses_sight_of_module_cache();
         if source.builtins.reaches_module_cache()
@@ -2165,6 +2170,7 @@ struct Found {
     loads_isolated_code: bool,
     files_naming_ways: Vec<FileId>,
     replaced_loader_hooks: Vec<ReplacedLoaderHook>,
+    deletions_from_module_cache: Vec<(FileId, ExprId)>,
     stores_loader_function: bool,
     files_that_computed_names_may_ask_for: Vec<FileId>,
 }
@@ -2183,6 +2189,8 @@ impl Found {
         self.files_naming_ways.append(&mut other.files_naming_ways);
         self.replaced_loader_hooks
             .append(&mut other.replaced_loader_hooks);
+        self.deletions_from_module_cache
+            .append(&mut other.deletions_from_module_cache);
         self.stores_loader_function |= other.stores_loader_function;
         self.files_that_computed_names_may_ask_for
             .append(&mut other.files_that_computed_names_may_ask_for);
@@ -3110,11 +3118,38 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
+    fn read_name_from_files_that_hand_it_on(&self, file: FileId, name: Atom) {
+        let walk = self.walk;
+        let graph = walk.input.graph;
+        let (mut file, mut name) = (file, name);
+        while let Some((source, listed)) = graph.find_what_hands_on_names(file, name) {
+            let ModuleRef::File(source) = source else {
+                return;
+            };
+            if !walk.names_read_from_objects.insert((source, listed)) {
+                return;
+            }
+            (file, name) = (source, listed);
+        }
+        if !graph.is_brought_by_star(file, name) {
+            return;
+        }
+        for &source in graph.files_named_by_stars(file) {
+            if graph.lists_export(ModuleRef::File(source), name, &walk.input.files.atoms)
+                && walk.names_read_from_objects.insert((source, name))
+            {
+                self.read_name_from_files_that_hand_it_on(source, name);
+            }
+        }
+    }
+
     fn reach_export(&mut self, module: ModuleRef, name: Atom) -> bool {
         let walk = self.walk;
         let module = module_with_code(module);
-        if let ModuleRef::File(file) = module {
-            walk.names_read_from_objects.insert((file, name));
+        if let ModuleRef::File(file) = module
+            && walk.names_read_from_objects.insert((file, name))
+        {
+            self.read_name_from_files_that_hand_it_on(file, name);
         }
         if walk.has_stored_names(module) {
             return self.reach_named_member(module, name);
@@ -3185,6 +3220,7 @@ impl Reacher<'_, '_, '_> {
             return;
         }
         for export in graph.exports(file) {
+            self.read_name_from_files_that_hand_it_on(file, export.name);
             self.reach_files_between(file, HandedOn::of(export.binding));
             self.reach_export_binding(export.binding);
         }
@@ -3428,6 +3464,9 @@ impl Reacher<'_, '_, '_> {
                 self.reach_module_object(file, owner, object_use);
             }
             Interest::EntryOfModuleCache => self.keep_every_module_object(file),
+            Interest::DeletionFromModuleCache(entry) => {
+                self.found.deletions_from_module_cache.push((file, entry));
+            }
             Interest::StoreOfLoaderFunction(replaced) => {
                 self.keep_every_module_object(file);
                 self.found.stores_loader_function = true;
@@ -3820,6 +3859,7 @@ pub(crate) struct ReachedModules {
     pub data_found_by_name: Vec<ModuleRef>,
     pub left_out_inner_modules: Vec<ModuleRef>,
     pub replaced_loader_hooks: Vec<ReplacedLoaderHook>,
+    pub deletions_from_module_cache: Vec<(FileId, ExprId)>,
     pub stores_loader_function: bool,
     required: SharedSet<(ModuleRef, ModuleRef)>,
     left_to_calls: FxHashSet<(FileId, FileId)>,
@@ -3900,6 +3940,9 @@ fn fingerprint(
     }
     for replaced in &reached.replaced_loader_hooks {
         add(9, replaced.file, u64::from(replaced.assignment.0));
+    }
+    for &(file, entry) in &reached.deletions_from_module_cache {
+        add(10, file, u64::from(entry.0));
     }
     let mut sums: Vec<(&[FileId], u64)> = (files.compiled_files().chunks(FILES_OF_A_TASK))
         .map(|files| (files, 0))
@@ -4031,6 +4074,11 @@ pub(crate) fn find_left_out_code(
     reached_modules.found_by_name = in_order(loads.files_found);
     reached_modules.replaced_loader_hooks = found.replaced_loader_hooks;
     reached_modules.stores_loader_function = found.stores_loader_function;
+    reached_modules.deletions_from_module_cache = found.deletions_from_module_cache;
+    reached_modules
+        .deletions_from_module_cache
+        .sort_unstable_by_key(|&(file, entry)| (file, entry.0));
+    reached_modules.deletions_from_module_cache.dedup();
     reached_modules
         .replaced_loader_hooks
         .sort_unstable_by_key(|replaced| (replaced.file, replaced.assignment.0));

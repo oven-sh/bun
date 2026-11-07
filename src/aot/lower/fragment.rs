@@ -17,8 +17,8 @@ use super::layouts::ObjectTypeKey;
 use super::tables::{SharedTables, TableLengths, TaskState, UnitTables};
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{
-    Data, EvalScope, ExpectedResult, Function, FunctionVisibility, Layout, LayoutFlags,
-    RuntimeFunctionEntry, SourcePositions, SourceRange, Variable,
+    Data, DeclaredRecord, EvalScope, ExpectedResult, Function, FunctionVisibility, Layout,
+    LayoutFlags, RuntimeFunctionEntry, SourcePositions, SourceRange, Variable,
 };
 use crate::ir::{
     DataId, EvalScopeId, ExpectedResultId, FunctionId, FunctionKey, Id, LayoutId, LayoutKey,
@@ -52,6 +52,7 @@ pub struct Fragment {
     pub eval_scopes: Vec<(EvalScopeId, EvalScope)>,
     pub data: Vec<(DataId, Data)>,
     pub expected_results: Vec<(ExpectedResultId, ExpectedResult)>,
+    pub declared_records: Vec<DeclaredRecord>,
     pub supertype_edges: Vec<(LayoutId, LayoutId)>,
     pub function_type_edges: Vec<(FunctionId, FunctionId)>,
     pub builtin_members: Vec<(FunctionId, BuiltinId)>,
@@ -239,6 +240,7 @@ pub(crate) struct FragmentBuilder {
     data: Vec<(DataId, Data)>,
     expected_result_count: u32,
     expected_results: Vec<(ExpectedResultId, ExpectedResult)>,
+    declared_records: Vec<DeclaredRecord>,
     supertype_edges: Vec<(LayoutId, LayoutId)>,
     function_type_edges: Vec<(FunctionId, FunctionId)>,
     runtime_functions: Vec<RuntimeFunctionEntry>,
@@ -290,6 +292,7 @@ impl FragmentBuilder {
             data: Vec::new(),
             expected_result_count: tables.expected_result_count,
             expected_results: Vec::new(),
+            declared_records: Vec::new(),
             supertype_edges: Vec::new(),
             function_type_edges: Vec::new(),
             runtime_functions: Vec::new(),
@@ -413,9 +416,12 @@ impl FragmentBuilder {
         self.functions.push((id, function));
     }
 
-    pub(crate) fn map_function_texts(&mut self, map: impl Fn(SourceRange) -> SourceRange) {
-        for (_, function) in &mut self.functions {
-            let mapped = map(function.text);
+    pub(crate) fn map_function_texts(
+        &mut self,
+        mut map: impl FnMut(FunctionKey, SourceRange) -> SourceRange,
+    ) {
+        for (id, function) in &mut self.functions {
+            let mapped = map(self.function_keys.key_of(*id), function.text);
             if mapped != function.text {
                 Arc::make_mut(function).text = mapped;
             }
@@ -506,6 +512,10 @@ impl FragmentBuilder {
     pub(crate) fn add_data(&mut self, data: Data) -> DataId {
         data.for_each_reference(&mut |reference| self.note_what_is_built(reference));
         add_record(&mut self.data, &mut self.data_count, data)
+    }
+
+    pub(crate) fn add_declared_record(&mut self, declared: DeclaredRecord) {
+        self.declared_records.push(declared);
     }
 
     pub(crate) fn add_expected_result(&mut self, expected: ExpectedResult) -> ExpectedResultId {
@@ -614,6 +624,7 @@ impl FragmentBuilder {
             eval_scopes: self.eval_scopes,
             data: self.data,
             expected_results: self.expected_results,
+            declared_records: self.declared_records,
             supertype_edges: sort_and_dedup(self.supertype_edges),
             function_type_edges: sort_and_dedup(self.function_type_edges),
             builtin_members: Vec::new(),

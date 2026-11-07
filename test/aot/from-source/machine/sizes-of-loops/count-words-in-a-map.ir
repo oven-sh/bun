@@ -1,0 +1,22 @@
+# f1 = count
+# -- source: count-words-in-a-map.ts
+# function count(words: string[]): Map<string, number> {
+#   const counts = new Map<string, number>();
+#   for (let k = 0; k < words.length; k++) {
+#     const word = words[k]!;
+#     counts.set(word, (counts.get(word) ?? 0) + 1);
+#   }
+#   return counts;
+# }
+# declare const input: any;
+# const words: string[] = [];
+# words.push(String(input));
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = count(words);
+# -- end of source
+# The compiler before this one: 31 instructions, 5 of them patches.
+# When the bound was taken: loop: operations 46, patches 4, moves 11, unlikely 13 ; loop: operations 54, patches 4, moves 10, unlikely 13.
+# RUN(X64): loops most:57,64 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 57
+# X64-NEXT: loop: at most 64

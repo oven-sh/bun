@@ -6,7 +6,6 @@
 //! `checkVariableLikeDeclaration` with `getBindingElementTypeFromParentType` for binding elements, in TypeScript
 //! 7.0.2's checker.go.
 
-use super::aot::DiagnosticSubject;
 use super::enclosing_declaration::Enclosing;
 use super::errors::is_close;
 use super::errors_names_and_exports::fully_qualified_name;
@@ -1012,11 +1011,7 @@ impl<'p> Checker<'p, '_> {
             };
             self.new_diagnostic_chain(chain, at, code, &args)
         };
-        // What was made of a name that the brought declarations declare lacks the member by their word alone.
-        diagnostic.subject = match self.is_expression_brought(file, e) {
-            true => DiagnosticSubject::BroughtDeclaration,
-            false => subject,
-        };
+        diagnostic.subject = subject;
         self.reporting_nonexistent.pop();
         self.reprinting = reprinting;
         // A query re-entered while building the message is no reason to roll back the message.

@@ -1,0 +1,19 @@
+# The guard at the entry asks whether `samples` is of one of nine classes, each told by the type of its cell. Seven of the types stand side by side, then Float16Array's, which is not written, then two more:
+# two ranges, each a subtraction and a compare, where a compare a class would be nine.
+# f1 = total
+# -- source: a-test-for-nine-kinds-of-views-asks-two-ranges-of-the-type-of-the-cell.ts
+# type Samples = Int8Array | Uint8Array | Uint8ClampedArray | Int16Array | Uint16Array | Int32Array | Uint32Array | Float32Array | Float64Array;
+# const tools: Record<string, (samples: Samples) => number> = { total(samples) { let sum = 0; for (let i = 0; i < samples.length; i++) sum += samples[i]; return sum; } };
+# console.log(tools[JSON.parse('"total"')](new Float64Array(9)));
+# -- end of source
+# RUN: emit f1:ParameterGuard mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: = Load8Z({{*}}JSCell_typeInfoType
+# CHECK-NEXT: = Add(
+# CHECK-NEXT: = Below({{*}}, @[[seven]], origin
+# CHECK: = Load8Z({{*}}JSCell_typeInfoType
+# CHECK-NEXT: = Add(
+# CHECK-NEXT: = Below({{*}}, @[[two]], origin
+# CHECK-NOT: JSCell_typeInfoType
+# CHECK: @[[seven]] = Const32(7)
+# CHECK: @[[two]] = Const32(2)

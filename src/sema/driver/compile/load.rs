@@ -4,8 +4,7 @@ use super::{
     WithoutBunTypes,
 };
 use crate::{
-    Libs, default_compiler_options, diagnostic_from_config_error, give_pool_stack_for_lowering,
-    host, use_dedicated_pool,
+    Libs, default_compiler_options, diagnostic_from_config_error, host, use_pool_for_lowering,
 };
 use bun_sema::check::Program;
 use bun_sema::check::aot::{FileOrigin, containers_completed_by_bun_types};
@@ -34,8 +33,7 @@ pub fn load_program<'s>(
     host: &dyn CodeHost,
     request: &CompileRequest<'_, 's>,
 ) -> Result<LoadedProgram<'s>, LoadFailure> {
-    give_pool_stack_for_lowering();
-    use_dedicated_pool("Bun Compile");
+    use_pool_for_lowering("Bun Compile");
     let mut steps = LoggedSteps::begin(host);
     let entry_paths = match request.entry_points {
         EntryPoints::Written(specifiers) | EntryPoints::WrittenAndFound(specifiers, ..) => {
@@ -82,11 +80,15 @@ pub fn load_program<'s>(
         .custom_conditions
         .extend_from_slice(&request.code.custom_conditions);
     let has_bun_types_installed = choose_libraries(host, options, request.libs);
-    let names_bun_types_by_itself = options.names_bun_types_by_itself;
     let is_application = request.project_origin != FileOrigin::Runtime;
     let brings_bun_types =
         is_application && !has_bun_types_installed && take_bun_types_of_host(host, options);
     let has_bun_types = has_bun_types_installed || brings_bun_types;
+    let is_read_as_after_bun_init =
+        is_application && has_bun_types && project.config_path.is_empty();
+    if is_read_as_after_bun_init && !options.specifies_lib {
+        options.libs = vec![b"esnext".to_vec()];
+    }
     options.orders_files_as_listed = !is_application;
     if is_application && has_bun_types {
         last_files.append(&mut host.declarations_beside_bun_types(has_bun_types_installed));
@@ -148,7 +150,7 @@ pub fn load_program<'s>(
         _ => EntryPointsFound::default(),
     };
     steps.end("entry points, project, libraries");
-    let files = Files::load_for_compile(
+    let mut files = Files::load_for_compile(
         session,
         host,
         project.options,
@@ -159,6 +161,12 @@ pub fn load_program<'s>(
             code: request.code,
             fold: request.fold,
             atoms: request.atoms,
+        },
+    );
+    files.note_types_that_program_leads_to(
+        &|path| match &roots_with_and_without_what_is_excluded {
+            Some((_, kept)) => kept.has(&config::SplitFilePath::new(path), &|it| host.is_file(it)),
+            None => entry_paths.iter().any(|it| it == path),
         },
     );
     steps.end("the files: the sum of the lines above, from the walk on");
@@ -177,7 +185,7 @@ pub fn load_program<'s>(
     let errors = project.errors.iter().chain(&problems);
     let origins = compute_origins(files, host, request.project_origin);
     steps.end("origins of the files");
-    let bun_types = if has_bun_types_installed && names_bun_types_by_itself && is_application {
+    let bun_types = if has_bun_types_installed && files.brings_declarations() && is_application {
         BunTypes::InstalledAndNotNamed
     } else if !is_application || has_bun_types_installed {
         BunTypes::Installed

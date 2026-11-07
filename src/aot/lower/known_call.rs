@@ -4,7 +4,7 @@ use bun_sema::bind::{
 };
 use bun_sema::check::aot::{FunctionRef, ObjectMemberKind};
 use bun_sema::hir::{
-    self, BinOp, Call, Chain, ExprId, ExprKind, FnBody, FnId, MemberKey, NodeData, PatKind,
+    self, BinOp, Call, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, MemberKey, NodeData, PatKind,
     PropKey, PropKind, StmtId, StmtKind, UnOp,
 };
 use bun_sema::program::FileId;
@@ -18,6 +18,7 @@ use super::scope::{BindingForm, BindingRef, Storage};
 use super::{FileLowering, FunctionLowering, module};
 use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
+use crate::ir::generated::ECMAMode;
 use crate::ir::{BlockId, Edge, FunctionId, FunctionKey, PropertyKeyId, TypeTable, ValueId};
 use crate::known_helpers::{
     HeldFunction, Helper, KnownCallee, KnownReference, PrivateFieldAccess, PrivateMemberKind,
@@ -99,6 +100,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
             };
         }
+        if let Some(required) = modules
+            .commonjs()
+            .find_require_of_star(self.file.file, call)
+        {
+            self.lower_expression_for_effect(required);
+            return Some(self.builder.undefined());
+        }
         if !is_plain_call(self.file, site) {
             return None;
         }
@@ -116,6 +124,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 Some(self.builder.type_of(value))
             }
             Helper::ImportDefault => self.lower_import_default(call, site, &callee),
+            Helper::PublicField => self.lower_public_field(call, site, &callee),
             Helper::ClassPrivateFieldGet | Helper::ClassPrivateFieldIn => {
                 self.lower_static_member_access(call, site)
             }
@@ -565,6 +574,85 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let key = self.emit_get(descriptor, key_name);
         let object = self.emit_builtin_itself(BuiltinId::Object);
         super::call::emit_call(self, define, Some(object), &[target, key, descriptor]);
+    }
+
+    fn lower_public_field(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        callee: &KnownCallee,
+    ) -> Option<ValueId> {
+        let hir = self.file.hir;
+        let helpers = self.file.inputs.known_helpers;
+        let &[held] = &callee.functions[..] else {
+            return None;
+        };
+        let known = helpers.function(callee.file, held.definition)?;
+        let is_certain = !callee.needs_guard() && callee.holds_from_the_start;
+        if !is_certain || !known.relies_on_facts || site.args.len() != 3 {
+            return None;
+        }
+        let answers_value = known.shape == Shape::PublicFieldAnswersValue;
+        let [reference] = known.references[..] else {
+            return None;
+        };
+        let defines = resolve_reference(
+            &resolve_input(self.file),
+            callee.file,
+            reference,
+            &|shape| shape == Shape::DefineNormalPropertyDefinesWhatIsThereAndStoresWhatIsNot,
+        )?;
+        let written = hir.skip_type_assertions(hir.id_at(site.args, 1));
+        let ExprKind::String(name) = hir[written].kind else {
+            return None;
+        };
+        let is_in_constructor = matches!(
+            self.key,
+            FunctionKey::Source(FunctionRef { function, .. })
+                if hir[function].kind == FnKind::Constructor
+        );
+        let handed = hir.skip_type_assertions(hir.id_at(site.args, 0));
+        let is_this_of_construction =
+            is_in_constructor && matches!(hir[handed].kind, ExprKind::This);
+        if defines.needs_guard || name == known::__proto__ || !is_this_of_construction {
+            return None;
+        }
+        let bound = self.file.queries.files().bound(callee.file);
+        let scope = bound.fns[defines.function.definition.idx()].scope;
+        let mode = match bound.is_strict_scope(scope) {
+            true => ECMAMode::Strict,
+            false => ECMAMode::Sloppy,
+        };
+        let object = self.lower_expression(hir.id_at(site.args, 0));
+        let value = self.lower_expression(hir.id_at(site.args, 2));
+        self.set_position(hir[call].pos);
+        let key = PropertyName::Constant(self.file.name_key(name));
+        let (is_there, is_not, done) = (
+            self.create_block(),
+            self.create_block(),
+            self.create_block(),
+        );
+        let result = self.builder.create_variable(None);
+        let has = self.emit_has(object, key);
+        self.builder
+            .branch(has, Edge::to(is_there), Edge::to(is_not));
+        self.continue_in(is_there);
+        self.emit_define(object, key, value);
+        self.builder.write_variable(
+            result,
+            match answers_value {
+                true => value,
+                false => object,
+            },
+        );
+        self.jump(done);
+        self.continue_in(is_not);
+        self.emit_set_in_mode(object, key, value, mode);
+        self.builder.write_variable(result, value);
+        self.jump(done);
+        self.continue_in(done);
+        self.file.known_helpers_lowered.calls += 1;
+        Some(self.builder.read_variable(result))
     }
 
     fn lower_import_default(
@@ -1310,6 +1398,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
         let options = LoweringOptions {
             platform: host_platform(),
             embeds_function_text: false,
+            reads_function_texts_back: false,
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,

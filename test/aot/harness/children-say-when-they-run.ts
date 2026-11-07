@@ -69,15 +69,18 @@ function listRuns(flags: string[], stderr: string, { exitCode, signalCode }: End
   }
   const realms = new Map<string, number>();
   const numberOf = (realm: string) => realms.get(realm) ?? realms.set(realm, realms.size + 1).size;
-  return [...stderr.matchAll(/^RUNS (.*) (\w+)$/gm)]
-    .map(([, file, realm]) => `${file} in realm ${numberOf(realm)}`)
-    .join("\n  ");
+  const runs = [...stderr.matchAll(/^RUNS (.*) (\w+)$/gm)].map(([, file, realm]) => `${file} in realm ${numberOf(realm)}`);
+  // A list may differ because a test went wrong: how the copy's tests ended, and the first of what it said of that.
+  const results = stderr.match(/^\((?:pass|fail|skip|todo)\) .*$/gm) ?? [];
+  const errors = stderr.match(/^(?:error|[A-Za-z]*Error): .*$/gm) ?? [];
+  const ended = [`the code ${exitCode}`, ...results.map(line => line.replace(/ \[[\d.]+ms\]$/, "")), ...errors.slice(0, 3)];
+  return { runs: runs.join("\n  "), ended: ended.join("\n  ") };
 }
 
-function hold(plain: string, compiled: string) {
-  if (plain !== compiled)
+function hold(plain: ReturnType<typeof listRuns>, compiled: ReturnType<typeof listRuns>) {
+  if (plain.runs !== compiled.runs)
     throw new Error(
-      `the list of runs under --aot is not the list of a plain run\nplain:\n  ${plain}\ncompiled:\n  ${compiled}`,
+      `the list of runs under --aot is not the list of a plain run\nplain:\n  ${plain.runs}\ncompiled:\n  ${compiled.runs}\nthe plain copy ended with:\n  ${plain.ended}\nthe compiled copy ended with:\n  ${compiled.ended}`,
     );
 }
 

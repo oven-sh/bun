@@ -45,6 +45,8 @@ diagnostic_codes! {
         WorkerStartedFromUnknownValue = 100082, Warning, "The build can't tell which file this Worker starts from. If that file isn't an entry point, the Worker fails to load";
         WorkerTextNotCompiled = 100084, Warning, "This Worker may start from code in a text: a data: or blob: URL, or the text of a Worker with eval: true. That code isn't compiled, so it runs in the interpreter. To compile it, move it to a file and write the path as new URL(\"./file\", import.meta.url)";
         FolderNamedAsParentIsSpelled = 100085, Error, "Two files would have the path \"{0}\" in the executable: \"{1}\" and \"{2}\". A folder above that of the entry point is written \"_.._\" there, so no folder beside it can have that name";
+        DeletionFromModuleCacheDoesNothing = 100091, Warning, "A compiled module that has run doesn't run again. Taking it out of require.cache does nothing in an executable, and the next require() returns the same exports";
+        TextOfFunctionIsNotItsTree = 100090, Error, "A check of the compiler itself failed: the text that is kept of a function is not its tree: {0}";
         WorkerFilesGoByOnePath = 100086, Warning, "In the executable \"{0}\" is all that is left of the paths of two files: \"{1}\" and \"{2}\". A \"..\" above the root of the executable takes nothing away, so nothing tells the two apart, and a Worker that starts from either fails to load. Pass both files to the build as entry points";
         FilesLeftOutByPattern = 100089, Warning, "The executable doesn't embed {0}, which this path may name. {1}";
         DataFilesFoundByPattern = 100088, Note, "This path isn't a constant, so the executable embeds every file that it may name. These aren't code: {0}";

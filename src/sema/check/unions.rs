@@ -109,6 +109,14 @@ impl Growth {
     pub(super) const MIN_MEMBERS: usize = 8;
 }
 
+#[derive(Copy, Clone)]
+pub(super) struct Loss {
+    pub(super) from: TypeId,
+    pub(super) at: usize,
+    pub(super) name: Atom,
+    pub(super) key: TypeId,
+}
+
 /// A member of a union that's being merged, with the data `CompareTypes` looks at first.
 #[derive(Copy, Clone)]
 struct Ranked<'p> {
@@ -1513,6 +1521,11 @@ impl<'p, 's> Checker<'p, 's> {
             true => self.union_as_object(apparent),
             false => apparent,
         };
+        if self.class_members_by_name.is_on
+            && let Some(found) = self.first_unit_property_of_unlisted_class(apparent)
+        {
+            return found;
+        }
         let members = self.members(apparent)?;
         for prop in &members.shape().props {
             let prop_type = self.type_of_prop(prop, members.mapper);

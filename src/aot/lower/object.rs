@@ -7,6 +7,7 @@ use smallvec::SmallVec;
 pub(in crate::lower) use self::builder::set_prototype;
 pub(in crate::lower) use self::emitted_enum::EnumsThatStayAsBorn;
 pub(crate) use self::literal::lower_object_literal;
+pub(in crate::lower) use self::literal::{ListsInside, is_born_level_by_level};
 use super::FunctionLowering;
 use crate::ir::{LayoutId, PropertyKeyId, ValueId};
 
@@ -15,6 +16,7 @@ pub(crate) struct ObjectBuilder {
     state: ObjectState,
     is_finished: bool,
     waiting_elements: SmallVec<[WaitingElement; 2]>,
+    waiting_names: SmallVec<[WaitingElement; 4]>,
 }
 
 struct WaitingElement {
@@ -61,6 +63,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             state: ObjectState::Pending(InitialFields::default()),
             is_finished: false,
             waiting_elements: SmallVec::new(),
+            waiting_names: SmallVec::new(),
         }
     }
 
@@ -71,6 +74,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             state: ObjectState::Open { head },
             is_finished: true,
             waiting_elements: SmallVec::new(),
+            waiting_names: SmallVec::new(),
         }
     }
 
@@ -81,6 +85,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             state: ObjectState::Open { head },
             is_finished: true,
             waiting_elements: SmallVec::new(),
+            waiting_names: SmallVec::new(),
         }
     }
 

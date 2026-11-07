@@ -1514,8 +1514,9 @@ test("a member that no test names stays read-only, and the write throws", async 
     "one.test.ts": `
       import { expect, spyOn, test } from "bun:test";
       const name = process.argv.length > 1000 ? "at" : ["last", "Index", "Of"].join("");
-      // Neither the object nor the name can be read off the file. With the object alone, every member of it would be open.
-      const holder: any = Object.getPrototypeOf(process.argv.length > 1000 ? 1 : "");
+      // Neither the object nor the name can be read off the file: the road to the object is itself looked up under a name that is made here.
+      // With the object alone, every member of it would be open, and the build follows Object.getPrototypeOf() where it is spelled out.
+      const holder: any = (Object as any)[["get", "Prototype", "Of"].join("")](process.argv.length > 1000 ? 1 : "");
       // The words are put together here: the build reads the texts of a test file as code that the test may hand on.
       const member = ["String", "prototype", name].join(".");
       const advice = "the build didn't see a test replace this one. Spell out the object and the name where the test does it, as in " + member + " = f or spyOn(" + ["String", "prototype"].join(".") + ", " + JSON.stringify(name) + ")";

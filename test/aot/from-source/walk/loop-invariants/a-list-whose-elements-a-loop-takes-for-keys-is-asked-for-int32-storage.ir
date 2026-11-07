@@ -1,0 +1,38 @@
+# -- source: main.ts
+# interface Line { readonly cells: readonly number[] }
+# const LINES: Line[] = [];
+# for (let y = 0; y < 3; y++) LINES.push({ cells: [0, 1, 2].map(k => y * 3 + k) });
+# class Grid {
+#   readonly cells: number[] = [1, 2, 0, 1, 1, 2, 0, 0, 1];
+#   count(player: number): number {
+#     let total = 0;
+#     for (const { cells } of LINES) {
+#       for (const c of cells) if (this.cells[c] === player) total++;
+#     }
+#     return total;
+#   }
+# }
+# function sum(): number {
+#   let total = 0;
+#   for (const { cells } of LINES) {
+#     for (const c of cells) total += c;
+#   }
+#   return total;
+# }
+# console.log(new Grid().count(1), new Grid().count(2), sum());
+# export {};
+# -- end of source
+# Link proves that `cells` of a line holds whole numbers, not that each fits an int32. Such a list is asked in front of a loop for storage of doubles that admits int32s; a for-of over it whose value is a key was not built twice at all:
+# the read under the key stayed the form for any key. Where the loop takes the elements for keys the list is asked for storage of int32s: a key past 2^31 names no place, so a list of keys holds int32s.
+# The value that the step hands out is then an int32 or a hole, and the list under it is tested in front as well. `sum` takes the same elements for numbers: there nothing is asked for storage of int32s alone.
+# f1 = sum, f3 = count
+# RUN(KEYS): walk f3 mechanisms=all
+# REQUIRES(KEYS): entries-of-bun
+# KEYS: = HasArrayStorage {{*}}arrayStorage=Int32
+# KEYS: isLoopHead=true
+# KEYS: undefined|i32 @OptionalInt64 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
+# KEYS: = TypeTest {{*}}testedType=number
+# KEYS: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]
+# RUN(NUMBERS): walk f1 mechanisms=all
+# REQUIRES(NUMBERS): entries-of-bun
+# NUMBERS-NOT: = HasArrayStorage {{*}}arrayStorage=Int32

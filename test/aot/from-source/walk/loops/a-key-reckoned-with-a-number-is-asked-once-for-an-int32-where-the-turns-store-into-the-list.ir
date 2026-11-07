@@ -1,0 +1,19 @@
+# `at - thing.weight`: the weight is a field of which only `number` is known, so the key is a double that may hold a fraction.
+# The turns store into `best`. In the typed copy the key is asked once whether it is an int32, while the turn has done nothing: another key begins the turn again in the other copy.
+# Behind the test the read names its storage and the store is one move: 54,093 instructions a filling become 30,530.
+# -- source: main.js
+# const things = []; for (let place = 0; place < 6; place++) things.push({ weight: 1 + Math.floor(place * 1.7), worth: place * 2.25 + 0.5 });
+# function fill(things, room) { const best = new Array(room + 1).fill(0); for (const thing of things) for (let at = room; at >= thing.weight; at--) { const worth = best[at - thing.weight] + thing.worth; if (worth > best[at]) best[at] = worth; } return best[room]; }
+# console.log(fill(things, 20), fill(things, 7));
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: [[key]]: number @Double = Sub {{*}}form=Numbers
+# CHECK: = GetArrayElement {{*}}, [[key]] level=Expected
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: [[asked]]: number @Double = Sub {{*}}form=Numbers
+# CHECK-NEXT: = TypeTest [[asked]] testedType=i32
+# CHECK: = GetArrayElement {{*}}arrayStorage=Double level=Proven
+# CHECK: = PutDoubleIndex

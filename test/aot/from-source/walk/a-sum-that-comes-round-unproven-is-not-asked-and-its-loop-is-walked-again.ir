@@ -1,0 +1,20 @@
+# `total += size(..)`: what is added stays unknown in the typed copy too, so a sum that is asked for a number in front is boxed, added by the stub, tested and unboxed in every turn: ten instructions a turn for nothing.
+# UNDO, NOT PREDICT: where what comes round in the typed copy is no proven number, the builds are undone, the rows that they made are forgotten (the typed copy's own row held `number`: the next build under the same key began there,
+# and another rule kept the Double over a generic Add), what they wrote into the loop's own row is put back, and the loop is walked and asked again as if no sum had ever been asked.
+# f1 = isBox, f2 = isText, f3 = size, f4 = run
+# LIBRARY: own
+# -- source: main.js
+# function isBox(v) { var t = typeof v; return v != null && (t == "object" || t == "function"); }
+# function isText(v) { return typeof v == "string" || (isBox(v) && Object.prototype.toString.call(v) == "[object String]"); }
+# function size(v) { if (isText(v)) return v.length; if (typeof v === "function") return v.length + 10; if (Array.isArray(v)) return v.length + 20; if (isBox(v)) return 30; return 0; }
+# function run(count) { var things = ["abc", function (a) {}, [1, 2], { k: 1 }, 5, null, undefined, "z"], total = 0; for (var i = 0; i < count; i++) total += size(things[i & 7]); return total; }
+# publish(run);
+# -- end of source
+# RUN: compile SumsAskedForNumbersInFrontOfLoops LoopsWalkedAgainWithoutAskingSums mechanisms=all
+# CHECK: statistic SumsAskedForNumbersInFrontOfLoops 1
+# CHECK: statistic LoopsWalkedAgainWithoutAskingSums 1
+# RUN(LOOP): walk f4 mechanisms=all
+# LOOP: code f4:Body
+# LOOP-NOT: : number @Double, v{{*}}) isInLoop=true isLoopHead=true
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(0), run(1), run(8), run(1000)); };
+# SHELL: 0 3 67 8375

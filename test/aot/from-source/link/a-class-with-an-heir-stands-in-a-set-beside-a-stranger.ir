@@ -1,0 +1,15 @@
+# -- source: a-class-with-an-heir-stands-in-a-set-beside-a-stranger.js
+# class Node { constructor(key) { this.key = key; this.next = null; } }
+# class Leaf extends Node { leaf = true; }
+# class Point { constructor(x) { this.x = x; } }
+# function pick(i) { return i % 3 ? new Node(i) : new Point(i); }
+# const kept = [];
+# for (let i = 0; i < 4; i++) kept.push(pick(i));
+# for (const one of kept) { if (one instanceof Node) one.next = kept[0]; }
+# sink(kept.length);
+# -- end of source
+# Node has an heir, so it stands in a family; Point is a stranger. The two that meet in the list are still two layouts by name: what is read out of the list and stored into a field lets neither go.
+# RUN: link layouts mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L2 {{*}}changes=[] stays-with-compiled-code

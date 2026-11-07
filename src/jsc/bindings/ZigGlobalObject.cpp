@@ -4359,7 +4359,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         Bun::willRequire(globalObject, moduleNameValue, JSC::AOT::LoadByName::Import);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
-        JSC::AOT::AskerOfModule asker(globalObject, sourceOriginStringHolder);
+        JSC::AOT::AskerOfModule asker(globalObject, Bun::askerOfImportCallInCodeThatIsNotCompiled(sourceOriginStringHolder));
         JSC::JSPromise* imported = Bun::importCompiledModule(globalObject, key.string(), parameters.get(), referrerAsyncOrder);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);

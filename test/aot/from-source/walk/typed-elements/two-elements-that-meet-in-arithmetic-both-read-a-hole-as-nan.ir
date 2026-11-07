@@ -1,0 +1,59 @@
+# `a[i] * b[i]`: a hole and a position past the end give `undefined`, and `undefined` is NaN for arithmetic with a number; so the read may give NaN itself and the product needs no question.
+# That was said only where the other operand was built already and was a number. Of two reads the first found the second not built, and the second found the first `number | undefined`:
+# both carried the mark of `undefined`, and the product asked each of them for it again: 4 of the 19 instructions an element of a dot product.
+# Now the other operand may be a number or `undefined`, and of a read by key that is not built yet Link's word is asked: the same word that read is typed by, and stops at when it is false.
+# It stays as it was for `+` beside what may be a text (joined): there `undefined` is written out.
+# Beside a list of anything (quotients, both orders) and under the operators on bits (bits) NaN and `undefined` answer alike whatever stands beside them: a text, an object that logs, a big integer that throws.
+# f1 = dot, f2 = differences, f3 = joined, f4 = quotients, f5 = bits, f6 = mixes, f7 = ratios
+# -- source: two-elements-that-meet-in-arithmetic-both-read-a-hole-as-nan.ts
+# declare function print(...values: unknown[]): void;
+# const left: number[] = [], right: number[] = [], short: number[] = [], words: any[] = [];
+# for (let i = 0; i < 8; i++) { left.push(i + 0.5); right.push(i * 0.25 + 0.125); if (i < 3) short.push(i + 1.5); words.push(i & 1 ? "w" + i : i + 0.5); }
+# const holed = [0.5, 1.5, , 3.5, 4.5, 5.5, 6.5, 7.5] as number[];
+# function dot(a: number[], b: number[]): number { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+# function differences(a: number[], b: number[], n: number): number { let s = 0; for (let i = 0; i < n; i++) s += a[i] - b[i]; return s; }
+# function joined(a: number[], b: any[], n: number): string { let s = ""; for (let i = 0; i < n; i++) s += a[i] + b[i]; return s; }
+# const log: string[] = [];
+# const mixed: any[] = [2, "4", { valueOf() { log.push("asked"); return 8; } }, undefined, null, true, 1.5, "x"];
+# function quotients(a: number[], b: any[], n: number): string { let s = ""; for (let i = 0; i < n; i++) s += (a[i] / b[i]) + " " + (b[i] / a[i]) + ","; return s; }
+# function bits(a: number[], b: any[], n: number): number { let s = 0; for (let i = 0; i < n; i++) s = (s << 1) ^ (a[i] & b[i]) ^ (b[i] | a[i]); return s; }
+# function mixes(a: number[], b: any[], n: number): string { try { let s = 0; for (let i = 0; i < n; i++) s += a[i] * b[i]; return "" + s; } catch (e) { return (e as Error).name; } }
+# function ratios(a: number[], b: number[], n: number): number { let s = 0; for (let i = 0; i < n; i++) s += (b[i] / a[i]) - (a[i] & b[i]); return s; }
+# function turns(n: number): number { return Date.now() > 0 ? n : 0; }
+# print(dot(left, right), dot(short, right), dot(left, short), dot(left, holed), dot(holed, left));
+# print(differences(left, right, turns(8)), differences(left, right, turns(9)), differences(short, holed, turns(2)), differences(short, holed, turns(3)));
+# print(joined(short, words, turns(5)));
+# print(quotients(holed, mixed, turns(9)));
+# print(bits(holed, mixed, turns(9)), log.length, mixes(holed, [1, 2, 3n], turns(3)), mixes(left, [1, 2, 3n], turns(3)));
+# print(ratios(left, right, turns(8)), ratios(left, right, turns(9)), ratios(short, holed, turns(2)), ratios(holed, short, turns(3)));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: @Double = GetArrayElement {{*}}readsHoleAsNaN
+# CHECK: @Double = GetArrayElement {{*}}readsHoleAsNaN
+# CHECK: @Double = Mul
+# RUN(DIFFERENCES): walk f2 mechanisms=all
+# DIFFERENCES-LABEL: code f2:Body
+# DIFFERENCES: @Double = GetArrayElement {{*}}readsHoleAsNaN
+# DIFFERENCES: @Double = GetArrayElement {{*}}readsHoleAsNaN
+# RUN(JOINED): walk f3 mechanisms=all
+# JOINED-LABEL: code f3:Body
+# JOINED-NOT: readsHoleAsNaN
+# RUN(QUOTIENTS): walk f4 mechanisms=all
+# QUOTIENTS-LABEL: code f4:Body
+# QUOTIENTS-NOT: readsHoleAsNaN
+# RUN(BITS): walk f5 mechanisms=all
+# BITS-LABEL: code f5:Body
+# BITS-NOT: readsHoleAsNaN
+# RUN(RATIOS): walk f7 mechanisms=all
+# RATIOS-LABEL: code f7:Body
+# RATIOS: @Double = GetArrayElement {{*}}readsHoleAsNaN
+# RATIOS: @Double = GetArrayElement {{*}}readsHoleAsNaN
+# RATIOS: @Double = Div
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 42.5 3.3125 NaN NaN NaN
+# ANSWERS: 24 NaN 2 NaN
+# ANSWERS: 22.5w16undefinedw3NaN
+# ANSWERS: 0.25 4,0.375 2.6666666666666665,NaN NaN,NaN NaN,Infinity 0,5.5 0.18181818181818182,4.333333333333333 0.23076923076923078,NaN NaN,NaN NaN,
+# ANSWERS: 658 4 TypeError TypeError
+# ANSWERS: 0 NaN 0.9333333333333333 NaN

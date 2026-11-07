@@ -73,6 +73,7 @@ pub struct LoweredFile {
     pub diagnostics: DiagnosticBuffer,
     pub queries: QueryStatistics,
     pub known_helpers: KnownHelpersLowered,
+    pub texts_read_back: u64,
     pub written_function_names: Vec<u8>,
 }
 

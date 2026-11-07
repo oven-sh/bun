@@ -23,7 +23,10 @@ pub(crate) use self::scan::{ScanInput, scan_file};
 pub(crate) use self::worker_entries::WorkerStart;
 #[cfg(test)]
 pub(crate) use self::worker_entries::{PlaceOfName, WorkerNameForm};
-use crate::builtins::table::{self, BuiltinFlags, BuiltinId, BuiltinKind, Mutability, Scope};
+use crate::builtins::table::{
+    self, BuiltinFlags, BuiltinId, BuiltinKind, Mutability, Platforms, Scope,
+};
+use crate::builtins::{BuiltinNames, can_lay_key_that_native_code_asks_of_process};
 use crate::ir::{InParallel, for_each_mut};
 use crate::load::loaders::{HostLoaderKind, host_loader_kind};
 use crate::load::sources::parsed_source;
@@ -32,6 +35,7 @@ use crate::options::Options;
 use crate::test_runs::files_of_run::find_whose_files;
 use crate::test_runs::{
     RunContents, RunInput, WhoseFile, collect_run_contents, fix_places_on_the_way,
+    fix_what_every_run_folds_by, list_names_that_tests_may_add,
 };
 
 #[derive(Default)]
@@ -111,6 +115,8 @@ pub(crate) struct ContentsInput<'a, 's> {
     pub found_entry_points: Vec<FoundEntryPoint>,
     pub any_file_may_become_main_module: bool,
     pub is_every_text_asked: bool,
+    pub builtin_names: &'a BuiltinNames,
+    pub platform: Platforms,
     pub in_parallel: InParallel<'a>,
 }
 
@@ -163,6 +169,7 @@ struct FoundInFiles {
     method_that_hands_out_global_object_may_come_out: bool,
     can_come_by_hook_of_instanceof: bool,
     hand_builtins_to_hooks_of_instanceof: Vec<FileId>,
+    ask_for_names_that_are_not_listed: Vec<FileId>,
     any_module_loads_again: bool,
     loads_by_unknown: LoadsByUnknown,
     names_worker_constructor: bool,
@@ -185,6 +192,7 @@ impl FoundInFiles {
             hand_builtins_to_hooks_of_instanceof: take(
                 &mut self.hand_builtins_to_hooks_of_instanceof,
             ),
+            ask_for_names_that_are_not_listed: take(&mut self.ask_for_names_that_are_not_listed),
             any_module_loads_again: true,
             loads_by_unknown: LoadsByUnknown::all(),
             names_worker_constructor: true,
@@ -240,6 +248,13 @@ impl FoundInFiles {
                 true => vec![file],
                 false => Vec::new(),
             },
+            ask_for_names_that_are_not_listed: match builtins
+                .names_asked_for_that_are_not_listed()
+                .is_empty()
+            {
+                true => Vec::new(),
+                false => vec![file],
+            },
             any_module_loads_again,
             loads_by_unknown,
             names_worker_constructor: contents.names_worker_constructor,
@@ -263,6 +278,8 @@ impl FoundInFiles {
         self.can_come_by_hook_of_instanceof |= following.can_come_by_hook_of_instanceof;
         self.hand_builtins_to_hooks_of_instanceof
             .append(&mut following.hand_builtins_to_hooks_of_instanceof);
+        self.ask_for_names_that_are_not_listed
+            .append(&mut following.ask_for_names_that_are_not_listed);
         self.any_module_loads_again |= following.any_module_loads_again;
         self.loads_by_unknown |= following.loads_by_unknown;
         self.names_worker_constructor |= following.names_worker_constructor;
@@ -289,6 +306,13 @@ fn comes_with_holder(holder: BuiltinId, member: BuiltinId) -> bool {
 fn is_locked_prototype(member: BuiltinId) -> bool {
     let entry = table::entry(member);
     entry.kind == BuiltinKind::Prototype && entry.mutability == Mutability::AlwaysLocked
+}
+
+fn leads_from_prototype_to_its_class(place: BuiltinId, object: BuiltinId) -> bool {
+    let holder_of = |id: BuiltinId| table::entry(id).holder.map(table::canonical_id);
+    holder_of(place).is_some_and(|holder| {
+        table::entry(holder).kind == BuiltinKind::Prototype && holder_of(holder) == Some(object)
+    })
 }
 
 fn may_be_taken_for_constant(place: BuiltinId) -> bool {
@@ -343,7 +367,9 @@ impl ReplacedPlaces {
             self.add_what_looks_up(place);
             let object = object_held_at(place);
             if object != place {
-                self.add(object);
+                if !leads_from_prototype_to_its_class(place, object) {
+                    self.add(object);
+                }
                 continue;
             }
             for &member in table::members(object) {
@@ -414,6 +440,8 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         found_entry_points,
         any_file_may_become_main_module,
         is_every_text_asked,
+        builtin_names,
+        platform,
         in_parallel,
     } = input;
     let is_test_run = options.load.runs_tests && !options.aot.checks_only;
@@ -441,6 +469,17 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
     for (_, found) in runs {
         all.append(found);
     }
+    if !all.process_reaches_code_on_its_prototypes && !options.can_load_code_at_run_time() {
+        let runs = files.compiled_files().chunks(FILES_LOOKED_AT_IN_A_RUN);
+        let mut runs: Vec<(&[FileId], bool)> = runs.map(|run| (run, false)).collect();
+        for_each_mut(&mut runs, in_parallel, &|(run, can_lay)| {
+            *can_lay = run.iter().any(|&file| {
+                let (hir, folded) = (files.hir(file), &files.analysis(file).decisions);
+                can_lay_key_that_native_code_asks_of_process(hir, folded, builtin_names, platform)
+            });
+        });
+        all.process_reaches_code_on_its_prototypes = runs.iter().any(|run| run.1);
+    }
     let unseen_code_may_run = options.can_load_code_at_run_time()
         || options.aot.loads_code_from_disk
         || !all.loads_by_unknown.is_empty()
@@ -462,6 +501,33 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
             );
         }
     }
+    let asking = take(&mut all.ask_for_names_that_are_not_listed);
+    let added_through_helpers = match asking.is_empty() {
+        true => Vec::new(),
+        false => list_names_that_tests_may_add(files, look_input.whose),
+    };
+    for &file in &asking {
+        let Some(source) = parsed_source(files, file) else {
+            continue;
+        };
+        let is_laid_above = |&(_, name): &(BuiltinId, Atom)| {
+            let mut added = all.names_added.iter().chain(&added_through_helpers);
+            added.any(|&(_, laid)| laid == name)
+        };
+        let mut asked_for = source.builtins.names_asked_for_that_are_not_listed().iter();
+        if !asked_for.any(is_laid_above) {
+            continue;
+        }
+        let (replaced, opened, stores_loader_functions) =
+            source.builtins.note_that_tests_lay_names_above();
+        all.replaced_members.extend_from_slice(replaced);
+        all.opened_holders.extend_from_slice(opened);
+        all.stores_loader_functions |= stores_loader_functions;
+        all.loads_by_unknown |= LoadsByUnknown::new(
+            source.builtins.loads_unknown_modules(),
+            source.builtins.hands_on_loader_of_paths(),
+        );
+    }
     let replaced_builtins = list_replaced_builtins(
         &options.load.replaced_builtins,
         &all.replaced_members,
@@ -482,6 +548,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
     sort_names_added(&mut all.names_added, files);
     let fixed_builtins = FixedBuiltins::default();
     if is_test_run {
+        fix_what_every_run_folds_by(&replaced_builtins, &fixed_builtins);
         for &file in files.compiled_files() {
             if let Some(source) = parsed_source(files, file) {
                 source

@@ -177,12 +177,42 @@ declare global {
       data: Listener | Listener[] | undefined;
       end: Listener | Listener[] | undefined;
       readable: Listener | Listener[] | undefined;
-      resume?: Listener | Listener[] | undefined;
     }
   }
 }
 
-function preallocatedEvents(): $Node.Events {
+// A table as preallocatedEvents() bore it holds its names as data and no other name, so a look into it runs no user code. Each look stands here, in the body of its question: there the yes says where the names lie.
+// Whatever was added to it, no name of it is an accessor.
+function holdsNoAccessor(table: unknown): boolean {
+  return $isAsBornExceptForAddedNames(table, preallocatedEvents) ? true : false;
+}
+function hearsNothingUnderClose(table: unknown): boolean {
+  if (!$isAsBornExceptForAddedNames(table, preallocatedEvents)) return false;
+  return table.close === undefined;
+}
+function hearsNothingUnderEnd(table: unknown): boolean {
+  if (!$isAsBornExceptForAddedNames(table, preallocatedEvents)) return false;
+  return table.end === undefined;
+}
+function hearsNothingUnderReadable(table: unknown): boolean {
+  if (!$isAsBornExceptForAddedNames(table, preallocatedEvents)) return false;
+  return table.readable === undefined;
+}
+function hearsNothingButErrors(table: unknown): boolean {
+  if (!$isAsBorn(table, preallocatedEvents)) return false;
+  return (
+    table.data === undefined && table.readable === undefined && table.end === undefined && table.close === undefined
+  );
+}
+if (IS_COMPILED_AHEAD_OF_TIME) {
+  internals.holdsNoAccessor = holdsNoAccessor;
+  internals.hearsNothingUnderClose = hearsNothingUnderClose;
+  internals.hearsNothingUnderEnd = hearsNothingUnderEnd;
+  internals.hearsNothingUnderReadable = hearsNothingUnderReadable;
+  internals.hearsNothingButErrors = hearsNothingButErrors;
+}
+
+function preallocatedEvents(): $Node.PreallocatedEvents {
   return {
     close: undefined,
     error: undefined,
@@ -222,7 +252,7 @@ function Readable(this: $Node.Readable, options?: $Node.ReadableOptions): void {
     return new Readable(options) as any;
   }
 
-  this._events ??= preallocatedEvents();
+  this._events ??= preallocatedEvents() as unknown as $Node.Events;
 
   this._readableState = new ReadableState(options, this, false);
 
@@ -255,7 +285,7 @@ $toClass(Readable, "Readable", Stream);
 Readable.ReadableState = ReadableState;
 
 function constructReadable(stream: $Node.Readable, highWaterMark: unknown): void {
-  stream._events ??= preallocatedEvents();
+  stream._events ??= preallocatedEvents() as unknown as $Node.Events;
 
   stream._readableState = createByteReadableState(highWaterMark);
 
@@ -429,7 +459,7 @@ function readableAddChunkPushByteMode(stream: $Node.Readable, state: ReadableSta
 }
 
 function readableAddChunkPushObjectMode(stream: $Node.Readable, state: ReadableState, chunk, encoding): boolean {
-  if (IS_COMPILED_AHEAD_OF_TIME && chunk !== null) {
+  if (IS_COMPILED_AHEAD_OF_TIME && chunk !== null && internals.isPlainReadableState!(state)) {
     const flags = state[kState];
     if (
       (flags &
@@ -446,9 +476,24 @@ function readableAddChunkPushObjectMode(stream: $Node.Readable, state: ReadableS
     ) {
       state.awaitDrainWriters = null;
       state[kState] = (flags & ~Flag.Reading) | Flag.DataEmitted;
-      emitData(stream, chunk);
-      maybeReadMore(stream, state);
-      return canPushMore(state);
+      const emitOfStream = stream.emit;
+      if (emitOfStream !== emit) {
+        ("unlikely");
+        if (typeof emitOfStream === "function") emitOfStream.$call(stream, "data", chunk);
+        else emitDataOfNoFunction({ emit: emitOfStream }, chunk);
+      } else {
+        const events = stream._events;
+        const handler = events === undefined ? undefined : events.data;
+        if (typeof handler === "function") handler.$call(stream, chunk);
+        else if (handler !== undefined) {
+          for (let i = 0, length = handler.length; i < length; i++) handler[i].$call(stream, chunk);
+        }
+      }
+      if ((state[kState] & (Flag.ReadingMore | Flag.Reading | Flag.Constructed)) === Flag.Constructed) {
+        state[kState] |= Flag.ReadingMore;
+        queueTick2(maybeReadMore_, stream, state);
+      }
+      return (state[kState] & Flag.Ended) === 0 && (state.length < state.highWaterMark || state.length === 0);
     }
   }
 
@@ -485,14 +530,35 @@ function canPushMore(state: ReadableState): boolean {
   return (state[kState] & Flag.Ended) === 0 && (state.length < state.highWaterMark || state.length === 0);
 }
 
+// Each makes the call that must throw on a stand-in that holds what was read off the stream and is no function. The error quotes the call: each is spelled as the call that it stands for.
+function emitDataOfNoFunction(stream: any, chunk: unknown): void {
+  stream.emit("data", chunk);
+}
+function emitOfNoFunction(this: any, stream: any, self: any, type: string): void {
+  if (type === "readable") stream.emit("readable");
+  else if (type === "resume") stream.emit("resume");
+  else if (type === "end") stream.emit("end");
+  else if (type === "pause") this.emit("pause");
+  else self.emit("close");
+}
+function writeOfNoFunction(dest: any, chunk: unknown): boolean {
+  return dest.write(chunk);
+}
+function readOfNoFunction(stream: any): unknown {
+  return stream.read();
+}
+
 // stream.emit(type) for a type other than "error", where emit() is the one of node:events: the same reads in the same order, and no list of arguments.
-// false: what lies under `emit` cannot be called: the caller says so in its own words.
+// Always true. What lies under `emit` is read once: where it is no function the call is made on a stand-in that holds it, and throws.
 function emitsToListeners(stream: $Node.Readable, type: string): boolean {
   const emitOfStream = stream.emit;
   if (emitOfStream !== emit) {
     ("unlikely");
-    if (typeof emitOfStream !== "function") return false;
-    emitOfStream.$call(stream, type);
+    if (typeof emitOfStream === "function") emitOfStream.$call(stream, type);
+    else {
+      const held = { emit: emitOfStream };
+      emitOfNoFunction.$call(held, held, held, type);
+    }
     return true;
   }
   const events = stream._events;
@@ -513,7 +579,7 @@ function emitData(stream: $Node.Readable, chunk: unknown): void {
   if (emitOfStream !== emit) {
     ("unlikely");
     if (typeof emitOfStream === "function") emitOfStream.$call(stream, "data", chunk);
-    else stream.emit("data", chunk);
+    else emitDataOfNoFunction({ emit: emitOfStream }, chunk);
     return;
   }
   const events = stream._events;
@@ -1042,7 +1108,7 @@ Readable.prototype.pipe = function (this: $Node.Readable, destination: $Node.Str
         } else if (typeof write === "function") {
           ret = write.$call(dest, chunk);
         } else {
-          ret = dest.write!(chunk);
+          ret = writeOfNoFunction({ write }, chunk);
         }
       } else {
         ret = dest.write!(chunk);
@@ -1522,7 +1588,24 @@ function destroysItself(stream: $Node.Readable) {
 // stream.destroyed ? null : stream.read(), where `destroyed` is the accessor of Readable: what that accessor and read() read off the stream is read here, as often and in that order.
 function readUnlessDestroyed(stream: $Node.Readable) {
   if (stream._readableState ? isStateDestroyed(stream._readableState) : false) return null;
-  return stream.read === readingMethod ? read.$call(stream, stream._readableState, NaN) : stream.read();
+  const reading = stream.read;
+  if (reading === readingMethod) return read.$call(stream, stream._readableState, NaN);
+  return typeof reading === "function" ? reading.$call(stream) : readOfNoFunction({ read: reading });
+}
+
+function optionsForReadableSide(stream: $Node.Readable) {
+  return $isPlainHeirOf(stream, Readable) ? internals.readableSideOfHeir! : { writable: false };
+}
+
+function isPlainReadableAlone(stream: $Node.AnyStream): boolean {
+  return (
+    $isPlainInstanceOf(stream, Readable) &&
+    $findsDeclaredMember(stream, "pipe", Readable) &&
+    $findsDeclaredMember(stream, "on", Readable) &&
+    $findsNoMember(stream, "_writableState") &&
+    $findsNoMember(stream, "write") &&
+    internals.isPlainReadableState!(stream._readableState)
+  );
 }
 
 async function* createAsyncIterator(stream: $Node.Readable, options?: $Node.ReadableIteratorOptions) {
@@ -1540,18 +1623,21 @@ async function* createAsyncIterator(stream: $Node.Readable, options?: $Node.Read
   stream.on("readable", next);
 
   let error: any;
-  const cleanup = eos(stream, { writable: false }, err => {
-    error = err ? aggregateTwoErrors(error, err) : null;
-    callback();
-    callback = nop;
-  });
+  const cleanup = eos(
+    stream,
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS ? optionsForReadableSide(stream) : { writable: false },
+    err => {
+      error = err ? aggregateTwoErrors(error, err) : null;
+      callback();
+      callback = nop;
+    },
+  );
 
   try {
     while (true) {
       const chunk =
         IS_COMPILED_AHEAD_OF_TIME &&
-        $findsDeclaredMember(stream as unknown as $Node.IncomingMessage, "destroyed") &&
-        $getPrototypeOf($getPrototypeOf(stream)) === Readable.prototype
+        $findsDeclaredMember(stream as unknown as $Node.IncomingMessage, "destroyed", Readable)
           ? readUnlessDestroyed(stream)
           : stream.destroyed
             ? null
@@ -1923,6 +2009,18 @@ const finishEnd = function endReadableNT(state: ReadableState, stream: $Node.Rea
   const destroyEndedRequest = internals.destroyEndedRequest;
   if (destroyEndedRequest !== undefined && destroyEndedRequest(state, stream)) return;
 
+  if (
+    IS_COMPILED_AHEAD_OF_TIME &&
+    $isPlainInstanceOf(stream, Readable) &&
+    $findsNoMember(stream, "writable") &&
+    $findsNoMember(stream, "_writableState")
+  ) {
+    if ((state[kState] & Flag.AutoDestroy) !== 0) {
+      stream[kAutoDestroyed] = true;
+      stream.destroy();
+    }
+    return;
+  }
   if (stream.writable && stream.allowHalfOpen === false) {
     queueTick1(endWritableNT, stream);
   } else if ((state[kState] & Flag.AutoDestroy) !== 0) {
@@ -1956,15 +2054,14 @@ function endWritableNT(stream: $Node.Duplex) {
 }
 
 // What `new Readable({ objectMode: true, highWaterMark })` makes. Nobody sees which options are asked for in a list that the library has written, unless a name lies on `Object.prototype`: the caller asks `CAN_REPLACE_BUILT_INS`.
-function makeObjectReadable(highWaterMark: number): $Node.Readable {
-  const stream = new (Readable as $Node.ReadableConstructor)();
-  const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(stream) : stream._readableState;
-  state[kState] |= Flag.ObjectMode;
-  state.highWaterMark = highWaterMark;
-  return stream;
+function makeObjectReadable(): $Node.Readable {
+  return new (Readable as $Node.ReadableConstructor)(internals.oneObject);
 }
 
 if (IS_COMPILED_AHEAD_OF_TIME) internals.makeObjectReadable = makeObjectReadable;
+if (IS_COMPILED_AHEAD_OF_TIME) internals.emitsToListeners = emitsToListeners;
+if (IS_COMPILED_AHEAD_OF_TIME) internals.emitData = emitData;
+if (IS_COMPILED_AHEAD_OF_TIME) internals.isPlainReadableAlone = isPlainReadableAlone;
 
 Readable.from = function (
   iterable: string | Buffer | Iterable<unknown> | AsyncIterable<unknown>,

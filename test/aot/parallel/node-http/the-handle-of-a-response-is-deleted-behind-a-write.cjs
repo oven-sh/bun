@@ -54,8 +54,10 @@ function play(way, deed) {
   return new Promise(resolve => {
     log = [];
     let turn = 0;
+    let entered = () => {};
     const server = http.createServer((req, res) => {
       const mine = ++turn;
+      entered();
       try {
         ways[way](res, mine, () => {
           if (mine !== 2) return;
@@ -72,26 +74,31 @@ function play(way, deed) {
       const client = net.connect(server.address().port, "127.0.0.1");
       let wire = "";
       let asked = 0;
-      let watchdog;
+      let answered = 0;
       const read = () => JSON.stringify(wire.replace(/Date: [^\r]*\r\n/, ""));
+      // No clock says that no more will come. A request goes out by one write, so all of it has come once the listener is entered. What the server still does from there is work of
+      // this process alone, and takes the same turns of the loop however busy the machine is. Then the client ends its half of the connection, the server closes, and whatever was
+      // written comes in front of the close.
       const ask = () => {
-        asked++;
+        const mine = ++asked;
         wire = "";
+        entered = async () => {
+          for (let i = 0; i < 16; i++) await new Promise(setImmediate);
+          if (answered < mine && !client.destroyed) client.end();
+        };
         client.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
-        clearTimeout(watchdog);
-        watchdog = setTimeout(() => client.destroy(), 300);
       };
       client.on("data", piece => {
         wire += piece.toString("latin1");
         if (!/body \d$|\r\n0\r\n\r\n$/.test(wire)) return;
         log.push(`${asked} ${read()}`);
+        answered = asked;
         wire = "";
         if (asked < 3) setImmediate(ask);
         else client.destroy();
       });
       client.on("error", error => log.push(`client ${error.code}`));
       client.on("close", () => {
-        clearTimeout(watchdog);
         if (wire) log.push(`${asked} cut off behind ${read()}`);
         else if (asked < 3) log.push(`${asked} nothing`);
         // The server has closed once its side of the connection has: what that brings is told too.

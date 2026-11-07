@@ -216,7 +216,19 @@ function EventEmitter(this: $Node.EventEmitter, opts?: $Node.EventEmitterOptions
     ("unlikely");
     return initializeProxyReceiver(this, opts);
   }
-  if (this._events === undefined || this._events === Object.$getPrototypeOf(this)._events) {
+  let hasNoTableOfItsOwn = this._events === undefined;
+  if (!hasNoTableOfItsOwn) {
+    let holder: object | null = CAN_REPLACE_BUILT_INS ? null : this;
+    while (holder !== null && !$isProxyObject(holder) && !Object.hasOwn(holder, "__proto__")) {
+      holder = $getPrototypeOf(holder);
+      if (holder === Object.prototype) break;
+    }
+    hasNoTableOfItsOwn =
+      holder === Object.prototype && this !== Object.prototype
+        ? this._events === ($getPrototypeOf(this) as any)._events
+        : this._events === (this as any).__proto__._events;
+  }
+  if (hasNoTableOfItsOwn) {
     this._events = Object.create(null);
     this._eventsCount = 0;
     this[kShapeMode] = false;
@@ -926,7 +938,13 @@ async function once(emitter: EmitterOrTarget, type: $Node.EventName, options: On
 }
 Object.defineProperty(once, "name", { value: "once" });
 
-const AsyncIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype);
+// In an executable it is looked for at the first call of on(): who only loads this file climbs to no prototype. A test that has replaced Object.getPrototypeOf sees the two calls while the file loads.
+const AsyncIteratorPrototype =
+  IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS
+    ? undefined
+    : Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype);
+const getPrototypeOf = IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS ? Object.getPrototypeOf : undefined;
+let foundAtFirstCall: object | undefined;
 function createIterResult(value: unknown, done: boolean) {
   return { value, done } as IteratorResult<unknown, undefined>;
 }
@@ -1013,7 +1031,9 @@ function on(emitter: EmitterOrTarget, event: $Node.EventName, options: OnOptions
         },
       },
     },
-    AsyncIteratorPrototype,
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS
+      ? (foundAtFirstCall ??= getPrototypeOf!(getPrototypeOf!(async function* () {}).prototype) as object)
+      : AsyncIteratorPrototype,
   );
 
   // Adding event handlers

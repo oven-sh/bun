@@ -1,0 +1,42 @@
+# -- source: a-loop-with-loops-inside-it-tells-the-walk-around-it-what-it-wants.js
+# function run(limit) {
+#   let n = 0;
+#   let t0 = ""; for (let i0 = 0; i0 < limit; i0++) { t0 += "x";
+#   let t1 = ""; for (let i1 = 0; i1 < limit; i1++) { t1 += "x";
+#   let t2 = ""; for (let i2 = 0; i2 < limit; i2++) { t2 += "x";
+#   let t3 = ""; for (let i3 = 0; i3 < limit; i3++) { t3 += "x";
+#   let t4 = ""; for (let i4 = 0; i4 < limit; i4++) { t4 += "x";
+#   let t5 = ""; for (let i5 = 0; i5 < limit; i5++) { t5 += "x";
+#   let t6 = ""; for (let i6 = 0; i6 < limit; i6++) { t6 += "x";
+#   let t7 = ""; for (let i7 = 0; i7 < limit; i7++) { t7 += "x";
+#   let t8 = ""; for (let i8 = 0; i8 < limit; i8++) { t8 += "x";
+#   let t9 = ""; for (let i9 = 0; i9 < limit; i9++) { t9 += "x";
+#   let t10 = ""; for (let i10 = 0; i10 < limit; i10++) { t10 += "x";
+#   let t11 = ""; for (let i11 = 0; i11 < limit; i11++) { t11 += "x";
+#   } n += t11.length;
+#   } n += t10.length;
+#   } n += t9.length;
+#   } n += t8.length;
+#   } n += t7.length;
+#   } n += t6.length;
+#   } n += t5.length;
+#   } n += t4.length;
+#   } n += t3.length;
+#   } n += t2.length;
+#   } n += t1.length;
+#   } n += t0.length;
+#   return n;
+# }
+# const limits = JSON.parse("[1]");
+# sink(run(limits[0] | 0));
+# -- end of source
+# Twelve loops stand inside one another and each grows a text of its own, so each wants a second walk, for its text in a builder. A loop that has loops inside it tells the walk
+# around it what it wants, and that walk is walked again once: three walks a level; the innermost loop alone meets its wish at once: two walks more. Where every level met its wish at once, each level walked itself and all inside it again: 103 walks
+# for these twelve, 40,600 for two hundred.
+# f1 = run
+# OPTIONS: check=Validate
+# RUN: compile WalksOfLoops
+# CHECK: statistic WalksOfLoops 38
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 12
+# SHELL: exited with 0

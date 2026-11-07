@@ -365,7 +365,8 @@ impl<'a> LoadHost<'a> {
             plugins: PluginModules::new(provider, disk, messages, &load.in_memory_files),
             modules_with_queries: ModulesWithQueries::default(),
             react_compiler: ReactCompiler::new(load.react_compiler, provider, messages)
-                .with_filter(load.react_compiler_filter),
+                .with_filter(load.react_compiler_filter)
+                .with_names_bound_again(options.reads_back_what_it_writes()),
             binary_entry_point_paths: binary_entry_point_paths.collect(),
             entry_points_that_run_despite_their_names,
             entry_points_by_file: collect_entry_points_by_file(options),
@@ -956,13 +957,13 @@ impl LoadHost<'_> {
         arena: &'s Arena,
         atoms: &Interner<'s>,
         request: &mut EarlyTransformRequest<'_, 's>,
-        source: &ParsedSource,
+        source: &mut ParsedSource,
     ) -> TreeChange {
         let (provider, messages) = (self.input.provider, self.input.messages);
         let runs_tests = self.input.options.load.runs_tests;
         let modules = &self.modules_with_queries;
         let file = modules.file_behind(request.path).to_vec();
-        import_meta_glob::expand_calls(
+        let change = import_meta_glob::expand_calls(
             provider,
             messages,
             runs_tests,
@@ -971,7 +972,9 @@ impl LoadHost<'_> {
             request,
             source,
             &|specifier, text| modules.add_text(&file, specifier, text),
-        )
+        );
+        source.depends_on_more_than_source |= change != TreeChange::Unchanged;
+        change
     }
 
     fn compile_components_and_expand_globs<'s>(
@@ -1140,6 +1143,11 @@ impl CodeHost for LoadHost<'_> {
             && gives_data(loader)
             && !(type_attribute.and_then(Loader::from_string))
                 .is_some_and(|written| is_taken_by_written_type(loader, written))
+    }
+
+    fn stands_for_text_that_cannot_be_read(&self, payload: &HostPayload) -> bool {
+        let source = payload.downcast_ref::<ParsedSource>();
+        source.is_some_and(|it| it.parse_failure.is_some())
     }
 
     fn note_file_left_out(
@@ -1400,13 +1408,16 @@ impl CodeHost for LoadHost<'_> {
             namespace: namespace.into(),
             path: path.into(),
         });
+        let is_named_as_code =
+            !is_from_plugin && script_kind_of(self.default_loader(path)).is_some();
         let parse_data = |loader: Loader, plugin_module: Option<PluginModuleName>| {
             let source = SourceFile {
                 path: self.plugins.provider_path(path),
                 contents: text,
                 loader,
             };
-            let (provider, messages) = (self.input.provider, self.input.messages);
+            let said_of_text = LoadMessages::default();
+            let (provider, messages) = (self.input.provider, &said_of_text);
             let is_given_to_no_parser = !load.runs_tests
                 && !self.input.options.aot.runs_in_place
                 && !is_from_plugin
@@ -1428,6 +1439,9 @@ impl CodeHost for LoadHost<'_> {
                 ),
                 false => parse_data_module(provider, messages, &source, arena, atoms),
             };
+            if !is_named_as_code || parsed.failure.is_none() {
+                said_of_text.hand_on_to(self.input.messages);
+            }
             ParsedCode {
                 hir: parsed.hir,
                 host_values: parsed.host_values,
@@ -1435,6 +1449,7 @@ impl CodeHost for LoadHost<'_> {
                     plugin_module,
                     web_assembly: parsed.web_assembly,
                     parse_failure: parsed.failure,
+                    refused_at: parsed.failed_at.map(|place| (loader, place)),
                     byte_count: text.len(),
                     ..ParsedSource::new(SourceKind::Data, loader)
                 })),
@@ -1467,8 +1482,8 @@ impl CodeHost for LoadHost<'_> {
                         payload: Some(Box::new(ParsedSource {
                             plugin_module: source.plugin_module.take(),
                             parse_failure: Some(failure),
-                            refused_json: (loader == Loader::Json && is_read_by_nobody_later)
-                                .then(|| text.to_vec()),
+                            refused_at: (source.refused_at.take())
+                                .filter(|_| is_read_by_nobody_later),
                             byte_count: text.len(),
                             ..ParsedSource::new(SourceKind::Program, Loader::Js)
                         })),

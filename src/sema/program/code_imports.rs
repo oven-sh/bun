@@ -2,8 +2,8 @@ use super::code_barrels::ImportRequests;
 use super::code_load::{Analyzed, CodeTarget, LoadKey, LoadedCode};
 use super::*;
 use crate::import_sites::{
-    ImportSite, ImportSiteKind, ImportSpecifier, ResolvedFrom, find_written_arms,
-    is_linked_by_bundler, is_name_read_by_transpiler, is_name_written_out,
+    ImportSite, ImportSiteKind, ImportSpecifier, ResolvedFrom, find_names_folded_by_transpiler,
+    find_written_arms, is_linked_by_bundler, is_name_read_by_transpiler, is_name_written_out,
 };
 use crate::resolve::{
     CodeFailure, CodeFile, CodeImportForm, CodeImportKind, CodeRequest, CodeResolution,
@@ -45,7 +45,17 @@ pub(super) fn resolve_code_imports<'s, 'r>(
         };
         let alternatives = analyzed.analysis.alternatives_of(&site.specifier);
         let decisions = &analyzed.analysis.decisions;
-        let names = match is_name_read_by_transpiler(hir, bound, decisions, site.kind) {
+        let is_folded = match site.specifier {
+            ImportSpecifier::Constant(name)
+                if !site.specifier_node.is_none()
+                    && context.host.is_name_for_transpiler_alone(atoms.bytes(name)) =>
+            {
+                find_names_folded_by_transpiler(hir, decisions, site.specifier_node).contains(&name)
+            }
+            _ => true,
+        };
+        let is_read = is_folded && is_name_read_by_transpiler(hir, bound, decisions, site.kind);
+        let names = match is_read {
             true => NamesKnown::ToTranspiler,
             false => NamesKnown::ToLoader,
         };

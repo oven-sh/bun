@@ -123,7 +123,8 @@ export function filledArray(length: unknown, value: unknown): unknown[] {
     }
   }
   const made = new Array<unknown>(length as number);
-  return made.fill(value);
+  made.fill(value);
+  return made;
 }
 
 // Array(length).fill(value).map(mapper), where the mapper does not take the list and checkedArrayLength has passed the length.

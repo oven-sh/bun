@@ -9,7 +9,7 @@ use bun_core::{StringBuilder, StringPointer, ZStr, bytes_of, slice_as_bytes};
 use bun_paths::{PathBuffer, path_buffer_pool, platform, resolve_path, strings};
 use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledFurtherPackageName, CompiledPackageName, CompiledPathAlias,
-    CompiledProgram, ImageFile, compare_source_paths,
+    CompiledProgram, ImageFile, RefusedData, compare_source_paths,
 };
 use bun_resolver::package_names::FurtherPackageName;
 use bun_sys::{Fd, Stat};
@@ -37,6 +37,8 @@ const HAS_ROOT_ON_BUILD_MACHINE: u32 = 128;
 const HAS_ASSETS_NAMED_AT_ROOT: u32 = 256;
 const NAMES_PLUGIN: u32 = 512;
 const HAS_LEVELS_ABOVE_ROOT: u32 = 1024;
+/// Behind the further names of packages: the length of `CompiledProgramInput::refused_data`, then the records.
+const HAS_REFUSED_DATA: u32 = 2048;
 /// The length of the path, what `require` and what `import` find, and what the name hides.
 const PACKAGE_NAME_SIZE: usize = 4 * size_of::<u32>();
 const HIDES_OTHER_PATHS: u32 = 1;
@@ -128,6 +130,8 @@ pub struct CompiledProgramInput<'a> {
     pub root_on_build_machine: Option<&'a [u8]>,
     /// `CompiledProgram::assets_named_at_root`. Empty where there are none.
     pub assets_named_at_root: &'a [u8],
+    /// `CompiledProgram::refused_data`. Empty where no parser refused a file.
+    pub refused_data: &'a [u8],
     /// `CompiledProgram::levels_above_root`
     pub levels_above_root: u32,
     /// Ascending by path.
@@ -173,6 +177,8 @@ pub(crate) fn capacity(input: &CompiledProgramInput<'_>) -> usize {
         + input.root_on_build_machine.map_or(0, <[u8]>::len)
         + size_of::<u32>()
         + input.assets_named_at_root.len()
+        + size_of::<u32>()
+        + input.refused_data.len()
         + size_of::<u32>()
         + encode_further_package_names(input.further_package_names).len()
 }
@@ -281,7 +287,8 @@ pub(crate) fn append_record(
             | (u32::from(input.root_on_build_machine.is_some()) * HAS_ROOT_ON_BUILD_MACHINE)
             | (u32::from(!input.assets_named_at_root.is_empty()) * HAS_ASSETS_NAMED_AT_ROOT)
             | (u32::from(input.levels_above_root != 0) * HAS_LEVELS_ABOVE_ROOT)
-            | (u32::from(!input.further_package_names.is_empty()) * HAS_FURTHER_PACKAGE_NAMES),
+            | (u32::from(!input.further_package_names.is_empty()) * HAS_FURTHER_PACKAGE_NAMES)
+            | (u32::from(!input.refused_data.is_empty()) * HAS_REFUSED_DATA),
     };
     let root = match input.root_below_working_directory {
         Some(root) => [
@@ -337,6 +344,16 @@ pub(crate) fn append_record(
         0 => Vec::new(),
         levels => levels.to_le_bytes().to_vec(),
     };
+    let refused_data = match input.refused_data {
+        b"" => Vec::new(),
+        records => [
+            &u32::try_from(records.len())
+                .map_err(|_| CORRUPTED)?
+                .to_le_bytes()[..],
+            records,
+        ]
+        .concat(),
+    };
     let _ = builder.add_concat(&[
         bytes_of(&header),
         slice_as_bytes(&records),
@@ -351,6 +368,7 @@ pub(crate) fn append_record(
         &assets_named_at_root,
         &levels_above_root,
         &encode_further_package_names(input.further_package_names),
+        &refused_data,
     ]);
     Ok(())
 }
@@ -662,6 +680,14 @@ fn try_read(
     if header.flags & HAS_FURTHER_PACKAGE_NAMES != 0 {
         further_package_names = read_further_package_names(payload, &mut end)?;
     }
+    let mut refused_data: &'static [u8] = b"";
+    if header.flags & HAS_REFUSED_DATA != 0 {
+        let length = payload.bytes(end, size_of::<u32>())?;
+        let length = u32::from_le_bytes(length.try_into().ok()?) as usize;
+        end += size_of::<u32>();
+        refused_data = payload.bytes(end, length)?;
+        end += length;
+    }
     *record_at = end;
     let backing_file = payload.file.map(|file| ImageFile {
         descriptor: file.descriptor,
@@ -682,6 +708,7 @@ fn try_read(
     let program = program.with_root_from_executable(root_from_executable);
     let program = program.with_root_on_build_machine(root_on_build_machine);
     let program = program.with_assets_named_at_root(assets_named_at_root);
+    let program = program.with_refused_data(refused_data);
     let program = program.with_levels_above_root(levels_above_root);
     let program = program.with_further_package_names(further_package_names.into_boxed_slice());
     Some(program.with_path_aliases(path_aliases))
@@ -1120,6 +1147,10 @@ impl StandaloneModuleGraph {
             && program.preserves_source_paths != is_bun_standalone_file_path(name)
     }
 
+    pub fn find_refused_data(&self, name: &[u8]) -> Option<RefusedData<'static>> {
+        self.compiled_program.as_ref()?.find_refused_data(name)
+    }
+
     pub fn find_asset_under_root(&self, name: &[u8]) -> Option<&File> {
         if !is_bun_standalone_file_path(name) {
             return None;
@@ -1285,6 +1316,7 @@ pub(crate) mod tests {
             root_from_executable: None,
             root_on_build_machine: None,
             assets_named_at_root: b"",
+            refused_data: b"",
             levels_above_root: 0,
             further_package_names: &[],
             preserves_source_paths,
@@ -1569,6 +1601,37 @@ pub(crate) mod tests {
             read_back(bytes[..bytes.len() - 1].to_vec(), record_at).err(),
             Some(CORRUPTED)
         );
+    }
+
+    #[test]
+    fn refused_data_round_trip() {
+        use bun_resolver::compiled_program::encode_refused_data;
+        let said = |message: &'static [u8], line: i32| RefusedData {
+            is_syntax_error: line < 0,
+            message,
+            line,
+            column: 3,
+            offset: 40,
+            length: 1,
+        };
+        let records = [
+            encode_refused_data(b"/$bunfs/root/data/bad.toml", &said(b"not toml", 1)),
+            encode_refused_data(b"/$bunfs/root/data/odd.txt?xml", &said(b"", -1)),
+        ]
+        .concat();
+        let entry_points = [entry_point(10, b"/$bunfs/root/main.js")];
+        let mut input = program(&IMAGE, ALIGNMENT, &entry_points, false);
+        input.refused_data = &records;
+        let (bytes, record_at, _) = write(&input, &[Some(0)], 5).unwrap();
+        let (program, record_end) = read_back(bytes.clone(), record_at).unwrap();
+        assert_eq!(record_end, bytes.len());
+        let find = |path: &[u8]| program.find_refused_data(path);
+        let toml = find(b"/$bunfs/root/data/bad.toml");
+        assert_eq!(toml, Some(said(b"not toml", 1)));
+        assert_eq!(find(b"/$bunfs/root/data/odd.txt?xml"), Some(said(b"", -1)));
+        assert_eq!(find(b"/$bunfs/root/data/odd.txt"), None);
+        assert_eq!(find(b"/$bunfs/root/data/bad.toml?toml"), None);
+        assert_eq!(find(b""), None);
     }
 
     #[test]

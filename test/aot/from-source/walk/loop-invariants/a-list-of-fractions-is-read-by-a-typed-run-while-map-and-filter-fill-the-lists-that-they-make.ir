@@ -1,0 +1,30 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const prices: number[] = [];
+# for (let i = 0; i < 40; i++) prices.push((i % 23) / 2 + 0.25);
+# function raised(turns: number): number {
+#   let sum = 0;
+#   for (let t = 0; t < turns; t++) {
+#     const more = prices.map(x => x + 1);
+#     const dear = prices.filter(x => x > 5);
+#     sum += more[t % 40] + dear.length + dear[0];
+#   }
+#   return sum;
+# }
+# function mixed(turns: number): string {
+#   let said = "";
+#   for (let t = 0; t < turns; t++) {
+#     const made = prices.map((x, i) => (i < 3 ? x + 1 : i === 3 ? "text" : i === 4 ? undefined : NaN));
+#     said += made.length + ":" + made[0] + "," + made[2] + "," + made[3] + "," + made[4] + "," + made[5] + ";";
+#   }
+#   return said;
+# }
+# print(raised(JSON.parse("3")));
+# print(mixed(JSON.parse("2")));
+# -- end of source
+# RUN(EVENT): compile LoopsOverTestedListsThatFillWhatIsMadeHere mechanisms=all
+# EVENT: statistic LoopsOverTestedListsThatFillWhatIsMadeHere 3
+# RUN(RIGHT): run-in-shell
+# RIGHT: 81
+# RIGHT-NEXT: 40:1.25,2.25,text,undefined,NaN;40:1.25,2.25,text,undefined,NaN;
+# RIGHT-NEXT: exited with 0

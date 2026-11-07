@@ -1,0 +1,26 @@
+# f1 = total
+# -- source: read-leaves-a-loop-and-stays-behind-its-instanceof-test.ts
+# class Circle {
+#   radius: number;
+#   constructor(radius: number) { this.radius = radius; }
+# }
+# class Square {
+#   side: number;
+#   constructor(side: number) { this.side = side; }
+# }
+# function total(shape: Circle | Square, count: number): number {
+#   let sum = 0;
+#   for (let i = 0; i < count; i++) {
+#     if (shape instanceof Circle) sum += shape.radius;
+#   }
+#   return sum;
+# }
+# declare const input: any;
+# (globalThis as any).answer = total(input ? new Circle(+input) : new Square(+input), input | 0);
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches, a turn of the written loop steps by 1.
+# When the bound was taken: loop: operations 5, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:5 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 5

@@ -684,7 +684,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     auto* parentOfCompiledModule = thisObject->m_isParentStored ? nullptr : Bun::parentOfCompiledModule(thisObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (parentOfCompiledModule) {
-        thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parentOfCompiledModule);
+        if (auto* parent = dynamicDowncast<JSCommonJSModule>(parentOfCompiledModule))
+            thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parent);
         return JSValue::encode(parentOfCompiledModule);
     }
 
@@ -1200,14 +1201,14 @@ void JSCommonJSModule::setCompiledModuleThatAsks(uint32_t module)
 {
     WTF::Locker locker { recordsBesideModuleObjectsLock };
     hasRecordBesideCell = true;
-    recordsBesideModuleObjects().ensure(this, [] { return RecordBesideModuleObject {}; }).iterator->value.compiledModuleThatAsks = module;
+    recordsBesideModuleObjects().ensure(this, [] { return RecordBesideModuleObject { }; }).iterator->value.compiledModuleThatAsks = module;
 }
 
 bool JSCommonJSModule::listsCompiledModuleAsChild(uint32_t module)
 {
     WTF::Locker locker { recordsBesideModuleObjectsLock };
     hasRecordBesideCell = true;
-    return recordsBesideModuleObjects().ensure(this, [] { return RecordBesideModuleObject {}; }).iterator->value.compiledModulesAmongChildren.add(module).isNewEntry;
+    return recordsBesideModuleObjects().ensure(this, [] { return RecordBesideModuleObject { }; }).iterator->value.compiledModulesAmongChildren.add(module).isNewEntry;
 }
 
 void JSCommonJSModule::forgetCompiledModulesAmongChildren()

@@ -1434,12 +1434,19 @@ pub(crate) fn find_why_askers_are_of_product(refusals: &[Vec<u8>]) -> Vec<(Vec<u
         .collect();
     askers.sort_unstable();
     askers.dedup();
-    (askers.into_iter())
-        .filter_map(|asker| {
-            let below = bun_core::strings::replace_owned(asker, b"/", &[bun_paths::SEP]);
-            let file = [top, &[bun_paths::SEP], &below[..]].concat();
-            let is_compiled = |path: &[u8]| bun_jsc::compiled_program::is_compiled_module(path);
-            let importer = bun_aot::builtins::find_importer_outside_run(top, &file, &is_compiled)?;
+    if askers.is_empty() {
+        return Vec::new();
+    }
+    let files = askers.iter().map(|asker| {
+        let below = bun_core::strings::replace_owned(asker, b"/", &[bun_paths::SEP]);
+        [top, &[bun_paths::SEP], &below[..]].concat()
+    });
+    let files: Vec<Vec<u8>> = files.collect();
+    let is_compiled = |path: &[u8]| bun_jsc::compiled_program::is_compiled_module(path);
+    let importers = bun_aot::builtins::find_importers_outside_run(top, &files, &is_compiled);
+    (askers.into_iter().zip(importers))
+        .filter_map(|(asker, importer)| {
+            let importer = importer?;
             let importer = importer
                 .strip_prefix(top)?
                 .strip_prefix(&[bun_paths::SEP])?;

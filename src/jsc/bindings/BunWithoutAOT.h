@@ -65,6 +65,7 @@ inline bool refusesLibraryText(JSGlobalObject*) { return false; }
 inline bool refusesToRun(JSFunction*) { return false; }
 inline bool isNeededByNothingThatRuns(JSFunction*) { return false; }
 inline void throwBuiltinNotCompiled(JSGlobalObject*, const String&) {}
+inline void noteGlobalObjectStoodInForReceiverOfEvents(JSGlobalObject*) {}
 
 namespace PropertyWalk {
 

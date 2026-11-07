@@ -41,6 +41,9 @@ pub enum KnownReference {
         symbol: SymbolId,
         helper: Helper,
     },
+    Holder {
+        symbol: SymbolId,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -315,6 +318,7 @@ impl<'a, 's> Finder<'a, 's> {
             return None;
         };
         match reference {
+            Reference::Holder => Some(KnownReference::Holder { symbol }),
             Reference::Helper(helper) if self.is_loaded_from_another_file(symbol) => {
                 Some(KnownReference::Loaded { symbol, helper })
             }
@@ -798,6 +802,7 @@ impl<'a, 's> Finder<'a, 's> {
                     && (is_initialized_first || self.is_defined_in_head(symbol))
             }
             KnownReference::Loaded { .. } => false,
+            KnownReference::Holder { .. } => true,
         }
     }
 

@@ -531,6 +531,84 @@ fn get_method_function(hir: &File<'_>, prop: &Prop) -> FnId {
     function
 }
 
+pub(in crate::lower) fn is_born_level_by_level(
+    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
+    literal: ExprId,
+) -> bool {
+    if lowering.is_module_body() && !lowering.stands_in_loop() {
+        return false;
+    }
+    let hir = lowering.file.hir;
+    if lowering.only_argument_of_construction == Some(hir.skip_type_assertions(literal)) {
+        return false;
+    }
+    let literal = hir.skip_type_assertions(literal);
+    let mut known = lowering.lists_inside_literals.borrow_mut();
+    if !known.contains_key(&literal) && is_laid_out_in_line_by_the_walk(hir, literal) {
+        known.insert(literal, ListsInside::None);
+    }
+    let mut pending: SmallVec<[(ExprId, bool); 8]> = smallvec![(literal, false)];
+    while let Some((expression, is_left)) = pending.pop() {
+        if known.contains_key(&expression) {
+            continue;
+        }
+        let inside = find_literals_inside(hir, expression);
+        if !is_left && !inside.is_empty() {
+            pending.push((expression, true));
+            pending.extend(inside.iter().map(|&inner| (inner, false)));
+            continue;
+        }
+        let is_filled_list =
+            matches!(hir[expression].kind, ExprKind::Array(items) if items.len() != 0);
+        let lists = match inside.iter().any(|inner| known[inner] != ListsInside::None) {
+            true => ListsInside::Some,
+            false if inside.is_empty() && is_filled_list => ListsInside::IsListOfLeaves,
+            false => ListsInside::None,
+        };
+        known.insert(expression, lists);
+    }
+    known[&literal] == ListsInside::Some
+}
+
+fn is_laid_out_in_line_by_the_walk(hir: &File<'_>, literal: ExprId) -> bool {
+    const MOST_NODES_OF_EXPANDED_DATA: usize = 16;
+    let mut number_of_nodes = 1;
+    let mut pending: SmallVec<[ExprId; 8]> = smallvec![literal];
+    while let Some(list) = pending.pop() {
+        let ExprKind::Array(items) = hir[list].kind else {
+            return false;
+        };
+        number_of_nodes += items.len();
+        if number_of_nodes > MOST_NODES_OF_EXPANDED_DATA {
+            return false;
+        }
+        pending.extend(find_literals_inside(hir, list));
+    }
+    true
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::lower) enum ListsInside {
+    None,
+    IsListOfLeaves,
+    Some,
+}
+
+fn find_literals_inside(hir: &File<'_>, literal: ExprId) -> SmallVec<[ExprId; 8]> {
+    let as_literal = |expression: ExprId| {
+        let expression = hir.skip_type_assertions(expression);
+        is_literal(hir, expression).then_some(expression)
+    };
+    match hir[literal].kind {
+        ExprKind::Array(items) => hir.ids(items).filter_map(as_literal).collect(),
+        ExprKind::Object(properties) => {
+            let values = properties.iter().map(|property| hir[property].value);
+            values.filter_map(as_literal).collect()
+        }
+        _ => SmallVec::new(),
+    }
+}
+
 fn is_literal(hir: &File<'_>, expression: ExprId) -> bool {
     matches!(
         hir[hir.skip_type_assertions(expression)].kind,
@@ -575,6 +653,7 @@ pub(crate) fn lower_object_literal(
         return lowering.emit_builtin_call(BuiltinId::ObjectCreate, &[null]);
     }
     if lowering.file.decisions().is_data_literal(literal)
+        && !is_born_level_by_level(lowering, literal)
         && !lowering.file.is_built_by_code(literal)
     {
         return lowering.lower_decided_data(literal);
@@ -617,7 +696,11 @@ pub(crate) fn lower_object_literal(
         }
         None => {
             let layout = lowering.file.literal_layout(literal);
-            lowering.begin_object(layout)
+            let mut object = lowering.begin_object(layout);
+            if lowering.file.is_opened_at_once(literal) {
+                lowering.open_head(&mut object);
+            }
+            object
         }
     };
     for prop in rest {

@@ -172,6 +172,11 @@ Transform.prototype._transform = function (
   throw $ERR_METHOD_NOT_IMPLEMENTED("_transform()");
 };
 
+// As emitOfNoFunction() in ./readable.ts.
+function pushOfNoFunction(this: any, val: unknown): void {
+  this.push(val);
+}
+
 Transform.prototype._write = function (
   this: $Node.Transform,
   chunk: unknown,
@@ -193,7 +198,7 @@ Transform.prototype._write = function (
         const push = this.push;
         if (push === internals.pushingMethod) internals.pushToReadable!(this, this._readableState, val, undefined);
         else if (typeof push === "function") push.$call(this, val);
-        else this.push(val);
+        else pushOfNoFunction.$call({ push }, val);
       } else {
         this.push(val);
       }

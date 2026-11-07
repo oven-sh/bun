@@ -1,0 +1,36 @@
+# -- source: the-rows-of-reads-off-records-of-which-nothing-is-known-are-claimed-sampled-and-given-up.ts
+# declare function publish(total: (rows: any) => number): void;
+# function total(rows: any): number { let sum = 0; for (const row of rows) sum += row.price * row.count; return sum; }
+# publish(total);
+# -- end of source
+# LIBRARY: own
+# f1 = total. The rows are parsed by the shell: ordinary objects of which the program knows nothing; a shape is told by its first name. Both reads of a turn are done at the first, out of the record's row in a group of four rows.
+# What is counted is how often the run time is ASKED FOR A ROW. A record that finds its row asks nothing. The numbers are foretold by a simulation written from the description alone (simulate.py beside the unit's script).
+# Each run first goes over rows of its shapes, some of them several times, so that the run time's caches know the shapes (a shape's first record asks the stub), and collects, which zeroes the group: what is counted begins with no row claimed.
+# Four shapes: each claims a free row: 4. Five shapes: the fifth puts out a row and a sample of 16 follows; then waits of 16, 32, 64 .. records without a row, each ended by a row put out and a sample: 55 in 400 records, 89 in 2,000.
+# Forty shapes: 4 rows claimed, one put out, 16 sampled, of which fewer than a third had a row: the group gives up: 21, and not one more in 1,600 further records.
+# A late shape: four shapes, then a fifth that stays: it puts out a row, all 16 of the sample have a row, the rows are shown again and nothing is asked any more: 21.
+# A collection: five shapes in turn for 12 records end in the middle of a sample (12 asked); a collection zeroes the group; one shape then claims its row: 13.
+# RUN(TWICE): walk f1 mechanisms=all
+# TWICE-LABEL: code f1:Body
+# TWICE: = GetValueAtSiteOrAbsent {{*}}key="price"
+# TWICE: = GetValueAtSiteOrAbsent {{*}}key="count"
+# RUN(FOUR): run-in-shell mechanisms=all --aotCountsPath=/dev/null publish = function (total) { const made = (shapes, from, length) => JSON.parse("[" + Array.from({ length }, (_, i) => `{"s${(from + i) % shapes}":0,"price":${i},"count":2}`).join(",") + "]"); const asked = () => aotOperationCount("operationAOTClaimRowOfReads"); const rows = made(4, 0, 400); total(rows); gc(); const before = asked(); print(total(rows), asked() - before); };
+# FOUR: 159600 4
+# FOUR-NEXT: exited with 0
+# RUN(FIVE): run-in-shell mechanisms=all --aotCountsPath=/dev/null publish = function (total) { const made = (shapes, from, length) => JSON.parse("[" + Array.from({ length }, (_, i) => `{"s${(from + i) % shapes}":0,"price":${i},"count":2}`).join(",") + "]"); const asked = () => aotOperationCount("operationAOTClaimRowOfReads"); const first = made(5, 0, 400), then = made(5, 400, 1600); total(first); gc(); const before = asked(); print(total(first), asked() - before); print(total(then), asked() - before); };
+# FIVE: 159600 55
+# FIVE-NEXT: 2558400 89
+# FIVE-NEXT: exited with 0
+# RUN(FORTY): run-in-shell mechanisms=all --aotCountsPath=/dev/null publish = function (total) { const made = (shapes, from, length) => JSON.parse("[" + Array.from({ length }, (_, i) => `{"s${(from + i) % shapes}":0,"price":${i},"count":2}`).join(",") + "]"); const asked = () => aotOperationCount("operationAOTClaimRowOfReads"); const first = made(40, 0, 400), then = made(40, 400, 1600); for (let pass = 0; pass < 6; pass++) { total(first); total(then); } gc(); const before = asked(); print(total(first), asked() - before); print(total(then), asked() - before); };
+# FORTY: 159600 21
+# FORTY-NEXT: 2558400 21
+# FORTY-NEXT: exited with 0
+# RUN(LATE): run-in-shell mechanisms=all --aotCountsPath=/dev/null publish = function (total) { const made = (shapes, from, length) => JSON.parse("[" + Array.from({ length }, (_, i) => `{"s${(from + i) % shapes}":0,"price":${i},"count":2}`).join(",") + "]"); const asked = () => aotOperationCount("operationAOTClaimRowOfReads"); const first = made(4, 0, 40), late = JSON.parse("[" + Array.from({ length: 400 }, (_, i) => `{"late":0,"price":${i},"count":2}`).join(",") + "]"); const warm = made(4, 0, 400); for (let pass = 0; pass < 6; pass++) { total(warm); total(late); } gc(); const before = asked(); print(total(first), asked() - before); print(total(late), asked() - before); if (!warm.length) print("gone"); };
+# LATE: 1560 4
+# LATE-NEXT: 159600 21
+# LATE-NEXT: exited with 0
+# RUN(COLLECTION): run-in-shell mechanisms=all --aotCountsPath=/dev/null publish = function (total) { const made = (shapes, from, length) => JSON.parse("[" + Array.from({ length }, (_, i) => `{"s${(from + i) % shapes}":0,"price":${i},"count":2}`).join(",") + "]"); const asked = () => aotOperationCount("operationAOTClaimRowOfReads"); const first = made(5, 0, 12), then = made(1, 0, 100), warm = made(5, 0, 400); for (let pass = 0; pass < 6; pass++) total(warm); gc(); const before = asked(); print(total(first), asked() - before); gc(); print(total(then), asked() - before); if (!warm.length) print("gone"); };
+# COLLECTION: 132 12
+# COLLECTION-NEXT: 9900 13
+# COLLECTION-NEXT: exited with 0

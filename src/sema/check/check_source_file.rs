@@ -1263,7 +1263,7 @@ impl<'s> Checker<'_, 's> {
                 self.check_members(file, members);
                 let ty = self.type_from_node(file, node);
                 if (members.iter()).any(|m| hir[m].kind == MemberKind::IndexSignature) {
-                    self.check_index_constraints(file, ty, &[(file, members)], false, None);
+                    self.check_index_constraints(file, ty, Ok(&[(file, members)]), false, None);
                 }
                 // Another task may have stored `ty`.
                 self.get_members_of_type_literal(file, members);

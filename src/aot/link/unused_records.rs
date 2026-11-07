@@ -84,8 +84,8 @@ fn find_written_keys(layouts: &[Layout], input: &UseInput<'_>) -> Vec<AtomicBool
         for layout in tasks[task].iter().filter(|layout| !is_plain_record(layout)) {
             let keys = layout.fields.iter().map(|field| field.key);
             for key in keys
-                .chain(layout.static_fields.iter().map(|field| field.key))
                 .flatten()
+                .chain(layout.static_fields.iter().map(|field| field.key))
             {
                 set_mark(&is_written[key.index()]);
             }

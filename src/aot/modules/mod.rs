@@ -34,8 +34,8 @@ mod written_descriptor;
 
 pub use bindings::{
     AccessedModule, AnswerMember, Candidates, CopiedExports, ExportBinding, ExportLookup,
-    ExportStatement, ExportUse, Holder, ImportBinding, ModuleExport, ModuleRequest, RequiredName,
-    ShownNames, SiteAnswer, SpelledModule, SyntheticExport, SyntheticExportId,
+    ExportStatement, ExportUse, Holder, ImportBinding, ModuleExport, ModuleRequest, NO_STAR_PLACE,
+    RequiredName, ShownNames, SiteAnswer, SpelledModule, SyntheticExport, SyntheticExportId,
 };
 pub use bun_core::strings::order_utf16 as compare_code_units;
 pub use commonjs_exports::CommonJsExports;
@@ -64,7 +64,7 @@ use crate::load::sources::parsed_source;
 use crate::load::{EntryPointKind, SourceKind, Sources};
 use crate::statistics::{Stage, StepClock};
 use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::hir::StmtId;
+use bun_sema::hir::{ExprId, StmtId};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
@@ -265,6 +265,10 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         ModuleKind::CommonJs => texts.marker(module),
         _ => None,
     };
+    let is_required_by_star =
+        |file: FileId, required: ExprId| texts.is_required_by_star(file, required);
+    let is_holder_in_erased_getter =
+        |file: FileId, holder: ExprId| texts.is_holder_in_erased_getter(file, holder);
     let (found_in_commonjs, mut imports) = run_steps_beside(
         input.beside,
         &mut steps,
@@ -279,6 +283,8 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
                 &order,
                 &sites,
                 &find_marker,
+                &is_required_by_star,
+                &is_holder_in_erased_getter,
                 &evicted,
             )
         },
@@ -660,6 +666,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
                 false => Vec::new(),
             },
             unread_exports: Vec::new(),
+            names_left_out: Vec::new(),
             is_left_to_loader: is_left_to_loader[file.idx()],
             required_names: imports.required_names,
             names_searched_behind_stars: imports.names_searched_behind_stars,
@@ -670,6 +677,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         })
     };
     let inner_requests = requests.inner_modules;
+    let files_with_late_stars = requests.files_with_late_stars;
     let create_plan = || {
         let mut plan = Plan::new(order.into_parts(), erased_statements);
         for &module in &stored_markers {
@@ -686,6 +694,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
             made.filter_map(|it| input.files.by_path.get(input.files.atoms.bytes(it.path)));
         plan.set_makers_of_imported_requires(makers.collect());
         plan.set_names_without_code_that_mocks_give(names_without_code);
+        plan.set_files_with_late_stars(files_with_late_stars);
         plan.test_run = input.run.plan_of_files();
         test_run_evictions::fill_plan_of_loads(input, evicted.modules(), &mut plan);
         for &module in &mocked_modules {

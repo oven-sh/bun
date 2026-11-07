@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# 'use strict';
+# class Bell {
+#   constructor() { this.ringers = []; }
+#   add(ringer) { this.ringers.push(ringer); }
+#   ring(...notes) { for (const ringer of this.ringers) ringer.apply(this, notes); }
+# }
+# const bell = new Bell();
+# let total = 0;
+# bell.add((note, times) => { total = (total + note.pitch * times) | 0; });
+# for (let i = 0; i < 3; i++) bell.ring({ pitch: i }, 2);
+# console.log(total);
+# -- end of source
+# `ringer.apply(this, notes)` is forwarded to the one function that the list of ringers holds. The list of notes is made by whoever calls ring(), not here. Link says of it what it says of a list that is
+# spread: it stays as its class makes it. So the parameters are read out of the list and the function is called directly, also in a loop, where the walk forgets what it knew of a list handed to a call.
+# RUN: walk f3 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: isLoopHead=true
+# CHECK: GetArrayElement {{*}} level=Proven
+# CHECK: GetArrayElement {{*}} level=Proven
+# CHECK: GetArrayElement {{*}} level=Proven
+# CHECK: CallDirect {{*}} function=f4

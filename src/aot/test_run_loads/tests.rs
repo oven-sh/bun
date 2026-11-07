@@ -215,7 +215,7 @@ fn path_that_is_spelled_in_part_marks_the_files_that_fit() {
 
 #[test]
 fn file_leaves_by_its_key() {
-    let uses: [(&str, &[&str], bool); 11] = [
+    let uses: [(&str, &[&str], bool); 14] = [
         (
             r#"delete require.cache[require.resolve("./a.cjs")];"#,
             &["a.cjs"],
@@ -249,8 +249,23 @@ fn file_leaves_by_its_key() {
         (r#"delete require.cache["/nowhere.js"];"#, &[], false),
         (
             r#"module.exports = require.cache[require.resolve("./a.cjs")];"#,
+            &["a.cjs"],
+            false,
+        ),
+        (
+            r#"module.exports = require.cache[require.resolve("./a.cjs")].exports;"#,
             &[],
             false,
+        ),
+        (
+            "exports.f = key => { const entry = require.cache[key]; return entry.exports; };",
+            &[],
+            false,
+        ),
+        (
+            "exports.f = key => { const entry = require.cache[key]; delete entry.exports; };",
+            &[],
+            true,
         ),
         (
             r#"if (false) delete require.cache[require.resolve("./a.cjs")];"#,

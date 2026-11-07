@@ -1,0 +1,19 @@
+# `{ *[Symbol.iterator]() { .. } }`: the generator method lies in a slot of the literal. The loop over the literal reads it there, knows the one function that the slot holds,
+# and walks the generator in place of its own loop: no generator is made and nothing is stepped.
+# f1 = make, f2 = total, f3 = the generator method
+# -- source: the-generator-method-of-an-object-literal-is-walked-in-the-loop-over-the-literal.ts
+# declare function sink(...values: unknown[]): number;
+# function make(most: number) { return { *[Symbol.iterator]() { for (let i = 0; i < most; i++) yield i + 1; } }; }
+# function total(walk: Iterable<number>): number { let sum = 0; for (const x of walk) sum += x; return sum; }
+# sink(total(make(3)), total(make(4)));
+# -- end of source
+# RUN: walk f2:Body mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f2:Body
+# CHECK: frame 1 callee=f3
+# CHECK: = GetSlot {{*}}key=@@iterator
+# CHECK-NOT: = NewGenerator
+# CHECK-NOT: = StepGenerator
+# CHECK-NOT: isNeverInlined
+# CHECK: isLoopHead=true
+# CHECK: Return

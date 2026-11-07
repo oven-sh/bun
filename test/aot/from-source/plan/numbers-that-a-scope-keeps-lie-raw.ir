@@ -1,0 +1,17 @@
+# A variable that closures share lies in a scope in the heap. Link proves `total` a number and `state` an integer, with every writer in sight, so their slots hold the raw words, as the fields of a class do:
+# no box at a store, no question at a read, and the collector does not look at them. `label` is a text and stays a value.
+# -- source: meters.ts
+# function meter(label: string) {
+#   let total = 0.5, state = 1;
+#   return { add(x: number) { total += x * 0.25; state = (Math.imul(state, 1664525) + x) >>> 0; }, read() { return label + " " + String(total) + " " + String(state); } };
+# }
+# const one = meter("one"), two = meter("two");
+# for (let i = 0; i < 100; i++) { one.add(i); two.add(i * 2); }
+# console.log(one.read() + " " + two.read());
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: Environment size=32
+# CHECK-NEXT: slot 0 {{*}}JSValue Inline offset=8
+# CHECK-NEXT: slot 1 {{*}}OptionalDouble Inline offset=16
+# CHECK-NEXT: slot 2 {{*}}OptionalInt64 Inline offset=24

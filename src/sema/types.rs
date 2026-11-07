@@ -11,7 +11,7 @@ use crate::session::{Arena, ArenaVec, Session};
 use crate::table::{ById, Frozen};
 use crate::util::memory::{AppendVec, OWN, Placeholder, Placeholders, Segmented};
 use crate::util::{
-    FxHashMap, FxHasher, LocalVec, SharedSort, Window, Windowed, WindowedSlots, fx_hash,
+    FxHashMap, FxHashSet, FxHasher, LocalVec, SharedSort, Window, Windowed, WindowedSlots, fx_hash,
     spread_in_window, spread_of,
 };
 use bun_alloc::{ArenaBox, vec_from_iter_in};
@@ -4104,9 +4104,10 @@ impl<'p, 's> Types<'p, 's> {
         let mut waiting: SmallVec<[TypeId; 16]> = SmallVec::new();
         waiting.push(whole);
         while let Some(next) = waiting.pop() {
-            let mut mentioned = Mentioned {
+            let mut mentioned = Mentioned::<false> {
                 types: *self,
                 found: SmallVec::new(),
+                bytes_of_texts: 0,
             };
             visit_type_as_content(&self.record(next).created, &mut mentioned);
             for id in mentioned.found {
@@ -4120,6 +4121,28 @@ impl<'p, 's> Types<'p, 's> {
             }
         }
         false
+    }
+
+    pub fn nesting_size(&self, id: TypeId) -> usize {
+        let mut size = 0usize;
+        let mut entered: FxHashSet<TypeId> = FxHashSet::from_iter([id]);
+        let mut waiting: SmallVec<[TypeId; 16]> = smallvec::smallvec![id];
+        while let Some(next) = waiting.pop() {
+            let created = &self.record(next).created;
+            if let TypeData::NumberLit { bits, .. } = created.0 {
+                size = size.saturating_add(f64::from_bits(bits).abs() as usize);
+            }
+            let mut mentioned = Mentioned::<true> {
+                types: *self,
+                found: SmallVec::new(),
+                bytes_of_texts: 0,
+            };
+            visit_type_as_content(created, &mut mentioned);
+            size = size.saturating_add(mentioned.found.len() + mentioned.bytes_of_texts);
+            let found = mentioned.found.into_iter();
+            waiting.extend(found.filter(|&id| entered.insert(id)));
+        }
+        size
     }
 
     /// Returns `None` if the rank hasn't been computed.
@@ -5569,12 +5592,13 @@ fn visit_type_as_content<V: Hashing>(created: &OwnedTypeKey, content: &mut V) {
 }
 
 /// Collects the types a key mentions, directly or through a mapper, a signature or a component list.
-struct Mentioned<'p, 's> {
+struct Mentioned<'p, 's, const MEASURES_TEXTS: bool> {
     types: Types<'p, 's>,
     found: SmallVec<[TypeId; 8]>,
+    bytes_of_texts: usize,
 }
 
-impl Hashing for Mentioned<'_, '_> {
+impl<const MEASURES_TEXTS: bool> Hashing for Mentioned<'_, '_, MEASURES_TEXTS> {
     fn unordered<T: Follow>(&mut self, items: &[T]) {
         for item in items {
             item.visit(self);
@@ -5582,8 +5606,12 @@ impl Hashing for Mentioned<'_, '_> {
     }
 }
 
-impl Visitor for Mentioned<'_, '_> {
-    fn atom(&mut self, _: Atom) {}
+impl<const MEASURES_TEXTS: bool> Visitor for Mentioned<'_, '_, MEASURES_TEXTS> {
+    fn atom(&mut self, atom: Atom) {
+        if MEASURES_TEXTS {
+            self.bytes_of_texts += self.types.text(atom).len();
+        }
+    }
     fn components(&mut self, id: ComponentsId) {
         self.types.components(id).visit(self);
     }

@@ -91,6 +91,8 @@ pub struct CompiledProgram {
     root_on_build_machine: Option<&'static [u8]>,
     /// The paths below the root of the files given to `--asset` that their base names find too, each followed by a zero byte.
     assets_named_at_root: &'static [u8],
+    /// `encode_refused_data`, one record after the other.
+    refused_data: &'static [u8],
     /// Ascending by path.
     further_package_names: Box<[CompiledFurtherPackageName]>,
     /// Built with `--aot-allow-code-from-disk`. Whether the program itself loads such code is the image's to say.
@@ -165,6 +167,8 @@ pub const ENDS_SEARCH: &[u8] = b"//";
 
 /// Behind a public path without its extension, or that of a folder: on the disk of the build `bun run` finds a file under it that was not compiled.
 pub const LEADS_OUTSIDE: &[u8] = b"//.";
+/// The same for the name written as that of a folder, `./tool/`.
+pub const LEADS_OUTSIDE_AS_FOLDER: &[u8] = b"///.";
 
 pub(crate) fn is_relative_specifier(specifier: &[u8]) -> bool {
     let after_dots = specifier
@@ -448,6 +452,56 @@ fn sorts_before_directory_contents(path: &[u8], directory: &[u8]) -> bool {
     }
 }
 
+/// Where the parser refused a file of data at the build, and a sentence that holds nothing of the file: what the parser says quotes the text. No byte of the file is in the executable.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct RefusedData<'a> {
+    /// What the engine's parser of JSON throws. Every other parser is Bun's, and throws a `BuildMessage`.
+    pub is_syntax_error: bool,
+    pub message: &'a [u8],
+    pub line: i32,
+    pub column: i32,
+    pub offset: u32,
+    pub length: u32,
+}
+
+pub fn encode_refused_data(path: &[u8], refused: &RefusedData<'_>) -> Vec<u8> {
+    let mut record = Vec::new();
+    for text in [path, refused.message] {
+        record.extend_from_slice(&(text.len() as u32).to_le_bytes());
+        record.extend_from_slice(text);
+    }
+    record.extend_from_slice(&u32::from(refused.is_syntax_error).to_le_bytes());
+    record.extend_from_slice(&refused.line.to_le_bytes());
+    record.extend_from_slice(&refused.column.to_le_bytes());
+    record.extend_from_slice(&refused.offset.to_le_bytes());
+    record.extend_from_slice(&refused.length.to_le_bytes());
+    record
+}
+
+fn read_refused_data<'a>(rest: &mut &'a [u8]) -> Option<(&'a [u8], RefusedData<'a>)> {
+    fn read_number(rest: &mut &[u8]) -> Option<u32> {
+        let (number, behind) = rest.split_first_chunk::<4>()?;
+        *rest = behind;
+        Some(u32::from_le_bytes(*number))
+    }
+    fn read_text<'a>(rest: &mut &'a [u8]) -> Option<&'a [u8]> {
+        let length = read_number(rest)? as usize;
+        let (text, behind) = rest.split_at_checked(length)?;
+        *rest = behind;
+        Some(text)
+    }
+    let (path, message) = (read_text(rest)?, read_text(rest)?);
+    let refused = RefusedData {
+        is_syntax_error: read_number(rest)? != 0,
+        message,
+        line: read_number(rest)? as i32,
+        column: read_number(rest)? as i32,
+        offset: read_number(rest)?,
+        length: read_number(rest)?,
+    };
+    Some((path, refused))
+}
+
 impl CompiledProgram {
     pub fn new(
         image: &'static [u8],
@@ -474,6 +528,7 @@ impl CompiledProgram {
             root_from_executable: None,
             root_on_build_machine: None,
             assets_named_at_root: b"",
+            refused_data: b"",
             further_package_names: Box::new([]),
             allows_code_from_disk: false,
             names_plugin: false,
@@ -574,6 +629,23 @@ impl CompiledProgram {
     pub fn with_assets_named_at_root(mut self, paths: &'static [u8]) -> CompiledProgram {
         self.assets_named_at_root = paths;
         self
+    }
+
+    pub fn with_refused_data(mut self, records: &'static [u8]) -> CompiledProgram {
+        self.refused_data = records;
+        self
+    }
+
+    /// `path`: that of the module that stands for the file.
+    pub fn find_refused_data(&self, path: &[u8]) -> Option<RefusedData<'static>> {
+        let mut rest = self.refused_data;
+        while !rest.is_empty() {
+            let (of, refused) = read_refused_data(&mut rest)?;
+            if of == path {
+                return Some(refused);
+            }
+        }
+        None
     }
 
     pub fn asset_named_at_root(&self, base_name: &[u8]) -> Option<&'static [u8]> {
@@ -810,6 +882,32 @@ impl CompiledProgram {
         self.find_file_or_directory(&path, how, search, lookup)
     }
 
+    /// Whether `bun run` finds under `specifier` a file that the executable does not hold, where the executable would find another.
+    pub fn leads_outside(
+        &self,
+        public_root: &[u8],
+        source_dir: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+    ) -> bool {
+        let how = HowNamed {
+            names_directory: Resolver::import_path_names_directory(specifier),
+            is_require,
+        };
+        !self.preserves_source_paths
+            && (self.join_public_path(public_root, source_dir, specifier))
+                .is_some_and(|path| self.is_marked_as_leading_outside(&path, how))
+    }
+
+    fn is_marked_as_leading_outside(&self, path: &[u8], how: HowNamed) -> bool {
+        let mark = match how.names_directory {
+            true => LEADS_OUTSIDE_AS_FOLDER,
+            false => LEADS_OUTSIDE,
+        };
+        !self.package_names.is_empty()
+            && self.is_hidden_name(&[path, mark].concat(), how.is_require)
+    }
+
     /// The compiled module that `specifier` names by going up out of the root directory and coming back through its folders.
     pub fn resolve_module_through_root_folders(
         &self,
@@ -912,10 +1010,7 @@ impl CompiledProgram {
         search: &ExtensionSearch<'_>,
         lookup: Lookup<'_>,
     ) -> Option<&'static [u8]> {
-        let leads_outside = !how.names_directory
-            && !self.package_names.is_empty()
-            && self.is_hidden_name(&[path, LEADS_OUTSIDE].concat(), how.is_require);
-        if leads_outside {
+        if self.is_marked_as_leading_outside(path, how) {
             return None;
         }
         if let Some(file) = find_file(path, how.names_directory, search, lookup) {

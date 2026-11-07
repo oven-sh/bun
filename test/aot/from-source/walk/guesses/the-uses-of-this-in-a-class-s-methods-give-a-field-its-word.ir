@@ -1,0 +1,11 @@
+# -- source: main.js
+# class Matrix { constructor(rows) { this.rows = rows; } count() { let s = 0; for (let r = 0; r < this.rows.length; r++) for (let c = 0; c < this.rows[r].length; c++) if (this.rows[r][c]) s++; return s; } }
+# globalThis.kept = Matrix;
+# -- end of source
+# A constructor's parameter fills the field: nothing is written of it. What the class's own methods do with `this.rows` says: a list of lists or texts. The word is expected alone.
+# RUN(WORD): print
+# WORD: layout {{*}}name="Matrix"{{*}}key="rows" declared={type=undefined|null|Array<undefined|null|string|Array> flags=[IsExpected]}
+# With the word the inner loop is bought: the row is expected to be a list and is asked in front of the typed copy.
+# RUN(WALK): walk f2 mechanisms=all
+# REQUIRES(WALK): entries-of-bun
+# WALK-COUNT-3: isLoopHead=true

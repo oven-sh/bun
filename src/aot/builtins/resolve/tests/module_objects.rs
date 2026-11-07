@@ -324,12 +324,55 @@ fn where_no_expression_names_the_object() {
         "function g() { exports = module.exports = f; }",
         "exports = module.exports = f; exports = 1;",
         "exports += module.exports = f;",
-        "module.exports = exports = f;",
         "__filename = 1;",
     ] {
         assert_mentions(source, &[("", OwnFile, Object)]);
     }
     assert_mentions("with (o) module;", &[("", OwnFile, Object)]);
+}
+
+#[test]
+fn the_store_that_goes_along_with_module_exports_in_other_places() {
+    let goes_along = |source: &str| {
+        with_case(SCRIPT, source, |case| {
+            let stores = case.exprs("exports");
+            case.resolved.is_stored_with_module_exports(stores[0])
+        })
+    };
+    assert!(goes_along("var app = exports = module.exports = {};"));
+    assert!(goes_along("const app = exports = module.exports = {};"));
+    assert!(goes_along("exports = module.exports = f;"));
+    assert!(!goes_along(
+        "if (c) var app = exports = module.exports = {};"
+    ));
+    assert!(!goes_along(
+        "for (var app = exports = module.exports = {}; c;) {}"
+    ));
+    assert!(!goes_along(
+        "function g() { var app = exports = module.exports = {}; }"
+    ));
+    assert!(!goes_along("var app = exports = other.exports = {};"));
+    assert!(!goes_along("var app = exports = {};"));
+    assert!(!goes_along("use(exports = module.exports = {});"));
+    assert!(!goes_along("exports += module.exports = {};"));
+}
+
+#[test]
+fn the_store_that_stands_inside_the_store_to_module_exports() {
+    let goes_along = |source: &str| {
+        with_case(SCRIPT, source, |case| {
+            let stores = case.exprs("exports");
+            stores
+                .iter()
+                .any(|&name| case.resolved.is_stored_with_module_exports(name))
+        })
+    };
+    assert!(goes_along("module.exports = exports = f;"));
+    assert!(goes_along("var app = module.exports = exports = f;"));
+    assert!(!goes_along("other.exports = exports = f;"));
+    assert!(!goes_along("module.exports = use(exports = f);"));
+    assert!(!goes_along("module.exports.name = exports = f;"));
+    assert!(!goes_along("if (c) module.exports = exports = f;"));
 }
 
 #[test]

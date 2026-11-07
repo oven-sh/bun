@@ -187,10 +187,9 @@ function isDestroyed(stream: $Node.MaybeStream) {
     const rState = stream._readableState as $Node.ReadableState | $Node.ForeignState | undefined;
     if (stream.destroyed || stream[kIsDestroyed]) return true;
     const state = wState || rState;
-    const isOfLibrary = wState
-      ? isWritableState(state) || isReadableState(state)
-      : isReadableState(state) || isWritableState(state);
-    return !!(isOfLibrary ? (state![kState] & Flag.Destroyed) !== 0 : state?.destroyed);
+    return !!(isWritableState(state) || isReadableState(state)
+      ? (state![kState] & Flag.Destroyed) !== 0
+      : state?.destroyed);
   }
   if (!isNodeStream(stream)) return null;
   const wState = stream._writableState as $Node.WritableState | $Node.ForeignState | undefined;
@@ -217,6 +216,10 @@ function isWritableEnded(stream: $Node.MaybeStream) {
 // Have emitted 'finish'.
 function isWritableFinished(stream: $Node.MaybeStream, strict) {
   if (!isWritableNodeStream(stream)) return null;
+  return isWritableSideFinished(stream, strict);
+}
+
+function isWritableSideFinished(stream: $Node.AnyStream, strict) {
   if (stream.writableFinished === true) return true;
   const wState = stream._writableState as $Node.WritableState | $Node.ForeignState | undefined;
   if (isWritableState(wState)) {
@@ -235,6 +238,10 @@ function isWritableFinished(stream: $Node.MaybeStream, strict) {
 // Have emitted 'end'.
 function isReadableFinished(stream: $Node.MaybeStream, strict?) {
   if (!isReadableNodeStream(stream)) return null;
+  return isReadableSideFinished(stream, strict);
+}
+
+function isReadableSideFinished(stream: $Node.AnyStream, strict?) {
   const rState = stream._readableState as $Node.ReadableState | $Node.ForeignState | undefined;
   if (isReadableState(rState)) {
     const flags = rState[kState];
@@ -318,6 +325,10 @@ function isClosed(stream: $Node.MaybeStream) {
     return null;
   }
 
+  return isNodeStreamClosed(stream);
+}
+
+function isNodeStreamClosed(stream: $Node.AnyStream) {
   const closed = stream.closed;
   if (typeof closed === "boolean") {
     return closed;
@@ -361,6 +372,10 @@ function isServerRequest(stream: $Node.AnyStream) {
 
 function willEmitClose(stream: $Node.MaybeStream) {
   if (!isNodeStream(stream)) return null;
+  return willNodeStreamEmitClose(stream);
+}
+
+function willNodeStreamEmitClose(stream: $Node.AnyStream) {
   const wState = stream._writableState as $Node.WritableState | $Node.ForeignState | undefined;
   const rState = stream._readableState as $Node.ReadableState | $Node.ForeignState | undefined;
   const state = wState || rState;
@@ -415,6 +430,10 @@ export default {
   isWritableErrored,
   isServerRequest,
   willEmitClose,
+  isWritableSideFinished,
+  isReadableSideFinished,
+  isNodeStreamClosed,
+  willNodeStreamEmitClose,
   isTransformStream,
   // bitfields
 } as const;

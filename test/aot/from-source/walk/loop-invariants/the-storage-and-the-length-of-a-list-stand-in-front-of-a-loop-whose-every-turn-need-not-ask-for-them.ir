@@ -1,0 +1,17 @@
+# -- source: the-storage-and-the-length-of-a-list-stand-in-front-of-a-loop-whose-every-turn-need-not-ask-for-them.ts
+# declare function sink(value: unknown): void;
+# const kernel: number[] = [], pixels: number[] = [], weights: number[] = [], values: number[] = [];
+# for (let i = 0; i < 9; i++) kernel.push(i === 4 ? 5.5 : (i & 1) ? -1.25 : 0.5);
+# for (let i = 0; i < 192; i++) pixels.push((i * 37) % 251 + 0.5);
+# for (let i = 0; i < 6; i++) { weights.push(2 + (i * 5) % 7); values.push(3.5 + (i * 11) % 13); }
+# function blur(width: number, height: number): number { let all = 0; for (let y = 1; y < height - 1; y++) for (let x = 1; x < width - 1; x++) { let s = 0; for (let ky = -1; ky <= 1; ky++) for (let kx = -1; kx <= 1; kx++) s += pixels[(y + ky) * width + x + kx] * kernel[(ky + 1) * 3 + kx + 1]; all += s; } return all; }
+# function pack(room: number): number { const best: number[] = []; for (let c = 0; c <= room; c++) best.push(0.5); for (let i = 0; i < weights.length; i++) for (let c = room; c >= 0; c--) if (weights[i] <= c) { const v = best[c - weights[i]] + values[i]; if (v > best[c]) best[c] = v; } return best[room]; }
+# sink([blur(16, 12), blur(3, 3), blur(2, 2), pack(20), pack(3), pack(0)]);
+# -- end of source
+# By its text the body of a loop of three turns does not stand on every way through a turn of the loop around it, and neither does a read under a condition: so the storage and the length of the lists
+# read there were loaded anew at each read, though nothing in the turns writes them. The two are loads that never fail of what is a list by its own type: they stand in front.
+# REQUIRES: entries-of-bun as-written
+# RUN: compile KnownInductionsUsed mechanisms=all
+# CHECK: statistic KnownInductionsUsed 27
+# RUN(SHELL): run-in-shell globalThis.sink = answers => print(answers.join(" "));
+# SHELL: 44901 559.5 0 41.5 11 0.5

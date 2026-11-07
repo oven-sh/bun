@@ -85,8 +85,16 @@ type Glob = import("bun").Glob;
 // loop with the same pattern
 let prevGlob: Glob | undefined;
 let prevPattern: string | undefined;
+// What validateString() of internal/validators does. That module would keep node:url and util.inspect in every executable that imports node:path.
+function validateStringWithoutValidators(value: unknown, name: string) {
+  ("has no frames");
+  if (typeof value !== "string") throw $ERR_INVALID_ARG_TYPE(name, "string", value);
+}
 function matchesGlob(isWindows: boolean, path: string, pattern: string) {
-  const { validateString } = require("internal/validators");
+  const { validateString } =
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS
+      ? { validateString: validateStringWithoutValidators }
+      : require("internal/validators");
   let glob: Glob;
 
   validateString(path, "path");

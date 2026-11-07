@@ -48,6 +48,22 @@ fn describe(input: &BindInput<'_, '_>, steps: &[Step]) -> Vec<String> {
             };
             format!("{file} {name} by {asked_by} from {asked_from} behind {behind}")
         }
+        Step::ModuleWithoutTable {
+            module,
+            name,
+            is_behind_its_mock,
+            ..
+        } => {
+            let file = match module {
+                ModuleRef::File(file) => name_of(input, file),
+                other => format!("{other:?}"),
+            };
+            let name = String::from_utf8_lossy(input.files.atoms.bytes(name)).into_owned();
+            match is_behind_its_mock {
+                true => format!("{file} itself may have {name}"),
+                false => format!("{file} may have {name}"),
+            }
+        }
         Step::Declaration => String::from("declaration"),
     };
     steps.iter().map(describe_step).collect()
@@ -446,13 +462,107 @@ fn ordinary_star_beside_a_star_whose_names_show_in_the_run_is_asked_too() {
     assert_eq!(
         find_way(&["middle.js"], &files, ("barrel.js", "fn")),
         [
-            "middle.js fn by its name from inner.js behind 2",
+            "dep.cjs may have fn",
+            "middle.js fn by its name from inner.js behind 3",
             "declaration"
         ]
     );
     assert_eq!(
         find_stations(&["middle.js"], READS_FN, &files),
         ["middle.js seen by inner.js"]
+    );
+}
+
+#[test]
+fn commonjs_file_behind_a_mock_that_lacks_the_name_is_asked_in_the_run() {
+    let files = [
+        (
+            "barrel.js",
+            "export * from './lib.js';
+export * from './more.cjs';
+",
+        ),
+        LIB,
+        (
+            "more.cjs",
+            "exports.fn = () => 'more';
+",
+        ),
+    ];
+    assert_eq!(
+        find_way(&["lib.js"], &files, ("barrel.js", "fn")),
+        [
+            "lib.js fn by a star from barrel.js behind 2",
+            "declaration",
+            "more.cjs may have fn"
+        ]
+    );
+}
+
+#[test]
+fn built_in_module_in_front_of_a_mocked_file_is_asked_in_the_run() {
+    let files = [
+        (
+            "barrel.js",
+            "export * from 'node:path';\nexport * from './lib.js';\n",
+        ),
+        LIB,
+    ];
+    assert_eq!(
+        find_way(&["lib.js"], &files, ("barrel.js", "fn")),
+        [
+            "Runtime(NodePath) may have fn",
+            "lib.js fn by a star from barrel.js behind 3",
+            "declaration"
+        ]
+    );
+}
+
+#[test]
+fn built_in_module_that_a_mock_names_is_asked_in_the_name_of_the_file_that_holds_the_statement() {
+    let others = [("between.js", "export { sep } from 'node:path';\n")];
+    let rest = "mock.module('node:path', () => ({}));
+import { sep } from './between.js';
+import { join } from 'node:path';
+console.log(sep, join);
+";
+    assert_eq!(
+        find_stations(&[], rest, &others),
+        [
+            "node:path seen by between.js",
+            "node:path seen by main.test.js"
+        ]
+    );
+}
+
+#[test]
+fn commonjs_file_that_two_files_hold_a_star_to_is_asked_itself_on_each_road() {
+    let files = [
+        (
+            "barrel.js",
+            "export * from './early.js';
+export * from './part.cjs';
+",
+        ),
+        (
+            "early.js",
+            "export * from './part.cjs';
+",
+        ),
+        (
+            "part.cjs",
+            "exports.kept = 1;
+",
+        ),
+    ];
+    assert_eq!(
+        find_way(&["part.cjs"], &files, ("barrel.js", "added")),
+        [
+            "part.cjs added by a star from early.js behind 2",
+            "part.cjs itself may have added",
+            "part.cjs added by a star from barrel.js behind 4",
+            "part.cjs itself may have added"
+        ]
     );
 }
 
@@ -510,7 +620,7 @@ fn file_that_reads_its_own_name_through_a_barrel_is_no_station_for_itself() {
 }
 
 #[test]
-fn commonjs_file_behind_its_face_is_a_station() {
+fn commonjs_file_behind_its_face_is_a_station_with_its_declaration_below_it() {
     let rest = "import { flag } from './barrel.js';\nconsole.log(flag);\n";
     let test_file = write_test_file(&["dep.cjs"], rest);
     let files = [
@@ -526,11 +636,11 @@ fn commonjs_file_behind_its_face_is_a_station() {
             input.files.atoms.intern(b"flag"),
         );
         let steps = find_way_of_read(graph, reader, binding, Some(asked));
-        let stations = steps.iter().filter_map(|step| match *step {
-            Step::Station { file, .. } => Some(name_of(input, file)),
-            Step::Declaration => None,
-        });
-        assert_eq!(stations.collect::<Vec<_>>(), ["dep.cjs"]);
+        let expected = [
+            "dep.cjs flag by a star from barrel.js behind 2",
+            "dep.cjs itself may have flag",
+        ];
+        assert_eq!(describe(input, &steps), expected);
     });
 }
 

@@ -40,10 +40,15 @@ function layPackages(folder: string) {
   }
 }
 
-async function outcomeOf(dir: string, ...flags: string[]) {
+// A file under.txt in the folder holds words for BUN_DEBUG_TEST_AOT_WORDS, `testing=CheckWalkAtRunTime,check=Validate`: the project is compiled and run once more under them, and held to the same.
+// It is the witness of a fault that showed only there. AOT_TEST_RUN_WORDS puts every compiled run of every project under its words: how a bench looks for what nobody knows of yet.
+// bunEnv drops each BUN_DEBUG_ variable of whoever runs this file.
+const wordsOfAll = process.env.AOT_TEST_RUN_WORDS ?? "";
+
+async function outcomeOf(dir: string, words: string, ...flags: string[]) {
   layPackages(dir);
   // As users run it: whoever runs this file may have switched the thread off that reads the texts.
-  const env = { ...bunEnv, NO_COLOR: "1", BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "0" };
+  const env = { ...bunEnv, NO_COLOR: "1", BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "0", BUN_DEBUG_TEST_AOT_WORDS: words };
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, ...testFilesIn(dir)], dir, env);
   return {
     printed: stdout.split("\n").filter(line => line && !line.startsWith("bun test v")),
@@ -71,13 +76,17 @@ export function testRunsInFolders(part: number, parts: number) {
       using compiledDir = tempDir("aot-test-run-in-folder", join(root, area, project));
       const flags = flagsOf(join(root, area, project));
       const [plain, compiled] = await Promise.all([
-        outcomeOf(String(plainDir), ...flags),
-        outcomeOf(String(compiledDir), "--aot", ...flags),
+        outcomeOf(String(plainDir), "", ...flags),
+        outcomeOf(String(compiledDir), wordsOfAll, "--aot", ...flags),
       ]);
       // A run in which plain says nothing would pass for the wrong reason: it prints, or a test of it passes by what it expects.
       expect(plain.printed.length + plain.tests.filter(line => line.startsWith("(pass) ")).length).toBeGreaterThan(0);
       expect(plain.tests.length).toBeGreaterThan(0);
       expect(compiled).toEqual(plain);
+      if (!existsSync(join(root, area, project, "under.txt"))) return;
+      using checkedDir = tempDir("aot-test-run-in-folder", join(root, area, project));
+      const words = readFileSync(join(root, area, project, "under.txt"), "utf8").trim();
+      expect(await outcomeOf(String(checkedDir), words, "--aot", ...flags)).toEqual(plain);
     }, 180_000);
   }
 }

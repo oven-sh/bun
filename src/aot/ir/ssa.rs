@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 
 use super::builder::{
     ENTRY_BLOCK, Edge, FunctionBuilder, ListInArena, LocalVariable, PendingBlock, PendingTarget,
-    Place, recycle_vector,
+    Place, TargetsByBlock, recycle_vector,
 };
 use super::generated::{BlockRole, Opcode, TerminatorKind};
 use super::ids::{BlockId, Id, TypeId, ValueId};
@@ -598,14 +598,21 @@ impl SsaState {
 fn for_each_edge_target(
     predecessor: &mut PendingBlock,
     targets: &mut [PendingTarget],
+    by_block: &TargetsByBlock,
     block: BlockId,
     mut visit: impl FnMut(&mut PendingTarget),
 ) {
     if let Some(terminator) = &predecessor.terminator {
-        let own = terminator.targets.start as usize..terminator.targets.end as usize;
-        for target in &mut targets[own] {
-            if target.block == block {
-                visit(target);
+        if let Some(places) = by_block.find(&terminator.targets, block) {
+            for place in places {
+                visit(&mut targets[place.1 as usize]);
+            }
+        } else {
+            let own = terminator.targets.start as usize..terminator.targets.end as usize;
+            for target in &mut targets[own] {
+                if target.block == block {
+                    visit(target);
+                }
             }
         }
     }
@@ -979,7 +986,8 @@ impl FunctionBuilder {
         let (ssa, listed_values) = (&mut self.ssa, &self.listed_values);
         for &predecessor in predecessors {
             let predecessor = &mut self.blocks[predecessor.index()];
-            for_each_edge_target(predecessor, &mut self.targets, block, |target| {
+            let by_block = &self.targets_by_block;
+            for_each_edge_target(predecessor, &mut self.targets, by_block, block, |target| {
                 if let Some(argument) = target.variable_arguments.pop(listed_values) {
                     ssa.take_back_read(argument);
                 }
@@ -994,7 +1002,8 @@ impl FunctionBuilder {
     fn append_argument(&mut self, predecessor: BlockId, block: BlockId, value: ValueId) {
         let (ssa, listed_values) = (&mut self.ssa, &mut self.listed_values);
         let predecessor = &mut self.blocks[predecessor.index()];
-        for_each_edge_target(predecessor, &mut self.targets, block, |target| {
+        let by_block = &self.targets_by_block;
+        for_each_edge_target(predecessor, &mut self.targets, by_block, block, |target| {
             target.variable_arguments.push(listed_values, value);
             ssa.count_read(value);
         });

@@ -474,13 +474,28 @@ fn find_files_that_require_may_load(
     let mut named_behind = vec![BEHIND_NO_LOAD; files.len()];
     let mut imported_behind = vec![BEHIND_NO_LOAD; files.len()];
     let mut to_visit: Vec<u32> = Vec::new();
+    let imported = std::cell::OnceCell::new();
+    let is_imported = |index: u32| {
+        let imported: &Vec<bool> = imported.get_or_init(|| {
+            let mut imported = vec![false; files.len()];
+            for file in files {
+                visit_named_files(file, &mut |target, site| {
+                    imported[target as usize] |=
+                        site.map(loading_kind) == Some(Some(CodeImportKind::Import));
+                });
+            }
+            imported
+        });
+        imported[index as usize]
+    };
     for entry_point in &context.entry_points() {
         let index = state.index_of[&context.canonical_key(entry_point.key)];
         let Some(loads) = context.loads_that_alone_name(entry_point.key) else {
             named_behind[index as usize] = order.load_in(order.host());
             continue;
         };
-        for load in loads.iter().filter(|load| load.requires) {
+        let counts = |load: &&NamingLoad| load.requires && !(load.is_guess && is_imported(index));
+        for load in loads.iter().filter(counts) {
             let behind = order.load_in(load.file.0);
             order.note(&behind, &mut named_behind[index as usize]);
             if is_module(index) && order.note(&behind, &mut imported_behind[index as usize]) {

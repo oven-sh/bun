@@ -4,8 +4,8 @@ mod tests;
 use super::ModuleRef;
 use super::bindings::{
     AccessedModule, AnswerMember, Candidates, ExportBinding, ExportLookup, ExportUse, Holder,
-    ImportBinding, ModuleExport, ModuleRequest, RequiredName, SiteAnswer, SpelledModule,
-    SyntheticExport, SyntheticExportId,
+    ImportBinding, ModuleExport, ModuleRequest, NO_STAR_PLACE, RequiredName, SiteAnswer,
+    SpelledModule, SyntheticExport, SyntheticExportId,
 };
 use super::commonjs_exports::CommonJsExports;
 use super::compare_code_units;
@@ -103,6 +103,7 @@ pub(super) struct FileRow {
     pub exports: Vec<ModuleExport>,
     pub ambiguous_names: Vec<Atom>,
     pub unread_exports: Vec<SymbolId>,
+    pub names_left_out: Vec<Atom>,
     pub is_left_to_loader: bool,
     pub required_names: Vec<RequiredName>,
     pub names_searched_behind_stars: Vec<(FileId, Atom)>,
@@ -458,6 +459,7 @@ impl ModuleGraph {
                         match passed_on.iter_mut().find(|earlier| is_same(earlier)) {
                             Some(earlier) => {
                                 earlier.is_star_export |= request.is_star_export;
+                                earlier.star_place = earlier.star_place.min(request.star_place);
                                 earlier.is_dynamic_star_export |= request.is_dynamic_star_export
                             }
                             None => passed_on.push(request),
@@ -468,6 +470,7 @@ impl ModuleGraph {
                             passed_on.push(ModuleRequest {
                                 is_star_export: false,
                                 is_dynamic_star_export: false,
+                                star_place: NO_STAR_PLACE,
                                 ..request
                             });
                         }
@@ -521,6 +524,9 @@ impl ModuleGraph {
         &self.row(file).ambiguous_names
     }
 
+    pub fn names_left_out(&self, file: FileId) -> &[Atom] {
+        &self.row(file).names_left_out
+    }
     pub fn unread_exports(&self, file: FileId) -> &[SymbolId] {
         &self.row(file).unread_exports
     }
@@ -607,6 +613,10 @@ impl ModuleGraph {
     pub fn is_brought_by_star(&self, file: FileId, name: Atom) -> bool {
         let names = &self.row(file).names_from_stars;
         names.binary_search_by_key(&name.0, |it| it.0).is_ok()
+    }
+
+    pub fn names_handed_on(&self, file: FileId) -> &[(Atom, (ModuleRef, Atom))] {
+        &self.row(file).handed_on
     }
 
     pub fn find_what_hands_on_names(&self, file: FileId, name: Atom) -> Option<(ModuleRef, Atom)> {
@@ -756,7 +766,6 @@ impl ModuleGraph {
         self.row(file).has_no_side_effects
     }
 
-    #[cfg(test)]
     pub fn has_dynamic_names(&self, file: FileId) -> bool {
         self.row(file).has_dynamic_names
     }

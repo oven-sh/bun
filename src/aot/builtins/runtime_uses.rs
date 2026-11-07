@@ -135,6 +135,10 @@ const WRITTEN_IN_PLACE_OF: &[(BuiltinId, &[BuiltinId])] = &[
             BuiltinId::CompilerHelpersArrayFromList,
         ],
     ),
+    (
+        BuiltinId::NodeModuleCreateRequire,
+        &[BuiltinId::PrivateGlobalsCreateCommonJSModule],
+    ),
 ];
 
 const DECORATOR_HELPERS: &[BuiltinId] = &[

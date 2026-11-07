@@ -2,6 +2,8 @@ mod body;
 mod closures;
 mod header;
 mod text;
+mod text_of_jsx;
+mod text_read_back;
 mod text_replaced_by_bundling;
 mod this;
 

@@ -198,6 +198,7 @@ export const {
   whenProgramStores,
   whenTestsReplaceBuiltins,
   withoutEntryColumns,
+  wordOfCell,
   writesContents,
 } = engineModule;
 const null_ = engineModule.null;

@@ -13,5 +13,5 @@
 # RUN: link functions mechanisms=all
 # REQUIRES: entries-of-bun
 # CHECK: function f1 
-# CHECK-NEXT: parameter 0 {{*}}proven=undefined|object
-# CHECK-NEXT: parameter 1 {{*}}proven=undefined|object
+# CHECK-NEXT: parameter 0 {{*}}proven=undefined|L0|Array
+# CHECK-NEXT: parameter 1 {{*}}proven=undefined|L0|Array

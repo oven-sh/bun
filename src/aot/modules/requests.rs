@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests;
 
-use super::bindings::{ModuleRequest, SpelledModule};
+use super::bindings::{ModuleRequest, NO_STAR_PLACE, SpelledModule};
 use super::exports::ExportTables;
 use super::failures::{
     FailureEffect, FailureOrder, ModuleFailureKind, NumberedFailures, PendingFailure, SitePart,
@@ -52,6 +52,7 @@ pub(super) struct RequestDraft {
     pub target: ModuleRef,
     pub phase: ImportPhase,
     pub is_star_export: bool,
+    pub star_place: u32,
 }
 
 pub(super) struct FileScan {
@@ -769,6 +770,7 @@ impl FileScanner<'_, '_> {
                 target,
                 phase,
                 is_star_export,
+                star_place: NO_STAR_PLACE,
             });
         }
         requests.drafts
@@ -907,13 +909,26 @@ fn is_star_export_entry(hir: &hir::File<'_>, statement: StmtId) -> bool {
 struct RequestList {
     drafts: Vec<RequestDraft>,
     positions: FxHashMap<(ModuleRef, ImportPhase), u32>,
+    stars: u32,
 }
 
 impl RequestList {
     fn add(&mut self, draft: RequestDraft) {
-        match self.find(draft.target, draft.phase) {
-            Some(position) => self.drafts[position].is_star_export |= draft.is_star_export,
-            None => self.push(draft),
+        let position = match self.find(draft.target, draft.phase) {
+            Some(position) => position,
+            None => {
+                self.push(RequestDraft {
+                    is_star_export: false,
+                    ..draft
+                });
+                self.drafts.len() - 1
+            }
+        };
+        let listed = &mut self.drafts[position];
+        if draft.is_star_export && !listed.is_star_export {
+            listed.is_star_export = true;
+            listed.star_place = self.stars;
+            self.stars += 1;
         }
     }
 
@@ -941,6 +956,7 @@ impl RequestList {
 pub(super) struct FinishedRequests {
     pub files: Vec<Vec<ModuleRequest>>,
     pub inner_modules: Vec<(ModuleRef, Vec<ModuleRequest>)>,
+    pub files_with_late_stars: Vec<FileId>,
 }
 
 fn find_modules_with_names_of_mocks(
@@ -986,12 +1002,17 @@ pub(super) fn finish_requests(
 ) -> FinishedRequests {
     let has_names_of_mock = find_modules_with_names_of_mocks(scans, modules, mocked_modules);
     let finish_file = |&file: &FileId| {
+        let is_any_mock_named = !has_names_of_mock.is_empty();
+        let has_names_of_mock = has_names_of_mock.contains(&ModuleRef::File(file));
         let follows_every_star = tables.follows_every_star(file)
-            || (has_names_of_mock.contains(&ModuleRef::File(file))
-                && !mocked_modules.contains(&ModuleRef::File(file)));
+            || (has_names_of_mock && !mocked_modules.contains(&ModuleRef::File(file)));
         let finish_request = |draft: &RequestDraft| ModuleRequest {
             phase: draft.phase,
             is_star_export: draft.is_star_export,
+            star_place: match is_any_mock_named {
+                true => draft.star_place,
+                false => NO_STAR_PLACE,
+            },
             is_dynamic_star_export: draft.is_star_export
                 && (follows_every_star || tables.has_dynamic_names(draft.target)),
             ..ModuleRequest::import(draft.target)
@@ -1007,7 +1028,18 @@ pub(super) fn finish_requests(
         inner_modules: inner_modules
             .map(|&(file, callback)| (ModuleRef::Inner { file, callback }, Vec::new()))
             .collect(),
+        files_with_late_stars: Vec::new(),
     };
+    if !has_names_of_mock.is_empty() {
+        let has_late_star = |requests: &[ModuleRequest]| {
+            let places = requests.iter().map(|it| it.star_place);
+            !places.filter(|&place| place != NO_STAR_PLACE).is_sorted()
+        };
+        let files = modules.record_files.iter().zip(&finished.files);
+        let files = files.filter(|(_, requests)| has_late_star(requests));
+        finished.files_with_late_stars = files.map(|(&file, _)| file).collect();
+        finished.files_with_late_stars.sort_unstable();
+    }
     let mut seen = FxHashSet::default();
     for (requests, &file) in finished.files.iter_mut().zip(&modules.record_files) {
         seen.clear();

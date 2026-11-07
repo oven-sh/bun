@@ -39,15 +39,34 @@ interface PipelineOptions {
   end?: boolean;
 }
 
+const readableSide =
+  IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS
+    ? { readable: true, writable: false, error: undefined, signal: undefined }
+    : undefined;
+const writableSide =
+  IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS
+    ? { readable: false, writable: true, error: undefined, signal: undefined }
+    : undefined;
+const bothSides =
+  IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS
+    ? { readable: true, writable: true, error: undefined, signal: undefined }
+    : undefined;
+
 function destroyer(stream: $Node.AnyStream, reading: boolean, writing: boolean) {
   let finished = false;
   stream.on("close", () => {
     finished = true;
   });
 
-  const cleanup = eos(stream, { readable: reading, writable: writing }, err => {
-    finished = !err;
-  });
+  const cleanup = eos(
+    stream,
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS && (reading || writing)
+      ? (reading ? (writing ? bothSides : readableSide) : writableSide)!
+      : { readable: reading, writable: writing },
+    err => {
+      finished = !err;
+    },
+  );
 
   return {
     destroy: (err?: Error | null) => {
@@ -464,29 +483,37 @@ function pipe(
     finish();
   }
 
-  eos(src, { readable: true, writable: false }, err => {
-    const rState = src._readableState as $Node.ReadableState | $Node.ForeignState | undefined;
-    if (
-      err &&
-      err.code === "ERR_STREAM_PREMATURE_CLOSE" &&
-      (isReadableState(rState)
-        ? rState.ended && !rState.errored && !rState.errorEmitted
-        : rState?.ended && !rState.errored && !rState.errorEmitted)
-    ) {
-      // Some readable streams will emit 'close' before 'end'. However, since
-      // this is on the readable side 'end' should still be emitted if the
-      // stream has been ended and no error emitted. This should be allowed in
-      // favor of backwards compatibility. Since the stream is piped to a
-      // destination this should not result in any observable difference.
-      // We don't need to check if this is a writable premature close since
-      // eos will only fail with premature close on the reading side for
-      // duplex streams.
-      src.once("end", finish).once("error", finish);
-    } else {
-      finish(err);
-    }
-  });
-  return eos(dst, { readable: false, writable: true }, finish);
+  eos(
+    src,
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS ? readableSide! : { readable: true, writable: false },
+    err => {
+      const rState = src._readableState as $Node.ReadableState | $Node.ForeignState | undefined;
+      if (
+        err &&
+        err.code === "ERR_STREAM_PREMATURE_CLOSE" &&
+        (isReadableState(rState)
+          ? rState.ended && !rState.errored && !rState.errorEmitted
+          : rState?.ended && !rState.errored && !rState.errorEmitted)
+      ) {
+        // Some readable streams will emit 'close' before 'end'. However, since
+        // this is on the readable side 'end' should still be emitted if the
+        // stream has been ended and no error emitted. This should be allowed in
+        // favor of backwards compatibility. Since the stream is piped to a
+        // destination this should not result in any observable difference.
+        // We don't need to check if this is a writable premature close since
+        // eos will only fail with premature close on the reading side for
+        // duplex streams.
+        src.once("end", finish).once("error", finish);
+      } else {
+        finish(err);
+      }
+    },
+  );
+  return eos(
+    dst,
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS ? writableSide! : { readable: false, writable: true },
+    finish,
+  );
 }
 
 export default { pipelineImpl, pipeline };

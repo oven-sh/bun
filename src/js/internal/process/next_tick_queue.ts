@@ -103,7 +103,12 @@ function enqueueTick(callback: TickCallback, count: number, first: unknown, seco
 }
 
 function ticksAreUnseen(): boolean {
-  return isSetUp && process.nextTick === installedNextTick && tickInitHooks.length === 0;
+  return (
+    isSetUp &&
+    ((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(process, "nextTick")) ||
+      process.nextTick === installedNextTick) &&
+    tickInitHooks.length === 0
+  );
 }
 
 function ticksAreUnhooked(): boolean {
@@ -115,6 +120,8 @@ function enqueueTick1(callback: TickCallback, first: unknown): void {
 }
 
 function queueTick1(callback: TickCallback, first: unknown): void {
+  if (IS_COMPILED_AHEAD_OF_TIME && isSetUp && $findsDeclaredMember(process, "nextTick"))
+    return enqueueTick(callback, 1, first, undefined, undefined);
   const target = process;
   const current = target.nextTick;
   if (current === installedNextTick) enqueueTick(callback, 1, first, undefined, undefined);
@@ -125,6 +132,8 @@ function queueTick1(callback: TickCallback, first: unknown): void {
 }
 
 function queueTick2(callback: TickCallback, first: unknown, second: unknown): void {
+  if (IS_COMPILED_AHEAD_OF_TIME && isSetUp && $findsDeclaredMember(process, "nextTick"))
+    return enqueueTick(callback, 2, first, second, undefined);
   const target = process;
   const current = target.nextTick;
   if (current === installedNextTick) enqueueTick(callback, 2, first, second, undefined);
@@ -135,6 +144,8 @@ function queueTick2(callback: TickCallback, first: unknown, second: unknown): vo
 }
 
 function queueTick3(callback: TickCallback, first: unknown, second: unknown, third: unknown): void {
+  if (IS_COMPILED_AHEAD_OF_TIME && isSetUp && $findsDeclaredMember(process, "nextTick"))
+    return enqueueTick(callback, 3, first, second, third);
   const target = process;
   const current = target.nextTick;
   if (current === installedNextTick) enqueueTick(callback, 3, first, second, third);

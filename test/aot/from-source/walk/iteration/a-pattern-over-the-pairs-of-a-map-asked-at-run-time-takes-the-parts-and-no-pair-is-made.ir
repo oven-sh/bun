@@ -1,0 +1,42 @@
+# `for (const [key, value] of map)` over what is written to be a Map and is asked at run time whether it is one as made: the step through the table and the step by the protocol join in front of the
+# body, so the pair had to exist as a value: a list was made at every step and the stub for patterns took it apart again. Where one pattern of two elements alone takes the step's value, the key and the
+# value go through the join beside it and the table's way hands no pair on. The pattern asks, in its own place and so under its own handlers, what the step asks: the instance: the two parts; anything
+# else: the value is taken apart as ever.
+# It stays as it was where something else names the pair (whole).
+# f1 = sumOfValues, f2 = both, f3 = whole
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}} builtinClass=Map
+# CHECK: = MapNext
+# RUN(NOPAIR): walk f1 mechanisms=all
+# NOPAIR-NOT: = NewArray
+# RUN(ODD): walk f1 mechanisms=all
+# ODD-COUNT-1: = DestructureIterable {{*}}count=2
+# ODD-NOT: = DestructureIterable
+# RUN(ENTRIES): walk f2 mechanisms=all
+# ENTRIES-LABEL: code f2:Body
+# ENTRIES: = MapNext
+# ENTRIES-NOT: = NewArray
+# RUN(WHOLE): walk f3 mechanisms=all
+# WHOLE-LABEL: code f3:Body
+# WHOLE: = MapNext
+# WHOLE: = NewArray
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3 a1b2 7
+# ANSWERS: 7y s7xy 9y2
+# ANSWERS: TypeError closed
+# -- source: a-pattern-over-the-pairs-of-a-map-asked-at-run-time-takes-the-parts-and-no-pair-is-made.ts
+# declare function print(...values: unknown[]): void;
+# function sumOfValues(map: Map<string, number>): number { let sum = 0; for (const [, value] of map) sum += value; return sum; }
+# function both(map: Map<string, number>): string { let out = ""; for (const [key, value] of map.entries()) out += key + value; return out; }
+# function whole(map: Map<string, number>): number { let sum = 0; for (const entry of map) { const [, value] = entry; sum += value + entry.length; } return sum; }
+# class Own extends Map<string, number> { *[Symbol.iterator](): any { yield ["s", 7]; yield "xy"; } entries(): any { return this[Symbol.iterator](); } }
+# const log: string[] = [];
+# const closes: any = new Map<string, number>();
+# closes[Symbol.iterator] = function () { return { next: () => ({ done: false, value: 5 }), return() { log.push("closed"); return {}; } }; };
+# const made = new Map<string, number>([["a", 1], ["b", 2]]);
+# print(sumOfValues(made), both(made), whole(made));
+# print(sumOfValues(new Own()), both(new Own()), whole(new Own()));
+# try { sumOfValues(closes); } catch (error) { print((error as Error).constructor.name, log.join()); }
+# -- end of source

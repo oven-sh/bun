@@ -164,9 +164,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             match placement.storage {
                 Storage::Variable(key) => {
                     let variable = self.file.ensure_variable(key);
+                    let runs_again = self.file.inputs.modules.runs_again(self.file.file);
                     let is_stored_at_entry = match binding {
-                        BindingRef::Symbol(_) => entry.find_initial(binding).is_some(),
+                        BindingRef::Symbol(_) => {
+                            runs_again || entry.find_initial(binding).is_some()
+                        }
                         BindingRef::Slot(..) => true,
+                    };
+                    let value = match (value, binding) {
+                        (None, BindingRef::Symbol(_))
+                            if runs_again && dead_zone::has_dead_zone(self.file, binding) =>
+                        {
+                            Some(self.get_entry_absent(&mut entry))
+                        }
+                        _ => value,
                     };
                     if let Some(value) = value
                         && is_stored_at_entry

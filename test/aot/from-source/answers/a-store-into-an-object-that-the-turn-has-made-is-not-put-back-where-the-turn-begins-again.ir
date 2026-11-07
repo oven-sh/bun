@@ -1,0 +1,29 @@
+# -- source: main.ts
+# const counts: Record<string, number> = {};
+# function note(text: unknown): void { const key = String(text); counts[key] = (counts[key] ?? 0) + 1; }
+# const tint = Symbol("tint");
+# class Crate { [tint]: number[]; constructor(turn: number) { this[tint] = [turn & 3, 1]; } }
+# function tally(turns: number): string {
+#   let holes = 0;
+#   for (let turn = 0; turn < turns; turn++) {
+#     const crate = new Crate(turn);
+#     switch (turn & 3) { case 1: (crate as any)[tint] = (turn % 3 !== 0 ? [turn & 3, 1] : -0); break; case 2: holes += 0; break; default: }
+#     note(typeof crate[tint]);
+#   }
+#   return holes + " holes " + JSON.stringify(counts);
+# }
+# print(tally(1));
+# print(tally(2));
+# print(tally(64));
+# -- end of source
+# The turn makes an object, its constructor stores into a field, and a second store brings what the field's written type does not admit: the turn begins again in the closed copy. Nobody will ever see the object of the
+# turn that was given up: its field is not put back. It was: the walk asked whether the object is built in the turn of what may be hoisted in front of the loop, which said no. And the net under effects, which counts no store
+# that fills a cell born above it in its block, took the store back for one deed less than none and stopped a right program.
+# RUN: run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# CHECK: 0 holes {{*}}"object":1}
+# CHECK: 0 holes {{*}}"object":3}
+# CHECK: 0 holes {{*}}"object":62,"number":5}
+# CHECK-NEXT: exited with 0
+# RUN(WALK): walk f2:Body testing=CheckEffectsAtRunTime mechanisms=all
+# WALK: = TurnBeginsAgain
+# WALK-NOT: putsBackWhatTurnStored

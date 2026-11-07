@@ -1,0 +1,20 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(a, b) { for (var i = 0; i < a.length; i++) a[i] = a[i] + b[i]; return a[1]; } };
+# print(T[key](new Float64Array(5).fill(0.5), new Float64Array(5).fill(0.25)), T[key](new Int16Array(9).fill(32767), new Int16Array(9).fill(4)), T[key]([1, 2, 3], [4, 5, 6]), T[key](["a", "b"], ["c", "d"]), T[key](new Uint8Array(3).fill(250), new Uint8Array(3).fill(10)), T[key](new Float32Array(2).fill(1.5), [1, 2]), T[key]([1, 2], new Int8Array(2).fill(-1)));
+# -- end of source
+# One vector is added to another, nobody has typed them, the callers are out of sight. "A number goes through the element" was asked of the element's only user: a sum whose other term is an element too, stored at once: no number
+# stood beside it: so the front asked both holders for a list of anything and all else ran closed: two Float64Arrays of 1,000: 248,950 instructions, plain Bun 6,076.
+# A sum of two elements under indexes says "numbers or texts": bytes and views are named beside the lists (lists of texts fail the question for their storage and take the copy of a list of anything, as before);
+# and in the copy for views the other holder, whose word from use is a list of anything, is asked for what the first is. 27,201.
+# f1 = go
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8ClampedArray
+# CHECK: = TypeTest {{*}} testedType=Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8ClampedArray
+# CHECK: = PutTypedArrayElement {{*}} level=Proven [keyIsIntegral, isInsideView]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 0.75 -32765 7 bd 4 3.5 1
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 0.75 -32765 7 bd 4 3.5 1
+# NONE-NEXT: exited with 0

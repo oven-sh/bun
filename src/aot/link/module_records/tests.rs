@@ -161,6 +161,7 @@ fn es_module_record_has_body_and_requests() {
         kind: ModuleRequestKind::Import,
         completes: true,
         is_hoisted: false,
+        star_place: None,
     };
     let expected_requests = [
         request(module_named(&program, "second.js"), ImportPhase::Evaluation),
@@ -1052,7 +1053,7 @@ fn main_entry_lists_the_default_export_for_serve() {
     assert_eq!(default_read.parameter, 0);
     let names = default_read.names_looked_for.iter();
     let names: Vec<&[u8]> = names.map(|&name| program.strings.get(name)).collect();
-    assert_eq!(names, [&b"fetch"[..], b"app"]);
+    assert_eq!(names, [&b"fetch"[..], b"app", b"stop"]);
 }
 
 #[test]

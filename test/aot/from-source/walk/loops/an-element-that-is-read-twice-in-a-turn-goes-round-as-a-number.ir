@@ -9,6 +9,7 @@
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = HasArrayStorage {{*}}arrayStorage=Double
+# The list is asked in front of the loop, so no element is asked in a turn: the head is built for a number, and what the read gave is asked for a number once, where it goes round.
 # CHECK: : number @Double, {{*}}isInLoop=true isLoopHead=true
 # CHECK: = GetArrayElement {{*}}arrayStorage=Double
 # CHECK-NOT: = GetArrayElement

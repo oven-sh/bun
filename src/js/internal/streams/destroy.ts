@@ -181,14 +181,19 @@ function emitErrorCloseNT(self: $Node.StreamWithState, err: Error) {
 
 let emitOfEmitters: $Node.EventEmitter["emit"] | undefined;
 
+// As emitOfNoFunction() in ./readable.ts.
+function emitCloseOfNoFunction(self: any): void {
+  self.emit("close");
+}
+
 // stream.emit(type) for a type other than "error", where emit() is the one of node:events: the same reads in the same order, and no list of arguments.
-// false: what lies under `emit` cannot be called: the caller says so in its own words.
+// Always true. What lies under `emit` is read once: where it is no function the call is made on a stand-in that holds it, and throws.
 function emitsToListeners(stream: $Node.StreamWithState, type: string): boolean {
   const emitOfStream = stream.emit;
   if (emitOfStream !== (emitOfEmitters ??= require("internal/shared").originals.eventEmitter!.emit)) {
     ("unlikely");
-    if (typeof emitOfStream !== "function") return false;
-    emitOfStream.$call(stream, type);
+    if (typeof emitOfStream === "function") emitOfStream.$call(stream, type);
+    else emitCloseOfNoFunction({ emit: emitOfStream });
     return true;
   }
   const events = stream._events;

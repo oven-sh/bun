@@ -480,33 +480,27 @@ pub fn summarize_top_level<'s>(
     {
         return None;
     }
-    for reads_module_statements_alone in [true, false] {
-        let how = ParseSettings {
-            dialect: Dialect::default(),
-            path,
-            script_kind,
-            experimental_decorators,
-            every_file_is_a_module,
-            jsdoc: JsDoc::Read,
-            attach_comments: false,
-            compiles: false,
-            reads_as_bun_run,
-            ignores_pure_comments: false,
-            skips_function_blocks: true,
-            reads_module_statements_alone,
-        };
-        let file = SCRATCH.with_borrow_mut(|all| {
-            let scratch = all[0].get_or_insert_default();
-            parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
-        });
-        if !file.has_errors
-            && !file.has_parse_diagnostics
-            && !file.has_parse_or_grammar_diagnostics()
-        {
-            return Some(file);
-        }
-    }
-    None
+    let how = ParseSettings {
+        dialect: Dialect::default(),
+        path,
+        script_kind,
+        experimental_decorators,
+        every_file_is_a_module,
+        jsdoc: JsDoc::Read,
+        attach_comments: false,
+        compiles: false,
+        reads_as_bun_run,
+        ignores_pure_comments: false,
+        skips_function_blocks: true,
+        reads_module_statements_alone: true,
+    };
+    let file = SCRATCH.with_borrow_mut(|all| {
+        let scratch = all[0].get_or_insert_default();
+        parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
+    });
+    let is_sound =
+        !file.has_errors && !file.has_parse_diagnostics && !file.has_parse_or_grammar_diagnostics();
+    is_sound.then_some(file)
 }
 
 /// [`summarize`] for a tool that follows a parser other than `tsc`'s and doesn't read types from JSDoc comments.

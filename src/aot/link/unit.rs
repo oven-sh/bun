@@ -1,7 +1,8 @@
 use super::program_keys::KeyContext;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{
-    Data, EvalScope, ExpectedResult, Function, Layout, RuntimeFunctionEntry, Variable,
+    Data, DeclaredRecord, EvalScope, ExpectedResult, Function, Layout, RuntimeFunctionEntry,
+    Variable,
 };
 use crate::ir::{
     DataId, EvalScopeId, ExpectedResultId, FunctionId, LayoutId, PropertyKeyId, VariableId,
@@ -19,6 +20,7 @@ pub(super) struct UnitRecords {
     pub eval_scopes: Vec<(EvalScopeId, EvalScope)>,
     pub data: Vec<(DataId, Data)>,
     pub expected_results: Vec<(ExpectedResultId, ExpectedResult)>,
+    pub declared_records: Vec<DeclaredRecord>,
 }
 
 #[derive(Clone)]
@@ -83,6 +85,7 @@ impl LinkUnit {
                 eval_scopes: fragment.eval_scopes,
                 data: fragment.data,
                 expected_results: fragment.expected_results,
+                declared_records: fragment.declared_records,
             },
             supertype_edges: fragment.supertype_edges,
             function_type_edges: fragment.function_type_edges,

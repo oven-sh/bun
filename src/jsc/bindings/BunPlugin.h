@@ -13,6 +13,11 @@
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPluginClear);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryResolve);
+#if ENABLE(AOT)
+BUN_DECLARE_HOST_FUNCTION(jsFunctionFactoryOfCompiledMockSettled);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionFactoryOfCompiledMockFailed);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionDecideWhetherFailureIsKept);
+#endif
 BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject);
 
 namespace Zig {
@@ -183,6 +188,9 @@ public:
 #if ENABLE(AOT)
             compiledMocksToRun.clear();
             factoriesOfCompiledMocks.clear();
+            numberOfFactoriesSetAside = 0;
+            fetchesThatStandForWaitingMocks.clear();
+            compiledImportersLinkedAheadOfMocks.clear();
             mocksLaidByBodies.clear();
             modulesThatLaidMocksInBodies.clear();
 #endif
@@ -196,11 +204,26 @@ public:
             uint32_t module;
             bool isWaitedFor;
             JSC::Strong<JSC::JSObject> mock;
+            // Settles behind the factory, or once the mock has ended and somebody else asks for the module.
             JSC::Strong<JSC::JSPromise> patched;
             // A fetch that waits holds its whole load up.
             bool isWaitedForByFetch { false };
+            // It could not wait, so nobody does.
+            bool wasStartedByRequire { false };
+            // An import() of the module itself waits for its factory and for nothing else. A load that comes to the module from another one goes on with what stands there once the mock has gone, and then so does whoever waits beside it.
+            bool isWaitedForByImporter { false };
+            // What the run time has noted of one call of a factory says nothing of the next.
+            uint64_t call { 0 };
+            WTF::Vector<uint32_t, 1> modulesThatLoadsThatWaitAskedFor;
+            WTF::Vector<JSC::Strong<JSC::JSObject>, 1> factoriesThatWait;
         };
         WTF::Vector<FactoryOfCompiledMock> factoriesOfCompiledMocks;
+        size_t numberOfFactoriesSetAside { 0 };
+        // The fetches of compiled files that wait for the turn of a mock below them: the key of the fetch, and the mock. To rankWaitingModuleMocks() such an entry of the loader stands for the mock.
+        WTF::Vector<std::pair<String, JSC::Strong<JSC::JSObject>>> fetchesThatStandForWaitingMocks;
+        // The mocked module, and a compiled importer that had yet to run when the mock was laid and whose record the loader held, linked to the record of the module, which had run. It stays linked to that one.
+        WTF::Vector<std::pair<String, String>> compiledImportersLinkedAheadOfMocks;
+        uint64_t callsOfFactoriesOfCompiledMocks { 0 };
         // The calls of mock.module(), vi.mock() and the like that were made while the body of a compiled module ran, the test files' own apart. `bun test` runs such a
         // module again for the next test file that imports it. A compiled body runs once, so the calls are made again.
         struct MockLaidByBody {
@@ -276,6 +299,9 @@ JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock);
 bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock);
 // Nothing has called it, and no import is loading the original, which a require() would disturb.
 bool canRequireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock);
+#if ENABLE(AOT)
+bool canRequireOriginalOfModuleMockAt(Zig::GlobalObject*, const String& path);
+#endif
 // What jest.requireActual() returns for the mocked module.
 JSC::JSValue requireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock);
 // "node:fs" for "node:fs?actual", the key of the original of a mocked builtin.

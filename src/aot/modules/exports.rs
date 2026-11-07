@@ -490,6 +490,14 @@ impl NameNodes {
         let is_star_name = self.tables[table].star_nodes().contains(&node);
         is_star_name.then_some(table)
     }
+
+    fn is_in_file_without_dynamic_stars(&self, node: u32) -> bool {
+        let table = self.tables.partition_point(|table| table.nodes.end <= node);
+        matches!(
+            self.tables[table].dynamic_targets,
+            DynamicStarTargets::Empty
+        )
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -672,7 +680,16 @@ impl ResolutionGraph<'_> {
         };
         let keys = self.nodes.keys.iter().enumerate();
         let results = keys.map(|(node, &(_, name))| (name, summary_of(node).resolve()));
-        let is_followed = |&node: &u32| summary_of(node as usize).should_follow_every_star();
+        let is_lost_unless_followed = |node: u32, summary: Summary| {
+            let mut targets = self.edges[node as usize].iter();
+            summary.binding == Resolution::NotFound
+                && matches!(summary.provider, Resolution::DynamicStar { .. })
+                && targets.any(|&target| self.nodes.is_in_file_without_dynamic_stars(target))
+        };
+        let is_followed = |&node: &u32| {
+            let summary = summary_of(node as usize);
+            summary.should_follow_every_star() || is_lost_unless_followed(node, summary)
+        };
         let followed_nodes = (0..self.edges.len() as u32).filter(is_followed);
         let results = results.collect();
         (results, self.find_star_tables(followed_nodes.collect()))
@@ -1002,6 +1019,7 @@ pub(super) fn resolve_begun_exports(
         }
     }
     steps.end("exports: follow the results");
+    tables.keep_names_that_mocks_may_settle(scans);
     #[cfg(debug_assertions)]
     if let Some(with_every_name) = &with_every_name {
         tables.assert_lacks_only_what_nobody_asks_for(with_every_name);
@@ -1026,6 +1044,7 @@ pub(super) struct ExportTables {
     index: FxHashMap<NodeKey, u32>,
     names_left_out: FxHashSet<Atom>,
     statements_ahead_of_stars: Vec<(NodeKey, Resolution)>,
+    names_that_mocks_may_settle: Vec<(NodeKey, (ModuleRef, Atom))>,
     failures: Vec<PendingFailure>,
     pub(super) commonjs: CommonJsNames,
     pub(super) commonjs_imports: Vec<CommonJsImport>,
@@ -1177,14 +1196,25 @@ impl ExportTables {
         let Some(file) = modules.table_file(named) else {
             return modules.find_commonjs_file(named);
         };
-        if name == known::default || self.index.contains_key(&(file, name)) {
+        if name == known::default {
             return None;
         }
-        self.assert_has_place_for(file, name);
-        match self.table_of(file)?.dynamic_targets {
-            DynamicStarTargets::One(target) => modules.find_commonjs_file(target),
-            DynamicStarTargets::Empty | DynamicStarTargets::Many => None,
+        let table = self.table_of(file)?;
+        let DynamicStarTargets::One(target) = table.dynamic_targets else {
+            return None;
+        };
+        match self.index.get(&(file, name)) {
+            None => self.assert_has_place_for(file, name),
+            Some(node) => {
+                let is_left_to_target = table.star_nodes().contains(node)
+                    && matches!(self.resolve(modules, file, name).resolution,
+                        Resolution::Synthetic { module, .. } if module == target);
+                if !is_left_to_target {
+                    return None;
+                }
+            }
         }
+        modules.find_commonjs_file(target)
     }
 
     pub(super) fn is_hidden_from_namespace(
@@ -1328,6 +1358,97 @@ impl ExportTables {
         Some(statements[at.ok()?].1)
     }
 
+    fn keep_names_that_mocks_may_settle(&mut self, scans: &Scans) {
+        if !self.tables.iter().any(|table| table.may_be_mocked) {
+            return;
+        }
+        let (mut statements, mut waiting) = (Vec::new(), Vec::new());
+        for &file in &self.files {
+            let own_count = self.own_names(file).len();
+            for (position, &(name, resolved)) in self.names(file).iter().enumerate() {
+                if resolved.resolution != Resolution::Ambiguous {
+                    continue;
+                }
+                if position >= own_count {
+                    let mut sources = self.files_that_stars_bring_name_from(file, name);
+                    if let (Some(source), None) = (sources.next(), sources.next()) {
+                        waiting.push(((file, name), (ModuleRef::File(source), name)));
+                    }
+                    continue;
+                }
+                let Some((site, listed)) = self.find_indirect_name(file, position) else {
+                    continue;
+                };
+                if let ScannedSite::Module(exporter) = scans.of(file).sites[site as usize] {
+                    statements.push(((file, name), (exporter, listed)));
+                }
+            }
+        }
+        let may_be_mocked = |file: &FileId| self.table_of(*file).is_some_and(|it| it.may_be_mocked);
+        let is_searched_for_in_mock = |it: &(NodeKey, (ModuleRef, Atom))| match it.1 {
+            (ModuleRef::File(file), name) => self
+                .files_searched_for(file, name)
+                .iter()
+                .any(may_be_mocked),
+            _ => false,
+        };
+        let (mut found, rest): (Vec<_>, Vec<_>) = statements
+            .iter()
+            .copied()
+            .partition(is_searched_for_in_mock);
+        waiting.extend(rest);
+        while !found.is_empty() {
+            self.names_that_mocks_may_settle.append(&mut found);
+            (self.names_that_mocks_may_settle)
+                .shared_sort_by_key(|&((file, name), _)| (file, name.0));
+            let comes_from_name_kept = |it: &(NodeKey, (ModuleRef, Atom))| match it.1 {
+                (ModuleRef::File(file), name) => {
+                    self.find_name_that_mock_may_settle(file, name).is_some()
+                }
+                _ => false,
+            };
+            (found, waiting) = waiting.into_iter().partition(comes_from_name_kept);
+        }
+        let kept = &self.names_that_mocks_may_settle;
+        self.failures.retain(|pending| {
+            let ModuleFailureKind::ExportAmbiguous { exporter, name } = pending.failure.kind else {
+                return true;
+            };
+            let importer = pending.failure.importer;
+            !kept
+                .iter()
+                .any(|it| it.0.0 == importer && it.1 == (exporter, name))
+        });
+    }
+
+    pub(super) fn find_name_that_mock_may_settle(
+        &self,
+        file: FileId,
+        name: Atom,
+    ) -> Option<(ModuleRef, Atom)> {
+        let statements = &self.names_that_mocks_may_settle;
+        let key_of = |&((file, name), _): &(NodeKey, (ModuleRef, Atom))| (file, name.0);
+        let at = statements.binary_search_by_key(&(file, name.0), key_of);
+        Some(statements[at.ok()?].1)
+    }
+
+    pub(super) fn find_where_names_lead(
+        &self,
+        mut module: ModuleRef,
+        mut name: Atom,
+    ) -> (ModuleRef, Atom) {
+        for _ in 0..=self.names_that_mocks_may_settle.len() {
+            let ModuleRef::File(file) = module else {
+                break;
+            };
+            let Some(next) = self.find_name_that_mock_may_settle(file, name) else {
+                break;
+            };
+            (module, name) = next;
+        }
+        (module, name)
+    }
+
     pub(super) fn follows_every_star(&self, module: FileId) -> bool {
         let table = self.table_of(module);
         table.is_some_and(|table| table.follows_every_star)
@@ -1367,7 +1488,10 @@ pub(super) fn find_ambiguous_names(
     file: FileId,
 ) -> Vec<Atom> {
     let names = tables.names(file).iter();
-    let ambiguous = names.filter(|it| it.1.resolution == Resolution::Ambiguous);
+    let ambiguous = names.filter(|it| {
+        it.1.resolution == Resolution::Ambiguous
+            && (tables.find_name_that_mock_may_settle(file, it.0)).is_none()
+    });
     let mut ambiguous: Vec<Atom> = ambiguous.map(|it| it.0).collect();
     let atoms = &files.atoms;
     ambiguous.shared_sort_unstable_by(|&a, &b| compare_code_units(atoms.bytes(a), atoms.bytes(b)));
@@ -1396,6 +1520,16 @@ pub(super) fn finish_exports(
                 ExportBinding::Synthetic(synthetic.id_of(ModuleRef::Runtime(module), name))
             }
             Resolution::LiveName { module, name } => ExportBinding::Indirect { module, name },
+            Resolution::DynamicStar { module, name } if position < own_count => {
+                ExportBinding::Indirect {
+                    module: ModuleRef::File(module),
+                    name,
+                }
+            }
+            Resolution::Ambiguous => {
+                let (module, name) = tables.find_name_that_mock_may_settle(file, exported_name)?;
+                ExportBinding::Indirect { module, name }
+            }
             _ => return None,
         };
         let is_from_star_export = position >= own_count;

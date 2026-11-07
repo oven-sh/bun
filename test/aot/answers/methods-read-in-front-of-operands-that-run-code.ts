@@ -9,7 +9,9 @@
 // # RUN(ADDED): bytes f3:Body mechanisms=all-Inlining
 // # ADDED: CallMethodThatMayBeUnread.SetAdd
 // # RUN(ONCE): bytes f4:Body mechanisms=all-Inlining
-// # ONCE: CallMethodOfBuiltinClassByValue.ArrayPush
+// # where the class is expected and not proven the read is a look too: it asks the class besides; what it finds as made stays unread, anything else is read there, in front of the operand
+// # ONCE: ReadMethodAtSiteUnlessReceiverFindsIt.ArrayPush
+// # ONCE: CallMethodOfAnyReceiverThatMayBeUnread.ArrayPush
 // # RUN(PROBED): bytes f6:Body mechanisms=all-Inlining
 // # PROBED: CallMethodOfBuiltinClassByValue.RegExpTest
 // # LIBRARY: own

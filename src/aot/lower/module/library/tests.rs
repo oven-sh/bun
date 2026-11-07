@@ -134,6 +134,7 @@ fn lower_library_file_for(
     let options = LoweringOptions {
         platform: host_platform(),
         embeds_function_text: false,
+        reads_function_texts_back: false,
         removable: Default::default(),
         minifies_identifiers: false,
         obfuscates: false,

@@ -174,12 +174,15 @@ fn commonjs_variable_store_is_recorded() {
 }
 
 #[test]
-fn the_five_names_are_slots_only_where_the_wrapper_is_kept() {
+fn the_names_other_than_exports_are_slots_only_where_the_wrapper_is_kept() {
     let plain = "exports.a = __filename; \
         module.exports.b = function () { return [require, module, exports, __dirname]; };";
     with_walk(&[("main.cjs", plain)], |_, _, walk| {
         assert!(!walk.has_wrapper_parameters);
-        assert!(!used_slots(walk).into_iter().any(is_commonjs_slot));
+        let mut slots = used_slots(walk)
+            .into_iter()
+            .filter(|&slot| is_commonjs_slot(slot));
+        assert!(slots.all(|slot| slot == EXPORTS));
     });
     let kept = format!("{KEEPS_WRAPPER} {plain}");
     with_walk(&[("main.cjs", kept.as_str())], |hir, bound, walk| {
@@ -189,6 +192,22 @@ fn the_five_names_are_slots_only_where_the_wrapper_is_kept() {
             let binding = BindingRef::Slot(file_scope(hir, bound), slot);
             assert!(has_use(walk, function, binding));
         }
+    });
+}
+
+#[test]
+fn exports_is_a_slot_only_where_the_file_may_replace_its_exports() {
+    let replaced = "exports.a = 1; module.exports = function () { return exports; };";
+    with_walk(&[("main.cjs", replaced)], |hir, bound, walk| {
+        assert!(!walk.has_wrapper_parameters);
+        let exports = BindingRef::Slot(file_scope(hir, bound), EXPORTS);
+        let function = walked(walk, only_function(hir, FnKind::Expr));
+        assert!(has_use(walk, WalkedFunctionId::MODULE_BODY, exports));
+        assert!(has_use(walk, function, exports));
+    });
+    let kept = "exports.a = 1; exports.b = function () { return exports.a; };";
+    with_walk(&[("main.cjs", kept)], |_, _, walk| {
+        assert!(!used_slots(walk).into_iter().any(is_commonjs_slot));
     });
 }
 

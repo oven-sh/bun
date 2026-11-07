@@ -132,7 +132,12 @@ interface Internals {
   constructReadable: ((stream: $Node.Readable, highWaterMark: unknown) => void) | undefined;
   resumeOnNextTick: ((stream: $Node.Readable, state: ReadableState) => void) | undefined;
   endOnNextTick: ((state: ReadableState, stream: $Node.Readable) => void) | undefined;
-  preallocatedEvents: (() => $Node.Events) | undefined;
+  preallocatedEvents: (() => $Node.PreallocatedEvents) | undefined;
+  holdsNoAccessor?: (table: unknown) => boolean;
+  hearsNothingUnderClose?: (table: unknown) => boolean;
+  hearsNothingUnderEnd?: (table: unknown) => boolean;
+  hearsNothingUnderReadable?: (table: unknown) => boolean;
+  hearsNothingButErrors?: (table: unknown) => boolean;
   writableAccessors: Record<WritableAccessorName, PropertyDescriptor> | undefined;
   resumeRequestBody: ((stream: $Node.Readable, state: ReadableState) => boolean) | undefined;
   finishReadOfNothing: ((state: ReadableState) => void) | undefined;
@@ -146,7 +151,21 @@ interface Internals {
   takeRequestCloseTick: ((request: $Node.IncomingMessage) => boolean) | undefined;
   destroyEndedRequest: ((state: ReadableState, stream: $Node.Readable) => boolean) | undefined;
   /** Only in what was compiled ahead of time. */
-  makeObjectReadable?: (highWaterMark: number) => $Node.Readable;
+  makeObjectReadable?: () => $Node.Readable;
+  /** Only in what was compiled ahead of time. */
+  oneObject?: $Node.ReadableOptions;
+  /** Only in what was compiled ahead of time. */
+  isPlainReadableState?: (state: unknown) => state is ReadableState;
+  /** Only in what was compiled ahead of time: the `{ writable: false }` that readable.ts hands to eos() for a plain heir of Readable. */
+  readableSideOfHeir?: { writable?: boolean };
+  /** Only in what was compiled ahead of time. */
+  emitsToListeners?: (stream: $Node.Readable, type: string) => boolean;
+  /** Only in what was compiled ahead of time. */
+  emitData?: (stream: $Node.Readable, chunk: unknown) => void;
+  /** Only in what was compiled ahead of time. */
+  isPlainReadableAlone?: (stream: $Node.AnyStream) => boolean;
+  /** Only in what was compiled ahead of time. */
+  isPlainUnfinishedResponse?: (stream: $Node.AnyStream) => boolean;
 }
 
 type WritableAccessorName =
@@ -290,6 +309,14 @@ interface ReadableState {
 }
 
 const kUnreadBytes = Symbol("kUnreadBytes");
+// The options of Readable.from(), which nobody else has: nobody sees which of them are asked for.
+const oneObject = IS_COMPILED_AHEAD_OF_TIME ? { objectMode: true, highWaterMark: 1 } : undefined;
+const kGivenHighWaterMark = IS_COMPILED_AHEAD_OF_TIME ? Symbol("kGivenHighWaterMark") : undefined;
+
+// Stores by computed key, so that the AOT compiler doesn't make a field that hides the prototype's accessor.
+function storeThroughAccessor(state: ReadableState, name: string, value: unknown) {
+  (state as any)[name] = value;
+}
 
 function ReadableState(this: ReadableState, options?, stream?, isDuplex?) {
   if (options === kUnreadBytes) {
@@ -305,6 +332,39 @@ function ReadableState(this: ReadableState, options?, stream?, isDuplex?) {
     this.bufferIndex = 0;
     this.length = 0;
     this.pipes = [];
+    this.awaitDrainWriters = null;
+    return;
+  }
+  if (
+    IS_COMPILED_AHEAD_OF_TIME &&
+    options === oneObject &&
+    new.target === ReadableState &&
+    $isPrototypeChainPlain(ReadableState)
+  ) {
+    this[kState] =
+      Flag.EmitClose |
+      Flag.AutoDestroy |
+      Flag.Constructed |
+      ReadableFlag.Sync |
+      Flag.ObjectMode |
+      ReadableFlag.DefaultUTF8Encoding;
+    this.highWaterMark = 1;
+    this.buffer = [];
+    this.bufferIndex = 0;
+    this.length = 0;
+    this.pipes = [];
+    this.awaitDrainWriters = null;
+    return;
+  }
+  if (IS_COMPILED_AHEAD_OF_TIME && options === kGivenHighWaterMark) {
+    this[kState] = Flag.EmitClose | Flag.AutoDestroy | Flag.Constructed | ReadableFlag.Sync;
+    if (!NumberIsInteger(stream) || stream < 0) throw $ERR_INVALID_ARG_VALUE("options.highWaterMark", stream);
+    this.highWaterMark = stream;
+    this.buffer = [];
+    this.bufferIndex = 0;
+    this.length = 0;
+    this.pipes = [];
+    this[kState] |= ReadableFlag.DefaultUTF8Encoding;
     this.awaitDrainWriters = null;
     return;
   }
@@ -337,7 +397,8 @@ function ReadableState(this: ReadableState, options?, stream?, isDuplex?) {
   if (defaultEncoding == null || defaultEncoding === "utf8" || defaultEncoding === "utf-8") {
     this[kState] |= ReadableFlag.DefaultUTF8Encoding;
   } else if (Buffer.isEncoding(defaultEncoding)) {
-    this.defaultEncoding = defaultEncoding;
+    if (IS_COMPILED_AHEAD_OF_TIME) storeThroughAccessor(this, "defaultEncoding", defaultEncoding);
+    else this.defaultEncoding = defaultEncoding;
   } else {
     throw $ERR_UNKNOWN_ENCODING(defaultEncoding);
   }
@@ -346,8 +407,13 @@ function ReadableState(this: ReadableState, options?, stream?, isDuplex?) {
   this.awaitDrainWriters = null;
 
   if (options?.encoding) {
-    this.decoder = new StringDecoder(options.encoding);
-    this.encoding = options.encoding;
+    if (IS_COMPILED_AHEAD_OF_TIME) {
+      storeThroughAccessor(this, "decoder", new StringDecoder(options.encoding));
+      storeThroughAccessor(this, "encoding", options.encoding);
+    } else {
+      this.decoder = new StringDecoder(options.encoding);
+      this.encoding = options.encoding;
+    }
   }
 }
 ReadableState.prototype = {};
@@ -377,7 +443,19 @@ ObjectDefineProperties(ReadableState.prototype, {
   closeEmitted: makeBitMapDescriptor(Flag.CloseEmitted),
   multiAwaitDrain: makeBitMapDescriptor(ReadableFlag.MultiAwaitDrain),
   // If true, a maybeReadMore has been scheduled.
-  readingMore: makeBitMapDescriptor(ReadableFlag.ReadingMore),
+  // Written out for a compiler ahead of time, which knows an accessor by what is written where it is defined: node:http asks whether a store under this name reaches these two functions.
+  readingMore: IS_COMPILED_AHEAD_OF_TIME
+    ? {
+        enumerable: false,
+        get(this: ReadableState) {
+          return (this[kState] & ReadableFlag.ReadingMore) !== 0;
+        },
+        set(this: ReadableState, value) {
+          if (value) this[kState] |= ReadableFlag.ReadingMore;
+          else this[kState] &= ~ReadableFlag.ReadingMore;
+        },
+      }
+    : makeBitMapDescriptor(ReadableFlag.ReadingMore),
   dataEmitted: makeBitMapDescriptor(ReadableFlag.DataEmitted),
 
   // Indicates whether the stream has errored.
@@ -860,7 +938,17 @@ function removeFlags(state, flags: number): void {
   state[kState] &= ~flags;
 }
 
+// True if `state` is an unmodified ReadableState, so reading its fields runs no user code.
+function isPlainReadableState(state: unknown): state is ReadableState {
+  return $isPlainInstanceOf(state, ReadableState) ? true : false;
+}
+if (IS_COMPILED_AHEAD_OF_TIME) internals.isPlainReadableState = isPlainReadableState;
+if (IS_COMPILED_AHEAD_OF_TIME) internals.oneObject = oneObject;
+if (IS_COMPILED_AHEAD_OF_TIME) internals.readableSideOfHeir = { writable: false };
+
 function createByteReadableState(highWaterMark: unknown): ReadableState {
+  if (IS_COMPILED_AHEAD_OF_TIME && highWaterMark != null)
+    return new ReadableState(kGivenHighWaterMark, highWaterMark, false);
   const state: ReadableState = new ReadableState(undefined, undefined, false);
   if (highWaterMark != null) {
     if (typeof highWaterMark !== "number" || !NumberIsInteger(highWaterMark) || highWaterMark < 0) {
@@ -872,10 +960,16 @@ function createByteReadableState(highWaterMark: unknown): ReadableState {
 }
 
 function createUnreadByteState(highWaterMark: number): ReadableState {
+  if (IS_COMPILED_AHEAD_OF_TIME && !$isPrototypeChainPlain(ReadableState)) {
+    const state: ReadableState = new ReadableState(kGivenHighWaterMark, highWaterMark, false);
+    state[kState] |= ReadableFlag.ReadingMore;
+    return state;
+  }
   return new ReadableState(kUnreadBytes, highWaterMark, false);
 }
 
 function advanceFlags(state: ReadableState, from: number, to: number): boolean {
+  if (IS_COMPILED_AHEAD_OF_TIME && !$isPlainInstanceOf(state, ReadableState)) return false;
   if (state[kState] !== from || state.length !== 0) return false;
   state[kState] = to | 0;
   return true;

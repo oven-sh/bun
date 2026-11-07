@@ -188,6 +188,20 @@ const programs: Record<string, Program> = {
     warnings: ["main.mjs:3:1", "main.mjs:7:1"],
     stdout: "stored\n",
   },
+  "a module is taken out of require.cache": {
+    source: `const first = require("./part.cjs");\ndelete require.cache[require.resolve("./part.cjs")];\nconsole.log(require("./part.cjs") === first);\n`,
+    files: { "part.cjs": "exports.a = 1;\n" },
+    code: "TS100091",
+    warnings: ["main.mjs:2:8"],
+    stdout: "true\n",
+  },
+  "a module is taken out of require.cache where nothing comes": {
+    source: `function nobodyCalls() {\n  delete require.cache[require.resolve("./part.cjs")];\n}\nconsole.log(require("./part.cjs").a);\n`,
+    files: { "part.cjs": "exports.a = 1;\n" },
+    code: "TS100091",
+    warnings: [],
+    stdout: "1\n",
+  },
   "the functions that the loader asks are read, and stored where nothing comes": {
     source: `import Module from "node:module";\nfunction nobodyCalls() {\n  Module.prototype.require = () => {};\n}\nconsole.log(typeof Module.prototype.require, typeof Module._resolveFilename);\n`,
     code: "TS100080",

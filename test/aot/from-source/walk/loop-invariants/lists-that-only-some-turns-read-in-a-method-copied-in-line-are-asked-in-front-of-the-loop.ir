@@ -1,0 +1,24 @@
+# -- source: lists-that-only-some-turns-read-in-a-method-copied-in-line-are-asked-in-front-of-the-loop.cjs
+# var ROW = [], COL = [];
+# for (var k = 0; k < 36; k++) { ROW[k] = (k / 6) | 0; COL[k] = k % 6; }
+# function Board() { this.cells = []; this.rows = []; this.cols = []; for (var i = 0; i < 36; i++) this.cells[i] = i % 4 === 0 ? 1 : 0; for (i = 0; i < 6; i++) { this.rows[i] = 1 << i; this.cols[i] = 64 << i; } }
+# Board.prototype.free = function (cell) { return 4095 & ~(this.rows[ROW[cell]] | this.cols[COL[cell]]); };
+# Board.prototype.weigh = function () { var sum = 0; for (var i = 0; i < 36; i++) { if (this.cells[i]) continue; sum += this.free(i); } return sum; };
+# var board = new Board(), answers = [board.weigh()];
+# COL[40] = 2; answers.push(board.weigh());
+# board.rows = [0.5, 1, 2, 4, 8, 16]; answers.push(board.weigh());
+# sink(answers);
+# -- end of source
+# Plain JavaScript: no written type asks the key for a number. The turn that finds a cell taken goes round; the others read four lists in a method that is copied in line: two of the file, under the
+# counter, and two in fields, under what the first two give. None of the four was asked in front: the reads of the variables and of the slots stayed in the turn, because not every turn comes by them; a test
+# could be laid in front only from a block that every turn passes; and the key kept its hole, so the read under it left the typed copy without a test: every turn that did any work ran as written.
+# A slot that constructions fill and a variable that is filled at every read fail nowhere, and a proven list can fail in front by the kind of its storage alone: they are asked in front, as the look does
+# for lists in the loop's own text. A hole among the keys leaves the turn.
+# f3 = weigh
+# RUN: walk f3 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f3:Body
+# CHECK-COUNT-2: i32 @Int32 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isPresent]
+# CHECK: undefined|i32 @OptionalInt64 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]
+# RUN(SHELL): run-in-shell globalThis.sink = answers => print(answers.join(" "));
+# SHELL: 90111 90111 90260

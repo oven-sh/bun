@@ -5,7 +5,7 @@
 //   bun test/aot/tools/list-goals-not-met-yet.ts --since <a tree>  also prints how many of the goals that older tree does not have
 //
 // It reads the tree and builds nothing. The marks of a goal, each of which runs at every run and turns red once the goal is met:
-//   a case of a test file that is declared with `failing`, in whatever way the file spells it and puts its name together
+//   a case of a test file that is declared with `failing`, in whatever way the file spells it and puts its name together: a row of a table that is wrapped in `gap()` is one
 //   `// STATISTIC: <count> <= <bound> Todo: <why>`, `// Todo: <why>`, `// Todo on <platform>: <why>` in a program under test/aot/parallel
 //   `# TODO: <why>` in an IR test, under test/aot and among the tests of the engine ($AOT_ENGINE_TESTS, or aot/tests in $BUN_WEBKIT_PATH)
 //   `// Todo: <why>` on the line above `#[should_panic]` in a crate of the front end
@@ -13,7 +13,7 @@
 // listed apart, in front of the goals. The name of the case, or the reason of the mark, says it:
 //   <what is to hold>: a wrong answer today: under `<the compiled run>` <what happens>, where `<the plain run>` <what happens>
 // Listed apart, because they are not run or not judged:
-//   a case under test/aot that is declared with `todo`, or is a row of a table that is wrapped in `gap()`
+//   a case under test/aot that is declared with `todo`
 //   `// Skip on <platform> <architecture>: <why>` in a program under test/aot/parallel
 // A name that is put together while the file runs cannot be read off its text. So each test file from which a mark can be reached is
 // loaded by a `bun test` of its own in which a stand-in takes the place of bun:test: `describe` runs what it is handed, every case is
@@ -183,9 +183,9 @@ function filesBelow(folder: string, wanted: (name: string) => boolean, base = ro
   return found.sort();
 }
 
-const spelling = /\.failing(?:If)?\b/;
-// `gap()` of supported.ts marks a row of a table that `eachRow()` then declares with `todo`. That file defines the two and marks nothing.
-const spellingOfWhatNeverRuns = /\.todo(?:If)?(?:\s*[():]|\.(?:each|if|skipIf|only|concurrent|serial)\b|\s*$)|\bgap\(/m;
+// `gap()` of supported.ts marks a row of a table that `eachRow()` then declares with `failing`. That file defines the two and marks nothing.
+const spelling = /\.failing(?:If)?\b|\bgap\(/;
+const spellingOfWhatNeverRuns = /\.todo(?:If)?(?:\s*[():]|\.(?:each|if|skipIf|only|concurrent|serial)\b|\s*$)/m;
 const marksNothingItself = "test/aot/supported.ts";
 const speaksOfTheCompiler = /\baot\b|--trim\b/i;
 const marksReachedFrom = new Map<string, Set<string>>();
@@ -196,8 +196,8 @@ function filesWithMarksReachedFrom(file: string): Set<string> {
   const reached = new Set<string>();
   marksReachedFrom.set(file, reached);
   const text = readFileSync(join(root, file), "utf8");
-  const neverRuns = file.startsWith("test/aot/") && file !== marksNothingItself && spellingOfWhatNeverRuns.test(text);
-  if (spelling.test(text) || neverRuns) reached.add(file);
+  const neverRuns = file.startsWith("test/aot/") && spellingOfWhatNeverRuns.test(text);
+  if (file !== marksNothingItself && (spelling.test(text) || neverRuns)) reached.add(file);
   for (const [, written] of text.matchAll(/(?:\bfrom|\bimport|\brequire\()\s*["'](\.{1,2}\/[^"']+)["']/g)) {
     const base = join(dirname(file), written);
     const imported = [base, base + ".ts", base + ".tsx", base + ".js", base + "/index.ts"].find(
@@ -389,8 +389,7 @@ async function marksOfTestFiles(found: Found) {
     process.exit(2);
   }
   for (const file of [...withMarks].sort()) {
-    const neverRuns = file.startsWith("test/aot/") && file !== marksNothingItself;
-    for (const mark of neverRuns ? (["failing", "todo"] as const) : (["failing"] as const)) {
+    for (const mark of file.startsWith("test/aot/") ? (["failing", "todo"] as const) : (["failing"] as const)) {
       for (const [line, text] of marksInTheCodeOf(readFileSync(join(root, file), "utf8"), mark)) {
         if (!evaluated.has(`${file}:${line}`)) found.declareNothing.push(`${file}:${line}: ${text}`);
       }

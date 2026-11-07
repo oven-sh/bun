@@ -247,6 +247,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.set_position(caller_position);
     }
 
+    pub(super) fn emit_field_born_with(
+        &mut self,
+        class: ClassId,
+        member: MemberId,
+        value: ValueId,
+        this: ValueId,
+    ) {
+        let caller_position = self.position();
+        let target = self.find_field_target(class, member);
+        self.set_position(self.file.hir[member].name_pos);
+        match target {
+            FieldTarget::Property(name) => self.emit_define(this, name, value),
+            FieldTarget::Private(name) => self.emit_field_definition(this, name, value),
+        }
+        self.set_position(caller_position);
+    }
+
     fn emit_parameter_property_field(&mut self, parameter: ParamId, this: ValueId) {
         let hir = self.file.hir;
         let name = match hir[hir[parameter].pat].kind {

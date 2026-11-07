@@ -1,0 +1,14 @@
+# -- source: a-field-of-a-class-is-not-narrowed-for-the-sake-of-an-heir-alone.js
+# class N { l = null; r = null; constructor(k, w) { this.k = k; this.w = w; } }
+# class M extends N { m = 1; }
+# function build(a, b) { if (a >= b) return null; const m = (a + b) >> 1, x = new N(m, m * 0.5 + 0.25); x.l = build(a, m); x.r = build(m + 1, b); return x; }
+# function walk(x) { return x === null ? 0 : x.w + x.k + walk(x.l) + walk(x.r); }
+# sink(walk(build(0, 31)), new M(1, 2).m);
+# -- end of source
+# N fills its cell with wide slots and would gain no byte from narrow ones. M alone would. The slots that both share stay wide: a read of N's pays nothing for M's byte.
+# RUN: plan mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: layout L0 CompiledObject size=48
+# CHECK: "l" JSValue Inline
+# CHECK: "r" JSValue Inline
+# CHECK: layout L1 CompiledObject size=64

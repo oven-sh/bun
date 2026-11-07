@@ -1,0 +1,13 @@
+# -- source: main.ts
+# class Box { items: any; constructor(items: any) { this.items = items; } sum() { let s = 0; for (let i = 0; i < this.items.length; i++) s += this.items[i]; return s; } }
+# class Heir extends Box { more = 1; }
+# declare const sink: any;
+# sink(Box, Heir);
+# -- end of source
+# The class has an heir: `this` is of two layouts, and the plan says that the field lies in one slot of both. The slot is asked and read once in front of the loop as for one layout.
+# RUN(WALK): walk f2 mechanisms=all
+# REQUIRES(WALK): entries-of-bun
+# WALK: = IsSlotFilled {{*}}key="items" receivers=[L0, L1]
+# WALK: [[given]]: {{*}} = GetSlot {{*}}key="items" receivers=[L0, L1]
+# WALK: = TypeTest [[given]] testedType=Array<number>
+# WALK: number @Double = GetArrayElement {{*}}arrayStorage=Double level=Proven

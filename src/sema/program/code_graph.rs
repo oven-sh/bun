@@ -134,6 +134,7 @@ impl<'s> CodeView<'s> for Files<'s> {
 pub struct NamingLoad {
     pub file: FileId,
     pub requires: bool,
+    pub is_guess: bool,
 }
 
 #[derive(Default)]

@@ -578,6 +578,11 @@ fn loads_compiled_file_below_vitest(vm: &VirtualMachine) -> bool {
     })
 }
 
+#[unsafe(no_mangle)]
+extern "C" fn Bun__AOT__loadsCompiledFileBelowVitest(vm: &VirtualMachine) -> bool {
+    loads_compiled_file_below_vitest(vm)
+}
+
 /// `Bun.jest(path)`
 pub(crate) fn jest(cx: &mut JsScope<'_>, path: Option<&[u8]>) -> JsResult<JSValue> {
     let global_object = cx.global();

@@ -1,0 +1,20 @@
+# `new Marker()` names a function that stores nothing on `this` and nothing on its prototype. Because a `new` names it, it has a layout, without fields,
+# so the construction is an allocation under that layout and no call by value: the run time makes no `this` and looks for no structure.
+# -- source: markers.ts
+# function Marker() { }
+# function plain() { }
+# function count(turns: number) {
+#   let made = 0;
+#   for (let i = 0; i < turns; i++) { plain(); if (new (Marker as any)() instanceof Marker) made++; }
+#   return made;
+# }
+# console.log(String(count(100)));
+# -- end of source
+# RUN: walk f3 mechanisms=-Inlining
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f3:Body
+# What it makes is held in sight, and here nobody looks at it but `instanceof`, which its layout answers: so not even the allocation is built.
+# CHECK-NOT: = NewObject
+# CHECK-NOT: = Construct
+# RUN(LAYOUTS): plan layouts mechanisms=all
+# LAYOUTS: layout L0 CompiledObject

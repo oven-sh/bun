@@ -23,8 +23,8 @@ use crate::import_sites::{
     write_question_where_file_lies, write_start_from_other_folder,
 };
 use crate::resolve::{
-    CodeRead, DeclaredSideEffects, EnclosingPackage, FinishedFile, HostPayload, ParsedFile,
-    TranspileSettings, is_declaration_file_name,
+    CodeHost, CodeRead, DeclaredSideEffects, EnclosingPackage, FinishedFile, HostPayload,
+    ParsedFile, TranspileSettings, is_declaration_file_name,
 };
 use bun_threading::guarded::GuardedLock;
 use bun_threading::{Condvar, Mutex};
@@ -1873,6 +1873,7 @@ struct OrderedFiles<'s, 'r> {
 }
 
 fn share_modules_among_types<'r>(
+    host: &dyn CodeHost,
     files: &mut [WalkedFile<'_, 'r>],
     mut entry_points: VecDeque<u32>,
     scanned: usize,
@@ -1900,7 +1901,7 @@ fn share_modules_among_types<'r>(
                 for next in 0..files[index as usize].code_targets().len() {
                     let target = files[index as usize].code_targets()[next];
                     if is_shared(&target) && target.has_shared_type == shares_statements {
-                        share_form(files, &mut first_forms, index, next);
+                        share_form(host, files, &mut first_forms, index, next);
                     }
                 }
             }
@@ -1918,7 +1919,7 @@ fn share_modules_among_types<'r>(
         for next in 0..files[index as usize].code_targets().len() {
             let target = files[index as usize].code_targets()[next];
             if target.has_shared_type {
-                share_form(files, &mut first_forms, index, next);
+                share_form(host, files, &mut first_forms, index, next);
             }
             let reached = files[index as usize].targets[next];
             match target.is_loaded_with_importer {
@@ -1930,6 +1931,7 @@ fn share_modules_among_types<'r>(
 }
 
 fn share_form<'r>(
+    host: &dyn CodeHost,
     files: &mut [WalkedFile<'_, 'r>],
     first_forms: &mut FxHashMap<&'r [u8], u32>,
     index: u32,
@@ -1937,7 +1939,16 @@ fn share_form<'r>(
 ) {
     let file = &files[index as usize];
     let path = file.code_targets()[next].key.path;
-    let reached = *first_forms.entry(path).or_insert(file.targets[next]);
+    let asked_for = file.targets[next];
+    let cannot_be_read = || {
+        let parsed = files[asked_for as usize].parsed.as_ref();
+        let payload = parsed.and_then(|it| it.payload.as_ref());
+        payload.is_some_and(|it| host.stands_for_text_that_cannot_be_read(it))
+    };
+    if !first_forms.contains_key(path) && cannot_be_read() {
+        return;
+    }
+    let reached = *first_forms.entry(path).or_insert(asked_for);
     let key = files[reached as usize].target.key;
     let file = &mut files[index as usize];
     file.targets[next] = reached;
@@ -1960,7 +1971,7 @@ fn order_files<'s, 'r>(
         true => context.written_entry_point_count(),
         false => 0,
     };
-    share_modules_among_types(files, indexes.collect(), scanned);
+    share_modules_among_types(context.host, files, indexes.collect(), scanned);
     let mut roots: Vec<u32> = Vec::with_capacity(entry_points.len());
     let mut order: Vec<u32> = Vec::with_capacity(files.len());
     let mut seen = vec![false; files.len()];

@@ -2,19 +2,20 @@ use super::SourceDialect;
 use super::mention_use::{MentionUse, lookup_passes_holder_linked_anew};
 use super::module_values::reads_what_wrapper_hands_in;
 use super::resolver::{ExprState, Resolver};
+use crate::builtins::names::BuiltinNames;
 use crate::builtins::runtime_uses::{
     SyntaxWithHelpers, is_name_of_language_member_with_code, is_name_under_which_evaluator_hangs,
 };
-use crate::builtins::table::{self, BuiltinId, BuiltinName, Intrinsic};
+use crate::builtins::table::{self, BuiltinId, BuiltinName, Intrinsic, Platforms};
 use bun_core::strings;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
     Binding, BindingKind, BindingStability, Decl, Parent, PatParent, StoreKind, SymbolId,
 };
-use bun_sema::fold::{Constant, Decision, FoldedValue};
+use bun_sema::fold::{Constant, Decision, Decisions, FoldedValue};
 use bun_sema::hir::{
     self, BinOp, ExprId, ExprKind, Flags, FnKind, MemberKey, MemberKind, PatId, PatKind, PropKey,
-    StmtKind, UnOp, VarDeclId, VarKind,
+    StmtKind, TemplatePart, UnOp, VarDeclId, VarKind,
 };
 use bun_sema::hir_from_data::DataValue;
 use core::ops::Range;
@@ -144,65 +145,50 @@ impl SyntaxOutsideExpressions {
 }
 
 fn names_asked_past_what_some_runs_create(
-    input: &super::ResolveInput<'_, '_>,
+    platform: Platforms,
 ) -> impl Iterator<Item = BuiltinName> {
-    let (dialect, platform) = (input.dialect, input.platform);
     let created_in_some_runs = table::MEMBERS_CREATED_IN_SOME_RUNS.iter();
     created_in_some_runs.filter_map(move |&member| {
-        let entry = table::entry(member);
+        let (entry, dialect) = (table::entry(member), SourceDialect::Program);
         lookup_passes_holder_linked_anew(entry.holder?, Some(entry.name), dialect, platform)
             .then_some(entry.name)
     })
 }
 
-fn for_each_text_spelled_at(
-    input: &super::ResolveInput<'_, '_>,
-    expr: ExprId,
-    mut note: impl FnMut(Atom),
-) {
-    match input.hir[expr].kind {
-        ExprKind::JsxText(text) => note(text),
-        ExprKind::Ident(name) if name == known::constructor => note(name),
-        ExprKind::Template { .. } => {
-            for part in input.hir.template_parts(expr) {
-                if let Some(cooked) = part.cooked {
-                    note(cooked);
-                }
-            }
-        }
-        _ => {}
-    }
-    if let FoldedValue::Constant(Constant::String(text))
-    | FoldedValue::ConstantOutsideDeadZone(Constant::String(text)) =
-        input.decisions.constant(input.hir, expr)
-    {
-        note(text);
-    }
-    match input.decisions.decision(expr) {
-        Decision::Constant(Constant::String(text)) => note(text),
-        Decision::Data(data) => for_each_text_spelled_in_data(data, &mut note),
-        Decision::DeferredData => note(known::constructor),
-        _ => {}
-    }
-}
-
-fn for_each_text_spelled_in_data(data: &DataValue<'_>, note: &mut dyn FnMut(Atom)) {
-    let mut waiting = vec![data];
-    while let Some(value) = waiting.pop() {
-        match *value {
-            DataValue::String(text) => note(text),
-            DataValue::Array(items) => waiting.extend(items),
-            DataValue::Object(entries) => {
-                for (key, value) in entries {
-                    if *key == known::constructor {
-                        note(*key);
-                    }
-                    waiting.push(value);
-                }
-            }
-            _ => {}
-        }
-    }
+pub fn can_lay_key_that_native_code_asks_of_process(
+    hir: &hir::File<'_>,
+    decisions: &Decisions<'_>,
+    names: &BuiltinNames,
+    platform: Platforms,
+) -> bool {
+    let text: &[u8] = &hir.text;
+    let asked: Vec<BuiltinName> = names_asked_past_what_some_runs_create(platform).collect();
+    let cooked: Vec<Atom> = (asked.iter())
+        .filter_map(|&name| names.atom_of(name))
+        .collect();
+    let is_key = |key: PropKey| matches!(key, PropKey::Name(name) if cooked.contains(&name));
+    let is_spelled =
+        || (asked.iter()).any(|&name| strings::contains(text, table::text_of_name(name)));
+    let is_put_together = || {
+        let decided = decisions.decided().iter();
+        let decided = decided.filter_map(|decided| match decided.1 {
+            Decision::Constant(Constant::String(made)) => Some(made),
+            _ => None,
+        });
+        (decided.chain(decisions.folded_texts())).any(|made| cooked.contains(&made))
+    };
+    let is_cooked = || {
+        let is_part = |part: &TemplatePart| part.cooked.is_some_and(|part| cooked.contains(&part));
+        hir.props.iter().any(|property| is_key(property.key))
+            || hir.members.iter().any(|member| is_key(member.key))
+            || hir.template_parts.iter().any(is_part)
+            || hir.exprs.iter().any(|expr| match expr.kind {
+                ExprKind::String(text) | ExprKind::JsxText(text) => cooked.contains(&text),
+                ExprKind::Ident(name) | ExprKind::Dot { name, .. } => cooked.contains(&name),
+                _ => false,
+            })
+    };
+    is_spelled() || is_put_together() || is_cooked()
 }
 
 fn makes_number(op: BinOp) -> bool {
@@ -272,40 +258,57 @@ impl Resolver<'_, '_> {
     }
 
     fn note_texts_that_may_come_to_be_keys(&mut self, expr: ExprId) {
-        if self.input.dialect == SourceDialect::Program {
-            for_each_text_spelled_at(self.input, expr, |text| {
-                self.note_text_that_may_come_to_be_key(text, expr);
-            });
-        }
-    }
-
-    fn note_key_that_program_can_lay(&mut self, key: Atom) {
-        if let Some(name) = self.input.names.get(key) {
-            self.output.process_reaches_code_on_its_prototypes |=
-                names_asked_past_what_some_runs_create(self.input).any(|asked| asked == name);
-        }
-    }
-
-    pub(super) fn note_keys_that_program_can_lay(&mut self) {
         let input = self.input;
         if input.dialect != SourceDialect::Program {
             return;
         }
-        self.output.process_reaches_code_on_its_prototypes |=
-            names_asked_past_what_some_runs_create(input)
-                .any(|name| strings::contains(&input.hir.text, table::text_of_name(name)));
-        if !input.is_text_asked {
-            for expr in self.evaluated_exprs() {
-                for_each_text_spelled_at(input, expr, |text| {
-                    self.note_key_that_program_can_lay(text);
-                });
+        match input.hir[expr].kind {
+            ExprKind::JsxText(text) => self.note_text_that_may_come_to_be_key(text, expr),
+            ExprKind::Ident(name) if name == known::constructor => {
+                self.note_text_that_may_come_to_be_key(name, expr);
             }
+            ExprKind::Template { .. } => {
+                for part in input.hir.template_parts(expr) {
+                    if let Some(cooked) = part.cooked {
+                        self.note_text_that_may_come_to_be_key(cooked, expr);
+                    }
+                }
+            }
+            _ => {}
         }
-        let of_literals = input.hir.props.iter().map(|property| property.key);
-        let of_classes = input.hir.members.iter().map(|member| member.key);
-        for key in of_literals.chain(of_classes) {
-            if let PropKey::Name(name) = key {
-                self.note_key_that_program_can_lay(name);
+        if let FoldedValue::Constant(Constant::String(text))
+        | FoldedValue::ConstantOutsideDeadZone(Constant::String(text)) =
+            input.decisions.constant(input.hir, expr)
+        {
+            self.note_text_that_may_come_to_be_key(text, expr);
+        }
+        match input.decisions.decision(expr) {
+            Decision::Constant(Constant::String(text)) => {
+                self.note_text_that_may_come_to_be_key(text, expr);
+            }
+            Decision::Data(data) => self.note_texts_of_data_that_may_come_to_be_keys(data, expr),
+            Decision::DeferredData => {
+                self.note_text_that_may_come_to_be_key(known::constructor, expr);
+            }
+            _ => {}
+        }
+    }
+
+    fn note_texts_of_data_that_may_come_to_be_keys(&mut self, data: &DataValue<'_>, at: ExprId) {
+        let mut waiting = vec![data];
+        while let Some(value) = waiting.pop() {
+            match *value {
+                DataValue::String(text) => self.note_text_that_may_come_to_be_key(text, at),
+                DataValue::Array(items) => waiting.extend(items),
+                DataValue::Object(entries) => {
+                    for (key, value) in entries {
+                        if *key == known::constructor {
+                            self.note_text_that_may_come_to_be_key(*key, at);
+                        }
+                        waiting.push(value);
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -344,7 +347,6 @@ impl Resolver<'_, '_> {
     }
 
     fn note_text_under_which_evaluator_hangs(&mut self, text: Atom) {
-        self.note_key_that_program_can_lay(text);
         self.output.reads_name_leading_to_hook_of_instanceof |=
             self.input.names.leads_to_hook_of_instanceof(text);
         let name = self.input.names.find_name_of_language_member(text);
@@ -392,9 +394,12 @@ impl Resolver<'_, '_> {
         }
     }
 
-    pub(super) fn spells_method_that_hands_out_global_object(&self) -> bool {
+    pub(super) fn spells_name_that_every_file_is_asked_for(&self) -> bool {
         let (hir, names) = (self.input.hir, self.input.names);
-        let is_such = |name: Atom| names.is_name_of_method_that_hands_out_global_object(name);
+        let is_such = |name: Atom| {
+            names.is_name_of_method_that_hands_out_global_object(name)
+                || names.leads_to_hook_of_instanceof(name)
+        };
         let is_key = |key: PropKey| match key {
             PropKey::Name(name) => is_such(name),
             PropKey::Computed(key) => self.constant_text(key).is_some_and(is_such),
@@ -413,7 +418,7 @@ impl Resolver<'_, '_> {
                 _ => None,
             });
         self.input.dialect == SourceDialect::Program
-            && (decided.into_iter().any(is_such)
+            && (decided.chain(decisions.folded_texts()).any(is_such)
                 || self.computed.iter().any(is_read_under_such_key)
                 || hir.props.iter().any(|property| is_key(property.key))
                 || hir.pat_props.iter().any(|property| is_key(property.key))

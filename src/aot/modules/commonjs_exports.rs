@@ -1,11 +1,13 @@
 mod faces;
 mod helper_calls;
+mod inline_star;
 mod summary;
 #[cfg(test)]
 mod tests;
 
 use self::faces::Faces;
 pub(super) use self::faces::collect_seen_namespaces;
+use self::inline_star::{InlineStar, InlineStarInput, find_inline_stars};
 use self::summary::{ExportsSummary, StoredName, summarize_file, summarize_inner_modules};
 use super::bindings::SyntheticExportId;
 use super::exports::{ExportTables, Resolution};
@@ -26,7 +28,7 @@ use crate::builtins::resolve::{
     ModuleObjectOwner, ModuleObjectUse, redeclares_what_wrapper_hands_in,
 };
 use crate::ir::for_each_mut;
-use crate::known_helpers::{Helper, Quiet, Shape as HelperShape};
+use crate::known_helpers::{Helper, KnownReference, Quiet, Shape as HelperShape};
 use crate::load::SourceKind;
 use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, Interner, known};
@@ -34,6 +36,7 @@ use bun_sema::bind::{
     AssignmentTarget, Binding, BindingInitializer, BindingKind, Bound, CodeUnit, CommonJsVariable,
     Decl, FnOwner, FunctionFlags, Parent, PatParent, ScopeKind, SymbolId,
 };
+use bun_sema::components::strongly_connected_components;
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, Decisions, FoldedValue};
 use bun_sema::hir::{
@@ -147,6 +150,16 @@ impl Creation {
 }
 
 #[derive(Copy, Clone, Debug)]
+struct Star {
+    module: ModuleRef,
+    call: ExprId,
+    required: ExprId,
+    statement: StmtId,
+    start: u32,
+    is_in_line: bool,
+}
+
+#[derive(Copy, Clone, Debug)]
 struct Alias {
     name: Atom,
     target: AliasTarget,
@@ -154,6 +167,8 @@ struct Alias {
     value: StoredValue,
     is_enumerable: bool,
     is_seen_unfilled: bool,
+    needs_marker: bool,
+    is_defined_in_front_of_load: bool,
     start: u32,
     returned_start: u32,
 }
@@ -185,6 +200,8 @@ struct ModuleText {
     marker_nodes: Vec<ExprId>,
     erased: Vec<StmtId>,
     evaluated_at_store: Option<StmtId>,
+    stars: Vec<Star>,
+    holders_in_erased_getters: Vec<ExprId>,
     names_read: Vec<Atom>,
     names_called: Vec<Atom>,
     marker: Option<bool>,
@@ -1059,6 +1076,7 @@ struct Scan<'t, 'a, 's> {
     mentions: Vec<Mention>,
     replacements: Vec<Replacement>,
     marking_calls: Vec<ExprId>,
+    inline_stars: Vec<InlineStar>,
     quiet_head: OnceCell<u32>,
 }
 
@@ -1109,6 +1127,41 @@ impl Scan<'_, '_, '_> {
             _ => return None,
         };
         Some((self.module_of_call(site)?, site))
+    }
+
+    fn operand_of_import_default(&self, value: ExprId) -> Option<ExprId> {
+        let text = self.text;
+        let hir = text.hir;
+        let ExprKind::Call(call) = hir[value].kind else {
+            return None;
+        };
+        let call = hir[call];
+        if call.chain != Chain::No || call.args.len() != 1 {
+            return None;
+        }
+        let helpers = text.bind.known_helpers;
+        let known = helpers.certain_callee(text.bind.files, text.file, call.callee)?;
+        matches!(known.shape.helper(), Helper::ImportDefault)
+            .then(|| hir.skip_type_assertions(hir.id_at::<ExprId>(call.args, 0)))
+    }
+
+    fn find_required_module_past_helper(&self, name: ExprId) -> Option<(ModuleRef, ExprId, bool)> {
+        if let Some((module, site)) = self.find_required_module(name) {
+            return Some((module, site, false));
+        }
+        let text = self.text;
+        let Binding::Symbol(symbol) = text.bound.binding(name) else {
+            return None;
+        };
+        if !text.bound.is_stable_binding(symbol) {
+            return None;
+        }
+        let answer = match text.bound.binding_initializer(text.hir, symbol) {
+            BindingInitializer::Expression(value) => text.hir.skip_type_assertions(value),
+            _ => return None,
+        };
+        let site = self.operand_of_import_default(answer)?;
+        Some((self.module_of_call(site)?, site, true))
     }
 
     fn create(&self, name: Atom, node: ExprId, value_node: ExprId, value: StoredValue) -> Creation {
@@ -1194,12 +1247,14 @@ impl Scan<'_, '_, '_> {
         returned: ExprId,
         definition: ExprId,
         is_read_behind_body: bool,
-    ) -> Option<AliasTarget> {
+    ) -> Option<(AliasTarget, bool, Option<ExprId>)> {
         let text = self.text;
         let hir = text.hir;
         let returned = hir.skip_type_assertions(returned);
         if matches!(hir[returned].kind, ExprKind::Ident(_)) {
-            return self.find_binding_alias(returned);
+            return self
+                .find_binding_alias(returned)
+                .map(|target| (target, false, None));
         }
         let (object, key) = hir.member_key(returned)?;
         let (ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. }) = hir[returned].kind
@@ -1208,13 +1263,33 @@ impl Scan<'_, '_, '_> {
         };
         let name = text.plain_name_of_key(key)?;
         let object = hir.skip_type_assertions(object);
+        let operand = self.operand_of_import_default(object);
+        let object = operand.unwrap_or(object);
         if chain != Chain::No || !matches!(hir[object].kind, ExprKind::Ident(_)) {
             return None;
         }
-        let (module, site) = self.find_required_module(object)?;
+        let (module, site, is_past_helper) = self.find_required_module_past_helper(object)?;
+        if operand.is_some() && is_past_helper {
+            return None;
+        }
+        let lies_in_own_body = match self.body.callback {
+            None => true,
+            Some(callback) => match text.bound.fns[callback.idx()].owner {
+                FnOwner::Expr(written) => {
+                    hir[written].pos <= hir[site].pos && hir[site].end <= hir[written].end
+                }
+                _ => false,
+            },
+        };
         let is_loaded_before = self.position_of(site) == SitePosition::InOrder
-            && (is_read_behind_body || hir[site].end <= hir[definition].pos);
-        is_loaded_before.then_some(AliasTarget::Member { module, name })
+            && ((is_read_behind_body && lies_in_own_body) || hir[site].end <= hir[definition].pos);
+        let needs_marker = operand.is_some() || is_past_helper;
+        let handed_to_helper = operand.map(|_| object);
+        is_loaded_before.then_some((
+            AliasTarget::Member { module, name },
+            needs_marker,
+            handed_to_helper,
+        ))
     }
 
     fn add_alias(
@@ -1224,6 +1299,7 @@ impl Scan<'_, '_, '_> {
         node: ExprId,
         returned: ExprId,
         is_enumerable: bool,
+        needs_marker: bool,
     ) {
         self.found.aliases.push(Alias {
             name,
@@ -1235,6 +1311,8 @@ impl Scan<'_, '_, '_> {
             },
             is_enumerable,
             is_seen_unfilled: false,
+            needs_marker,
+            is_defined_in_front_of_load: false,
             start: self.text.hir[node].pos,
             returned_start: self.text.hir[returned].pos,
         });
@@ -1278,8 +1356,25 @@ impl Scan<'_, '_, '_> {
                 setter: None,
             } => {
                 let returned = self.find_returned_expression(getter)?;
-                let target = self.find_alias_target(returned, call_node, false)?;
-                self.add_alias(name, target, call_node, returned, is_enumerable);
+                let behind_load = self.find_alias_target(returned, call_node, false);
+                let (target, needs_marker, handed_to_helper) = match behind_load {
+                    Some(found) => found,
+                    None => self.find_alias_target(returned, call_node, true)?,
+                };
+                self.add_alias(
+                    name,
+                    target,
+                    call_node,
+                    returned,
+                    is_enumerable,
+                    needs_marker,
+                );
+                self.found
+                    .holders_in_erased_getters
+                    .extend(handed_to_helper);
+                if let (None, Some(alias)) = (behind_load, self.found.aliases.last_mut()) {
+                    alias.is_defined_in_front_of_load = true;
+                }
                 self.found.erased.extend(text.statement_of(call_node));
             }
             DescribedPart::Data { .. } | DescribedPart::Accessor { .. } => return None,
@@ -1306,9 +1401,12 @@ impl Scan<'_, '_, '_> {
                     ..
                 } if statement == written_at => {
                     let returned = self.find_returned_expression(getter)?;
-                    let target =
+                    let (target, needs_marker, handed_to_helper) =
                         self.find_alias_target(returned, definition, is_read_behind_body)?;
-                    aliases.push((name, target, returned, is_enumerable));
+                    if handed_to_helper.is_some() {
+                        return None;
+                    }
+                    aliases.push((name, target, returned, is_enumerable, needs_marker));
                 }
                 StoredName::Value {
                     name,
@@ -1331,8 +1429,15 @@ impl Scan<'_, '_, '_> {
         {
             return None;
         }
-        for (name, target, returned, is_enumerable) in aliases {
-            self.add_alias(name, target, definition, returned, is_enumerable);
+        for (name, target, returned, is_enumerable, needs_marker) in aliases {
+            self.add_alias(
+                name,
+                target,
+                definition,
+                returned,
+                is_enumerable,
+                needs_marker,
+            );
         }
         if marks_module {
             let ignored = StoredValue::IgnoresThis;
@@ -1347,6 +1452,101 @@ impl Scan<'_, '_, '_> {
         }
         self.found.erased.push(written_at);
         Some(())
+    }
+
+    fn add_star(&mut self, exports: ExprId, call_node: ExprId) -> Option<()> {
+        let text = self.text;
+        let hir = text.hir;
+        let ExprKind::Call(call) = hir[call_node].kind else {
+            return None;
+        };
+        let call = hir[call];
+        if self.body.callback.is_some()
+            || call.chain != Chain::No
+            || call.args.len() != 2
+            || hir.id_at::<ExprId>(call.args, 1) != exports
+            || (self.certain_helper)(call.callee)
+                != Some(HelperShape::ExportStarBindsNamesTheTargetLacks)
+            || !self.is_statement_in_order(call_node)
+            || !self.star_binds_getters(call.callee)
+        {
+            return None;
+        }
+        let required = hir.skip_type_assertions(hir.id_at(call.args, 0));
+        let module = self.module_of_call(required)?;
+        let statement = text.statement_of(call_node)?;
+        self.found.stars.push(Star {
+            module,
+            call: call_node,
+            required,
+            statement,
+            start: hir[call_node].pos,
+            is_in_line: false,
+        });
+        Some(())
+    }
+
+    fn add_inline_star(&mut self, star: InlineStar) -> bool {
+        let text = self.text;
+        let hir = text.hir;
+        if self.found.stars.iter().any(|known| known.call == star.call) {
+            return true;
+        }
+        let Some((module, site)) = self.find_required_module(star.holder_name) else {
+            return false;
+        };
+        if self.body.callback.is_some()
+            || !self.is_statement_in_order(star.call)
+            || self.position_of(site) != SitePosition::InOrder
+            || hir[site].end > star.start
+        {
+            return false;
+        }
+        let names = (0..hir.exprs.len() as u32).map(ExprId);
+        let in_star = names.filter(|&name| {
+            matches!(hir[name].kind, ExprKind::Ident(_))
+                && star.holds(hir, name)
+                && text.bound.binding(name) == Binding::Symbol(star.holder)
+        });
+        self.found.holders_in_erased_getters.extend(in_star);
+        self.found.erased.push(star.statement);
+        self.found.stars.push(Star {
+            module,
+            call: star.call,
+            required: ExprId::NONE,
+            statement: star.statement,
+            start: star.start,
+            is_in_line: true,
+        });
+        true
+    }
+
+    fn star_binds_getters(&self, callee: ExprId) -> bool {
+        let (text, helpers) = (self.text, self.text.bind.known_helpers);
+        let binds_getters = |shape: HelperShape| {
+            matches!(
+                shape,
+                HelperShape::CreateBindingDefinesGetter
+                    | HelperShape::CreateBindingReusesDescriptor
+            )
+        };
+        let known = helpers.certain_callee(text.bind.files, text.file, callee);
+        known.is_some_and(|known| {
+            known.references.iter().all(|reference| match *reference {
+                KnownReference::Helper { symbol, .. } => {
+                    let values = helpers.binding(text.file, symbol);
+                    values.is_some_and(|values| {
+                        !values.functions.is_empty()
+                            && values.functions.iter().all(|held| {
+                                let known = helpers.function(text.file, held.definition);
+                                known.is_some_and(|it| binds_getters(it.shape))
+                            })
+                    })
+                }
+                KnownReference::Global { .. } => true,
+                KnownReference::Loaded { .. } | KnownReference::Holder { .. } => false,
+            })
+        })
     }
 
     fn add_definitions_of_helper(&mut self, call_node: ExprId) -> Option<()> {
@@ -1472,6 +1672,14 @@ impl Scan<'_, '_, '_> {
 
     fn look_at_object(&mut self, object: ExprId, is_module_exports: bool) {
         let text = self.text;
+        let around = self
+            .inline_stars
+            .iter()
+            .find(|star| star.holds(text.hir, object));
+        if let Some(&star) = around {
+            self.found.has_names &= !is_module_exports && self.add_inline_star(star);
+            return;
+        }
         let mention = Mention {
             node: object,
             is_module_exports,
@@ -1503,6 +1711,7 @@ impl Scan<'_, '_, '_> {
             Parent::Expr(user) => {
                 self.is_asked_as_some_object(outermost, user)
                     || self.add_definition(outermost, user).is_some()
+                    || self.add_star(outermost, user).is_some()
                     || self.add_definitions_of_helper(user).is_some()
             }
             Parent::Stmt(user) => matches!(text.hir[user].kind, StmtKind::If { .. }),
@@ -1878,9 +2087,15 @@ impl Scan<'_, '_, '_> {
             |name: Atom| !found.creations_of(name).is_empty() || found.alias_of(name).is_some();
         let knows_every_name = self.summary.names.iter().all(|stored| match *stored {
             StoredName::Value { name, .. } | StoredName::Getter { name, .. } => knows(name),
-            StoredName::AllOf { .. } => false,
+            StoredName::AllOf { statement, .. } => {
+                found.stars.iter().any(|star| star.statement == statement)
+            }
         });
         self.found.has_names &= knows_every_name;
+        let mut aliases = self.found.aliases.iter();
+        let is_asked_behind_body = !self.found.is_half && self.accesses.is_empty();
+        self.found.has_names &=
+            is_asked_behind_body || !aliases.any(|alias| alias.is_defined_in_front_of_load);
         self.find_stores_that_fill();
         let mut replacements = self.replacements.iter();
         self.found.is_replaced_late = self.found.uses_module_object
@@ -1954,6 +2169,8 @@ fn begin_scan<'t, 'a, 's>(
             marker_nodes: Vec::new(),
             erased: Vec::new(),
             evaluated_at_store: None,
+            stars: Vec::new(),
+            holders_in_erased_getters: Vec::new(),
             names_read: Vec::new(),
             names_called: Vec::new(),
             marker: None,
@@ -1970,6 +2187,17 @@ fn begin_scan<'t, 'a, 's>(
         mentions: Vec::new(),
         replacements: Vec::new(),
         marking_calls: Vec::new(),
+        inline_stars: match callback {
+            Some(_) => Vec::new(),
+            None => find_inline_stars(&InlineStarInput {
+                file: text.file,
+                atoms: text.atoms,
+                hir: text.hir,
+                bound: text.bound,
+                builtins: text.builtins,
+                known_helpers: text.bind.known_helpers,
+            }),
+        },
         quiet_head: OnceCell::new(),
     }
 }
@@ -2211,6 +2439,8 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
     }
     let inner_modules = &mut texts.index.inner_modules;
     inner_modules.shared_sort_unstable_by_key(|entry| entry.0);
+    texts.hold_aliases_to_markers();
+    texts.expand_stars();
     let find_open_marker_of = |module: ModuleRef| match modules.interop(module).kind {
         ModuleKind::CommonJs => {
             let text = &texts.modules[texts.index.find(module)?];
@@ -2248,6 +2478,188 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
 }
 
 impl CommonJsTexts {
+    fn hold_aliases_to_markers(&mut self) {
+        for number in 0..self.modules.len() {
+            let mut past_helpers = self.modules[number]
+                .aliases
+                .iter()
+                .filter(|it| it.needs_marker);
+            let holds = past_helpers.all(|alias| match alias.target {
+                AliasTarget::Member { module, .. } => {
+                    self.index.find(module).is_some_and(|source| {
+                        let source = &self.modules[source];
+                        source.has_names
+                            && !source.is_half
+                            && !source.is_replaced_late
+                            && source.marker == Some(true)
+                            && source.is_marker_fixed
+                    })
+                }
+                AliasTarget::Binding(_) => false,
+            });
+            if holds {
+                continue;
+            }
+            let text = &mut self.modules[number];
+            text.has_names = false;
+            text.creations = Vec::new();
+            text.aliases = Vec::new();
+            text.erased = Vec::new();
+            text.evaluated_at_store = None;
+            text.defined_values = Vec::new();
+            text.marker = None;
+        }
+    }
+
+    fn expand_stars(&mut self) {
+        if self.modules.iter().all(|text| text.stars.is_empty()) {
+            return;
+        }
+        let edges_of = |text: &ModuleText| -> Vec<u32> {
+            let sources = text
+                .stars
+                .iter()
+                .filter_map(|star| self.index.find(star.module));
+            sources.map(|number| number as u32).collect()
+        };
+        let edges: Vec<Vec<u32>> = self.modules.iter().map(edges_of).collect();
+        let (_, components) = strongly_connected_components(&edges);
+        for members in components {
+            let is_cycle = match members[..] {
+                [member] => edges[member].contains(&(member as u32)),
+                _ => true,
+            };
+            for member in members {
+                if self.modules[member].stars.is_empty() {
+                    continue;
+                }
+                let names = match is_cycle {
+                    true => None,
+                    false => self.find_names_of_stars(member),
+                };
+                let text = &mut self.modules[member];
+                match names {
+                    Some(names) => {
+                        text.aliases.extend(names);
+                        text.aliases.shared_sort_by_key(|it| (it.name.0, it.start));
+                    }
+                    None => {
+                        text.has_names = false;
+                        text.creations = Vec::new();
+                        text.aliases = Vec::new();
+                        text.erased = Vec::new();
+                        text.evaluated_at_store = None;
+                        text.defined_values = Vec::new();
+                        text.marker = None;
+                    }
+                }
+            }
+        }
+    }
+
+    fn find_names_of_stars(&self, number: usize) -> Option<Vec<Alias>> {
+        let text = &self.modules[number];
+        if !text.has_names || text.is_half || text.marker != Some(true) {
+            return None;
+        }
+        let mut stars = text.stars.clone();
+        stars.shared_sort_by_key(|star| star.start);
+        let some_star_is_in_line = stars.iter().any(|star| star.is_in_line);
+        let mut found: Vec<Alias> = Vec::new();
+        let mut taken: FxHashSet<Atom> = FxHashSet::default();
+        let own_reads = text.own_accesses.iter().filter(|it| !it.is_store_only);
+        let own_reads = own_reads.map(|it| it.name);
+        let read: FxHashSet<Atom> = text.names_read.iter().copied().chain(own_reads).collect();
+        for star in stars {
+            let source = &self.modules[self.index.find(star.module)?];
+            if !source.has_names
+                || source.is_half
+                || source.is_replaced_late
+                || !source.knows_all_names()
+            {
+                return None;
+            }
+            let names = create_entries(source).names;
+            for (order, entry) in (0u32..).zip(names) {
+                let name = entry.name;
+                let hidden = &source.names_hidden_from_loops;
+                let is_hidden = hidden.binary_search_by_key(&name.0, |it| it.0).is_ok();
+                let creations = source.creations_of(name);
+                if is_hidden == entry.is_enumerable
+                    || (is_hidden && creations.iter().any(|it| it.is_enumerable))
+                {
+                    return None;
+                }
+                let is_asked =
+                    entry.is_enumerable && name != known::default && name != known::__esModule;
+                let is_laid = is_asked && taken.insert(name);
+                if is_asked && !is_laid && some_star_is_in_line {
+                    return None;
+                }
+                if !is_laid {
+                    continue;
+                }
+                if entry.created_at == u32::MAX
+                    || source.creations_of(name).iter().any(|it| it.is_read_only)
+                    || read.contains(&name)
+                {
+                    return None;
+                }
+                let own = text.creations_of(name);
+                let getter = text.alias_of(name);
+                if star.is_in_line && (!own.is_empty() || getter.is_some()) {
+                    return None;
+                }
+                if !own.is_empty() || getter.is_some() {
+                    let is_there = own
+                        .iter()
+                        .any(|it| it.is_in_order() && it.end <= star.start)
+                        || getter.is_some_and(|it| it.start < star.start);
+                    let is_late = own.iter().any(|it| !it.is_in_order())
+                        || getter.is_some_and(|it| it.start > star.start);
+                    match is_there && !is_late {
+                        true => continue,
+                        false => return None,
+                    }
+                }
+                found.push(Alias {
+                    name,
+                    target: AliasTarget::Member {
+                        module: star.module,
+                        name,
+                    },
+                    node: star.call,
+                    value: StoredValue::Unknown,
+                    is_enumerable: true,
+                    is_seen_unfilled: false,
+                    needs_marker: false,
+                    is_defined_in_front_of_load: false,
+                    start: star.start,
+                    returned_start: order,
+                });
+            }
+        }
+        Some(found)
+    }
+
+    pub(super) fn is_holder_in_erased_getter(&self, file: FileId, holder: ExprId) -> bool {
+        let number = self.index.find(ModuleRef::File(file));
+        let text = number.map(|number| &self.modules[number]);
+        text.is_some_and(|text| text.has_names && text.holders_in_erased_getters.contains(&holder))
+    }
+
+    pub(super) fn is_required_by_star(&self, file: FileId, required: ExprId) -> bool {
+        let number = self.index.find(ModuleRef::File(file));
+        let text = number.map(|number| &self.modules[number]);
+        text.is_some_and(|text| {
+            text.has_names
+                && text
+                    .stars
+                    .iter()
+                    .any(|star| !star.is_in_line && star.required == required)
+        })
+    }
+
     fn forget_markers_that_may_change(&mut self, modules: &ModuleSet, taken: &TakenObjects) {
         let text_of = |module: ModuleRef| Some(&self.modules[self.index.find(module)?]);
         let lacks_marker =
@@ -2469,6 +2881,11 @@ impl CommonJsExports {
     ) -> bool {
         let module = text.module();
         let mut is_bound = true;
+        for star in &text.stars {
+            if text.has_names {
+                self.add_name_source(number, module, star.module);
+            }
+        }
         for alias in &text.aliases {
             if let AliasTarget::Member { module: source, .. } = alias.target {
                 self.add_name_source(number, module, source);
@@ -2887,6 +3304,13 @@ impl CommonJsExports {
     pub fn is_getter_that_no_loop_sees(&self, module: ModuleRef, name: Atom) -> bool {
         let alias = self.text_of(module).and_then(|text| text.alias_of(name));
         alias.is_some_and(|alias| !alias.is_enumerable)
+    }
+
+    pub fn find_require_of_star(&self, file: FileId, call: ExprId) -> Option<ExprId> {
+        let number = self.number_of(ModuleRef::File(file))?;
+        let mut stars = self.modules[number].stars.iter();
+        let star = stars.find(|star| !star.is_in_line && star.call == call)?;
+        self.keeps_names(number).then_some(star.required)
     }
 
     pub fn imported_member(&self, variable: SyntheticExportId) -> Member {

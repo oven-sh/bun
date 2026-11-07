@@ -247,6 +247,7 @@ fn every_reference_of_a_published_function_can_be_verified() {
             let can_be_verified = match reference {
                 Reference::Helper(helper) => published.contains(&helper),
                 Reference::Global(path) => find_global(path).is_some(),
+                Reference::Holder => true,
             };
             assert!(
                 can_be_verified,

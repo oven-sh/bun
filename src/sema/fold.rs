@@ -188,6 +188,7 @@ pub struct Decisions<'s> {
     constants: &'s [FoldedConstant],
     is_constant: NodeBits<'s>,
     strings_and_numbers_of_bun_run_alone: NodeBits<'s>,
+    strings_and_numbers_under_minify_syntax: NodeBits<'s>,
     folded_with: FoldInputs<'s>,
     specifiers: &'s [(ExprId, ImportSpecifier)],
     paths_from_own_directory: &'s [ExprId],
@@ -310,6 +311,16 @@ impl<'s> Decisions<'s> {
         }
     }
 
+    pub fn is_string_or_number_under_minify_syntax(&self, hir: &File<'_>, expr: ExprId) -> bool {
+        match self.constant(hir, expr) {
+            FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
+                matches!(constant, Constant::String(_) | Constant::Number(_))
+                    && self.is_constant_under_minify_syntax(hir, expr)
+            }
+            FoldedValue::Unknown => self.strings_and_numbers_under_minify_syntax.has(expr.idx()),
+        }
+    }
+
     pub fn specifier(&self, argument: ExprId) -> ImportSpecifier {
         match self
             .specifiers
@@ -357,6 +368,15 @@ impl<'s> Decisions<'s> {
 
     pub fn decided(&self) -> &'s [(ExprId, Decision<'s>)] {
         self.decided
+    }
+
+    pub fn folded_texts(&self) -> impl Iterator<Item = Atom> + use<'s> {
+        self.constants
+            .iter()
+            .filter_map(|folded| match folded.constant {
+                Constant::String(text) => Some(text),
+                _ => None,
+            })
     }
 
     pub fn dead_exprs(&self) -> impl Iterator<Item = ExprId> + use<'s> {

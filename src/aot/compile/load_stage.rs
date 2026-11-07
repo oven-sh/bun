@@ -557,6 +557,8 @@ impl<'a> Build<'a> {
             found_entry_points: found.entry_points,
             any_file_may_become_main_module: host.may_any_file_become_main_module(),
             is_every_text_asked: !host.has_file_that_asks_for_what_unseen_code_finds(),
+            builtin_names: shared.builtin_names,
+            platform: self.platform,
             in_parallel: &in_parallel,
         });
         steps.end("contents of the program");
@@ -675,6 +677,7 @@ impl<'a> Build<'a> {
             loads_code_by_unknown_names_alone,
             keeps_library_code_without_names: roots.keeps_code_without_names,
             holds_what_unseen_code_finds: roots.holds_what_unseen_code_finds,
+            holds_it_for_uses_of_files_alone: roots.holds_it_for_uses_of_files_alone,
             finish_asset_reads: project.finish_asset_reads,
             known_library_regions: &|| {
                 let reach = runtime_host.reach.as_ref()?;
@@ -723,6 +726,9 @@ impl<'a> Build<'a> {
                         || contents.loads_by_unknown_name
                         || contents.inspects_prototype_chain_of_process
                         || roots.loads_events,
+                    warnings_ask_path: can_load_code_at_run_time
+                        || contents.loads_by_unknown_name
+                        || roots.loads_path,
                     takes_first_texts: options.aot.takes_first_texts,
                 },
             ),
@@ -1011,6 +1017,96 @@ mod tests {
                 false,
             ),
             (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Bun.ModuleGraph;"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Reflect.get(Bun, "ModuleGraph");"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Reflect.get(Bun, "Module" + "Graph");"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Object.getOwnPropertyDescriptor(Bun, "ModuleGraph").value;"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Reflect.getOwnPropertyDescriptor(Bun, "ModuleGraph").value;"#,
+                ),
+                false,
+            ),
+            (
+                r#"console.log(typeof Reflect.get(Bun as any, "ModuleGraph"));"#,
+                PLAIN,
+                false,
+            ),
+            (
+                r#"console.log(typeof (Bun as any)["Module" + "Graph"]);"#,
+                PLAIN,
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"const key = "ModuleGraph"; export const mark = typeof Bun[key];"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"const { ["Module" + "Graph"]: found } = Bun; export const mark = typeof found;"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Bun["ver" + "sion"];"#,
+                ),
+                true,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Reflect.get(globalThis, "eval");"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Reflect.get(Bun, "version");"#,
+                ),
+                true,
+            ),
+            (
                 r#"vi.mock("./helper.cjs", () => ({ mark: 2 }));"#,
                 PLAIN,
                 true,
@@ -1087,6 +1183,43 @@ mod tests {
                 if found != sites {
                     wrong.push((head, text, found));
                 }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn manual_mock_is_loaded_for_every_call_that_runs_it() {
+        let rows = [
+            (r#"vi.mock("./sub/thing.js");"#, true),
+            (r#"jest.mock("./sub/thing.js");"#, true),
+            (r#"await vi.importMock("./sub/thing.js");"#, true),
+            (r#"jest.requireMock("./sub/thing.js");"#, true),
+            (r#"vi.mock("./sub/thing.js", () => ({}));"#, false),
+            (r#"await vi.importActual("./sub/thing.js");"#, false),
+            (r#"jest.requireActual("./sub/thing.js");"#, false),
+            (r#"jest.createMockFromModule("./sub/thing.js");"#, false),
+        ];
+        let mut wrong = Vec::new();
+        for (text, is_loaded) in rows {
+            let test_file = format!("import {{ jest, vi }} from \"bun:test\";\n{text}\n");
+            let files = [
+                ("a.test.js", &test_file[..]),
+                ("sub/thing.js", "export const thing = 1;"),
+                ("sub/__mocks__/thing.js", "export const thing = 2;"),
+            ];
+            let found = with_loaded_test_run(&files, &default_settings(), |_, loaded| {
+                let files = loaded.project(ProjectId::Application).loaded.files();
+                let file = files.by_path.get(&b"/project/a.test.js"[..]);
+                let source = parsed_source(files, file.expect("it is loaded"));
+                source.expect("it is parsed").manual_mocks.clone()
+            });
+            let expected: &[&[u8]] = match is_loaded {
+                true => &[b"/project/sub/__mocks__/thing.js"],
+                false => &[],
+            };
+            if found != expected {
+                wrong.push((text, found.len()));
             }
         }
         assert!(wrong.is_empty(), "{wrong:#?}");

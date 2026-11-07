@@ -931,6 +931,7 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "tables-asked-and-then-read",
     "a-store-through-a-second-name-between-two-reads",
     "locals-that-change-their-kind-compared-in-loops",
+    "numbers-in-either-box",
   ])
     sources[name] = productSource(name, generateOf(name), oddSeeds);
   sources["computed-key-stores-with-mutations"] = productSource(

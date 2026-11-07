@@ -1,0 +1,12 @@
+# -- source: main.js
+# function blocks(modules, size) { let score = 0; for (let r = 0; r < size - 1; r++) { for (let c = 0; c < size - 1; c++) { const m = modules[r][c]; if (m === modules[r][c + 1] && m === modules[r + 1][c] && m === modules[r + 1][c + 1]) score += 3; } } return score; }
+# const go = { blocks }[JSON.parse('"blocks"')];
+# console.log(go(JSON.parse("[[true,true],[true,true]]"), 2));
+# -- end of source
+# `modules[r + 1]` is found behind `&&`. In the turn of the typed copy that row is asked there: a list, as made, and of which storage, the failing side beginning the turn again in the closed copy. That was so for rows expected to hold numbers alone; these hold booleans.
+# RUN(WALK): walk f1 mechanisms=all
+# REQUIRES(WALK): entries-of-bun
+# WALK-COUNT-5: isLoopHead=true
+# RUN(ASKED): walk f1 mechanisms=all
+# REQUIRES(ASKED): entries-of-bun
+# ASKED-COUNT-4: = IsPristine {{*}}builtinClass=Array

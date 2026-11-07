@@ -169,9 +169,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             };
             entry_values.push((binding, value));
         }
-        if let Some(first_exports) = first_exports {
-            self.store_first_exports(first_exports);
-        }
         self.allocate_scope(scope, &entry_values);
         self.instantiate_functions(scope);
     }

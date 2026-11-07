@@ -1,0 +1,14 @@
+# -- source: main.js
+# function sum(box) { let s = 0; for (let i = 0; i < box.inner.bytes.length; i++) s += box.inner.bytes[i]; return s; }
+# const go = { sum }[JSON.parse('"sum"')];
+# console.log(go({ inner: { bytes: new Uint8Array(300).fill(3) } }));
+# -- end of source
+# Two boxes lie on the way to the bytes. In front of the loop each is asked for its shape and whether its slot is filled, failing to the closed copy, and each slot is read once; what the last gives is told apart. In the copy for byte arrays no turn reads a slot.
+# RUN(WALK): walk f1 mechanisms=all
+# REQUIRES(WALK): entries-of-bun
+# WALK: = ShapeTest
+# WALK: [[inner]]: {{*}} = GetSlot {{*}}key="inner"
+# WALK: = ShapeTest [[inner]]
+# WALK: [[given]]: {{*}} = GetSlot {{*}}key="bytes"
+# WALK: = TypeTest [[given]] testedType=Uint8Array
+# WALK: = GetTypedArrayElement {{*}}typedArrayType=2 {{*}}isInsideView

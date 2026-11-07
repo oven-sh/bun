@@ -1,0 +1,13 @@
+# -- source: an-edge-to-a-handler-that-takes-a-whole-remainder-for-a-key-of-minus-zero-stops-the-build-though-a-try-of-the-loop-is-undone.ts
+# function store(list: number[], from: number): any { let key = 1; try { for (let i = from | 0; i < 3; i++) { key = i % 4; list[key] = i; } } catch { return Object.is(key, -0); } return "none"; }
+# console.log(store([1, 2, 3, 4], 0), store(Object.freeze([1, 2, 3, 4]) as any, Number(process.env.NO_SUCH ?? -4)));
+# -- end of source
+# The red control of the judge and of the test beside this one that holds the mend.
+# The store under `i % 4` is walked while the key is bound to the remainder of integers, which is 0 where the key is -0. The frozen list throws, and the catch reads the key: plain Bun prints none true.
+# THE LIE, the command walk-where-handler-edges-take-stand-ins: as in the test beside this one: that build prints none false.
+# The edge is led inside a try of the loop. A failure of the walk there is taken back with the try and the loop is built another way: the judge's word would be lost, and the build under the check
+# would come out right where the build without it is wrong. So this kind of failure outlives tries.
+# DIAGNOSTIC: HandlerEdgeHandsOnStandIn
+# RUN: walk-where-handler-edges-take-stand-ins f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: the walk of f1:Body failed

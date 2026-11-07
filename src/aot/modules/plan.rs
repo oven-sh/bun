@@ -3,7 +3,7 @@ mod tests;
 
 use super::bindings::{
     AnswerMember, CopiedExports, Holder, ImportBinding, ModuleExport, ModuleRequest,
-    SyntheticExportId,
+    SyntheticExportId, list_in_order_of_stars,
 };
 use super::failures::ModuleFailureId;
 use super::graph::{ModuleGraph, find};
@@ -31,6 +31,7 @@ use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::{FxHashMap, FxHashSet};
 use core::ops::Range;
+use std::borrow::Cow;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleRef {
@@ -317,7 +318,7 @@ pub(super) struct Plan {
     keeps_module_object: Vec<bool>,
     names_way_to_module_objects: Vec<bool>,
     is_found_by_name: Vec<bool>,
-    is_first_require_seen: bool,
+    is_every_require_seen: bool,
     is_namespace_seen: Vec<bool>,
     is_marker_stored: Vec<bool>,
     is_imported_as_namespace: Vec<bool>,
@@ -327,6 +328,7 @@ pub(super) struct Plan {
     is_named_by_mock: Vec<bool>,
     runtime_modules_named_by_mocks: Vec<RuntimeModule>,
     names_without_code_that_mocks_give: Vec<Atom>,
+    files_with_late_stars: Vec<FileId>,
     mocked_runtime_modules: Vec<RuntimeModule>,
     may_mock_every_module: bool,
     originals_beside_mocks_may_run: bool,
@@ -369,7 +371,7 @@ impl Plan {
             keeps_module_object: vec![false; order.numbers.len()],
             names_way_to_module_objects: vec![false; order.numbers.len()],
             is_found_by_name: vec![false; order.numbers.len()],
-            is_first_require_seen: false,
+            is_every_require_seen: false,
             is_namespace_seen: vec![false; order.numbers.len()],
             is_marker_stored: vec![false; order.numbers.len()],
             is_imported_as_namespace: vec![false; order.numbers.len()],
@@ -379,6 +381,7 @@ impl Plan {
             is_named_by_mock: vec![false; order.numbers.len()],
             runtime_modules_named_by_mocks: Vec::new(),
             names_without_code_that_mocks_give: Vec::new(),
+            files_with_late_stars: Vec::new(),
             mocked_runtime_modules: Vec::new(),
             may_mock_every_module: false,
             originals_beside_mocks_may_run: false,
@@ -517,6 +520,10 @@ impl Plan {
         self.originals_beside_mocks_may_run = true;
     }
 
+    pub(super) fn set_files_with_late_stars(&mut self, files: Vec<FileId>) {
+        self.files_with_late_stars = files;
+    }
+
     pub(super) fn set_names_without_code_that_mocks_give(&mut self, names: Vec<Atom>) {
         for name in names {
             if !self.names_without_code_that_mocks_give.contains(&name) {
@@ -634,7 +641,7 @@ impl ModuleGraph {
             records: shows_mark
                 || self.keeps_module_object(site.referrer)
                 || self.keeps_module_object(site.target)
-                || (self.plan.is_first_require_seen && matches!(site.target, ModuleRef::File(_)))
+                || (self.plan.is_every_require_seen && matches!(site.target, ModuleRef::File(_)))
                 || matches!(site.target, ModuleRef::File(file) if self.tracks_first_load(file)),
         }
     }
@@ -730,6 +737,9 @@ impl ModuleGraph {
     pub fn member(&self, file: FileId, access: ExprId) -> Option<Member> {
         let row = self.row(file);
         if let Some((module, member)) = find(&row.fixed_members, access) {
+            if matches!(member, Member::Binding(_)) && !self.runs_body_once(module) {
+                return None;
+            }
             return Some(self.finish_fixed_member(module, member));
         }
         let Some(binding) = find(&row.members, access) else {
@@ -990,6 +1000,10 @@ impl ModuleGraph {
         &self.plan.runtime_modules_named_by_mocks
     }
 
+    pub fn is_name_without_code_that_mocks_give(&self, name: Atom) -> bool {
+        (self.plan.names_without_code_that_mocks_give).contains(&name)
+    }
+
     pub fn is_made_by_mocks_alone(&self, module: ModuleRef) -> bool {
         let names = &self.plan.names_without_code_that_mocks_give;
         matches!(module, ModuleRef::External { specifier, type_attribute: None, .. } if names.contains(&specifier))
@@ -1102,6 +1116,21 @@ impl ModuleGraph {
     pub fn inner_module(&self, file: FileId, callback: FnId) -> Option<ModuleRef> {
         let module = ModuleRef::Inner { file, callback };
         self.plan.order.numbers.number_of(module).map(|_| module)
+    }
+
+    pub fn in_order_of_stars<'a>(
+        &self,
+        module: ModuleRef,
+        requests: &'a [ModuleRequest],
+    ) -> Cow<'a, [ModuleRequest]> {
+        match module {
+            ModuleRef::File(file)
+                if self.plan.files_with_late_stars.binary_search(&file).is_ok() =>
+            {
+                Cow::Owned(list_in_order_of_stars(requests))
+            }
+            _ => Cow::Borrowed(requests),
+        }
     }
 
     pub fn requests_of(&self, module: ModuleRef) -> &[ModuleRequest] {
@@ -1217,11 +1246,7 @@ impl ModuleGraph {
         (self.plan.final_requests, self.plan.final_ranges) =
             self.settle_requests(prefixes, &data_files, in_parallel);
         steps.end("plan: requests");
-        let mut first_requests = self.plan.order.first_requests_of_host.iter();
-        self.plan.is_first_require_seen = self.plan.names_way_to_module_objects.contains(&true)
-            && first_requests.any(|&file| {
-                self.kind(file) == ModuleKind::SourceText && !linked_files.leads_to_target(file)
-            });
+        self.plan.is_every_require_seen = self.plan.names_way_to_module_objects.contains(&true);
         self.plan.is_finished = true;
     }
 

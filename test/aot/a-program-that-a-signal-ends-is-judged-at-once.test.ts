@@ -43,19 +43,19 @@ test.skipIf(isWindows || !isCanary)(
     using dir = tempDir("a-program-that-a-signal-ends", {
       "tsconfig.json": "{}",
       "aborts.js": `console.error("said before the end");\nprocess.abort();\n`,
-      "aborts-under-a-todo.js": `// Todo: some day\nconsole.error("said before the end");\nprocess.abort();\n`,
+      "aborts-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.error("said before the end");\nprocess.abort();\n`,
       "aborts-where-it-is-skipped.js": `// Skip on ${process.platform} ${process.arch}: some day\nconsole.error("said before the end");\nprocess.abort();\n`,
       "aborts-under-a-todo-of-one-way.js": [
         `// Under: --define DIES=true: the build whose executable dies`,
-        `// Todo under --define DIES=true: some day`,
+        `// Todo under --define DIES=true: "true" | "false": some day`,
         `if (typeof DIES !== "undefined") process.abort();`,
         `console.log(true);`,
         `/* Output:`,
         `true`,
         `*/\n`,
       ].join("\n"),
-      "faults-under-a-todo.js": `// Todo: some day\nconsole.error("said before the end");\nprocess.kill(process.pid, "SIGSEGV");\nawait Bun.sleep(200_000);\n`,
-      "answers-otherwise-under-a-todo.js": `// Todo: some day\nconsole.log(true);\n/* Output:\nfalse\n*/\n`,
+      "faults-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.error("said before the end");\nprocess.kill(process.pid, "SIGSEGV");\nawait Bun.sleep(200_000);\n`,
+      "answers-otherwise-under-a-todo.js": `// Todo: "true" | "false": some day\nconsole.log(true);\n/* Output:\nfalse\n*/\n`,
       // The command outlives the time limit of a run, in the group of the program and with its pipe for errors.
       "leaves-a-command-behind.js": [
         `Bun.spawnSync({ cmd: ["sh", "-c", "sleep 200 &"], stdio: ["ignore", "ignore", "inherit"] });`,
@@ -119,7 +119,7 @@ test.skipIf(isWindows || !isCanary)(
         file: "answers-otherwise-under-a-todo.js",
         state: "skip",
         stage: undefined,
-        message: "todo: some day",
+        message: 'todo: "true" | "false": some day',
         said: undefined,
       },
       { file: "faults-under-a-todo.js", state: "fail", stage: "run", message: "it ended by SIGSEGV", said: true },

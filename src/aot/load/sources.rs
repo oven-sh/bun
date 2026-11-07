@@ -5,7 +5,7 @@ mod tests;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use bun_ast::Loader;
+use bun_ast::{Loader, Location};
 use bun_builtin_sources::{Manifest, VIRTUAL_ROOT};
 use bun_sema::program::{CodeView, FileId, Files};
 use bun_sema::resolve::HostPayload;
@@ -85,8 +85,9 @@ pub(crate) struct ParsedSource {
     pub file_with_query: Option<FileWithQuery>,
     pub web_assembly: Option<Vec<u8>>,
     pub has_compiled_components: bool,
+    pub depends_on_more_than_source: bool,
     pub parse_failure: Option<Vec<u8>>,
-    pub refused_json: Option<Vec<u8>>,
+    pub refused_at: Option<(Loader, Location)>,
     pub is_language_assumed: bool,
     pub builtins: ResolvedBuiltins,
     pub library_modules_named_in_text_left_to_run_time: Vec<RuntimeModule>,
@@ -106,8 +107,9 @@ impl ParsedSource {
             file_with_query: None,
             web_assembly: None,
             has_compiled_components: false,
+            depends_on_more_than_source: false,
             parse_failure: None,
-            refused_json: None,
+            refused_at: None,
             is_language_assumed: false,
             builtins: ResolvedBuiltins::default(),
             library_modules_named_in_text_left_to_run_time: Vec::new(),
@@ -167,6 +169,7 @@ struct SourceEntry {
     kind: SourceKind,
     loader: Loader,
     byte_count: u64,
+    depends_on_more_than_source: bool,
     public_path: Box<[u8]>,
     display_path: OnceLock<Box<[u8]>>,
     diagnostic_path: Box<[u8]>,
@@ -197,6 +200,10 @@ impl Sources {
 
     pub fn kind(&self, file: FileId) -> SourceKind {
         self.entries[file.idx()].kind
+    }
+
+    pub fn depends_on_more_than_source(&self, file: FileId) -> bool {
+        self.entries[file.idx()].depends_on_more_than_source
     }
 
     pub fn is_data(&self, file: FileId) -> bool {

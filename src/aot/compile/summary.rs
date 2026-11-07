@@ -59,7 +59,7 @@ pub(super) fn collect_program_file_paths(
 ) -> Vec<(FileId, EntryPointPaths)> {
     let compiled = files.compiled_files().iter();
     compiled
-        .filter(|&&file| sources.kind(file) == SourceKind::Program)
+        .filter(|&&file| matches!(sources.kind(file), SourceKind::Program | SourceKind::Data))
         .filter(|&&file| !is_host_path(files.module(file).file_name()))
         .map(|&file| {
             let paths = EntryPointPaths {

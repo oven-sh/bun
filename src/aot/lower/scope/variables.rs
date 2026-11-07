@@ -15,7 +15,7 @@ impl FileLowering<'_, '_, '_, '_> {
         if key.home_file() != Some(self.file) || self.fragment.is_variable_defined(id) {
             return id;
         }
-        let variable = match key {
+        let mut variable = match key {
             VariableKey::Symbol(symbol)
                 if self.bound.binding_kind(symbol.id) == BindingKind::Import =>
             {
@@ -88,11 +88,46 @@ impl FileLowering<'_, '_, '_, '_> {
                 unreachable!("link defines the variable of an export")
             }
         };
+        variable.place = Some(self.place_in_source_of(key));
         let is_defined_reentrantly = self.fragment.is_variable_defined(id);
         if !is_defined_reentrantly {
             self.fragment.define_variable(id, variable);
         }
         id
+    }
+
+    fn place_in_source_of(&self, key: VariableKey) -> u32 {
+        let one_a_file = self.scopes.number_of_symbols_at_module_level();
+        let by_number = |number: usize, part: u32| one_a_file + 16 + 8 * number as u32 + part;
+        match key {
+            VariableKey::InnerModuleExports(_) => 0,
+            VariableKey::ModuleExports(_) => one_a_file,
+            VariableKey::MockOf(_) => one_a_file + 1,
+            VariableKey::InstantiationState(_) => one_a_file + 2,
+            VariableKey::EnvironmentMadeAhead(_) => one_a_file + 3,
+            VariableKey::RequiresMadeForOwnFile(_) => one_a_file + 4,
+            VariableKey::RequiresMadeForOtherFolders(_) => one_a_file + 5,
+            VariableKey::ModulePath { variable, .. } => one_a_file + 6 + variable as u32,
+            VariableKey::Symbol(symbol) => match self.scopes.place_at_module_level(symbol.id) {
+                Some(place) => place,
+                None => by_number(symbol.id.idx(), 0),
+            },
+            VariableKey::RequiredAnswer(holder) => by_number(holder.id.idx(), 1),
+            VariableKey::PrivateState { state, part } => by_number(state.id.idx(), 2 + part as u32),
+            VariableKey::ClassSlot { class, slot } => match slot {
+                ClassSlot::ClassObject => by_number(class.class.idx(), 4),
+                ClassSlot::ClassToken => by_number(class.class.idx(), 5),
+                ClassSlot::DecoratorState => by_number(class.class.idx(), 6),
+                ClassSlot::ComputedKey(member)
+                | ClassSlot::StaticField(member)
+                | ClassSlot::PrivateMethod(member) => by_number(member.idx(), 7),
+            },
+            VariableKey::SyntheticExport(_)
+            | VariableKey::Copy(_)
+            | VariableKey::MockOfRuntimeModule(_) => {
+                unreachable!("link defines the variable of an export")
+            }
+        }
     }
 
     fn create_untyped_variable(&mut self, name: Atom) -> Variable {
@@ -142,6 +177,7 @@ impl FileLowering<'_, '_, '_, '_> {
             function,
             owner: None,
             flags: self.compute_flags(binding),
+            place: None,
         }
     }
 

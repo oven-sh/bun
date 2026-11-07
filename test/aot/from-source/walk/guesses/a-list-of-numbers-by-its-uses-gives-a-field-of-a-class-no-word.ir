@@ -1,0 +1,12 @@
+# -- source: main.js
+# class Box { constructor(items) { this.items = items; } sum() { let s = 0; for (let i = 0; i < this.items.length; i++) s += this.items[i]; return s; } }
+# globalThis.kept = Box;
+# -- end of source
+# `s += this.items[i]` and `this.items.length` fit a list of numbers and a view alike: the uses give the field NO word: the loop asks in front of itself: the slot is read once and what it gives is told apart. With the word "a list of numbers" on the field the copy for lists was walked otherwise and three everyday lines rose, one from 0.7 to 5.1 times plain Bun.
+# RUN(WORD): print
+# WORD: layout {{*}}name="Box"{{*}}key="items" declared={type=anything}
+# RUN(WALK): walk f2 mechanisms=all
+# REQUIRES(WALK): entries-of-bun
+# WALK: [[given]]: {{*}} = GetSlot {{*}}key="items"
+# WALK: = TypeTest [[given]] testedType=Array<number>
+# WALK: = TypeTest [[given]] testedType=Uint8Array

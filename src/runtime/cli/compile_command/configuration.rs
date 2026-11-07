@@ -339,7 +339,7 @@ fn name_executable(
         Global::exit(1);
     }
 
-    this_transpiler.options.compile_entry_point_name =
+    this_transpiler.options.entry_point_file_name =
         bun_paths::basename(compile_outfile(outfile)).into();
 
     ExecutableName {

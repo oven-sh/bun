@@ -45,6 +45,7 @@ async function expectCompiledToRunAsPlain(files: Record<string, string>, ...flag
   const plain = await runTests(String(dir), ...flags);
   expect(plain.results.filter(result => result.startsWith("fail"))).toEqual([]);
   expect(plain.results).not.toEqual([]);
+  expect(plain.exitCode).toBe(0);
   expect(await runTests(String(dir), "--aot", ...flags)).toEqual(plain);
 }
 
@@ -1866,4 +1867,64 @@ test("a store through a native accessor of a prototype replaces nothing, and a d
   };
   await expectCompiledToRunAsPlain(files);
   await expectCompiledToRunAsPlain(files, "--isolate");
+});
+
+// Native code keeps these functions behind a setter of its own, and in a compiled run the exports of a CommonJS file are one more. A spy
+// goes to the setter, as a store does, so what reads the native side calls the spy.
+test("a spy on a value that native code keeps behind a setter is what native code calls", async () => {
+  await expectCompiledToRunAsPlain({
+    "greet.cjs": `module.exports = function greet(name) { return "hello " + name; };`,
+    "uses.cjs": `
+      exports.greet = name => require("./greet.cjs")(name);
+      exports.separator = () => require("node:path").sep;`,
+    "one.test.ts": `
+      import { expect, jest, spyOn, test } from "bun:test";
+      import Module, { createRequire } from "node:module";
+      const require = createRequire(import.meta.url);
+      const uses = require("./uses.cjs");
+      const greetModule = (require("./greet.cjs"), require.cache[require.resolve("./greet.cjs")]!);
+      const attributesOf = (object: object, key: string) => {
+        const { value, ...attributes } = Object.getOwnPropertyDescriptor(object, key)!;
+        return JSON.stringify(attributes);
+      };
+      test("the formatter of stacks", () => {
+        const attributes = attributesOf(Error, "prepareStackTrace");
+        const spy = spyOn(Error as any, "prepareStackTrace").mockImplementation(() => "from the spy");
+        console.log(new Error("a").stack, attributesOf(Error, "prepareStackTrace") === attributes);
+        expect(spy).toHaveBeenCalledTimes(1);
+        console.log(delete (Error as any).prepareStackTrace);
+        spy.mockRestore();
+        console.log(String(new Error("b").stack).split("\\n")[0]);
+        expect(spy).not.toHaveBeenCalled();
+        expect(attributesOf(Error, "prepareStackTrace")).toBe(attributes);
+      });
+      test("the exports of a CommonJS file", () => {
+        const attributes = attributesOf(greetModule, "exports");
+        const spy = spyOn(greetModule, "exports").mockImplementation((name: string) => "spied on " + name);
+        console.log(uses.greet("a"), attributesOf(greetModule, "exports") === attributes);
+        expect(spy.mock.calls).toEqual([["a"]]);
+        spy.mockRestore();
+        expect(uses.greet("b")).toBe("hello b");
+        expect(spy).not.toHaveBeenCalled();
+        expect(attributesOf(greetModule, "exports")).toBe(attributes);
+      });
+      // Nothing reads console.Console before the spy does: its getter replaces itself with a plain value on the first read.
+      test("a value with no setter behind it", () => {
+        const data = { writable: true, enumerable: true, configurable: true };
+        const spy = spyOn(console, "Console");
+        expect(Object.getOwnPropertyDescriptor(console, "Console")).toEqual({ ...data, value: spy });
+        spy.mockRestore();
+        expect(Object.getOwnPropertyDescriptor(console, "Console")).toEqual({ ...data, value: expect.any(Function) });
+        expect(Object.is(console.Console, spy)).toBe(false);
+        console.log(console.Console.name);
+      });
+      test("the function behind require()", () => {
+        const spy = spyOn(Module.prototype, "require");
+        console.log(uses.separator().length);
+        expect(spy.mock.calls.map(call => call[0])).toEqual(["node:path"]);
+        spy.mockRestore();
+        console.log(uses.separator().length, typeof jest.requireActual("node:path").sep);
+        expect(spy).not.toHaveBeenCalled();
+      });`,
+  });
 });

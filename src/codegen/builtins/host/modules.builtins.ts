@@ -60,6 +60,7 @@ const resolvesFromImportMeta = (specifier: b.TableType) =>
 // JSMock__jsSpyOn finds the property on the object or above it, keeps what stands there and may call it, and puts a function of its own under the name on the object
 // itself: as a value where a function stood, as a getter and a setter otherwise. mockRestore() stores the original in the same place. It reads no other name and hands
 // the object to nobody: it keeps it weakly. So a test that spies on one export of a module doesn't open the others.
+// Where the object's own property is a custom value with a native setter, that setter takes the function and later the original, as it takes a store.
 const spiedName = b.keyFrom("method");
 const spyOn = {
   args: { object: b.object, method: b.propertyKey.loose },

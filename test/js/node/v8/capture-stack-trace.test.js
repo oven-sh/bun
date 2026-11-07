@@ -1183,6 +1183,46 @@ test("a name that throws: the default Error.prepareStackTrace throws, error.stac
   });
 });
 
+// Error.captureStackTrace() takes any object and hands it to Error.prepareStackTrace. A callback
+// that calls the default formatter with its own arguments passes that object on.
+test("the default Error.prepareStackTrace formats an object that is not an Error", () => {
+  Error.prepareStackTrace = (error, callSites) => origPrepareStackTrace(error, callSites);
+
+  const target = { message: "not an error" };
+  Error.captureStackTrace(target);
+  expect(target.stack).toStartWith("Error: not an error\n    at ");
+
+  // An ES5 error class: `this` inherits from Error.prototype and is no Error itself.
+  function Legacy(message) {
+    this.message = message;
+    Error.captureStackTrace(this);
+  }
+  Legacy.prototype = Object.create(Error.prototype, { name: { value: "Legacy" } });
+  expect(new Legacy("boom").stack).toStartWith("Legacy: boom\n    at new Legacy (");
+
+  for (const bare of [{}, Object.create(null)]) {
+    Error.captureStackTrace(bare);
+    expect(bare.stack).toStartWith("Error\n    at ");
+  }
+
+  expect(origPrepareStackTrace({ name: "Plain", message: "object" }, [])).toBe("Plain: object");
+  for (const notAnObject of [undefined, null, 1, "string"]) {
+    expect(() => origPrepareStackTrace(notAnObject, [])).toThrow(new TypeError("First argument must be an object"));
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/41151
+test("the default Error.prepareStackTrace formats an object whose prototype is an Error, with no frame left", () => {
+  Error.prepareStackTrace = (error, callSites) => origPrepareStackTrace(error, callSites);
+
+  // As follow-redirects makes its error classes. `this.constructor` is Error, which is not on the stack, so no frame is left.
+  function CustomError() {
+    Error.captureStackTrace(this, this.constructor);
+  }
+  CustomError.prototype = new Error();
+  expect(new CustomError().stack).toBe("Error");
+});
+
 test("CallFrame.p.getScriptNameOrSourceURL inside eval", () => {
   let prevPrepareStackTrace = Error.prepareStackTrace;
   const prepare = mock((e, s) => {

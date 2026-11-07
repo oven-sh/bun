@@ -2934,18 +2934,20 @@ describe("Database#status", () => {
     expect(db.status(new Float64Array([constants.SQLITE_DBSTATUS_CACHE_USED])[0])).toEqual(cacheUsed);
     expect(db.status(-0)).toEqual(db.status(constants.SQLITE_DBSTATUS_LOOKASIDE_USED));
 
-    // Every op this library knows answers with the same shape. TEMPBUF_SPILL needs SQLite 3.51; macOS uses the system library.
-    const version = db.query("SELECT sqlite_version() AS v").get().v;
-    const hasTempbufSpill = Bun.semver.satisfies(version, ">=3.51.0");
-    const ops = dbStatusOps.filter(name => hasTempbufSpill || name !== "SQLITE_DBSTATUS_TEMPBUF_SPILL");
+    // Every op the bundled library knows answers with the same shape.
+    const shape = { current: expect.any(Number), highwater: expect.any(Number) };
+    const ops = dbStatusOps.filter(name => !isMacOS || name !== "SQLITE_DBSTATUS_TEMPBUF_SPILL");
     const all = Object.fromEntries(ops.map(name => [name, db.status(constants[name])]));
-    expect(all).toEqual(
-      Object.fromEntries(ops.map(name => [name, { current: expect.any(Number), highwater: expect.any(Number) }])),
-    );
-    if (!hasTempbufSpill) {
-      expect(() => db.status(constants.SQLITE_DBSTATUS_TEMPBUF_SPILL)).toThrow(
-        new RangeError("Unknown sqlite3_db_status op: 13"),
-      );
+    expect(all).toEqual(Object.fromEntries(ops.map(name => [name, shape])));
+    if (isMacOS) {
+      // The system library reports 3.51 on some macOS versions and still does not know TEMPBUF_SPILL.
+      let result;
+      try {
+        result = db.status(constants.SQLITE_DBSTATUS_TEMPBUF_SPILL);
+      } catch (error) {
+        result = error;
+      }
+      expect([shape, new RangeError("Unknown sqlite3_db_status op: 13")]).toContainEqual(result);
     }
   });
 

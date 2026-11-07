@@ -520,8 +520,9 @@ inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
             int current = 0;
             int highwater = 0;
             int rc = lazy_sqlite3_db_status(db, op, &current, &highwater, resetFlg);
-            *pCur = current;
-            *pHiwtr = highwater;
+            // A library this old keeps the counters in int and can wrap negative. The 3.51 wrapper masks the same way.
+            *pCur = current & 0x7fffffff;
+            *pHiwtr = highwater & 0x7fffffff;
             return rc;
         };
     }

@@ -1540,7 +1540,7 @@ declare module "bun:sqlite" {
      */
     const SQLITE_DBSTATUS_CACHE_SPILL: number;
     /**
-     * Needs SQLite 3.51 or later. On macOS, Bun uses the system SQLite library. An older library throws a `RangeError` for this op.
+     * The bundled SQLite knows this op. On macOS, Bun uses the system SQLite library, which may not. Then `status()` throws a `RangeError`.
      * @constant 13
      */
     const SQLITE_DBSTATUS_TEMPBUF_SPILL: number;

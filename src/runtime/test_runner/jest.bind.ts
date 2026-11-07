@@ -4,6 +4,10 @@ export default b.module({ rustPath: "crate::test_runner::jest" });
 
 export const fileGeneration = b.fn({ returns: b.u32 });
 export const nodeTestMarkResult = b.fn({ args: { todo: b.bool, done: b.any } });
+/** `--only`, which `--test-only` is another name of. `node:test` reads it once. A Worker reads false. */
+export const nodeTestOnly = b.value({ returns: b.bool });
+export const nodeTestEntryCount = b.fn({ returns: b.u32 });
+export const nodeTestFocusEntry = b.fn({ args: { index: b.u32 } });
 
 const js = { capability: "js", throws: true } as const;
 

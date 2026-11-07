@@ -108,8 +108,7 @@ extern "C" void ExpectDeferred__location(JSGlobalObject* globalObject, EncodedJS
     }
 }
 
-// `callback`, bound to an async context frame that names `attempt` on top of the context it would run in.
-// The frame's storage is the `bun:test` module object, which no AsyncLocalStorage, module graph or mock is.
+// `callback`, bound to a frame on top of its async context: storage is the `bun:test` module object, value is `attempt`.
 extern "C" EncodedJSValue ExpectDeferred__bindToAttempt(JSGlobalObject* lexicalGlobalObject, EncodedJSValue encodedCallback, uint32_t attempt)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -122,8 +121,7 @@ extern "C" EncodedJSValue ExpectDeferred__bindToAttempt(JSGlobalObject* lexicalG
     return JSValue::encode(AsyncContextFrame::create(globalObject, bound ? bound->callback.get() : callback, frame));
 }
 
-// Resolves `promise` with `thenable`, as `JSPromise::resolve` does. If `ExpectDeferred__bindToAttempt` bound `callback`,
-// which returned `thenable`, the job that calls `then` runs in the async context of `callback`: that work is the attempt's too.
+// Resolves `promise` with `thenable`, which `callback` returned. The job that calls `then()` runs in the attempt frame of `callback`, if it has one.
 extern "C" void ExpectDeferred__followThenable(JSGlobalObject* lexicalGlobalObject, EncodedJSValue encodedCallback, JSPromise* promise, EncodedJSValue encodedThenable)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);

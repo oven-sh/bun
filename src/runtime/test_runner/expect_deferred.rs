@@ -67,8 +67,7 @@ pub(crate) struct RunningEntry {
     /// `Execution` with `entry_data: None` is a whole concurrent group. Any other variant is the file.
     entry: RefDataValue,
     unclaimed: Option<usize>,
-    /// The test that was running when the matcher was called, when the file holds the matcher in its place:
-    /// that test is expected to fail and isn't known to have made the call.
+    /// The test that ran beside the call, if the file holds the matcher because that test isn't known to have called it.
     bystander: Option<RefDataValue>,
 }
 
@@ -155,8 +154,7 @@ impl RunningEntry {
             if let Some(sequence) = running.sequence(&buntest) {
                 // SAFETY: as in `pending_matchers`.
                 let sequence = unsafe { sequence.as_ref() };
-                // `expect()` took the test that was running for its caller, but code that an earlier test left behind can call it too.
-                // A test that is expected to fail would pass on that code's failure, so it only holds what its own code calls.
+                // Code that an earlier test left behind can call this too. A test that is expected to fail would pass on its failure.
                 if on_stack == Some(entry) || !sequence.is_expected_to_fail() || sequence.is_caller(global) {
                     return Some(running);
                 }
@@ -183,8 +181,7 @@ impl RunningEntry {
         }
     }
 
-    /// Has the file end `poll`, a pending `expect.poll()` wait, after its tests if it holds the wait in place of a test.
-    /// Until then the wait only finds out at its next attempt that the test has ended. `forget_poll` takes the result.
+    /// Keeps `poll`, a pending `expect.poll()` wait that the file holds, for `step_file_end` to end. `forget_poll` takes the result.
     pub(crate) fn keep_poll(&self, global: &JSGlobalObject, poll: JSValue) -> Option<usize> {
         self.bystander?;
         let buntest = self.buntest.upgrade()?;
@@ -207,8 +204,7 @@ impl RunningEntry {
         }
     }
 
-    /// Whether the call was made beside an attempt of a test that has ended since, hooks included.
-    /// `expect.poll()` stops with it, as it does with a test that called it.
+    /// Whether the attempt that ran beside the call has ended, hooks included.
     pub(crate) fn outlived_bystander(&self) -> bool {
         let (
             Some(
@@ -762,8 +758,7 @@ impl ExpectDeferred {
                 Some(journal) => journal.get_length(global)? / u64::from(Pass::STRIDE),
                 None => 0,
             };
-            // The test that ran beside a call which the file holds doesn't wait for the call. A replay after that
-            // attempt of the test counts for nobody, not for a later attempt either.
+            // A replay after the attempt that ran beside the call counts for nobody, not for a later attempt either.
             let expect = this
                 .held
                 .get()

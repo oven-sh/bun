@@ -178,8 +178,7 @@ pub(crate) struct ExecutionSequence {
     pub(crate) pending_matchers: u32,
     /// The active entry's callback is done, and only `pending_matchers` keeps the entry open.
     pub(crate) callback_done: bool,
-    /// Names this attempt in the async context of its callbacks. Unlike `attempt`, no other sequence has the same one.
-    /// 0 unless `is_expected_to_fail()`, because only then does `RunningEntry::of` ask `is_caller()`.
+    /// Names this attempt in the async context of its callbacks, unique in the process. 0 unless `is_expected_to_fail()`.
     pub(crate) attempt_id: u32,
     /// Names `Snapshots::add_count` counted during this attempt, for `reset_sequence` to undo.
     pub(crate) counted_snapshots: Vec<Box<[u8]>>,
@@ -235,7 +234,6 @@ impl ExecutionSequence {
     }
 
     /// `test.failing` or `test.fails`: a failure of the test's own code makes it pass.
-    /// `Execution::handle_uncaught_exception` hides it in the test callback, and for `test.fails` in a hook too.
     pub(crate) fn is_expected_to_fail(&self) -> bool {
         matches!(self.entry_mode(), ScopeMode::Failing | ScopeMode::Fails)
     }
@@ -245,8 +243,7 @@ impl ExecutionSequence {
         if self.attempt_id == 0 {
             self.attempt_id = buntest.bun_test_root.get().next_attempt_id();
         }
-        // An unbound callback runs in its file's context, which `run_test_callback` enters for the call.
-        // Enter it here too, so that the frame goes on top of it.
+        // `run_test_callback` enters the file's context to call an unbound callback. The frame goes on top of that context.
         let vm = global.bun_vm();
         let file_context = vm.test_isolation_state.file_context;
         let _entered = (file_context != bun_jsc::ContextId::NONE).then(|| vm.enter_context(file_context));

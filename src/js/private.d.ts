@@ -925,7 +925,7 @@ declare namespace $Node {
   interface SerializedIPCHandle {
     cmd: "NODE_HANDLE";
     msg: unknown;
-    type: "net.Server" | "net.Socket" | "dgram.Socket" | "dgram.Native";
+    type: "net.Server" | "net.Socket" | "dgram.Socket" | "dgram.Native" | "fd";
     dgramType?: "udp4" | "udp6";
   }
 

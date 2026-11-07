@@ -28,6 +28,12 @@ function server(name: string) {
     ],
     proto: {
       address: { getter: b.any.returning("string", "object", "null"), cache: true, capability: "js", throws: true },
+      adopt: {
+        args: { fd: b.any },
+        returns: b.bool,
+        capability: "js",
+        throws: true,
+      },
       closeIdleConnections: { returns: b.usize, capability: "js" },
       development: { getter: b.bool, pure: true },
       fetch: {

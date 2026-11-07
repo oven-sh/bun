@@ -42,6 +42,47 @@ class WithValue {
   a = 1;
 }
 
+class StringSubclass extends String {}
+class OtherStringSubclass extends String {}
+
+class StringWithField extends String {
+  loc = 1;
+}
+
+class StringWithUnsetField extends String {
+  loc = undefined;
+}
+
+class TaggedString extends String {
+  get [Symbol.toStringTag]() {
+    return "Tagged";
+  }
+}
+
+class StringWithConstantToString extends String {
+  toString() {
+    return "abc";
+  }
+}
+
+class StringWithConstantToPrimitive extends String {
+  [Symbol.toPrimitive]() {
+    return "abc";
+  }
+}
+
+function mapKeyedByBoxedStrings(boxedValue: number, subclassValue: number) {
+  return new Map<unknown, number>([
+    [new String("abc"), boxedValue],
+    [new StringSubclass("abc"), subclassValue],
+  ]);
+}
+
+/** The case, then the same case with its operands swapped. */
+function bothOrders(testCase: Case): Case[] {
+  return [testCase, { ...testCase, name: `${testCase.name}, swapped`, a: testCase.b, b: testCase.a }];
+}
+
 const sharedConstructor = function sharedConstructor() {};
 const sharedPrototype = { p: 1 };
 
@@ -191,6 +232,267 @@ const cases: Case[] = [
     strict: false,
     loose: false,
     looseBug: "reports equal",
+  },
+  {
+    name: "boxed strings with the same out-of-range indexed own property",
+    a: () => Object.assign(new String("ab"), { 5: "x" }),
+    b: () => Object.assign(new String("ab"), { 5: "x" }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "boxed strings with different out-of-range indexed own properties",
+    a: () => Object.assign(new String("ab"), { 5: "x" }),
+    b: () => Object.assign(new String("ab"), { 5: "y" }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "boxed strings with the same extra own property",
+    a: () => withExtraProperty(new String("test")),
+    b: () => withExtraProperty(new String("test")),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "boxed strings with different values of an extra own property",
+    a: () => Object.assign(new String("test"), { extra: 1 }),
+    b: () => Object.assign(new String("test"), { extra: 2 }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "boxed strings with an extra own property of 1 and of '1'",
+    a: () => Object.assign(new String("test"), { extra: 1 }),
+    b: () => Object.assign(new String("test"), { extra: "1" }),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "a boxed string with an own undefined property",
+    a: () => Object.assign(new String("test"), { extra: undefined }),
+    b: () => new String("test"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "a boxed string with an own symbol property",
+    a: () => Object.assign(new String("test"), { [sym]: 1 }),
+    b: () => new String("test"),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "a boxed string with a non-enumerable own property",
+    a: () => withHiddenProperty(new String("test"), "hidden", 1),
+    b: () => new String("test"),
+    strict: true,
+    loose: true,
+  },
+
+  // Loose mode compares the text and the own enumerable string keys of two boxed strings, not their classes.
+  ...bothOrders({
+    name: "a boxed string and a String subclass instance with the same text",
+    a: () => new String("abc"),
+    b: () => new StringSubclass("abc"),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  }),
+  {
+    name: "instances of two String subclasses with the same text",
+    a: () => new StringSubclass("abc"),
+    b: () => new OtherStringSubclass("abc"),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "a boxed string and a String subclass instance with different text",
+    a: () => new String("abc"),
+    b: () => new StringSubclass("abd"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "objects holding a boxed string and a String subclass instance",
+    a: () => ({ a: new String("abc") }),
+    b: () => ({ a: new StringSubclass("abc") }),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "arrays holding a boxed string and a String subclass instance",
+    a: () => [new String("abc")],
+    b: () => [new StringSubclass("abc")],
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "Maps whose values are a boxed string and a String subclass instance",
+    a: () => new Map([[1, new String("abc")]]),
+    b: () => new Map([[1, new StringSubclass("abc")]]),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "Maps whose keys are a boxed string and a String subclass instance",
+    a: () => new Map([[new String("abc"), 1]]),
+    b: () => new Map([[new StringSubclass("abc"), 1]]),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "Sets holding a boxed string and a String subclass instance",
+    a: () => new Set([new String("abc")]),
+    b: () => new Set([new StringSubclass("abc")]),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "Maps keyed by a boxed string and a String subclass instance with the same text, and a copy",
+    a: () => mapKeyedByBoxedStrings(1, 2),
+    b: () => mapKeyedByBoxedStrings(1, 2),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "Maps keyed by a boxed string and a String subclass instance with the same text, values swapped",
+    a: () => mapKeyedByBoxedStrings(1, 2),
+    b: () => mapKeyedByBoxedStrings(2, 1),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "Sets of a boxed string and a String subclass instance with the same text, in different orders",
+    a: () => new Set([new String("abc"), new StringSubclass("abc")]),
+    b: () => new Set([new StringSubclass("abc"), new String("abc")]),
+    strict: true,
+    loose: true,
+  },
+  ...bothOrders({
+    name: "a Set of a boxed string and a String subclass instance with the same text, and a Set of two boxed strings",
+    a: () => new Set([new String("abc"), new StringSubclass("abc")]),
+    b: () => new Set([new String("abc"), new String("abd")]),
+    strict: false,
+    loose: false,
+  }),
+  {
+    name: "boxed strings whose extra own property holds a boxed string and a String subclass instance",
+    a: () => Object.assign(new String("test"), { extra: new String("abc") }),
+    b: () => Object.assign(new String("test"), { extra: new StringSubclass("abc") }),
+    strict: false,
+    loose: true,
+  },
+  ...bothOrders({
+    name: "a boxed string and a String subclass instance with an own field",
+    a: () => new String("abc"),
+    b: () => new StringWithField("abc"),
+    strict: false,
+    loose: false,
+  }),
+  {
+    name: "two String subclass instances with the same own field",
+    a: () => new StringWithField("abc"),
+    b: () => new StringWithField("abc"),
+    strict: true,
+    loose: true,
+  },
+  ...bothOrders({
+    name: "a boxed string and a String subclass instance with an unset field",
+    a: () => new String("abc"),
+    b: () => new StringWithUnsetField("abc"),
+    strict: false,
+    loose: false,
+  }),
+  ...bothOrders({
+    name: "a boxed string and a String subclass instance with an own undefined property",
+    a: () => new String("abc"),
+    b: () => Object.assign(new StringSubclass("abc"), { extra: undefined }),
+    strict: false,
+    loose: false,
+  }),
+  ...bothOrders({
+    name: "a boxed string and a String subclass instance with a Symbol.toStringTag getter",
+    a: () => new String("abc"),
+    b: () => new TaggedString("abc"),
+    strict: false,
+    loose: false,
+  }),
+  ...bothOrders({
+    name: "a boxed string and a String subclass instance whose toString() returns that string's text",
+    a: () => new String("abc"),
+    b: () => new StringWithConstantToString("xyz"),
+    strict: false,
+    loose: false,
+  }),
+  ...bothOrders({
+    name: "a boxed string and a String subclass instance whose Symbol.toPrimitive returns that string's text",
+    a: () => new String("abc"),
+    b: () => new StringWithConstantToPrimitive("xyz"),
+    strict: false,
+    loose: false,
+  }),
+  {
+    name: "String subclass instances with different text and the same toString()",
+    a: () => new StringWithConstantToString("xyz"),
+    b: () => new StringWithConstantToString("xyw"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+    strictBug: "reports equal",
+  },
+  {
+    name: "String subclass instances with different text and the same Symbol.toPrimitive",
+    a: () => new StringWithConstantToPrimitive("xyz"),
+    b: () => new StringWithConstantToPrimitive("xyw"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+    strictBug: "reports equal",
+  },
+  ...bothOrders({
+    name: "an empty boxed string and String.prototype",
+    a: () => new String(""),
+    b: () => String.prototype,
+    strict: true,
+    loose: true,
+    looseBug: "reports not equal",
+    strictBug: "reports not equal",
+  }),
+  {
+    name: "an empty String subclass instance and String.prototype",
+    a: () => new StringSubclass(""),
+    b: () => String.prototype,
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  ...bothOrders({
+    name: "String.prototype and an empty object",
+    a: () => String.prototype,
+    b: () => ({}),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  }),
+  {
+    name: "two null-prototype boxed strings",
+    a: () => Object.setPrototypeOf(new String("a"), null),
+    b: () => Object.setPrototypeOf(new String("a"), null),
+    strict: true,
+    loose: true,
+    looseBug: "throws a TypeError",
+    strictBug: "throws a TypeError",
   },
 
   // Undefined-valued and missing properties. Both modes compare own key counts.

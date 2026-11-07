@@ -1152,6 +1152,20 @@ describe.concurrent("a bun.lockb that Bun 1.4 wrote", () => {
     await rm(join(cwd, "node_modules"), { recursive: true, force: true });
     await bun(cwd, ["install", "--frozen-lockfile"]);
   });
+
+  // This Bun drops nd@1.1.0 and zz-9@1.0.1, which only a peer holds. A bun.lockb keeps the tree of the Bun that wrote
+  // it, so the summary counts the packages that leave the file, not the entries of that tree.
+  it("bun install counts the packages that leave the file", async () => {
+    using server = await serve();
+    using dir = project(server);
+    const cwd = String(dir);
+
+    await bun(join(cwd, "fill"), ["install"], cwd);
+    const output = await bun(cwd, ["install"]);
+    expect(await stored(cwd)).toMatchObject({ "nd@^1.0.0": "1.0.1", "zz-9@~1.0.1": "1.0.2" });
+    expect(output).toContain("\n7 packages installed ");
+    expect(output).toContain("\nRemoved: 2\n");
+  });
 });
 
 it("rejects a binary lockfile whose git resolved tag contains path separators", async () => {

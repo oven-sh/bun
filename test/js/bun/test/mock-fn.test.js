@@ -5236,11 +5236,14 @@ if (isBun) {
       });
 
       test("a variable that a script declares in the place of a deleted spy stays", () => {
-        const mocked = spyOn(globalThis, "declaredAfterTheSpy");
-        delete globalThis.declaredAfterTheSpy;
-        vm.runInThisContext("var declaredAfterTheSpy = 'declared';");
+        // A variable of a global object can't be deleted again, so the global is one that ends with the test.
+        const context = vm.createContext(vm.constants.DONT_CONTEXTIFY);
+        const global = vm.runInContext("this", context);
+        const mocked = spyOn(global, "declaredAfterTheSpy");
+        delete global.declaredAfterTheSpy;
+        vm.runInContext("var declaredAfterTheSpy = 'declared';", context);
         mocked.mockRestore();
-        expect(Object.getOwnPropertyDescriptor(globalThis, "declaredAfterTheSpy")).toEqual({
+        expect(Object.getOwnPropertyDescriptor(global, "declaredAfterTheSpy")).toEqual({
           value: "declared",
           writable: true,
           enumerable: true,
@@ -5275,7 +5278,7 @@ if (isBun) {
       // toThrow() with an Error reads only its message.
       const cannotRestore = name =>
         expect.objectContaining({
-          name: "TypeError",
+          constructor: TypeError,
           message: `Cannot restore the \`${name}\` property because the object does not allow it to be changed`,
         });
 
@@ -5503,7 +5506,7 @@ if (isBun) {
               const spy = spyOn(array, 0);
               Object.freeze(array);
               for (const restore of [() => spy.mockRestore(), () => mock.restore()]) {
-                expect(restore).toThrow(expect.objectContaining({ name: "TypeError", message: ${JSON.stringify(message("0"))} }));
+                expect(restore).toThrow(expect.objectContaining({ constructor: TypeError, message: ${JSON.stringify(message("0"))} }));
               }
               expect(array[0]).toBe(spy);
             });

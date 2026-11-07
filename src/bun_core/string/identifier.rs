@@ -42,6 +42,15 @@ pub fn is_identifier(text: &[u8]) -> bool {
     true
 }
 
+/// Whole-string ES identifier check over Latin-1, where each byte is one code point.
+pub fn is_identifier_latin1(text: &[u8]) -> bool {
+    let Some((&first, rest)) = text.split_first() else {
+        return false;
+    };
+    is_identifier_start(CodePoint::from(first))
+        && rest.iter().all(|&c| is_identifier_part(CodePoint::from(c)))
+}
+
 /// Whole-string ES identifier check over WTF-16.
 ///
 /// Surrogate decoding is open-coded on purpose: an unpaired high surrogate

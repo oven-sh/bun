@@ -214,6 +214,8 @@ async function withTerminalRepl(
     /** Changes the width of the pty, and of the screen that `waitForScreen` renders. */
     resize: (cols: number) => void;
     allOutput: () => string;
+    /** Everything the REPL wrote so far, escape sequences included. */
+    rawOutput: () => string;
   }) => Promise<void>,
   options: { env?: Record<string, string | undefined>; cols?: number } = {},
 ) {
@@ -316,11 +318,12 @@ async function withTerminalRepl(
     model.resize(newCols);
   };
 
-  const allOutput = () => stripAnsi(received.join(""));
+  const rawOutput = () => received.join("");
+  const allOutput = () => stripAnsi(rawOutput());
 
   await waitFor(/\u276f|> /); // Wait for prompt
 
-  await fn({ terminal, proc, send, waitFor, waitForScreen, resize, allOutput });
+  await fn({ terminal, proc, send, waitFor, waitForScreen, resize, allOutput, rawOutput });
 
   // Clean exit. Ctrl+A then Ctrl+K first discards whatever the test left on
   // the line, wherever the cursor is, so `.exit` is not appended to it (which
@@ -835,6 +838,44 @@ describe.concurrent("Bun REPL", () => {
         ".exit",
       ]);
       expect(outputs).toEqual(["42", "42", "undefined", '{\n  name: "test",\n}', '"test"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("tab completion", () => {
+    // Runs without a pty, so on Windows too. It reaches the completer only because a TAB byte
+    // on piped stdin is taken as the Tab key.
+    test("Tab inserts, lists and counts identifier names only", async () => {
+      const { stdout, outputs, stderr, exitCode } = await runRepl([
+        String.raw`var mk = (...keys) => Object.assign(Object.create(null), Object.fromEntries(keys.map((key, i) => [key, i + 1]))); 0`,
+        // Each control is in an 8-bit key and in a 16-bit key. Only `qd` and `qe` have none.
+        String.raw`var hostile = mk(...["\x1b]0;OWNED\x07", "\x1b[2J", "\b", "\x7f", "\x9b2J"].flatMap(c => ["q" + c, "q" + c + "\u2192"]), "qd", "qe"); 0`,
+        String.raw`var one = mk("a\x1b[2J", "a-", "ab"), two = mk("q-a", "qz", "q b", "qa"), none = mk("q-a", "q b"); 0`,
+        String.raw`var many = mk(...Array.from({ length: 51 }, (_, i) => "q" + i), "q-"), enc = mk("caf\xe9a", "caf\xe9b", "caf\u2192", "q\u03c0a", "q\u03c0b", "q\u03c0-"); 0`,
+        "hostile.q\t",
+        "one.a\t",
+        "two.q\t",
+        "none.q\t",
+        "many.q\t",
+        "enc.caf\t",
+        "enc.q\t",
+        ".exit",
+      ]);
+      expect(["\x1b]", "\x1b[2J", "\b", "\x7f", "\x9b"].filter(bytes => stdout.includes(bytes))).toEqual([]);
+      expect(outputs).toEqual([
+        "0",
+        "0",
+        "0",
+        "0",
+        "qd\n  qe\n\nundefined", // a list, then `hostile.q`
+        "3", // `ab` is the one name that can follow the dot, so the line became `one.ab`
+        "qz\n  qa\n\nundefined",
+        "undefined", // nothing to list, and the line stayed `none.q`
+        "51 completions\n\nundefined",
+        "caf\u00e9a\n  caf\u00e9b\n\nundefined", // 8-bit names with a Latin-1 letter
+        "q\u03c0a\n  q\u03c0b\n\nundefined", // 16-bit names
+      ]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -1476,6 +1517,171 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
         },
         { env: colorEnv },
       );
+    });
+  });
+
+  describe("tab completion candidates", () => {
+    type Helpers = Parameters<Parameters<typeof withTerminalRepl>[0]>[0];
+
+    // Evaluates `setup` first. It is not typed out, because every typed character redraws the line.
+    async function withObjects(
+      setup: string,
+      env: Record<string, string | undefined>,
+      fn: (helpers: Helpers) => Promise<void>,
+    ) {
+      await withTerminalRepl(
+        async helpers => {
+          helpers.send("(0, eval)(process.env.REPL_SETUP)\n");
+          await helpers.waitFor("setupDone");
+          await fn(helpers);
+        },
+        { env: { ...env, REPL_SETUP: `${setup}; "setup" + "Done"` } },
+      );
+    }
+
+    // Types `input`, Tab and `;` at an empty prompt, and returns the rows from the prompt's
+    // row down. The `;` is drawn after everything that Tab wrote.
+    async function rowsAfterTab({ send, waitForScreen }: Helpers, prompt: string, input: string) {
+      const top = (await waitForScreen(s => s.rows.at(-1) === prompt)).rows.length - 1;
+      send(`${input}\t;`);
+      const screen = await waitForScreen(s => s.rows.at(-1)!.endsWith(";"));
+      send("\x15"); // Ctrl+U empties the line for the next input.
+      return screen.rows.slice(top);
+    }
+
+    // What a key of somebody else's JSON can carry: set the window title, clear the screen,
+    // line feed, carriage return, backspace, DEL and a C1 CSI. `__k` has no prototype. It gets
+    // each of them in an 8-bit key, in a 16-bit key (with U+2192) and after a lone surrogate,
+    // then `q-c`, `qd` and `qe`. `__bad` gets the keys with a control only.
+    const keys = String.raw`
+      globalThis.__k = Object.create(null);
+      globalThis.__bad = Object.create(null);
+      for (const control of ["\x1b]0;OWNED\x07", "\x1b[2J", "\n", "\r", "\b", "\x7f", "\x9b2J"]) {
+        for (const key of ["q" + control, "q" + control + "\u2192", "q\ud80b" + control]) __k[key] = __bad[key] = 1;
+      }
+      __k["q-c"] = 1;
+      __k.qd = 1;
+      __k.qe = 1;
+    `;
+    // The line editor sends none of these itself. A leaked LF or CR shows in the rows instead.
+    const leaked = (raw: string) => ["\x1b]", "\x1b[2J", "\b", "\x7f", "\x9b"].filter(bytes => raw.includes(bytes));
+
+    test("lists only the names that can follow a dot", async () => {
+      const routes = `
+        globalThis.__child = Object.create(__k);
+        globalThis.__proxy = new Proxy({}, { ownKeys: () => Reflect.ownKeys(__k), getPrototypeOf: () => null });
+        for (const key in __k) globalThis["zz" + key] = 1;
+      `;
+      await withObjects(keys + routes, {}, async helpers => {
+        for (const [input, names] of [
+          ["__k.q", ["qd", "qe"]], // own keys with a prefix
+          ["__k.", ["qd", "qe"]], // own keys, empty prefix
+          ["__child.q", ["qd", "qe"]], // inherited keys
+          ["__proxy.q", ["qd", "qe"]], // keys from an ownKeys trap
+          ["zzq", ["zzqd", "zzqe"]], // globals
+        ] as const) {
+          expect(await rowsAfterTab(helpers, "> ", input)).toEqual([
+            `> ${input}`,
+            ...names.map(name => `  ${name}`),
+            `> ${input};`,
+          ]);
+        }
+        expect(leaked(helpers.rawOutput())).toEqual([]);
+      });
+    });
+
+    test("lists only such names on a continuation line and in editor mode, with colors", async () => {
+      await withObjects(keys, { NO_COLOR: undefined, FORCE_COLOR: "1" }, async helpers => {
+        const list = ["... __k.q", "  qd", "  qe", "... __k.q;"];
+        // Neither mode draws ghost text, so the first Tab prints the list.
+        helpers.send("if (true) {\n");
+        expect(await rowsAfterTab(helpers, "... ", "__k.q")).toEqual(list);
+        helpers.send("\x03");
+        await helpers.waitForScreen(s => s.rows.at(-1) === "❯ ");
+
+        helpers.send(".editor\n");
+        expect(await rowsAfterTab(helpers, "... ", "__k.q")).toEqual(list);
+        helpers.send("\x03");
+        await helpers.waitForScreen(s => s.rows.at(-1) === "❯ ");
+        expect(leaked(helpers.rawOutput())).toEqual([]);
+      });
+    });
+
+    test("ghost text is a name that can follow a dot", async () => {
+      const stop = `globalThis.__stop = Object.assign(Object.create(null), { "a-": 1, longFirst: 1, z: 1 });`;
+      await withObjects(keys + stop, { NO_COLOR: undefined, FORCE_COLOR: "1" }, async helpers => {
+        const rows = (input: string) => rowsAfterTab(helpers, "❯ ", input);
+        // The first Tab accepts the ghost text, which is the `d` of `qd`.
+        expect(await rows("__k.q")).toEqual(["❯ __k.qd;"]);
+        // No key of `__bad` can follow a dot: no ghost text, no list, and the line stays.
+        expect(await rows("__bad.q")).toEqual(["❯ __bad.q;"]);
+        expect(await rows("__bad.")).toEqual(["❯ __bad.;"]);
+        // After a dot alone, the ghost text is the first name that can follow it, and the
+        // walk stops there: a shorter name that comes later does not replace it.
+        expect(await rows("__k.")).toEqual(["❯ __k.qd;"]);
+        expect(await rows("__stop.")).toEqual(["❯ __stop.longFirst;"]);
+        expect(leaked(helpers.rawOutput())).toEqual([]);
+      });
+    });
+
+    // `mk` makes an object with these keys and no prototype. `seq` numbers a name.
+    const makers = `
+      const mk = (...keys) => Object.assign(Object.create(null), Object.fromEntries(keys.map(key => [key, 1])));
+      const seq = (n, prefix) => Array.from({ length: n }, (_, i) => prefix + i);
+    `;
+
+    test("inserts the one name that can follow the dot", async () => {
+      const objects = `
+        globalThis.__one = mk("qd", "q-c");
+        globalThis.__sixty = mk("qd", ...seq(60, "q-"));
+        globalThis.__none = mk("q-a", "q b");
+        globalThis.__two = mk("q-a", "qz", "q b", "qa");
+      `;
+      await withObjects(makers + objects, {}, async helpers => {
+        const rows = (input: string) => rowsAfterTab(helpers, "> ", input);
+        // Whatever else starts with `q`.
+        expect(await rows("__one.q")).toEqual(["> __one.qd;"]);
+        expect(await rows("__sixty.q")).toEqual(["> __sixty.qd;"]);
+        // Only names that need brackets start with `q`: nothing is printed and the line stays.
+        expect(await rows("__none.q")).toEqual(["> __none.q;"]);
+        // No name at all starts with `x`: Tab indents.
+        expect(await rows("__none.x")).toEqual(["> __none.x  ;"]);
+        expect(await rows("__two.q")).toEqual(["> __two.q", "  qz", "  qa", "> __two.q;"]);
+      });
+    });
+
+    test("lists 50 such names and counts 51", async () => {
+      const objects = `
+        globalThis.__fifty = mk(...seq(50, "q"), ...seq(10, "q-"));
+        globalThis.__count = mk(...seq(51, "q"), ...seq(10, "q-"));
+      `;
+      await withObjects(makers + objects, {}, async helpers => {
+        expect(await rowsAfterTab(helpers, "> ", "__fifty.q")).toEqual([
+          "> __fifty.q",
+          ...Array.from({ length: 50 }, (_, i) => `  q${i}`),
+          "> __fifty.q;",
+        ]);
+        expect(await rowsAfterTab(helpers, "> ", "__count.q")).toEqual([
+          "> __count.q",
+          "51 completions",
+          "> __count.q;",
+        ]);
+      });
+    });
+
+    test("lists such names in every string encoding", async () => {
+      // `__enc` has 8-bit names with a Latin-1 letter and 16-bit names. U+2192 is not an
+      // identifier character. Neither is the emoji nor the lone surrogate of `__astral`.
+      const objects = String.raw`
+        globalThis.__enc = mk("caf\xe9a", "caf\xe9b", "caf\u2192", "\u03c0a", "\u03c0b", "\u03c0\u2192");
+        globalThis.__astral = mk("q\u{20BB7}a", "q\u{20BB7}b", "q\u{1F600}", "q\ud800");
+      `;
+      await withObjects(makers + objects, {}, async helpers => {
+        const rows = (input: string) => rowsAfterTab(helpers, "> ", input);
+        expect(await rows("__enc.caf")).toEqual(["> __enc.caf", "  caféa", "  caféb", "> __enc.caf;"]);
+        expect(await rows("__enc.π")).toEqual(["> __enc.π", "  πa", "  πb", "> __enc.π;"]);
+        expect(await rows("__astral.q")).toEqual(["> __astral.q", "  q𠮷a", "  q𠮷b", "> __astral.q;"]);
+      });
     });
   });
 

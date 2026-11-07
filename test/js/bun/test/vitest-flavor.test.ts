@@ -1877,6 +1877,25 @@ describe.concurrent("aroundEach and aroundAll", () => {
     });
   });
 
+  test(`an aroundAll from "bun:test" doesn't run either if every test of its block is skipped`, async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, aroundAll, beforeAll, afterAll } from "bun:test";
+        describe("every test is skipped", () => {
+          aroundAll(async runSuite => { console.log("unreachable"); await runSuite(); });
+          beforeAll(() => console.log("beforeAll"));
+          afterAll(() => console.log("afterAll"));
+          test.skip("test", () => {});
+        });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["beforeAll", "afterAll"],
+      results: ["(skip) every test is skipped > test"],
+      exitCode: 0,
+    });
+  });
+
   test("the timeout is for the time before runTest() and for the time after it, not for the time inside", async () => {
     const { log, results, errors, exitCode } = await runTests({
       "a.test.js": `
@@ -2940,6 +2959,244 @@ describe.concurrent("behavior depends on the module a function is imported from"
       ],
     });
     expect(bun.exitCode).toBe(1);
+  });
+
+  // Every module calls these the way Vitest does, so how a callback is called doesn't tell its module.
+  describe("an around hook and a callback of the test context have the rules of their module", () => {
+    // Vitest's toEqual() compares the lengths of two arrays, and its .not.not still negates.
+    const rules = `
+      const which = check => { try { check(); return "Jest"; } catch { return "Vitest"; } };
+      const toEqual = () => which(() => expect([1]).toEqual([1, undefined]));
+      const notNot = () => which(() => expect(1).not.not.toBe(1));
+    `;
+
+    const everyPosition = `
+      ${rules}
+      const show = where => console.log(where, "| toEqual:", toEqual(), "| .not.not:", notNot());
+      let context;
+      aroundAll(async runSuite => { show("aroundAll >"); await runSuite(); show("aroundAll <"); });
+      aroundEach(async (runTest, current) => {
+        context = current;
+        show("aroundEach >");
+        current.onTestFinished(() => show("onTestFinished from the hook"));
+        current.onTestFailed(() => show("onTestFailed from the hook"));
+        await runTest();
+        show("aroundEach <");
+      });
+      test("passes", () => {
+        show("test");
+        context.onTestFinished(() => show("onTestFinished from the test"));
+      });
+      test.fails("fails", () => {
+        show("test");
+        context.onTestFailed(() => show("onTestFailed from the test"));
+        throw new Error("expected");
+      });
+    `;
+    test.each([
+      [`"bun:test"`, `import { aroundAll, aroundEach, expect, test } from "bun:test";`, "Jest"],
+      [`"@jest/globals"`, `import { aroundAll, aroundEach, expect, test } from "@jest/globals";`, "Jest"],
+      [`the test of "bun:test"`, `import { expect, test } from "bun:test"; const { aroundAll, aroundEach } = test;`, "Jest"],
+      ["the globals", "", "Jest"],
+      [`"vitest"`, `import { aroundAll, aroundEach, expect, test } from "vitest";`, "Vitest"],
+      [`the test of "vitest"`, `import { expect, test } from "vitest"; const { aroundAll, aroundEach } = test;`, "Vitest"],
+    ])("before and after runSuite() and runTest(), from %s", async (_, header, ofModule) => {
+      const { log, results, exitCode } = await runTests({ "a.test.js": header + everyPosition });
+      const each = (deferred: string[]) => ["aroundEach >", "test", ...deferred, "aroundEach <"];
+      expect({ log, results, exitCode }).toEqual({
+        log: [
+          "aroundAll >",
+          ...each(["onTestFinished from the test", "onTestFinished from the hook"]),
+          ...each(["onTestFinished from the hook", "onTestFailed from the test", "onTestFailed from the hook"]),
+          "aroundAll <",
+        ].map(where => `${where} | toEqual: ${ofModule} | .not.not: ${ofModule}`),
+        results: ["(pass) passes", "(pass) fails"],
+        exitCode: 0,
+      });
+    });
+
+    test("an error that nobody handles goes to the file's process listeners first, if the hook is vitest's", async () => {
+      const file = (module: string) => `
+        import { aroundAll, aroundEach, test } from "${module}";
+        const unhandled = async where => {
+          for (const [event, cause] of [
+            ["unhandledRejection", error => void Promise.reject(error)],
+            ["uncaughtException", error => queueMicrotask(() => { throw error; })],
+          ]) {
+            const listener = error => console.log("the listener heard:", error.message);
+            process.on(event, listener);
+            cause(new Error(event + " " + where));
+            // Either error is reported before the next immediate runs.
+            await new Promise(resolve => setImmediate(resolve));
+            process.off(event, listener);
+          }
+        };
+        aroundAll(async runSuite => {
+          await unhandled("before runSuite()");
+          await runSuite();
+          await unhandled("after runSuite()");
+        });
+        aroundEach(async (runTest, context) => {
+          await unhandled("before runTest()");
+          context.onTestFinished(() => unhandled("in onTestFinished()"));
+          await runTest();
+          await unhandled("after runTest()");
+        });
+        test("the test", () => {});
+      `;
+      const thrown = ["before runSuite()", "before runTest()", "in onTestFinished()", "after runTest()", "after runSuite()"]
+        .flatMap(where => [`unhandledRejection ${where}`, `uncaughtException ${where}`]);
+      const [vitest, bun] = await Promise.all([
+        runTests({ "a.test.js": file("vitest") }),
+        runTests({ "a.test.js": file("bun:test") }),
+      ]);
+      expect({ log: vitest.log, results: vitest.results, errors: vitest.errors, exitCode: vitest.exitCode }).toEqual({
+        log: thrown.map(message => `the listener heard: ${message}`),
+        results: ["(pass) the test"],
+        errors: [],
+        exitCode: 0,
+      });
+      expect({ log: bun.log, results: bun.results, errors: bun.errors, exitCode: bun.exitCode }).toEqual({
+        log: [],
+        results: ["(pass) the test"],
+        errors: thrown.map(message => `error: ${message}`),
+        exitCode: 1,
+      });
+    });
+
+    test("around a test of the other module, and from a preload", async () => {
+      const expected = (log: string[]) => log.map(where => `${where} | toEqual: ${where.includes("bun:test") ? "Jest" : "Vitest"}`);
+      const hooks = (name: string) => `
+        aroundAll(async runSuite => { show("aroundAll of ${name} >"); await runSuite(); show("aroundAll of ${name} <"); });
+        aroundEach(async (runTest, context) => {
+          show("aroundEach of ${name} >");
+          context.onTestFinished(() => show("onTestFinished of the context, from ${name}"));
+          await runTest();
+          show("aroundEach of ${name} <");
+        });
+      `;
+      const [mixed, preloaded] = await Promise.all([
+        runTests({
+          "a.test.js": `
+            import * as bun from "bun:test";
+            import * as vitest from "vitest";
+            const { expect } = bun;
+            ${rules}
+            const show = where => console.log(where, "| toEqual:", toEqual());
+            { const { aroundAll, aroundEach } = bun; ${hooks("bun:test")} }
+            { const { aroundAll, aroundEach } = vitest; ${hooks("vitest")} }
+            bun.test("of bun:test", () => {
+              show("test of bun:test");
+              vitest.onTestFinished(() => show("onTestFinished of vitest"));
+            });
+            vitest.test("of vitest", () => show("test of vitest"));
+          `,
+        }),
+        runTests(
+          {
+            "preload.js": `
+              import { aroundAll, aroundEach, expect } from "bun:test";
+              ${rules}
+              globalThis.show = where => console.log(where, "| toEqual:", toEqual());
+              ${hooks("bun:test")}
+            `,
+            "a.test.js": `import { test } from "bun:test"; test("of bun:test", () => show("test of bun:test"));`,
+            "b.test.js": `import { test } from "vitest"; test("of vitest", () => show("test of vitest"));`,
+          },
+          ["--preload=./preload.js"],
+        ),
+      ]);
+      const around = (names: string[], inside: string[]) => [
+        ...names.map(name => `aroundEach of ${name} >`),
+        ...inside,
+        ...names.map(name => `onTestFinished of the context, from ${name}`).reverse(),
+        ...names.map(name => `aroundEach of ${name} <`).reverse(),
+      ];
+      expect({ log: mixed.log, exitCode: mixed.exitCode }).toEqual({
+        log: expected([
+          "aroundAll of bun:test >",
+          "aroundAll of vitest >",
+          ...around(["bun:test", "vitest"], ["test of bun:test", "onTestFinished of vitest"]),
+          ...around(["bun:test", "vitest"], ["test of vitest"]),
+          "aroundAll of vitest <",
+          "aroundAll of bun:test <",
+        ]),
+        exitCode: 0,
+      });
+      expect({ log: preloaded.log, exitCode: preloaded.exitCode }).toEqual({
+        log: expected([
+          "aroundAll of bun:test >",
+          ...around(["bun:test"], ["test of bun:test"]),
+          ...around(["bun:test"], ["test of vitest"]),
+          "aroundAll of bun:test <",
+        ]),
+        exitCode: 0,
+      });
+    });
+
+    test(`concurrent tests of "bun:test" keep its toEqual() inside an aroundEach of "bun:test"`, async () => {
+      const { results, exitCode } = await runTests({
+        "a.test.js": `
+          import { aroundEach, expect, test } from "bun:test";
+          aroundEach(async runTest => { await runTest(); });
+          for (const name of ["a", "b", "c", "d"]) {
+            test.concurrent(name, async () => {
+              await new Promise(resolve => setImmediate(resolve));
+              expect([1]).toEqual([1, undefined]);
+            });
+          }
+        `,
+      });
+      expect({ results, exitCode }).toEqual({
+        results: ["(pass) a", "(pass) b", "(pass) c", "(pass) d"],
+        exitCode: 0,
+      });
+    });
+
+    test(`a file of "bun:test" is loaded again with its rules after an aroundAll`, async () => {
+      const { log, exitCode } = await runTests(
+        {
+          "a.test.js": `
+            import { aroundAll, describe, expect, test } from "bun:test";
+            ${rules}
+            const show = where => console.log(where, "| toEqual:", toEqual());
+            show("the file");
+            aroundAll(async runSuite => { await runSuite(); });
+            describe("block", () => {
+              show("describe()");
+              test("test", () => show("test"));
+            });
+          `,
+        },
+        ["--rerun-each=2"],
+      );
+      const load = ["the file", "describe()", "test"].map(where => `${where} | toEqual: Jest`);
+      expect({ log, exitCode }).toEqual({ log: [...load, ...load], exitCode: 0 });
+    });
+
+    test(`a callback of the test context has the default timeout of "bun:test", if that is what registers it`, async () => {
+      const { log, results, stderr, exitCode } = await runTests(
+        {
+          "a.test.js": `
+            import { aroundEach, test } from "bun:test";
+            // Only the callback has the default timeout, which is 10 seconds or more for a hook of "vitest".
+            aroundEach(async (runTest, context) => {
+              context.onTestFinished(() => {
+                setTimeout(() => console.log("still running after 5 seconds"), 5000);
+                return new Promise(() => {});
+              });
+              await runTest();
+            }, 30_000);
+            test("the test", () => {}, 30_000);
+          `,
+        },
+        ["--timeout=50"],
+        {},
+        beforeTheTestTimesOut,
+      );
+      expect(stderr).toContain("a beforeEach/afterEach hook timed out for this test");
+      expect({ log, results, exitCode }).toEqual({ log: [], results: ["(fail) the test"], exitCode: 1 });
+    });
   });
 
   test(`"bun:test" and "@jest/globals" keep the done callback`, async () => {

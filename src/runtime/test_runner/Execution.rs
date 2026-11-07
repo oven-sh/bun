@@ -46,7 +46,7 @@ use bun_core::scoped_log;
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
     group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
-    HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
+    Flavor, HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
 use super::expect::expect_deferred::ExpectDeferred;
 use super::test_context::{self, TestContext};
@@ -1283,7 +1283,7 @@ fn step_sequence_one(
             match TestFixtures::next(fixtures, global_this, into, fixtures_scope, parameter, next_item.timeout) {
                 Ok(NextFixture::Ready) => {}
                 Ok(NextFixture::SetUp(set_up)) => {
-                    let set_up = buntest_strong.get().create_vitest_entry(set_up, next_item.timeout, false);
+                    let set_up = buntest_strong.get().create_extra_entry(set_up, next_item.timeout, false, Flavor::OF_FIXTURES);
                     // SAFETY: just allocated.
                     unsafe {
                         (*set_up.as_ptr()).next = Some(next_item_ptr.as_ptr());
@@ -1329,7 +1329,7 @@ fn step_sequence_one(
 
         // The callback re-enters and reaches the sequence on its own, so no `&mut` is held across it.
         let sequence_ptr = NonNull::from(sequence);
-        global_this.bun_vm().as_mut().is_running_vitest_entry = next_item.calling.is_vitest();
+        global_this.bun_vm().as_mut().is_running_vitest_entry = next_item.flavor == Flavor::Vitest;
         if BunTest::run_test_callback(
             buntest_strong,
             global_this,

@@ -1973,3 +1973,141 @@ test("a standalone executable does not run a synchronous full GC after loading i
   expect(stderr).not.toContain("FullCollection");
   expect(exitCode).toBe(0);
 });
+
+// A package that loads its addon through a path built at run time (node-gyp-build, bindings) ships `prebuilds/` or
+// `binding.gyp`. The bundle keeps the build machine's absolute `__dirname`, so the executable reads that path at run
+// time. `bun build --compile` warns once per such package unless a `.node` file of the package is embedded.
+describe("compile warns for a native addon that the executable loads from disk", () => {
+  const nodeGypBuildStyle = {
+    "node_modules/fakeaddon/package.json": JSON.stringify({ name: "fakeaddon", version: "1.0.0", main: "index.js" }),
+    "node_modules/fakeaddon/index.js": `
+      var path = require("path");
+      var runtimeRequire = require;
+      module.exports = runtimeRequire(path.join(__dirname, "prebuilds", process.platform + "-" + process.arch, "node.napi.node"));
+    `,
+    "node_modules/fakeaddon/prebuilds/linux-x64/node.napi.node": "not a real addon",
+  };
+  const bindingsStyle = {
+    "node_modules/gyponly/package.json": JSON.stringify({ name: "gyponly", version: "1.0.0", main: "index.js" }),
+    "node_modules/gyponly/binding.gyp": `{ "targets": [{ "target_name": "gyponly", "sources": ["gyponly.cc"] }] }`,
+    "node_modules/gyponly/index.js": `
+      var path = require("path");
+      var requireFunc = require;
+      module.exports = requireFunc(path.join(__dirname, "build/Release/gyponly.node"));
+    `,
+  };
+
+  async function build(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", ...args, "index.js", "--outfile", "app"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return stdout + stderr;
+  }
+
+  test("a package with prebuilds/ and a runtime-built path", async () => {
+    using dir = tempDir("compile-addon-prebuilds", {
+      ...nodeGypBuildStyle,
+      "index.js": `console.log(typeof require("fakeaddon"));`,
+    });
+    const output = await build(String(dir));
+    const root = join(String(dir), "node_modules", "fakeaddon");
+    expect(output).toContain(
+      `warn: fakeaddon loads a native addon through a path built at run time, and no .node file from ${root} is embedded in the executable.`,
+    );
+    expect(output).toContain(`--asset node_modules/fakeaddon/prebuilds`);
+    expect(output.match(/warn: /g)).toHaveLength(1);
+  }, 30_000);
+
+  test("a package with binding.gyp and a runtime-built path", async () => {
+    using dir = tempDir("compile-addon-gyp", {
+      ...bindingsStyle,
+      "index.js": `console.log(typeof require("gyponly"));`,
+    });
+    const output = await build(String(dir));
+    const root = join(String(dir), "node_modules", "gyponly");
+    expect(output).toContain(`warn: gyponly loads a native addon through a path built at run time`);
+    expect(output).toContain(`The executable reads ${join(root, "build/Release")} at run time`);
+    expect(output.match(/warn: /g)).toHaveLength(1);
+  }, 30_000);
+
+  test("one warning per package", async () => {
+    using dir = tempDir("compile-addon-two", {
+      ...nodeGypBuildStyle,
+      ...bindingsStyle,
+      "index.js": `console.log(typeof require("fakeaddon"), typeof require("gyponly"));`,
+    });
+    const output = await build(String(dir));
+    expect(output).toContain("warn: fakeaddon loads a native addon");
+    expect(output).toContain("warn: gyponly loads a native addon");
+    expect(output.match(/warn: /g)).toHaveLength(2);
+  }, 30_000);
+
+  test("no warning when the .node file is embedded by a direct require", async () => {
+    using dir = tempDir("compile-addon-embedded", {
+      ...nodeGypBuildStyle,
+      "index.js": `console.log(typeof require("fakeaddon/prebuilds/linux-x64/node.napi.node"));`,
+    });
+    const output = await build(String(dir));
+    expect(output).not.toContain("warn:");
+  }, 30_000);
+
+  test("no warning for a package without a native addon", async () => {
+    using dir = tempDir("compile-addon-none", {
+      "node_modules/plain/package.json": JSON.stringify({ name: "plain", version: "1.0.0", main: "index.js" }),
+      "node_modules/plain/index.js": `module.exports = 1;`,
+      "node_modules/plain/build/index.js": `module.exports = 2;`,
+      "index.js": `console.log(require("plain"));`,
+    });
+    const output = await build(String(dir));
+    expect(output).not.toContain("warn:");
+  }, 30_000);
+
+  test("no warning without --compile", async () => {
+    using dir = tempDir("compile-addon-no-compile", {
+      ...nodeGypBuildStyle,
+      "index.js": `console.log(typeof require("fakeaddon"));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=bun", "index.js", "--outfile", "out.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).not.toContain("warn:");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.build with compile reports the warning in logs", async () => {
+    using dir = tempDir("compile-addon-js-api", {
+      ...nodeGypBuildStyle,
+      "index.js": `console.log(typeof require("fakeaddon"));`,
+      "build.js": `
+        const result = await Bun.build({ entrypoints: ["./index.js"], compile: { outfile: "./app" } });
+        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => log.message) }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { success, logs } = JSON.parse(stdout);
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toStartWith("fakeaddon loads a native addon through a path built at run time");
+    expect(success).toBe(true);
+    expect(exitCode).toBe(0);
+  }, 30_000);
+});

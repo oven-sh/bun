@@ -4296,6 +4296,83 @@ pub mod bv2_impl {
             (fetcher.on_fetch)(fetcher.ctx, &mut result)
         }
 
+        /// `--compile` without `--aot`: one warning per reachable package that ships a native
+        /// addon (`prebuilds/` or `binding.gyp` in its root) and embeds no `.node` file in the
+        /// executable. Only a `require("./x.node")` with a string literal embeds the addon. A
+        /// loader such as `node-gyp-build` or `bindings` builds the path at run time from the
+        /// inlined `__dirname`, so the executable reads the build machine's `node_modules`.
+        ///
+        /// The resolver walked through every directory it looks at here, so each lookup is a
+        /// cache hit and the pass does no I/O. `binding.gyp` stands in for `build/Release`:
+        /// node-gyp only writes that directory next to a `binding.gyp`.
+        fn warn_unembedded_native_addons(
+            &mut self,
+            reachable_files: &[Index],
+        ) -> Result<(), Error> {
+            if !self.transpiler.options.compile_mode.is_executable() {
+                return Ok(());
+            }
+
+            let sources = self.graph.input_files.items_source();
+            let loaders = self.graph.input_files.items_loader();
+            // Keyed by the address of the resolver-owned `PackageJSON`. The value is whether a
+            // `.node` file of that package is embedded.
+            let mut packages: ArrayHashMap<usize, (&'static _resolver::PackageJSON, bool)> =
+                ArrayHashMap::new();
+            for source_index in reachable_files {
+                let index = source_index.get() as usize;
+                let path = &sources[index].path;
+                if !path.is_file() {
+                    continue;
+                }
+                let Some(package_json) = self
+                    .transpiler
+                    .resolver
+                    .read_dir_info_ignore_error(path.source_dir())
+                    .and_then(|dir| dir.enclosing_package_json)
+                else {
+                    continue;
+                };
+                let embedded = loaders[index] == options::Loader::Napi;
+                let key = core::ptr::from_ref(package_json).addr();
+                match packages.get_mut(&key) {
+                    Some(entry) => entry.1 |= embedded,
+                    None => packages.put(key, (package_json, embedded))?,
+                }
+            }
+
+            let generation = self.transpiler.resolver.generation;
+            for &(package_json, embedded) in packages.values() {
+                if embedded {
+                    continue;
+                }
+                let Some(root) = self
+                    .transpiler
+                    .resolver
+                    .read_dir_info_ignore_error(package_json.source.path.source_dir())
+                else {
+                    continue;
+                };
+                let artifact: &str = if root.has_entry(generation, b"prebuilds") {
+                    "prebuilds"
+                } else if root.has_entry(generation, b"binding.gyp") {
+                    "build/Release"
+                } else {
+                    continue;
+                };
+                let name = bstr::BStr::new(&package_json.name);
+                let dir = bstr::BStr::new(package_json.source.path.name().dir);
+                self.transpiler.log_mut().add_warning_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "{name} loads a native addon through a path built at run time, and no .node file from {dir} is embedded in the executable. The executable reads {dir}/{artifact} at run time and fails where that directory does not exist. Build with --aot and --asset node_modules/{name}/{artifact}, or load the .node file with a string literal require so that it is embedded."
+                    ),
+                );
+            }
+            Ok(())
+        }
+
         /// `load` has returned its `&mut Graph` before `link` starts the workers that read the graph.
         pub(crate) fn link(
             &mut self,
@@ -4373,6 +4450,7 @@ pub mod bv2_impl {
                 let reachable_files = this.find_reachable_files()?;
                 *reachable_files_count = reachable_files.len().saturating_sub(1); // - 1 for the runtime
 
+                this.warn_unembedded_native_addons(&reachable_files)?;
                 this.process_files_to_copy(&reachable_files)?;
 
                 this.add_server_component_boundaries_as_extra_entry_points()?;
@@ -5542,6 +5620,7 @@ pub mod bv2_impl {
 
             let reachable_files = self.find_reachable_files()?;
 
+            self.warn_unembedded_native_addons(&reachable_files)?;
             self.process_files_to_copy(&reachable_files)?;
 
             self.add_server_component_boundaries_as_extra_entry_points()?;

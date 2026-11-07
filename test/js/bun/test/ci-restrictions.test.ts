@@ -55,8 +55,52 @@ test.only("should fail in CI", () => {
 
       expect(exitCode).toBe(1);
       expect(stderr).toContain(
-        "error: .only is disabled in CI environments to prevent accidentally skipping tests. To override, set the environment variable CI=false.",
+        "error: .only is disabled in CI environments to prevent accidentally skipping tests. To override, pass --only or set the environment variable CI=false.",
       );
+    });
+
+    test("test.only and describe.only should work with --only when GITHUB_ACTIONS=1", async () => {
+      const dir = tempDirWithFiles("ci-test-only-flag", {
+        "focused.test.js": `
+import { test, expect, describe } from "bun:test";
+
+test.only("focused test runs", () => {
+  expect(1 + 1).toBe(2);
+});
+
+describe.only("focused describe", () => {
+  test("runs", () => {
+    expect(1 + 1).toBe(2);
+  });
+});
+
+test("unfocused test is skipped", () => {
+  expect(false).toBe(true);
+});
+        `,
+        "other.test.js": `
+import { test, expect } from "bun:test";
+
+test("unfocused file is skipped", () => {
+  expect(false).toBe(true);
+});
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--only"],
+        env: { ...bunEnv, GITHUB_ACTIONS: "1" },
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("is disabled in CI environments");
+      expect(stderr).toContain("2 pass");
+      expect(stderr).toContain("0 fail");
+      expect(exitCode).toBe(0);
     });
 
     test("describe.only should fail when GITHUB_ACTIONS=1", async () => {
@@ -84,7 +128,7 @@ describe.only("CI test", () => {
 
       expect(exitCode).toBe(1);
       expect(stderr).toContain(
-        "error: .only is disabled in CI environments to prevent accidentally skipping tests. To override, set the environment variable CI=false.",
+        "error: .only is disabled in CI environments to prevent accidentally skipping tests. To override, pass --only or set the environment variable CI=false.",
       );
     });
   });

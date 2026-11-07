@@ -584,12 +584,16 @@ describe("clearAllTimers() from the callback of a timer", () => {
     async schedule => {
       vi.useFakeTimers();
       let runs = 0;
-      const third = Promise.withResolvers<void>();
-      const callback = () => (vi.clearAllTimers(), ++runs === 3 && third.resolve());
-      const timer =
-        schedule === "setInterval" ? saved.setInterval(callback, 1) : withRepeat(saved.setTimeout(callback, 1), 1);
+      const ran = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+      const callback = () => (vi.clearAllTimers(), ran[runs++]?.resolve());
+      const timer = (
+        schedule === "setInterval" ? saved.setInterval(callback, 1) : withRepeat(saved.setTimeout(callback, 1), 1)
+      ) as Timer & { _destroyed: boolean };
       try {
-        await third.promise;
+        await ran[0].promise;
+        // Its first run has returned. A timer that the clear stopped is destroyed by now, and would never run again.
+        expect({ destroyed: timer._destroyed, hasRef: timer.hasRef() }).toEqual({ destroyed: false, hasRef: true });
+        await ran[1].promise;
       } finally {
         saved.clearInterval(timer);
       }

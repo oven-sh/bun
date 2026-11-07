@@ -1835,6 +1835,10 @@ impl Expect {
         let buntest = buntest_strong.get();
         let state_data = state.unwrap_or_else(|| buntest.get_current_state_data());
         let Some(execution) = state_data.sequence(buntest) else {
+            // A test context's `expect` names its test. With no sequence, the file of that test is over, and so is the count.
+            if state.is_some() {
+                return Ok(());
+            }
             return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
         };
         if !matches!(execution.expect_assertions, ExpectAssertions::Exact(_)) {
@@ -1887,6 +1891,10 @@ impl Expect {
         let buntest = buntest_strong.get();
         let state_data = state.unwrap_or_else(|| buntest.get_current_state_data());
         let Some(execution) = state_data.sequence(buntest) else {
+            // As in `has_assertions_in`.
+            if state.is_some() {
+                return Ok(());
+            }
             return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
         };
         execution.expect_assertions = ExpectAssertions::Exact(unsigned_expected_assertions);

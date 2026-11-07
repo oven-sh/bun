@@ -277,8 +277,15 @@ impl Snapshots {
 
     #[optimize(size)]
     pub(crate) fn add_count(&mut self, expect: &Expect, format: Format, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
+        let snapshot_name = Self::name_of(expect, format, hint);
+        self.count(expect, snapshot_name)
+    }
+
+    /// Counts the call of a snapshot matcher, also when the call has no name to be counted under.
+    #[optimize(size)]
+    fn count(&mut self, expect: &Expect, snapshot_name: Result<Vec<u8>, Error>) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
-        let snapshot_name = Self::name_of(expect, format, hint)?;
+        let snapshot_name = snapshot_name?;
         // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
         // owned `snapshot_name` (same bytes as the interned key) instead.
         let gop = self
@@ -306,7 +313,9 @@ impl Snapshots {
         let parent = expect.parent.as_ref().ok_or(Error::NoTest)?;
         let buntest_strong = parent.bun_test().ok_or(Error::TestNotActive)?;
         let buntest = buntest_strong.get();
-        let active = core::ptr::NonNull::from(parent.phase.entry(buntest).ok_or(Error::SnapshotInConcurrentGroup)?);
+        let Some(active) = parent.phase.entry(buntest).map(core::ptr::NonNull::from) else {
+            return Err(if parent.phase.test_has_ended(buntest) { Error::TestNotActive } else { Error::SnapshotInConcurrentGroup });
+        };
         let test = parent.phase.sequence(buntest).and_then(|sequence| sequence.test_entry);
         // SAFETY: `buntest_strong` owns the entries of its sequences.
         let entry: &ExecutionEntry = unsafe { test.filter(|_| format != Format::Bun).unwrap_or(active).as_ref() };
@@ -342,6 +351,10 @@ impl Snapshots {
         let file_id = buntest.file_id;
         if let Some(file) = self._current_file.as_ref().filter(|file| file.id == file_id) {
             return Ok(file.format);
+        }
+        // A test that has ended gets no snapshot, so it doesn't pick the format of the running file either.
+        if expect.parent.as_ref().is_some_and(|parent| parent.phase.test_has_ended(buntest)) {
+            return Err(Error::TestNotActive);
         }
         self.write_snapshot_file(files)?;
 
@@ -396,11 +409,13 @@ impl Snapshots {
         hint: &[u8],
     ) -> Result<Outcome, Error> {
         let format = self.format_of(files, expect)?;
-        if format == Format::Bun {
+        // A call that is refused must not create the file, and a call that cannot open the file must not use up a number.
+        let snapshot_name = Self::name_of(expect, format, hint);
+        if format == Format::Bun && snapshot_name.is_ok() {
             self.open_to_append(files)?;
         }
 
-        let (mut key, counter) = self.add_count(expect, format, hint)?;
+        let (mut key, counter) = self.count(expect, snapshot_name)?;
         let mut counter_string_buf = [0u8; 32];
         let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
         key.push(b' ');
@@ -622,6 +637,13 @@ impl Snapshots {
         received: &[u8],
         hint: &[u8],
     ) -> FileOutcome {
+        // `format_of` refuses a test that has ended only when it loads the file's snapshots, and the file is read before the count.
+        if let Some(parent) = expect.parent.as_ref()
+            && let Some(buntest) = parent.bun_test()
+            && parent.phase.test_has_ended(buntest.get())
+        {
+            return FileOutcome::NoTest(Error::TestNotActive);
+        }
         let format = match self.format_of(files, expect) {
             Ok(format) => format,
             Err(err) => return FileOutcome::NoTest(err),

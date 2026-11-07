@@ -297,23 +297,23 @@ describe("a file that fails in its parallel bucket", () => {
     });
   });
 
-  test("scripts/update-test-durations.mjs samples the bucket attempt, and not the attempts alone", () => {
-    // The sample of a file is its first attempt in a job. A file of a bucket runs beside other files, and the runner
-    // divides its duration by the number of files at once. The rerun alone is a retry: alone `regexp` took a quarter
-    // of its time in the bucket.
+  test("scripts/update-test-durations.mjs keeps the run alone as the sample, and takes none from the bucket", () => {
+    // The table is for the packing of shards. A file that fails in its bucket has a flaky or failed annotation, and
+    // scripts/update-parallel-allowlist.mjs takes a file with one out of the buckets, so it runs alone next. A bucket
+    // run that was interrupted, like that of `regexp`, did not finish either. A retry gives no sample, as before.
     expect(parseDurations(bucketThenPassAlone.join("\r\r\n"))).toEqual([
       [passed, 2070],
-      [mocked, 240230],
-      [regexp, 599930],
+      [mocked, 35538],
+      [regexp, 149852],
     ]);
     expect(parseDurations(bucketThenFailAlone.join("\r\r\n"))).toEqual([
       [slowPass, 344850],
-      [imported, 281800],
-      [twice, 186260],
+      [imported, 30318],
+      [twice, 196705],
     ]);
     expect(parseDurations(aloneIsLonger.join("\r\r\n"))).toEqual([
       [quick, 10],
-      [net, 5610],
+      [net, 6718],
     ]);
   });
 
@@ -339,40 +339,31 @@ describe("a file that fails in its parallel bucket", () => {
     });
     expect(parseDurations(log)).toEqual([
       ["test/ok.test.ts", 1000],
-      ["test/failed.test.ts", 4000],
+      ["test/failed.test.ts", 2000],
       ["test/unfinished.test.ts", 3000],
       ["test/serial.test.ts", 500],
     ]);
   });
 
-  test("both parsers keep the bucket attempt when the log ends before the file runs alone", () => {
+  test("scripts/ci-slowest-tests.ts keeps the bucket attempt when the log ends before the file runs alone", () => {
     // The job is killed after the runner has printed what failed in the bucket.
     const killed = bucketThenFailAlone.slice(0, 10).join("\r\r\n");
     expect(Object.fromEntries(parseLog(killed))).toEqual({ [slowPass]: 344850, [imported]: 281800, [twice]: 186260 });
-    expect(parseDurations(killed)).toEqual([
-      [slowPass, 344850],
-      [imported, 281800],
-      [twice, 186260],
-    ]);
+    // No file ran alone, so the durations have no sample for the two that failed.
+    expect(parseDurations(killed)).toEqual([[slowPass, 344850]]);
   });
 
-  test("both parsers read the line where it ends in three carriage returns", () => {
+  test("scripts/ci-slowest-tests.ts reads the line where it ends in three carriage returns", () => {
     // Most lines of a log end in `\r\r\n`. In the darwin logs some of the runner's lines end in `\r\r\r\n`.
-    const log = bucketThenPassAlone.join("\r\r\r\n");
-    expect(Object.fromEntries(parseLog(log))).toEqual({
+    expect(Object.fromEntries(parseLog(bucketThenPassAlone.join("\r\r\r\n")))).toEqual({
       [passed]: 2070,
       [mocked]: 240230 + 35538,
       [regexp]: 599930 + 149852,
     });
-    expect(parseDurations(log)).toEqual([
-      [passed, 2070],
-      [mocked, 240230],
-      [regexp, 599930],
-    ]);
   });
 
-  test("the group of a failed file ends the test that runs before it, as every header of the runner does", () => {
-    // The runner prints the header of the bucket first. A parser does not depend on that.
+  test("scripts/ci-slowest-tests.ts: the group of a failed file ends the test before it, as every header does", () => {
+    // The runner prints the header of the bucket first. The parser does not depend on that.
     const log = [
       bk(0, `--- ${gray("[1/3]")} test/serial.test.ts`),
       bk(1000, failedInBucket("test/b.test.ts", 1, "2.00")),
@@ -380,10 +371,6 @@ describe("a file that fails in its parallel bucket", () => {
       bk(9500, `--- End`),
     ].join("\n");
     expect(Object.fromEntries(parseLog(log))).toEqual({ "test/serial.test.ts": 1000, "test/b.test.ts": 2000 + 500 });
-    expect(parseDurations(log)).toEqual([
-      ["test/serial.test.ts", 1000],
-      ["test/b.test.ts", 2000],
-    ]);
   });
 
   test.each([

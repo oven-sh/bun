@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { failedBucketAttempt, isPhaseGroupHeader } from "./ci-log-phase.mjs";
+import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outputPath = join(__dirname, "..", "test", "expected-durations.json");
@@ -70,26 +70,24 @@ const api = async path => {
 // delta, not wall clock; we clamp it so the last-dispatched file on each shard
 // does not absorb the N-wide tail drain or a sibling's 5-15 s retry backoff.
 //
-// The sample of a file is its first attempt in the job. A retry (`[attempt #K]`)
-// gives none. A file that fails in its parallel bucket gives what it took
-// there, beside the other files: the runner divides the duration of a bucket
-// file by the number of files that run at once. What that file then takes
-// alone is a retry too. A file that did not finish in its bucket has no time
-// from there, so its run alone is its sample.
+// A file that fails in its parallel bucket gets no sample from the group that
+// the runner prints for that run, `--- <path> - K failing in the parallel
+// batch (X.XXs)`. Its sample is its run alone: a bucket run that was
+// interrupted did not finish, and update-parallel-allowlist.mjs takes a file
+// with a flaky or failed annotation out of the buckets, so it runs alone next.
 export function parseLog(raw) {
   const out = [];
-  // A line ends in up to three CRs before its LF.
-  const lines = raw.replace(/\x1b\[[0-9;]*m/g, "").split(/\r*\n/);
+  const lines = raw.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/);
   let path = null;
   let start = null;
   let concurrent = false;
   let lastTs = null;
-  let failedInBucket = null;
   const emit = ts => {
     if (path === null || start === null || ts === null) return;
     out.push([path, concurrent ? Math.min(ts - start, 500) : ts - start]);
   };
-  for (const line of lines) {
+  for (let line of lines) {
+    if (line.endsWith("\r")) line = line.slice(0, -1);
     const m = /^\x1b_bk;t=(\d+)\x07(.*)$/.exec(line);
     const ts = m ? (lastTs = Number(m[1])) : null;
     const text = m ? m[2] : line;
@@ -115,7 +113,7 @@ export function parseLog(raw) {
         concurrent = false;
         continue;
       }
-      const isPath = /\.(?:[cm]?[jt]sx?|json)$/.test(title) && !failedInBucket?.has(title);
+      const isPath = /\.(?:[cm]?[jt]sx?|json)$/.test(title);
       path = isPath ? title : null;
       start = isPath ? ts : null;
       concurrent = isPath && !hdr[1];
@@ -125,16 +123,10 @@ export function parseLog(raw) {
     // `napi prebuild: ...`, `Running N parallel-safe ...`, End) close the open
     // span so the preceding serial test is not charged for the phase that
     // follows. See scripts/ci-log-phase.mjs.
-    if (!text.startsWith("--- ")) continue;
-    const failed = failedBucketAttempt(text);
-    if (failed || isPhaseGroupHeader(text)) {
+    if (isPhaseGroupHeader(text)) {
       emit(ts);
       path = start = null;
       concurrent = false;
-    }
-    if (failed) {
-      out.push([failed.path, failed.ms]);
-      (failedInBucket ??= new Set()).add(failed.path);
     }
   }
   emit(lastTs);

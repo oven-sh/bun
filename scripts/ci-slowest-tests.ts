@@ -25,13 +25,14 @@ import { failedBucketAttempt, isPhaseGroupHeader } from "./ci-log-phase.mjs";
 // scripts/ci-log-phase.mjs for the header shapes runner.node.ts emits and why
 // each one has to close the open span.
 //
-// `record` gets each attempt of a file in the log, with what that attempt
-// took. An attempt is a serial run (the first, or an `[attempt #K]`), a run in
-// a parallel bucket whether it passed or failed there, or a dispatch of the
-// parallel-safe phase. In the phase of the files that build many executables
-// this loop times only a file that passes at its first try (`[N/M] <path>
-// (X.XXs)`): a first try that fails is no attempt, and a further try counts
-// like a parallel-safe dispatch, at most 500 ms.
+// `record` gets each attempt of a file that the log has seconds for, with
+// what that attempt took. An attempt is a serial run (the first, or an
+// `[attempt #K]`), a run in a parallel bucket (one that passed, or one that
+// failed and has its group), or a dispatch of the parallel-safe phase. In the
+// phase of the files that build many executables this loop times only a file
+// that passes at its first try (`[N/M] <path> (X.XXs)`): a first try that
+// fails is no attempt, and a further try counts like a parallel-safe dispatch,
+// at most 500 ms.
 function eachAttempt(text: string, record: (file: string, ms: number) => void): void {
   let curName: string | null = null;
   let curStart = 0;

@@ -11,9 +11,11 @@
 //   - parallel-bucket phase: `--- [A-B/M] K files in parallel`, then after the
 //     single `bun test --parallel` run a summary `[N/M] <path> (X.XXs)` per file
 //     that passed, and a group `--- <path> - K failing in the parallel batch (X.XXs)`
-//     per file whose tests failed there. Both say what the file took in the bucket.
-//     The group has no `[N/M]`: the file gets its number when it runs again, alone,
-//     as a serial test. failedBucketAttempt() reads it
+//     per file whose tests failed there. The seconds of the group are what the file
+//     took in the bucket, up to the interruption where the bucket was cut short. The
+//     group has no `[N/M]`: the file gets its number when it runs again, alone, as a
+//     serial test. failedBucketAttempt() reads it for ci:slowest. The durations
+//     parser takes no sample from it
 //   - parallel-safe phase: `--- Running N parallel-safe tests`, then a bare
 //     `[N/M] <path>` per concurrent dispatch (no recoverable wall clock)
 //   - compiled-programs phase: `--- Running N programs compiled ahead of time`,

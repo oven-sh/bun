@@ -173,8 +173,7 @@ void CryptoAlgorithmRSASSA_PKCS1_v1_5::importKey(CryptoKeyFormat format, KeyData
         break;
     }
     default:
-        // Only raw reaches here: raw-secret/raw-public alias to raw and
-        // raw-seed is rejected by aliasImportKeyFormat before dispatch.
+        // Only raw reaches here: aliasImportKeyFormat rejects raw-secret, raw-public and raw-seed.
         exceptionCallback(NotSupportedError, "Unable to import RSASSA-PKCS1-v1_5 using raw format"_s);
         return;
     }

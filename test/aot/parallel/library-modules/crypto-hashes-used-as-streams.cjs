@@ -1,4 +1,4 @@
-// Hashes, signers and verifiers are written to as streams. A chunk that comes after digest() is dropped.
+// Hashes, signers and verifiers are written to as streams. A chunk that comes after digest() is an error.
 const crypto = require("node:crypto");
 const hash = crypto.createHash("md5");
 hash.on("readable", () => {
@@ -14,7 +14,8 @@ hmac.on("data", digest => console.log("hmac", digest));
 hmac.end("ab");
 const late = crypto.createHash("md5");
 console.log(late.update("a").digest("hex"));
-late.write("b", () => console.log("written after digest"));
+late.on("error", error => console.log("error event", error.code));
+late.write("b", error => console.log("written after digest", error.code));
 const keys = crypto.generateKeyPairSync("rsa", { modulusLength: 1024 });
 const signer = crypto.createSign("sha256");
 signer.write("a");

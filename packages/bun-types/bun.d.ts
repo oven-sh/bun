@@ -4230,7 +4230,6 @@ declare module "bun" {
      * // true
      * ```
      *
-     * @throws If the algorithm is specified and does not match the hash
      * @throws If the algorithm is invalid
      * @throws If the hash is invalid
      */
@@ -4249,8 +4248,10 @@ declare module "bun" {
       /**
        * If not specified, the algorithm is inferred from the hash.
        *
-       * If specified and the algorithm does not match the hash, this function
-       * throws an error.
+       * If specified, Bun reads the hash as a hash of that algorithm. An argon2
+       * hash read as `"bcrypt"` never matches. A bcrypt hash read as argon2 is an
+       * invalid hash. `"argon2id"`, `"argon2i"` and `"argon2d"` each read all
+       * three, because an argon2 hash names its own variant.
        */
       algorithm?: Password.AlgorithmLabel,
     ): Promise<boolean>;

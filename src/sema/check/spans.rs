@@ -938,6 +938,20 @@ impl<'a, 's> Spans<'a, 's> {
         token_end(self.text, at, self.is_jsx())
     }
 
+    /// The `StringLiteralLike` at `pos`. The scanner of a JSDoc comment only has the text up to its `*/`.
+    pub(crate) fn string(self, pos: u32) -> u32 {
+        let comments = &self.hir.jsdoc_comments;
+        let started = comments.partition_point(|comment| comment.0 <= pos);
+        let scanned = match started.checked_sub(1).and_then(|index| comments.get(index)) {
+            Some(&(_, end)) if pos < end => {
+                self.text.get(..(end as usize).saturating_sub(b"*/".len()))
+            }
+            _ => None,
+        };
+        let end = token_end(scanned.unwrap_or(self.text), pos as usize, self.is_jsx());
+        (end as u32).max(pos)
+    }
+
     /// `Loc.End()` of a diagnostic stored with `start` and `end` (`hir::Diagnostic::end`).
     pub(crate) fn diagnostic_end(self, start: u32, end: u32) -> u32 {
         // In a JSDoc comment the line break is a token.
@@ -965,6 +979,7 @@ impl<'a, 's> Spans<'a, 's> {
     fn name(self, at: usize) -> usize {
         match self.byte(at) {
             b'[' | b'{' => self.bracket(at),
+            b'"' | b'\'' => self.string(at as u32) as usize,
             _ => self.token(at),
         }
     }
@@ -1598,6 +1613,11 @@ impl<'s> Checker<'_, 's> {
     /// retained.
     pub(super) fn end_of_token_at(&self, file: FileId, pos: u32) -> u32 {
         (self.spans(file).token(pos as usize) as u32).max(pos)
+    }
+
+    /// `node.End()` of the string that starts at `pos`: a module specifier, or the name of an import or export.
+    pub(super) fn end_of_string_at(&self, file: FileId, pos: u32) -> u32 {
+        self.spans(file).string(pos)
     }
 
     /// End of the bracketed group opened at `open`: after the matching `)`, `]`, `}`.

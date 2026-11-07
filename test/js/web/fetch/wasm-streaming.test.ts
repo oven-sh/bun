@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 
 import { ok } from "node:assert/strict";
+import { join } from "node:path";
 
 const wasmDataUriPrefix = "data:application/wasm;base64,";
 
@@ -287,5 +288,100 @@ describe("WebAssembly.instantiateStreaming", () => {
     expect(instantiateAndGetExports(response)).rejects.toThrow(
       "can't make WebAssembly.Instance because there is no imports Object and the WebAssembly.Module requires imports",
     );
+  });
+});
+
+// The streaming compiler registers its pending work as work that may never get
+// scheduled (the response body could stall forever), which by itself does not
+// keep the event loop alive. Once the last byte is in, compilation is running
+// on the wasm worklist threads and the process must wait for it to settle the
+// promise instead of exiting with it forever pending.
+// https://github.com/oven-sh/bun/issues/25145
+describe("pending streaming compilation keeps the process alive", () => {
+  const fixture = join(import.meta.dir, "wasm-streaming-keeps-alive-fixture.ts");
+  const headers = { "Content-Type": "application/wasm" };
+
+  function uleb(value: number): number[] {
+    const out: number[] = [];
+    do {
+      let byte = value & 0x7f;
+      value >>>= 7;
+      if (value !== 0) byte |= 0x80;
+      out.push(byte);
+    } while (value !== 0);
+    return out;
+  }
+
+  // `funcs` functions `(func (result i32) i32.const 0 (i32.const 1 i32.add)*adds)`. With `lastIsValid` false the last
+  // function leaves nothing on the stack, which the compiler finds only when it reaches that function.
+  function makeWasm(funcs: number, adds: number, lastIsValid = true): Buffer {
+    const body: number[] = [0, 0x41, 0x00];
+    for (let i = 0; i < adds; i++) body.push(0x41, 0x01, 0x6a);
+    body.push(0x0b);
+    const valid = [...uleb(body.length), ...body];
+    const last = lastIsValid ? valid : [2, 0, 0x0b];
+    const code = [...uleb(funcs), ...Array.from({ length: funcs - 1 }, () => valid).flat(), ...last];
+    return Buffer.from([
+      ...[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+      ...[1, 5, 1, 0x60, 0, 1, 0x7f],
+      ...[3, ...uleb(uleb(funcs).length + funcs), ...uleb(funcs), ...new Array(funcs).fill(0)],
+      ...[10, ...uleb(code.length), ...code],
+    ]);
+  }
+
+  // Enough work for the one compiler thread that the compilation outlives the main script.
+  const modules = {
+    valid: makeWasm(200, 1000),
+    // Fails when the compiler thread reaches the last function.
+    invalid: makeWasm(200, 1000, false),
+    // Fails when the compiler learns that no more bytes come.
+    truncated: makeWasm(200, 1000).subarray(0, -1000),
+  };
+
+  async function run(api: string, body: string, how: string, module: keyof typeof modules) {
+    using dir = tempDir("wasm-streaming-keeps-alive", { "module.wasm": modules[module] });
+    // The server of the "fetch" body is in this process: nothing but the compilation keeps the child alive.
+    await using server =
+      body === "fetch" ? Bun.serve({ port: 0, fetch: () => new Response(modules[module], { headers }) }) : undefined;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, api, body, how, join(String(dir), "module.wasm"), `${server?.url ?? ""}`],
+      // A single compiler thread keeps the whole compilation pending when the
+      // main script finishes, on any machine.
+      env: { ...bunEnv, BUN_JSC_numberOfWasmCompilerThreads: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent.each([
+    ["compileStreaming", "buffered", "then"],
+    ["compileStreaming", "stream", "then"],
+    ["instantiateStreaming", "buffered", "then"],
+    ["instantiateStreaming", "stream", "then"],
+    ["instantiateStreaming", "file", "then"],
+    ["instantiateStreaming", "fetch", "then"],
+    // A top-level await has nothing else to wait for either.
+    ["compileStreaming", "buffered", "await"],
+    ["instantiateStreaming", "stream", "await"],
+  ] as const)("%s settles with a %s response body (%s)", async (api, body, how) => {
+    expect(await run(api, body, how, "valid")).toEqual({ stdout: "settled\n", stderr: "", exitCode: 0 });
+  });
+
+  // A compilation that fails releases the event loop too: the rejection arrives and the process ends by itself.
+  test.concurrent.each([
+    ["compileStreaming", "buffered", "invalid"],
+    ["instantiateStreaming", "stream", "invalid"],
+    ["instantiateStreaming", "fetch", "invalid"],
+    ["compileStreaming", "buffered", "truncated"],
+    ["instantiateStreaming", "stream", "truncated"],
+  ] as const)("%s rejects with a %s response body of a module that is %s", async (api, body, module) => {
+    expect(await run(api, body, "then", module)).toEqual({
+      stdout: "rejected: CompileError\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

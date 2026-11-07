@@ -802,32 +802,39 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
       `perl -MPOSIX -e '` +
       `$|=1; ` +
       `$SIG{CONT}=sub{ print "RESUMED\\n" }; ` +
+      // The child can run before bun's post-spawn terminal handoff completes.
+      `select undef, undef, undef, 0.001 while POSIX::tcgetpgrp(0) != getpgrp(); ` +
       `printf "READY %d\\n", getpgrp(); ` +
       `sleep 1 while 1'`;
 
     // Minimal interactive-shell stand-in. SIGTTOU ignored so `tcsetpgrp` from
     // the background succeeds instead of EIO (session-leader pgroup is
-    // orphaned). BUN_PGID is printed *before* handing off the foreground so
-    // ordering vs. READY is deterministic. `${^CHILD_ERROR_NATIVE}` — not
+    // orphaned). Release the child only after establishing its foreground:
+    // a late parent tcsetpgrp must not steal it back from the script.
+    // `${^CHILD_ERROR_NATIVE}` — not
     // `$?` — carries the raw WIFSTOPPED bits on a WUNTRACED return.
     const shellSim =
       `use POSIX qw(:sys_wait_h setpgid tcsetpgrp WIFSTOPPED);` +
+      `sub foreground { my ($pgid) = @_; ` +
+      `  my $result = tcsetpgrp(0, $pgid); defined($result) && $result == 0 or die "tcsetpgrp: $!"; ` +
+      `  my $fg = POSIX::tcgetpgrp(0); defined($fg) or die "tcgetpgrp: $!"; ` +
+      `  $fg == $pgid or die "foreground group $fg, expected $pgid"; } ` +
       `$|=1; $SIG{TTOU}="IGNORE"; ` +
-      `my $bun = fork(); ` +
-      // Child sets its own pgroup AND makes itself foreground *before* exec
-      // so `JobControl.give()`'s `tcgetpgrp(0)==getpgrp()` gate is satisfied
-      // regardless of whether the parent's tcsetpgrp won the fork race.
-      `if ($bun == 0) { setpgid(0,0); tcsetpgrp(0,$$); ` +
+      `pipe(my $start_r, my $start_w) or die $!; ` +
+      `my $bun = fork(); defined($bun) or die $!; ` +
+      `if ($bun == 0) { close($start_w); setpgid(0,0) or die $!; ` +
+      `  my $go; sysread($start_r, $go, 1) == 1 or die $!; close($start_r); ` +
       `  exec($ENV{BUN_EXE}, "run", "--no-orphans", "--silent", "dev") or die $!; } ` +
-      `setpgid($bun, $bun); ` +
-      `tcsetpgrp(0, $bun); ` +
+      `close($start_r); setpgid($bun, $bun) or die $!; ` +
+      `foreground($bun); ` +
       `print "BUN_PGID $bun\\n"; ` +
+      `syswrite($start_w, "g", 1) == 1 or die $!; close($start_w); ` +
       `while (1) { ` +
       `  my $w = waitpid($bun, WUNTRACED); last if $w <= 0; ` +
       `  if (WIFSTOPPED(\${^CHILD_ERROR_NATIVE})) { ` +
       `    print "BUN_STOPPED\\n"; ` +
       // `fg`: foreground back to the job, then SIGCONT its pgroup.
-      `    tcsetpgrp(0, $bun); kill "CONT", -$bun; ` +
+      `    foreground($bun); kill("CONT", -$bun) or die $!; ` +
       `  } else { last; } ` +
       `}`;
 
@@ -862,21 +869,21 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
     // `finally` and the stopped processes leak into CI.
     let timedOut = false;
     const deadline = sleep(10000).then(() => (timedOut = true));
-    const waitFor = async (needle: string) => {
-      while (!out.includes(needle) && !timedOut) {
+    const waitFor = async (pattern: RegExp) => {
+      while (!pattern.test(out) && !timedOut) {
         wake = Promise.withResolvers();
         await Promise.race([wake.promise, eof.promise, deadline]);
         if (proc.terminal!.closed) break;
       }
-      expect(out).toContain(needle);
+      expect(out).toMatch(pattern);
     };
 
     let bunPgid = 0;
     let scriptPgid = 0;
     try {
-      await waitFor("BUN_PGID ");
-      await waitFor("READY ");
+      await waitFor(/BUN_PGID \d+\r?\n/);
       bunPgid = Number(out.match(/BUN_PGID (\d+)/)![1]);
+      await waitFor(/READY \d+\r?\n/);
       scriptPgid = Number(out.match(/READY (\d+)/)![1]);
       expect(bunPgid).toBeGreaterThan(0);
       expect(scriptPgid).toBeGreaterThan(0);
@@ -887,11 +894,11 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
       // (the script). `bun run` must observe the stop and stop itself; the
       // perl shell's `waitpid(WUNTRACED)` then reports it.
       proc.terminal!.write("\x1a");
-      await waitFor("BUN_STOPPED");
+      await waitFor(/BUN_STOPPED\r?\n/);
 
       // (3) perl already `fg`'d it; `onChildStopped` SIGCONTs the script
       // pgroup on resume.
-      await waitFor("RESUMED");
+      await waitFor(/RESUMED\r?\n/);
     } finally {
       // `bun run` watches ppid and cleans its own tree when perl dies, but
       // belt-and-braces so a regressing build can't leak stopped processes

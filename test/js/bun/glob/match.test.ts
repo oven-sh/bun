@@ -2436,6 +2436,173 @@ describe("Glob.match", () => {
     }
   });
 
+  // `a/**/*` doesn't match `a/`.
+  test.each([
+    ["a/{**,b}/*", ["a/x", "a/x/", "a/x/y", "a/x/y/", "a/b/z", "a/b/"], ["a/", "a"]],
+    ["a/{b,**}/*", ["a/x", "a/x/", "a/b/z"], ["a/", "a"]],
+    ["a/{**}/*", ["a/x", "a/x/", "a/b/z"], ["a/", "a"]],
+    ["a/{**/**,b}/*", ["a/x", "a/x/", "a/b/z"], ["a/", "a"]],
+    ["a/{{**,c},b}/*", ["a/x", "a/x/", "a/b/z"], ["a/", "a"]],
+    ["{a/{**,b},c}/*", ["a/x", "a/x/", "c/x"], ["a/", "a"]],
+    ["{a/**,b}/*", ["a/x", "a/x/", "a/x/y", "b/x"], ["a/", "a", "b"]],
+    ["a/{x/**,b}/*", ["a/x/y", "a/x/y/", "a/b/z"], ["a/x/", "a/x", "a/"]],
+    ["a/{x/**,y/**}/*", ["a/x/q/", "a/y/q/", "a/x/q"], ["a/x/", "a/y/", "a/"]],
+    ["a/{x/**,{y/**,z}}/*", ["a/x/q/", "a/y/q/", "a/z/q"], ["a/x/", "a/y/"]],
+    ["x*/{**,b}/*", ["xy/z", "xy/z/"], ["xy/", "xy"]],
+    ["a/{**,[!x]}/*", ["a/b/", "a/x/", "a//", "a/b/c"], ["a/"]],
+    ["src/{,**}/*", ["src/a", "src/a/", "src//", "src/a/b"], ["src/", "src"]],
+    ["a/{.,**}/*", ["a/./", "a/x", "a/./x"], ["a/"]],
+    ["!a/{**,b}/*", ["a/", "a"], ["a/x", "a/x/"]],
+    // These have always matched: a `**` that ends an alternative used to be a `*`, and `*/*` matches `x/`.
+    ["{**,b}/*", ["x", "x/", "b/x", "/"], ["", "//"]],
+    ["{,**}/*", ["a/", "/a", "/"], ["", "//"]],
+    ["/*{**,b}/*", ["//", "/a/", "/a/b"], ["/"]],
+    ["/{**,}/*", ["//", "/a"], ["/"]],
+    // Only a `**` right before the `/*`, and only a pattern that ends with `/*`.
+    ["{src/**,lib}/{test,spec}/*", ["src/a/test/", "src/a/b/test/", "src/test/", "src/a/b/test/x"], ["src/"]],
+    ["{{src/**,lib}/test,x}/*", ["src/a/b/test/", "src/test/", "x/"], ["src/"]],
+    ["{src/**,lib}/{test**,spec}/*", ["src/a/b/testing/", "src/testing/", "lib/spec/"], ["src/"]],
+    ["{src/**,lib}/a{**,b}/*", ["src/x/y/ab/", "src/ab/", "lib/ab/"], ["src/"]],
+    // `src/**/b/*` matches `src/b/`, and `src/**/x/**/*` doesn't match `src/x/`.
+    ["{src/**,lib}/{x/**,b}/*", ["src/b/", "src/q/b/", "lib/b/", "src/x/y/"], ["src/x/", "src/q/x/", "lib/x/"]],
+    ["a{/,[!x]/**}", ["a///", "a//", "ab/"], ["a/b/"]],
+    ["/*[!x]*{,x/**}/", ["/aa//", "/aa/"], ["/a/x/", "/aa"]],
+    // Node reads `//*` as `/*`, and leaves the `/` at the end of a path out of account.
+    ["/{,x/**,aa}/*", ["/x/", "/x/y", "/aa/"], ["/x", "/"]],
+    ["{,**}{,x/**}/*", ["x///", "x/", "x/a"], [""]],
+  ])("a `**` that ends an alternative before `/*`: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
+  test.each([
+    // The pattern has more than 64 bytes, and the `**` and the `/` after the group are not among the same 64.
+    ["in a long pattern", Buffer.alloc(56, "x").toString(), (name: string) => `{${name}/**,bbbbbbbb}/*`],
+    // A path of 512 bytes or more gets a cache on the first match.
+    ["on a long path", Buffer.alloc(600, "x").toString(), (name: string) => `${name}/{**,b}/*`],
+  ])("a `**` that ends an alternative before `/*`, %s", (_, name, make) => {
+    const pattern = make(name);
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      const matched = [`${name}/`, `${name}/y`, `${name}/y/`, name].map(
+        path => [glob.match(path), new Glob(pattern).match(path)] as const,
+      );
+      expect(matched).toEqual([
+        [false, false],
+        [true, true],
+        [true, true],
+        [false, false],
+      ]);
+    }
+  });
+
+  // `*[!x]*` doesn't match `a/b`: its class takes the `a`, and its last `*` stops at the `/`.
+  test.each([
+    ["*{zz,[!x]}*", ["*zz*", "*[!x]*"]],
+    ["*{zz,[/]}*", ["*zz*", "*[/]*"]],
+    ["a{zz,[!x]}b", ["azzb", "a[!x]b"]],
+    ["*b{[!x]}*", ["*b[!x]*"]],
+    ["{a,b}*[!x]*", ["a*[!x]*", "b*[!x]*"]],
+    ["*[!x]{,a}*", ["*[!x]*", "*[!x]a*"]],
+    ["*{a,{b,[!x]}}*", ["*a*", "*b*", "*[!x]*"]],
+    ["*{a,b}{x,[!x]}*", ["*ax*", "*a[!x]*", "*bx*", "*b[!x]*"]],
+    ["{*a,b}*[!x]*", ["*a*[!x]*", "b*[!x]*"]],
+    ["\\*{*,a}[!x]*", ["\\**[!x]*", "\\*a[!x]*"]],
+    ["{**/a,*[!x]*}", ["**/a", "*[!x]*"]],
+    ["{a/**,*[!x]*}", ["a/**", "*[!x]*"]],
+  ])(
+    "a group matches what its alternatives match, with a `*` and a class that can match a separator: %s",
+    (pattern, alternatives) => {
+      let paths = [""];
+      for (let length = 0; length < 4; length++) {
+        paths = paths.flatMap(path =>
+          path.length === length ? [path, ...Array.from("abx/*", it => path + it)] : [path],
+        );
+      }
+      // Node has a reading of its own for the others. See below.
+      paths = paths.filter(path => !path.endsWith("/") && !path.includes("//"));
+      const glob = new Glob(pattern);
+      const written = alternatives.map(it => new Glob(it));
+      for (let round = 0; round < 2; round++) {
+        const differs = paths.filter(path => {
+          const expected = written.some(it => it.match(path));
+          return glob.match(path) !== expected || new Glob(pattern).match(path) !== expected;
+        });
+        expect(differs).toEqual([]);
+      }
+    },
+  );
+
+  test.each([
+    ["*{zz,[!x]}*", ["a", "azz", "/b", "x/b", "xx/", "é"], ["a/b", "a/b/c", "a/zz", "x", "", "é/b", "a/é", "./a"]],
+    ["!*{zz,[!x]}*", ["a/b", "x"], ["a", "/b"]],
+    ["{*[!x]*,src/**/*}", ["src/c.ts", "src/", "src/a/b", "ab", "x/y"], ["lib/c.ts", "a/b", "x"]],
+    ["{src/**,*[!x]*}", ["src/c.ts", "src/", "src/a/b", "src", "ab", "x/y"], ["lib/c.ts", "a/b", "x"]],
+    ["{**,*[!x]}*", ["ab", "x/y"], ["a/b", "a/b/c"]],
+    ["*{**,[!x]}*", ["a", "ab"], ["a/b", "a/b/c"]],
+    ["{a/**,*[!x]*}/*", ["a/", "a/b/c", "b/c", "b/c/"], ["b/c/d"]],
+    ["{x\\**,*[!x]*}", ["x*", "x*a", "b"], ["x*/a", "a/b"]],
+    // What Node matches still matches. It leaves a `/` at the end of the path out of account, reads `//` and `/./` as `/`,
+    // leaves out `b/../`, and takes the two `*` around an empty alternative for a `**`.
+    ["*{yy,[!x]}*", ["a/"], ["a/b/"]],
+    ["*{zz,[!x]}/*", ["a//b"], ["a/b/c"]],
+    ["*{zz,[!x]}*/*", ["a/./b"], ["a/b/c"]],
+    ["*[!x]*{zz,[!x]}*", ["b/../aa"], ["b/c/aa"]],
+    ["*[!x]*[!x]*{zz,[!x]}*{,[!x]}*", ["b/c/../../aaa"], ["b/c/d/e/aaa"]],
+    ["{{.*,*[!x]*,.},a}", ["./.", "./"], ["a/."]],
+    ["*[^a]/{**,..}", ["///", "b/c"], ["b"]],
+    ["*{,[!x]}*", ["a/b", "a", "x"], ["a/b/c"]],
+    ["*{[!x]*,*}/", ["a/a/", "a/", "x/"], ["a/a"]],
+    ["*[!x]*{/**,b}", ["a//", "ab/c"], ["x"]],
+    // `*[!x]*/**` matches `///`, and `*[!x]/**/` matches `.//aa/../`.
+    ["*[!x]*{/**,}", ["a", "ab/c", "a//", "///", "x///"], ["x"]],
+    ["*{[!x],[!x]/**}{/,a/**}", [".//aa/../", "a//b/", "ab/"], ["x"]],
+    // Node reads these patterns the way the loop does, so how it reads the path doesn't count.
+    ["*[!x]{[!x]*,b}a", ["aba", "a/ba", "abba"], ["a//a"]],
+    // Its `*` takes at least one character.
+    ["{*,}[!x]/*", ["a/", "a/b", "ab/c"], ["a//"]],
+    // A pattern that ends with `**/*` itself doesn't match `a/`.
+    ["{a,*[!x]}/**/*", ["a/b", "ab/c", "c/a/b"], ["a/", "a", "ab/"]],
+    // Written out as they are, these would mean something else: a leading `!`, `**/*` at the end, `*(a)`.
+    ["{*[!x],}!*", ["!", "!a", "a!b", "/!a", "a/!"], ["a", "a/b", ""]],
+    ["*[/]{/**/*,x}", ["//", "a//", "a//b/", "a/x"], ["/", "a/", "a/x/"]],
+    ["{*,[!x]}(a)", ["(a)", "x(a)", "b(a)", "/(a)"], ["a", "", "aa"]],
+    ["{!,a}*[/]", ["!/", "!b/", "a/"], ["!b", "b/"]],
+    ["*{zz,[!x]}*/../!b", ["a/../!b", "ab/../!b"], ["a/b/../!b"]],
+    ["*{[/]*,b}(a)", ["a/x(a)", "/(a)", "ab(a)"], ["a/x", "a/aa"]],
+    // The first `*` is escaped.
+    ["\\*{*,a}[/][/]", ["*b//", "*//", "*a//"], ["*b/"]],
+    ["{\\**,b}/[!x]", ["*a//", "*a/b", "b/c"], ["*a/"]],
+    // Without a `*` before the class, the loop misses nothing.
+    ["{[!x]/**,q}", ["//a/b", "a/b/c", "//"], ["a"]],
+    // Only a pattern that has nothing else for the loop to stumble over.
+    ["****/**/{[!x]}", ["a", "x/a", "a/b"], ["xa"]],
+    ["**a{,b}[!x]*a", ["aa/a", "aaba"], ["aabc"]],
+    ["*{a,[!x]}*@(b)", ["ab", "a/b", "ab/b"], ["a", "a/"]],
+    ["*[!x]*{1..3}", ["a/1", "a1", "ab/2"], ["a/4"]],
+    ["*[!x]{*,[}", ["a/b", "a/", "a["], ["x", ""]],
+    ["*[!x]*{a,b", ["ab{a,b"], ["ab", "a/b{a,b"]],
+    ["*{zz,[!x]}*{a", ["a/b{a", "ab{a"], ["a/b"]],
+    // A pattern of up to 1024 bytes is written out.
+    [`*{zz,[!x]}*${Buffer.alloc(1013, "y")}`, [`a${Buffer.alloc(1013, "y")}`], [`a/b${Buffer.alloc(1013, "y")}`]],
+    [`*{zz,[!x]}*${Buffer.alloc(1014, "y")}`, [`a/b${Buffer.alloc(1014, "y")}`], ["a/b"]],
+    // Up to 64 patterns are written out. Each group counts as two or more.
+    [`*{${Array.from({ length: 63 }, (_, i) => `z${i}`)},[!x]}*`, ["a", "z62", "/b"], ["a/b", "x"]],
+    [`*{${Array.from({ length: 64 }, (_, i) => `z${i}`)},[!x]}*`, ["a", "z63", "/b", "a/b"], ["x"]],
+    [`*${Buffer.alloc(6 * 8, "{a,[!x]}")}*`, ["aaaaaa", "aaaaa/"], ["aaaaaaa/b", "aaaaa"]],
+    [`*${Buffer.alloc(7 * 8, "{a,[!x]}")}*`, ["aaaaaaa", "aaaaaa/", "aaaaaaaa/b"], ["aaaaaa"]],
+    [`*${Buffer.alloc(7 * 3, "{a}")}[!x]*`, ["aaaaaaaab", "aaaaaaa/", "aaaaaaaa/b"], ["aaaaaaa"]],
+  ])("a group, a `*` and a class that can match a separator: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
   test.each([
     ["{src/**,lib/**}", ["src/a", "lib/a/b.ts", "src/"], ["src", "test/a", "a/src/b"]],
     ["{**/*.ts,**/*.js}", ["a.ts", "src/a/b.js"], ["a.css", "src/a.tsx"]],
@@ -2773,14 +2940,14 @@ describe("Glob.match", () => {
   );
 
   test.each([
-    ["**/*[!a]*{a,b}", ["/abc/aa", "x//abc/aa", "b/x//abc/aa"], ["/abc/ac", "c/cc"]],
+    ["**/*[!a]*{a,b}", ["bca", "x/bcb", "/a"], ["/abc/aa", "x//abc/aa", "b/x//abc/aa", "/abc/ac", "c/cc"]],
     ["**/*[^b]*@(a|b)", ["abc/b", "x/abc/b"], ["abc/c", "b"]],
-    ["*[^b]*{a,b}/x", ["abc/ab/x", "ca/x"], ["cc/x", "abc/cc/x"]],
-    ["a/**/*[^/]*[!a]*{a,b}", ["a/bcaa", "a/x/bc/a"], ["a/aa", "b/bcaa"]],
-    ["**/*[!a]*[^/]/**/*{,b}/*", ["b/./.a/é", "2/x//y/z", "a}/n/../"], ["a/a", "aa"]],
+    ["*[^b]*{a,b}/x", ["ca/x", "/a/x"], ["abc/ab/x", "cc/x", "abc/cc/x"]],
+    ["a/**/*[^/]*[!a]*{a,b}", ["a/bcaa", "a/x/bca"], ["a/x/bc/a", "a/aa", "b/bcaa"]],
+    ["**/*[!a]*[^/]/**/*{,b}/*", ["bc/x/y", "x/bc/y/z"], ["b/./.a/é", "2/x//y/z", "a}/n/../", "a/a", "aa"]],
     ["**/*[^b]**a*/**/{a,b}*/*", ["1/a/aa/aa", "1/a/aa/aa/x"], ["1/c/cc/cc"]],
-    ["**/*[!a]*[+-9]/**/*/{*a,b}/b", ["a,b/2/ba//a/b", "x/2/ba//a/b"], ["x/2/c/c/c"]],
-    ["**/*[!a]*[!a]/**/*/{,b}/*/*", ["ab/ab/x//x/+", "ab/ab/x//x/y"], ["aa/aa"]],
+    ["**/*[!a]*[+-9]/**/*/{*a,b}/b", ["b2/x/a/b", "y/b2/x/b/b"], ["a,b/2/ba//a/b", "x/2/ba//a/b", "x/2/c/c/c"]],
+    ["**/*[!a]*[!a]/**/*/{,b}/*/*", ["bb/x//y/z", "bb/x/b/y/z"], ["ab/ab/x//x/+", "ab/ab/x//x/y", "aa/aa"]],
   ])("a group after a `*` and a class that can match a separator: %s", (pattern, matches, others) => {
     const glob = new Glob(pattern);
     for (let round = 0; round < 12; round++) {

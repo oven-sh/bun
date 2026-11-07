@@ -146,6 +146,39 @@ describe("bundler", () => {
     },
   });
 
+  // A fragment or a remote URL is not a file, also when tsconfig `paths` has a key of
+  // that name and `packages: "external"` is set.
+  itBundled("html/external-assets-tsconfig-paths-packages-external", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <img src="#logo">
+    <img src="https://cdn.example.com/logo.svg">
+    <a href="#logo">Logo</a>
+  </body>
+</html>`,
+      "/logo.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+      "/tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          paths: {
+            "#logo": ["./logo.svg"],
+            "https://cdn.example.com/logo.svg": ["./logo.svg"],
+          },
+        },
+      }),
+    },
+    entryPoints: ["/index.html"],
+    packages: "external",
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html).toContain(`<img src="#logo">`);
+      expect(html).toContain(`<img src="https://cdn.example.com/logo.svg">`);
+    },
+  });
+
   // Test mixed local and external assets
   itBundled("html/mixed-assets", {
     outdir: "out/",

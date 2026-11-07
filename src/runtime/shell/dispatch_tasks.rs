@@ -94,6 +94,9 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
             Ok(Err(e)) => this.err = Some(ShellGlobErr::Syscall(e)),
             Err(e) => this.err = Some(ShellGlobErr::Unknown(e)),
         }
+        // The event loop thread drops this task. It must not free the walker's copy of each match.
+        this.walker.matched_paths.clear_and_free();
+        sort_glob_matches(&mut this.result);
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: paired with `heap::alloc` in `create_and_schedule`.
@@ -153,6 +156,15 @@ impl ShellGlobTask {
                 }
             }
         }
+    }
+}
+
+/// Byte order, as dash sorts and as bash sorts in the C locale. On Windows `\` ranks as `/`.
+pub(crate) fn sort_glob_matches(matches: &mut [Vec<u8>]) {
+    use bun_resolver::compiled_program::compare_source_paths;
+    let order = |a: &Vec<u8>, b: &Vec<u8>| compare_source_paths(a, b).then_with(|| a.cmp(b));
+    if !matches.is_sorted_by(|a, b| order(a, b).is_le()) {
+        bun_collections::index_sort::sort_slice_unstable_by(matches, order);
     }
 }
 

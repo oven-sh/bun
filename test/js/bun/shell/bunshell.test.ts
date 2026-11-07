@@ -985,7 +985,7 @@ booga"
 
     TestBuilder.command`touch hihello; touch hifriends; FOO=hi*; echo $FOO`
       .ensureTempDir()
-      .stdout(s => expect(s).toBeOneOf(["hihello hifriends\n", "hifriends hihello\n"]))
+      .stdout("hifriends hihello\n")
       .runAsTest("Trailing asterisk with matches, inline");
 
     TestBuilder.command`ls *.js`
@@ -1209,6 +1209,103 @@ booga"
       } finally {
         chmodSync(noaccess, 0o755);
       }
+    });
+
+    describe("the matches of a glob word are sorted by byte, as in dash and in bash in the C locale", () => {
+      // Made in this order, so that a listing in creation order, in reverse creation order or in hash order isn't sorted.
+      const shuffled = [7, 2, 11, 5, 1, 9, 12, 4, 8, 3, 10, 6].map(i => String(i).padStart(2, "0"));
+      const parts = Object.fromEntries(shuffled.map(digits => [`part-${digits}`, `${digits}\n`]));
+      const sorted = shuffled.toSorted();
+      const sortedParts = sorted.map(digits => `part-${digits}`).join(" ");
+      const folders = { "s2/x": "", "s3/x": "", "s1/x": "" };
+
+      test.concurrent("echo part-*", async () => {
+        using dir = tempDir("shell-glob-order", parts);
+        const { stdout, exitCode } = await $`echo part-*`.cwd(String(dir)).quiet();
+        expect(stdout.toString()).toBe(`${sortedParts}\n`);
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("cat part-* joins the parts in the order of their names", async () => {
+        using dir = tempDir("shell-glob-order", parts);
+        const { stdout, exitCode } = await $`cat part-*`.cwd(String(dir)).quiet();
+        expect(stdout.toString()).toBe(sorted.map(digits => `${digits}\n`).join(""));
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("bun exec sorts them too", async () => {
+        using dir = tempDir("shell-glob-order", parts);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "exec", "echo part-*"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe(`${sortedParts}\n`);
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("a * in a folder component", async () => {
+        using dir = tempDir("shell-glob-order", folders);
+        const { stdout, exitCode } = await $`echo */x`.cwd(String(dir)).quiet();
+        expect(stdout.toString().replaceAll("\\", "/")).toBe("s1/x s2/x s3/x\n");
+        expect(exitCode).toBe(0);
+      });
+
+      // `.` is before `/` and `/` is before `1`. A `\` would be after all three.
+      test.concurrent("the whole path is compared, and its separator is a /", async () => {
+        using dir = tempDir("shell-glob-order", { "a1/f": "", "a/f": "", "a.d/f": "" });
+        const { stdout, exitCode } = await $`echo a*/*`.cwd(String(dir)).quiet();
+        expect(stdout.toString().replaceAll("\\", "/")).toBe("a.d/f a/f a1/f\n");
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("a ** word is sorted as one list of paths", async () => {
+        using dir = tempDir("shell-glob-order", {
+          "a1/z": "",
+          "a/c": "",
+          "a/b": "",
+          "a.txt": "",
+          "a.d/x": "",
+          "a.d/sub/y": "",
+        });
+        const { stdout, exitCode } = await $`echo **`.cwd(String(dir)).quiet();
+        expect(stdout.toString().replaceAll("\\", "/")).toBe("a a.d a.d/sub a.d/sub/y a.d/x a.txt a/b a/c a1 a1/z\n");
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("each word is sorted alone, and the words keep their places", async () => {
+        using dir = tempDir("shell-glob-order", { ...parts, ...folders });
+        const { stdout, exitCode } = await $`echo s* part-0*`.cwd(String(dir)).quiet();
+        expect(stdout.toString()).toBe(
+          "s1 s2 s3 part-01 part-02 part-03 part-04 part-05 part-06 part-07 part-08 part-09\n",
+        );
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("a word before the matches stays before them", async () => {
+        using dir = tempDir("shell-glob-order", { "x2": "", "x3": "", "x1": "" });
+        const { stdout, exitCode } = await $`echo $(echo zz x)*`.cwd(String(dir)).quiet();
+        expect(stdout.toString()).toBe("zz x1 x2 x3\n");
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("an assignment gets them in the same order", async () => {
+        using dir = tempDir("shell-glob-order", { "x2": "", "x3": "", "x1": "" });
+        const { stdout, exitCode } = await $`X=x*; echo $X`.cwd(String(dir)).quiet();
+        expect(stdout.toString()).toBe("x1 x2 x3\n");
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("the order is -, digits, upper case, _, lower case, then the rest", async () => {
+        using dir = tempDir("shell-glob-order", { "a": "", "ø": "", "9": "", "_x": "", "B": "", "10": "", "-x": "" });
+        const { stdout, exitCode } = await $`echo *`.cwd(String(dir)).quiet();
+        expect(stdout.toString()).toBe("-x 10 9 B _x a ø\n");
+        expect(exitCode).toBe(0);
+      });
     });
   });
 

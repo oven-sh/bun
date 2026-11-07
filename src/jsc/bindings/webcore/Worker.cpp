@@ -256,15 +256,42 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsMessagePortIsActive, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+// Only util.inspect gets a receiver that is not a port back, as in node: chai prints what a hook returns again, in a tail call with no end.
+static NEVER_INLINE JSC::EncodedJSValue inspectNonMessagePort(JSGlobalObject* lexicalGlobalObject, JSValue thisValue, JSValue formatter)
 {
-    auto port = callFrame->argument(0);
-    if (auto* messagePort = dynamicDowncast<JSMessagePort>(port)) {
-        auto& wrapped = messagePort->wrapped();
-        bool active = (wrapped.isDetached() == false) && wrapped.pipe()->isOtherSideOpen(wrapped.side());
-        return JSC::JSValue::encode(jsBoolean(active));
-    }
-    return JSC::JSValue::encode(jsBoolean(false));
+    if (!thisValue.isObject())
+        return JSValue::encode(thisValue);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSFunction* utilInspect = defaultGlobalObject(lexicalGlobalObject)->utilInspectFunction();
+    RETURN_IF_EXCEPTION(scope, {});
+    if (formatter == utilInspect)
+        return JSValue::encode(thisValue);
+
+    // Not the options of the caller: chai asks for no limits and cuts the text itself, but not the text of a hook.
+    JSObject* hooksOff = constructEmptyObject(lexicalGlobalObject);
+    hooksOff->putDirect(vm, Identifier::fromString(vm, "customInspect"_s), jsBoolean(false));
+    MarkedArgumentBuffer arguments;
+    arguments.append(thisValue);
+    arguments.append(hooksOff);
+    ASSERT(!arguments.hasOverflowed());
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, utilInspect, JSC::getCallData(utilInspect), jsUndefined(), arguments)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortInspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    static constexpr ASCIILiteral text[2][2] = {
+        { "MessagePort [EventTarget] { active: false, refed: false }"_s, "MessagePort [EventTarget] { active: false, refed: true }"_s },
+        { "MessagePort [EventTarget] { active: true, refed: false }"_s, "MessagePort [EventTarget] { active: true, refed: true }"_s },
+    };
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
+    auto* messagePort = dynamicDowncast<JSMessagePort>(thisValue);
+    if (!messagePort) [[unlikely]]
+        return inspectNonMessagePort(lexicalGlobalObject, thisValue, callFrame->argument(2));
+    auto& wrapped = messagePort->wrapped();
+    bool active = !wrapped.isDetached() && wrapped.pipe()->isOtherSideOpen(wrapped.side());
+    bool refed = wrapped.jsHasRef();
+    return JSValue::encode(jsNontrivialString(JSC::getVM(lexicalGlobalObject), text[active][refed]));
 }
 
 // Primitives are a documented no-op for both.
@@ -364,7 +391,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 4, threadName);
     RETURN_IF_EXCEPTION(scope, {});
-    array->putDirectIndex(globalObject, 5, JSFunction::create(vm, globalObject, 1, "isMessagePortActive"_s, jsMessagePortIsActive, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 5, JSFunction::create(vm, globalObject, 0, "inspect"_s, jsMessagePortInspectCustom, ImplementationVisibility::Public, NoIntrinsic));
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 6, JSFunction::create(vm, globalObject, 1, "markAsUntransferable"_s, jsFunctionMarkAsUntransferable, ImplementationVisibility::Public, NoIntrinsic));
     RETURN_IF_EXCEPTION(scope, {});

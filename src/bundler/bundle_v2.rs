@@ -6977,18 +6977,19 @@ pub mod bv2_impl {
                             continue 'outer;
                         }
 
-                        // Do not use cached files for CSS, nor a cached stylesheet in JS: its importer declares the
-                        // names it imports, which a CSS module's source gives.
-                        if loader == Loader::Css
-                            || import_record.loader.or_else(|| path.loader(&self.transpiler.options.loaders))
-                                == Some(Loader::Css)
-                        {
+                        if loader == Loader::Css {
+                            // Do not use cached files for CSS.
                             break 'brk;
                         }
 
                         import_record.source_index = Index::INVALID;
 
                         if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
+                            // Nor a stylesheet imported from JS (by any loader, a plugin's too): its importer
+                            // declares the names it imports, which a CSS module's source gives.
+                            if entry.kind == bake_types::CacheKind::Css && loader != Loader::Html {
+                                break 'brk;
+                            }
                             let rel = bun_paths::resolve_path::relative_platform::<
                                 bun_paths::resolve_path::platform::Loose,
                                 false,

@@ -1,5 +1,7 @@
+import { gcAndSweep } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { isASAN, isDebug, isLinux } from "harness";
+import { isASAN, isDebug, isLinux, withoutAggressiveGC } from "harness";
+import { readFileSync } from "node:fs";
 
 describe("Bun.JSONL.parseChunk on UTF-8 bytes", () => {
   const pieces = [
@@ -61,23 +63,49 @@ describe("Bun.JSONL.parseChunk on UTF-8 bytes", () => {
     expect(new TextDecoder().decode(bytes.subarray(result.read)).trimStart()).toBe('{"cut":');
   });
 
-  test.skipIf(!isLinux || process.arch !== "x64" || isDebug || isASAN)(
-    "one character outside ASCII does not make a long text several times as slow",
+  // parseChunk decodes bytes that are not all ASCII to text, then parses the text. TextDecoder and a parse of its text
+  // do those two steps, so their time is the yardstick. An all-ASCII line is parsed in place: the ratio to it follows
+  // the machine more than the code.
+  //
+  // The bytes go through simdutf five times and TextDecoder twice, so the ratio rises as simdutf's kernel gets slower.
+  // On the SSE4.2 kernel it reaches the bound, so the case needs a CPU with AVX2.
+  function hasAVX2() {
+    if (!isLinux || process.arch !== "x64") return false;
+    try {
+      return /^flags\s*:.*\bavx2\b/m.test(readFileSync("/proc/cpuinfo", "utf8"));
+    } catch {
+      return false;
+    }
+  }
+  test.skipIf(!hasAVX2() || isDebug || isASAN)(
+    "a long line with one character outside ASCII takes under twice as long from bytes as from TextDecoder and a parse of its text",
     () => {
-      const line = (last: string) =>
-        new TextEncoder().encode(
-          JSON.stringify("the quick brown fox jumps over the lazy dog. ".repeat(180000) + last) + "\n",
-        );
-      const fastestOf = (bytes: Uint8Array) => {
-        let fastest = Infinity;
-        for (let run = 0; run < 15; run++) {
-          const began = performance.now();
-          expect(Bun.JSONL.parseChunk(bytes).values.length).toBe(1);
-          fastest = Math.min(fastest, performance.now() - began);
-        }
-        return fastest;
+      // 900 KB: a call takes under a millisecond, so of 15 calls one runs undisturbed even on a busy machine.
+      const bytes = new TextEncoder().encode(
+        JSON.stringify("the quick brown fox jumps over the lazy dog. ".repeat(20000) + "\u2014") + "\n",
+      );
+      const decoder = new TextDecoder();
+      // Collecting first keeps a collection out of the measured time, and the call gets the memory the collection
+      // freed instead of pages the system has yet to map.
+      const timeOf = (parse: () => { values: unknown[] }) => {
+        gcAndSweep();
+        const began = performance.now();
+        const { values } = parse();
+        const took = performance.now() - began;
+        expect(values.length).toBe(1);
+        return took;
       };
-      expect(fastestOf(line("\u2014")) / fastestOf(line(""))).toBeLessThan(4.5);
+      const parseBytes = () => Bun.JSONL.parseChunk(bytes);
+      const parseText = () => Bun.JSONL.parseChunk(decoder.decode(bytes));
+      let fromBytes = Infinity;
+      let fromText = Infinity;
+      withoutAggressiveGC(() => {
+        for (let run = 0; run < 15; run++) {
+          fromBytes = Math.min(fromBytes, timeOf(parseBytes));
+          fromText = Math.min(fromText, timeOf(parseText));
+        }
+      });
+      expect(fromBytes / fromText).toBeLessThan(2);
     },
   );
 });

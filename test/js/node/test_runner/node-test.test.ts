@@ -439,7 +439,9 @@ describe("node:test", () => {
   test.concurrent(
     "should report the subtests and suites that a test cancelled through run()",
     async () => {
-      const events = await run({ files: [join(import.meta.dirname, "fixtures", "31-cancelled-by-parent.js")] }).toArray();
+      const events = await run({
+        files: [join(import.meta.dirname, "fixtures", "31-cancelled-by-parent.js")],
+      }).toArray();
       const cancelled = events
         .filter(({ type, data }) => type === "test:fail" && data.details.error.failureType === "cancelledByParent")
         .map(({ data }) => data.name);

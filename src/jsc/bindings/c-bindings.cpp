@@ -279,6 +279,11 @@ extern "C" void windows_enable_stdio_inheritance()
 
 #endif
 
+#if !OS(WINDOWS)
+// Implemented by bun_core::Global::raise_default_action.
+extern "C" [[noreturn]] void Bun__raiseDefaultAction(int sig);
+#endif
+
 #if OS(LINUX) || OS(FREEBSD)
 
 #include <sys/syscall.h>
@@ -334,8 +339,10 @@ static void onSIGSYS(int sig, siginfo_t* info, void* context)
         Bun__onPosixSignal(sig);
         return;
     }
-    signal(sig, SIG_DFL);
-    raise(sig);
+    // The kernel discards a default-action signal sent to the init process of a pid namespace.
+    if (getpid() == 1)
+        return;
+    Bun__raiseDefaultAction(sig);
 }
 
 static void installSIGSYSHandler()
@@ -958,9 +965,6 @@ extern "C" void bun_restore_stdio()
 }
 
 #if !OS(WINDOWS)
-// Implemented by bun_core::Global::raise_default_action.
-extern "C" [[noreturn]] void Bun__raiseDefaultAction(int sig);
-
 extern "C" void onExitSignal(int sig)
 {
     bun_restore_stdio();

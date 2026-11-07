@@ -7,10 +7,12 @@
 //   - a compiled executable runs them
 //   - `Bun.build` says where the programs that do not build are wrong
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, nodeExeAtLeast, tempDir, type DirectoryTree } from "harness";
+import { mkfifo } from "mkfifo";
+import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { SourceMap } from "node:module";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { broken, cases, snapshots } from "./source-positions-corpus";
 
 type Variant = {
@@ -182,6 +184,27 @@ const dir = tempDir("source-positions", {
   "entry.ts": programs.map(({ file }) => `import "./${file}";\n`).join(""),
   "compiled.ts": `import "./probe.cjs";\nawait import("./entry.ts");\n`,
   "run.ts": `await load(${JSON.stringify(programs.map(({ file }) => `./${file}`))});\n`,
+  // The program of a second executable, for the last group of tests. It says where a function of its own is and
+  // loads the first file it is given, turns source maps on, and does both again with the second file.
+  "executable/main.cjs": [
+    `function bundled() {`,
+    `  throw new Error("bundled");`,
+    `}`,
+    `function firstFrame(f) {`,
+    `  try {`,
+    `    f();`,
+    `  } catch (e) {`,
+    `    return e.stack.split("\\n")[1].trim();`,
+    `  }`,
+    `}`,
+    `const [off, on] = process.argv.slice(2).map(file => require("node:path").resolve(file));`,
+    `const out = { bundled: [firstFrame(bundled)], loaded: [firstFrame(require(off).boom)] };`,
+    `process.setSourceMapsEnabled(true);`,
+    `out.bundled.push(firstFrame(bundled));`,
+    `out.loaded.push(firstFrame(require(on).boom));`,
+    `console.log(JSON.stringify(out));`,
+    ``,
+  ].join("\n"),
 });
 afterAll(() => dir[Symbol.dispose]());
 const root = String(dir);
@@ -223,6 +246,7 @@ async function bundle(name: string) {
 
 // Everything runs once, here and not in a hook: a hook has the time limit of one test.
 const compiled = join(root, isWindows ? "compiled.exe" : "compiled");
+const loadsFromDisk = join(root, isWindows ? "loads-from-disk.exe" : "loads-from-disk");
 const [table, { logs: diagnostics }] = await Promise.all([
   run("test", [
     bunExe(),
@@ -246,6 +270,11 @@ const [table, { logs: diagnostics }] = await Promise.all([
   Bun.build({ entrypoints: [join(root, "compiled.ts")], compile: { outfile: compiled }, sourcemap: "inline" }).then(
     () => run("compiled", [compiled]),
   ),
+  Bun.build({
+    entrypoints: [join(root, "executable", "main.cjs")],
+    compile: { outfile: loadsFromDisk },
+    sourcemap: "inline",
+  }),
 ]);
 const lcov = readFileSync(join(root, "coverage", "lcov.info"), "utf8");
 const junit = readFileSync(join(root, "junit.xml"), "utf8");
@@ -525,5 +554,1792 @@ describe.each(Object.keys(builds))("the source map of %s", name => {
     }
     expect(wrong).toEqual([]);
     expect(checked).toBeGreaterThan(0);
+  });
+});
+
+// A file that something other than Bun transpiled, with a `sourceMappingURL` comment that names its own source map.
+// Bun's own map goes from what runs to that file. With `--enable-source-maps`, `process.setSourceMapsEnabled(true)`
+// or `module.setSourceMapsSupport(true)`, `Error.stack` and a printed error go on to the file it was made from, as in
+// Node.js. Every reader that is about the loaded file does not.
+describe.concurrent("a loaded file with its own source map", () => {
+  const original = [
+    `type Erased = { x: number };`,
+    ``,
+    `export function boom(): never {`,
+    `  throw new Error("kaboom");`,
+    `}`,
+    ``,
+    `export function call<R>(cb: () => R): R[] {`,
+    `  return [cb()];`,
+    `}`,
+    ``,
+  ].join("\n");
+  // What `tsc --sourceMap` (6.0.2) makes of `original`, with `--module commonjs` and with `--module esnext`.
+  const transpiled = {
+    cjs: {
+      code: [
+        `"use strict";`,
+        `Object.defineProperty(exports, "__esModule", { value: true });`,
+        `exports.boom = boom;`,
+        `exports.call = call;`,
+        `function boom() {`,
+        `    throw new Error("kaboom");`,
+        `}`,
+        `function call(cb) {`,
+        `    return [cb()];`,
+        `}`,
+        ``,
+      ].join("\n"),
+      mappings:
+        ";;AAEA,oBAEC;AAED,oBAEC;AAND,SAAgB,IAAI;IAClB,MAAM,IAAI,KAAK,CAAC,QAAQ,CAAC,CAAC;AAC5B,CAAC;AAED,SAAgB,IAAI,CAAI,EAAW;IACjC,OAAO,CAAC,EAAE,EAAE,CAAC,CAAC;AAChB,CAAC",
+      // Where `Error` of `new Error("kaboom")` and `cb` of `cb()` are.
+      boom: "6:15",
+      call: "9:13",
+    },
+    esm: {
+      code: [
+        `export function boom() {`,
+        `    throw new Error("kaboom");`,
+        `}`,
+        `export function call(cb) {`,
+        `    return [cb()];`,
+        `}`,
+        ``,
+      ].join("\n"),
+      mappings:
+        "AAEA,MAAM,UAAU,IAAI;IAClB,MAAM,IAAI,KAAK,CAAC,QAAQ,CAAC,CAAC;AAC5B,CAAC;AAED,MAAM,UAAU,IAAI,CAAI,EAAW;IACjC,OAAO,CAAC,EAAE,EAAE,CAAC,CAAC;AAChB,CAAC",
+      boom: "2:15",
+      call: "5:13",
+    },
+  };
+  // The same two places in `original`.
+  const inOriginal = { boom: "4:13", call: "8:11" };
+
+  type Format = keyof typeof transpiled;
+  const mapOf = (format: Format, source: string, more: object = {}) =>
+    JSON.stringify({
+      version: 3,
+      sourceRoot: "",
+      sources: [source],
+      names: [],
+      mappings: transpiled[format].mappings,
+      ...more,
+    });
+  const dataUrl = (json: string, type = "application/json;base64") =>
+    `data:${type},${Buffer.from(json).toString("base64")}`;
+  /** `path` and `path.map`, which names `source`. `after` goes between the code and the comment. */
+  const withMap = (path: string, format: Format = "cjs", source = path.replace(/\.\w+$/, ".ts"), after = "") => ({
+    [path]: `${transpiled[format].code}${after}//# sourceMappingURL=${path.split("/").at(-1)}.map\n`,
+    [`${path}.map`]: mapOf(format, source.split("/").at(-1)!),
+  });
+  const withUrl = (path: string, url: string, format: Format = "cjs") => ({
+    [path]: `${transpiled[format].code}//# sourceMappingURL=${url}\n`,
+  });
+
+  // What the programs below print, with the folder of the test taken out.
+  const firstFrame = `
+    globalThis.firstFrame = function (f) {
+      try {
+        f();
+      } catch (e) {
+        return e.stack.split("\\n")[1].trim();
+      }
+    };
+  `;
+  async function run(
+    cwd: string,
+    args: string[],
+    env: Record<string, string | undefined> = bunEnv,
+    executable = bunExe(),
+  ) {
+    await using proc = Bun.spawn({ cmd: [executable, ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A path of Windows has "\", which JSON writes twice.
+    const tidy = (text: string) =>
+      text.replaceAll("\\\\", "/").replaceAll("\\", "/").replaceAll(cwd.replaceAll("\\", "/"), "<dir>");
+    return { stdout: tidy(stdout), stderr: tidy(stderr), exitCode };
+  }
+  const printed = (result: { stdout: string; stderr: string; exitCode: number }) => ({
+    ...result,
+    stdout: result.stdout && JSON.parse(result.stdout),
+  });
+
+  // The Node.js on the PATH, if it reads a source map when a stack first needs it (v26.9.0, nodejs/node#65490).
+  const node = nodeExeAtLeast("26.9.0");
+  /**
+   * Expects that Node.js prints `want` for `args` too. Without such a Node.js it does nothing. Node.js runs in a
+   * folder of its own, which has `files` or is a copy of the folder `files`: a program can change its files.
+   * `labels` name the frames of a `stdout` that is a list.
+   */
+  async function expectNodeToPrint(
+    files: DirectoryTree | string,
+    args: string[],
+    want: { stdout: any; stderr: string; exitCode: number },
+    labels?: string[],
+  ) {
+    if (!node) return;
+    using dir = tempDir("own-source-map-in-node", files);
+    const said = printed(await run(String(dir), args, bunEnv, node));
+    // Only file and line are compared: V8 has another column, `Object.` before some names and a URL for an ES module.
+    const fileAndLine = (frame: string) =>
+      frame
+        .replace(/^(at )?Object\./, "$1")
+        .replace(/file:\/\/\/?(?=<dir>)/, "")
+        .replace(/:(\d+):\d+(\)?)$/, ":$1$2");
+    const compared = ({ stdout, ...rest }: typeof want) =>
+      JSON.parse(
+        JSON.stringify({
+          stdout: labels ? Object.fromEntries(labels.map((label, i) => [label, stdout[i]])) : stdout,
+          ...rest,
+        }),
+        (_, value) => (typeof value === "string" ? fileAndLine(value) : value),
+      );
+    expect(compared(said)).toEqual(compared(want));
+  }
+
+  // Each line is what node v26.13.0 does, with the position that JavaScriptCore reports. It keeps the URL of a
+  // module's map when the module loads, if source maps are on then. It reads the map when a stack first needs it, if
+  // they are on then (nodejs/node#65490: before v26.9.0 it read the map when the module loaded).
+  test("Error.stack follows the switch as it is when the module loads and when the stack is read", async () => {
+    const names = ["a", "b", "c", "d", "e", "f", "g", "h", "i"];
+    const files = {
+      ...Object.assign({}, ...names.map(name => withMap(`${name}.js`))),
+      "main.cjs": `
+        ${firstFrame}
+        const fs = require("node:fs");
+        const on = () => process.setSourceMapsEnabled(true);
+        const off = () => process.setSourceMapsEnabled(false);
+        const caught = f => { try { f(); } catch (e) { return e; } };
+        const top = e => e.stack.split("\\n")[1].trim();
+        const out = {};
+
+        on(); out["enable, load"] = firstFrame(require("./a.js").boom); off();
+
+        const b = require("./b.js"); on(); out["load, enable"] = firstFrame(b.boom); off();
+
+        on(); const c = require("./c.js"); off(); out["enable, load, disable"] = firstFrame(c.boom);
+        on(); out["enable, load, disable, enable"] = firstFrame(c.boom); off();
+
+        on(); const d = require("./d.js"); fs.rmSync("./d.js.map");
+        out["enable, load, delete the map"] = firstFrame(d.boom); off();
+
+        const map = fs.readFileSync("./e.js.map", "utf8"); fs.rmSync("./e.js.map");
+        on(); const e = require("./e.js"); fs.writeFileSync("./e.js.map", map);
+        out["enable, load, create the map"] = firstFrame(e.boom); off();
+
+        on(); const f = require("./f.js"); fs.writeFileSync("./f.js.map", "not a source map");
+        out["enable, load, overwrite the map"] = firstFrame(f.boom); off();
+
+        on(); const g = require("./g.js"); const madeOn = caught(g.boom); off();
+        out["error made while on, stack first read while off"] = top(madeOn);
+        on(); out["the same stack read again while on"] = top(madeOn); off();
+
+        on(); const h = require("./h.js"); off(); const madeOff = caught(h.boom); on();
+        out["error made while off, stack first read while on"] = top(madeOff); off();
+
+        const before = require("./i.js"); on(); delete require.cache[require.resolve("./i.js")];
+        const again = require("./i.js");
+        out["load, enable, load again"] = [firstFrame(before.boom), firstFrame(again.boom)]; off();
+
+        console.log(JSON.stringify(out));
+      `,
+    };
+    using dir = tempDir("own-source-map-switch", files);
+    const loaded = (name: string) => `at boom (<dir>/${name}.js:${transpiled.cjs.boom})`;
+    const mapped = (name: string) => `at boom (<dir>/${name}.ts:${inOriginal.boom})`;
+    const want = {
+      stdout: {
+        "enable, load": mapped("a"),
+        "load, enable": loaded("b"),
+        "enable, load, disable": loaded("c"),
+        "enable, load, disable, enable": mapped("c"),
+        "enable, load, delete the map": loaded("d"),
+        "enable, load, create the map": mapped("e"),
+        "enable, load, overwrite the map": loaded("f"),
+        "error made while on, stack first read while off": loaded("g"),
+        "the same stack read again while on": loaded("g"),
+        "error made while off, stack first read while on": mapped("h"),
+        "load, enable, load again": [mapped("i"), mapped("i")],
+      },
+      stderr: "",
+      exitCode: 0,
+    };
+    expect(printed(await run(String(dir), ["main.cjs"]))).toEqual(want);
+    await expectNodeToPrint(files, ["main.cjs"], want);
+  });
+
+  // node v26.13.0 prints the same files with the position that V8 reports: `file://<dir>/a.mjs:2:11` and
+  // `<dir>/b.ts:4:9`. Each module is large enough for the transpiler cache, and the second run takes both from it.
+  test("Error.stack of an ES module follows the switch as it is when import() is called", async () => {
+    const padding = `// ${Buffer.alloc(5 * 1024, "f").toString()}\n`;
+    const files = {
+      ...withMap("a.mjs", "esm", undefined, padding),
+      ...withMap("b.mjs", "esm", undefined, padding),
+      "main.mjs": `
+        ${firstFrame}
+        const on = () => process.setSourceMapsEnabled(true);
+        const off = () => process.setSourceMapsEnabled(false);
+        const out = {};
+
+        const a = import("./a.mjs"); on();
+        out["import(), enable, await"] = firstFrame((await a).boom); off();
+
+        on(); const b = import("./b.mjs"); off(); const { boom } = await b; on();
+        out["enable, import(), disable, await, enable"] = firstFrame(boom); off();
+
+        console.log(JSON.stringify(out));
+      `,
+    };
+    using dir = tempDir("own-source-map-switch-esm", files);
+    const cache = join(String(dir), ".cache");
+    const env = {
+      ...bunEnv,
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache,
+      // A debug build takes nothing from the cache without this.
+      BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+    };
+    // An entry that is written again is another file.
+    const entries = () => readdirSync(cache).map(name => `${name} ${statSync(join(cache, name)).ino}`);
+    const cold = printed(await run(String(dir), ["main.mjs"], env));
+    const written = entries();
+    const warm = printed(await run(String(dir), ["main.mjs"], env));
+    const frames = {
+      stdout: {
+        "import(), enable, await": `at boom (<dir>/a.mjs:${transpiled.esm.boom})`,
+        "enable, import(), disable, await, enable": `at boom (<dir>/b.ts:${inOriginal.boom})`,
+      },
+      stderr: "",
+      exitCode: 0,
+    };
+    expect({ cold, warm }).toEqual({ cold: frames, warm: frames });
+    expect(written).toHaveLength(2);
+    expect(entries()).toEqual(written);
+    await expectNodeToPrint(files, ["main.mjs"], frames);
+  });
+
+  // A module that `import()` reaches through a static import is asked for after its importer is transpiled, which is
+  // after the code that follows the `import()` call. Bun gives it the switch as it is then. node v26.13.0 gives the
+  // whole graph the switch as it is at the `import()` call.
+  test("a module that import() reaches through a static import gets the switch as it is when Bun loads it", async () => {
+    using dir = tempDir("own-source-map-switch-import-graph", {
+      ...withMap("dep.mjs", "esm"),
+      "parent.mjs": `export { boom as boomOfDep } from "./dep.mjs";\n`,
+      ...withMap("dep2.mjs", "esm"),
+      "parent2.mjs": `export { boom as boomOfDep } from "./dep2.mjs";\n`,
+      "main.mjs": `
+        ${firstFrame}
+        const on = () => process.setSourceMapsEnabled(true);
+        const off = () => process.setSourceMapsEnabled(false);
+        const out = {};
+
+        const p = import("./parent.mjs"); on();
+        out["import(), enable, await"] = firstFrame((await p).boomOfDep); off();
+
+        on(); const p2 = import("./parent2.mjs"); off(); const { boomOfDep } = await p2; on();
+        out["enable, import(), disable, await, enable"] = firstFrame(boomOfDep); off();
+
+        console.log(JSON.stringify(out));
+      `,
+    });
+    expect(printed(await run(String(dir), ["main.mjs"]))).toEqual({
+      stdout: {
+        // node v26.13.0: at boom (file://<dir>/dep.mjs:2:11)
+        "import(), enable, await": `at boom (<dir>/dep.ts:${inOriginal.boom})`,
+        // node v26.13.0: at boom (<dir>/dep2.ts:4:9)
+        "enable, import(), disable, await, enable": `at boom (<dir>/dep2.mjs:${transpiled.esm.boom})`,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // All the modules that an entry point imports load before one of them runs, so the one that turns the switch on
+  // is too late for the next. node v26.13.0 has no `--preload`. For the other three it prints the same files with
+  // the position that V8 reports: `<dir>/required.ts:4:9`, `<dir>/imported.ts:4:9`, `file://<dir>/imported.mjs:2:11`.
+  test("a preload sets the switch in time for what the entry point loads, and a static import does not", async () => {
+    const printsTheFrame = `
+      ${firstFrame}
+      console.log(JSON.stringify(firstFrame(boom)));
+    `;
+    const files = {
+      ...withMap("required.cjs", "cjs"),
+      ...withMap("imported.mjs", "esm"),
+      "enable.cjs": `process.setSourceMapsEnabled(true);\n`,
+      "enable.mjs": `process.setSourceMapsEnabled(true);\n`,
+      "main.cjs": `const { boom } = require("./required.cjs");\n${printsTheFrame}`,
+      "main.mjs": `import { boom } from "./imported.mjs";\n${printsTheFrame}`,
+      "imports-enable.mjs": `import "./enable.mjs";\nimport { boom } from "./imported.mjs";\n${printsTheFrame}`,
+    };
+    using dir = tempDir("own-source-map-switch-preload", files);
+    const ways = [
+      ["--preload", "./enable.cjs", "main.cjs"],
+      ["-r", "./enable.cjs", "main.cjs"],
+      ["--import", "./enable.mjs", "main.mjs"],
+      ["imports-enable.mjs"],
+    ];
+    const results = await Promise.all(ways.map(args => run(String(dir), args)));
+    const prints = (frame: string) => ({ stdout: frame, stderr: "", exitCode: 0 });
+    const want: Record<string, ReturnType<typeof prints>> = {
+      "--preload ./enable.cjs main.cjs": prints(`at boom (<dir>/required.ts:${inOriginal.boom})`),
+      "-r ./enable.cjs main.cjs": prints(`at boom (<dir>/required.ts:${inOriginal.boom})`),
+      "--import ./enable.mjs main.mjs": prints(`at boom (<dir>/imported.ts:${inOriginal.boom})`),
+      "imports-enable.mjs": prints(`at boom (<dir>/imported.mjs:${transpiled.esm.boom})`),
+    };
+    expect(Object.fromEntries(ways.map((args, i) => [args.join(" "), printed(results[i])]))).toEqual(want);
+    // The ways that Node.js has.
+    for (const args of ways.slice(1)) await expectNodeToPrint(files, args, want[args.join(" ")]);
+  });
+
+  /** The lines that an error is printed under, when it is at `line:column` of `text`. */
+  function preview(text: string, position: string) {
+    const [line, column] = position.split(":").map(Number);
+    const lines = text.split("\n").slice(Math.max(0, line - 6), line);
+    const gutter = String(line).length;
+    return [
+      ...lines.map((text, i) => `${String(line - lines.length + 1 + i).padStart(gutter)} | ${text}`),
+      " ".repeat(gutter + " | ".length + column - 1) + "^",
+    ].join("\n");
+  }
+
+  // The entry point is the transpiled file, and the error leaves it. `entry.js` is CommonJS, `entry.mjs` a module.
+  describe.each(["cjs", "esm"] as const)("an error that nothing catches, thrown by a %s entry point", format => {
+    const entry = format === "cjs" ? "entry.js" : "entry.mjs";
+    const code = transpiled[format].code + "boom();\n";
+    const external = {
+      [entry]: `${code}//# sourceMappingURL=${entry}.map\n`,
+      [`${entry}.map`]: mapOf(format, "entry.ts"),
+    };
+    const printedError = async (files: Record<string, string>, flags: string[]) => {
+      using dir = tempDir("own-source-map-uncaught", files);
+      const { stdout, stderr, exitCode } = await run(String(dir), [...flags, entry]);
+      // The preview, the message and the frame of `boom`.
+      return { stdout, stderr: stderr.split("\n").slice(0, stderr.split("\n").indexOf("error: kaboom") + 2), exitCode };
+    };
+    const atLoaded = [
+      ...preview(code, transpiled[format].boom).split("\n"),
+      "error: kaboom",
+      `      at boom (<dir>/${entry}:${transpiled[format].boom})`,
+    ];
+    const atOriginal = [
+      ...preview(original, inOriginal.boom).split("\n"),
+      "error: kaboom",
+      `      at boom (<dir>/entry.ts:${inOriginal.boom})`,
+    ];
+
+    test("is in the original file with --enable-source-maps, and in the loaded file without it", async () => {
+      const files = { ...external, "entry.ts": original };
+      expect(await Promise.all([printedError(files, ["--enable-source-maps"]), printedError(files, [])])).toEqual([
+        { stdout: "", stderr: atOriginal, exitCode: 1 },
+        { stdout: "", stderr: atLoaded, exitCode: 1 },
+      ]);
+    });
+
+    test("is previewed from the sourcesContent of a data: URL", async () => {
+      const inline = dataUrl(mapOf(format, "entry.ts", { sourcesContent: [original] }));
+      expect(
+        await printedError({ [entry]: `${code}//# sourceMappingURL=${inline}\n` }, ["--enable-source-maps"]),
+      ).toEqual({ stdout: "", stderr: atOriginal, exitCode: 1 });
+    });
+
+    // Node.js prints the line of the loaded file then, under the name of the loaded file.
+    test("has no source lines when nothing has the original text", async () => {
+      expect(await printedError(external, ["--enable-source-maps"])).toEqual({
+        stdout: "",
+        stderr: atOriginal.slice(-2),
+        exitCode: 1,
+      });
+    });
+  });
+
+  test("require(), import, import() and a Worker's import read it with --enable-source-maps, and not without", async () => {
+    using dir = tempDir("own-source-map-loaders", {
+      ...withMap("required.cjs", "cjs"),
+      ...withMap("static.mjs", "esm"),
+      ...withMap("dynamic.mjs", "esm"),
+      ...withMap("in-worker.mjs", "esm"),
+      "worker.mjs": `
+        import { parentPort } from "node:worker_threads";
+        import { boom } from "./in-worker.mjs";
+        try {
+          boom();
+        } catch (e) {
+          parentPort.postMessage(e.stack.split("\\n")[1].trim());
+        }
+      `,
+      "main.mjs": `
+        import { createRequire } from "node:module";
+        import { Worker } from "node:worker_threads";
+        import { boom } from "./static.mjs";
+        ${firstFrame}
+        const out = {
+          "require()": firstFrame(createRequire(import.meta.url)("./required.cjs").boom),
+          "import": firstFrame(boom),
+          "import()": firstFrame((await import("./dynamic.mjs")).boom),
+        };
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const worker = new Worker(new URL("./worker.mjs", import.meta.url));
+        worker.on("message", resolve);
+        worker.on("error", reject);
+        worker.on("exit", code => reject(new Error("the worker exited with " + code)));
+        out["import in a Worker"] = await promise;
+        await worker.terminate();
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const frames = (frame: (file: string, format: Format) => string) => ({
+      stdout: {
+        "require()": frame("required.cjs", "cjs"),
+        "import": frame("static.mjs", "esm"),
+        "import()": frame("dynamic.mjs", "esm"),
+        "import in a Worker": frame("in-worker.mjs", "esm"),
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+    const [withTheFlag, without] = await Promise.all([
+      run(String(dir), ["--enable-source-maps", "main.mjs"]),
+      run(String(dir), ["main.mjs"]),
+    ]);
+    expect([printed(withTheFlag), printed(without)]).toEqual([
+      frames(file => `at boom (<dir>/${file.replace(/\.\w+$/, ".ts")}:${inOriginal.boom})`),
+      frames((file, format) => `at boom (<dir>/${file}:${transpiled[format].boom})`),
+    ]);
+  });
+
+  // While a debugger listens, Bun puts a source map of its own at the end of each module that loads, for the
+  // debugger, and the mappings of the module go to the table from the code that does that. stderr is not compared:
+  // the inspector says there where it listens, when it starts before the program ends.
+  test("with --inspect, require() reads it with --enable-source-maps, and not without", async () => {
+    using dir = tempDir("own-source-map-inspector", {
+      ...withMap("lib.js"),
+      "main.cjs": `
+        ${firstFrame}
+        console.log(firstFrame(require("./lib.js").boom));
+      `,
+    });
+    const [withTheFlag, without] = await Promise.all([
+      run(String(dir), ["--inspect=127.0.0.1:0", "--enable-source-maps", "main.cjs"]),
+      run(String(dir), ["--inspect=127.0.0.1:0", "main.cjs"]),
+    ]);
+    expect([withTheFlag, without].map(({ stdout, exitCode }) => ({ stdout, exitCode }))).toEqual([
+      { stdout: `at boom (<dir>/lib.ts:${inOriginal.boom})\n`, exitCode: 0 },
+      { stdout: `at boom (<dir>/lib.js:${transpiled.cjs.boom})\n`, exitCode: 0 },
+    ]);
+  });
+
+  // What is bundled into an executable is not a file that it loads, and the switch changes nothing for it: a frame is
+  // where the executable's own source map puts it. A file that the executable loads from disk is a loaded file.
+  test("an executable reads it for a file that it loads from disk, and what is bundled stays where it is", async () => {
+    using dir = tempDir("own-source-map-executable", { ...withMap("off.js"), ...withMap("on.js") });
+    const result = printed(await run(String(dir), ["off.js", "on.js"], bunEnv, loadsFromDisk));
+    // The path in a frame of the executable is relative to where the executable was built.
+    if (result.stdout) result.stdout.bundled = result.stdout.bundled.map(position);
+    expect(result).toEqual({
+      // Each is [while source maps are off, after they are turned on].
+      stdout: {
+        // `Error` of `new Error("bundled")`.
+        bundled: ["executable/main.cjs:2:13", "executable/main.cjs:2:13"],
+        loaded: [`at boom (<dir>/off.js:${transpiled.cjs.boom})`, `at boom (<dir>/on.ts:${inOriginal.boom})`],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // What `bun build --target=bun` makes starts with `// @bun`, and Bun does not transpile it again. Every reader of
+  // a position in it goes through the source map of the build, which Bun finds beside the file by its name, and the
+  // switch changes nothing. What is built for another target is a loaded file like any other: its comment counts.
+  // node v26.13.0 prints the same files and lines for the two that are built for it, with 9 as the column.
+  test("a // @bun file keeps the positions of its build, and a file built for Node.js is a loaded file", async () => {
+    using dir = tempDir("own-source-map-bun-build", {
+      "entry.ts": [
+        `type Erased = { x: number };`,
+        ``,
+        `function boom(): never {`,
+        `  throw new Error("kaboom");`,
+        `}`,
+        ``,
+        `const out: Record<string, unknown> = {};`,
+        `try {`,
+        `  boom();`,
+        `} catch (error) {`,
+        `  out["Error.stack"] = (error as Error).stack!.split("\\n")[1].trim();`,
+        `}`,
+        `Error.prepareStackTrace = (_, [site]) => site.getFileName() + ":" + site.getLineNumber();`,
+        `try {`,
+        `  boom();`,
+        `} catch (error) {`,
+        `  out["CallSite"] = (error as Error).stack;`,
+        `}`,
+        `console.log(JSON.stringify(out));`,
+        ``,
+      ].join("\n"),
+    });
+    // "external" writes the source map and no comment. "linked" writes both.
+    const made = {
+      "for-bun": { target: "bun", sourcemap: "external" },
+      "for-node": { target: "node", sourcemap: "linked" },
+      "for-node-without-a-comment": { target: "node", sourcemap: "external" },
+    } as const;
+    const cells = async (name: keyof typeof made) => {
+      await Bun.build({ entrypoints: [join(String(dir), "entry.ts")], outdir: join(String(dir), name), ...made[name] });
+      const results = await Promise.all([
+        run(String(dir), [`${name}/entry.js`]),
+        run(String(dir), ["--enable-source-maps", `${name}/entry.js`]),
+      ]);
+      return results.map(printed);
+    };
+    const prints = (stack: string, callSite: string) => ({
+      stdout: { "Error.stack": stack, "CallSite": callSite },
+      stderr: "",
+      exitCode: 0,
+    });
+    const inSource = prints("at boom (<dir>/entry.ts:4:13)", "<dir>/entry.ts:4");
+    const inOutput = (name: string) => prints(`at boom (<dir>/${name}/entry.js:3:13)`, `<dir>/${name}/entry.js:3`);
+    const [forBun, forNode, forNodeWithoutAComment] = await Promise.all(
+      (Object.keys(made) as (keyof typeof made)[]).map(cells),
+    );
+    // Each is [without the switch, with --enable-source-maps].
+    const want = {
+      forBun: [inSource, inSource],
+      forNode: [inOutput("for-node"), prints("at boom (<dir>/entry.ts:4:13)", "<dir>/for-node/entry.js:3")],
+      forNodeWithoutAComment: [inOutput("for-node-without-a-comment"), inOutput("for-node-without-a-comment")],
+    };
+    expect({ forBun, forNode, forNodeWithoutAComment }).toEqual(want);
+    // Node.js runs what is built for it, in a copy of the folder.
+    for (const [name, [without, withTheFlag]] of Object.entries({
+      "for-node": want.forNode,
+      "for-node-without-a-comment": want.forNodeWithoutAComment,
+    })) {
+      await expectNodeToPrint(String(dir), [`${name}/entry.js`], without);
+      await expectNodeToPrint(String(dir), ["--enable-source-maps", `${name}/entry.js`], withTheFlag);
+    }
+  });
+
+  // node v26.13.0: `/[\\/]node_modules[\\/]/` on the path, when the module loads and again when a stack is read.
+  test("a module in node_modules is left out unless nodeModules is set", async () => {
+    const files = {
+      ...withMap("node_modules/dep/a.js"),
+      ...withMap("node_modules/dep/b.js"),
+      ...withMap("node_modules/dep/c.js"),
+      ...withMap("node_modules/.store/dep@1/node_modules/dep/d.js"),
+      ...withMap("my_node_modules/dep/e.js"),
+      ...withMap("node_modules_too/dep/f.js"),
+      "main.cjs": `
+        ${firstFrame}
+        const { setSourceMapsSupport } = require("node:module");
+        const out = {};
+        setSourceMapsSupport(true);
+        out["setSourceMapsSupport(true)"] = firstFrame(require("./node_modules/dep/a.js").boom);
+        out["in my_node_modules"] = firstFrame(require("./my_node_modules/dep/e.js").boom);
+        out["in node_modules_too"] = firstFrame(require("./node_modules_too/dep/f.js").boom);
+        setSourceMapsSupport(true, { nodeModules: true });
+        out["loaded before nodeModules was set"] = firstFrame(require("./node_modules/dep/a.js").boom);
+        out["setSourceMapsSupport(true, { nodeModules: true })"] = firstFrame(require("./node_modules/dep/b.js").boom);
+        out["in a store in node_modules"] = firstFrame(
+          require("./node_modules/.store/dep@1/node_modules/dep/d.js").boom,
+        );
+        setSourceMapsSupport(true);
+        out["read after nodeModules was unset"] = firstFrame(require("./node_modules/dep/b.js").boom);
+        setSourceMapsSupport(false);
+        process.setSourceMapsEnabled(true);
+        out["process.setSourceMapsEnabled(true)"] = firstFrame(require("./node_modules/dep/c.js").boom);
+        console.log(JSON.stringify(out));
+      `,
+    };
+    using dir = tempDir("own-source-map-node-modules", files);
+    const loaded = (file: string) => `at boom (<dir>/${file}.js:${transpiled.cjs.boom})`;
+    const mapped = (file: string) => `at boom (<dir>/${file}.ts:${inOriginal.boom})`;
+    const want = {
+      stdout: {
+        "setSourceMapsSupport(true)": loaded("node_modules/dep/a"),
+        "in my_node_modules": mapped("my_node_modules/dep/e"),
+        "in node_modules_too": mapped("node_modules_too/dep/f"),
+        "loaded before nodeModules was set": loaded("node_modules/dep/a"),
+        "setSourceMapsSupport(true, { nodeModules: true })": mapped("node_modules/dep/b"),
+        "in a store in node_modules": mapped("node_modules/.store/dep@1/node_modules/dep/d"),
+        "read after nodeModules was unset": loaded("node_modules/dep/b"),
+        "process.setSourceMapsEnabled(true)": mapped("node_modules/dep/c"),
+      },
+      stderr: "",
+      exitCode: 0,
+    };
+    expect(printed(await run(String(dir), ["main.cjs"]))).toEqual(want);
+    await expectNodeToPrint(files, ["main.cjs"], want);
+  });
+
+  // What is about the loaded file stays there. In node v26.13.0 a CallSite answers for the loaded file too, and
+  // `error.stack` inside `Error.prepareStackTrace` is the loaded file's.
+  test("a CallSite is in the loaded file while Error.stack is in the original", async () => {
+    const files = {
+      ...withMap("lib.js"),
+      "main.cjs": `
+        const lib = require("./lib.js");
+        const out = {};
+        const error = new Error("made in the original");
+        lib.call(() => Error.captureStackTrace(error));
+        out["Error.stack"] = error.stack.split("\\n")[2].trim();
+        Error.prepareStackTrace = (e, sites) => {
+          const site = sites[1];
+          out["CallSite"] = {
+            getFileName: site.getFileName(),
+            getScriptNameOrSourceURL: site.getScriptNameOrSourceURL(),
+            getLineNumber: site.getLineNumber(),
+            getColumnNumber: site.getColumnNumber(),
+            toString: String(site),
+          };
+          out["error.stack in prepareStackTrace"] = e.stack.split("\\n")[2].trim();
+          return "prepared";
+        };
+        out["the result of prepareStackTrace"] = lib.call(() => new Error("read by a callback").stack)[0];
+        console.log(JSON.stringify(out));
+      `,
+    };
+    using dir = tempDir("own-source-map-call-site", files);
+    const [line, column] = transpiled.cjs.call.split(":").map(Number);
+    const want = {
+      stdout: {
+        "Error.stack": `at call (<dir>/lib.ts:${inOriginal.call})`,
+        "CallSite": {
+          getFileName: "<dir>/lib.js",
+          getScriptNameOrSourceURL: "<dir>/lib.js",
+          getLineNumber: line,
+          getColumnNumber: column,
+          toString: `call (<dir>/lib.js:${transpiled.cjs.call})`,
+        },
+        "error.stack in prepareStackTrace": `at call (<dir>/lib.js:${transpiled.cjs.call})`,
+        "the result of prepareStackTrace": "prepared",
+      },
+      stderr: "",
+      exitCode: 0,
+    };
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual(want);
+    // `getColumnNumber` is compared too: V8 puts a call where JavaScriptCore puts it.
+    await expectNodeToPrint(files, ["--enable-source-maps", "main.cjs"], want);
+  });
+
+  /** The `mappings` of a map where line `i + 1` of the generated text is line `lines[i]` of the original. */
+  function lineMappings(lines: number[]) {
+    const digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let previous = 1;
+    return lines
+      .map(line => {
+        let value = line >= previous ? (line - previous) << 1 : ((previous - line) << 1) | 1;
+        previous = line;
+        let delta = "";
+        do {
+          const digit = value & 31;
+          value >>>= 5;
+          delta += digits[value ? digit | 32 : digit];
+        } while (value);
+        return `AA${delta}A`;
+      })
+      .join(";");
+  }
+
+  test("bun test writes coverage, an inline snapshot and the JUnit line for the loaded file", async () => {
+    const testFile = [
+      `const { test, expect } = require("bun:test");`,
+      `const { add } = require("./math.js");`,
+      `test("adds", () => {`,
+      `  expect(add(1, 2)).toMatchInlineSnapshot();`,
+      `  console.log(new Error("in the test").stack.split("\\n")[1].trim());`,
+      `});`,
+      `//# sourceMappingURL=math.test.js.map`,
+      ``,
+    ];
+    const math = [
+      `function add(a, b) {`,
+      `  if (a > 100) {`,
+      `    return -1;`,
+      `  }`,
+      `  return a + b;`,
+      `}`,
+      `exports.add = add;`,
+      `//# sourceMappingURL=math.js.map`,
+      ``,
+    ];
+    // Each original has four more lines above its code.
+    const shifted = (lines: string[], source: string) =>
+      JSON.stringify({
+        version: 3,
+        sources: [source],
+        names: [],
+        mappings: lineMappings(lines.slice(0, -2).map((_, i) => i + 5)),
+      });
+    using dir = tempDir("own-source-map-bun-test", {
+      "math.test.js": testFile.join("\n"),
+      "math.test.js.map": shifted(testFile, "math.test.ts"),
+      "math.js": math.join("\n"),
+      "math.js.map": shifted(math, "math.ts"),
+    });
+    const { stdout, exitCode } = await run(String(dir), [
+      "test",
+      "--enable-source-maps",
+      "--coverage",
+      "--coverage-reporter=lcov",
+      "--reporter=junit",
+      "--reporter-outfile=junit.xml",
+      "--update-snapshots",
+      "./math.test.js",
+    ]);
+    const lcov = readFileSync(join(String(dir), "coverage", "lcov.info"), "utf8");
+    expect({
+      // `Error.stack` is mapped. An inline snapshot is written into the file that ran. Coverage and the JUnit line
+      // are about that file too, which is a choice of Bun: the test runner of Node.js maps both with the flag.
+      stack: stdout.split("\n").filter(line => line.startsWith("at ")),
+      covered: lcov
+        .split("end_of_record\n")[0]
+        .split("\n")
+        .filter(line => /^(SF|DA):/.test(line)),
+      snapshot: readFileSync(join(String(dir), "math.test.js"), "utf8").split("\n")[3],
+      junit: readFileSync(join(String(dir), "junit.xml"), "utf8").match(/<testcase name="adds"[^>]* line="(\d+)"/)?.[1],
+      exitCode,
+    }).toEqual({
+      stack: ["at <anonymous> (<dir>/math.test.ts:9:1)"],
+      covered: ["SF:math.js", "DA:1,1", "DA:2,1", "DA:3,0", "DA:5,1", "DA:7,1"],
+      snapshot: "  expect(add(1, 2)).toMatchInlineSnapshot(`3`);",
+      junit: "3",
+      exitCode: 0,
+    });
+  });
+
+  // A profile is of the code that ran. `spin` runs for 100 ms, which is long enough to be sampled on every platform.
+  test("--cpu-prof says where a function is in the loaded file", async () => {
+    const lib = [
+      `exports.spin = function spin(ms) {`,
+      `  const end = performance.now() + ms;`,
+      `  while (performance.now() < end) {}`,
+      `  return new Error("spun").stack.split("\\n")[1].trim();`,
+      `};`,
+      `//# sourceMappingURL=lib.js.map`,
+      ``,
+    ];
+    using dir = tempDir("own-source-map-cpu-profile", {
+      "lib.js": lib.join("\n"),
+      // Each line is ten lines further down in `lib.ts`.
+      "lib.js.map": JSON.stringify({
+        version: 3,
+        sources: ["lib.ts"],
+        names: [],
+        mappings: lineMappings(lib.slice(0, -2).map((_, i) => i + 11)),
+      }),
+      "main.cjs": `console.log(JSON.stringify(require("./lib.js").spin(100)));`,
+    });
+    const result = await run(String(dir), [
+      "--enable-source-maps",
+      "--cpu-prof",
+      "--cpu-prof-name=profile.cpuprofile",
+      "main.cjs",
+    ]);
+    expect(printed(result)).toEqual({ stdout: "at spin (<dir>/lib.ts:14:1)", stderr: "", exitCode: 0 });
+    const { nodes } = JSON.parse(readFileSync(join(String(dir), "profile.cpuprofile"), "utf8"));
+    const spin: { url: string; lineNumber: number }[] = nodes
+      .map((node: any) => node.callFrame)
+      .filter((callFrame: any) => callFrame.functionName === "spin");
+    // The file and the line, which is from 0, of each node that is of `spin`.
+    expect([...new Set(spin.map(({ url, lineNumber }) => `${url.split("/").at(-1)}:${lineNumber}`))]).toEqual([
+      "lib.js:0",
+    ]);
+  });
+
+  // The parser says where the text that it was given is wrong. No map is asked. node v26.13.0 names the loaded file
+  // too. `bad.js` is what Bun's parser refuses, and `bad-regexp.js` what only JavaScriptCore refuses.
+  test("where a module that does not parse is wrong is a place in the loaded file", async () => {
+    const map = (source: string) =>
+      JSON.stringify({ version: 3, sources: [source], names: [], mappings: lineMappings([11, 12]) });
+    using dir = tempDir("own-source-map-syntax-error", {
+      "bad.js": `function (\n//# sourceMappingURL=bad.js.map\n`,
+      "bad.js.map": map("bad.ts"),
+      "bad-regexp.js": `const a = 1;\nconst re = /(/;\n//# sourceMappingURL=bad-regexp.js.map\n`,
+      "bad-regexp.js.map": map("bad-regexp.ts"),
+      "main.cjs": `
+        try {
+          require("./bad-regexp.js");
+        } catch (error) {
+          const { name, line, sourceURL, stack } = error;
+          console.log(JSON.stringify({ name, line, sourceURL, frame: stack.split("\\n")[1].trim() }));
+        }
+      `,
+    });
+    const [refused, caught, caughtWithout] = await Promise.all([
+      run(String(dir), ["--enable-source-maps", "bad.js"]),
+      run(String(dir), ["--enable-source-maps", "main.cjs"]),
+      run(String(dir), ["main.cjs"]),
+    ]);
+    // The lines that say where: one for each of the two things that the parser finds wrong.
+    expect({ ...refused, stderr: refused.stderr.split("\n").filter(line => /^\s+at /.test(line)) }).toEqual({
+      stdout: "",
+      stderr: ["    at <dir>/bad.js:1:10", "    at <dir>/bad.js:2:32"],
+      exitCode: 1,
+    });
+    const inTheLoadedFile = {
+      stdout: {
+        name: "SyntaxError",
+        line: 2,
+        sourceURL: "<dir>/bad-regexp.js",
+        frame: "at <parse> (<dir>/bad-regexp.js:2)",
+      },
+      stderr: "",
+      exitCode: 0,
+    };
+    expect([printed(caught), printed(caughtWithout)]).toEqual([inTheLoadedFile, inTheLoadedFile]);
+  });
+
+  // Node.js says nothing either. It reads an index map that has `sources` beside its `sections`. Bun reads no
+  // index map.
+  test("a source map that cannot be read or used leaves the stack in the loaded file, without a warning", async () => {
+    const unusable: Record<string, Record<string, string | object>> = {
+      "not JSON": { "not-json.js.map": "{ not JSON" },
+      "an empty file": { "empty.js.map": "" },
+      "a missing file": {},
+      "a directory": { "directory.js.map": {} },
+      "a JSON array": { "array.js.map": "[]" },
+      "no mappings": { "no-mappings.js.map": JSON.stringify({ version: 3, sources: ["a.ts"] }) },
+      "no sources": { "no-sources.js.map": JSON.stringify({ version: 3, mappings: transpiled.cjs.mappings }) },
+      // Node.js reads these as mappings, and puts the frame at the start of `a.ts`.
+      "mappings that are no VLQ": { "not-vlq.js.map": mapOf("cjs", "a.ts", { mappings: ";;;;;!!!!" }) },
+      "an index map": {
+        "index-map.js.map": JSON.stringify({
+          version: 3,
+          sections: [{ offset: { line: 0, column: 0 }, map: JSON.parse(mapOf("cjs", "a.ts")) }],
+        }),
+      },
+    };
+    const name = (label: string) => Object.keys(unusable[label])[0]?.replace(".map", "") ?? "missing.js";
+    using dir = tempDir("own-source-map-unusable", {
+      ...withMap("usable.js"),
+      ...Object.assign({}, ...Object.keys(unusable).map(label => ({ ...withMap(name(label)), ...unusable[label] }))),
+      ...withUrl("bad-base64.js", "data:application/json;base64,!!!!"),
+      ...withUrl("empty-url.js", ""),
+      "main.cjs": `
+        ${firstFrame}
+        const out = {};
+        for (const [label, file] of ${JSON.stringify([
+          ["a source map", "usable.js"],
+          ...Object.keys(unusable).map(label => [label, name(label)]),
+          ["a data: URL that is not base64", "bad-base64.js"],
+          ["an empty URL", "empty-url.js"],
+        ])}) out[label] = firstFrame(require("./" + file).boom);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    rmSync(join(String(dir), "missing.js.map"));
+    const loaded = (file: string) => `at boom (<dir>/${file}:${transpiled.cjs.boom})`;
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: {
+        "a source map": `at boom (<dir>/usable.ts:${inOriginal.boom})`,
+        ...Object.fromEntries(Object.keys(unusable).map(label => [label, loaded(name(label))])),
+        "a data: URL that is not base64": loaded("bad-base64.js"),
+        "an empty URL": loaded("empty-url.js"),
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Opening a FIFO to read it waits for a writer, and this one has none: a load that waited for one would never end.
+  test.skipIf(isWindows)("a FIFO in place of the source map is not read, and the module loads", async () => {
+    using dir = tempDir("own-source-map-fifo", {
+      ...withMap("usable.js"),
+      ...withUrl("fifo.js", "fifo.js.map"),
+      "main.cjs": `
+        ${firstFrame}
+        console.log(JSON.stringify(["usable.js", "fifo.js"].map(file => firstFrame(require("./" + file).boom))));
+      `,
+    });
+    mkfifo(join(String(dir), "fifo.js.map"));
+    const loaded = (file: string) => `at boom (<dir>/${file}:${transpiled.cjs.boom})`;
+    const [withTheFlag, without] = await Promise.all([
+      run(String(dir), ["--enable-source-maps", "main.cjs"]),
+      run(String(dir), ["main.cjs"]),
+    ]);
+    expect([printed(withTheFlag), printed(without)]).toEqual([
+      { stdout: [`at boom (<dir>/usable.ts:${inOriginal.boom})`, loaded("fifo.js")], stderr: "", exitCode: 0 },
+      { stdout: [loaded("usable.js"), loaded("fifo.js")], stderr: "", exitCode: 0 },
+    ]);
+  });
+
+  // `main.cjs` writes `lib.js` and its source map anew once, and `--hot` then loads both files again.
+  test("--hot reads the source map again when it loads the file again", async () => {
+    const changed = withMap("lib.js", "cjs", "second.ts", "exports.changed = true;\n");
+    using dir = tempDir("own-source-map-hot", {
+      ...withMap("lib.js", "cjs", "first.ts"),
+      "main.cjs": `
+        ${firstFrame}
+        const fs = require("node:fs");
+        globalThis.loads = (globalThis.loads ?? 0) + 1;
+        const { boom } = require("./lib.js");
+        // --hot can load lib.js while it is empty, between the two steps of the write below. It then loads it again.
+        if (boom) {
+          console.log(firstFrame(boom));
+          if (globalThis.loads > 1) process.exit(0);
+          fs.writeFileSync("./lib.js.map", ${JSON.stringify(changed["lib.js.map"])});
+          fs.writeFileSync("./lib.js", ${JSON.stringify(changed["lib.js"])});
+        }
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--hot", "--enable-source-maps", "main.cjs"]);
+    expect({
+      stdout: stdout.split("\n"),
+      // A debug build says when it loads again.
+      stderr: stderr.split("\n").filter(line => line && !line.startsWith("DEBUG: ")),
+      exitCode,
+    }).toEqual({
+      stdout: [`at boom (<dir>/first.ts:${inOriginal.boom})`, `at boom (<dir>/second.ts:${inOriginal.boom})`, ""],
+      stderr: [],
+      exitCode: 0,
+    });
+  });
+
+  // A tool that builds `lib.js` writes the source map after it. `--hot` loads `lib.js` at once, and a stack read then
+  // has the map of the build before. The write of the map loads the module again.
+  test("--hot loads a module again when the file of its source map changes", async () => {
+    const changed = withMap("lib.js", "cjs", "second.ts", "exports.changed = true;\n");
+    using dir = tempDir("own-source-map-hot-map-file", {
+      ...withMap("lib.js", "cjs", "first.ts"),
+      "main.cjs": `
+        ${firstFrame}
+        const fs = require("node:fs");
+        const lib = require("./lib.js");
+        // --hot can load a file while it is empty, between the two steps of a write. It then loads it again.
+        if (lib.boom) {
+          const frame = firstFrame(lib.boom);
+          console.log(frame);
+          if (frame.includes("second.ts")) process.exit(0);
+          if (!lib.changed) fs.writeFileSync("./lib.js", ${JSON.stringify(changed["lib.js"])});
+          else fs.writeFileSync("./lib.js.map", ${JSON.stringify(changed["lib.js.map"])});
+        }
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--hot", "--enable-source-maps", "main.cjs"]);
+    const frames = stdout.split("\n").filter(Boolean);
+    expect({
+      first: frames[0],
+      last: frames.at(-1),
+      // A debug build says when it loads again.
+      stderr: stderr.split("\n").filter(line => line && !line.startsWith("DEBUG: ")),
+      exitCode,
+    }).toEqual({
+      first: `at boom (<dir>/first.ts:${inOriginal.boom})`,
+      last: `at boom (<dir>/second.ts:${inOriginal.boom})`,
+      stderr: [],
+      exitCode: 0,
+    });
+  });
+
+  // What node v26.13.0 reads: a `data:` URL that says `application/json` and ends its parameters with `base64`, and a
+  // path, which is a URL relative to the module. It does not read a URL with any other scheme. The comment is a `//`
+  // comment that starts with `//# sourceMappingURL=` or `//@ sourceMappingURL=`, and only white space is after the
+  // URL on its line. The last such comment of the file counts, also when it has no URL to read.
+  test("the URL of the comment is read the way Node.js reads it", async () => {
+    const map = mapOf("cjs", "original.ts");
+    const comment = (url: string) => `//# sourceMappingURL=${url}\n`;
+    const { code } = transpiled.cjs;
+    // [what the module ends with, the files beside it, where the frame is]
+    const forms: Record<string, [string | ((root: string) => string), Record<string, string>, string]> = {
+      "a file beside the module": [comment("a.js.map"), { "a.js.map": map }, "original.ts"],
+      "./": [comment("./b.js.map"), { "b.js.map": map }, "original.ts"],
+      // A relative source is beside the map.
+      "a file in a folder": [comment("maps/c.js.map"), { "maps/c.js.map": map }, "maps/original.ts"],
+      "..": [comment("../forms/d.js.map"), { "d.js.map": map }, "original.ts"],
+      "a percent-encoded name": [comment("sp%20ace.js.map"), { "sp ace.js.map": map }, "original.ts"],
+      "a query and a fragment": [comment("e.js.map?v=1#top"), { "e.js.map": map }, "original.ts"],
+      "a name that is not ASCII": [comment("ünï.js.map"), { "ünï.js.map": map }, "original.ts"],
+      "//@": [`//@ sourceMappingURL=f.js.map\n`, { "f.js.map": map }, "original.ts"],
+      "spaces after the URL": [`//# sourceMappingURL=g.js.map  \n`, { "g.js.map": map }, "original.ts"],
+      "no line break after the URL": [`//# sourceMappingURL=h.js.map`, { "h.js.map": map }, "original.ts"],
+      "CR LF after the URL": [`//# sourceMappingURL=i.js.map\r\n`, { "i.js.map": map }, "original.ts"],
+      "the last of two comments": [comment("none.js.map") + comment("j.js.map"), { "j.js.map": map }, "original.ts"],
+      "the last of two comments, which names nothing": [
+        comment("k.js.map") + comment("none.js.map"),
+        { "k.js.map": map },
+        "",
+      ],
+      "the last of two comments, which text follows": [
+        comment("r.js.map") + `//# sourceMappingURL=s.js.map and more\n`,
+        { "r.js.map": map, "s.js.map": map },
+        "",
+      ],
+      "a comment, then a block comment with one in it": [
+        comment("t.js.map") + `/* //# sourceMappingURL=none.js.map */\n`,
+        { "t.js.map": map },
+        "original.ts",
+      ],
+      "a comment that more code follows": [
+        comment("l.js.map") + `exports.after = 1;\n`,
+        { "l.js.map": map },
+        "original.ts",
+      ],
+      "a string": [`exports.text = "//# sourceMappingURL=m.js.map";\n`, { "m.js.map": map }, ""],
+      "/*#": [`/*# sourceMappingURL=u.js.map */\n`, { "u.js.map": map }, ""],
+      "/*@": [`/*@ sourceMappingURL=v.js.map */\n`, { "v.js.map": map }, ""],
+      "a space before the #": [`// # sourceMappingURL=w.js.map\n`, { "w.js.map": map }, ""],
+      "no space after the #": [`//#sourceMappingURL=x.js.map\n`, { "x.js.map": map }, ""],
+      "two spaces after the #": [`//#  sourceMappingURL=y.js.map\n`, { "y.js.map": map }, ""],
+      "text before the //#": [`// see //# sourceMappingURL=z.js.map\n`, { "z.js.map": map }, ""],
+      "text after the URL": [`//# sourceMappingURL=aa.js.map and more\n`, { "aa.js.map": map }, ""],
+      // A quote is a character of the URL like any other.
+      "quotes around the URL": [`//# sourceMappingURL="ab.js.map"\n`, { "ab.js.map": map }, ""],
+      "quotes in the name of the file": [`//# sourceMappingURL='ac.js.map'\n`, { "'ac.js.map'": map }, "original.ts"],
+      "the last of two comments, which has quotes around its URL": [
+        comment("ad.js.map") + `//# sourceMappingURL="none.js.map"\n`,
+        { "ad.js.map": map },
+        "",
+      ],
+      // One white space character of any kind is between the marker and the name.
+      "a tab after the #": [`//#\tsourceMappingURL=ae.js.map\n`, { "ae.js.map": map }, "original.ts"],
+      "a no-break space after the #": [`//#\u00A0sourceMappingURL=af.js.map\n`, { "af.js.map": map }, "original.ts"],
+      // White space before the URL is not a part of it.
+      "a space after the =": [`//# sourceMappingURL= ag.js.map\n`, { "ag.js.map": map }, "original.ts"],
+      "a tab after the =": [`//# sourceMappingURL=\tah.js.map\n`, { "ah.js.map": map }, "original.ts"],
+      // A block comment names no source map, and takes none away.
+      "a comment, then a block comment that starts with the marker": [
+        comment("ai.js.map") + `/*# sourceMappingURL=none.js.map */\n`,
+        { "ai.js.map": map },
+        "original.ts",
+      ],
+      "a comment, then one with no URL at the end of the file": [
+        comment("aj.js.map") + `//# sourceMappingURL=`,
+        { "aj.js.map": map },
+        "",
+      ],
+      "a comment, then one with a tab after the #, which names nothing": [
+        comment("ak.js.map") + `//#\tsourceMappingURL=none.js.map\n`,
+        { "ak.js.map": map },
+        "",
+      ],
+      "data: with base64": [comment(dataUrl(map)), {}, "original.ts"],
+      "data: with a charset before base64": [
+        comment(dataUrl(map, "application/json;charset=utf-8;base64")),
+        {},
+        "original.ts",
+      ],
+      "DATA:": [comment(dataUrl(map).replace("data:", "DATA:")), {}, "original.ts"],
+      "data: with base64url and no padding": [
+        comment(`data:application/json;base64,${Buffer.from(map).toString("base64url")}`),
+        {},
+        "original.ts",
+      ],
+      "data: with base64 before a charset": [comment(dataUrl(map, "application/json;base64;charset=utf-8")), {}, ""],
+      "data: with another media type": [comment(dataUrl(map, "text/plain;base64")), {}, ""],
+      "data: with no media type": [comment(dataUrl(map, ";base64")), {}, ""],
+      "data: with Application/JSON": [comment(dataUrl(map, "Application/JSON;base64")), {}, ""],
+      // Node.js takes the data up to a second comma, so JSON that has one is cut.
+      "data: with JSON that is not base64": [comment(`data:application/json,${map}`), {}, ""],
+      "data: with percent-encoded JSON": [comment(`data:application/json,${encodeURIComponent(map)}`), {}, ""],
+      "data: with no comma": [comment("data:application/json;base64"), {}, ""],
+      "file:": [root => comment(`${pathToFileURL(root)}/forms/n.js.map`), { "n.js.map": map }, ""],
+      "http:": [comment("http://127.0.0.1:1/o.js.map"), { "o.js.map": map }, ""],
+      "https:": [comment("https://127.0.0.1:1/p.js.map"), { "p.js.map": map }, ""],
+      // `C:` is a scheme on every platform, so a path with a drive names nothing. POSIX can have a file with such a
+      // path beside the module, and it is not read.
+      "a drive and slashes": [comment("C:/x/y.js.map"), isWindows ? {} : { "C:/x/y.js.map": map }, ""],
+      "a drive and backslashes": [comment("C:\\x\\y.js.map"), isWindows ? {} : { "C:\\x\\y.js.map": map }, ""],
+      // A backslash in a relative URL is a slash, also where the name of a file can have one.
+      "a backslash in a relative path": [comment("maps\\am.js.map"), { "maps/am.js.map": map }, "maps/original.ts"],
+      // Two slashes are before a host. On Windows the URL is then a UNC path, and an address needs no lookup there.
+      "a host and a share": [comment("//127.0.0.1/nope/y.js.map"), {}, ""],
+      // A path with a drive letter is a URL with a scheme.
+      ...(!isWindows && {
+        "an absolute path": [
+          root => comment(`${root}/elsewhere/q.js.map`),
+          { "../elsewhere/q.js.map": map },
+          "../elsewhere/original.ts",
+        ],
+        // The URL of a file on another host names no file on POSIX. On Windows it is a UNC path.
+        "a host before an absolute path": [root => comment(`//host${root}/forms/ao.js.map`), { "ao.js.map": map }, ""],
+        // Only white space ends the URL. Windows has no file with a control character in its name.
+        "a control character in the URL": [
+          `//# sourceMappingURL=al\u0001.js.map\n`,
+          { "al\u0001.js.map": map },
+          "original.ts",
+        ],
+      }),
+    };
+    const files: Record<string, string | ((at: { root: string }) => string)> = {};
+    const modules: [string, string][] = [];
+    let count = 0;
+    for (const [label, [end, beside]] of Object.entries(forms)) {
+      const module = `forms/m${count++}.js`;
+      modules.push([label, module]);
+      files[module] = ({ root }) => code + (typeof end === "function" ? end(root) : end);
+      for (const [name, text] of Object.entries(beside)) files[`forms/${name}`] = text;
+    }
+    const fixture = {
+      ...files,
+      "main.cjs": `
+        ${firstFrame}
+        const out = {};
+        for (const [label, module] of ${JSON.stringify(modules)}) out[label] = firstFrame(require("./" + module).boom);
+        console.log(JSON.stringify(out));
+      `,
+    };
+    using dir = tempDir("own-source-map-url", fixture);
+    const want: Record<string, string> = {};
+    for (const [label, module] of modules) {
+      const source = forms[label][2];
+      want[label] = source
+        ? `at boom (<dir>/${join("forms", source).replaceAll("\\", "/")}:${inOriginal.boom})`
+        : `at boom (<dir>/${module}:${transpiled.cjs.boom})`;
+    }
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: want,
+      stderr: "",
+      exitCode: 0,
+    });
+    await expectNodeToPrint(fixture, ["--enable-source-maps", "main.cjs"], { stdout: want, stderr: "", exitCode: 0 });
+  });
+
+  // node v26.13.0 puts `sourceRoot` before the source with nothing between them, and resolves the result as a URL
+  // beside the map. A `file:` URL is shown as a path.
+  test("a source is named the way Node.js names it", async () => {
+    // [sourceRoot, source, the name in the frame, or null where the frame stays in the loaded file]
+    const named: [string | null | undefined, string, string | null][] = [
+      [undefined, "original.ts", "<dir>/maps/original.ts"],
+      ["", "../src/./original.ts", "<dir>/src/original.ts"],
+      ["src", "original.ts", "<dir>/maps/srcoriginal.ts"],
+      ["src/", "original.ts", "<dir>/maps/src/original.ts"],
+      ["../", "original.ts", "<dir>/original.ts"],
+      [null, "original.ts", "<dir>/maps/original.ts"],
+      ["http://example.com/root/", "original.ts", "http://example.com/root/original.ts"],
+      ["", "webpack://app/./src/original.ts", "webpack://app/src/original.ts"],
+      ["", "webpack:///./src/original.ts?a=1", "webpack:///src/original.ts?a=1"],
+      ["", "a%20b.ts", "<dir>/maps/a b.ts"],
+      ["", "a b.ts", "<dir>/maps/a b.ts"],
+      ["", "original.ts?query#fragment", "<dir>/maps/original.ts"],
+      ["", "ünï.ts", "<dir>/maps/ünï.ts"],
+      // A backslash in a relative source is a slash.
+      ["", "..\\src\\original.ts", "<dir>/src/original.ts"],
+      // Two slashes start a path from the root on POSIX, and a UNC path on Windows: `\\host\share\x.ts`.
+      ["", "//host/share/x.ts", isWindows ? "//host/share/x.ts" : "/host/share/x.ts"],
+      // A path from the root has a drive on Windows. Node.js keeps an absolute path as it is written: no `%20` is
+      // a space, and a `?` does not end it.
+      ...((isWindows
+        ? []
+        : [
+            ["/abs/root/", "original.ts", "/abs/root/original.ts"],
+            ["file:///abs/root/", "original.ts", "/abs/root/original.ts"],
+            ["", "/abs/src/../original.ts", "/abs/original.ts"],
+            ["", "/abs/a%20b.ts?query", "/abs/a%20b.ts?query"],
+            ["", "file:///abs/src/original.ts", "/abs/src/original.ts"],
+            // A `file:` URL with a host names no file on POSIX. On Windows it is a UNC path.
+            ["", "file://host/share/x.ts", null],
+            ["", "\\\\host\\share\\x.ts", null],
+          ]) as [string, string, string | null][]),
+    ];
+    const files: Record<string, string> = {};
+    named.forEach(([sourceRoot, source], i) => {
+      files[`s${i}.js`] = `${transpiled.cjs.code}//# sourceMappingURL=maps/s${i}.js.map\n`;
+      files[`maps/s${i}.js.map`] = mapOf("cjs", source, { sourceRoot });
+    });
+    const fixture = {
+      ...files,
+      // The source of a `data:` URL is beside the module.
+      ...withUrl("inline.js", dataUrl(mapOf("cjs", "src/original.ts"))),
+      "main.cjs": `
+        ${firstFrame}
+        const out = [];
+        for (let i = 0; i < ${named.length}; i++) out.push(firstFrame(require("./s" + i + ".js").boom));
+        out.push(firstFrame(require("./inline.js").boom));
+        console.log(JSON.stringify(out));
+      `,
+    };
+    using dir = tempDir("own-source-map-sources", fixture);
+    const want = {
+      stdout: [
+        ...named.map(([, , name], i) =>
+          name === null ? `at boom (<dir>/s${i}.js:${transpiled.cjs.boom})` : `at boom (${name}:${inOriginal.boom})`,
+        ),
+        `at boom (<dir>/src/original.ts:${inOriginal.boom})`,
+      ],
+      stderr: "",
+      exitCode: 0,
+    };
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual(want);
+    const labels = [...named.map(([sourceRoot, source]) => `${sourceRoot} + ${source}`), "in a data: URL"];
+    await expectNodeToPrint(fixture, ["--enable-source-maps", "main.cjs"], want, labels);
+  });
+
+  // A module that returns errors nothing has read. The functions of their stacks are garbage once `make` returns, so
+  // a collection formats the stacks. The finally blocks keep every return out of tail position.
+  const madeUnread = {
+    "make.js": [
+      `exports.make = function () {`,
+      `  function thrower() { try { return new Error("made"); } finally {} }`,
+      `  try { return thrower(); } finally {}`,
+      `};`,
+      `//# sourceMappingURL=make.js.map`,
+      ``,
+    ].join("\n"),
+    // Line 2 of `make.js` is line 7 of `make.ts`.
+    "make.js.map": JSON.stringify({
+      version: 3,
+      sources: ["make.ts"],
+      names: [],
+      mappings: lineMappings([5, 7, 8, 9]),
+    }),
+  };
+
+  // The map is read by the first stack that needs it. Here that is a collection: the file is gone before any stack
+  // is read, and a stack that no collection formatted would be in the loaded file.
+  test("a stack that a collection formats is in the original file", async () => {
+    using dir = tempDir("own-source-map-collection", {
+      ...madeUnread,
+      "main.cjs": `
+        const { make } = require("./make.js");
+        const errors = Array.from({ length: 8 }, () => make());
+        setImmediate(() => {
+          Bun.gc(true);
+          require("node:fs").rmSync("./make.js.map");
+          console.log(JSON.stringify([...new Set(errors.map(error => error.stack.split("\\n")[1].trim()))]));
+        });
+      `,
+    });
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: ["at thrower (<dir>/make.ts:7:1)"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Bun collects once when the entry point has loaded. That collection reads the map here, in a program that asks
+  // for no collection and reads no stack before the file is gone. node v26.13.0 prints
+  // `at thrower (<dir>/make.js:2:37)`: only a read of `.stack` reads the map there.
+  test("the collection that Bun runs once the entry point has loaded reads the source map", async () => {
+    using dir = tempDir("own-source-map-collection-at-startup", {
+      ...madeUnread,
+      "main.cjs": `
+        const { make } = require("./make.js");
+        globalThis.errors = Array.from({ length: 8 }, () => make());
+        setImmediate(() => {
+          require("node:fs").rmSync("./make.js.map");
+          console.log(JSON.stringify([...new Set(errors.map(error => error.stack.split("\\n")[1].trim()))]));
+        });
+      `,
+    });
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: ["at thrower (<dir>/make.ts:7:1)"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // With an `Error.prepareStackTrace`, a read of the stack is in the loaded file: the function gets call sites. The
+  // text that a collection makes for a stack nothing read stands in for that read.
+  test("with an Error.prepareStackTrace, a stack that a collection formats is in the loaded file", async () => {
+    using dir = tempDir("own-source-map-collection-formatter", {
+      ...madeUnread,
+      "main.cjs": `
+        Error.prepareStackTrace = (error, sites) => "prepared: " + sites[0].getFileName() + ":" + sites[0].getLineNumber();
+        const { make } = require("./make.js");
+        const errors = Array.from({ length: 8 }, () => make());
+        const atOnce = make().stack;
+        setImmediate(() => {
+          Bun.gc(true);
+          const files = new Set([atOnce, ...errors.map(error => error.stack)].map(stack => stack.match(/make\\.\\w+:\\d+/)?.[0]));
+          console.log(JSON.stringify([...files]));
+        });
+      `,
+    });
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: ["make.js:2"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // `--smol` collects while the loader turns the parsed `.jsonc` file into values, and that collection is the first
+  // reader of the map. The parser of the map must leave the loader's syntax tree alone.
+  test("a collection that reads a source map during the load of a .jsonc file leaves that file whole", async () => {
+    const strings = Array.from({ length: 600 }, (_, i) => String(i).padEnd(4096, "x"));
+    using dir = tempDir("own-source-map-collection-in-a-load", {
+      ...madeUnread,
+      "data.jsonc": `// a comment\n${JSON.stringify(strings)}`,
+      "main.cjs": `
+        const { make } = require("./make.js");
+        const errors = Array.from({ length: 8 }, () => make());
+        const data = require("./data.jsonc");
+        require("node:fs").rmSync("./make.js.map");
+        let wrong = 0;
+        for (let i = 0; i < ${strings.length}; i++) if (data[i] !== String(i).padEnd(4096, "x")) wrong++;
+        console.log(
+          JSON.stringify({
+            length: data.length,
+            wrong,
+            frames: [...new Set(errors.map(error => error.stack.split("\\n")[1].trim()))],
+          }),
+        );
+      `,
+    });
+    expect(printed(await run(String(dir), ["--smol", "--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: { length: strings.length, wrong: 0, frames: ["at thrower (<dir>/make.ts:7:1)"] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A frame that a read of `.stack` or a collection put in the original file no longer says which module it is
+  // from. The source lines of the error are found again by the name of the source.
+  test("a printed error has the same source lines when its stack was read or formatted before", async () => {
+    const twice = [
+      `exports.make = function () {`,
+      `  function thrower() { try { return new Error("made"); } finally {} }`,
+      `  try { return thrower(); } finally {}`,
+      `};`,
+      ``,
+    ].join("\n");
+    const madeIn = (name: string) =>
+      JSON.stringify({ version: 3, sources: [`${name}.ts`], names: [], mappings: lineMappings([1, 2, 3, 4]) });
+    const text = (name: string) => `// ${name}\n  here(); // ${name}\n`;
+    using dir = tempDir("own-source-map-printed-after", {
+      // The text is in the map.
+      "in-map.js": `${twice}//# sourceMappingURL=in-map.js.map\n`,
+      "in-map.js.map": JSON.stringify({ ...JSON.parse(madeIn("in-map")), sourcesContent: [text("in the map")] }),
+      // The text is in the file that the map names.
+      "on-disk.js": `${twice}//# sourceMappingURL=on-disk.js.map\n`,
+      "on-disk.js.map": madeIn("on-disk"),
+      "on-disk.ts": text("on the disk"),
+      // The map has one text and the file another: the map's is the one.
+      "both.js": `${twice}//# sourceMappingURL=both.js.map\n`,
+      "both.js.map": JSON.stringify({ ...JSON.parse(madeIn("both")), sourcesContent: [text("in the map")] }),
+      "both.ts": text("on the disk"),
+      // Nothing has the text.
+      "nowhere.js": `${twice}//# sourceMappingURL=nowhere.js.map\n`,
+      "nowhere.js.map": madeIn("nowhere"),
+      "main.cjs": `
+        const name = process.argv[2];
+        const { make } = require("./" + name + ".js");
+        const [atOnce, read, collected] = [make(), make(), make()];
+        void read.stack;
+        setImmediate(() => {
+          Bun.gc(true);
+          for (const error of [atOnce, read, collected]) {
+            console.error(error);
+            console.error("--");
+          }
+        });
+      `,
+    });
+    const shown = async (name: string) => {
+      const { stderr, exitCode } = await run(String(dir), ["--enable-source-maps", "main.cjs", name]);
+      // What is above the message of each error.
+      const lines = stderr
+        .split("--\n")
+        .slice(0, 3)
+        .map(error => error.split("\n").slice(0, error.split("\n").indexOf("error: made")));
+      return { "at once": lines[0], "after a read of .stack": lines[1], "after a collection": lines[2], exitCode };
+    };
+    const everyOrder = (lines: string[]) => ({
+      "at once": lines,
+      "after a read of .stack": lines,
+      "after a collection": lines,
+      exitCode: 0,
+    });
+    const previewOf = (name: string) => preview(text(name), "2:1").split("\n");
+    expect({
+      "in-map": await shown("in-map"),
+      "on-disk": await shown("on-disk"),
+      "both": await shown("both"),
+      "nowhere": await shown("nowhere"),
+    }).toEqual({
+      "in-map": everyOrder(previewOf("in the map")),
+      "on-disk": everyOrder(previewOf("on the disk")),
+      "both": everyOrder(previewOf("in the map")),
+      "nowhere": everyOrder([]),
+    });
+  });
+
+  // A handler of `require.extensions` can give `Module.prototype._compile` another text than the loader gave it.
+  // The own source map of a module is for the file on the disk, so it is applied to that text only.
+  test("a require.extensions handler keeps the source map of a module for the text of the file only", async () => {
+    const names = ["pass-through", "printed-again", "read-by-the-handler"];
+    using dir = tempDir("own-source-map-extension-handler", {
+      ...Object.assign({}, ...names.map(name => withMap(`${name}.js`))),
+      "main.cjs": `
+        ${firstFrame}
+        const Module = require("node:module");
+        const fs = require("node:fs");
+        const original = Module._extensions[".js"];
+        Module._extensions[".js"] = function (module, filename) {
+          if (filename.endsWith("read-by-the-handler.js")) {
+            return module._compile(fs.readFileSync(filename, "utf8"), filename);
+          }
+          const compile = module._compile;
+          module._compile = function (code, filename) {
+            module._compile = compile;
+            return module._compile(filename.endsWith("printed-again.js") ? "\\n\\n" + code : code, filename);
+          };
+          return original.call(this, module, filename);
+        };
+        const out = {};
+        for (const name of ${JSON.stringify(names)}) out[name] = firstFrame(require("./" + name + ".js").boom);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const [withTheFlag, without] = await Promise.all([
+      run(String(dir), ["--enable-source-maps", "main.cjs"]),
+      run(String(dir), ["main.cjs"]),
+    ]);
+    expect([printed(withTheFlag), printed(without)]).toMatchInlineSnapshot(`
+      [
+        {
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": {
+            "pass-through": "at boom (<dir>/pass-through.ts:4:13)",
+            "printed-again": "at boom (<dir>/printed-again.js:8:14)",
+            "read-by-the-handler": "at boom (<dir>/read-by-the-handler.js:6:20)",
+          },
+        },
+        {
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": {
+            "pass-through": "at boom (<dir>/pass-through.js:6:15)",
+            "printed-again": "at boom (<dir>/printed-again.js:8:14)",
+            "read-by-the-handler": "at boom (<dir>/read-by-the-handler.js:6:20)",
+          },
+        },
+      ]
+    `);
+  });
+
+  // A plugin gives Bun the text of a module. The comment of that text counts when the path of the module is the
+  // path of a file, and not for a module in another namespace.
+  test("the text that a plugin's onLoad returns is mapped for a file path, and not in another namespace", async () => {
+    const banner = 5;
+    const text = [
+      ...Array(banner).fill(`// banner`),
+      `export function boom() {`,
+      `  throw new Error("from the plugin");`,
+      `}`,
+    ];
+    // The line of the throw is line 2 of `app.original`.
+    const map = JSON.stringify({
+      version: 3,
+      sources: ["app.original"],
+      names: [],
+      mappings: lineMappings([...Array(banner).fill(1), 1, 2, 3]),
+    });
+    const contents = `${text.join("\n")}\n//# sourceMappingURL=${dataUrl(map)}\n`;
+    using dir = tempDir("own-source-map-plugin", {
+      ...withMap("plain.js"),
+      "app.src": `not JavaScript\n`,
+      "preload.ts": `
+        const contents = ${JSON.stringify(contents)};
+        Bun.plugin({
+          name: "gives text that has a sourceMappingURL comment",
+          setup(build) {
+            build.onLoad({ filter: /\\.src$/ }, () => ({ contents, loader: "js" }));
+            build.onResolve({ filter: /.*/, namespace: "virt" }, ({ path }) => ({ path, namespace: "virt" }));
+            build.onLoad({ filter: /.*/, namespace: "virt" }, () => ({ contents, loader: "js" }));
+            build.onLoad({ filter: /plain\\.js$/ }, async ({ path }) => ({
+              contents: await Bun.file(path).text(),
+              loader: "js",
+            }));
+          },
+        });
+      `,
+      "main.mjs": `
+        ${firstFrame}
+        const out = {};
+        out["a file path, text with an inline map"] = firstFrame((await import("./app.src")).boom);
+        out["another namespace, the same text"] = firstFrame((await import("virt:thing")).boom);
+        out["a file path, the text of the file"] = firstFrame((await import("./plain.js")).boom);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const [withTheFlag, without] = await Promise.all([
+      run(String(dir), ["--enable-source-maps", "--preload", "./preload.ts", "main.mjs"]),
+      run(String(dir), ["--preload", "./preload.ts", "main.mjs"]),
+    ]);
+    expect([printed(withTheFlag), printed(without)]).toEqual([
+      {
+        stdout: {
+          "a file path, text with an inline map": "at boom (<dir>/app.original:2:1)",
+          "another namespace, the same text": "at boom (virt:thing:7:13)",
+          "a file path, the text of the file": `at boom (<dir>/plain.ts:${inOriginal.boom})`,
+        },
+        stderr: "",
+        exitCode: 0,
+      },
+      {
+        stdout: {
+          "a file path, text with an inline map": "at boom (<dir>/app.src:7:13)",
+          "another namespace, the same text": "at boom (virt:thing:7:13)",
+          "a file path, the text of the file": `at boom (<dir>/plain.js:${transpiled.cjs.boom})`,
+        },
+        stderr: "",
+        exitCode: 0,
+      },
+    ]);
+  });
+
+  // `%00` in a URL is a NUL in the path that the URL names.
+  test("a NUL in the URL of the comment or in a source names no file", async () => {
+    using dir = tempDir("own-source-map-nul", {
+      ...withUrl("in-the-url.js", "a%00b.js.map"),
+      "entry.js": `${transpiled.cjs.code}boom();\n//# sourceMappingURL=entry.js.map\n`,
+      "entry.js.map": mapOf("cjs", "a%00b.ts"),
+      "main.cjs": `
+        ${firstFrame}
+        console.log(JSON.stringify(firstFrame(require("./in-the-url.js").boom)));
+      `,
+    });
+    const [caught, printedError] = await Promise.all([
+      run(String(dir), ["--enable-source-maps", "main.cjs"]),
+      run(String(dir), ["--enable-source-maps", "entry.js"]),
+    ]);
+    expect(printed(caught)).toEqual({
+      stdout: `at boom (<dir>/in-the-url.js:${transpiled.cjs.boom})`,
+      stderr: "",
+      exitCode: 0,
+    });
+    // The frame is in the source, whose name has the NUL. Nothing is read for its text.
+    expect({ ...printedError, stderr: printedError.stderr.split("\n").slice(0, 2) }).toEqual({
+      stdout: "",
+      stderr: ["error: kaboom", `      at boom (<dir>/a\0b.ts:${inOriginal.boom})`],
+      exitCode: 1,
+    });
+  });
+
+  // What a bundler makes of two files: each line of `bundle.js` is a line of one of them.
+  test("a frame is in the source that its line is from, in a map with two sources", async () => {
+    const bundle = [
+      `function fromFirst() {`,
+      `  throw new Error("first");`,
+      `}`,
+      `function fromSecond() {`,
+      `  throw new Error("second");`,
+      `}`,
+      `module.exports = { fromFirst, fromSecond };`,
+      `//# sourceMappingURL=bundle.js.map`,
+      ``,
+    ].join("\n");
+    using dir = tempDir("own-source-map-two-sources", {
+      "bundle.js": bundle,
+      // Lines 1 to 3 are lines 11 to 13 of `first.ts`. Lines 4 to 6 are lines 21 to 23 of `second.ts`.
+      "bundle.js.map": JSON.stringify({
+        version: 3,
+        sources: ["src/first.ts", "src/second.ts"],
+        names: [],
+        mappings: "AAUA;AACA;AACA;ACQA;AACA;AACA",
+      }),
+      "main.cjs": `
+        ${firstFrame}
+        const { fromFirst, fromSecond } = require("./bundle.js");
+        console.log(JSON.stringify([firstFrame(fromFirst), firstFrame(fromSecond), firstFrame(fromFirst)]));
+      `,
+    });
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: [
+        "at fromFirst (<dir>/src/first.ts:12:1)",
+        "at fromSecond (<dir>/src/second.ts:22:1)",
+        "at fromFirst (<dir>/src/first.ts:12:1)",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Bun maps the position that JavaScriptCore reports in the loaded file, which is not always in the segment of the
+  // map that the position of V8 is in. Each difference from node v26.13.0 is beside its line.
+  test("frames of a one-line bundle of two sources, and of a variable that is used once", async () => {
+    // The bundle that esbuild 0.28.2 makes of src/index.ts and src/config.ts, after terser 5.51.2 (compress, mangle,
+    // toplevel).
+    const bundle = [
+      `function r(){const r=function(r){const t=Number(r);if(!Number.isInteger(t))throw new RangeError("not a port: "+r);return t}("eighty");return r+1}try{r()}catch(r){console.log(r.stack)}"uncaught"===process.argv[2]&&r();`,
+      `//# sourceMappingURL=index.js.map`,
+      ``,
+    ].join("\n");
+    const bundleMap = JSON.stringify({
+      version: 3,
+      names: [
+        "portFromEnv",
+        "port",
+        "text",
+        "value",
+        "Number",
+        "isInteger",
+        "RangeError",
+        "parsePort",
+        "e",
+        "console",
+        "log",
+        "stack",
+        "process",
+        "argv",
+      ],
+      sources: ["src/index.ts", "src/config.ts"],
+      mappings:
+        "AAEA,SAASA,IACP,MACMC,ECaD,SAAmBC,GACxB,MAAMC,EAAQC,OAAOF,GACrB,IAAKE,OAAOC,UAAUF,GACpB,MAAM,IAAIG,WAAW,eAAiBJ,GAExC,OAAOC,CACT,CDnBeI,CADA,UAEb,OAAON,EAAO,CAChB,CAEA,IACED,GACF,OAASQ,GACPC,QAAQC,IAAKF,EAAYG,MAC3B,CACwB,aAApBC,QAAQC,KAAK,IAAmBb",
+      ignoreList: [],
+    });
+    // What tsc 6.0.2 (--module commonjs --sourceMap) makes of a function that reads a variable that is used once.
+    const lib = [
+      `"use strict";`,
+      `Object.defineProperty(exports, "__esModule", { value: true });`,
+      `exports.nameOf = nameOf;`,
+      `function findUser(id) {`,
+      `    return id === 1 ? { id } : undefined;`,
+      `}`,
+      `function nameOf(id) {`,
+      `    const user = findUser(id);`,
+      `    return user.profile.name;`,
+      `}`,
+      `//# sourceMappingURL=lib.js.map`,
+    ].join("\n");
+    const libMap = JSON.stringify({
+      version: 3,
+      file: "lib.js",
+      sourceRoot: "",
+      sources: ["lib.ts"],
+      names: [],
+      mappings:
+        ";;AAMA,wBAGC;AAPD,SAAS,QAAQ,CAAC,EAAU;IAC1B,OAAO,EAAE,KAAK,CAAC,CAAC,CAAC,CAAC,EAAE,EAAE,EAAE,CAAC,CAAC,CAAC,SAAS,CAAC;AACvC,CAAC;AAED,SAAgB,MAAM,CAAC,EAAU;IAC/B,MAAM,IAAI,GAAG,QAAQ,CAAC,EAAE,CAAC,CAAC;IAC1B,OAAO,IAAI,CAAC,OAAO,CAAC,IAAI,CAAC;AAC3B,CAAC",
+    });
+    using dir = tempDir("own-source-map-minified", {
+      "index.js": bundle,
+      "index.js.map": bundleMap,
+      "lib.js": lib,
+      "lib.js.map": libMap,
+      "main.cjs": `try { require("./lib.js").nameOf(2); } catch (e) { console.log(e.stack.split("\\n")[1]); }`,
+    });
+    const [bundled, uncaught, read, readWithInspector] = await Promise.all([
+      run(String(dir), ["--enable-source-maps", "index.js"]),
+      run(String(dir), ["--enable-source-maps", "index.js", "uncaught"]),
+      run(String(dir), ["--enable-source-maps", "main.cjs"]),
+      run(String(dir), ["--inspect=127.0.0.1:0", "--enable-source-maps", "main.cjs"]),
+    ]);
+    const frames = (text: string) =>
+      text
+        .split("\n")
+        .filter(line => /^\s*at /.test(line))
+        .map(line => line.trim());
+    expect({
+      bundled: { stdout: frames(bundled.stdout), stderr: bundled.stderr, exitCode: bundled.exitCode },
+      // What is printed for the error that nothing catches, up to the empty line after its frames.
+      uncaught: { stderr: uncaught.stderr.split("\n\n")[0].split("\n"), exitCode: uncaught.exitCode },
+      read: { stdout: frames(read.stdout), stderr: read.stderr, exitCode: read.exitCode },
+      // The inspector says on stderr where it listens.
+      readWithInspector: { stdout: frames(readWithInspector.stdout), exitCode: readWithInspector.exitCode },
+    }).toEqual({
+      bundled: {
+        stdout: [
+          // node v26.13.0: at parsePort (<dir>/src/config.ts:21:11)
+          "at <anonymous> (<dir>/src/config.ts:21:15)",
+          // node v26.13.0: at portFromEnv (<dir>/src/index.ts:5:16). Bun is at 1:122 of index.js and V8 at 1:124.
+          "at r (<dir>/src/config.ts:23:10)",
+          // node v26.13.0: at Object.<anonymous> (<dir>/src/index.ts:10:3)
+          "at <dir>/src/index.ts:10:3",
+        ],
+        stderr: "",
+        exitCode: 0,
+      },
+      // The map has no `sourcesContent` and no source is on the disk, so no source lines are above the message.
+      // node v26.13.0 prints line 1 of index.js there. Its frames differ from these as they do above.
+      uncaught: {
+        stderr: [
+          "RangeError: not a port: eighty",
+          "      at <anonymous> (<dir>/src/config.ts:21:15)",
+          "      at r (<dir>/src/config.ts:23:10)",
+          "      at <dir>/src/index.ts:14:37",
+        ],
+        exitCode: 1,
+      },
+      // node v26.13.0: at Object.nameOf (<dir>/lib.ts:9:15). Bun's transpiler puts `findUser(id)` where `user` is read.
+      read: { stdout: ["at nameOf (<dir>/lib.ts:8:27)"], stderr: "", exitCode: 0 },
+      // It does not do that while a debugger listens. node v26.13.0: at Object.nameOf (<dir>/lib.ts:9:15)
+      readWithInspector: { stdout: ["at nameOf (<dir>/lib.ts:9:10)"], exitCode: 0 },
+    });
+  });
+
+  // One stack with a frame of each kind: a module with its own map, a file that Bun transpiles, a plain file and a
+  // builtin, whose position is not the test's to say. Every reader is asked for all of it.
+  test("each frame of a stack with frames of several kinds is in its own file", async () => {
+    using dir = tempDir("own-source-map-mixed-stack", {
+      ...withMap("lib.js"),
+      "typed.ts": [
+        `type Erased = { x: number };`,
+        `export function typed(cb: () => unknown): unknown {`,
+        `  return [0].map(() => cb())[0];`,
+        `}`,
+        ``,
+      ].join("\n"),
+      "plain.cjs": `exports.plain = function plain(cb) {\n  return [cb()];\n};\n`,
+      "main.cjs": [
+        `const lib = require("./lib.js");`,
+        `const { typed } = require("./typed.ts");`,
+        `const { plain } = require("./plain.cjs");`,
+        `const through = f => lib.call(() => typed(() => plain(f)));`,
+        `const frames = text => text.split("\\n").slice(1).map(line => line.trim().replace(/^at map .*/, "at map"));`,
+        `const out = {};`,
+        `try {`,
+        `  through(lib.boom);`,
+        `} catch (error) {`,
+        `  out["Error.stack"] = frames(error.stack);`,
+        `}`,
+        `Error.prepareStackTrace = (error, sites) =>`,
+        `  sites.map(site =>`,
+        `    site.getFunctionName() === "map" ? "map" : [site.getFileName(), site.getLineNumber(), site.getColumnNumber()].join(":"),`,
+        `  );`,
+        `try {`,
+        `  through(lib.boom);`,
+        `} catch (error) {`,
+        `  out["CallSite"] = error.stack;`,
+        `}`,
+        `Error.prepareStackTrace = undefined;`,
+        `console.log(JSON.stringify(out));`,
+        `through(lib.boom);`,
+        ``,
+      ].join("\n"),
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--enable-source-maps", "main.cjs"]);
+    expect({
+      ...JSON.parse(stdout),
+      printed: stderr
+        .split("\n")
+        .filter(line => line.startsWith("      at "))
+        .map(line => line.trim().replace(/^at map .*/, "at map")),
+      exitCode,
+    }).toMatchInlineSnapshot(`
+      {
+        "CallSite": [
+          "<dir>/lib.js:6:15",
+          "<dir>/plain.cjs:2:11",
+          "<dir>/main.cjs:4:49",
+          "map",
+          "<dir>/typed.ts:3:14",
+          "<dir>/main.cjs:4:37",
+          "<dir>/lib.js:9:13",
+          "<dir>/main.cjs:4:26",
+          "<dir>/main.cjs:17:3",
+        ],
+        "Error.stack": [
+          "at boom (<dir>/lib.ts:4:13)",
+          "at plain (<dir>/plain.cjs:2:11)",
+          "at <anonymous> (<dir>/main.cjs:4:49)",
+          "at map",
+          "at typed (<dir>/typed.ts:3:14)",
+          "at <anonymous> (<dir>/main.cjs:4:37)",
+          "at call (<dir>/lib.ts:8:11)",
+          "at through (<dir>/main.cjs:4:26)",
+          "at <anonymous> (<dir>/main.cjs:8:3)",
+        ],
+        "exitCode": 1,
+        "printed": [
+          "at boom (<dir>/lib.ts:4:13)",
+          "at plain (<dir>/plain.cjs:2:11)",
+          "at <anonymous> (<dir>/main.cjs:4:49)",
+          "at map",
+          "at typed (<dir>/typed.ts:3:14)",
+          "at <anonymous> (<dir>/main.cjs:4:37)",
+          "at call (<dir>/lib.ts:8:11)",
+          "at through (<dir>/main.cjs:4:26)",
+          "at <anonymous> (<dir>/main.cjs:23:1)",
+        ],
+      }
+    `);
   });
 });

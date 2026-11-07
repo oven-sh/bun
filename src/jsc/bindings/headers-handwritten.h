@@ -125,10 +125,17 @@ struct bun_ModuleInfoDeserialized;
 // Every BunString here is owned by whichever frame holds the struct (see
 // ~ErrorableResolvedSource / Rust `Drop`). Consumers that keep a string take it
 // with `transferToWTFString()`, which leaves the field empty.
+// Mirrors `OwnSourceMapBinding` in bun_jsc: whether a module has a sourceMappingURL comment that can name a source map of its own, and whether the source maps switch asked for that map when the module was transpiled.
+enum class BunOwnSourceMapBinding : uint8_t {
+    None = 0,
+    NotKept = 1,
+    Kept = 2,
+};
 typedef struct ResolvedSource {
     BunString source_code;
     BunString source_url;
     bool isCommonJSModule;
+    BunOwnSourceMapBinding own_source_map;
     // `bun build --compile`: StringImpl::hash() of source_code computed at build time (0 = unknown).
     uint32_t source_code_hash;
     JSC::EncodedJSValue cjsCustomExtension;
@@ -158,7 +165,7 @@ typedef struct ResolvedSource {
     // validated against). If empty, origin is derived from source_url.
     BunString origin_path;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, depends_on_more_than_source) == 78 && offsetof(ResolvedSource, is_static) == 79 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, own_source_map) == 49 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, depends_on_more_than_source) == 78 && offsetof(ResolvedSource, is_static) == 79 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
@@ -419,6 +426,17 @@ extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
 extern "C" bool Bun__VM__isMainModule(void* bunVM, const BunString* key);
 extern "C" bool Bun__VM__isTestEntryPoint(void* bunVM, const BunString* key);
 
+// Mirrors `SourceMapsSupport` in bun_jsc: what `module.getSourceMapsSupport()` answers.
+typedef struct BunSourceMapsSupport {
+    bool enabled;
+    bool nodeModules;
+    bool generatedCode;
+} BunSourceMapsSupport;
+extern "C" BunSourceMapsSupport Bun__VM__sourceMapsSupport(void* bunVM);
+extern "C" void Bun__VM__setSourceMapsSupport(void* bunVM, BunSourceMapsSupport);
+extern "C" bool Bun__VM__sourceMapsApplyTo(void* bunVM, const BunString* key);
+extern "C" void Bun__VM__forgetOwnSourceMap(void* bunVM, const BunString* key);
+
 // Used in process.version
 extern "C" const char* Bun__version;
 extern "C" const char* Bun__version_with_sha;
@@ -487,7 +505,14 @@ bool Bun__deepMatch(
     Bun::DeepMatchState& state,
     bool isMatchingObjectContaining);
 
-extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
+// Mirrors `PositionSpace` in bun_jsc: the file that a reader of a stack position wants the position in.
+enum class BunPositionSpace : uint8_t {
+    // Through the maps that Bun wrote and no further.
+    Loaded = 0,
+    // On through the own source map of a runtime-transpiled module, while process.sourceMapsEnabled is on. Otherwise the same as Loaded. `Error.stack` and a printed error read this one.
+    Original = 1,
+};
+extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t, BunPositionSpace);
 
 namespace Inspector {
 class ScriptArguments;
@@ -530,9 +555,9 @@ public:
 
     ZigStackFrame& operator[](size_t index) { return m_frames[index]; }
 
-    void remap(void* bunVM)
+    void remap(void* bunVM, BunPositionSpace space)
     {
-        Bun__remapStackFramePositions(bunVM, m_frames.begin(), m_frames.size());
+        Bun__remapStackFramePositions(bunVM, m_frames.begin(), m_frames.size(), space);
     }
 
 private:

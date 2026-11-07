@@ -2888,7 +2888,7 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
             WTF::String stackProperty = Bun::formatStackTrace(
                 vm, globalObject, globalObject, name, message,
                 line, column,
-                sourceURL, stackFrames, nullptr);
+                sourceURL, stackFrames, nullptr, BunPositionSpace::Original);
             RETURN_IF_EXCEPTION(scope, {});
 
             WTF::String stack;
@@ -5460,8 +5460,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_setSourceMapsEnabled, (JSC::JSGlobalObject * le
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "enabled"_s, "boolean"_s, arg0);
     }
 
-    globalObject->processObject()->m_sourceMapsEnabled = arg0.toBoolean(globalObject);
+    // nodeModules and generatedCode follow enabled, as in process.setSourceMapsEnabled() of Node.js (lib/internal/bootstrap/node.js).
+    bool enabled = arg0.asBoolean();
+    Bun__VM__setSourceMapsSupport(globalObject->bunVM(), { enabled, enabled, enabled });
+    globalObject->m_sourceMapsSupportObject.clear();
     return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(processSourceMapsEnabled, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue, JSC::PropertyName))
+{
+    return JSValue::encode(jsBoolean(Bun__VM__sourceMapsSupport(bunVM(lexicalGlobalObject)).enabled));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -6208,6 +6216,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   send                             constructProcessSend                                PropertyCallback
   setSourceMapsEnabled             Process_setSourceMapsEnabled                           Function 1
   setUncaughtExceptionCaptureCallback Process_setUncaughtExceptionCaptureCallback      Function 1
+  sourceMapsEnabled                processSourceMapsEnabled                            CustomAccessor|ReadOnly
   stderr                           constructStderr                                     PropertyCallback
   stdin                            constructStdin                                      PropertyCallback
   stdout                           constructStdout                                     PropertyCallback

@@ -19,6 +19,8 @@ pub struct ResolvedSource {
     pub source_url: BunString,
 
     pub is_commonjs_module: bool,
+    /// What `SavedSourceMap::put_mappings` did for the module's own source map. `IsolatedModuleCache` gives the module to a later file only while the switch asks the same.
+    pub own_source_map: OwnSourceMapBinding,
     /// `bun build --compile`: `StringImpl::hash()` of `source_code`, computed at build time (0 = not known).
     pub source_code_hash: u32,
 
@@ -50,19 +52,34 @@ pub struct ResolvedSource {
     pub origin_path: BunString,
 }
 
+/// Whether a module has a `sourceMappingURL` comment that can name a source map of its own, and whether the source maps switch asked for that map when the module was transpiled. `BunOwnSourceMapBinding` in headers-handwritten.h mirrors it.
+#[repr(u8)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum OwnSourceMapBinding {
+    /// The module has no such comment.
+    #[default]
+    None = 0,
+    /// The switch did not ask for the map.
+    NotKept = 1,
+    /// The source map table has the URL of the comment.
+    Kept = 2,
+}
+
 /// The AST fields a `ResolvedSource` needs, copied out before the printer consumes the AST.
 #[derive(Clone, Copy)]
 pub struct PrintedAst {
     pub is_commonjs_module: bool,
     depends_on_more_than_source: bool,
+    own_source_map: OwnSourceMapBinding,
 }
 
 impl PrintedAst {
-    pub fn new(ast: &bun_ast::Ast) -> Self {
+    pub fn new(ast: &bun_ast::Ast, own_source_map: OwnSourceMapBinding) -> Self {
         Self {
             is_commonjs_module: ast.has_commonjs_export_names
                 || ast.exports_kind == bun_ast::ExportsKind::Cjs,
             depends_on_more_than_source: ast.depends_on_more_than_source,
+            own_source_map,
         }
     }
 }
@@ -73,6 +90,7 @@ impl ResolvedSource {
         Self {
             source_code,
             is_commonjs_module: ast.is_commonjs_module,
+            own_source_map: ast.own_source_map,
             depends_on_more_than_source: ast.depends_on_more_than_source,
             ..Default::default()
         }
@@ -160,5 +178,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, depends_on_more_than_source @ 78, is_static @ 79, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; own_source_map @ 49, is_prelinked_module @ 77, depends_on_more_than_source @ 78, is_static @ 79, bytecode_cache @ 80, module_info @ 104);
 bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17, entry_offset @ 20);

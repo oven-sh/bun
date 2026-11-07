@@ -324,7 +324,8 @@ impl Lookup {
 
         let name: &[u8] = &source_map.external_source_names[source_idx];
 
-        let display = if source_map.standalone_module_graph.is_none()
+        let display = if !source_map.has_resolved_source_names
+            && source_map.standalone_module_graph.is_none()
             && bun_paths::is_absolute(base_filename)
         {
             // `platform::Auto` is a cfg-selected
@@ -353,6 +354,15 @@ impl Lookup {
             debug_assert!(source_map.is_external());
 
             let index = usize::try_from(self.mapping.source_index).ok()?;
+
+            if source_map.has_resolved_source_names {
+                // As in Node.js, only a source that resolved to a file is read. A `webpack://` one is not.
+                let name: &[u8] = source_map.external_source_names.get(index)?;
+                if !bun_paths::is_absolute(name) {
+                    return None;
+                }
+                break 'bytes crate::read_file_that_a_map_names(name)?;
+            }
 
             // Standalone module graph source maps are stored (in memory) compressed.
             // They are decompressed on demand.
@@ -392,10 +402,7 @@ impl Lookup {
             let path = bun_paths::resolve_path::join_abs_string_buf_checked::<
                 bun_paths::platform::Loose,
             >(dir, &mut buf[..], &[name])?;
-            match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
-                Ok(r) => break 'bytes r,
-                Err(_) => return None,
-            }
+            crate::read_file_that_a_map_names(path)?
         };
 
         Some(Utf8Bytes::Owned(bytes))

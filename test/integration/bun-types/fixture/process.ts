@@ -1,3 +1,6 @@
+import { findSourceMap, getSourceMapsSupport, setSourceMapsSupport, type SourceMap } from "node:module";
+import { expectType } from "./utilities";
+
 process.memoryUsage();
 process.cpuUsage().system;
 process.cpuUsage().user;
@@ -44,7 +47,14 @@ console.log(process.listenerCount("exit"));
 console.log(process.memoryUsage());
 // console.log(process.report);
 // console.log(process.resourceUsage);
-// console.log(process.setSourceMapsEnabled());
+process.setSourceMapsEnabled(true);
+expectType(process.sourceMapsEnabled).is<boolean>();
+setSourceMapsSupport(true, { nodeModules: true, generatedCode: true });
+const sourceMapsSupport = getSourceMapsSupport();
+expectType(sourceMapsSupport.enabled).is<boolean>();
+expectType(sourceMapsSupport.nodeModules).is<boolean>();
+expectType(sourceMapsSupport.generatedCode).is<boolean>();
+expectType(findSourceMap("/path/to/module.js")).is<SourceMap | undefined>();
 // console.log(process.send);
 process.reallyExit();
 process.assert(false, "PleAsE don't Use THIs It IS dEpReCATED");

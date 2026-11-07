@@ -97,7 +97,7 @@ extern "C" void ExpectDeferred__location(JSGlobalObject* globalObject, EncodedJS
         remapped[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
         remapped[0].position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
         remapped[0].source_url = Bun::toStringRef(Zig::sourceURL(vm, frame));
-        remapped.remap(Bun::vm(globalObject));
+        remapped.remap(Bun::vm(globalObject), BunPositionSpace::Loaded);
         *outSourceURL = Bun::toStringRef(remapped[0].source_url.toWTFString());
         *outLine = OrdinalNumber::fromZeroBasedInt(remapped[0].position.line_zero_based).oneBasedInt();
         *outColumn = OrdinalNumber::fromZeroBasedInt(remapped[0].position.column_zero_based).oneBasedInt();

@@ -117,6 +117,43 @@ describe("fake node cli", () => {
     );
   });
 
+  test("--enable-source-maps reads the source map that a loaded file names", () => {
+    using temp = tempDir("fake-node", {
+      // What `tsc --sourceMap` makes of a file that throws on its line 4, `Error` at column 13.
+      "lib.js": [
+        `"use strict";`,
+        `Object.defineProperty(exports, "__esModule", { value: true });`,
+        `exports.boom = boom;`,
+        `function boom() {`,
+        `    throw new Error("kaboom");`,
+        `}`,
+        `//# sourceMappingURL=lib.js.map`,
+        ``,
+      ].join("\n"),
+      "lib.js.map": JSON.stringify({
+        version: 3,
+        sources: ["lib.ts"],
+        names: [],
+        mappings: ";;AAEA,oBAEC;AAFD,SAAgB,IAAI;IAClB,MAAM,IAAI,KAAK,CAAC,QAAQ,CAAC,CAAC;AAC5B,CAAC",
+      }),
+      "index.js": `
+        try {
+          require("./lib.js").boom();
+        } catch (e) {
+          console.log(e.stack.split("\\n")[1].trim());
+        }
+      `,
+    });
+    expect(fakeNodeRun(temp, ["--enable-source-maps", "index.js"])).toEqual({
+      stdout: `at boom (${join(temp, "lib.ts")}:4:13)`,
+      stderr: "",
+    });
+    expect(fakeNodeRun(temp, ["index.js"])).toEqual({
+      stdout: `at boom (${join(temp, "lib.js")}:5:15)`,
+      stderr: "",
+    });
+  });
+
   // Bare `node` now matches Node.js: a TTY stdin enters the REPL, a
   // non-TTY stdin (pipe) prints "Missing script". fakeNodeRun's default
   // stdin is platform-dependent (Windows may inherit a console), so pin

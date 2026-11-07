@@ -1641,7 +1641,7 @@ unsafe fn apply_standalone_runtime_flags(
 }
 
 /// Scan a Worker's `execArgv` for the flags that mean something there. Like the
-/// CLI parser, the scan stops at the first positional.
+/// CLI parser, the scan reads an option's value with the option and stops at the first positional. It skips a word that the parser rejects.
 ///
 /// # Safety
 /// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
@@ -1649,43 +1649,49 @@ unsafe fn apply_standalone_runtime_flags(
 unsafe fn parse_worker_exec_argv_flags(
     exec_argv: &[bun_core::WTFStringImpl],
 ) -> Option<WorkerExecArgvFlags> {
+    use crate::cli::arguments::{AUTO_PARAMS, CODE_GENERATION_PARAM};
+    use crate::cli::startup_options::{index_of_long, visit_option_words};
+    const NO_ADDONS_PARAM: usize = index_of_long(AUTO_PARAMS, b"no-addons");
+    const NO_FFI_CC_PARAM: usize = index_of_long(AUTO_PARAMS, b"no-ffi-cc");
+    const ENABLE_SOURCE_MAPS_PARAM: usize = index_of_long(AUTO_PARAMS, b"enable-source-maps");
+
     let mut flags = WorkerExecArgvFlags {
         allow_addons: true,
         allow_ffi_cc: true,
+        enable_source_maps: false,
         invalid: None,
     };
+    // SAFETY: per fn contract: each entry that is not null is a live `WTFStringImpl*`.
+    let owned = exec_argv
+        .iter()
+        .enumerate()
+        .filter(|(_, arg)| !arg.is_null())
+        .map(|(index, &arg)| (index, unsafe { &*arg }.to_owned_slice_z()));
+    let owned: Vec<_> = owned.collect();
+    let words: Vec<&[u8]> = owned.iter().map(|(_, word)| word.as_bytes()).collect();
     if crate::cli::startup_options::may_refuse_options() {
-        // SAFETY: per fn contract: each entry that is not null is a live `WTFStringImpl*`.
-        let words = exec_argv
-            .iter()
-            .filter(|arg| !arg.is_null())
-            .map(|&arg| unsafe { &*arg }.to_owned_slice_z());
-        let words: Vec<_> = words.collect();
-        let words: Vec<&[u8]> = words.iter().map(|word| word.as_bytes()).collect();
         crate::cli::startup_options::warn_of_ignored_options(&words);
     }
-    for (index, &arg) in exec_argv.iter().enumerate() {
-        if arg.is_null() {
-            continue;
-        }
-        // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
-        let owned = unsafe { &*arg }.to_owned_slice_z();
-        let bytes = owned.as_bytes();
-        if bytes.first() != Some(&b'-') {
+    let mut read = 0;
+    while read < words.len() {
+        let mut is_invalid = false;
+        let stopped_after = visit_option_words(&words[read..], |option| {
+            match option.index {
+                NO_ADDONS_PARAM => flags.allow_addons = false,
+                NO_FFI_CC_PARAM => flags.allow_ffi_cc = false,
+                ENABLE_SOURCE_MAPS_PARAM => flags.enable_source_maps = true,
+                CODE_GENERATION_PARAM => is_invalid = true,
+                _ => {}
+            }
+            !is_invalid
+        });
+        let Some(count) = stopped_after else {
             break;
-        }
-        if bytes == b"--" {
-            break;
-        }
-        if bytes == b"--no-addons" {
-            flags.allow_addons = false;
-        } else if bytes == b"--no-ffi-cc" {
-            flags.allow_ffi_cc = false;
-        } else if matches!(
-            bytes.strip_prefix(b"--disallow-code-generation-from-strings".as_slice()),
-            Some([] | [b'=', ..])
-        ) {
-            flags.invalid.get_or_insert(index);
+        };
+        read += count;
+        if is_invalid {
+            // The flag is always one word, so it is the last word that was read.
+            flags.invalid.get_or_insert(owned[read - 1].0);
         }
     }
     Some(flags)
@@ -2933,11 +2939,26 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     // stacks remap to original positions even on a cache hit.
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread
                     // VM; `source_mappings` is only touched from the JS thread.
-                    let _ = unsafe { &mut (*jsc_vm).source_mappings }.put_mappings(
+                    let source_mappings = unsafe { &mut (*jsc_vm).source_mappings };
+                    let source_maps_support = source_mappings.source_maps_support();
+                    let own_source_map = bun_jsc::saved_source_map::own_source_map_binding(
+                        source,
+                        entry.metadata.source_mapping_url,
+                        source_maps_support,
+                    );
+                    watch_own_source_map(
+                        jsc_vm,
+                        source,
+                        entry.metadata.source_mapping_url,
+                        own_source_map,
+                    );
+                    let _ = source_mappings.put_mappings(
                         source,
                         bun_core::MutableString {
                             list: core::mem::take(&mut entry.sourcemap).into_vec(),
                         },
+                        entry.metadata.source_mapping_url,
+                        source_maps_support,
                     );
                     // Rebuild the cached ESM record for the
                     // isolation source-provider cache (same shape as
@@ -3025,6 +3046,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         source_code,
                         source_url: input_specifier.create_if_different(path.text),
                         is_commonjs_module,
+                        own_source_map,
                         module_info,
                         tag,
                         bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
@@ -3101,7 +3123,20 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     return Err(crate::Error::AsyncModule);
                 }
 
-                let printed_ast = bun_jsc::resolved_source::PrintedAst::new(&parse_result.ast);
+                let own_source_map = bun_jsc::saved_source_map::own_source_map_binding(
+                    &parse_result.source,
+                    parse_result.ast.source_mapping_url,
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM. The printer's handler reads the same switch below.
+                    unsafe { (*jsc_vm).source_mappings.source_maps_support() },
+                );
+                watch_own_source_map(
+                    jsc_vm,
+                    &parse_result.source,
+                    parse_result.ast.source_mapping_url,
+                    own_source_map,
+                );
+                let printed_ast =
+                    bun_jsc::resolved_source::PrintedAst::new(&parse_result.ast, own_source_map);
                 let is_commonjs_module = printed_ast.is_commonjs_module;
                 // Collect the ESM record while printing, for the isolation
                 // source-provider cache (same shape as `RuntimeTranspilerStore`).
@@ -3572,6 +3607,22 @@ fn maybe_watch_file(
     ) {
         *should_close_input_file_fd = false;
     }
+}
+
+/// Gives the file of a module's own source map to the watcher of `--hot` and `--watch`, see `ImportWatcher::watch_own_source_map`.
+fn watch_own_source_map(
+    jsc_vm: *mut VirtualMachine,
+    source: &bun_ast::Source,
+    url: bun_ast::Range,
+    own_source_map: bun_jsc::resolved_source::OwnSourceMapBinding,
+) {
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+    if !unsafe { &*jsc_vm }.is_watcher_enabled() {
+        return;
+    }
+    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when `is_watcher_enabled()`; cast recovers the concrete type.
+    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+    watcher.watch_own_source_map(source, url, own_source_map);
 }
 
 /// Like `maybe_watch_file`, for a file the transpiler didn't open itself.
@@ -4925,6 +4976,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
                     lr.package_json,
                     aot_package_config,
                     module_loader,
+                    (*jsc_vm).source_mappings.source_maps_support(),
                 )
             };
         }

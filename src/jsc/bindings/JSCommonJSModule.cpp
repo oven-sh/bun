@@ -943,6 +943,16 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 
     String wrappedString;
     auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    for (auto* given = zigGlobalObject->m_textGivenToCompileHook; given; given = given->outer) {
+        if (given->module != moduleObject)
+            continue;
+        // The hook changed the text: the module's own source map is not for what runs now.
+        if (given->text != sourceString) {
+            BunString key = Bun::toString(given->key);
+            Bun__VM__forgetOwnSourceMap(bunVM(zigGlobalObject), &key);
+        }
+        break;
+    }
     if (zigGlobalObject->hasOverriddenModuleWrapper) [[unlikely]] {
         wrappedString = makeString(
             zigGlobalObject->m_moduleWrapperStart,
@@ -1669,6 +1679,12 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
             sourceStringWithoutWrapper = sourceString;
         }
         RETURN_IF_EXCEPTION(scope, );
+
+        Zig::GlobalObject::TextGivenToCompileHook given { this, sourceStringWithoutWrapper, key, globalObject->m_textGivenToCompileHook };
+        globalObject->m_textGivenToCompileHook = &given;
+        auto restoreTextGivenToCompileHook = WTF::makeScopeExit([&] {
+            globalObject->m_textGivenToCompileHook = given.outer;
+        });
 
         // _compile(source, filename)
         MarkedArgumentBuffer arguments;

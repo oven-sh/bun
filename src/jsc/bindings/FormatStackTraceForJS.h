@@ -68,7 +68,8 @@ WTF::String formatStackTrace(
     WTF::OrdinalNumber& column,
     WTF::String& sourceURL,
     WTF::Vector<JSC::StackFrame>& stackTrace,
-    JSC::JSObject* errorInstance);
+    JSC::JSObject* errorInstance,
+    BunPositionSpace space);
 
 // JSC Host Functions - Error constructor methods
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);

@@ -16,7 +16,7 @@ use crate::counters::Counters;
 use crate::event_loop::EventLoop;
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
-use crate::saved_source_map::SavedSourceMap;
+use crate::saved_source_map::{PositionSpace, SavedSourceMap, ShownSource, SourceMapsSupport};
 use crate::{
     self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsResult, OpaqueCallback,
     PlatformEventLoop, ResolvedSource, VM, ZigException,
@@ -1736,9 +1736,11 @@ impl VirtualMachine {
         &'a mut self,
         printer: *mut bun_js_printer::BufferPrinter,
     ) -> SourceMapHandlerGetter<'a> {
+        let support = self.source_mappings.source_maps_support();
         SourceMapHandlerGetter {
             vm: self,
             printer,
+            support,
             _marker: core::marker::PhantomData,
         }
     }
@@ -2944,13 +2946,15 @@ extern crate alloc;
 /// casts back on the other side of each hook.
 pub type RuntimeState = *mut c_void;
 
-/// Runtime flags a Worker's `execArgv` can set. `true` means allowed.
+/// Runtime flags a Worker's `execArgv` can set.
 #[derive(Copy, Clone, Debug)]
 pub struct WorkerExecArgvFlags {
     /// `!--no-addons`
     pub allow_addons: bool,
     /// `!--no-ffi-cc`
     pub allow_ffi_cc: bool,
+    /// `--enable-source-maps`
+    pub enable_source_maps: bool,
     /// Where a flag is that is the process's, which a Worker cannot be given
     /// (`ERR_WORKER_INVALID_EXEC_ARGV`): `--disallow-code-generation-from-strings`.
     pub invalid: Option<usize>,
@@ -3530,7 +3534,11 @@ impl VirtualMachine {
             let _ = (*regular).tasks.ensure_unused_capacity(64);
             addr_of_mut!((*vm).event_loop).write(regular);
 
-            addr_of_mut!((*vm).source_mappings).write(SavedSourceMap::default());
+            let source_mappings = SavedSourceMap::default();
+            source_mappings.set_source_maps_support(SourceMapsSupport::all(
+                opts.transform_options.enable_source_maps,
+            ));
+            addr_of_mut!((*vm).source_mappings).write(source_mappings);
         }
 
         // High-tier per-VM state — Transpiler / Timer::All / entry_point.
@@ -4059,6 +4067,8 @@ pub fn process_fetch_log(
 pub struct SourceMapHandlerGetter<'a> {
     vm: *mut VirtualMachine,
     printer: *mut bun_js_printer::BufferPrinter,
+    /// The source maps switch as the JS thread had it when it asked for the module.
+    support: SourceMapsSupport,
     _marker: core::marker::PhantomData<&'a mut ()>,
 }
 
@@ -4074,10 +4084,12 @@ impl<'a> SourceMapHandlerGetter<'a> {
     pub(crate) unsafe fn from_raw(
         vm: *mut VirtualMachine,
         printer: *mut bun_js_printer::BufferPrinter,
+        support: SourceMapsSupport,
     ) -> Self {
         Self {
             vm,
             printer,
+            support,
             _marker: core::marker::PhantomData,
         }
     }
@@ -4127,20 +4139,6 @@ impl<'a> SourceMapHandlerGetter<'a> {
     /// pointer once the writer's last byte has been emitted (i.e. inside
     /// `on_source_map_chunk`, which the printer invokes from its tail).
     pub fn get(&mut self) -> bun_js_printer::SourceMapHandler<'_> {
-        // Take the inline-sourcemap path only when a
-        // debugger is present AND it is *not* in `.connect` mode — `.connect`
-        // (VSCode-extension) clients fall through to the `source_mappings`
-        // fast-path handler.
-        let wants_inline_source_map = matches!(
-            self.vm_debugger(),
-            Some(d) if d.mode != crate::debugger::Mode::Connect
-        );
-        if !wants_inline_source_map {
-            // `source_mappings` is a value field on the VM, exclusively
-            // borrowed for the returned handler's lifetime (bounded by
-            // `&mut self`).
-            return bun_js_printer::SourceMapHandler::for_(self.vm_source_mappings_mut());
-        }
         bun_js_printer::SourceMapHandler::for_(self)
     }
 }
@@ -4153,7 +4151,22 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         &mut self,
         chunk: bun_sourcemap::Chunk,
         source: &bun_ast::Source,
+        source_mapping_url: bun_ast::Range,
     ) -> bun_js_printer::Result<()> {
+        let support = self.support;
+        // Only a debugger that is not in `.connect` mode (the VSCode extension connects) gets the inline source map.
+        let wants_inline_source_map = matches!(
+            self.vm_debugger(),
+            Some(d) if d.mode != crate::debugger::Mode::Connect
+        );
+        if !wants_inline_source_map {
+            return self.vm_source_mappings_mut().put_mappings(
+                source,
+                chunk.buffer,
+                source_mapping_url,
+                support,
+            );
+        }
         let mut temp_json_buffer = bun_core::MutableString::init_empty();
         // `defer temp_json_buffer.deinit()` → Drop.
         chunk
@@ -4168,7 +4181,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
 
         self.vm_source_mappings_mut()
-            .put_mappings(source, chunk.buffer)
+            .put_mappings(source, chunk.buffer, source_mapping_url, support)
             .map_err(|_| bun_js_printer::Error::WriteFailed)?;
 
         // SAFETY: `printer` is the raw `*mut BufferPrinter` passed in by the
@@ -4515,6 +4528,41 @@ impl VirtualMachine {
     pub(crate) extern "C" fn is_code_generation_from_strings_strict_by_flags_for_cpp() -> bool {
         bun_core::code_generation_from_strings_by_flags()
             == bun_core::CodeGenerationFromStrings::Strict
+    }
+
+    /// `module.getSourceMapsSupport()` and `process.sourceMapsEnabled`.
+    #[unsafe(export_name = "Bun__VM__sourceMapsSupport")]
+    pub(crate) extern "C" fn source_maps_support(this: &VirtualMachine) -> SourceMapsSupport {
+        this.source_mappings.source_maps_support()
+    }
+
+    /// `module.setSourceMapsSupport()` and `process.setSourceMapsEnabled()`.
+    #[unsafe(export_name = "Bun__VM__setSourceMapsSupport")]
+    pub(crate) extern "C" fn set_source_maps_support(
+        this: &VirtualMachine,
+        support: SourceMapsSupport,
+    ) {
+        this.source_mappings.set_source_maps_support(support);
+    }
+
+    /// Whether the switch asks for the own source map of the module `key`. `bun test --isolate` keeps a transpiled module for the answer it was transpiled with.
+    #[unsafe(export_name = "Bun__VM__sourceMapsApplyTo")]
+    pub(crate) extern "C" fn source_maps_apply_to(
+        this: &VirtualMachine,
+        key: &bun_core::String,
+    ) -> bool {
+        let support = this.source_mappings.source_maps_support();
+        support.enabled && (support.node_modules || support.applies_to(key.to_utf8().slice()))
+    }
+
+    /// A hook gave `Module.prototype._compile` another text for the module `key` than the loader gave the hook.
+    #[unsafe(export_name = "Bun__VM__forgetOwnSourceMap")]
+    pub(crate) extern "C" fn forget_own_source_map(
+        this: &mut VirtualMachine,
+        key: &bun_core::String,
+    ) {
+        this.source_mappings
+            .forget_own_source_map(key.to_utf8().slice());
     }
 
     /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
@@ -6493,6 +6541,7 @@ impl VirtualMachine {
         if shares_global {
             self.undo_process_env_side_effects();
             self.undo_synthetic_allocation_limit();
+            self.undo_source_maps_support();
             return;
         }
 
@@ -6527,6 +6576,15 @@ impl VirtualMachine {
 
         self.undo_process_env_side_effects();
         self.undo_synthetic_allocation_limit();
+        self.undo_source_maps_support();
+    }
+
+    /// The switch is on the VM, which outlives the file: put the startup value back so a file's setting stays with it.
+    fn undo_source_maps_support(&mut self) {
+        self.source_mappings
+            .set_source_maps_support(SourceMapsSupport::all(
+                self.transpiler.options.transform_options.enable_source_maps,
+            ));
     }
 
     /// `--isolate=modules`: creates the graph for the test file that's about to run.
@@ -6909,7 +6967,11 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub fn remap_stack_frame_positions(&mut self, frames: &mut [crate::ZigStackFrame<'_>]) {
+    pub fn remap_stack_frame_positions(
+        &mut self,
+        frames: &mut [crate::ZigStackFrame<'_>],
+        space: PositionSpace,
+    ) {
         if frames.is_empty() {
             return;
         }
@@ -6941,6 +7003,7 @@ impl VirtualMachine {
                     frame.position.line,
                     frame.position.column,
                     bun_sourcemap::SourceContentHandling::NoSourceContents,
+                    space,
                 )
                 .map(|lookup| {
                     (
@@ -7115,9 +7178,27 @@ impl VirtualMachine {
         }
 
         let already_remapped = frames[top].remapped;
+        // The frame no longer says which module it is from. With source maps on, its name can be a source of a module's own source map.
+        let shown_source = if already_remapped && self.source_mappings.source_maps_support().enabled
+        {
+            self.source_mappings
+                .shown_source(frames[top].source_url.to_utf8().slice())
+        } else {
+            ShownSource::Unclaimed
+        };
+        // It is not known whose text an ambiguous name stands for.
+        let has_ambiguous_source = matches!(shown_source, ShownSource::Ambiguous);
         let resolved = {
             let top_source_url = frames[top].source_url.to_utf8();
             let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
+                let (source_map, source_index, prefetched_source_code) = match shown_source {
+                    ShownSource::Claimed {
+                        map,
+                        source_index,
+                        text,
+                    } => (Some(map), source_index, text),
+                    ShownSource::Unclaimed | ShownSource::Ambiguous => (None, 0, None),
+                };
                 Some(bun_sourcemap::mapping::Lookup {
                     mapping: bun_sourcemap::mapping::Mapping {
                         generated: bun_sourcemap::LineColumnOffset::default(),
@@ -7129,11 +7210,11 @@ impl VirtualMachine {
                                 frames[top].position.column.zero_based().max(0),
                             ),
                         },
-                        source_index: 0,
+                        source_index,
                         name_index: -1,
                     },
-                    source_map: None,
-                    prefetched_source_code: None,
+                    source_map,
+                    prefetched_source_code,
                 })
             } else {
                 self.resolve_source_mapping(
@@ -7141,6 +7222,7 @@ impl VirtualMachine {
                     frames[top].position.line,
                     frames[top].position.column,
                     bun_sourcemap::SourceContentHandling::SourceContents,
+                    PositionSpace::Original,
                 )
             };
 
@@ -7151,8 +7233,13 @@ impl VirtualMachine {
                 } else {
                     None
                 };
+                // The text of a source of a module's own source map is in the map or in the file that the map names, and nowhere else.
+                let only_external_code = has_ambiguous_source
+                    || lookup
+                        .source_map
+                        .as_deref()
+                        .is_some_and(|m| m.has_resolved_source_names);
                 let external_code = if *enable_source_code_preview
-                    && !already_remapped
                     && lookup
                         .source_map
                         .as_deref()
@@ -7162,11 +7249,11 @@ impl VirtualMachine {
                 } else {
                     None
                 };
-                (mapping, display_url, external_code)
+                (mapping, display_url, external_code, only_external_code)
             })
         };
 
-        if let Some((mapping, display_url, external_code)) = resolved {
+        if let Some((mapping, display_url, external_code, only_external_code)) = resolved {
             if let Some(src) = display_url {
                 frames[top].source_url = src.into();
             }
@@ -7182,8 +7269,11 @@ impl VirtualMachine {
                     // Avoid printing "export default 'native'"
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
-                // What lies on the disk under the name of a module that is compiled into an executable is not what runs.
+                if only_external_code {
+                    break 'code bun_core::Utf8Bytes::EMPTY;
+                }
                 let top_path = frames[top].source_url.to_utf8();
+                // What lies on the disk under the name of a module that is compiled into an executable is not what runs.
                 if crate::compiled_program::is_compiled_module(top_path.slice()) {
                     if !crate::compiled_program::runs_in_place() {
                         break 'code bun_core::Utf8Bytes::EMPTY;
@@ -7214,7 +7304,7 @@ impl VirtualMachine {
             *source_code = code;
             let code: &'a [u8] = source_code.slice();
 
-            if *enable_source_code_preview && code.is_empty() {
+            if *enable_source_code_preview && code.is_empty() && !only_external_code {
                 exception.collect_source_lines(error_instance, global);
             }
 
@@ -7268,6 +7358,7 @@ impl VirtualMachine {
                         frames[i].position.line,
                         frames[i].position.column,
                         bun_sourcemap::SourceContentHandling::NoSourceContents,
+                        PositionSpace::Original,
                     )
                     .map(|lookup| {
                         (
@@ -8187,10 +8278,11 @@ impl VirtualMachine {
         line: bun_core::Ordinal,
         column: bun_core::Ordinal,
         source_handling: bun_sourcemap::SourceContentHandling,
+        space: PositionSpace,
     ) -> Option<bun_sourcemap::mapping::Lookup> {
         if let Some(lookup) =
             self.source_mappings
-                .resolve_mapping(path, line, column, source_handling)
+                .resolve_mapping(path, line, column, source_handling, space)
         {
             return Some(lookup);
         }

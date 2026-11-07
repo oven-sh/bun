@@ -39,6 +39,7 @@ use crate::runtime_transpiler_cache::{
     Entry as CacheEntry, ModuleType as CacheModuleType,
     RuntimeTranspilerCache as JscRuntimeTranspilerCache,
 };
+use crate::saved_source_map::SourceMapsSupport;
 use crate::strong::Optional as StrongOptional;
 use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine};
 use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsResult, ResolvedSource};
@@ -327,6 +328,8 @@ impl RuntimeTranspilerStore {
         // `Transpiler::find_aot_package_config` of `path`.
         aot_package_config: Option<std::sync::Arc<bun_resolver::tsconfig_json::TSConfigJSON>>,
         module_loader: JSValue,
+        // The source maps switch of `vm` now.
+        source_maps_support: SourceMapsSupport,
     ) -> *mut c_void {
         let path_text = Box::<[u8]>::from(path.text);
         let promise: *mut JSInternalPromise = JSInternalPromise::create(global_object);
@@ -372,6 +375,7 @@ impl RuntimeTranspilerStore {
                 poll_ref: KeepAlive::default(),
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
+                source_maps_support,
                 has_plugins: global_object.has_plugins(),
                 parse_error: None,
                 work_task: WorkPoolTask {
@@ -432,6 +436,8 @@ pub struct TranspilerJob {
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) poll_ref: KeepAlive,
     pub(crate) generation_number: u32,
+    /// The source maps switch when the JS thread asked for the module. The pool thread gives it to `put_mappings`.
+    pub(crate) source_maps_support: SourceMapsSupport,
     /// Macros load through `Bun.plugin()` callbacks, which the pool thread's VM lacks, so the JS thread must run them.
     has_plugins: bool,
     pub(crate) log: bun_ast::Log,
@@ -682,6 +688,7 @@ impl TranspilerJob {
         let path = bun_paths::fs::Path::init(&this.path_text);
         let specifier = path.text;
         let loader = this.loader;
+        let source_maps_support = this.source_maps_support;
         let this_tag = this.resolved_source.tag;
 
         // RuntimeTranspilerCache has no per-allocator fields (Box<[u8]> + global mimalloc).
@@ -932,6 +939,8 @@ impl TranspilerJob {
                 MutableString {
                     list: core::mem::take(&mut entry.sourcemap).into_vec(),
                 },
+                entry.metadata.source_mapping_url,
+                source_maps_support,
             );
 
             if bun_core::env::DUMP_SOURCE {
@@ -951,9 +960,23 @@ impl TranspilerJob {
                 None
             };
 
+            let own_source_map = crate::saved_source_map::own_source_map_binding(
+                &parse_result.source,
+                entry.metadata.source_mapping_url,
+                source_maps_support,
+            );
+            if let Some(iw) = import_watcher {
+                // SAFETY: BACKREF to the process-lifetime watcher, as for `add_file` above.
+                unsafe { iw.assume_mut() }.watch_own_source_map(
+                    &parse_result.source,
+                    entry.metadata.source_mapping_url,
+                    own_source_map,
+                );
+            }
             this.resolved_source = ResolvedSource {
                 source_code: core::mem::take(&mut entry.output_code),
                 is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
+                own_source_map,
                 module_info,
                 tag: this_tag,
                 ..Default::default()
@@ -1020,7 +1043,20 @@ impl TranspilerJob {
             *source_code_printer = BufferPrinter::init(writer);
         }
 
-        let printed_ast = PrintedAst::new(&parse_result.ast);
+        let own_source_map = crate::saved_source_map::own_source_map_binding(
+            &parse_result.source,
+            parse_result.ast.source_mapping_url,
+            source_maps_support,
+        );
+        if let Some(iw) = import_watcher {
+            // SAFETY: BACKREF to the process-lifetime watcher, as for `add_file` above.
+            unsafe { iw.assume_mut() }.watch_own_source_map(
+                &parse_result.source,
+                parse_result.ast.source_mapping_url,
+                own_source_map,
+            );
+        }
+        let printed_ast = PrintedAst::new(&parse_result.ast, own_source_map);
         let is_commonjs_module = printed_ast.is_commonjs_module;
         let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
             if use_isolation_source_provider_cache
@@ -1047,8 +1083,13 @@ impl TranspilerJob {
             // SAFETY: see `vm` note above — `from_raw` stores `vm` as a raw
             // pointer and only borrows leaf fields (`source_mappings`, `debugger`)
             // inside `get()`. No `&mut VirtualMachine` is ever formed.
-            let mut mapper =
-                unsafe { SourceMapHandlerGetter::from_raw(vm, &raw mut *source_code_printer) };
+            let mut mapper = unsafe {
+                SourceMapHandlerGetter::from_raw(
+                    vm,
+                    &raw mut *source_code_printer,
+                    source_maps_support,
+                )
+            };
             transpiler.print_with_source_map(
                 // Same per-call `arena` that `transpiler.set_arena(&arena)`
                 // and `parse_options.arena` used to build `parse_result.ast`.

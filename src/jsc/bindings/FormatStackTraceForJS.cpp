@@ -222,7 +222,8 @@ WTF::String formatStackTrace(
     OrdinalNumber& column,
     WTF::String& sourceURL,
     Vector<JSC::StackFrame>& stackTrace,
-    JSC::JSObject* errorInstance)
+    JSC::JSObject* errorInstance,
+    BunPositionSpace space)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     // The message and each frame's source URL come from JS. Past `String::MaxLength` a default `StringBuilder` calls `CRASH()`.
@@ -273,7 +274,8 @@ WTF::String formatStackTrace(
                     // https://github.com/oven-sh/bun/issues/3595
                     if (!sourceURLForFrame.isEmpty()) {
                         remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-                        remappedFrames.remap(getBunVM());
+                        // As in Node.js, where a module does not parse is a place in the file that was loaded, also with process.sourceMapsEnabled.
+                        remappedFrames.remap(getBunVM(), BunPositionSpace::Loaded);
 
                         sourceURLForFrame = remappedFrame.source_url.toWTFString();
                     }
@@ -383,7 +385,7 @@ WTF::String formatStackTrace(
     }
 
     if (anyRemap) {
-        remappedFrames.remap(getBunVM());
+        remappedFrames.remap(getBunVM(), space);
     }
 
     // Pass 2: format. Everything except (display line/col, source_url) is
@@ -504,7 +506,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    RELEASE_AND_RETURN(scope, Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance));
+    RELEASE_AND_RETURN(scope, Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance, BunPositionSpace::Original));
 }
 
 static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
@@ -574,7 +576,8 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     }
 
     if (anyRemap) {
-        remappedFrames.remap(globalObject->bunVM());
+        // A CallSite is not mapped through a module's own source map, as in V8: a prepareStackTrace that maps call sites itself goes on from the loaded file.
+        remappedFrames.remap(globalObject->bunVM(), BunPositionSpace::Loaded);
     }
 
     for (int i = 0; i < n; i++) {
@@ -675,8 +678,11 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     JSC::SuspendExceptionScope suspendExceptionScope(vm);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // With an Error.prepareStackTrace installed, a read of the stack gives it call sites, which are in the loaded file. This text stands in for that read.
+    JSValue prepareStackTrace = defaultGlobalObject(vm)->m_errorConstructorPrepareStackTraceValue.get();
+    auto space = prepareStackTrace && prepareStackTrace.isCallable() ? BunPositionSpace::Loaded : BunPositionSpace::Original;
     // The frames only: JavaScriptCore prepends the error's name and message when the stack is read.
-    WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(vm), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr);
+    WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(vm), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr, space);
     if (scope.exception()) {
         // The onComputeErrorInfo hook cannot propagate a throw.
         (void)scope.tryClearException();
@@ -705,7 +711,7 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
     frame.position.column_zero_based = column.zeroBasedInt();
     frame.source_url = Bun::toStringRef(sourceURL);
 
-    frames.remap(Bun::vm(vm));
+    frames.remap(Bun::vm(vm), BunPositionSpace::Loaded);
 
     if (frame.remapped) {
         lineColumn.line = frame.position.line().oneBasedInt();

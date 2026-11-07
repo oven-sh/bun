@@ -118,6 +118,7 @@ process.connected: false
 process.debugPort: number
 process.exitCode: undefined
 process.ppid: number
+process.sourceMapsEnabled: false
 process.title: string
 readable: refused
 writable: refused

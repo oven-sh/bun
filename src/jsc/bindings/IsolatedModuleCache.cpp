@@ -43,7 +43,16 @@ Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String&
         return nullptr;
     ASSERT(it->value);
     auto* provider = static_cast<Zig::SourceProvider*>(it->value.get());
-    return provider->m_madeFromHash == madeFromHash(vm, key, pluginContents) ? provider : nullptr;
+    if (provider->m_madeFromHash != madeFromHash(vm, key, pluginContents))
+        return nullptr;
+    // A module with a sourceMappingURL comment is transpiled again when the source maps switch asks another thing of it than it did then.
+    if (provider->m_ownSourceMap != BunOwnSourceMapBinding::None) {
+        BunString borrowedKey = Bun::toString(key);
+        bool kept = provider->m_ownSourceMap == BunOwnSourceMapBinding::Kept;
+        if (Bun__VM__sourceMapsApplyTo(WebCore::clientData(vm)->bunVM, &borrowedKey) != kept)
+            return nullptr;
+    }
+    return provider;
 }
 
 void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)

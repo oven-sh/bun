@@ -382,6 +382,67 @@ describe.concurrent("stubs do not outlive their test file", () => {
   });
 });
 
+// The end of a test file restores the file's spies. Outside vi that also takes their implementation away.
+test.concurrent("an object made with `new` on a spied class keeps its class after the test file", async () => {
+  const { stderr, exitCode } = await run(["test", "--no-isolate", "./a.test.ts", "./b.test.ts"], {
+    "shared.ts": `export class Db { query() { return "rows"; } }`,
+    "consumer.ts": `
+      import * as shared from "./shared.ts";
+      let cached;
+      export const getDb = () => (cached ??= new shared.Db());
+    `,
+    "a.test.ts": `
+      import { expect, spyOn, test } from "bun:test";
+      import { getDb } from "./consumer.ts";
+      import * as shared from "./shared.ts";
+      test("a", () => {
+        const spy = spyOn(shared, "Db");
+        expect(getDb().query()).toBe("rows");
+        expect(spy).toHaveBeenCalledTimes(1);
+      });
+    `,
+    "b.test.ts": `
+      import { expect, jest, test } from "bun:test";
+      import { getDb } from "./consumer.ts";
+      import * as shared from "./shared.ts";
+      test("b", () => {
+        expect(jest.isMockFunction(shared.Db)).toBe(false);
+        expect(getDb()).toBeInstanceOf(shared.Db);
+        expect(getDb().query()).toBe("rows");
+      });
+    `,
+  });
+  expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+});
+
+// A later test file resets a mock that the files share. What the mock built for an earlier file is still in use.
+test.concurrent("an object made with `new` on a shared mock keeps its class when a later file resets it", async () => {
+  const { stderr, exitCode } = await run(["test", "--no-isolate", "./a.test.ts", "./b.test.ts"], {
+    "shared.ts": `
+      import { mock } from "bun:test";
+      class Dog { speak() { return "woof"; } }
+      export const Pet = mock(Dog);
+      let cached;
+      export const getPet = () => (cached ??= new Pet());
+    `,
+    "a.test.ts": `
+      import { expect, test } from "bun:test";
+      import { getPet } from "./shared.ts";
+      test("a", () => expect(getPet().speak()).toBe("woof"));
+    `,
+    "b.test.ts": `
+      import { beforeEach, expect, jest, test } from "bun:test";
+      import { getPet, Pet } from "./shared.ts";
+      beforeEach(() => jest.resetAllMocks());
+      test("b", () => {
+        expect(Pet.getMockImplementation()).toBeUndefined();
+        expect(getPet().speak()).toBe("woof");
+      });
+    `,
+  });
+  expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+});
+
 describe.concurrent("stubs made in a preload apply to every test file", () => {
   const seen = `[typeof viUtilsStub, typeof fetch, process.env.VI_UTILS_EXISTING, process.env.VI_UTILS_NEW, process.env.VI_UTILS_GONE]`;
   const stubbed = `["function", "string", "stub", "stub", undefined]`;
@@ -915,6 +976,39 @@ describe.concurrent("vi.setConfig", () => {
         env: undefined,
       });
     });
+
+    // Outside vi a reset or a restore takes the implementation away from the mock, but not the class from its objects.
+    test.each([
+      ["bunfig", "mockReset", { calls: 0, isSpied: true }],
+      ["bunfig", "restoreMocks", { calls: 1, isSpied: false }],
+      ["setConfig", "mockReset", { calls: 0, isSpied: true }],
+      ["setConfig", "restoreMocks", { calls: 1, isSpied: false }],
+    ] as const)(
+      "through %s, %s leaves an object made with `new` on a mock its class",
+      async (through, option, applied) => {
+        const { stderr, exitCode } = await run(["test"], {
+          "bunfig.toml": through === "bunfig" ? `[test]\n${option} = true\n` : "",
+          "a.test.ts": `
+            import { beforeAll, expect, mock, spyOn, test, vi } from "bun:test";
+            ${through === "setConfig" ? `vi.setConfig({ ${option}: true });` : ""}
+            class Dog { speak() { return "woof"; } }
+            const pets = { Dog };
+            const Mocked = mock(Dog);
+            let mocked, spied;
+            beforeAll(() => {
+              spyOn(pets, "Dog");
+              mocked = new Mocked();
+              spied = new pets.Dog();
+            });
+            test("first", () => {
+              expect({ calls: Mocked.mock.calls.length, isSpied: pets.Dog !== Dog }).toEqual(${JSON.stringify(applied)});
+              expect([mocked.speak(), spied.speak(), spied instanceof Dog]).toEqual(["woof", "woof", true]);
+            });
+          `,
+        });
+        expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) first"], exitCode: 0 });
+      },
+    );
 
     test("apply to every attempt but not to skipped tests, until resetConfig() or the file ends", async () => {
       const { stdout, stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {

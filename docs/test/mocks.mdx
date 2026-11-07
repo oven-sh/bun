@@ -296,6 +296,8 @@ test("mock a class", () => {
 });
 ```
 
+When a mock made with `mock()`, `jest.fn()` or `spyOn()` is reset or restored, the objects it has made with `new` keep what they inherit. This holds for `mockReset()`, `mockRestore()`, `mock.restore()`, the [`mockReset` and `restoreMocks`](/test/configuration#test-execution) options and the [cleanup after each test file](#cleanup-after-each-test-file).
+
 ## Mock an Object with vi.mockObject()
 
 `vi.mockObject(value)` returns a deep copy of `value` with every function and class replaced by a mock that returns `undefined`. Arrays become empty. Primitives and built-in objects like `Date` and `Map` are kept.

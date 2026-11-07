@@ -119,7 +119,6 @@ impl Removable<'_, '_> {
             },
             ExprKind::Call(call) | ExprKind::New(call) => {
                 let call = &hir[call];
-                // The bundler prints the spread of an argument as a statement, which is no program.
                 let is_spread =
                     |argument: ExprId| matches!(hir[argument].kind, ExprKind::Spread(_));
                 if !call.is_pure

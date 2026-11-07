@@ -455,6 +455,18 @@ impl SideEffects {
                 // array items with side effects. Apply this simplification recursively.
                 return Self::join_all_simplified(p, &arr.items);
             }
+            // An argument of a call or `new` that is unwrapped above. The "..." runs the
+            // iterator of its operand, and only an array or an argument list can hold it.
+            ExprData::ESpread(_) => {
+                return Some(p.new_expr(
+                    E::Array {
+                        items: bun_ast::ExprNodeList::init_one(expr),
+                        is_single_line: true,
+                        ..Default::default()
+                    },
+                    expr.loc,
+                ));
+            }
 
             _ => {}
         }

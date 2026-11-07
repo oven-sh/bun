@@ -605,6 +605,27 @@ test.concurrent.each(["hostname", "host"])("bun bake uses Bun.serve options from
   expect(await get(url, "/")).toBe("500 from the error option");
 });
 
+test.concurrent("bun bake uses development.allowedHosts from the export", async () => {
+  using dir = tempDir("bake-command-allowed-hosts", {
+    "app/pages/index.html": page,
+    "app/server.ts": `
+      export default {
+        development: { allowedHosts: ["mybox.local"] },
+      };
+    `,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  const allowed = await fetch(url, { headers: { Host: "mybox.local" } });
+  expect(await allowed.text()).toContain("<html>");
+  expect(allowed.status).toBe(200);
+  const blocked = await fetch(url, { headers: { Host: "rebound-host.example" } });
+  expect(await blocked.text()).toContain("development.allowedHosts");
+  expect(blocked.status).toBe(403);
+});
+
 test.concurrent("bun bake accepts a frozen export of app/server.ts", async () => {
   using dir = tempDir("bake-command-frozen", {
     "app/server.ts": `export default Object.freeze({ fetch: () => new Response("frozen") });`,

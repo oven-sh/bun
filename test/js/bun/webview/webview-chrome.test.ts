@@ -10,7 +10,7 @@ import { dlopen, FFIType, ptr } from "bun:ffi";
 import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { beginsAtLooks, clickSelectorPages, slideLeft } from "./click-selector-pages";
+import { clickSelectorPages, slideLeft, slidesAtLooks, timerFrames } from "./click-selector-pages";
 
 // shm_unlink for encoding:"shmem" test cleanup. macOS has no /dev/shm
 // filesystem mount, so we go through libc. Linux exposes POSIX shm at
@@ -952,7 +952,7 @@ it.each(clickSelectorPages)(
 // look have started at the fourth, where a new one has yet to start. click() waits for one more frame.
 it("chrome: click(selector) waits for an animation that begins again after those that it found", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
-  await view.navigate(html(beginsAtLooks("mover", slideLeft, 4)));
+  await view.navigate(html(slidesAtLooks("mover", slideLeft, 4)));
   await view.click("#mover");
   expect(await view.evaluate("String(window.__hit)")).toBe("100");
 });
@@ -969,6 +969,13 @@ it("chrome: click(selector) clicks while the clock of the animations is paused",
   } finally {
     await view.cdp("Animation.setPlaybackRate", { playbackRate: 1 });
   }
+});
+
+it("chrome: click(selector) runs on frames that the page makes with a timer", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(html(timerFrames.page));
+  await view.click("#btn");
+  expect(JSON.parse(await view.evaluate<string>(timerFrames.report))).toEqual(timerFrames.want);
 });
 
 it("chrome: click(selector) rejects a selector that is not valid without a frame", async () => {

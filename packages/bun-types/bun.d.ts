@@ -4144,6 +4144,39 @@ declare module "bun" {
       description?: string;
       copyright?: string;
     };
+    /**
+     * Options for executables that target macOS. Other targets ignore them.
+     * `false` and `null` mean none, so `macos: isMac && { ... }` works.
+     */
+    macos?:
+      | {
+          /**
+           * Path to an `Info.plist` file to embed in the executable, relative to the
+           * current working directory.
+           *
+           * Bun copies the file as-is into the `__TEXT,__info_plist` section, like the
+           * linker flag `-sectcreate __TEXT __info_plist Info.plist`. That is where
+           * macOS looks for the `Info.plist` of an executable that is not inside an
+           * `.app` bundle, for keys such as `CFBundleIdentifier` and
+           * `CFBundleVersion`. On arm64, the ad-hoc signature Bun writes covers the
+           * file.
+           *
+           * The file has to fit in about 8 KB. The build fails if it does not.
+           * This option works when cross-compiling.
+           *
+           * An executable that a compiled executable builds does not inherit the
+           * file.
+           *
+           * `false` and `null` mean no file, so `infoPlist: havePlist && path` works.
+           *
+           * Equivalent CLI flag: `--macos-info-plist <path>`
+           *
+           * @see https://bun.com/docs/compiler/executables#embed-an-info-plist-on-macos
+           */
+          infoPlist?: string | false | null | undefined;
+        }
+      | false
+      | null;
   }
 
   /**

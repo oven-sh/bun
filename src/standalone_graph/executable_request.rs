@@ -5,7 +5,7 @@ use bun_options_types::bundle_enums::{Format, WindowsOptions};
 use bun_sys::Fd;
 
 use crate::StandaloneModuleGraph::{
-    CompileResult, CompileTarget, Flags, RuntimeOptions, to_bytes, to_executable,
+    CompileError, CompileResult, CompileTarget, Flags, RuntimeOptions, to_bytes, to_executable,
 };
 use crate::compiled_program::{CompiledProgramInput, EntryPointPathPointers, append_record};
 use crate::executable_file::{ImageRange, ImageSymbols};
@@ -29,6 +29,7 @@ pub struct ExecutableRequest<'a> {
     pub windows: &'a WindowsOptions,
     pub executable_path: Option<&'a [u8]>,
     pub trim: Option<&'a bun_trim::TrimPlan>,
+    pub info_plist: Option<&'a [u8]>,
 }
 
 #[derive(Default)]
@@ -51,6 +52,8 @@ pub struct ExecutableOutcome {
 pub struct ExecutableAdditions<'a> {
     pub compiled_program: Option<&'a CompiledProgramInput<'a>>,
     pub trim: Option<&'a bun_trim::TrimPlan>,
+    /// The contents of the file, for macOS.
+    pub info_plist: Option<&'a [u8]>,
     /// Filled once the copy of the executable is written. Meaningful if the result is `Success`.
     pub details: ExecutableDetails,
 }
@@ -69,6 +72,10 @@ pub(crate) struct InjectionAdditions<'a> {
     build_id: Option<[u8; bun_exe_format::build_id::SIZE]>,
     trim: Option<&'a bun_trim::TrimPlan>,
     trim_summary: Option<bun_trim::TrimSummary>,
+    info_plist: Option<&'a [u8]>,
+    pub(crate) has_edited_info_plist: bool,
+    /// Why `inject` returned `None`, where it has not printed that itself.
+    pub(crate) failure: Option<CompileError>,
 }
 
 impl<'a> ExecutableAdditions<'a> {
@@ -89,6 +96,9 @@ impl<'a> ExecutableAdditions<'a> {
             build_id: None,
             trim: self.trim,
             trim_summary: None,
+            info_plist: self.info_plist,
+            has_edited_info_plist: false,
+            failure: None,
         }
     }
 }
@@ -105,6 +115,24 @@ impl InjectionAdditions<'_> {
         self.build_id = self
             .build_id
             .filter(|id| bun_exe_format::build_id::write(template, id));
+    }
+
+    /// A template that is a compiled executable has the Info.plist of that program, which this one does not inherit.
+    /// Comes before `edit_template`, whose trimming takes the rest of the room behind the load commands.
+    /// False: the error is in `failure`.
+    pub(crate) fn edit_info_plist(&mut self, template: &mut [u8]) -> bool {
+        use bun_exe_format::macho_info_plist::{remove_written, write};
+        let Some(plist) = self.info_plist else {
+            self.has_edited_info_plist = remove_written(template);
+            return true;
+        };
+        self.has_edited_info_plist = true;
+        if let Err(error) = write(template, plist) {
+            self.failure = Some(CompileError::fmt(format_args!(
+                "failed to embed the Info.plist: {error}"
+            )));
+        }
+        self.failure.is_none()
     }
 
     /// False: the error has been printed.
@@ -209,6 +237,7 @@ pub fn write_executable(request: &mut ExecutableRequest<'_>) -> crate::Result<Ex
     let mut additions = ExecutableAdditions {
         compiled_program: graph.compiled_program.as_ref(),
         trim: request.trim,
+        info_plist: request.info_plist,
         details: ExecutableDetails::default(),
     };
     let result = to_executable(

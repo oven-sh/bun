@@ -15,6 +15,7 @@ pub mod identity;
 pub mod image;
 pub mod macho;
 pub mod macho_fixups;
+pub mod macho_info_plist;
 pub mod macho_ranges;
 pub mod macho_symbols;
 pub mod macho_types;

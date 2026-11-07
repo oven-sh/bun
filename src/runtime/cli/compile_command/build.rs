@@ -262,6 +262,7 @@ fn write_product(
         windows: settings.windows,
         executable_path: settings.executable_path,
         trim: product.plan,
+        info_plist: settings.info_plist,
     };
     let written = write_executable(&mut executable_request).map_err(CompileFailure::Graph)?;
     if let CompileResult::Err(error) = written.result {

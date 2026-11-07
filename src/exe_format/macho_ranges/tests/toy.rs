@@ -363,7 +363,7 @@ fn append_blob(linkedit: &mut Vec<u8>, blob: &[u8]) -> Blob {
 
 fn append_signature(linkedit: &mut Vec<u8>) -> Blob {
     let offset = append_blob(linkedit, &[]).offset;
-    let size = MachoSigner::compute_signature_size(u64::from(offset));
+    let size = MachoSigner::compute_signature_size(u64::from(offset), 0);
     append_blob(linkedit, &vec![0xcc; size])
 }
 

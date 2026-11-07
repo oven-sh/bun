@@ -212,7 +212,7 @@ Several situational sections live in `.claude/docs/landing-prs.md` — read the 
 Requires the BuildKite CLI (`brew install buildkite/buildkite/bk`) and a read-scoped token in `BUILDKITE_API_TOKEN`. The repo's `.bk.yaml` sets the org/pipeline so `-p bun` is not needed.
 
 ```bash
-bun run ci:errors    # rendered test-failure output for this branch's latest build, [new] vs [also on main]
+bun run ci:errors    # rendered test-failure output for this branch's latest build, [new] vs [pre-existing] (also fails on main)
 bun run ci:errors '#26173'          # or a PR number / URL / branch / build number
 bun run ci:status    # one-screen progress summary (job counts, failed jobs, failing tests so far)
 bun run ci:logs      # save full logs for every failed job to ./tmp/ci-<build>/

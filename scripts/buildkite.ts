@@ -674,6 +674,9 @@ export function reportAnnotationToBuildkite({
  * already posted (or had nothing to post) so the fallback stays quiet. The
  * marker is build meta-data, which is server-side and so remains visible to
  * the host pre-exit hook even when the reporter ran inside an ephemeral VM.
+ *
+ * `bun run ci:errors` counts these keys to tell whether a build of main ran
+ * its tests (`ranTests` in scripts/find-build.ts).
  */
 export function markBuildkiteStepReported(): void {
   if (!isBuildkite) return;

@@ -10,6 +10,8 @@ export const internalErrorEntries = b.fn({ returns: b.array(UVError) });
 export const etimedoutErrorCode = b.fn({ returns: b.i32 });
 export const enobufsErrorCode = b.fn({ returns: b.i32 });
 export const ecanceledErrorCode = b.value({ returns: b.i32 });
+/** True when this process runs as `node` (argv[0] ends in `node`). */
+export const isRunningAsNode = b.value({ returns: b.bool });
 export const uvTranslateSysError = b.fn({ args: { errno: b.f64 }, returns: b.i32 });
 
 export const extractedSplitNewLinesFastPathStringsOnly = b.fn({

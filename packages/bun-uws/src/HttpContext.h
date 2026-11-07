@@ -435,8 +435,11 @@ private:
         httpContextData->flags.isParsingHttp = true;
         struct us_socket_t *prevParsingSocket = httpContextData->parsingSocket;
         httpContextData->parsingSocket = s;
-        const bool wasIdle = httpResponseData->isIdle;
-        httpResponseData->isIdle = false;
+        /* node:http keeps the idle bit. Bun.serve computes idle where it is read (HttpResponse::isIdle). */
+        const bool wasIdle = IsNodeHttp && httpResponseData->isIdle;
+        if constexpr (IsNodeHttp) {
+            httpResponseData->isIdle = false;
+        }
 
         /* node:http compat: maintain the headers/request timeout window (see
          * the requestHandler/dataHandler hooks and the post-parse check). */
@@ -827,9 +830,11 @@ private:
             }
 
             /* A read that started no message (empty lines, RFC 9112 2.2) leaves an idle connection idle. */
-            if (wasIdle && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) && httpResponseData->nodeHttpQueuedPipelinedCount == 0
-                && !httpResponseData->hasIncompleteRequestBody() && !httpResponseData->hasBufferedPartialRequestHeaders()) {
-                httpResponseData->isIdle = true;
+            if constexpr (IsNodeHttp) {
+                if (wasIdle && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) && httpResponseData->nodeHttpQueuedPipelinedCount == 0
+                    && !httpResponseData->hasIncompleteRequestBody() && !httpResponseData->hasBufferedPartialRequestHeaders()) {
+                    httpResponseData->isIdle = true;
+                }
             }
 
             /* Timeout on uncork failure */

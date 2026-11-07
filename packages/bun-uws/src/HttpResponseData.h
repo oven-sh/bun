@@ -51,6 +51,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* Ignore data after this point. node:http clears its own slot: a request body outlives its response there. */
         if (!HttpContext<SSL>::fromSocket((us_socket_t *) uwsRes)->isNodeHttp()) {
             inStream = nullptr;
+        } else {
+            /* A queued pipelined response still owes output on this
+             * connection, so it is not idle between the responses. */
+            this->isIdle = nodeHttpQueuedPipelinedCount == 0;
         }
 
         // Ensure we don't call a timeout callback
@@ -58,11 +62,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         /* We are done with this request */
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
-
-        HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
-        /* A queued pipelined response (node:http) still owes output on this
-         * connection, so it is not idle between the responses. */
-        httpResponseData->isIdle = httpResponseData->nodeHttpQueuedPipelinedCount == 0;
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */

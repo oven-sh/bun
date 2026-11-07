@@ -163,6 +163,7 @@ struct AsyncSocketData {
     /* Or empty */
     AsyncSocketData() = default;
     const char *peerCertVerifyErrorCode = nullptr;
+    /* node:http's answer for HttpResponse::isIdle. Never true on a Bun.serve socket, which computes it there. */
     bool isIdle = false;
     bool isAuthorized = false; // per-socket TLS authorization status
     bool peerCertVerified = false;

@@ -735,6 +735,21 @@ fn read_tokens<'a>(
     }
 }
 
+/// The character that the entity at the start of `text` stands for, and the text after the entity.
+#[optimize(size)]
+fn entity(text: &[u8]) -> Option<(char, &[u8])> {
+    if let Some(after) = text.strip_prefix(b"&nbsp;") {
+        return Some(('\u{A0}', after));
+    }
+    let number = text.strip_prefix(b"&#x")?;
+    // `u32::from_str_radix` takes a `+` before the digits, which Svelte doesn't.
+    let is_in_number = |it: &&u8| it.is_ascii_hexdigit() || **it == b'+';
+    let (digits, after) = number.split_at(number.iter().take_while(is_in_number).count());
+    let after = after.strip_prefix(b";")?;
+    let code = u32::from_str_radix(std::str::from_utf8(digits).ok()?, 16).ok()?;
+    Some((char::from_u32(code)?, after))
+}
+
 /// `text` with `&nbsp;`, `&#xA0;` and the like decoded, if the character is whitespace in JavaScript.
 #[optimize(size)]
 fn decode_whitespace_entities(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
@@ -745,19 +760,11 @@ fn decode_whitespace_entities(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
     while let Some(at) = strings::index_of_char_usize(rest, b'&') {
         out.extend_from_slice(&rest[..at]);
         rest = &rest[at..];
-        let end = strings::index_of_char_usize(rest, b';').unwrap_or(0);
-        let decoded = match &rest[..end] {
-            b"&nbsp" => Some('\u{A0}'),
-            [b'&', b'#', b'x', digits @ ..] => (std::str::from_utf8(digits).ok())
-                .and_then(|it| u32::from_str_radix(it, 16).ok())
-                .and_then(char::from_u32),
-            _ => None,
-        };
         let mut bytes = [0; 4];
-        match decoded.map(|it| it.encode_utf8(&mut bytes).as_bytes()) {
-            Some(it) if strings::js_whitespace_len(it) == it.len() && !it.is_empty() => {
+        match entity(rest).map(|(it, after)| (it.encode_utf8(&mut bytes).as_bytes(), after)) {
+            Some((it, after)) if strings::js_whitespace_len(it) == it.len() && !it.is_empty() => {
                 out.extend_from_slice(it);
-                rest = &rest[end + 1..];
+                rest = after;
             }
             _ => {
                 out.push(b'&');

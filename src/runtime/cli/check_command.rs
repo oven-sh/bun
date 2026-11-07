@@ -8,6 +8,7 @@ use bstr::BStr;
 use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
 use bun_core::{Global, Output, ZStr, env_var};
+use bun_options_types::context::CheckOptions;
 use bun_sema_driver::format::{self, Layout, Style};
 use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
 use bun_sema_driver::{
@@ -54,7 +55,7 @@ struct Options {
     trim: bool,
 }
 
-fn usage_error(args: core::fmt::Arguments<'_>) -> ! {
+pub(crate) fn usage_error(args: core::fmt::Arguments<'_>) -> ! {
     Output::err_generic("{}", (args,));
     bun_core::note!("run 'bun check --help' for more information");
     Global::exit(1);
@@ -64,45 +65,52 @@ const PROJECT: &[clap::Param<clap::Help>] = &[clap::param!(
     "-p, --project/--tsconfig-override <path>  Path to a tsconfig.json or its directory"
 )];
 /// Only listed for `--help`. It's parsed as a compiler option.
-const PRETTY: &[clap::Param<clap::Help>] = &[clap::param!(
+pub(crate) const PRETTY: &[clap::Param<clap::Help>] = &[clap::param!(
     "--pretty <bool>?   Show source code around each error <d>(default in a terminal)<r>"
 )];
-const OTHERS: &[clap::Param<clap::Help>] = &[
-    clap::param!(
-        "-b, --build        Check the projects in <b>references<r> too, like <b>tsc -b<r>"
-    ),
+pub(crate) const THREAD_PARAMS: &[clap::Param<clap::Help>] = &[clap::param!(
+    "--threads <n>      Number of threads <d>(default: one per CPU core)<r>"
+)];
+pub(crate) const OUTPUT_PARAMS: &[clap::Param<clap::Help>] = &[
     clap::param!(
         "--no-pretty        One line per error, like <b>tsc --pretty false<r> <d>(default when piped)<r>"
     ),
     clap::param!(
         "--all              Show every error <d>(above 50, identical errors are grouped)<r>"
     ),
-    clap::param!("--threads <n>      Number of threads <d>(default: one per CPU core)<r>"),
     clap::param!("--timing           Print load and check times"),
-    clap::param!(
-        "--aot              Also report the errors <b>bun compile<r> would report for these entry points"
-    ),
-    clap::param!(
-        "--explain <report>?...  With --aot: print a report. <b>guards<r> lists every type guard that can fail at run time"
-    ),
-    clap::param!(
-        "--define <k=v>...  With --aot: substitute k with v while parsing, like <b>bun compile --define<r>"
-    ),
-    clap::param!("--disallow-code-generation-from-strings <level>?"),
-    clap::param!("--aot-report <path>"),
-    clap::param!("--aot-report-detail <detail>"),
-    clap::param!("--trim"),
-    clap::param!("--cwd <path>       Set the working directory"),
-    // Handled by `script_or_command`.
-    clap::param!(
-        "--no-script        Run the type checker even if the project has a <b>check<r> script"
-    ),
-    clap::param!("-h, --help         Print this help menu"),
-    // Accepted and ignored, since nothing is ever emitted. `--noEmit` is an ordinary compiler
-    // option that the driver sets last.
-    clap::param!("--no-emit"),
-    clap::param!("<POS>..."),
 ];
+const OTHERS: &[clap::Param<clap::Help>] = clap::concat_params!(
+    THREAD_PARAMS,
+    OUTPUT_PARAMS,
+    &[
+        clap::param!(
+            "-b, --build        Check the projects in <b>references<r> too, like <b>tsc -b<r>"
+        ),
+        clap::param!(
+            "--aot              Also report the errors <b>bun compile<r> would report for these entry points"
+        ),
+        clap::param!(
+            "--explain <report>?...  With --aot: print a report. <b>guards<r> lists every type guard that can fail at run time"
+        ),
+        clap::param!(
+            "--define <k=v>...  With --aot: substitute k with v while parsing, like <b>bun compile --define<r>"
+        ),
+        clap::param!("--disallow-code-generation-from-strings <level>?"),
+        clap::param!("--aot-report <path>"),
+        clap::param!("--aot-report-detail <detail>"),
+        clap::param!("--trim"),
+        clap::param!("--cwd <path>       Set the working directory"),
+        // Handled by `script_or_command`.
+        clap::param!(
+            "--no-script        Run the type checker even if the project has a <b>check<r> script"
+        ),
+        clap::param!("-h, --help         Print this help menu"),
+        // Nothing is ever emitted. `--noEmit` is a compiler option like any other, which the driver sets last.
+        clap::param!("--no-emit"),
+        clap::param!("<POS>..."),
+    ]
+);
 pub(crate) const PARAMS: &[clap::Param<clap::Help>] = clap::concat_params!(PROJECT, PRETTY, OTHERS);
 /// Compiler options aren't in the table. See `unknown_long_flags_are_positional`.
 static TABLE: &clap::ConvertedTable =
@@ -174,15 +182,7 @@ fn parse(args: &[&ZStr]) -> Options {
     if !options.aot {
         compile_check::reject_flags_requiring_aot(&options);
     }
-    if let Some(threads) = parsed.option(b"--threads") {
-        match bun_core::fmt::parse_decimal::<usize>(threads) {
-            Some(n) if n > 0 => options.threads = n,
-            _ => usage_error(format_args!(
-                "--threads takes a number above zero, not \"{}\"",
-                BStr::new(threads)
-            )),
-        }
-    }
+    options.threads = thread_count(&parsed);
     // Arguments before `check` belong to `bun`, like those from `BUN_OPTIONS`. Unknown flags there
     // are skipped, as in every other command.
     let positionals = parsed.positionals();
@@ -217,6 +217,48 @@ fn parse(args: &[&ZStr]) -> Options {
     }
     options.command_line = command_line;
     options
+}
+
+fn thread_count(parsed: &clap::Args<clap::Help>) -> usize {
+    match parsed.option(b"--threads") {
+        None => 0,
+        Some(threads) => match bun_core::fmt::parse_decimal::<usize>(threads) {
+            Some(n) if n > 0 => n,
+            _ => usage_error(format_args!(
+                "--threads takes a number above zero, not \"{}\"",
+                BStr::new(threads)
+            )),
+        },
+    }
+}
+
+pub(crate) fn runtime_options(parsed: &clap::Args<clap::Help>, for_build: bool) -> CheckOptions {
+    let mut options = CheckOptions {
+        threads: thread_count(parsed),
+        ..Default::default()
+    };
+    if !for_build {
+        options.pretty = parsed.option(b"--pretty").map(|value| match value {
+            b"" | b"true" => true,
+            b"false" => false,
+            _ => usage_error(format_args!(
+                "--pretty does not take \"{}\"",
+                BStr::new(value)
+            )),
+        });
+        if parsed.flag(b"--no-pretty") {
+            options.pretty = Some(false);
+        }
+        options.all = parsed.flag(b"--all");
+        options.timing = parsed.flag(b"--timing");
+    }
+    options
+}
+
+fn runtime_options_of_context() -> CheckOptions {
+    bun_options_types::context::try_get()
+        .map(|ctx| ctx.runtime_options.check_options)
+        .unwrap_or_default()
 }
 
 fn reject(rejected: &RejectedFlag) -> ! {
@@ -502,11 +544,16 @@ impl CheckCommand {
     /// `bun --check` without an entry point behaves like `bun check` without arguments. `bun` has
     /// already parsed its own arguments.
     pub(crate) fn exec_without_arguments() -> ! {
+        let options = runtime_options_of_context();
         Self::exec_with(&Options {
             command_line: CommandLine {
                 project: tsconfig_override().map(<[u8]>::to_vec),
                 ..Default::default()
             },
+            threads: options.threads,
+            pretty: options.pretty,
+            all: options.all,
+            timing: options.timing,
             ..Default::default()
         })
     }
@@ -568,26 +615,30 @@ fn print_report(report: &Report, options: &Options, cwd: &[u8]) -> u8 {
         },
     );
     if options.timing {
-        use std::io::Write;
-        let _ = writeln!(
-            summary,
-            "  {} files loaded in {:.1}ms, {} checked in {:.1}ms, {} queries, {} KB of stack at the most",
-            report.files_loaded,
-            report.load_time.as_secs_f64() * 1000.0,
-            report.files_checked,
-            report.check_time.as_secs_f64() * 1000.0,
-            report.queries,
-            report.deepest_stack / 1024,
-        );
-        if report.shared_parses > 0 {
-            let _ = writeln!(
-                summary,
-                "  {} files parsed for all projects",
-                report.shared_parses,
-            );
-        }
+        write_timing(&mut summary, report);
     }
     super::lint_command::print(&out, &summary, u8::from(!report.is_ok()))
+}
+
+fn write_timing(out: &mut Vec<u8>, report: &Report) {
+    use std::io::Write;
+    let _ = writeln!(
+        out,
+        "  {} files loaded in {:.1}ms, {} checked in {:.1}ms, {} queries, {} KB of stack at the most",
+        report.files_loaded,
+        report.load_time.as_secs_f64() * 1000.0,
+        report.files_checked,
+        report.check_time.as_secs_f64() * 1000.0,
+        report.queries,
+        report.deepest_stack / 1024,
+    );
+    if report.shared_parses > 0 {
+        let _ = writeln!(
+            out,
+            "  {} files parsed for all projects",
+            report.shared_parses,
+        );
+    }
 }
 
 /// A file or snippet that's about to run.
@@ -696,17 +747,22 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
 
 /// `BundleOptions::type_check` for `bun build --check`.
 pub(crate) fn check_for_build_command(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
-    check_for_build(checked, log, true)
+    check_for_build(checked, log, true, runtime_options_of_context().threads)
 }
 
 /// `BundleOptions::type_check` for `Bun.build({ check: true })`. Prints nothing.
 pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
-    check_for_build(checked, log, false)
+    check_for_build(checked, log, false, 0)
 }
 
 /// Doesn't reread the bundle's files (`sources`). Adds the errors to `log`, which the build reports
 /// like its own. Runs on the bundler's thread.
-fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress: bool) -> bool {
+fn check_for_build(
+    checked: TypeChecked,
+    log: &mut bun_ast::Log,
+    shows_progress: bool,
+    threads: usize,
+) -> bool {
     let TypeChecked {
         cwd,
         tsconfig,
@@ -748,7 +804,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
     });
     let then = |report| report;
     let report = match shows_progress {
-        true => run(cwd, tsconfig, &paths, &[], 0, provided, then),
+        true => run(cwd, tsconfig, &paths, &[], threads, provided, then),
         false => run_quietly(cwd, tsconfig, &paths, &[], 0, None, provided, then),
     };
     for reported in &report.diagnostics {
@@ -927,20 +983,37 @@ fn tsconfig_override() -> Option<&'static [u8]> {
 fn check_and_report(paths: &Paths, provided: Provided) -> bool {
     bun_removable_features::removable_definition!(Check, check_and_report);
     let cwd = working_directory();
+    let options = runtime_options_of_context();
     let then = |report| report;
-    let report = run(&cwd, tsconfig_override(), paths, &[], 0, provided, then);
-    if report.diagnostics.is_empty() && report.incomplete.is_empty() {
+    let report = run(
+        &cwd,
+        tsconfig_override(),
+        paths,
+        &[],
+        options.threads,
+        provided,
+        then,
+    );
+    if report.diagnostics.is_empty() && report.incomplete.is_empty() && !options.timing {
         return report.is_ok();
     }
     let display_cwd = bun_sema_driver::host::from_native(&cwd);
     let style = Style {
         is_case_sensitive: report.is_case_sensitive,
-        ..style_for(&display_cwd, None, Destination::stderr(), false)
+        ..style_for(
+            &display_cwd,
+            options.pretty,
+            Destination::stderr(),
+            options.all,
+        )
     };
     let mut out = Vec::new();
     format::write_diagnostics(&mut out, &report, &style);
     if !report.is_ok() {
         format::write_summary(&mut out, &report, &style);
+    }
+    if options.timing {
+        write_timing(&mut out, &report);
     }
     let _ = Output::error_writer().write_all(&out);
     Output::flush();

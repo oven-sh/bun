@@ -97,6 +97,14 @@ fn has_flag(command: &[u8], flag: &[u8]) -> bool {
 /// Where the first of `args` is that is neither a flag of `bun` nor the value of one: the command, or what to run.
 /// There is none with `--eval` and `--print`.
 fn place_of_first_word(args: &[&[u8]]) -> Option<usize> {
+    if let Some(parsed) = super::arguments::checked_auto_arguments() {
+        let parsed = parsed?;
+        if parsed.option(b"--eval").is_some() || parsed.option(b"--print").is_some() {
+            return None;
+        }
+        let word = *parsed.positionals().first()?;
+        return args.iter().position(|arg| core::ptr::eq(*arg, word));
+    }
     let mut at = 1;
     while let Some(arg) = args.get(at).copied() {
         if !arg.starts_with(b"-") || arg == b"-" {
@@ -130,6 +138,22 @@ pub(crate) fn arguments_before(command: &[u8]) -> Vec<&'static [u8]> {
     let mut args: Vec<&'static [u8]> = bun_core::argv().into_iter().collect();
     args.truncate(place_of_command(command).unwrap_or(args.len()));
     args
+}
+
+/// Prefix flags without values consumed by checker options, including overwritten values.
+pub(crate) fn flags_before(command: &[u8]) -> Vec<&'static bun_core::ZStr> {
+    let argv = bun_core::argv().to_vec();
+    let at = place_of_command(command).unwrap_or(argv.len());
+    let values = super::arguments::checked_option_values(command);
+    argv.into_iter()
+        .take(at)
+        .skip(1)
+        .filter(|arg| {
+            !values
+                .iter()
+                .any(|value| core::ptr::eq(arg.as_bytes(), *value))
+        })
+        .collect()
 }
 
 /// `bun --cwd <dir> lint`: the command, which comes after the flags of `bun` and their values.
@@ -172,7 +196,11 @@ pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
     let Some(at) = place_of_command(command) else {
         return true;
     };
-    let (before, of_command) = args.split_at(at);
+    let of_command = &args[at..];
+    let before: Vec<_> = flags_before(command)
+        .into_iter()
+        .map(|arg| arg.as_bytes())
+        .collect();
     // `bun --no-script lint`: the flags of these commands count before them too.
     if before.iter().any(|arg| *arg == b"--no-script") {
         return false;
@@ -231,27 +259,39 @@ pub(crate) fn directory_of_cwd(given: &[u8]) -> Vec<u8> {
 
 /// Decides what `bun <command>` runs, without looking at `command`'s own arguments.
 pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
-    let args: Vec<&[u8]> = bun_core::argv().into_iter().collect();
-    // What follows the name of a script is for the script.
-    let before = place_of_first_word(&args).map_or(&args[..], |at| &args[..at]);
-    let mut before = before.iter().copied();
     let mut given = None;
-    while let Some(arg) = before.next() {
-        // These are about scripts: those of several packages, whatever this one has, or none.
-        if matches!(
-            arg,
-            b"--workspaces" | b"--parallel" | b"--sequential" | b"--if-present"
-        ) || arg.starts_with(b"--filter")
-            || short_with_value(arg) == Some(b'F')
+    if let Some(args) = super::arguments::checked_command_arguments(command) {
+        if args.flag(b"--workspaces")
+            || args.flag(b"--parallel")
+            || args.flag(b"--sequential")
+            || args.flag(b"--if-present")
+            || !args.options(b"--filter").is_empty()
         {
             return Ok(Runs::Other);
         }
-        let value = match arg.strip_prefix(b"--cwd") {
-            Some(b"") => before.next(),
-            Some(rest) => rest.strip_prefix(b"="),
-            None => None,
-        };
-        given = value.or(given);
+        given = args.option(b"--cwd");
+    } else {
+        let args: Vec<&[u8]> = bun_core::argv().into_iter().collect();
+        // What follows the name of a script is for the script.
+        let before = place_of_first_word(&args).map_or(&args[..], |at| &args[..at]);
+        let mut before = before.iter().copied();
+        while let Some(arg) = before.next() {
+            // These are about scripts: those of several packages, whatever this one has, or none.
+            if matches!(
+                arg,
+                b"--workspaces" | b"--parallel" | b"--sequential" | b"--if-present"
+            ) || arg.starts_with(b"--filter")
+                || short_with_value(arg) == Some(b'F')
+            {
+                return Ok(Runs::Other);
+            }
+            let value = match arg.strip_prefix(b"--cwd") {
+                Some(b"") => before.next(),
+                Some(rest) => rest.strip_prefix(b"="),
+                None => None,
+            };
+            given = value.or(given);
+        }
     }
     let cwd = match given {
         Some(given) => {

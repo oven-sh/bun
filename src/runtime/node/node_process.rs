@@ -338,24 +338,6 @@ mod _impl {
             // emulate `defer prev = arg` by setting at end of each iteration body
             let arg: &[u8] = arg;
 
-            if arg.len() >= 1 && arg[0] == b'-' {
-                args.push(if arg.starts_with(b"--aot-graph-fd=") {
-                    BunString::static_("--debug-aot")
-                } else if arg.starts_with(b"--aot-checked=") {
-                    BunString::static_("--aot")
-                } else {
-                    BunString::clone_utf8(arg)
-                });
-                prev = Some(arg);
-                continue;
-            }
-
-            if !seen_run && arg == b"run" {
-                seen_run = true;
-                prev = Some(arg);
-                continue;
-            }
-
             // A set of execArgv args consume an extra argument, so we do not want to
             // confuse these with script names.
             // Build the set lazily at runtime from the `AUTO_PARAMS` table:
@@ -391,11 +373,42 @@ mod _impl {
                 });
 
             if let Some(p) = prev {
-                if MAP.contains(p) {
+                let check_value = bun_options_types::context::try_get()
+                    .is_some_and(|ctx| ctx.runtime_options.check)
+                    && p.strip_prefix(b"--").is_some_and(|name| {
+                        crate::cli::arguments::CHECK_AUTO_PARAMS
+                            .iter()
+                            .any(|param| {
+                                (param.takes_value == bun_clap::Values::One
+                                    || (param.takes_value == bun_clap::Values::OneOptional
+                                        && matches!(arg, b"true" | b"false")))
+                                    && (param.names.long == Some(name)
+                                        || param.names.long_aliases.contains(&name))
+                            })
+                    });
+                if MAP.contains(p) || check_value {
                     args.push(BunString::clone_utf8(arg));
-                    prev = Some(arg);
+                    prev = None;
                     continue;
                 }
+            }
+
+            if arg.len() >= 1 && arg[0] == b'-' {
+                args.push(if arg.starts_with(b"--aot-graph-fd=") {
+                    BunString::static_("--debug-aot")
+                } else if arg.starts_with(b"--aot-checked=") {
+                    BunString::static_("--aot")
+                } else {
+                    BunString::clone_utf8(arg)
+                });
+                prev = Some(arg);
+                continue;
+            }
+
+            if !seen_run && arg == b"run" {
+                seen_run = true;
+                prev = Some(arg);
+                continue;
             }
 
             // we hit the script name

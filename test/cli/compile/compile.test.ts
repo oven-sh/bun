@@ -27,6 +27,27 @@ describe.concurrent("bun compile", () => {
     });
   });
 
+  test("--no-aot --check checks before producing an executable", async () => {
+    using dir = tempDir("compile-checked", {
+      "good.ts": `export const count: number = 1;`,
+      "bad.ts": `export const count: number = "one";`,
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: [], skipLibCheck: true } }),
+    });
+    const bad = await bun(String(dir), "compile", "--no-aot", "--check", "bad.ts");
+    expect(bad.stderr).toContain("TS2322");
+    expect(bad.exitCode).toBe(1);
+    expect(existsSync(executable(String(dir), "bad"))).toBe(false);
+
+    const good = await bun(String(dir), "compile", "--no-aot", "--check", "good.ts");
+    expect(good.stderr).toBe("");
+    expect(good.exitCode).toBe(0);
+    expect(await run(String(dir), [executable(String(dir), "good")])).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("takes the flags of bun build --compile", async () => {
     using dir = tempDir("compile-flags", {
       "app.ts": `console.log(GREETING, process.execArgv.join(" "));\ndeclare const GREETING: string;`,

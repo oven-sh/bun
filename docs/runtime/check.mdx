@@ -470,6 +470,18 @@ bun check --no-script -b # with any other flag or path
 bun --check              # type checks the project too
 ```
 
+Pass checker options before the file or script name:
+
+```bash terminal icon="terminal"
+bun --check --threads 2 --project tsconfig.app.json --pretty false
+bun run --check --threads 2 --timing src/index.ts
+bun test --check --threads 2 --no-pretty
+```
+
+`--threads`, `--project`, `--pretty`, `--no-pretty`, `--all`, and `--timing` also work with `--check`.
+`bun build --check` supports `--threads` and `--project`; it uses the build's error format.
+Use the long `--project` name here: `-p` still means `--print`. With `bun run`, options after a file or script name belong to that program.
+
 Writing a tool or a CI step that runs in projects you don't control? `bun check --no-script` is always the type checker.
 
 Inside the `check` script, and in any script it starts, `bun check` is the type checker. That makes `"check": "bun check"` work.

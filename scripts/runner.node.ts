@@ -850,6 +850,15 @@ const isParallelAllowlisted = (testPath: string) => {
     parallelAllowlist.dirs.has(slash === -1 ? "" : path.slice(0, slash)) && !parallelAllowlist.excludeFiles.has(path)
   );
 };
+// A bucket has one time limit for all of its files, and for each test the time limit of a file that runs alone. A build keeps
+// several processors busy, and with a sanitizer it takes several times as long: there a file that builds executables took three
+// to seven times as long in a bucket as alone. So with a sanitizer it has a process of its own, whatever the allowlist says.
+// The answer decides where a file runs and what it costs its shard.
+const bucketAdmission = (execPath: string) => {
+  const withSanitizer = hasSanitizer(execPath);
+  return (testPath: string) =>
+    isParallelAllowlisted(testPath) && !/stress/i.test(testPath) && !(withSanitizer && buildsManyExecutables(testPath));
+};
 
 const dockerServicePrefixes = Object.keys(dockerPrestartMap);
 const needsDockerService = (testPath: string) => {
@@ -1255,6 +1264,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
   /**
    * @param concurrent this call may overlap with other runTest calls
    * @param saysDuration of a concurrent call: the title is logged when it has passed, with the seconds it took, as for a file of a bucket, and what a failure printed is logged too
+   * @param hasTimeFor asked where a try has failed and tries are left, with the milliseconds that it took: whether one more is made
    */
   const runTest = async (
     title: string,
@@ -1262,6 +1272,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
     concurrent = parallelism > 1,
     maxAttempts = 1 + (parseInt(options.retries) || 0),
     saysDuration = false,
+    hasTimeFor: (milliseconds: number) => boolean = () => true,
   ): Promise<TestResult | undefined> => {
     const index = ++i;
 
@@ -1275,6 +1286,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       let grouptitle = `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`;
       if (attempt > 1) grouptitle += ` ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`;
 
+      const triedAt = Date.now();
       if (concurrent && saysDuration) {
         // Where a further try begins. The title of the first alone would be taken for a file that took no time.
         if (attempt > 1) console.log(grouptitle);
@@ -1300,8 +1312,10 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
         break;
       }
 
-      const color = attempt >= maxAttempts ? "red" : "yellow";
-      const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
+      const hasNoTime = attempt < maxAttempts && !isAlwaysFailure(error) && !hasTimeFor(Date.now() - triedAt);
+      const color = attempt >= maxAttempts || hasNoTime ? "red" : "yellow";
+      const noTime = hasNoTime ? ", and the job has no time for another try" : "";
+      const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${noTime}${getAnsi("reset")}`;
       if (concurrent) {
         // Don't open a group mid-phase: it would re-anchor the log viewer's
         // folding for every concurrent title printed after it.
@@ -1317,7 +1331,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       failure ||= result;
       flaky ||= true;
 
-      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
+      if (attempt >= maxAttempts || hasNoTime || isAlwaysFailure(error)) {
         flaky = false;
         failedResults.push(failure);
         failedResultsTitles.push(title);
@@ -1417,7 +1431,12 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
   if (!failedResults.length) {
     await Promise.all(beforeFirstTest);
 
-    const runOneTest = async (testPath: string, concurrent: boolean, saysDuration = false) => {
+    const runOneTest = async (
+      testPath: string,
+      concurrent: boolean,
+      saysDuration = false,
+      hasTimeFor?: (milliseconds: number) => boolean,
+    ) => {
       await awaitNapiPrebuild(testPath);
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
@@ -1551,6 +1570,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
           concurrent,
           undefined,
           saysDuration,
+          hasTimeFor,
         );
       }
     };
@@ -1811,12 +1831,12 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       allFiles.filter(filename => filename.startsWith("test/")).map(filename => filename.slice("test/".length)),
     );
     const isModified = (t: string) => modifiedTests.has(t.replaceAll("\\", "/"));
+    const mayShareABucket = bucketAdmission(execPath);
     const isBucketCandidate = (t: string) =>
       parallelism === 1 &&
       isTestStrict(t) &&
       !isNodeTest(t) &&
-      !/stress/i.test(t) &&
-      isParallelAllowlisted(t) &&
+      mayShareABucket(t) &&
       !runsAlone(t) &&
       !needsDockerService(t) &&
       (!validationApplies || (shouldValidateExceptions(t) && shouldValidateLeakSan(t)));
@@ -1833,7 +1853,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       .filter(files => files.length >= 8);
     const bucketable = new Set(buckets.flat());
     const unbucketedTests = serialTests.filter(t => !modifiedSerialTests.includes(t) && !bucketable.has(t));
-    // Those of them that take too long for a bucket run beside one another too, each in a process of its own. The longest first: what is left for the end is short.
+    // Those of them that take too long for a bucket, and with a sanitizer all of them, run beside one another too, each in a process of its own. The longest first: what is left for the end is short.
     const expectedDurations = loadExpectedDurations(testsPath);
     const costOfNewTest = costOfNewTests(expectedDurations);
     const expectedDuration = (t: string) => expectedDurations[t.replaceAll("\\", "/")] ?? costOfNewTest(t);
@@ -1851,7 +1871,58 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
     if (buildingTests.length) {
       startGroup(`Running ${buildingTests.length} files that build many executables (${buildingFilesWidth}-wide)`);
       const buildingFilesLimit = createLimit(buildingFilesWidth);
-      await Promise.all(buildingTests.map(t => buildingFilesLimit(() => runOneTest(t, true, true))));
+      if (!hasSanitizer(execPath)) {
+        await Promise.all(buildingTests.map(t => buildingFilesLimit(() => runOneTest(t, true, true))));
+      } else {
+        // With a sanitizer these are the files of a bucket too, and a file is tried as in a bucket: once beside the others, and
+        // if it fails there, alone when the others are through.
+        const failedBesideOthers: { testPath: string; failure: TestResult }[] = [];
+        const tryBesideOthers = async (testPath: string) => {
+          const title = join("test", testPath).replaceAll("\\", "/");
+          const startedAt = Date.now();
+          const result = await spawnBunTest(bunFor(execPath, testPath), join("test", testPath), {
+            cwd,
+            filesAtATime: buildingFilesWidth,
+            // As a bucket is, it is ended five minutes before the job.
+            atMost: Math.max(60_000, jobBudgetMs() - 5 * 60_000),
+            stdout: () => {},
+            stderr: () => {},
+          });
+          if (result.ok) {
+            const seconds = ((Date.now() - startedAt) / 1000).toFixed(2);
+            console.log(
+              `${getAnsi("gray")}[${++i}/${total}]${getAnsi("reset")} ${title} ${getAnsi("gray")}(${seconds}s)${getAnsi("reset")}`,
+            );
+            okResults.push(result);
+          } else if (isAlwaysFailure(result.error)) {
+            // What a crash or a sanitizer reports is final here too.
+            await runTest(title, async () => result, true, 1, true);
+          } else {
+            console.log(`${getAnsi("yellow")}${title} - ${result.error} beside other files${getAnsi("reset")}`);
+            if (isCI) process.stderr.write(result.stdoutPreview);
+            failedBesideOthers.push({ testPath, failure: result });
+          }
+        };
+        await Promise.all(buildingTests.map(t => buildingFilesLimit(() => tryBesideOthers(t))));
+        // The five minutes before the end of the job are left to the rest of the shard, as a bucket leaves them. A file that
+        // has failed alone too has each further try only if that try ends before them: it may take as long as the one before
+        // it, and the runner waits up to fifteen seconds before it starts.
+        const hasTimeFor = (milliseconds: number) => jobBudgetMs() - 5 * 60_000 >= milliseconds + 15_000;
+        for (const { testPath, failure } of failedBesideOthers) {
+          const alone = await runOneTest(testPath, false, false, hasTimeFor);
+          if (!alone?.ok || !isBuildkite) continue;
+          const title = join("test", testPath).replaceAll("\\", "/");
+          const unlisted = !isKnownFlakyTest(title);
+          const error = `${failure.error} beside other files, passed alone`;
+          reportAnnotationToBuildkite({
+            context: unlisted ? "flaky-new" : "flaky",
+            label: title,
+            style: "warning",
+            priority: unlisted ? 4 : 3,
+            content: formatTestToMarkdown({ ...failure, error }, false, 0, unlisted),
+          });
+        }
+      }
     }
     for (const files of buckets) await runParallelBucket(bunFor(execPath, files[0]!), files);
     // Concurrent tests log their title without opening a group (interleaved
@@ -2690,6 +2761,8 @@ interface SpawnBunTestOptions {
   cwd: string;
   /** How many files share the machine. Each may take that many times as long as alone, so its time limits are that many times as long. */
   filesAtATime?: number;
+  /** Milliseconds after which the file is ended, where its own time limit is longer. */
+  atMost?: number;
   args?: string[];
   env?: SpawnEnv;
   stdout?: SpawnOutputHandler;
@@ -2701,7 +2774,8 @@ async function spawnBunTest(
   testPath: string,
   opts: SpawnBunTestOptions = { cwd },
 ): Promise<TestResult> {
-  const timeout = getTestTimeout(testPath) * (opts.filesAtATime ?? 1);
+  const filesAtATime = opts.filesAtATime ?? 1;
+  const timeout = getTestTimeout(testPath) * filesAtATime;
   const isAsan = basename(execPath).includes("asan");
   const perTestTimeout = Math.ceil(timeout / 2) * (isAsan ? 3 : 1);
   const absPath = join(opts.cwd, testPath);
@@ -2710,9 +2784,10 @@ async function spawnBunTest(
 
   const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`, "--reporter=dots"];
   // A test holds the executables that it has built until it ends, and `bun test` has twenty tests under way. More of them than
-  // there are processors end no sooner: their executables only lie there together.
+  // there are processors end no sooner: their executables only lie there together. With a sanitizer a build takes several times
+  // as long, and a test keeps the time limit that it gave itself: there a file has its share of the processors, as in a bucket.
   if (buildsManyExecutables(relative(testsPath, absPath)))
-    testArgs.push(`--max-concurrency=${Math.min(20, availableParallelism())}`);
+    testArgs.push(`--max-concurrency=${Math.min(20, Math.ceil(availableParallelism() / (isAsan ? filesAtATime : 1)))}`);
 
   // This will be set if a JUnit file is generated
   let junitFilePath: string | null = null;
@@ -2766,7 +2841,7 @@ async function spawnBunTest(
     // setup (napi node-gyp compiles) or many subprocess spawns don't hit
     // the file wall before any individual test times out. Kept below the
     // per-test multiplier so the overall shard stays inside the job timeout.
-    timeout: isReallyTest ? Math.ceil(timeout * (isAsan ? 2 : 1)) : 30_000,
+    timeout: Math.min(isReallyTest ? Math.ceil(timeout * (isAsan ? 2 : 1)) : 30_000, opts.atMost ?? Infinity),
     env,
     stdout: opts.stdout ?? pipeTestStdout(process.stdout),
     stderr: opts.stderr ?? pipeTestStdout(process.stderr),
@@ -3340,11 +3415,11 @@ const aotProgramsAtOnce = 4;
  * How many files of this kind run at once on a machine with four processors, which is what most lanes have. A constant per kind,
  * not a count of this machine's processors: every shard must compute the same assignment.
  */
-function filesAtOnce(testPath: string) {
+function filesAtOnce(testPath: string, mayShareABucket: (testPath: string) => boolean) {
   const path = testPath.replaceAll("\\", "/");
   if (path.includes("js/node/test/parallel/") || path.includes("js/bun/test/parallel/")) return 3;
   if (!isTestStrict(path) || isNodeTest(path) || needsDockerService(path)) return 1;
-  const isInBucket = isParallelAllowlisted(path) && !/stress/i.test(path);
+  const isInBucket = mayShareABucket(path);
   if ((!isInBucket && !waitsForChildProcesses(path)) || runsAlone(testPath)) return 1;
   return isInBucket ? 3 : 2;
 }
@@ -3484,9 +3559,10 @@ function getRelevantTests(
     // files, or the file failing to load) count as the files beside them do.
     const durations = loadExpectedDurations(cwd);
     const costOfNewTest = costOfNewTests(durations);
+    const mayShareABucket = bucketAdmission(execPath);
     // What is balanced is wall time, and a file that runs beside others adds only its share of it.
     const costOf = (testPath: string) =>
-      (durations[testPath.replaceAll("\\", "/")] ?? costOfNewTest(testPath)) / filesAtOnce(testPath);
+      (durations[testPath.replaceAll("\\", "/")] ?? costOfNewTest(testPath)) / filesAtOnce(testPath, mayShareABucket);
     const indexOf = new Map(availableTests.map((testPath, originalIndex) => [testPath, originalIndex]));
     const programs = availableTests.filter(isAotProgram);
 

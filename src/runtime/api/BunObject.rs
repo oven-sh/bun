@@ -1646,6 +1646,7 @@ extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
 #[allow(non_snake_case)]
 pub(crate) mod JSZlib {
     use super::*;
+    use bun_core::fmt::{OutOfRangeOptions, out_of_range};
     use bun_libdeflate_sys::libdeflate as bun_libdeflate;
 
     type BufferResult<'a> = bindgen::Result<'a, JsLocal<'a, BufferSource>>;
@@ -1674,6 +1675,39 @@ pub(crate) mod JSZlib {
                 Some(_) => Err(heap.invalid_arguments(format_args!(
                     "Expected library to be one of 'zlib' or 'libdeflate'"
                 ))),
+            }
+        }
+    }
+
+    /// What `deflateInit2` takes. `gzipSync` writes gzip alone, so it adds 16 to a window size.
+    fn deflate_window_bits<'a>(
+        heap: &JsHeap<'a>,
+        requested: Option<i32>,
+        is_gzip: bool,
+    ) -> bindgen::Result<'a, i32> {
+        let Some(bits) = requested else {
+            return Ok(if is_gzip { 31 } else { -15 });
+        };
+        match bits {
+            25..=31 => Ok(bits),
+            9..=15 if is_gzip => Ok(bits + 16),
+            // zlib takes 8 with its own wrapper alone, and then uses a window of 9 bits.
+            -15..=-9 | 8..=15 if !is_gzip => Ok(bits),
+            _ => {
+                let ranges: &[u8] = if is_gzip {
+                    b">= 9 && <= 15 or >= 25 && <= 31"
+                } else {
+                    b">= -15 && <= -9, >= 8 && <= 15 or >= 25 && <= 31"
+                };
+                let options = OutOfRangeOptions {
+                    field_name: b"ZlibCompressionOptions.windowBits",
+                    msg: ranges,
+                    ..Default::default()
+                };
+                Err(heap.error_with_code(
+                    jsc::ErrorCode::OUT_OF_RANGE,
+                    format_args!("{}", out_of_range(i64::from(bits), options)),
+                ))
             }
         }
     }
@@ -1826,8 +1860,11 @@ pub(crate) mod JSZlib {
         is_gzip: bool,
     ) -> BufferResult<'a> {
         let level = options.level.map_or(6, |level| level as i32);
+        let library = Library::from_option(heap, options.library)?;
+        // Checked for both libraries. Only zlib has a window size and a format to choose.
+        let window_bits = deflate_window_bits(heap, options.window_bits, is_gzip)?;
 
-        match Library::from_option(heap, options.library)? {
+        match library {
             Library::Zlib => {
                 // `init` reserves `deflateBound` of the input.
                 let mut list: Vec<u8> = Vec::new();
@@ -1836,8 +1873,7 @@ pub(crate) mod JSZlib {
                     data,
                     &mut list,
                     zlib::Options {
-                        window_bits: 15,
-                        gzip: is_gzip,
+                        window_bits,
                         level,
                         mem_level: options.mem_level,
                         strategy: options.strategy,

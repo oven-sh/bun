@@ -6517,6 +6517,14 @@ declare module "bun" {
      * - `-9..-15`: The output does **not** have a zlib header or footer (Raw Deflate)
      * - `25..31` (16+`9..15`): The output has a gzip header and footer (gzip)
      *
+     * `Bun.deflateSync` writes the format that the value names. The default is `-15`.
+     *
+     * `Bun.gzipSync` always writes gzip. It adds 16 to a value in `9..15` and refuses a negative value. The default is `31`.
+     *
+     * `Bun.deflateSync` and `Bun.gzipSync` throw for a value that zlib does not accept.
+     *
+     * `Bun.inflateSync` and `Bun.gunzipSync` read the format that the value names. The defaults are `-15` and `31`.
+     *
      * The gzip header has no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
      */
     windowBits?:
@@ -6548,6 +6556,9 @@ declare module "bun" {
 
   /**
    * Compresses a chunk of data with the `zlib` DEFLATE algorithm.
+   *
+   * The output is a raw deflate stream, with no zlib header or footer. Pass `windowBits: 15` for the zlib format,
+   * which is what `deflateSync` of `node:zlib` writes.
    * @param data The buffer of data to compress
    * @param options Compression options to use
    * @returns The output buffer with the compressed data
@@ -6568,6 +6579,8 @@ declare module "bun" {
   ): Uint8Array<ArrayBuffer>;
   /**
    * Decompresses a chunk of data with the `zlib` INFLATE algorithm.
+   *
+   * The input is a raw deflate stream. Pass `windowBits: 15` to read the zlib format, or `windowBits: 31` to read gzip.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */

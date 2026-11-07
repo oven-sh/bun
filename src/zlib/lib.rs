@@ -329,9 +329,9 @@ impl<'a> ZlibReaderArrayList<'a> {
 
 #[derive(Clone, Copy)]
 pub struct Options {
-    pub gzip: bool,
     pub level: c_int,
     pub method: c_int,
+    /// As `deflateInit2` and `inflateInit2` take it: negative for raw deflate, 16 more for gzip.
     pub window_bits: c_int,
     pub mem_level: c_int,
     pub strategy: c_int,
@@ -340,7 +340,6 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
-            gzip: false,
             level: 6,
             method: 8,
             window_bits: 15,
@@ -632,11 +631,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
         match zlib_reader.zlib.deflate_init(
             options.level,
             options.method,
-            if !options.gzip {
-                -options.window_bits
-            } else {
-                options.window_bits + 16
-            },
+            options.window_bits,
             options.mem_level,
             options.strategy,
         ) {

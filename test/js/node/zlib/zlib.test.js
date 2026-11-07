@@ -309,6 +309,157 @@ describe("zlib", () => {
       isDebug ? 60_000 : undefined,
     );
   });
+
+  describe("windowBits", () => {
+    // A match further back than the window is not found, so each window size gives other bytes.
+    const data = Buffer.from(Uint8Array.from({ length: 32768 }, (_, i) => ((i % 251) ^ Math.floor(i / 7)) & 0xff));
+    const level = 9;
+    // One deflate() call with room for all of the output, which is what Bun makes.
+    const chunkSize = 2 * data.length;
+    const windowSizes = [9, 10, 11, 12, 13, 14, 15];
+    const named = option => expect.stringContaining(`"ZlibCompressionOptions.${option}"`);
+
+    it("deflateSync: 15 writes the zlib stream that node:zlib's deflateSync writes", () => {
+      const hello = Buffer.alloc(500, "hello");
+      const compressed = Buffer.from(deflateSync(hello, { level, windowBits: 15 }));
+      expect(compressed).toEqual(zlib.deflateSync(hello, { level, windowBits: 15 }));
+      // RFC 1950: a header that is a multiple of 31, the raw deflate stream, then the Adler-32 of the input.
+      expect(compressed.readUInt16BE(0) % 31).toBe(0);
+      expect(compressed.subarray(2, -4)).toEqual(Buffer.from(deflateSync(hello, { level })));
+      expect(compressed.readUInt32BE(compressed.length - 4)).toBe(Bun.hash.adler32(hello));
+    });
+
+    for (const bits of windowSizes) {
+      // What each function is given, and the function of node:zlib that writes that format with a window of `bits`.
+      for (const [compress, windowBits, nodeCompress] of [
+        [deflateSync, bits, zlib.deflateSync],
+        [deflateSync, -bits, zlib.deflateRawSync],
+        [deflateSync, bits + 16, zlib.gzipSync],
+        [gzipSync, bits, zlib.gzipSync],
+        [gzipSync, bits + 16, zlib.gzipSync],
+      ]) {
+        it(`${compress.name}: ${windowBits} gives the bytes of node:zlib's ${nodeCompress.name} with a window of ${bits} bits`, () => {
+          const compressed = Buffer.from(compress(data, { level, windowBits }));
+          expect(compressed).toEqual(nodeCompress(data, { level, windowBits: bits, chunkSize }));
+        });
+      }
+    }
+
+    // gzipSync writes gzip alone. deflateSync writes the format that the value names.
+    for (const { compress, taken, refused, ranges } of [
+      {
+        compress: deflateSync,
+        taken: [-15, -9, 8, 15, 31],
+        refused: [-16, -8, 0, 7, 16, 24, 32, 99],
+        ranges: ">= -15 && <= -9, >= 8 && <= 15 or >= 25 && <= 31",
+      },
+      {
+        compress: gzipSync,
+        taken: [9, 15, 25, 31],
+        refused: [-16, -15, -9, -8, 0, 7, 8, 16, 24, 32, 99],
+        ranges: ">= 9 && <= 15 or >= 25 && <= 31",
+      },
+    ]) {
+      it(`${compress.name}: a larger window gives a shorter output`, () => {
+        const lengths = windowSizes.map(windowBits => compress(data, { level, windowBits }).length);
+        for (let i = 1; i < lengths.length; i++) expect(lengths[i]).toBeLessThan(lengths[i - 1]);
+      });
+
+      const outOfRange = windowBits =>
+        expect.objectContaining({
+          name: "RangeError",
+          code: "ERR_OUT_OF_RANGE",
+          message: `The value of "ZlibCompressionOptions.windowBits" is out of range. It must be ${ranges}. Received ${windowBits}`,
+        });
+
+      for (const windowBits of refused) {
+        it(`${compress.name}: ${windowBits} is refused`, () => {
+          expect(() => compress(data, { windowBits })).toThrow(outOfRange(windowBits));
+        });
+      }
+
+      for (const [windowBits, code] of [
+        [15.5, "ERR_OUT_OF_RANGE"],
+        [NaN, "ERR_OUT_OF_RANGE"],
+        [2 ** 32 + 15, "ERR_OUT_OF_RANGE"],
+        ["15", "ERR_INVALID_ARG_TYPE"],
+        [15n, "ERR_INVALID_ARG_TYPE"],
+        [null, "ERR_INVALID_ARG_TYPE"],
+        [{ valueOf: () => 15 }, "ERR_INVALID_ARG_TYPE"],
+      ]) {
+        it(`${compress.name}: ${util.inspect(windowBits)} is refused`, () => {
+          expect(() => compress(data, { windowBits })).toThrow(
+            expect.objectContaining({ code, message: named("windowBits") }),
+          );
+        });
+      }
+
+      it(`${compress.name}: which of two wrong options the error names`, () => {
+        const names = option => expect.objectContaining({ message: named(option) });
+        expect(() => compress(data, { windowBits: 99, level: 99 })).toThrow(names("windowBits"));
+        expect(() => compress(data, { windowBits: 99, memLevel: 99 })).toThrow(names("memLevel"));
+        expect(() => compress(data, { windowBits: 99, strategy: 99 })).toThrow(names("strategy"));
+        expect(() => compress(data, { windowBits: "15", memLevel: 99 })).toThrow(names("windowBits"));
+        expect(() => compress(data, { windowBits: 99, library: "libdeflate", level: 99 })).toThrow(names("windowBits"));
+        expect(() => compress(data, { windowBits: 99, library: "nope" })).toThrow(
+          "Expected library to be one of 'zlib' or 'libdeflate'",
+        );
+      });
+
+      it(`${compress.name}: libdeflate checks it and does not use it`, () => {
+        const library = "libdeflate";
+        for (const windowBits of taken) {
+          expect(compress(data, { library, windowBits })).toEqual(compress(data, { library }));
+        }
+        for (const windowBits of refused) {
+          expect(() => compress(data, { library, windowBits })).toThrow(outOfRange(windowBits));
+        }
+        expect(() => compress(data, { library, windowBits: "9" })).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+        );
+      });
+    }
+
+    it("without it, deflateSync writes raw deflate and gzipSync writes gzip, with a window of 15 bits", () => {
+      expect(Buffer.from(deflateSync(data))).toEqual(zlib.deflateRawSync(data, { chunkSize }));
+      expect(Buffer.from(gzipSync(data))).toEqual(zlib.gzipSync(data, { chunkSize }));
+      for (const windowBits of [-15, undefined]) expect(deflateSync(data, { windowBits })).toEqual(deflateSync(data));
+      for (const windowBits of [15, 31, undefined]) expect(gzipSync(data, { windowBits })).toEqual(gzipSync(data));
+    });
+
+    it("deflateSync: 8 is a window of 9 bits, which is what zlib makes of it", () => {
+      const compressed = Buffer.from(deflateSync(data, { level, windowBits: 8 }));
+      expect(compressed).toEqual(zlib.deflateSync(data, { level, windowBits: 9, chunkSize }));
+    });
+
+    it("gzipSync refuses 8 and a negative value, as node:zlib's gzipSync does", () => {
+      const outOfRange = expect.objectContaining({ code: "ERR_OUT_OF_RANGE" });
+      for (const windowBits of [8, -9, -15]) {
+        expect(() => gzipSync(data, { windowBits })).toThrow(outOfRange);
+        expect(() => zlib.gzipSync(data, { windowBits })).toThrow(outOfRange);
+      }
+    });
+
+    it("inflateSync reads raw deflate as it is, a zlib stream with windowBits 15 and gzip with windowBits 31", () => {
+      for (const bits of [8, ...windowSizes]) {
+        const zlibStream = deflateSync(data, { windowBits: bits });
+        expect(Buffer.compare(inflateSync(zlibStream, { windowBits: 15 }), data)).toBe(0);
+      }
+      for (const bits of windowSizes) {
+        expect(Buffer.compare(inflateSync(deflateSync(data, { windowBits: -bits })), data)).toBe(0);
+        const gzipStream = deflateSync(data, { windowBits: bits + 16 });
+        expect(Buffer.compare(inflateSync(gzipStream, { windowBits: 31 }), data)).toBe(0);
+      }
+    });
+
+    it("gunzipSync reads what gzipSync writes for every windowBits that gzipSync takes", () => {
+      for (const bits of windowSizes) {
+        for (const windowBits of [bits, bits + 16]) {
+          expect(Buffer.compare(gunzipSync(gzipSync(data, { windowBits })), data)).toBe(0);
+        }
+      }
+    });
+  });
 });
 
 function* window(buffer, size, advance = size) {

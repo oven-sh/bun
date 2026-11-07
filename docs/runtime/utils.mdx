@@ -513,6 +513,14 @@ export type ZlibCompressionOptions = {
    * - `-9..-15`: The output will **not** have a zlib header or footer (Raw Deflate)
    * - `25..31` (16+`9..15`): The output will have a gzip header and footer (gzip)
    *
+   * `Bun.deflateSync` writes the format that the value names. The default is `-15`.
+   *
+   * `Bun.gzipSync` always writes gzip. It adds 16 to a value in `9..15` and refuses a negative value. The default is `31`.
+   *
+   * `Bun.deflateSync` and `Bun.gzipSync` throw for a value that zlib does not accept.
+   *
+   * `Bun.inflateSync` and `Bun.gunzipSync` read the format that the value names. The defaults are `-15` and `31`.
+   *
    * The gzip header will have no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
    */
   windowBits?:
@@ -570,6 +578,8 @@ compressed; // => Uint8Array(12)
 
 The second argument supports the same set of configuration options as [`Bun.gzipSync`](#bun-gzipsync).
 
+The output is a raw deflate stream, with no zlib header or footer. Pass `windowBits: 15` for the zlib format, which is what `deflateSync` of `node:zlib` writes. [`Bun.inflateSync`](#bun-inflatesync) reads that format when it gets `windowBits: 15`.
+
 ---
 
 ## `Bun.inflateSync()`
@@ -585,6 +595,8 @@ const decompressed = Bun.inflateSync(compressed);
 dec.decode(decompressed);
 // => "hellohellohello..."
 ```
+
+The input is a raw deflate stream. Pass `{ windowBits: 15 }` as the second argument to read the zlib format, or `{ windowBits: 31 }` to read gzip.
 
 ---
 

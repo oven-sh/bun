@@ -306,22 +306,17 @@ impl History {
         None
     }
 
+    /// `None` when already on the line being entered (nothing to restore).
     fn next(&mut self) -> Option<&[u8]> {
-        if self.position < self.entries.len() {
-            self.position += 1;
-        }
-
         if self.position == self.entries.len() {
-            // Keep ownership in History; reset_position() frees temp_line.
-            // Caller copies the data via set(), so borrowed reference is safe.
-            return self.temp_line.as_deref();
+            return None;
         }
-
-        if self.position < self.entries.len() {
-            return Some(&self.entries[self.position]);
+        self.position += 1;
+        match self.entries.get(self.position) {
+            Some(entry) => Some(entry),
+            // Back on the line being entered; `prev` saved it on the way out.
+            None => self.temp_line.as_deref(),
         }
-
-        None
     }
 
     fn reset_position(&mut self) {
@@ -2370,6 +2365,7 @@ impl<'a> Repl<'a> {
                         }
                         self.input_mode = InputMode::Normal;
                         self.editor_buffer.clear();
+                        self.history.reset_position();
                         self.refresh_line();
                     }
                     InputMode::Normal if self.line_editor.buffer.is_empty() => {
@@ -2473,13 +2469,10 @@ impl<'a> Repl<'a> {
                 }
                 Key::ArrowDown | Key::CtrlN => {
                     if let Some(next_line) = self.history.next() {
-                        let next_line = next_line.to_vec();
-                        let _ = self.line_editor.set(&next_line);
-                    } else {
-                        self.line_editor.clear();
+                        let _ = self.line_editor.set(next_line);
+                        self.suggestion.clear();
+                        self.refresh_line();
                     }
-                    self.suggestion.clear();
-                    self.refresh_line();
                 }
                 Key::Tab => self.handle_tab(),
                 Key::Home => {
@@ -2518,6 +2511,8 @@ impl<'a> Repl<'a> {
 
         // Note: reshaped for borrowck — copy line out so we can call &mut self methods
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
+        // Whatever this line turns out to be, the next one starts at the newest end of history.
+        self.history.reset_position();
 
         if self.input_mode == InputMode::Editor {
             if strings::trim(&line, b" \t").is_empty() {
@@ -2554,7 +2549,6 @@ impl<'a> Repl<'a> {
                     }
                     ReplResult::SkipEval => {
                         self.line_editor.clear();
-                        self.history.reset_position();
                         self.refresh_line();
                         return Ok(());
                     }
@@ -2613,7 +2607,6 @@ impl<'a> Repl<'a> {
         self.line_editor.clear();
         self.multiline_buffer.clear();
         self.input_mode = InputMode::Normal;
-        self.history.reset_position();
         self.refresh_line();
         Ok(())
     }

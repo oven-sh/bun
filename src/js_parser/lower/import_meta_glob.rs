@@ -1145,11 +1145,11 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             loc,
         );
         // CommonJS is only known after the visit pass, which takes an unused object literal apart but leaves a call alone.
-        if has_imports
-            && self.options.features.commonjs_at_runtime
+        let may_be_commonjs = self.options.features.commonjs_at_runtime
             && self.esm_export_keyword.len == 0
-            && self.top_level_await_keyword.len == 0
-        {
+            && self.top_level_await_keyword.len == 0;
+        // The arrow also captures the entries of a file that awaits them. JavaScriptCore saves every uncaptured binding at each `await`.
+        if has_imports && (may_be_commonjs || self.has_mock_hoist_plan) {
             *e = Expr::init(
                 E::Call {
                     target: arrow(self.arena, &[], *e),

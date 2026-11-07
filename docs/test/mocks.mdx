@@ -548,6 +548,14 @@ import { total } from "./cart"; // imports "./tax", and gets the mock
 
 As in Vitest, an import of a name that the module doesn't export is `undefined` in such a file, and not a `SyntaxError`.
 
+Where Bun turns a file's imports into `await import()`, the `eager` entries of [`import.meta.glob()`](/runtime/module-resolution#import-meta-glob) become `await import()` too. They run in turn, after the imports that stay static and before the file's other imports.
+
+The entries don't decide whether a file is one of these. A file with no hoisted call needs two imports that aren't from `bun:test`, `vitest` or `@jest/globals`, and the entries don't count toward them. To run modules in turn in any file, await the lazy form:
+
+```ts
+for (const load of Object.values(import.meta.glob("./mocks/*.ts"))) await load();
+```
+
 To mock a module for every test file, use `--preload` to load your mocks before your tests run.
 
 ```ts title="my-preload.ts" icon="/icons/typescript.svg"

@@ -243,6 +243,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             return None;
         }
         self.did_apply_test_feature = true;
+        self.has_mock_hoist_plan = true;
 
         let mut exported = RefMap::default();
         for stmt in stmts {

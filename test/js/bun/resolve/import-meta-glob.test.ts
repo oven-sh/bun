@@ -759,6 +759,152 @@ describe.concurrent("import.meta.glob", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A file with a hoisted call awaits its imports in turn. So does a Vitest test file or preload with two imports of
+  // its own, even when it hoists nothing. The eager entries are awaited too, whatever else the file declares.
+  describe("eager entries of a file that awaits its imports", () => {
+    const print = `test("print", () => console.log(JSON.stringify(globalThis.events)));`;
+    const printed = (stdout: string) => stdout.split("\n").filter(line => line.startsWith("["));
+    const declarations = [
+      ["nothing else", ``],
+      ["a literal const", `const flag = "x";`],
+    ];
+
+    // Imports with attributes stay import statements, so the entries are all that these files await.
+    const imports = `
+      import first from "./first.json" with { type: "json" };
+      import second from "./second.json" with { type: "json" };
+      void [first, second];`;
+    const mocking = {
+      "first.json": `{}`,
+      "second.json": `{}`,
+      "dependency.js": `(globalThis.events ??= []).push("real dependency"); export const dependency = "real";`,
+      "modules/a.js": `
+        import { vi } from "vitest";
+        vi.mock("../dependency.js", () => ({ dependency: "mocked", onlyInTheMock: true }));`,
+      "modules/b.js": `
+        import * as all from "../dependency.js";
+        (globalThis.events ??= []).push(all.dependency, all.onlyInTheMock);`,
+    };
+
+    describe.each(declarations)("in a Vitest file that declares %s", (_, declaration) => {
+      const body = `${imports} ${declaration} import.meta.glob("./modules/*.js", { eager: true });`;
+
+      test.each([
+        ["it imports vitest", { "glob.test.js": `import { test } from "vitest"; ${body} ${print}` }, []],
+        ["the globals are those of vitest", { "glob.test.js": `${body} ${print}` }, ["--globals=vitest"]],
+        ["it is a preload", { "setup.js": body, "glob.test.js": print }, ["--globals=vitest", "--preload=./setup.js"]],
+      ])("a mock from one entry reaches the next one: %s", async (_, files, flags) => {
+        using dir = tempDir("import-meta-glob", { ...mocking, ...files });
+        const { stdout, exitCode } = await run(String(dir), ["test", ...flags, "./glob.test.js"]);
+        expect(printed(stdout)).toEqual([`["mocked",true]`]);
+        expect(exitCode).toBe(0);
+      });
+
+      test("an export that an entry doesn't have is undefined, as for the file's awaited imports", async () => {
+        using dir = tempDir("import-meta-glob", {
+          "first.json": `{}`,
+          "second.json": `{}`,
+          "modules/a.js": `export const a = "a";`,
+          "glob.test.js": `
+            import { test } from "vitest";
+            ${imports}
+            ${declaration}
+            const missing = import.meta.glob("./modules/*.js", { eager: true, import: "missing" });
+            (globalThis.events ??= []).push(...Object.entries(missing).map(([path, value]) => path + " " + typeof value));
+            ${print}`,
+        });
+        const { stdout, exitCode } = await run(String(dir), ["test", "./glob.test.js"]);
+        expect(printed(stdout)).toEqual([`["./modules/a.js undefined"]`]);
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    // Known gap: Vitest gives the mock here too. A Vitest file needs two imports of its own to await its imports,
+    // and the entries don't count toward them.
+    test("a mock from one entry misses the next one in a Vitest file with one import of its own", async () => {
+      using dir = tempDir("import-meta-glob", {
+        ...mocking,
+        "glob.test.js": `
+          import { test } from "vitest";
+          import first from "./first.json" with { type: "json" };
+          void first;
+          import.meta.glob("./modules/*.js", { eager: true });
+          ${print}`,
+      });
+      const { stdout, exitCode } = await run(String(dir), ["test", "./glob.test.js"]);
+      expect(printed(stdout)).toEqual([`["real dependency","mocked",null]`]);
+      expect(exitCode).toBe(0);
+    });
+
+    const ordered = {
+      "a.ts": `(globalThis.events ??= []).push("a"); export const a = 1;`,
+      "b.ts": `(globalThis.events ??= []).push("b"); export const b = 2;`,
+      "types.ts": `export type Flag = string;`,
+      "modules/entry.ts": `(globalThis.events ??= []).push("entry");`,
+    };
+
+    // Vitest evaluates the entries first. Here an import that the file re-exports stays an import statement,
+    // and import statements run before everything that is awaited.
+    test.each([
+      ...declarations,
+      ["an import that is only used as a type", `import { Flag } from "./types.ts"; let flag: Flag | undefined;`],
+    ])("the entries are evaluated after the imports that stay static: %s", async (_, declaration) => {
+      using dir = tempDir("import-meta-glob", {
+        ...ordered,
+        "glob.test.ts": `
+          import { test } from "vitest";
+          import { a } from "./a.ts";
+          import { b } from "./b.ts";
+          export { a, b };
+          ${declaration}
+          import.meta.glob("./modules/*.ts", { eager: true });
+          ${print}`,
+      });
+      const { stdout, exitCode } = await run(String(dir), ["test", "./glob.test.ts"]);
+      expect(printed(stdout)).toEqual([`["a","b","entry"]`]);
+      expect(exitCode).toBe(0);
+    });
+
+    // A bun:test file with no hoisted call keeps its imports static, so its entries are static too and go first.
+    test("a bun:test file that hoists nothing keeps its entries static", async () => {
+      using dir = tempDir("import-meta-glob", {
+        ...ordered,
+        "glob.test.ts": `
+          import { test } from "bun:test";
+          import { a } from "./a.ts";
+          import { b } from "./b.ts";
+          export { a, b };
+          const flag = "x";
+          import.meta.glob("./modules/*.ts", { eager: true });
+          ${print}`,
+      });
+      const { stdout, exitCode } = await run(String(dir), ["test", "./glob.test.ts"]);
+      expect(printed(stdout)).toEqual([`["entry","a","b"]`]);
+      expect(exitCode).toBe(0);
+    });
+
+    // The entries are awaited behind the hoisted calls, so a hoisted call runs before they exist.
+    test.each([
+      ["an export", `export const exported = 1;`],
+      ["no export", ``],
+    ])("an eager call inside vi.hoisted() can't read the entries of a module with %s", async (_, own) => {
+      using dir = tempDir("import-meta-glob", {
+        ...ordered,
+        "helper.ts": `
+          import { vi } from "bun:test";
+          vi.hoisted(() => { import.meta.glob("./modules/*.ts", { eager: true }); });
+          ${own}`,
+        "glob.test.ts": `
+          import { test } from "bun:test";
+          const result = await import("./helper.ts").then(() => "loaded", error => error.name + ": " + error.message);
+          test("print", () => console.log(JSON.stringify([result])));`,
+      });
+      const { stdout, exitCode } = await run(String(dir), ["test", "./glob.test.ts"]);
+      expect(printed(stdout)).toEqual([`["ReferenceError: Cannot access 'import_entry$1' before initialization."]`]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("a module that calls it is not restored from the transpiler cache", async () => {
     const padding = Buffer.alloc(80 * 1024, "/").toString();
     using dir = tempDir("import-meta-glob", {
@@ -890,5 +1036,64 @@ describe("errors", () => {
   });
   test.each(errors.map(([code], i) => [code, i] as const))("%s", (_, i) => {
     expect(actual[i]).toEqual(["TypeError: " + errors[i][1], 2, errors[i][2]]);
+  });
+});
+
+// JavaScriptCore keeps a binding that no function captures in a register, and compiles a save and a restore of every
+// live register around each `await`. So the object reads the awaited entries through a function.
+// The heap counts the bytecode of a module as extra memory. Each case loads 150 modules, so these run after the rest.
+describe.concurrent("a function captures the awaited eager entries", () => {
+  const count = 150;
+  const entries = Object.fromEntries(Array.from({ length: count }, (_, i) => [`modules/${i}.js`, ``]));
+  const measure = `
+    const entries = import.meta.glob("./modules/*.js", { eager: true });
+    Bun.gc(true);
+    globalThis.measured = [Object.keys(entries).length, require("bun:jsc").heapStats().extraMemorySize];`;
+  const print = `test("print", () => console.log(JSON.stringify(globalThis.measured)));`;
+  const testFile = (own: string) => ({
+    "glob.test.js": `
+      import { test } from "vitest";
+      import { a } from "./a.js";
+      import { b } from "./b.js";
+      ${own}
+      ${measure}
+      ${print}`,
+  });
+  const helper = (own: string) => ({
+    "helper.js": `
+      import { vi } from "bun:test";
+      vi.mock("./nothing.js", () => ({}));
+      ${own}
+      ${measure}`,
+    "glob.test.js": `import "./helper.js"; ${print}`,
+  });
+
+  async function extraMemory(files: Record<string, string>) {
+    using dir = tempDir("import-meta-glob", {
+      ...entries,
+      "a.js": `export const a = 1;`,
+      "b.js": `export const b = 2;`,
+      ...files,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["test", "./glob.test.js"]);
+    const [loaded, extra] = JSON.parse(stdout.split("\n").find(line => line.startsWith("[")) ?? "[]");
+    expect({ loaded, exitCode }).toEqual({ loaded: count, exitCode: 0 });
+    return extra as number;
+  }
+
+  // A file that could still be CommonJS already had the function.
+  let withFunction: Promise<number> | undefined;
+
+  test.each([
+    ["a test file that re-exports its imports", testFile(`export { a, b };`)],
+    ["a test file that re-exports one import", testFile(`export { a }; void b;`)],
+    ["a test file with a top-level await", testFile(`void [a, b]; await 0;`)],
+    ["a module with a hoisted call and an export", helper(`export const exported = 1;`)],
+    ["a module with a hoisted call and a top-level await", helper(`await 0;`)],
+  ])("in %s", async (_, files) => {
+    withFunction ??= extraMemory(testFile(`void [a, b];`));
+    const [extra, expected] = await Promise.all([extraMemory(files), withFunction]);
+    // Without the function the bytecode is 3 to 9 times the size.
+    expect(extra / expected).toBeLessThan(2);
   });
 });

@@ -537,9 +537,16 @@ impl Terminal {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReturnVariant {
+    /// The end of a function body: `() => { ... }`, `function () { ... }`.
     Void,
+    /// An arrow with an expression body: `() => foo`.
     Implicit,
+    /// A return statement with an operand: `return foo;`.
     Explicit,
+    /// A return statement with no operand: `return;`. Upstream folds this into
+    /// `Explicit`. Inside an async generator `return undefined;` awaits its
+    /// operand and `return;` does not, so codegen has to keep them apart.
+    ExplicitVoid,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

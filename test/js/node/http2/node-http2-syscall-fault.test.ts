@@ -3,11 +3,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isASAN, isWindows } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
+import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 
 const skip = !fault.available() || isWindows;
 
-afterEach(() => fault.clear());
+// fault.clear() throws on builds without the hooks compiled in, and the unfaulted scenario at the
+// bottom of this file runs on those builds too.
+afterEach(() => {
+  if (fault.available()) fault.clear();
+});
 
 // http2 sessions go through the same uSockets bsd_recv/bsd_send chokepoints.
 // Faults are process-global, so client and server (both in this process)
@@ -271,5 +277,118 @@ describe.skipIf(skip)("node:http2 seeded short-I/O fuzz", () => {
         client.close();
       }
     }
+  });
+});
+
+// A raw TCP peer that only records the HTTP/2 frames the client sends and never answers, so
+// the only thing that can put a frame on the wire is the client's own flushing.
+const FRAME_HEADERS = 0x1;
+const FRAME_RST_STREAM = 0x3;
+const FRAME_SETTINGS = 0x4;
+const PREFACE_LENGTH = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".length;
+type RawFrame = { type: number; flags: number; streamId: number; payload: Buffer };
+
+async function silentRawServer() {
+  const frames: RawFrame[] = [];
+  let waiter: { pred: (f: RawFrame) => boolean; resolve: (f: RawFrame) => void } | null = null;
+  let buf = Buffer.alloc(0);
+  let sawPreface = false;
+  let socket: net.Socket | null = null;
+  const server = net.createServer(s => {
+    socket = s;
+    s.on("error", () => {});
+    s.on("data", (chunk: Buffer) => {
+      buf = Buffer.concat([buf, chunk]);
+      if (!sawPreface) {
+        if (buf.length < PREFACE_LENGTH) return;
+        buf = buf.subarray(PREFACE_LENGTH);
+        sawPreface = true;
+      }
+      while (buf.length >= 9) {
+        const length = buf.readUIntBE(0, 3);
+        if (buf.length < 9 + length) break;
+        const frame: RawFrame = {
+          type: buf.readUInt8(3),
+          flags: buf.readUInt8(4),
+          streamId: buf.readUInt32BE(5) & 0x7fffffff,
+          payload: buf.subarray(9, 9 + length),
+        };
+        buf = buf.subarray(9 + length);
+        frames.push(frame);
+        if (waiter !== null && waiter.pred(frame)) {
+          const { resolve } = waiter;
+          waiter = null;
+          resolve(frame);
+        }
+      }
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  return {
+    url: `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`,
+    frames,
+    waitFor(pred: (f: RawFrame) => boolean): Promise<RawFrame> {
+      const existing = frames.find(pred);
+      if (existing) return Promise.resolve(existing);
+      return new Promise(resolve => (waiter = { pred, resolve }));
+    },
+    [Symbol.dispose]() {
+      socket?.destroy();
+      server.close();
+    },
+  };
+}
+
+// close() on a request made before the session connected: the stream is submitted from the
+// connect callback, and its RST_STREAM is written from a later setImmediate with nothing else
+// going on, so that frame only reaches the wire through the parser's deferred auto-flush. Against
+// a silent peer nothing else ever flushes it. (Without fault injection this is the case the
+// darwin CI lane hit: the preface send() on the still-connecting socket fails with ENOTCONN there.)
+async function closedPendingRequestGetsReset(raw: Awaited<ReturnType<typeof silentRawServer>>) {
+  const client = http2.connect(raw.url);
+  const sessionErrors: Error[] = [];
+  client.on("error", err => sessionErrors.push(err));
+  const sessionClosed = once(client, "close").then(() => {
+    throw new Error(`session closed before the RST_STREAM went out (${sessionErrors.map(e => e.message)})`);
+  });
+  try {
+    const req = client.request({ ":method": "POST", ":path": "/" });
+    req.on("error", () => {});
+    expect(req.pending).toBe(true);
+    req.end("hello");
+    req.close();
+
+    const rst = await Promise.race([raw.waitFor(f => f.streamId === 1 && f.type === FRAME_RST_STREAM), sessionClosed]);
+    expect(rst.payload.readUInt32BE(0)).toBe(http2.constants.NGHTTP2_NO_ERROR);
+    expect(raw.frames.map(f => [f.type, f.streamId])).toEqual([
+      [FRAME_SETTINGS, 0],
+      [FRAME_HEADERS, 1],
+      [0 /* DATA */, 1],
+      [FRAME_RST_STREAM, 1],
+    ]);
+    expect(sessionErrors).toEqual([]);
+  } finally {
+    client.removeAllListeners("close");
+    client.destroy();
+  }
+}
+
+test("client: a request close()d while the session was still connecting is reset once it is submitted", async () => {
+  using raw = await silentRawServer();
+  await closedPendingRequestGetsReset(raw);
+});
+
+describe.skipIf(skip)("node:http2 after a send() that fails with a peer-gone errno but is delivered on retry", () => {
+  // Models what macOS does for the preface write on a still-connecting loopback socket (ENOTCONN,
+  // which the socket layer reports as fatal), or a racy EPROTOTYPE: the send fails once, the bytes
+  // are delivered by the next flush. The parser must keep flushing the frames written after that,
+  // not treat the connection as dead or stop flushing it.
+  test("frames written after the failed send still reach the wire", async () => {
+    using raw = await silentRawServer();
+    // The first send() of the connection, no matter whether it happens before or after the
+    // connect completes; the raw peer never sends, so no other send() can consume the rule.
+    fault.set({ syscall: "send", action: "errno", errno: os.constants.errno.ENOTCONN, repeat: 1 });
+    await closedPendingRequestGetsReset(raw);
   });
 });

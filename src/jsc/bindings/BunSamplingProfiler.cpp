@@ -23,7 +23,6 @@ namespace Bun {
 
 using JSC::SamplingProfiler;
 
-// One profiler per VM, one VM per thread.
 static WTF::Seconds& samplingProfilerTimingIntervalSlot()
 {
     static thread_local WTF::Seconds interval = WTF::Seconds::fromMicroseconds(JSC::Options::sampleInterval());
@@ -46,17 +45,11 @@ WTF::Vector<SamplingProfiler::StackTrace> takeSamplingProfilerStackTraces(Sampli
     WTF::Locker locker { profiler.getLock() };
     if (pause)
         profiler.pause();
-    // releaseStackTraces() processes the unverified samples, moves the result
-    // out and clears the profiler's data.
     return profiler.releaseStackTraces();
 }
 
-// The two formatters below produce the same strings as the file-static
-// descriptionForLocation() and tierName() in JavaScriptCore's
-// SamplingProfiler.cpp (oven-sh/WebKit 4d45755fed4aeef19e95beb90d3d0c884a2812bd,
-// Source/JavaScriptCore/runtime/SamplingProfiler.cpp:1327 and :1383), which
-// stackTracesAsJSON() uses. JavaScriptCore does not export them. Diff them
-// against the fork on a WebKit upgrade.
+// Ported from the file-static descriptionForLocation() and tierName() in
+// Source/JavaScriptCore/runtime/SamplingProfiler.cpp (oven-sh/WebKit 4d45755fed, :1327 and :1383).
 
 static WTF::String descriptionForLocation(const SamplingProfiler::StackFrame::CodeLocation& location, std::optional<JSC::Wasm::CompilationMode> wasmCompilationMode, JSC::BytecodeIndex wasmOffset)
 {
@@ -149,10 +142,8 @@ static ASCIILiteral tierName(const SamplingProfiler::StackFrame& frame)
 
 namespace {
 
-// Builds the JS objects for one batch of samples. Most frames repeat the same
-// function name, location and URL, so each distinct string becomes one
-// JSString that every frame shares. The raw JSString pointers are safe because
-// the caller holds a DeferGC for the whole build.
+// Each distinct string becomes one JSString that every frame shares. The raw
+// JSString pointers are safe under the caller's DeferGC.
 class StackTracesBuilder {
 public:
     StackTracesBuilder(JSC::JSGlobalObject* globalObject)
@@ -185,7 +176,6 @@ public:
             RETURN_IF_EXCEPTION(scope, {});
             traces->putDirectIndex(m_globalObject, i, trace);
             RETURN_IF_EXCEPTION(scope, {});
-            // The frames are no longer needed once they are JS objects.
             stackTraces[i].frames.clear();
         }
         stackTraces.clear();

@@ -526,7 +526,6 @@ JSC_DEFINE_HOST_FUNCTION(functionSamplingProfilerStackTraces,
             globalObject, scope,
             createError(globalObject, "Sampling profiler was never started"_s)));
 
-    // The frames hold raw cell pointers until they become JS objects.
     JSC::DeferGC deferGC(vm);
     auto stackTraces = Bun::takeSamplingProfilerStackTraces(*vm.samplingProfiler(), /* pause */ false);
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(Bun::samplingProfilerStackTracesToJS(globalObject, WTF::move(stackTraces), Bun::samplingProfilerTimingInterval())));
@@ -738,8 +737,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         return JSValue::encode(JSValue {});
     }
 
-    // Without an argument, reset to the default interval (1000 microseconds) so
-    // that each profile() call is independent of previous calls.
+    // Each profile() call is independent of the previous one: reset to the default interval.
     Seconds interval = Seconds::fromMicroseconds(1000);
     if (sampleValue.isNumber())
         interval = Seconds::fromMicroseconds(JSC::toUInt32(sampleValue.asNumber()));
@@ -756,10 +754,8 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         StringPrintStream byteCodes;
         samplingProfiler.reportTopBytecodes(byteCodes);
 
-        // The frames hold raw cell pointers until they become JS objects.
         JSC::DeferGC deferGC(vm);
-        // Pause instead of shutdown(): shutdown() sets m_isShutDown, which is
-        // never reset, and profile() must be able to run again.
+        // pause(), not shutdown(): shutdown() is permanent and profile() must run again.
         auto traces = Bun::takeSamplingProfilerStackTraces(samplingProfiler, /* pause */ true);
         JSValue stackTraces = Bun::samplingProfilerStackTracesToJS(globalObject, WTF::move(traces), Bun::samplingProfilerTimingInterval());
         RETURN_IF_EXCEPTION(throwScope, {});

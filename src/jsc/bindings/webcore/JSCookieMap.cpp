@@ -96,6 +96,7 @@ using JSCookieMapDOMConstructor = JSDOMConstructor<JSCookieMap>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Cookie, JSCookieMapDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSCookieMapDOMConstructor>(callFrame->jsCallee());
@@ -167,7 +168,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
             Vector<Vector<String>> seqSeq;
 
             PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            JSObject::getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
+            object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Exclude);
             RETURN_IF_EXCEPTION(throwScope, {});
 
             for (const auto& propertyName : propertyNames) {
@@ -338,7 +339,9 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_toSetCookieHeader
     RETURN_IF_EXCEPTION(throwScope, {});
     size_t i = 0;
     for (auto& item : cookies) {
-        resultArray->putDirectIndex(lexicalGlobalObject, i, jsString(vm, item->toString(vm)));
+        auto header = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, item->toString(vm));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        resultArray->putDirectIndex(lexicalGlobalObject, i, header);
         RETURN_IF_EXCEPTION(throwScope, {});
         i += 1;
     }

@@ -91,7 +91,7 @@ if (isDockerEnabled()) {
 // (#20295), `bun publish` and `bun pm whoami` have each shipped without the
 // proxy, so every command that talks to the registry gets a case here.
 describe("registry commands honor http_proxy", () => {
-  type RegistryRequest = { via: "proxy" | "registry"; method: string; url: string; otp?: string };
+  type RegistryRequest = { via: "proxy" | "registry" | "mirror"; method: string; url: string; otp?: string };
 
   // The registry from bunfig.toml and the proxy from http_proxy both answer
   // with `respond`, and every request records which of the two received it.
@@ -114,9 +114,12 @@ describe("registry commands honor http_proxy", () => {
       });
     const registry = serve("registry");
     const proxy = serve("proxy");
+    // Somewhere for the registry to redirect to.
+    const mirror = serve("mirror");
     const registryUrl = `http://127.0.0.1:${registry.port}/`;
     return {
       registryUrl,
+      mirrorUrl: `http://127.0.0.1:${mirror.port}/`,
       requests,
       async run(args: string[], opts: { files?: Record<string, string>; env?: Record<string, string> } = {}) {
         using dir = tempDir("registry-behind-proxy", {
@@ -149,6 +152,7 @@ describe("registry commands honor http_proxy", () => {
       [Symbol.dispose]() {
         registry.stop(true);
         proxy.stop(true);
+        mirror.stop(true);
       },
     };
   }
@@ -220,7 +224,7 @@ describe("registry commands honor http_proxy", () => {
     expect(stdout).toContain(" + app@1.0.0");
   });
 
-  it.concurrent("bun publish to a registry listed in no_proxy goes direct", async () => {
+  it.concurrent("bun publish to a registry listed in no_proxy doesn't use the proxy", async () => {
     using setup = registryBehindProxy(() => Response.json({ ok: true }));
 
     const { stdout, stderr, exitCode } = await setup.run(["publish"], { env: { no_proxy: "127.0.0.1" } });
@@ -277,6 +281,87 @@ describe("registry commands honor http_proxy", () => {
       requests: [{ via: "proxy", method: "GET", url: `${setup.registryUrl}some-dep` }],
       stderr: expect.stringContaining(`error: GET ${setup.registryUrl}some-dep - 404`),
       exitCode: 1,
+    });
+  });
+
+  describe.each([
+    { noProxy: "registryUrl", first: "registry", second: "proxy" },
+    { noProxy: "mirrorUrl", first: "proxy", second: "mirror" },
+  ] as const)("with no_proxy = $noProxy, a redirect from the registry to the mirror", ({ noProxy, first, second }) => {
+    /** The registry redirects everything. `mirrorFailures`: that many answers of the mirror are a 503. */
+    function redirectingRegistry(mirrorFailures = 0) {
+      const setup = registryBehindProxy(({ url }) => {
+        if (url.startsWith(setup.registryUrl)) {
+          return Response.redirect(setup.mirrorUrl + url.slice(setup.registryUrl.length), 302);
+        }
+        if (mirrorFailures-- > 0) return new Response(null, { status: 503 });
+        if (url.endsWith(".tgz")) {
+          return new Response(Bun.file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz")));
+        }
+        const tarball = `${setup.registryUrl}no-deps/-/no-deps-1.0.0.tgz`;
+        return Response.json({
+          name: "no-deps",
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name: "no-deps", version: "1.0.0", dist: { tarball } } },
+        });
+      });
+      return setup;
+    }
+    const roads = (setup: ReturnType<typeof registryBehindProxy>) =>
+      setup.requests.map(({ via, url }) => [
+        via,
+        url.replace(setup.registryUrl, "registry/").replace(setup.mirrorUrl, "mirror/"),
+      ]);
+    const files = {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+    };
+
+    it.concurrent("bun install", async () => {
+      using setup = redirectingRegistry();
+      const { stderr, exitCode } = await setup.run(["install"], {
+        files,
+        env: { no_proxy: new URL(setup[noProxy]).host },
+      });
+      expect(stderr).not.toContain("error:");
+      expect(roads(setup)).toEqual([
+        [first, "registry/no-deps"],
+        [second, "mirror/no-deps"],
+        [first, "registry/no-deps/-/no-deps-1.0.0.tgz"],
+        [second, "mirror/no-deps/-/no-deps-1.0.0.tgz"],
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    it.concurrent("bun install, when the mirror fails at first", async () => {
+      using setup = redirectingRegistry(1);
+      const { stderr, exitCode } = await setup.run(["install", "--lockfile-only"], {
+        files,
+        env: { no_proxy: new URL(setup[noProxy]).host, BUN_CONFIG_HTTP_RETRY_BACKOFF: "0" },
+      });
+      expect(stderr).not.toContain("error:");
+      expect(roads(setup)).toEqual([
+        [first, "registry/no-deps"],
+        [second, "mirror/no-deps"],
+        [first, "registry/no-deps"],
+        [second, "mirror/no-deps"],
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    it.concurrent("bun info", async () => {
+      using setup = redirectingRegistry();
+      const { stdout, stderr, exitCode } = await setup.run(["info", "no-deps", "name"], {
+        env: { no_proxy: new URL(setup[noProxy]).host },
+      });
+      expect({ roads: roads(setup), stdout, stderr, exitCode }).toEqual({
+        roads: [
+          [first, "registry/no-deps"],
+          [second, "mirror/no-deps"],
+        ],
+        stdout: "no-deps\n",
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 });

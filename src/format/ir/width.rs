@@ -1,4 +1,4 @@
-//! Prettier's `getStringWidth`: the number of columns that a text takes.
+//! Prettier's `getStringWidth`: a text's width in columns.
 
 use super::width_tables::{EMOJI, EMOJI_MODIFIER_BASE, NARROW_EMOJI, OXFMT_ZERO_WIDTH, WIDE};
 use crate::options::Flavor;
@@ -20,9 +20,9 @@ fn is_regional_indicator(c: u32) -> bool {
     (0x1F1E6..=0x1F1FF).contains(&c)
 }
 
-/// The number of characters at the start of `chars` that are one emoji, in the sense of the
-/// `emoji-regex` package. This accepts any sequence that is joined like an emoji, where the
-/// package only accepts those that are recommended for interchange.
+/// Returns how many characters at the start of `chars` form one emoji, as the `emoji-regex` package defines it. This
+/// accepts any sequence that's joined like an emoji, while the package only accepts the ones recommended for
+/// interchange.
 fn emoji_len(chars: &[u32]) -> usize {
     let at = |i: usize| chars.get(i).copied().unwrap_or(0);
     let first = at(0);
@@ -66,9 +66,9 @@ fn emoji_len(chars: &[u32]) -> usize {
     }
 }
 
-/// To the crate `unicode-width`, which oxfmt measures with, every character up to U+00A0 in a text is as wide as a letter.
-/// To Prettier a control character has no width.
-fn control_character_is_a_column(flavor: Flavor) -> bool {
+/// The `unicode-width` crate, which oxfmt measures with, counts every character up to U+00A0 in a text as one column.
+/// Prettier gives a control character zero width.
+fn control_character_has_width(flavor: Flavor) -> bool {
     flavor.is_oxfmt()
 }
 
@@ -76,7 +76,8 @@ fn control_character_is_a_column(flavor: Flavor) -> bool {
 fn width_of_non_ascii(text: &[u8], flavor: Flavor) -> u32 {
     let mut width = 0;
     let mut rest = text;
-    // ASCII only takes a closer look next to other characters: `#` is an emoji before a keycap, or joined to one.
+    // ASCII only needs a closer look next to non-ASCII characters. For example, `#` is part of an emoji before a
+    // keycap, or when joined to one.
     while !rest.is_empty() {
         let ascii = bun_core::strings::first_non_ascii(rest).map_or(rest.len(), |at| at as usize);
         let plain = if ascii == rest.len() {
@@ -86,7 +87,7 @@ fn width_of_non_ascii(text: &[u8], flavor: Flavor) -> u32 {
         };
         width += rest[..plain]
             .iter()
-            .filter(|&&byte| is_printable(byte) || control_character_is_a_column(flavor))
+            .filter(|&&byte| is_printable(byte) || control_character_has_width(flavor))
             .count() as u32;
         rest = &rest[plain..];
         let mut len = ascii - plain;
@@ -106,8 +107,8 @@ fn width_of_non_ascii(text: &[u8], flavor: Flavor) -> u32 {
     width
 }
 
-/// Whether `c` takes no column of its own behind `before`, to the crate `unicode-width`: the other ligatures that it
-/// knows, of which `before` has one column.
+/// True if the `unicode-width` crate gives `c` zero width after `before`. These are the other ligatures it knows, where
+/// `before` already counts as one column.
 fn ends_ligature(before: &[u32], c: u32) -> bool {
     match c {
         // A Khmer letter under another one.
@@ -122,7 +123,7 @@ fn ends_ligature(before: &[u32], c: u32) -> bool {
         | 0x17A7
         | 0x17AB..=0x17AC
         | 0x17AF => before.ends_with(&[0x17D2]),
-        // Two tone letters of Lisu.
+        // Two Lisu tone letters.
         0xA4FC..=0xA4FD => matches!(before, [.., 0xA4F8..=0xA4FB]),
         // Hebrew alef and lamed, two consonants of Tifinagh, Old Turkic, each with a joiner.
         0x5DC => before.ends_with(&[0x5D0, 0x200D]),
@@ -136,7 +137,7 @@ fn width_of_characters(text: &[u8], flavor: Flavor) -> u32 {
     let chars: smallvec::SmallVec<[u32; 64]> =
         bstr::ByteSlice::chars(text).map(u32::from).collect();
     let (mut width, mut i) = (0, 0);
-    // To the crate `unicode-width`, an Arabic lam and the alef after it are one ligature.
+    // The `unicode-width` crate treats an Arabic lam and the alef after it as one ligature.
     let mut follows_lam = false;
     while let Some(&c) = chars.get(i) {
         let is_alef_of_ligature = follows_lam
@@ -145,7 +146,7 @@ fn width_of_characters(text: &[u8], flavor: Flavor) -> u32 {
                 c,
                 0x622 | 0x623 | 0x625 | 0x627 | 0x671..=0x673 | 0x675 | 0x773 | 0x774
             );
-        // A joiner or a non-joiner between them keeps them apart.
+        // A joiner or non-joiner between them breaks the ligature.
         follows_lam = matches!(c, 0x644 | 0x6B5..=0x6B8 | 0x76A | 0x8A6 | 0x8C7)
             || (follows_lam
                 && is_in(OXFMT_ZERO_WIDTH, c)
@@ -154,7 +155,7 @@ fn width_of_characters(text: &[u8], flavor: Flavor) -> u32 {
                     0x605 | 0x890..=0x891 | 0x8E2 | 0x200C..=0x200D | 0x2065..=0x2069
                 ));
         let emoji_len = match emoji_len(&chars[i..]) {
-            // No emoji that `emoji-regex` knows starts with a skin tone: the joiner behind it is a column.
+            // No emoji that `emoji-regex` knows starts with a skin tone, so the joiner after it counts as a column.
             2.. if is_skin_tone(c) && !flavor.is_oxfmt() => 1,
             len => len,
         };
@@ -172,7 +173,7 @@ fn width_of_characters(text: &[u8], flavor: Flavor) -> u32 {
         }
         i += 1;
         width += match c {
-            0..=0x1F | 0x7F..=0x9F => u32::from(control_character_is_a_column(flavor)),
+            0..=0x1F | 0x7F..=0x9F => u32::from(control_character_has_width(flavor)),
             0x20..=0x7E => 1,
             0x300..=0x36F | 0xFE00..=0xFE0F => 0,
             _ if is_alef_of_ligature => 0,
@@ -185,8 +186,8 @@ fn width_of_characters(text: &[u8], flavor: Flavor) -> u32 {
     width
 }
 
-/// Whether `is_plain` is true for every byte. It looks at whole blocks without a branch, which the
-/// compiler turns into vector instructions, so `is_plain` has to be free of branches too.
+/// True if `is_plain` is true for every byte. It checks whole blocks without branching, which the compiler vectorizes,
+/// so `is_plain` has to be branch-free too.
 #[inline]
 fn all_bytes(text: &[u8], is_plain: impl Fn(u8) -> bool + Copy) -> bool {
     let (blocks, rest) = text.as_chunks::<64>();
@@ -205,17 +206,17 @@ fn is_printable(byte: u8) -> bool {
     byte.wrapping_sub(0x20) < 0x5F
 }
 
-/// Whether `text` is one line of ASCII, as wide as it is long.
+/// True if `text` is a single line of printable ASCII, so its width equals its length.
 #[inline]
 pub(crate) fn is_all_printable(text: &[u8]) -> bool {
     all_bytes(text, is_printable)
 }
 
-/// The number of bytes that a bit of [`OddBlocks`] is about.
+/// Number of bytes that each bit of [`OddBlocks`] covers.
 const BLOCK: usize = 64;
 
-/// Which blocks of a text have something in them that takes a closer look: a character whose width
-/// is not 1, other than a tab or a line break, or a backslash.
+/// A bitmap of the blocks of a text that need a closer look, because they contain a backslash or a character whose
+/// width isn't 1 (other than a tab or line break).
 #[derive(Default)]
 pub(crate) struct OddBlocks(Vec<u64>);
 
@@ -224,8 +225,8 @@ impl OddBlocks {
         bun_highway::odd_blocks(source, &mut self.0);
     }
 
-    /// Whether the text from `start` to `end`, which has no tab and no line break, is as wide as it
-    /// is long and has no backslash. It can be so without this saying so.
+    /// True if the text from `start` to `end`, which has no tab or line break, is as many columns wide as it has bytes
+    /// and has no backslash. False negatives are possible.
     #[inline]
     pub(crate) fn is_plain(&self, start: u32, end: u32) -> bool {
         let is_odd = |block: usize| {
@@ -237,13 +238,13 @@ impl OddBlocks {
     }
 }
 
-/// `text` has no line breaks.
+/// `text` must not contain line breaks.
 #[inline]
 pub(crate) fn string_width(text: &[u8]) -> u32 {
     string_width_as(text, Flavor::Prettier)
 }
 
-/// The same as `flavor` counts.
+/// Same, with `flavor`'s width rules.
 #[inline]
 pub(crate) fn string_width_as(text: &[u8], flavor: Flavor) -> u32 {
     match all_bytes(text, |byte| is_printable(byte) | (byte == 0x7F)) {

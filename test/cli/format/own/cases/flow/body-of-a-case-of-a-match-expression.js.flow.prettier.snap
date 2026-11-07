@@ -1,0 +1,195 @@
+------------------
+{ printWidth: 80 }
+------------------
+const getIcon = (type: "confirm" | "error") =>
+  match (type) {
+    "confirm" =>
+      <ListenLaterAddedSVG
+        color="var(--color-core-confirm)"
+        size="large"
+        {...iconProps}
+      />,
+    "error" => <ErrorSVG />,
+  };
+
+x = match (a) {
+  1 =>
+    <div className="aaaaaaaaaaaaaaaaaaaaaaaaaaaa">
+      <span>hello world this is long</span>
+      <b>bbbbbbbbbbbbbbbb</b>
+    </div>,
+  2 =>
+    <>
+      <span>hello world this is long</span>
+      <b>bbbbbbbbbbbbbbbb</b>
+      <i>ccccccccccccccccccccccccc</i>
+    </>,
+  3 => <div>a</div>,
+  4 if (b) =>
+    <ListenLaterAddedSVG
+      color="var(--color-core-confirm)"
+      size="large"
+      {...iconProps}
+    />,
+  5 =>
+    match (b) {
+      1 =>
+        <ListenLaterAddedSVG
+          color="var(--color-core-confirm)"
+          size="large"
+          {...iconProps}
+        />,
+      _ => 2,
+    },
+  6 =>
+    {
+      a: (
+        <ListenLaterAddedSVG
+          color="var(--color-core-confirm)"
+          size="large"
+          {...iconProps}
+          aaaaaaaaaaaa
+        />
+      ),
+    },
+  7 =>
+    (() => (
+      <ListenLaterAddedSVG
+        color="var(--color-core-confirm)"
+        size="large"
+        {...iconProps}
+      />
+    )),
+  8 =>
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && (
+      <ListenLaterAddedSVG color="var(--color-core-confirm)" size="large" />
+    ),
+  9 =>
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ? (
+      <ListenLaterAddedSVG color="var(--color-core-confirm)" />
+    ) : (
+      <B />
+    ),
+};
+
+x = match (a) {
+  1 =>
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb +
+      cccccccccccccccccccc,
+  2 =>
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &&
+      cccccccccccccccccccc,
+  3 =>
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" +
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  4 =>
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ??
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  5 =>
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa * bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb +
+      (ccccccccccccccccccccccccccc % d),
+  6 =>
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || {
+      aaaaaaaaaaaaaaaaaaaaaaa: 1,
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: 2,
+      c: 3,
+    },
+  7 =>
+    {
+      a:
+        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+        bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb +
+        cccccccccccccccccccc,
+    },
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const getIcon = (type: "confirm" | "error") =>
+  match (type) {
+    "confirm" =>
+      <ListenLaterAddedSVG color="var(--color-core-confirm)" size="large" {...iconProps} />,
+    "error" => <ErrorSVG />,
+  };
+
+x = match (a) {
+  1 =>
+    <div className="aaaaaaaaaaaaaaaaaaaaaaaaaaaa">
+      <span>hello world this is long</span>
+      <b>bbbbbbbbbbbbbbbb</b>
+    </div>,
+  2 =>
+    <>
+      <span>hello world this is long</span>
+      <b>bbbbbbbbbbbbbbbb</b>
+      <i>ccccccccccccccccccccccccc</i>
+    </>,
+  3 => <div>a</div>,
+  4 if (b) => <ListenLaterAddedSVG color="var(--color-core-confirm)" size="large" {...iconProps} />,
+  5 =>
+    match (b) {
+      1 => <ListenLaterAddedSVG color="var(--color-core-confirm)" size="large" {...iconProps} />,
+      _ => 2,
+    },
+  6 =>
+    {
+      a: (
+        <ListenLaterAddedSVG
+          color="var(--color-core-confirm)"
+          size="large"
+          {...iconProps}
+          aaaaaaaaaaaa
+        />
+      ),
+    },
+  7 =>
+    (() => <ListenLaterAddedSVG color="var(--color-core-confirm)" size="large" {...iconProps} />),
+  8 =>
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && (
+      <ListenLaterAddedSVG color="var(--color-core-confirm)" size="large" />
+    ),
+  9 =>
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ? (
+      <ListenLaterAddedSVG color="var(--color-core-confirm)" />
+    ) : (
+      <B />
+    ),
+};
+
+x = match (a) {
+  1 =>
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb +
+      cccccccccccccccccccc,
+  2 =>
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &&
+      cccccccccccccccccccc,
+  3 =>
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" +
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  4 =>
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ??
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  5 =>
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa * bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb +
+      (ccccccccccccccccccccccccccc % d),
+  6 =>
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || {
+      aaaaaaaaaaaaaaaaaaaaaaa: 1,
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: 2,
+      c: 3,
+    },
+  7 =>
+    {
+      a:
+        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+        bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb +
+        cccccccccccccccccccc,
+    },
+};
+
+===================== End =====================

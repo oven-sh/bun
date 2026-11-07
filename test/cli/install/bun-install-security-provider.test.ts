@@ -1,5 +1,5 @@
-import { bunEnv, bunExe, githubTarball, runBunInstall, tempDir } from "harness";
-import { existsSync } from "node:fs";
+import { bunEnv, bunExe, githubTarball, isWindows, runBunInstall, tempDir } from "harness";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -121,6 +121,21 @@ test("basic", {
   expect: ({ out }) => {
     expect(out).toContain("Advisory 1 description");
     expect(out).toContain("https://example.com/advisory-1");
+  },
+});
+
+test("the scanner process gets --use-openssl-ca", {
+  packages: ["bar", "--use-openssl-ca"],
+  scanner: `import { getCACertificates, rootCertificates } from "node:tls";
+export const scanner = {
+  version: "1",
+  scan: async () => {
+    console.log("trusts the bundled roots:", getCACertificates("default").includes(rootCertificates[0]));
+    return [];
+  },
+};`,
+  expect: ({ out }) => {
+    expect(out).toContain("trusts the bundled roots: false");
   },
 });
 
@@ -847,7 +862,7 @@ describe("Package Resolution", () => {
 });
 
 describe("Dependencies that do not come from a registry", () => {
-  // Trusted, so that its postinstall runs whenever the install goes ahead.
+  // Trusted, so that its postinstall runs whenever the install continues.
   const depFiles = {
     "package.json": JSON.stringify({
       name: "dep",
@@ -1117,5 +1132,244 @@ describe("Large payload via ipc pipe", () => {
       expect(count).toBe(PKG_COUNT);
       expect(out).toContain("abort after IPC payload check");
     },
+  });
+});
+
+describe("every command that installs runs the scanner", () => {
+  const scanner = `export const scanner = {
+  version: "1",
+  scan: async ({ packages }) => {
+    console.log("SCANNED", [...new Set(packages.map(p => p.name))].sort().join(" "));
+    return packages
+      .filter(p => p.name === "boba")
+      .map(p => ({ package: p.name, level: "fatal", description: "not this one", url: null }));
+  },
+};`;
+
+  /** The result of `bun ...args` in a project whose lockfile has `boba` and whose node_modules does not. */
+  async function run(args: string[], prepare?: (bun: (...args: string[]) => Promise<unknown>, dir: string) => unknown) {
+    const ctx = await createTestContext();
+    try {
+      const dir = ctx.package_dir;
+      // `bar` accepts any baz. Its baz 0.0.3 stays in the lockfile next to the project's 0.0.5, until `bun dedupe`
+      // merges them.
+      const versions: Record<string, Record<string, object>> = {
+        bar: { "0.0.2": { dependencies: { baz: ">=0.0.3" } } },
+        boba: { "0.0.2": {} },
+        baz: { "0.0.3": {} },
+      };
+      setContextHandler(ctx, async request => {
+        const path = new URL(request.url).pathname.replace(`/${ctx.id}/`, "");
+        if (path.endsWith(".tgz")) return new Response(Bun.file(join(import.meta.dir, path)));
+        const entries = Object.entries(versions[path]).map(([version, rest]) => [
+          version,
+          { name: path, version, dist: { tarball: `${ctx.registry_url}${path}-${version}.tgz` }, ...rest },
+        ]);
+        return Response.json({
+          name: path,
+          versions: Object.fromEntries(entries),
+          "dist-tags": { latest: entries.at(-1)![0] },
+        });
+      });
+      const bun = async (...args: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          cwd: args[0] === "link" && args.length === 1 ? join(dir, "linked") : dir,
+          env: { ...bunEnv, BUN_INSTALL: join(dir, ".bun") },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const install = async (dependencies: object) => {
+        await Bun.write(join(dir, "package.json"), JSON.stringify({ name: "my-app", version: "1.0.0", dependencies }));
+        expect(await bun("install")).toMatchObject({ exitCode: 0 });
+      };
+
+      await install({ bar: "0.0.2", boba: "0.0.2" });
+      versions.baz["0.0.5"] = {};
+      await install({ bar: "0.0.2", boba: "0.0.2", baz: "0.0.5" });
+      await prepare?.(bun, dir);
+      rmSync(join(dir, "node_modules", "boba"), { recursive: true, force: true });
+      await Bun.write(join(dir, "scanner.ts"), scanner);
+      const bunfig = await Bun.file(join(dir, "bunfig.toml")).text();
+      await Bun.write(join(dir, "bunfig.toml"), `${bunfig}\n[install.security]\nscanner = "./scanner.ts"\n`);
+
+      const { stdout, exitCode } = await bun(...args);
+      return {
+        scanned: stdout.match(/^SCANNED (.*)$/m)?.[1],
+        aborted: stdout.includes("Installation aborted due to fatal security advisories"),
+        installed: existsSync(join(dir, "node_modules", "boba")),
+        exitCode,
+      };
+    } finally {
+      destroyTestContext(ctx);
+    }
+  }
+
+  const stopped = { scanned: "bar baz boba", aborted: true, installed: false, exitCode: 1 };
+  // Several installs each, all at the same time, like in the tests above.
+  const timeout = 30_000;
+
+  it.concurrent.each(["install", "dedupe", "patch bar", "remove baz", "update"])(
+    "bun %s",
+    async command => {
+      expect(await run(command.split(" "))).toEqual(stopped);
+    },
+    timeout,
+  );
+
+  it.concurrent(
+    "bun patch --commit",
+    async () => {
+      const result = await run(["patch", "--commit", "node_modules/bar"], async (bun, dir) => {
+        expect(await bun("patch", "bar")).toMatchObject({ exitCode: 0 });
+        await Bun.write(join(dir, "node_modules", "bar", "added.js"), "");
+      });
+      expect(result).toEqual(stopped);
+    },
+    timeout,
+  );
+
+  it.concurrent(
+    "bun link <package>",
+    async () => {
+      const result = await run(["link", "linked"], async (bun, dir) => {
+        await Bun.write(join(dir, "linked", "package.json"), JSON.stringify({ name: "linked", version: "1.0.0" }));
+        expect(await bun("link")).toMatchObject({ exitCode: 0 });
+      });
+      expect(result).toEqual({ ...stopped, scanned: expect.stringContaining("bar baz boba") });
+    },
+    timeout,
+  );
+
+  describe.each([
+    ["add baz@0.0.3", "baz"],
+    ["install baz@0.0.3", "baz"],
+    ["update bar", "bar baz"],
+  ])("bun %s", (command, named) => {
+    it.concurrent.each(["node_modules", "bun.lockb"])(
+      "sends every package without %s",
+      async missing => {
+        const result = await run(command.split(" "), (_, dir) => rmSync(join(dir, missing), { recursive: true }));
+        expect(result).toEqual(stopped);
+      },
+      timeout,
+    );
+
+    it.concurrent(
+      "sends every package with the lockfile of another package manager",
+      async () => {
+        const result = await run(command.split(" "), async (_, dir) => {
+          const { registry } = Bun.TOML.parse(await Bun.file(join(dir, "bunfig.toml")).text()).install;
+          const entry = (name: string, version: string, rest = {}) => ({
+            [`node_modules/${name}`]: { version, resolved: `${registry}${name}-${version}.tgz`, ...rest },
+          });
+          rmSync(join(dir, "bun.lockb"));
+          await Bun.write(
+            join(dir, "package-lock.json"),
+            JSON.stringify({
+              name: "my-app",
+              version: "1.0.0",
+              lockfileVersion: 3,
+              requires: true,
+              packages: {
+                "": await Bun.file(join(dir, "package.json")).json(),
+                ...entry("bar", "0.0.2", { dependencies: { baz: ">=0.0.3" } }),
+                ...entry("baz", "0.0.5"),
+                ...entry("boba", "0.0.2"),
+              },
+            }),
+          );
+        });
+        expect(result).toEqual(stopped);
+      },
+      timeout,
+    );
+
+    it.concurrent(
+      "sends what it names with both",
+      async () => {
+        expect(await run(command.split(" "))).toMatchObject({ scanned: named });
+      },
+      timeout,
+    );
+  });
+
+  it.concurrent.each(["install", "dedupe"])(
+    "not bun %s --dry-run, which installs nothing",
+    async command => {
+      expect(await run([command, "--dry-run"])).toEqual({
+        scanned: undefined,
+        aborted: false,
+        installed: false,
+        exitCode: 0,
+      });
+    },
+    timeout,
+  );
+});
+
+describe.concurrent("where the scanner is looked up", () => {
+  const scannerOf = (owner: string) =>
+    `export const scanner = { version: "1", scan: async () => (console.log("SCANNER OF", ${JSON.stringify(owner)}), []) };`;
+  const bunfig = (scanner: string) => Bun.TOML.stringify({ install: { security: { scanner } } });
+
+  /** Runs `bun install` in `project`. The user's own bunfig is `home/.bunfig.toml`. */
+  async function install(files: Record<string, string>, ...flags: string[]) {
+    using dir = tempDir("scanner-lookup", {
+      "home/.keep": "",
+      "project/package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
+      "project/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      ...files,
+    });
+    const home = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", ...flags],
+      cwd: join(String(dir), "project"),
+      env: { ...bunEnv, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { ran: stdout.match(/^SCANNER OF (.*)$/m)?.[1] ?? stderr, exitCode };
+  }
+
+  it("a relative path in the project's bunfig.toml starts at the project", async () => {
+    const files = { "project/bunfig.toml": bunfig("./s.ts"), "project/s.ts": scannerOf("the project") };
+    expect(await install(files)).toEqual({ ran: "the project", exitCode: 0 });
+  });
+
+  it("a relative path in the user's bunfig starts at that file", async () => {
+    const files = {
+      "home/.bunfig.toml": bunfig("./s.ts"),
+      "home/s.ts": scannerOf("the user"),
+      "project/s.ts": scannerOf("the project"),
+    };
+    expect(await install(files)).toEqual({ ran: "the user", exitCode: 0 });
+  });
+
+  it("a relative path in a --config file starts at that file", async () => {
+    const files = {
+      "ci/bunfig.toml": bunfig("./s.ts"),
+      "ci/s.ts": scannerOf("ci"),
+      "project/s.ts": scannerOf("the project"),
+    };
+    expect(await install(files, "--config=../ci/bunfig.toml")).toEqual({ ran: "ci", exitCode: 0 });
+  });
+
+  it("a package name in the user's bunfig is a package of the project", async () => {
+    const files = {
+      "home/.bunfig.toml": bunfig("a-scanner"),
+      "project/node_modules/a-scanner/package.json": JSON.stringify({ name: "a-scanner", version: "1.0.0" }),
+      "project/node_modules/a-scanner/index.js": scannerOf("a-scanner"),
+    };
+    expect(await install(files)).toEqual({ ran: "a-scanner", exitCode: 0 });
+  });
+
+  it.skipIf(isWindows)("a file with a quote in its name", async () => {
+    const files = { "project/bunfig.toml": bunfig('./s"q.ts'), 'project/s"q.ts': scannerOf("the project") };
+    expect(await install(files)).toEqual({ ran: "the project", exitCode: 0 });
   });
 });

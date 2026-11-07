@@ -32,7 +32,9 @@ The output table shows three version columns:
 
 - **Current**: The version currently installed
 - **Update**: The latest version that satisfies your package.json version range
-- **Latest**: The latest version published to the registry
+- **Latest**: The version that the `latest` tag in the registry points to
+
+A dependency that is ahead of `latest`, such as a prerelease, is listed when `bun update` would change its version.
 
 ### Dependency Filters
 

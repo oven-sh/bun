@@ -1,0 +1,34 @@
+# A closure over an environment is deferred in a field by listing the environment in a hidden field. A layout that is full has no room for that field, and its closure is made at the allocation
+# FORM: Prepared
+# OPTIONS: references=narrow check=VerifyEachPass limit=FieldsInKeyOrder:12
+# RUN: pass DeferClosuresInFields
+# LOSS: FieldsInKeyOrder x1 L1
+# CHECK: outcome: Changed
+# CHECK: layout L0 name="HasRoom" {{*}}deferral=CapturesEnvironment deferredFunction=f1}{{*}}IsHidden{{*}}closureEnvironmentField=1
+# CHECK-NEXT: layout L1 name="IsFull" {{*}}{key="id10" declared={type=anything}}, {key="run" declared={type=anything}}]
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="HasRoom" fields=[{key="run" declared={type=anything}}]
+layout L1 name="IsFull" fields=[{key="id0" declared={type=anything}}, {key="id1" declared={type=anything}}, {key="id2" declared={type=anything}}, {key="id3" declared={type=anything}}, {key="id4" declared={type=anything}}, {key="id5" declared={type=anything}}, {key="id6" declared={type=anything}}, {key="id7" declared={type=anything}}, {key="id8" declared={type=anything}}, {key="id9" declared={type=anything}}, {key="id10" declared={type=anything}}, {key="run" declared={type=anything}}]
+layout L2 kind=Environment name="scope" fields=[{key="count" declared={type=anything}}]
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = NewClosure v1 function=f1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure v1 function=f1
+    v6 = NewObject -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v5 layout=L1 fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    PutModuleVariable v6 variable=g0
+    Return v0
+# CHECK: v2: f1 = NewClosure {{*}}function=f1 [isMadeOnDemand]
+# CHECK: v5: f1 = NewClosure v1 function=f1
+# CHECK-NEXT: = NewObject {{*}}, v5 layout=L1
+}
+function f1 name="overEnvironment" module=m0 kind=Arrow captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    Return
+}

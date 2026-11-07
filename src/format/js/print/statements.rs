@@ -1,4 +1,4 @@
-//! The statements that do not have a file of their own.
+//! The statements that don't have their own file.
 
 use super::parameters::can_avoid_parentheses;
 use super::semicolon::OptionalSemicolon;
@@ -16,8 +16,7 @@ use crate::js::utils::typecast::{comments_of_expression, has_comments, is_cast_t
 use crate::prelude::*;
 use crate::{format_args, write};
 
-/// `;`, which is only written where a statement has to be: Prettier's
-/// `isMeaningfulEmptyStatement`.
+/// `;`, which is only printed where a statement is required: Prettier's `isMeaningfulEmptyStatement`.
 #[inline(never)]
 pub(crate) fn write_empty_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     if matches!(
@@ -35,7 +34,7 @@ pub(crate) fn write_empty_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'
     }
 }
 
-/// Whether `statement` is after the end of another, and not after the head of one.
+/// True if `statement` comes after the end of another statement, not after the head of one.
 fn can_follow_a_statement(statement: Stmt<'_>) -> bool {
     !matches!(
         statement.ast_parent(),
@@ -50,8 +49,8 @@ fn can_follow_a_statement(statement: Stmt<'_>) -> bool {
     ) && statement.directive().is_none()
 }
 
-/// Without semicolons, whether a `(` that is written before `e`, and that [`expression_statement_needs_semicolon`] does not
-/// know about, has to have a `;` before it: a statement starts with `e`. Prettier writes none.
+/// Without semicolons, true if a `(` printed before `e`, which [`expression_statement_needs_semicolon`] doesn't know
+/// about, needs a `;` before it because `e` starts a statement. Prettier doesn't print one.
 pub(crate) fn parenthesis_before_needs_semicolon<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let in_html = f.options().in_html;
     if !f.options().semicolons.is_as_needed()
@@ -63,7 +62,7 @@ pub(crate) fn parenthesis_before_needs_semicolon<'a>(e: Expr<'a>, f: &Formatter<
     let mut top = e;
     loop {
         match top.parent() {
-            // Which writes one before this one.
+            // The outer conditional prints its own `(` before this one.
             Node::Expr(parent) if matches!(parent.kind(), ExprKind::Cond { .. }) => return false,
             Node::Expr(parent)
                 if (ExpressionLeftSide::from(parent).left()).is_some_and(|it| it.expr == top) =>
@@ -80,8 +79,8 @@ pub(crate) fn parenthesis_before_needs_semicolon<'a>(e: Expr<'a>, f: &Formatter<
     }
 }
 
-/// Without semicolons, whether the statement has to start with one so that it is not read as the
-/// continuation of the line before: it starts with `(`, `[`, `` ` ``, `+`, `-`, `/` or `<`.
+/// Without semicolons, true if the statement has to start with a `;` so it isn't parsed as a continuation of the
+/// previous line: it starts with `(`, `[`, `` ` ``, `+`, `-`, `/` or `<`.
 pub(crate) fn expression_statement_needs_semicolon<'a>(
     statement: Stmt<'a>,
     expression: Expr<'a>,
@@ -130,13 +129,28 @@ pub(crate) fn expression_statement_needs_semicolon<'a>(
     })
 }
 
-/// Whether the last comment before the token at `position` looks like a type cast, with or without a `(` after it.
+/// Like [`expression_statement_needs_semicolon`], for a statement that is copied verbatim from the source starting at
+/// `start`. The copied text can start with a parenthesis that the printer would have dropped. Prettier's output for
+/// `a = b⏎// prettier-ignore⏎(c).d()` calls `b`.
+pub(crate) fn ignored_statement_needs_semicolon<'a>(
+    statement: Stmt<'a>,
+    start: u32,
+    f: &Formatter<'a>,
+) -> bool {
+    let StmtKind::Expr(expression) = statement.kind() else {
+        return false;
+    };
+    expression_statement_needs_semicolon(statement, expression, f)
+        || (f.source_text().byte_at(start) == Some(b'(') && can_follow_a_statement(statement))
+}
+
+/// True if the last comment before the token at `position` looks like a type cast, with or without a `(` after it.
 pub(crate) fn follows_type_cast_comment(position: u32, f: &Formatter<'_>) -> bool {
     (f.comments().comments_directly_before(position).last())
         .is_some_and(|comment| comment.looks_like_type_cast())
 }
 
-/// Prettier's `isSingleJsxExpressionStatementInMarkdown`: all of the code in a block in Markdown is JSX.
+/// Prettier's `isSingleJsxExpressionStatementInMarkdown`: a Markdown code block that contains only JSX.
 fn is_single_jsx_statement_in_markdown<'a>(
     statement: Stmt<'a>,
     expression: Expr<'a>,
@@ -148,9 +162,9 @@ fn is_single_jsx_statement_in_markdown<'a>(
         && f.file().body().len() == 1
 }
 
-/// Prettier's `shouldPrintSemicolon` for a statement that is all of the value of an attribute in HTML. `None`: it is not,
-/// and the statement ends like any other.
-fn semicolon_of_only_statement_in_html<'a>(
+/// Prettier's `shouldPrintSemicolon` for a statement that's the whole value of an HTML attribute. Returns `None` if it
+/// isn't, so the statement ends like any other.
+fn semicolon_for_only_statement_in_html<'a>(
     statement: Stmt<'a>,
     expression: Expr<'a>,
     f: &Formatter<'a>,
@@ -175,7 +189,7 @@ fn semicolon_of_only_statement_in_html<'a>(
     {
         expression = expr;
     }
-    // A function, or the path to one: Vue calls it.
+    // A function, or a path to one, which Vue calls.
     Some(match expression.kind() {
         ExprKind::Fn(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => true,
         ExprKind::Ident(_) => expression.text() != b"undefined",
@@ -192,8 +206,8 @@ pub(crate) fn write_expression_statement<'a>(
     if is_single_jsx_statement_in_markdown(statement, expression, f) {
         return write!(f, expression);
     }
-    let semicolon_in_html = semicolon_of_only_statement_in_html(statement, expression, f);
-    // Before a type cast comment, `FormatStatements` has written the `;`.
+    let semicolon_in_html = semicolon_for_only_statement_in_html(statement, expression, f);
+    // Before a type cast comment, `FormatStatements` has already printed the `;`.
     if f.options().semicolons.is_as_needed()
         && semicolon_in_html.is_none()
         && expression_statement_needs_semicolon(statement, expression, f)
@@ -216,7 +230,7 @@ pub(crate) fn write_do_while_statement<'a>(
     test: Expr<'a>,
     f: &mut Formatter<'a>,
 ) {
-    // For oxfmt the comments before the `while` keep their lines. Those on the line of a body that is no block break the
+    // oxfmt keeps the comments before the `while` on their lines. Comments on the line of a non-block body break the
     // group: `do⏎  a; // comment⏎while (b);`
     let comments_stay = !f.is_quiet() && comments_stay_between_head_and_body(f);
     let trailing_comments = match (comments_stay, body.kind()) {
@@ -268,13 +282,13 @@ fn is_negated_logical_expression(test: Expr<'_>) -> bool {
     matches!(argument.kind(), ExprKind::Binary { op, .. } if op.is_logical())
 }
 
-/// Prettier 3.9 writes `if (!(` on one line. oxfmt follows 3.8, which breaks after `if (`.
+/// Prettier 3.9 prints `if (!(` on one line. oxfmt follows 3.8, which breaks after `if (`.
 fn hugs_negated_condition(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
-/// Prettier's `shouldInlineCondition`: a negated logical expression starts right after the `(` of the statement, so that
-/// its operands are indented as they are without the `!`.
+/// Prettier's `shouldInlineCondition`: a negated logical expression starts right after the statement's `(`, so its
+/// operands are indented the same as without the `!`.
 fn should_inline_condition<'a>(test: Expr<'a>, f: &Formatter<'a>) -> bool {
     is_negated_logical_expression(test)
         && hugs_negated_condition(f)
@@ -282,8 +296,8 @@ fn should_inline_condition<'a>(test: Expr<'a>, f: &Formatter<'a>) -> bool {
         && !is_cast_target(test, f)
 }
 
-/// Prettier's `printIfOrWhileConditionOrWithStatementObject`: what is between the parentheses of an `if`, a `while`, a
-/// `do` or a `with`.
+/// Prettier's `printIfOrWhileConditionOrWithStatementObject`: the content of the parentheses of an `if`, `while`, `do`
+/// or `with`.
 struct FormatCondition<'a>(Expr<'a>);
 
 impl<'a> Format<'a> for FormatCondition<'a> {
@@ -335,7 +349,7 @@ pub(crate) fn write_with_statement<'a>(
     write_while_or_with_statement("with", object, body, f);
 }
 
-/// What is in the head of a `for`: a declaration without its `;`, or an expression.
+/// An item in a `for` head: a declaration without its `;`, or an expression.
 #[derive(Copy, Clone)]
 struct FormatForHead<'a>(Stmt<'a>);
 
@@ -366,13 +380,13 @@ impl<'a> FormatForHead<'a> {
     }
 }
 
-/// Whether the token before `comment` is `token`, which is one byte.
+/// True if the token before `comment` is the one-byte `token`.
 fn follows_token(comment: Comment<'_>, token: u8, f: &Formatter<'_>) -> bool {
     let last_byte = comment.prev_token_end().checked_sub(1);
     last_byte.and_then(|at| f.source_text().byte_at(at)) == Some(token)
 }
 
-/// Of `comments`, which follow a `;` in the head of a `for`, those on the line of the `;`, if the line ends after them.
+/// `comments` follow a `;` in a `for` head. Returns the ones on the `;`'s line, if the line ends after them.
 fn comments_ending_line_of_semicolon<'a>(
     comments: CommentList<'a>,
     f: &Formatter<'a>,
@@ -383,8 +397,9 @@ fn comments_ending_line_of_semicolon<'a>(
     }
 }
 
-/// See `comments_stay_between_head_and_body`: what is between the parentheses of a `for` that has comments there. Each
-/// stays on its side of the two `;`. `dangling`: the comments where the `for` has no initializer, no test or no update.
+/// See `comments_stay_between_head_and_body`. Prints the content of a `for`'s parentheses when it has comments. Each
+/// comment stays on its side of the two `;`. `dangling` holds the comments where the `for` has no initializer, test or
+/// update.
 ///
 /// ```js
 /// for (a; /* comment */; /* comment */);
@@ -418,7 +433,7 @@ fn write_for_head_with_comments_in_place<'a>(
     let is_empty = init.is_none() && test.is_none() && update.is_none();
     let separator = (!is_empty).then_some(soft_line_break_or_space());
 
-    // `a; /* comment */ // comment⏎b`: comments that end the line of the `;` trail `a`.
+    // `a; /* comment */ // comment⏎b`: comments that end the `;`'s line trail `a`.
     let split_at_semicolon = |trailing: CommentList<'a>, f: &Formatter<'a>| {
         let count = (trailing.iter()).position(|comment| follows_token(comment, b';', f));
         trailing.split_at(count.unwrap_or(trailing.len()))
@@ -505,7 +520,7 @@ pub(crate) fn write_for_statement<'a>(
             ))
         );
     }
-    // A comment in a head with nothing to attach it to goes above the loop.
+    // A comment in a head with nothing to attach to goes above the loop.
     if !dangling.is_empty() {
         write!(f, [dangling_comments(node), soft_line_break()]);
     }
@@ -533,8 +548,8 @@ pub(crate) fn write_for_statement<'a>(
     );
 }
 
-/// See `comments_stay_between_head_and_body`: a line comment in the head of a `for (a in b)`, which does
-/// not break, is written before the `)`. In Prettier it comes out behind the `{`.
+/// See `comments_stay_between_head_and_body`: a line comment in the head of a `for (a in b)`, which doesn't break, is
+/// printed before the `)`. Prettier prints it after the `{`.
 fn boundary_before_parenthesis(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
     (!f.is_quiet() && comments_stay_between_head_and_body(f)).then_some(line_suffix_boundary())
 }
@@ -601,8 +616,8 @@ pub(crate) fn write_if_statement<'a>(
     alternate: Option<Stmt<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    // `if (a) b; // comment⏎else c;`: oxfmt writes the comment outside of the group, which it does not break then. A
-    // `prettier-ignore` comment stays with the statement that it is about.
+    // `if (a) b; // comment⏎else c;`: oxfmt prints the comment outside the group, so it doesn't break the group. A
+    // `prettier-ignore` comment stays with the statement it applies to.
     let comments_stay = !f.is_quiet() && comments_stay_between_head_and_body(f);
     let consequent_node = consequent.as_ast_nodes();
     let moves_trailing_comments =
@@ -639,9 +654,10 @@ pub(crate) fn write_if_statement<'a>(
     );
 }
 
-/// What is between the consequent and the `else`. Returns whether the comments there stay where they are.
+/// Prints what's between the consequent and the `else`. Returns true if the comments there stay in place.
 ///
-/// Not inlined: `if (a) {} else if (b) {} else ..` is nested, and what this needs of the stack would be taken at each level.
+/// Not inlined: `if (a) {} else if (b) {} else ..` is nested, and inlining would add this function's stack use to every
+/// level.
 #[inline(never)]
 fn write_up_to_else<'a>(
     statement: Stmt<'a>,
@@ -735,7 +751,7 @@ pub(crate) fn write_labeled_statement<'a>(
         );
     }
 
-    // `a // comment⏎: b;` is `a: // comment⏎b;`
+    // `a // comment⏎: b;` prints as `a: // comment⏎b;`
     let label_comments = f.comments().of_name(label.span().start);
     write!(
         f,

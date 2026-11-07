@@ -1,0 +1,22 @@
+const { Database } = require("bun:sqlite");
+const db = new Database(":memory:");
+db.run("create table people (id integer primary key, name text, age integer, score real, note blob)");
+db.run("create index by_age on people (age)");
+const insert = db.prepare("insert into people (name, age, score, note) values (?, ?, ?, ?)");
+db.transaction(() => { for (let i = 0; i < 20000; i++) insert.run("name" + i, i % 90, i / 7, i % 16 ? null : new Uint8Array(8)); })();
+let sum = 0;
+const byId = db.prepare("select * from people where id = ?");
+for (let i = 1; i <= 20000; i++) sum += byId.get(i).age;
+const byAge = db.query("select id, name, score from people where age = $age");
+for (let a = 0; a < 90; a++) for (const row of byAge.all({ $age: a })) sum += row.name.length;
+for (let r = 0; r < 4; r++) for (const row of db.query("select id, age from people").values()) sum += row[1];
+for (const row of db.query("select name from people where id < 6666").iterate()) sum += row.name.length;
+class Person { get double() { return this.age * 2; } }
+for (const p of db.query("select age from people where id < 6666").as(Person).all()) sum += p.double;
+const update = db.prepare("update people set score = score + 1 where id = ?");
+db.transaction(() => { for (let i = 1; i <= 10000; i++) update.run(i); })();
+sum += db.query("select sum(score) as s, count(*) as c from people").get().c;
+for (let i = 0; i < 1000; i++) sum += db.query("select " + (i % 50) + " as v").get().v;
+sum += db.serialize().length > 0 ? 1 : 0;
+db.close();
+console.log("sqlite", sum);

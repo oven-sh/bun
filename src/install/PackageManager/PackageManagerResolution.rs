@@ -78,6 +78,7 @@ impl PackageManager {
         );
         debug_assert!((package_id as usize) < self.lockfile.packages.len());
         // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
+        self.lockfile.take_refreshing(dependency_id);
         let buffers = &mut self.lockfile.buffers;
         buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
         let string_buf = buffers.string_bytes.as_slice();
@@ -207,16 +208,13 @@ impl PackageManager {
                                 ),
                             );
                         } else if is_default {
-                            Output::err_generic(
-                                "<b>{}@{}<r> is not in the catalog",
-                                (name, literal),
-                            );
+                            Output::err_generic("<b>{}@{}<r> not in catalog", (name, literal));
                             if can_add {
                                 bun_core::pretty_errorln!("  bun add --catalog {}", name);
                             }
                         } else {
                             Output::err_generic(
-                                "<b>{}@{}<r> is not in catalog \"{}\"",
+                                "<b>{}@{}<r> not in catalog \"{}\"",
                                 (name, literal, bstr::BStr::new(catalog_name)),
                             );
                             if can_add {
@@ -262,7 +260,7 @@ impl PackageManager {
         if any_failed {
             if root_has_workspaces == Some(false) {
                 bun_core::note!(
-                    "catalogs require a \"workspaces\" field in the root package.json, and bun used {} as the root, which has none",
+                    "catalogs require a \"workspaces\" field in the root package.json. {} was used as root and has none",
                     bun_core::fmt::quote(&root_package_json_path()),
                 );
             }

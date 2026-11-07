@@ -2,6 +2,8 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "ZigGlobalObject.h"
 
+#include "GeneratedBlob.h"
+#include "GeneratedResponse.h"
 #include "JSFetchHeaders.h"
 #include "JSDOMFormData.h"
 #include "JavaScriptCore/ObjectConstructor.h"
@@ -27,15 +29,15 @@ JSC::JSValue createNodeFetchInternalBinding(Zig::GlobalObject* globalObject)
     auto* obj = constructEmptyObject(globalObject);
     obj->putDirectIndex(
         globalObject, 0,
-        globalObject->JSResponseConstructor());
+        Bun::Bindgen::constructorForClass<Bun::Bindgen::Generated::JSResponse>(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     obj->putDirectIndex(
         globalObject, 1,
-        globalObject->JSRequestConstructor());
+        Bun::Bindgen::constructorForClass<Bun::Bindgen::Generated::JSRequest>(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     obj->putDirectIndex(
         globalObject, 2,
-        globalObject->JSBlobConstructor());
+        Bun::Bindgen::constructorForClass<Bun::Bindgen::Generated::JSBlob>(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     obj->putDirectIndex(
         globalObject, 3,

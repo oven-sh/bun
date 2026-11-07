@@ -1,0 +1,25 @@
+# new Headers().entries(); handedOver().next()
+# Nobody knows the object that the second call answers. The program has made an iterator over headers, so the `next` that is found there may be that of its class.
+# Nothing has made an iterator over the parameters of a URL: the `next` of that class is not found, and what hangs on it in the table stays out of the image.
+# LIBRARY: own
+# RUN: valueflow-why used-builtin=URLSearchParamsIteratorPrototypeNext used-builtin=HeadersIteratorPrototypeNext
+# CHECK: used-builtin=URLSearchParamsIteratorPrototypeNext
+# CHECK-NEXT: not held
+# CHECK-NEXT: used-builtin=HeadersIteratorPrototypeNext
+# CHECK-NOT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Headers" [isFreeName]
+    v2 = Construct v1, -
+    v3 = PropGet v2 key="entries"
+    v4 = Call v3, v2
+    v5 = PropGet v0 key="handedOver" [isFreeName]
+    v6 = Call v5
+    v7 = PropGet v6 key="next"
+    v8 = Call v7, v6
+    Return
+}

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 
-const scannerModuleName = "__SCANNER_MODULE__";
+const scannerModuleName = __SCANNER_MODULE__;
 const suppressError = __SUPPRESS_ERROR__;
 
 type IPCMessage =

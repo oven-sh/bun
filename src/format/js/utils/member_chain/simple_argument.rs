@@ -4,9 +4,8 @@ use crate::options::Flavor;
 use crate::prelude::*;
 use smallvec::SmallVec;
 
-/// An argument of a call, to ask whether it is "simple": a literal, a name, or something small
-/// that is made of those. A chain of calls with simple arguments is more likely to stay on one
-/// line.
+/// A call argument that can be checked for being "simple": a literal, a name, or something small made of those. A chain
+/// of calls with simple arguments is more likely to stay on one line.
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct SimpleArgument<'a>(Expr<'a>, Flavor);
 
@@ -24,7 +23,7 @@ impl<'a> SimpleArgument<'a> {
     }
 }
 
-/// Up to five characters. oxfmt counts bytes: for it `/[“”]/` is long.
+/// Up to five characters. oxfmt counts bytes, so to it `/[“”]/` is long.
 fn is_short_pattern(pattern: &[u8], flavor: Flavor) -> bool {
     match flavor.is_oxfmt() {
         true => pattern.len() <= 5,
@@ -36,7 +35,7 @@ fn is_simple(e: Expr<'_>, depth: u8, flavor: Flavor) -> bool {
     if depth >= 2 {
         return false;
     }
-    // What is left to look at. All of it is as deep as `e`: a chain of accesses and calls can be
+    // The expressions still to check. All of them are at the same depth as `e`: a chain of accesses and calls can be
     // long, and so can `a[b[c[..]]]`.
     let mut pending = SmallVec::<[Expr<'_>; 4]>::new();
     let mut next = Some(e);
@@ -86,7 +85,7 @@ fn is_simple(e: Expr<'_>, depth: u8, flavor: Flavor) -> bool {
                     op: UnOp::Not | UnOp::Minus | UnOp::Plus | UnOp::BitNot,
                     operand,
                 } => operand,
-                // For oxfmt `a++` is simple and `a.b++` is not.
+                // In oxfmt `a++` is simple and `a.b++` isn't.
                 ExprKind::Unary { op, operand }
                     if op.is_update()
                         && (!flavor.is_oxfmt() || matches!(operand.kind(), ExprKind::Ident(_))) =>
@@ -113,7 +112,7 @@ fn is_simple(e: Expr<'_>, depth: u8, flavor: Flavor) -> bool {
     true
 }
 
-/// The arguments of a call: the deeper it is, the fewer it may have.
+/// A call's arguments: the deeper the call, the fewer it may have.
 fn are_simple<'a>(arguments: List<'a, Expr<'a>>, depth: u8, flavor: Flavor) -> bool {
     arguments.len() + usize::from(depth) <= 2
         && arguments

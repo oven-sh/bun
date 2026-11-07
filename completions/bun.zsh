@@ -596,6 +596,7 @@ _bun_build_completion() {
         '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
         '--splitting[Whether to enable code splitting (requires --outdir)]' \
         '--compile[generating a standalone binary from a TypeScript or JavaScript file]' \
+        '--dts[Write declaration files (.d.ts), and each output file with its types kept (.aot.ts), to --outdir]' \
         '--format[Specifies the module format to be used in the generated bundles]: :->format' &&
         ret=0
 
@@ -785,6 +786,41 @@ _bun_prune_completion() {
         ret=0
 }
 
+_bun_compile_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :_files' \
+        '--outfile[Write the executable to this path]:outfile:_files' \
+        '--target[The platform to build for, such as bun-linux-x64]:target' \
+        '--define[Substitute K\:V while parsing]:define' \
+        '--env[Inline environment variables\: inline, disable or a prefix*]:env' \
+        '--asset[Embed a file or directory into the executable]:asset:_files' \
+        '--external[Exclude a module from the executable]:external' \
+        '--minify[Enable all minification flags]' \
+        '--sourcemap[Build with sourcemaps]:sourcemap' \
+        '--tsconfig-override[Use this tsconfig.json]:tsconfig-override:_files' \
+        '--compile-exec-argv[Prepend arguments to the executable'"'"'s execArgv]:compile-exec-argv' \
+        '--disallow-code-generation-from-strings[In the executable, eval() and new Function() throw]' \
+        '--explain[List the code that compiled to a slow path]' \
+        '--aot-log-type-mismatches[Log every value that does not match its declared type]' \
+        '--aot-huge-heap[Remove the 32 GB heap limit per thread]' \
+        '--aot-allow-code-from-disk[Let import() and require() load code from disk at run time]' \
+        '--obfuscate[Strip function names and source locations from the executable and write them to a source map]' \
+        '--compile-inspector[Let a debugger attach to the executable]' \
+        '--compile-in-place[Keep modules at their paths on disk. The executable only runs on the machine that built it]' \
+        '--no-compile-function-source[Don'"'"'t embed function source code. fn.toString() returns \[native code\]]' \
+        '--no-aot[Bundle the JavaScript into the executable instead of compiling it to machine code]' \
+        '--trim[Remove the Bun and Node.js APIs your code never calls from the executable]' \
+        '--trim-locales[Keep only these locales, such as en,de-AT. Implies --trim]:trim-locales' \
+        '--library[Build a package to publish instead of an executable]' \
+        '--outdir[With --library\: the folder the package is written to]:outdir:_files -/' \
+        '--no-script[Run this command even if the project has a compile script]' \
+        '--cwd[Set the working directory]:cwd:_files -/' \
+        '--help[Print this help menu]' \
+        '-h[Print this help menu]' &&
+        ret=0
+}
+
 _bun_check_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
@@ -792,11 +828,17 @@ _bun_check_completion() {
         '--project[Path to a tsconfig.json or its directory]:project:_files' \
         '-p[Path to a tsconfig.json or its directory]:project:_files' \
         '--pretty[Show source code around each error]' \
+        '--build[Check the projects in references too, like tsc -b]' \
+        '-b[Check the projects in references too, like tsc -b]' \
         '--no-pretty[One line per error]' \
         '--all[Show every error]' \
         '--threads[Number of threads]:threads' \
         '--timing[Print load and check times]' \
         '--cwd[Set the working directory]:cwd:_files -/' \
+        '--no-script[Run the type checker even if the project has a check script]' \
+        '--aot[Also report the errors bun compile would report for these entry points]' \
+        '--explain[With --aot\: print a report. guards lists every type guard that can fail at run time]:report' \
+        '--define[With --aot\: substitute k with v while parsing, like bun compile --define]:define' \
         '--help[Print this help menu]' \
         '-h[Print this help menu]' &&
         ret=0
@@ -809,7 +851,7 @@ _bun_lint_completion() {
         '--config[Use this config file instead of looking for one]:config:_files' \
         '-c[Use this config file instead of looking for one]:config:_files' \
         '--no-config-lookup[Do not look for a config file]' \
-        '--rule[Set a rule\: --rule '"'"'eqeqeq\: \[error, smart\]'"'"']:rule' \
+        '--rule[Set a rule, or turn off a plugin\: --rule '"'"'eqeqeq\: \[error, smart\]'"'"', --rule '"'"'unicorn/*\: off'"'"']:rule' \
         '--rules[List the built-in rules]' \
         '--explain[Print the documentation of a rule]:explain' \
         '--init[Add a \[lint\] section to bunfig.toml]' \
@@ -847,11 +889,12 @@ _bun_lint_completion() {
         '--fix-dangerously[Apply every fix and suggestion, even those that can change behavior]' \
         '--type-aware[Also run the rules that need types]' \
         '--no-type-aware[Skip the rules that need types]' \
-        '--tsconfig[Use this tsconfig.json for the rules that need types]:tsconfig:_files' \
+        '--tsconfig[Use this tsconfig.json instead of the nearest one]:tsconfig:_files' \
         '--type-check[With --type-aware, report type errors too]' \
         '--infer-globals[Also treat what the project'"'"'s types declare as globals]' \
         '--no-infer-globals[Do not take globals from the project'"'"'s types]' \
         '--threads[Number of threads (default\: one per CPU core)]:threads' \
+        '--no-script[Run the linter even if the project has a lint script]' \
         '--version[Print the version of Bun]' \
         '-v[Print the version of Bun]' \
         '--help[Print the common flags. With --all, every flag]' \
@@ -863,7 +906,7 @@ _bun_lint_completion() {
         '--parser-options[Set parser options\: --parser-options projectService\:true]:parser-options' \
         '--parser[Parse files with this package]:parser' \
         '--plugin[Load these plugins]:plugin' \
-        '--native-plugin-rules[Use the built-in rules for these plugins only\: import,react-hooks (default\: all)]:native-plugin-rules' \
+        '--native-plugin-rules[Of the ESLint plugins a config loads, run only these natively\: import,react-hooks (default\: all)]:native-plugin-rules' \
         '--no-native-plugin-rules[Run plugin rules from the installed packages, in JavaScript]' \
         '--report-unused-disable-directives-severity[Report unused eslint-disable comments as off, warn or error]:report-unused-disable-directives-severity' \
         '--report-unused-inline-configs[Report config comments that change nothing]:report-unused-inline-configs' \
@@ -944,7 +987,7 @@ _bun_fmt_completion() {
         '--staged[Only format files that are staged in git, and stage them again]' \
         '--changed[Only format files that differ from a branch or commit (default\: the default branch)]' \
         '--stdin-filepath[Format standard input as this file and print the result]:stdin-filepath:_files' \
-        '--ignore-path[Read ignore patterns from these files (default\: .gitignore and .prettierignore)]:ignore-path:_files' \
+        '--ignore-path[Read ignore patterns from these files (default\: .gitignore, .prettierignore, .git/info/exclude)]:ignore-path:_files' \
         '--ignore-pattern[Skip files that match this pattern]:ignore-pattern' \
         '--with-node-modules[Format files in node_modules too]' \
         '--no-error-on-unmatched-pattern[Do not fail when an argument matches no file]' \
@@ -965,6 +1008,7 @@ _bun_fmt_completion() {
         '--timing[Print how long each phase took]' \
         '--threads[Number of threads (default\: one per CPU core)]:threads' \
         '--debug-check[Do not write. Fail if formatting a file would change what it means]' \
+        '--no-script[Run the formatter even if the project has a fmt script]' \
         '--version[Print the version of Bun]' \
         '-v[Print the version of Bun]' \
         '--help[Print the common flags. With --all, every flag]' \
@@ -1136,6 +1180,7 @@ _bun() {
             'unlink\:"Globally unlink an npm package" '
             'pm\:"More commands for managing packages" '
             'build\:"Bundle TypeScript & JavaScript into a single file" '
+            'compile\:"Compile TypeScript & JavaScript into a standalone executable" '
             'upgrade\:"Get the latest version of bun" '
             'help\:"Show all supported flags and commands" '
         )
@@ -1216,6 +1261,10 @@ _bun() {
             ;;
         build)
             _bun_build_completion
+
+            ;;
+        compile)
+            _bun_compile_completion
 
             ;;
         update)
@@ -1327,6 +1376,10 @@ _bun() {
                     ;;
                 build)
                     _bun_build_completion
+
+                    ;;
+                compile)
+                    _bun_compile_completion
 
                     ;;
                 update)

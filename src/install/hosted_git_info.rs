@@ -914,7 +914,7 @@ impl HostProvider {
     ///
     /// The second parameter allows you to declare whether the given string includes the protocol:
     /// colon or not.
-    fn from_shortcut(shortcut_str: &[u8], with_colon: bool) -> Option<HostProvider> {
+    pub(crate) fn from_shortcut(shortcut_str: &[u8], with_colon: bool) -> Option<HostProvider> {
         for provider in Self::ALL {
             let shortcut_matches = if with_colon {
                 provider.shortcut() == shortcut_str
@@ -931,7 +931,7 @@ impl HostProvider {
     }
 
     /// Find the appropriate host provider by its domain (e.g. "github.com").
-    fn from_domain(domain_str: &[u8]) -> Option<HostProvider> {
+    pub(crate) fn from_domain(domain_str: &[u8]) -> Option<HostProvider> {
         Self::ALL
             .into_iter()
             .find(|&provider| provider.domain() == domain_str)

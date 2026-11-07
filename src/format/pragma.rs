@@ -1,26 +1,26 @@
-//! `@format` and `@noformat` in the first comment of a file: the options `requirePragma`,
-//! `checkIgnorePragma` and `insertPragma`.
+//! `@format` and `@noformat` pragmas in a file's first comment, for the `requirePragma`,
+//! `checkIgnorePragma` and `insertPragma` options.
 //!
-//! All of it is about the text of a file **before it is parsed**: Prettier inserts the pragma into
-//! the source and formats the result, and a file that is left as it is does not have to be parsed.
-//! [`before_parsing`] does what Prettier's `formatWithCursor` does with the three options.
+//! All of this runs on the source text **before it's parsed**. Prettier inserts the pragma into the
+//! source and formats the result, and a skipped file never needs parsing. [`before_parsing`] does
+//! what Prettier's `formatWithCursor` does with the three options.
 //!
-//! It is a port of `language-js/pragma.js` and of the functions of `jest-docblock` that it calls,
-//! which are made of regular expressions. Each function here names the expression that it is.
+//! This is a port of `language-js/pragma.js` and the `jest-docblock` functions it calls, which are
+//! built from regular expressions. Each function here quotes the expression it implements.
 
 use crate::options::FormatOptions;
 use bun_core::strings;
 use std::borrow::Cow;
 
-/// What to do with a file.
+/// The decision made for a file before it's parsed.
 pub enum BeforeParsing<'t> {
-    /// Nothing: it is not to be formatted.
-    LeaveAsItIs,
+    /// Skip it. The file must not be formatted.
+    LeaveUnchanged,
     /// Parse and format this text.
     Format(Cow<'t, [u8]>),
 }
 
-/// What the pragmas in `text`, which is JavaScript or TypeScript, and the options about them say.
+/// Applies the pragma options to `text`, which is JavaScript or TypeScript.
 pub fn before_parsing<'t>(text: &'t [u8], options: &FormatOptions) -> BeforeParsing<'t> {
     let is_whole_file = options.range_start.unwrap_or(0) == 0
         && options
@@ -29,10 +29,11 @@ pub fn before_parsing<'t>(text: &'t [u8], options: &FormatOptions) -> BeforePars
     before_parsing_css(text, 0, is_whole_file, options)
 }
 
-/// The same for CSS, SCSS and Less, where the comment can follow front matter: Prettier's
-/// `language-css/pragma.js`. `front_matter_len`: the length of the front matter that `text` starts
-/// with, up to and including its last `---`. `is_whole_file`: `rangeStart` and `rangeEnd`, which count in the text before its
-/// line breaks were made `\n`, leave nothing out.
+/// Same as `before_parsing`, but for CSS, SCSS and Less, where the comment can follow front matter.
+/// Mirrors Prettier's `language-css/pragma.js`. `front_matter_len` is the length of the front
+/// matter at the start of `text`, through its closing `---`. `is_whole_file` is true if
+/// `rangeStart` and `rangeEnd` cover the whole file. Both are offsets into the text before its line
+/// breaks were normalized to `\n`.
 pub fn before_parsing_css<'t>(
     text: &'t [u8],
     front_matter_len: usize,
@@ -43,9 +44,9 @@ pub fn before_parsing_css<'t>(
     if (options.require_pragma && !has_pragma(content))
         || (options.check_ignore_pragma && has_ignore_pragma(content))
     {
-        return BeforeParsing::LeaveAsItIs;
+        return BeforeParsing::LeaveUnchanged;
     }
-    // Not if only a part of the file is formatted.
+    // Range formatting never inserts the pragma.
     if options.insert_pragma && !options.require_pragma && is_whole_file && !has_pragma(content) {
         let mut out = Vec::with_capacity(text.len() + 32);
         if !front_matter.is_empty() {
@@ -58,19 +59,19 @@ pub fn before_parsing_css<'t>(
     BeforeParsing::Format(Cow::Borrowed(text))
 }
 
-/// Whether the first comment of `text` has `@format` or `@prettier`.
+/// True if `text`'s first comment has `@format` or `@prettier`.
 pub fn has_pragma(text: &[u8]) -> bool {
     has_any_pragma(text, [b"format", b"prettier"])
 }
 
-/// Whether the first comment of `text` has `@noformat` or `@noprettier`.
+/// True if `text`'s first comment has `@noformat` or `@noprettier`.
 pub fn has_ignore_pragma(text: &[u8]) -> bool {
     has_any_pragma(text, [b"noformat", b"noprettier"])
 }
 
 fn has_any_pragma(text: &[u8], names: [&[u8]; 2]) -> bool {
     let parts = Parts::of(text);
-    // Nearly every file is told by this.
+    // Fast path: nearly every file returns here.
     if !strings::contains_char(parts.doc_block, b'@') {
         return false;
     }
@@ -81,13 +82,14 @@ fn has_any_pragma(text: &[u8], names: [&[u8]; 2]) -> bool {
         .any(|(name, _)| names.contains(&name.as_slice()))
 }
 
-/// Prettier's `insertPragma`: appends `text` to `out`, with `@format` in its first comment, which is
-/// added if there is none.
+/// Prettier's `insertPragma`. Appends `text` to `out` with `@format` in its first comment, adding
+/// the comment if there isn't one.
 pub fn insert_pragma(text: &[u8], out: &mut Vec<u8>) {
     let parts = Parts::of(text);
     let doc_block = DocBlock::parse(parts.doc_block);
-    // Prettier works on text whose line breaks are all `\n`, and puts those of the file back when it
-    // prints. So that they are told as before, what is added has the line breaks of the file.
+    // Prettier normalizes every line break to `\n` and restores the file's style when it prints.
+    // The inserted lines use the file's own line break so that line-ending detection still gets the
+    // same answer.
     let line_break: &[u8] = match strings::index_of_char_usize(text, b'\r') {
         Some(at) if text.get(at + 1) == Some(&b'\n') => b"\r\n",
         Some(_) => b"\r",
@@ -106,7 +108,7 @@ pub fn insert_pragma(text: &[u8], out: &mut Vec<u8>) {
         out.extend_from_slice(line);
     }
     match (line_break, parts.rest) {
-        // `\r` and the `\n` that follows would be one line break.
+        // This `\r` and the `\n` after it would merge into one line break.
         (b"\r", [b'\n', ..]) => out.push(b'\n'),
         (_, [b'\n' | b'\r', ..]) => out.extend_from_slice(line_break),
         _ => out.extend([line_break, line_break].concat()),
@@ -114,15 +116,15 @@ pub fn insert_pragma(text: &[u8], out: &mut Vec<u8>) {
     out.extend_from_slice(parts.rest);
 }
 
-/// A file taken apart: all of it but the white space before the first comment and the line break
-/// after the shebang.
+/// A file split into parts. Together they cover everything except the whitespace before the first
+/// comment and the line break after the shebang.
 struct Parts<'t> {
     byte_order_mark: &'t [u8],
     /// `#!/usr/bin/env bun`, without its line break
     shebang: &'t [u8],
-    /// The comment that the file starts with, or nothing.
+    /// The file's leading comment, or empty.
     doc_block: &'t [u8],
-    /// What follows the comment. Without a comment, what follows the shebang.
+    /// Everything after the comment, or after the shebang if there's no comment.
     rest: &'t [u8],
 }
 
@@ -168,14 +170,15 @@ impl<'t> Parts<'t> {
     }
 }
 
-/// `/^\/\*\*?(.|\r?\n)*?\*\//`: the length of the comment that `text` starts with.
+/// Length of the comment at the start of `text`: `/^\/\*\*?(.|\r?\n)*?\*\//`.
 ///
-/// The expression finds the end of `/**/` in the next comment, and takes the code in between for a
-/// part of the comment, which `insertPragma` then deletes. That is not done here.
+/// For `/**/` the expression only stops at the next comment's `*/`, so it treats the code in
+/// between as part of the comment, and `insertPragma` then deletes that code. This port doesn't
+/// copy that.
 fn doc_block_len(text: &[u8]) -> Option<usize> {
     let content = text.strip_prefix(b"/*")?;
     let len = strings::index_of(content, b"*/")?;
-    // `.` is not U+2028 or U+2029.
+    // `.` doesn't match U+2028 or U+2029.
     let mut rest = &content[..len];
     while let Some(at) = strings::index_of(rest, b"\xE2\x80") {
         if matches!(rest.get(at + 2), Some(0xA8 | 0xA9)) {
@@ -186,10 +189,10 @@ fn doc_block_len(text: &[u8]) -> Option<usize> {
     Some(len + 4)
 }
 
-/// What `parseWithComments` of `jest-docblock` makes of a comment.
+/// The result of `jest-docblock`'s `parseWithComments`.
 struct DocBlock {
-    /// The names and the values of `@name value`, in the order of `Object.keys`. A name that is there
-    /// several times is next to its first.
+    /// The name and value of each `@name value`, in `Object.keys` order. Repeats of a name come
+    /// right after its first occurrence.
     pragmas: Vec<(Vec<u8>, Vec<u8>)>,
     /// All other lines.
     comments: Vec<u8>,
@@ -202,7 +205,7 @@ struct Property<'t> {
 }
 
 impl<'t> Property<'t> {
-    fn of_line(line: &'t [u8]) -> Option<Self> {
+    fn from_line(line: &'t [u8]) -> Option<Self> {
         let after_at = strings::trim_left(line, b" ").strip_prefix(b"@")?;
         let mut name_len = 0;
         while name_len < after_at.len() && strings::js_whitespace_len(&after_at[name_len..]) == 0 {
@@ -215,7 +218,7 @@ impl<'t> Property<'t> {
         })
     }
 
-    /// The value without `// ..`: `/(^|\s+)\/\/([^\n\r]*)/g`.
+    /// The value with `// ..` stripped: `/(^|\s+)\/\/([^\n\r]*)/g`.
     fn value_without_line_comment(&self) -> &'t [u8] {
         let value = self.value;
         let mut from = 0;
@@ -231,7 +234,7 @@ impl<'t> Property<'t> {
 }
 
 impl DocBlock {
-    /// `comment`: `/* .. */`, or nothing.
+    /// `comment` is `/* .. */` or empty.
     fn parse(comment: &[u8]) -> DocBlock {
         // `/^\/\*\*?/` and `/\*\/$/`
         let content = comment
@@ -240,7 +243,7 @@ impl DocBlock {
             .unwrap_or(comment);
         let content = content.strip_suffix(b"*/").unwrap_or(content);
 
-        // Without the `*` that the lines start with: `/(\r?\n|^) *\* ?/g`. The line breaks become `\n`.
+        // Strip each line's leading `*`: `/(\r?\n|^) *\* ?/g`. Line breaks become `\n`.
         let mut text = Vec::with_capacity(content.len());
         let mut rest = content;
         loop {
@@ -269,7 +272,7 @@ impl DocBlock {
         let mut pragmas: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         let mut comments = Vec::new();
         for (index, line) in strings::split(text, b"\n").enumerate() {
-            let Some(property) = Property::of_line(line) else {
+            let Some(property) = Property::from_line(line) else {
                 if index > 0 {
                     comments.push(b'\n');
                 }
@@ -293,7 +296,7 @@ impl DocBlock {
         DocBlock { pragmas, comments }
     }
 
-    /// `print` of `jest-docblock`, with `{ format: "", ...pragmas }` and `comments.trimStart()`.
+    /// `jest-docblock`'s `print`, with `{ format: "", ...pragmas }` and `comments.trimStart()`.
     fn print_with_format_pragma(&self) -> Vec<u8> {
         let comments = strings::trim_js_whitespace_start(&self.comments);
         let is_format = |(name, _): &&(Vec<u8>, Vec<u8>)| name == b"format";
@@ -348,14 +351,14 @@ impl DocBlock {
 }
 
 /// One `replaceAll` of
-/// `/(?:^|\r?\n) *(@[^\n\r]*?) *\r?\n *(?![^\n\r@]*\/\/[^]*)([^\s@][^\n\r@]+?) *\r?\n/g` by
-/// `"\n$1 $2\n"`: a line after `@name value` that goes on with the value is joined to it. `None` if
-/// nothing matches.
+/// `/(?:^|\r?\n) *(@[^\n\r]*?) *\r?\n *(?![^\n\r@]*\/\/[^]*)([^\s@][^\n\r@]+?) *\r?\n/g` with
+/// `"\n$1 $2\n"`. It joins a line that continues the value onto the `@name value` line before it.
+/// Returns `None` if nothing matches.
 fn join_continuation_lines(text: &[u8]) -> Option<Vec<u8>> {
     let mut out: Option<Vec<u8>> = None;
-    // Up to here `text` is in `out`.
+    // `text[..copied]` is already in `out`.
     let mut copied = 0;
-    // A line can be the first of a match if the line break before it is not the end of a match.
+    // A line can start a match only if the previous match didn't consume the line break before it.
     let mut line_start = 0;
     loop {
         let Some(first_end) =
@@ -381,7 +384,7 @@ fn join_continuation_lines(text: &[u8]) -> Option<Vec<u8>> {
             {
                 return None;
             }
-            // The lazy `+?` takes one character at least, even if that is a space.
+            // The lazy `+?` matches at least one character, even a space.
             let second = &second[..strings::trim_right(second, b" ").len().max(2)];
             Some((first, second, second_end + 1))
         })();
@@ -396,7 +399,8 @@ fn join_continuation_lines(text: &[u8]) -> Option<Vec<u8>> {
                 out.extend_from_slice(second);
                 out.push(b'\n');
                 copied = end;
-                // The line at `end` has no line break before it that is left to match.
+                // The match consumed the line break before `end`, so the line there can't start
+                // another match.
                 match strings::index_of_char_usize(&text[end..], b'\n') {
                     Some(at) => line_start = end + at + 1,
                     None => break,

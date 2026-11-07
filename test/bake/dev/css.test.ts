@@ -437,6 +437,65 @@ devTest("css hot update carries the edited stylesheet when another root fails in
     }
   },
 });
+// The incremental graph's stale bitset grows in steps of 512 files.
+const modulesPastFirstBitsetStep = Array.from({ length: 520 }, (_, i) => `m${i}`);
+devTest("css file imported from css first, then from a second page's script", {
+  files: {
+    "first.html": emptyHtmlFile({
+      styles: ["first.css"],
+      scripts: ["first.ts"],
+    }),
+    "second.html": emptyHtmlFile({
+      scripts: ["second.ts"],
+    }),
+    "first.css": `
+      .first { color: red; }
+    `,
+    "child.css": `
+      .child { color: blue; }
+    `,
+    "first.ts": `
+      console.log("first");
+      import.meta.hot.accept();
+    `,
+    "second.ts": `
+      import "./child.css";
+      console.log("second");
+    `,
+    ...Object.fromEntries(modulesPastFirstBitsetStep.map(name => [`modules/${name}.ts`, `export default "${name}";`])),
+  },
+  async test(dev) {
+    await using c1 = await dev.client("/first");
+    await c1.expectMessage("first");
+
+    // A bundle without css pushes the client graph past 512 files, so the bitset
+    // grows at the end of the bundle and the new bits mean "cached".
+    await dev.write(
+      "first.ts",
+      [
+        ...modulesPastFirstBitsetStep.map(name => `import "./modules/${name}";`),
+        `console.log("first with modules");`,
+        `import.meta.hot.accept();`,
+      ].join("\n"),
+    );
+    await c1.expectMessage("first with modules");
+
+    // "child.css" enters the client graph as a css import, so it doesn't have its own stylesheet.
+    await dev.write(
+      "first.css",
+      `
+        @import "./child.css";
+        .first { color: red; }
+      `,
+    );
+    await c1.style(".child").color.expect.toBe("#00f");
+
+    // The script import must bundle "child.css" as a stylesheet of this page.
+    await using c2 = await dev.client("/second");
+    await c2.expectMessage("second");
+    await c2.style(".child").color.expect.toBe("#00f");
+  },
+});
 devTest("multiple stylesheets importing same dependency", {
   files: {
     "first.html": emptyHtmlFile({
@@ -610,6 +669,60 @@ devTest("changing html file with link tag works", {
     await c.style(".other").color.expect.toBe("red");
     await c.style(".test").color.expect.toBe("#00f");
     await c.style(".test").fontSize.expect.toBe("24px");
+  },
+});
+devTest("a page recovers after the missing @import of a shared stylesheet is created", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["main.css"], scripts: ["main.ts"] }),
+    "about.html": emptyHtmlFile({ styles: ["main.css"], scripts: ["about.ts"] }),
+    "main.ts": `console.log("main");`,
+    "about.ts": `import "./main.css"; console.log("about");`,
+    "main.css": `.main { width: 1px; }`,
+  },
+  async test(dev) {
+    const load = async () => {
+      await dev.fetch("/index").text();
+      const about = await dev.fetch("/about");
+      const links = Array.from((await about.text()).matchAll(/<link[^>]*href="([^"]+)"/g), match => match[1]);
+      return { status: about.status, links };
+    };
+    const loaded = { status: 200, links: [expect.stringMatching(/^\/_bun\/asset\/.*\.css$/)] };
+    expect(await load()).toEqual(loaded);
+    // The other page has a build error of its own the whole time.
+    await dev.write("main.ts", `const = ;`, { errors: null });
+    expect(await load()).toEqual(loaded);
+    await dev.write("main.css", `@import "./n.css";\n.main { width: 1px; }`, { errors: null });
+    expect((await load()).status).toBe(500);
+    await dev.write("n.css", `.n { width: 2px; }`, { errors: null });
+    expect(await load()).toEqual(loaded);
+    await using c = await dev.client("/about");
+    await c.expectMessage("about");
+    await c.style(".n").width.expect.toBe("2px");
+  },
+});
+devTest("an error in a stylesheet reaches a page through an @import that another page links", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["main.css"] }),
+    "about.html": emptyHtmlFile({ styles: ["b.css"] }),
+    "main.css": `@import "./b.css";\n.m { width: 1px; }`,
+    "b.css": `@import "./c.css";\n.b { width: 1px; }`,
+    "c.css": `.c { width: 1px; }`,
+  },
+  async test(dev) {
+    // The status of the page, or the width of ".c" in its stylesheet.
+    const loadPage = async (url: string) => {
+      const page = await dev.fetch(url);
+      const html = await page.text();
+      if (page.status !== 200) return page.status;
+      const css = await dev.fetch(html.match(/\/_bun\/asset\/\w+\.css/)![0]).text();
+      return css.match(/\.c \{[^}]*width: (\w+)/)?.[1];
+    };
+    const load = async () => [await loadPage("/index"), await loadPage("/about")];
+    expect(await load()).toEqual(["1px", "1px"]);
+    await dev.write("c.css", `.c { width: 2px; }}}`, { errors: null });
+    expect(await load()).toEqual([500, 500]);
+    await dev.write("c.css", `.c { width: 3px; }`, { errors: null });
+    expect(await load()).toEqual(["3px", "3px"]);
   },
 });
 devTest("css import before create", {

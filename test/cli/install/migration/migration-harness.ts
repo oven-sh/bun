@@ -77,11 +77,21 @@ export async function startNpmjs() {
   tunnel.listen(0, "127.0.0.1", resolve);
   await listening;
   const proxy = `http://127.0.0.1:${(tunnel.address() as net.AddressInfo).port}`;
+  // Manifests are cached by registry URL, and CI's parallel batch has one cache for all of its files.
+  const cache = tempDir("npmjs-cache", {});
   return {
-    env: { HTTPS_PROXY: proxy, https_proxy: proxy, NO_PROXY: "", no_proxy: "", NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+    env: {
+      HTTPS_PROXY: proxy,
+      https_proxy: proxy,
+      NO_PROXY: "",
+      no_proxy: "",
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      BUN_INSTALL_CACHE_DIR: String(cache),
+    },
     stop() {
       tunnel.close();
       server.stop(true);
+      cache[Symbol.dispose]();
     },
   };
 }

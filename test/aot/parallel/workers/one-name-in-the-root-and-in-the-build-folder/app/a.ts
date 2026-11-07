@@ -1,0 +1,1 @@
+postMessage("app/a.ts");

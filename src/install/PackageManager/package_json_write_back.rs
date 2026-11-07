@@ -11,7 +11,7 @@ use crate::lockfile::override_map::OverrideMap;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, Package};
 use crate::resolution::Tag as ResolutionTag;
-use crate::{Features, PackageID, PackageNameHash, invalid_package_id};
+use crate::{DependencyID, Features, PackageID, PackageNameHash, invalid_package_id};
 
 use super::add_catalog;
 use super::add_remove_with_filter::{
@@ -19,7 +19,6 @@ use super::add_remove_with_filter::{
 };
 use super::options::Do;
 use super::package_json_editor::{self as PackageJSONEditor, Declared, EditOptions};
-use super::update_package_json_and_install::print_package_json_into_cache_entry;
 use super::workspace_manifests::same_row;
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, WorkspacePackageJSONCache};
 use super::{PackageManager, Subcommand, UpdateRequest};
@@ -52,7 +51,7 @@ pub(crate) fn record(
     push(&mut manager.edited_package_jsons, target, received_requests);
 }
 
-/// A package.json whose cache entry a migration edited, and what is reported once it is written.
+/// A package.json whose cache entry a migration edited, and what to report once it's written.
 pub(crate) struct MigratedPackageJson {
     target: WorkspaceTarget,
     edits: Vec<&'static str>,
@@ -97,12 +96,13 @@ pub fn write_migrated(manager: &mut PackageManager) {
         bun_core::pretty_errorln!(
             "<d>{} in <r><green>{}<r>",
             file.edits.join(", "),
-            bstr::BStr::new(FileSystem::instance().relative_to(&file.target.package_json_path)),
+            bstr::BStr::new(FileSystem::get().relative_to(&file.target.package_json_path)),
         );
     }
 }
 
-/// Phase 0, before the clean: `bun add ./folder` has a name now, and only one row may carry it.
+/// Phase 0, before the lockfile is cleaned. `bun add ./folder` knows the package's name now, and
+/// only one dependency can have that name.
 pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
     if manager.subcommand != Subcommand::Add
         || manager.options.add_catalog.is_some()
@@ -144,7 +144,8 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
                 continue;
             };
             let name = rows[positional].name.slice(buf);
-            // Not resolved, or a package.json without a name, which two unrelated packages share.
+            // It isn't resolved, or its package.json has no name, which two unrelated packages can
+            // have in common.
             if name.is_empty() || name == request.get_name() {
                 continue;
             }
@@ -179,7 +180,7 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
                             bun_core::fmt::quote(name),
                         ),
                     );
-                    bun_core::note!("add one of them");
+                    bun_core::note!("add only one of them");
                     Global::crash();
                 }
                 let declared_list = DependencyGroup::prop_for_behavior(declared.behavior);
@@ -208,7 +209,7 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
         }
     }
 
-    // Highest row first: a removal moves only the rows after it.
+    // Highest index first, because a removal only shifts the dependencies after it.
     index_sort::sort_slice_unstable_by(&mut dropped, |a, b| b.1.cmp(&a.1));
     let lockfile: &mut Lockfile = &mut manager.lockfile;
     for (workspace_id, row) in dropped {
@@ -221,9 +222,18 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
     }
 }
 
-/// Phase 1, before bun.lock is saved. True when `overrides` got other values (a `$name` follows).
+/// How the version strings that `edit_after_resolve` wrote to package.json changed the lockfile.
+#[derive(Default)]
+pub(crate) struct Synced {
+    /// A dependency that had resolved to a registry package now has a version range that matches a
+    /// workspace, so it was resolved to that workspace instead.
+    pub(crate) links: bool,
+}
+
+/// Phase 1, before bun.lock is saved: puts the resolved versions into the in-memory copies of the
+/// edited package.json files, which `flush` writes later, and into the lockfile.
 #[inline]
-pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<bool> {
+pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<Synced> {
     if manager.pending_filtered_write.is_none()
         && manager.update_target_workspaces.is_none()
         && !manager
@@ -231,13 +241,13 @@ pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<
             .iter()
             .any(|e| e.received_requests)
     {
-        return Ok(false);
+        return Ok(Synced::default());
     }
     edit_after_resolve_slow(manager)
 }
 
 #[inline(never)]
-fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<bool> {
+fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<Synced> {
     let mut edited: Vec<EditedPackageJson> = core::mem::take(&mut manager.edited_package_jsons);
     let mut updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
     let exact = manager.options.enable.exact_versions();
@@ -277,7 +287,7 @@ fn edit_update_targets(
     edited: &mut Vec<EditedPackageJson>,
     exact: bool,
 ) -> crate::Result<()> {
-    let top_level = FileSystem::instance().top_level_dir();
+    let top_level = FileSystem::get().top_level_dir();
     let mut selected: Vec<WorkspaceTarget> = Vec::new();
     {
         let lockfile: &Lockfile = &manager.lockfile;
@@ -438,11 +448,12 @@ fn parse_edited(
     Ok(parsed)
 }
 
-/// So that the next install's differ sees no change. True when `overrides` differed.
+/// Copies the edited package.json files' dependency versions, overrides and catalogs into the
+/// lockfile, so that the next install finds no difference between the two.
 fn sync_lockfile(
     manager: &mut PackageManager,
     edited: &[EditedPackageJson],
-) -> crate::Result<bool> {
+) -> crate::Result<Synced> {
     let mut scratch = super::workspace_manifests::ScratchManifests::new();
     let parsed = match parse_edited(manager, &mut scratch, edited) {
         Ok(parsed) => parsed,
@@ -470,10 +481,12 @@ fn sync_lockfile(
             sbuf,
         )
     };
-    // Why a rule is gone: the members no longer agree on the literal its `$name` names.
+    // Explains why an override is gone: the workspaces no longer agree on the literal that its
+    // `$name` refers to.
     if overrides_changed && !manager.options.log_level.is_silent() {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
     }
+    let mut rewritten: Vec<DependencyID> = Vec::new();
     for (i, pkg) in &parsed {
         let target_id = target_ids[*i];
         if target_id == invalid_package_id {
@@ -554,6 +567,7 @@ fn sync_lockfile(
             *lf.catalogs = scratch.catalogs.clone(known, sbuf, &mut builder)?;
         }
         builder.clamp();
+        rewritten.extend(changed.iter().map(|&(ti, _)| row.off + ti as DependencyID));
     }
     // `steer_used_catalogs_to_latest` ran, also when the root is not edited.
     if manager.options.do_.contains(Do::UPDATE_TO_LATEST)
@@ -576,7 +590,13 @@ fn sync_lockfile(
         *lf.overrides = scratch.overrides.clone(known, sbuf, &mut builder)?;
         builder.clamp();
     }
-    Ok(overrides_changed)
+    // An override can decide a rewritten row, so the rows are bound once the overrides are synced.
+    let link_workspace_packages = manager.options.link_workspace_packages;
+    let mut links = false;
+    for row in rewritten {
+        links |= (manager.lockfile).bind_workspace_link(row, link_workspace_packages);
+    }
+    Ok(Synced { links })
 }
 
 fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> bool {
@@ -595,10 +615,11 @@ fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> 
     if *on_disk.source.contents == *printed {
         return true;
     }
-    // Printed as it is, the file can differ from itself: that alone is nothing to write.
-    let root = on_disk.root;
-    print_package_json_into_cache_entry(on_disk, root);
-    *on_disk.source.contents == *printed
+    // Printing the file unchanged can already give different bytes. That alone isn't a reason to
+    // write it.
+    on_disk
+        .print(on_disk.root)
+        .is_ok_and(|reprinted| *reprinted == *printed)
 }
 
 /// Phase 2 (after bun.lock is saved): add `trustedDependencies` learned during the install and write every edited entry whose bytes differ from disk.

@@ -104,6 +104,25 @@ impl Dir {
             Err(e) => Err(e),
         }
     }
+    /// Deletes everything inside this directory through its open handle, never through its path.
+    /// Continues past an entry that cannot be deleted, and returns the first error.
+    pub fn delete_children(&self) -> Maybe<()> {
+        // On POSIX, a listing resumes where the last one through this handle stopped, so rewind.
+        // On Windows, every listing starts from the beginning.
+        #[cfg(not(windows))]
+        set_file_offset(self.fd, 0)?;
+        let mut names: Vec<Vec<u8>> = Vec::new();
+        let mut entries = dir_iterator::iterate(self.fd);
+        while let Some(entry) = entries.next()? {
+            names.push(entry.name.slice_u8().to_vec());
+        }
+        let mut result = Ok(());
+        for name in &names {
+            let deleted = self.delete_tree(name);
+            result = result.and(deleted);
+        }
+        result
+    }
     /// Recursive `rm -rf`
     /// (stack-based depth-first walk).
     pub fn delete_tree(&self, sub_path: &[u8]) -> Maybe<()> {
@@ -372,14 +391,6 @@ impl Dir {
     #[inline]
     pub fn delete_file_z(&self, sub_path: &ZStr) -> Maybe<()> {
         unlinkat(self.fd, sub_path)
-    }
-
-    /// Open `sub_path` (NUL-terminated) relative to
-    /// this dir as a `Dir` handle: `O_DIRECTORY |
-    /// O_RDONLY | O_CLOEXEC` (handled by `open_dir_at`).
-    #[inline]
-    pub fn open_dir_z(&self, sub_path: &ZStr) -> Maybe<Dir> {
-        open_dir_at(self.fd, sub_path.as_bytes()).map(Dir::from_fd)
     }
 
     /// Open `sub_path` as an iterable, no-follow `Dir` handle with sub-path

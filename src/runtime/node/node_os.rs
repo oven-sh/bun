@@ -141,6 +141,7 @@ mod _impl {
         let mut num_cpus: u32 = 0;
 
         let mut file_buf: Vec<u8> = Vec::new();
+        let mut cpu_ids: Vec<u32> = Vec::new();
 
         // Read /proc/stat to get number of CPUs and times
         {
@@ -188,10 +189,14 @@ mod _impl {
             while let Some(line) = line_iter.next() {
                 // CPU lines are formatted as `cpu0 user nice sys idle iowait irq softirq`
                 let mut toks = strings::tokenize_any(line, b" \t");
-                let cpu_name = toks.next();
-                if cpu_name.is_none() || !cpu_name.unwrap().starts_with(b"cpu") {
+                let Some(cpu_name) = toks.next() else {
                     break; // done with CPUs
-                }
+                };
+                let Some(cpu_id) = cpu_name.strip_prefix(b"cpu") else {
+                    break; // done with CPUs
+                };
+                let cpu_id = bun_core::fmt::parse_int::<u32>(cpu_id, 10)
+                    .map_err(|_| crate::Error::InvalidCharacter)?;
 
                 //NOTE: libuv assumes this is fixed on Linux, not sure that's actually the case
                 let scale: u64 = 10;
@@ -211,6 +216,7 @@ mod _impl {
                 let cpu = JSValue::create_empty_object(global_this, 1);
                 cpu.put(global_this, b"times", times.to_value(global_this));
                 values.put_index(global_this, num_cpus, cpu)?;
+                cpu_ids.push(cpu_id);
 
                 num_cpus += 1;
             }
@@ -227,49 +233,15 @@ mod _impl {
             file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
             let contents = file_buf.as_slice();
 
-            let mut line_iter = strings::tokenize(contents, b"\n");
-
-            const KEY_PROCESSOR: &[u8] = b"processor\t: ";
-            const KEY_MODEL_NAME: &[u8] = b"model name\t: ";
-
-            let mut cpu_index: u32 = 0;
-            let mut has_model_name = true;
-            while let Some(line) = line_iter.next() {
-                if line.starts_with(KEY_PROCESSOR) {
-                    if !has_model_name {
-                        let cpu = values.get_index(global_this, cpu_index)?;
-                        cpu.put(
-                            global_this,
-                            b"model",
-                            global_this.common_strings().unknown(),
-                        );
-                    }
-                    // If this line starts a new processor, parse the index from the line
-                    let digits = strings::trim(&line[KEY_PROCESSOR.len()..], b" \t\n");
-                    cpu_index = parse_u32(digits)?;
-                    if cpu_index >= num_cpus {
-                        return Err(OsError::Any);
-                    }
-                    has_model_name = false;
-                } else if line.starts_with(KEY_MODEL_NAME) {
-                    // If this is the model name, extract it and store on the current cpu
-                    let model_name = &line[KEY_MODEL_NAME.len()..];
-                    let cpu = values.get_index(global_this, cpu_index)?;
-                    cpu.put(
-                        global_this,
-                        b"model",
-                        bun_string_jsc::create_utf8_for_js(global_this, model_name)?,
-                    );
-                    has_model_name = true;
-                }
-            }
-            if !has_model_name {
-                let cpu = values.get_index(global_this, cpu_index)?;
-                cpu.put(
-                    global_this,
-                    b"model",
-                    global_this.common_strings().unknown(),
-                );
+            let models = parse_cpuinfo_models(contents);
+            for (cpu_index, cpu_id) in cpu_ids.iter().enumerate() {
+                let cpu = values.get_index(global_this, cpu_index as u32)?;
+                let model =
+                    match models.get(*cpu_id as usize).and_then(|model| model.as_deref()) {
+                        Some(model) => bun_string_jsc::create_utf8_for_js(global_this, model)?,
+                        None => global_this.common_strings().unknown(),
+                    };
+                cpu.put(global_this, b"model", model);
             }
 
             file_buf.clear();
@@ -286,7 +258,7 @@ mod _impl {
         }
 
         // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional)
-        for cpu_index in 0..num_cpus as usize {
+        for (cpu_index, cpu_id) in cpu_ids.iter().enumerate() {
             let cpu = values.get_index(global_this, cpu_index as u32)?;
 
             let mut path_buf = [0u8; 128];
@@ -295,7 +267,7 @@ mod _impl {
                 write!(
                     cursor,
                     "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq\0",
-                    cpu_index
+                    cpu_id
                 )
                 .map_err(|_| crate::Error::fmt)?;
                 let remaining = cursor.len();
@@ -1474,10 +1446,167 @@ impl NetmaskInt for u128 {
 fn parse_u64(s: &[u8]) -> crate::Result<u64> {
     bun_core::fmt::parse_int(s, 10).map_err(|_| crate::Error::InvalidCharacter)
 }
+/// The model name of each CPU, keyed by its `/proc/cpuinfo` processor ID.
+///
+/// `/proc/stat` and `/proc/cpuinfo` list only online CPUs, so a hot-removed
+/// CPU leaves a gap in the IDs. Keep the processor ID as the index instead of
+/// assigning models by dense position.
+///
+/// `/proc/cpuinfo` does not have one fixed spelling: x86 puts the name in
+/// `model name`, while many ARM kernels only report the SoC in `Hardware`
+/// (and some put the per-core name in `model name`). Split each line at the
+/// first `:`, trim both sides, and let `model name` win over `Hardware`.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-#[inline]
-fn parse_u32(s: &[u8]) -> crate::Result<u32> {
-    bun_core::fmt::parse_int(s, 10).map_err(|_| crate::Error::InvalidCharacter)
+fn parse_cpuinfo_models(contents: &[u8]) -> Vec<Option<Vec<u8>>> {
+    let mut models: Vec<Option<Vec<u8>>> = Vec::new();
+    let mut hardware: Option<Vec<u8>> = None;
+    let mut current: Option<usize> = None;
+
+    for line in bun_core::strings::split(contents, b"\n") {
+        let Some(colon) = bun_core::strings::index_of_char_usize(line, b':') else {
+            continue;
+        };
+        let key = bun_core::strings::trim(&line[..colon], b" \t\r");
+        let value = bun_core::strings::trim(&line[colon + 1..], b" \t\r");
+
+        match key {
+            b"processor" => {
+                current = bun_core::fmt::parse_int::<usize>(value, 10).ok();
+                if let Some(index) = current {
+                    if models.len() <= index {
+                        models.resize(index + 1, None);
+                    }
+                }
+            }
+            b"model name" => {
+                if let Some(index) = current {
+                    if !value.is_empty() {
+                        if models.len() <= index {
+                            models.resize(index + 1, None);
+                        }
+                        models[index] = Some(value.to_vec());
+                    }
+                }
+            }
+            b"Hardware" => {
+                if !value.is_empty() {
+                    hardware = Some(value.to_vec());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(hardware) = hardware {
+        for model in &mut models {
+            if model.is_none() {
+                *model = Some(hardware.clone());
+            }
+        }
+    }
+
+    models
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "android")))]
+mod tests {
+    use super::parse_cpuinfo_models;
+
+    fn models(contents: &str) -> Vec<Option<String>> {
+        parse_cpuinfo_models(contents.as_bytes())
+            .into_iter()
+            .map(|model| model.map(|model| String::from_utf8(model).unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn reads_x86_model_name() {
+        let input = "processor\t: 0\nmodel name\t: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz\n";
+        assert_eq!(
+            models(input),
+            vec![Some("Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz".into())]
+        );
+    }
+
+    #[test]
+    fn uses_hardware_when_the_core_has_no_model_name() {
+        let input = "processor\t: 0\nBogoMIPS\t: 48.00\nHardware\t: HUAWEI Kirin 9000\n";
+        assert_eq!(models(input), vec![Some("HUAWEI Kirin 9000".into())]);
+    }
+
+    #[test]
+    fn model_name_wins_over_hardware() {
+        let input = "processor : 0\nmodel name : Cortex-A76\nHardware : HUAWEI Kirin 9000\n";
+        assert_eq!(models(input), vec![Some("Cortex-A76".into())]);
+    }
+
+    #[test]
+    fn hardware_fills_only_the_cores_without_a_model_name() {
+        let input = "\
+processor : 0
+model name : Cortex-A55
+processor : 1
+Hardware : HUAWEI Kirin 9000
+";
+        assert_eq!(
+            models(input),
+            vec![Some("Cortex-A55".into()), Some("HUAWEI Kirin 9000".into())]
+        );
+    }
+
+    #[test]
+    fn leaves_a_core_without_a_model_unknown() {
+        let input = "processor : 0\nBogoMIPS : 48.00\n";
+        assert_eq!(models(input), vec![None]);
+    }
+
+    #[test]
+    fn keeps_processors_beyond_the_proc_stat_count() {
+        let input = "processor : 0\nmodel name : A\nprocessor : 1\nmodel name : B\n";
+        assert_eq!(models(input), vec![Some("A".into()), Some("B".into())]);
+    }
+
+    #[test]
+    fn keeps_models_for_sparse_processor_ids() {
+        let input = "\
+processor : 0
+model name : A
+processor : 2
+model name : C
+processor : 3
+model name : D
+";
+        let parsed = models(input);
+        assert_eq!(
+            parsed,
+            vec![
+                Some("A".into()),
+                None,
+                Some("C".into()),
+                Some("D".into())
+            ]
+        );
+
+        let cpu_ids = [0usize, 2, 3];
+        let names: Vec<Option<String>> = cpu_ids
+            .iter()
+            .map(|&id| parsed.get(id).cloned().flatten())
+            .collect();
+        assert_eq!(
+            names,
+            vec![Some("A".into()), Some("C".into()), Some("D".into())]
+        );
+    }
+
+    #[test]
+    fn keeps_a_processor_id_beyond_the_online_count() {
+        let input = "processor : 5\nmodel name : Five\n";
+        let parsed = models(input);
+        assert_eq!(
+            parsed.get(5).and_then(|model| model.as_deref()),
+            Some("Five")
+        );
+    }
 }
 
 #[cfg(windows)]

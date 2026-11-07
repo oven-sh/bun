@@ -811,6 +811,15 @@ declare module "bun:jsc" {
   function startSamplingProfiler(optionalDirectory?: string, sampleInterval?: number): void;
 
   /**
+   * Returns the samples that the profiler started by {@link startSamplingProfiler}
+   * took since the previous call, and removes them from the profiler. The
+   * profiler keeps sampling.
+   *
+   * @throws {Error} If {@link startSamplingProfiler} was never called
+   */
+  function samplingProfilerStackTraces(): SamplingProfileStackTraces;
+
+  /**
    * Non-recursively estimates the memory usage of an object, excluding the memory usage of
    * properties or other objects it references. For more accurate per-object
    * memory usage, use {@link Bun.generateHeapSnapshot}.

@@ -1,5 +1,6 @@
 #include "root.h"
 #include "BunCPUProfiler.h"
+#include "BunSamplingProfiler.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "BunString.h"
@@ -331,14 +332,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
     // Defer GC while we're working with stack traces
     JSC::DeferGC deferGC(vm);
 
-    // Pause the profiler while holding the lock
-    auto& lock = profiler->getLock();
-    WTF::Locker profilerLocker { lock };
-    profiler->pause();
-
-    // releaseStackTraces() calls processUnverifiedStackTraces() internally
-    auto stackTraces = profiler->releaseStackTraces();
-    profiler->clearData();
+    auto stackTraces = takeSamplingProfilerStackTraces(*profiler, /* pause */ true);
 
     // If neither output is requested, we're done
     if (!outJSON && !outText)

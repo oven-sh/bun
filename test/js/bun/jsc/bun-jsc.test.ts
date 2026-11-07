@@ -19,14 +19,16 @@ import {
   optimizeNextInvocation,
   profile,
   releaseWeakRefs,
+  samplingProfilerStackTraces,
   reoptimizationRetryCount,
   serialize,
   setRandomSeed,
   setTimeZone,
+  startSamplingProfiler,
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isBuildKite, isDebug, isWindows, tempDir } from "harness";
 import { createHash, type webcrypto } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -340,6 +342,121 @@ describe("bun:jsc", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("ok\n");
     expect(exitCode).toBe(0);
+  });
+
+  // A recursion that stays on the stack while the sampler runs, so that every
+  // sample has `depth` frames of `deep` on top of the caller's frames.
+  const deepRecursion = (depth: number, holdMs: number) => {
+    function deep(n: number): void {
+      if (n === 0) {
+        const end = performance.now() + holdMs;
+        while (performance.now() < end);
+        return;
+      }
+      deep(n - 1);
+    }
+    return () => deep(depth);
+  };
+
+  it.todoIf(isBuildKite && isWindows)("profile stackTraces has the documented shape", () => {
+    let result = profile(deepRecursion(50, 20), 500);
+    const deadline = performance.now() + 5000;
+    while (result.stackTraces.traces.length === 0 && performance.now() < deadline) {
+      result = profile(deepRecursion(50, 20), 500);
+    }
+
+    expect(Object.keys(result)).toEqual(["functions", "bytecodes", "stackTraces"]);
+    expect(Object.keys(result.stackTraces)).toEqual(["interval", "traces", "sources"]);
+    expect(result.stackTraces.interval).toBe(0.0005);
+    expect(result.stackTraces.traces.length).toBeGreaterThan(0);
+
+    const frameKeys = ["sourceID", "name", "location", "line", "column", "category", "flags"];
+    const frameKeysWithURL = ["sourceID", "name", "location", "sourceURL", "line", "column", "category", "flags"];
+    let deepFrames = 0;
+    for (const trace of result.stackTraces.traces) {
+      expect(Object.keys(trace)).toEqual(["timestamp", "frames"]);
+      expect(typeof trace.timestamp).toBe("number");
+      for (const frame of trace.frames) {
+        const keys = Object.keys(frame).filter(key => key !== "inliner");
+        expect([frameKeys, frameKeysWithURL]).toContainEqual(keys);
+        expect(typeof frame.sourceID).toBe("number");
+        expect(typeof frame.name).toBe("string");
+        expect(frame.location).toMatch(/^#[^:]+:[^:]+:.+$/);
+        expect(typeof frame.line).toBe("number");
+        expect(typeof frame.column).toBe("number");
+        expect(typeof frame.category).toBe("string");
+        expect([0, 1]).toContain(frame.flags);
+        if (frame.inliner) {
+          expect(Object.keys(frame.inliner)).toEqual(["name", "location", "line", "column", "category"]);
+        }
+        if (frame.name === "deep") deepFrames++;
+      }
+    }
+    // 50 frames of `deep` per sample, innermost first.
+    expect(deepFrames).toBeGreaterThanOrEqual(result.stackTraces.traces.length * 50);
+    expect(result.stackTraces.traces.some(trace => trace.frames[0]?.name === "deep")).toBe(true);
+
+    const thisFile = result.stackTraces.sources.find(source => source.url === import.meta.path);
+    expect(thisFile).toBeDefined();
+    const deepFrame = result.stackTraces.traces.flatMap(trace => trace.frames).find(frame => frame.name === "deep")!;
+    expect(deepFrame.sourceID).toBe(thisFile!.sourceID);
+    for (const source of result.stackTraces.sources) {
+      expect(Object.keys(source)[0]).toBe("sourceID");
+      expect(Object.values(source)).not.toContain("");
+    }
+  });
+
+  it.todoIf(isBuildKite && isWindows)("samplingProfilerStackTraces drains the samples and keeps sampling", () => {
+    startSamplingProfiler(undefined, 200);
+    const deadline = performance.now() + 5000;
+    let first = samplingProfilerStackTraces();
+    while (first.traces.length === 0 && performance.now() < deadline) {
+      deepRecursion(10, 20)();
+      first = samplingProfilerStackTraces();
+    }
+    expect(first.interval).toBe(0.0002);
+    expect(first.traces.length).toBeGreaterThan(0);
+
+    // Each call returns only the samples taken since the previous call.
+    const second = samplingProfilerStackTraces();
+    expect(second.traces.length).toBe(0);
+
+    let third = samplingProfilerStackTraces();
+    while (third.traces.length === 0 && performance.now() < deadline) {
+      deepRecursion(10, 20)();
+      third = samplingProfilerStackTraces();
+    }
+    expect(third.traces.length).toBeGreaterThan(0);
+  });
+
+  it.todoIf(isBuildKite && isWindows)("profile does not allocate far more than the result for deep stacks", async () => {
+    // Each sampled frame used to cost about 1.5 KB of transient memory (a
+    // JSON tree, its text, and the parse of that text) on top of the frame
+    // objects in the result. Stock Bun measures about 1500 B/frame in a
+    // release build and about 2400 B/frame in an ASAN debug build.
+    const script = `
+      const { profile } = require("bun:jsc");
+      function deep(n) {
+        if (n === 0) { const end = performance.now() + 300; while (performance.now() < end); return; }
+        deep(n - 1);
+      }
+      const before = process.resourceUsage().maxRSS;
+      const result = profile(() => deep(1000), 1000);
+      const after = process.resourceUsage().maxRSS;
+      const frames = result.stackTraces.traces.reduce((sum, trace) => sum + trace.frames.length, 0);
+      console.log(JSON.stringify({ frames, peakDeltaBytes: (after - before) * 1024 }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { frames, peakDeltaBytes } = JSON.parse(stdout);
+    expect(frames).toBeGreaterThan(10_000);
+    expect(peakDeltaBytes / frames).toBeLessThan(isASAN || isDebug ? 1600 : 700);
   });
 });
 

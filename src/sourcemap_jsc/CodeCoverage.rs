@@ -870,6 +870,29 @@ impl ByteRangeMapping {
         }
         functions.sort_unstable_by_key(|function| function.range);
 
+        // A function that the printer marked is none of the source's: the file does not have it, and no line runs in it.
+        let mut invented: Vec<ByteRange> = Vec::new();
+        if let Some(source_map) = source_map.as_deref()
+            && source_map.invented_function_count() > 0
+        {
+            let mut starts: Vec<u32> = Vec::new();
+            source_map.for_each_invented_function(|generated| {
+                starts.extend(self.offset_of(generated));
+            });
+            starts.sort_unstable();
+            functions.retain(|function| {
+                let is_invented = starts.binary_search(&function.range.start).is_ok();
+                if is_invented {
+                    invented.push(function.range);
+                }
+                !is_invented
+            });
+        }
+        let is_invented = |offset: u32| {
+            let after = invented.partition_point(|range| range.start <= offset);
+            after > 0 && offset < invented[after - 1].end
+        };
+
         let counts = ExecutionCounts::new(&blocks, &functions);
         let mut lines = LineCounts::default();
 
@@ -941,6 +964,9 @@ impl ByteRangeMapping {
                 ) else {
                     return;
                 };
+                if is_invented(offset) {
+                    return;
+                }
                 self.count_line(&counts, offset, line, &mut lines);
             });
         } else {

@@ -259,6 +259,21 @@ impl ParsedSourceMap {
         }
     }
 
+    /// How many functions the printer marked as ones the source does not have.
+    pub fn invented_function_count(&self) -> u32 {
+        match &self.internal {
+            Some(ism) => ism.invented_function_count(),
+            None => 0,
+        }
+    }
+
+    /// Where each of them begins in the generated text.
+    pub fn for_each_invented_function(&self, each: impl FnMut(crate::LineColumnOffset)) {
+        if let Some(ism) = &self.internal {
+            ism.for_each_invented_function(each);
+        }
+    }
+
     pub fn memory_cost(&self) -> usize {
         let mappings_cost = if let Some(ism) = &self.internal {
             ism.memory_cost()

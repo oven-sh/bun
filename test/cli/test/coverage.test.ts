@@ -1478,29 +1478,40 @@ test("disposes", () => {
   expect(plain.exitCode).toBe(0);
 });
 
-test("every line and every called function of a class with an undecorated accessor #x is reported as run", async () => {
+test("the getter and the setter that are printed for an undecorated accessor #x are no functions of the file", async () => {
   using dir = tempDir("cov-accessor", {
-    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    // The test never stores to #a and #s. If their setters counted, the functions would be under the threshold.
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = 0.9\n`,
     // An accessor with no value, and one whose value is on the next line, have no code of their own on their line.
     "lib.ts": `export class C {
+  before = #a in this;
   accessor #a = 1;
   accessor #bare;
   static accessor #s = 2;
   static accessor #sbare;
   accessor #next =
     3;
+  accessor shown = 4;
+  #count = 5;
+  get #written() {
+    return this.#count;
+  }
   use() {
     this.#bare = this.#a + 1;
     C.#sbare = C.#s + 1;
     this.#next = this.#next + 1;
-    return this.#bare + C.#sbare + this.#next;
+    this.shown = this.shown + this.#written;
+    return this.#bare + C.#sbare + this.#next + this.shown;
   }
 }
 `,
     "lib.test.ts": `
       import { test, expect } from "bun:test";
       import { C } from "./lib";
-      test("use", () => { expect(new C().use()).toBe(9); });
+      test("use", () => {
+        const c = new C();
+        expect([c.before, c.use()]).toEqual([true, 18]);
+      });
     `,
   });
   await using proc = Bun.spawn({
@@ -1513,10 +1524,12 @@ test("every line and every called function of a class with an undecorated access
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("(pass) use");
   const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
-  expect(lcov.match(/^DA:\d+,0$/gm)).toBeNull();
-  expect(lcov.match(/^L[FH]:\d+$/gm)).toEqual(["LF:12", "LH:12"]);
-  // The getter and the setter of each accessor count as functions. The test calls all but the setters of #a and #s.
-  expect(lcov.match(/^FN[FH]:\d+$/gm)).toEqual(["FNF:11", "FNH:9"]);
+  // use(), the getter #written that the source has, and the pair of the public accessor.
+  expect(lcov.match(/^FN[FH]:\d+$/gm)).toEqual(["FNF:4", "FNH:4"]);
+  // A line runs as often as its field gets its value, not as often as the accessor is read.
+  expect(lcov.match(/^DA:\d+,\d+$/gm)?.join(" ")).toBe(
+    "DA:1,1 DA:2,1 DA:3,1 DA:4,1 DA:5,1 DA:6,1 DA:7,1 DA:8,1 DA:9,2 DA:10,1 DA:11,1 DA:12,1 DA:14,1 DA:15,1 DA:16,1 DA:17,1 DA:18,1 DA:19,1",
+  );
   expect(exitCode).toBe(0);
 });
 

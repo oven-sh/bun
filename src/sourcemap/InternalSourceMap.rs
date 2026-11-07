@@ -63,12 +63,13 @@
 //! ```text
 //!     [ 0.. 8]  total_len:         u64   -- written by Chunk.Builder.generateChunk
 //!     [ 8..16]  mapping_count:     u64   -- written by Chunk.Builder.generateChunk
-//!     [16..20]  unused
+//!     [16..20]  invented_function_count: u32
 //!     [20..24]  object_brace_count: u32  -- 0 from an older Bun: the high half of its u64 line count
 //!     [24..28]  sync_count:        u32
 //!     [28..32]  stream_offset:     u32   -- byte offset from blob start to stream
 //!     [32..  ]  SyncEntry[sync_count]    -- 24 bytes each
 //!     [stream_offset..]  Window[sync_count]
+//!     [..]  InventedFunction[invented_function_count] -- see `Builder::mark_invented_function`
 //!     [..total_len-stream_tail_pad]  ObjectBrace[object_brace_count] -- see `Builder::mark_object_brace`
 //!     [total_len-stream_tail_pad..total_len]      zero bytes (see `STREAM_TAIL_PAD`)
 //! ```
@@ -144,7 +145,15 @@ pub struct ObjectBrace {
 
 const _: () = assert!(size_of::<ObjectBrace>() == 16);
 
-bun_core::impl_pod!(SyncEntry, ObjectBrace);
+/// Where `Builder::mark_invented_function` found the generated text.
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct InventedFunction {
+    generated_line: i32,
+    generated_column: i32,
+}
+
+bun_core::impl_pod!(SyncEntry, ObjectBrace, InventedFunction);
 
 impl SyncEntry {
     #[inline]
@@ -207,6 +216,22 @@ impl InternalSourceMap {
         let stream = self.stream();
         let len = self.object_brace_count() as usize * size_of::<ObjectBrace>();
         match stream.len().checked_sub(len + STREAM_TAIL_PAD) {
+            Some(start) => stream[start..][..len].as_chunks().0,
+            None => &[],
+        }
+    }
+
+    #[inline]
+    pub(crate) fn invented_function_count(self) -> u32 {
+        // SAFETY: blob is at least HEADER_SIZE bytes.
+        unsafe { u32::from_ne_bytes(*self.data.add(16).cast::<[u8; 4]>()) }
+    }
+
+    fn invented_functions(&self) -> &[[u8; size_of::<InventedFunction>()]] {
+        let stream = self.stream();
+        let after = self.object_brace_count() as usize * size_of::<ObjectBrace>() + STREAM_TAIL_PAD;
+        let len = self.invented_function_count() as usize * size_of::<InventedFunction>();
+        match stream.len().checked_sub(len + after) {
             Some(start) => stream[start..][..len].as_chunks().0,
             None => &[],
         }
@@ -679,6 +704,17 @@ impl InternalSourceMap {
         }
     }
 
+    /// The generated position of each function that the printer marked as one the source does not have.
+    pub(crate) fn for_each_invented_function(self, mut each: impl FnMut(LineColumnOffset)) {
+        for bytes in self.invented_functions() {
+            let at = bun_core::read_prefix::<InventedFunction>(bytes).unwrap();
+            each(LineColumnOffset {
+                lines: Ordinal(at.generated_line),
+                columns: Ordinal(at.generated_column),
+            });
+        }
+    }
+
     /// Re-encode the full mapping stream as a standard VLQ "mappings" string. Only
     /// the inspector's inline-sourcemap path needs this.
     pub fn append_vlq_to(self, out: &mut MutableString) {
@@ -769,6 +805,7 @@ pub struct Builder {
     pending_original_column: [i32; SYNC_INTERVAL],
     finalized: Option<MutableString>,
     object_braces: Vec<ObjectBrace>,
+    invented_functions: Vec<InventedFunction>,
 }
 
 impl Default for Builder {
@@ -787,6 +824,7 @@ impl Default for Builder {
             pending_original_column: [0; SYNC_INTERVAL],
             finalized: None,
             object_braces: Vec::new(),
+            invented_functions: Vec::new(),
         }
     }
 }
@@ -842,6 +880,14 @@ impl Builder {
                 lines: Ordinal(last.original_line),
                 columns: Ordinal(last.original_column),
             },
+        });
+    }
+
+    /// Marks `generated`, where the printer is about to write a function that the source does not have. Coverage does not count it.
+    pub(crate) fn mark_invented_function(&mut self, generated: LineColumnOffset) {
+        self.invented_functions.push(InventedFunction {
+            generated_line: generated.lines.0,
+            generated_column: generated.columns.0,
         });
     }
 
@@ -1067,15 +1113,18 @@ impl Builder {
             let sync_entries = bun_core::slice_as_bytes(&self.sync_entries);
             let sync_bytes = sync_entries.len();
             let stream_offset: u32 = u32::try_from(HEADER_SIZE + sync_bytes).expect("int cast");
-            let object_braces_offset = stream_offset as usize + self.win_stream.len();
+            let invented_functions_offset = stream_offset as usize + self.win_stream.len();
+            let invented_functions = bun_core::slice_as_bytes(&self.invented_functions);
+            let object_braces_offset = invented_functions_offset + invented_functions.len();
             let object_braces = bun_core::slice_as_bytes(&self.object_braces);
             let object_braces_bytes = object_braces.len();
             let total: usize = object_braces_offset + object_braces_bytes + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
-            // Every byte in [0..total) is written below: [0..20] zero-filled,
-            // [20..32] header u32s, [32..32+sync_bytes] sync table memcpy,
+            // Every byte in [0..total) is written below: [0..16] zero-filled,
+            // [16..32] header u32s, [32..32+sync_bytes] sync table memcpy,
             // [stream_offset..stream_offset+win_stream.len()] stream memcpy,
+            // [invented_functions_offset..object_braces_offset] invented functions memcpy,
             // [object_braces_offset..total-STREAM_TAIL_PAD] object braces memcpy,
             // [total-STREAM_TAIL_PAD..total] zero-filled. These ranges are
             // contiguous (HEADER_SIZE==32, stream_offset==32+sync_bytes), so
@@ -1083,7 +1132,12 @@ impl Builder {
             // SAFETY: every byte in [0..total) is written below (see comment above).
             let blob = unsafe { out.list.writable_slice_exact(total) };
 
-            blob[0..20].fill(0);
+            blob[0..16].fill(0);
+            blob[16..20].copy_from_slice(
+                &u32::try_from(self.invented_functions.len())
+                    .expect("int cast")
+                    .to_ne_bytes(),
+            );
             blob[20..24].copy_from_slice(
                 &u32::try_from(self.object_braces.len())
                     .expect("int cast")
@@ -1100,6 +1154,8 @@ impl Builder {
             }
             blob[stream_offset as usize..stream_offset as usize + self.win_stream.len()]
                 .copy_from_slice(&self.win_stream);
+            blob[invented_functions_offset..object_braces_offset]
+                .copy_from_slice(invented_functions);
             blob[object_braces_offset..][..object_braces_bytes].copy_from_slice(object_braces);
             blob[total - STREAM_TAIL_PAD..total].fill(0);
 

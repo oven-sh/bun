@@ -48,12 +48,19 @@ declare namespace DEBUG {
 /** All modules for the initial bundle. */
 declare const unloadedModuleRegistry: Record<string, UnloadedModule>;
 declare type UnloadedModule = UnloadedESM | UnloadedCommonJS;
+/** A tuple record. `print_dev_server_module` in src/js_printer/lib.rs decides which CommonJS files are one. */
 declare type UnloadedESM = [
   deps: EncodedDependencyArray,
   exportKeys: string[],
   starImports: Id[],
-  load: (mod: import("./hmr-module").HMRModule) => Promise<void>,
-  isAsync: boolean,
+  /** Called like `UnloadedCommonJS` when `flags` has `RecordFlags.cjs` */
+  load: (
+    mod: import("./hmr-module").HMRModule,
+    module?: import("./hmr-module").HMRModule["cjs"],
+    exports?: unknown,
+  ) => Promise<void>,
+  /** `RecordFlags` in hmr-module.ts */
+  flags: number,
 ];
 declare type EncodedDependencyArray = (string | number)[];
 declare type UnloadedCommonJS = (

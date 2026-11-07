@@ -1578,10 +1578,25 @@ devTest("a route whose import throws on load throws that error again on the next
     "sync-import-dep.ts": `throw new Error("sync-import-dep.ts failed to load"); export const value = 1;`,
     "sync-import.ts": `export { value } from "./sync-import-dep.ts";`,
     "sync-import.cjs": `module.exports = require("./sync-import.ts").value;`,
+    // The body runs, but the namespace of its exports cannot be built: reading `__esModule` throws.
+    "namespace-dep.cjs": `
+      module.exports = new Proxy({}, {
+        get(target, key) {
+          if (key === "__esModule") throw new Error("namespace-dep.cjs failed to load");
+          return target[key];
+        },
+      });
+    `,
     "routes/index.ts": `
       import dep from "../dep.cjs";
       export default function () {
         return new Response("dep: " + dep);
+      }
+    `,
+    "routes/namespace.ts": `
+      import dep from "../namespace-dep.cjs";
+      export default function () {
+        return new Response("namespace-dep: " + dep.value);
       }
     `,
     "routes/esm.ts": `
@@ -1616,6 +1631,7 @@ devTest("a route whose import throws on load throws that error again on the next
       ["/tla", "tla-dep.ts failed to load"],
       ["/sync-body", "sync-body.ts failed to load"],
       ["/sync-import", "sync-import-dep.ts failed to load"],
+      ["/namespace", "namespace-dep.cjs failed to load"],
     ]) {
       for (let i = 0; i < 2; i++) {
         const response = await dev.fetch(url);
@@ -1637,6 +1653,8 @@ devTest("a route whose import throws on load throws that error again on the next
     await dev.fetch("/sync-body").equals("sync-body: fixed");
     await dev.write("sync-import-dep.ts", `export const value = "fixed";`);
     await dev.fetch("/sync-import").equals("sync-import: fixed");
+    await dev.write("namespace-dep.cjs", `module.exports = { value: "fixed" };`);
+    await dev.fetch("/namespace").equals("namespace-dep: fixed");
   },
 });
 devTest("a route module that throws when a save reloads it is reported and recovers", {

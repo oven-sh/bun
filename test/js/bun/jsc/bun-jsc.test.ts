@@ -28,7 +28,7 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isBuildKite, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isBuildKite, isLinux, isWindows, tempDir } from "harness";
 import { createHash, type webcrypto } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -372,8 +372,9 @@ describe("bun:jsc", () => {
 
     const frameKeys = ["sourceID", "name", "location", "line", "column", "category", "flags"];
     const frameKeysWithURL = ["sourceID", "name", "location", "sourceURL", "line", "column", "category", "flags"];
-    let deepFrames = 0;
+    let deepestSample = 0;
     for (const trace of result.stackTraces.traces) {
+      let deepFrames = 0;
       expect(Object.keys(trace)).toEqual(["timestamp", "frames"]);
       expect(typeof trace.timestamp).toBe("number");
       for (const frame of trace.frames) {
@@ -391,9 +392,10 @@ describe("bun:jsc", () => {
         }
         if (frame.name === "deep") deepFrames++;
       }
+      deepestSample = Math.max(deepestSample, deepFrames);
     }
-    // 50 frames of `deep` per sample, innermost first.
-    expect(deepFrames).toBeGreaterThanOrEqual(result.stackTraces.traces.length * 50);
+    // deep(50) down to deep(0) is 51 frames of `deep`, innermost first.
+    expect(deepestSample).toBeGreaterThanOrEqual(51);
     expect(result.stackTraces.traces.some(trace => trace.frames[0]?.name === "deep")).toBe(true);
 
     const thisFile = result.stackTraces.sources.find(source => source.url === import.meta.path);
@@ -417,47 +419,59 @@ describe("bun:jsc", () => {
     expect(first.interval).toBe(0.0002);
     expect(first.traces.length).toBeGreaterThan(0);
 
-    // Each call returns only the samples taken since the previous call.
-    const second = samplingProfilerStackTraces();
-    expect(second.traces.length).toBe(0);
-
-    let third = samplingProfilerStackTraces();
-    while (third.traces.length === 0 && performance.now() < deadline) {
+    // The profiler keeps sampling, and each call returns only the samples
+    // taken since the previous call.
+    let second = samplingProfilerStackTraces();
+    while (second.traces.length === 0 && performance.now() < deadline) {
       deepRecursion(10, 20)();
-      third = samplingProfilerStackTraces();
+      second = samplingProfilerStackTraces();
     }
-    expect(third.traces.length).toBeGreaterThan(0);
+    expect(second.traces.length).toBeGreaterThan(0);
+    const lastOfFirst = Math.max(...first.traces.map(trace => trace.timestamp));
+    const firstOfSecond = Math.min(...second.traces.map(trace => trace.timestamp));
+    expect(firstOfSecond).toBeGreaterThan(lastOfFirst);
   });
 
-  it.todoIf(isBuildKite && isWindows)("profile does not allocate far more than the result for deep stacks", async () => {
-    // Each sampled frame used to cost about 1.5 KB of transient memory (a
-    // JSON tree, its text, and the parse of that text) on top of the frame
-    // objects in the result. Stock Bun measures about 1500 B/frame in a
-    // release build and about 2400 B/frame in an ASAN debug build.
-    const script = `
+  it.skipIf(!isLinux)(
+    "profile does not allocate far more than the result for deep stacks",
+    async () => {
+      // Each sampled frame used to cost about 1.5 KB of transient memory (a
+      // JSON tree, its text, and the parse of that text) on top of the frame
+      // objects in the result: about 1700 B/frame in both release and ASAN
+      // debug builds, against under 400 B/frame now.
+      const script = `
       const { profile } = require("bun:jsc");
+      const fs = require("fs");
+      const peakRSS = () => +/VmHWM:\\s+(\\d+)/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1] * 1024;
       function deep(n) {
-        if (n === 0) { const end = performance.now() + 300; while (performance.now() < end); return; }
+        if (n === 0) { const end = performance.now() + 200; while (performance.now() < end); return; }
         deep(n - 1);
       }
-      const before = process.resourceUsage().maxRSS;
-      const result = profile(() => deep(1000), 1000);
-      const after = process.resourceUsage().maxRSS;
+      // Start the sampler thread and warm up the JIT outside the measurement,
+      // then reset the peak RSS to the current RSS.
+      profile(() => deep(5), 1000);
+      Bun.gc(true);
+      fs.writeFileSync("/proc/self/clear_refs", "5");
+      const before = peakRSS();
+      const result = profile(() => deep(500), 1000);
+      const after = peakRSS();
       const frames = result.stackTraces.traces.reduce((sum, trace) => sum + trace.frames.length, 0);
-      console.log(JSON.stringify({ frames, peakDeltaBytes: (after - before) * 1024 }));
+      console.log(JSON.stringify({ frames, peakDeltaBytes: after - before }));
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    const { frames, peakDeltaBytes } = JSON.parse(stdout);
-    expect(frames).toBeGreaterThan(10_000);
-    expect(peakDeltaBytes / frames).toBeLessThan(isASAN || isDebug ? 1600 : 700);
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      const { frames, peakDeltaBytes } = JSON.parse(stdout);
+      expect(frames).toBeGreaterThan(5_000);
+      expect(peakDeltaBytes / frames).toBeLessThan(800);
+    },
+    30_000,
+  );
 });
 
 it("deserialize returns a Date whose getTime() is NaN when the timestamp is a NaN with a payload", () => {

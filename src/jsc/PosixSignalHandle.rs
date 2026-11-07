@@ -31,6 +31,11 @@ impl PosixSignalHandle {
         self.ring.enqueue(signal)
     }
 
+    /// A signal is queued that no tick has drained yet. Any thread.
+    pub(crate) fn has_pending(&self) -> bool {
+        !self.ring.is_empty()
+    }
+
     /// Drain as many signals as possible and enqueue them as tasks in the event loop.
     /// Called by the main thread, the ring's single consumer.
     pub(crate) fn drain(&self, event_loop: &mut EventLoop) {
@@ -59,13 +64,13 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
             // SAFETY: `_exit(2)` is async-signal-safe and takes no pointers.
             unsafe { libc::_exit(0) };
         }
-        let Some(vm) = VirtualMachine::get_main_thread_vm() else {
+        let Some(event_loop) = VirtualMachine::main_thread_regular_loop() else {
             return;
         };
-        // SAFETY: `vm` and its event loop are process-lifetime; raw place
+        // SAFETY: the VM and its event loop are process-lifetime; raw place
         // projection reads only the `signal_handler` slot (no `&EventLoop`
         // formed — the main thread may hold `&mut EventLoop` concurrently).
-        let handler = unsafe { (*(*vm).event_loop()).signal_handler };
+        let handler = unsafe { (*event_loop).signal_handler };
         if let Some(handler) = handler {
             // `BackRef::deref` is the centralised set-once-NonNull proof; the
             // pointee is all-atomic (`Sync`), so a `&PosixSignalHandle` from
@@ -77,7 +82,7 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
             if handler.enqueue(signal) {
                 // SAFETY: same process-lifetime event loop as above; `wakeup`
                 // is one async-signal-safe write to the loop's wakeup fd.
-                unsafe { (*(*vm).event_loop()).wakeup() };
+                unsafe { (*event_loop).wakeup() };
             }
         }
     }
@@ -220,9 +225,9 @@ impl PosixSignalTask {
 extern "C" fn Bun__ensureSignalHandler() {
     #[cfg(unix)]
     {
-        if let Some(vm) = VirtualMachine::get_main_thread_vm() {
-            // SAFETY: `vm` and its event loop are process-lifetime.
-            let this = unsafe { &mut *(*vm).event_loop() };
+        if let Some(event_loop) = VirtualMachine::main_thread_regular_loop() {
+            // SAFETY: the VM and its event loop are process-lifetime.
+            let this = unsafe { &mut *event_loop };
             if this.signal_handler.is_none() {
                 let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
                 this.signal_handler =

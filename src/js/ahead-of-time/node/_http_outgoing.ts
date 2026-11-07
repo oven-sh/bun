@@ -5,8 +5,13 @@
 // Hardcoded module "node:_http_outgoing"
 // This is a port of Node.js's lib/_http_outgoing.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js
-require("internal/stream");
+const { Stream: streamOfProgram } = require("internal/stream");
 const { Stream } = require("internal/streams/legacy");
+// The other text takes what lies under `Stream` on node:stream when it is loaded. Here the class above OutgoingMessage is written into the compiled program.
+if (streamOfProgram !== Stream)
+  throw new TypeError(
+    "stream.Stream was replaced before node:http was loaded. In a compiled executable the classes of node:http extend the one that Bun made: add to stream.Stream.prototype instead, or load node:http first.",
+  );
 const { validateString } = require("internal/validators");
 const { isUint8Array } = require("node:util/types");
 const { deprecate } = require("internal/util/deprecate");
@@ -24,7 +29,6 @@ const kEndCallbacks: typeof http.kEndCallbacks = http.kEndCallbacks;
 const kFlushError: typeof http.kFlushError = http.kFlushError;
 const kRejectNonStandardBodyWrites: typeof http.kRejectNonStandardBodyWrites = http.kRejectNonStandardBodyWrites;
 const kUniqueHeaders: typeof http.kUniqueHeaders = http.kUniqueHeaders;
-const kHandle: typeof http.kHandle = http.kHandle;
 const {
   validateHeaderName,
   validateHeaderValue,
@@ -266,34 +270,16 @@ declare global {
     interface OutgoingMessageConstructor {
       new (options?: OutgoingMessageOptions): OutgoingMessage;
       (this: OutgoingMessage, options?: OutgoingMessageOptions): void;
-      /** The form of `ServerResponse` for a request of the native listener. */
-      (
-        this: OutgoingMessage,
-        marker: typeof kHandle,
-        highWaterMark: number | undefined,
-        rejectNonStandardBodyWrites: boolean | undefined,
-        keepAliveTimeout: number,
-      ): void;
       prototype: any;
     }
   }
 }
 
-function OutgoingMessage(
-  this: $Node.OutgoingMessage,
-  options?: $Node.OutgoingMessageOptions | typeof kHandle,
-  highWaterMark: number | undefined = undefined,
-  rejectNonStandardBodyWrites: boolean | undefined = undefined,
-  keepAliveTimeout: number | undefined = undefined,
-) {
-  if (options === kHandle) {
-    Stream.$call(this, undefined);
-    highWaterMark ??= getDefaultHighWaterMark();
-    if (rejectNonStandardBodyWrites === undefined) rejectNonStandardBodyWrites = false;
-  } else {
-    Stream.$call(this, options);
-    keepAliveTimeout = 0;
-  }
+function OutgoingMessage(this: $Node.OutgoingMessage, options?: $Node.OutgoingMessageOptions) {
+  // A call on a response that exists lays its fields anew. What its server keeps of the dispatch is not among them, and stays.
+  const kept = this.$exchange;
+  if (kept !== undefined) http.responseRoad.spillStateReachedThrough!(this);
+  Stream.$call(this, options);
 
   // Queue that holds all currently pending data, until the response will be
   // assigned to the socket (until it will its turn in the HTTP pipeline).
@@ -337,7 +323,7 @@ function OutgoingMessage(
   this._header = null;
   this[kOutHeaders] = null;
 
-  this._keepAliveTimeout = keepAliveTimeout;
+  this._keepAliveTimeout = 0;
 
   this._onPendingData = nop;
 
@@ -345,13 +331,12 @@ function OutgoingMessage(
   this[kWritableFinished] = false;
   this[kEndCallbacks] = null;
   this[kFlushError] = null;
-  this[kHighWaterMark] = options === kHandle ? highWaterMark! : (options?.highWaterMark ?? getDefaultHighWaterMark());
-  this[kRejectNonStandardBodyWrites] =
-    options === kHandle ? rejectNonStandardBodyWrites! : (options?.rejectNonStandardBodyWrites ?? false);
+  this[kHighWaterMark] = options?.highWaterMark ?? getDefaultHighWaterMark();
+  this[kRejectNonStandardBodyWrites] = options?.rejectNonStandardBodyWrites ?? false;
   // Declared here so the memoizing _isLenientHeaderValidation never
   // shape-transitions the message when it caches.
   this[kLenientValidation] = undefined;
-  this.$exchange = undefined;
+  this.$exchange = kept;
 }
 $toClass(OutgoingMessage, "OutgoingMessage", Stream);
 
@@ -375,27 +360,26 @@ function computeLenientHeaderValidation(message: $Node.OutgoingMessage): boolean
   const httpValidation = message.httpValidation;
   if (httpValidation !== undefined) return httpValidation !== "strict";
   // ServerResponse routes both options through the owning server; walk the req -> socket -> server chain once, not once per option.
-  const server = getServer(message);
-  const serverHttpValidation = getServerHttpValidation(server);
+  // Each step leaves early: where two ways meet again, a compiler ahead of time no longer knows what it holds.
+  const req = message.req;
+  if (req === undefined || req === null) return isLenientWithoutServer(message);
+  const socket = req.socket;
+  if (socket === undefined || socket === null) return isLenientWithoutServer(message);
+  const server = socket.server;
+  if (server === undefined || server === null) return isLenientWithoutServer(message);
+  const serverHttpValidation = server.httpValidation;
   if (serverHttpValidation !== undefined) return serverHttpValidation !== "strict";
   // Legacy insecureHTTPParser - ClientRequest has it directly
   const insecureHTTPParser = message.insecureHTTPParser;
   if (typeof insecureHTTPParser === "boolean") return insecureHTTPParser;
   // ServerResponse can access via the server
-  const serverOption = getServerInsecureHTTPParser(server);
+  const serverOption = server.insecureHTTPParser;
   return typeof serverOption === "boolean" ? serverOption : isLenient();
 }
 
-function getServer(message: $Node.OutgoingMessage) {
-  return message.req?.socket?.server;
-}
-
-function getServerHttpValidation(server: $Node.HttpSocketServer | null | undefined) {
-  return server?.httpValidation;
-}
-
-function getServerInsecureHTTPParser(server: $Node.HttpSocketServer | null | undefined) {
-  return server?.insecureHTTPParser;
+function isLenientWithoutServer(message: $Node.OutgoingMessage): boolean {
+  const insecureHTTPParser = message.insecureHTTPParser;
+  return typeof insecureHTTPParser === "boolean" ? insecureHTTPParser : isLenient();
 }
 
 ObjectDefineProperty(OutgoingMessage.prototype, "errored", {
@@ -989,9 +973,8 @@ interface ResponseEvents {
   finish: $Node.Listener | $Node.Listener[] | undefined;
 }
 
-class Exchange {
+interface Exchange {
   flags: number;
-  headerState: number;
   headerBits: number;
   shape: HeaderShape;
   value0: number | string;
@@ -1000,7 +983,6 @@ class Exchange {
   value3: number | string;
   value4: number | string;
   value5: number | string;
-  heldChunk: $Node.HttpHeldChunk | null;
   statusCode: number;
   statusMessage: string;
   bytesBuffered: number;
@@ -1013,7 +995,7 @@ class Exchange {
   mustClose: boolean;
   response: $Node.ServerResponse;
   connection: $Node.HttpServerSocket | null;
-  tickMark: import("internal/process/tick_ring").Tick | null;
+  queuedTick: import("internal/process/tick_ring").Tick | null;
   events: ResponseEvents;
   pendingFinish: boolean;
   holdsNumber: boolean;
@@ -1027,50 +1009,6 @@ class Exchange {
   oddMask: number;
   wasEmptied: boolean;
   requestState: $Node.ReadableState | null;
-
-  constructor(
-    response: $Node.ServerResponse,
-    connection: $Node.HttpServerSocket | null,
-    events: ResponseEvents,
-    requestState: $Node.ReadableState | null,
-  ) {
-    this.flags = 0;
-    this.headerState = 0;
-    this.headerBits = IS_COMPILED_AHEAD_OF_TIME ? 0 : HEADER_SPILLED;
-    this.shape = IS_COMPILED_AHEAD_OF_TIME ? noHeadersShape : spilledHeadersShape;
-    this.value0 = 0;
-    this.value1 = 0;
-    this.value2 = 0;
-    this.value3 = 0;
-    this.value4 = 0;
-    this.value5 = 0;
-    this.heldChunk = null;
-    this.statusCode = 0;
-    this.statusMessage = "";
-    this.bytesBuffered = 0;
-    this.isFrozenChunked = false;
-    this.isImplicitFromEnd = false;
-    this.detachedFrom = null;
-    this.isReplaying = false;
-    this.isFlushScheduled = false;
-    this.mustClose = false;
-    this.response = response;
-    this.connection = connection;
-    this.tickMark = null;
-    this.events = events;
-    this.pendingFinish = false;
-    this.holdsNumber = false;
-    this.onWritable = null;
-    this.awaitsClose = false;
-    this.dispatchPromise = null;
-    this.idleTimeout = 0;
-    this.requestKind = 0;
-    this.moreValues = null;
-    this.oddValues = null;
-    this.oddMask = 0;
-    this.wasEmptied = false;
-    this.requestState = requestState;
-  }
 }
 
 declare global {
@@ -1093,7 +1031,43 @@ function makeExchange(
   events: ResponseEvents,
   requestState: $Node.ReadableState | null,
 ): Exchange {
-  return new Exchange(response, connection, events, requestState);
+  // One literal: a constructor that is compiled by itself does not know what `new.target` is, and asks of each store whether the object is still as it was made.
+  return {
+    flags: 0,
+    headerBits: IS_COMPILED_AHEAD_OF_TIME ? 0 : HEADER_SPILLED,
+    shape: IS_COMPILED_AHEAD_OF_TIME ? noHeadersShape : spilledHeadersShape,
+    value0: 0,
+    value1: 0,
+    value2: 0,
+    value3: 0,
+    value4: 0,
+    value5: 0,
+    statusCode: 0,
+    statusMessage: "",
+    bytesBuffered: 0,
+    isFrozenChunked: false,
+    isImplicitFromEnd: false,
+    detachedFrom: null,
+    isReplaying: false,
+    isFlushScheduled: false,
+    mustClose: false,
+    response,
+    connection,
+    queuedTick: null,
+    events,
+    pendingFinish: false,
+    holdsNumber: false,
+    onWritable: null,
+    awaitsClose: false,
+    dispatchPromise: null,
+    idleTimeout: 0,
+    requestKind: 0,
+    moreValues: null,
+    oddValues: null,
+    oddMask: 0,
+    wasEmptied: false,
+    requestState,
+  };
 }
 
 function bitsOfHeaderKey(key: string): number {
@@ -1260,24 +1234,32 @@ function removeShapedHeader(exchange: Exchange, name: string, key: string): void
   if (last === 0) exchange.wasEmptied = true;
 }
 
-function headerEntriesOf(exchange: Exchange | undefined, message: $Node.OutgoingMessage): unknown[] | undefined {
-  const entries: unknown[] = [];
-  const shape = exchange === undefined ? spilledHeadersShape : exchange.shape;
-  if (shape !== spilledHeadersShape) {
-    const names = namesOf(shape);
-    const keys = shape.keys!;
-    for (let index = 0; index < names.length; index++)
-      entries.push(keys[index], names[index], shapedValue(exchange!, index));
-    return entries;
-  }
-  const headers = message[kOutHeaders];
-  if (headers === undefined) return undefined;
-  if (headers !== null) {
-    for (const key in headers) {
-      const entry = headers[key];
-      entries.push(key, entry[0], entry[1]);
+// A text, a number and a list of those are written without any code of the program. Anything else is turned to text by a toString(), which may set and remove headers.
+function runsCodeWhenWritten(exchange: Exchange): boolean {
+  const odd = exchange.oddValues!;
+  for (let index = 0, mask = exchange.oddMask; mask !== 0; index++, mask >>>= 1) {
+    if ((mask & 1) === 0) continue;
+    const value = odd[index];
+    if (!$isArray(value)) return true;
+    for (let i = 0; i < value.length; i++) {
+      const kind = typeof value[i];
+      if (kind !== "string" && kind !== "number") return true;
     }
   }
+  return false;
+}
+
+// Key, name and value of each header in the compact form. `null`: the headers lie in the map, where whoever writes them finds them as they are at each step.
+function headerEntriesOf(exchange: Exchange | undefined): unknown[] | null {
+  if (exchange === undefined) return null;
+  if (exchange.oddMask !== 0 && runsCodeWhenWritten(exchange)) spillHeaders(exchange);
+  const shape = exchange.shape;
+  if (shape === spilledHeadersShape) return null;
+  const entries: unknown[] = [];
+  const names = namesOf(shape);
+  const keys = shape.keys!;
+  for (let index = 0; index < names.length; index++)
+    entries.push(keys[index], names[index], shapedValue(exchange, index));
   return entries;
 }
 
@@ -1302,7 +1284,7 @@ function spillHeaders(exchange: Exchange): void {
   exchange.shape = spilledHeadersShape;
   exchange.headerBits = HEADER_SPILLED;
   const count = shape.count;
-  if (count === 0 && !exchange.wasEmptied) return;
+  if (count === 0 && exchange.wasEmptied !== true) return;
   const headers = { __proto__: null } as $Node.OutgoingHttpHeaders;
   for (let index = 0; index < count; index++) {
     const node = shapeAt(shape, index);
@@ -1321,7 +1303,7 @@ function spillHeadersReachedThrough(receiver: $Node.OutgoingMessage): void {
   const exchange = receiver.$exchange;
   if (exchange === undefined) return;
   const response = exchange.response;
-  if (response !== receiver && (exchange.shape.count !== 0 || exchange.wasEmptied)) {
+  if (response !== receiver && (exchange.shape.count !== 0 || exchange.wasEmptied === true)) {
     ("unlikely");
     spillHeaders(exchange);
     outgoingIsLenientHeaderValidation.$call(response);
@@ -1364,14 +1346,28 @@ function isStrictlyValidValue(message: $Node.OutgoingMessage, name: string, valu
   return false;
 }
 
-function storeInDictionary(message: $Node.OutgoingMessage, name: string, value: $Node.HttpHeaderValue): void {
-  const field = validatedLowercaseHeaderName(name);
-  validateHeaderValueLenient(name, value, message._isLenientHeaderValidation());
-
+function putInDictionary(
+  message: $Node.OutgoingMessage,
+  field: string,
+  name: string,
+  value: $Node.HttpHeaderValue,
+): void {
   let headers = message[kOutHeaders];
   if (headers === null) message[kOutHeaders] = headers = { __proto__: null } as $Node.OutgoingHttpHeaders;
 
   headers[field] = [name, value];
+}
+
+function storeInDictionary(message: $Node.OutgoingMessage, name: string, value: $Node.HttpHeaderValue): void {
+  const field = validatedLowercaseHeaderName(name);
+  validateHeaderValueLenient(name, value, message._isLenientHeaderValidation());
+  putInDictionary(message, field, name, value);
+}
+
+// The name and the value have been looked at. A second look would run a toString() of the program once more.
+function putSpilledHeader(exchange: Exchange, key: string, name: string, value: $Node.HttpHeaderValue): void {
+  spillHeaders(exchange);
+  putInDictionary(exchange.response, key, name, value);
 }
 
 function storeSpilledHeader(exchange: Exchange, name: string, value: $Node.HttpHeaderValue): void {
@@ -1395,13 +1391,18 @@ function storeUnexpectedHeader(
     isStrictlyValid = isStrictlyValidValue(exchange.response, name, value);
   } else {
     validateHeaderValueLenient(name, value, exchange.response._isLenientHeaderValidation());
+    // The look has run code of the program, which may have set or removed a header.
+    if (exchange.shape !== shape) {
+      putSpilledHeader(exchange, key, name, value);
+      return;
+    }
   }
   const index = indexInShape(shape, key);
   if (index >= 0) {
     if (shapeAt(shape, index).name !== name) {
       const respelled = shapeRespelled(shape, index, name, key);
       if (respelled === null) {
-        storeSpilledHeader(exchange, name, value);
+        putSpilledHeader(exchange, key, name, value);
         return;
       }
       exchange.shape = respelled;
@@ -1426,7 +1427,7 @@ function storeUnexpectedHeader(
   }
   const next = shape.count === kMaxShapedHeaders ? null : childOf(shape, name, key);
   if (next === null) {
-    storeSpilledHeader(exchange, name, value);
+    putSpilledHeader(exchange, key, name, value);
     return;
   }
   shape.nextName = name;
@@ -1470,6 +1471,10 @@ function storeShapedHeader(exchange: Exchange, name: string, value: $Node.HttpHe
       exchange.holdsNumber = true;
     } else {
       validateHeaderValueLenient(name, value, exchange.response._isLenientHeaderValidation());
+      if (exchange.shape !== shape) {
+        putSpilledHeader(exchange, next.key, name, value);
+        return;
+      }
       putOddValue(exchange, shape.count, value);
     }
     exchange.shape = next;
@@ -1484,6 +1489,14 @@ function storeShapedHeader(exchange: Exchange, name: string, value: $Node.HttpHe
     return;
   }
   storeUnexpectedHeader(exchange, shape, name, value);
+}
+
+// The first header of a message settles how its values are held, once and for all, behind the look at its name. A name that the shape expects has been looked at.
+function settleLeniency(exchange: Exchange, name: string): void {
+  const response = exchange.response;
+  if (response._isLenientHeaderValidation !== outgoingIsLenientHeaderValidation) return;
+  if (exchange.shape.nextName !== name) validatedLowercaseHeaderName(name);
+  response[kLenientValidation] = computeLenientHeaderValidation(response);
 }
 
 function findUnexpectedHeader(shape: HeaderShape, name: string): number {
@@ -1512,6 +1525,18 @@ function indexOfShapedHeader(shape: HeaderShape, name: string): number {
   return findUnexpectedHeader(shape, name);
 }
 
+function shapedHeaderOf(exchange: Exchange, name: string): $Node.HttpHeaderValue | undefined {
+  const shape = exchange.shape;
+  if (shape.count === 0) return;
+  const index = indexOfShapedHeader(shape, name);
+  return index >= 0 ? shapedValue(exchange, index) : undefined;
+}
+
+function hasShapedHeader(exchange: Exchange, name: string): boolean {
+  const shape = exchange.shape;
+  return shape.count !== 0 && indexOfShapedHeader(shape, name) >= 0;
+}
+
 function pushRenderedHeader(
   flat: unknown[],
   message: $Node.OutgoingMessage,
@@ -1536,12 +1561,73 @@ function pushRenderedHeader(
   }
 }
 
-function flatHeadersWithCare(exchange: Exchange): unknown[] {
+function textOf(value: number | string): string {
+  return typeof value === "string" ? value : "" + value;
+}
+
+// flatHeadersOf() where a value may be a number.
+function flatHeadersWithNumbers(exchange: Exchange, shape: HeaderShape): unknown[] {
+  switch (shape.count) {
+    case 0:
+      return noHeaders;
+    case 1:
+      return [shape.name, textOf(exchange.value0)];
+    case 2:
+      return [shape.parent.name, textOf(exchange.value0), shape.name, textOf(exchange.value1)];
+    case 3: {
+      const second = shape.parent;
+      return [
+        second.parent.name,
+        textOf(exchange.value0),
+        second.name,
+        textOf(exchange.value1),
+        shape.name,
+        textOf(exchange.value2),
+      ];
+    }
+    case 4: {
+      const third = shape.parent;
+      const second = third.parent;
+      return [
+        second.parent.name,
+        textOf(exchange.value0),
+        second.name,
+        textOf(exchange.value1),
+        third.name,
+        textOf(exchange.value2),
+        shape.name,
+        textOf(exchange.value3),
+      ];
+    }
+  }
+  const fifth = shape.count === 6 ? shape.parent : shape;
+  const fourth = fifth.parent;
+  const third = fourth.parent;
+  const second = third.parent;
+  const flat: unknown[] = [
+    second.parent.name,
+    textOf(exchange.value0),
+    second.name,
+    textOf(exchange.value1),
+    third.name,
+    textOf(exchange.value2),
+    fourth.name,
+    textOf(exchange.value3),
+    fifth.name,
+    textOf(exchange.value4),
+  ];
+  if (shape.count === 6) flat.push(shape.name, textOf(exchange.value5));
+  return flat;
+}
+
+function flatHeadersWithCare(exchange: Exchange): unknown[] | null {
   const shape = exchange.shape;
+  if (exchange.oddMask === 0 && shape.count <= kInlineHeaderValues) return flatHeadersWithNumbers(exchange, shape);
   const names = namesOf(shape);
   const keys = shape.keys!;
   const flat: unknown[] = [];
   const oddMask = exchange.oddMask;
+  if (oddMask !== 0 && runsCodeWhenWritten(exchange)) return null;
   let length = 0;
   for (let index = 0; index < names.length; index++) {
     if (oddMask !== 0 && (oddMask & (1 << index)) !== 0) {
@@ -1557,9 +1643,10 @@ function flatHeadersWithCare(exchange: Exchange): unknown[] {
   return flat;
 }
 
-function flatHeadersOf(exchange: Exchange): unknown[] {
+// `null`: writing a value runs code of the program, so the headers are walked in their map.
+function flatHeadersOf(exchange: Exchange): unknown[] | null {
   const shape = exchange.shape;
-  if (exchange.holdsNumber || shape.count > kInlineHeaderValues) return flatHeadersWithCare(exchange);
+  if (exchange.holdsNumber === true || shape.count > kInlineHeaderValues) return flatHeadersWithCare(exchange);
   switch (shape.count) {
     case 0:
       return noHeaders;
@@ -1608,6 +1695,7 @@ function flatHeadersOf(exchange: Exchange): unknown[] {
 
 http.responseRoad.makeExchange = makeExchange;
 http.responseRoad.storeHeader = storeShapedHeader;
+http.responseRoad.settleLeniency = settleLeniency;
 http.responseRoad.spillHeaders = spillHeaders;
 http.responseRoad.spillHeadersReachedThrough = spillHeadersReachedThrough;
 http.responseRoad.hasHeaderUnderKey = hasHeaderUnderKey;
@@ -1621,6 +1709,7 @@ const outgoingSetHeader = function setHeader(this: $Node.OutgoingMessage, name: 
   }
   const exchange = this.$exchange;
   if (IS_COMPILED_AHEAD_OF_TIME && exchange !== undefined && exchange.response === this) {
+    if (exchange.shape.count === 0 && this[kLenientValidation] === undefined) settleLeniency(exchange, name);
     storeShapedHeader(exchange, name, value);
     return this;
   }
@@ -1738,11 +1827,7 @@ OutgoingMessage.prototype.getHeader = function getHeader(this: $Node.OutgoingMes
   const headers = this[kOutHeaders];
   if (headers === null) {
     const exchange = this.$exchange;
-    if (exchange === undefined) return;
-    const shape = exchange.shape;
-    if (shape.count === 0) return;
-    const index = indexOfShapedHeader(shape, name);
-    return index >= 0 ? shapedValue(exchange, index) : undefined;
+    return exchange === undefined ? undefined : shapedHeaderOf(exchange, name);
   }
 
   const entry = headers[lowercaseHeaderName(name)];
@@ -1810,9 +1895,7 @@ OutgoingMessage.prototype.hasHeader = function hasHeader(this: $Node.OutgoingMes
   if (IS_COMPILED_AHEAD_OF_TIME) spillHeadersReachedThrough(this);
   if (this[kOutHeaders] === null) {
     const exchange = this.$exchange;
-    if (exchange === undefined) return false;
-    const shape = exchange.shape;
-    return shape.count !== 0 && indexOfShapedHeader(shape, name) >= 0;
+    return exchange !== undefined && hasShapedHeader(exchange, name);
   }
   return !!this[kOutHeaders][lowercaseHeaderName(name)];
 };
@@ -1999,7 +2082,13 @@ function write_(
   if (msg.chunkedEncoding && chunk.length !== 0) {
     len ??= typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
     if (msg[kCorked] && msg._headerSent) {
-      msg[kChunkedBuffer].push(chunk, encoding, callback);
+      let held = msg[kChunkedBuffer];
+      // Every response of the native server begins with one shared empty list. Whoever holds chunks back lays a list of the response's own first.
+      if (held === http.responseRoad.noChunks) {
+        ("unlikely");
+        (msg.$exchange?.response ?? msg)[kChunkedBuffer] = held = [];
+      }
+      held.push(chunk, encoding, callback);
       msg[kChunkedLength] += len!;
       ret = msg[kChunkedLength] < msg[kHighWaterMark];
     } else {
@@ -2305,8 +2394,10 @@ ObjectDefineProperty(OutgoingMessage.prototype, "headers", {
   },
   set(this: $Node.OutgoingMessage, val: Record<string, $Node.HttpHeaderValue> | null | undefined) {
     if (val == null) {
+      spillHeadersOf(this);
       this[kOutHeaders] = null;
     } else if (typeof val === "object") {
+      spillHeadersOf(this);
       this[kOutHeaders] = { __proto__: null } as $Node.OutgoingHttpHeaders;
       const keys = ObjectKeys(val);
       // Retain for(;;) loop for performance reasons

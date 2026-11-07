@@ -1,0 +1,32 @@
+# -- source: main.js
+# class Crate { constructor(tag) { this.tag = tag; } }
+# function mark(item, note) { item.note = note; }
+# function watch(item, above, turns, when) {
+#   let found = 0;
+#   for (let turn = 0; turn < turns; turn++) {
+#     if (item.note !== undefined) found++;
+#     if (turn === when) above.note = "above";
+#   }
+#   return found;
+# }
+# const spare = new Crate("spare");
+# mark(spare, "own");
+# const one = new Crate("one"), two = new Crate("two");
+# print(watch(one, new Crate("other"), 20, 5), watch(one, Crate.prototype, 20, 5), watch(two, spare, 20, 99), two.note, Object.keys(one).join());
+# -- end of source
+# f2 = watch
+# The read of `note` finds an empty slot and answers undefined behind a guard: nothing above an object of Crate answers under the name. The store in the turn may create the field, and the operation
+# of the run time behind a creation ends guards (DidCreateField: writes ShapeWords, MemberGuards). The row of PutSlotOrAdd did not say so, and the second version of the loop asked the guard once, in front
+# of the loop. Now both versions ask it in the turn.
+# THE RED CONTROL: MemberGuards taken out of the writes of PutSlotOrAdd again (and the check out of the generator, which stops the build there): the second guard stands in front of its loop, in a block made behind the turn's: no read is printed behind it.
+# RUN(FORM): walk f2 mechanisms=all
+# FORM: AreMembersUnchanged conditions=[{layout=L0 key="note"}]
+# FORM: GetSlotOrUndefined {{*}} key="note"
+# FORM: AreMembersUnchanged conditions=[{layout=L0 key="note"}]
+# FORM: GetSlotOrUndefined {{*}} key="note"
+# RUN: run-in-shell mechanisms=all
+# CHECK: 0 14 20 above tag
+# CHECK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: 0 14 20 above tag
+# CHECKED-NEXT: exited with 0

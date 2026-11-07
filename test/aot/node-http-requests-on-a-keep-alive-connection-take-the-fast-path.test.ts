@@ -2,7 +2,7 @@
 // form and finishes it in a single process.nextTick(). This pins how many requests of ordinary applications take each of the three,
 // so that a change which quietly pushes a framework onto the slow path fails here. The functions of the fast path have the names of
 // those they stand in for, so the fixture tells them apart by the place of the onNodeHTTPRequest frame, what node:http itself finds
-// under the kOutHeaders symbol and a finishResponse tick with no other tick of the finish around it: changing one means updating it. A
+// under the kOutHeaders symbol and whether 'close' is emitted below a frame of finishResponse: changing one means updating it. A
 // program that looks under the symbol finds the map, whichever form the headers had. `bun run` evaluates another text of node:http,
 // which has none of the three.
 import { afterAll, expect } from "bun:test";
@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 import { fixture, measure, stacks } from "../js/node/http/node-http-fast-path-coverage";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { beforeAll, describe, test } from "./supported";
+import { beforeAll, describe, test } from "./measures";
 
 raiseDefaultTimeout(240_000);
 

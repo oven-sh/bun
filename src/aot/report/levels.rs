@@ -1,8 +1,8 @@
 use super::ReportInput;
+use super::source_texts::ModuleOrigin;
 use crate::engine::AccessCountRecord;
 use crate::ir::generated::{AccessCost, KnowledgeLevel};
 use crate::ir::ids::ModuleId;
-use crate::link::ModuleOrigin;
 
 pub(super) const ASCENDING_LEVELS: [KnowledgeLevel; KnowledgeLevel::COUNT] = [
     KnowledgeLevel::Unknown,
@@ -10,7 +10,6 @@ pub(super) const ASCENDING_LEVELS: [KnowledgeLevel; KnowledgeLevel::COUNT] = [
     KnowledgeLevel::Proven,
 ];
 
-// The engine's `rankOf`: where the words of a record hold the count of a level.
 const fn rank_of(level: KnowledgeLevel) -> usize {
     match level {
         KnowledgeLevel::Unknown => 0,
@@ -81,7 +80,6 @@ impl CostCounts {
         }
     }
 
-    // The engine's `rankOf` is the number of the enumerator.
     pub fn get(&self, cost: AccessCost) -> u64 {
         self.counts[cost as usize]
     }
@@ -170,7 +168,7 @@ pub(super) fn totals_of(
 
 pub fn compute_totals(input: &ReportInput<'_>) -> ProgramTotals {
     totals_of(input.engine.access_counts(), |module| {
-        input.names.module_origin(module)
+        input.texts.origin(module)
     })
 }
 

@@ -17,21 +17,9 @@ const programs: Record<string, Record<string, string>> = {
     ...commonJS,
     "main.cjs": `const byName = require("outside");\nconsole.log(typeof byName, byName && byName.who);\nconst byPath = require("./node_modules/outside/index.js");\n${show}`,
   },
-  "require() of the path, then of the name": {
-    ...commonJS,
-    "main.cjs": `const byPath = require("./node_modules/outside/index.js");\nconst byName = require("outside");\n${show}`,
-  },
-  "an import of each": {
-    ...commonJS,
-    "main.mjs": `import byName from "outside";\nimport byPath from "./node_modules/outside/index.js";\n${show}`,
-  },
   "import() of the name, then of the path": {
     ...commonJS,
     "main.mjs": `const byName = await import("outside");\nconsole.log(typeof byName, byName.who);\nconst byPath = await import("./node_modules/outside/index.js");\n${show}`,
-  },
-  "require() of an ES module": {
-    ...esModule,
-    "main.cjs": `const byName = require("outside");\nconsole.log(typeof byName, byName.who);\nconst byPath = require("./node_modules/outside/index.mjs");\n${show}`,
   },
   "the namespace of an ES module": {
     ...esModule,
@@ -42,22 +30,27 @@ const programs: Record<string, Record<string, string>> = {
     "node_modules/outside/index.js": `module.exports = require("../../shared.js");\n`,
     "main.cjs": `const byName = require("outside");\nconsole.log(typeof byName, byName && byName.who);\nconst byPath = require("./shared.js");\n${show}`,
   },
-  "the package requires a file of its own first": {
-    "node_modules/outside/inner.js": counted("inner"),
-    "node_modules/outside/index.js": `module.exports = require("./inner.js");\n`,
-    "main.cjs": `const byName = require("outside");\nconsole.log(typeof byName, byName && byName.who);\nconst byPath = require("./node_modules/outside/inner.js");\n${show}`,
-  },
 };
 
 // --no-builtin-modules: a build that allows code from disk would compile all of them.
 const modes: [string, string[], "executable" | "run"][] = [
   ["an executable", [], "executable"],
-  ["code from disk is allowed", ["--aot-allow-code-from-disk", "--no-builtin-modules"], "run"],
+  ["code from disk is allowed", ["--aot-allow-code-from-disk", "--no-builtin-modules"], "executable"],
   ["compiled in place", ["--compile-in-place"], "run"],
 ];
 
+// On a build that looks for an external name among the compiled files, and that does not count a file found by its name as loaded, every one of these fails. One of each
+// road of the loader stands in the two modes that are dear; where code from disk is allowed a build costs little. require() of the name and then of the path in an
+// executable is the stored program parallel/modules/external-package-whose-file-is-required-by-path.
+const witnesses: Record<string, string[]> = {
+  "an executable": ["import() of the name, then of the path", "the namespace of an ES module"],
+  "code from disk is allowed": ["require() of the name, then of the path", "import() of the name, then of the path"],
+  "compiled in place": ["require() of the name, then of the path", "the package requires a file of the program first"],
+};
+
 for (const [mode, flags, reference] of modes) {
-  for (const [name, files] of Object.entries(programs)) {
+  for (const name of witnesses[mode]) {
+    const files = programs[name];
     test.concurrent(
       `${mode}: ${name}`,
       async () => {

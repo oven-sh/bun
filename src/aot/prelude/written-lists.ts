@@ -1,6 +1,15 @@
-// What a program writes to make a list of a given length.
+// What a program writes to make a list of a given length, or out of another list.
+// The compiler walks each maker at its call, with the mapper in the loop. So each has one loop and calls its mapper at one place.
+// The list is made once, with its length and with storage for what it comes to hold.
+// A store that the list does not take leaves the loop, which is entered anew: what the loop knows of a list it has from in front of itself.
 declare var $visibility: "Public" | "Private" | "PrivateRecursive";
 declare var $overriddenName: string;
+declare function $newArrayLike<T>(n: number, a: unknown[] | undefined): T[];
+declare function $tryPutByValDirect(out: unknown[], k: number, value: unknown): boolean;
+// Every place of a list that this file has just made, in a row. False, with nothing stored, where its storage does not take any value.
+declare function $tryFillNewArray(out: unknown[], value: unknown): boolean;
+declare function $truncateNewArray<T>(out: T[], n: number): T[];
+declare function $isJSArray(value: unknown): boolean;
 
 // Array(length) throws where the length is a number that no list can have. What the program evaluates behind it comes behind this.
 $visibility = "Private";
@@ -16,27 +25,51 @@ export function arrayFromLength(length: unknown, mapper: unknown): unknown[] {
   if (typeof length === "number" && typeof mapper === "function") {
     const count = length | 0;
     if (count === length && count >= 0) {
-      if (!count) return new Array<unknown>(0);
+      const made = $newArrayLike<unknown>(count, undefined);
       let index = 0;
-      let item = mapper(undefined, 0);
-      let numbers: number[] | undefined;
-      if (typeof item === "number") {
-        numbers = new Array<number>(count);
-        do {
-          numbers[index] = item;
-          if (++index === count) return numbers;
-          item = mapper(undefined, index);
-        } while (typeof item === "number");
+      entered: for (;;) {
+        for (; index < count; index++) {
+          const item: unknown = mapper(undefined, index);
+          const isStored: boolean = $tryPutByValDirect(made, index, item);
+          if (!isStored) {
+            made[index] = item;
+            index = (index + 1) >>> 0;
+            continue entered;
+          }
+        }
+        break;
       }
-      const made = new Array<unknown>(count);
-      if (numbers) for (let copied = 0; copied < index; copied++) made[copied] = numbers[copied];
-      made[index] = item;
-      for (index++; index < count; index++) made[index] = mapper(undefined, index);
       return made;
     }
   }
   const items = { length } as ArrayLike<undefined>;
   return Array.from(items, mapper as (value: undefined, index: number) => unknown);
+}
+
+// Array.from(list, mapper), where a spread of `list` runs nobody's code. That holds of a plain Set too, which goes the way of anything else.
+// The iterator of a list hands out what lies at each index, a hole as undefined, for as long as the list is that long: the mapper may make it longer or shorter.
+$overriddenName = "from";
+export function arrayFromList(list: unknown, mapper: unknown): unknown[] {
+  if ($isJSArray(list) && typeof mapper === "function") {
+    const source = list as unknown[];
+    const count = source.length;
+    const made = $newArrayLike<unknown>(count, undefined);
+    let index = 0;
+    entered: for (;;) {
+      for (; index < source.length; index++) {
+        const item: unknown = mapper(source[index], index);
+        const isStored: boolean = $tryPutByValDirect(made, index, item);
+        if (!isStored) {
+          made[index] = item;
+          index = (index + 1) >>> 0;
+          continue entered;
+        }
+      }
+      break;
+    }
+    return index === count ? made : $truncateNewArray<unknown>(made, index);
+  }
+  return Array.from(list as Iterable<unknown>, mapper as (value: unknown, index: number) => unknown);
 }
 
 // Array.from({ length })
@@ -45,8 +78,20 @@ export function arrayOfUndefined(length: unknown): undefined[] {
   if (typeof length === "number") {
     const count = length | 0;
     if (count === length && count >= 0) {
-      const made = new Array<undefined>(count);
-      for (let index = 0; index < count; index++) made[index] = undefined;
+      const made = $newArrayLike<undefined>(count, undefined);
+      if ($tryFillNewArray(made, undefined)) return made;
+      let index = 0;
+      entered: for (;;) {
+        for (; index < count; index++) {
+          const isStored: boolean = $tryPutByValDirect(made, index, undefined);
+          if (!isStored) {
+            made[index] = undefined;
+            index = (index + 1) >>> 0;
+            continue entered;
+          }
+        }
+        break;
+      }
       return made;
     }
   }
@@ -60,13 +105,20 @@ export function filledArray(length: unknown, value: unknown): unknown[] {
   if (typeof length === "number") {
     const count = length | 0;
     if (count === length && count >= 0) {
-      if (typeof value === "number") {
-        const numbers = new Array<number>(count);
-        for (let index = 0; index < count; index++) numbers[index] = value;
-        return numbers;
+      const made = $newArrayLike<unknown>(count, undefined);
+      if ($tryFillNewArray(made, value)) return made;
+      let index = 0;
+      entered: for (;;) {
+        for (; index < count; index++) {
+          const isStored: boolean = $tryPutByValDirect(made, index, value);
+          if (!isStored) {
+            made[index] = value;
+            index = (index + 1) >>> 0;
+            continue entered;
+          }
+        }
+        break;
       }
-      const made = new Array<unknown>(count);
-      for (let index = 0; index < count; index++) made[index] = value;
       return made;
     }
   }
@@ -81,22 +133,20 @@ export function mappedFilledArray(length: unknown, value: unknown, mapper: unkno
   if (typeof length === "number" && typeof mapper === "function") {
     const count = length | 0;
     if (count === length && count >= 0) {
-      if (!count) return new Array<unknown>(0);
+      const made = $newArrayLike<unknown>(count, undefined);
       let index = 0;
-      let item = mapper(value, 0);
-      let numbers: number[] | undefined;
-      if (typeof item === "number") {
-        numbers = new Array<number>(count);
-        do {
-          numbers[index] = item;
-          if (++index === count) return numbers;
-          item = mapper(value, index);
-        } while (typeof item === "number");
+      entered: for (;;) {
+        for (; index < count; index++) {
+          const item: unknown = mapper(value, index);
+          const isStored: boolean = $tryPutByValDirect(made, index, item);
+          if (!isStored) {
+            made[index] = item;
+            index = (index + 1) >>> 0;
+            continue entered;
+          }
+        }
+        break;
       }
-      const made = new Array<unknown>(count);
-      if (numbers) for (let copied = 0; copied < index; copied++) made[copied] = numbers[copied];
-      made[index] = item;
-      for (index++; index < count; index++) made[index] = mapper(value, index);
       return made;
     }
   }

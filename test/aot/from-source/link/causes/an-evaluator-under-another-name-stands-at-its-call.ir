@@ -1,0 +1,9 @@
+# the record stands where the evaluator is called, in the function that calls it, not where it is read
+# -- source: an-evaluator-under-another-name-stands-at-its-call.ts
+# declare const input: any;
+# function run(evaluate: any) { return evaluate(input); }
+# run(eval);
+# -- end of source
+# OPTIONS: report=Uses
+# RUN: causes
+# CHECK: cause EvaluatesText {{*}}at f1 v

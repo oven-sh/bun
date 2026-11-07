@@ -18,6 +18,8 @@ function describeLayout(path: string) {
   const file = readFileSync(path);
   const headers = readElf64ProgramHeaders(path);
   const loads = headers.filter(header => header.type === load && header.filesz > 0n);
+  // The page that the file is laid out for: 64 KB on arm64, whatever the kernel's is.
+  const pageOfFile = loads.reduce((largest, { align }) => (align > largest ? align : largest), pageSize);
   const table = headers.find(header => header.type === dynamic)!;
   const entries = Array.from(
     { length: Number(table.filesz / 16n) },
@@ -31,7 +33,7 @@ function describeLayout(path: string) {
     new Set(
       loads
         .filter(header => isWanted(header.flags))
-        .flatMap(header => [header.offset / pageSize, (header.offset + header.filesz - 1n) / pageSize]),
+        .flatMap(header => [header.offset / pageOfFile, (header.offset + header.filesz - 1n) / pageOfFile]),
     );
   const codePages = pagesOf(flags => !!(flags & mayExecute));
   const sections = Array.from(
@@ -48,7 +50,7 @@ function describeLayout(path: string) {
       .filter(section => section.start < offset + filesz && section.end > offset)
       .map(section => section.end);
     const used = ends.reduce((last, end) => (end > last ? end : last), offset);
-    return used < offset + filesz ? (offset + filesz - used) / pageSize : 0n;
+    return used < offset + filesz ? (offset + filesz - used) / pageOfFile : 0n;
   });
   return {
     isPositionIndependent: file.readUInt16LE(16) === sharedObject,

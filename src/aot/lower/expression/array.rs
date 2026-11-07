@@ -1,5 +1,4 @@
-use bun_core::printer::{FIRST_ASCII, LAST_ASCII, bmp_escape, surrogate_pair_escape};
-use bun_core::strings::{CodepointIterator, Cursor};
+use bun_core::printer::{RawText, write_raw_text_ascii};
 use bun_sema::atom::Atom;
 use bun_sema::hir::{Branches, ExprId, ExprKind, NodeData};
 use smallvec::SmallVec;
@@ -92,23 +91,10 @@ fn is_left_out_and_invalid(
 
 /// As `js_printer` writes a literal for `bun run`, so that `source` reads the same. `None`: as written.
 fn pattern_as_printed(written: &[u8]) -> Option<Vec<u8>> {
-    let is_printed_as_written = |character: u32| (FIRST_ASCII..=LAST_ASCII).contains(&character);
-    if written
-        .iter()
-        .all(|&byte| is_printed_as_written(u32::from(byte)))
-    {
-        return None;
-    }
+    let start = RawText::RegExp.first_respelled(written)?;
     let mut printed = Vec::with_capacity(written.len() * 2);
-    let characters = CodepointIterator::init(written);
-    let mut cursor = Cursor::default();
-    while characters.next(&mut cursor) {
-        match cursor.c as u32 {
-            character if is_printed_as_written(character) => printed.push(character as u8),
-            character @ 0..=0xFFFF => printed.extend_from_slice(&bmp_escape(character)),
-            character => printed.extend_from_slice(&surrogate_pair_escape(character)),
-        }
-    }
+    write_raw_text_ascii(written, start, RawText::RegExp, &mut printed)
+        .expect("a Vec takes every write");
     Some(printed)
 }
 

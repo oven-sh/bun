@@ -2057,7 +2057,7 @@ pub mod printer {
     use crate::string::immutable::{self as strings, Encoding as StrEncoding};
     use crate::string::mutable_string::MutableString;
 
-    use crate::fmt::{hex_byte_lower, hex2_upper, hex4_upper};
+    use crate::fmt::{hex_byte_lower, hex2_upper, hex4_upper, u64_hex_var_lower};
 
     pub const FIRST_ASCII: u32 = 0x20;
     pub const LAST_ASCII: u32 = 0x7E;
@@ -2088,6 +2088,119 @@ pub mod printer {
     /// Byte-sink alias so `write_pre_quoted_string` works for `Vec<u8>`,
     /// `MutableString`, and any other `crate::io::Write` sink.
     pub use crate::io::Write as PrinterWriter;
+
+    /// Source text that the printer holds as it is written, backslashes included.
+    #[derive(Clone, Copy)]
+    pub enum RawText {
+        /// One part of a tagged template.
+        Template,
+        /// A regular expression literal, or its pattern alone.
+        RegExp,
+    }
+
+    impl RawText {
+        #[inline]
+        fn is_respelled(self, character: u32) -> bool {
+            match self {
+                RawText::Template => character >= 0x80,
+                RawText::RegExp => !(FIRST_ASCII..=LAST_ASCII).contains(&character),
+            }
+        }
+
+        /// Where `write_raw_text_ascii` first writes an escape. `None`: the text is printed as it is.
+        #[inline]
+        pub fn first_respelled(self, text: &[u8]) -> Option<usize> {
+            match self {
+                RawText::Template => strings::first_non_ascii_usize(text),
+                RawText::RegExp => text
+                    .iter()
+                    .position(|&byte| self.is_respelled(u32::from(byte))),
+            }
+        }
+    }
+
+    /// Writes `text` in ASCII: an escape stands for each code point that is not printed as it is.
+    // Each caller names its kind, so the loop is compiled for that kind alone.
+    #[inline(always)]
+    pub fn write_raw_text_ascii<W: PrinterWriter + ?Sized>(
+        text: &[u8],
+        start: usize,
+        kind: RawText,
+        writer: &mut W,
+    ) -> crate::CrateResult<()> {
+        debug_assert_eq!(kind.first_respelled(text), Some(start));
+        let characters = strings::CodepointIterator::init(text);
+        let mut cursor = strings::Cursor {
+            i: start as u32,
+            ..Default::default()
+        };
+        let mut copied = 0;
+        while characters.next(&mut cursor) {
+            let character = cursor.c as u32;
+            if !kind.is_respelled(character) {
+                continue;
+            }
+            let at = cursor.i as usize;
+            if copied < at {
+                writer.write_all(&text[copied..at])?;
+            }
+            // A backslash is printed as it is, so only what was copied just now can end in one.
+            let is_behind_backslash = copied < at && text[at - 1] == b'\\';
+            copied = at + usize::from(cursor.width);
+            if is_behind_backslash && write_behind_backslash(&text[..at], character, kind, writer)?
+            {
+                continue;
+            }
+            match (kind, character) {
+                (_, 0..=0xFFFF) => writer.write_all(&bmp_escape(character))?,
+                (RawText::Template, _) => write_braced_escape(b"\\u{", character, writer)?,
+                (RawText::RegExp, _) => writer.write_all(&surrogate_pair_escape(character))?,
+            }
+        }
+        if copied < text.len() {
+            writer.write_all(&text[copied..])?;
+        }
+        Ok(())
+    }
+
+    /// Where the last backslash of `ahead` escapes `character`, writes the escape without its own backslash.
+    #[cold]
+    #[inline(never)]
+    fn write_behind_backslash<W: PrinterWriter + ?Sized>(
+        ahead: &[u8],
+        character: u32,
+        kind: RawText,
+        writer: &mut W,
+    ) -> crate::CrateResult<bool> {
+        let mut run = 0;
+        while run < ahead.len() && ahead[ahead.len() - 1 - run] == b'\\' {
+            run += 1;
+        }
+        if run % 2 == 0 {
+            return Ok(false);
+        }
+        match (kind, character) {
+            // A line continuation. No regular expression literal holds a line terminator.
+            (RawText::Template, 0x2028 | 0x2029) => writer.write_all(b"\n")?,
+            (_, 0..=0xFFFF) => writer.write_all(&bmp_escape(character)[1..])?,
+            (RawText::Template, _) => write_braced_escape(b"u{", character, writer)?,
+            (RawText::RegExp, _) => writer.write_all(&surrogate_pair_escape(character)[1..])?,
+        }
+        Ok(true)
+    }
+
+    /// `\u{1f600}`, where `opening` is `\u{` or `u{`.
+    #[inline]
+    fn write_braced_escape<W: PrinterWriter + ?Sized>(
+        opening: &[u8],
+        character: u32,
+        writer: &mut W,
+    ) -> crate::CrateResult<()> {
+        let mut digits = [0; 16];
+        writer.write_all(opening)?;
+        writer.write_all(u64_hex_var_lower(&mut digits, u64::from(character)))?;
+        writer.write_all(b"}")
+    }
 
     #[inline]
     fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {

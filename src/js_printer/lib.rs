@@ -861,8 +861,8 @@ pub type RuntimeTranspilerCacheRef = core::ptr::NonNull<bun_ast::RuntimeTranspil
 
 use bun_core::fmt::hex2_upper; // remaining `\xHH` site below
 use bun_core::printer::{
-    FIRST_ASCII, FIRST_HIGH_SURROGATE, LAST_ASCII, LAST_LOW_SURROGATE, bmp_escape,
-    surrogate_pair_escape,
+    FIRST_ASCII, FIRST_HIGH_SURROGATE, LAST_ASCII, LAST_LOW_SURROGATE, RawText, bmp_escape,
+    surrogate_pair_escape, write_raw_text_ascii,
 };
 
 /// For support JavaScriptCore
@@ -3164,53 +3164,20 @@ pub(crate) mod __gated_printer {
         }
 
         fn print_raw_template_literal(&mut self, bytes: &[u8]) {
-            if IS_JSON || !ASCII_ONLY {
+            if !IS_JSON && ASCII_ONLY {
+                self.print_raw_text_ascii(bytes, RawText::Template);
+            } else {
                 self.print(bytes);
-                return;
             }
+        }
 
-            // Translate any non-ASCII to unicode escape sequences
-            // Note that this does not correctly handle malformed template literal strings
-            // template literal strings can contain invalid unicode code points
-            // and pretty much anything else
-            //
-            // we use WTF-8 here, but that's still not good enough.
-            //
-            let mut ascii_start: usize = 0;
-            let mut is_ascii = false;
-            let iter = CodepointIterator::init(bytes);
-            let mut cursor = strings::Cursor::default();
-
-            while iter.next(&mut cursor) {
-                match cursor.c as u32 {
-                    // unlike other versions, we only want to mutate > 0x7F
-                    0..=LAST_ASCII => {
-                        if !is_ascii {
-                            ascii_start = cursor.i as usize;
-                            is_ascii = true;
-                        }
-                    }
-                    _ => {
-                        if is_ascii {
-                            self.print(&bytes[ascii_start..(cursor.i as usize)]);
-                            is_ascii = false;
-                        }
-
-                        match cursor.c as u32 {
-                            c @ 0..=0xFFFF => self.print(&bmp_escape(c)[..]),
-                            _ => {
-                                self.print(b"\\u{");
-                                let _ = self.fmt(format_args!("{:x}", cursor.c));
-                                self.print(b"}");
-                            }
-                        }
-                    }
-                }
-            }
-
-            if is_ascii {
-                self.print(&bytes[ascii_start..]);
-            }
+        #[inline(always)]
+        fn print_raw_text_ascii(&mut self, text: &[u8], kind: RawText) {
+            let Some(start) = kind.first_respelled(text) else {
+                return self.print(text);
+            };
+            let mut writer = self.writer.std_writer();
+            let _ = write_raw_text_ascii(text, start, kind, &mut writer);
         }
 
         pub(crate) fn check_stack_overflow(&self) -> crate::Result<()> {
@@ -4678,38 +4645,8 @@ pub(crate) mod __gated_printer {
             }
 
             if IS_BUN_PLATFORM {
-                // Translate any non-ASCII to unicode escape sequences
-                let mut ascii_start: usize = 0;
-                let mut is_ascii = false;
-                let iter = CodepointIterator::init(&e.value);
-                let mut cursor = strings::Cursor::default();
-                while iter.next(&mut cursor) {
-                    match cursor.c as u32 {
-                        FIRST_ASCII..=LAST_ASCII => {
-                            if !is_ascii {
-                                ascii_start = cursor.i as usize;
-                                is_ascii = true;
-                            }
-                        }
-                        _ => {
-                            if is_ascii {
-                                self.print(&e.value[ascii_start..(cursor.i as usize)]);
-                                is_ascii = false;
-                            }
-
-                            match cursor.c as u32 {
-                                c @ 0..=0xFFFF => self.print(&bmp_escape(c)[..]),
-                                c => self.print(&surrogate_pair_escape(c)[..]),
-                            }
-                        }
-                    }
-                }
-
-                if is_ascii {
-                    self.print(&e.value[ascii_start..]);
-                }
+                self.print_raw_text_ascii(&e.value, RawText::RegExp);
             } else {
-                // UTF8 sequence is fine
                 self.print(&e.value[..]);
             }
 

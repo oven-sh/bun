@@ -3,6 +3,7 @@ use bun_collections::VecExt;
 use std::io::Write as _;
 
 use bstr::BStr;
+use bun_core::printer::RawText;
 use bun_core::strings;
 
 use crate::lexer as js_lexer;
@@ -816,14 +817,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return None;
         };
         let head = *head;
-        let mut is_ascii = strings::is_all_ascii(head.slice());
+        let is_printed_as_written = |text: &[u8]| RawText::Template.first_respelled(text).is_none();
+        let mut is_all_printed_as_written = is_printed_as_written(head.slice());
         for part in template.parts() {
             let E::TemplateContents::Raw(tail) = &part.tail else {
                 return None;
             };
-            is_ascii = is_ascii && strings::is_all_ascii(tail.slice());
+            is_all_printed_as_written =
+                is_all_printed_as_written && is_printed_as_written(tail.slice());
         }
-        if is_ascii {
+        if is_all_printed_as_written {
             return None;
         }
 

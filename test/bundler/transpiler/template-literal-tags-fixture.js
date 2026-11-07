@@ -31,7 +31,10 @@ console.log(
     raw: [String.raw`😀`, String.raw`a${1}é${2}日本`, String.raw`{"a":"😀"}`],
     cooked: [...strings`😀\n${0}é`],
     ownEscapes: strings`\u{1f600}😀\xe9é`.raw,
+    escaped: [...strings`\é${0}a\日b\😀${1}\\é\\\é`],
+    escapedRaw: strings`\é${0}a\日b\😀${1}\\é\\\é`.raw,
     invalidEscape: [strings`\u{zz}é`[0] === undefined, strings`\u{zz}é`.raw[0]],
+    invalidEscapeAndEscaped: [strings`\u{zz}\é`[0] === undefined, strings`\x\é`[0] === undefined, strings`\x\é`.raw[0]],
     newline: strings`é
 é`.raw,
     sameSite: site() === site(),

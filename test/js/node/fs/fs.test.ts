@@ -337,7 +337,44 @@ describe("FileHandle", () => {
       expect(await fd.readv(buffers, 0)).toEqual({ bytesRead: 20, buffers });
     }
     expect(handle.close).toHaveBeenCalled();
-    expect(async () => await handle.read(Buffer.alloc(10))).toThrow("Bad file descriptor");
+    expect(async () => await handle.read(Buffer.alloc(10))).toThrow("file closed");
+  });
+
+  // The closed-handle rows that equal Node are in fs-filehandle-closed-errors.test.ts, which also runs under Node.
+  it("a stream constructor takes its FileHandle ref after the descriptor check and after it reads the handle's methods", async () => {
+    const outOfRange = expect.objectContaining({ code: "ERR_OUT_OF_RANGE" });
+    const closeListeners = (handle: FileHandle) =>
+      (handle as unknown as import("node:events").EventEmitter).listenerCount("close");
+
+    // Node adds its 'close' listener before the descriptor check and leaves one for each constructor that throws.
+    const closed = await fs.promises.open(__filename, "r");
+    await closed.close();
+    expect(() => createReadStream(null!, { fd: closed })).toThrow(outOfRange);
+    expect(() => closed.createWriteStream()).toThrow(outOfRange);
+    expect(closeListeners(closed)).toBe(0);
+
+    // Bun reads read/write/writev/sync of the handle when it builds the stream. Node reads them at the first I/O.
+    const throwing = await fs.promises.open(__filename, "r");
+    Object.defineProperty(throwing, "read", {
+      get() {
+        throw new Error("getter of read");
+      },
+    });
+    expect(() => createReadStream(null!, { fd: throwing })).toThrow("getter of read");
+    expect(() => throwing.createWriteStream()).toThrow("getter of read");
+    expect(closeListeners(throwing)).toBe(0);
+    // Does not settle if a constructor that threw kept its ref.
+    await throwing.close();
+
+    const closing = await fs.promises.open(__filename, "r");
+    Object.defineProperty(closing, "read", {
+      get() {
+        void closing.close();
+        return Object.getPrototypeOf(closing).read;
+      },
+    });
+    expect(() => createReadStream(null!, { fd: closing })).toThrow(outOfRange);
+    await closing.close();
   });
 
   it("FileHandle#write returns object", async () => {

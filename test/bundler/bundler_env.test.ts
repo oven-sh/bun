@@ -167,3 +167,43 @@ test("Bun.build inlines the env values from when it was called", async () => {
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
+
+// An inlined env value is the bytes of the .env file. Under --minify-syntax a value and the string that is joined to it
+// print as one literal. A value that ends in a cut-off UTF-8 sequence must not take the start of that string.
+test.concurrent("--minify-syntax keeps the string joined to an env value that ends in a cut-off sequence", async () => {
+  using dir = tempDir("bun-build-env-cut-off", {
+    ".env": Buffer.from("PUB_NAME=Caf\xE9\nPUB_TWO=a\xE2\x82\n", "latin1"),
+    "entry.mjs": /* js */ `
+      console.log(JSON.stringify([process.env.PUB_NAME + "!", \`\${process.env.PUB_NAME}!\`, "<" + process.env.PUB_TWO + ">"]));
+    `,
+  });
+  const outputOf = async (...flags: string[]) => {
+    const outfile = `out${flags.length}.mjs`;
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--env", "PUB_*", "--target=node", ...flags, "entry.mjs", "--outfile", outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    await using run = Bun.spawn({
+      cmd: [bunExe(), outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    return { buildStderr, buildExitCode, stdout, stderr, exitCode };
+  };
+  const [plain, minified] = await Promise.all([outputOf(), outputOf("--minify-syntax")]);
+  expect(minified).toEqual({
+    buildStderr: "",
+    buildExitCode: 0,
+    stdout: '["Caf\uFFFD!","Caf\uFFFD!","<a\uFFFD>"]\n',
+    stderr: "",
+    exitCode: 0,
+  });
+  expect(plain).toEqual(minified);
+});

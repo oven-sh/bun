@@ -1,5 +1,6 @@
 import { fileURLToPath, Loader } from "bun";
 import { describe, expect } from "bun:test";
+import { textThatIsNotUtf8 } from "harness";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
@@ -462,6 +463,109 @@ describe("bundler", async () => {
       stdout: moon,
     },
   });
+
+  // A lead byte of a file that starts no sequence of UTF-8 prints as U+FFFD, one for the bytes that go with it, and
+  // the bytes around it stay. "bun" escapes the string to ASCII. "browser" writes it as UTF-8.
+  {
+    const table = textThatIsNotUtf8();
+    const latin1 = (text: string) => Buffer.from(text, "latin1");
+
+    // `caf`, 0xE9, ` au lait` is Latin-1: in UTF-8, 0xE9 starts a sequence of three bytes.
+    const strings = `"caf\xE9 au lait", "caf\xE9 key": 1, m: "\xE2\x82A\xF0\x9F\x98B\xED\xA0\x80C"`;
+    const read = { k: "caf\uFFFD au lait", "caf\uFFFD key": 1, m: "\uFFFDA\uFFFDB\uD800C" };
+    for (const target of ["bun", "browser"] as const) {
+      itBundled(`${target}/loader-text-not-utf8`, {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+            import text from "./table.txt" with { type: "text" };
+            process.stdout.write(JSON.stringify(text));
+          `,
+          "/table.txt": table.bytes,
+        },
+        run: {
+          validate({ stdout }) {
+            expect(table.linesThatDiffer(JSON.parse(stdout))).toEqual([]);
+          },
+        },
+      });
+      itBundled(`${target}/loader-data-not-utf8`, {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+            import json from "./a.json";
+            import jsonc from "./b.jsonc";
+            import json5 from "./c.json5";
+            import yaml from "./d.yaml";
+            process.stdout.write(JSON.stringify([json, jsonc, json5, yaml]));
+          `,
+          "/a.json": latin1(`{ "k": ${strings.replace("m:", '"m":')} }`),
+          "/b.jsonc": latin1(`{ "k": ${strings.replace("m:", '"m":')}, /* caf\xE9 */ }`),
+          "/c.json5": latin1(`{ k: ${strings} }`),
+          "/d.yaml": latin1(`{ k: ${strings} }`),
+        },
+        onAfterBundle(api) {
+          expect(() => new TextDecoder("utf-8", { fatal: true }).decode(fs.readFileSync(api.outfile))).not.toThrow();
+        },
+        run: { stdout: JSON.stringify([read, read, read, read]) },
+      });
+    }
+
+    // A source map has the text that `readFileSync(path, "utf8")` reads, and its lines and columns are those of
+    // that text. A legal comment is copied as it is, so here the output is not UTF-8 either. Counted as the three
+    // bytes that 0xE9 starts, a line break was stepped over and the lines after it were one off.
+    const legacy = latin1(
+      `//! caf\xE9\n/* \xE2\x82 */ export function a() { return new Error("A").stack; }\n/*! \xE2\x82 */\n` +
+        `export function b() {\n  return new Error("B").stack; // caf\xE9\n}\n`,
+    );
+    itBundled("bun/sourcemap-source-not-utf8", {
+      target: "bun",
+      files: {
+        "/entry.js": /* js */ `
+          import { a, b } from "./legacy.js";
+          const position = stack => /legacy\\.js:(\\d+:\\d+)/.exec(stack)[1];
+          console.log(position(a()), position(b()));
+        `,
+        "/legacy.js": legacy,
+      },
+      outdir: "/out",
+      sourceMap: "external",
+      snapshotSourceMap: {
+        "entry.js.map": {
+          files: ["../legacy.js", "../entry.js"],
+          mappings: [
+            [`legacy.js:2:'Error("A")'`, "5:13:Error"],
+            [`legacy.js:5:'Error("B")'`, "9:13:Error"],
+          ],
+        },
+      },
+      run: { stdout: "2:42 5:14" },
+    });
+    // On one line, what is written after the legal comment of another file starts at the column that the comment
+    // ends at in the text of the output.
+    itBundled("browser/sourcemap-source-not-utf8-one-line", {
+      target: "browser",
+      files: {
+        "/entry.js": /* js */ `
+          import { a } from "./legacy.js";
+          export function c() { return new Error("C").stack + a(); }
+        `,
+        "/legacy.js": legacy,
+      },
+      outdir: "/out",
+      sourceMap: "external",
+      minifyWhitespace: true,
+      snapshotSourceMap: {
+        "entry.js.map": {
+          files: ["../legacy.js", "../entry.js"],
+          mappings: [
+            [`legacy.js:2:'Error("A")'`, "2:24:Error"],
+            [`entry.js:2:'Error("C")'`, "2:73:Error"],
+          ],
+        },
+      },
+    });
+  }
 
   const loaders: Loader[] = ["wasm", "json", "file" /* "napi" */, "text"];
   const exts = ["wasm", "json", "lmao" /*  ".node" */, "txt"];

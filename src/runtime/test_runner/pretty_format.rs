@@ -1084,12 +1084,13 @@ impl<'a> Formatter<'a> {
             self.failed = true;
             return Err(self.global_this.throw_stack_overflow());
         }
-        // Only a failure message tracks `output_length`. A snapshot keeps `PlainDate {}`.
+        // Older versions printed a Temporal value as its class name alone: `PlainDate {}`.
         if matches!(FORMAT, Tag::Object)
             && js_type == JSType::Object
-            && self.output_length.is_some()
+            && self.like_older_bun.is_none()
             && print_temporal(self, writer_, value)?
         {
+            self.same_as_older_bun = false;
             return Ok(());
         }
         // reshaped for borrowck — `WrappedWriter` borrows both writer_

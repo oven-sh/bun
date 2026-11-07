@@ -46,7 +46,7 @@ use bun_core::scoped_log;
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
     group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
-    HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
+    HandleUncaughtExceptionResult, Order, RefDataValue, Report, ScopeMode, StepResult,
 };
 use super::expect::expect_deferred::ExpectDeferred;
 use super::test_context::{self, TestContext};
@@ -212,9 +212,25 @@ impl ExecutionSequence {
     }
 
     /// Call once the active entry's callback is done. An entry that already errored doesn't wait.
-    fn waits_for_matchers(&mut self) -> bool {
-        self.callback_done = self.pending_matchers > 0 && !self.maybe_skip;
-        self.callback_done
+    /// A matcher that failed while the callback ran gets its verdict first, so it can still fail this entry.
+    #[inline]
+    fn waits_for_matchers(
+        this: NonNull<ExecutionSequence>,
+        buntest: &BunTestPtr,
+        global: &JSGlobalObject,
+    ) -> JsResult<bool> {
+        // SAFETY: `this` points into `buntest.execution.sequences`, which is never reallocated during execution.
+        // No reference to the sequence is live across `settle_if_needed`, which reaches it on its own.
+        unsafe {
+            if (*this.as_ptr()).pending_matchers == 0 {
+                (*this.as_ptr()).callback_done = false;
+                return Ok(false);
+            }
+            ExpectDeferred::settle_if_needed(buntest, global)?;
+            let sequence = &mut *this.as_ptr();
+            sequence.callback_done = sequence.pending_matchers > 0 && !sequence.maybe_skip;
+            Ok(sequence.callback_done)
+        }
     }
 
     fn entry_mode(&self) -> ScopeMode {
@@ -505,10 +521,13 @@ impl Execution {
                 };
 
                 debug_assert!(sequence.active_entry.is_some());
-                if sequence.waits_for_matchers() {
+                let sequence_ptr = NonNull::from(sequence);
+                let group_ptr = NonNull::from(group);
+                if ExecutionSequence::waits_for_matchers(sequence_ptr, buntest_strong, global_this)? {
                     return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
                 }
-                let group_ptr = NonNull::from(group);
+                // SAFETY: as in `waits_for_matchers`, which kept no reference to the sequence.
+                let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
                 Execution::advance_sequence(buntest_ptr, sequence, group_ptr);
 
                 let sequence_result =
@@ -643,7 +662,7 @@ impl Execution {
         debug_assert!(sequence.executing);
         if core::mem::take(&mut sequence.pending_matchers) > 0 {
             // SAFETY: a field that neither `sequence` nor `group_ptr` points into.
-            unsafe { (*buntest.as_ptr()).unclaimed.some_ended = true };
+            unsafe { (*buntest.as_ptr()).unclaimed.needs_settle = true };
         }
         sequence.callback_done = false;
         if let Some(entry_ptr) = sequence.active_entry {
@@ -1002,7 +1021,7 @@ fn step_group(
 
     loop {
         let Some(group) = this.active_group() else {
-            return Ok(ExpectDeferred::step_file_end(buntest_strong, global_this, now));
+            return ExpectDeferred::step_file_end(buntest_strong, global_this, now);
         };
         if !group.executing {
             Execution::on_group_started(global_this);
@@ -1022,20 +1041,26 @@ fn step_group(
         }
 
         // SAFETY: re-deref after step_group_one; disjoint from this.sequences read below.
-        let group = unsafe { &mut *group_ptr.as_ptr() };
+        let mut group = unsafe { &mut *group_ptr.as_ptr() };
         if group.pending_matchers > 0 {
-            // Any test in the group may have called them, so wait until the latest test deadline.
-            let timeout = this.sequences[group.sequence_start..group.sequence_end]
-                .iter()
-                .filter_map(|sequence| sequence.test_entry)
-                // SAFETY: arena-owned entry
-                .map(|entry| unsafe { entry.as_ref() }.timespec)
-                .fold(Timespec::EPOCH, |latest, timespec| if timespec.order(&latest).is_gt() { timespec } else { latest });
-            if timeout.eql(&Timespec::EPOCH) || timeout.order(now).is_gt() {
-                return Ok(StepResult::Waiting { timeout });
+            // A call that has failed gets its verdict here, before the group can give up on it.
+            ExpectDeferred::settle_if_needed(buntest_strong, global_this)?;
+            // SAFETY: as above. The settle reached the group on its own.
+            group = unsafe { &mut *group_ptr.as_ptr() };
+            if group.pending_matchers > 0 {
+                // Any test in the group may have called them, so wait until the latest test deadline.
+                let timeout = this.sequences[group.sequence_start..group.sequence_end]
+                    .iter()
+                    .filter_map(|sequence| sequence.test_entry)
+                    // SAFETY: arena-owned entry
+                    .map(|entry| unsafe { entry.as_ref() }.timespec)
+                    .fold(Timespec::EPOCH, |latest, timespec| if timespec.order(&latest).is_gt() { timespec } else { latest });
+                if timeout.eql(&Timespec::EPOCH) || timeout.order(now).is_gt() {
+                    return Ok(StepResult::Waiting { timeout });
+                }
+                group.pending_matchers = 0;
+                ExpectDeferred::group_timed_out(buntest_strong, global_this, this.group_index);
             }
-            group.pending_matchers = 0;
-            ExpectDeferred::group_timed_out(buntest_strong, global_this, this.group_index);
         }
         group.executing = false;
         Execution::on_group_completed(global_this);
@@ -1127,7 +1152,7 @@ fn report_around_timeout(
         return Ok(());
     };
     let error = around.timeout_error(global_this, phase, entry.timeout)?;
-    buntest_strong.get().on_uncaught_exception(global_this, Some(error), false, data);
+    buntest_strong.get().on_uncaught_exception(global_this, Some(error), Report::Once, data);
     Ok(())
 }
 
@@ -1165,9 +1190,7 @@ fn step_sequence_one(
     now: &mut Timespec,
 ) -> JsResult<Option<AdvanceSequenceStatus>> {
     let _g = group_begin!();
-    if core::mem::take(&mut buntest_strong.get().unclaimed.some_ended) {
-        ExpectDeferred::settle_ended(buntest_strong, global_this)?;
-    }
+    ExpectDeferred::settle_if_needed(buntest_strong, global_this)?;
     let buntest = buntest_strong.get();
     let buntest_ptr = NonNull::from(&mut *buntest);
     let this = &mut buntest.execution;
@@ -1295,7 +1318,7 @@ fn step_sequence_one(
                 }
                 Err(err) => {
                     let thrown = global_this.take_exception(err);
-                    buntest_strong.get().on_uncaught_exception(global_this, Some(thrown), false, &callback_data);
+                    buntest_strong.get().on_uncaught_exception(global_this, Some(thrown), Report::Once, &callback_data);
                     Execution::advance_sequence(buntest_ptr, sequence, group);
                     return Ok(None); // run again
                 }
@@ -1350,13 +1373,17 @@ fn step_sequence_one(
                     TestContext::abort_signal(context, global_this);
                 }
                 report_around_timeout(buntest_strong, global_this, next_item, &callback_data)?;
-            } else if sequence.waits_for_matchers() {
+                // The entry is over, and a matcher that failed while its callback ran is still its failure.
+                ExpectDeferred::settle_if_needed(buntest_strong, global_this)?;
+            } else if ExecutionSequence::waits_for_matchers(sequence_ptr, buntest_strong, global_this)? {
                 return Ok(Some(AdvanceSequenceStatus::Execute {
                     timeout: next_item.timespec,
                 }));
             }
 
             // the result is available immediately; advance the sequence and run again.
+            // SAFETY: as above. The settle reached the sequence on its own.
+            let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
             Execution::advance_sequence(buntest_ptr, sequence, group);
             return Ok(None); // run again
         }

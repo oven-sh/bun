@@ -954,7 +954,7 @@ impl BunTest {
         let this = this_strong.get();
 
         if is_catch && !refdata.timed_out.get() {
-            this.on_uncaught_exception(global_this, Some(result), true, &refdata.phase);
+            this.on_uncaught_exception(global_this, Some(result), Report::Once, &refdata.phase);
         }
         if !has_one_ref && !is_catch {
             bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> refdata has multiple refs; don't add result until the last ref");
@@ -994,7 +994,7 @@ impl BunTest {
                 .get_current_and_valid_execution_sequence(entry)
                 .is_some_and(|(sequence, _)| sequence.active_entry == sequence.test_entry);
             if is_running_test {
-                this.on_uncaught_exception(global_this, Some(error), false, entry);
+                this.on_uncaught_exception(global_this, Some(error), Report::Once, entry);
                 // As for any other uncaught exception: the test is over whatever its callback returns,
                 // and `on_before_exit()` doesn't drain the event loop of a file that failed.
                 this.add_result(*entry);
@@ -1361,7 +1361,7 @@ impl BunTest {
                 Ok(v) => v,
                 Err(e) => {
                     // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point.
-                    unsafe { (*this).on_uncaught_exception(global_this, Some(global_this.take_exception(e)), false, &cfg_data) };
+                    unsafe { (*this).on_uncaught_exception(global_this, Some(global_this.take_exception(e)), Report::Once, &cfg_data) };
                     JSValue::ZERO // failed to bind done callback
                 }
             };
@@ -1371,7 +1371,7 @@ impl BunTest {
         if global_this.has_exception() {
             global_this.clear_termination_exception();
             // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point.
-            unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &RefDataValue::Start) };
+            unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), Report::Once, &RefDataValue::Start) };
         }
 
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
@@ -1395,7 +1395,7 @@ impl BunTest {
             Err(_) => {
                 global_this.clear_termination_exception();
                 // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
-                unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data) };
+                unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), Report::Once, &cfg_data) };
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
                 JSValue::ZERO
             }
@@ -1496,7 +1496,7 @@ impl BunTest {
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
                         // SAFETY: re-derive via `UnsafeCell` after the JS/microtask
                         // drain above; sole `&mut` at this point.
-                        unsafe { (*this).on_uncaught_exception(global_this, Some(value), true, &cfg_data) };
+                        unsafe { (*this).on_uncaught_exception(global_this, Some(value), Report::Once, &cfg_data) };
 
                         // We previously marked it as handled above.
 
@@ -1566,12 +1566,10 @@ impl BunTest {
         &mut self,
         global_this: &JSGlobalObject,
         exception: Option<JSValue>,
-        is_rejection: bool,
+        report: Report,
         user_data: &RefDataValue,
     ) {
         let _g = group_begin!();
-
-        let _ = is_rejection;
 
         let handle_status: HandleUncaughtExceptionResult = match self.phase {
             Phase::Collection => self.collection.handle_uncaught_exception(user_data),
@@ -1584,6 +1582,12 @@ impl BunTest {
         // The ended error just unwinds a test that's already over. Inside a running test it's still a normal failure.
         if handle_status == HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
             && exception.is_some_and(|exception| self.unclaimed.is_ended_error(exception))
+        {
+            return;
+        }
+
+        if report == Report::Once
+            && exception.is_some_and(|exception| self.unclaimed.was_reported(user_data, exception))
         {
             return;
         }
@@ -1885,7 +1889,7 @@ impl RunTestsTask {
             bt.on_uncaught_exception(
                 &this.global_this,
                 Some(this.global_this.take_exception(e)),
-                false,
+                Report::Once,
                 &this.phase,
             );
         }
@@ -1903,6 +1907,17 @@ impl bun_event_loop::Taskable for RunTestsTask {
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
+}
+
+/// What `BunTest::on_uncaught_exception` does with an error that a failed matcher already reported for the same test
+/// or hook (`Unclaimed::was_reported`).
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Report {
+    /// Drops it. The matcher's promise rejects with that error, so the entry can hand it back: in what its callback
+    /// throws or returns, in `done(error)`, in an unhandled rejection.
+    Once,
+    /// Reports it. This is a matcher's own report, and two failed matchers are two reports even with one error object.
+    Always,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]

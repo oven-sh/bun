@@ -124,6 +124,44 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain(" 1 pass");
   });
 
+  // The runner reads from the matcher's promise whether the test took the failure up, and compiled code has its own
+  // await. Not compared with plain `bun test`, whose report of such a failure has one more stack frame.
+  test.concurrent("a failed matcher whose promise the test takes up after the failure", async () => {
+    using dir = tempDir("test-aot", {
+      "a.test.ts": `
+        import { expect, test } from "bun:test";
+        const soon = async (value: number) => { await null; return value; };
+        const jobs = async () => { for (let i = 0; i < 8; i++) await null; };
+        test("awaited in a later turn", async () => {
+          const { promise, resolve } = Promise.withResolvers<number>();
+          const matcher = expect(promise).resolves.toBe(2);
+          resolve(1);
+          await new Promise(resolve => setTimeout(resolve, 1));
+          await matcher;
+        });
+        test("awaited a few promise jobs later", async () => {
+          const matcher = expect(soon(1)).resolves.toBe(2);
+          await jobs();
+          await matcher;
+        });
+        test("caught a few promise jobs later", async () => {
+          const matcher = expect(soon(1)).resolves.toBe(2);
+          await jobs();
+          try { await matcher; } catch {}
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), true);
+    expect(stderr.split("\n").filter(line => /^error: |^\((pass|fail)\)/.test(line))).toEqual([
+      "error: expect(received).toBe(expected)",
+      "(fail) awaited in a later turn",
+      "error: expect(received).toBe(expected)",
+      "(fail) awaited a few promise jobs later",
+      "(pass) caught a few promise jobs later",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
   test.concurrent("a dependency with top-level await that is imported statically and dynamically", async () => {
     const { stderr, exitCode } = await expectSameAsBunTest({
       "both.test.ts": `

@@ -672,7 +672,7 @@ pub(crate) mod on_unhandled_rejection {
             buntest.on_uncaught_exception(
                 global_object,
                 Some(rejection),
-                true,
+                bun_test::Report::Once,
                 &current_state_data,
             );
             buntest.is_reporting_uncaught = false;

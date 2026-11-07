@@ -9,11 +9,9 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, readdirSorted, tempDir } from "harness";
 import {
   chmodSync,
-  closeSync,
   existsSync,
   lstatSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readlinkSync,
   realpathSync,
@@ -251,6 +249,7 @@ describe.skipIf(isWindows)("install backends on POSIX", () => {
       for (const file of Object.keys(packageFiles)) chmodSync(join(packageDir, file), 0o644);
       chmodSync(installed, 0o777);
       chmodSync(join(projectDir, "node_modules"), 0o555);
+      const { ino } = statSync(installed);
       try {
         const { stdout, stderr, exitCode } = await install(projectDir, "symlink", { unprivileged: true });
         expect(stderr).not.toContain("error");
@@ -259,8 +258,9 @@ describe.skipIf(isWindows)("install backends on POSIX", () => {
       } finally {
         chmodSync(join(projectDir, "node_modules"), 0o755);
       }
-      // The old directory was indeed installed into rather than replaced.
-      expect(existsSync(join(installed, "not-in-the-package"))).toBe(true);
+      // The old directory was indeed installed into rather than replaced, once emptied.
+      expect(statSync(installed).ino).toBe(ino);
+      expect(existsSync(join(installed, "not-in-the-package"))).toBe(false);
       expect(readlinkSync(join(installed, "index.js"))).toBe(join(realpathSync.native(packageDir), "index.js"));
       expect(readFileSync(join(installed, "index.js"), "utf8")).toBe(packageFiles["index.js"]);
     },
@@ -302,19 +302,37 @@ describe.skipIf(!isWindows)("install backends on Windows", () => {
 
   /**
    * Runs the install while a file inside `node_modules/pkg/<leftoverDir>` is
-   * held open. A previous install of the package then cannot be moved out of
-   * the way, so the walker runs into the existing directory.
+   * held open without FILE_SHARE_DELETE, as a scanner holds one. A previous
+   * install of the package then cannot be moved out of the way, nor can the
+   * held file and its directories be deleted, so the walker runs into the
+   * existing directory.
    */
   async function installOverLeftover(projectDir: string, leftoverDir: string) {
-    const leftover = join(projectDir, "node_modules", "pkg", leftoverDir);
+    const pkg = join(projectDir, "node_modules", "pkg");
+    const leftover = join(pkg, leftoverDir);
     mkdirSync(leftover, { recursive: true });
     writeFileSync(join(leftover, "held-open.txt"), "");
-    const held = openSync(join(leftover, "held-open.txt"), "r");
-    try {
-      return await install(projectDir, "copyfile");
-    } finally {
-      closeSync(held);
+    await using holder = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "bun-install-windows-rename-retry-fixture.ts"),
+        pkg,
+        leftoverDir.split(/[\\/]/)[0],
+        "60000",
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const decoder = new TextDecoder();
+    let output = "";
+    for await (const chunk of holder.stdout) {
+      output += decoder.decode(chunk, { stream: true });
+      if (output.includes("HELD") || output.includes("MISSED")) break;
     }
+    expect(output).toContain("HELD");
+    return await install(projectDir, "copyfile");
   }
 
   // The copyfile and the symlink backend share one walk. It creates directories

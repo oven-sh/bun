@@ -1,0 +1,12 @@
+# `pos <= text.length - 0` lets the end in: the read asks the bounds, and NaN meets the code unit
+# f1 = codes
+# -- source: position-at-most-the-length-is-tested-again.ts
+# function codes(text: string): number { let sum = 0; for (let pos = 0; pos <= text.length - 0; pos++) sum = (sum + text.charCodeAt(pos)) | 0; return sum; }
+# console.log(codes("abc"), codes(""));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK: = LessEq
+# CHECK: = Less v
+# CHECK: = GetStringCodeUnit

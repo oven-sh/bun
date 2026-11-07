@@ -36,6 +36,13 @@ impl Binder<'_, '_> {
         is_pushed
     }
 
+    pub(super) fn push_scope_of_code_behind_class(&mut self, class: ClassId) -> bool {
+        self.f.has_typescript_semantics()
+            && self.f.legacy_decorators
+            && matches!(self.b.class_owner[class.idx()], ClassOwner::Stmt(_))
+            && self.push_runtime_scope(ScopeKind::ClassDecorators(class))
+    }
+
     pub(super) fn push_implicit_block_scope(&mut self, statement: StmtId, function: FnId) -> bool {
         self.options.runtime.is_some()
             && runtime::has_implicit_block(self.f, &self.b, statement, function)
@@ -60,16 +67,17 @@ impl Binder<'_, '_> {
 
     #[inline(always)]
     pub(super) fn note_private_reference(&mut self, reference: ExprId) {
-        if self.options.runtime.is_some() {
+        if (self.f.expr_flags(reference)).contains(ExprFlags::PRIVATE_NAME)
+            && self.options.runtime.is_some()
+        {
             self.note_private_reference_for_runtime(reference);
         }
     }
 
+    #[cold]
+    #[inline(never)]
     fn note_private_reference_for_runtime(&mut self, reference: ExprId) {
         let f = self.f;
-        if !f.expr_flags(reference).contains(ExprFlags::PRIVATE_NAME) {
-            return;
-        }
         let (ExprKind::PrivateIdentifier(name) | ExprKind::Dot { name, .. }) =
             f.checked_kind(reference)
         else {
@@ -102,6 +110,7 @@ impl Binder<'_, '_> {
             idents: &idents,
             options,
             atoms: self.atoms,
+            names_in_place: self.names_in_place,
         };
         runtime::compute(input, private_references);
         self.idents = idents;

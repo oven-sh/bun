@@ -1,0 +1,19 @@
+# A counter behind `i < length` is narrowed to a range by the compare that stands in the code: the walk's own reasoning, no word of Link's. In a raw form it is asked for that range where the walk is held against
+# itself (testing=CheckWalkAtRunTime beside CheckProofsAtRunTime), and not under CheckProofsAtRunTime alone, which `--aot-harden=proof-checks` stands for.
+# f1 = total
+# -- source: the-range-of-a-raw-counter-behind-a-compare-is-asked-under-the-word-of-the-walk.ts
+# declare function print(value: unknown): void;
+# function total(list: number[]): number { let sum = 0; for (let i = 0; i < list.length; i++) sum = (sum + list[i]) | 0; return sum; }
+# print(total([1, 2, 3]));
+# -- end of source
+# RUN(HARDENED): walk f1 mechanisms=all-Inlining testing=CheckProofsAtRunTime
+# HARDENED-LABEL: code f1:Body
+# HARDENED: = Narrowed
+# HARDENED-NOT: typeWithoutProof=int{{*}}source=Test
+# RUN(WALK): walk f1 mechanisms=all-Inlining testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# WALK-LABEL: code f1:Body
+# WALK: [[counter]]: int[{{*}} = Narrowed
+# WALK-NEXT: CheckProof [[counter]] checkedType=int[{{*}}source=Test
+# RUN(RIGHT): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# RIGHT: 6
+# RIGHT-NEXT: exited with 0

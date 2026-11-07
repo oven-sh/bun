@@ -1,4 +1,5 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
+import { sentHandlesCell, sentMessagesCell, sentOptionsCell } from "../../../codegen/builtins/host/native-cells.ts";
 import * as table from "../../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::api::bun::subprocess::testing_apis" });
@@ -14,6 +15,11 @@ const whatChildHasWritten = table.union(
   table.strictNull,
 );
 const output = { ...stdio, getter: b.any.returning(whatChildHasWritten.spec) } as const;
+/** Writable.rs `to_js`: the sink of a pipe, the number of a descriptor, undefined for all else. `null` where a terminal stands in. */
+const whatChildReads = table.union(table.instance("FileSink"), table.f64, table.undefined, table.strictNull);
+const input = { ...stdio, getter: b.any.returning(whatChildReads.spec) } as const;
+/** `get_stdio`: a new list each time, `null` for the first three and for a pipe that is gone, the number of a descriptor for the others. */
+const extraPipes = table.instance("Array").holding({ element: table.union(table.f64, table.strictNull) }).fresh;
 
 /** What `Bun.spawn` returns. */
 export const Subprocess = b.class({
@@ -39,15 +45,20 @@ export const Subprocess = b.class({
       capability: "js",
       throws: true,
       length: 1,
+      uses: {
+        message: [...table.handedOver, table.storedIn(table.nativeCell(sentMessagesCell))],
+        handle: [...table.handedOver, table.storedIn(table.nativeCell(sentHandlesCell))],
+        options: [...table.handedOver, table.storedIn(table.nativeCell(sentOptionsCell))],
+      },
     },
     signalCode: { getter: b.any.returning("string", "number", "null"), capability: "js" },
     stderr: { ...output, throws: true, cache: true },
-    stdin: { ...stdio, cache: true },
-    stdio: { getter: b.any.returning("Array"), capability: "js", throws: true },
+    stdin: { ...input, cache: true },
+    stdio: { getter: b.any.returning(extraPipes.spec), capability: "js", throws: true },
     stdout: { ...output, throws: true, cache: true },
     terminal: { internalField: "terminal" },
     unref: { rustName: "do_unref" },
-    writable: { ...stdio, cache: "stdin", rustName: "stdin" },
+    writable: { ...input, cache: "stdin", rustName: "stdin" },
     "@@asyncDispose": {
       returns: b.any.returning("Promise", "undefined"),
       capability: "js",

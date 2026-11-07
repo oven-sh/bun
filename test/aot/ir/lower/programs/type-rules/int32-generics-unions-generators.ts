@@ -32,44 +32,36 @@ console.log(inferred, either(n), maybe(n), mapped, likeTheModel, taking().next()
 
 // GENERATED: either taking giving Counter size
 // CHECK-LABEL: function {{*}}name="either"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|i32|string site=[[w_1]] flags=[IsInt32Promise, OmitsNull, OmitsUndefined]}] results=[{type=i32 site=[[w_2]] flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|i32|string flags=[IsInt32Promise, OmitsNull, OmitsUndefined]}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: undefined|null|i32|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = TypeTest v0 testedType=number
-// CHECK-NEXT: Branch v1 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v2):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v3 = Convert v2 declared={type=i32} illTypedCause=Assertion
-// CHECK-NEXT: Jump -> next b6(v3)
-// CHECK-NEXT: b4(v4):
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
+// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v2):
+// CHECK-NEXT: v3 = NarrowByTest v0, v2
+// CHECK-NEXT: Jump -> next b3(v3)
+// CHECK-NEXT: b2(v4):
 // CHECK-NEXT: v5 = Integer
-// CHECK-NEXT: Jump -> next b6(v5)
-// CHECK-NEXT: b6(v6):
-// CHECK-NEXT: v7 = Convert v6 declared={type=i32 site=[[w_2]] flags=[IsInt32Promise]}
+// CHECK-NEXT: Jump -> next b3(v5)
+// CHECK-NEXT: b3(v6):
+// CHECK-NEXT: v7 = Convert v6 declared={type=i32}
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="taking"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Generator<i32> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: InitialYield
 // CHECK-NEXT: v3 = Integer integer=1
-// CHECK-NEXT: v4 = Convert v3 declared={type=i32 site=[[w_3]] flags=[IsInt32Promise]}
+// CHECK-NEXT: v4 = Convert v3 declared={type=i32}
 // CHECK-NEXT: v5 = Yield v4
 // CHECK-NEXT: v6 = ResultAt v5
 // CHECK-NEXT: v7 = ResultAt v5 index=1
-// CHECK-NEXT: Switch v7 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
-// CHECK-NEXT: b2():
+// CHECK-NEXT: Switch v7 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+// CHECK-NEXT: b1():
 // CHECK-NEXT: Throw v6
-// CHECK-NEXT: b3():
+// CHECK-NEXT: b2():
 // CHECK-NEXT: Return v6
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v8 = Convert v6 declared={type=i32 site=[[w_4]] flags=[IsInt32Promise]}
+// CHECK-NEXT: b3():
+// CHECK-NEXT: v8 = Convert v6 declared={type=i32 flags=[IsInt32Promise]}
 // CHECK-NEXT: v9 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v10 = PropGet v9 key="console" [isFreeName]
 // CHECK-NEXT: v11 = Convert v10 declared={type=builtin(Console) flags=[IsExpected]}
@@ -82,50 +74,42 @@ console.log(inferred, either(n), maybe(n), mapped, likeTheModel, taking().next()
 // CHECK-LABEL: function {{*}}name="giving"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Generator<i32> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_5]]
+// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_1]]
 // CHECK-NEXT: v4 = CheckInitialized v3 name="n"
-// CHECK-NEXT: v5 = Convert v4 declared={type=i32 site=[[w_6]] flags=[IsInt32Promise]}
+// CHECK-NEXT: v5 = Convert v4 declared={type=i32 flags=[IsInt32Promise]}
 // CHECK-NEXT: v6 = Yield v5
 // CHECK-NEXT: v7 = ResultAt v6
 // CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Switch v8 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
-// CHECK-NEXT: b2():
+// CHECK-NEXT: Switch v8 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+// CHECK-NEXT: b1():
 // CHECK-NEXT: Throw v7
-// CHECK-NEXT: b3():
+// CHECK-NEXT: b2():
 // CHECK-NEXT: Return v7
-// CHECK-NEXT: b4():
+// CHECK-NEXT: b3():
 // CHECK-NEXT: v9 = Undefined
 // CHECK-NEXT: Return v9
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Counter"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_7]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_7]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_7]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_8]]
+// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
+// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
+// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
+// CHECK-NEXT: v4 = CallDirect v3 function=[[f_3]]
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="size"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_7]] site=[[w_9]]} results=[{type=i32 site=[[w_10]] flags=[IsInt32Promise]}] {
-// CHECK-NEXT: b0(v0: [[L_7]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_2]]} results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK-NEXT: b0(v0: [[L_2]]):
 // CHECK-NEXT: v1 = PropGet v0 key="count"
-// CHECK-NEXT: v2 = Convert v1 declared={type=i32 site=[[w_10]] flags=[IsInt32Promise]}
+// CHECK-NEXT: v2 = Convert v1 declared={type=i32}
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="size"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_7]] site=[[w_11]]} parameters=[{type=i32 site=[[w_12]] flags=[IsInt32Promise]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_7]], v1: i32):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Convert v1 declared={type=i32 site=[[w_13]] flags=[IsInt32Promise]}
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_2]]} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: [[L_2]], v1: i32):
+// CHECK-NEXT: v2 = Convert v1 declared={type=i32}
 // CHECK-NEXT: PropSet v0, v2 key="count"
 // CHECK-NEXT: v4 = Undefined
 // CHECK-NEXT: Return v4

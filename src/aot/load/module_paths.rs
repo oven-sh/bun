@@ -8,12 +8,13 @@ use bun_sema::resolve::CodeImportKind;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::to_native;
 
-use crate::diagnostics::InternalError;
+use crate::diagnostic_codes::Code;
+use crate::diagnostics::{Diagnostic, InternalError};
 use crate::load::loaders::{
-    BY_NAME, HostLoaderKind, host_loader_kind, is_asked_for_by_query, loader_by_name,
-    loader_by_path, to_host_loader,
+    BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path, script_kind_of,
+    to_host_loader,
 };
-use crate::load::plugin_modules::{DATA_URL_NAMESPACE, ENTRY_TEXT_NAMESPACE};
+use crate::load::plugin_modules::ENTRY_TEXT_NAMESPACE;
 use crate::load::sources::{ModulePaths, PluginModuleName, SourceKind};
 use crate::module_keys::path_of_form;
 use crate::options::PathOptions;
@@ -30,6 +31,7 @@ pub(super) fn is_linkable(files: &Files<'_>, file: FileId) -> bool {
 #[derive(Default)]
 pub(super) struct FileMaps<'s> {
     primary_files: FxHashMap<&'s [u8], (FileId, HostLoader)>,
+    paths_with_multiple_forms: FxHashSet<&'s [u8]>,
     entry_point_indexes: FxHashMap<FileId, usize>,
     entry_point_paths: FxHashSet<Vec<u8>>,
 }
@@ -56,18 +58,11 @@ impl<'s> FileMaps<'s> {
         maps
     }
 
-    /// The files that a typed package's own program starts from are no entry points of the build.
-    pub(super) fn forget_entry_points(&mut self) {
-        self.entry_point_indexes.clear();
-    }
-
     fn add_linkable_file(&mut self, path: &'s [u8], file: FileId, loader: HostLoader) {
-        // What an import without attributes gets stands under the path, ahead of what a `type` asks for.
-        let loader = match is_asked_for_by_query(loader) {
-            true => BY_NAME,
-            false => loader,
-        };
         let primary = self.primary_files.entry(path).or_insert((file, loader));
+        if primary.0 != file {
+            self.paths_with_multiple_forms.insert(path);
+        }
         if loader < primary.1 {
             *primary = (file, loader);
         }
@@ -75,6 +70,10 @@ impl<'s> FileMaps<'s> {
 
     fn primary_file(&self, path: &[u8]) -> Option<FileId> {
         self.primary_files.get(path).map(|primary| primary.0)
+    }
+
+    fn has_multiple_forms(&self, path: &[u8]) -> bool {
+        self.paths_with_multiple_forms.contains(path)
     }
 
     fn shadows_entry_point(&self, file: FileId, public_path: &[u8]) -> bool {
@@ -91,17 +90,21 @@ impl<'s> FileMaps<'s> {
 pub(super) fn collect_entry_point_paths(
     runs_in_place: bool,
     paths: &PathOptions,
+    levels_above_root: usize,
 ) -> FxHashSet<Vec<u8>> {
     if runs_in_place {
         return FxHashSet::default();
     }
     let names = paths.entry_point_names.iter();
-    names.map(|name| compute_module_path(paths, name)).collect()
+    names
+        .map(|name| compute_module_path(paths, levels_above_root, name))
+        .collect()
 }
 
 pub(super) struct PathContext<'a> {
     pub runs_in_place: bool,
     pub paths: &'a PathOptions,
+    pub levels_above_root: usize,
     pub loaders: &'a [(Vec<u8>, Loader)],
     pub manifest: &'a Manifest,
     pub maps: &'a FileMaps<'a>,
@@ -112,7 +115,6 @@ pub(super) struct PathInput<'a> {
     pub kind: SourceKind,
     pub plugin_module: Option<&'a PluginModuleName>,
     pub file_name: &'a [u8],
-    /// What stands behind the path of the file in the name of the module: `?fresh=1`, or nothing.
     pub query: &'a [u8],
     pub canonical_path: &'a [u8],
     pub host_loader: HostLoader,
@@ -123,11 +125,6 @@ pub(super) struct PathInput<'a> {
 pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'_>) -> Box<[u8]> {
     let maps = context.maps;
     let path = match input.plugin_module {
-        // The run time knows the module by the URL.
-        Some(module) if *module.namespace == *DATA_URL_NAMESPACE => {
-            let loader = requested_loader(input.host_loader, input.file_name);
-            return path_of_form(&module.path, loader).into();
-        }
         Some(module) if *module.namespace == *ENTRY_TEXT_NAMESPACE => return module.path.clone(),
         Some(module) => plugin_public_path(&module.namespace, &module.path),
         None => match input.kind {
@@ -135,7 +132,7 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
                 let path = compute_path_of_runtime_module(context.manifest, module.registry_id());
                 return path.unwrap_or_else(|| input.file_name.into());
             }
-            SourceKind::RuntimeFunctions | SourceKind::EvaluatedText => {
+            SourceKind::RuntimeFunctions => {
                 return input.file_name.into();
             }
             SourceKind::Program | SourceKind::Data | SourceKind::TypesOnly
@@ -147,6 +144,7 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
                 let mut path = compute_program_path(
                     context.runs_in_place,
                     context.paths,
+                    context.levels_above_root,
                     to_native(input.file_name),
                     maps.entry_point_indexes.get(&input.file).copied(),
                 );
@@ -156,6 +154,7 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
             SourceKind::TypesOnly => compute_program_path(
                 context.runs_in_place,
                 context.paths,
+                0,
                 to_native(input.file_name),
                 None,
             ),
@@ -169,7 +168,6 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
     }
 }
 
-/// `bun run` shows a module of src/js/thirdparty under the name of its file, and its loader knows the module by the specifier.
 pub(super) fn compute_name_of_third_party_file(
     manifest: &Manifest,
     kind: SourceKind,
@@ -183,7 +181,6 @@ pub(super) fn compute_name_of_third_party_file(
     Some(name[..end].into())
 }
 
-/// A module that holds a part of another one is shown under the name of that one.
 pub(super) fn compute_name_of_module_held_in_part(
     manifest: &Manifest,
     kind: SourceKind,
@@ -197,7 +194,6 @@ pub(super) fn compute_name_of_module_held_in_part(
 
 fn compute_path_of_runtime_module(manifest: &Manifest, id: u32) -> Option<Box<[u8]>> {
     let specifier = manifest.module(id)?.specifier.as_deref()?;
-    // `bun run` shows a module of src/js/internal as internal:<name>.
     Some(match specifier.strip_prefix(b"internal/") {
         Some(name) => [b"internal:", name].concat().into(),
         None => specifier.into(),
@@ -211,16 +207,19 @@ fn requested_loader(host_loader: HostLoader, file_name: &[u8]) -> Loader {
     }
 }
 
-// Whoever names the file at run time without an attribute asks for another module than this one.
 fn is_data_that_only_an_attribute_asks_for(
     context: &PathContext<'_>,
     input: &PathInput<'_>,
 ) -> bool {
-    let is_file_with_data = input.kind == SourceKind::Data && input.plugin_module.is_none();
-    if !is_file_with_data
-        || context.maps.entry_point_indexes.contains_key(&input.file)
-        || is_asked_for_by_query(input.host_loader)
-    {
+    let is_data = match input.kind {
+        SourceKind::Data => true,
+        SourceKind::Program => {
+            script_kind_of(requested_loader(input.host_loader, input.file_name)).is_none()
+        }
+        _ => false,
+    };
+    let is_file_with_data = is_data && input.plugin_module.is_none();
+    if !is_file_with_data || context.maps.entry_point_indexes.contains_key(&input.file) {
         return false;
     }
     let kinds = [
@@ -228,9 +227,12 @@ fn is_data_that_only_an_attribute_asks_for(
         CodeImportKind::Require,
         CodeImportKind::EntryPoint,
     ];
+    let requested = requested_loader(input.host_loader, input.file_name);
+    let is_only_form = !context.maps.has_multiple_forms(input.canonical_path);
     !kinds.into_iter().any(|kind| {
         let loader = loader_by_path(context.loaders, input.file_name, kind);
         to_host_loader(loader, input.file_name) == input.host_loader
+            || (!context.runs_in_place && is_only_form && loader == requested)
     })
 }
 
@@ -248,9 +250,10 @@ fn plugin_public_path(namespace: &[u8], path: &[u8]) -> Vec<u8> {
     public_path
 }
 
-fn compute_program_path(
+pub(super) fn compute_program_path(
     runs_in_place: bool,
     paths: &PathOptions,
+    levels_above_root: usize,
     native_path: &[u8],
     entry_point_index: Option<usize>,
 ) -> Vec<u8> {
@@ -258,15 +261,45 @@ fn compute_program_path(
         return with_separators_of_host(native_path, cfg!(windows));
     }
     if let Some(index) = entry_point_index {
-        return compute_module_path(paths, &paths.entry_point_names[index]);
+        let name = &paths.entry_point_names[index];
+        return compute_module_path(paths, levels_above_root, name);
     }
     match compute_relative_path(&paths.root_directory, native_path) {
-        Some(relative_path) => compute_module_path(paths, &relative_path),
-        None => compute_module_path(paths, native_path),
+        Some(relative_path) => compute_module_path(paths, levels_above_root, &relative_path),
+        None => compute_module_path(paths, levels_above_root, native_path),
     }
 }
 
-/// The compiler writes `C:/a/b.ts`. `bun run` names that file `C:\a\b.ts`, and so does whoever asks for a module by its path.
+pub(crate) const FOLDER_ABOVE_ROOT: &[u8] = b"_.._";
+
+pub(crate) fn count_folders(directory: &[u8]) -> usize {
+    let is_separator = |byte: &u8| *byte == b'/' || (cfg!(windows) && *byte == b'\\');
+    let folders = directory.split(is_separator);
+    folders.filter(|folder| !folder.is_empty()).count()
+}
+
+pub(crate) fn count_levels_above(relative_path: &[u8]) -> usize {
+    let folders = strings::split(relative_path, b"/");
+    folders.take_while(|&folder| folder == b"..").count()
+}
+
+pub(crate) fn spell_mount_above_root(root: &[u8]) -> &[u8] {
+    let folder = root.strip_suffix(b"/").unwrap_or(root);
+    &root[..strings::last_index_of_char(folder, b'/').map_or(0, |at| at + 1)]
+}
+
+pub(crate) fn spell_folder_above_root(
+    root: &[u8],
+    levels_above_root: usize,
+    level: usize,
+) -> Vec<u8> {
+    let (start, folders) = match (1..=levels_above_root).contains(&level) {
+        true => (spell_mount_above_root(root), levels_above_root + 1 - level),
+        false => (root, level),
+    };
+    [start, &b"_.._/".repeat(folders)[..]].concat()
+}
+
 pub(crate) fn with_separators_of_host(native_path: &[u8], is_windows: bool) -> Vec<u8> {
     let to_host = |&byte: &u8| match byte {
         b'/' if is_windows => b'\\',
@@ -275,7 +308,6 @@ pub(crate) fn with_separators_of_host(native_path: &[u8], is_windows: bool) -> V
     native_path.iter().map(to_host).collect()
 }
 
-/// What the executable prints for a file at run time: its path from the project's folder, with forward slashes.
 pub(super) fn compute_display_path(project_root: &[u8], native_path: &[u8]) -> Box<[u8]> {
     let are_absolute = is_absolute(project_root) && is_absolute(native_path);
     let relative_path = are_absolute.then(|| compute_relative_path(project_root, native_path));
@@ -301,10 +333,46 @@ fn fits_path_buffer(path: &[u8]) -> bool {
     path.len() + MAX_NORMALIZATION_GROWTH <= MAX_PATH_BYTES
 }
 
-pub(super) fn compute_module_path(paths: &PathOptions, relative_path: &[u8]) -> Vec<u8> {
-    let mut path = paths.module_prefix.clone();
-    append_sanitized_path(&mut path, relative_path);
-    // `__dirname` in an executable for Windows is `B:\~BUN\root`, and a program compares what it joins to that with the path of a module.
+pub(crate) fn read_path_above_root<'p>(
+    root: &[u8],
+    levels_above_root: usize,
+    path: &'p [u8],
+) -> Option<(usize, &'p [u8])> {
+    let above = path.strip_prefix(spell_mount_above_root(root))?;
+    let folders = strings::split(above, b"/");
+    let spelled = folders.take_while(|&folder| folder == FOLDER_ABOVE_ROOT);
+    let spelled = spelled.count().min(levels_above_root + 1);
+    let below = &above[above.len().min(5 * spelled)..];
+    (spelled > 0 && levels_above_root > 0).then_some((levels_above_root + 1 - spelled, below))
+}
+
+pub(crate) fn spell_with_other_levels(
+    root: &[u8],
+    path: &[u8],
+    levels: usize,
+    other_levels: usize,
+) -> Vec<u8> {
+    match read_path_above_root(root, levels, path) {
+        None => path.to_vec(),
+        Some((level, below)) => [
+            &spell_folder_above_root(root, other_levels, level)[..],
+            below,
+        ]
+        .concat(),
+    }
+}
+
+pub(super) fn compute_module_path(
+    paths: &PathOptions,
+    levels_above_root: usize,
+    relative_path: &[u8],
+) -> Vec<u8> {
+    let level = count_levels_above(relative_path);
+    let mut path = spell_folder_above_root(&paths.module_prefix, levels_above_root, level);
+    append_sanitized_path(
+        &mut path,
+        &relative_path[relative_path.len().min(3 * level)..],
+    );
     with_separators_of_host(&path, paths.module_prefix.starts_with(b"B:/"))
 }
 
@@ -330,16 +398,35 @@ pub(super) fn are_all_different<'a>(mut paths: impl Iterator<Item = &'a [u8]>) -
     paths.all(|path| seen.insert(path))
 }
 
-fn check_unique_public_paths_of(
-    mut modules: Vec<(FileId, ModulePaths<'_>)>,
-) -> Result<(), InternalError> {
+fn find_files_with_one_public_path<'a>(
+    mut modules: Vec<(FileId, ModulePaths<'a>)>,
+) -> Option<[ModulePaths<'a>; 2]> {
     if are_all_different(modules.iter().map(|it| it.1.public_path)) {
-        return Ok(());
+        return None;
     }
     modules.shared_sort_unstable_by_key(|&(file, paths)| (paths.public_path, file));
     let mut neighbors = modules.iter().zip(modules.iter().skip(1));
     let collision = neighbors.find(|(first, second)| first.1.public_path == second.1.public_path);
-    let Some(((_, first), (_, second))) = collision else {
+    collision.map(|(first, second)| [first.1, second.1])
+}
+
+pub(super) fn find_folder_named_as_parent_is_spelled<'a>(
+    paths: impl Iterator<Item = (FileId, ModulePaths<'a>)>,
+) -> Option<Diagnostic> {
+    let [first, second] = find_files_with_one_public_path(paths.collect())?;
+    let lies_in_such_folder = |paths: ModulePaths<'_>| {
+        strings::split(paths.display_path, b"/").any(|folder| folder == b"_.._")
+    };
+    (lies_in_such_folder(first) || lies_in_such_folder(second)).then(|| {
+        let arguments = [first.public_path, first.display_path, second.display_path];
+        Diagnostic::new(Code::FolderNamedAsParentIsSpelled, None, &arguments)
+    })
+}
+
+fn check_unique_public_paths_of(
+    modules: Vec<(FileId, ModulePaths<'_>)>,
+) -> Result<(), InternalError> {
+    let Some([first, second]) = find_files_with_one_public_path(modules) else {
         return Ok(());
     };
     let parts: [&[u8]; 6] = [
@@ -362,7 +449,7 @@ mod tests {
 
     use super::*;
     use crate::builtins::RuntimeModule;
-    use crate::load::loaders::{to_host_loader_of_attribute, to_host_loader_of_query};
+    use crate::load::loaders::to_host_loader_of_attribute;
     use crate::options::default_loaders;
 
     fn as_text() -> HostLoader {
@@ -378,6 +465,7 @@ mod tests {
             module_prefix: b"/$bunfs/root/".to_vec(),
             root_directory: b"/project".to_vec(),
             entry_point_names: vec![b"main.js".to_vec(), b"worker.js".to_vec()],
+            entry_point_file_names: Vec::new(),
         }
     }
 
@@ -418,6 +506,7 @@ mod tests {
         let context = PathContext {
             runs_in_place: false,
             paths: &path_options(),
+            levels_above_root: 0,
             loaders: &default_loaders(),
             manifest,
             maps,
@@ -432,12 +521,12 @@ mod tests {
             ..path_options()
         };
         assert_eq!(
-            compute_module_path(&paths, b"../lib/a.ts"),
-            b"B:\\~BUN\\root\\_.._\\lib\\a.ts"
+            compute_module_path(&paths, 2, b"../lib/a.ts"),
+            b"B:\\~BUN\\_.._\\_.._\\lib\\a.ts"
         );
         assert_eq!(
-            compute_module_path(&path_options(), b"../lib/a.ts"),
-            b"/$bunfs/root/_.._/lib/a.ts"
+            compute_module_path(&path_options(), 2, b"../lib/a.ts"),
+            b"/$bunfs/_.._/_.._/lib/a.ts"
         );
     }
 
@@ -457,14 +546,14 @@ mod tests {
     #[test]
     fn program_paths_follow_options() {
         let paths = path_options();
-        let path = |native, index| compute_program_path(false, &paths, native, index);
+        let path = |native, index| compute_program_path(false, &paths, 2, native, index);
         assert_eq!(
             path(b"/project/src/main.ts", Some(1)),
             b"/$bunfs/root/worker.js"
         );
         assert_eq!(path(b"/project/src/a.ts", None), b"/$bunfs/root/src/a.ts");
-        assert_eq!(path(b"/other/a.ts", None), b"/$bunfs/root/_.._/other/a.ts");
-        assert_eq!(path(b"/a.ts", None), b"/$bunfs/root/_.._/a.ts");
+        assert_eq!(path(b"/other/a.ts", None), b"/$bunfs/_.._/_.._/other/a.ts");
+        assert_eq!(path(b"/a.ts", None), b"/$bunfs/_.._/_.._/a.ts");
     }
 
     #[test]
@@ -485,7 +574,7 @@ mod tests {
             root_directory: b"/d".repeat(depth),
             ..path_options()
         };
-        let outside = compute_program_path(false, &deep_root, b"/other/a.ts", None);
+        let outside = compute_program_path(false, &deep_root, 0, b"/other/a.ts", None);
         let parents = b"_.._/".repeat(depth);
         assert_eq!(
             outside,
@@ -497,24 +586,24 @@ mod tests {
     fn path_beyond_path_buffer_stays_absolute() {
         let name = b"n".repeat(MAX_PATH_BYTES);
         let native_path = [&b"/project/"[..], &name, b".ts"].concat();
-        let inside = compute_program_path(false, &path_options(), &native_path, None);
+        let inside = compute_program_path(false, &path_options(), 0, &native_path, None);
         assert_eq!(inside, [&b"/$bunfs/root/"[..], &native_path].concat());
 
         let long_root = PathOptions {
             root_directory: b"/d".repeat(MAX_PATH_BYTES / 2),
             ..path_options()
         };
-        let outside = compute_program_path(false, &long_root, b"/other/a.ts", None);
+        let outside = compute_program_path(false, &long_root, 0, b"/other/a.ts", None);
         assert_eq!(outside, b"/$bunfs/root//other/a.ts");
     }
 
     #[test]
     fn program_paths_run_in_place() {
         let paths = path_options();
-        let path = |index| compute_program_path(true, &paths, b"/project/a.ts", index);
+        let path = |index| compute_program_path(true, &paths, 0, b"/project/a.ts", index);
         assert_eq!(path(None), b"/project/a.ts");
         assert_eq!(path(Some(0)), b"/project/a.ts");
-        assert!(collect_entry_point_paths(true, &paths).is_empty());
+        assert!(collect_entry_point_paths(true, &paths, 0).is_empty());
     }
 
     #[test]
@@ -524,12 +613,13 @@ mod tests {
             entry_point_names: names.map(<[u8]>::to_vec).to_vec(),
             ..path_options()
         };
-        let path = |index| compute_program_path(false, &paths, b"/project/src/a.ts", Some(index));
+        let path =
+            |index| compute_program_path(false, &paths, 3, b"/project/src/a.ts", Some(index));
         assert_eq!(path(0), b"/$bunfs/root/a");
-        assert_eq!(path(1), b"/$bunfs/root/_.._/lib/b.js");
-        assert_eq!(path(2), b"/$bunfs/root/_.._/_.._/other/c.js");
+        assert_eq!(path(1), b"/$bunfs/_.._/_.._/_.._/lib/b.js");
+        assert_eq!(path(2), b"/$bunfs/_.._/_.._/other/c.js");
         for index in 0..names.len() {
-            assert!(collect_entry_point_paths(false, &paths).contains(&path(index)));
+            assert!(collect_entry_point_paths(false, &paths, 3).contains(&path(index)));
         }
     }
 
@@ -588,26 +678,10 @@ mod tests {
     }
 
     #[test]
-    fn module_with_query_stands_under_path_of_file_and_query() {
-        let (file, module) = (b"/project/lib/a.ts", b"/project/lib/a%3fx.ts");
-        let mut maps = FileMaps::default();
-        maps.add_linkable_file(file, FileId(1), BY_NAME);
-        maps.add_linkable_file(module, FileId(2), BY_NAME);
-        let input = PathInput {
-            query: b"?x",
-            canonical_path: module,
-            ..program_file(2, file, BY_NAME)
-        };
-        assert_eq!(public_path(&maps, input), b"/$bunfs/root/lib/a.ts?x");
-        let input = program_file(1, file, BY_NAME);
-        assert_eq!(public_path(&maps, input), b"/$bunfs/root/lib/a.ts");
-    }
-
-    #[test]
     fn import_at_entry_point_name_has_suffix() {
         let (main_ts, main_js) = (b"/project/main.ts", b"/project/main.js");
         let mut maps = FileMaps {
-            entry_point_paths: collect_entry_point_paths(false, &path_options()),
+            entry_point_paths: collect_entry_point_paths(false, &path_options(), 0),
             ..FileMaps::default()
         };
         maps.entry_point_indexes.insert(FileId(0), 0);
@@ -630,7 +704,7 @@ mod tests {
             ..path_options()
         };
         let mut maps = FileMaps {
-            entry_point_paths: collect_entry_point_paths(false, &paths),
+            entry_point_paths: collect_entry_point_paths(false, &paths, 2),
             ..FileMaps::default()
         };
         maps.entry_point_indexes.insert(FileId(0), 0);
@@ -639,6 +713,7 @@ mod tests {
         let context = PathContext {
             runs_in_place: false,
             paths: &paths,
+            levels_above_root: 2,
             loaders: &default_loaders(),
             manifest: &Manifest::default(),
             maps: &maps,
@@ -646,8 +721,8 @@ mod tests {
         let path = |file, path: &[u8]| {
             compute_public_path(&context, &program_file(file, path, BY_NAME)).into_vec()
         };
-        assert_eq!(path(0, entry_point), b"/$bunfs/root/_.._/lib/b.js");
-        assert_eq!(path(1, imported), b"/$bunfs/root/_.._/lib/b.js?jsx");
+        assert_eq!(path(0, entry_point), b"/$bunfs/_.._/_.._/lib/b.js");
+        assert_eq!(path(1, imported), b"/$bunfs/_.._/_.._/lib/b.js?jsx");
     }
 
     #[test]
@@ -681,17 +756,15 @@ mod tests {
     }
 
     #[test]
-    fn default_library_runtime_file_and_evaluated_text_keep_their_file_names() {
+    fn default_library_and_runtime_file_keep_their_file_names() {
         let library: &[u8] = b"/bundled:///libs/lib.es5.d.ts";
         let runtime_file: &[u8] = b"/$bun/js/node/fs.ts";
-        let text: &[u8] = b"/$bun/text/%2fproject%2fa.ts/7.cjs";
         let rows = [
             (SourceKind::Program, true, library),
             (SourceKind::Data, true, library),
             (SourceKind::TypesOnly, true, library),
             (runtime_kind(), false, runtime_file),
             (SourceKind::RuntimeFunctions, false, runtime_file),
-            (SourceKind::EvaluatedText, false, text),
         ];
         for (kind, is_default_library, path) in rows {
             let input = PathInput {
@@ -781,46 +854,53 @@ mod tests {
     }
 
     #[test]
-    fn text_that_a_query_asks_for_stands_under_path_of_file_and_query() {
-        let (file_name, module) = (b"/project/a.json", b"/project/a%3fraw.json");
-        let by_query = to_host_loader_of_query(Loader::Text);
-        let as_json = to_host_loader_of_attribute(Loader::Json, module);
-        let mut maps = FileMaps::default();
-        maps.add_linkable_file(module, FileId(1), as_json);
-        maps.add_linkable_file(module, FileId(2), by_query);
-        maps.add_linkable_file(module, FileId(3), as_text());
-        let path = |file, host_loader| {
+    fn data_that_an_attribute_asks_for_as_the_name_does_stands_under_the_path() {
+        let file_name = b"/project/a.json";
+        let as_json = to_host_loader_of_attribute(Loader::Json);
+        let path = |maps: &FileMaps<'_>, file, host_loader| {
             let input = PathInput {
                 kind: SourceKind::Data,
-                query: b"?raw",
-                canonical_path: module,
                 ..program_file(file, file_name, host_loader)
             };
-            public_path(&maps, input)
+            public_path(maps, input)
         };
-        assert_eq!(path(1, as_json), b"/$bunfs/root/a.json?raw?json");
-        assert_eq!(path(2, by_query), b"/$bunfs/root/a.json?raw");
-        assert_eq!(path(3, as_text()), b"/$bunfs/root/a.json?raw?text");
+        let mut maps = FileMaps::default();
+        maps.add_linkable_file(file_name, FileId(1), as_json);
+        assert_eq!(path(&maps, 1, as_json), b"/$bunfs/root/a.json");
+        maps.add_linkable_file(file_name, FileId(2), BY_NAME);
+        assert_eq!(path(&maps, 1, as_json), b"/$bunfs/root/a.json?json");
+        assert_eq!(path(&maps, 2, BY_NAME), b"/$bunfs/root/a.json");
     }
 
     #[test]
-    fn data_of_a_url_stands_under_the_url_and_the_loader() {
-        let virtual_path = b"/$bun/plugin/dataurl/data%3a,1";
-        let plugin_module = plugin_module_name(DATA_URL_NAMESPACE, b"data:,1");
-        let mut maps = FileMaps::default();
-        maps.add_linkable_file(virtual_path, FileId(1), as_text());
-        let input = PathInput {
-            kind: SourceKind::Data,
-            plugin_module: Some(&plugin_module),
-            ..program_file(1, virtual_path, as_text())
-        };
-        assert_eq!(public_path(&maps, input), b"data:,1?text");
+    fn two_attribute_forms_are_both_keyed_by_type() {
+        for (file_name, default_loader) in [
+            (&b"/project/a.toml"[..], Loader::Toml),
+            (b"/project/a.jsonc", Loader::Jsonc),
+            (b"/project/a.yaml", Loader::Yaml),
+            (b"/project/a.json5", Loader::Json5),
+        ] {
+            let forms = [default_loader, Loader::Text].map(to_host_loader_of_attribute);
+            let mut maps = FileMaps::default();
+            maps.add_linkable_file(file_name, FileId(1), forms[0]);
+            maps.add_linkable_file(file_name, FileId(2), forms[1]);
+            let path = |file, host_loader| {
+                let input = PathInput {
+                    kind: SourceKind::Data,
+                    ..program_file(file, file_name, host_loader)
+                };
+                public_path(&maps, input)
+            };
+            let bare_path = [&b"/$bunfs/root"[..], &file_name[b"/project".len()..]].concat();
+            assert_eq!(path(1, forms[0]), path_of_form(&bare_path, default_loader));
+            assert_eq!(path(2, forms[1]), path_of_form(&bare_path, Loader::Text));
+        }
     }
 
     #[test]
     fn only_other_files_shadow_entry_point() {
         let mut maps = FileMaps {
-            entry_point_paths: collect_entry_point_paths(false, &path_options()),
+            entry_point_paths: collect_entry_point_paths(false, &path_options(), 0),
             ..FileMaps::default()
         };
         maps.entry_point_indexes.insert(FileId(1), 0);

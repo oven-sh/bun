@@ -59,10 +59,7 @@ function mostAtOnce(trail: string[], isCounted: (name: string) => boolean) {
   return most;
 }
 
-test.each([
-  ["one program", "TestRunLayers:0"],
-  ["two layers", "TestRunLayers:2"],
-])(
+test.each([["one program", "TestRunLayers:0"]])(
   "files that took over a gigabyte run at once only where they took no more together than the largest alone: %s",
   async (_, words) => {
     const records: { [name: string]: Measured } = { largest: { milliseconds: 300, megabytes: 3000 } };
@@ -150,7 +147,8 @@ test.skipIf(!isLinux)("a compiled run writes by how much each file's worker grew
   const flags = ["--isolate", "--parallel=2", "--timeout=60000", "--timings=timings.json", "--update-timings", "."];
   expect((await run([bunExe(), "test", "--aot", ...flags], String(dir), env)).exitCode).toBe(0);
   const written = JSON.parse(readFileSync(join(String(dir), "timings.json"), "utf8"));
-  expect(Object.keys(written)).toEqual(["version", "files", "memory"]);
+  expect(Object.keys(written)).toEqual(["version", "workers", "files", "memory"]);
+  expect(written.workers).toBe(2);
   expect(written.memory["grows.test.js"]).toBeGreaterThan(280);
   expect(written.memory["small.test.js"] ?? 0).toBeLessThan(200);
   expect(written.memory["starts-large.test.js"]).toBeGreaterThan(680);

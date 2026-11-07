@@ -1,0 +1,22 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# let kept: any = null;
+# function keeps(job: any) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; kept = job; return work; }
+# function calls(job: any) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return job().length + work; }
+# const takers = [keeps, calls];
+# function once(take: any, n: number) { const label = "n" + n; const got = take(() => label); return got + label.length; }
+# function drive() { let sum = 0; for (let t = 0; t < 10; t++) sum += once(takers[t & 1], t); return sum; }
+# print(drive());
+# print(kept());
+# print("went on");
+# -- end of source
+# testing=CheckProofsAtRunTime: a closure whose loan is left to the stub of a call by value stands in the heap too. The stub hands a callee whose word does not borrow a copy, so what is overwritten behind the call is held by nobody who may hold it.
+# The lie, testing=NoCalleeKeepsWhatItIsHanded: the word of keeps() says that it borrows its first argument.
+# OPTIONS: testing=CheckProofsAtRunTime,NoCalleeKeepsWhatItIsHanded
+# RUN(LOAN): walk f1 mechanisms=-Inlining
+# LOAN: NewClosure {{*}} loan=LeftToStubOfCall
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: 40
+# CALL: AOT: f{{*}} at {{*}}: a cell that the compiler took for dead where its function returned is still held. This is a bug in Bun.
+# CALL-NOT: went on
+# CALL: crashed with

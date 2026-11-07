@@ -1,0 +1,19 @@
+# `await o.load()`: the call is taken to have just made the promise of the async method of the class only where the lookup comes to that class for sure. Below a constructor function a statement may have laid another function under the name, or the link may not be laid yet: what the await gives is then whatever the value that was returned settles with.
+# f1 = kindOf, f3 = use
+# -- source: awaited-call-below-a-function-may-find-another-callee.js
+# class Base { async load() { return 1; } }
+# function Sub() { this.a = 1; }
+# Object.setPrototypeOf(Sub.prototype, Base.prototype);
+# const kept = Promise.resolve(2);
+# kept.constructor = function Other() { };
+# kept.then = function (done) { done("text"); };
+# Sub.prototype.load = function () { return kept; };
+# function kindOf(v) { return typeof v; }
+# async function use(o) { const v = await o.load(); return kindOf(v); }
+# use(new Sub());
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# REQUIRES(LINK): entries-of-bun
+# LINK: function f1
+# LINK-NOT: proven=i32
+# LINK: function f2

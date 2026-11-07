@@ -1,8 +1,8 @@
 use super::entries::{
     BuiltinEntry, BuiltinFlags, BuiltinKind, CallsForTexts, ClassData, Dependencies, HostRead,
-    HostReadContext, HostReadUse, ModuleData, ModuleFlags, ModuleLoad, Mutability, ObjectDemand,
-    OperandDemand, OperandKinds, Origin, Platforms, Prototype, RemovableCall, RuntimeFunctionData,
-    RuntimeFunctionRole, Scope, StartupLoad, TypeName,
+    HostReadContext, HostReadUse, ModuleData, ModuleFlags, ModuleLoad, Mutability, Origin,
+    Platforms, Prototype, QuietCall, RuntimeFunctionData, RuntimeFunctionRole, Scope, StartupLoad,
+    TypeName, WrittenOperand,
 };
 use super::ids::{BuiltinClass, BuiltinId, BuiltinName, RuntimeFunction, RuntimeModule};
 use crate::ir::{ContentsSlot, WellKnownSymbol};
@@ -23,10 +23,12 @@ pub enum ExportLookup {
     Found(BuiltinId),
 }
 
+#[inline]
 pub fn entry(id: BuiltinId) -> &'static BuiltinEntry {
-    &ENTRIES[id.index()]
+    &ENTRIES[id as usize]
 }
 
+#[inline]
 pub fn has_flag(id: BuiltinId, flag: BuiltinFlags) -> bool {
     entry(id).flags.contains(flag)
 }
@@ -48,11 +50,18 @@ impl BuiltinEntry {
         self.dependencies().calls_for_texts
     }
 
+    pub fn calls_where_call_runs_other_code(&self) -> &'static [RuntimeFunction] {
+        self.dependencies().calls_where_call_runs_other_code
+    }
+
+    pub fn calls_that_run_no_other_code(&self) -> &'static [QuietCall] {
+        self.dependencies().calls_that_run_no_other_code
+    }
+
     pub fn implemented_by(&self) -> &'static [RuntimeFunction] {
         self.dependencies().implemented_by
     }
 
-    /// What hangs on the operands of the entry, or on what is done with a value that it hands out.
     pub fn guessed_functions(&self) -> &'static [RuntimeFunction] {
         self.dependencies().guessed
     }
@@ -69,15 +78,15 @@ pub fn contents_index(class: BuiltinClass, slot: ContentsSlot) -> Option<usize> 
         .position(|&candidate| candidate == slot)
 }
 
+#[inline]
 pub fn module_data(module: RuntimeModule) -> &'static ModuleData {
-    &MODULES[module.index()]
+    &MODULES[module as usize]
 }
 
 pub fn namespace_of(module: RuntimeModule) -> BuiltinId {
     module_data(module).namespace
 }
 
-/// `bun run` replaces `import * as ns from "bun"` by `var ns = globalThis.Bun` and `import("bun")` by `Promise.resolve(globalThis.Bun)`.
 pub fn object_replacing_namespace(module: RuntimeModule) -> Option<BuiltinId> {
     let data = module_data(module);
     let is_replaced = data.flags.contains(ModuleFlags::HAS_OPEN_NAMESPACE);
@@ -90,6 +99,7 @@ pub fn is_es_module(module: RuntimeModule) -> bool {
         .contains(ModuleFlags::IS_ES_MODULE)
 }
 
+#[inline]
 pub fn members(holder: BuiltinId) -> &'static [BuiltinId] {
     let holder = entry(holder);
     &BUILTINS_IN_ORDER[holder.first_member as usize..][..holder.member_count as usize]
@@ -106,7 +116,6 @@ pub fn own_member(holder: BuiltinId, name: BuiltinName) -> Option<BuiltinId> {
     Some(span[position])
 }
 
-/// What the export `name` holds in the module whose `require` answers `module_object`.
 pub fn find_export(module_object: BuiltinId, name: BuiltinName) -> ExportLookup {
     if let Some(module) = entry(module_object).module.map(module_data) {
         if module.exports_held_by_namespace.contains(&name) {
@@ -144,11 +153,42 @@ pub fn member(holder: BuiltinId, name: BuiltinName) -> MemberLookup {
     }
 }
 
+#[inline]
 pub fn canonical_id(id: BuiltinId) -> BuiltinId {
     entry(id).same_object_as.unwrap_or(id)
 }
 
-/// Start-up makes the place and every object on the way to it immutable.
+pub fn resets_modules(id: BuiltinId) -> bool {
+    matches!(
+        canonical_id(id),
+        BuiltinId::BunTestJestResetModules
+            | BuiltinId::BunTestViResetModules
+            | BuiltinId::BunTestVitestViResetModules
+    )
+}
+
+pub fn fakes_timers(id: BuiltinId) -> bool {
+    matches!(
+        canonical_id(id),
+        BuiltinId::BunTestJestUseFakeTimers
+            | BuiltinId::BunTestViUseFakeTimers
+            | BuiltinId::BunTestVitestViUseFakeTimers
+    )
+}
+
+pub fn stubs_global(id: BuiltinId) -> bool {
+    matches!(
+        canonical_id(id),
+        BuiltinId::BunTestViStubGlobal | BuiltinId::BunTestVitestViStubGlobal
+    )
+}
+
+pub const HOLDERS_OF_MATCHERS: [BuiltinId; 3] = [
+    BuiltinId::Expect,
+    BuiltinId::ExpectPrototype,
+    BuiltinId::ExpectStaticPrototype,
+];
+
 pub fn is_locked(id: BuiltinId) -> bool {
     let mut next = Some(id);
     while let Some(place) = next {
@@ -172,6 +212,7 @@ pub fn root_of(id: BuiltinId) -> BuiltinId {
     root
 }
 
+#[inline]
 pub fn exists_on(id: BuiltinId, platform: Platforms) -> bool {
     entry(id).platforms.contains(platform)
 }
@@ -212,10 +253,13 @@ pub fn specifier_of(module: RuntimeModule) -> &'static [u8] {
     module_data(module).specifier.as_bytes()
 }
 
+pub fn name_without_node_prefix(module: RuntimeModule) -> Option<&'static [u8]> {
+    specifier_of(module).strip_prefix(b"node:")
+}
+
 #[cfg(feature = "linked_names")]
 fn text_of_text_name(index: usize) -> &'static [u8] {
     unsafe extern "C" {
-        /// `BuiltinTextStorage` of AOTBuiltinTable.h: the number of texts, where each starts, then the texts, each with a zero behind it.
         #[link_name = "builtinTableTextNames"]
         static TEXT_NAMES: u32;
     }
@@ -243,7 +287,6 @@ pub fn text_of_name(name: BuiltinName) -> &'static [u8] {
         [SYMBOL_NAME_TEXT_STARTS[index] as usize..SYMBOL_NAME_TEXT_STARTS[index + 1] as usize]
 }
 
-/// Whether native code puts a property under `name` on some object: a member of a built-in object, or what a constructor or a function defines on a new instance, on its result or on an operand.
 pub fn is_stored_by_native_code(name: BuiltinName) -> bool {
     let index = name.0 as usize;
     NAMES_STORED_BY_NATIVE_CODE[index / 8] >> (index % 8) & 1 != 0
@@ -253,7 +296,6 @@ pub fn is_symbol_name(name: BuiltinName) -> bool {
     name.0 as usize >= TEXT_NAME_COUNT
 }
 
-/// The texts of the names that are no symbols ascend.
 pub fn find_name(text: &[u8]) -> Option<BuiltinName> {
     let (mut low, mut high) = (0, TEXT_NAME_COUNT);
     while low < high {
@@ -316,12 +358,17 @@ pub fn name_of_symbol(symbol: WellKnownSymbol) -> BuiltinName {
 }
 
 pub fn module_by_specifier(specifier: &[u8]) -> Option<RuntimeModule> {
+    let first = MODULES_BY_SPECIFIER.first();
+    if first.is_some_and(|&first| specifier < module_data(first).specifier.as_bytes()) {
+        return None;
+    }
     let position = MODULES_BY_SPECIFIER
         .binary_search_by(|&module| module_data(module).specifier.as_bytes().cmp(specifier))
         .ok()?;
     Some(MODULES_BY_SPECIFIER[position])
 }
 
+#[inline]
 pub fn runtime_functions() -> &'static [RuntimeFunctionData] {
     RUNTIME_FUNCTIONS
 }
@@ -339,24 +386,10 @@ pub fn host_reads(context: HostReadContext) -> impl Iterator<Item = &'static Hos
         .filter(move |read| read.context == context)
 }
 
-/// Whether `builtin`, which is a canonical id, makes its answer out of text or bytes, and may make it with the layouts of the type that the answer is written under.
 pub fn is_parser(builtin: BuiltinId) -> bool {
     PARSERS.binary_search(&builtin).is_ok()
 }
 
-/// Whether `builtin`, which is a canonical id, answers a query that settles to rows.
 pub fn answers_query(builtin: BuiltinId) -> bool {
     QUERY_FUNCTIONS.binary_search(&builtin).is_ok()
-}
-
-/// The ways to call or construct `builtin`, which is a canonical id, so that nothing a program can see happens when nobody uses the result.
-pub fn removable_calls(
-    builtin: BuiltinId,
-    is_construction: bool,
-) -> impl Iterator<Item = &'static RemovableCall> {
-    let first = REMOVABLE_CALLS.partition_point(|call| call.builtin < builtin);
-    REMOVABLE_CALLS[first..]
-        .iter()
-        .take_while(move |call| call.builtin == builtin)
-        .filter(move |call| call.is_construction == is_construction)
 }

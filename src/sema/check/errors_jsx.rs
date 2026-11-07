@@ -514,7 +514,7 @@ impl Checker<'_, '_> {
         // parameters.
         let is_this_element = |entry: &ResolvedMeanwhile| entry.file == file && entry.call == e;
         if !self.resolved_meanwhile.iter().any(is_this_element)
-            && self.stack.contains(&Query::Call(file, e))
+            && self.is_in_flight(Query::Call(file, e))
         {
             let signature = self.any_signature();
             return Some(self.jsx_effective_first_argument(file, e, signature));

@@ -83,7 +83,6 @@ fn has_mark(files: &Files<'_>, file: FileId, written_at: TextRange) -> bool {
     strings::contains(text, b"MARK")
 }
 
-// The answers for the marked statements of a file. Of a statement with several declarations, the marked ones answer.
 fn ask(files: &Files<'_>, file: FileId, options: RemovableOptions) -> Vec<bool> {
     let hir = files.hir(file);
     let removable = Removable::new(files, file, options).expect("the file has a tree");
@@ -222,6 +221,37 @@ fn annotations_can_be_ignored() {
 }
 
 #[test]
+fn global_names_that_are_not_locked_are_left_out_as_whoever_runs_the_program_leaves_them_out() {
+    let bundled = RemovableOptions::default();
+    let minified = RemovableOptions {
+        is_told_to_minify_syntax: true,
+        ..bundled
+    };
+    let in_place = RemovableOptions {
+        has_no_bundle: true,
+        ..bundled
+    };
+    let rows = [
+        ("const MARK = Map;", [true, true, true]),
+        ("const MARK = process;", [true, true, true]),
+        ("const MARK = { table: Map };", [true, true, true]),
+        ("Date, \"MARK\";", [true, true, true]),
+        ("const MARK = Date;", [true, true, false]),
+        ("const MARK = { when: Date };", [true, true, false]),
+        ("export default [URL, \"MARK\"];", [true, true, false]),
+        ("const MARK = structuredClone;", [false, false, false]),
+        ("structuredClone, \"MARK\";", [false, false, false]),
+        ("const MARK = new WeakMap();", [false, true, false]),
+        ("new WeakMap(), \"MARK\";", [false, true, true]),
+        ("new Date(0), \"MARK\";", [false, true, true]),
+    ];
+    for (source, expected) in rows {
+        let answers = [bundled, minified, in_place].map(|options| ask_one(source, "ts", options));
+        assert_eq!(answers, expected, "{source}");
+    }
+}
+
+#[test]
 fn constructions_of_known_globals_are_left_out() {
     let plain = RemovableOptions::default();
     let removable = [
@@ -232,10 +262,7 @@ fn constructions_of_known_globals_are_left_out() {
         "const MARK = new Set();",
         "const MARK = new Set([\"a\", \"b\"]);",
         "const MARK = new Set(undefined);",
-        "const MARK = new WeakMap();",
         "const MARK = new WeakSet([]);",
-        "const MARK = new Date();",
-        "const MARK = new Date(0);",
         "const MARK = [...[\"a\"]];",
         "class MARK { static a = new Map([[\"a\", 1]]); }",
     ];
@@ -252,6 +279,9 @@ fn constructions_of_known_globals_are_left_out() {
         "const o: any = {}; const MARK = new Date(o);",
         "class Map { constructor(a?: any) { sideEffect(); } } declare function sideEffect(): void; const MARK = new Map();",
         "const MARK = new Map([], 1 as any);",
+        "const MARK = new WeakMap();",
+        "const MARK = new Date();",
+        "const MARK = new Date(0);",
     ];
     for source in kept {
         assert!(!ask_one(source, "ts", plain), "{source}");
@@ -288,4 +318,33 @@ fn statement_with_several_declarations_needs_all_of_them() {
         });
         assert_eq!(answer, expected, "{source}");
     }
+}
+
+#[test]
+fn a_member_at_the_end_of_a_long_chain_of_enum_members_is_a_constant() {
+    let chain: String = (0..50_000)
+        .map(|member| format!("M{} = M{member} + 1, ", member + 1))
+        .collect();
+    let source = format!("enum Chain {{ M0 = 1, {chain}}} const MARK = [Chain.M50000];");
+    assert!(ask_one(&source, "ts", RemovableOptions::default()));
+}
+
+#[test]
+fn names_of_a_long_chain_of_operators_are_initialized() {
+    let forms = [
+        ("let a = 1; const MARK = (a", ", a", ");"),
+        ("let a = 1; const MARK = a", " && a", ";"),
+        ("class C { static MARK = (C", ", C", "); }"),
+    ];
+    let sources = forms.map(|(head, link, tail)| [head, &link.repeat(4_000), tail].concat());
+    let programs: Vec<(String, &str)> = (1..)
+        .zip(&sources)
+        .map(|(number, source)| (format!("form{number}.ts"), &source[..]))
+        .collect();
+    with_programs(&programs, &default_settings(), |files, ids| {
+        for ((head, ..), &file) in forms.iter().zip(ids) {
+            let answers = ask(files, file, RemovableOptions::default());
+            assert_eq!(answers, [true], "{head}");
+        }
+    });
 }

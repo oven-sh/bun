@@ -1,0 +1,19 @@
+# `if (!item.id) throw ..; items.push({ ...item })`, item known as two literals that differ in their fields. The guard's read leaves a value for the slot `id` that is typed over BOTH layouts.
+# The copy's arm for one layout lays into its maker what fits that layout's slot: it reads the slot. Laid as it was, the value cut the maker's list, and the cut maker was stopped: every object of the first layout died there.
+# f1 = add
+# -- source: main.js
+# const items = [];
+# function add(item) { if (!item.id) throw new Error("no id"); items.push({ ...item }); }
+# add({ id: 7 });
+# add({ id: "abc", owner: 3 });
+# print(items.length + " " + items[0].id + " " + items[1].id + " " + items[1].owner);
+# -- end of source
+# RUN(STOPS): compile MakersWithoutFieldsHeldFilled mechanisms=all
+# STOPS: statistic MakersWithoutFieldsHeldFilled 0
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK: HasNoExtraProperties
+# WALK: GetSlot {{*}} key="id" receivers=[L0] level=Proven
+# WALK: NewObject {{*}} layout=L0
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 2 7 abc 3
+# ANSWERS-NEXT: exited with 0

@@ -1,0 +1,30 @@
+# The same program with every body written straight: `make` hands the stub four captures, loads the others out of its frame behind the call and stores them into the cell. Every capture is boxed with all mechanisms withheld, which is what the straight form of the operation takes; the count says that `make` is written so and not walked.
+# OPTIONS: testing=WritesBodiesStraight
+# STATISTIC: UnitsWrittenStraight >= 1
+# RUN: run-in-shell mechanisms=none
+# CHECK: 10000 10000
+# CHECK-NEXT: exited with 0
+# RUN(BYTES): bytes f1 mechanisms=none
+# BYTES: NewSlimClosure.Plain count 5
+# BYTES: NewSlimClosure.Plain count 8
+# -- source: closures-hold-what-they-capture-past-the-registers-of-the-stub.js
+# const kept = [];
+# function make(t, a, b, c, d, e, f, g, h) {
+#     kept.push(() => a.of + b.of + c.of + d.of + t);
+#     kept.push(() => a.of + b.of + c.of + d.of + e.of + t);
+#     kept.push(() => a.of + b.of + c.of + d.of + e.of + f.of + t);
+#     kept.push(() => a.of + b.of + c.of + d.of + e.of + f.of + g.of + t);
+#     kept.push(() => a.of + b.of + c.of + d.of + e.of + f.of + g.of + h.of + t);
+# }
+# for (let t = 0; t < 2000; t++) {
+#     make(t, { of: "a" }, { of: "b" }, { of: "c" }, { of: "d" }, { of: "e" }, { of: "f" }, { of: "g" }, { of: "h" });
+#     if (t % 500 === 499)
+#         gc();
+# }
+# const texts = ["abcd", "abcde", "abcdef", "abcdefg", "abcdefgh"];
+# let right = 0;
+# for (let k = 0; k < kept.length; k++)
+#     right += kept[k]() === texts[k % 5] + (k - k % 5) / 5;
+# print(right, kept.length);
+# -- end of source
+# f1 = make

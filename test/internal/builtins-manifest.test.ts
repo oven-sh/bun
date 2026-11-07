@@ -5,7 +5,7 @@ import { join, relative } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import {
   type EngineFunctions,
-  functionFiles,
+  findModuleHeldInPart,
   functionIds,
   helperModules,
   locate,
@@ -14,18 +14,6 @@ import {
   specifierOf,
   typesOnlySchemas,
 } from "../../src/codegen/builtins-manifest-model";
-import { listBundledNamesOfModule } from "../../src/codegen/bundled-names";
-import {
-  Aligner,
-  encodeWordsInEvaluatedText,
-  findModuleHeldInPart,
-  findWordsInEvaluatedText,
-  findWordsOfFirstText,
-  listPlacesInOtherFiles,
-  moveBundledNamesToSecondText,
-  readFileOfFunctions,
-  Words,
-} from "../../src/codegen/bundled-positions";
 import { run } from "../aot/harness/run";
 
 const root = join(import.meta.dir, "..", "..");
@@ -37,11 +25,6 @@ const textsForTheCompiler = readdirSync(join(root, "src", "js", "ahead-of-time")
   .map(entry =>
     relative(join(root, "src", "js", "ahead-of-time"), join(entry.parentPath, entry.name)).replaceAll("\\", "/"),
   );
-// A module of those, and a word that both of its texts have. The first comment of the text that is bundled is not in the other.
-const moduleOfTwoTexts = "internal/primordials.js";
-const wordOfBothTexts = "ObjectSetPrototypeOf = Object.setPrototypeOf;";
-const offsetOfWordOfBothTexts = (...folders: string[]) =>
-  readFileSync(join(root, "src", "js", ...folders, moduleOfTwoTexts)).indexOf(wordOfBothTexts);
 const script = join(root, "src", "codegen", "builtins-manifest.ts");
 // A debug build takes seconds to load the script and to compress the archive.
 const generatorTimeout = 120_000;
@@ -81,19 +64,6 @@ function createFixture(engine: EngineFunctions = engineFunctions) {
   const dir = tempDir("builtins-manifest", {
     "evaluated_modules.bin": createEvaluatedModules(),
     "aot_engine_functions.json": JSON.stringify(engine),
-    "bundled_names_of_modules.txt": [
-      `name\tnode/fs.ts\t12\tread2\town`,
-      `positions\tnode/fs.ts\t${Buffer.from([1, 2, 3]).toString("base64")}`,
-      `name\t${moduleOfTwoTexts}\t3\tcall2\tvariable`,
-      `name\t${moduleOfTwoTexts}\t${offsetOfWordOfBothTexts()}\tset2\tvariable`,
-      `positions\t${moduleOfTwoTexts}\t${Buffer.from([4]).toString("base64")}`,
-      `positions\tnode/os.ts\t${Buffer.from([5, 6]).toString("base64")}`,
-      `part\tnode/os.ts\tnode/fs.ts`,
-      `evaluated-functions\tbuiltins/Fifo.ts\t30 40 0 10`,
-      `positions\tbuiltins/Fifo.ts\t${Buffer.from([7]).toString("base64")}`,
-      `place\tnode/os.ts\t5\t39\t11\t19`,
-      ``,
-    ].join("\n"),
     "runtime.out.js": "var a=()=>1;export{a as __name};",
   });
   const file = (name: string) => join(String(dir), name);
@@ -102,11 +72,7 @@ function createFixture(engine: EngineFunctions = engineFunctions) {
     manifest: file("builtins.manifest"),
     archive: file("builtin_sources.bin"),
     engineFlag: `--engine-functions=${file("aot_engine_functions.json")}`,
-    nameFlags: [
-      `--bundled-names-of-modules=${file("bundled_names_of_modules.txt")}`,
-      `--bundled-helpers=${file("runtime.out.js")}`,
-      `--evaluated-modules=${file("evaluated_modules.bin")}`,
-    ],
+    nameFlags: [`--bundled-helpers=${file("runtime.out.js")}`, `--evaluated-modules=${file("evaluated_modules.bin")}`],
     [Symbol.dispose]: () => dir[Symbol.dispose](),
   };
 }
@@ -145,49 +111,19 @@ describe("builtins-manifest.ts", () => {
 
   afterAll(() => fixture[Symbol.dispose]());
 
-  test("the manifest has format 6 and its ten record kinds", () => {
+  test("the manifest has format 6 and its eight record kinds", () => {
     expect(records[0]).toEqual(["bun-builtins-manifest", "6"]);
     expect([...new Set(records.slice(1).map(([kind]) => kind))]).toEqual([
       "define",
+      "native",
       "module",
       "functions",
       "function",
       "declarations",
       "declares-for-every-file",
-      "name",
       "part",
-      "evaluated-functions",
-      "place",
     ]);
-    expect(records.filter(([kind]) => ["part", "evaluated-functions", "place"].includes(kind))).toEqual([
-      ["part", "node/os.ts", "node/fs.ts"],
-      ["evaluated-functions", "builtins/Fifo.ts", "30 40 0 10"],
-      ["place", "node/os.ts", "5", "39", "11", "19"],
-    ]);
-  });
-
-  test("the names are those of the bundled texts, at the words of a second text that stand for their identifiers", () => {
-    expect(records.filter(([kind]) => kind === "name")).toEqual([
-      ["name", "node/fs.ts", "12", "read2", "own"],
-      ["name", moduleOfTwoTexts, String(offsetOfWordOfBothTexts("ahead-of-time")), "set2", "variable"],
-    ]);
-    expect(offsetOfWordOfBothTexts("ahead-of-time")).not.toBe(offsetOfWordOfBothTexts());
-  });
-
-  test("the positions of all files are one file of the archive, each part behind the id of its file and its length", () => {
-    // 7 bits a byte, the lowest first.
-    const idOf = (file: string) => {
-      const id = moduleList.indexOf(file);
-      expect(id).toBeWithin(0, 128 * 128);
-      return id < 128 ? [id] : [(id & 127) | 128, id >> 7];
-    };
-    expect([...readArchive(fixture.archive).frames.get("positions")!.text()]).toEqual([
-      ...[...idOf("node/fs.ts"), 3, 1, 2, 3],
-      ...[...idOf(moduleOfTwoTexts), 1, 4],
-      ...[...idOf("node/os.ts"), 2, 5, 6],
-      // The files of functions follow on the modules, from 1 << 20.
-      ...[functionFiles.indexOf("builtins/Fifo.ts") | 128, 128, 64, 1, 7],
-    ]);
+    expect(records).toContainEqual(["part", "internal/validate_function.ts", "internal/validators.ts"]);
   });
 
   test("a module is compressed as what follows on the text that is evaluated for it", () => {
@@ -206,6 +142,16 @@ describe("builtins-manifest.ts", () => {
     const defines = records.filter(([kind]) => kind === "define");
     for (const [, , json] of defines) expect(() => JSON.parse(json)).not.toThrow();
     expect(readFileSync(fixture.file("debug.manifest"), "utf8")).toBe(readFileSync(fixture.manifest, "utf8"));
+  });
+
+  test("the names that mean what Bun began with are listed, the classes also as members of globalThis", () => {
+    expect(records).toContainEqual(["native", "setTimeout", "name"]);
+    expect(records).toContainEqual(["native", "queueMicrotask", "name"]);
+    expect(records).toContainEqual(["native", "Blob", "name-or-member"]);
+    expect(records).toContainEqual(["native", "URL", "name-or-member"]);
+    expect(records.filter(([kind, name]) => kind === "native" && ["Array", "Bun", "process"].includes(name))).toEqual(
+      [],
+    );
   });
 
   test("module ids ascend from 0 without a gap", () => {
@@ -317,299 +263,14 @@ describe("builtins-manifest.ts", () => {
   }
 });
 
-describe("bundled-names.ts", () => {
-  test("lists the identifiers that name a function otherwise in the bundle than in the file", async () => {
-    const written = [
-      `const stream = require("node:stream");`,
-      `{`,
-      `  function inBlock() {}`,
-      `  stream.first = inBlock;`,
-      `}`,
-      `stream.second = function setTimeout() {};`,
-      `function kept() {}`,
-      `export default () => [kept, setTimeout];`,
-      ``,
-    ].join("\n");
-    const given = "var $;" + written.replace(`require("node:stream")`, "lookUp(12)").replace("export default", "$ =");
-    using dir = tempDir("bundled-names", { "module.ts": given + "done($);\n" });
-    const built = await Bun.build({
-      entrypoints: [join(String(dir), "module.ts")],
-      target: "bun",
-      minify: { syntax: true, keepNames: true },
-      sourcemap: "external",
-    });
-    const [output, map] = await Promise.all(
-      ["entry-point", "sourcemap"].map(kind => built.outputs.find(it => it.kind === kind)!.text()),
-    );
-    const lines = listBundledNamesOfModule("node/sample.ts", written, output, JSON.parse(map));
-    const at = (text: string) => String(written.indexOf(text));
-    expect(lines.map(line => line.split("\t"))).toEqual([
-      ["name", "node/sample.ts", at("inBlock() {}"), "inBlock2", "variable"],
-      ["name", "node/sample.ts", at("setTimeout() {}"), "setTimeout2", "own"],
-      ["name", "node/sample.ts", at("export default"), "$", "variable"],
-    ]);
-  });
-});
-
-describe("bundled-positions.ts", () => {
-  test("finds where the tokens of a file stand in the text that is evaluated", async () => {
-    const written = [
-      `const stream = require("node:stream");`,
-      `// Nothing of this line is evaluated.`,
-      `function check(value: unknown, name: string): void {`,
-      `  if (typeof value !== "string") {`,
-      `    throw $ERR_INVALID_ARG_TYPE(name, "string", value);`,
-      `  }`,
-      `  stream.$call(value!, false);`,
-      `  (stream as any).end(name);`,
-      `}`,
-      `export default check;`,
-      ``,
-    ].join("\n");
-    const given =
-      "var $;" +
-      written
-        .replace(
-          `require("node:stream")`,
-          "(__intrinsic__getInternalField(12) || __intrinsic__createInternalModuleById(12))",
-        )
-        .replace("$ERR_INVALID_ARG_TYPE(", "__intrinsic__makeErrorWithCode(118, ")
-        .replace("$call", "__intrinsic__call")
-        .replace("export default", "$ =");
-    using dir = tempDir("bundled-positions", { "module.ts": given + "done($);\n" });
-    const built = await Bun.build({
-      entrypoints: [join(String(dir), "module.ts")],
-      target: "bun",
-      minify: { syntax: true, keepNames: true },
-      sourcemap: "external",
-    });
-    const [output, map] = await Promise.all(
-      ["entry-point", "sourcemap"].map(kind => built.outputs.find(it => it.kind === kind)!.text()),
-    );
-    const evaluated = `(function (){"use strict";${output.replace("// @bun\n", "").trim()}})`.replace(
-      /__intrinsic__/g,
-      "@",
-    );
-    const [words, wordsOfEvaluated] = [new Words(written), new Words(evaluated)];
-    const found = findWordsInEvaluatedText(words, output, JSON.parse(map), wordsOfEvaluated);
-    const encoded = encodeWordsInEvaluatedText(words, wordsOfEvaluated, found);
-
-    const numbers: number[] = [];
-    for (let at = 0, scale = 1; at < encoded.length; at++) {
-      if (scale === 1) numbers.push(0);
-      numbers[numbers.length - 1] += (encoded[at] & 127) * scale;
-      scale = encoded[at] < 128 ? 1 : scale * 128;
-    }
-    const aligner = new Aligner(words, wordsOfEvaluated);
-    for (let corrected = numbers.shift(); aligner.written < words.length;) {
-      if (aligner.written !== corrected) {
-        aligner.step(corrected ?? words.length);
-        continue;
-      }
-      const distance = numbers.shift()! - 1;
-      if (distance < 0) aligner.passOver();
-      else aligner.correct(distance & 1 ? -(distance >> 1) - 1 : distance >> 1);
-      corrected = numbers.length > 0 ? corrected + numbers.shift()! : undefined;
-    }
-    for (const [word, partner] of found) expect([word, aligner.partners[word]]).toEqual([word, partner]);
-
-    const partnerOf = (inWritten: string) => aligner.partners[words.starts.indexOf(written.indexOf(inWritten))];
-    const textAt = (inWritten: string) => evaluated.slice(wordsOfEvaluated.starts[partnerOf(inWritten)]);
-    const textBehind = (inWritten: string) => evaluated.slice(wordsOfEvaluated.ends[partnerOf(inWritten)]);
-    expect(textBehind(`require("node:stream")`)).toStartWith("(12)");
-    expect(textBehind(`$ERR_INVALID_ARG_TYPE(name, "string", value)`)).toStartWith(`(118, name, "string", value)`);
-    expect(textAt(`$ERR_INVALID_ARG_TYPE`)).toStartWith("makeErrorWithCode(");
-    expect(textBehind(`$call(value!, false)`)).toStartWith("(value, !1)");
-    expect(textBehind(`stream.$call`)).toStartWith(".@call(");
-    expect(textBehind(`stream as any).end(name)`)).toStartWith(".end(name)");
-    expect(textBehind(`end(name);`)).toStartWith("(name)");
-    expect(partnerOf("unknown")).toBe(-1);
-    expect(partnerOf("Nothing")).toBe(-1);
-    expect(encoded.length).toBeLessThan(written.length / 40);
-  });
-});
-
-describe("bundled-positions.ts, a second text", () => {
-  const first = [
-    "const copy = (from, to) => {",
-    "  for (const key of keys(from)) to[key] = from[key].$call(to);",
-    "  return to;",
-    "};",
-    "export default {",
-    "  one: copy(a, b),",
-    "  two: copy(c, d),",
-    "};",
-  ].join("\n");
-
-  test("a line of both texts stands for the line of the same number, and a quote for its last word", () => {
-    const second = [
-      "const copy = (from, to) => /* as: from[key].$call */ copyNatively(from, to);",
-      "const one = /* as: one: copy */ copy(a, b);",
-      "  return to;",
-      "export default {",
-      "  one,",
-      "  two: copy(c, d),",
-      "};",
-    ].join("\n");
-    const [words, wordsOfFirst] = [new Words(second), new Words(first)];
-    const found = findWordsOfFirstText(words, wordsOfFirst);
-    const textAt = (inSecond: string) => {
-      const partner = found.get(words.starts.indexOf(second.indexOf(inSecond)));
-      return partner === undefined ? undefined : first.slice(wordsOfFirst.starts[partner]);
-    };
-    expect(textAt("copyNatively(")).toStartWith("$call(to)");
-    expect(textAt("copy(a, b)")).toStartWith("copy(a, b)");
-    expect(textAt("copy(c, d)")).toStartWith("copy(c, d)");
-    expect(textAt("return to")).toStartWith("return to");
-    expect(textAt("default {")).toStartWith("default {");
-    expect(textAt("one = ")).toBeUndefined();
-  });
-
-  test("between lines of both texts, words in the same order stand for each other", () => {
-    const second = [
-      "const copy = (from: Bag, to: Bag): Bag => {",
-      "  for (const key of keys(from)) to[key] = from[key].$call(to);",
-      "  return to as Bag;",
-      "};",
-      "export default {",
-      "  two: copy(c, d),",
-      "};",
-    ].join("\n");
-    const [words, wordsOfFirst] = [new Words(second), new Words(first)];
-    const found = findWordsOfFirstText(words, wordsOfFirst);
-    const textAt = (inSecond: string) => {
-      const partner = found.get(words.starts.indexOf(second.indexOf(inSecond)));
-      return partner === undefined ? undefined : first.slice(wordsOfFirst.starts[partner]);
-    };
-    expect(textAt("copy = ")).toStartWith("copy = (from, to) => {");
-    expect(textAt("to: Bag")).toStartWith("to) => {");
-    expect(textAt("Bag,")).toBeUndefined();
-    expect(textAt("return to as")).toStartWith("return to;");
-    expect(textAt("to as")).toStartWith("to;");
-    expect(textAt("as Bag")).toBeUndefined();
-  });
-
-  test("a name of the bundle goes to the word of the second text that stands for its identifier", () => {
-    const second = first.replace("(from, to) =>", "(from: Bag, to: Bag): Bag =>").replace("  two: copy(c, d),\n", "");
-    const line = (text: string, word: string, name: string) =>
-      `name\tnode/sample.ts\t${text.indexOf(word)}\t${name}\tvariable`;
-    expect(
-      moveBundledNamesToSecondText([line(first, "copy =", "copy2"), line(first, "two:", "two2")], second, first),
-    ).toEqual([line(second, "copy =", "copy2")]);
-  });
-
-  test("a quote that the first text does not have once is refused", () => {
-    const find = (second: string) => () => findWordsOfFirstText(new Words(second), new Words(first));
-    expect(find("/* as: copy */ copy();")).toThrow('The other text does not have "copy" once');
-    expect(find("/* as: three: copy */ copy();")).toThrow('The other text does not have "three: copy" once');
-    expect(find("/* as: one: copy( */ copy();")).toThrow("does not end with a word");
-  });
-});
-
-describe("bundled-positions.ts, a file of functions", () => {
-  const bodyOfFirst = [
-    ``,
-    `  // Nothing of this line is evaluated.`,
-    ``,
-    `  function inner(b: number) {`,
-    `    return a + b;`,
-    `  }`,
-    `  return inner;`,
-    ``,
-  ].join("\n");
-  const bodyOfSecond = [
-    ``,
-    `  // Nor of this one.`,
-    `  const callback = (d: number) => c + d;`,
-    `  function last(e: number) {`,
-    `    return callback(e);`,
-    `  }`,
-    `  return last;`,
-    ``,
-  ].join("\n");
-  const written = [
-    `// In front of the first one.`,
-    `export function first(a: number) {${bodyOfFirst}}`,
-    ``,
-    `type Unused = number;`,
-    `// Between the two, a line and`,
-    `// another one.`,
-    `export async function second(c: Unused) {${bodyOfSecond}}`,
-    ``,
-  ].join("\n");
-
-  // As bundle-functions.ts does it.
-  async function bundleFunction(name: string, head: string, body: string) {
-    using dir = tempDir("bundled-function", {
-      "function.ts": `// A line in front.\n$$capture_start$$(${head} {${body}}).$$capture_end$$;\n`,
-    });
-    const built = await Bun.build({
-      entrypoints: [join(String(dir), "function.ts")],
-      target: "bun",
-      minify: { syntax: true, whitespace: false, keepNames: true },
-      sourcemap: "external",
-    });
-    const [output, map] = await Promise.all(
-      ["entry-point", "sourcemap"].map(kind => built.outputs.find(it => it.kind === kind)!.text()),
-    );
-    const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
-    const evaluated =
-      captured.replace(/function\s*\(.*?\)\s*{/, '$&"use strict";').replace(/^\((async )?function\(/, "($1function (") +
-      "\n";
-    return { name, output, map: JSON.parse(map), evaluated };
-  }
-
-  test("each function is found in what is evaluated for it, and a quote of the file says a line of that text", async () => {
-    const functions = await Promise.all([
-      bundleFunction("first", "function(a)", bodyOfFirst),
-      bundleFunction("second", "async function(c)", bodyOfSecond),
-    ]);
-    const reading = readFileOfFunctions(written, functions);
-    expect(reading.evaluated.text).toBe(functions[0].evaluated + functions[1].evaluated);
-    expect(reading.startsOfTexts).toEqual([0, functions[0].evaluated.length]);
-    const textAt = (inWritten: string) => {
-      const partner = reading.partners[reading.written.starts.indexOf(written.indexOf(inWritten))];
-      return partner < 0 ? undefined : reading.evaluated.text.slice(reading.evaluated.starts[partner]);
-    };
-    expect(textAt("export function first")).toBe(reading.evaluated.text.slice(1));
-    expect(textAt("function first")).toBe(reading.evaluated.text.slice(1));
-    expect(textAt("export async function second")).toBe(functions[1].evaluated.slice(1));
-    expect(textAt("async function second")).toBe(functions[1].evaluated.slice(1));
-    expect(textAt("function second")).toBe(functions[1].evaluated.slice("(async ".length));
-    expect(textAt("first(a")).toBeUndefined();
-    expect(textAt("inner(b")).toStartWith("inner(b) {");
-    expect(textAt("d: number")).toStartWith("d) => c + d");
-    expect(textAt("last(e")).toStartWith("last(e) {");
-    expect(textAt("Between the two")).toBeUndefined();
-
-    const text = "function /* as in builtins/Two.ts: function last */ other(x) {}\n";
-    const lines = functions[1].evaluated.split("\n");
-    const line = lines.findIndex(it => it.includes("function last("));
-    const column = lines[line].indexOf("last(");
-    expect(line).toBeGreaterThan(0);
-    expect(listPlacesInOtherFiles("internal/a.ts", text, () => reading)).toEqual([
-      ["place", "internal/a.ts", text.indexOf("other"), line, column, column + "last".length].join("\t"),
-    ]);
-  });
-
-  test("a quote that the other file does not have once, or that nothing is evaluated for, is refused", async () => {
-    const reading = readFileOfFunctions(written, [await bundleFunction("first", "function(a)", bodyOfFirst)]);
-    const list = (text: string) => () => listPlacesInOtherFiles("internal/a.ts", text, () => reading);
-    expect(list("/* as in builtins/Two.ts: function */ a();")).toThrow('builtins/Two.ts does not have "function" once');
-    expect(list("/* as in builtins/Two.ts: function none */ a();")).toThrow("does not have");
-    expect(list("/* as in builtins/Two.ts: In front of the first one */ a();")).toThrow("has no word for the end of");
-    expect(list("/* as in builtins/Two.ts: function inner */ ();")).toThrow("no word follows the comment");
-  });
-
+describe("builtins-manifest-model.ts", () => {
   test("a module says on a line of its own which module it holds a part of", () => {
     expect(findModuleHeldInPart("/* part of: internal/a.ts */\nexport default {};\n")).toBe("internal/a.ts");
     expect(findModuleHeldInPart("// About it.\n/* part of: internal/a.ts */\n")).toBe("internal/a.ts");
     expect(findModuleHeldInPart("call(); /* part of: internal/a.ts */\n")).toBeUndefined();
     expect(findModuleHeldInPart("export default {};\n")).toBeUndefined();
   });
-});
 
-describe("builtins-manifest-model.ts", () => {
   test(
     "a types-only schema gets no native call id",
     async () => {

@@ -1,0 +1,27 @@
+# `twice` only calls what arrives: the arrows of `scaled` and `looped` lie in the frame. A stub writes the one of `scaled` there, and `looped`, which makes its arrow in a loop, writes it in line. `keep` lays it in a variable: its arrow is made in the heap.
+# `last` returns at once what `twice` gives, and `twice` comes back: the call stays a call, and the arrow lies in the frame (closure-taken-by-the-call-that-ends-the-unit-lies-in-the-frame-where-the-callee-comes-back.ir).
+# f1 = twice, f2 = keep, f3 = scaled, f4 = kept, f5 = last, f6 = looped
+# -- source: closure-that-one-call-takes-lies-in-the-frame-where-the-callee-only-calls-it.ts
+# declare function sink(...values: unknown[]): void;
+# let held: ((x: number) => number) | undefined;
+# function twice(a: number, f: (x: number) => number): number { let t = a; for (let i = 0; i < 2; i++) t = f(t); return t; }
+# function keep(a: number, f: (x: number) => number): number { let t = a; for (let i = 0; i < 2; i++) t = f(t); held = f; return t; }
+# function scaled(a: number, k: number) { const t = twice(a, x => x * k); return t + 1; }
+# function kept(a: number, k: number) { const t = keep(a, x => x * k); return t + 1; }
+# function last(a: number, k: number) { return twice(a, x => x - k); }
+# function looped(a: number, k: number) { let t = a; for (let i = 0; i < 2; i++) { const s = t + k; t = twice(s, x => x * s); } return t; }
+# sink(scaled(1, 2), scaled(2, 3), kept(1, 2), kept(2, 3), last(1, 2), last(2, 3), looped(1, 2), looped(2, 3), () => held);
+# -- end of source
+# RUN: bytes f3 mechanisms=all-Inlining
+# CHECK-NOT: NewSlimClosure.Plain
+# CHECK: NewSlimClosureInFrame.Plain
+# CHECK-NOT: NewSlimClosure.Plain
+# RUN(LOOPED): bytes f6 mechanisms=all-Inlining
+# LOOPED: "looped"
+# LOOPED-NOT: NewSlimClosure
+# RUN(KEPT): bytes f4 mechanisms=all-Inlining
+# KEPT: NewSlimClosure.Plain
+# RUN(LAST): bytes f5 mechanisms=all-Inlining
+# LAST-NOT: NewSlimClosure.Plain
+# RUN(WITHHELD): bytes f3 mechanisms=all-Inlining-CellsInFrames
+# WITHHELD: NewSlimClosure.Plain

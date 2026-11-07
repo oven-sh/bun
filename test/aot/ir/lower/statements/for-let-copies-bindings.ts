@@ -1,10 +1,11 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="letHead"
 // CHECK-NOT: = NewObject
-// CHECK: LoopHint
+// CHECK: ([[i]]: number):
+// CHECK-NEXT: LoopHint
 // CHECK-NOT: = NewObject
-// CHECK: Branch {{*}} -> taken [[body]](| 0),
-// CHECK: [[body]]([[i]]):
+// CHECK: Branch {{*}} -> taken [[body]](),
+// CHECK: [[body]]():
 // CHECK-NOT: = NewObject
 // CHECK: = NewClosure [[i]] function=
 // CHECK-NOT: = NewObject

@@ -1,0 +1,46 @@
+# -- source: spread-of-a-layout-is-loads-and-an-allocation.ts
+# declare function sink(...values: unknown[]): void;
+# type State = { a: number; b: number };
+# function widen(state: State, c: number) { return { ...state, c }; }
+# function rest(i: number) { const o = { a: i, b: 1, c: 2 }; const { a, ...others } = o; return others.b + others.c + a; }
+# function computed(state: State, key: string) { const { [key]: taken, ...others } = state as any; return others; }
+# sink(widen, rest, computed, { a: 1, b: 2 });
+# -- end of source
+# The front end makes an empty object of the layout that the checker has for the literal or the rest, and copies into it. Where the properties of the source are known by name and in their order,
+# the object is made with them. Of an object of a layout, one word says which fields it has, in which order it got them and whether it has anything beside them: behind the tests stand loads and an allocation,
+# and the copy as written stands in a block of its own with an empty object of its own. Of a literal that nothing else has the state knows all of it, and nothing is left of either object.
+# The literal that is made fits State too. What is tested for first is what the type is written as, whichever of the two has the lower number. What is made may come round as a source:
+# behind the first test stands one for its layout, and the words of the cell are copied.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: b0([[state]]: {{*}}, [[c]]:
+# CHECK: [[shape]]: boolean {{*}} = ShapeTest [[state]] layouts={{*}}[[written]]]
+# CHECK: frequency=Unlikely
+# CHECK: [[empty]]: [[made]] {{*}} = NewObject layout=[[made]]
+# CHECK: CopyDataProperties [[empty]], [[state]]
+# CHECK: = HasKeyOrder {{*}} layout=[[written]] fields=[0, 1]
+# CHECK: = HasNoExtraProperties {{*}} [hasNoFieldOutsideSlot]
+# CHECK: [[a]]: {{*}} = GetSlot {{*}} key="a"
+# CHECK: [[b]]: {{*}} = GetSlot {{*}} key="b"
+# CHECK: = NewObject -, [[a]], [[b]] layout=[[made]] fields=[0, 1]
+# RUN(ROUND): walk f1 mechanisms=all
+# ROUND: = ShapeTest [[state]] layouts={{*}}[[written]]]
+# ROUND: = NewObject layout=[[made]]
+# ROUND: = ShapeTest [[state]] layouts={{*}}[[made]]]
+# ROUND: [[other]]: [[made]] {{*}} = NewObject layout=[[made]]
+# ROUND: = TryCopyFields [[other]], {{*}} layout=[[made]]
+# RUN(TWO): walk f1 mechanisms=all
+# TWO-COUNT-2: = ShapeTest
+# TWO-NOT: = ShapeTest
+# RUN(LITERAL): walk f2 mechanisms=all
+# LITERAL-LABEL: code f2:Body
+# LITERAL-NOT: NewObject
+# LITERAL-NOT: CopyDataProperties
+# LITERAL-NOT: Slot
+# A key that is computed is left out by the run time: the front end writes one operation, and it stays
+# RUN(COMPUTED): walk f3 mechanisms=all
+# COMPUTED-NOT: HasKeyOrder
+# COMPUTED: = CopyObject
+# RUN(WITHHELD): walk f1 mechanisms=all-Guesses
+# WITHHELD-NOT: HasKeyOrder
+# WITHHELD: CopyDataProperties

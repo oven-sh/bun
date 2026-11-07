@@ -1,0 +1,49 @@
+# -- source: main.js
+# function Base(a) { this.a = a; }
+# Base.prototype.first = function () { return this.a; };
+# function Below(a, b) { Base.call(this, a); this.b = b; }
+# Below.prototype = Object.create(Base.prototype);
+# Below.prototype.constructor = Below;
+# Below.prototype.second = function () { return this.b + this.first(); };
+# let answers = "";
+# for (let turn = 0; turn < 8; turn++) {
+#     if (turn === when) change(Base, Below);
+#     const item = new Below(turn, 10);
+#     answers += "," + item.second() + ":" + item.first();
+# }
+# print(answers);
+# report();
+# -- end of source
+# No Base is ever made: the guards behind which `first` and `second` are found are guards of Below. Base listens all the same, for the class below it.
+# What is laid on the prototype object of Base, in front of the first Below or behind it, ends the guard of that name in Below, and nothing else.
+# OPTIONS: mechanisms=all
+# RUN(NEVER): run-in-shell --aotCountsPath=/dev/null globalThis.when = -1; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsEnded")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
+# NEVER: ,10:0,11:1,12:2,13:3,14:4,15:5,16:6,17:7
+# NEVER-NEXT: guards ended: 0
+# NEVER-NEXT: exited with 0
+# RUN(BEFORE): run-in-shell globalThis.when = 0; globalThis.report = () => { }; globalThis.change = Base => { Base.prototype.first = function () { return 100; }; };
+# BEFORE: ,110:100,110:100,110:100,110:100,110:100,110:100,110:100,110:100
+# BEFORE-NEXT: exited with 0
+# RUN(LATER): run-in-shell --aotCountsPath=/dev/null globalThis.when = 5; globalThis.change = Base => { Base.prototype.first = function () { return 100; }; }; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0", counted = 0; for (let i = 0; i < lines.length; i++) { if (lines[i] && !lines[i].startsWith("0")) counted++; if (lines[i].includes("counter:ClassGuardBitsEnded")) ended = lines[i].split("\t")[0]; } print(counted && ended === "0" ? "compiled code ran and no guard ended" : "a guard ended wherever compiled code ran"); };
+# LATER: ,10:0,11:1,12:2,13:3,14:4,110:100,110:100,110:100
+# LATER-NEXT: a guard ended wherever compiled code ran
+# LATER-NEXT: exited with 0
+# RUN(HIDDEN): run-in-shell globalThis.when = 5; globalThis.report = () => { }; globalThis.change = (Base, Below) => { Below.prototype.first = function () { return 200; }; };
+# HIDDEN: ,10:0,11:1,12:2,13:3,14:4,210:200,210:200,210:200
+# HIDDEN-NEXT: exited with 0
+# RUN(SETTER): run-in-shell globalThis.when = 5; globalThis.report = () => { }; globalThis.change = Base => { Object.defineProperty(Base.prototype, "b", { get() { return 50; }, set(value) { } }); };
+# SETTER: ,10:0,11:1,12:2,13:3,14:4,55:5,56:6,57:7
+# SETTER-NEXT: exited with 0
+# RUN(FIRST): run-in-shell globalThis.when = 0; globalThis.report = () => { }; globalThis.change = Base => { Object.defineProperty(Base.prototype, "b", { get() { return 50; }, set(value) { } }); };
+# FIRST: ,50:0,51:1,52:2,53:3,54:4,55:5,56:6,57:7
+# FIRST-NEXT: exited with 0
+# RUN(PLAIN): run-in-shell --aotCountsPath=/dev/null globalThis.when = 0; globalThis.change = Base => { Base.prototype.unasked = 2; Base.prototype.alsoUnasked = function () { return 3; }; }; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsEnded")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
+# PLAIN: ,10:0,11:1,12:2,13:3,14:4,15:5,16:6,17:7
+# PLAIN-NEXT: guards ended: 0
+# PLAIN-NEXT: exited with 0
+# RUN(TWICE): run-in-shell globalThis.when = 2; globalThis.report = () => { }; globalThis.change = Base => { if (globalThis.when === 2) { Base.prototype.unasked = 2; globalThis.when = 5; return; } Base.prototype.first = function () { return 100; }; };
+# TWICE: ,10:0,11:1,12:2,13:3,14:4,110:100,110:100,110:100
+# TWICE-NEXT: exited with 0
+# RUN(RELINKED): run-in-shell globalThis.when = 5; globalThis.report = () => { }; globalThis.change = (Base, Below) => { Object.setPrototypeOf(Below.prototype, { first() { return 300; } }); };
+# RELINKED: ,10:0,11:1,12:2,13:3,14:4,310:300,310:300,310:300
+# RELINKED-NEXT: exited with 0

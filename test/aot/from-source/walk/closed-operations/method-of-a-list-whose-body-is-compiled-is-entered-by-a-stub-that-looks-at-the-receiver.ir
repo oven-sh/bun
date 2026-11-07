@@ -1,0 +1,21 @@
+# -- source: method-of-a-list-whose-body-is-compiled-is-entered-by-a-stub-that-looks-at-the-receiver.ts
+# declare function print(...values: unknown[]): void;
+# function anyOver(list: number[], least: number): number { return list.some(v => v > least) ? 1 : 0; }
+# function anyIn(bag: { some(f: (v: number) => boolean): boolean }): number { return bag.some(v => v > 1) ? 1 : 0; }
+# const named: any = [5]; named.some = () => false;
+# print(anyOver([1, 2, 3], 2), anyOver([], 0), anyOver(named, 0), anyIn({ some: () => true }));
+# -- end of source
+# The source says that `list` is a list. The call stays closed: one call opens no guess outside of loops. The walk names what a list as its class makes it finds under the name, whose body is a function of the library,
+# and the stub of that method looks at the receiver and enters the function. Any other receiver goes on by the name. Of `bag` the source says another thing, and nothing is named.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call {{*}}calleeKey="some" {{*}}methodOfReceiverAsMade=ArrayPrototypeSome
+# RUN(BYTES): bytes f1 mechanisms=all-CellsInFrames
+# BYTES: Call Stub CallCompiledMethodOfArray.Some count 1
+# RUN(LENDS): bytes f1 mechanisms=all
+# LENDS: Call Stub CallCompiledMethodOfArrayLending.Some count 1
+# RUN(OTHER): walk f2 mechanisms=all
+# OTHER-LABEL: code f2:Body
+# OTHER-NOT: methodOfReceiverAsMade
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1 0 0 1

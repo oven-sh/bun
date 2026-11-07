@@ -70,16 +70,15 @@ fn disabled_mode_changes_nothing() {
     with_workbench(HELLO, |bench| {
         let messages = LoadMessages::default();
         let compiler = ReactCompiler::new(ReactCompilerMode::Client, &WithoutServices, &messages);
-        let (bound, analysis) = bench.analyze(&[]);
         let nodes = bench.tree.exprs.as_ptr();
 
-        let (change, source) = bench.transform(ReactCompilerMode::Disabled, &bound, &analysis);
+        let (change, source) = bench.transform(ReactCompilerMode::Disabled);
         assert_eq!(change, TreeChange::Unchanged);
         assert!(!source.has_compiled_components);
         assert!(!compiler.needs_declarations(&source));
         assert_eq!(bench.tree.exprs.as_ptr(), nodes);
 
-        let (change, source) = bench.transform(ReactCompilerMode::Client, &bound, &analysis);
+        let (change, source) = bench.transform(ReactCompilerMode::Client);
         assert_eq!(change, TreeChange::Changed);
         assert!(source.has_compiled_components);
         assert!(compiler.needs_declarations(&source));
@@ -94,9 +93,8 @@ fn file_without_components_is_not_copied() {
     let no_component = "export function Plain() { return 1; }\n";
     for text in [no_candidate, no_component] {
         with_workbench(text, |bench| {
-            let (bound, analysis) = bench.analyze(&[]);
             let nodes = bench.tree.exprs.as_ptr();
-            let (change, source) = bench.transform(ReactCompilerMode::Client, &bound, &analysis);
+            let (change, source) = bench.transform(ReactCompilerMode::Client);
             assert_eq!(change, TreeChange::Unchanged, "{text}");
             assert!(!source.has_compiled_components, "{text}");
             assert_eq!(bench.tree.exprs.as_ptr(), nodes, "{text}");
@@ -254,7 +252,6 @@ fn existing_ids_keep_their_nodes() {
     assert_eq!(compiled.function_count, written.function_count);
 }
 
-// Only the bundler can run a macro, and the parser expands macros before the compiler runs.
 #[test]
 fn file_with_macro_is_left_as_written_without_the_bundler() {
     let text = "import { version } from './macro.ts' with { type: 'macro' };\n\
@@ -270,9 +267,9 @@ fn file_with_macro_is_left_as_written_without_the_bundler() {
         };
         let result = &*arena.alloc(DataValue::Number(7.0));
         let host_values = &*arena.alloc_slice_copy(&[(call, HostValue::Data(result))]);
-        let (bound, analysis) = bench.analyze(host_values);
+        bench.analyze(host_values);
 
-        let (change, _) = bench.transform(ReactCompilerMode::Client, &bound, &analysis);
+        let (change, _) = bench.transform(ReactCompilerMode::Client);
         assert_eq!(change, TreeChange::Unchanged);
     });
 }

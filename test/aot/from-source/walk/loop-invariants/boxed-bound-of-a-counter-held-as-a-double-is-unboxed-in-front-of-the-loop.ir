@@ -1,0 +1,14 @@
+# the relation on numbers takes a box as it is and looks at its tag in every turn. Beside a counter that is held as a double, a number from in front of the loop is unboxed there, once
+# f1 = count
+# -- source: boxed-bound-of-a-counter-held-as-a-double-is-unboxed-in-front-of-the-loop.ts
+# function count(words: unknown[]): number { const n = Number(words[2]); let s = 0; for (let i = 0; i < n; i++) s++; return s; }
+# console.log(count([0, 0, "3.5"]), count([0, 0, {}]), count([]));
+# -- end of source
+# RUN: walk f1 mechanisms=all-Inlining
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK: [[boxed]]: number @JSValue =
+# CHECK: [[bound]]: number @Double = Unbox [[boxed]]
+# CHECK: [[i]]: int[0, 9007199254740992] @Double) {{*}}isLoopHead=true
+# CHECK-NOT: Unbox
+# CHECK: = Less [[i]], [[bound]] form=Numbers

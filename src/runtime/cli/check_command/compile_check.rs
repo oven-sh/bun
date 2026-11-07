@@ -3,7 +3,7 @@ use core::num::NonZeroU32;
 use bstr::BStr;
 use bun_aot::report;
 use bun_core::{Global, Output};
-use bun_options_types::aot_options::AotOptions;
+use bun_options_types::aot_options::{AotOptions, ExplainSet};
 use bun_options_types::context::ContextData;
 use bun_options_types::schema::api;
 use bun_sema::util::SharedSort;
@@ -24,8 +24,6 @@ pub(super) fn reject_flags_requiring_aot(options: &Options) {
             "--disallow-code-generation-from-strings",
         ),
         (!options.defines.is_empty(), "--define"),
-        (options.report_path.is_some(), "--aot-report"),
-        (options.report_detail.is_some(), "--aot-report-detail"),
         (options.trim, "--trim"),
     ];
     if let Some((_, flag)) = flags.iter().find(|(is_given, _)| *is_given) {
@@ -111,29 +109,14 @@ fn set_compile_context(ctx: &mut ContextData, options: &Options, cwd: &[u8]) {
     let mut aot = AotOptions {
         explain,
         thread_count: NonZeroU32::new(u32::try_from(options.threads).unwrap_or(u32::MAX)),
+        looks_for_type_errors: true,
         ..Default::default()
     };
     aot.code_generation_from_strings =
         compile_options::code_generation_from_strings(exec_argv.as_deref().unwrap_or_default());
-    aot.trim.removes_unused = options.trim;
-    set_build_report(&mut aot, options);
+    aot.trim.removes_unused = options.trim || explain.contains(ExplainSet::RUNTIME_USE);
     bundler_options.compile_exec_argv = exec_argv;
     bundler_options.aot = Some(Box::new(aot));
-}
-
-fn set_build_report(aot: &mut AotOptions, options: &Options) {
-    let words = [
-        ("report", options.report_path),
-        ("report-detail", options.report_detail),
-    ];
-    for (key, value) in words {
-        if value.is_none() {
-            continue;
-        }
-        if let Err(error) = compile_options::apply_developer_word(key, value, aot) {
-            option_usage_error(&error);
-        }
-    }
 }
 
 fn report_compile_check(

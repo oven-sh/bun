@@ -18,6 +18,14 @@ worker.onmessage = event => {
 `;
 const worker = `postMessage([3, 4].map(side => side * side).join());
 `;
+// More callbacks than the one block of entries that is loaded with the code.
+const callbacks = `import { CFunction, JSCallback } from "bun:ffi";
+import { writeFileSync } from "node:fs";
+writeFileSync(process.argv[2], "");
+let sum = 0; // @ts-expect-error
+for (let n = 0; n < 600; n++) sum += CFunction({ ptr: new JSCallback(() => n, { returns: "int32_t", args: [] }).ptr, returns: "int32_t", args: [] })();
+console.log("called", sum);
+`;
 
 // The process dies of SIGSYS at its first mremap(), from execve() on.
 const launcher = `import { dlopen, FFIType, ptr } from "bun:ffi";
@@ -83,6 +91,7 @@ describe.skipIf(!isLinux)("an executable", () => {
     directory = tempDir("aot-execute-only-start", {
       "program.ts": program,
       "worker.ts": worker,
+      "callbacks.ts": callbacks,
       "launcher.ts": launcher,
     });
     executable = join(String(directory), "program");
@@ -103,6 +112,33 @@ describe.skipIf(!isLinux)("an executable", () => {
     expect(await start(mark => [executable, mark])).toEqual(started);
     expect(await start(mark => [bunExe(), join(String(directory), "launcher.ts"), executable, mark])).toEqual(started);
   }, 60_000);
+
+  test("that can read its own file makes callbacks for native code without a call of mremap()", async () => {
+    const withCallbacks = join(String(directory), "callbacks");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        join(String(directory), "callbacks.ts"),
+        "--outfile",
+        withCallbacks,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect({ stderr: await proc.stderr.text(), exitCode: await proc.exited }).toEqual({
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+    const called = { ...started, stdout: "called 179700\n" };
+    expect(await start(mark => [withCallbacks, mark])).toEqual(called);
+    expect(await start(mark => [bunExe(), join(String(directory), "launcher.ts"), withCallbacks, mark])).toEqual(
+      called,
+    );
+  }, 120_000);
 
   describe.skipIf(!refusesExecuteOnlyStart || readsEveryFile)("of a build with --execute-only-start=off", () => {
     test("that may be run but not read exits before its first statement", async () => {

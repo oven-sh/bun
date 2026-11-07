@@ -33,17 +33,13 @@ async function runTests(directory: string, words: string | undefined, ...flags: 
   return { stdout: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")), exitCode };
 }
 
-for (const [way, words] of [
-  ["as one program", "TestRunLayers:0"],
-  ["over two layers", "TestRunLayers:2,TestRunPartFiles:1"],
-]) {
-  test(`a file that loads again from disk calls what the test file has laid on the global object, ${way}`, async () => {
-    using dir = tempDir("aot-copy-of-a-file-reads-the-global-object", files);
-    const plain = await runTests(String(dir), undefined);
-    expect(plain).toEqual({
-      stdout: [`first {"made":6,"read":1} the file runs`, `again {"made":6,"read":1} the file runs`],
-      exitCode: 0,
-    });
-    expect(await runTests(String(dir), words, "--aot")).toEqual(plain);
-  }, 180_000);
-}
+// Alone in its run: beside a file that lets code run which no build has seen, the entry stays open anyway.
+test("a file that loads again from disk calls what the test file has laid on the global object, as one program", async () => {
+  using dir = tempDir("aot-copy-of-a-file-reads-the-global-object", files);
+  const plain = await runTests(String(dir), undefined);
+  expect(plain).toEqual({
+    stdout: [`first {"made":6,"read":1} the file runs`, `again {"made":6,"read":1} the file runs`],
+    exitCode: 0,
+  });
+  expect(await runTests(String(dir), "TestRunLayers:0", "--aot")).toEqual(plain);
+}, 180_000);

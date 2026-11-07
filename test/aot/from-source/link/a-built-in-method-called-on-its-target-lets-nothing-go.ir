@@ -1,0 +1,10 @@
+# -- source: a-built-in-method-called-on-its-target-lets-nothing-go.js
+# const own = new EventTarget();
+# own.addEventListener("ping", event => console.log(event.target === own));
+# own.dispatchEvent(new Event("ping"));
+# -- end of source
+# The control of a-built-in-function-that-is-let-go-lets-go-the-objects-that-its-rows-make.ir: the methods are called on a target of the program's own.
+# RUN: link lookups mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-NOT: lookup let-go GlobalThis
+# CHECK-NOT: lookup called FinalizationRegistry

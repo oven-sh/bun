@@ -229,6 +229,28 @@ console.log(typeof marked, typeof test, typeof missing, chosen.name, import.meta
   );
 
   test(
+    "the import of an HTML page has the kind that the build without --aot gives it",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-metafile-html", {
+          "main.ts": `import page from "./page.html";\nconsole.log(typeof page);\n`,
+          "page.html": `<!doctype html><html><head><title>made up</title></head><body><p>made up</p></body></html>\n`,
+        });
+        const folder = String(dir);
+        const build = (...flags: string[]) => bun(folder, "build", "--compile", ...flags, "main.ts");
+        built(await build("--metafile=plain.json", "--outfile", "plain/app"));
+        built(await build("--aot", "--metafile=aot.json", "--outfile", "aot/app"));
+        const kinds = (name: string) =>
+          read(join(folder, name)).inputs["main.ts"].imports.map(it => it.kind + " " + it.path);
+        expect({ aot: kinds("aot.json"), plain: kinds("plain.json") }).toEqual({
+          aot: ["html_manifest page.html"],
+          plain: ["html_manifest page.html"],
+        });
+      }),
+    buildLimit,
+  );
+
+  test(
     "Bun.build",
     () =>
       slot(async () => {

@@ -164,92 +164,79 @@ attempt("every other index", () => {
 
 // GENERATED: doubled storeAt present sumOfPresent
 // CHECK-LABEL: function {{*}}name="doubled"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<number>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key="map"
-// CHECK-NEXT: v2 = NewClosure function=[[f_3]]
+// CHECK-NEXT: v2 = NewClosure function=[[f_1]]
 // CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="map" calleeName="numbers.map"
-// CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|Array<number> site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<number> site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="storeAt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}, {type=number site=[[w_6]]}, {type=number site=[[w_7]]}] results=[{type=number site=[[w_8]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<number>, v1: number, v2: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Convert v2 declared={type=number site=[[w_9]]}
-// CHECK-NEXT: ElemSet v0, v1, v3
-// CHECK-NEXT: v5 = PropGet v0 key="length"
-// CHECK-NEXT: v6 = Convert v5 declared={type=number site=[[w_10]]} illTypedCause=Assertion
-// CHECK-NEXT: Return v6
+// CHECK-NEXT: ElemSet v0, v1, v2
+// CHECK-NEXT: v4 = PropGet v0 key="length"
+// CHECK-NEXT: v5 = Convert v4 declared={type=number}
+// CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="present"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|string> site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<number>):
+// CHECK-NEXT: v1 = Data data=[[d_2]]
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v3 = ForInOpen v0
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Data data=[[d_13]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|Array<undefined|null|string> site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = ForInOpen v0
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2():
 // CHECK-NEXT: LoopHint
 // CHECK-NEXT: v5 = ForInStep v3, v0
 // CHECK-NEXT: v6 = ResultAt v5
 // CHECK-NEXT: v7 = ResultAt v5 index=1
-// CHECK-NEXT: Branch v6 -> taken b3(), notTaken b4()
-// CHECK-NEXT: b3():
+// CHECK-NEXT: Branch v6 -> taken b2(), notTaken b3()
+// CHECK-NEXT: b2():
 // CHECK-NEXT: Return v2
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string site=[[w_15]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v9 = PropGet v2 key="push"
-// CHECK-NEXT: v10 = String string="="
-// CHECK-NEXT: v11 = Add v8, v10
-// CHECK-NEXT: v12 = ElemGet v0, v8
-// CHECK-NEXT: v13 = Add v11, v12
-// CHECK-NEXT: v14 = Call v9, v2, v13 calleeKey="push" calleeName="seen.push"
-// CHECK-NEXT: v15 = Convert v14 declared={type=number site=[[w_16]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Jump -> next b2()
+// CHECK-NEXT: b3():
+// CHECK-NEXT: v8 = PropGet v2 key="push"
+// CHECK-NEXT: v9 = String string="="
+// CHECK-NEXT: v10 = Add v7, v9
+// CHECK-NEXT: v11 = ElemGet v0, v7
+// CHECK-NEXT: v12 = Add v10, v11
+// CHECK-NEXT: v13 = Call v8, v2, v12 calleeKey="push" calleeName="seen.push"
+// CHECK-NEXT: v14 = Convert v13 declared={type=number} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="sumOfPresent"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=[[w_17]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_18]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<number>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number site=[[w_19]]}
+// CHECK-NEXT: v2 = Convert v1 declared={type=number}
 // CHECK-NEXT: v3 = Builtin builtin=Object
 // CHECK-NEXT: v4 = Builtin builtin=ObjectKeys
 // CHECK-NEXT: v5 = Call v4, v3, v0 calleeName="Object.keys"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Array<undefined|null|string> site=[[w_20]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: v7 = IteratorOpen v6
-// CHECK-NEXT: Jump -> next b2(v2)
-// CHECK-NEXT: b2(v8: number):
+// CHECK-NEXT: Jump -> next b1(v2)
+// CHECK-NEXT: b1(v8: number):
 // CHECK-NEXT: LoopHint
 // CHECK-NEXT: v10 = IteratorResume v7
 // CHECK-NEXT: v11 = ResultAt v10
 // CHECK-NEXT: v12 = ResultAt v10 index=1
-// CHECK-NEXT: Branch v11 -> taken b3(), notTaken b4()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v13 = Convert v8 declared={type=number site=[[w_18]]}
+// CHECK-NEXT: Branch v11 -> taken b2(), notTaken b3()
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v13 = Convert v8 declared={type=number}
 // CHECK-NEXT: Return v13
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5() handler=b7():
-// CHECK-NEXT: v14 = Convert v12 declared={type=undefined|null|string site=[[w_21]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+// CHECK-NEXT: b3():
+// CHECK-NEXT: Jump -> next b4()
+// CHECK-NEXT: b4() handler=b5():
+// CHECK-NEXT: v14 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
 // CHECK-NEXT: v15 = Builtin builtin=Number
 // CHECK-NEXT: v16 = Call v15, -, v14 calleeName="Number"
-// CHECK-NEXT: v17 = Convert v16 declared={type=number site=[[w_22]]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v17 = Convert v16 declared={type=number} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: v18 = ElemGet v0, v17
-// CHECK-NEXT: v19 = Convert v18 declared={type=number site=[[w_23]]} illTypedCause=ContainerWriterUnseen
-// CHECK-NEXT: v20 = Add v8, v19
-// CHECK-NEXT: v21 = Convert v20 declared={type=number site=[[w_19]]}
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6() handler=b7():
-// CHECK-NEXT: Jump -> next b2(v21)
-// CHECK-NEXT: b7() role=IterationCleanup subject=v7:
-// CHECK-NEXT: v22 = CatchException
+// CHECK-NEXT: v19 = Add v8, v18
+// CHECK-NEXT: v20 = Convert v19 declared={type=number}
+// CHECK-NEXT: Jump -> next b1(v20)
+// CHECK-NEXT: b5() role=IterationCleanup subject=v7:
+// CHECK-NEXT: v21 = CatchException
 // CHECK-NEXT: IteratorClose v7 completion=Throw
-// CHECK-NEXT: Rethrow v22
+// CHECK-NEXT: Rethrow v21
 // CHECK-NEXT: }

@@ -1,0 +1,24 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# type Box = { lid: number; rim: number };
+# const holder: { inner: Box | null } = { inner: null };
+# function keep(box: Box): number { holder.inner = box; return 1; }
+# function make(i: number): number {
+#   let n = 0;
+#   if (i & 1) { const box = { lid: i, rim: i + 1 }; n = keep(box); } else { const box = { lid: -i, rim: i + 2 }; n = keep(box); }
+#   return n + i;
+# }
+# print(make(4));
+# print(make(7));
+# print(Object.keys(holder.inner!).length);
+# print("went on");
+# -- end of source
+# testing=CheckProofsAtRunTime: where two ways meet, the state lets go of a fresh cell that the other way lacks, so such a cell comes to no return as a fresh one: its life is ended at the jump that leaves the last value that names it.
+# The lie, testing=NoCalleeKeepsWhatItIsHanded: whatever a function entered is handed is taken to be kept by nobody.
+# OPTIONS: testing=CheckProofsAtRunTime,NoCalleeKeepsWhatItIsHanded
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: 5
+# CALL: 8
+# CALL: AOT: f{{*}} at {{*}}: a cell that the compiler took for dead where its function returned is still held. This is a bug in Bun.
+# CALL-NOT: went on
+# CALL: crashed with

@@ -1,0 +1,26 @@
+# -- source: field-held-to-one-function-is-called-directly-behind-its-look.ts
+# declare function sink(...values: unknown[]): void;
+# class Button { handler: (n: number) => number; label: string; constructor(label: string) { this.label = label; this.handler = n => n * 2 + this.label.length; } click(n: number) { return this.handler(n); } twice(n: number) { const once = this.handler(n); return once + 1; } }
+# sink(new Button("a"), new Button("b").click(1), new Button("c").twice(2));
+# -- end of source
+# Every store into `handler` brings a closure of one function, so the slot is held to that or to undefined (PlacedSlot::type). The read is there for its call alone:
+# behind the look at the slot, what it has loaded is asked whether it is there, in the row in front of the arms, and the call enters the function directly, with no test of the callee.
+# A call of undefined throws, which the closed arm does in its turn. A call that is returned at once is returned by each arm.
+# TODO: no slot is held to a type: held types bought nothing and cost the servers 1 to 5%, the closures of one function koa 4% (plan/AOTSlotPlan.cpp, typeHeldOfFieldForSlotPlan())
+# RUN: walk f2 mechanisms=all-Inlining
+# CHECK-LABEL: code f2:Body
+# CHECK: = IsSlotFilled {{*}}key="handler"
+# CHECK: [[loaded]]: undefined|f5 {{*}}= GetSlot {{*}}key="handler"
+# CHECK-NEXT: [[isThere]]: boolean {{*}}= TypeTest [[loaded]] testedType=f5
+# CHECK-NEXT: Branch [[isThere]] -> taken {{*}}, notTaken [[closed]]()
+# CHECK: [[closed]]() frequency=Rare:
+# CHECK-NEXT: = PropGet {{*}}key="handler"
+# CHECK-NEXT: [[byValue]]: {{*}}= Call
+# CHECK-NEXT: ReturnCall [[byValue]]
+# CHECK: [[direct]]: {{*}}= CallDirect {{*}}function=f5
+# CHECK-NEXT: ReturnCall [[direct]]
+# RUN(REJOINS): walk f3 mechanisms=all-Inlining
+# REJOINS-LABEL: code f3:Body
+# REJOINS: = TypeTest {{*}}testedType=f5
+# REJOINS: = CallDirect {{*}}function=f5
+# REJOINS-NEXT: Jump

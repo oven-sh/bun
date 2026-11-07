@@ -1,0 +1,16 @@
+# -- source: value-read-twice-behind-calls.js
+# function keep(a, b) { report(a); report(b); return b; }
+# report(id(keep)(1, 2));
+# -- end of source
+# b lives across the calls and is read twice behind them: in memory it would cost a store and two loads, which is more than the store and the load of a callee-saved register. It takes one.
+# The twin, in which b is read once: value-read-once-behind-calls-takes-no-new-saved-register.ir
+# f1 = keep
+# REQUIRES: unsanitized-code
+# RUN: allocate f1:Body mechanisms=none
+# CHECK-LABEL: unit f1:Body
+# CHECK: usedCalleeSaves =
+# RUN(RUNS): run-in-shell mechanisms=none globalThis.id = value => value; globalThis.report = value => print(String(value));
+# RUNS: 1
+# RUNS-NEXT: 2
+# RUNS-NEXT: 2
+# RUNS: exited with 0

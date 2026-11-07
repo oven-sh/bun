@@ -164,92 +164,78 @@ console.log("static", Object.keys(BesideStatic).join("+"), describe(BesideStatic
 
 // GENERATED: describe Base Derived get
 // CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="log"
-// CHECK-NEXT: v3 = Data data=[[d_5]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> site=[[w_6]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: PutModuleVariable v4 variable=[[g_4]]
+// CHECK-NEXT: v3 = Data data=[[d_3]]
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PutModuleVariable v4 variable=[[g_2]]
 // CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string site=[[w_7]] flags=[OmitsNull]} illTypedCause=FromLooseType
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b5():
+// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull]}
+// CHECK-NEXT: Jump -> next b1()
+// CHECK-NEXT: b1() handler=b2():
 // CHECK-NEXT: v8 = Construct v0 calleeName="Made"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|object site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v10 = Builtin builtin=Reflect
-// CHECK-NEXT: v11 = Builtin builtin=ReflectOwnKeys
-// CHECK-NEXT: v12 = Call v11, v10, v9 calleeName="Reflect.ownKeys"
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|Array<undefined|null|string|symbol> site=[[w_9]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v14 = PropGet v13 key="map"
-// CHECK-NEXT: v15 = NewClosure v9 function=[[f_10]]
-// CHECK-NEXT: v16 = Call v14, v13, v15 calleeKey="map" calleeName="map"
-// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|Array<undefined|null|string> site=[[w_9]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v18 = PropGet v17 key="join"
-// CHECK-NEXT: v19 = String string=", "
-// CHECK-NEXT: v20 = Call v18, v17, v19 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3() handler=b5():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Jump -> next b6(v21)
-// CHECK-NEXT: b5() role=CatchHandler:
-// CHECK-NEXT: v22 = CatchValue
-// CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v24 = PropGet v23 key="name"
-// CHECK-NEXT: v25 = Convert v24 declared={type=undefined|null|string site=[[w_12]]} illTypedCause=Assertion
-// CHECK-NEXT: Jump -> next b6(v25)
-// CHECK-NEXT: b6(v26: undefined|null|string):
-// CHECK-NEXT: v27 = String string="["
-// CHECK-NEXT: v28 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v29 = CheckInitialized v28 name="log"
-// CHECK-NEXT: v30 = PropGet v29 key="join"
-// CHECK-NEXT: v31 = String string="; "
-// CHECK-NEXT: v32 = Call v30, v29, v31 calleeKey="join" calleeName="log.join"
-// CHECK-NEXT: v33 = Convert v32 declared={type=undefined|null|string site=[[w_13]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v34 = Add v27, v33
-// CHECK-NEXT: v35 = String string="] {"
-// CHECK-NEXT: v36 = Add v34, v35
-// CHECK-NEXT: v37 = Add v36, v26
-// CHECK-NEXT: v38 = String string="}"
-// CHECK-NEXT: v39 = Add v37, v38
-// CHECK-NEXT: v40 = Convert v39 declared={type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v40
+// CHECK-NEXT: v9 = Builtin builtin=Reflect
+// CHECK-NEXT: v10 = Builtin builtin=ReflectOwnKeys
+// CHECK-NEXT: v11 = Call v10, v9, v8 calleeName="Reflect.ownKeys"
+// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v13 = PropGet v12 key="map"
+// CHECK-NEXT: v14 = NewClosure v8 function=[[f_4]]
+// CHECK-NEXT: v15 = Call v13, v12, v14 calleeKey="map" calleeName="map"
+// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: v17 = PropGet v16 key="join"
+// CHECK-NEXT: v18 = String string=", "
+// CHECK-NEXT: v19 = Call v17, v16, v18 calleeKey="join" calleeName="keys.join"
+// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: Jump -> next b3(v20)
+// CHECK-NEXT: b2() role=CatchHandler:
+// CHECK-NEXT: v21 = CatchValue
+// CHECK-NEXT: v22 = Convert v21 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v23 = PropGet v22 key="name"
+// CHECK-NEXT: v24 = Convert v23 declared={type=undefined|null|string flags=[OmitsNull]}
+// CHECK-NEXT: Jump -> next b3(v24)
+// CHECK-NEXT: b3(v25: undefined|null|string):
+// CHECK-NEXT: v26 = String string="["
+// CHECK-NEXT: v27 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: v28 = CheckInitialized v27 name="log"
+// CHECK-NEXT: v29 = PropGet v28 key="join"
+// CHECK-NEXT: v30 = String string="; "
+// CHECK-NEXT: v31 = Call v29, v28, v30 calleeKey="join" calleeName="log.join"
+// CHECK-NEXT: v32 = Convert v31 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v33 = Add v26, v32
+// CHECK-NEXT: v34 = String string="] {"
+// CHECK-NEXT: v35 = Add v33, v34
+// CHECK-NEXT: v36 = Add v35, v25
+// CHECK-NEXT: v37 = String string="}"
+// CHECK-NEXT: v38 = Add v36, v37
+// CHECK-NEXT: v39 = Convert v38 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: Return v39
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Base"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_14]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_5]]] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_15]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_15]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_15]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_6]]
+// CHECK-NEXT: v2 = NewObject v1 layout=[[L_6]]
+// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_6]]}
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Derived"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_16]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_7]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_17]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_17]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_8]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_8]]}
 // CHECK-NEXT: v6 = Integer integer=1
 // CHECK-NEXT: PropSet v5, v6 key="-1"
 // CHECK-NEXT: v8 = Integer integer=2
-// CHECK-NEXT: v9 = Convert v8 declared={type=number site=[[w_18]]}
+// CHECK-NEXT: v9 = Convert v8 declared={type=number}
 // CHECK-NEXT: PropSet v5, v9 key="y"
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=[[w_19]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_20]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = String string="inherited"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string site=[[w_19]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
+// CHECK-NEXT: Return v0
 // CHECK-NEXT: }

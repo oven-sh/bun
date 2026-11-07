@@ -1,6 +1,7 @@
 use super::answers::{
     CheckedType, ClassDeclaration, ClassMember, ClassMemberSource, ClassParent, ClassRef,
-    ClassShape, FunctionRef, GaveUp, MemberName, ObjectMemberKind, PositionTypes,
+    ClassShape, FunctionRef, GaveUp, MemberForm, MemberName, ObjectMemberKind, PositionTypes,
+    QueryLimit,
 };
 use super::prototype_links::{LinkEnd, PrototypeLink, PrototypeLinks, list_in};
 use super::queries::Queries;
@@ -16,12 +17,8 @@ use crate::program::{FileId, Sym};
 use crate::session::Arena;
 use crate::types::{TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
-use smallvec::{SmallVec, smallvec};
+use smallvec::SmallVec;
 use std::rc::Rc;
-
-const MAX_NESTED_FOLLOWED_CALLS: usize = 8;
-const MAX_CHAIN_OF_PARENTS: usize = 64;
-const MAX_FUNCTIONS_GIVEN_THIS: usize = 32;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 struct FunctionLink {
@@ -143,7 +140,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub fn constructor_function_parent(&mut self, function: FunctionRef) -> Option<ClassParent> {
         let parent = self.find_linked_parent(function)?;
         let mut ancestor = parent;
-        for _ in 0..MAX_CHAIN_OF_PARENTS {
+        for _ in 0..self.limit(QueryLimit::ConstructorParentsFollowed) {
             let above = match ancestor {
                 ClassParent::Declared(ClassDeclaration::Function(linked)) => {
                     self.find_linked_parent(linked)
@@ -156,6 +153,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 None => return Some(parent),
             }
         }
+        self.note_walk_ended_by(QueryLimit::ConstructorParentsFollowed);
         None
     }
 
@@ -165,22 +163,20 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         (parent != ClassParent::Declared(ClassDeclaration::Class(class))).then_some(parent)
     }
 
-    pub fn constructed_declaration(&mut self, file: FileId, callee: ExprId) -> Option<ClassParent> {
-        self.end_finder(file).find_parent(callee)
-    }
-
     pub fn library_declarations_of_type(&mut self, ty: TypeId) -> SmallVec<[ClassDeclaration; 1]> {
-        let parts: SmallVec<[TypeId; 2]> = match self.c.data(ty) {
-            TypeData::Intersection(parts) => parts.iter().copied().collect(),
-            _ => smallvec![ty],
+        let parts = match self.c.data(ty) {
+            TypeData::Intersection(parts) => &parts[..],
+            _ => std::slice::from_ref(&ty),
         };
-        let origins = parts.into_iter().map(|part| self.object_origin(part));
-        let origins: SmallVec<[ObjectOrigin; 2]> = origins.collect();
-        let declarations = origins.into_iter().filter_map(|origin| match origin {
-            ObjectOrigin::Symbol(class) => self.find_library_declaration_of_class(class),
-            _ => None,
-        });
-        declarations.collect()
+        let mut declarations = SmallVec::new();
+        for &part in parts {
+            if let ObjectOrigin::Symbol(class) = self.object_origin(part)
+                && let Some(declaration) = self.find_library_declaration_of_class(class)
+            {
+                declarations.push(declaration);
+            }
+        }
+        declarations
     }
 
     fn find_library_declaration_of_class(&self, class: Sym) -> Option<ClassDeclaration> {
@@ -279,9 +275,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if let Some(known) = followed.links_of_parameters.get(&function) {
             return Some(Rc::clone(known));
         }
-        if followed.in_progress.len() == MAX_NESTED_FOLLOWED_CALLS
-            || followed.in_progress.contains(&function)
+        if followed.in_progress.contains(&function) {
+            return None;
+        }
+        if followed.in_progress.len() as u64
+            >= self.limit(QueryLimit::HelpersFollowedToPrototypeLink)
         {
+            self.note_walk_ended_by(QueryLimit::HelpersFollowedToPrototypeLink);
             return None;
         }
         followed.in_progress.push(function);
@@ -310,6 +310,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             .links_of_parameters
             .insert(function, Rc::clone(&links));
         Some(links)
+    }
+
+    pub(super) fn passes_this_on_in_front_of(
+        &mut self,
+        function: FunctionRef,
+        source: ClassMemberSource,
+    ) -> bool {
+        let of_file = self.prototype_links(function.file);
+        let calls = of_file.calls_passing_this_of(function.function);
+        let hir = self.c.hir(function.file);
+        let position = find_position(hir, source);
+        calls.iter().any(|&(_, call)| hir[call.call].pos < position)
     }
 
     pub(super) fn complete_constructor_function_shape(
@@ -401,7 +413,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         given_this: &mut Vec<FunctionRef>,
         fields: &mut Vec<ClassMember>,
     ) {
-        if given_this.len() == MAX_FUNCTIONS_GIVEN_THIS || given_this.contains(&function) {
+        if given_this.contains(&function) {
+            return;
+        }
+        if given_this.len() as u64 >= self.limit(QueryLimit::FunctionsGivenThis) {
+            self.note_walk_ended_by(QueryLimit::FunctionsGivenThis);
             return;
         }
         given_this.push(function);
@@ -486,9 +502,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 name,
                 kind,
                 source: ClassMemberSource::PrototypeStore(property.value),
+                is_made_at_birth: false,
                 types: PositionTypes::unwritten(checked),
                 is_static: false,
                 is_optional: true,
+                form: MemberForm::default(),
             };
             members.add(hir[property.value].pos, member);
         }

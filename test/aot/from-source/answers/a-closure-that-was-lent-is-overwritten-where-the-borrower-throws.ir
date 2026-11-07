@@ -1,0 +1,23 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# let kept: (() => string) | null = null;
+# function keep(callback: () => string): number { kept = callback; throw new RangeError("full"); }
+# function make(start: number): number {
+#   const label = "n" + start;
+#   let n = 0;
+#   try { n = keep(() => label); } catch (e) { n = 4; }
+#   return label.length + n;
+# }
+# print(make(3));
+# print(kept!());
+# print("went on");
+# -- end of source
+# testing=CheckProofsAtRunTime: code behind the lending call runs on the way that comes back alone. A throw gives the call up: the unwinder ends the lives of what the frames that it leaves, and the frame of the handler, had lent.
+# The lie, testing=NoCalleeKeepsWhatItIsHanded: whatever a function entered is handed is taken to be kept by nobody.
+# OPTIONS: testing=CheckProofsAtRunTime,NoCalleeKeepsWhatItIsHanded
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: 6
+# CALL: AOT: f{{*}} at {{*}}: a cell that the compiler took for dead where its function returned is still held. This is a bug in Bun.
+# CALL-NOT: went on
+# CALL: crashed
+# CALL: with

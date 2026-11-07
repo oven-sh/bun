@@ -1,4 +1,5 @@
-// A suspended function holds what its text reads behind the suspension, also on a path that the arguments of this program never take, and an iteration that goes on behind the suspension holds what it walks. Asked while the function is suspended.
+// What a generator at its yield holds of what its text reads behind it, also on a path that the arguments of this program never take, and what a function lets go that it
+// reads only in front of the suspension. Asked while the function is suspended. What the build proves that nothing reads again may go earlier than in plain Bun: not asked.
 let last;
 function make(n) {
   const made = { n };
@@ -10,13 +11,13 @@ async function pause(label) {
     await new Promise(resolve => setTimeout(resolve, 1));
     Bun.gc(true);
   }
-  console.log(label + ":", last.deref() !== undefined ? "kept" : "collected");
+  if (label !== undefined) console.log(label + ":", last.deref() !== undefined ? "kept" : "collected");
   return 1;
 }
 
 async function readOnAPathNeverTaken(n) {
   const x = make(n);
-  await pause("a local read behind the await on a path never taken");
+  await pause();
   if (n < 0) return x.n;
   return 1;
 }
@@ -28,7 +29,7 @@ async function readOnlyInFront(n) {
 }
 async function listWalkedByForOf(n) {
   for (const x of [make(n)]) {
-    await pause("the list that for-of walks, left behind the await");
+    await pause();
     return 1;
   }
 }
@@ -60,9 +61,9 @@ async function asyncGeneratorAtItsYield(n) {
   return (await generator.next()).done;
 }
 
-await readOnAPathNeverTaken(1);
+console.log("a function that reads a local on a path never taken answers", await readOnAPathNeverTaken(1));
 await readOnlyInFront(3);
-await listWalkedByForOf(4);
+console.log("a function that leaves a for-of loop behind an await answers", await listWalkedByForOf(4));
 await listWalkedToItsEnd(5);
 await generatorAtItsYield(6);
 await asyncGeneratorAtItsYield(7);

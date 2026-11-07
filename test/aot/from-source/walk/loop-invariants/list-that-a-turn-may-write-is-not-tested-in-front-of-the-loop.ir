@@ -1,0 +1,71 @@
+# a turn that may write a list, or run code that nobody has seen, may give the list other storage, another length or another kind. Then no row asks the list in front of the loop, and every read asks for itself
+# the twin that is tested is list-of-numbers-is-added-up-with-storage-and-length-from-in-front-of-the-loop.ir: the same loop with nothing else in the turn
+# f1 = grows, f2 = storesBehindTheEnd, f3 = setsTheLength, f4 = shrinks, f5 = changesTheKind, f6 = makesAHole, f7 = writesThroughAnotherName, f8 = callsACallee, f9 = readsAGetter, f10 = converts, f11 = takesAnotherList, f12 = callsAndNeverAsksTheLength
+# -- source: list-that-a-turn-may-write-is-not-tested-in-front-of-the-loop.ts
+# declare function sink(...values: unknown[]): void;
+# function grows(list: number[]) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) list.push(7); } return s; }
+# function storesBehindTheEnd(list: number[]) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) list[list.length] = 7; } return s; }
+# function setsTheLength(list: number[]) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) list.length = 1; } return s; }
+# function shrinks(list: number[]) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) list.pop(); } return s; }
+# function changesTheKind(list: number[]) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) (list as unknown[])[i + 1] = "text"; } return s; }
+# function makesAHole(list: number[]) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) delete list[i + 1]; } return s; }
+# function writesThroughAnotherName(list: number[], other: number[]) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) other[i + 1] = 0.5; } return s; }
+# function callsACallee(list: number[], change: () => void) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) change(); } return s; }
+# function readsAGetter(list: number[], holder: any) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) s += holder.more; } return s; }
+# function converts(list: number[], more: any) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) s += more * 2; } return s; }
+# function takesAnotherList(list: number[], other: number[]) { let s = 0; for (let i = 0; i < 3; i++) { s += list[i]; list = other; } return s; }
+# function callsAndNeverAsksTheLength(names: string[], turns: number) { let n = 0; for (let i = 0; i < turns; i++) { n += names[i & 7] ? 1 : 0; sink(i); } return n; }
+# sink(grows, storesBehindTheEnd, setsTheLength, shrinks, changesTheKind, makesAHole, writesThroughAnotherName, callsACallee, readsAGetter, converts, takesAnotherList, callsAndNeverAsksTheLength);
+# -- end of source
+# RUN(GROWS): walk f1 mechanisms=all
+# GROWS-NOT: = HasArrayStorage
+# GROWS-NOT: = GetArrayStorage
+# three of them are tested all the same: the arm that stores behind the end, stores through the other name or converts stands in the other copy alone. Where the typed copy comes to it the turn begins again there, with nothing of it done.
+# So nothing in the typed copy writes a list or runs other code, and the list is as the row in front has found it
+# RUN(BEHIND): walk f2 mechanisms=all
+# BEHIND: = PutArrayElement
+# BEHIND: = HasArrayStorage
+# BEHIND: = GetArrayStorage
+# BEHIND: isLoopHead=true
+# BEHIND-NOT: = Put
+# RUN(LENGTH): walk f3 mechanisms=all
+# LENGTH-NOT: = HasArrayStorage
+# LENGTH-NOT: = GetArrayStorage
+# RUN(SHRINKS): walk f4 mechanisms=all
+# SHRINKS-NOT: = HasArrayStorage
+# SHRINKS-NOT: = GetArrayStorage
+# RUN(KIND): walk f5 mechanisms=all
+# KIND-NOT: = HasArrayStorage
+# KIND-NOT: = GetArrayStorage
+# RUN(HOLE): walk f6 mechanisms=all
+# HOLE-NOT: = HasArrayStorage
+# HOLE-NOT: = GetArrayStorage
+# RUN(OTHER): walk f7 mechanisms=all
+# OTHER: = PutArrayElement
+# OTHER: = HasArrayStorage
+# OTHER: = GetArrayStorage
+# OTHER: isLoopHead=true
+# OTHER-NOT: = Put
+# RUN(CALLEE): walk f8 mechanisms=all
+# CALLEE-NOT: = HasArrayStorage
+# CALLEE-NOT: = GetArrayStorage
+# RUN(GETTER): walk f9 mechanisms=all
+# GETTER-NOT: = HasArrayStorage
+# GETTER-NOT: = GetArrayStorage
+# RUN(CONVERTS): walk f10 mechanisms=all
+# CONVERTS: = Mul
+# CONVERTS: = HasArrayStorage
+# CONVERTS: = GetArrayStorage
+# CONVERTS: isLoopHead=true
+# CONVERTS-NOT: = Mul
+# RUN(ASSIGNED): walk f11 mechanisms=all
+# ASSIGNED-NOT: = HasArrayStorage
+# ASSIGNED-NOT: = GetArrayStorage
+# no guess at a type stands in front of this loop, so it would be built twice for the sake of the list alone
+# RUN(ALONE): walk f12 mechanisms=all
+# ALONE-NOT: = HasArrayStorage
+# ALONE-NOT: = GetArrayStorage
+# each of them still reads the list by the operation that tests for itself
+# RUN(READS): walk f1 mechanisms=all
+# READS-LABEL: code f1:Body
+# READS: = GetArrayElement {{*}}level=Expected

@@ -17,7 +17,6 @@ pub mod strings;
 #[cfg(test)]
 mod type_constants;
 pub mod types;
-pub mod waiting_lists;
 
 #[rustfmt::skip]
 pub mod generated;
@@ -43,7 +42,7 @@ mod tests;
 #[cfg(any(test, feature = "ir_text"))]
 pub use body::{BlockView, StreamError, TargetView, TerminatorView, ValueView};
 pub use body::{Body, FieldWord, Words};
-pub use builder::{BuilderScratch, Edge, FunctionBuilder, Handler, LocalVariable};
+pub use builder::{BuilderScratch, Edge, FunctionBuilder, Handler, LocalVariable, Place};
 pub use declared::{DeclaredType, Mapped, PositionFlags};
 pub use entry_parameters::EntryPosition;
 pub use generated::{ContentsSlot, Opcode};
@@ -55,7 +54,9 @@ pub use keys::{ClassSlot, FunctionKey, LayoutKey, PrivateStatePart, VariableKey}
 pub use name_class::classify_name;
 pub use parallel::{InParallel, drop_each, extend_from_boxes, for_each_mut, run_serially};
 #[cfg(any(test, feature = "ir_text"))]
-pub use print::{Printer, print_function, print_program};
+pub use print::{
+    Printer, REWRITTEN_TYPE, print_function, print_program, print_program_held_to_engine,
+};
 #[cfg(any(test, feature = "ir_text"))]
 pub use program::NameTables;
 pub use program::Program;
@@ -63,5 +64,7 @@ pub use property_keys::{PropertyKey, PropertyKeyKind, PropertyKeyTable, WellKnow
 pub use references::{IdMap, Reference, ReferenceKind};
 pub use sections::{ListCounts, SectionWriter, WireSpan};
 pub use strings::StringTable;
-pub use types::{ClassPart, OpaqueKind, PreparedType, Primitives, Type, TypeFlags, TypeTable};
+pub use types::{
+    DistinctTypes, OpaqueKind, Primitives, Type, TypeFlags, TypeRef, TypeTable, Types,
+};
 pub use wtf8::is_canonical_wtf8;

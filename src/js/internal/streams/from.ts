@@ -36,12 +36,18 @@ function from<T extends $Node.Readable>(
     throw $ERR_INVALID_ARG_TYPE("iterable", ["Iterable"], iterable);
   }
 
-  const readable = new Readable({
-    objectMode: true,
-    highWaterMark: 1,
-    // TODO(ronag): What options should be allowed?
-    ...opts,
-  });
+  const readable =
+    IS_COMPILED_AHEAD_OF_TIME &&
+    !CAN_REPLACE_BUILT_INS &&
+    opts === undefined &&
+    (Readable as unknown) === require("internal/streams/readable")
+      ? (require("internal/streams/state").internals.makeObjectReadable!(1) as T)
+      : new Readable({
+          objectMode: true,
+          highWaterMark: 1,
+          // TODO(ronag): What options should be allowed?
+          ...opts,
+        });
 
   // Flag to protect against _read
   // being called before last iteration completion.
@@ -180,7 +186,7 @@ function from<T extends $Node.Readable>(
   async function nextAsync() {
     for (;;) {
       try {
-        const { value, done } = await iterator.next();
+        const { value, done } = await (iterator as AsyncIterator<unknown>).next();
 
         if (done) {
           readable.push(null);

@@ -1,0 +1,19 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# class Panel { n = 1; reset(): void { this.n = 0; } show(): number { return this.n + 7; } clear(): number { this.reset(); return this.show() + 1; } }
+# function other(this: unknown): number { return -1; }
+# const commands: Record<string, unknown> = { clear: Panel.prototype.clear, other };
+# function run(name: string, self: unknown): unknown { try { return (commands[name] as any).call(self); } catch (error) { return (error as Error).name; } }
+# print(run(JSON.parse('"clear"'), new Panel()), run(JSON.parse('"other"'), 1), new Panel().clear());
+# print(run(JSON.parse('"clear"'), { n: 3 }));
+# print("went on");
+# -- end of source
+# A test in front of a call through a table of methods.
+# RUN(CODE): bytes f0:Body mechanisms=all
+# CODE: thunks=14
+# CODE: MethodSelector
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 8 -1 8
+# RIGHT-NEXT: TypeError
+# RIGHT-NEXT: went on
+# RIGHT-NEXT: exited with 0

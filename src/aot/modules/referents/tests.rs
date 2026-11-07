@@ -158,16 +158,19 @@ fn deferred_namespace_is_unknown() {
 }
 
 #[test]
-fn commonjs_import_is_unknown() {
+fn commonjs_import_names_what_the_file_stores_in_its_exports() {
     let main = "
-        import { A } from './legacy.cjs';
+        import { A, missing } from './legacy.cjs';
         import * as ns from './legacy.cjs';
         const member = ns.A;
-        console.log(A, member);
+        console.log(A, missing, member);
     ";
     let files = [("main.js", main), ("legacy.cjs", "exports.A = class {};\n")];
     with_program(&files, |program| {
-        assert_eq!(program.referent("main.js", "A"), UNLINKED_IMPORT);
+        let found = program.referent("main.js", "A");
+        assert!(matches!(found, StaticReferent::Class(_)), "{found:?}");
+        let missing = program.referent("main.js", "missing");
+        assert!(matches!(missing, StaticReferent::Unknown(_)), "{missing:?}");
         assert_eq!(program.referent("main.js", "member"), UNLINKED_IMPORT);
         assert_eq!(
             program.referent("main.js", "ns"),

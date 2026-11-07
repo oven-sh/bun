@@ -9,7 +9,9 @@
 //! Which task gets anywhere first depends on timing. These rules keep the report a function of the program:
 //!
 //! - **One commit at a time.** Commits store under one mutex and are numbered from 1 in that order. The first entry for
-//!   a key wins.
+//!   a key wins. A thread that sleeps under the mutex, in front of another lock or in a page fault, keeps every other
+//!   commit waiting. So a commit first does all that needs no order (`Commits::prepare`), and takes no lock under the
+//!   mutex that it has no use for.
 //! - **A task that finds an entry also finds everything stored before it.** It doesn't evaluate the entry, so it misses
 //!   whatever that evaluation stored along the way unless it can find that too. A commit first stores the entries keyed
 //!   by a record, in log order, each with a release store, so an entry becomes visible after everything that was stored
@@ -82,15 +84,16 @@
 //! - Variances don't wait for a commit either. See `Claims`.
 
 use super::task::{Task, tables_of, tables_written_immediately};
-use super::{Checker, Program, Spare};
+use super::{Checker, Program, Query, Spare};
 use crate::local::{Log, node_word};
-use crate::program::{FileId, Sym};
+use crate::program::{FileId, Files, ReadingNoTrees, Sym};
 use crate::session::Arena;
-use crate::table::Publish;
+use crate::table::{Prepared, Publish};
 use crate::util::{FxHashMap, SharedSort};
 use bun_threading::{Condvar, Guarded};
 use std::cell::{Cell, RefCell};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 /// A field of `Program`.
 pub(super) struct Commits<'s> {
@@ -107,6 +110,28 @@ pub(super) struct Commits<'s> {
     with_errors: &'s [AtomicU32],
     /// `tables_written_immediately`
     immediate_tables: u128,
+    /// `Program::commit_totals`
+    totals: [AtomicU64; 7],
+    /// `Program::count_entries_found`
+    counts_entries_found: AtomicBool,
+}
+
+/// A commit that has waited for the mutex for longer than this has slept. `Mutex::lock` spins for a few microseconds.
+const LONGEST_WAIT_AWAKE: Duration = Duration::from_micros(50);
+
+/// What `Commits::prepare` has made of a task's `Log`.
+pub(super) struct PreparedLog {
+    /// The entries keyed by a record, in log order, and then those keyed by a node or a symbol.
+    entries: Vec<Prepared>,
+    /// How many of `entries` are keyed by a record.
+    records: usize,
+}
+
+#[cfg(test)]
+impl PreparedLog {
+    pub(super) fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 /// Allocated in an arena so that tasks can refer to it.
@@ -157,6 +182,38 @@ impl<'s> Commits<'s> {
             ranks_of_files: &[],
             with_errors: &[],
             immediate_tables: tables_written_immediately(),
+            totals: Default::default(),
+            counts_entries_found: AtomicBool::new(false),
+        }
+    }
+
+    /// Call once the commit has let go of the mutex. `stored` is what `store` returned.
+    fn note_commit(&self, stored: [u64; 2], waited: Duration, held: Duration) {
+        if waited > LONGEST_WAIT_AWAKE {
+            self.totals[6].fetch_add(1, Ordering::Relaxed);
+        }
+        let (waited, held) = (waited.as_nanos() as u64, held.as_nanos() as u64);
+        let more = [1, stored[0] + stored[1], held, waited, stored[1]];
+        for (total, more) in self.totals.iter().zip(more) {
+            total.fetch_add(more, Ordering::Relaxed);
+        }
+    }
+
+    /// `Program::commit_totals`
+    pub(super) fn totals(&self) -> [u64; 7] {
+        (self.totals.each_ref()).map(|total| total.load(Ordering::Relaxed))
+    }
+
+    /// `Program::count_entries_found`
+    pub(super) fn count_entries_found(&self, counts: bool) {
+        self.counts_entries_found.store(counts, Ordering::Relaxed);
+    }
+
+    /// Adds what `view`'s task has counted since the last call. See `Program::count_entries_found`.
+    pub(super) fn note_entries_found(&self, view: &View) {
+        let found = view.found.take();
+        if found != 0 {
+            self.totals[5].fetch_add(found, Ordering::Relaxed);
         }
     }
 
@@ -193,20 +250,47 @@ impl<'s> Commits<'s> {
             compared_with_pinned: Cell::new(0),
             own: RefCell::default(),
             times_unsettled: Cell::new(0),
+            counts_found: self.counts_entries_found.load(Ordering::Relaxed),
+            found: Cell::new(0),
         }
     }
 
-    /// Stores the entries of `task`'s commit `number`, in the order described at the top of this file. The caller holds
-    /// the mutex. `tables` is indexed by slot, and `log` is the task's. Returns how many entries it stored.
+    /// Does what a commit of `task` can do before it takes the mutex, so that it holds the mutex only for the stores. See
+    /// `Publish::prepare_logged`. `tables` is indexed by slot, and `log` is the task's.
+    pub(super) fn prepare(tables: &[&dyn Publish<'s>], task: &Task<'s>, log: &Log) -> PreparedLog {
+        let prepare = |slot: u32, key: u64| {
+            let table = tables.get(slot as usize)?;
+            table.prepare_logged(task, slot, key)
+        };
+        let mut entries = task.buffer().take_spare_prepared();
+        if entries.capacity() < log.len() {
+            entries = Vec::with_capacity(log.len());
+        }
+        for &[slot, key] in &log.record_keys {
+            if let Some(entry) = prepare(slot, u64::from(key)) {
+                entries.push(entry);
+            }
+        }
+        let records = entries.len();
+        for &[slot, file, index] in &log.node_keys {
+            if let Some(entry) = prepare(slot, node_word(file, index)) {
+                entries.push(entry);
+            }
+        }
+        PreparedLog { entries, records }
+    }
+
+    /// Stores the entries of commit `number`, in the order described at the top of this file. The caller holds the mutex.
+    /// `tables` is indexed by slot. Returns how many entries it stored under records, and how many under nodes and
+    /// symbols.
     pub(super) fn store(
         &self,
         tables: &[&dyn Publish<'s>],
-        task: &Task<'s>,
-        log: &mut Log,
+        prepared: &PreparedLog,
         number: u32,
         ring: Option<CycleCommit>,
-    ) -> u64 {
-        let mut stored = 0;
+    ) -> [u64; 2] {
+        let mut stored = [0; 2];
         self.numbers.begun.store(number, Ordering::Release);
         // This comes before the first entry, so a task that finds an entry also sees this.
         if let Some(ring) = ring {
@@ -215,14 +299,12 @@ impl<'s> Commits<'s> {
                 .push(CycleCommit { number, ..ring });
             self.numbers.with_a_cycle.store(number, Ordering::Release);
         }
-        for &[slot, key] in &log.record_keys {
-            if let Some(table) = tables.get(slot as usize) {
-                stored += u64::from(table.store_logged(task, u64::from(key), number));
-            }
-        }
-        for &[slot, file, index] in &log.node_keys {
-            if let Some(table) = tables.get(slot as usize) {
-                stored += u64::from(table.store_logged(task, node_word(file, index), number));
+        let (under_records, under_nodes) = prepared.entries.split_at(prepared.records);
+        for (entries, stored) in [under_records, under_nodes].into_iter().zip(&mut stored) {
+            for &entry in entries {
+                if let Some(table) = tables.get(entry.slot as usize) {
+                    *stored += u64::from(table.store_prepared(entry, number));
+                }
             }
         }
         self.numbers.stored.store(number, Ordering::Release);
@@ -277,6 +359,10 @@ pub(crate) struct View<'s> {
     own: RefCell<Vec<u32>>,
     /// How many times `state` has caught a commit in the middle of storing.
     times_unsettled: Cell<u32>,
+    /// `Program::count_entries_found`
+    counts_found: bool,
+    /// How many entries the task has been the first to find since `Commits::note_entries_found`.
+    found: Cell<u64>,
 }
 
 impl View<'_> {
@@ -290,6 +376,7 @@ impl View<'_> {
         }
     }
 
+    #[cold]
     #[inline(never)]
     fn touch(&self, file: FileId) -> u32 {
         let stored = self.numbers.stored.load(Ordering::Acquire);
@@ -306,14 +393,22 @@ impl View<'_> {
         self.last_idle_commit
             .set(self.numbers.stored.load(Ordering::Acquire));
         let pinned = self.pinned.get();
-        self.touched.borrow_mut().retain(|&file| {
-            if file != pinned
-                && let Some(file_snapshot) = self.file_snapshots.get(file as usize)
-            {
+        let mut touched = self.touched.borrow_mut();
+        if touched[..] == [pinned] {
+            return;
+        }
+        let mut is_pinned_touched = false;
+        for &file in touched.iter() {
+            if file == pinned {
+                is_pinned_touched = true;
+            } else if let Some(file_snapshot) = self.file_snapshots.get(file as usize) {
                 file_snapshot.set(0);
             }
-            file == pinned
-        });
+        }
+        touched.clear();
+        if is_pinned_touched {
+            touched.push(pinned);
+        }
     }
 
     /// True if the task is visiting `file`, so what it sees there stays the same until it visits another file.
@@ -370,8 +465,19 @@ impl View<'_> {
         self.numbers.with_a_cycle.load(Ordering::Acquire) > self.last_idle_commit.get()
     }
 
-    fn is_own(&self, commit: u32) -> bool {
+    pub(crate) fn is_own(&self, commit: u32) -> bool {
         self.own.borrow().binary_search(&commit).is_ok()
+    }
+
+    /// See `Program::count_entries_found`.
+    #[inline]
+    pub(crate) fn counts_found(&self) -> bool {
+        self.counts_found
+    }
+
+    /// The task has found an entry that another task's commit stored and that no task had found before.
+    pub(crate) fn note_found(&self) {
+        self.found.set(self.found.get() + 1);
     }
 
     /// Call after the task's commit `number`.
@@ -451,6 +557,20 @@ pub(super) enum NotShared {
 }
 
 impl<'s> Program<'s> {
+    /// So far: commits, the entries that they stored, the nanoseconds that all tasks together held the mutex of
+    /// `Checker::commit` and waited for it, how many of the entries are under nodes and symbols, and how many of those a
+    /// task other than the one that stored them has found (`count_entries_found`), and how many of the commits slept
+    /// in front of the mutex.
+    pub fn commit_totals(&self) -> [u64; 7] {
+        self.commits.totals()
+    }
+
+    /// For a log. The tasks that begin from now on mark each entry under a node or a symbol that they find and another
+    /// task's commit stored, and count the marks they are the first to set. A mark changes no lookup.
+    pub fn count_entries_found(&self, counts: bool) {
+        self.commits.count_entries_found(counts);
+    }
+
     /// See `Claims`. The caller is about to start an outermost measurement of `sym`'s variances. It isn't measuring
     /// yet, so it has no claim. `may_claim` is true if its result has a chance of being shared.
     pub(super) fn claim_variances(&self, sym: Sym, may_claim: bool) -> VarianceClaim<'s> {
@@ -533,6 +653,11 @@ impl<'s> Program<'s> {
     /// True if a commit numbered `after + 1..=last` resolved a cycle that contains one of `members`. See
     /// `Checker::take_unresolved_cycle`.
     pub fn is_cycle_resolved(&self, members: &[u64], after: u32, last: u32) -> bool {
+        // A commit up to `last` has stored everything, so it has announced itself here if it resolved a cycle.
+        let newest = self.commits.numbers.with_a_cycle.load(Ordering::Acquire);
+        if members.is_empty() || newest <= after {
+            return false;
+        }
         let cycle_commits = self.commits.cycle_commits.lock();
         let from = cycle_commits.partition_point(|ring| ring.number <= after);
         let mut since = cycle_commits[from..]
@@ -548,6 +673,9 @@ impl<'s> Program<'s> {
     /// They're compared with every earlier commit. A task only notes variances it computed itself, which it only does
     /// if it found none. They stay noted, because the task keeps using them.
     fn is_invalid(&self, task: &Task<'s>) -> bool {
+        if task.order_dependent_variances.is_empty() {
+            return false;
+        }
         let serial = self.serial_variances.lock();
         let mut noted = task.order_dependent_variances.iter();
         noted.any(|it| {
@@ -559,6 +687,9 @@ impl<'s> Program<'s> {
 
     /// Call once `task`'s commit is known to be valid. Later commits are compared with what the task noted.
     fn register_notes(&self, task: &Task<'s>) {
+        if task.order_dependent_variances.is_empty() {
+            return;
+        }
         let mut serial = self.serial_variances.lock();
         for it in &task.order_dependent_variances {
             serial.entry(it.sym).or_insert(it.variances);
@@ -613,8 +744,8 @@ impl<'s> Checker<'_, 's> {
     /// error.
     fn is_commit_due(&self) -> bool {
         self.task.commits()
-            && !self.task.is_trusted()
             && self.task.buffer().logged() >= KEYS_PER_COMMIT
+            && !self.task.is_trusted()
     }
 
     /// Call when nothing in progress has looked at a table or is about to store in one.
@@ -636,6 +767,7 @@ impl<'s> Checker<'_, 's> {
     /// - The task has stored, since it was last idle, under a key that the commit has. A task that misses a member
     ///   evaluates it and stores it. See `Task::overlaps_a_cycle_commit`.
     /// - The commit has a key in the file the task is visiting, which doesn't change during the visit.
+    #[inline]
     fn discard_if_missed_cycle_member(&self) {
         let Some(view) = self.task.view() else {
             return;
@@ -646,6 +778,14 @@ impl<'s> Checker<'_, 's> {
         if newest <= last_idle_commit.min(compared) {
             return;
         }
+        self.discard_if_missed_member_of_cycles_up_to(view, newest);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn discard_if_missed_member_of_cycles_up_to(&self, view: &View<'s>, newest: u32) {
+        let (last_idle_commit, compared) =
+            (view.last_idle_commit.get(), view.compared_with_pinned.get());
         // Copied because `identities_of` borrows the task's buffer again.
         let (record_keys, node_keys) = self.task.logged_since_idle();
         let (record_keys, node_keys) = (record_keys.to_vec(), node_keys.to_vec());
@@ -783,6 +923,75 @@ impl<'s> Checker<'_, 's> {
         self.leaves_depth_limit_unreported
     }
 
+    pub fn record_cycles_entered(&mut self, records: bool) {
+        self.records_cycles_entered.set(records);
+        self.cycles_entered.get_mut().clear();
+    }
+
+    pub fn take_cycles_entered(&mut self) -> CyclesEntered {
+        CyclesEntered(std::mem::take(self.cycles_entered.get_mut()))
+    }
+
+    pub fn enter_cycles_again(&mut self, cycles: &CyclesEntered) {
+        debug_assert!(self.stack.is_empty());
+        for &entry in &cycles.0 {
+            let has_tree = |file: FileId| {
+                let module = self.files().module(file);
+                !module.is_leaf || module.bound.symbols.len() > 0 || !module.hir.stmts.is_empty()
+            };
+            if !entry.file_that_names_it().is_some_and(has_tree) {
+                continue;
+            }
+            match entry {
+                Query::Expr(file, e) | Query::ExprInFlowLoop(file, e) => {
+                    self.type_of_expr(file, e);
+                }
+                Query::Call(file, call) => {
+                    self.resolved_signature(file, call);
+                }
+                Query::Symbol(sym) => {
+                    self.type_of_symbol(sym);
+                }
+                Query::Declared(sym) => {
+                    self.declared_type(sym);
+                }
+                Query::Return(file, func) | Query::ReturnAtFirstLook(file, func) => {
+                    self.return_type_of_fn(file, func);
+                }
+                Query::Pat(file, pat) | Query::ParameterSymbol(file, pat) => {
+                    self.type_of_pat(file, pat);
+                }
+                Query::LiteralProp(file, prop) => {
+                    self.type_of_literal_prop(file, prop);
+                }
+                Query::TypeNode(file, node) | Query::WriteType(file, node) => {
+                    self.type_from_node(file, node);
+                }
+                Query::Enum(file, member) => {
+                    self.enum_member_value(file, member);
+                }
+                Query::Bases(sym) => {
+                    self.base_types(sym);
+                }
+                Query::BaseConstructor(class) => {
+                    self.base_constructor_type_of_class(class);
+                }
+                Query::AliasTarget(_)
+                | Query::InitializerIsUndefined(..)
+                | Query::ReturnOfSignature(_)
+                | Query::Shape(_)
+                | Query::Properties(_)
+                | Query::Constraint(_)
+                | Query::InferredConstraint(_)
+                | Query::MappedProp(..)
+                | Query::Cond(..)
+                | Query::TypeArguments(_)
+                | Query::Comparison(_) => {}
+            }
+            self.take_ran_out_of_stack();
+        }
+    }
+
     /// Call before `check_file`. See `Task::set_first_in_order`.
     pub fn set_first_in_order(&self, is_first: bool, is_first_in_component: bool) {
         (self.task).set_first_in_order(is_first, is_first_in_component);
@@ -807,6 +1016,9 @@ impl<'s> Checker<'_, 's> {
     /// Returns true if the task continues, that is, if it isn't discarded.
     fn commit(&mut self, is_between_files: bool) -> bool {
         let p = self.p;
+        if let Some(view) = self.task.view() {
+            p.commits.note_entries_found(view);
+        }
         let Some([immediate_diagnostics, mut reported]) =
             self.take_diagnostics_for_commit(is_between_files)
         else {
@@ -815,7 +1027,9 @@ impl<'s> Checker<'_, 's> {
             }
             return !self.task.was_discarded();
         };
-        p.publish_reported(self.task.number(), immediate_diagnostics);
+        if !immediate_diagnostics.is_empty() {
+            p.publish_reported(self.task.number(), immediate_diagnostics);
+        }
         if self.task.was_discarded() {
             return false;
         }
@@ -826,9 +1040,9 @@ impl<'s> Checker<'_, 's> {
             .unwrap_or(0);
         let at_cycles = self.task.take_logged_at_cycles();
         let mut log = self.task.buffer().take_log();
+        let tables = tables_of(p);
         let ring = (!at_cycles.is_empty()).then(|| {
             let (mut record_keys, mut node_keys) = (Vec::new(), Vec::new());
-            let tables = tables_of(p);
             for [from, to] in &at_cycles {
                 let logged = log.record_keys.get(from[0]..to[0]).unwrap_or(&[]);
                 record_keys.extend(identities_of(&tables, &self.task, logged));
@@ -844,11 +1058,17 @@ impl<'s> Checker<'_, 's> {
             }
         });
         self.withhold_until_the_file_ends(&mut log, is_between_files);
+        let prepared = Commits::prepare(&tables, &self.task, &log);
+        let asked = Instant::now();
         let mut committing = p.commits.committing.lock();
+        let entered = Instant::now();
+        let waited = entered.duration_since(asked);
         let is_invalid =
             !self.task.is_trusted() && self.task.view().is_some() && p.is_invalid(&self.task);
         if is_invalid {
+            let held = entered.elapsed();
             drop(committing);
+            p.commits.note_commit([0; 2], waited, held);
             (self.task).discard_until_recheck();
             return false;
         }
@@ -863,17 +1083,23 @@ impl<'s> Checker<'_, 's> {
         p.commits.numbers.ranks.lock().push(rank);
         p.register_notes(&self.task);
         let task = &self.task;
-        p.drop_diagnostics_of_losers(&mut reported, |commit| {
-            task.view().is_some_and(|view| view.is_own(commit))
-        });
-        p.publish_reported(task.number(), reported);
-        (p.commits).store(&tables_of(p), task, &mut log, number, ring);
+        // Which of two tasks reports under a query is decided by the order of their commits.
+        if !reported.is_empty() {
+            p.drop_diagnostics_of_losers(&mut reported, |commit| {
+                task.view().is_some_and(|view| view.is_own(commit))
+            });
+            p.publish_reported(task.number(), reported);
+        }
+        let stored = (p.commits).store(&tables, &prepared, number, ring);
+        let held = entered.elapsed();
         drop(committing);
+        p.commits.note_commit(stored, waited, held);
         if let Some(view) = task.view() {
             view.has_committed(number);
         }
         task.resume_writing_immediately();
         task.buffer().recycle_log(log);
+        task.buffer().recycle_prepared(prepared.entries);
         true
     }
 
@@ -889,8 +1115,12 @@ impl<'s> Checker<'_, 's> {
             return;
         }
         let uncommitted = &self.task.uncommitted_files;
+        let (mut last_file, mut is_uncommitted) = (NO_FILE, false);
         log.node_keys.retain(|&entry| {
-            let is_uncommitted = uncommitted.contains(&FileId(entry[1]));
+            if entry[1] != last_file {
+                last_file = entry[1];
+                is_uncommitted = uncommitted.contains(&FileId(last_file));
+            }
             if is_uncommitted {
                 withheld.push(entry);
             }
@@ -900,6 +1130,7 @@ impl<'s> Checker<'_, 's> {
 
     /// Ends a task that `see_commits` was called for, after its last `commit_after_file`, on its own thread.
     pub fn end_task_after_commits(&mut self) {
+        self.aot_answers.outlives_task = !self.task.was_discarded() && self.task.own.is_empty();
         self.task.end(self.p)
     }
 }
@@ -925,8 +1156,34 @@ impl<'p, 's> Checker<'p, 's> {
         spare.signature_links.clear();
         spare.widened_types.clear();
         spare.apparent_types_of_intersections.clear();
-        spare.aot_answers.clear();
+        spare.aot_answers.end_task();
         spare
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct CyclesEntered(Vec<Query>);
+
+impl CyclesEntered {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn append(&mut self, mut later: CyclesEntered) {
+        self.0.append(&mut later.0);
+    }
+
+    pub fn retain_within_reach_of(&mut self, files: &Files<'_>, visited: &[FileId]) {
+        let _reading = ReadingNoTrees::begin();
+        let is_reached = files.reached_from(visited.to_vec());
+        self.0.retain(|entry| {
+            let file = entry.file_that_names_it();
+            file.is_some_and(|file| is_reached[file.idx()] || !files.module(file).is_closed)
+        });
     }
 }
 

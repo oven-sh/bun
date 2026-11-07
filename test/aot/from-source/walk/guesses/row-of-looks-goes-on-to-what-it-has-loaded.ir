@@ -1,0 +1,89 @@
+# -- source: row-of-looks-goes-on-to-what-it-has-loaded.ts
+# declare function sink(...values: unknown[]): void;
+# class Leaf { weight: number; constructor(weight: number) { this.weight = weight; } }
+# class Branch { leaf: Leaf; next: Branch | undefined; flags: number; constructor(leaf: Leaf, next: Branch | undefined, flags: number) { this.leaf = leaf; this.next = next; this.flags = flags | 0; } }
+# function weightOfNext(branch: Branch) { return branch.next!.leaf.weight; }
+# function hasFlag(branch: Branch) { return branch.flags & 4 ? 1 : 2; }
+# function hasNext(branch: Branch) { if (!branch.next) return 1; return 2; }
+# function store(branch: Branch, leaf: Leaf, flags: any) { branch.leaf = leaf; branch.flags = flags; }
+# function pair(leaf: any, flags: any) { return { leaf, flags }; }
+# sink(weightOfNext, hasFlag, hasNext, store, pair, pair(new Leaf(3), 4), new Branch(new Leaf(1.5), new Branch(new Leaf(2), undefined, 1), 2));
+# -- end of source
+# The objects reach code that the build has not seen, so Link has proven nothing of their fields. Each slot is HELD to a type (PlacedSlot::type): every store is held to it, so a slot that is filled holds a value of it.
+# A read behind the look at its slot has that type with no test of its own. So the row of looks in front of the arms goes on to the slots of what it has loaded: `a.b.c` has one closed arm and no test of a shape.
+# What may be undefined or null is asked for that, and the closed arm throws in its turn.
+# TODO: no slot is held to a type: held types bought nothing and cost the servers 1 to 5% (plan/AOTSlotPlan.cpp, typeHeldOfFieldForSlotPlan())
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: layout L0 CompiledObject
+# PLAN-NEXT: slot 0 "weight" JSValue Inline {{*}} type=undefined|i32|fractional
+# PLAN: layout L1 CompiledObject
+# PLAN-NEXT: slot 0 "leaf" JSValue Inline {{*}} type=undefined|L0
+# PLAN-NEXT: slot 1 "next" JSValue Inline {{*}} type=undefined|L1
+# RUN(CHAIN): walk f1 mechanisms=all
+# CHAIN-LABEL: code f1:Body
+# CHAIN-NOT: ShapeTest
+# CHAIN: = IsSlotFilled {{*}} key="next"
+# CHAIN: [[next]]: undefined|L1 {{*}} = GetSlot {{*}} key="next"
+# CHAIN: = TypeTest [[next]] testedType=L1
+# CHAIN: frequency=Rare
+# CHAIN-NEXT: = PropGet {{*}} key="next"
+# CHAIN-NEXT: = PropGet {{*}} key="leaf"
+# CHAIN-NEXT: = PropGet {{*}} key="weight"
+# CHAIN-NOT: ShapeTest
+# CHAIN: = IsSlotFilled {{*}} key="leaf"
+# CHAIN: [[leaf]]: undefined|L0 {{*}} = GetSlot {{*}} key="leaf"
+# CHAIN: = TypeTest [[leaf]] testedType=L0
+# CHAIN: = IsSlotFilled {{*}} key="weight"
+# CHAIN: : undefined|i32|fractional {{*}} = GetSlot {{*}} key="weight"
+# CHAIN-NOT: frequency=Rare
+# What is made of the value leans on its type and stands in the typed run.
+# RUN(OPERATOR): walk f2 mechanisms=all
+# OPERATOR-LABEL: code f2:Body
+# OPERATOR: = BitAnd {{*}} form=Generic
+# OPERATOR: [[flags]]: undefined|i32 {{*}} = GetSlot {{*}} key="flags"
+# OPERATOR: = BitAnd {{*}} form=Numbers
+# The edges of the branch hand on what the test leaves of the value, and nothing reads it: the test stands in the typed run too.
+# RUN(TRUTH): walk f3 mechanisms=all
+# TRUTH-LABEL: code f3:Body
+# TRUTH: frequency=Rare
+# TRUTH: = ToBoolean {{*}} form=Generic
+# TRUTH: [[next]]: undefined|L1 {{*}} = GetSlot {{*}} key="next"
+# TRUTH-NEXT: = ToBoolean [[next]] form=Bits
+# A typed store writes the bits as they are. What is not proven to fit its slot is tested in the row, and the closed arm stores what fails: its stub takes the field out of its slot.
+# RUN(STORE): walk f4 mechanisms=all
+# STORE-LABEL: code f4:Body
+# STORE: b0({{*}}, [[leaf]]: anything{{*}}, [[flags]]: anything
+# STORE: frequency=Rare
+# STORE-NEXT: PropSet {{*}}, [[leaf]] key="leaf"
+# STORE-NEXT: PropSet {{*}}, [[flags]] key="flags"
+# STORE: [[leafFits]]: boolean {{*}} = TypeTest [[leaf]] testedType=undefined|L0
+# STORE: [[fittingLeaf]]: undefined|L0{{*}} = Narrowed [[leaf]], [[leafFits]]
+# STORE: [[flagsFit]]: boolean {{*}} = TypeTest [[flags]] testedType=undefined|i32
+# STORE: [[fittingFlags]]: undefined|i32{{*}} = Narrowed [[flags]], [[flagsFit]]
+# STORE: PutSlot {{*}}, [[fittingLeaf]] key="leaf"
+# STORE: PutSlot {{*}}, [[fittingFlags]] key="flags"
+# STORE-NOT: frequency=Rare
+# An allocation fills its slots without a test. All that it lists is tested in a row. Where one fails, the allocation lists what fits and the rest is defined by name.
+# RUN(ALLOCATION): walk f5 mechanisms=all-ParameterGuards
+# ALLOCATION-LABEL: code f5:Body
+# ALLOCATION: = TypeTest {{*}} testedType=undefined|L0
+# ALLOCATION: = TypeTest {{*}} testedType=undefined|i32
+# ALLOCATION: frequency=Rare
+# ALLOCATION: [[empty]]: L2 {{*}} = NewObject layout=L2
+# ALLOCATION-NEXT: PropDefine [[empty]], {{*}} key="leaf"
+# ALLOCATION-NEXT: PropDefine [[empty]], {{*}} key="flags"
+# ALLOCATION: = NewObject -, {{*}} layout=L2 fields=[1, 0]
+# The guard at the entry tests a parameter that is only listed. Behind it nothing is left to ask.
+# RUN(GUARD): walk f5 mechanisms=all
+# GUARD-LABEL: code f5:Body
+# GUARD-NOT: TypeTest
+# GUARD: = NewObject -, {{*}} layout=L2 fields=[1, 0]
+# GUARD-NOT: NewObject
+# Without guesses nothing is tested: what is not proven to fit goes by the closed store, and no read has a look to stand behind.
+# RUN(WITHHELD): walk f1 f4 f5 mechanisms=all-Guesses-ParameterGuards
+# WITHHELD-NOT: GetSlot
+# WITHHELD-NOT: PutSlot
+# WITHHELD-NOT: TypeTest
+# With typed slots withheld no slot is held to anything.
+# RUN(OPEN): plan layouts mechanisms=all-TypedSlots
+# OPEN-NOT: type=

@@ -9,6 +9,7 @@ import {
   externType,
   getterHostFunctionName,
   getterSymbolName,
+  hasThunk,
   methodHostFunctionName,
   methodSymbolName,
   pathOfBoundNamespace,
@@ -26,6 +27,7 @@ import {
   Getter,
   InternalFieldAccessor,
   Method,
+  OptionalType,
   RefType,
   RestType,
   Signature,
@@ -113,8 +115,6 @@ const usesWithoutJavaScript: readonly UseSpec[] = [
 const usesOfGetterWithoutWrapper: readonly UseSpec[] = [b.readsContents(), b.writesContents(), heldValuesAnswered];
 
 const usesThatReachResult: readonly UseSpec[] = [b.returned, heldValuesAnswered];
-
-const jsonSerializationUses: readonly UseSpec[] = [b.runsTransitively("OwnKeys", "OwnValues", "ToJSON", "ToPrimitive")];
 
 /** The thunk of a member takes the cell of its receiver behind the realm. */
 const receiverParameter: DirectParameterSpec = { value: "Receiver", cppType: "JSC::JSCell*" };
@@ -270,8 +270,14 @@ function convertsStringObject(type: Type): boolean {
   return (type instanceof RestType ? type.element : type).cppPrepare("") !== null;
 }
 
+/** `.otherAsNull` takes anything, and converts what the type inside it takes. */
+function convertedTypeOf(type: Type): TypeSpec {
+  const isIgnoringOthers = type instanceof OptionalType && type.modifier === "otherAsNull";
+  return (isIgnoringOthers ? type.inner : type).parameterType.accepted;
+}
+
 function computeConversionUses(type: Type): UseSpec[] {
-  const runsToString = acceptsStringObject(type.parameterType.accepted) || convertsStringObject(type);
+  const runsToString = acceptsStringObject(convertedTypeOf(type)) || convertsStringObject(type);
   const ownConversion = runsToString ? [b.runs("ToPrimitive")] : [];
   const containers = findContainers(type);
   if (containers.length === 0) return ownConversion;
@@ -404,7 +410,9 @@ function createField(
       }),
     ),
     returns: createStrictType(result),
-    resultIsDeclaredOnly: checkedWordsOf(signature.returns) !== null || undefined,
+    // A thunk holds what the Rust function returns to the words, or hands back the wrapper itself (answersThis). A body in C++ has no thunk.
+    resultIsDeclaredOnly: (!hasThunk(signature) && checkedWordsOf(signature.returns) !== null) || undefined,
+    resultIsHeld: isHeld(signature) || undefined,
     capability: capabilityOf(
       signature,
       result,
@@ -412,7 +420,11 @@ function createField(
     ),
     runsOnlyOperandCode:
       columns.runsOnlyOperandCode ?? ((capability !== "js" && iteratesOperand(signature)) || undefined),
-    throws: signature.throws || signature.requiredArguments > 0 || args.some(({ type }) => type.canRefuse),
+    throws:
+      signature.throws ||
+      isHeld(signature) ||
+      signature.requiredArguments > 0 ||
+      args.some(({ type }) => type.canRefuse),
     uses,
     reads: columns.reads ?? (isOfClass && capability === "js" ? undefined : externalState),
     writes: columns.writes ?? (isOfClass && capability === "js" ? undefined : externalState),
@@ -441,6 +453,8 @@ function findLayoutOfResult({ returns }: Signature, fn: FunctionDefinition): Dic
 }
 
 function resultTypeOf(signature: Signature, fn: FunctionDefinition): TypeSpec {
+  // `returns: b.self` alone is any object of the class, one that nobody follows too.
+  if (signature instanceof Method && signature.answersThis) return b.operand("this").spec;
   const layout = findLayoutOfResult(signature, fn);
   return layout === null ? signature.returns.resultType : b.ordinaryObjectOf(layout.name).fresh.spec;
 }
@@ -524,7 +538,7 @@ function createFields(general: DeclaredField, signature: Signature, thunk: strin
       general.returns.spec,
       forms.map(({ type }) => type),
     ),
-    throws: signature.throws,
+    throws: signature.throws || isHeld(signature),
     isSpecialCase: true,
     directEntry,
   };
@@ -589,6 +603,12 @@ export function declareFunction(fn: FunctionDefinition, path: BuiltinPath): Decl
   );
 }
 
+/** Its thunk throws a TypeError in place of a result that is none of the declared words. */
+const isHeld = (signature: Signature): boolean =>
+  hasThunk(signature) &&
+  !(signature instanceof Method && signature.answersThis) &&
+  checkedWordsOf(signature.returns) !== null;
+
 function computeCachedResult(spec: TypeSpec): TypeSpec {
   switch (spec.type) {
     case "PlainData":
@@ -638,7 +658,7 @@ function usesOfGetterReceiver(passesWrapper: boolean, result: TypeSpec): readonl
   return mayHoldObject(result) ? uses : uses.filter(use => !usesThatReachResult.includes(use));
 }
 
-const isLocked = (type: ClassType): boolean => type.columns.lockedObjects?.includes("prototype") ?? false;
+const isLocked = (type: ClassType): boolean => type.columns.lockedMembers?.includes("prototype") ?? false;
 /** JavaScript holds an instance itself, and no function that is bound to one. */
 const hasInstanceReceiver = (type: ClassType): boolean => !type.forBind;
 const headerOf = (type: ClassType): string => `Generated${type.origin!.namespace}.h`;
@@ -748,16 +768,19 @@ function collectAccessor(type: ClassType, accessor: Getter | InternalFieldAccess
   const isPure = getter?.isPure ?? false;
   const touchesNoCell = getter !== null && getter.capability === "none" && !getter.passThis && isImmediate(result);
   const isAssignable = accessor.hasSetter || (getter?.writable ?? false);
+  const isGetterHeld = getter !== null && checkedWordsOf(getter.type) !== null;
   const usesOfReceiver = isPure ? [b.readsContents()] : usesOfGetterReceiver(getter?.passThis ?? false, result);
   return declareMember(path, isStatic, {
     ...columns,
     ...symbolColumns,
     this: isStatic ? b.any : undefined,
     getter: createStrictType(result),
-    resultIsDeclaredOnly: (getter !== null && checkedWordsOf(getter.type) !== null) || undefined,
+    // A property that takes any value answers with it.
+    resultIsDeclaredOnly: (getter !== null && getter.writable && checkedWordsOf(getter.type) !== null) || undefined,
+    resultIsHeld: isGetterHeld || undefined,
     setter: isAssignable ? setterTakingAnything(isRead, isStatic) : undefined,
     capability: touchesNoCell ? "none" : runsNoJavaScript ? "heap" : "js",
-    throws: getter === null || getter.capability === "js" || getter.throws,
+    throws: getter === null || getter.capability === "js" || getter.throws || isGetterHeld,
     uses: isStatic
       ? { this: b.inspected, ...columns.uses }
       : runsNoJavaScript
@@ -942,7 +965,7 @@ function collectValue(fn: FunctionDefinition, binding: BuiltinPath): Declaration
     ...signature.columns,
     getter: createStrictType(resultTypeOf(signature, fn)),
     capability: signature.capability === "none" ? "heap" : signature.capability,
-    throws: signature.throws,
+    throws: signature.throws || isHeld(signature),
     implementation: b.generic,
   });
 }

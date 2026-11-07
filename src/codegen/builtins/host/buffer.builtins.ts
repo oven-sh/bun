@@ -32,7 +32,7 @@ const createdFrom = (implementation: b.ImplementationSpec): b.FunctionField[] =>
     returns: newBuffer,
     capability: "heap",
     throws: true,
-    uses: { string: [b.readAsCharacters], encoding: b.inspected },
+    uses: { string: b.inspected, encoding: b.inspected },
     implementation,
   },
   {
@@ -151,7 +151,7 @@ const encodedWrite = {
   capability: "js",
   throws: true,
   runsOnlyOperandCode: true,
-  uses: { this: writesBytes, string: [b.readAsCharacters], offset: converted, length: converted },
+  uses: { this: writesBytes, string: b.inspected, offset: converted, length: converted },
   implementation: b.hostCall,
 } satisfies b.FunctionField;
 
@@ -193,10 +193,12 @@ const numberWriteWithWidth = {
   implementation: b.hostCall,
 } satisfies b.FunctionField;
 
-const propertyOfBuffer = (name: string, property: string) =>
+// src/js/builtins/JSBufferPrototype.ts: `this.buffer`, `this.byteOffset` of what is below Buffer.prototype, undefined of anything else. A program may have laid something of its own under the name.
+const propertyOfBuffer = (name: string, property: string, found: b.TableType) =>
   ({
     this: b.any,
-    getter: b.any,
+    getter: b.union(found, b.undefined),
+    resultIsDeclaredOnly: true,
     capability: "js",
     throws: true,
     uses: { this: [b.runs("PrototypeChain"), b.readByKey(b.keysNamed(property))] },
@@ -240,8 +242,40 @@ const createdByFrom: b.FunctionField[] = [
   },
 ];
 
+const allocated: b.FunctionField[] = [
+  {
+    args: { size: b.f64, fill: b.undefined.optional },
+    returns: newBuffer,
+    capability: "heap",
+    throws: true,
+    implementation: b.hostCall,
+  },
+  {
+    args: { size: b.f64, fill: arrayBufferView, encoding: b.any.optional },
+    returns: newBuffer,
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    uses: { fill: [b.readsContents(), printedByInspect], encoding: b.inspected },
+    implementation: b.hostCall,
+  },
+  {
+    args: { size: b.f64, fill: b.any, encoding: b.any.optional },
+    returns: newBuffer,
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    uses: { fill: converted, encoding: [...converted, b.printedByFormatter("constructor")] },
+    implementation: b.hostCall,
+  },
+];
+
 export default b.declarations(
   b.constructionOfFunction("Buffer.from", createdByFrom),
+  // jsBufferConstructorTable in JSBuffer.cpp lists the three as Constructable: under `new` the same native function runs, and it does not look at new.target.
+  b.constructionOfFunction("Buffer.alloc", allocated),
+  b.constructionOfFunction("Buffer.allocUnsafe", uninitialized),
+  b.constructionOfFunction("Buffer.allocUnsafeSlow", uninitialized),
   b.class("Buffer", {
     extends: "Uint8Array",
     jsType: "Uint8ArrayType",
@@ -255,33 +289,7 @@ export default b.declarations(
     construct: constructed,
     static: {
       poolSize: b.property(b.f64, { mutability: "ConstantUnlessWritten" }),
-      alloc: [
-        {
-          args: { size: b.f64, fill: b.undefined.optional },
-          returns: newBuffer,
-          capability: "heap",
-          throws: true,
-          implementation: b.hostCall,
-        },
-        {
-          args: { size: b.f64, fill: arrayBufferView, encoding: b.any.optional },
-          returns: newBuffer,
-          capability: "js",
-          throws: true,
-          runsOnlyOperandCode: true,
-          uses: { fill: [b.readsContents(), printedByInspect], encoding: b.inspected },
-          implementation: b.hostCall,
-        },
-        {
-          args: { size: b.f64, fill: b.any, encoding: b.any.optional },
-          returns: newBuffer,
-          capability: "js",
-          throws: true,
-          runsOnlyOperandCode: true,
-          uses: { fill: converted, encoding: converted },
-          implementation: b.hostCall,
-        },
-      ],
+      alloc: allocated,
       allocUnsafe: uninitialized,
       allocUnsafeSlow: uninitialized,
       byteLength: [
@@ -290,7 +298,7 @@ export default b.declarations(
           returns: b.int(0, 3 * (2 ** 31 - 1)),
           capability: "heap",
           throws: true,
-          uses: { string: [b.readAsCharacters], encoding: b.inspected },
+          uses: { string: b.inspected, encoding: b.inspected },
           implementation: b.inline("StringUTF8ByteLength", { otherwise: b.hostCall }),
         },
         {
@@ -323,7 +331,8 @@ export default b.declarations(
           implementation: b.hostCall,
         },
         {
-          args: { list: b.object, totalLength: b.f64.optional },
+          // JSC::isArray(): an array, or a proxy of one. Any other object is refused, and the message says what it is.
+          args: { list: b.union(b.instance("Array"), b.instance("Proxy")), totalLength: b.f64.optional },
           returns: newBuffer,
           capability: "js",
           throws: true,
@@ -359,8 +368,8 @@ export default b.declarations(
       },
     },
     proto: {
-      parent: propertyOfBuffer("parent", "buffer"),
-      offset: propertyOfBuffer("offset", "byteOffset"),
+      parent: propertyOfBuffer("parent", "buffer", b.union(b.instance("ArrayBuffer"), b.instance("SharedArrayBuffer"))),
+      offset: propertyOfBuffer("offset", "byteOffset", b.f64),
       compare: {
         this: uint8Array,
         args: {
@@ -431,7 +440,7 @@ export default b.declarations(
         uses: {
           this: writesBytes,
           value: [b.readsContents(), b.runs("ToPrimitive")],
-          encoding: converted,
+          encoding: [...converted, b.printedByFormatter("constructor")],
         },
         reads: viewHeaps,
         implementation: b.hostCall,
@@ -495,7 +504,7 @@ export default b.declarations(
         capability: "js",
         throws: true,
         runsOnlyOperandCode: true,
-        uses: { this: writesBytes, string: [b.readAsCharacters], encoding: converted },
+        uses: { this: writesBytes, string: b.inspected, encoding: converted },
         implementation: b.hostCall,
       },
       asciiSlice: decodedRange,
@@ -536,6 +545,8 @@ export default b.declarations(
   }),
   b.same("Buffer.prototype.toLocaleString", "Buffer.prototype.toString"),
   b.same("Buffer.prototype.@@@nodejs.util.inspect.custom", "Buffer.prototype.inspect"),
+  // JSBuffer.cpp: the constructor lays itself there.
+  b.method("Buffer.prototype.@@species", b.property(b.builtin("Buffer"))),
   b.same("Buffer.prototype.readUintBE", "Buffer.prototype.readUIntBE"),
   b.same("Buffer.prototype.readUintLE", "Buffer.prototype.readUIntLE"),
   b.same("Buffer.prototype.writeUintBE", "Buffer.prototype.writeUIntBE"),
@@ -545,4 +556,6 @@ export default b.declarations(
   // The module takes the constructors from the realm, not from the names of the global object.
   b.same("node:buffer.Buffer", "Buffer"),
   b.same("node:buffer.Blob", "Blob"),
+  b.same("node:buffer.atob", "atob"),
+  b.same("node:buffer.btoa", "btoa"),
 );

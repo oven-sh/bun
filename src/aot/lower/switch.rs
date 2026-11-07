@@ -22,6 +22,7 @@ struct ClauseGroup {
 struct CaseTest {
     expression: ExprId,
     constant: FoldedValue,
+    read_off: Option<SymbolId>,
     target: BlockId,
 }
 
@@ -69,23 +70,35 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         for group in &groups {
             for index in group.first..group.end {
                 match hir[cases.at(index as usize)].test.some() {
-                    Some(expression) => tests.push(CaseTest {
-                        expression,
-                        constant: find_constant(self.file, expression),
-                        target: group.body,
-                    }),
+                    Some(expression) => {
+                        let mut constant = find_constant(self.file, expression);
+                        let mut read_off = None;
+                        if matches!(constant, FoldedValue::Unknown)
+                            && let Some((variable, value)) =
+                                self.file.find_member_of_enum_that_stays_as_born(expression)
+                        {
+                            constant = FoldedValue::Constant(value);
+                            read_off = Some(variable);
+                        }
+                        tests.push(CaseTest {
+                            expression,
+                            constant,
+                            read_off,
+                            target: group.body,
+                        });
+                    }
                     None => default_target = group.body,
                 }
             }
         }
         match switched_by_kind {
-            Some(operand) => {
+            Some(_) => {
                 let names = tests.iter().filter_map(|test| match test.constant {
                     FoldedValue::Constant(Constant::String(name)) => Some((name, test.target)),
                     _ => None,
                 });
                 let names: Vec<(Atom, BlockId)> = names.collect();
-                self.jump_by_typeof(operand, subject.value, &names, default_target);
+                self.jump_by_typeof(subject.value, &names, default_target);
             }
             None => self.emit_dispatch(subject, &tests, default_target),
         }
@@ -102,7 +115,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.leave_own_scope(scope);
     }
 
-    /// `switch (typeof operand)` where every case is a written text: the operand.
     fn find_operand_switched_by_kind(
         &mut self,
         subject: ExprId,
@@ -126,7 +138,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut first = 0;
         while first < cases.len {
             let mut end = first + 1;
-            // A clause that counts how often it is entered has a block of its own.
             while end < cases.len
                 && hir[cases.at(end as usize - 1)].body.is_empty()
                 && !self.file.counts_executions()
@@ -145,6 +156,7 @@ fn find_constant(file: &mut FileLowering<'_, '_, '_, '_>, expression: ExprId) ->
     let inner = file.skip_type_syntax(expression);
     let folded = match file.decisions().constant(file.hir, inner) {
         FoldedValue::Unknown => match file.find_enum_member_read(inner) {
+            Some(_) if file.find_member_of_loaded_module(inner).is_some() => FoldedValue::Unknown,
             Some(value) => FoldedValue::Constant(value),
             None => FoldedValue::Unknown,
         },

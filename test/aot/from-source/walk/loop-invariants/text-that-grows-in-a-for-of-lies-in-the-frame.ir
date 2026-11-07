@@ -1,0 +1,16 @@
+# the handler of a for-of closes the iterator and throws on: it is handed no name of the text, which is dead there: the builder lies in the frame. A handler that is handed the text keeps the builder in the heap
+# f1 = letsGo, f2 = caught
+# -- source: text-that-grows-in-a-for-of-lies-in-the-frame.ts
+# declare function sink(...values: unknown[]): void;
+# function letsGo(list: number[]): string { let line = ""; for (const c of list) line += c; return line; }
+# function caught(list: number[]): string { let line = ""; try { for (const c of list) line += c; } catch { line += "!"; } return line; }
+# sink(letsGo, caught, letsGo([1, 2]), caught([1, 2]));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK: = StackStringBuilderBegin
+# RUN(CAUGHT): walk f2 mechanisms=all
+# REQUIRES(CAUGHT): entries-of-bun
+# CAUGHT-LABEL: code f2:Body
+# CAUGHT-NOT: StackStringBuilderBegin

@@ -1,0 +1,25 @@
+# a store under a computed key that Link sees come to a layout says: more is stored here than is seen. So what rests on what was seen is taken back: nothing is written of Knot's fields, and none of them is held;
+# `fill` stores a number under "name", where only texts were seen. Plain beside it is the control: no such store comes to it, and its two fields are held to what is seen stored. What is WRITTEN of a field stays:
+# each-kind-of-field-that-is-never-held.ir has that half.
+# -- source: what-is-only-seen-stored-is-not-held-where-a-computed-key-stores-more.js
+# function Knot(tag, name) { this.tag = tag; this.name = name; this.up = null; }
+# function Plain(name) { this.name = name; this.up = null; }
+# function link(below, above) { below.up = above; }
+# function fill(knot, word, value) { knot[word] = value; }
+# const first = new Knot(1, "a"), second = new Knot(2, "b"), third = new Plain("c"), fourth = new Plain("d");
+# link(first, second);
+# link(third, fourth);
+# fill(first, JSON.parse('"name"'), 7);
+# console.log(String(first.name) + String(first.up === second) + third.name + String(third.up === fourth));
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: field L1.0 "name" source=seen type=undefined|null|string slot=OptionalCell32
+# CHECK-NEXT: field L1.1 "up" source=seen type=undefined|null|L0|L1 slot=OptionalCell32
+# CHECK: counts fields {{*}} | seen 2
+# RUN(MARKED): facts enforced mechanisms=all
+# REQUIRES(MARKED): entries-of-bun
+# MARKED-NOT: field L0.
+# RUN(LINK): link held layouts mechanisms=all
+# REQUIRES(LINK): entries-of-bun
+# LINK: layout L0 {{*}}filled-under-computed-keys

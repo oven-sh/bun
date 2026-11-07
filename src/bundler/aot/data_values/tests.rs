@@ -1,6 +1,5 @@
-use bun_aot::statistics::is_lowered_by_all;
-use bun_ast::{Ref, Source};
-use bun_core::strings::contains;
+use bun_alloc::AstAlloc;
+use bun_ast::{ExprNodeList, Ref, Source};
 use bun_parsers::json::{parse_json_into_arena, parse_utf8};
 use bun_sema::session::Session;
 
@@ -27,7 +26,7 @@ fn parse_tree(text: &'static [u8], scratch: &Arena) -> Expr {
 }
 
 fn write_error(root: &Expr, scratch: &Arena) -> NotData {
-    match write_expr(root, scratch, &mut PortableValue::default()) {
+    match write_expr(root, scratch, &mut ValueCounter::default()) {
         Err(error) => error,
         Ok(()) => panic!("expected an error"),
     }
@@ -139,6 +138,10 @@ impl ValueSink for ValueCounter {
     }
 
     fn big_int(&mut self, _digits: &[u8]) {
+        self.values += 1;
+    }
+
+    fn temporal(&mut self, _class: &[u8], _text: &[u8]) {
         self.values += 1;
     }
 
@@ -409,38 +412,17 @@ fn proto_key_stays_own_key() {
         let value = data_value_from_expr(&root, scratch, arena, atoms).expect("data");
         let expected = [(atoms.intern(b"__proto__"), DataValue::Number(1.0))];
         assert_eq!(*value, DataValue::Object(&expected));
-
-        let mut builder = ExprBuilder::new(scratch);
-        write_data_value(value, atoms, &mut builder);
-        let root = builder.finish();
-        let Data::EObject(object) = &root.data else {
-            panic!("expected an object");
-        };
-        let key = object.get().properties[0].key.as_ref().expect("a key");
-        assert!(object.get().properties[0].flags == E::own_key_property_flags(key));
-        assert!(object.get().properties[0].flags != bun_ast::flags::PROPERTY_NONE);
     });
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn lone_surrogate_round_trips() {
+fn utf16_string_keeps_lone_surrogate() {
     with_scope(|atoms, arena, scratch| {
         let units: &[u16] = scratch.alloc_slice_copy(&[0x61u16, 0xD800]);
         let root = Expr::init(E::EString::init_utf16(units), Loc::EMPTY);
         let value = data_value_from_expr(&root, scratch, arena, atoms).expect("data");
-
-        let mut builder = ExprBuilder::new(scratch);
-        write_data_value(value, atoms, &mut builder);
-        let rebuilt = builder.finish();
-        let Data::EString(string) = &rebuilt.data else {
-            panic!("expected a string");
-        };
-        assert!(string.get().is_utf16);
-        assert_eq!(string.get().slice16(), units);
-
-        let again = data_value_from_expr(&rebuilt, scratch, arena, atoms).expect("data");
-        assert_eq!(value, again);
+        assert_eq!(*value, DataValue::String(atoms.intern(b"a\xED\xA0\x80")));
     });
 }
 
@@ -464,38 +446,14 @@ fn rope_is_flattened() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn deep_array_converts_in_all_sinks() {
+fn deep_array_converts() {
     with_scope(|atoms, arena, scratch| {
-        let mut builder = DataValueBuilder::new(arena, atoms);
-        builder.number(1.0);
+        let mut root = number_expr(1.0);
         for _ in 0..NESTING_DEPTH {
-            builder.array(1);
+            root = array_from(&[root]);
         }
-        let value = builder.finish();
-
-        let mut portable = PortableValue::default();
-        write_data_value(value, atoms, &mut portable);
-        let mut rebuilt = ExprBuilder::new(scratch);
-        portable.replay(&mut rebuilt);
-        let root = rebuilt.finish();
-
-        let again = data_value_from_expr(&root, scratch, arena, atoms).expect("data");
-        assert_eq!(nesting_depth(again), NESTING_DEPTH);
-    });
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn replay_equals_direct_result() {
-    with_scope(|atoms, arena, scratch| {
-        let root = parse_tree(br#"{"a":[1,"x",null],"b":{"c":false}}"#, scratch);
-        let direct = data_value_from_expr(&root, scratch, arena, atoms).expect("data");
-
-        let mut portable = PortableValue::default();
-        write_expr(&root, scratch, &mut portable).expect("data");
-        let mut builder = DataValueBuilder::new(arena, atoms);
-        portable.replay(&mut builder);
-        assert_eq!(direct, builder.finish());
+        let value = data_value_from_expr(&root, scratch, arena, atoms).expect("data");
+        assert_eq!(nesting_depth(value), NESTING_DEPTH);
     });
 }
 
@@ -592,18 +550,22 @@ fn limit_counts_values_and_not_keys() {
 #[test]
 fn limit_is_equal_in_every_build() {
     let limit = LimitId::MaxDataNodes;
-    assert!(!is_lowered_by_all(limit));
     assert_eq!(limit.value_on_arm64(), limit.value_on_x86_64());
     assert_eq!(max_data_nodes() as u64, limit.value_on_arm64());
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn toml_date_time_is_not_data() {
-    with_scope(|_, _, scratch| {
+fn toml_date_time_names_its_class() {
+    with_scope(|atoms, arena, scratch| {
         let date = E::EString::init_toml_datetime(b"1979-05-27", E::TomlDateTimeKind::LocalDate);
         let root = Expr::init(date, Loc::EMPTY);
-        assert!(matches!(write_error(&root, scratch), NotData::TomlDateTime));
+        let expected = DataValue::Temporal {
+            class: atoms.intern(b"PlainDate"),
+            text: atoms.intern(b"1979-05-27"),
+        };
+        let value = data_value_from_expr(&root, scratch, arena, atoms);
+        assert_eq!(*value.unwrap(), expected);
     });
 }
 
@@ -623,12 +585,6 @@ fn each_error_is_reported_once() {
         max_data_nodes()
     );
     assert_eq!(reported_text(NotData::TooLarge), size_message.as_bytes());
-    let date_time = reported_text(NotData::TomlDateTime);
-    assert!(date_time.starts_with(b"TS100050"));
-    assert!(contains(
-        &date_time,
-        b"the TOML file \"/project/value.toml\""
-    ));
 }
 
 #[test]

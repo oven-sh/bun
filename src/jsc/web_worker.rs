@@ -90,8 +90,6 @@ pub struct WebWorker {
     exec_argv_len: usize,
     inherit_exec_argv: bool,
     unresolved_specifier: Box<[u8]>,
-    /// In an executable whose entry points begin programs of their own: the image of the program that begins at the specifier.
-    image: Option<&'static [u8]>,
     /// The specifier is a `data:` or `blob:` URL, or a file on disk, that the build has not seen: the Worker runs it and nothing of the compiled program.
     runs_apart_from_compiled_program: bool,
     preloads: Vec<Box<[u8]>>,
@@ -479,14 +477,6 @@ impl WebWorker {
                     && !crate::compiled_program::is_compiled_module(path)
             })
         };
-        let image = crate::compiled_program::has_image_for_each_entry_point().then(|| {
-            let dot_slash = OnceCell::new();
-            // SAFETY: as for the preloads.
-            let path = unsafe {
-                resolve_entry_point_specifier_quietly(parent, spec_slice.slice(), &dot_slash)
-            };
-            crate::compiled_program::image_of_worker(path)
-        });
 
         // Everything the worker thread needs from this VM is copied here, on
         // its own thread; the worker never dereferences `parent`.
@@ -562,7 +552,6 @@ impl WebWorker {
             exec_argv_len,
             inherit_exec_argv,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
-            image,
             runs_apart_from_compiled_program,
             preloads,
             name: if name_str.is_empty() {
@@ -1024,10 +1013,8 @@ impl WebWorker {
             return Ok(core::ptr::null_mut());
         }
 
-        let runs_apart = self.runs_apart_from_compiled_program
-            && crate::compiled_program::use_no_image_on_this_thread(&self.unresolved_specifier);
-        if !runs_apart && let Some(image) = self.image {
-            crate::compiled_program::use_image_of_worker(image);
+        if self.runs_apart_from_compiled_program {
+            crate::compiled_program::use_no_image_on_this_thread(&self.unresolved_specifier);
         }
         let vm = VirtualMachine::init_worker(
             self,
@@ -1165,6 +1152,21 @@ impl WebWorker {
                 return self.shutdown();
             }
         };
+
+        if crate::compiled_program::refuses_start_of_worker_at(path) {
+            vm.as_mut().exit_handler.exit_code = 1;
+            let message = [
+                &b"Cannot start a Worker at '"[..],
+                path,
+                b"': this executable loads code from disk, so a Worker starts only at the files that the build saw a Worker start at. Pass the file to bun compile as another entry point.",
+            ]
+            .concat();
+            vm.log_mut()
+                .unwrap()
+                .add_error(None, bun_ast::Loc::EMPTY, message);
+            self.flush_logs(vm);
+            return self.shutdown();
+        }
 
         // Terminated while resolving — exit code 0, no error.
         if self.has_requested_terminate() {
@@ -1679,10 +1681,45 @@ unsafe fn resolve_entry_point_specifier<'s>(
         }
     }
 
-    // SAFETY: per fn contract — `parent` is this thread's VM, and only its own
-    // thread mutates its `transpiler`.
-    let resolved_entry_point = unsafe { (*parent).transpiler.resolve_entry_point(str, dot_slash) }
-        .map_err(|_| Unresolved::Logged)?;
+    let said_before = {
+        // SAFETY: per fn contract — `parent` is this thread's VM, and only its own
+        // thread mutates its `transpiler` and the log that it writes to. No two
+        // references to the log overlap: this one ends with the block,
+        // `resolve_entry_point` makes its own where it fails, and the one in the
+        // `Err` arm is made when that call has returned.
+        let log = unsafe { &*(*parent).transpiler.log };
+        (log.msgs.len(), log.errors)
+    };
+    // SAFETY: as above.
+    let resolved_entry_point = match unsafe {
+        (*parent).transpiler.resolve_entry_point(str, dot_slash)
+    } {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            // SAFETY: per fn contract; the field is only read.
+            let graph = unsafe { (*parent).standalone_module_graph };
+            let below_root = graph
+                .filter(|_| crate::compiled_program::program_of_executable().is_some())
+                .and_then(|graph| str.strip_prefix(graph.base_public_path_with_default_suffix()));
+            if let Some(below_root) = below_root {
+                // SAFETY: as above.
+                let log = unsafe { &mut *(*parent).transpiler.log };
+                log.msgs.truncate(said_before.0);
+                log.errors = said_before.1;
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "{} resolving \"{}\" (entry point). It isn't in this executable, which only runs code that was compiled into it. If it is a file of your project, pass ./{} to bun compile as another entry point.",
+                        error,
+                        bstr::BStr::new(str),
+                        bstr::BStr::new(below_root),
+                    ),
+                );
+            }
+            return Err(Unresolved::Logged);
+        }
+    };
 
     if let Some(entry) = resolved_entry_point
         .path_const()

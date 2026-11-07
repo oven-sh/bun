@@ -46,7 +46,7 @@ fn load_module<'s, 'r>(context: &CodeLoadContext<'_, 's, 'r>, path: &str) -> Box
     let target = CodeTarget::of_path(path, HostLoader::default());
     let arena = context.session.arena();
     let text = context.host.read_source(path);
-    let parsed = load_code_file(context, arena, target, text, LoadInputs::default());
+    let parsed = load_code_file(context, arena, target, text, &LoadInputs::default());
     context.answer_types_question(arena, target.key, parsed).0
 }
 
@@ -97,11 +97,10 @@ fn order_unseen_files(files: &Files<'_>, seen: &[FileId]) -> Ordered {
 }
 
 fn assert_has_no_files(graph: &CodeGraph<'_>) {
-    let files = graph.viewed();
-    assert!(files.entry_points.is_empty());
-    assert!(files.compiled_files.is_empty());
-    assert!(files.is_compiled.is_empty());
-    assert!(files.host_modules.is_empty());
+    assert!(graph.entry_points.is_empty());
+    assert!(graph.compiled_files.is_empty());
+    assert!(graph.is_compiled.is_empty());
+    assert!(graph.host_modules.is_empty());
     assert!(graph.host_payloads.is_empty());
 }
 

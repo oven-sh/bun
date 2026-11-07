@@ -9,7 +9,7 @@ mod slots;
 use std::rc::Rc;
 
 use bun_sema::check::aot::ClassRef;
-use bun_sema::hir::{ClassId, ExprId, FnId, MemberId, ParamId};
+use bun_sema::hir::{ClassId, ExprId, ExprKind, FnId, MemberId, ParamId};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -22,9 +22,12 @@ pub(in crate::lower) use self::accessors::{AccessorFunction, declare_accessor_fu
 pub(in crate::lower) use self::fields::is_called_by_evaluated_text;
 pub(crate) use self::fields::static_field_position;
 pub(in crate::lower) use self::plan::{
-    assigns_fields_in_constructor, brand_is_of_methods, class_slots, decorators_of, has_decorators,
-    has_instance_brand, has_private_static_storage, is_auto_accessor, is_declaration_only,
-    is_decorated_private_name, is_derived_class, is_evaluated_in_constructor, runtime_members,
+    brand_is_of_methods, class_slots, decorators_of, fields_evaluated_in_constructor,
+    find_fields_under_signed_members, find_keys_that_hold_decorators,
+    find_what_is_printed_for_each_object, has_decorators, has_instance_brand,
+    has_private_static_storage, is_auto_accessor, is_declaration_only, is_decorated_private_name,
+    is_derived_class, is_evaluated_in_constructor, is_printed_as_getter_and_setter,
+    runtime_members,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -32,6 +35,27 @@ pub(in crate::lower) enum ClassTransform {
     None,
     Standard,
     Legacy,
+}
+
+#[derive(Default)]
+pub(in crate::lower) struct PrintedForEachObject {
+    pub(in crate::lower) written_constructor: Option<FnId>,
+    pub(in crate::lower) makes_constructor: bool,
+    pub(in crate::lower) stands_at_statement: bool,
+    pub(in crate::lower) fields_given_a_value: SmallVec<[MemberId; 2]>,
+}
+
+pub(in crate::lower) struct KeyThatHoldsDecorators {
+    pub(in crate::lower) member: Option<MemberId>,
+    pub(in crate::lower) private_members: SmallVec<[MemberId; 2]>,
+    pub(in crate::lower) lists: usize,
+    pub(in crate::lower) stands_behind_text_of_class: bool,
+}
+
+impl KeyThatHoldsDecorators {
+    pub(in crate::lower) fn shows_place_of_class(&self) -> bool {
+        self.lists > 1 || !self.stands_behind_text_of_class
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -81,6 +105,7 @@ pub(in crate::lower) struct ClassPlan {
     pub(in crate::lower) instance_elements: Vec<ClassElement>,
     pub(in crate::lower) injected_elements: Vec<ClassElement>,
     pub(in crate::lower) static_elements: Vec<ClassElement>,
+    pub(in crate::lower) elements_behind_class: Vec<ClassElement>,
     pub(in crate::lower) decorations: Vec<Decoration>,
     pub(in crate::lower) instance_method_initializers: Option<u32>,
     pub(in crate::lower) initializer_list_count: u32,
@@ -95,14 +120,24 @@ pub(in crate::lower) struct ClassEvaluation {
     pub(in crate::lower) class_decorators: Option<ValueId>,
     pub(in crate::lower) member_decorators: SmallVec<[(MemberId, ValueId); 4]>,
     pub(in crate::lower) member_names: SmallVec<[(MemberId, PropertyName); 4]>,
+    pub(in crate::lower) unconverted_keys: SmallVec<[(MemberId, ValueId); 4]>,
 }
 
 #[derive(Default)]
 pub(crate) struct ClassState {
     plans: FxHashMap<ClassId, Rc<ClassPlan>>,
     constant_keys: FxHashMap<MemberId, PropertyKeyId>,
-    /// For a class, where the shape lists each of its members first.
     entries_of_members: FxHashMap<ClassId, FxHashMap<MemberId, u32>>,
+    pub(in crate::lower) fields_under_signed_members: Vec<MemberId>,
+}
+
+impl ClassState {
+    pub(in crate::lower) fn new(fields_under_signed_members: Vec<MemberId>) -> ClassState {
+        ClassState {
+            fields_under_signed_members,
+            ..ClassState::default()
+        }
+    }
 }
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -110,11 +145,24 @@ impl FileLowering<'_, '_, '_, '_> {
         if let Some(plan) = self.classes.plans.get(&class) {
             return Rc::clone(plan);
         }
-        let (settings, transpiled) = (self.compiled.settings, self.transpiled.as_ref());
-        let plan = plan::plan_class(self.hir, self.bound, settings, transpiled, class);
+        let signed = &self.classes.fields_under_signed_members;
+        let plan = plan::plan_class(self.hir, self.bound, self.compiled, signed, class);
         let plan = Rc::new(plan);
         self.classes.plans.insert(class, Rc::clone(&plan));
         plan
+    }
+
+    pub(in crate::lower) fn has_standard_class_decorators(&mut self, class: ClassId) -> bool {
+        has_decorators(self.hir, self.hir[class].modifiers)
+            && self.class_plan(class).transform == ClassTransform::Standard
+    }
+
+    pub(in crate::lower) fn is_class_named_by_its_declaration(&mut self, value: ExprId) -> bool {
+        let hir = self.hir;
+        match hir[self.skip_type_syntax(value)].kind {
+            ExprKind::Class(class) => self.has_standard_class_decorators(class),
+            _ => false,
+        }
     }
 
     pub(in crate::lower) fn own_class(&self, class: ClassId) -> ClassRef {

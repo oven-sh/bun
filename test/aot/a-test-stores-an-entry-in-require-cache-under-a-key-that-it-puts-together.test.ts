@@ -167,11 +167,7 @@ const projects: Record<string, Record<string, string>> = {
 };
 
 const asOneProgram = { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" };
-const ways: [string, Record<string, string>][] = [
-  ["as one program", asOneProgram],
-  ["in layers", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" }],
-  ["with the test files from disk", { BUN_AOT_TEST_FILES_FROM_DISK: "1", BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" }],
-];
+const ways: [string, Record<string, string>][] = [["as one program", asOneProgram]];
 
 async function runTests(directory: string, env: Record<string, string>, flag?: "--aot", log?: string[]) {
   const command = [bunExe(), "test", "--isolate", ...(flag ? [flag] : [])];

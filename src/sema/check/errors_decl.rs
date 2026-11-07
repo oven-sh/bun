@@ -4,6 +4,7 @@
 //! `checkTypeForDuplicateIndexSignatures` and `checkVariableLikeDeclaration` in TypeScript 7.0.2's checker.go, and
 //! `Resolve` in its nameresolver.go.
 
+use super::aot::DiagnosticSubject;
 use super::*;
 use crate::bind::{Decl, PatParent, SymbolId};
 use smallvec::SmallVec;
@@ -174,10 +175,18 @@ impl Checker<'_, '_> {
             }
         }
         if !identical {
+            let files = self.files();
+            let is_alone_but_for_brought =
+                lists.iter().filter(|l| !files.is_brought(l.0)).count() < 2;
+            let subject = match is_alone_but_for_brought {
+                true => DiagnosticSubject::BroughtDeclaration,
+                false => DiagnosticSubject::None,
+            };
             for l in lists.iter().filter(|l| l.0 == file) {
                 match l.2 {
                     Some(name) => {
-                        self.error_at((file, name, 0), 2428, &[Arg::Sym(sym)]);
+                        self.error_at((file, name, 0), 2428, &[Arg::Sym(sym)])
+                            .subject = subject;
                     }
                     // `c.error(nil, ..)`
                     None => {
@@ -266,21 +275,38 @@ impl Checker<'_, '_> {
                     && !self.are_declaration_flags_identical(d, own)
             })
         } else {
-            self.check_type_of_secondary_declaration(symbol, value_declaration, own, at, name);
+            let files = self.files();
+            let first_not_brought = declarations.iter().find(|d| !files.is_brought(d.0));
+            let first_not_brought = first_not_brought.copied().filter(|&d| d != own);
+            let declared = (value_declaration, first_not_brought, own);
+            self.check_type_of_secondary_declaration(symbol, declared, at, name);
             !self.are_declaration_flags_identical(own, value_declaration)
         };
         if differs {
-            self.error_at(at, 2687, &[name]);
+            let differs_from_what_is_not_brought = declarations.iter().any(|&d| {
+                d != own
+                    && !self.files().is_brought(d.0)
+                    && self.is_variable_like(d)
+                    && !self.are_declaration_flags_identical(d, own)
+            });
+            let diagnostic = self.error_at(at, 2687, &[name]);
+            if !differs_from_what_is_not_brought {
+                diagnostic.subject = DiagnosticSubject::BroughtDeclaration;
+            }
         }
     }
 
     /// "Node is a secondary declaration, check that type is identical to primary declaration", with
-    /// `errorNextVariableOrPropertyDeclarationMustHaveSameType`.
+    /// `errorNextVariableOrPropertyDeclarationMustHaveSameType`. Without the declarations that the build has brought,
+    /// `first_not_brought` is the primary declaration, or `node` itself if there is none.
     fn check_type_of_secondary_declaration(
         &mut self,
         symbol: Sym,
-        value_declaration: (FileId, Decl),
-        node: (FileId, Decl),
+        (value_declaration, first_not_brought, node): (
+            (FileId, Decl),
+            Option<(FileId, Decl)>,
+            (FileId, Decl),
+        ),
         at: (FileId, u32, u32),
         name: Arg<'_>,
     ) {
@@ -312,10 +338,21 @@ impl Checker<'_, '_> {
         let related =
             related.map(|(start, end)| self.new_diagnostic((of, start, end), 6203, &[name]));
         let code = if is_property { 2717 } else { 2403 };
+        let is_primary_brought = self.files().is_brought(of);
+        let differs_without_brought = is_primary_brought
+            && first_not_brought.is_some_and(|primary| {
+                let ty = self.get_widened_type_for_variable_like_declaration(primary);
+                !self.is_error_type(ty) && !self.is_identical(ty, declaration_type)
+            });
         let args = [name, Arg::Type(t), Arg::Type(declaration_type)];
-        self.error_at(at, code, &args)
-            .related_information
-            .extend(related);
+        let diagnostic = self.error_at(at, code, &args);
+        diagnostic.related_information.extend(related);
+        if is_primary_brought {
+            diagnostic.subject = match differs_without_brought {
+                true => DiagnosticSubject::None,
+                false => DiagnosticSubject::BroughtDeclaration,
+            };
+        }
     }
 
     /// `convertAutoToAny(getWidenedTypeForVariableLikeDeclaration(declaration, false))`. For `symbol.ValueDeclaration`

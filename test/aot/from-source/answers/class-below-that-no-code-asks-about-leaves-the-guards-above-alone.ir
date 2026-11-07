@@ -1,0 +1,31 @@
+# -- source: main.js
+# function Base(a) { this.a = a; }
+# Base.prototype.first = function () { return this.a; };
+# function Below(a) { Base.call(this, a); }
+# Below.prototype = Object.create(Base.prototype);
+# keep(new Below(1));
+# let answers = "";
+# for (let turn = 0; turn < 8; turn++) {
+#     if (turn === when) change(Base, Below);
+#     const item = new Base(turn);
+#     answers += "," + item.first();
+# }
+# print(answers, kept());
+# report();
+# -- end of source
+# `first` is asked behind the guard of Base. Below is made first, so Base is entered as the class above it before its own guards begin; no compiled code reads a member of a Below.
+# What changes in Below ends nothing in Base. What changes in Base ends the guard of Base, and the walk down finds nobody who listens.
+# RUN(NEVER): run-in-shell --aotCountsPath=/dev/null let held; globalThis.keep = item => { held = item; }; globalThis.kept = () => held.first(); globalThis.when = -1; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsEnded")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
+# NEVER: ,0,1,2,3,4,5,6,7 1
+# NEVER-NEXT: guards ended: 0
+# NEVER-NEXT: exited with 0
+# RUN(BELOW): run-in-shell --aotCountsPath=/dev/null let held; globalThis.keep = item => { held = item; }; globalThis.kept = () => held.first(); globalThis.when = 5; globalThis.change = (Base, Below) => { Below.prototype.first = () => 70; Below.prototype.other = 1; }; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsEnded")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
+# BELOW: ,0,1,2,3,4,5,6,7 70
+# BELOW-NEXT: guards ended: 0
+# BELOW-NEXT: exited with 0
+# RUN(ABOVE): run-in-shell let held; globalThis.keep = item => { held = item; }; globalThis.kept = () => held.first(); globalThis.report = () => { }; globalThis.when = 5; globalThis.change = Base => { Base.prototype.first = () => 90; };
+# ABOVE: ,0,1,2,3,4,90,90,90 90
+# ABOVE-NEXT: exited with 0
+# RUN(FIRST): run-in-shell let held; globalThis.keep = item => { held = item; }; globalThis.kept = () => held.first(); globalThis.report = () => { }; globalThis.when = 0; globalThis.change = Base => { Base.prototype.first = () => 90; };
+# FIRST: ,90,90,90,90,90,90,90,90 90
+# FIRST-NEXT: exited with 0

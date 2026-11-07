@@ -2,7 +2,19 @@ use super::*;
 
 const EXPLAIN_PAGE: &str = include_str!("../../../../docs/compiler/explain.mdx");
 
-type ReasonSentence = fn(u32) -> Option<&'static str>;
+const CAUSES_WITH_OWN_CLASS: [(UnprovenCause, GuardClass); 5] = [
+    (UnprovenCause::Unknown, GuardClass::OtherType),
+    (UnprovenCause::ResultDisabled, GuardClass::ProofWithheld),
+    (UnprovenCause::UnknownCallee, GuardClass::UnknownCallee),
+    (
+        UnprovenCause::ResultOfUnknownCallee,
+        GuardClass::UnknownCallee,
+    ),
+    (
+        UnprovenCause::UnprovenContents,
+        GuardClass::UnprovenContents,
+    ),
+];
 
 fn assert_has_heading(code: &str) {
     let heading = format!("### {code}");
@@ -10,6 +22,12 @@ fn assert_has_heading(code: &str) {
         EXPLAIN_PAGE.lines().any(|line| line == heading),
         "{heading}"
     );
+}
+
+fn assert_all_differ(texts: &[&str]) {
+    for (index, text) in texts.iter().enumerate() {
+        assert!(!texts[..index].contains(text), "{text}");
+    }
 }
 
 fn ill_typed_wordings() -> Vec<IllTypedWording> {
@@ -27,53 +45,6 @@ fn each_ill_typed_cause_but_none_has_wording() {
     }
 }
 
-fn assert_each_reason_has_sentence(
-    member_count: usize,
-    none: Option<u32>,
-    sentence_of: ReasonSentence,
-) {
-    for reason in 0..member_count as u32 {
-        let sentence = sentence_of(reason);
-        assert_eq!(sentence.is_none(), none == Some(reason), "{reason}");
-    }
-    assert_eq!(sentence_of(member_count as u32), None);
-    assert_eq!(sentence_of(u32::MAX), None);
-}
-
-#[test]
-fn each_decline_reason_but_none_has_sentence() {
-    assert_each_reason_has_sentence(
-        TypedResultDeclineReason::COUNT,
-        Some(TypedResultDeclineReason::None.to_wire()),
-        typed_result_decline_sentence,
-    );
-    assert_each_reason_has_sentence(
-        CallDeclineReason::COUNT,
-        Some(CallDeclineReason::None.to_wire()),
-        call_decline_sentence,
-    );
-    assert_each_reason_has_sentence(
-        GeneratorFusionDeclineReason::COUNT,
-        Some(GeneratorFusionDeclineReason::None.to_wire()),
-        generator_fusion_decline_sentence,
-    );
-    assert_each_reason_has_sentence(
-        ArrayChainDeclineReason::COUNT,
-        Some(ArrayChainDeclineReason::None.to_wire()),
-        array_chain_decline_sentence,
-    );
-    assert_each_reason_has_sentence(
-        StringBuilderDeclineReason::COUNT,
-        None,
-        string_builder_decline_sentence,
-    );
-    assert_each_reason_has_sentence(
-        LoopDeclineReason::COUNT,
-        Some(LoopDeclineReason::None.to_wire()),
-        loop_decline_sentence,
-    );
-}
-
 #[test]
 fn each_heap_cause_but_none_has_sentence() {
     for cause in AllocationHeapCause::ALL {
@@ -87,15 +58,6 @@ fn each_heap_cause_but_none_has_sentence() {
 }
 
 #[test]
-fn each_interpreted_cause_but_none_has_sentence() {
-    assert_each_reason_has_sentence(
-        InterpretedCause::COUNT,
-        Some(InterpretedCause::None.to_wire()),
-        interpreted_cause_sentence,
-    );
-}
-
-#[test]
 fn escape_reasons_cover_every_bit_in_order() {
     let mut covered = AllocationEscapeReason::default();
     for (bit, (reason, sentence)) in ESCAPE_REASONS.into_iter().enumerate() {
@@ -103,6 +65,54 @@ fn escape_reasons_cover_every_bit_in_order() {
         covered |= reason;
     }
     assert_eq!(covered, AllocationEscapeReason::ALL);
+}
+
+#[test]
+fn guard_classes_are_listed_in_numeric_order() {
+    for (number, class) in GuardClass::ALL.into_iter().enumerate() {
+        assert_eq!(class as usize, number, "{class:?}");
+    }
+}
+
+#[test]
+fn each_guard_class_has_its_own_code_and_wording() {
+    assert_all_differ(&GuardClass::ALL.map(guard_cause_code));
+    assert_all_differ(&GuardClass::ALL.map(|class| guard_wording(class).counted_as));
+    assert_all_differ(&GuardClass::ALL.map(|class| guard_wording(class).headline));
+}
+
+#[test]
+fn each_cause_has_its_guard_class() {
+    for cause in UnprovenCause::ALL {
+        let mut rows = CAUSES_WITH_OWN_CLASS.into_iter();
+        let own = rows.find(|&(listed, _)| listed == cause);
+        let expected = own.map_or(GuardClass::UnknownObject, |(_, class)| class);
+        assert_eq!(guard_class(cause), expected, "{cause:?}");
+    }
+}
+
+#[test]
+fn cause_and_guard_class_with_one_code_belong_together() {
+    for cause in UnprovenCause::ALL {
+        for class in GuardClass::ALL {
+            if cause_code(cause) == guard_cause_code(class) {
+                assert_eq!(guard_class(cause), class, "{cause:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn codes_of_one_table_differ() {
+    assert_all_differ(&UnprovenCause::ALL.map(cause_code));
+    let ill_typed_codes: Vec<&str> = ill_typed_wordings()
+        .into_iter()
+        .map(|wording| wording.code)
+        .collect();
+    assert_all_differ(&ill_typed_codes);
+    assert_all_differ(&TypeTestFailure::ALL.map(failure_code));
+    assert_all_differ(&TypeTestFailure::ALL.map(failure_sentence));
+    assert_all_differ(&CodeForm::ALL.map(form_label));
 }
 
 #[test]

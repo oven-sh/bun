@@ -1,5 +1,5 @@
 // What a program pays that never asks for the compiler. Most of Bun's users run `bun file.ts`, and the code they run is shared with
-// --aot: JavaScriptCore's run time, collector, B3 and Air, Yarr, the allocator, the transpiler, the modules in src/js. Each row here
+// --aot: JavaScriptCore's run time, collector, Yarr, the allocator, the transpiler, the modules in src/js. Each row here
 // is a small program of fixed work, run by this Bun without --aot, and what it costs is compared with ./plain-bun-costs.linux-x64.json.
 //
 //   start         hello, a TypeScript file, the node: modules most programs load, a server's first answer
@@ -42,7 +42,6 @@ import {
 import { bunExe, isASAN, isCI, isDebug, isGlibc, makeTreeSync, runCommandMaxRSS } from "harness";
 import { tmpdir } from "os";
 import { basename, dirname, join } from "path";
-import { measureUntilWithinBounds } from "../harness/measure-again";
 import { withoutInstallingPackages } from "../harness/without-installing-packages";
 import { measureStart, startEnvironment, steppedStart, type Until } from "./start/measure-start";
 
@@ -155,6 +154,19 @@ function folderWithTheFewestEntriesAbove() {
 const failures: string[] = [];
 const table: string[] = [];
 let countersWork = true;
+
+// Other work on the machine only adds to a count or a peak, and code that costs more does so every time. Nothing is measured again once the file has run for 200 seconds.
+async function measureUntilWithinBounds<T>(
+  name: string,
+  measure: () => Promise<T>,
+  isWithinBounds: (measured: T) => boolean,
+): Promise<T> {
+  for (let attemptsLeft = 3; ; attemptsLeft--) {
+    const measured = await measure();
+    if (attemptsLeft === 0 || isWithinBounds(measured) || performance.now() > 200_000) return measured;
+    console.error(`ASKED AGAIN: ${name}`);
+  }
+}
 
 async function row(name: string, command: string[], until: Until) {
   if (!countersWork) return;

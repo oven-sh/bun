@@ -578,7 +578,12 @@ impl<'a> Lexer<'a> {
                     pos = next;
                     continue;
                 }
-                First::LineFeed => return self.scan_after_line_feed(next),
+                // How far a line is indented is hard to predict, so the indentation isn't skipped byte by byte.
+                First::LineFeed => {
+                    self.newline_before = true;
+                    pos = self.stops.after_blanks.next(next);
+                    continue;
+                }
                 First::CarriageReturn => {
                     self.newline_before = true;
                     pos = next;
@@ -713,23 +718,6 @@ impl<'a> Lexer<'a> {
                 }
             }
             return;
-        }
-    }
-
-    /// Scans the token after the line feed that precedes `pos`, skipping indentation and empty lines. How far a line is
-    /// indented is hard to predict, so the indentation isn't skipped byte by byte.
-    #[inline(never)]
-    fn scan_after_line_feed(&mut self, mut pos: usize) {
-        self.newline_before = true;
-        loop {
-            pos = self.stops.after_blanks.next(pos);
-            match FIRST[usize::from(self.at(pos))] {
-                // Most lines start with one of these.
-                First::Name => return self.name(pos),
-                First::CloseBrace => return self.set(T::CloseBrace, pos, pos + 1),
-                First::LineFeed | First::CarriageReturn | First::Blank => pos += 1,
-                _ => return self.scan_after_comments(pos),
-            }
         }
     }
 
@@ -958,8 +946,8 @@ impl<'a> Lexer<'a> {
 
     // ───────────────────────────── names ─────────────────────────────
 
-    /// Scans a name or keyword that starts at `start` with an ASCII letter, `_` or `$`. It's inlined into `scan` and
-    /// `scan_after_line_feed`, and like them doesn't save any registers.
+    /// Scans a name or keyword that starts at `start` with an ASCII letter, `_` or `$`. It's inlined into `scan`, and
+    /// like it doesn't save any registers.
     #[inline(always)]
     fn name(&mut self, start: usize) {
         self.has_escape = false;
@@ -972,7 +960,7 @@ impl<'a> Lexer<'a> {
         };
         let len = self.stops.after_name.run(start);
         if len >= 16 {
-            return self.long_name(start);
+            return self.long_name(start, len as usize);
         }
         let after = chunk[(len & 15) as usize];
         if after >= 0x80 || after == b'\\' {
@@ -984,19 +972,15 @@ impl<'a> Lexer<'a> {
                 self.atom = atom;
                 self.set(kind, start, start + len as usize);
             }
-            None => self.new_short_name(start, len),
+            None => self.new_short_name(start, len, words),
         }
     }
 
     /// The slow path of `name`, for a name of `len` bytes that isn't in its first slot of the table.
     #[cold]
     #[inline(never)]
-    fn new_short_name(&mut self, start: usize, len: u32) {
+    fn new_short_name(&mut self, start: usize, len: u32, words: [u64; 2]) {
         let src = self.src;
-        let Some(chunk) = src.get(start..).and_then(|rest| rest.first_chunk::<16>()) else {
-            return self.name_of_any_length(start);
-        };
-        let words = crate::names::short_words(chunk, len);
         let (atom, kind) = (self.names).short_name_slow(words, src, (start, len), self.atoms);
         self.atom = atom;
         self.set(kind, start, start + len as usize);
@@ -1004,12 +988,12 @@ impl<'a> Lexer<'a> {
 
     /// `name` for a name of 16 bytes or more.
     #[inline(never)]
-    fn long_name(&mut self, start: usize) {
+    fn long_name(&mut self, start: usize, len: usize) {
         let src = self.src;
         let Some(chunk) = (src.get(start + 16..)).and_then(|rest| rest.first_chunk::<16>()) else {
             return self.name_of_any_length(start);
         };
-        let len = self.stops.after_name.run(start) as usize;
+
         if len >= 32 {
             return self.name_of_any_length(start);
         }
@@ -1949,7 +1933,11 @@ impl<'a> Lexer<'a> {
         let is_bigint = is_integer && src.get(end) == Some(&b'n');
         let mut text = std::mem::take(&mut self.buffer);
         text.clear();
-        text.extend(src[start..end].iter().filter(|&&c| c != b'_'));
+        for &c in &src[start..end] {
+            if c != b'_' {
+                text.push(c);
+            }
+        }
         let token = if is_bigint {
             end += 1;
             let decimal = match radix {

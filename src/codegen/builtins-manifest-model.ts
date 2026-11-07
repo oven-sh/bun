@@ -53,6 +53,16 @@ export function locate(file: string): string {
   return fs.existsSync(forCompiler) ? forCompiler : path.join(BASE, file);
 }
 
+/** Where the text that `bun run` evaluates under the name `file` is, if the compiler reads another. */
+export function locateFirstText(file: string): string | undefined {
+  return fs.existsSync(path.join(BASE, "ahead-of-time", file)) ? path.join(BASE, file) : undefined;
+}
+
+/** The module that `text` holds a part of, if `text` has a line that says so. */
+export function findModuleHeldInPart(text: string): string | undefined {
+  return /^\/\* part of: (\S+) \*\/$/m.exec(text)?.[1];
+}
+
 /** `aot_engine_functions.json`, which src/codegen/builtins/index.ts writes: JavaScriptCore's own functions, as the compiler reads them. */
 export interface EngineFunctions {
   files: { name: string; text: string }[];
@@ -98,6 +108,11 @@ export function nativeCalls(typesOnly: ReadonlySet<string>): NativeCall[] {
   // The bundler of the modules numbers what the first texts call before it comes here: what only a second text calls is numbered behind all of that.
   // Such a function does what code of the first text does, and no stack trace lists it.
   const secondTexts = files.map(file => path.join(BASE, "ahead-of-time", file)).filter(file => fs.existsSync(file));
+  // So is what only a helper of the compiler calls.
+  const prelude = path.join(BASE, "../aot/prelude");
+  const isText = (file: string) => file.endsWith(".ts") && !file.endsWith(".d.ts");
+  const helpers = fs.readdirSync(prelude).filter(isText).sort();
+  secondTexts.push(...helpers.map(file => path.join(prelude, file)));
   for (const file of [...files.map(file => path.join(BASE, file)), ...secondTexts]) {
     const source = fs.readFileSync(file, "utf8");
     const namer = path

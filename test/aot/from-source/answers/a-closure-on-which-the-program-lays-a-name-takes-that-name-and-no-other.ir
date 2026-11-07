@@ -1,0 +1,36 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function poke(...values: unknown[]): void;
+# class Keeper {
+#     run: (first: number) => string;
+#     constructor(run: (first: number) => string) { this.run = run; }
+# }
+# function make() { return function target(first: number) { return "base " + first; }; }
+# const kept = new Keeper(make());
+# (kept.run as any).mark = "laid";
+# const tell = () => kept.run(1) + " " + kept.run.call(null, 2) + " " + (kept.run as any).mark;
+# print(tell());
+# poke();
+# print(tell());
+# -- end of source
+# The closure stays with compiled code, and the program lays `mark` on it in sight: Link lists that name, and compiled code still takes `call` off Function.prototype without a look.
+# The image lists the name beside the function, so the program's own store goes through, and so does another store under the same name. Any other name, and another prototype, end the process.
+# `poke` is a free name that each run defines, and it is handed nothing: it takes the keeper out of the heap and reads the closure off it.
+# OPTIONS: mechanisms=all
+# RUN: run-in-shell globalThis.poke = () => { const run = aotFindObjectOfLayout(0).run; run.mark = "again"; print(run.mark); };
+# CHECK: base 1 base 2 laid
+# CHECK-NEXT: again
+# CHECK-NEXT: base 1 base 2 {{*}}
+# CHECK-NEXT: exited with 0
+# RUN(STORES): run-in-shell globalThis.poke = () => { aotFindObjectOfLayout(0).run.call = function () { return "own call"; }; print("went on"); };
+# STORES: AOT: AddName of a closure of the function f{{*}} (target)
+# STORES-NOT: went on
+# STORES: crashed with
+# RUN(OTHER): run-in-shell globalThis.poke = () => { aotFindObjectOfLayout(0).run.other = 1; print("went on"); };
+# OTHER: AOT: AddName of a closure of the function f{{*}} (target)
+# OTHER-NOT: went on
+# OTHER: crashed with
+# RUN(RELINKS): run-in-shell globalThis.poke = () => { Object.setPrototypeOf(aotFindObjectOfLayout(0).run, { call() { return "other call"; } }); print("went on"); };
+# RELINKS: AOT: ChangePrototype of a closure of the function f{{*}} (target)
+# RELINKS-NOT: went on
+# RELINKS: crashed with

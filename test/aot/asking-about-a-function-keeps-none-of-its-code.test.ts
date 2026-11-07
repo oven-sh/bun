@@ -1,6 +1,6 @@
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { guardFeatureOf } from "../../scripts/build/trim/builtin-uses";
 import { builtinEntries } from "../bundler/compile-trim-features";
 import { test } from "./supported";
@@ -23,10 +23,29 @@ const listsAllMembers = ({ flags }: (typeof functions)[number]) => flags.include
 const namedIsUsedToday = [
   /^Buffer\./,
   /^Bun\.build$/,
-  /^Bun\.inspect\./,
   /^Bun\.plugin(\.|$)/,
   /^WebAssembly\.(compile|instantiate)Streaming$/,
-  /^process\.(binding|openStdin)$/,
+  // The object that holds them counts as used once it is read.
+  /^Bun\.CSRF\./,
+  /^Bun\.FFI\./,
+  /^Bun\.JSON5\./,
+  /^Bun\.JSONC\./,
+  /^Bun\.JSONL\./,
+  /^Bun\.TOML\./,
+  /^Bun\.XML\./,
+  /^Bun\.YAML\./,
+  /^Bun\.dns\./,
+  /^Bun\.markdown\./,
+  /^Bun\.password\./,
+  /^Bun\.secrets\./,
+  /^Bun\.semver\./,
+  /^Bun\.unsafe\./,
+  /^Temporal\.Now\./,
+  /^WebAssembly\.(Module\.|compile$|instantiate$|promising$|validate$)/,
+  /^process\.report\./,
+  // Each keeps nearly everything that --trim can remove.
+  /^process\._rawDebug$/,
+  /^process\.loadEnvFile$/,
 ];
 
 async function usersIn(text: string) {
@@ -60,7 +79,7 @@ test("few functions that --trim can remove have members that the table does not 
       .filter(each => !listsAllMembers(each))
       .map(({ path }) => path)
       .sort(),
-  ).toEqual(["Bun.cron", "Bun.inspect", "Bun.peek", "Bun.sql", "process.memoryUsage"]);
+  ).toEqual(["Bun.cron", "Bun.peek", "Bun.sql", "process.memoryUsage"]);
 });
 
 // The table takes what it knows only as a property for something that a read may create, so `typeof URL.createObjectURL` would keep URL.
@@ -78,8 +97,6 @@ test("a function that --trim can remove is a property in the table only where a 
       .map(({ path }) => path)
       .sort(),
   ).toEqual([
-    // It is made with Bun.FFI, which the first read of Bun.FFI makes.
-    "Bun.FFI.CString",
     // The first read makes them.
     "Bun.ModuleGraph",
     "Bun.SQL",
@@ -99,6 +116,26 @@ test("what a program asks about a function without calling it is no use of anyth
   expect(asked).toEqual(expect.arrayContaining(["Bun.Cookie.parse", "Bun.WebView.closeAll", "URL.createObjectURL"]));
   expect((await usersIn(questionsAbout(asked))).map(({ line }) => line)).toEqual([]);
 }, 600_000);
+
+// A goal that is not met yet. Once it is, this test fails: change `test.failing` to `test` and empty the list of what is used once it is named.
+// A mark does not see a number grow worse: the case behind it holds the report to the number of today.
+let usersOfAll: ReturnType<typeof usersIn> | undefined;
+const usersWhereAllAreAsked = () =>
+  (usersOfAll ??= usersIn(questionsAbout(functions.filter(listsAllMembers).map(({ path }) => path))));
+test.failing(
+  "what a program asks about any function that --trim can remove is no use of anything: 158 lines of the report on Linux, the goal is none",
+  async () => {
+    expect((await usersWhereAllAreAsked()).map(({ line }) => line)).toEqual([]);
+  },
+  600_000,
+);
+test.skipIf(!isLinux)(
+  "what a program asks about any function that --trim can remove is no use of anything: no more than 158 lines of the report",
+  async () => {
+    expect((await usersWhereAllAreAsked()).length).toBeLessThanOrEqual(158);
+  },
+  600_000,
+);
 
 test.concurrent.each(namedIsUsedToday.map(pattern => [String(pattern), pattern] as const))(
   "the list of what is used once it is named holds nothing that is not: %s",

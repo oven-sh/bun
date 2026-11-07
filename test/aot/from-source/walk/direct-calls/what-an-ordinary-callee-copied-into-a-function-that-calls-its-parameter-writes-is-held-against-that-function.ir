@@ -1,0 +1,13 @@
+# -- source: what-an-ordinary-callee-copied-into-a-function-that-calls-its-parameter-writes-is-held-against-that-function.js
+# class Counter { constructor() { this.n = 0; } bump(k) { this.n = this.n + k; return this.n; } }
+# function turns(step, c) { let sum = 0; for (let i = 0; i < 3; i++) { sum += c.bump(i); sum += step(i); } return sum; }
+# function outer() { const c = new Counter(); return turns((i) => i * 2, c) * 10 + c.n; }
+# print(outer(), outer());
+# -- end of source
+# turns() calls its parameter, and c.bump(), which the walk copies in and which stores into a field of c. That store is of an ordinary callee: the effects of turns() given its arguments must name it.
+# They are taken to name no write of ObjectFields: the verifier of the unit stops on the copied store. Only the text of the closure that the parameter holds is left to the caller.
+# f1 = turns
+# OPTIONS: check=Validate testing=RowSaysLess:Summary/f1/ObjectFields
+# DIAGNOSTIC: EffectsNotCounted
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: code f1:Body

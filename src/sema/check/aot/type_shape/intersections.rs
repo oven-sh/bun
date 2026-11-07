@@ -29,7 +29,6 @@ impl<'c> IntersectionSummary<'c> {
         match shape.kind {
             ShapeKind::Anything(reason) => match reason {
                 AnythingReason::Any => self.has_any_part = true,
-                // A brand is a phantom: no value has it when the program runs. `void & { brand }` holds `undefined`.
                 AnythingReason::Void => {
                     let undefined = TypeShape::undeclared(ShapeKind::Undefined);
                     self.wide_primitive.get_or_insert(undefined);
@@ -126,7 +125,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             };
             return Ok(TypeShape::undeclared(ShapeKind::TypeVariable {
                 constraint,
-                parameter: None,
             }));
         }
         if summary.has_any_part {
@@ -154,7 +152,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if summary.has_composite_part {
             return Ok(TypeShape::undeclared(ShapeKind::TypeVariable {
                 constraint: None,
-                parameter: None,
             }));
         }
         Ok(self.shape_of_object_type(ty))

@@ -176,7 +176,6 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             return false;
 #if ENABLE(AOT)
         if (frame.isCompiledFrame()) {
-            JSC::AOT::ImageOfTraceFrameScope imageOfFrame(frame.compiledFrame());
             if (JSC::AOT::isClosureOf(callerObject, frame.compiledFrame().function))
                 return true;
         }
@@ -517,7 +516,6 @@ String sourceURL(const JSC::AOT::SourcePosition& position)
 
 String sourceURL(const JSC::AOT::TraceFrame& frame, const JSC::AOT::SourcePosition& position)
 {
-    JSC::AOT::ImageOfTraceFrameScope imageOfFrame(frame);
     if (JSC::AOT::FunctionDescription(frame.function).isHelperOfCompiler()) [[unlikely]]
         return JSC::AOT::moduleOfCompilerHelpers;
     return sourceURL(position);
@@ -651,7 +649,6 @@ static String compiledFunctionName(JSC::VM& vm, const JSC::StackFrame& frame)
 
 static String functionNameOfCompiledFrame(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)
 {
-    JSC::AOT::ImageOfTraceFrameScope imageOfFrame(frame.compiledFrame());
     if (!frame.hasLineAndColumnInfo())
         return compiledFunctionName(vm, frame);
 

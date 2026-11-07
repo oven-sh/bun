@@ -1,0 +1,27 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# function Base(this: any) { this.n = 1; }
+# Base.prototype.base = function () { return 5; };
+# const Parent: any = Base;
+# class Side extends Parent {
+#   level: number;
+#   constructor() { super(); this.level = 1; }
+#   rise(): number { return ++this.level; }
+#   twice(): number { return this.level * 2; }
+# }
+# function use(side: any): number { return side.rise() + side.twice() + side.base(); }
+# (globalThis as any).kept = [Base, Side];
+# const side = new Side();
+# print(use(side) + use(side));
+# print("went on");
+# -- end of source
+# testing=CheckEffectsAtRunTime: where the guards of a class begin, the counts of guards that do not hold are raised for the names whose bits do not say "holds": a test of such a count that passed fails now.
+# ClassTable::beginGuardsSlowCase() raises them past storeBitOfClassGuard(): the count for the net stands in countChangeOfClassGuard() itself.
+# RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# NET: 25
+# NET-NEXT: went on
+# RUN(LIE): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:RuntimeOperation/NewClass/MemberGuards mechanisms=all
+# LIE: AOT: f{{*}} at {{*}}: the rows of effects of operation:NewClass and of runtime:operationAOTNewClass say that the call will not write MemberGuards, and under it guards that held have ended, guards were armed or have begun. This is a bug in Bun.
+# LIE-NOT: went on
+# LIE: crashed
+# LIE: with

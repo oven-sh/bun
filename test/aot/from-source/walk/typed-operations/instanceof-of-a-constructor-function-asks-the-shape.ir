@@ -1,0 +1,38 @@
+# -- source: instanceof-of-a-constructor-function-asks-the-shape.js
+# function Ok(v) { this.v = v; }
+# function Err(e) { this.e = e; }
+# function Base(a) { this.a = a; }
+# function Below(a) { Base.call(this, a); }
+# Below.prototype = Object.create(Base.prototype);
+# function Tagged(t) { this.t = t; }
+# Object.defineProperty(Tagged, Symbol.hasInstance, { value: function () { return true; } });
+# function unwrap(r) { if (r instanceof Ok) return r.v; if (r instanceof Err) return -r.e; return 0; }
+# function isBase(r) { return r instanceof Base; }
+# function isTagged(r) { return r instanceof Tagged; }
+# sink(unwrap(new Ok(1)) + unwrap(new Err(2)) + unwrap(sink()), isBase(new Below(1)), isBase(new Base(1)), isBase(new Ok(1)), isTagged(new Tagged(1)));
+# -- end of source
+# `r instanceof Ok`: Ok gets no name of its own but `prototype`, so the lookup of Symbol.hasInstance comes to Function.prototype's, and its prototype object is settled ahead of every object: an object of its shape is an instance, with no guard.
+# What else may arrive here nobody knows (unseen code hands something over too; Ok and Err alone would be a set, and the shape would decide), so the other arm has the operation as written.
+# f6 = unwrap, f7 = isBase, f8 = isTagged
+# RUN: walk f6 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# The function is read where the operation as written takes it: the way of the shape test reads nothing.
+# CHECK: frequency=Rare
+# CHECK-NEXT: = GetModuleVariable
+# CHECK-NEXT: = InstanceOf
+# CHECK: = ShapeTest {{*}}layouts=[L1]
+# RUN(GUARD): walk f6 f7 mechanisms=all
+# REQUIRES(GUARD): entries-of-bun
+# GUARD-NOT: AreMembersUnchanged
+# A row of functions: which objects are made in front of the store and the link of `Below.prototype` nobody can tell: the operation as written answers.
+# RUN(ROW): walk f7 mechanisms=all
+# REQUIRES(ROW): entries-of-bun
+# ROW: = InstanceOf
+# Tagged has a Symbol.hasInstance of its own: the shape is asked only behind the guard of that name, which the program's own deed ends.
+# RUN(OWN): walk f8 mechanisms=all
+# REQUIRES(OWN): entries-of-bun
+# OWN-NOT: ShapeTest
+# OWN: = AreMembersUnchanged {{*}}key=@@hasInstance
+# OWN: = ShapeTest
+# OWN: = InstanceOf

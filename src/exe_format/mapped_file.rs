@@ -223,6 +223,9 @@ impl MappedFile {
             moved != libc::MAP_FAILED,
             "no memory for the pages of an executable"
         );
+        // qemu's emulation of system calls doesn't know MREMAP_DONTUNMAP and takes the pages that were left behind for unmapped: `pwrite` out of them fails with EFAULT.
+        // Mapped anew, they hold zeros, as they do where pages are copied.
+        self.map_zero_pages(source.max(target + size), source + size);
         true
     }
 }
@@ -743,6 +746,23 @@ pub(crate) mod tests {
         fn pages_that_cannot_be_remapped_are_copied() {
             let page = MappedFile::page_size();
             check_edit("copied-pages", move_whole_pages, Some(page * 7));
+        }
+
+        #[test]
+        #[cfg(target_os = "linux")]
+        fn pages_that_a_move_leaves_behind_are_mapped_anew() {
+            let page = MappedFile::page_size();
+            let original = vec![7u8; page * 8];
+            for (name, source, target) in [("apart", 5, 1), ("overlapping", 3, 2)] {
+                let file = TemporaryFile::create(name, &original);
+                let mut mapped = MappedFile::open(&file.0).unwrap();
+                mapped.move_down(page * source..page * (source + 2), page * target);
+                let left_behind = page * source.max(target + 2)..page * (source + 2);
+                assert!(mapped[left_behind.clone()].iter().all(|&byte| byte == 0));
+                assert!(mapped[..left_behind.start].iter().all(|&byte| byte == 7));
+                assert!(mapped[left_behind.end..].iter().all(|&byte| byte == 7));
+                assert!(!has_unmapped_page(&mapped));
+            }
         }
     }
 }

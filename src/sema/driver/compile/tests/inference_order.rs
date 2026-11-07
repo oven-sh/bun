@@ -1,8 +1,8 @@
-use super::support::{check, with_program};
+use super::support::{check, check_only, with_program};
 use bun_sema::check::aot::{
     BuiltinTypeSymbols, NamedValue, NamedValues, QueryInputs, QueryStatistics,
 };
-use bun_sema::hir::ExprId;
+use bun_sema::hir::{ExprId, FnId};
 use bun_sema::program::{FileId, FileRole};
 use std::fmt::Write;
 use std::sync::Mutex;
@@ -15,8 +15,6 @@ impl NamedValues for NoNamedValues {
     }
 }
 
-/// As a library that compares two schemas does: `visit` hands both to one function a kind, and each of those goes on
-/// to its neighbors and, with the parts of both, back to `visit`. All are exported, so only the uses say what they take.
 fn write_visitors(kinds: usize) -> String {
     let mut text = String::from("export function visit(left, right) {\n");
     for kind in 0..kinds {
@@ -43,7 +41,6 @@ fn write_visitors(kinds: usize) -> String {
     text
 }
 
-/// Each hands what it gets on to the next, and the last reads a member of it.
 fn write_chain(length: usize) -> String {
     let mut text = String::new();
     for index in 0..length {
@@ -62,7 +59,6 @@ fn write_chain(length: usize) -> String {
     text
 }
 
-/// Each reads a member of what it gets and hands `handed_on` to the next, and the last to the first.
 fn write_ring(length: usize, handed_on: &str) -> String {
     let mut text = String::new();
     for index in 0..length {
@@ -76,7 +72,6 @@ fn write_ring(length: usize, handed_on: &str) -> String {
     text
 }
 
-/// None is exported, so what the callers pass says what each takes, and nearly all of them call one another in one cycle.
 fn write_functions_that_call_one_another_at_random(count: usize) -> String {
     let mut seed = 7;
     let mut next = || {
@@ -100,8 +95,6 @@ fn write_functions_that_call_one_another_at_random(count: usize) -> String {
     text
 }
 
-/// `first` and `second` hand what they get to each other, and each reads members of it. Behind that `first` hands it to
-/// `run`, which calls it.
 fn write_two_that_read_many_members_and_one_that_calls(reads: usize) -> String {
     let mut text = String::from("export function first(value) {\n");
     for index in 0..reads {
@@ -116,8 +109,6 @@ fn write_two_that_read_many_members_and_one_that_calls(reads: usize) -> String {
     text
 }
 
-/// As above, in a few lines: each level hands four parts of what it gets to the next, so the first of five reads more
-/// than two thousand members.
 fn write_two_that_read_a_wide_tree_and_one_that_calls() -> String {
     let mut text = String::from(
         "export function first(value) {
@@ -151,11 +142,10 @@ export function run(value) {
     text
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum Order {
     AsWritten,
     LastFirst,
-    /// Every third, then the rest.
     Scattered,
 }
 
@@ -168,8 +158,36 @@ fn ask_for_parameters_and_count(
     order: Order,
     max_inference_nodes: u64,
 ) -> (Vec<String>, QueryStatistics) {
-    let files = [("main.ts", text)];
-    with_program(&files, &["./main.ts"], 1, |program| {
+    ask_for_parameters_of("main.ts", text, order, max_inference_nodes)
+}
+
+fn ask_for_parameters_of(
+    name: &str,
+    text: &str,
+    order: Order,
+    max_inference_nodes: u64,
+) -> (Vec<String>, QueryStatistics) {
+    ask_for_parameters_from_height(name, text, order, max_inference_nodes, 0)
+}
+
+fn call_higher_up(kilobytes: usize, then: &mut dyn FnMut()) {
+    let in_use = std::hint::black_box([0u8; 1024]);
+    match kilobytes {
+        0 => then(),
+        _ => call_higher_up(kilobytes - 1, then),
+    }
+    std::hint::black_box(in_use);
+}
+
+fn ask_for_parameters_from_height(
+    name: &str,
+    text: &str,
+    order: Order,
+    max_inference_nodes: u64,
+    kilobytes_in_use: usize,
+) -> (Vec<String>, QueryStatistics) {
+    let files = [(name, text)];
+    with_program(&files, &[&format!("./{name}")], 1, |program| {
         let all = program.files();
         let roles = vec![FileRole::Inferred; all.modules.len()];
         let inputs = QueryInputs {
@@ -178,14 +196,16 @@ fn ask_for_parameters_and_count(
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
             max_inference_nodes,
+            limits: Default::default(),
         };
-        let main = program.file("main.ts");
+        let main = program.file(name);
         let answers = Mutex::new((Vec::new(), QueryStatistics::default()));
         check(program, &|checker, file| {
             if file != main {
                 return;
             }
-            checker.with_queries(file, inputs, |queries| {
+            checker.set_has_stack_for_questions();
+            checker.with_queries(file, &inputs, |queries| {
                 let count = queries.hir().params.len();
                 let mut asked: Vec<usize> = (0..count).collect();
                 match order {
@@ -194,9 +214,17 @@ fn ask_for_parameters_and_count(
                     Order::Scattered => asked.sort_by_key(|&index| (index % 3, index)),
                 }
                 let mut texts = vec![String::new(); count];
-                for index in asked {
-                    let pattern = queries.hir().params[index].pat;
-                    let ty = queries.binding_type(pattern).unwrap();
+                let mut types = Vec::with_capacity(count);
+                call_higher_up(kilobytes_in_use, &mut || {
+                    for &index in &asked {
+                        let pattern = queries.hir().params[index].pat;
+                        let ty = (queries.binding_type(pattern)).unwrap_or_else(|refusal| {
+                            panic!("parameter {index}, {order:?}: {refusal:?}")
+                        });
+                        types.push((index, ty));
+                    }
+                });
+                for (index, ty) in types {
                     texts[index] = String::from_utf8(queries.type_text(ty)).unwrap();
                 }
                 *answers.lock().unwrap() = (texts, queries.statistics());
@@ -204,6 +232,25 @@ fn ask_for_parameters_and_count(
         });
         answers.into_inner().unwrap()
     })
+}
+
+#[test]
+fn an_inherited_index_signature_does_not_depend_on_which_class_is_asked_for_first() {
+    let text = "/** @type {symbol} */
+let name;
+class Top { [name]() { return 1; } }
+class Middle extends Top { middle = 1; }
+class Bottom extends Middle { bottom = 2; }
+/** @param {Middle} it */
+export function ofMiddle(it, found = it[name]) {}
+/** @param {Bottom} it */
+export function ofBottom(it, found = it[name]) {}
+";
+    for order in [Order::LastFirst, Order::AsWritten] {
+        let answers = ask_for_parameters_of("main.js", text, order, 4096).0;
+        let expected = ["Middle", "() => number", "Bottom", "() => number"];
+        assert_eq!(answers, expected, "{order:?}");
+    }
 }
 
 #[test]
@@ -218,7 +265,6 @@ fn types_in_a_cycle_do_not_depend_on_which_is_asked_for_first() {
     }
 }
 
-/// None is exported, so what the callers pass counts as well, and what they pass is what they were passed.
 #[test]
 fn types_in_a_cycle_of_private_functions_do_not_depend_on_which_is_asked_for_first() {
     let mut programs = Vec::new();
@@ -234,7 +280,6 @@ fn types_in_a_cycle_of_private_functions_do_not_depend_on_which_is_asked_for_fir
     programs.push(write_functions_that_call_one_another_at_random(300));
     for text in programs {
         let text = text.replace("export function", "function");
-        // One walk reaches all of a cycle, or a part of it.
         for max_inference_nodes in [4096, 100] {
             let ask = |order| ask_for_parameters_and_count(&text, order, max_inference_nodes).0;
             let as_written = ask(Order::AsWritten);
@@ -277,7 +322,6 @@ fn every_function_of_a_cycle_knows_what_the_others_read() {
     let (left, right) = (&answers[0], &answers[1]);
     assert!(left.contains("own0") && left.contains("own19"), "{left}");
     assert!(right.contains("any0") && right.contains("any19"), "{right}");
-    // `part` is handed on as `right` is.
     let count = |text: &String| answers.iter().filter(|&answer| answer == text).count();
     assert_eq!((count(left), count(right)), (49, 49 + 48));
 }
@@ -298,7 +342,6 @@ fn the_first_of_a_long_chain_of_calls_knows_what_the_last_reads() {
 fn a_cycle_of_functions_is_not_inferred_once_for_each_of_them() {
     for count in [300, 600] {
         let text = write_functions_that_call_one_another_at_random(count);
-        // One walk reaches all of the cycle, or a small part of it.
         for max_inference_nodes in [4096, 100] {
             for order in [Order::AsWritten, Order::LastFirst, Order::Scattered] {
                 let (answers, statistics) =
@@ -368,12 +411,126 @@ fn a_cycle_of_functions_that_is_deeper_than_the_stack_is_walked_once() {
 }
 
 #[test]
+fn an_answer_does_not_depend_on_how_much_stack_the_asker_has_in_use() {
+    let text = write_functions_that_call_one_another_at_random(6_000);
+    let ask = |kilobytes| {
+        ask_for_parameters_from_height("main.ts", &text, Order::AsWritten, 4096, kilobytes).0
+    };
+    let from_the_bottom = ask(0);
+    for kilobytes in [500, 1_000, 2_000] {
+        assert!(from_the_bottom == ask(kilobytes), "{kilobytes} KB in use");
+    }
+}
+
+fn ask_for_results_of_a_circle_across_files(threads: usize) -> Vec<String> {
+    let files = [
+        ("main.ts", "import \"./a\";\nimport \"./b\";\n"),
+        (
+            "a.ts",
+            "import { g } from \"./b\";\nexport function f() { return [g()]; }\n",
+        ),
+        (
+            "b.ts",
+            "import { f } from \"./a\";\nexport function g() { return { v: f() }; }\n",
+        ),
+    ];
+    with_program(&files, &["./main.ts"], threads, |program| {
+        let all = program.files();
+        let roles: Vec<FileRole> = (0..all.modules.len() as u32)
+            .map(|file| all.role(FileId(file)))
+            .collect();
+        let inputs = QueryInputs {
+            roles: &roles,
+            checked_elsewhere: &[],
+            builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
+            named_values: &NoNamedValues,
+            max_inference_nodes: 4096,
+            limits: Default::default(),
+        };
+        let build = check(program, &|checker, file| {
+            checker.with_queries(file, &inputs, |queries| {
+                let mut texts = Vec::new();
+                for function in 0..queries.hir().fns.len() as u32 {
+                    texts.push(match queries.return_type(FnId(function)) {
+                        Ok(ty) => String::from_utf8(queries.type_text(ty)).unwrap(),
+                        Err(refusal) => format!("{refusal:?}"),
+                    });
+                }
+                texts
+            })
+        });
+        let lowered = build.program.lowered.iter();
+        lowered.flat_map(|file| file.1.clone()).collect()
+    })
+}
+
+#[test]
+fn types_in_a_circle_across_files_do_not_depend_on_the_threads() {
+    let on_one_thread = ask_for_results_of_a_circle_across_files(1);
+    assert_eq!(on_one_thread.len(), 2);
+    for attempt in 0..20 {
+        let on_four_threads = ask_for_results_of_a_circle_across_files(4);
+        assert_eq!(on_one_thread, on_four_threads, "attempt {attempt}");
+    }
+}
+
+#[test]
+fn a_ring_through_the_type_of_an_assertion_is_answered_alike_whoever_enters_it_first() {
+    let files = [
+        (
+            "main.ts",
+            "import { use } from \"./early\";\nimport { make } from \"./gadget\";\nexport const used = use(make());\n",
+        ),
+        (
+            "early.ts",
+            "export function use(gadget: Shop.Gadget) {\n  return gadget.start();\n}\n",
+        ),
+        (
+            "gadget.ts",
+            "import keys from \"./keys\";\nconst kFirst: typeof keys.kFirst = keys.kFirst;\n\
+             declare global {\n  namespace Shop {\n    interface Base { start(): number }\n    \
+             interface Gadget extends Base { [kFirst]?: number }\n  }\n}\n\
+             export function make(): Shop.Gadget {\n  return { [kFirst]: 1, start() { return 2; } };\n}\n",
+        ),
+        (
+            "keys.ts",
+            "export default {} as unknown as {\n  \
+             readonly kFirst: unique symbol;\n  startOfGadget: Shop.Gadget[\"start\"] | undefined;\n};\n",
+        ),
+    ];
+    for threads in [1, 4] {
+        with_program(&files, &["./main.ts"], threads, |program| {
+            assert_eq!(check_only(program).codes(), [0; 0], "{threads} threads");
+        });
+    }
+}
+
+#[test]
 fn a_function_is_listed_once_among_the_members_of_the_cycles_it_is_in() {
     for count in [300, 600] {
         let text = write_functions_that_call_one_another_at_random(count);
         let files = [("main.ts", text.as_str())];
         with_program(&files, &["./main.ts"], 1, |program| {
-            let build = check(program, &|checker, _| checker.cycle_members_added());
+            let all = program.files();
+            let roles: Vec<FileRole> = (0..all.modules.len() as u32)
+                .map(|file| all.role(FileId(file)))
+                .collect();
+            let inputs = QueryInputs {
+                roles: &roles,
+                checked_elsewhere: &[],
+                builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
+                named_values: &NoNamedValues,
+                max_inference_nodes: 0,
+                limits: Default::default(),
+            };
+            let build = check(program, &|checker, file| {
+                checker.with_queries(file, &inputs, |queries| {
+                    for function in 0..queries.hir().fns.len() as u32 {
+                        let _ = queries.return_type(FnId(function));
+                    }
+                });
+                checker.cycle_members_added()
+            });
             let added: u64 = build.program.lowered.iter().map(|file| file.1).sum();
             assert!(
                 (1..=40 * count as u64).contains(&added),

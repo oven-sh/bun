@@ -1,0 +1,16 @@
+# `{ ...o }`, o known as literals whose names a class that is never made bears too. One value does not fit the slot that the layout shares with the class: the choices cut the maker's list and define the rest behind it.
+# The cut list alone lacks a field that is held filled: judged there, the maker was stopped at the build, and every run that came that way died. It is asked behind its rest, at run time.
+# f1 = see
+# -- source: main.js
+# class Plain { idq; noteq = [1]; constructor(v) { this.idq = v; } }
+# function see(o) { return Object.keys({ ...o }).join(); }
+# const out = [];
+# for (const make of [() => ({ idq: undefined, noteq: {}, zq: 0 }), () => ({ idq: 7, noteq: 2 }), () => ({ idq: 8, noteq: {} })]) out.push(see(make()));
+# print(out.join(" "));
+# -- end of source
+# RUN(STOPS): compile MakersWithoutFieldsHeldFilled FieldsAskedWhereMakersEnd mechanisms=all
+# STOPS: statistic MakersWithoutFieldsHeldFilled 0
+# STOPS: statistic FieldsAskedWhereMakersEnd 1
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: idq,noteq,zq idq,noteq idq,noteq
+# ANSWERS-NEXT: exited with 0

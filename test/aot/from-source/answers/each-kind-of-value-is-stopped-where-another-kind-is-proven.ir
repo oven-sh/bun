@@ -1,0 +1,42 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare function id(value: any): any;
+# declare const which: number;
+# function returnsIt(value: unknown) { const got = id(value); return got; }
+# const values = [7, 1.5, "text", Symbol("made"), 10n, {}, () => 1, true, null];
+# print(typeof returnsIt(values[which]));
+# print("went on");
+# -- end of source
+# testing=CheckProofsAtRunTime: a check whose type is a set of kinds is one call of a stub, which finds the kinds beside the throw word. THE RED CONTROL OF THAT STUB, A KIND A RUN.
+# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined. Each kind of value leaves the stub by another of its ways, and the stop names the kind.
+# OPTIONS: testing=CheckProofsAtRunTime,UnseenCodeAnswersUndefined
+# RUN(INTEGER): run-in-shell mechanisms=all-Inlining globalThis.which = 0; globalThis.id = (value) => value;
+# INTEGER: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# INTEGER-NOT: went on
+# RUN(DOUBLE): run-in-shell mechanisms=all-Inlining globalThis.which = 1; globalThis.id = (value) => value;
+# DOUBLE: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# DOUBLE-NOT: went on
+# RUN(TEXT): run-in-shell mechanisms=all-Inlining globalThis.which = 2; globalThis.id = (value) => value;
+# TEXT: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# TEXT-NOT: went on
+# RUN(SYMBOL): run-in-shell mechanisms=all-Inlining globalThis.which = 3; globalThis.id = (value) => value;
+# SYMBOL: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: symbol. This is a bug in Bun.
+# SYMBOL-NOT: went on
+# RUN(BIGINT): run-in-shell mechanisms=all-Inlining globalThis.which = 4; globalThis.id = (value) => value;
+# BIGINT: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: bigint. This is a bug in Bun.
+# BIGINT-NOT: went on
+# RUN(OBJECT): run-in-shell mechanisms=all-Inlining globalThis.which = 5; globalThis.id = (value) => value;
+# OBJECT: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# OBJECT-NOT: went on
+# RUN(FUNCTION): run-in-shell mechanisms=all-Inlining globalThis.which = 6; globalThis.id = (value) => value;
+# FUNCTION: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# FUNCTION-NOT: went on
+# RUN(BOOLEAN): run-in-shell mechanisms=all-Inlining globalThis.which = 7; globalThis.id = (value) => value;
+# BOOLEAN: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: boolean. This is a bug in Bun.
+# BOOLEAN-NOT: went on
+# RUN(NULL): run-in-shell mechanisms=all-Inlining globalThis.which = 8; globalThis.id = (value) => value;
+# NULL: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: null. This is a bug in Bun.
+# NULL-NOT: went on
+# RUN(RIGHT): run-in-shell mechanisms=all-Inlining globalThis.which = 9; globalThis.id = (value) => value;
+# RIGHT: undefined
+# RIGHT: went on

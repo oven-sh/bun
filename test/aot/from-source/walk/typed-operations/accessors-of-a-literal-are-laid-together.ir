@@ -1,0 +1,28 @@
+# -- source: accessors-of-a-literal-are-laid-together.ts
+# interface View { a: number; b: number; c: number }
+# interface Either { m: number; z: number }
+# function make(x: number): View { return { get a() { return x; }, get b() { return x + 1; }, c: 1 }; }
+# function use(o: View) { return o.a + o.b + o.c; }
+# function either(flag: boolean, x: number): Either { return flag ? { get m() { return x; }, z: 1 } : { m: x, z: 2 }; }
+# console.log(use(make(1)), either(true, 1).m + either(false, 2).m);
+# -- end of source
+# `{ get a() { .. }, get b() { .. }, c: 1 }`: a closure, a definition, a closure, a definition. One operation lays the accessors that stand side by side but for their closures: the run time is entered once.
+# Who goes with whom is read off the body as it is written. A getter that stands alone is defined as it is written (`either`).
+# RUN: walk f1 f3 mechanisms=all-Inlining
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: DefineGetter
+# CHECK: [[made]]: L0 {{*}} = NewObject layout=L0
+# CHECK: [[a]]: {{*}} = NewClosure
+# CHECK: [[b]]: {{*}} = NewClosure
+# CHECK-NEXT: DefineAccessors [[made]], [[a]], [[b]] keys=["a", "b"] getterMask=3 enumerableMask=3
+# CHECK-NOT: DefineGetter
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: DefineAccessors
+# CHECK: DefineGetter {{*}}key="m"
+# CHECK-NOT: DefineAccessors
+# RUN(CLOSED): walk f1 mechanisms=none
+# REQUIRES(CLOSED): entries-of-bun
+# CLOSED-NOT: DefineAccessors
+# CLOSED: DefineGetter {{*}}key="a"
+# CLOSED: DefineGetter {{*}}key="b"

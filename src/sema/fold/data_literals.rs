@@ -45,7 +45,11 @@ impl<'s> Folder<'_, 's> {
             (Value::Known(_), Effects::None) => true,
             (
                 Value::Known(_),
-                Effects::Unknown | Effects::TypeTest | Effects::DeadZoneCheck | Effects::MemberRead,
+                Effects::Unknown
+                | Effects::LeftOutByBunRun
+                | Effects::TypeTest
+                | Effects::DeadZoneCheck
+                | Effects::MemberRead,
             )
             | (Value::Unknown, _) => false,
         }

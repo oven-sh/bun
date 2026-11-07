@@ -4,8 +4,7 @@
 // ./behind-the-jit.<os>-<arch>.json names the idioms, of ./idioms too, that took more instructions than the JIT when they were last measured, with the ratio.
 // Each is a todo, and the ratio is only its title: ./pins.<os>-<arch>.json or ./everyday-pins.<os>-<arch>.json holds what it takes. `bun test --todo` runs them and tells which have come under the JIT. `bun test/aot/perf/idioms-against-the-jit.ts --write-behind` rewrites the file.
 // Every other idiom of ./everyday fails at over 1.35 times and 8 instructions: the JIT's own number moves by up to a tenth from run to run.
-// ./idioms.test.ts holds the idioms of ./idioms against pins.
-// A run measures one idiom in ten, others for each commit of Bun; AOT_SHARE=all measures all of them (../run-programs.ts).
+// ./idioms.measure.ts holds the idioms of ./idioms against pins.
 // AOT_PERF_BUILD_FLAGS="--aot-.. --aot-.." goes to every `bun build --compile --aot`: which idioms an option of the compiler turns red.
 //
 // Nor may type annotations cost: no idiom, of ./idioms too, may take over 1.05 times and one instruction more as TypeScript than as the same text without its types.
@@ -15,7 +14,6 @@ import { afterAll, expect } from "bun:test";
 import { existsSync, readFileSync, rmSync } from "fs";
 import { bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { slot } from "../harness/commands";
-import { inShare } from "../harness/shares";
 import { describe, test } from "../supported";
 import {
   behindPath,
@@ -36,7 +34,7 @@ const skipped =
       : !existsSync(behindPath)
         ? `there is no ${behindPath}`
         : undefined;
-if (skipped) console.error(`SKIPPED: test/aot/perf/idioms-against-the-jit.test.ts: ${skipped}`);
+if (skipped) console.error(`SKIPPED: test/aot/perf/idioms-against-the-jit.measure.ts: ${skipped}`);
 
 describe.skipIf(!!skipped)("compile/aot/perf/idioms-against-the-jit", () => {
   if (skipped) return;
@@ -49,8 +47,6 @@ describe.skipIf(!!skipped)("compile/aot/perf/idioms-against-the-jit", () => {
     buildFlags: process.env.AOT_PERF_BUILD_FLAGS?.split(" ") ?? [],
   });
   const rows = new Map<string, Promise<Row>>();
-  // An idiom takes about six seconds of one core.
-  const taken = names.filter(name => inShare(name, 10));
 
   const holds = (name: string, isOverBound: (row: Parameters<typeof ratioOf>[0]) => boolean) => async () => {
     if (!rows.has(name))
@@ -77,7 +73,7 @@ describe.skipIf(!!skipped)("compile/aot/perf/idioms-against-the-jit", () => {
   for (const name of names)
     if (name in behind)
       test.todo(`${name}: ${behind[name]} times the JIT's instructions`, staysUnder(name, lineAgainstTheJit, 0));
-  for (const name of taken)
+  for (const name of names)
     if (!(name in behind) && name.startsWith("everyday-")) test.concurrent(name, staysUnder(name, 1.35, 8), 900_000);
   for (const name of names)
     if (name in dearer)
@@ -85,7 +81,7 @@ describe.skipIf(!!skipped)("compile/aot/perf/idioms-against-the-jit", () => {
         `${name}: ${dearer[name]} times the instructions of the same text without types`,
         holds(name, row => isTypedDearer(row)),
       );
-  for (const name of taken)
+  for (const name of names)
     if (!(name in dearer))
       test.concurrent(
         `${name}: types cost nothing`,

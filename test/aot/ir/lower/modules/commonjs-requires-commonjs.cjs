@@ -6,8 +6,7 @@
 
 // RUN(BODY): link
 // BODY: EvaluateModule module=m{{*}} [isBare, isCallOfRequire]
-// BODY: [[read]] = GetModuleVariable
-// BODY-NEXT: [[c]] = Convert [[read]]
+// BODY: [[c]] = GetModuleVariable
 // BODY: = Add [[c]]
 // BODY: PutModuleVariable
 // BODY: = NewClosure function=

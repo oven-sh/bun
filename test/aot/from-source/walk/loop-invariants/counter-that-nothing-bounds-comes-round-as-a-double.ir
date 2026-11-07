@@ -1,0 +1,42 @@
+# `i < n` with a number says nothing of 2^53, so `i++` may stand at the end of the exact integers, where it is rounded: the step gives a double.
+# A parameter of the head that the turns only step, compare with numbers and hand on comes round as that double: one addition a step, no way to an integer and back.
+# f1 = count, f2 = countSome, f3 = sumAt, f4 = tell
+# -- source: counter-that-nothing-bounds-comes-round-as-a-double.ts
+# function count(n: number): number { let s = 0; for (let i = 0; i < n; i++) s++; return s; }
+# function countSome(n: number, list: boolean[]): number { let s = 0; for (let i = 0; i < n; i++) { if (list.length > 2) s++; } return s; }
+# function sumAt(n: number, list: number[]): number { let s = 0; for (let i = 0; i < n; i++) s += list[i] | 0; return s; }
+# function tell(n: number, told: (turn: number) => void): void { for (let i = 0; i < n; i++) told(i); }
+# const n = Number(process.argv[2] ?? "4.5");
+# const seen: number[] = [];
+# tell(n, turn => { seen.push(turn); });
+# console.log(count(n), countSome(n, [true, false, true]), sumAt(n, [1, 2, 3, 4, 5, 6]), seen.join());
+# -- end of source
+# RUN: walk f1 f2 f3 f4 mechanisms=all-Inlining
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: IntegerBound
+# CHECK: ([[s1]]: int[0, 9007199254740992] @Double, [[i1]]: int[0, 9007199254740992] @Double) {{*}}isLoopHead=true
+# CHECK: = Less [[i1]], {{*}}form=Numbers
+# CHECK-NOT: NumberToInteger
+# CHECK-NOT: CheckedIntegers
+# CHECK: @Double = Increment [[s1]] form=Numbers
+# CHECK: @Double = Increment [[i1]] form=Numbers
+# the tally of some turns meets itself as a double
+# CHECK-LABEL: code f2:Body
+# CHECK: ([[s2]]: int[0, 9007199254740992] @Double, [[i2]]: int[0, 9007199254740992] @Double) {{*}}isLoopHead=true
+# CHECK-NOT: NumberToInteger
+# CHECK: [[more2]]: {{*}} @Double = Increment [[s2]] form=Numbers
+# CHECK: ({{*}}: int[0, 9007199254740992] @Double) isInLoop=true
+# an index is wanted as an integer in every turn: the counter stays one
+# CHECK-LABEL: code f3:Body
+# CHECK: int[0, 9007199254740992] @Int64) {{*}}isLoopHead=true
+# CHECK: form=CheckedIntegers
+# an argument is wanted in a box in every turn
+# CHECK-LABEL: code f4:Body
+# CHECK: int[0, 9007199254740992] @Int64) {{*}}isLoopHead=true
+# CHECK: form=CheckedIntegers
+# RUN(BOXED): walk f1 mechanisms=all-Inlining-UnboxedNumbers
+# REQUIRES(BOXED): entries-of-bun
+# BOXED-LABEL: code f1:Body
+# BOXED-NOT: @Double) {{*}}isLoopHead=true
+# BOXED: isLoopHead=true

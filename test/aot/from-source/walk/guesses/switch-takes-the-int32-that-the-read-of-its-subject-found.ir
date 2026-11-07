@@ -1,0 +1,62 @@
+# `switch (shape.tag)`, nothing proven of `shape`, the slot of `tag` held to an int32, and the Switch alone takes what is read. What the closed read finds is anything, so the typed run boxed its int32 where the arms met,
+# and the Switch asked the box for its tag, widened it, and kept an arm with a call for doubles. Here the closed arm finds the int32 by itself: what is an int32 is unboxed, -0 is 0 where 0 is a case,
+# and whatever takes no case becomes an int32 that no case names. The arms meet on an Int32, which goes into the Switch as it lies.
+# pickAndTell() reads the subject again where no case takes it: there a box stands for it as before.
+# f1 = pick, f2 = pickAndTell
+# -- source: tags.ts
+# const enum Tag { MinusOne = -1, Zero, One, Two, Three, Seven = 7 }
+# class Shape {
+#   tag: Tag;
+#   weight: number;
+#   constructor(tag: Tag, weight: number) { this.tag = tag; this.weight = weight; }
+# }
+# function pick(shape: Shape): string {
+#   switch (shape.tag) {
+#     case Tag.Zero: return "zero";
+#     case Tag.One: return "one";
+#     case Tag.Two:
+#     case Tag.Three: return "two or three";
+#     case Tag.Seven: return "seven";
+#     case Tag.MinusOne: return "minus one";
+#     default: return "none";
+#   }
+# }
+# function pickAndTell(shape: Shape): string {
+#   const tag = shape.tag;
+#   switch (tag) {
+#     case Tag.Zero: return "zero";
+#     case Tag.One: return "one";
+#     case Tag.Two: return "two";
+#     default: return "none: " + String(tag);
+#   }
+# }
+# (globalThis as any).pick = pick;
+# (globalThis as any).pickAndTell = pickAndTell;
+# let said = "";
+# for (let tag = -2; tag < 9; tag++) {
+#   const shape = new Shape(tag, tag * 2);
+#   (globalThis as any).kept = shape;
+#   said += pick(shape) + pickAndTell(shape);
+# }
+# console.log(said);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK: @Int32 = GetSlot {{*}}key="tag"
+# CHECK: = PropGet {{*}}key="tag"
+# CHECK: = TypeTest {{*}}testedType=i32
+# CHECK: ([[subject]]: i32 @Int32
+# CHECK-NEXT: Switch [[subject]] cases=[0, 1, 2, 3, 7, -1]
+# CHECK: = StrictEq {{*}}form=Int32AndValue
+# CHECK-NOT: = Box
+# RUN(READ): walk f2 mechanisms=all
+# REQUIRES(READ): entries-of-bun
+# READ-LABEL: code f2:Body
+# READ-NOT: = TypeTest {{*}}testedType=i32
+# READ: @JSValue
+# READ: Switch
+# RUN(WITHHELD): walk f1 mechanisms=-Guesses
+# REQUIRES(WITHHELD): entries-of-bun
+# WITHHELD: [[read]]: {{*}} = PropGet {{*}}key="tag"
+# WITHHELD: Switch [[read]]

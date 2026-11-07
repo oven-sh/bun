@@ -332,12 +332,18 @@ static JSValue createBunSql(VM& vm, Zig::GlobalObject* globalObject)
     JSValue sqlValue = BUN_REQUIRE_INTERNAL_MODULE(globalObject, BunSql, "Bun.sql", "default"_s);
 #if ENABLE(AOT)
     if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
-        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "sql"_s, 2 }, globalObject))
+        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "sql"_s, 2, true, false }, globalObject))
             return standIn;
     }
 #endif
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword));
+    return sqlValue;
+}
+
+// `--sql-preconnect` reads Bun.sql before the program runs. A program compiled ahead of time holds what stands behind it only where the program, or an option written into the executable, uses it.
+extern "C" bool Bun__canReadSqlAtStart(Zig::GlobalObject* globalObject)
+{
+    return ::Bun::DeclaredModuleLoad::canLoad(globalObject, ::Bun::InternalModuleRegistry::Field::BunSql);
 }
 
 static JSValue createBunSQLConstructor(VM& vm, Zig::GlobalObject* globalObject)
@@ -351,8 +357,7 @@ static JSValue createBunSQLConstructor(VM& vm, Zig::GlobalObject* globalObject)
     }
 #endif
     RETURN_IF_EXCEPTION(scope, {});
-    auto clientData = WebCore::clientData(vm);
-    RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName()));
+    return sqlValue;
 }
 
 JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)

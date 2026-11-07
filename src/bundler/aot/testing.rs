@@ -69,6 +69,8 @@ pub fn with_front_end_inputs<R>(
     transpiler.options.compile_mode = crate::options::CompileMode::Executable;
     // As the command line has it without `--env`.
     transpiler.options.env.behavior = api::DotEnvBehavior::disable;
+    // And without `--minify-syntax`, which the options begin with where the target is Bun.
+    transpiler.options.minify_syntax = false;
     transpiler.configure_defines().ok()?;
     transpiler.configure_linker();
     let input = OptionsInput {

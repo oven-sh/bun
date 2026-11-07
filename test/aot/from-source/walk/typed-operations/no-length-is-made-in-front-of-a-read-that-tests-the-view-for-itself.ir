@@ -1,0 +1,25 @@
+# f1 = scan, f2 = scanAndNoteAll
+# -- source: no-length-is-made-in-front-of-a-read-that-tests-the-view-for-itself.ts
+# declare function sink(...values: unknown[]): void;
+# declare function note(value: unknown): void;
+# type Board = { words: Int32Array; width: number };
+# function scan(board: Board, last: number) { let found = 0; for (let x = 0; x <= last; x++) { const word = board.words[x]!; if ((word & 3) !== 1) continue; const next = board.words[x + 1]!; note(next); found++; } return found; }
+# function scanAndNoteAll(board: Board, last: number) { let found = 0; for (let x = 0; x <= last; x++) { const word = board.words[x]!; note(word); found++; } return found; }
+# const board: Board = { words: new Int32Array(64), width: 8 };
+# sink(scan(board, 60), scan(board, 30), scanAndNoteAll(board, 60), scanAndNoteAll(board, 30));
+# -- end of source
+# Every turn of `scanAndNoteAll` runs other code, so the view is read off the object in every turn, and the read tests the view for itself: no length is made for it.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = GetTypedArrayElement
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-NOT: = GetTypedArrayLength
+# In `scan` the turn that finds nothing runs no other code: the view, its length and its vector are read in the front of quiet turns, and the read in the turn takes them. A turn that has called note() comes round through the front.
+# RUN(FRONT): walk f1 mechanisms=all
+# FRONT-LABEL: code f1:Body
+# FRONT: [[head]]({{*}}isLoopHead=true:
+# FRONT: [[front]]({{*}}isLoopHead=true:
+# FRONT: = GetSlot {{*}}key="words"
+# FRONT: [[length]]: {{*}} = GetTypedArrayLength
+# FRONT: [[vector]]: {{*}} = GetTypedArrayVector
+# FRONT: = GetTypedArrayElement {{*}}, [[vector]], [[length]] typedArrayType

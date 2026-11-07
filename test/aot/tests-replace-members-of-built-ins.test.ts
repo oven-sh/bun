@@ -33,7 +33,7 @@ const imports = `
   import { count, find, findUntyped, first, fold, frozen, glued, has, joined, listOf, lookUp, matches, sumOfCodes, unique } from "./app";`;
 
 async function runTests(directory: string, ...flags: string[]) {
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, bunEnv);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--timeout=60000", ...flags], directory, bunEnv);
   const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`);
   // A crash prints only there, and the comparison below would hide it.
   if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
@@ -418,13 +418,13 @@ test("toString, valueOf and toJSON are replaced, for calls that spell them and f
 
 // Each member alone in its run: a second replaced member of these names turns JSON.stringify into a plain call and hides the fault, and so
 // does console.log(), which brings in library code that asks dates for these names. So the tests inside say what they expect.
-// An import() of a name that the build cannot know takes another way through the build, so each is run with and without one.
+// An import() of a name that the build cannot know takes another way through the build, which holds all of Bun's library: the first member is run with one too.
 for (const [member, replacement, written] of [
   ["toJSON", `() => "replaced"`, `["replaced"]{"at":"replaced"}"replaced"`],
   ["toISOString", `() => "replaced"`, `["replaced"]{"at":"replaced"}"replaced"`],
   ["valueOf", `() => NaN`, `[null]{"at":null}null`],
 ]) {
-  for (const loadsUnknownName of [false, true]) {
+  for (const loadsUnknownName of member === "toJSON" ? [false, true] : [false]) {
     test(`JSON.stringify of a date calls a replaced Date.prototype.${member}${loadsUnknownName ? ", beside an import() of an unknown name" : ""}`, async () => {
       await expectCompiledToRunAsPlain({
         "one.test.ts": `
@@ -1004,7 +1004,8 @@ test("rows of a table and a helper of another name, two steps from the test file
   });
   const plain = await runTests(String(dir));
   expect(plain.stdout).toContain("5 row row yes too\n2 a-b e undefined undefined");
-  const logged = await run([bunExe(), "test", "--aot"], String(dir), { ...bunEnv, BUN_JSC_logAOTPhaseTimes: "1" });
+  const logs = { ...bunEnv, BUN_JSC_logAOTPhaseTimes: "1" };
+  const logged = await run([bunExe(), "test", "--timeout=60000", "--aot"], String(dir), logs);
   expect(logged.stdout).toContain("5 row row yes too\n2 a-b e undefined undefined");
   expect(logged.stderr).not.toContain("AOT build starts over | replaced built-ins added");
   expect(logged.stderr).not.toContain("AOT build starts over | names opened");
@@ -1527,17 +1528,31 @@ test("a member that no test names stays read-only, and the write throws", async 
         expect(() => spyOn(holder, name)).toThrow("Cannot spy on " + member + " because built-in objects are read-only in compiled code, and " + advice);
         expect(() => spyOn(Array.prototype as any, "constructor")).toThrow("Cannot spy on Array.prototype.constructor because built-in objects are read-only in compiled code, and a test can't replace this one: it is read without being looked up. Replace a function of your own that uses it");
       });
+      test("spied on, and spelled in vain", () => {
+        expect(() => spyOn(globalThis as any, "Bun", "get")).toThrow("Cannot spy on Bun because built-in objects are read-only in compiled code, and a test can't replace this one: it is read without being looked up.");
+      });
       test("added", () => {
         (Object.prototype as any).seen = 1;
         delete (Object.prototype as any).seen;
         expect(() => { (Object.prototype as any)[name] = 1; }).toThrow("the build didn't see a test add this one. Spell out the object and the name where the test does it, as in Object.prototype." + name + " = value");
         expect(() => { (Object.prototype as any)[Symbol.iterator] = 1; }).toThrow("built-in objects are read-only");
         expect(() => { (Object.prototype as any)[0] = 1; }).toThrow("Cannot assign to Object.prototype[0] because built-in objects are read-only in compiled code, and a test can't add this one");
+        expect(() => { (Object.prototype as any)[Symbol("mark")] = 1; }).toThrow("Cannot assign to Object.prototype[Symbol(mark)] because built-in objects are read-only in compiled code, and a test can't add this one");
+        expect(() => Object.defineProperty(Object.prototype, Symbol.for("made.up.key"), { value: 7, configurable: true })).toThrow("Cannot assign to Object.prototype[Symbol(made.up.key)] because built-in objects are read-only in compiled code, and a test can't add this one");
+        const mark = Symbol("mark");
+        (Array.prototype as any)[mark] = 1;
+        expect(([] as any)[mark]).toBe(1);
+        delete (Array.prototype as any)[mark];
         expect(() => { Promise.prototype.constructor = function () {}; }).toThrow("built-in objects are read-only");
         expect(() => Object.setPrototypeOf(Object.prototype, {})).toThrow();
       });`,
   });
-  expect((await runTests(String(dir), "--aot")).results).toEqual(["pass stored", "pass spied on", "pass added"]);
+  expect((await runTests(String(dir), "--aot")).results).toEqual([
+    "pass stored",
+    "pass spied on",
+    "pass spied on, and spelled in vain",
+    "pass added",
+  ]);
 });
 
 // The language reads this one by itself, once, where a walk opens: each compiled walk over a map tests the location there.

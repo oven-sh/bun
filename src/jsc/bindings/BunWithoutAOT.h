@@ -56,6 +56,8 @@ inline void hostDidCreateObjectOfGlobal(JSGlobalObject*, UniquedStringImpl*, JSO
 inline void hostDidFillObjectWithFoldedMembers(JSGlobalObject*, JSObject*, ASCIILiteral, std::span<const ASCIILiteral>) {}
 inline void hostDidReplaceProperty(JSGlobalObject*, UniquedStringImpl*) {}
 inline void hostDidLoadBuiltinModule(JSGlobalObject*, uint32_t, JSValue) {}
+inline void willHandBuiltinModuleToNativeCode(JSGlobalObject*, uint32_t) {}
+inline void willHandExportOfBuiltinModuleToNativeCode(JSGlobalObject*, uint32_t, ASCIILiteral) {}
 
 inline bool hasBuiltinModule(JSGlobalObject*, uint32_t) { return false; }
 inline bool refusesLibraryText() { return false; }
@@ -84,6 +86,8 @@ enum class Presence : uint8_t { Present,
 
 constexpr bool isCompiledObject(const JSCell*) { return false; }
 template<typename Functor> Result forEachOwnProperty(VM&, JSObject*, Filter, const Functor&) { return Result::NeedsGenericPath; }
+template<typename Functor> Result forEachOwnPropertyAsCreated(VM&, JSObject*, const Functor&) { return Result::NeedsGenericPath; }
+inline JSValue getDirect(VM&, const JSObject*, PropertyName, unsigned*) { return {}; }
 inline void materializeLazyProperties(VM&, JSObject*) {}
 inline void prepareHoldersBeforeLookupsUnder(JSGlobalObject*, Symbol*, JSObject*) {}
 inline Presence tryGetOwnValue(JSObject*, UniquedStringImpl*, JSValue&) { return Presence::Unknown; }

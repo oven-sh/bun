@@ -1,0 +1,25 @@
+# a field that a constructor function stores takes the member of the written type of `this`: the front end sends it so. A name that the maker stores behind the construction has no record:
+# Link appends it, and the types that the objects are written as say what lies under it, where each of them is guarded. The reference is held; an enum and `number` are not, while a number stays boxed.
+# f1 = Type, f2 = make
+# -- source: field-of-a-constructor-function-takes-the-member-of-the-written-this.ts
+# declare function sink(...values: unknown[]): void;
+# enum TypeFlags { Any = 1, Union = 2, Object = 4 }
+# interface Sym { name: string }
+# interface Type { flags: TypeFlags; symbol: Sym; objectFlags: TypeFlags; size: number }
+# function Type(this: Type, flags: TypeFlags, symbol: Sym) { this.flags = flags; this.symbol = symbol; }
+# function make(flags: TypeFlags, symbol: Sym, objectFlags: TypeFlags, size: number): Type { const made: Type = new (Type as any)(flags, symbol); made.objectFlags = objectFlags; made.size = size; return made; }
+# const first: Sym = { name: "first" };
+# sink(make, first);
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: field {{*}} "flags" source=written type=i32 {{*}}slot=OptionalInt32
+# CHECK-NEXT: field {{*}} "symbol" source=written type=undefined|null|
+# CHECK-NEXT: field {{*}} "objectFlags" appended source=family type=i32 {{*}}slot=OptionalInt32
+# CHECK-NEXT: field {{*}} "size" appended source=family type=number {{*}}slot=JSValue
+# RUN(NEVER): facts enforced mechanisms=all
+# REQUIRES(NEVER): entries-of-bun
+# NEVER-NOT: differs-from-table
+# RUN(PLAN): plan layouts mechanisms=all
+# REQUIRES(PLAN): entries-of-bun
+# PLAN: slot {{*}} "symbol" {{*}} type=undefined|null|

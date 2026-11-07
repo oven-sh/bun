@@ -10,7 +10,7 @@ bun test/aot/perf/compare-builds.ts --before <bun> --after <bun>
 
 It needs Linux, and hardware counters that a user may read (`sysctl kernel.perf_event_paranoid` at 2 or below). It measures with both Buns:
 
-- **every small benchmark** of `idioms/` and `everyday/` (about 1,800), as TypeScript and as the same text without its types, in three program sizes;
+- **every small benchmark** of `idioms/` and `everyday/` (about 1,800), as TypeScript and as the same text without its types, in two program sizes;
 - **one request of each route of seven servers** (`../servers/app`: Bun.serve, node:http, Hono, Elysia, Express, Fastify, Koa).
 
 Then it prints every row that moved by more than 2% and two instructions, and exits with 1 if a row got slower:
@@ -37,18 +37,17 @@ A row that moved is measured a second time on both sides. It is printed only if 
 | No servers, or some                     | `--servers none`, `--servers koa,fastify`                                                                                                                                            |
 | No network                              | `--modules <node_modules>`: what `bun install` made of `../servers/app/package.json`                                                                                                 |
 | A baseline that is measured once        | `--out <folder>` on the first run, then `--before <folder>/before`                                                                                                                   |
-| What a compiler flag costs              | the same Bun on both sides and `--build-flag=--aot-disable=<pass>`. A server whose executable the flag leaves as it is has the same code on both sides: it is named and not measured |
+| What a compiler flag costs              | the same Bun on both sides and `--build-flag=--aot-huge-heap`. A server whose executable the flag leaves as it is has the same code on both sides: it is named and not measured      |
 | Another threshold                       | `--threshold 0.5`                                                                                                                                                                    |
 
-### The three program sizes
+### The two program sizes
 
 The same text is not compiled the same way everywhere, and a change often moves one size only.
 
-| Size         | What it models                                                                                                                                       |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `small`      | The benchmark is the whole program. Its loop calls `turn()` directly, so `turn()` is usually copied into the loop                                    |
-| `called`     | The loop finds `turn()` at run time. `turn()` stays a function with a caller, like most functions of a real program                                  |
-| `very-large` | The same, compiled the way it would be inside a very large program, where only code in a loop or with several callers counts as code that runs often |
+| Size     | What it models                                                                                                                         |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `small`  | The benchmark is the whole program. Its loop calls `turn()` directly, so `turn()` is usually copied into the loop                      |
+| `called` | The loop finds `turn()` at run time. `turn()` stays a function with a caller, like most functions of a real program, in typed text too |
 
 ### How a number is made
 
@@ -64,23 +63,20 @@ collector shows in CPU time and memory (`../servers/measure`). The server runs a
 ## Find out where the instructions went
 
 ```sh
-BUN_JSC_aotMapFilePath=app.map <bun> build --compile --aot app.ts --outfile app
-python3 test/aot/tools/exact_counts.py run --out after.counts --map app.map --symbols <bun with symbols> -- ./app
+<bun with symbols> build --compile --aot --aot-symbols app.ts --outfile app
+python3 test/aot/tools/exact_counts.py run --out after.counts -- ./app
 python3 test/aot/tools/exact_counts.py diff before.counts after.counts
 ```
 
-`exact_counts.py` runs the executable under valgrind's callgrind and adds the counts up by compiled function, by stub of the compiler and by C++ function of the runtime. `serve` in place of `run`
-counts exactly _n_ requests to a warm server. The top of the file has the details and what to watch out for.
+`exact_counts.py` runs the executable under valgrind's callgrind and adds the counts up by function. The names are those of the executable's table of symbols. `--aot-symbols` puts each compiled
+function, with its file and line, and each stub of the compiler there, beside the C++ functions of the Bun that built it: build with a Bun that has its symbols (bun-profile). Code without a name is
+listed by page (`unnamed`). With `--symbols <file>` the names come from that file alone, and compiled code has none. `serve` in place of `run` counts exactly _n_ requests to a warm server. The top
+of the file has the details and what to watch out for.
 
-Other ways in, none of which needs a counter of the processor:
+`bun build --compile --aot --explain` says what the compiler made of a program, and needs no counter of the processor.
 
-| Question                                                | Tool                                                                   |
-| ------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Which tests does a request run, and which of them fail? | `../servers/measure/tests-by-request.ts`, `failed-tests-by-request.ts` |
-| How often does a request look something up at run time? | `../servers/measure/arrivals-by-request.ts`                            |
-| Which optimization is a benchmark's speed owed to?      | `what-each-switch-is-worth.ts`                                         |
-| Which property accesses got worse between two builds?   | `sites-that-got-worse.ts`                                              |
-| What does the compiler say about a program?             | `bun build --compile --aot --explain`                                  |
+`symbols.ts <benchmark> <a Bun> <another Bun>` needs the counter and perf(1): it says in which functions the instructions of a benchmark lie in two builds, for a pin that moved although the
+compiled code did not.
 
 ## Compare with the JIT
 
@@ -95,7 +91,7 @@ builds. [`../servers/measure/README.md`](../servers/measure/README.md) says what
 ## Hold a build against the pins
 
 ```sh
-bun test/aot/perf/measure.ts                    # everything: about an hour of processor time
+bun test/aot/perf/measure.ts                    # everything: hours of processor time, most of them in stepped-*
 bun test/aot/perf/measure.ts pinned idioms      # the files whose path holds one of the words
 bun test/aot/perf/measure.ts --list
 ```
@@ -103,22 +99,25 @@ bun test/aot/perf/measure.ts --list
 CI does not run these: they take minutes, or their pins are those of glibc, and of CI's machines only Alpine on x64 has a counter of executed instructions
 that a user may read (elsewhere a test that asks for one says `instructions are not counted here` and with which error). Run them on a Linux x64 machine with a counter before
 a change to the compiler lands, and after one that was meant to make programs faster. Each file is a file of `bun test`, named
-`<name>.measure.ts`, and can be run alone: `bun test ./test/aot/perf/operations.measure.ts`.
+`<name>.measure.ts`, and can be run alone: `bun test ./test/aot/perf/definitions-that-run-once.measure.ts`.
 
 | Files                                                              | What they hold                                                                                                                                                                                   |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `idioms`, `idioms-in-parts-*`                                      | Instructions per turn of each benchmark of `idioms/` (`pins.linux-x64.json`)                                                                                                                     |
-| `pinned-everyday-idioms-*`                                         | The same for `everyday/` (`everyday-pins.linux-x64.json`): 1,163 benchmarks, as TypeScript and as JavaScript. 128 of them are the entry points of one executable, and nothing runs under the JIT |
+| `pinned-everyday-idioms-*`                                         | The same for every benchmark of `everyday/` (`everyday-pins.linux-x64.json`), as TypeScript and as JavaScript, within 2% and 2 instructions. Nothing runs under the JIT |
+| `pinned-everyday-idioms-cold-*`                                    | Every benchmark of `everyday/` again, where `turn()` is a function of its own that its caller finds at run time (`everyday-pins-in-a-very-large-program.linux-x64.json`). What `behind-the-jit-in-a-very-large-program.linux-x64.json` excuses from the line against the JIT is held to its pin here |
+| `stepped-idioms-*`                                                 | Every benchmark of `idioms/` and `everyday/`, as TypeScript and as JavaScript, built as a user builds them: the instructions that a turn takes in compiled code (`idiom-steps.linux-<arch>.json`), counted without a counter of the processor: `count-steps.ts` lets the program go one instruction at a time over a few turns. The numbers are exact; a row fails over its pin by more than 2% and 2 instructions, more loosely where its pin says `wavers` or `owed`. Linux with glibc, x64 and arm64, where one process may watch another |
+| `stepped-idioms-called-once-*`                                     | The benchmarks of `everyday/` again, in the form of `main()` and of the body of a test: the function that holds the loop is called once (`idiom-steps-called-once.linux-<arch>.json`) |
+| `stepped-idioms-in-a-very-large-program-*`                         | The benchmarks of `everyday/` again: `turn()` is a function of its own that its caller finds at run time (`idiom-steps-in-a-very-large-program.linux-<arch>.json`). Here a read that the other forms resolve may look its name up |
+| `stepped-operations-*`                                             | Single operations of the language (`operations/generate.py`): the instructions that one site takes in compiled code, counted the same way (`operation-steps.linux-<arch>.json`). Each row twice: `alone`, with the whole program in sight, and `opened`, where every object, closure and string of the row has been handed to text that is evaluated at run time: the state of most accesses of a large program, which no benchmark of `idioms/` or `everyday/` is in |
+| `first-executions`, `first-executions-against-plain-bun`           | What an item costs the first time it runs: a class and its first instance, the first object of a layout, a pattern. Held against pins, one instruction at a time (`first-executions.linux-x64.json`), and against plain Bun, by the counter: no row may cost more compiled than plain |
 | `pinned-applications`                                              | zod, and the type checker of the `typescript` package (`application-pins.linux-x64.json`)                                                                                                        |
 | `idioms-against-the-jit`, `idioms-in-a-very-large-program`         | No benchmark takes over 1.35 times the JIT's instructions, unless `behind-the-jit.linux-x64.json` lists it. What a list names has a pin                                                          |
-| `generated-code-of-idioms-*`, `generated-code-of-operations-*`     | The same programs by their generated code: instructions and patchpoints of each function and loop. Nothing runs, so it needs no counter, only time                                               |
-| `operations`, `small-benchmarks`, `plain-bun-costs`, `serial-time` | Single operations, whole small programs, what a program pays that never asks for the compiler, how much of a build runs on one thread                                                            |
-| `copies-of-ordinary-objects-in-cold-code` ..                       | One loop against another of the same executable. Nothing is pinned                                                                                                                               |
+| `operations`, `small-benchmarks`, `plain-bun-costs`                | Single operations, whole small programs, what a program pays that never asks for the compiler                                                                                                    |
+| `definitions-that-run-once` ..                                     | One program against another that does more of the same. Nothing is pinned                                                                                                                        |
 | `compare-builds`                                                   | `compare-builds.ts` finds no difference between a Bun and itself: its numbers repeat on a busy machine                                                                                           |
-| `../long-functions-build-instructions`, `../startup-scaling` ..    | What a build or a start costs as a program grows                                                                                                                                                 |
-| `../minifying-first-saves-no-code-*`                               | Bytes of code and classes of accesses: one build against another of the same program                                                                                                             |
 
-A pin only goes down: `AOT_PERF=lower bun test/aot/perf/measure.ts idioms` rewrites the pins that got better.
+A pin only goes down: `AOT_PERF=lower bun test/aot/perf/measure.ts idioms` rewrites the pins that got better, and pins a new benchmark of `everyday/`.
 
 ### How many turns a number needs
 
@@ -154,11 +153,8 @@ turn (`mostlyWaits()` in `measure-idioms.ts`; `%w` of GNU time, `voluntary conte
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `start.test.ts`                   | Page faults, system calls and private memory of a start. Its instructions only where they can be counted                                                      |
 | `threads-of-a-build.test.ts`      | How many threads a build starts                                                                                                                               |
-| `../servers/budgets-of-*.test.ts` | Bytes of code, tests that fail, accesses by name, calls of the run time, allocations of one round of requests to each server: exact counts of branch counters |
 | `../build-scaling`                | Peak memory of a build as a program grows, and its instructions where they can be counted                                                                     |
-| `a-cost-that-comes-in-lumps-*`    | The plan of a measurement takes so many turns that a lump more or less moves no reading: arithmetic, no counter                                               |
-| `compiled-code-is-measured-*`     | A measurement that runs nothing under the JIT spends under a fiftieth of its instructions in front of what it measures: arithmetic, no counter                |
-| `a-busy-machine-gives-*`          | A program that only computes gets the same plan however long the machine keeps its runs from running: arithmetic, no counter                                  |
+| `measure-idioms.test.ts`          | The plan of a measurement of the bench: a lump more or less moves no reading, a busy machine changes no plan, both runs of a reading take the same loop, and what runs nothing under the JIT is not warmed up: arithmetic, no counter |
 
 ## Which number decides
 
@@ -189,15 +185,14 @@ Each of these has cost somebody a day.
   off; if you measure by hand use `perf stat -i`, or the environment at the top of `measure-idioms.ts`.
 - **If the JIT's number moved too, the runtime changed.** Both columns call the same native code.
 - **A benchmark's loop is part of the benchmark.** When a row "gains", check that the work is still there: the compiler may have folded it away. Every form must print the same answer, and the tools check it.
-- **Whether `turn()` is copied into the loop can decide a row.** That is why there are three sizes. A budget of the inliner once moved 800 rows back and forth within an hour.
+- **Whether `turn()` is copied into the loop can decide a row.** That is why there are two sizes. A budget of the inliner once moved 800 rows back and forth within an hour.
 - **Sampled counts skid.** `perf record` books an instruction's cost on a neighbor; for a short stub it has been wrong by three times. Use exact counts (`exact_counts.py`).
 
 **Time and cycles**
 
 - **A then B is not an A/B.** The clock of a core drifts, and whatever ran before has warmed or emptied the caches. Interleave (A B B A), swap the order every round, and read cycles beside every wall time.
-- **Where code lies moves a server by 3% a route**, with the same instructions, and repeating the run repeats the same layout. Two builds that differ by one unused function differ that much. Measure
-  over several layouts (`measure.py --layouts`, `layouts.py`), or put the change behind a switch of one Bun, so that only the compiled program differs.
-- **The order in which the compiler's flow analysis visits functions moves a server by up to 5%** the same way. One pair of builds is partly luck.
+- **Where code lies moves a server by 3% a route**, with the same instructions, and repeating the run repeats the same layout. Two builds that differ by one unused function differ that much. Put
+  the change behind a flag of one Bun, so that only the compiled program differs.
 - **"Idle" cores are often not.** Check that nothing else ran there (`measure.py` marks such rows void), and that a pin really holds: `taskset -p <pid>` of the running child. A job started through
   `systemd-run` does not inherit the caller's affinity.
 - **Cores that share a last-level cache slow each other down** by 3 to 5%.
@@ -209,5 +204,5 @@ Each of these has cost somebody a day.
 - **A static count is not run time.** How many sites have a property, how many bytes a pass emits: neither says what a program spends. Profile first.
 - **Two counts of the same size need not count the same things.** Compare the sets.
 - **A stand-in does not decide for the application.** A small benchmark that shows a gain is a reason to measure the real program, not a result.
-- **A cause is a run that tells two builds apart.** "It started around that commit" is a guess. `../tools/bisect.ts` finds the optimization, two binaries find the commit.
+- **A cause is a run that tells two builds apart.** "It started around that commit" is a guess. Two binaries find the commit.
 - **One table is not a finding.** Repeat it before you believe it, and before you tell anyone.

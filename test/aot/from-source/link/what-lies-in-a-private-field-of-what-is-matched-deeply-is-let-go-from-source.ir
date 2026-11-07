@@ -1,0 +1,22 @@
+# -- source: main.js
+# class Inner { constructor(tag) { this.tag = tag; } }
+# class Apart { constructor(tag) { this.tag = tag; } }
+# class Matched { #kept; constructor(kept) { this.#kept = kept; } }
+# class Alone { #kept; constructor(kept) { this.#kept = kept; } }
+# globalThis.held = new Alone(new Apart("apart"));
+# console.log(Bun.deepMatch(new Matched(new Inner("inner")), new Matched(new Inner("inner"))));
+# -- end of source
+# L0 = Inner, L1 = Apart, L2 = Matched, L3 = Alone
+# Nobody outside a class body can name `#kept`, so what lies there stays in sight where the object itself is let go: Alone, Apart. Bun.deepMatch() is the exception: it asks the engine for what the
+# written private fields of its operands hold and compares that as it compares everything else: it reads every name off it, runs its getters and hands it to testers. Its row says so
+# (PrivateFieldsAreCompared), and what lies in the private fields of whatever reaches it is let go: Matched, Inner. The field is marked, and at run time only a marked field hands out an object.
+# THE RED CONTROL: the role taken off the row of Bun.deepMatch (src/codegen/builtins/host/native-code.ts matchedDeeply): the first line below finds nothing.
+# RUN(LINK): link fields layouts mechanisms=all
+# LINK-NOT: field L0.0 "tag" proven
+# LINK: field L1.0 "tag" proven=string writers-known
+# LINK: field L2.1 #"#kept"@L2 {{*}}shown-to-comparisons
+# LINK-NOT: #"#kept"@L3 {{*}}shown-to-comparisons
+# LINK: layout L0 changes=[IsFrozen, GainsProperty
+# LINK: layout L1 changes=[] stays-with-compiled-code
+# RUN(COUNT): compile PrivateFieldsShownToComparisons mechanisms=all
+# COUNT: statistic PrivateFieldsShownToComparisons 1

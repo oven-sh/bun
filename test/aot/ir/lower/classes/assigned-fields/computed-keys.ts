@@ -6,11 +6,13 @@
 // CHECK: PropSet {{*}}key="a"
 // CHECK-NOT: Define
 // CHECK: function {{*}}name="FirstConstant" {{*}}kind=BaseConstructor
-// CHECK-NOT: Define
-// CHECK: ElemSet
-// CHECK-NOT: Define
-// CHECK: PropSet {{*}}key="b"
-// CHECK-NOT: Define
+// CHECK-NOT: Set
+// CHECK: CallDirect
+// CHECK-NOT: Set
+// CHECK: function {{*}}kind=Initializer
+// CHECK: ElemDefine
+// CHECK: PropDefine {{*}}key="b"
+// CHECK: PropDefine {{*}}key="unset"
 // CHECK: function {{*}}kind=Initializer
 // CHECK: ElemDefine
 // CHECK: PropDefine {{*}}key="c"

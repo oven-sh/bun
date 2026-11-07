@@ -1,5 +1,4 @@
 // RUN: lower
-// STATISTIC: MaxCapturesHits = 1
 // CHECK-LABEL: function {{*}}name="f"
 // CHECK: [[environment]] = NewObject {{*}}layout=[[layout]]
 // CHECK: [[c0]] = Call

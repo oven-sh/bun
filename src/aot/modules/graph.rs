@@ -13,6 +13,7 @@ use super::deferred_exports::mirrors_an_object;
 use super::failures::{ModuleFailure, ModuleFailureId};
 use super::imports::NamedMember;
 use super::interop::{Interop, ModuleKind};
+use super::known_members::list_data_linked_by_names_alone;
 use super::order::SiteKey;
 use super::plan::{Member, Plan, StoredSite};
 use super::unread_exports::remove_unread_data_exports;
@@ -21,7 +22,7 @@ use crate::builtins::RuntimeModule;
 use crate::ir::generated::ModuleRequestKind;
 use crate::ir::parallel::{InParallel, for_each_mut};
 use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::bind::SymbolId;
+use bun_sema::bind::{MemberStores, SymbolId};
 use bun_sema::components::strongly_connected_components;
 use bun_sema::hir::{ExprId, FnId};
 use bun_sema::import_sites::{ImportSiteKind, JsxImport};
@@ -29,6 +30,7 @@ use bun_sema::program::FileId;
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashSet, SharedSort};
 use core::ops::Range;
+use std::sync::OnceLock;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) enum StoredSiteAnswer {
@@ -41,28 +43,34 @@ pub(super) enum StoredSiteAnswer {
 
 pub struct ModuleGraph {
     pub(super) row_by_file: Vec<Option<u32>>,
-    /// Ascending by file.
     pub(super) rows: Vec<FileRow>,
     pub(super) record_files: Vec<FileId>,
     pub(super) left_out_files: Vec<FileId>,
-    pub(super) files_brought_by_calls: Vec<FileId>,
-    /// Those of `left_out_files` that keep a record without code.
     pub(super) placeholder_files: Vec<FileId>,
     pub(super) left_out_inner_modules: Vec<(FileId, FnId)>,
     pub(super) other_modules: Vec<ModuleRef>,
     pub(super) external_kinds: Vec<((FileId, Atom), ExternalKind)>,
-    /// `ModuleSet::left_to_loader`, sorted the same way.
-    pub(super) statements_left_to_loader: Vec<((FileId, Atom), FileId)>,
-    /// `join_externals_that_spell_paths`. Ascending by the number of the atom.
-    pub(super) importers_that_stand_for_all: Vec<(Atom, FileId)>,
+    pub(super) runs_code_out_of_sight: bool,
     pub(super) synthetic_exports: Vec<SyntheticExport>,
     pub(super) errors: Vec<ModuleFailure>,
     pub(super) failures: Vec<ModuleFailure>,
-    /// Ascending by file.
     pub(super) load_failures: Vec<(FileId, ModuleFailureId)>,
+    pub(super) files_that_sites_name: Vec<bool>,
+    pub(super) mocked_library_modules: Vec<RuntimeModule>,
     pub(super) wrapped: WrappedModules,
     pub(super) commonjs_exports: CommonJsExports,
     pub(super) plan: Plan,
+    pub(super) member_stores: Vec<OnceLock<MemberStores>>,
+    pub(super) data_linked_by_names_alone: Box<[FileId]>,
+    pub(super) forms_require_checks_first: Vec<(FileId, FileId)>,
+    pub(super) star_names_left_out: StarNamesLeftOut,
+    pub(super) names_laid_on_object_prototype: Vec<Box<[u8]>>,
+}
+
+#[derive(Default)]
+pub(super) struct StarNamesLeftOut {
+    pub names: FxHashSet<Atom>,
+    pub files: Vec<FileId>,
 }
 
 const fn assert_send_and_sync<T: Send + Sync + 'static>() {}
@@ -81,9 +89,7 @@ pub(super) struct FileRow {
     pub sites: Vec<(ImportSiteKind, StoredSiteAnswer)>,
     pub spellings: Vec<SpelledModule>,
     pub imports: Vec<(SymbolId, ImportBinding)>,
-    /// The accesses that are bound to a name of a module: reads, stores and callees.
     pub members: Vec<(ExprId, ImportBinding)>,
-    /// For each of `members`, the module that the access is written on.
     pub accessed: Vec<(ExprId, AccessedModule)>,
     pub fixed_members: Vec<(ExprId, (ModuleRef, Member))>,
     pub named_members: Vec<((ModuleRef, Atom), NamedMember<ImportBinding>)>,
@@ -93,16 +99,17 @@ pub(super) struct FileRow {
     pub unread_sites: Vec<(ExprId, bool)>,
     pub holders: Vec<Holder>,
     pub answer_members: Vec<(ExprId, AnswerMember)>,
+    pub names_read_on_answers: Vec<(SymbolId, Atom)>,
     pub exports: Vec<ModuleExport>,
-    /// `find_ambiguous_names`
     pub ambiguous_names: Vec<Atom>,
     pub unread_exports: Vec<SymbolId>,
-    /// A module of data: whatever names it in the files of the program is an import or export statement that links names to its variables.
-    pub is_data_linked_by_names_alone: bool,
-    /// A statement of a test file names the file to the loader of the run time, which may ask it for any name.
     pub is_left_to_loader: bool,
     pub required_names: Vec<RequiredName>,
     pub names_searched_behind_stars: Vec<(FileId, Atom)>,
+    pub handed_on: Vec<(Atom, (ModuleRef, Atom))>,
+    pub named_by_stars: Vec<FileId>,
+    pub names_from_stars: Vec<Atom>,
+    pub reaches_mock: bool,
 }
 
 pub(super) fn find<K: Copy + Ord, V: Copy>(entries: &[(K, V)], key: K) -> Option<V> {
@@ -129,7 +136,7 @@ fn is_among(files: &[FileId], module: ModuleRef) -> bool {
         ModuleRef::File(file)
         | ModuleRef::Inner { file, .. }
         | ModuleRef::Face(file)
-        | ModuleRef::Check(file) => files.binary_search(&file).is_ok(),
+        | ModuleRef::Check(file) => !files.is_empty() && files.binary_search(&file).is_ok(),
         ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
     }
 }
@@ -142,7 +149,6 @@ fn spelled_in<'a>(row: &'a FileRow, range: &Range<u32>) -> &'a [SpelledModule] {
     &row.spellings[range.start as usize..range.end as usize]
 }
 
-// The modules whose namespace object something in the file may look at.
 fn add_seen_namespaces(file: &FileRow, seen: &mut Vec<ModuleRef>) {
     seen.extend_from_slice(&file.namespace_values);
     for (site, answer) in &file.sites {
@@ -170,7 +176,6 @@ impl ModuleGraph {
         match module {
             ModuleRef::File(file) => self.row(file).interop,
             ModuleRef::Inner { .. } => Interop::INNER_MODULE,
-            // A face that has the loader capture what the file exports goes by the rule of the file.
             ModuleRef::Face(file) if self.commonjs_exports.face_captures(file) => Interop {
                 export_rule: self.row(file).interop.export_rule,
                 ..Interop::ES_MODULE
@@ -185,27 +190,12 @@ impl ModuleGraph {
         }
     }
 
-    /// A program above other images names a file of theirs by its whole path, which means the same from every file. One module stands for it then,
-    /// that of the first file that imports it: the run time makes what it keeps for a module once for the file, not once for each importer.
-    pub fn join_externals_that_spell_paths(&mut self, atoms: &Interner<'_>) {
-        let is_kept = |file: FileId| self.left_out_files.binary_search(&file).is_err();
-        let mut importers: Vec<(Atom, FileId)> = (self.external_kinds.iter())
-            .filter(|(_, kind)| *kind == ExternalKind::UncompiledCode)
-            .map(|&((importer, specifier), _)| (specifier, importer))
-            .filter(|&(specifier, importer)| {
-                atoms.bytes(specifier).starts_with(b"/") && is_kept(importer)
-            })
-            .collect();
-        importers.shared_sort_unstable_by_key(|&(specifier, importer)| (specifier.0, importer));
-        importers.dedup_by_key(|entry| entry.0);
-        self.importers_that_stand_for_all = importers;
+    pub fn importer_of_external(&self, importer: FileId, _specifier: Atom) -> FileId {
+        importer
     }
 
-    /// The importer under which the program knows the external module.
-    pub fn importer_of_external(&self, importer: FileId, specifier: Atom) -> FileId {
-        let all = &self.importers_that_stand_for_all;
-        let found = all.binary_search_by_key(&specifier.0, |entry| entry.0.0);
-        found.map_or(importer, |index| all[index].1)
+    pub fn runs_code_out_of_sight(&self) -> bool {
+        self.runs_code_out_of_sight
     }
 
     pub fn importers_of_uncompiled_code(&self) -> Vec<FileId> {
@@ -216,14 +206,6 @@ impl ModuleGraph {
         importers.shared_sort_unstable();
         importers.dedup();
         importers
-    }
-
-    /// Whether the loader of the run time links a statement of the test file that spells the specifier so.
-    pub fn leaves_statement_to_loader(&self, importer: FileId, specifier: Atom) -> bool {
-        let left = &self.statements_left_to_loader;
-        let key = external_key((importer, specifier));
-        left.binary_search_by_key(&key, |entry| external_key(entry.0))
-            .is_ok()
     }
 
     pub fn external_kind(&self, module: ModuleRef) -> Option<ExternalKind> {
@@ -240,17 +222,16 @@ impl ModuleGraph {
         index.ok().map(|index| kinds[index].1)
     }
 
-    /// What the text of the file asks for: what it imports, and then what its sites evaluate.
     pub fn requests(&self, file: FileId) -> &[ModuleRequest] {
         &self.row(file).requests
     }
 
-    pub fn wrapped(&self) -> &WrappedModules {
-        &self.wrapped
-    }
-
     pub fn commonjs(&self) -> &CommonJsExports {
         &self.commonjs_exports
+    }
+
+    pub fn wrapped(&self) -> &WrappedModules {
+        &self.wrapped
     }
 
     pub fn site_answer(&self, file: FileId, site: ImportSiteKind) -> SiteAnswer<'_> {
@@ -275,7 +256,6 @@ impl ModuleGraph {
 
     pub fn import_binding(&self, file: FileId, symbol: SymbolId) -> ImportBinding {
         let imports = &self.row(file).imports;
-        // Most names that are asked about are declared behind the imports of their file, which mostly stand one behind the other.
         let (Some(first), Some(last)) = (imports.first(), imports.last()) else {
             return ImportBinding::Local;
         };
@@ -300,15 +280,22 @@ impl ModuleGraph {
         is_namespace.then_some(members[index].1)
     }
 
+    pub fn find_module_accessed(&self, file: FileId, member: ExprId) -> Option<ModuleRef> {
+        let accessed = &self.row(file).accessed;
+        let index = accessed
+            .binary_search_by_key(&member, |&(member, _)| member)
+            .ok()?;
+        Some(accessed[index].1.module)
+    }
+
     pub(super) fn find_stored_site(&self, file: FileId, key: SiteKey) -> Option<StoredSite> {
         find(&self.find_row(file)?.evaluating_sites, key)
     }
 
-    /// By symbol. One that is needed as a value is an ordinary binding that holds the object. Final behind `finish_plan`.
     pub fn holders(&self, file: FileId) -> &[Holder] {
         debug_assert!(
-            self.plan.is_finished,
-            "a shape has changed since the plan was finished"
+            self.plan.are_holders_settled,
+            "a shape has changed since the holders were settled"
         );
         &self.row(file).holders
     }
@@ -319,7 +306,6 @@ impl ModuleGraph {
         binding.expect("a JSX import that is not in use").1
     }
 
-    /// The program never evaluates these files, which are in order.
     pub fn leave_out_files(&mut self, files: &[FileId], in_parallel: InParallel<'_>) {
         for row in &mut self.rows {
             row.has_no_side_effects = false;
@@ -327,7 +313,7 @@ impl ModuleGraph {
         if files.is_empty() {
             return self.finish_plan(in_parallel);
         }
-        self.plan.is_finished = false;
+        self.plan.reopen();
         self.placeholder_files = self.find_placeholder_files(files);
         self.pass_requests_through(files);
         self.left_out_files = files.to_vec();
@@ -356,7 +342,6 @@ impl ModuleGraph {
         self.record_files.retain(|file| {
             files.binary_search(file).is_err() || placeholder_files.binary_search(file).is_ok()
         });
-        // Each importer has a module of its own for what the build does not compile.
         self.other_modules.retain(|module| match *module {
             ModuleRef::External { importer, .. } => files.binary_search(&importer).is_err(),
             _ => true,
@@ -364,15 +349,19 @@ impl ModuleGraph {
         self.finish_plan(in_parallel);
     }
 
-    /// A request all of whose sites stand in code that is left out goes. `finish_plan` has to follow.
     pub fn limit_requests(&mut self, keeps: impl Fn(ModuleRef, &ModuleRequest) -> bool) {
-        self.plan.is_finished = false;
+        self.plan.reopen();
         for row in &mut self.rows {
             let module = ModuleRef::File(row.file);
             row.requests.retain(|request| keeps(module, request));
+            let requests = &row.requests;
+            row.required_names.retain(|name| {
+                !matches!(name.module, ModuleRef::External { .. })
+                    || requests.iter().any(|it| it.target == name.module)
+            });
         }
         let plan = &mut self.plan;
-        #[allow(clippy::needless_collect)] // ends the borrow of `plan`
+        #[allow(clippy::needless_collect)]
         let inner_modules: Vec<ModuleRef> = plan
             .inner_modules()
             .iter()
@@ -383,7 +372,6 @@ impl ModuleGraph {
         }
     }
 
-    /// Wrappers that no code calls that is left. They have no record. `finish_plan` has to follow.
     pub fn leave_out_inner_modules(&mut self, modules: &[ModuleRef]) {
         let mut left_out: Vec<(FileId, FnId)> = modules
             .iter()
@@ -402,8 +390,6 @@ impl ModuleGraph {
         self.left_out_inner_modules = left_out;
     }
 
-    // The files that are left out and lie on a cycle of imports with a file that runs. A file of the cycle that asks for one while
-    // it is being evaluated asks for nothing, so what it imports cannot stand in the lists of its importers.
     fn find_placeholder_files(&self, left_out_files: &[FileId]) -> Vec<FileId> {
         let row_of = |file: FileId| self.row_by_file.get(file.idx()).copied().flatten();
         let mut imported: Vec<Vec<u32>> = vec![Vec::new(); self.rows.len()];
@@ -436,19 +422,14 @@ impl ModuleGraph {
         files.filter(is_on_cycle_with_file_that_runs).collect()
     }
 
-    pub fn set_files_brought_by_calls(&mut self, files: Vec<FileId>) {
-        self.files_brought_by_calls = files;
-    }
-
     pub fn is_placeholder(&self, file: FileId) -> bool {
-        self.placeholder_files.binary_search(&file).is_ok()
+        !self.placeholder_files.is_empty() && self.placeholder_files.binary_search(&file).is_ok()
     }
 
     fn pass_requests_through(&mut self, left_out_files: &[FileId]) {
         let is_left_out = |file: FileId| left_out_files.binary_search(&file).is_ok();
         let mut lists = Vec::with_capacity(self.rows.len() + self.plan.inner_requests.len());
         let mut seen = FxHashSet::default();
-        // With each request: whether the file has written it itself.
         let mut pending: Vec<(ModuleRequest, bool)> = Vec::new();
         let is_import = |request: &&ModuleRequest| request.kind == ModuleRequestKind::Import;
         let of_files = self.rows.iter().map(|row| &row.requests);
@@ -461,10 +442,8 @@ impl ModuleGraph {
                     earlier.target == request.target && earlier.kind == request.kind
                 };
                 match request.target {
-                    // No site of it is left.
                     ModuleRef::File(target) | ModuleRef::Inner { file: target, .. }
                         if is_left_out(target) && request.kind == ModuleRequestKind::Require => {}
-                    // The body that its sites are written in does not run.
                     ModuleRef::File(target)
                         if is_left_out(target) && !self.is_placeholder(target) =>
                     {
@@ -473,19 +452,12 @@ impl ModuleGraph {
                             pending.extend(imports.map(|&request| (request, false)));
                         }
                     }
-                    // Only a call wants it, and it says that nothing is lost until then.
-                    ModuleRef::File(target)
-                        if !is_written_here
-                            && !request.is_dynamic_star_export
-                            && self.files_brought_by_calls.binary_search(&target).is_ok() => {}
-                    // It goes with its importer, as a file does that only a file asks for that is left out.
                     ModuleRef::External { importer, .. } if is_left_out(importer) => {}
-                    // What the file asks for itself stays as it is written, also twice.
                     _ if seen.is_empty() => passed_on.push(request),
-                    // A file that is left out may have asked for the same in front of it: that request takes what this one says of the names.
                     _ if is_written_here => {
                         match passed_on.iter_mut().find(|earlier| is_same(earlier)) {
                             Some(earlier) => {
+                                earlier.is_star_export |= request.is_star_export;
                                 earlier.is_dynamic_star_export |= request.is_dynamic_star_export
                             }
                             None => passed_on.push(request),
@@ -494,6 +466,7 @@ impl ModuleGraph {
                     _ => {
                         if !passed_on.iter().any(is_same) {
                             passed_on.push(ModuleRequest {
+                                is_star_export: false,
                                 is_dynamic_star_export: false,
                                 ..request
                             });
@@ -552,10 +525,6 @@ impl ModuleGraph {
         &self.row(file).unread_exports
     }
 
-    pub fn is_data_linked_by_names_alone(&self, file: FileId) -> bool {
-        self.row(file).is_data_linked_by_names_alone
-    }
-
     pub fn find_export(&self, module: ModuleRef, name: Atom, atoms: &Interner<'_>) -> ExportLookup {
         let row = match module {
             ModuleRef::File(file) => self.row(file),
@@ -568,6 +537,9 @@ impl ModuleGraph {
         let name_bytes = atoms.bytes(name);
         let position = exports
             .binary_search_by(|export| compare_code_units(atoms.bytes(export.name), name_bytes));
+        if position.is_err() {
+            self.assert_lists_export_if_it_has_it(row.file, name);
+        }
         match position.map(|position| exports[position]) {
             Ok(export) if export.can_be_ambiguous => ExportLookup::Unknown,
             Ok(export) => ExportLookup::Found(export.binding),
@@ -577,20 +549,103 @@ impl ModuleGraph {
         }
     }
 
+    pub fn lists_export(&self, module: ModuleRef, name: Atom, atoms: &Interner<'_>) -> bool {
+        let ModuleRef::File(file) = module else {
+            return false;
+        };
+        let row = self.row(file);
+        let name_bytes = atoms.bytes(name);
+        let compare =
+            |export: &ModuleExport| compare_code_units(atoms.bytes(export.name), name_bytes);
+        let is_listed =
+            row.interop.has_export_table() && row.exports.binary_search_by(compare).is_ok();
+        if !is_listed {
+            self.assert_lists_export_if_it_has_it(file, name);
+        }
+        is_listed
+    }
+
+    pub fn leaves_out_star_names(&self, file: FileId) -> bool {
+        self.star_names_left_out.files.binary_search(&file).is_ok()
+    }
+
+    fn assert_lists_export_if_it_has_it(&self, file: FileId, name: Atom) {
+        assert!(
+            !self.star_names_left_out.names.contains(&name) || !self.leaves_out_star_names(file),
+            "{file:?} is asked for {name:?}, which `export *` may bring it, and nobody was seen to ask for that name"
+        );
+    }
+
+    pub(crate) fn test_run(&self) -> &crate::test_runs::TestRunPlan {
+        &self.plan.test_run
+    }
+
     pub fn required_names(&self, file: FileId) -> &[RequiredName] {
         &self.row(file).required_names
     }
 
-    /// Where a required name of the file comes through `export *` and a mock may take it away: the files behind the module that a link looks into, with the name.
     pub fn names_searched_behind_stars(&self, file: FileId) -> &[(FileId, Atom)] {
         &self.row(file).names_searched_behind_stars
+    }
+
+    pub fn holds_mock_in_variable(&self, file: FileId) -> bool {
+        let is_file_of_program = matches!(
+            self.kind(file),
+            ModuleKind::SourceText | ModuleKind::CommonJs | ModuleKind::Data
+        );
+        is_file_of_program && !self.is_library(file) && self.is_named_by_mock(ModuleRef::File(file))
+    }
+
+    pub fn reaches_mock(&self, file: FileId) -> bool {
+        self.row(file).reaches_mock || self.is_named_by_mock(ModuleRef::File(file))
+    }
+
+    pub fn files_named_by_stars(&self, file: FileId) -> &[FileId] {
+        &self.row(file).named_by_stars
+    }
+
+    pub fn is_brought_by_star(&self, file: FileId, name: Atom) -> bool {
+        let names = &self.row(file).names_from_stars;
+        names.binary_search_by_key(&name.0, |it| it.0).is_ok()
+    }
+
+    pub fn find_what_hands_on_names(&self, file: FileId, name: Atom) -> Option<(ModuleRef, Atom)> {
+        let handed_on = &self.row(file).handed_on;
+        let at = handed_on.binary_search_by_key(&name.0, |entry| entry.0.0);
+        Some(handed_on[at.ok()?].1)
+    }
+
+    pub fn mocked_library_modules(&self) -> &[RuntimeModule] {
+        &self.mocked_library_modules
+    }
+
+    pub fn is_laid_on_object_prototype(&self, name: &[u8]) -> bool {
+        let laid = &self.names_laid_on_object_prototype;
+        laid.binary_search_by(|laid| (**laid).cmp(name)).is_ok()
+    }
+
+    pub fn forms_require_checks_first(&self, module: ModuleRef) -> &[(FileId, FileId)] {
+        let ModuleRef::File(file) = module else {
+            return &[];
+        };
+        let forms = &self.forms_require_checks_first;
+        let start = forms.partition_point(|entry| entry.0 < file);
+        let count = forms[start..].partition_point(|entry| entry.0 == file);
+        &forms[start..start + count]
+    }
+
+    pub fn is_every_export_asked_for(&self, module: ModuleRef) -> bool {
+        let is_left_to_loader =
+            |file: FileId| self.find_row(file).is_some_and(|row| row.is_left_to_loader);
+        self.may_be_evicted(module)
+            || self.is_named_by_copies(module)
+            || matches!(module, ModuleRef::File(file) if is_left_to_loader(file))
     }
 
     pub fn synthetic_export(&self, id: SyntheticExportId) -> &SyntheticExport {
         &self.synthetic_exports[id.0 as usize]
     }
 
-    /// `export { a } from "node:process"` reads nothing. `process.a` is read when an importer binds the name, or when the namespace object is asked for it.
     pub fn lazy_export(&self, binding: ExportBinding) -> Option<(ModuleRef, Atom)> {
         let ExportBinding::Synthetic(id) = binding else {
             return None;
@@ -622,13 +677,54 @@ impl ModuleGraph {
         &self.failures
     }
 
-    /// What the load of the module ends with: an import of it, or of a module that it imports, names nothing.
     pub fn load_failure(&self, file: FileId) -> Option<ModuleFailureId> {
         find(&self.load_failures, file)
     }
 
     pub fn unloadable_files(&self) -> impl Iterator<Item = FileId> + '_ {
         self.load_failures.iter().map(|&(file, _)| file)
+    }
+
+    pub fn is_found_by_computed_names_alone(&self, file: FileId) -> bool {
+        let Some(row) = self.find_row(file) else {
+            return false;
+        };
+        let is_file_of_program =
+            row.interop.kind == ModuleKind::Data || self.is_code_of_program(ModuleRef::File(file));
+        let is_named = self.files_that_sites_name.get(file.idx());
+        is_file_of_program && is_named.is_some_and(|&is_named| !is_named)
+    }
+
+    pub fn find_files_named_by_load_sites(&self) -> Vec<FileId> {
+        let mut named = Vec::new();
+        for row in &self.rows {
+            for (site, answer) in &row.sites {
+                match (site, answer) {
+                    (
+                        ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaResolve(_),
+                        _,
+                    ) => {}
+                    (_, StoredSiteAnswer::Module(module)) => named.push(*module),
+                    (_, StoredSiteAnswer::Candidates(range)) => {
+                        named.extend(spelled_in(row, range).iter().map(|spelled| spelled.module));
+                    }
+                    (
+                        _,
+                        StoredSiteAnswer::AllModules
+                        | StoredSiteAnswer::Failed(_)
+                        | StoredSiteAnswer::Erased,
+                    ) => {}
+                }
+            }
+        }
+        let files = named.into_iter().filter_map(|module| match module {
+            ModuleRef::File(file) => Some(file),
+            _ => None,
+        });
+        let mut files: Vec<FileId> = files.collect();
+        files.sort_unstable();
+        files.dedup();
+        files
     }
 
     pub fn record_files(&self) -> &[FileId] {
@@ -639,8 +735,9 @@ impl ModuleGraph {
         &self.other_modules
     }
 
+    #[inline]
     pub fn has_record(&self, file: FileId) -> bool {
-        self.find_row(file).is_some()
+        matches!(self.row_by_file.get(file.idx()), Some(Some(_)))
     }
 
     pub fn is_library(&self, file: FileId) -> bool {
@@ -655,7 +752,6 @@ impl ModuleGraph {
         self.row(file).has_top_level_await
     }
 
-    /// By `sideEffects` of its package.
     pub fn has_no_side_effects(&self, file: FileId) -> bool {
         self.row(file).has_no_side_effects
     }
@@ -665,8 +761,10 @@ impl ModuleGraph {
         self.row(file).has_dynamic_names
     }
 
-    pub(super) fn finish(mut self, in_parallel: InParallel<'_>) -> ModuleGraph {
+    pub(super) fn finish(mut self) -> ModuleGraph {
         remove_unread_data_exports(&mut self.rows);
+        self.data_linked_by_names_alone =
+            list_data_linked_by_names_alone(&self.rows, &self.forms_require_checks_first);
         let (mut named_members, mut seen_namespaces) = (Vec::new(), Vec::new());
         for (index, row) in self.rows.iter_mut().enumerate() {
             named_members.append(&mut row.named_members);
@@ -698,39 +796,29 @@ impl ModuleGraph {
         let external_kinds = &mut self.external_kinds;
         external_kinds.shared_sort_unstable_by_key(|entry| external_key(entry.0));
         debug_assert!(external_kinds.is_sorted_by(|a, b| external_key(a.0) < external_key(b.0)));
-        self.finish_plan(in_parallel);
+        self.mocked_library_modules.sort_unstable();
+        self.mocked_library_modules.dedup();
+        self.settle_holders();
         self
     }
 
-    /// The files that a site which loads a module names. A load of an unknown path names none, and `require.resolve` and
-    /// `import.meta.resolve` load nothing.
-    pub fn find_files_named_by_load_sites(&self) -> Vec<FileId> {
-        let mut found = Vec::new();
-        for row in &self.rows {
-            for (site, answer) in &row.sites {
-                if matches!(
-                    site,
-                    ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaResolve(_)
-                ) {
-                    continue;
-                }
-                match answer {
-                    StoredSiteAnswer::Module(ModuleRef::File(file)) => found.push(*file),
-                    StoredSiteAnswer::Candidates(range) => {
-                        found.extend(spelled_in(row, range).iter().filter_map(|spelled| {
-                            match spelled.module {
-                                ModuleRef::File(file) => Some(file),
-                                _ => None,
-                            }
-                        }));
-                    }
-                    _ => {}
-                }
-            }
-        }
-        found.sort_unstable();
-        found.dedup();
-        found
+    pub fn names_left_to_loader(
+        &self,
+        file: FileId,
+    ) -> impl Iterator<Item = (SpelledModule, bool)> + '_ {
+        let sites = self.find_row(file).into_iter().flat_map(|row| {
+            row.sites
+                .iter()
+                .filter_map(move |(kind, answer)| match answer {
+                    StoredSiteAnswer::Candidates(range) => Some((*kind, spelled_in(row, range))),
+                    _ => None,
+                })
+        });
+        sites.flat_map(|(kind, spelled)| {
+            let is_required = !matches!(kind, ImportSiteKind::ImportCall(_));
+            let left = spelled.iter().filter(|it| it.is_left_to_loader);
+            left.map(move |&it| (it, is_required))
+        })
     }
 
     fn find_row(&self, file: FileId) -> Option<&FileRow> {

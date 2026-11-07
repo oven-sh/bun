@@ -6,8 +6,7 @@ use bun_options_types::trim::TrimRequest;
 use bun_standalone_graph::StandaloneModuleGraph::{Flags, target_executable};
 use bun_standalone_graph::with_executable_image;
 use bun_trim::{
-    Decision, Feature, FeatureEdges, OptionRequirement, RuntimeRequirement, TrimError, TrimInput,
-    TrimPlan, UsedFeatures,
+    Decision, FeatureEdges, OptionRequirement, TrimError, TrimInput, TrimPlan, UsedFeatures,
 };
 
 use super::{CompileFailure, CompileProduct, CompileRequest};
@@ -17,52 +16,19 @@ pub(crate) fn collect_exec_argv_requirements(exec_argv: &[u8]) -> Vec<OptionRequ
     read_exec_argv(exec_argv).requirements
 }
 
-// The engine reads the name of a check without regard to hyphens and case.
-fn names_validate(check: &[u8]) -> bool {
-    check
-        .iter()
-        .filter(|&&byte| byte != b'-')
-        .map(u8::to_ascii_lowercase)
-        .eq(*b"validate")
-}
-
-fn validates_at_run_time(options: &AotOptions) -> bool {
-    options
-        .option_words
-        .iter()
-        .any(|word| match word.strip_prefix(b"check=") {
-            Some(checks) => bun_core::strings::split(checks, b",").any(names_validate),
-            None => &**word == b"validate",
-        })
-}
-
 // An embedded `--inspect` admits the inspector too, and is listed already.
 pub(super) fn add_build_option_requirements(
     options: &AotOptions,
     requirements: &mut Vec<OptionRequirement>,
 ) {
-    let build_options = [
-        (
-            options.admits_inspector,
-            INSPECTOR_REQUIREMENT,
-            "--compile-inspector",
-        ),
-        (
-            validates_at_run_time(options),
-            RuntimeRequirement::Feature(Feature::ImageCompiler),
-            "--aot-validate",
-        ),
-    ];
-    for (is_set, requirement, label) in build_options {
-        let is_listed = requirements
-            .iter()
-            .any(|option| option.requirement == requirement);
-        if is_set && !is_listed {
-            requirements.push(OptionRequirement {
-                requirement,
-                label: Box::from(label.as_bytes()),
-            });
-        }
+    let is_listed = requirements
+        .iter()
+        .any(|option| option.requirement == INSPECTOR_REQUIREMENT);
+    if options.admits_inspector && !is_listed {
+        requirements.push(OptionRequirement {
+            requirement: INSPECTOR_REQUIREMENT,
+            label: Box::from(&b"--compile-inspector"[..]),
+        });
     }
 }
 
@@ -153,12 +119,10 @@ fn find_settings_and_template(
         executable.embeds_source_maps,
     );
     add_build_option_requirements(request.options, &mut settings.exec_argv);
-    let template = target_executable(
-        executable.target,
-        executable.env,
-        executable.executable_path,
-    )
-    .map_err(CompileFailure::Executable)?;
+    // SAFETY: the loader outlives the request, and nothing below this call reaches the transpiler.
+    let env = unsafe { &mut *executable.env };
+    let template = target_executable(executable.target, env, executable.executable_path)
+        .map_err(CompileFailure::Executable)?;
     Ok((settings, template))
 }
 

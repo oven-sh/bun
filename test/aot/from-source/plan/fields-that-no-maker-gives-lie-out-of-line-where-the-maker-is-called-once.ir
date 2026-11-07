@@ -1,0 +1,16 @@
+# -- source: records.ts
+# interface Parcel { text: string; id: number; isMarked?: boolean; note?: string; never?: string }
+# function make(text: string, id: number): Parcel { return { text, id }; }
+# function mark(parcel: Parcel) { parcel.isMarked = true; parcel.note = "noted"; (parcel as any).later = 1; }
+# function show(m: Parcel) { return Object.keys(m).join() + (m.never === undefined ? " none " : " some ") + (m.isMarked ? "meta" : "plain"); }
+# { const made = make("first", 1); console.log(show(made)); mark(made); console.log(show(made)); }
+# export {};
+# -- end of source
+# Where the fields of a record lie does not hang on how many calls of its maker the program holds: every reader and writer of the layout would be other code by one call more.
+# Only what the body of a module makes is taken to be made once. The twin, ..-is-called-twice.ir, is this program and its last block once more: the check lines are the same.
+# RUN: plan layouts mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: layout L0 CompiledObject
+# CHECK: "isMarked" JSValue OutOfLine
+# CHECK: "never" JSValue OutOfLine
+# CHECK: "note" JSValue OutOfLine

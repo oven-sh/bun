@@ -34,6 +34,7 @@ test("a file that only require.resolve names is neither bundled nor embedded, wh
   });
   const { executable, stderr } = await build(String(dir));
   expect(stderr).not.toContain("no-such");
+  expect(stderr).not.toContain("TS100088");
   // require.resolve() says where the file lay when the program was built, as with `bun build --compile`. It is found there as long as it is there, and nowhere else.
   for (const isOnDisk of [true, false]) {
     if (!isOnDisk) rmSync(join(String(dir), "pages"), { recursive: true });

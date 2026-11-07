@@ -461,13 +461,11 @@ pub(crate) mod js_bundler {
     #[derive(Default)]
     struct RawCompileFlags {
         aot: bool,
-        logs_type_mismatches: bool,
         explain: Vec<Vec<u8>>,
-        validates: bool,
         check: Vec<Vec<u8>>,
-        disable: Vec<Vec<u8>>,
-        heat: Option<Vec<u8>>,
+        harden: Vec<Vec<u8>>,
         testing: Vec<Vec<u8>>,
+        out: Vec<Vec<u8>>,
         omits_function_source: bool,
         obfuscates: bool,
         admits_inspector: bool,
@@ -484,9 +482,6 @@ pub(crate) mod js_bundler {
             let mut raw = RawCompileFlags {
                 aot: compile
                     .get_boolean_loose(global_this, "aot")?
-                    .unwrap_or(false),
-                logs_type_mismatches: compile
-                    .get_boolean_loose(global_this, "aotLogTypeMismatches")?
                     .unwrap_or(false),
                 omits_function_source: compile.get_boolean_loose(global_this, "functionSource")?
                     == Some(false),
@@ -527,25 +522,10 @@ pub(crate) mod js_bundler {
             global_this: &JSGlobalObject,
             compile: JSValue,
         ) -> JsResult<()> {
-            self.validates = compile
-                .get_boolean_loose(global_this, "aotValidate")?
-                .unwrap_or(false);
             self.check = read_names(global_this, compile, "aotCheck")?;
-            self.disable = read_names(global_this, compile, "aotDisable")?;
+            self.harden = read_names(global_this, compile, "aotHarden")?;
             self.testing = read_names(global_this, compile, "aotTesting")?;
-
-            if let Some(heat) = compile.get(global_this, "aotHeat")?
-                && !heat.is_undefined_or_null()
-            {
-                if !heat.is_string() {
-                    return Err(global_this.throw_invalid_property_type_value(
-                        b"compile.aotHeat",
-                        b"string",
-                        heat,
-                    ));
-                }
-                self.heat = Some(heat.to_utf8(global_this)?.slice().to_vec());
-            }
+            self.out = read_names(global_this, compile, "aotOut")?;
             Ok(())
         }
 
@@ -582,12 +562,12 @@ pub(crate) mod js_bundler {
             &'a self,
             compile: &'a CompileOptions,
             source_map: options::SourceMapOption,
+            checks_types: bool,
         ) -> CompileFlags<'a> {
             CompileFlags {
                 is_executable: true,
                 aot: self.aot,
                 no_aot: false,
-                logs_type_mismatches: self.logs_type_mismatches,
                 explain: self.explain.iter().map(Vec::as_slice).collect(),
                 has_huge_heap: false,
                 is_in_place: false,
@@ -596,6 +576,7 @@ pub(crate) mod js_bundler {
                 has_external_source_map: source_map == options::SourceMapOption::External,
                 admits_inspector: self.admits_inspector,
                 allows_code_from_disk: self.allows_code_from_disk,
+                checks_types,
                 trim: TrimFlags {
                     removes_unused: self.removes_unused,
                     allow: self.allow.iter().map(Vec::as_slice).collect(),
@@ -609,11 +590,10 @@ pub(crate) mod js_bundler {
                     is_template: false,
                 },
                 // In the order of the command line's flags.
-                developer_words: (self.validates.then_some(("validate", None)).into_iter())
-                    .chain(with_key("check", &self.check))
-                    .chain(with_key("disable", &self.disable))
-                    .chain(self.heat.iter().map(|word| ("heat", Some(word.as_slice()))))
+                developer_words: with_key("check", &self.check)
+                    .chain(with_key("harden", &self.harden))
                     .chain(with_key("testing", &self.testing))
+                    .chain(with_key("out", &self.out))
                     .collect(),
                 is_cross_compile: !compile.compile_target.is_this_bun(),
                 exec_argv: &compile.exec_argv.list,
@@ -1687,16 +1667,11 @@ pub(crate) mod js_bundler {
                 this.compile.as_ref().map(|c| c.compile_target),
             )? {
                 let compile = this.compile.insert(compile);
-                let settings =
-                    compile_options::resolve(&raw.compile_flags(compile, this.source_map))
-                        .map_err(|error| throw_option_error(global_this, error))?;
+                let flags = raw.compile_flags(compile, this.source_map, this.check);
+                let settings = compile_options::resolve(&flags)
+                    .map_err(|error| throw_option_error(global_this, error))?;
                 compile.aot = settings.aot;
                 compile.trim = settings.trim;
-                if compile.aot.is_some() {
-                    this.bytecode = false;
-                    this.format = options::Format::Esm;
-                    compile.compile_target = CompileTarget::default();
-                }
             }
 
             if let Some(compile) = this.compile.as_mut() {
@@ -1716,6 +1691,11 @@ pub(crate) mod js_bundler {
                 let is_standalone_html = this.target == Target::Browser && has_all_html_entrypoints;
                 if !is_standalone_html {
                     this.target = Target::Bun;
+                    if compile.aot.is_some() {
+                        this.bytecode = false;
+                        this.format = options::Format::Esm;
+                        compile.compile_target = CompileTarget::default();
+                    }
 
                     let define_keys = compile.compile_target.define_keys();
                     let define_values = compile.compile_target.define_values();

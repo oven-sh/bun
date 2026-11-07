@@ -1,0 +1,302 @@
+The control of names-compared-as-text.ts: each pattern that the lint finds and each form that it allows.
+Nobody compiles this file. It is a .txt so that no formatter and no other lint reads it.
+A line that begins with `finds` or `allows` is a mark, and a snippet runs from its mark to the next one.
+names-compared-as-text.test.ts hands the lint each snippet alone, as the text of the file at <path>.
+  finds <path> <pattern>    exactly one line is reported, under that pattern. If a line ends in `// here`, it is that line
+  allows <path> <why>       no line is reported. If the path is the reason, the same lines are reported under an ordinary path
+
+finds src/aot/lower/call.rs ==
+    return name == "eval";
+finds src/aot/lower/call.rs !=
+    return Some("eval") != name.as_deref();
+finds src/aot/lower/call.rs ==
+    let text = self.queries.atom_bytes(name);
+    return text == b"eval"; // here
+finds src/aot/lower/call.rs ==
+    return names.iter().any(|name| name == "eval");
+finds src/aot/lower/call.rs ==
+    #[cfg(not(test))]
+    fn is_eval<'a>(name: &str) -> bool { name == "eval" && outlives::<'a>() } // here
+finds src/aot/lower/call.rs ==
+    #[cfg_attr(test, allow(dead_code))]
+    fn is_eval(name: &str) -> bool { name == "eval" } // here
+finds src/aot/lower/call.rs ==
+    #[cfg(test)]
+    mod tests;
+    fn is_eval(name: &str) -> bool { name == "eval" } // here
+finds src/aot/lower/call.rs starts_with
+    return name.starts_with("on");
+finds src/aot/lower/call.rs ends_with
+    return specifier.ends_with(".json");
+finds src/aot/lower/call.rs contains
+    const EVALUATORS: &[&str] = &["eval", "Function"];
+    return EVALUATORS.contains(&name); // here
+finds src/aot/lower/call.rs contains_key
+    return names.contains_key("eval");
+finds src/aot/lower/call.rs contains_char
+    return bun_core::strings::contains_char(specifier, b'?');
+finds src/aot/lower/call.rs find
+    return table.string(id).find("::");
+finds src/aot/lower/call.rs rfind
+    return property_key.rfind('.');
+finds src/aot/lower/call.rs strip_prefix
+    return member.strip_prefix("get");
+finds src/aot/lower/call.rs strip_suffix
+    return member.strip_suffix("Sync");
+finds src/aot/lower/call.rs eq
+    return atoms.bytes(name)?[1..].eq(b"eval");
+finds src/aot/lower/call.rs ne
+    return ident.sym.ne("arguments");
+finds src/aot/lower/call.rs eq_ignore_ascii_case
+    return prop.eq_ignore_ascii_case("constructor");
+finds src/aot/lower/call.rs matches!
+    return matches!(symbol.name, "get" | "set");
+finds src/aot/lower/call.rs match
+    match self.queries.atom_bytes(name) {
+        b"eval" | b"Function" => Callee::Evaluator, // here
+        _ => Callee::Unknown,
+    }
+finds src/aot/lower/call.rs let
+    if let Some("default") = export_name {}
+
+finds src/aot/lower/call.rs ==
+    return name == known::eval;
+finds src/aot/lower/call.rs !=
+    return known::eval != name;
+finds src/aot/lower/call.rs ==
+    return hir[e].kind == ExprKind::Ident(known::eval);
+finds src/aot/lower/call.rs ==
+    return matches!(hir[e].kind, ExprKind::Ident(name) if name == known::eval);
+finds src/aot/lower/call.rs contains
+    return [known::eval, known::Function].contains(&name);
+finds src/aot/lower/call.rs contains
+    const EVALUATORS: [Atom; 2] = [known::eval, known::Function];
+    return EVALUATORS.contains(&name); // here
+finds src/aot/lower/call.rs contains
+    let evaluators = [known::eval, known::Function];
+    return evaluators.contains(&name); // here
+finds src/aot/lower/call.rs matches!
+    return matches!(hir[e].kind, ExprKind::Ident(known::eval));
+finds src/aot/lower/call.rs match
+    match hir[e].kind {
+        ExprKind::Ident(known::eval) => true, // here
+        _ => false,
+    }
+finds src/aot/lower/call.rs let
+    let Some((object, MemberKey::Name(known::eval))) = found else { return None };
+
+allows src/aot/lower/call.rs the id of a thing
+    return self.builtins.of_expr(callee) == Some(BuiltinId::Eval);
+allows src/aot/lower/call.rs a key that the language reads off whatever object it is handed
+    return name == known::prototype || export.name == known::default;
+allows src/aot/lower/call.rs a name that only the binder can write
+    return symbol.name == known::missing;
+allows src/aot/lower/call.rs an interned text that is handed to a question of the binder
+    return is_free_name(hir, bound, callee, &[known::eval]);
+allows src/aot/lower/call.rs an interned text that the guard of matches! hands on
+    return matches!(hir.member_key(e), Some((object, _)) if is_free_name(hir, bound, object, &[known::globalThis]));
+allows src/aot/lower/call.rs the export that the record of an import leads to
+    return find_export_of_module(hir, bound, callee) == Some(known::eval);
+allows src/aot/lower/call.rs the name of a file
+    return file_name.ends_with(".d.ts");
+allows src/aot/lower/call.rs a variable that is not named like a name
+    return directive == "use strict";
+allows src/aot/lower/call.rs a module in front of ::
+    return strings::trim(line) == "end";
+allows src/aot/lower/call.rs a closure, which is judged by what it compares
+    return members.iter().find(|entry| entry.kind == "get");
+allows src/aot/lower/call.rs a literal that is the result of a match arm
+    return match self.names.get(name) { Some(_) => "known", None => "unknown" };
+allows src/aot/lower/call.rs a test
+    #[cfg(test)]
+    mod tests { fn is_eval(name: &str) -> bool { name == "eval" } }
+allows src/aot/lower/call.rs a comment within a comment
+    /* name == "eval" /* or */ name == "eval" */
+
+allows src/aot/builtins/generated.rs generated tables
+    return name == b"eval";
+allows src/aot/builtins/table/members.rs the table of built-ins
+    return member == b"push";
+allows src/aot/ir/name_class.rs the class of a name, read off its text once
+    return name.starts_with(b"#");
+allows src/aot/options.rs option words, which are the build's own
+    return key == "threads";
+allows src/aot/load/test_runner_names.rs a name that no program can write
+    return name.starts_with(b"%");
+allows src/aot/load/loaders.rs file extensions and module specifiers in Load
+    return specifier.ends_with(".json");
+allows src/aot/compile/program_reach.rs a string that begins like a relative path
+    return strings.get(id).starts_with(b"./");
+finds src/aot/compile/program_reach.rs starts_with
+    return strings.get(id).starts_with(b"node:");
+allows src/aot/modules/spelled_files.rs a string that begins like a relative path
+    return strings.get(id).starts_with(b"./");
+finds src/aot/modules/spelled_files.rs starts_with
+    return strings.get(id).starts_with(b"node:");
+allows src/aot/lower/module/loads.rs the steps up of a path that the build has made
+    let bytes = self.file.queries.atom_bytes(written).to_vec();
+    let below = bytes.strip_prefix(b".").unwrap_or(&bytes);
+    return below.strip_prefix(b"/..");
+finds src/aot/lower/module/loads.rs strip_prefix
+    return specifier.strip_prefix(b"node:");
+allows src/aot/compile/removable.rs the value of a string that the answer of typeof is compared with
+    return self.atoms.bytes(text) == b"u";
+finds src/aot/compile/removable.rs ==
+    return self.atoms.bytes(text) == b"undefined";
+allows src/aot/lower/jsx/element.rs a quote in front of the first word of a JSX pragma
+    let [quote @ (b'"' | b'\''), text @ .., last] = name else { return None };
+finds src/aot/lower/jsx/element.rs let
+    let [b'$', text @ ..] = name else { return None };
+allows src/aot/module_list.rs the specifier of a built-in module in the list of modules
+    return specifier.strip_prefix("node:");
+allows src/aot/report/wording.rs the wording of diagnostics
+    return name == b"default";
+allows src/aot/lower/tests.rs a file of tests
+    return name == "eval";
+allows src/sema/import_sites/tests.rs a file of tests outside src/aot
+    return name == "eval";
+allows src/sema/file_analysis/source_tests/import_sites.rs a folder of tests outside src/aot
+    return name == "eval";
+
+finds src/sema/file_analysis/analyze.rs ==
+    return name == known::require;
+finds src/sema/import_sites/scan.rs ==
+    return atoms.bytes(name) == b"Worker";
+finds src/sema/fold/folder.rs ==
+    return name == known::Worker;
+finds src/sema/check/aot/queries.rs matches!
+    return matches!(hir[callee].kind, ExprKind::Ident(known::require));
+finds src/bundler/aot/entry.rs ==
+    return atoms.bytes(name) == b"require";
+finds src/sema/fold/options.rs ==
+    return key == "threads";
+
+allows src/sema/import_sites/made_requires.rs the specifier in the record of an import
+    return specifier == known::module || specifier == known::node_module;
+allows src/sema/import_sites/changed_files.rs the specifier of a module whose functions change files
+    holder.set(match atoms.bytes(specifier) {
+        b"fs" | b"node:fs" => Holder::Fs,
+        _ => return false,
+    });
+allows src/sema/import_sites/alternatives.rs a step of a path
+    return name.start.starts_with(b"./");
+finds src/sema/import_sites/alternatives.rs starts_with
+    return name.start.starts_with(b"on");
+allows src/sema/import_sites/call_sites.rs a member of require, which the binder has answered for
+    if name == known::resolve { return follow_to_own_require(text, object, left).is_some(); }
+allows src/sema/fold/string_affixes.rs a member of import.meta
+    return matches!(hir[object].kind, ExprKind::ImportMeta) && name == known::meta_dir;
+finds src/sema/import_sites/call_sites.rs ==
+    return name == known::eval;
+allows src/sema/import_sites/alternatives.rs a method of a list that is in hand
+    return matches!(self.inputs.atoms.bytes(name), b"forEach" | b"map");
+allows src/sema/import_sites/alternatives.rs a method of a Set that is in hand
+    return object == mention && atoms.bytes(name) == b"add";
+allows src/sema/fold/folder_calls.rs a method of a list as it is written
+    return self.atoms.bytes(name) != b"join";
+finds src/sema/fold/folder_calls.rs ==
+    return self.atoms.bytes(name) == b"Worker";
+allows src/sema/import_sites/alternatives.rs what every object inherits
+    matches!(
+        key,
+        b"__defineGetter__"
+            | b"hasOwnProperty"
+    )
+allows src/sema/import_sites/changed_files.rs a function of node:fs that changes a file
+    return matches!(name, b"open" | b"openSync");
+finds src/sema/import_sites/changed_files.rs matches!
+    return matches!(name, b"readFile");
+allows src/sema/import_sites/call_sites.rs a member of jest, which the record of an import leads to
+    if name == known::doMock { return may_be_export_of_test_runner(hir, bound, object, holders); }
+allows src/sema/import_sites/call_sites.rs what Bun's transpiler goes by
+    return [known::toMatchInlineSnapshot].contains(&name);
+allows src/sema/import_sites/call_sites.rs a constructor that cannot be followed
+    return by_binding.unwrap_or(name == known::Worker);
+allows src/sema/import_sites/import_uses.rs the identifier eval as it is written
+    return matches!(e.kind, ExprKind::Ident(name) if name == known::eval);
+finds src/sema/import_sites/import_uses.rs ==
+    return name == known::require;
+allows src/sema/import_sites/jsx.rs the attribute key of a JSX element
+    return attribute.key == PropKey::Name(known::key);
+allows src/sema/fold/folder_calls.rs the scheme of a URL
+    return self.atoms.bytes(url).starts_with(b"data:");
+allows src/sema/fold/folder_operators.rs a global whose identifier the binder calls free
+    return matches!(hir[callee].kind, ExprKind::Ident(known::RegExp)) && self.bound.binding(callee) == Binding::Free;
+allows src/sema/fold/known_constructors.rs a constructor whose identifier the binder calls free
+    match (self.atoms.bytes(name), &arguments[..]) {
+        (b"Object", []) => Some(EmptyObject),
+        _ => None,
+    }
+allows src/aot/known_helpers/quiet.rs undefined behind Binding::Free
+    return self.bound.binding(expression) == Binding::Free && name == known::undefined;
+finds src/aot/known_helpers/quiet.rs ==
+    return name == known::eval;
+allows src/sema/check/aot/early_errors/names.rs a word that strict code may not bind
+    return matches!(hir.text(name), known::eval | known::arguments);
+allows src/sema/check/aot/prototype_links.rs a call that may hand on a receiver
+    return name == known::call || name == known::apply;
+finds src/sema/check/aot/prototype_links.rs ==
+    return name == known::eval;
+allows src/aot/load/hoisted_mocks.rs a member of vi or jest
+    return matches!(name, known::mock | known::unmock);
+finds src/aot/load/hoisted_mocks.rs matches!
+    return matches!(name, known::require);
+allows src/aot/modules/referents.rs the exports of the module's own parameter
+    return key == MemberKey::Name(known::exports) && bound.binding(object) == Binding::CommonJs(CommonJsVariable::Module);
+allows src/aot/lower/module/loads.rs the end of a written path
+    let bytes = self.file.queries.atom_bytes(written).to_vec();
+    let (of_folder, of_file) = match bytes.ends_with(b"/") {
+allows src/aot/lower/module/loads.rs the scheme of a built-in module
+    return alias.node_builtin && !name.starts_with(b"node:");
+allows src/aot/lower/quoted_text.rs an identifier that the build has made
+    return written_name_of_local(self.file.queries.atom_bytes(name)).starts_with(b"%");
+finds src/aot/lower/quoted_text.rs starts_with
+    return self.file.queries.atom_bytes(name).starts_with(b"_");
+allows src/aot/builtins/resolve/mentions.rs the kind of an event that a listener on the global object is added for
+    const EVENTS_THAT_NATIVE_CODE_DISPATCHES_ON_GLOBAL_OBJECT: [&[u8]; 3] = [b"error", b"message", b"messageerror"];
+    let text = self.input.atoms.bytes(text);
+    !EVENTS_THAT_NATIVE_CODE_DISPATCHES_ON_GLOBAL_OBJECT.contains(&text)
+finds src/aot/builtins/resolve/mentions.rs ==
+    return self.input.atoms.bytes(name) == b"error";
+allows src/aot/load/made_own_require.rs a member of the require that the binder has answered for
+    return name == known::createRequire && requires_node_module(hir, bound, obj);
+finds src/aot/load/made_own_require.rs ==
+    return name == known::eval;
+allows src/aot/lower/commonjs/variables.rs a member of import.meta in the lowering
+    return matches!(name, known::meta_dir | known::meta_dirname);
+allows src/aot/lower/function/text_replaced_by_bundling.rs the identifier eval where it is called
+    return is_callee && name == known::eval;
+allows src/aot/lower/known_call.rs a key of the descriptor of a helper
+    return Some(name) == atoms.lookup(b"key");
+allows src/aot/lower/call/written_operands.rs a parent that is written as a prototype
+    return self.file.queries.atom_bytes(name) == b"prototype";
+allows src/aot/modules/imports.rs a specifier that is no relative path
+    return !matches!(input.files.atoms.bytes(name), [b'.' | b'/', ..]);
+allows src/aot/lower/statement.rs the word at the head of an arm in a module of Bun's own
+    return self.file.source.dialect() == SourceDialect::Runtime && self.file.queries.atom_bytes(text) == b"unlikely";
+allows src/aot/test_runs/files_of_run.rs the keys of a package.json
+    match atoms.bytes(name) {
+        b"main" | b"module" | b"bin" => ways.extend(text_of(field.value)),
+        b"exports" => nested.push(field.value),
+        _ => {}
+    }
+allows src/aot/test_runs/files_of_run.rs the scope of a package
+    return name.starts_with(b"@");
+allows src/aot/test_runs/texts.rs the specifier of another test runner
+    match atoms.bytes(specifier) {
+        b"@jest/globals" | b"vitest" => table::test_runner(),
+        text => find_module_named(text),
+    }
+allows src/aot/test_runs/texts.rs the length of a text that is followed
+    return obj == value && tree.text_of(name) == b"length";
+allows src/aot/test_run_loads/keys_of_cache.rs the start of a key of the table of loaded modules
+    return atoms.bytes(method) == b"startsWith" && bound.binding(asked) == Binding::Symbol(name);
+allows src/sema/check/aot/inferred_from_use.rs a key that no layout lists
+    match self.atom_bytes(name) {
+        b"__proto__" | b"Infinity" | b"NaN" | [] => false,
+        _ => true,
+    }
+allows src/aot/lower/condition.rs an answer of typeof
+    return name == known::function;
+allows src/aot/lower/member.rs a member of a function that plain Bun answers while it runs
+    return name != known::arguments && name != known::caller;

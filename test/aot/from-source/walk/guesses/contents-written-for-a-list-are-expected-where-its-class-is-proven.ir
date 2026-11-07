@@ -1,0 +1,46 @@
+# `const list = holder.nodes; .. list[i].kind`: of what the field holds Link proves the class, Array, and a type never proves contents. What the layout writes of them, `Node[]`, is expected of the list all the same:
+# so a Node is expected of `list[i]`, a guess is opened, and `.kind` is a read of its slot. Taken for all that is expected, the proven class said nothing of the elements, and the read was closed: 57 instructions a turn against 25
+# The list leaves the program, so that Link has seen nothing of what comes out of it (LinkTables::resultsOfReadsByKey).
+# f1 = once, f2 = everyTurn: `holder.nodes[i]`. f3 = loose: `any[]` is written, which says nothing: there what the program was SEEN to put into the list is expected (LinkTables::resultsOfReadsByKey of Facts::held()):
+# a guess with its test at the use, and the closed read behind the test: in the copy of the loop that other code may run in, one operation that does both. It is never a proof: the element itself stays `anything`.
+# -- source: places.ts
+# interface Node { kind: number; next: Node | null }
+# interface Holder { nodes: Node[] }
+# interface Loose { things: any[] }
+# function once(holder: Holder): number {
+#   const list = holder.nodes;
+#   let s = 0;
+#   for (let i = 0; i < list.length; i++) if (list[i].kind === 3) s++;
+#   return s;
+# }
+# function everyTurn(holder: Holder): number {
+#   let s = 0;
+#   for (let i = 0; i < holder.nodes.length; i++) if (holder.nodes[i].kind === 3) s++;
+#   return s;
+# }
+# function loose(holder: Loose): number {
+#   const list = holder.things;
+#   let s = 0;
+#   for (let i = 0; i < list.length; i++) if (list[i].kind === 3) s++;
+#   return s;
+# }
+# const nodes: Node[] = [];
+# for (let i = 0; i < 10; i++) nodes.push({ kind: i & 7, next: null });
+# (globalThis as any).kept = nodes;
+# console.log(once({ nodes }), everyTurn({ nodes }), loose({ things: nodes }));
+# -- end of source
+# RUN(ONCE): walk f1 mechanisms=all-Inlining
+# REQUIRES(ONCE): entries-of-bun
+# ONCE-LABEL: code f1:Body
+# ONCE: = GetSlot {{*}} key="kind"
+# RUN(TURN): walk f2 mechanisms=all-Inlining
+# REQUIRES(TURN): entries-of-bun
+# TURN-LABEL: code f2:Body
+# TURN: = GetSlot {{*}} key="kind"
+# RUN(LOOSE): walk f3 mechanisms=all-Inlining
+# REQUIRES(LOOSE): entries-of-bun
+# LOOSE-LABEL: code f3:Body
+# LOOSE: : anything{{*}} = GetArrayElement
+# LOOSE: = GetSlot {{*}} key="kind" {{*}}level=Expected
+# LOOSE: = ShapeTest {{*}} layouts=[L2]
+# LOOSE: = GetSlot {{*}} key="kind"

@@ -16,10 +16,7 @@ pub struct Interop {
     pub kind: ModuleKind,
     pub export_rule: SyntheticExportRule,
     pub require_result: RequireResult,
-    /// A file that stands for a string, in an executable. `require_result` is what the calls answer that `bun build` links. The loader answers every other call, with `{ default }`.
     pub answers_loader_with_namespace: bool,
-    /// Of a file that `require` reads as code because nothing names its kind: what an import makes of the same file.
-    pub form_that_imports_get: Option<FileId>,
 }
 
 impl Interop {
@@ -49,7 +46,6 @@ impl Interop {
         RequireResult::Namespace,
     );
 
-    /// The callback of `__commonJS(cb)` or `__esm(fn)`: a body and no export table, whichever helper wraps it.
     pub(crate) const INNER_MODULE: Interop = Interop::new(
         ModuleKind::CommonJs,
         SyntheticExportRule::None,
@@ -66,7 +62,6 @@ impl Interop {
             export_rule,
             require_result,
             answers_loader_with_namespace: false,
-            form_that_imports_get: None,
         }
     }
 
@@ -92,7 +87,7 @@ pub(crate) fn file_interop(files: &Files<'_>, sources: &Sources, file: FileId) -
         SourceKind::RuntimeModule(module) if table::is_es_module(module) => Interop::ES_MODULE,
         SourceKind::RuntimeModule(_) => Interop::RUNTIME_SOURCE,
         SourceKind::Data => data_module_interop(files.bound(file)),
-        SourceKind::Program | SourceKind::EvaluatedText => program_file_interop(files, file),
+        SourceKind::Program => program_file_interop(files, file),
     }
 }
 

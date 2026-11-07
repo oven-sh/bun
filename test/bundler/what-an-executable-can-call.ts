@@ -207,7 +207,10 @@ function placesIn(elf: Image, wanted: (name: string) => boolean): Place[] {
       const before = file[at - 1]!;
       const isBranch = before === 0xe8 || before === 0xe9 || (file[at - 2] === 0x0f && (before & 0xf0) === 0x80);
       const isOperand = (before & 0xc7) === 0x05 && operandOpcodes.includes(file[at - 2]!);
-      if (isBranch || isOperand) found(nameAt(base + at + 4 + word), base + at);
+      if (!isBranch && !isOperand) continue;
+      const name = nameAt(base + at + 4 + word);
+      const isShortBranch = before === 0xe8 || before === 0xe9;
+      if (name !== undefined && (!isShortBranch || beginsAnInstruction(file, at - 1, offset))) found(name, base + at);
     }
   }
   return places;
@@ -285,6 +288,18 @@ function leadsTo(file: Uint8Array, from: number, to: number): boolean {
     from += length;
   }
   return from === to;
+}
+
+// `e8` and four bytes are a call only where an instruction begins: `80 bb e8 96 00 00 01` is `cmpb $1, 0x96e8(%rbx)`.
+// A function begins at a multiple of 16 behind padding. It is no call only if none of the three nearest such places leads to it.
+function beginsAnInstruction(file: Uint8Array, at: number, start: number): boolean {
+  let heads = 0;
+  for (let head = at & ~15; head > start && head > at - 65536 && heads < 3; head -= 16) {
+    if (file[head - 1] !== 0xcc) continue;
+    if (leadsTo(file, head, at)) return true;
+    heads++;
+  }
+  return heads === 0;
 }
 
 function numberLoadedAhead(elf: Image, at: number, start: number, isFirstArgument: boolean): number | undefined {

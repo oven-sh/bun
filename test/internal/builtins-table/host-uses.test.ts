@@ -4,6 +4,7 @@ import { Problems } from "../../../src/codegen/builtins/declarations.ts";
 import * as b from "../../../src/codegen/builtins/lib.ts";
 import type {
   ModelBuiltin,
+  ModelCallback,
   ModelCalledFunction,
   ModelHostCall,
   ModelHostObject,
@@ -12,6 +13,8 @@ import type {
   ModelModuleLoad,
   ModelName,
   ModelOverload,
+  ModelPlace,
+  ModelPropertyAction,
   ModelType,
   TableModel,
 } from "../../../src/codegen/builtins/model.ts";
@@ -32,8 +35,12 @@ function nameOf(text: string): ModelName {
 const stringType = { primitives: ["String"], integers: null, stringLiterals: [], parts: [] } as unknown as ModelType;
 const neverType = { primitives: [], integers: null, stringLiterals: [], parts: [] } as unknown as ModelType;
 const none: ModelHostValue = { place: "None" };
-const newString: ModelHostValue = { place: "NewValue", type: stringType };
-const inCell = (cell: string): ModelHostValue => ({ place: "NativeCell", cell: nameOf(cell) });
+const newString: ModelHostValue = { place: "NewValue", type: stringType, holdsWhatIsThrown: false };
+const inCell = (cell: string, holdsOnlyWhatIsStored = false): ModelHostValue => ({
+  place: "NativeCell",
+  cell: nameOf(cell),
+  holdsOnlyWhatIsStored,
+});
 
 const callWith = (columns: Partial<ModelHostCall>): ModelHostCall => ({
   times: "Once",
@@ -108,8 +115,6 @@ function problemsOf(columns: Partial<CheckedModel>): readonly string[] {
       moduleLoaderFunctions: [],
     },
     hostObjects: [],
-    namedMemberCalls: [],
-    hostMethodCalls: [],
     ...columns,
   } satisfies Pick<TableModel, keyof CheckedModel>;
   const problems = new Problems();
@@ -163,7 +168,6 @@ test("where no call of a built-in is under way there is no operand to name", () 
   expect(() => b.hostObject("Realm.options", { fields: { depth: b.ownValues("options") } })).toThrow(
     "OwnValues: where no call",
   );
-  expect(() => b.namedMemberCall("print", [b.slot("this", "element")])).toThrow("Slot: where no call");
 });
 
 test("a field of a host object lists everything that may be put there", () => {
@@ -174,6 +178,7 @@ test("a field of a host object lists everything that may be put there", () => {
       declares: "HostObject",
       cell: "Realm.options",
       function: null,
+      holder: null,
       prototype: "Object.prototype",
       fields: [
         {
@@ -187,6 +192,7 @@ test("a field of a host object lists everything that may be put there", () => {
       ],
       internalFields: [],
       keepsStringsOfStoredValues: false,
+      lockedNames: [],
       nativeAccessors: [],
       platforms: ["Darwin", "Linux", "Windows", "FreeBSD", "Android"],
     },
@@ -206,6 +212,7 @@ test("a host object says what lies under the names that it does not list, that i
       declares: "HostObject",
       cell: "Realm.variables",
       function: null,
+      holder: null,
       prototype: "Object.prototype",
       fields: [
         { name: "count", values: [{ place: "NewValue", value: { type: "Primitive", primitive: "Number" } }] },
@@ -213,6 +220,7 @@ test("a host object says what lies under the names that it does not list, that i
       ],
       internalFields: [],
       keepsStringsOfStoredValues: true,
+      lockedNames: [],
       nativeAccessors: ["zone"],
       platforms: ["Darwin", "Linux", "Windows", "FreeBSD", "Android"],
     },
@@ -265,7 +273,6 @@ test("rows that name what is there are taken", () => {
     problemsOf({
       builtins: [user, serve],
       hostObjects: [hostObject("Realm.options", { fields: [{ name: nameOf("print"), value: inCell("Realm.print") }] })],
-      namedMemberCalls: [{ name: nameOf("print"), arguments: [inCell("Realm.options")], source }],
     }),
   ).toEqual([]);
 });
@@ -329,9 +336,56 @@ test("further arguments follow a list, and every value that is passed has a type
   expect(problemsOf({ builtins: [user({ arguments: null, otherArguments: newString })] })).toEqual([
     `${row}: otherArgs follows a list of arguments, and the call has none`,
   ]);
-  expect(problemsOf({ builtins: [user({ arguments: [{ place: "NewValue", type: neverType }] })] })).toEqual([
-    `${row}: native code passes a value that has no type`,
+  expect(
+    problemsOf({ builtins: [user({ arguments: [{ place: "NewValue", type: neverType, holdsWhatIsThrown: false }] })] }),
+  ).toEqual([`${row}: native code passes a value that has no type`]);
+  expect(problemsOf({ builtins: [user({ arguments: [{ ...newString, holdsWhatIsThrown: true }] })] })).toEqual([
+    `${row}: what is thrown is said of an argument of a callback or of a handler of an overload alone`,
   ]);
+});
+
+test("a cell that hands back what the program handed in is filled by rows, out of their operands alone", () => {
+  const withFlow = (flow: Partial<ModelOverload["flow"]>) =>
+    ({ ...overloadTaking(1), flow: { ...overloadTaking(1).flow, ...flow } }) as ModelOverload;
+  const firstOperand: ModelPlace = { place: "Operand", operand: { operand: "Argument", index: 0 } };
+  const cell = inCell("Holder.data");
+  const reads = withFlow({ transfers: [{ from: inCell("Holder.data", true), to: { place: "Result" } }] });
+  const stores = withFlow({ transfers: [{ from: firstOperand, to: cell }] });
+  const holder = (...overloads: ModelOverload[]) => [entry("Holder.prototype.data", "Accessor", {}, overloads)];
+  const refusal = (filler: string) => [
+    `the native cell Holder.data is said to hold only what rows store there out of their operands, and ${filler}`,
+  ];
+
+  expect(problemsOf({ builtins: holder(reads, stores) })).toEqual([]);
+  expect(problemsOf({ builtins: holder(reads) })).toEqual(refusal("no row stores anything there"));
+  expect(
+    problemsOf({ builtins: holder(reads, stores, withFlow({ transfers: [{ from: newString, to: cell }] })) }),
+  ).toEqual(refusal("a row stores NewValue there"));
+  expect(
+    problemsOf({ builtins: holder(reads, stores, withFlow({ callbacks: [{ resultTo: cell } as ModelCallback] })) }),
+  ).toEqual(refusal("a row stores there what a callback answers"));
+  expect(
+    problemsOf({
+      builtins: holder(
+        reads,
+        stores,
+        withFlow({ propertyActions: [{ action: "ReadsByKey", value: cell } as ModelPropertyAction] }),
+      ),
+    }),
+  ).toEqual(refusal("a row reads or stores a property through it"));
+  expect(problemsOf({ builtins: holder(reads, stores), hostObjects: [hostObject("Holder.data")] })).toEqual(
+    refusal("a host object lies there"),
+  );
+  expect(
+    problemsOf({
+      builtins: [
+        ...holder(reads, stores),
+        entry("process.stdout", "DataProperty", {
+          calledFunctions: [calling([called({ result: [kept("Holder.data")] })])],
+        }),
+      ],
+    }),
+  ).toEqual(refusal("what a function answers that the host calls is kept there"));
 });
 
 test("the records of start-up are checked as those of an entry are", () => {
@@ -383,39 +437,4 @@ test("a host object that is a function has an entry that says what a call does",
   expect(problemsOf({ hostObjects: [hostObject("Realm.drain", { function: undeclared })] })).toEqual([
     "rows.builtins.ts: the host object Realm.drain is a function, and %NativeFunctions%.RealmCppOther has no Call overload that says what a call does",
   ]);
-});
-
-test("a member that native code calls by name is called by some operand's protocol, and described once", () => {
-  const printer = entry("console.log", "Function", {}, [overloadTaking(1, ["print"])]);
-  const call = { name: nameOf("print"), arguments: [newString], source };
-  expect(problemsOf({ builtins: [printer], namedMemberCalls: [call] })).toEqual([]);
-  expect(problemsOf({ builtins: [printer], namedMemberCalls: [call, call] })).toEqual([
-    "rows.builtins.ts: two rows say what native code passes to a member named print",
-  ]);
-  expect(problemsOf({ namedMemberCalls: [call] })).toEqual([
-    'rows.builtins.ts: no operand has b.calls("print"), so nothing calls a member of that name',
-  ]);
-});
-
-test("a host method that calls what is kept goes by a name that start-up lists", () => {
-  const startup = (...listed: string[]) => ({
-    modules: [],
-    loads: [reading([kept("Realm.print")])],
-    functionsCalledWithLoads: [],
-    namesOfMethodsCallingLoads: listed.map(nameOf),
-    moduleLoaderFunctions: [],
-  });
-  const method = (cell: string) => ({
-    name: nameOf("print"),
-    cell: nameOf(cell),
-    call: callWith({ arguments: [newString] }),
-    source,
-  });
-  expect(problemsOf({ startup: startup("print"), hostMethodCalls: [method("Realm.print")] })).toEqual([]);
-  expect(problemsOf({ startup: startup(), hostMethodCalls: [method("Realm.print")] })).toEqual([
-    "rows.builtins.ts: print is not among namesOfMethodsCallingLoads of b.startup, so nothing says that the host has methods of that name",
-  ]);
-  expect(problemsOf({ startup: startup("print"), hostMethodCalls: [method("Realm.lost")] })[0]).toStartWith(
-    "a host method named print: nothing puts a value into the native cell Realm.lost",
-  );
 });

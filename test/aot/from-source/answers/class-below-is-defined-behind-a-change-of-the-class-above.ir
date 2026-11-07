@@ -1,0 +1,45 @@
+# -- source: main.js
+# class Above { first() { return 1; } second() { return 2; } }
+# between(Above);
+# class Below extends Above { third() { return 3; } }
+# function ask(item) { let total = 0; for (let i = 0; i < 3; i++) total += item.second() * 10 + item.third(); return total + ":" + typeof item.first; }
+# print(ask(new Below()));
+# after(Above, Below);
+# print(ask(new Below()));
+# report();
+# -- end of source
+# The holder of Above was looked at when Above was defined, and every change since then has been reported. Where Below is defined nothing looks at it again:
+# what has changed in between has ended the guards of its name in Below, though they had not begun, and the guards of the other names of Below begin.
+# RUN(NOTHING): run-in-shell --aotCountsPath=/dev/null globalThis.between = globalThis.after = () => { }; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsEnded")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
+# NOTHING: 69:function
+# NOTHING-NEXT: 69:function
+# NOTHING-NEXT: guards ended: 0
+# NOTHING-NEXT: exited with 0
+# RUN(DELETED): run-in-shell globalThis.after = globalThis.report = () => { }; globalThis.between = A => { delete A.prototype.first; };
+# DELETED: 69:undefined
+# DELETED-NEXT: 69:undefined
+# DELETED-NEXT: exited with 0
+# RUN(REPLACED): run-in-shell globalThis.after = globalThis.report = () => { }; globalThis.between = A => { A.prototype.second = () => 5; };
+# REPLACED: 159:function
+# REPLACED-NEXT: 159:function
+# REPLACED-NEXT: exited with 0
+# RUN(LATER): run-in-shell globalThis.between = globalThis.report = () => { }; globalThis.after = A => { A.prototype.second = () => 5; };
+# LATER: 69:function
+# LATER-NEXT: 159:function
+# LATER-NEXT: exited with 0
+# RUN(ANSWERED): run-in-shell globalThis.after = globalThis.report = () => { }; globalThis.between = A => { A.prototype.third = () => 7; A.prototype.unasked = 1; };
+# ANSWERED: 69:function
+# ANSWERED-NEXT: 69:function
+# ANSWERED-NEXT: exited with 0
+# RUN(UNCOVERED): run-in-shell globalThis.report = () => { }; globalThis.between = A => { A.prototype.third = () => 7; }; globalThis.after = (A, B) => { delete B.prototype.third; };
+# UNCOVERED: 69:function
+# UNCOVERED-NEXT: 81:function
+# UNCOVERED-NEXT: exited with 0
+# RUN(RELINKED): run-in-shell globalThis.after = globalThis.report = () => { }; globalThis.between = A => { delete A.prototype.second; Object.setPrototypeOf(A.prototype, { second() { return 9; } }); };
+# RELINKED: 279:function
+# RELINKED-NEXT: 279:function
+# RELINKED-NEXT: exited with 0
+# RUN(BOTH): run-in-shell globalThis.report = () => { }; globalThis.between = A => { delete A.prototype.first; }; globalThis.after = A => { A.prototype.second = () => 5; A.prototype.first = 1; };
+# BOTH: 69:undefined
+# BOTH-NEXT: 159:number
+# BOTH-NEXT: exited with 0

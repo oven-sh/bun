@@ -1,0 +1,23 @@
+# -- source: name-that-no-layout-lists-is-read-behind-looks-at-the-cell.ts
+# declare function print(...values: unknown[]): void;
+# function make(i: number): any { return { issues: i }; }
+# function read(o: any) { let found = 0; for (let k = 0; k < 3; k++) if (o.aborted === undefined) found++; return found; }
+# const first = make(1);
+# (globalThis as any).kept = first;
+# print(read(first));
+# (0, eval)("kept.aborted = 7");
+# print(read(first));
+# -- end of source
+# The record has left, and nobody in sight stores `aborted`: its layout has no field for the name. Whether unseen code has laid a property beside the fields the order word says, and whether the object still stands where its layout says
+# one byte of the cell: behind the two looks the read is undefined, and where either fails it goes as it is written. The text that is evaluated between the two calls lays the property: the first look fails from then on.
+# RUN: walk f2 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f2:Body
+# CHECK: = HasNoExtraProperties
+# CHECK: = HasLayoutPrototype
+# CHECK: = PropGet {{*}}key="aborted"
+# RUN(ANSWERS): run-in-shell
+# REQUIRES(ANSWERS): entries-of-bun
+# ANSWERS: 3
+# ANSWERS: 0
+# ANSWERS-NEXT: exited with 0

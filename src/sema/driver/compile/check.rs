@@ -1,14 +1,16 @@
-use super::effects::requested_diagnostics;
-use super::queue::{LOWERING_ROUNDS, run_queue};
+use super::effects::{can_lose_trust, requested_diagnostics};
+use super::queue::{LOWERING_ROUNDS, ROLE_ROUNDS, run_queue};
 use super::{CheckedProgram, CompileRequest, FileWork, LoadedProgram, RoleDecision};
 use crate::{Diagnostic, equal_diagnostics};
+use bun_sema::check::aot::LeftOutBodies;
+use bun_sema::check::commit::CyclesEntered;
 use bun_sema::check::{Checker, Requested};
 use bun_sema::hir::FileKind;
 use bun_sema::program::{FileId, FileRole, Files};
 use bun_sema::resolve::Host;
 use bun_sema::util::SharedSort;
 use bun_threading::Guarded;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 pub fn check_and_lower<'s, T: Send>(
     loaded: &LoadedProgram<'s>,
@@ -27,7 +29,6 @@ pub fn check_and_lower<'s, T: Send>(
         files_to_lower,
         lower,
         note_commit,
-        None,
         &Passes {
             count: PassCount::Exactly(1),
             before_next: &|| {},
@@ -35,19 +36,42 @@ pub fn check_and_lower<'s, T: Send>(
     )
 }
 
-/// The files are lowered in so many passes, in program order, each with a checker that knows nothing yet.
+pub fn check_whole_files<'s>(
+    loaded: &LoadedProgram<'s>,
+    host: &dyn Host,
+    request: &CompileRequest<'_, 's>,
+    files_to_check: &[FileId],
+) -> crate::Report {
+    let files = loaded.files();
+    let mut to_check = files_to_check.to_vec();
+    to_check.shared_sort_by_key(|&file| files.rank_of_file(file));
+    run_queue(
+        loaded,
+        host,
+        request,
+        to_check,
+        &FileWork {
+            requested: &|_| Requested::All,
+            after_file: None,
+            after_commit: &|_| {},
+            frees_tree: &|_| false,
+            is_last_pass: &|| false,
+            note_cycles_entered: None,
+            cycles_entered_before: &Default::default,
+            first_round: ROLE_ROUNDS,
+            left_out_bodies: request.left_out_bodies,
+        },
+    )
+}
+
 pub struct Passes<'a> {
     pub count: PassCount,
-    /// Called between two passes, when the types and signatures of the pass before mean nothing any more.
     pub before_next: &'a (dyn Fn() + Sync),
 }
 
 #[derive(Copy, Clone)]
 pub enum PassCount {
-    /// Whatever the files are like.
     Exactly(usize),
-    /// A second pass takes time and saves memory. So there is one where the files hold no more text than this, and two above it,
-    /// unless a pass would wait for its largest file: see `passes_that_wait_for_no_file`.
     TwoAboveBytesOfText(u64),
 }
 
@@ -59,14 +83,20 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     files_to_lower: &[FileId],
     lower: &(dyn Fn(&mut Checker<'_, 's>, FileId) -> Option<T> + Sync),
     note_commit: &(dyn Fn(FileId, &T) + Sync),
-    prepare: Option<&(dyn Fn(FileId) + Sync)>,
     passes: &Passes<'_>,
 ) -> CheckedProgram<T> {
     let files = loaded.files();
     let is_left_out = |file: FileId| is_left_out(request, file);
-    let requested = |file: FileId| match roles.is_checked(file) || is_left_out(file) {
+    let is_checker_renewed = AtomicBool::new(false);
+    let requested = |file: FileId| match is_left_out(file) {
         true => Requested::Types,
-        false => requested_diagnostics(loaded.origin(file), roles.role(file)),
+        false => requested_diagnostics(
+            loaded.origin(file),
+            !files.needs_another_program(file)
+                && !files.module_options(file).keeps_type_errors_to_itself
+                && !loaded.is_excluded_by_project(file)
+                && files.hir(file).syntax_errors().next().is_none(),
+        ),
     };
     let slots = slots_by_file(files, roles, files_to_lower);
     let products: Vec<Guarded<Option<T>>> =
@@ -77,17 +107,8 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
         .copied()
         .filter(|&file| files.module(file).is_read_by_every_task)
         .collect();
-    if !loaded.is_read_again {
-        files.let_trees_go_behind(&to_check);
-    }
+    files.let_trees_go_behind(&to_check);
     let passes_left = AtomicUsize::new(usize::MAX);
-    let prepare_lowered_file = |file: FileId| {
-        if let Some(prepare) = prepare
-            && slots[file.idx()].is_some()
-        {
-            prepare(file);
-        }
-    };
     let work = FileWork {
         requested: &requested,
         after_file: Some(&|checker, file| {
@@ -104,11 +125,17 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
                 note_commit(file, product);
             }
         },
-        beside_file: prepare.map(|_| &prepare_lowered_file as &(dyn Fn(FileId) + Sync)),
-        frees_tree: &|_| !loaded.is_read_again,
+        frees_tree: &|_| true,
         is_last_pass: &|| passes_left.load(Ordering::Relaxed) == 0,
+        note_cycles_entered: Some(&|file, cycles| {
+            loaded.note_cycles_entered(LOWERING_ROUNDS, file, cycles);
+        }),
+        cycles_entered_before: &|| match is_checker_renewed.load(Ordering::Relaxed) {
+            true => loaded.cycles_entered(),
+            false => CyclesEntered::default(),
+        },
         first_round: LOWERING_ROUNDS,
-        left_out_bodies: request.left_out_bodies,
+        left_out_bodies: bodies_left_out_of_check(request),
     };
     let pass_count = match passes.count {
         PassCount::Exactly(count) => count,
@@ -130,6 +157,7 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
         if report.is_some() {
             // SAFETY: the tasks of the pass before have ended, and what they lowered holds nothing of the checker's.
             unsafe { loaded.renew_checker(&|count, each| host.parallel(count, each)) };
+            is_checker_renewed.store(true, Ordering::Relaxed);
             (passes.before_next)();
         }
         let renewed = began.elapsed();
@@ -162,11 +190,9 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     }
     let report = report.expect("there is a first pass");
     files.watch_no_more();
-    if !loaded.is_read_again {
-        for &file in &read_by_every_task {
-            // SAFETY: every task has ended, and nothing reads a tree after them.
-            unsafe { files.free_tree(file) };
-        }
+    for &file in &read_by_every_task {
+        // SAFETY: every task has ended, and nothing reads a tree after them.
+        unsafe { files.free_tree(file) };
     }
     let mut lowered: Vec<(FileId, T)> = files_to_lower
         .iter()
@@ -190,10 +216,6 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     }
 }
 
-// A file is lowered by one thread, and a pass ends when its last file is lowered. Where the largest file is more than a thread's share
-// of a pass, the threads wait for it at the end of its pass with nothing to do, while the files of the next pass lie there. So there
-// are at most as many passes as leave each thread a share of the size of the largest file. The number of threads is fixed, not the
-// machine's: where the checker's limit is met, the passes decide what a program's types are, and those may not depend on the core count.
 const THREADS_OF_A_PASS: usize = 16;
 
 fn passes_that_wait_for_no_file(files: &Files<'_>, to_check: &[FileId], most: usize) -> usize {
@@ -206,9 +228,6 @@ fn passes_that_wait_for_no_file(files: &Files<'_>, to_check: &[FileId], most: us
     (sizes().sum::<usize>() / (largest * THREADS_OF_A_PASS)).clamp(1, most.max(1))
 }
 
-// The files in program order, cut into `count` parts of about as many bytes of text. What a file of one part refers to in another part
-// the checker of its pass works out again, so each cut falls, within a sixth of a part's share to either side, where the fewest
-// references go across it.
 fn cut_into_passes(files: &Files<'_>, to_check: Vec<FileId>, count: usize) -> Vec<Vec<FileId>> {
     if count < 2 || to_check.len() < 2 {
         return vec![to_check];
@@ -217,7 +236,6 @@ fn cut_into_passes(files: &Files<'_>, to_check: Vec<FileId>, count: usize) -> Ve
     for (position, &file) in (0u32..).zip(&to_check) {
         position_of[file.idx()] = position;
     }
-    // At `n`: how many more references go across a cut in front of the file at `n` than across one in front of the file before it.
     let mut changes = vec![0i64; to_check.len() + 1];
     let mut sizes_so_far = Vec::with_capacity(to_check.len() + 1);
     let mut so_far = 0usize;
@@ -270,10 +288,16 @@ fn cut_into_passes(files: &Files<'_>, to_check: Vec<FileId>, count: usize) -> Ve
     parts
 }
 
-// None of its statements is compiled, also where it is lowered for its place among the modules.
 fn is_left_out(request: &CompileRequest<'_, '_>, file: FileId) -> bool {
-    let left_out = request.left_out_bodies;
+    let left_out = bodies_left_out_of_check(request);
     left_out.is_some_and(|left_out| left_out.contains_file(file))
+}
+
+fn bodies_left_out_of_check<'a>(request: &CompileRequest<'a, '_>) -> Option<&'a LeftOutBodies> {
+    match request.code.looks_for_type_errors {
+        true => None,
+        false => request.left_out_bodies,
+    }
 }
 
 fn is_reported_with_roles(roles: &RoleDecision, diagnostic: &Diagnostic) -> bool {
@@ -310,7 +334,7 @@ fn files_to_check(
     let is_reached = files.reached_from(files.entry_points().to_vec());
     let reports = |file: FileId| {
         is_reached[file.idx()]
-            && !loaded.origin(file).can_lose_trust()
+            && !can_lose_trust(loaded.origin(file))
             && requested(file) != Requested::Types
             && is_checked_by_kind(files, file)
             && !is_left_out(request, file)

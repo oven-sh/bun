@@ -1,6 +1,6 @@
 use crate::diagnostics::LoadMessages;
-use crate::load::source_provider::{SourceFile, SourceProvider};
-use bun_ast::{Loader, Loc, Location};
+use crate::load::source_provider::{DataFailure, SourceFile, SourceProvider};
+use bun_ast::{Kind, Loader, Location};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::spans::skip_trivia;
 use bun_sema::hir::{ExprId, ExprKind, File, IdList, PropId, PropKind, Span, StmtKind, UnOp};
@@ -15,7 +15,7 @@ pub(crate) struct ParsedDataModule<'s> {
     pub hir: File<'s>,
     pub host_values: &'s [(ExprId, HostValue<'s>)],
     pub web_assembly: Option<Vec<u8>>,
-    pub is_page: bool,
+    pub failure: Option<Vec<u8>>,
 }
 
 pub(crate) fn parse_data_module<'s>(
@@ -25,9 +25,18 @@ pub(crate) fn parse_data_module<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> ParsedDataModule<'s> {
+    let mut failure = None;
     let module = messages.with_log(|log| {
         let module = provider.parse_data(source, arena, atoms, log);
-        // Whoever asks in which files the errors stand finds this one.
+        if matches!(module, Err(DataFailure::InvalidText))
+            && let Some(first) = log.msgs.iter().position(|it| it.kind == Kind::Err)
+        {
+            failure = Some(log.msgs[first].data.text.to_vec());
+            for message in log.msgs.iter_mut().filter(|it| it.kind == Kind::Err) {
+                message.kind = Kind::Warn;
+            }
+            log.warnings += core::mem::take(&mut log.errors);
+        }
         for message in log.msgs.iter_mut().filter(|it| it.data.location.is_none()) {
             message.data.location = Some(Location {
                 file: Box::from(to_native(source.path)),
@@ -47,29 +56,32 @@ pub(crate) fn parse_data_module<'s>(
         hir: file,
         host_values,
         web_assembly: is_web_assembly.then(|| source.contents.to_vec()),
-        is_page: matches!(module, Ok(DataModule::Page)),
+        failure,
     }
 }
 
-/// `bun test` hands the text of a JSON file to `JSON.parse`, which takes no empty text. The bundler's parser reads `{}` there, as it does for an executable.
-/// A file with an error is left to the loader of a test run, which says it in its own words.
-pub(crate) fn report_blank_json(messages: &LoadMessages, source: &SourceFile<'_>) {
-    if source.loader != Loader::Json || !source.contents.iter().all(u8::is_ascii_whitespace) {
-        return;
+pub(crate) fn create_module_without_text<'s>(
+    is_in_es_package: bool,
+    arena: &'s Arena,
+    atoms: &Interner<'s>,
+) -> ParsedDataModule<'s> {
+    let module = match is_in_es_package {
+        true => DataModule::Value {
+            default: &DataValue::Undefined,
+            exports_keys: false,
+        },
+        false => DataModule::Value {
+            default: &DataValue::Object(&[]),
+            exports_keys: true,
+        },
+    };
+    let DataModuleTree { file, host_values } = module_from_data(&module, atoms, arena);
+    ParsedDataModule {
+        hir: file,
+        host_values,
+        web_assembly: None,
+        failure: None,
     }
-    messages.with_log(|log| {
-        log.add_error_fmt(
-            None,
-            Loc::EMPTY,
-            format_args!("JSON Parse error: Unexpected EOF"),
-        );
-        for message in &mut log.msgs {
-            message.data.location = Some(Location {
-                file: Box::from(to_native(source.path)),
-                ..Default::default()
-            });
-        }
-    });
 }
 
 pub(crate) fn parse_json<'s>(
@@ -264,7 +276,7 @@ mod tests {
             arena: &'s Arena,
             atoms: &Interner<'s>,
             log: &mut Log,
-        ) -> Result<DataModule<'s>, Failed> {
+        ) -> Result<DataModule<'s>, DataFailure> {
             let embedded_path = atoms.intern(file.path);
             match file.loader {
                 Loader::Wasm => Ok(DataModule::RuntimeRequire {
@@ -276,7 +288,6 @@ mod tests {
                     default: arena.alloc(DataValue::String(embedded_path)),
                     exports_keys: false,
                 }),
-                Loader::Html => Ok(DataModule::Page),
                 _ => WithoutServices.parse_data(file, arena, atoms, log),
             }
         }
@@ -453,8 +464,25 @@ mod tests {
         let undefined = [(default, HostValue::Data(&DataValue::Undefined))];
         assert_eq!(parsed.host_values, undefined);
         assert!(parsed.web_assembly.is_none());
-        assert!(!parsed.is_page);
+        assert_eq!(parsed.failure, None);
         assert_eq!(written_log(&messages).errors, 1);
+    }
+
+    #[test]
+    fn invalid_text_fails_where_loaded() {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let messages = LoadMessages::default();
+        let source = SourceFile {
+            path: b"/project/a.json",
+            contents: b"{",
+            loader: Loader::Json,
+        };
+        let parsed = parse_data_module(&WithoutServices, &messages, &source, arena, &atoms);
+        let said = &b"\"/project/a.json\" is not valid JSON"[..];
+        assert_eq!(parsed.failure.as_deref(), Some(said));
+        let log = written_log(&messages);
+        assert_eq!((log.errors, log.warnings), (0, 1));
     }
 
     #[test]
@@ -490,41 +518,14 @@ mod tests {
         assert_eq!(wasm.web_assembly.as_deref(), Some(b"\0asm".as_slice()));
         assert!(wasm.hir.text.is_empty());
         assert!(wasm.host_values.is_empty());
-        assert!(!wasm.is_page);
 
         let file = parse(Loader::File);
         assert!(file.web_assembly.is_none());
         assert!(file.hir.text.is_empty());
         let default = default_export(&file.hir);
         assert!(matches!(file.hir[default].kind, ExprKind::String(_)));
-        assert!(!file.is_page);
 
         assert!(written_log(&messages).msgs.is_empty());
-    }
-
-    #[test]
-    fn page_module_has_a_deferred_default() {
-        let session = Session::new();
-        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
-        let messages = LoadMessages::default();
-        let source = SourceFile {
-            path: b"/project/index.html",
-            contents: b"<html></html>",
-            loader: Loader::Html,
-        };
-        let page = parse_data_module(&EmbeddingProvider, &messages, &source, arena, &atoms);
-        assert!(page.is_page);
-        let default = default_export(&page.hir);
-        assert_eq!(page.host_values, [(default, HostValue::Deferred)]);
-        assert!(page.web_assembly.is_none());
-        assert!(written_log(&messages).msgs.is_empty());
-
-        let failed = parse_data_module(&WithoutServices, &messages, &source, arena, &atoms);
-        assert!(!failed.is_page);
-        let default = default_export(&failed.hir);
-        let expected = [(default, HostValue::Data(&DataValue::Undefined))];
-        assert_eq!(failed.host_values, expected);
-        assert_eq!(written_log(&messages).errors, 1);
     }
 
     #[test]
@@ -544,7 +545,6 @@ mod tests {
         assert!(matches!(parsed.hir[root].kind, ExprKind::Object(_)));
         let entries = [(atoms.intern(b"a"), DataValue::Number(1.0))];
         assert_eq!(*value, DataValue::Object(&entries));
-        assert!(!parsed.is_page);
         assert!(written_log(&messages).msgs.is_empty());
     }
 }

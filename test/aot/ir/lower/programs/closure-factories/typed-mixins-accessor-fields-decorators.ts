@@ -393,97 +393,76 @@ function acc(v: ClassAccessorDecoratorTarget<any, number>, c: ClassAccessorDecor
 
 // GENERATED: show T init K #v
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_2]] site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[f_2]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[f_1]]):
 // CHECK-NEXT: v2 = Undefined
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b5():
+// CHECK-NEXT: Jump -> next b1()
+// CHECK-NEXT: b1() handler=b2():
 // CHECK-NEXT: v3 = Builtin builtin=JSON
 // CHECK-NEXT: v4 = PropGet v3 key="stringify"
 // CHECK-NEXT: v5 = Convert v4 declared={type=builtin(JSONStringify) flags=[IsExpected]}
 // CHECK-NEXT: v6 = Call v1 calleeName="f"
 // CHECK-NEXT: v7 = Call v5, v3, v6 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3() handler=b5():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Jump -> next b6(v8)
-// CHECK-NEXT: b5() role=CatchHandler:
+// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: Jump -> next b3(v8)
+// CHECK-NEXT: b2() role=CatchHandler:
 // CHECK-NEXT: v9 = CatchValue
 // CHECK-NEXT: v10 = PropGet v9 key="constructor"
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|number|string|symbol|bigint|[[L_5]] flags=[IsExpected]}
-// CHECK-NEXT: v12 = PropGet v11 key="name"
-// CHECK-NEXT: Jump -> next b6(v12)
-// CHECK-NEXT: b6(v13):
-// CHECK-NEXT: v14 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v15 = PropGet v14 key="console" [isFreeName]
-// CHECK-NEXT: v16 = Convert v15 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v17 = PropGet v16 key="log"
-// CHECK-NEXT: v18 = Convert v17 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v19 = String string=": "
-// CHECK-NEXT: v20 = Add v0, v19
-// CHECK-NEXT: v21 = Convert v13 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v22 = Add v20, v21
-// CHECK-NEXT: v23 = Call v18, v16, v22 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v24 = Undefined
-// CHECK-NEXT: Return v24
+// CHECK-NEXT: v11 = PropGet v10 key="name"
+// CHECK-NEXT: Jump -> next b3(v11)
+// CHECK-NEXT: b3(v12):
+// CHECK-NEXT: v13 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v14 = PropGet v13 key="console" [isFreeName]
+// CHECK-NEXT: v15 = Convert v14 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v16 = PropGet v15 key="log"
+// CHECK-NEXT: v17 = Convert v16 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v18 = String string=": "
+// CHECK-NEXT: v19 = Add v0, v18
+// CHECK-NEXT: v20 = Add v19, v12
+// CHECK-NEXT: v21 = Call v17, v15, v20 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v22 = Undefined
+// CHECK-NEXT: Return v22
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="T"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_2]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_7]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_7]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="init"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_8]]}] results=[{type=number site=[[w_9]]}] functionTypes={{*}}[[f_10]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Integer integer=10
 // CHECK-NEXT: v2 = Mul v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number site=[[w_9]]}
-// CHECK-NEXT: Return v3
+// CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="K"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_11]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_4]]] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_12]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_12]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_12]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_5]]
+// CHECK-NEXT: v2 = NewObject v1 layout=[[L_5]]
+// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_5]]}
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#v"
 // CHECK: module=[[m_0]] position={{*}} kind=Method flags=[HasThis, IsChecked] captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: classtoken, v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = PrivateHas v1, v0 layout=[[L_13]] field=1
+// CHECK-NEXT: v2 = PrivateHas v1, v0 layout=[[L_6]] field=1
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#v"
 // CHECK: module=[[m_0]] position={{*}} kind=Getter flags=[HasThis, IsChecked] captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: classtoken, v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = PrivateGet v1, v0 layout=[[L_13]] field=1
+// CHECK-NEXT: v2 = PrivateGet v1, v0 layout=[[L_6]] field=1
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#v"
 // CHECK: module=[[m_0]] position={{*}} kind=Setter flags=[HasThis, IsChecked] length=1 captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: classtoken, v1: anything, v2: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Convert v2 declared={type=number site=[[w_14]]} illTypedCause=FromLooseType
-// CHECK-NEXT: PrivateSet v1, v0, v3 layout=[[L_13]] field=1
+// CHECK-NEXT: v3 = Convert v2 declared={type=number}
+// CHECK-NEXT: PrivateSet v1, v0, v3 layout=[[L_6]] field=1
 // CHECK-NEXT: v5 = Undefined
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }

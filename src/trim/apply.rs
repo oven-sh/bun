@@ -4,7 +4,8 @@ use core::ops::Range;
 use bun_exe_format::builtins::{Builtins, HEADER_SIZE as BUILTIN_MODULES_HEADER_SIZE};
 use bun_exe_format::cut_model::{Fill, RemovableBytes};
 use bun_exe_format::image::{
-    AddressRange, Architecture, ImageBytes, ImageEditor, KnownSection, SectionLocation,
+    AddressRange, Architecture, ExecutableFormat, ImageBytes, ImageEditor, KnownSection,
+    SectionLocation,
 };
 use bun_removable_features::{Feature, FeatureSet, RemovableFeatureState, RemovedRange};
 
@@ -13,8 +14,11 @@ use crate::icu_data::remove_items;
 use crate::model::{PlannedRange, TrimPlan, TrimSummary};
 use crate::table::{REMOVED_RANGES_HEADER_BYTES, encode_removed_ranges, read_u32};
 
-const X86_64_TRAP: u8 = 0xcc;
-const AARCH64_TRAP: [u8; 4] = 0xd420_0000u32.to_le_bytes();
+// `hlt` and `udf #0`. Not breakpoints: where a program listens for SIGTRAP, a breakpoint stops nothing.
+const X86_64_TRAP: u8 = 0xf4;
+const AARCH64_TRAP: [u8; 4] = 0u32.to_le_bytes();
+// macOS says too little about a `hlt` for the crash handler to tell it from a fault on data.
+const X86_64_BREAKPOINT: u8 = 0xcc;
 const STATE_BYTES: u64 = size_of::<RemovableFeatureState>() as u64;
 
 // The index that `bun_exe_format::builtins` reads.
@@ -320,13 +324,13 @@ fn clear_removed_module_texts(
 }
 
 fn write_fills(editor: &mut ImageEditor<'_>, fills: &[Fill]) -> Result<(), TrimInternalError> {
-    let architecture = editor.architecture();
+    let (architecture, format) = (editor.architecture(), editor.format());
     for fill in fills {
         let bytes = editor
             .bytes_at_mut(fill.range)
             .ok_or(TrimInternalError::RangeOutsideImage)?;
         if fill.is_code {
-            write_traps(bytes, fill.range.start, architecture);
+            write_traps(bytes, fill.range.start, architecture, format);
         } else {
             bytes.fill(0);
         }
@@ -334,8 +338,14 @@ fn write_fills(editor: &mut ImageEditor<'_>, fills: &[Fill]) -> Result<(), TrimI
     Ok(())
 }
 
-fn write_traps(bytes: &mut [u8], address: u64, architecture: Architecture) {
+fn write_traps(
+    bytes: &mut [u8],
+    address: u64,
+    architecture: Architecture,
+    format: ExecutableFormat,
+) {
     match architecture {
+        Architecture::X86_64 if format == ExecutableFormat::MachO => bytes.fill(X86_64_BREAKPOINT),
         Architecture::X86_64 => bytes.fill(X86_64_TRAP),
         Architecture::Aarch64 => {
             for (byte_address, byte) in (address..).zip(bytes.iter_mut()) {
@@ -359,7 +369,7 @@ fn write_removal_state(
     let is_trimmed = u32::from(
         !plan
             .removed()
-            .is_subset_of(&Feature::all_outside_compiled_programs()),
+            .is_subset_of(&Feature::all_that_leave_unasked()),
     );
     write_state_field(
         state,

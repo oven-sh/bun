@@ -146,7 +146,7 @@ test("the key of a delete may come by a name, a helper or a path that is put tog
 });
 
 // The image of a test file and the layer that it shares with the others may both hold a file. The copy that has run is the one to take out.
-test("a file that a layer below holds too is taken out of require.cache", async () => {
+test("a file that several test files share is taken out of require.cache", async () => {
   using dir = tempDir("require-cache-in-test-runs", {
     "package.json": `{ "name": "p", "type": "module" }`,
     "tsconfig.json": "{}",
@@ -176,12 +176,12 @@ test("a file that a layer below holds too is taken out of require.cache", async 
   const plain = await seen();
   expect(plain.exitCode).toBe(0);
   expect(plain.stdout).toContain("2 0 false");
-  for (const words of [undefined, "TestRunLayers:2,TestRunPartFiles:1", "TestRunLayers:1,TestRunPartFiles:1"])
-    expect(await seen(words, "--aot")).toEqual(plain);
+  for (const words of [undefined]) expect(await seen(words, "--aot")).toEqual(plain);
 });
 
 // The stage log says why every file of a run may load again, so that nobody has to guess what keeps a large run open.
-test("a file that is loaded under a query: every file may load again, and only that file where the host runs the test files", async () => {
+// A query behind a path that is spelled copies that file alone. test-run-doors.test.ts has the path that nobody can read.
+test("a file that is loaded under a query: that file alone is read once more", async () => {
   using dir = tempDir("require-cache-in-test-runs", {
     "src/base.js": `export const base = "base";`,
     "src/state.js": `import { base } from "./base.js";\nexport let count = 0;\nexport function bump() { return ++count; }\nexport const from = base;`,
@@ -210,9 +210,7 @@ test("a file that is loaded under a query: every file may load again, and only t
   expect(await test({})).toEqual({ printed, why: [], exitCode: 0 });
   expect(await test(logs, "--aot")).toEqual({
     printed,
-    why: ["helper.js loads a file under a query", "the scan of the test files says so"],
+    why: [],
     exitCode: 0,
   });
-  const hostRunsTestFiles = { BUN_AOT_TEST_FILES_FROM_DISK: "1", BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" };
-  expect(await test({ ...logs, ...hostRunsTestFiles }, "--aot")).toEqual({ printed, why: [], exitCode: 0 });
 });

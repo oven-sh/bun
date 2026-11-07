@@ -98,7 +98,6 @@ impl<'h> Resolver<'h> {
             .find_map(|ancestor| self.code_manifest(ancestor)?.package())
     }
 
-    /// Whether the `exports` or `imports` of the package that holds `path` name the "aot" condition.
     pub fn is_in_aot_package(&self, path: &[u8]) -> bool {
         self.aot_package_directory(path).is_some()
     }
@@ -129,7 +128,6 @@ impl<'h> Resolver<'h> {
             && nearest(path).is_some_and(|other| std::ptr::eq(manifest, other))
     }
 
-    /// As the bundler has it: the nearest `package.json` with a name speaks for the file.
     pub fn declared_side_effects(&self, path: &[u8]) -> DeclaredSideEffects<'h> {
         if !path.starts_with(b"/") {
             return DeclaredSideEffects::Unspecified;
@@ -199,7 +197,6 @@ fn build_map<'h>(
         .filter(|(key, _)| key.ends_with(b"/") || strings::contains_char(key, b'*'))
         .copied()
         .collect();
-    // The comparison is not a total order, so the result depends on the algorithm: `bun_resolver` sorts with this one.
     index_sort::sort_slice_by(&mut expansion_keys, |a, b| {
         strings::glob_length_compare(a.0, b.0)
     });

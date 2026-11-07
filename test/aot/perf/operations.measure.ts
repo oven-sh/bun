@@ -6,25 +6,36 @@
 //   instructions a site = (executed by N calls of the function with 12 sites - executed by N calls of the one with 4) / (8 N)
 //
 // each as the difference of a run with many calls and a run with few, so that start-up cancels out. Instructions are counted in user mode around the whole process: no clock, the same at any load.
+// That is the cost of a site only while the two loops that call the functions are the same code: a function that is copied into its loop takes the call out of one side of the difference.
+// Where there is a testaot, each row first holds the operations of both loops against each other, as `testaot walk` prints them.
 //
 // Every row is counted twice. `alone`: the whole program is in sight, and the compiler may prove what the values are. `opened`: the same texts, but every object, array, closure and
 // string that the row works on has been handed once to text that is evaluated at run time, and has come back: nothing is left but the written types, which is the state of most accesses of a large program.
 // A row may also pin what one call of each of its two functions takes, under "<row>: a call of the function with <n> sites": the number of a site is a difference, and falls when the function with 4 sites gets dearer.
 // Held against ./operations.<os>-<arch>.json and ./operations-opened.<os>-<arch>.json, which only go down:
 //
-//   bun test test/aot/perf/operations.test.ts                   fails if a site takes more than 10% AND more than 1 instruction more than its pin
-//   AOT_PERF=lower bun test test/aot/perf/operations.test.ts    writes every number that got better into the file
-//   AOT_PERF=update ..                                          rewrites the pinned numbers as measured
-//   AOT_PERF_ONLY='^field_' ..                                  only the rows whose name matches the regular expression
+//   bun test ./test/aot/perf/operations.measure.ts                   fails if a site takes more than 10% AND more than 1 instruction more than its pin
+//   AOT_PERF=lower bun test ./test/aot/perf/operations.measure.ts    writes every number that got better into the file
+//   AOT_PERF=update ..                                               rewrites the pinned numbers as measured
+//   AOT_PERF_ONLY='^field_' ..                                       only the rows whose name matches the regular expression
 import { afterAll, expect } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
+import { testaot, toolEnv, whyNoTestaot } from "../engine/testaot";
 import { slot, spawned, withoutDebugInformation } from "../harness/commands";
-import { withSteadyCollections } from "../harness/counted-run";
+import { withProgramOutput, wordsOfAPlainBuild } from "../harness/flags";
 import { describe, test } from "../supported";
 
+// A collection starts only when enough has been allocated, never on a timer, and runs entirely on the program's thread. With the collector's helper threads on, the instruction count differs from run to run.
+const withSteadyCollections = {
+  BUN_GC_TIMER_DISABLE: "1",
+  BUN_JSC_percentCPUPerMBForEdenTimer: "0",
+  BUN_JSC_percentCPUPerMBForFullTimer: "0",
+  BUN_JSC_useConcurrentGC: "0",
+  BUN_JSC_numberOfGCMarkers: "1",
+};
 const python = Bun.which("python3");
 const root = String(
   tempDir("aot-operations", {
@@ -66,6 +77,37 @@ const rows = (python ? readFileSync(join(root, "rows.tsv"), "utf8") : "")
 
 const isWorse = (now: number, pin: number) => now > pin * 1.1 && now > pin + 1;
 
+if (whyNoTestaot)
+  console.error(`SKIPPED: test/aot/perf/operations.measure.ts: whether both loops are the same code: ${whyNoTestaot}`);
+
+async function printedByTestaot(...words: string[]) {
+  const { stdout, stderr, exitCode } = await spawned([testaot!, ...words], root, toolEnv);
+  expect({ words, stderr, exitCode }).toEqual({ words, stderr: expect.any(String), exitCode: 0 });
+  return stdout;
+}
+
+// A line that is not read stands for itself, so nothing is left out of the comparison.
+const operationsIn = (code: string) =>
+  code
+    .split("\n")
+    .filter(line => /^ {4}\S/.test(line))
+    .map(line => /^ {4}(?:v\d+(?:: .+?)? @\w+ = )?([A-Z]\w*)/.exec(line)?.[1] ?? line);
+
+/** The operations of the loop that calls the function with 4 sites, and of the loop that calls the one with 12. */
+async function operationsOfBothLoops(programFile: string, name: string) {
+  const printed = await printedByTestaot("print", programFile);
+  const loops = [4, 12].map(sites => {
+    const written = `drive_${name}_${sites}`;
+    const loop = new RegExp(`^function (f\\d+)\\b.* name="${written}"`, "m").exec(printed)?.[1];
+    if (!loop) throw new Error(`testaot print shows no function ${written}`);
+    return loop;
+  });
+  // The loop of an async function stands in its CoroutineBody. The file of a program holds no options.
+  const units = loops.flatMap(loop => [`${loop}:Body`, `${loop}:CoroutineBody`]);
+  const codes = (await printedByTestaot("walk", programFile, ...units, ...wordsOfAPlainBuild)).split(/^(?=code )/m);
+  return loops.map(loop => codes.filter(code => code.startsWith(`code ${loop}:`)).flatMap(operationsIn));
+}
+
 for (const { title, programs, pinsPath } of columns) {
   const pins: Record<string, number> = existsSync(pinsPath) ? JSON.parse(readFileSync(pinsPath, "utf8")) : {};
   const skipped =
@@ -80,7 +122,7 @@ for (const { title, programs, pinsPath } of columns) {
             : !existsSync(pinsPath) && mode !== "update"
               ? `there is no ${pinsPath}`
               : undefined;
-  if (skipped) console.error(`SKIPPED: test/aot/perf/operations.test.ts: ${programs}: ${skipped}`);
+  if (skipped) console.error(`SKIPPED: test/aot/perf/operations.measure.ts: ${programs}: ${skipped}`);
 
   describe.skipIf(!!skipped)(title, () => {
     const folder = String(tempDir(`aot-operations-${programs}`, {}));
@@ -101,8 +143,19 @@ for (const { title, programs, pinsPath } of columns) {
           slot(async () => {
             const source = join(root, programs, `${name}.ts`);
             const executable = join(folder, name);
+            const programFile = join(folder, `${name}.aot`);
             const build = await spawned(
-              [bunExe(), "build", "--compile", "--aot", ...carrier, source, "--outfile", executable],
+              [
+                bunExe(),
+                "build",
+                "--compile",
+                "--aot",
+                ...carrier,
+                ...(whyNoTestaot ? [] : [withProgramOutput(programFile)]),
+                source,
+                "--outfile",
+                executable,
+              ],
               root,
               bunEnv,
             );
@@ -121,6 +174,14 @@ for (const { title, programs, pinsPath } of columns) {
             ];
             const env = { ...bunEnv, ...withSteadyCollections };
             try {
+              if (!whyNoTestaot) {
+                const [loopOfFour, loopOfTwelve] = await operationsOfBothLoops(programFile, name);
+                expect(loopOfFour).not.toEqual([]);
+                expect({ name, loopThatCallsTheFunctionWith4Sites: loopOfFour }).toEqual({
+                  name,
+                  loopThatCallsTheFunctionWith4Sites: loopOfTwelve,
+                });
+              }
               const costs: Record<string, number | undefined> = {};
               for (const sites of [4, 12]) {
                 for (const calls of [few, many]) {
@@ -176,6 +237,7 @@ for (const { title, programs, pinsPath } of columns) {
               });
             } finally {
               rmSync(executable, { force: true });
+              rmSync(programFile, { force: true });
             }
           }),
         900_000,

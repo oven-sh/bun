@@ -10,7 +10,7 @@ use crate::check::aot::trust::Trust;
 use crate::check::aot::type_shape::{ShapeKind, TupleElement};
 use crate::hir::TypeNodeId;
 use crate::program::{FileId, Sym};
-use crate::types::{Origin, TypeData, TypeId};
+use crate::types::{Literalness, Origin, Prop, PropFlags, PropSource, Shape, TypeData, TypeId};
 use crate::util::FxHashMap;
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
@@ -22,15 +22,31 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub(in crate::check::aot) fn compute_object_origin(&mut self, ty: TypeId) -> ObjectOrigin {
-        let ty = self.declared_type_of_this(ty);
-        let data = self.c.data(ty);
+        let (ty, data) = match self.c.data(ty) {
+            TypeData::ThisParam(symbol) => {
+                let declared = self.c.declared_type(*symbol);
+                (declared, self.c.data(declared))
+            }
+            data => (ty, data),
+        };
         if let TypeData::Ref { target, .. } = data {
             return ObjectOrigin::Symbol(self.files().canonical(*target));
         }
-        if let Some((alias, _)) = self.c.alias_of_type(ty)
+        let alias = match self.c.stored_alias(ty) {
+            Some((alias, _)) => Some(*alias),
+            None => self.c.alias_symbol_of_type(ty),
+        };
+        if let Some(alias) = alias
             && is_top_level_alias(self, alias)
         {
             return ObjectOrigin::Symbol(alias);
+        }
+        if let TypeData::Synth(shape) = data
+            && is_made_by_a_check_of_a_literal(shape)
+            && let Some((file, _, expression)) = shape.symbol_declared_at
+            && expression.is_some()
+        {
+            return ObjectOrigin::ObjectLiteral { file, expression };
         }
         let TypeData::Anon { origin, .. } = data else {
             return ObjectOrigin::Computed;
@@ -50,6 +66,21 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Origin::GlobalThis => ObjectOrigin::Computed,
         }
     }
+}
+
+fn is_made_by_a_check_of_a_literal(shape: &Shape<'_>) -> bool {
+    let is_written_in_literal = |property: &Prop<'_>| {
+        property.flags.contains(PropFlags::DECLARED_IN_LITERAL)
+            || matches!(property.source, PropSource::Literal(..))
+    };
+    let mut properties = shape.props.iter();
+    shape.created_from.is_none()
+        && shape.props.iter().all(is_written_in_literal)
+        && match shape.literal {
+            Literalness::Literal | Literalness::Partial => !shape.props.is_empty(),
+            Literalness::No => properties.any(|property| property.flags.contains(PropFlags::WIDEN)),
+            _ => false,
+        }
 }
 
 fn is_top_level_scope(bound: &Bound<'_>, scope: ScopeId) -> bool {

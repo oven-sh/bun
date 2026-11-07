@@ -53,11 +53,7 @@ const membersInspected = (...names: readonly string[]) => [b.runs(b.named(...nam
 const headerProtocols = ["OwnKeys", "OwnValues", "PrototypeChain", "Iterate", "ToPrimitive"] as const;
 
 const responseOptionNames = ["headers", "status", "statusText", "method"];
-const responseOptions = [
-  b.readsContents(),
-  b.runsTransitively(...headerProtocols, b.named(...responseOptionNames)),
-  b.membersOfObjectsOnly,
-];
+const responseOptions = [b.readsContents(), b.runsTransitively(...headerProtocols, b.named(...responseOptionNames))];
 
 // An async generator function is called, and any other object is asked for @@asyncIterator, inside the call.
 const bodyOfAnyKind = [
@@ -109,7 +105,6 @@ const requestOptionsAt = (operand: b.OperandName) => [
     ...headerProtocols.filter(protocol => protocol !== "Iterate"),
     b.named(...requestOptionNames, "length", "next"),
   ),
-  b.membersOfObjectsOnly,
   asksForIterator(operand, "@@iterator", "headers"),
   asksForIterator(operand, "@@iterator", "headers", b.everyOwnValue),
   asksForIterator(operand, "@@asyncIterator", "body"),
@@ -155,7 +150,7 @@ const responseInitParts = ["status", "statusText", "headers"];
 const usesOfResponseInitParts = {
   status: [b.runs("ToPrimitive")],
   statusText: [b.runs("ToPrimitive")],
-  headers: [b.readsContents(), b.runsTransitively(...headerProtocols), b.membersOfObjectsOnly],
+  headers: [b.readsContents(), b.runsTransitively(...headerProtocols)],
 };
 const argsOfResponseInitParts = { status: b.any, statusText: b.any, headers: b.any };
 
@@ -207,6 +202,16 @@ const responseFromJSON = [
     reads: externalState,
   },
 ] satisfies b.FunctionField[];
+
+// Every operand is passed.
+const responseFromJSONAndParts = {
+  ...operandCodeOnly,
+  args: { value: b.any, ...argsOfResponseInitParts },
+  returns: newResponse,
+  uses: { value: serialized, ...usesOfResponseInitParts },
+  reads: externalState,
+  directEntry: entryTakingResponseInitParts("Response__jsonFromParts"),
+} satisfies b.FunctionField;
 
 // A call without a URL redirects to the empty string, and a call with undefined to "undefined".
 const redirection = [
@@ -292,28 +297,8 @@ const readsBlob = (settledValue: b.TableType) =>
 
 const parsedBody = { typedResultForm: { form: "ParsedBody", source: "this" } } as const;
 
-// What json() parses: the string that holds the body, the text behind the UTF-16 mark of a Blob, otherwise the bytes.
-// The call of json() that this one stands for has matched its receiver, by a test where the type does not say it.
-const jsonSourceOfBody = {
-  ...anyCode,
-  args: { body: b.any },
-  returns: settledWithAnyReason(b.union(b.instance("Uint8Array").exactly, b.string).fresh),
-  uses: { body: stateUpdate },
-  reads: externalState,
-  writes: externalState,
-  directEntry: {
-    symbol: "Body__jsonSource",
-    declaration: 'extern "C" SYSV_ABI JSC::EncodedJSValue Body__jsonSource(JSC::JSGlobalObject*, JSC::EncodedJSValue);',
-    headers: [],
-    parameters: [
-      { value: "Realm", cppType: "JSC::JSGlobalObject*" },
-      { value: "Value", cppType: "JSC::EncodedJSValue" },
-    ],
-  },
-} satisfies b.FunctionField;
-
-// The bytes of a stream are handed to what `FormData.from` holds, which a program can replace, and a promise that is resolved with a FormData looks for `then` on a prototype that is not locked.
-const readsFormData = readsBody(b.any);
+// The bytes of a stream are handed to `FormData.from`, which no program can replace. A promise that is resolved with a FormData looks for `then` on a prototype that is not locked.
+const readsFormData = readsBody(b.anyMadeOf("FormData"));
 
 const membersOfMessage = (className: string) => ({
   // A stream whose only chunk is a string settles with a Uint8Array.
@@ -350,7 +335,7 @@ const joinedParts = [
   b.readsContents(),
   b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length")),
 ];
-const blobOptions = membersInspected("type");
+const blobOptions = [b.runsTransitively("ToPrimitive", b.named("type"))];
 
 const blobConstruction = [
   {
@@ -401,7 +386,7 @@ const removesFile = {
   ...operandCodeOnly,
   args: { options: anythingOrAbsent },
   returns: settledWithAnyReason(b.union(b.undefined, b.bool, b.instance("Error")).unaliased),
-  uses: { this: stateRead, options: b.hostOptionBag(s3OptionNames) },
+  uses: { this: stateRead, options: b.optionBag(s3OptionNames) },
   reads: externalState,
   writes: externalState,
 } satisfies b.FunctionField;
@@ -431,9 +416,9 @@ const membersOfBlob = {
   },
   json: { ...readsBlob(parsedJSON), ...parsedBody },
   lastModified: measuredNumber,
-  // The setter keeps undefined, null or a string and ignores any other value.
+  // The setter keeps undefined, null, a string or a String object and ignores any other value.
   name: {
-    getter: b.union(b.string, b.null),
+    getter: b.union(b.string, b.null, b.instance("String")),
     capability: "heap",
     throws: true,
     uses: { this: stateUpdate },
@@ -442,21 +427,21 @@ const membersOfBlob = {
     implementation: { how: "CachedGetter", cppClass: "JSBlob", member: "m_name" },
     setter: {
       value: b.any,
-      capability: "heap",
+      capability: "js",
+      runsOnlyOperandCode: true,
       throws: true,
-      uses: { this: stateUpdate, value: b.inspected },
+      uses: { this: stateUpdate, value: converted },
       reads: externalState,
       writes: externalState,
       implementation: b.hostCall,
     },
   },
   size: measuredNumber,
-  // An operand of another kind than a number or a string counts as absent.
   slice: {
-    ...nativeOnly,
+    ...operandCodeOnly,
     args: { start: anythingOrAbsent, end: anythingOrAbsent, contentType: anythingOrAbsent },
     returns: newBlobOverSameBytes,
-    uses: { this: stateRead, start: b.inspected, end: b.inspected, contentType: b.inspected },
+    uses: { this: stateRead, start: converted, end: converted, contentType: converted },
     reads: externalState,
   },
   // The promise is resolved with a Stats object, which looks for `then` on a prototype that is not locked.
@@ -506,7 +491,7 @@ const membersOfBlob = {
           b.writesContents(),
           b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length")),
         ],
-        options: b.hostOptionBag(["createPath", ...s3OptionNames]),
+        options: b.optionBag(["createPath", ...s3OptionNames]),
       },
       reads: operandHeaps,
       writes: externalState,
@@ -516,7 +501,7 @@ const membersOfBlob = {
     ...operandCodeOnly,
     args: { options: anythingOrAbsent },
     returns: b.union(b.instance("FileSink"), b.instance("NetworkSink")).fresh,
-    uses: { this: stateUpdate, options: b.hostOptionBag(["fd", "path", ...s3OptionNames]) },
+    uses: { this: stateUpdate, options: b.optionBag(["fd", "path", ...s3OptionNames]) },
     reads: externalState,
     writes: externalState,
   },
@@ -549,6 +534,15 @@ export default b.declarations(
     literalPartsForm: { argument: 1, names: responseInitParts, path: "%CompilerHelpers%.newResponseFromParts" },
   }),
   b.static("%Response%.json", responseFromJSON),
+  b.static("%CompilerHelpers%.newResponseOfJSONFromParts", responseFromJSONAndParts),
+  b.extend("%CompilerHelpers%.newResponseOfJSONFromParts", { runsUnseenCode: false }),
+  b.extend("%Response%.json", {
+    literalPartsForm: {
+      argument: 1,
+      names: responseInitParts,
+      path: "%CompilerHelpers%.newResponseOfJSONFromParts",
+    },
+  }),
   b.static("%Response%.redirect", redirection),
   b.static("%Response%.error", { returns: newResponse, capability: "heap", implementation: b.hostCall }),
   declareMethods("Response", membersOfMessage("Response")),
@@ -560,7 +554,6 @@ export default b.declarations(
 
   b.construction("%Blob%", blobConstruction),
   declareMethods("Blob", membersOfBlob),
-  b.static("%CompilerHelpers%.jsonSourceOfBody", jsonSourceOfBody),
 
   // What Bun.file makes of an "s3://" path, and an S3Client of a key.
   b.class("%S3File%", {
@@ -570,7 +563,7 @@ export default b.declarations(
       "globalObject->m_JSS3FileStructure.getInitializedOnMainThread(globalObject)->storedPrototypeObject()",
     instanceStructureCppExpression: "globalObject->m_JSS3FileStructure.getConcurrently()",
     hasConstructor: false,
-    lockedObjects: ["prototype"],
+    lockedMembers: ["prototype"],
     types: [b.viewType("bun.S3File")],
     proto: {
       presign: b.otherwise,

@@ -1,0 +1,9 @@
+# require(name): the name may be that of any module of the library: what those modules alone lead to keeps nothing and has the place of the call
+# -- source: what-only-a-module-loaded-by-a-name-of-the-run-can-name-is-named-at-run-time.cts
+# declare const input: any;
+# require(input);
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# DIAGNOSTIC: CodeOutsideImageIsRefused 1
+# CHECK: by BunColor named-at-run-time at f0 v

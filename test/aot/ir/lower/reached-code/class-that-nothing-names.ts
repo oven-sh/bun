@@ -4,7 +4,7 @@
 // CHECK: Return
 
 // RUN(ABSENT): link
-// ABSENT-NOT: name="Unused"
+// ABSENT-NOT: function {{*}}name="Unused"
 // ABSENT-NOT: name="triple"
 
 // A class that nothing refers to, and whose definition runs nothing that could be noticed, is not defined.

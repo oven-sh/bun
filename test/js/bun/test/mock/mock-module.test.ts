@@ -2888,7 +2888,7 @@ describe.concurrent("a mocked module's exports are read from the object the fact
             vi.resetModules();
             expect(readManyTimes((await import("./reader")).readFlag, "real-flag")).toBe(0);
             expect(readManyTimes(mocked.readFlag, "changed")).toBe(0);
-          });
+          }, 50_000);
         `,
       },
       1,

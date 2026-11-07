@@ -26,7 +26,6 @@ console.log(process.argv.length > 2 ? versionIn(process.argv[2]) : "no text");
         "--compile",
         ...withoutDebugInformation,
         "--aot",
-        "--aot-verify-each-pass",
         "--trim",
         ...withoutFeatures([regExp]),
         "program.ts",

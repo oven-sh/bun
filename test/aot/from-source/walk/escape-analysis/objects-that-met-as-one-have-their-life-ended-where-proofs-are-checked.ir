@@ -1,0 +1,26 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# function dead(c: boolean, i: number) { const o = c ? { lid: i, spout: 1 } : { lid: 2, spout: i }; if (i > 5) return 0; return o.lid + o.spout; }
+# function handedBack(c: boolean, i: number) { const o = c ? { lid: i, spout: 1 } : { lid: 2, spout: i }; if (i > 5) return null; return o; }
+# function left(c: boolean, i: number) { const o = c ? { lid: i, spout: 1 } : { lid: 2, spout: i }; if (i > 5) sink(o); return i; }
+# sink(dead, handedBack, left);
+# -- end of source
+# f1 = dead, f2 = handedBack, f3 = left
+# The two objects of dead() meet as one that only this code has. Under the word they are made, though a build of a program makes neither, and at each Return the life of what the parameter is ends: whoever else held it would find it poisoned.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN: walk f1 mechanisms=-Inlining
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject
+# CHECK: = NewObject
+# CHECK: ([[met]]: L{{*}} @Cell
+# CHECK: EndLifeOfCell [[met]]
+# CHECK: Return
+# CHECK: EndLifeOfCell [[met]]
+# CHECK: Return
+# Where it is handed back its life goes on; on the way on which null is handed back it ends.
+# RUN(BACK): walk f2 mechanisms=-Inlining
+# BACK-LABEL: code f2:Body
+# BACK: ([[met]]: L{{*}} @Cell
+# BACK: EndLifeOfCell [[met]]
+# RUN(WITHOUT): walk f1 mechanisms=-Inlining-EscapeAnalysis
+# WITHOUT-NOT: EndLifeOfCell

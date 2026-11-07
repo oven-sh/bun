@@ -4,8 +4,8 @@ use bun_sema::bind::{CommonJsVariable, Decl, ScopeId};
 use bun_sema::hir::{FnKind, ModuleId, Pat, PatId, PatKind, StmtKind};
 
 use super::{
-    creator_of, has_symbol_use, has_use, is_commonjs_slot, stored_in_loop, used_slots, walked,
-    with_walk,
+    created_at, creator_of, has_symbol_use, has_use, is_commonjs_slot, stored_in_loop, used_slots,
+    walked, with_walk,
 };
 use crate::lower::scope::testing::{
     file_scope, first_statement, function_named, functions_of_kind, only_function, symbol_named,
@@ -18,7 +18,6 @@ const MODULE: ScopeSlot = ScopeSlot::CommonJs(CommonJsVariable::Module);
 const REQUIRE: ScopeSlot = ScopeSlot::CommonJs(CommonJsVariable::Require);
 const FILENAME: ScopeSlot = ScopeSlot::CommonJs(CommonJsVariable::Filename);
 
-// A store to one of the five names: the text of the file stays a function that has them as parameters.
 const KEEPS_WRAPPER: &str = "__filename = '';";
 
 fn is_block(kind: &StmtKind) -> bool {
@@ -87,7 +86,7 @@ fn annex_b_function_stores_var() {
 }
 
 #[test]
-fn store_reaches_every_enclosing_loop() {
+fn store_is_listed_in_the_innermost_loop() {
     let source = "export function g() { let x = 0; \
         while (x < 1) { do { x = 1; } while (x < 2); } }";
     with_walk(&[("main.ts", source)], |hir, bound, walk| {
@@ -96,11 +95,23 @@ fn store_reaches_every_enclosing_loop() {
         assert_eq!(walk.loops[0].statement, first_statement(hir, is_while));
         assert_eq!(walk.loops[0].parent, None);
         assert_eq!(walk.loops[1].parent, Some(0));
-        assert!(
-            walk.loops
-                .iter()
-                .all(|walked_loop| walked_loop.stored == [binding])
-        );
+        assert_eq!(walk.loops[1].outermost, 0);
+        assert!(walk.loops[0].stored.is_empty());
+        assert_eq!(walk.loops[1].stored, [binding]);
+    });
+}
+
+#[test]
+fn store_in_a_loop_lasts_until_the_outermost_loop_ends() {
+    let source = "export function g() { let x = 0; \
+        while (g()) { do { x = 1; } while (g()); const made = () => x; } const last = () => x; }";
+    with_walk(&[("main.ts", source)], |hir, bound, walk| {
+        let stored_last = walk.last_store_times[symbol_named(hir, bound, "x").idx()];
+        let arrows = functions_of_kind(hir, FnKind::Arrow).into_iter();
+        let created: Vec<u32> = arrows
+            .map(|arrow| created_at(walk, walked(walk, arrow)))
+            .collect();
+        assert!(created[0] < stored_last && stored_last < created[1]);
     });
 }
 

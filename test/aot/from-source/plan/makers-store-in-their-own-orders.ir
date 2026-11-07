@@ -1,0 +1,25 @@
+# a body that has an object made and then stores one name behind the other gives its objects their keys in that order. Each such run is an order of the image behind what the layout lists itself, so a creation along it is a step within the order, and whoever knows the order word in front of the run knows it behind every store.
+# `touch` is handed its object: nobody knows which keys that has by then, so its stores are no order. They come first in the text, and the one order that goes by declaration lists the names so.
+# -- source: makers-store-in-their-own-orders.ts
+# interface Sig { flags: number; declaration?: object; parameters?: object; target?: object; mapper?: object }
+# function Sig(this: Sig, flags: number) { this.flags = flags; }
+# function touch(sig: Sig) { sig.target = undefined; sig.declaration = undefined; }
+# function create(flags: number, declaration: object, parameters: object): Sig { const sig: Sig = new (Sig as any)(flags); sig.declaration = declaration; sig.parameters = parameters; sig.target = undefined; sig.mapper = undefined; return sig; }
+# function clone(from: Sig, mapper: object): Sig { const sig: Sig = new (Sig as any)(from.flags); sig.target = from; sig.mapper = mapper; return sig; }
+# const first = create(1, {}, {});
+# const second = clone(first, {});
+# touch(second);
+# console.log(Object.keys(first).join(), Object.keys(second).join());
+# -- end of source
+# RUN: plan orders mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: orders L0
+# CHECK-NEXT: order 0: "flags" "target" "declaration" "parameters" "mapper"
+# CHECK-NEXT: order 1: "flags" | "target" "mapper"
+# CHECK-NEXT: order 2: "flags" | "declaration" "parameters" "target" "mapper"
+# CHECK-NEXT: orders
+# RUN(NONE): plan orders mechanisms=none
+# REQUIRES(NONE): entries-of-bun
+# NONE: orders L0
+# NONE-NEXT: order 0: "flags"
+# NONE-NEXT: orders

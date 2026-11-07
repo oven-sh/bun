@@ -123,9 +123,6 @@ fn parts_outside(range: (u32, u32), mut holes: Vec<(u32, u32)>) -> Vec<(u32, u32
     parts
 }
 
-/// The diagnostics of binder.go. The binder visits every node, whether or not the checker does. 1184 isn't included:
-/// the binder only reports it for `export as namespace`, and wherever it's reported here it comes from the checker
-/// (`reportObviousModifierErrors`).
 pub(super) fn is_binder_diagnostic(code: u32) -> bool {
     matches!(
         code,

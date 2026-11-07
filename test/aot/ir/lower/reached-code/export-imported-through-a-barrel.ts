@@ -10,8 +10,10 @@
 // CHECK: [[errorOfUnused]] = NewRuntimeError runtimeError=LeftOutOfExecutable
 // CHECK-NEXT: Throw [[errorOfUnused]]
 
-// RUN(ABSENT): link
-// ABSENT-NOT: name="helperOfUnused"
+// RUN(ALSO): link
+// ALSO-LABEL: function {{*}}name="helperOfUnused"
+// ALSO-NOT: Return
+// ALSO: NewRuntimeError runtimeError=LeftOutOfExecutable
 
 // An import is followed to the binding that defines it, through the file that passes it on.
 import { first } from "./imports/barrel";

@@ -1,0 +1,26 @@
+# `parent ? 1 : 2`, of what is written `Node | undefined`: nobody reads what a test of the shape would prove: an object of any shape is true, undefined and null are false in line, the rest goes by the closed operation
+# `if (parent) return parent.kind`: the read leans on the proof: the test of the shape stays, and its failing side asks for undefined and null in front of the closed operation
+# f1 = truth, f2 = kindOf
+# -- source: truth-of-what-is-expected-to-be-an-object-asks-no-shape.ts
+# declare function sink(...values: unknown[]): void;
+# class Node { kind = 0; }
+# function truth(parent: Node | undefined): number { return parent ? 1 : 2; }
+# function kindOf(parent: Node | undefined): number { if (parent) return parent.kind; return -1; }
+# sink(truth, kindOf, new Node());
+# -- end of source
+# RUN(OBJECT): walk f1 mechanisms=all-ParameterGuards
+# OBJECT-LABEL: code f1:Body
+# OBJECT: [[isObject]]: boolean @Boolean = TypeTest v0 testedType=object
+# OBJECT: Branch [[isObject]]
+# OBJECT: [[isNothing]]: boolean @Boolean = TypeTest v0 testedType=undefined|null
+# OBJECT: Branch [[isNothing]]
+# OBJECT: frequency=Rare
+# OBJECT-NEXT: = ToBoolean v0 form=Generic
+# RUN(NOSHAPE): walk f1 mechanisms=all-ParameterGuards
+# NOSHAPE-NOT: = ShapeTest
+# RUN(PROOF): walk f2 mechanisms=all-ParameterGuards
+# PROOF-LABEL: code f2:Body
+# PROOF: = ShapeTest v0
+# PROOF: testedType=undefined|null
+# RUN(WITHHELD): walk f1 f2 mechanisms=all-ParameterGuards-Guesses
+# WITHHELD-NOT: testedType=undefined|null

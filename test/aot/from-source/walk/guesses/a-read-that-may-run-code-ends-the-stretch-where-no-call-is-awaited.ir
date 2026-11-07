@@ -1,0 +1,25 @@
+# `sum += text.length; sum += holder.extra; sum += text.length`, nothing proven of either. The read of `extra` may run a getter. It cannot end the proof that the text is a string, and still the stretch of the guess ends in front of it:
+# what goes on over such a read is the stretch between the read of a method and its call, `text.charCodeAt(holder.at)`, and the index says where the call stands. A finder that goes on to the end of the block for every guess looks at
+# each place of the block once for each guess: "texts that move up one place in every turn of a loop" of test/aot/build-scaling/shapes.ts: 3.6 G > 64.5 G at 4,000 texts. So the text is tested once in front of the read and once behind it.
+# -- source: twice.ts
+# export function run(first: any, second: any, turns: number) {
+#   let text: any = "0";
+#   let holder: any = null;
+#   let sum = 0;
+#   for (let i = 0; i < turns; i++) { text = first; holder = second; }
+#   sum += text.length;
+#   sum += holder.extra;
+#   sum += text.length;
+#   return sum;
+# }
+# (globalThis as any).run = run;
+# console.log(String(run("bc", { extra: 5 }, 2)));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: = TypeTest {{*}}testedType=string
+# CHECK: = GetStringLength
+# CHECK: = PropGet {{*}}key="extra"
+# CHECK: = TypeTest {{*}}testedType=string
+# CHECK: = GetStringLength
+# CHECK: Return

@@ -2,19 +2,23 @@ use bstr::BString;
 use bun_trim::{UnseenCode, UnseenCodeCause, WitnessIndex};
 
 use super::*;
-use crate::engine::UnseenCodeRecord;
 use crate::engine::testing::ResultRecords;
-use crate::ir::generated::UnseenCodeCause as EngineCause;
+use crate::engine::{SourceLocation, UnseenCodeRecord};
+use crate::ir::generated::{UnseenCodeCause as EngineCause, Witness};
 use crate::ir::ids::{ABSENT_WORD, Id};
-use crate::report::testing::{
-    self, LINE_2_COLUMN_14, NO_LOCATION, ReportFixture, location, witness,
-};
+use crate::report::source_texts::ModuleOrigin;
+use crate::report::testing::{self, LINE_2_COLUMN_14, ReportFixture};
 
 type File<'f> = (&'f str, [u32; 3]);
 
 const MAIN: &str = "/p/main.ts";
 const DEPENDENCY: &str = "/p/node_modules/x/index.js";
 const RUNTIME: &str = "node:fs";
+const MODULE_WITHOUT_TEXT: u32 = testing::RUNTIME + 1;
+const NO_LOCATION: SourceLocation = SourceLocation {
+    module: ABSENT_WORD,
+    position: 0,
+};
 
 struct Modules {
     records: Vec<AccessCountRecord>,
@@ -56,8 +60,6 @@ impl Modules {
             |module| &self.paths[module.index()][..],
             |module| self.origins[module.index()],
             statistics,
-            limit_value_of,
-            |limit| u64::from(limit == LimitId::MaxTypeNodes) * 14,
             &PathPrinter::in_directory(native("/p")),
         );
         text.map(BString::from)
@@ -73,14 +75,6 @@ fn origin_of_file(path: &str) -> ModuleOrigin {
         DEPENDENCY => ModuleOrigin::Dependency,
         RUNTIME => ModuleOrigin::Runtime,
         _ => ModuleOrigin::Program,
-    }
-}
-
-fn limit_value_of(limit: LimitId) -> u64 {
-    if limit == LimitId::MaxTypeNodes {
-        1200
-    } else {
-        2
     }
 }
 
@@ -121,6 +115,10 @@ fn counts(module: u32, accesses: [u32; 3]) -> AccessCountRecord {
         type_tests: 0,
         access_costs: costs_of(accesses),
     }
+}
+
+fn location(module: u32, position: u32) -> SourceLocation {
+    SourceLocation { module, position }
 }
 
 fn unseen(cause: UnseenCodeCause, witness: Option<u32>) -> UnseenCode {
@@ -230,8 +228,8 @@ fn calls_change_no_percentage() {
 
 #[test]
 fn developer_options_come_first() {
-    let words = ["validate", "check=verify-each-pass"];
-    let options = "Built with developer options: --aot-validate --aot-check=verify-each-pass\n";
+    let words = ["check=Validate", "cpu=apple-m1"];
+    let options = "Built with developer options: --aot-check=Validate --aot-cpu=apple-m1\n";
     let line = "0% of property accesses are one load: 0 free, 0 tested, 1 by name (1)\n";
     let records = [counts(testing::PROGRAM, [1, 0, 0])];
     let mut fixture = ReportFixture::new(ResultRecords {
@@ -314,6 +312,26 @@ fn untyped_note_counts_files() {
 }
 
 #[test]
+fn note_says_how_fast_the_program_was_compiled() {
+    let mut statistics = Statistics::default();
+    statistics.count(StatisticId::SourceLines, 119_100);
+    statistics.count(StatisticId::SourceLinesOfDeclarations, 1_000_000);
+    statistics.add_time(Stage::Load, core::time::Duration::from_millis(1_180));
+    statistics.add_time(
+        Stage::GenerateCode,
+        core::time::Duration::from_millis(8_000),
+    );
+    statistics.add_time(Stage::RunTime, core::time::Duration::from_secs(50));
+    let speed = "compiled 119,100 lines in 9.18 s (12,973 lines/s)";
+    assert_eq!(written(|out| write_untyped_note(&statistics, out)), speed);
+    statistics.count(StatisticId::SourceFilesDemoted, 1);
+    assert_eq!(
+        written(|out| write_untyped_note(&statistics, out)),
+        format!("1 file compiled without types, {speed}")
+    );
+}
+
+#[test]
 fn details_list_most_untyped_files() {
     let modules = Modules::new(&[
         ("/p/g.ts", [1, 0, 0]),
@@ -376,7 +394,7 @@ fn five_untyped_files_are_all_listed() {
 #[test]
 fn details_need_counted_access() {
     let mut statistics = Statistics::default();
-    statistics.gave_up(LimitId::MaxValueFlowSetMembers, None);
+    statistics.count(StatisticId::DirectCalls, 3);
     assert_eq!(Modules::new(&[]).details(&statistics), None);
     assert_eq!(
         Modules::new(&[(RUNTIME, [1, 2, 3])]).details(&statistics),
@@ -385,44 +403,19 @@ fn details_need_counted_access() {
 }
 
 #[test]
-fn details_end_with_reached_limits() {
-    let mut statistics = Statistics::default();
-    statistics.gave_up(LimitId::MaxValueFlowSetMembers, None);
-    for _ in 0..3 {
-        statistics.gave_up(LimitId::MaxTypeNodes, None);
-    }
-    let type_nodes = format!(
-        "  MaxTypeNodes = 1,200, hit 3 times, left 14 operations untyped (limits {})",
-        LimitId::MaxTypeNodes.purpose()
-    );
-    let flow_edges = format!(
-        "  MaxValueFlowSetMembers = 2, hit 1 time, left nothing untyped (limits {})",
-        LimitId::MaxValueFlowSetMembers.purpose()
-    );
-    let expected = [
-        "All property accesses, including dependencies:",
-        "  1  free: one load or store at a fixed offset",
-        "  0  tested: a test of its own, then a load or store at a fixed offset",
-        "  0  by name: looked up by name",
-        "Calls: 0 direct, 0 indirect",
-        "Compiler limits hit:",
-        type_nodes.as_str(),
-        flow_edges.as_str(),
-    ];
-    let modules = Modules::new(&[(MAIN, [0, 0, 1])]);
-    assert_eq!(modules.details(&statistics), joined(&expected));
-}
-
-#[test]
 fn trim_causes_have_sentence_and_position() {
     let at_location = |location| UnseenCodeRecord {
         cause: EngineCause::EvaluatesText,
         builtin: ABSENT_WORD,
-        witness: witness(ABSENT_WORD, location),
+        witness: Witness {
+            function: ABSENT_WORD,
+            value: ABSENT_WORD,
+            location,
+        },
     };
     let records = [
         at_location(location(testing::PROGRAM, LINE_2_COLUMN_14)),
-        at_location(location(testing::RUNTIME, 0)),
+        at_location(location(MODULE_WITHOUT_TEXT, 0)),
         at_location(NO_LOCATION),
     ];
     let mut fixture = ReportFixture::new(ResultRecords {
@@ -479,11 +472,11 @@ fn summary_starts_with_trim_causes() {
         ..ResultRecords::default()
     });
     fixture.options.trim.removes_unused = true;
-    fixture.options.option_words = vec![Box::from(&b"validate"[..])];
+    fixture.options.option_words = vec![Box::from(&b"check=Validate"[..])];
     fixture.used_features.causes = vec![unseen(UnseenCodeCause::FlowResultDisabled, None)];
     let start = [
         "--trim kept APIs your code doesn't call because a developer option turned the analysis off\n",
-        "Built with developer options: --aot-validate\n",
+        "Built with developer options: --aot-check=Validate\n",
     ];
     let levels = [
         "Dependencies: 100% of property accesses are one load: 1 free, 0 tested, 0 by name (1)\n",
@@ -496,31 +489,27 @@ fn summary_starts_with_trim_causes() {
 }
 
 #[test]
-fn details_entry_reads_names_and_limit_values() {
-    let records = [counts(testing::PROGRAM, [1, 0, 1])];
+fn details_entry_reads_paths_and_origins() {
+    let records = [
+        counts(testing::PROGRAM, [1, 0, 1]),
+        counts(testing::DEPENDENCY, [2, 0, 0]),
+        counts(testing::RUNTIME, [9, 9, 9]),
+    ];
     let mut fixture = ReportFixture::new(ResultRecords {
         access_counts: &records,
-        limit_values: &[(LimitId::MaxTypeNodes, 1200)],
         ..ResultRecords::default()
     });
-    fixture.statistics.gave_up(LimitId::MaxTypeNodes, None);
     fixture.statistics.count(StatisticId::DirectCalls, 3);
     let mut entries = Vec::new();
     fixture.with_input(|input| collect_details(input, &mut entries));
-    let reached = format!(
-        "  MaxTypeNodes = 1,200, hit 1 time, left nothing untyped (limits {})",
-        LimitId::MaxTypeNodes.purpose()
-    );
     let expected = [
         "All property accesses, including dependencies:",
         "  1  free: one load or store at a fixed offset",
         "  0  tested: a test of its own, then a load or store at a fixed offset",
-        "  1  by name: looked up by name",
+        "  3  by name: looked up by name",
         "Calls: 3 direct, 0 indirect",
         "Files with the most untyped accesses:",
         "  src/a.ts  50% typed (1 of 2)",
-        "Compiler limits hit:",
-        reached.as_str(),
     ];
     let text = expected.join("\n").into_bytes();
     assert_eq!(entries, [ReportEntry::line(ExplainSet::TEXT, text)]);

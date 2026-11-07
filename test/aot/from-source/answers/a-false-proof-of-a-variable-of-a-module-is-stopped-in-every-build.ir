@@ -1,0 +1,30 @@
+# What goes into a variable of a module is shown or asked. Link types the variable by what it sees stored, and every function of the program reads it with no look.
+# THE RED CONTROL. The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so `held` is a number or undefined, and a text is stored.
+# In the first run the body of the function stores it: it printed "NaN" and went on. In the second the function is entered with an argument of another type than is written, so its slow version stores it: such a version is walked, and the door stands there too.
+# OPTIONS: testing=UnseenCodeAnswersUndefined
+# RUN(STORED): run-in-shell mechanisms=all-Inlining globalThis.which = 1;
+# STORED: AOT: f{{*}} at {{*}}: what a variable holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# STORED-NOT: went on
+# STORED: crashed with
+# RUN(SLOW): run-in-shell mechanisms=all-Inlining globalThis.which = 2;
+# SLOW: AOT: f{{*}} at {{*}}: what a variable holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# SLOW-NOT: went on
+# SLOW: crashed with
+# THE GREEN CONTROL: the same store of what fits.
+# RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
+# NONE: 2.5
+# NONE-NEXT: went on
+# NONE-NEXT: exited with 0
+# -- source: a-false-proof-of-a-variable-of-a-module-is-stopped-in-every-build.ts
+# declare function id(value: unknown): any;
+# declare function print(...values: unknown[]): void;
+# declare const which: number;
+# let held = 0.5;
+# function set(flag: number) { held = flag ? 1.5 : id("text"); }
+# function get() { return held + 1; }
+# set(1);
+# if (which === 1) set(0);
+# if (which === 2) (set as any)("");
+# print(String(get()));
+# print("went on");
+# -- end of source

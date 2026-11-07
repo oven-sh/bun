@@ -1,0 +1,15 @@
+# `hidden.apply(null, [line, i]); line += ..`: the call as written gets a list of its own, made again of what the list holds: the string, and not the operand of the literal, which is bound to the builder again by then.
+# f1 = gather
+# -- source: text-that-grows-goes-into-a-list-written-for-apply.js
+# function gather(count) { let line = ""; let seen = 0; for (let i = 0; i < count; i++) { const got = hidden.apply(null, [line, i]); line += "k" + i; seen += got.length; } return line + "/" + seen; }
+# let last = ""; for (let turn = 0; turn < 30; turn++) last = gather(3);
+# print(last);
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all globalThis.hidden = function (a, b) { return a + ":" + b; };
+# ANSWERS: k0k1k2/12
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: StringBuilderBegin
+# FORM: StringBuilderToString
+# FORM: = NewArray
+# FORM: = NewArray

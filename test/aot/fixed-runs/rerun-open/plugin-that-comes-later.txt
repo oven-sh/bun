@@ -1,0 +1,11 @@
+A module that a plugin answers for only later.
+#### later.test.js
+import { expect, mock, test } from "bun:test";
+import { plugin } from "bun";
+test("later", async () => {
+  console.log("| CASE", "early", await import("virtual:late").then(() => "loaded", error => error.name));
+  plugin({ name: "late", setup(build) { build.module("virtual:late", () => ({ exports: { default: "late" }, loader: "object" })); } });
+  console.log("| CASE", "late", (await import("virtual:late")).default, require("virtual:late").default);
+});
+#### tsconfig.json
+{ "compilerOptions": { "allowJs": true } }

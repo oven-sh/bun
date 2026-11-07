@@ -32,102 +32,77 @@ console.log(lines.join("\n"));
 
 // GENERATED: shape digest
 // CHECK-LABEL: function {{*}}name="shape"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|object flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|object, v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v2 = Builtin builtin=Object
 // CHECK-NEXT: v3 = Builtin builtin=ObjectCreate
 // CHECK-NEXT: v4 = Call v3, v2, v0 calleeName="Object.create"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v6 = Integer
-// CHECK-NEXT: v7 = Convert v6 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v7)
-// CHECK-NEXT: b2(v8):
+// CHECK-NEXT: v5 = Integer
+// CHECK-NEXT: v6 = Convert v5 declared={type=i32 flags=[IsExpected]}
+// CHECK-NEXT: Jump -> next b1(v6)
+// CHECK-NEXT: b1(v7):
 // CHECK-NEXT: LoopHint
-// CHECK-NEXT: v10 = Convert v1 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v11 = Integer integer=5
-// CHECK-NEXT: v12 = Mod v10, v11
-// CHECK-NEXT: v13 = LessEq v8, v12
-// CHECK-NEXT: Branch v13 -> taken b3(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b3(v14):
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v15 = String string="own"
-// CHECK-NEXT: v16 = Add v15, v14
-// CHECK-NEXT: ElemSet v5, v16, v14
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v18 = Increment v14
-// CHECK-NEXT: v19 = Convert v18 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v19)
-// CHECK-NEXT: b6(v20):
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: Return v5
+// CHECK-NEXT: v9 = Integer integer=5
+// CHECK-NEXT: v10 = Mod v1, v9
+// CHECK-NEXT: v11 = LessEq v7, v10
+// CHECK-NEXT: Branch v11 -> taken b2(), notTaken b3()
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v12 = String string="own"
+// CHECK-NEXT: v13 = Add v12, v7
+// CHECK-NEXT: ElemSet v4, v13, v7
+// CHECK-NEXT: v15 = Increment v7
+// CHECK-NEXT: v16 = Convert v15 declared={type=i32 flags=[IsExpected]}
+// CHECK-NEXT: Jump -> next b1(v16)
+// CHECK-NEXT: b3():
+// CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="digest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Integer
 // CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}
 // CHECK-NEXT: v2 = GetModuleVariable variable=[[g_1]]
 // CHECK-NEXT: v3 = CheckInitialized v2 name="objects"
 // CHECK-NEXT: v4 = IteratorOpen v3
-// CHECK-NEXT: Jump -> next b2(v1)
-// CHECK-NEXT: b2(v5):
+// CHECK-NEXT: Jump -> next b1(v1)
+// CHECK-NEXT: b1(v5):
 // CHECK-NEXT: LoopHint
 // CHECK-NEXT: v7 = IteratorResume v4
 // CHECK-NEXT: v8 = ResultAt v7
 // CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: Branch v8 -> taken b3(), notTaken b4()
+// CHECK-NEXT: Branch v8 -> taken b2(), notTaken b3()
+// CHECK-NEXT: b2():
+// CHECK-NEXT: Return v5
 // CHECK-NEXT: b3():
-// CHECK-NEXT: v10 = Convert v5 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5() handler=b13():
-// CHECK-NEXT: v11 = Convert v9 declared={type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v12 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v13 = Call v12, -, v11 calleeName="readAll"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v15 = Integer
-// CHECK-NEXT: v16 = Convert v15 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b6(v5, v16)
-// CHECK-NEXT: b6(v17, v18) handler=b13():
+// CHECK-NEXT: Jump -> next b4()
+// CHECK-NEXT: b4() handler=b8():
+// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}
+// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v12 = Call v11, -, v10 calleeName="readAll"
+// CHECK-NEXT: v13 = Integer
+// CHECK-NEXT: v14 = Convert v13 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: Jump -> next b5(v5, v14)
+// CHECK-NEXT: b5(v15, v16) handler=b8():
 // CHECK-NEXT: LoopHint
-// CHECK-NEXT: v20 = PropGet v14 key="length"
-// CHECK-NEXT: v21 = Convert v20 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v22 = Less v18, v21
-// CHECK-NEXT: Branch v22 -> taken b7(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b7(v23) handler=b13():
-// CHECK-NEXT: Jump -> next b8()
-// CHECK-NEXT: b8() handler=b13():
-// CHECK-NEXT: v24 = Integer integer=31
-// CHECK-NEXT: v25 = Mul v17, v24
-// CHECK-NEXT: v26 = PropGet v14 key="charCodeAt"
-// CHECK-NEXT: v27 = Convert v26 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
-// CHECK-NEXT: v28 = Call v27, v14, v23 calleeKey="charCodeAt" calleeName="text.charCodeAt"
+// CHECK-NEXT: v18 = PropGet v12 key="length"
+// CHECK-NEXT: v19 = Less v16, v18
+// CHECK-NEXT: Branch v19 -> taken b6(), notTaken b7()
+// CHECK-NEXT: b6() handler=b8():
+// CHECK-NEXT: v20 = Integer integer=31
+// CHECK-NEXT: v21 = Mul v15, v20
+// CHECK-NEXT: v22 = PropGet v12 key="charCodeAt"
+// CHECK-NEXT: v23 = Call v22, v12, v16 calleeKey="charCodeAt" calleeName="text.charCodeAt"
+// CHECK-NEXT: v24 = Add v21, v23
+// CHECK-NEXT: v25 = Integer
+// CHECK-NEXT: v26 = BitOr v24, v25
+// CHECK-NEXT: v27 = Convert v26 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v28 = Increment v16
 // CHECK-NEXT: v29 = Convert v28 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v30 = Add v25, v29
-// CHECK-NEXT: v31 = Integer
-// CHECK-NEXT: v32 = BitOr v30, v31
-// CHECK-NEXT: v33 = Convert v32 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b9()
-// CHECK-NEXT: b9() handler=b13():
-// CHECK-NEXT: Jump -> next b10()
-// CHECK-NEXT: b10() handler=b13():
-// CHECK-NEXT: v34 = Increment v23
-// CHECK-NEXT: v35 = Convert v34 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b6(v33, v35)
-// CHECK-NEXT: b11(v36) handler=b13():
-// CHECK-NEXT: Jump -> next b12()
-// CHECK-NEXT: b12() handler=b13():
-// CHECK-NEXT: Jump -> next b2(v17)
-// CHECK-NEXT: b13() role=IterationCleanup subject=v4:
-// CHECK-NEXT: v37 = CatchException
+// CHECK-NEXT: Jump -> next b5(v27, v29)
+// CHECK-NEXT: b7() handler=b8():
+// CHECK-NEXT: Jump -> next b1(v15)
+// CHECK-NEXT: b8() role=IterationCleanup subject=v4:
+// CHECK-NEXT: v30 = CatchException
 // CHECK-NEXT: IteratorClose v4 completion=Throw
-// CHECK-NEXT: Rethrow v37
+// CHECK-NEXT: Rethrow v30
 // CHECK-NEXT: }

@@ -1,0 +1,13 @@
+# the result of the step is laid into a list: somebody gets hold of it, and could tell an object that was never made from the one that the call makes. The call stands as written
+# -- source: next-written-by-hand-whose-result-somebody-gets-hold-of-is-called.ts
+# declare function sink(...values: unknown[]): void;
+# function* count(n: number): Generator<number, string, number | undefined> { let sum = 0; for (let i = 0; i < n; i++) sum += (yield i) ?? 0; return "sum " + sum; }
+# function drive(walk: Generator<number, string, number | undefined>) { const steps: unknown[] = []; for (;;) { const step = walk.next(1); steps.push(step); if (step.done) return steps; } }
+# sink(drive(count(4)), drive(count(5)));
+# -- end of source
+# f1 = count, f2 = drive
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = Call {{*}}calleeKey="next"
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-NOT: = StepGenerator

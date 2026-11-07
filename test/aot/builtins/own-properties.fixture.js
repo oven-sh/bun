@@ -66,6 +66,12 @@ async function findPrototypeOfServerWebSockets() {
   return prototype;
 }
 
+function prototypeOfCallbacksOfFFI() {
+  const made = Bun.FFI.callback({ args: [], returns: "void" }, () => {});
+  Bun.FFI.closeCallback(made);
+  return getPrototypeOf(made);
+}
+
 const hiddenObjects = new Map([
   ["%ArrayIterator%.prototype", getPrototypeOf([][Symbol.iterator]())],
   ["%AsyncFunction%.prototype", getPrototypeOf(async function () {})],
@@ -73,12 +79,18 @@ const hiddenObjects = new Map([
   ["%AsyncGeneratorFunction%.prototype", getPrototypeOf(async function* () {})],
   ["%AsyncIterator%.prototype", getPrototypeOf(asyncGeneratorPrototype)],
   ["%BunRequest%.prototype", await findPrototypeOfRoutedRequests()],
+  ["%CookieMapIterator%.prototype", getPrototypeOf(new Bun.CookieMap()[Symbol.iterator]())],
   ["%EventEmitter%.prototype", getPrototypeOf(process)],
+  // In front of bun:ffi, which takes `callback` away when it is loaded.
+  ["%FFICallback%.prototype", prototypeOfCallbacksOfFFI()],
   // The function pointer is never called.
   ["%FFI%.prototype", getPrototypeOf(require("bun:ffi").linkSymbols({ never: { ptr: 8, args: [], returns: "void" } }))],
+  ["%FormDataIterator%.prototype", getPrototypeOf(new FormData()[Symbol.iterator]())],
   ["%Generator%.prototype", getPrototypeOf(function* () {}).prototype],
   ["%GeneratorFunction%.prototype", getPrototypeOf(function* () {})],
   ["%HeadersIterator%.prototype", getPrototypeOf(new Headers()[Symbol.iterator]())],
+  ["%IntlSegmentIterator%.prototype", getPrototypeOf(new Intl.Segmenter().segment("")[Symbol.iterator]())],
+  ["%IntlSegments%.prototype", getPrototypeOf(new Intl.Segmenter().segment(""))],
   ["%IteratorHelper%.prototype", getPrototypeOf([].values().map(x => x))],
   ["%MapIterator%.prototype", getPrototypeOf(new Map()[Symbol.iterator]())],
   ["%NodeHTTPResponse%.prototype", await findPrototypeOfNativeResponses()],

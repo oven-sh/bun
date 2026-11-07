@@ -1,0 +1,27 @@
+# testing=CheckProofsAtRunTime: whoever reads a filled slot trusts the bits. Every door of the run time holds what it stores to the type of the slot (slotAdmits(), branchUnlessTypeAccepts());
+# a typed store of compiled code writes on the walk's word that the type of the value lies within it. Under the switch the VALUE is asked in front of the store, whatever its record claims:
+# so a claim of the walk's own rules is heard too, which no check at a source holds against anything. `inner` lies in a slot for narrow references to objects of one layout.
+# f1 = the constructor: `this.inner = i`. f2 = swap.
+# -- source: slots.ts
+# interface Inner { n: number }
+# class Holder {
+#   inner: Inner | undefined;
+#   constructor(i: Inner) { this.inner = i; }
+#   swap(i: Inner) { this.inner = i; }
+# }
+# const all: Holder[] = [];
+# for (let k = 0; k < 4; k++) all.push(new Holder({ n: k }));
+# for (const h of all) h.swap({ n: 9 });
+# (globalThis as any).kept = all;
+# -- end of source
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN(MADE): walk f1 mechanisms=all-Inlining
+# REQUIRES(MADE): entries-of-bun
+# MADE-LABEL: code f1:Body
+# MADE: CheckProof {{*}} checkedType=undefined|null|L{{*}} typeWithoutProof=absent|anything source=Field
+# MADE: = PutSlot{{*}} key="inner"
+# RUN(STORED): walk f2 mechanisms=all-Inlining
+# REQUIRES(STORED): entries-of-bun
+# STORED-LABEL: code f2:Body
+# STORED: CheckProof {{*}} checkedType=L{{*}} typeWithoutProof=absent|anything source=Field
+# STORED: = PutSlot{{*}} key="inner"

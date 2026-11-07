@@ -456,7 +456,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                 JSC::Options::thresholdForFTLOptimizeAfterWarmUp() = 1000000;
             }
 
-            // The front end and the passes are Bun's own, so a build does not verify the program between them. Bun's tests do.
+            // The front end and the engine are Bun's own, so a build does not verify the program between them. Bun's tests do.
             JSC::Options::verifyAOTProgram() = false;
             Bun::saveBackEndOptionDefaults();
             if (envc > 0) [[likely]] {
@@ -1010,6 +1010,19 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
         }
         unfinished.append(WTF::move(key));
     });
+#if ENABLE(AOT)
+    // A compiled module that another imports by a statement is in no registry.
+    if (Bun::hasCompiledModules()) {
+        JSC::AOT::forEachFileAwaitingAtTopLevel(globalObject, [&](int64_t order, const String& specifier) {
+            if (awaiting.containsIf([&](auto& entry) { return entry.second == specifier; }))
+                return;
+            size_t index = awaiting.size();
+            while (index && awaiting[index - 1].first > order)
+                --index;
+            awaiting.insert(index, std::pair { order, specifier });
+        });
+    }
+#endif
     for (auto& key : unfinished)
         loader->removeEntry(key);
 
@@ -1153,14 +1166,10 @@ JSC_DEFINE_HOST_FUNCTION(functionRequireCacheDidDelete, (JSC::JSGlobalObject * g
     return JSValue::encode(jsUndefined());
 }
 
-// Without an argument: whether the cache lists modules of the compiled program at all.
-// With a third: whether a require() has put the built-in module there. No entry is made.
 JSC_DEFINE_HOST_FUNCTION(functionRequireCacheCompiledEntry, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    if (!callFrame->argumentCount())
-        return JSValue::encode(jsBoolean(Bun::hasCompiledModules()));
-    JSValue keyValue = callFrame->uncheckedArgument(0);
+    JSValue keyValue = callFrame->argument(0);
     if (!keyValue.isString() || !seesCompiledModules(globalObject, callFrame->argument(1)))
         return JSValue::encode(jsUndefined());
     WTF::String key = asString(keyValue)->value(globalObject);
@@ -1177,7 +1186,7 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject 
     if (!Bun::hasCompiledModules()) [[likely]]
         return JSValue::encode(jsBoolean(false));
     // A file can come back from the disk there: the cache shows it, as plain's does.
-    if (Bun::requireCacheListsCompiledFiles(defaultGlobalObject(globalObject)))
+    if (Bun::requireCacheListsCompiledFiles())
         return JSValue::encode(jsBoolean(false));
     if (!callFrame->argumentCount())
         return JSValue::encode(jsBoolean(true));
@@ -1187,7 +1196,8 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject 
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     WTF::String key = asString(keyValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsBoolean(Bun::isHiddenFromRequireCache(key)));
+    std::optional<bool> isHidden = Bun::isHiddenFromRequireCache(key);
+    return JSValue::encode(isHidden ? jsBoolean(*isHidden) : jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1202,7 +1212,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     };
     if (auto* loader = moduleLoaderOfRequirer(globalObject, callFrame->argument(0))) {
         Bun::forEachModuleRegistrySpecifier(loader, [&](UniquedStringImpl* specifier, JSC::ModuleRegistryEntry* entry) {
-            if (isModuleEvaluated(entry->record()))
+            if (isModuleEvaluated(entry->record()) && !Bun::isRecordOfCompiledFile(entry->record()))
                 add(String { specifier });
         });
     }
@@ -2465,7 +2475,7 @@ extern "C" JSC::EncodedJSValue CryptoObject__create(JSGlobalObject*);
 JSC_DEFINE_CUSTOM_GETTER(moduleNamespacePrototypeGetESModuleMarker, (JSGlobalObject * globalObject, JSC::EncodedJSValue encodedThisValue, PropertyName))
 {
     JSValue thisValue = JSValue::decode(encodedThisValue);
-    if (thisValue.isCell() && JSC::AOT::isModuleNamespace(thisValue.asCell()))
+    if (thisValue.isCell() && globalObject->vm().hasCompiledCode() && JSC::AOT::isModuleNamespace(thisValue.asCell()))
         return JSC::JSValue::encode(JSC::AOT::hasESModuleMarker(thisValue.asCell()) ? jsBoolean(true) : jsUndefined());
     JSModuleNamespaceObject* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(thisValue);
     if (!moduleNamespaceObject || moduleNamespaceObject->m_hasESModuleMarker != WTF::TriState::True) {
@@ -2479,7 +2489,7 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
 {
     auto& vm = JSC::getVM(globalObject);
     JSValue thisValue = JSValue::decode(encodedThisValue);
-    if (thisValue.isCell() && JSC::AOT::isModuleNamespace(thisValue.asCell())) {
+    if (thisValue.isCell() && vm.hasCompiledCode() && JSC::AOT::isModuleNamespace(thisValue.asCell())) {
         JSC::AOT::setESModuleMarker(thisValue.asCell(), JSValue::decode(encodedValue).toBoolean(globalObject));
         return true;
     }
@@ -3233,7 +3243,8 @@ void GlobalObject::finishCreation(VM& vm)
 
             init.set(process);
             // The global object adds its `process` at the first read of the name. A program may come to the object without it: import process from "node:process".
-            JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "process"_s).impl(), process);
+            if (init.vm.hasCompiledCode()) [[unlikely]]
+                JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "process"_s).impl(), process);
         });
 
     m_streamsRuntime.initialize(this);
@@ -3279,7 +3290,8 @@ void GlobalObject::finishCreation(VM& vm)
 
 void GlobalObject::didCreateDOMConstructor(JSC::JSObject* constructor)
 {
-    JSC::AOT::hostDidCreateConstructor(this, constructor);
+    if (vm().hasCompiledCode()) [[unlikely]]
+        JSC::AOT::hostDidCreateConstructor(this, constructor);
 }
 
 void GlobalObject::didCreateDOMStructure(JSC::Structure* structure)
@@ -3402,7 +3414,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     prototype->putDirect(vm, vm.propertyNames->constructor, target, PropertyAttribute::DontEnum | 0);
 
 #if ENABLE(AOT)
-    if (JSC::AOT::CompiledCallee::isCompiledCallee(target)) {
+    if (target->vm().hasCompiledCode() && JSC::AOT::CompiledCallee::isCompiledCallee(target)) {
         target->methodTable()->setPrototype(target, globalObject, base, true);
         RETURN_IF_EXCEPTION(scope, {});
         JSC::AOT::CompiledCallee::setPrototypeProperty(vm, target, prototype, PropertyAttribute::DontEnum | 0);
@@ -3410,12 +3422,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
         String ownName = JSC::AOT::CompiledCallee::name(target);
         JSC::AOT::CompiledCallee::setNameProperty(globalObject, target, jsString(vm, ownName), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
         RETURN_IF_EXCEPTION(scope, {});
-        if (name.isString()) {
-            String stored = asString(name)->value(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!stored.isEmpty() && stored != ownName)
-                JSC::AOT::CompiledCallee::showNameUntilLookedFor(vm, target, stored);
-        }
         return JSValue::encode(jsUndefined());
     }
 #endif
@@ -3455,10 +3461,7 @@ JSC::JSFunction* GlobalObject::utilInspectFunction()
 
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue inspectModule = BUN_REQUIRE_INTERNAL_MODULE(this, InternalUtilInspect, "Startup", "inspect"_s);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_ASSERT(inspectModule.isObject());
-    JSValue inspectValue = asObject(inspectModule)->get(this, Identifier::fromString(vm, "inspect"_s));
+    JSValue inspectValue = BUN_REQUIRE_INTERNAL_MODULE(this, InternalUtilInspect, "Startup", "inspect"_s);
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto* inspect = dynamicDowncast<JSFunction>(inspectValue);
     if (!inspect) [[unlikely]] {
@@ -3708,8 +3711,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
     // A test's console in Jest and Vitest has none. Where there is one, React's development build reads into the props of what it renders.
-    // Compiled code doesn't look it up, so it has to be there.
-    if (isBunTest && !Bun::hasCompiledModules()) {
+    if (isBunTest) {
         consoleObject->deleteProperty(this, Identifier::fromString(vm, "timeStamp"_s));
         RETURN_IF_EXCEPTION(scope, );
     }
@@ -4160,7 +4162,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    const bool isImportCall = std::exchange(globalObject->onLoadPlugins.isResolvingImportCall, false) || (vm.hasCompiledCode() && globalObject->onLoadPlugins.hasVirtualModules() && JSC::AOT::isResolvingImportCall(vm));
+#else
     const bool isImportCall = std::exchange(globalObject->onLoadPlugins.isResolvingImportCall, false);
+#endif
 
     // JSC asks this way about the key of a top-level load (JSModuleLoader::loadModule), which is resolved already.
     if (!useImportMap)
@@ -4252,6 +4258,10 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         if (globalObject->onLoadPlugins.modulesAskedFor.add(resolved).isNewEntry)
             globalObject->onLoadPlugins.hasNewLoad = true;
     }
+    if (Bun::hasCompiledModules()) [[unlikely]] {
+        Bun::willResolveImport(globalObject, resolved, referrer);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     return resolvedKey;
 }
 
@@ -4267,10 +4277,15 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
                 auto span = view->span8();
                 size_t canonicalLength = 0;
                 if (const Latin1Character* canonical = Bun__standaloneModuleKey(span.data(), span.size(), &canonicalLength)) {
+                    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
                     // The graph's spelling is the printed specifier's on POSIX; on Windows it fixes the separator form.
-                    if (canonicalLength == span.size() && !memcmp(canonical, span.data(), canonicalLength))
-                        return Identifier::fromString(globalObject->vm(), string->tryGetValue());
-                    return Identifier::fromString(globalObject->vm(), String({ canonical, canonicalLength }));
+                    bool isCanonical = canonicalLength == span.size() && !memcmp(canonical, span.data(), canonicalLength);
+                    Identifier resolved = isCanonical ? Identifier::fromString(globalObject->vm(), string->tryGetValue()) : Identifier::fromString(globalObject->vm(), String({ canonical, canonicalLength }));
+                    if (Bun::hasCompiledModules()) [[unlikely]] {
+                        Bun::willResolveImport(zigGlobalObject, resolved.string(), referrer);
+                        RETURN_IF_EXCEPTION(scope, {});
+                    }
+                    return resolved;
                 }
             }
         }
@@ -4348,6 +4363,12 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         JSC::JSPromise* imported = Bun::importCompiledModule(globalObject, key.string(), parameters.get(), referrerAsyncOrder);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+#if ENABLE(AOT)
+        if (imported && globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
+            Bun::didStartDynamicImport(globalObject, imported, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+#endif
         if (imported)
             return imported;
     }
@@ -4403,13 +4424,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
         // The loader keeps parameters of the type alone for an import() without attributes, and fetches with them where a require() takes over a load in flight.
         bool hasImportAttributes = parameters && (parameters->type() != ScriptFetchParameters::Type::JavaScript || !parameters->attributes().isEmpty());
-        JSC::AOT::AskerOfModule asker(globalObject, referrer);
+        JSC::AOT::AskerOfModule asker(globalObject, Bun::askerOfImport(referrer));
         JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, hasImportAttributes ? parameters.get() : nullptr);
-        if (scope.exception()) [[unlikely]] {
-            JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
-            rejected->markAsHandled();
-            return rejected->rejectWithCaughtException(vm, scope);
-        }
+        RETURN_IF_EXCEPTION(scope, nullptr);
         if (compiled)
             return compiled;
     }
@@ -4968,6 +4985,8 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
 {
     auto* importMeta = Zig::ImportMetaObject::create(globalObject, key);
     importMeta->setModuleGraph(globalObject->vm(), Bun::moduleGraphOfLoader(globalObject, loader));
+    // A module that the loader holds has a record. Only the engine asks without one, for a module of the executable.
+    importMeta->isOfCompiledModule = !record && Bun::hasCompiledModules();
     return importMeta;
 }
 

@@ -375,7 +375,11 @@ export class Bench {
           child.kill(it.signal ?? "SIGTERM");
           // It has answered, so it has started. A server that the signal has stopped answers nothing more: it is ended ten seconds from here.
           clearTimeout(timer);
-          timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+          // Whoever reads a SIGKILL in the place of the signal's own end is told who sent it.
+          timer = setTimeout(() => {
+            answers.push("ended by this test ten seconds behind the signal");
+            child.kill("SIGKILL");
+          }, 10_000);
           if (it.signal && (await Promise.race([child.exited, Bun.sleep(3000).then(() => "runs on")])) === "runs on") {
             const answer = await fetch(base + "/text").then(
               async answer => `${answer.status} ${await answer.text()}`,

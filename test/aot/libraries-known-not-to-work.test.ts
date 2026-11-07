@@ -1,11 +1,12 @@
 // libraries-known-not-to-work.md: a table of packages, what each does, and what you see in an executable. docs/compiler/libraries.mdx names the same packages.
 // Here each row has a small program that does what the package does. The program runs under plain Bun, is built with `bun compile`, and the
 // executable has to print the messages of the row, letter for letter. A row without a program fails, and so does a program without a row.
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { slot, unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 import { run } from "./harness/run";
 
 const read = (path: string) => readFileSync(join(import.meta.dir, path), "utf8");
@@ -25,7 +26,7 @@ const anchors = new Set(
 );
 
 // Where the table cuts a TypeError short with `...`, it ends like the one that the section prints in full.
-const whole = /```txt\n(TypeError: Cannot assign to Function\.prototype\.call\$0)( because .*)\n```/.exec(section)!;
+const whole = /```txt\n(TypeError: Cannot assign to Promise\.prototype\.then)( because .*)\n```/.exec(section)!;
 const ending = whole[2];
 
 const codeIn = (cell: string) => Array.from(cell.matchAll(/`([^`]+)`/g), ([, code]) => code.replaceAll("\\|", "|"));
@@ -59,13 +60,6 @@ type Program = {
 };
 
 const programs: Record<string, Program> = {
-  "sass": {
-    files: {
-      "main.js":
-        inSteps("Function.prototype.call$0 = function () { return this(); };") + `console.log((() => 1).call$0());`,
-    },
-    plain: "1\n",
-  },
   "private": {
     files: {
       "main.js": `
@@ -166,9 +160,12 @@ const programs: Record<string, Program> = {
         function hide(object, key, value) { return Object.defineProperty(object, key, { configurable: true, writable: true, value }); }
         function $export(name, source) { for (const key in source) hide(globalThis[name].prototype, key, source[key]); }
         $export("Function", { part() { return this.bind(undefined, ...arguments); } });
-        console.log(Math.max.part(2)(1));`,
+        console.log(Math.max.part(2)(1));
+        function define(Base, next) { hide(Base.prototype, Symbol.iterator, function () { return { i: 0, l: +this, next }; }); }
+        define(Number, function () { return this.i < this.l ? { done: false, value: this.i++ } : { done: true, value: undefined }; });
+        console.log([...3].join());`,
     },
-    plain: "2\n",
+    plain: "2\n0,1,2\n",
   },
   "harmony-reflect": {
     files: {
@@ -206,15 +203,6 @@ const programs: Record<string, Program> = {
     },
     plain: "[ 1 ]\n",
   },
-  "url-polyfill": {
-    files: {
-      "main.js": `
-        const proto = URLSearchParams.prototype;
-        if (typeof proto._fromString !== "function") Object.defineProperty(proto, "_fromString", { value(text) { return text; } });
-        console.log(new URLSearchParams()._fromString("a"));`,
-    },
-    plain: "a\n",
-  },
   "array.prototype.map": {
     files: {
       "main.js": `
@@ -243,14 +231,6 @@ const programs: Record<string, Program> = {
         console.log(Symbol[symbol] === symbol);`,
     },
     plain: "true\n",
-  },
-  "promise": {
-    files: {
-      "main.js":
-        inSteps("Promise.prototype.done = function (a, b) { this.then(a, b); };") +
-        `Promise.resolve(1).done(console.log);`,
-    },
-    plain: "1\n",
   },
   "timezone-mock": {
     files: {

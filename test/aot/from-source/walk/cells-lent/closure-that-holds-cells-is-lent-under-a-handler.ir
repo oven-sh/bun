@@ -1,0 +1,26 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# function twice(run: () => number): number {
+#   let work = 0;
+#   for (let i = 0; i < 2; i++) work = (work + i) | 0;
+#   const sum = run() + run() + work;
+#   if (sum > 100) throw new RangeError("full");
+#   return sum;
+# }
+# function maker(first: any, second: any): number {
+#   let s = 0;
+#   try { s += twice(() => first.length + second.length); } catch { s++; }
+#   return s;
+# }
+# print(maker("a", "bc"));
+# -- end of source
+# f1 = twice, f2 = maker
+# A closure over two values that may be cells is lent to a callee that only calls it, under a handler of its maker's own frame. Where the callee throws, the head of the handler clears its two references and the word of its copy in the heap.
+# RUN: walk f2 mechanisms=all-Inlining
+# CHECK-LABEL: code f2:Body
+# CHECK: = NewClosure {{*}}storage=Frame
+# RUN(COUNT): compile UnitsCompiled WordsClearedAtHeadsOfHandlers mechanisms=all-Inlining
+# COUNT: statistic UnitsCompiled
+# COUNT: statistic WordsClearedAtHeadsOfHandlers 3
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 7

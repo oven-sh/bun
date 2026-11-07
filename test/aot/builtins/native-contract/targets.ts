@@ -60,9 +60,9 @@ const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   ],
 ]);
 
-// Behind such a call others do something else: no connection is secured with ciphers that do not exist, and no request has a head of one byte.
+// Behind such a call others do something else: no connection is secured with ciphers that do not exist, no request has a head of one byte, and what `process` lacks is looked for on an operand of the test.
 // It is among the last calls of its process.
-export const leavesProcessChanged = /setTLSDefaultCiphers|setMaxHTTPHeaderSize/i;
+export const leavesProcessChanged = /setTLSDefaultCiphers|setMaxHTTPHeaderSize|MakeProcessInheritFrom/i;
 
 export function reasonTargetIsSkipped(path: string): string | undefined {
   for (const [pattern, reason] of neverCalledNatives) if (pattern.test(path)) return reason;

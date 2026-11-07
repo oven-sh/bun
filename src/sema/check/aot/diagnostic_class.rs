@@ -36,7 +36,9 @@ const STYLE_CODES: [u32; 67] = [
 ];
 
 impl DiagnosticClass {
+    #[cfg(test)]
     pub const COUNT: usize = 7;
+    #[cfg(test)]
     pub const ALL: [DiagnosticClass; DiagnosticClass::COUNT] = [
         DiagnosticClass::EarlyError,
         DiagnosticClass::TypeScriptGrammar,

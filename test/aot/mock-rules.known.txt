@@ -1,0 +1,18 @@
+# What the cases of mock-rules.test.ts print otherwise than under `bun test`.
+# failed-*: what the cure for a module whose body threw leaves . ordinary-*: the user is not made anew . this-files-user-domock: the user that is held and the one that is loaded again behind the mock are two under `bun test` and one here.
+one-program failed-cjs-then-reset again: loud | threw not yet
+one-program failed-cjs-then-reset runs: SILENT | 2
+one-program failed-then-unmock behind the event: loud | threw not yet 1
+one-program ordinary-jest file 2: SILENT | mock calls 3
+one-program ordinary-jest file 3: SILENT | real calls 4
+one-program ordinary-module file 3: SILENT | real calls 4
+one-program ordinary-vimock file 2: SILENT | mock calls 3
+one-program ordinary-vimock file 3: SILENT | real calls 4
+one-program this-files-user-domock again: SILENT | mock held: mock
+two-layers failed-then-unmock behind the event: loud | threw not yet 1
+two-layers ordinary-jest file 2: SILENT | mock calls 3
+two-layers ordinary-jest file 3: SILENT | real calls 4
+two-layers ordinary-module file 3: SILENT | real calls 4
+two-layers ordinary-vimock file 2: SILENT | mock calls 3
+two-layers ordinary-vimock file 3: SILENT | real calls 4
+two-layers this-files-user-domock again: SILENT | real held: real

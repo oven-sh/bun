@@ -11,7 +11,16 @@ fn visit_this_of_file(
     visit: impl FnMut(ExprId) -> ControlFlow<()>,
 ) {
     let stack = hir.ids(hir.body).map(TreeNode::Stmt).collect();
-    visit_this_below(hir, decisions, stack, ParameterDecorators::PassedBy, visit);
+    let decorators = ParameterDecorators::PassedBy;
+    visit_this_below(hir, decisions, stack, decorators, false, visit);
+}
+
+fn takes_this(expr: &Expr, jsx_takes_this: bool) -> bool {
+    match expr.kind {
+        ExprKind::This => true,
+        ExprKind::Jsx(_) => jsx_takes_this,
+        _ => false,
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -25,9 +34,10 @@ fn visit_this_below(
     decisions: &Decisions<'_>,
     mut stack: Vec<TreeNode>,
     parameter_decorators: ParameterDecorators,
+    jsx_takes_this: bool,
     mut visit: impl FnMut(ExprId) -> ControlFlow<()>,
 ) {
-    let is_this = |expr: &Expr| matches!(expr.kind, ExprKind::This);
+    let is_this = |expr: &Expr| takes_this(expr, jsx_takes_this);
     if !hir.exprs.iter().any(is_this) {
         return;
     }
@@ -80,12 +90,12 @@ pub(crate) fn has_live_this_of_file(hir: &File<'_>, decisions: &Decisions<'_>) -
     is_found
 }
 
-pub fn evaluates_own_this(hir: &File<'_>, function: FnId) -> bool {
+pub fn evaluates_own_this(hir: &File<'_>, function: FnId, jsx_takes_this: bool) -> bool {
     let mut stack = Vec::new();
     push_children(hir, TreeNode::Function(function), &mut stack);
     let mut is_found = false;
-    let decorators = ParameterDecorators::Visited;
-    visit_this_below(hir, &Decisions::default(), stack, decorators, |_| {
+    let (decisions, decorators) = (Decisions::default(), ParameterDecorators::Visited);
+    visit_this_below(hir, &decisions, stack, decorators, jsx_takes_this, |_| {
         is_found = true;
         ControlFlow::Break(())
     });
@@ -93,17 +103,21 @@ pub fn evaluates_own_this(hir: &File<'_>, function: FnId) -> bool {
 }
 
 #[derive(Default)]
-pub struct ThisPositions(Box<[u32]>);
+pub struct ThisPositions {
+    positions: Box<[u32]>,
+    jsx_takes_this: bool,
+}
 
 impl ThisPositions {
-    pub fn of(hir: &File<'_>) -> ThisPositions {
-        let all = hir
-            .exprs
-            .iter()
-            .filter(|expr| matches!(expr.kind, ExprKind::This));
-        let mut positions: Vec<u32> = all.map(|expr| expr.pos).collect();
+    pub fn of(hir: &File<'_>, jsx_takes_this: bool) -> ThisPositions {
+        let all = hir.exprs.iter();
+        let taking = all.filter(|expr| takes_this(expr, jsx_takes_this));
+        let mut positions: Vec<u32> = taking.map(|expr| expr.pos).collect();
         positions.sort_unstable();
-        ThisPositions(positions.into_boxed_slice())
+        ThisPositions {
+            positions: positions.into_boxed_slice(),
+            jsx_takes_this,
+        }
     }
 
     pub fn evaluates_own_this(&self, hir: &File<'_>, function: FnId) -> bool {
@@ -113,12 +127,12 @@ impl ThisPositions {
             FnBody::None | FnBody::Expr(_) => None,
         };
         let end = last_statement.map_or(u32::MAX, |statement| hir[statement].loc.end);
-        let first_inside = self.0.partition_point(|&position| position < start);
-        let has_this_in_its_text = self
-            .0
+        let positions = &self.positions;
+        let first_inside = positions.partition_point(|&position| position < start);
+        let has_this_in_its_text = positions
             .get(first_inside)
             .is_some_and(|&position| position < end);
-        has_this_in_its_text && evaluates_own_this(hir, function)
+        has_this_in_its_text && evaluates_own_this(hir, function, self.jsx_takes_this)
     }
 }
 

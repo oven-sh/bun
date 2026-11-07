@@ -58,9 +58,9 @@ describe.concurrent("bun compile", () => {
       exitCode: 0,
     });
 
-    expect(await bun(String(dir), "compile", "--no-aot", "--aot-log-type-mismatches", "app.ts")).toEqual({
+    expect(await bun(String(dir), "compile", "--no-aot", "--aot-huge-heap", "app.ts")).toEqual({
       stdout: "",
-      stderr: "error: --aot-log-type-mismatches requires --aot\n",
+      stderr: "error: --aot-huge-heap requires --aot\n",
       exitCode: 1,
     });
   });
@@ -76,7 +76,9 @@ describe.concurrent("bun compile", () => {
       expect({ ...built, stdout: built.stdout.split("\n") }).toEqual({
         stdout: [
           expect.stringMatching(/^ *\[[\d.]+m?s\]  bundle  1 modules$/),
-          expect.stringMatching(/^ *\[[\d.]+m?s\] compile  \S*app(\.exe)?$/),
+          expect.stringMatching(
+            /^ *\[[\d.]+m?s\] compile  \S*app(\.exe)?  compiled 4 lines in [\d,]+\.\d\d s \([\d,]+ lines\/s\)$/,
+          ),
           expect.stringMatching(/^ +build id  [0-9a-f]{32}$/),
           "",
         ],
@@ -116,38 +118,52 @@ describe.concurrent("bun compile", () => {
       expect(await bun(String(dir), "compile", "app.ts", "--explain=nonsense")).toEqual({
         stdout: "",
         stderr:
-          'error: Invalid value for --explain: "nonsense". Must be one of text, json, guards, guards-json, trim, missed-optimizations, allocations, statistics\n',
+          'error: Invalid value for --explain: "nonsense". Must be one of text, json, guards, guards-json, trim, allocations, forms, statistics\n',
         exitCode: 1,
       });
     },
     120_000,
   );
 
+  // Each of the two cases below builds twice, beside every other build of this file: the cases above have two minutes for one build.
+  const doubledNumbers = { "app.ts": `console.log([1, 2, 3].map((x: number) => x * 2).join());` };
+
+  function builderIn(dir: string) {
+    return async (...args: string[]) => {
+      rmSync(executable(dir, "app"), { force: true });
+      const { stderr, exitCode } = await bun(dir, ...args, "app.ts", "--outfile", "app");
+      if (exitCode !== 0) return { stderr, exitCode };
+      return {
+        stderr,
+        exitCode,
+        size: statSync(executable(dir, "app")).size,
+        ...(await run(dir, [executable(dir, "app")])),
+      };
+    };
+  }
+
   test.skipIf(!!unsupported)(
     "writes what bun build --compile --aot writes",
     async () => {
-      using dir = tempDir("compile-same-as-build", {
-        "app.ts": `console.log([1, 2, 3].map((x: number) => x * 2).join());`,
-      });
-      async function build(...args: string[]) {
-        rmSync(executable(String(dir), "app"), { force: true });
-        const { stderr, exitCode } = await bun(String(dir), ...args, "app.ts", "--outfile", "app");
-        if (exitCode !== 0) return { stderr, exitCode };
-        return {
-          stderr,
-          exitCode,
-          size: statSync(executable(String(dir), "app")).size,
-          ...(await run(String(dir), [executable(String(dir), "app")])),
-        };
-      }
+      using dir = tempDir("compile-same-as-build", doubledNumbers);
+      const build = builderIn(String(dir));
       const compiled = await build("compile");
       expect(compiled).toMatchObject({ stdout: "2,4,6\n", exitCode: 0 });
       expect(compiled).toEqual(await build("build", "--compile", "--aot"));
+    },
+    240_000,
+  );
+
+  test.skipIf(!!unsupported)(
+    "with --trim writes what bun build --compile --aot --trim writes",
+    async () => {
+      using dir = tempDir("compile-trim-same-as-build", doubledNumbers);
+      const build = builderIn(String(dir));
       const trimmed = await build("compile", "--trim");
       expect(trimmed).toEqual(await build("build", "--compile", "--aot", "--trim"));
       expect(await build("build", "--trim")).toEqual({ stderr: "error: --trim requires --compile\n", exitCode: 1 });
     },
-    60_000,
+    240_000,
   );
 
   test.skipIf(!!unsupported).each([[["--aot", "--no-aot"], "error: Cannot use both --aot and --no-aot\n"]])(

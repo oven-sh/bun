@@ -1,10 +1,10 @@
 use super::finish_body;
-use crate::ir::generated::{BlockFrequency, FunctionFlags, FunctionKind};
-use crate::ir::{FunctionId, FunctionKey, TypeTable, VariableKey};
-use crate::lower::{FileLowering, FunctionLowering, function};
-use crate::modules::ModuleRef;
+use crate::ir::generated::{FunctionFlags, FunctionKind};
+use crate::ir::{BlockId, FunctionId, FunctionKey, TypeTable, VariableId, VariableKey};
+use crate::lower::{FileLowering, FunctionLowering, commonjs, function};
+use crate::modules::{ModuleRef, SyntheticExportId};
+use rustc_hash::FxHashSet;
 
-// What is written in a file, and what is made for it, names the record of the file, which has the path and the positions. Nobody wrote it, so no stack trace lists it.
 fn declare_body(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) {
     file.declare_function(key, |file| {
         let mut header = function::create_header(file, key, FunctionKind::Module, 0);
@@ -13,8 +13,34 @@ fn declare_body(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) {
     });
 }
 
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    fn copy_name_off_object(
+        &mut self,
+        export: SyntheticExportId,
+        copy: VariableId,
+    ) -> Option<BlockId> {
+        let modules = self.file.inputs.modules;
+        let copied = *modules.synthetic_export(export);
+        if !(modules.commonjs()).is_left_out_by_capture_of_executable(copied.module, copied.name) {
+            return None;
+        }
+        let object = commonjs::emit_module_value(self, copied.module)?;
+        let (found, missing) = (self.create_block(), self.create_block());
+        let is_object = self.builder.type_test(object, TypeTable::OBJECT);
+        self.go_on_if(is_object, true, missing);
+        let name = self.file.intern_atom(copied.name);
+        let name = self.builder.string(name);
+        let has_name = self.emit_own_property_test(object, name);
+        self.go_on_if(has_name, true, missing);
+        let value = self.emit_named_read(object, copied.name);
+        self.builder.put_module_variable(copy, value);
+        self.jump(found);
+        self.continue_in(missing);
+        Some(found)
+    }
+}
+
 impl FileLowering<'_, '_, '_, '_> {
-    /// The module that ES modules request in place of a CommonJS file.
     pub(super) fn declare_face_body(&mut self) {
         let modules = self.inputs.modules;
         if modules.face(ModuleRef::File(self.file)).is_some() {
@@ -22,15 +48,12 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    /// The module that throws for a name that the ES graph below the file imports and no CommonJS file of it has stored.
     pub(super) fn declare_check_body(&mut self) {
-        let commonjs = self.inputs.modules.commonjs();
-        if !commonjs.checked_copies(self.file).is_empty() {
+        if !self.inputs.modules.checks_of(self.file).is_empty() {
             declare_body(self, FunctionKey::CheckBody(self.file));
         }
     }
 
-    // An ES importer holds what the file had under a name when the file was first linked into an ES graph.
     pub(crate) fn lower_face_body(&mut self, function: FunctionId) {
         let modules = self.inputs.modules;
         let own_file = self.file;
@@ -39,7 +62,6 @@ impl FileLowering<'_, '_, '_, '_> {
         let face = ModuleRef::Face(own_file);
         let face = lowering.file.fragment.declare_module(face);
         lowering.builder.evaluate_module(module, face, true, false);
-        // Behind the self, so that the files run in the order of its text.
         for owner in modules.faces_behind(own_file) {
             let owner = ModuleRef::Face(owner);
             let owner = lowering.file.fragment.declare_module(owner);
@@ -47,8 +69,8 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         for &export in modules.commonjs().copies(own_file) {
             let copied = *modules.synthetic_export(export);
-            // Only the object says which names it has: the run time takes the copies of a face that captures, behind its body.
             if matches!(copied.module, ModuleRef::File(owner) if modules.commonjs().face_captures(owner))
+                && !(modules.commonjs()).is_getter_that_no_loop_sees(copied.module, copied.name)
             {
                 continue;
             }
@@ -61,13 +83,12 @@ impl FileLowering<'_, '_, '_, '_> {
         finish_body(lowering, None);
     }
 
-    // Every CommonJS file of the graph has run by now, as under `bun run`, which reports the first missing name behind them.
     pub(crate) fn lower_check_body(&mut self, function: FunctionId) {
         let modules = self.inputs.modules;
         let own_file = self.file;
         let mut lowering = FunctionLowering::begin(self, function);
-        for &(export, failure) in modules.commonjs().checked_copies(own_file) {
-            // A file that is left out is never linked, no import is linked to one, and nothing stores the copies of one.
+        let mut checked = FxHashSet::default();
+        for &(export, failure) in modules.checks_of(own_file) {
             let written = modules.failure(failure);
             let importer = Some(ModuleRef::File(written.importer));
             let owner = Some(modules.synthetic_export(export).module);
@@ -75,16 +96,22 @@ impl FileLowering<'_, '_, '_, '_> {
             if linked.any(|module| modules.is_left_out(module)) {
                 continue;
             }
+            if !checked.insert(export) {
+                continue;
+            }
             let copy = lowering.file.ensure_variable(VariableKey::Copy(export));
             let value = lowering.builder.get_module_variable(copy);
             let split = lowering.split_on_type(value, TypeTable::ABSENT);
-            let unlikely = BlockFrequency::Unlikely;
-            lowering.builder.set_frequency(split.taken, unlikely);
             lowering.builder.switch_to(split.taken);
+            let found = lowering.copy_name_off_object(export, copy);
             let failure = lowering.file.fragment.declare_module_failure(failure);
             lowering.builder.throw_module_failure(failure, false);
             lowering.builder.unreachable();
             lowering.builder.switch_to(split.not_taken);
+            if let Some(found) = found {
+                lowering.jump(found);
+                lowering.continue_in(found);
+            }
         }
         finish_body(lowering, None);
     }

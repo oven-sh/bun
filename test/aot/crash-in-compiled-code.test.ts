@@ -2,16 +2,19 @@
 // is enough to tell the build, the function and the line, and every compiled caller is there. The faults are planted: a copy of
 // the executable gets a load from a low address written over its code.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { withoutCoreDump } from "./harness/commands";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run as runCommand } from "./harness/run";
-import { describe, test } from "./supported";
+import { beforeAll, describe, eachRow, gap, test } from "./supported";
 
 raiseDefaultTimeout(240_000);
 
+// Each function may call itself, by a test that no build can decide. So each has code and a symbol of its own whatever the
+// compiler thinks of its size, though its caller may hold a copy of it in line. The call is never in tail position: that would
+// make a loop of the body, and in a loop Map.get is searched inline, without a call of the code that the functions share.
 const files = {
   "app.ts": `import { priceOf, type Item } from "./prices.ts";
 
@@ -24,13 +27,13 @@ class Order {
   total(): number {
     let sum = 0;
     for (const item of this.items) sum += lineTotal(item);
-    return sum;
+    return process.argv.length > 99 ? this.total() + 1 : sum;
   }
 }
 
 function lineTotal(item: Item): number {
   const price = priceOf(item.name);
-  return price * item.count;
+  return process.argv.length > 99 ? lineTotal(item) + 1 : price * item.count;
 }
 
 async function checkout(order: Order): Promise<string> {
@@ -40,6 +43,7 @@ async function checkout(order: Order): Promise<string> {
 }
 
 const order = new Order().add("tea", 2).add("cake", 3).add("milk", 1);
+for (const signal of process.argv.slice(2)) process.on(signal as NodeJS.Signals, () => {});
 console.log("started");
 console.log(await checkout(order));
 `,
@@ -57,7 +61,7 @@ const prices = new Map<string, number>([
 export function priceOf(name: string): number {
   const price = prices.get(name);
   if (price === undefined) throw new RangeError("no price for " + name);
-  return price;
+  return process.argv.length > 99 ? priceOf(name) + 1 : price;
 }
 `,
 };
@@ -70,6 +74,8 @@ async function run(cmd: string[], cwd: string, env: Record<string, string> = {})
 
 // `mov eax, [0x18]`
 const loadFromLowAddress = Buffer.from([0x8b, 0x04, 0x25, 0x18, 0x00, 0x00, 0x00]);
+// `ud2`: what compiled code traps with.
+const illegalInstruction = Buffer.from([0x0f, 0x0b]);
 
 class Executable {
   bytes: Buffer;
@@ -99,10 +105,11 @@ class Executable {
     const segment = this.#segments.find(({ address: start, size }) => address >= start && address < start + size)!;
     return segment.offset + address - segment.address;
   }
+  /** Where the typed body starts. Its symbol is `<name> <file>:<line>`; any other unit of the function has its role after that. */
   addressOf(name: string) {
-    const address = this.symbols.get(name);
-    if (address === undefined) throw new Error(`the executable has no symbol ${name}`);
-    return address;
+    for (const [symbol, address] of this.symbols)
+      if (symbol.startsWith(name + " ") && /:\d+$/.test(symbol)) return address;
+    throw new Error(`the executable has no symbol ${name}`);
   }
   /** Where the first near call in the function to something that has a symbol returns to. */
   firstReturnAddressIn(name: string) {
@@ -115,9 +122,25 @@ class Executable {
     }
     throw new Error(`${name} calls nothing that has a symbol`);
   }
-  writeWithFaultAt(address: number, path: string) {
+  /** Where the near calls of `callee` return to in the program's other functions: in the body of its caller, and wherever that body was copied in line. */
+  returnAddressesOfCallsOf(callee: string) {
+    const target = this.addressOf(callee);
+    const sorted = [...this.addresses].sort((a, b) => a - b);
+    const found: number[] = [];
+    for (const [symbol, start] of this.symbols) {
+      if (!/ (?:app|prices)\.ts:\d+/.test(symbol) || start === target) continue;
+      const end = sorted.find(address => address > start)!;
+      for (let address = start; address + 5 <= end; address++) {
+        const at = this.offsetOf(address);
+        if (this.bytes[at] === 0xe8 && address + 5 + this.bytes.readInt32LE(at + 1) === target) found.push(address + 5);
+      }
+    }
+    if (!found.length) throw new Error(`nothing calls ${callee}`);
+    return found;
+  }
+  writeWithFaultAt(addresses: number | number[], path: string, fault = loadFromLowAddress) {
     const planted = Buffer.from(this.bytes);
-    loadFromLowAddress.copy(planted, this.offsetOf(address));
+    for (const address of [addresses].flat()) fault.copy(planted, this.offsetOf(address));
     writeFileSync(path, planted);
     chmodSync(path, 0o755);
   }
@@ -131,19 +154,8 @@ const framesOf = (text: string) =>
 // The planted bytes are x64's, the symbol table is ELF's, and in a Bun built with AddressSanitizer its handler answers, not Bun's.
 describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault", () => {
   async function build(cwd: string) {
-    // Nothing is inlined, so that each function has code and a symbol of its own whatever the compiler thinks of its size.
     const built = await run(
-      [
-        bunExe(),
-        "build",
-        "--compile",
-        "--aot",
-        "--aot-symbols",
-        "--aot-disable=InlineCalls",
-        "app.ts",
-        "--outfile",
-        "app",
-      ],
+      [bunExe(), "build", "--compile", "--aot", "--aot-symbols", "app.ts", "--outfile", "app"],
       cwd,
     );
     expect(built.stderr).not.toMatch(/^error\b/m);
@@ -199,12 +211,37 @@ describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault",
   test("in a function: the function and all its callers, by name, file, line and column", async () => {
     using dir = tempDir("aot-crash-in-compiled-code", files);
     const { id, executable } = await build(String(dir));
-    executable.writeWithFaultAt(executable.firstReturnAddressIn("lineTotal"), join(String(dir), "planted"));
+    executable.writeWithFaultAt(executable.returnAddressesOfCallsOf("priceOf"), join(String(dir), "planted"));
     expect(await crash(String(dir), id)).toEqual([
       "lineTotal app.ts:17:17",
       "total app.ts:11:43",
       "checkout app.ts:23:23",
     ]);
+  });
+
+  // Bun's handler for a signal that JavaScript listens for notes the signal and returns: onto the instruction that raised it, for ever.
+  test("under a listener for its signal: the report all the same", async () => {
+    using dir = tempDir("aot-crash-in-compiled-code", files);
+    const { executable } = await build(String(dir));
+    for (const [signal, fault, words] of [
+      ["SIGSEGV", loadFromLowAddress, "Segmentation fault at address 0x18\n"],
+      ["SIGILL", illegalInstruction, "Illegal instruction at address 0x"],
+    ] as const) {
+      executable.writeWithFaultAt(executable.returnAddressesOfCallsOf("priceOf"), join(String(dir), "planted"), fault);
+      await using child = Bun.spawn({
+        cmd: withoutCoreDump([join(String(dir), "planted"), "SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE"]),
+        cwd: String(dir),
+        env: { ...bunEnv, ...quiet },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      expect({ stdout, signal: child.signalCode }).toEqual({ stdout: "started\n", signal });
+      expect(stderr).toContain(words);
+      expect(framesOf(stderr)[0]).toBe("lineTotal app.ts:17:17");
+    }
   });
 
   test("in code that the functions share: the function that called it and all its callers", async () => {
@@ -222,7 +259,114 @@ describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault",
   });
 });
 
-// In a test run the test files and what they import are programs of their own, and a stack goes from one to the other and back.
+describe.skipIf(isWindows || isASAN)("a crash in what a compiled function calls", () => {
+  const program = `import { read } from "bun:ffi";
+import { crash_handler } from "bun:internal-for-testing";
+
+function lowest(how: string): number {
+  if (how === "fault") return read.u8(8 as never) + 1;
+  if (how === "panic") crash_handler.panic();
+  if (how === "panic of Rust") crash_handler.rustPanic();
+  if (how === "out of memory") crash_handler.outOfMemory();
+  if (how === "trap") crash_handler.trap();
+  if (how === "abort") crash_handler.abort();
+  if (how === "no stack left") crash_handler.stackOverflow();
+  return 1;
+}
+
+const [how, listens, raw] = process.argv.slice(2);
+if (raw) process.stdin.setRawMode(true);
+if (listens) for (const signal of ["SIGTRAP", "SIGABRT"] as const) process.on(signal, () => {});
+if (how.endsWith(" in a Worker")) new Worker("./app.ts", { argv: [how.replace(" in a Worker", "")] });
+else console.log("went on", lowest(how));
+`;
+  const forTesting = { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "0" };
+  let dir: ReturnType<typeof tempDir>;
+  let cwd: string;
+
+  beforeAll(async () => {
+    dir = tempDir("aot-crash-below-compiled-code", { "app.ts": program });
+    cwd = String(dir);
+    const built = await run([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], cwd, forTesting);
+    expect(built.stderr).not.toMatch(/^error\b/m);
+    expect(built.exitCode).toBe(0);
+  });
+
+  const inLowest = /^lowest app\.ts:\d+:\d+$/;
+
+  test.each(["fault", "panic", "panic of Rust", "out of memory", "trap", "abort"])(
+    "names the function first: %s",
+    async how => {
+      const { stdout, stderr } = await run([join(cwd, "app"), how], cwd, forTesting);
+      expect(stdout).toBe("");
+      expect(framesOf(stderr)[0]).toMatch(inLowest);
+    },
+  );
+
+  // glibc's raise() keeps no frame record and has the id of the thread where the frame pointer would be, and every eighth id is aligned.
+  // From there the stack is searched, and what earlier calls have left on it differs from run to run.
+  test("names the function first, run after run: abort", async () => {
+    for (let time = 0; time < 16; time++) {
+      const { stderr } = await run([join(cwd, "app"), "abort"], cwd, forTesting);
+      expect(framesOf(stderr)[0]).toMatch(inLowest);
+    }
+  });
+
+  test.each([
+    "fault",
+    "panic",
+    "panic of Rust",
+    "out of memory",
+    "trap",
+    "abort",
+    "no stack left",
+    "no stack left in a Worker",
+  ])("the terminal is out of raw mode again: %s", async how => {
+    let shown = "";
+    const child = Bun.spawn({
+      // A stack without a limit never runs out: it grows until the kernel ends the process, and no handler sees that. CI's machines set no limit.
+      cmd: ["sh", "-c", 'ulimit -c 0; ulimit -s 8192; "$0" "$@"; stty -a', join(cwd, "app"), how, "", "raw"],
+      cwd,
+      env: { ...bunEnv, ...quiet, ...forTesting },
+      terminal: {
+        cols: 200,
+        rows: 24,
+        data: (_: unknown, data: Uint8Array) => void (shown += new TextDecoder().decode(data)),
+      },
+    } as never);
+    await child.exited;
+    expect(shown).toContain("Bun has ");
+    expect(shown.match(/-?\b(?:icanon|echo|isig|icrnl)\b/g)?.sort()).toEqual(["echo", "icanon", "icrnl", "isig"]);
+  });
+
+  // The npm package signal-exit listens for both signals, and half the command line tools on npm load it.
+  const forwarded = "Bun's handler for a signal that JavaScript listens for takes the place of the crash handler's";
+  eachRow([
+    ["trap", "SIGTRAP", "nothing"],
+    ["abort", "SIGABRT", "nothing"],
+    gap(`${forwarded} and returns: on x64 the program goes on behind the trap, on arm64 it traps for ever`, [
+      "trap",
+      "SIGTRAP",
+      "the signal",
+    ]),
+    gap(`${forwarded}: abort() ends the process without a word`, ["abort", "SIGABRT", "the signal"]),
+  ] as const)("%s ends a program with %s and a report where it listens for %s", async (how, signal, heard) => {
+    await using child = Bun.spawn({
+      cmd: withoutCoreDump([join(cwd, "app"), how, heard === "nothing" ? "" : "listens"]),
+      env: { ...bunEnv, ...quiet, ...forTesting },
+      stdout: "pipe",
+      stderr: "pipe",
+      // Where cores are piped to a program, a loaded machine takes seconds to let a process die. The rows not met yet never end.
+      timeout: heard === "nothing" ? 90_000 : 5000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    expect({ stdout, signal: child.signalCode }).toEqual({ stdout: "", signal });
+    expect(framesOf(stderr)[0]).toMatch(inLowest);
+  });
+});
+
+// In a test run a stack goes from a test file to what it imports and back.
 // Every function has something left to do behind its call, so that its frame is still there.
 const filesOfTestRun = {
   "helpers/lib.ts": `import { read } from "bun:ffi";
@@ -255,7 +399,7 @@ function mineBelow() {
     return theirsCrashes() + 1;
   }) + 1;
 }
-test("a crash in the shared program", () => {
+test("a crash in what the test file imports", () => {
   console.log(mineBelow());
 });
 `,
@@ -263,25 +407,25 @@ test("a crash in the shared program", () => {
 };
 
 test.skipIf(!isLinux || isASAN)(
-  "in a test run over a shared program: the frames of every program, in their order",
+  "in a test run: the frames of the test file and of what it imports, in their order",
   async () => {
-    using dir = tempDir("aot-crash-over-a-shared-program", filesOfTestRun);
-    const { stderr } = await run(
-      [bunExe(), "test", "--aot", "--isolate", "./mine.test.ts", "./theirs.test.ts"],
-      String(dir),
-      {
-        BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:1,TestRunPartFiles:1",
-      },
-    );
-    const stacks = stderr
-      .split("Compiled JavaScript on the stack:\n")
-      .slice(1)
-      .map(text =>
-        [...text.slice(0, text.indexOf("\n\n")).matchAll(/^ +at (\S+) \(.*[\\/]([\w.]+:\d+:\d+)\)$/gm)].map(
-          ([, name, place]) => `${name} ${place}`,
-        ),
+    using dir = tempDir("aot-crash-in-a-test-run", filesOfTestRun);
+    // A crash ends the run, so each file has a run of its own.
+    const stacks: string[][] = [];
+    for (const file of ["./mine.test.ts", "./theirs.test.ts"]) {
+      const { stderr } = await run([bunExe(), "test", "--aot", "--isolate", file], String(dir));
+      stacks.push(
+        ...stderr
+          .split("Compiled JavaScript on the stack:\n")
+          .slice(1)
+          .map(text =>
+            [...text.slice(0, text.indexOf("\n\n")).matchAll(/^ +at (\S+) \(.*[\\/]([\w.]+:\d+:\d+)\)$/gm)].map(
+              ([, name, place]) => `${name} ${place}`,
+            ),
+          ),
       );
-    expect(stacks.sort()).toEqual([
+    }
+    expect(stacks).toEqual([
       [
         "mineOnTop mine.test.ts:5:15",
         "theirs lib.ts:3:10",

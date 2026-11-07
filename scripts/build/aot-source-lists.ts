@@ -103,15 +103,13 @@ export function readWrittenAotLists(javaScriptCore: string): WrittenAotLists {
     generatedHeaders: [
       ...evaluated.list("JavaScriptCore_AOT_SCHEMA_GENERATED_HEADERS"),
       ...evaluated.list("JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_HEADERS"),
-      ...evaluated.list("JavaScriptCore_AOT_VECTOR_GENERATED_HEADERS"),
     ],
     programSources: evaluated.list("JavaScriptCore_AOT_PROGRAM_SOURCES"),
     shellSources: evaluated.list("JavaScriptCore_AOT_SHELL_SOURCES"),
     tableExportedHeaders: evaluated.list("JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_HEADERS"),
-    tableExportedGeneratedHeaders: [
-      ...evaluated.list("JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_GENERATED_HEADERS"),
-      ...evaluated.list("JavaScriptCore_AOT_VECTOR_GENERATED_HEADERS"),
-    ].map(path => basename(path)),
+    tableExportedGeneratedHeaders: evaluated
+      .list("JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_GENERATED_HEADERS")
+      .map(path => basename(path)),
   };
 }
 

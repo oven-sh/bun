@@ -5,7 +5,7 @@ import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const root = join(import.meta.dir, "..", "..");
-const walked = ["test/aot/parallel", "test/aot/ir", "test/aot/engine-tests"];
+const walked = ["test/aot/parallel", "test/aot/ir"];
 const longest = { path: 260 - 40, folder: 260 - 40 - 1 - 37 };
 
 test("programs and text tests have paths that are short enough on Windows", () => {

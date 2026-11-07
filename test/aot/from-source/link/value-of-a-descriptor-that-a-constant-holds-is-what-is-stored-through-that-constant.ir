@@ -1,0 +1,25 @@
+# -- source: main.js
+# const first = { value: undefined, enumerable: false };
+# const second = { value: undefined, enumerable: false };
+# function Inner(n) { this.n = n; }
+# function Other(n) { this.n = n; }
+# function Holder(n) { layFirst(this, n); laySecond(this, n); }
+# function layFirst(inst, n) { first.value = new Inner(n); Object.defineProperty(inst, "_z", first); first.value = undefined; }
+# function laySecond(inst, n) { second.value = new Other(n + 100); Object.defineProperty(inst, "_w", second); second.value = undefined; }
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) { var made = new Holder(i); total += made._z.n + made._w.n; } return total; }
+# print(run(10));
+# -- end of source
+# Two constants hold descriptors of the same names, which are one layout: what that layout is seen to hold under `value` is what either lays. What each lays is what the body that defines stores THROUGH THAT CONSTANT:
+# `_z` is expected to hold an Inner and `_w` an Other, and the reads behind them are tested for that. Both have the name `n`, so the name alone says nothing. f6 = run
+# RUN: link fields mechanisms=all
+# CHECK-NOT: "_z" proven
+# RUN(HELD): link held fields mechanisms=all
+# HELD: "_z" proven={{*}}|L0 writers-known
+# HELD: "_w" proven={{*}}|L1 writers-known
+# RUN(WALK): walk f6 mechanisms=all
+# WALK-LABEL: code f6:Body
+# WALK: GetSlot {{*}}key="n" receivers=[L0]
+# WALK: GetSlot {{*}}key="n" receivers=[L1]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1090
+# ANSWERS-NEXT: exited with 0

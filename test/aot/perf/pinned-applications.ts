@@ -16,11 +16,20 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, write
 import { bunEnv, bunExe, isASAN, isDebug, isMusl, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
-import { withSteadyCollections } from "../harness/counted-run";
 import { run } from "../harness/run";
 import { slot, withoutDebugInformation } from "../harness/commands";
 import { installPackages } from "../servers/run-servers";
 import { describe, test } from "../supported";
+
+// Collections come by bytes allocated and run on the program's own thread.
+// With the collector's own threads on, counts differ by some percent from run to run.
+const withSteadyCollections = {
+  BUN_GC_TIMER_DISABLE: "1",
+  BUN_JSC_percentCPUPerMBForEdenTimer: "0",
+  BUN_JSC_percentCPUPerMBForFullTimer: "0",
+  BUN_JSC_useConcurrentGC: "0",
+  BUN_JSC_numberOfGCMarkers: "1",
+};
 
 const pinsPath = join(import.meta.dir, `application-pins.${process.platform}-${process.arch}.json`);
 const mode = process.env.AOT_PERF;

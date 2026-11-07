@@ -61,112 +61,96 @@ class Methods { static { row("methods and accessors are there from the start", (
 
 // GENERATED: said #g #s C readA poke
 // CHECK-LABEL: function {{*}}name="said"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_1]]):
 // CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b3():
+// CHECK-NEXT: b1() handler=b2():
 // CHECK-NEXT: v1 = Builtin builtin=String
 // CHECK-NEXT: v2 = Call v0 calleeName="f"
 // CHECK-NEXT: v3 = Call v1, -, v2 calleeName="String"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: Return v4
-// CHECK-NEXT: b3() role=CatchHandler:
+// CHECK-NEXT: b2() role=CatchHandler:
 // CHECK-NEXT: v5 = CatchValue
 // CHECK-NEXT: v6 = String string="threw "
 // CHECK-NEXT: v7 = Convert v5 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v8 = PropGet v7 key="name"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|string site=[[w_5]]} illTypedCause=Assertion
-// CHECK-NEXT: v10 = Add v6, v9
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v11
+// CHECK-NEXT: v9 = Add v6, v8
+// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: Return v10
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#g"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_6]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: v1 = Convert v0 declared={type=number site=[[w_6]]}
-// CHECK-NEXT: Return v1
+// CHECK-NEXT: Return v0
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#s"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_7]]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: Return v1
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: anything):
+// CHECK-NEXT: v1 = NewRuntimeError runtimeError=LeftOutOfExecutable name="#s"
+// CHECK-NEXT: Throw v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_8]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_9]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_9]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_9]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
+// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
+// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="readA"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_10]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number site=[[w_11]]}] {
-// CHECK-NEXT: b0(v0: env [[L_10]], v1: function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetEnvironmentField v0 layout=[[L_10]]
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_3]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_3]], v1: function):
+// CHECK-NEXT: v2 = GetEnvironmentField v0 layout=[[L_3]]
 // CHECK-NEXT: v3 = CheckInitialized v2 name="C"
 // CHECK-NEXT: v4 = StrictEq v3, v1
-// CHECK-NEXT: Branch v4 -> taken b2(), notTaken b5()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v5 = GetEnvironmentField v0 layout=[[L_10]] field=1
+// CHECK-NEXT: Branch v4 -> taken b1(), notTaken b4()
+// CHECK-NEXT: b1():
+// CHECK-NEXT: v5 = GetEnvironmentField v0 layout=[[L_3]] field=1
 // CHECK-NEXT: v6 = TypeTest v5 testedType=absent
-// CHECK-NEXT: Branch v6 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v7) frequency=Unlikely:
+// CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3(| 0)
+// CHECK-NEXT: b2(v7):
 // CHECK-NEXT: v8 = NewRuntimeError runtimeError=InvalidPrivateRead
 // CHECK-NEXT: Throw v8
-// CHECK-NEXT: b4(v9):
-// CHECK-NEXT: v10 = Convert v9 declared={type=number} illTypedCause=Assertion
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: b5() frequency=Unlikely:
-// CHECK-NEXT: v11 = TypeTest v3 testedType=undefined|null
-// CHECK-NEXT: Branch v11 -> taken b6(| 0), notTaken b7(| 0)
-// CHECK-NEXT: b6(v12):
-// CHECK-NEXT: v13 = PropGet v12 key="#a"
+// CHECK-NEXT: b3(v9):
+// CHECK-NEXT: Return v9
+// CHECK-NEXT: b4():
+// CHECK-NEXT: v10 = TypeTest v3 testedType=undefined|null
+// CHECK-NEXT: Branch v10 -> taken b5(| 0), notTaken b6(| 0)
+// CHECK-NEXT: b5(v11):
+// CHECK-NEXT: v12 = PropGet v11 key="#a"
 // CHECK-NEXT: Unreachable
-// CHECK-NEXT: b7(v14):
-// CHECK-NEXT: v15 = NewRuntimeError runtimeError=InvalidPrivateRead
-// CHECK-NEXT: Throw v15
+// CHECK-NEXT: b6(v13):
+// CHECK-NEXT: v14 = NewRuntimeError runtimeError=InvalidPrivateRead
+// CHECK-NEXT: Throw v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="poke"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number site=[[w_12]]}] results=[{type=anything}] functionTypes={{*}}[[f_13]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_14]]
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="Later"
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_15]]
+// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_5]]
 // CHECK-NEXT: v4 = StrictEq v2, v3
-// CHECK-NEXT: Branch v4 -> taken b2(), notTaken b5()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_16]]
+// CHECK-NEXT: Branch v4 -> taken b1(), notTaken b4()
+// CHECK-NEXT: b1():
+// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_6]]
 // CHECK-NEXT: v6 = TypeTest v5 testedType=absent
-// CHECK-NEXT: Branch v6 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v7) frequency=Unlikely:
+// CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3(| 0)
+// CHECK-NEXT: b2(v7):
 // CHECK-NEXT: v8 = NewRuntimeError runtimeError=InvalidPrivateWrite
 // CHECK-NEXT: Throw v8
-// CHECK-NEXT: b4(v9):
-// CHECK-NEXT: v10 = Convert v0 declared={type=number site=[[w_17]]}
-// CHECK-NEXT: PutModuleVariable v10 variable=[[g_16]]
-// CHECK-NEXT: v12 = Undefined
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: b5() frequency=Unlikely:
-// CHECK-NEXT: v13 = TypeTest v2 testedType=undefined|null
-// CHECK-NEXT: Branch v13 -> taken b6(| 0), notTaken b7(| 0)
-// CHECK-NEXT: b6(v14):
-// CHECK-NEXT: v15 = PropGet v14 key="#v"
+// CHECK-NEXT: b3(v9):
+// CHECK-NEXT: PutModuleVariable v0 variable=[[g_6]]
+// CHECK-NEXT: v11 = Undefined
+// CHECK-NEXT: Return v11
+// CHECK-NEXT: b4():
+// CHECK-NEXT: v12 = TypeTest v2 testedType=undefined|null
+// CHECK-NEXT: Branch v12 -> taken b5(| 0), notTaken b6(| 0)
+// CHECK-NEXT: b5(v13):
+// CHECK-NEXT: v14 = PropGet v13 key="#v"
 // CHECK-NEXT: Unreachable
-// CHECK-NEXT: b7(v16):
-// CHECK-NEXT: v17 = NewRuntimeError runtimeError=InvalidPrivateWrite
-// CHECK-NEXT: Throw v17
+// CHECK-NEXT: b6(v15):
+// CHECK-NEXT: v16 = NewRuntimeError runtimeError=InvalidPrivateWrite
+// CHECK-NEXT: Throw v16
 // CHECK-NEXT: }

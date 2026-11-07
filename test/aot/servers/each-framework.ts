@@ -30,7 +30,7 @@ const dir = tempDir("aot-servers", {});
 const app = join(String(dir), "app");
 const timeout = 600_000;
 
-/** AOT_SERVERS_FLAGS="--aot-heat=everything-is-hot": more flags for every build. What a server answers does not depend on them. */
+/** AOT_SERVERS_FLAGS="--aot-erase-types": more flags for every build. What a server answers does not depend on them. */
 const moreFlags = (process.env.AOT_SERVERS_FLAGS ?? "").split(" ").filter(Boolean);
 /** AOT_SERVERS_ENVIRONMENT="A=1 B=2": more variables for every run of an executable. */
 const moreEnvironment = Object.fromEntries(

@@ -1,0 +1,15 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# let kept: any = null;
+# function keep(o: any): void { kept = o; }
+# function make(i: number): number { const o = { lid: i, spout: "s" }; keep(o); return i; }
+# print(make(1));
+# print(kept.lid);
+# print("went on");
+# -- end of source
+# a read that counts on a proof asks no shape: it finds the slot of the overwritten cell empty, and its own check stops under the place of the read
+# OPTIONS: testing=CheckProofsAtRunTime,NoCalleeKeepsWhatItIsHanded
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: AOT: f{{*}} at {{*}}: what a field holds is not of the type that the compiler has proven of it. It is: nothing, undefined or null. This is a bug in Bun.
+# CALL-NOT: went on
+# CALL: crashed with

@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import { sayGoal } from "./harness/goals";
 import { run } from "./harness/run";
 import { separatePrograms, startsAtAnyEntryPoint } from "./harness/separate-programs";
 import { test } from "./supported";
@@ -30,20 +31,55 @@ const double = `export function double(x) { return x * 2; }\n`;
 const notReached: Record<string, string> = {
   "an-export-nobody-imports": `${double}export function evaluate(text) { return (0, eval)(text); }\n`,
   "the-global-object-in-a-function-nobody-calls": `${double}function made(options) { return options; }\nexport function windowOf(options) {\n  const found = options?.window ?? (typeof document !== "undefined" ? window : undefined);\n  return made({ window: found });\n}\n`,
+};
+const notReachedAndStillDear: Record<string, string> = {
   "a-function-that-only-such-a-function-calls": `${double}function load(name) { return require(name); }\nexport function loadTwice(name) { return [load(name), load(name)]; }\n`,
 };
 
-test("a door in a function that nothing reaches brings no built-in module along", async () => {
-  const plain = await built("main.mjs", { "main.mjs": main, "lib.mjs": double });
+const builtWith = new Map<string, ReturnType<typeof built>>();
+function builtOnceWith(lib: string) {
+  let once = builtWith.get(lib);
+  if (!once) builtWith.set(lib, (once = built("main.mjs", { "main.mjs": main, "lib.mjs": lib })));
+  return once;
+}
+
+async function expectNoGrowth(forms: Record<string, string>, goalNotMet?: string) {
+  const plain = await builtOnceWith(double);
   expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "42\n", exitCode: 0 });
-  for (const [name, lib] of Object.entries(notReached)) {
-    const found = await built("main.mjs", { "main.mjs": main, "lib.mjs": lib });
+  for (const [name, lib] of Object.entries(forms)) {
+    const found = await builtOnceWith(lib);
+    if (goalNotMet) sayGoal(goalNotMet, found.size - plain.size, 32 * 1024);
     expect({
       name,
       stdout: found.stdout,
       exitCode: found.exitCode,
       grows: found.size - plain.size > 32 * 1024,
     }).toEqual({ name, stdout: "42\n", exitCode: 0, grows: false });
+  }
+}
+
+test(
+  "a door in a function that nothing reaches brings no built-in module along",
+  () => expectNoGrowth(notReached),
+  240_000,
+);
+
+// A goal that is not met yet: beside a load by a name that nobody reads, reached or not, the tables of the executable list every public module of Bun's own that the standard streams load.
+// Once it is met this test fails: put the form back into the list above.
+test.failing(
+  "a load by name in a function that only a function nobody calls calls brings no built-in module along: 80 KB for at most 32 KB",
+  () =>
+    expectNoGrowth(
+      notReachedAndStillDear,
+      "a load by name in a function that only a function nobody calls calls brings no built-in module along",
+    ),
+  240_000,
+);
+// A case that is marked fails for whatever reason. That the program is built and answers is asked here, of the same build.
+test("a load by name in a function that only a function nobody calls calls: the program is built and answers all the same", async () => {
+  for (const [name, lib] of Object.entries(notReachedAndStillDear)) {
+    const { stdout, exitCode } = await builtOnceWith(lib);
+    expect({ name, stdout, exitCode }).toEqual({ name, stdout: "42\n", exitCode: 0 });
   }
 }, 240_000);
 

@@ -32,10 +32,12 @@ fn from_records(
     let mut named = FeatureSet::EMPTY;
     let mut used = Vec::new();
     for (index, record) in features.iter().enumerate() {
-        // An undeclared word can stand for any feature, so nothing may be removed.
         let Some(feature) = feature_of(record.feature) else {
             return UsedFeatures::default();
         };
+        if record.kind == FeatureUseKind::NamedAtRunTime {
+            continue;
+        }
         let is_named = record.kind == FeatureUseKind::Named;
         if is_named {
             named.insert(feature);

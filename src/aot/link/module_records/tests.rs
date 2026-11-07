@@ -1,14 +1,19 @@
 use super::*;
 use crate::builtins::table::{HostReadContext, STARTUP_MODULES, host_reads};
 use crate::builtins::{BuiltinId, RuntimeModule};
+use crate::compile::testing::{default_settings, with_loaded_test_run};
 use crate::ir::generated::{
     ImportPhase, Module, ModuleRequest, ModuleRequestKind, RequiredName, VariableInitialization,
 };
 use crate::ir::{Program, print_program};
+use crate::link::Linked;
+use crate::link::definitions::synthetic_export_keys;
 use crate::link::entries::host_reads_of;
+use crate::link::merged_keys::Merged;
+use crate::link::numbering::number_program;
 use crate::link::testing::{
-    Numbered, Projects, SHARED_NAME_IMPORTERS, application_file, find_file, forward, link_sources,
-    link_sources_without_bun_modules, link_units, number_units, with_lowered_units,
+    SHARED_NAME_IMPORTERS, application_file, find_file, forward, link_sources,
+    link_sources_without_bun_modules, link_units, prepare, with_lowered_units,
 };
 use crate::load::EntryPointKind;
 use crate::modules::ModuleFailure;
@@ -16,13 +21,42 @@ use crate::modules::testing::with_graph;
 
 const PLUGIN_URL: &str = "https://example.com/plugin.js";
 
+fn program_with_functions(mut linked: Linked) -> Program {
+    if linked.program.functions.is_empty() {
+        linked.program.functions = linked.functions.into_program_functions(&forward);
+    }
+    assert!(!linked.program.functions.is_empty());
+    linked.program
+}
+
 fn link_program(files: &[(&str, &str)]) -> Program {
-    link_sources(files).expect("the program links").program
+    program_with_functions(link_sources(files).expect("the program links"))
 }
 
 fn link_program_without_bun_modules(files: &[(&str, &str)]) -> Program {
     let linked = link_sources_without_bun_modules(files);
-    linked.expect("the program links").program
+    program_with_functions(linked.expect("the program links"))
+}
+
+fn link_test_run(files: &[(&str, &str)]) -> Program {
+    with_loaded_test_run(files, &default_settings(), |build, loaded| {
+        let bound = build.bind_modules(loaded);
+        assert!(!build.diagnostics.has_errors(), "module binding failed");
+        let bound = bound.expect("module binding reports every failure");
+        let units = build.check_and_lower(loaded, &bound);
+        let unreached = build.take_unreached_runtime_files();
+        let projects = loaded.projects.as_ref().map(|id, project| LinkProject {
+            loaded: project.loaded,
+            graph: &bound.projects.get(id).graph,
+            sources: &project.sources,
+            unreached_files: match id {
+                ProjectId::Application => &bound.projects.application.left_out.files,
+                ProjectId::Runtime => &unreached,
+            },
+        });
+        let linked = link_units(units, &projects, &forward);
+        program_with_functions(linked.expect("the program links"))
+    })
 }
 
 fn find_module(program: &Program, path_suffix: &str) -> Option<ModuleId> {
@@ -98,56 +132,6 @@ fn print_functions_of(program: &Program, module: ModuleId) -> String {
 
 fn observe(module: &str) -> String {
     format!("import * as observed from './{module}';\nconsole.log(observed);\n")
-}
-
-fn build_records(
-    projects: &Projects<'_, '_>,
-    numbered: &mut Numbered,
-) -> Result<ModuleRecords, LinkError> {
-    let Numbered {
-        prepared,
-        numbering,
-        strings,
-        ..
-    } = numbered;
-    let input = RecordInput {
-        projects,
-        atoms: &projects.application.loaded.files().atoms,
-        modules: &prepared.modules,
-        functions: &prepared.functions,
-        variables: &prepared.variables,
-        definitions: &prepared.definitions,
-        numbering,
-        progress: RecordProgress::default(),
-    };
-    build_module_records(&mut prepared.units, &input, strings)
-}
-
-#[test]
-fn request_for_a_module_without_a_record_is_an_error() {
-    let files = [
-        ("main.js", "import './other.js';\n"),
-        ("other.js", "console.log(1);\n"),
-    ];
-    with_lowered_units(&files, |units, projects| {
-        let mut numbered = number_units(units, projects);
-        let [main, other] = ["main.js", "other.js"]
-            .map(|name| ProgramModule::File(application_file(find_file(projects, name))));
-        let index = numbered.prepared.modules.index_of(other) as usize;
-        let dropped = numbered.numbering.modules[index].take();
-        let dropped = dropped.expect("the module has a record");
-        for id in numbered.numbering.modules.iter_mut().flatten() {
-            if id.index() > dropped.index() {
-                *id = ModuleId::new(id.index() - 1);
-            }
-        }
-        match build_records(projects, &mut numbered) {
-            Err(LinkError::MissingRecord { module, named_by }) => {
-                assert_eq!((module, named_by), (other, Some(main)));
-            }
-            _ => panic!("the records name a module that has none"),
-        }
-    });
 }
 
 #[test]
@@ -313,6 +297,7 @@ fn native_bun_module_record_is_named_by_its_namespace() {
     assert_eq!(record.path, record.display_path);
     let expected = Module {
         kind: ModuleKind::Runtime,
+        flags: ModuleFlags::IS_HELD_UNDER_NAME_WITHOUT_PREFIX,
         runtime_module: Some(buffer),
         synthetic_exports: record.synthetic_exports.clone(),
         ..blank_record(record)
@@ -353,21 +338,34 @@ fn default_import_of_bun_module_reads_no_namespace() {
 
 #[test]
 fn import_call_of_replaced_namespace_resolves_the_object() {
-    let print = |specifier: &str| {
-        let main = format!("const name = 'bun';\nexport const loaded = import({specifier});\n");
+    let print = |head: &str, specifier: &str| {
+        let main = format!("{head}export const loaded = import({specifier});\n");
         let program = link_program(&[("main.js", main.as_str())]);
         print_functions_of(&program, module_named(&program, "main.js"))
     };
-    let replaced = print("'bun'");
-    assert!(!replaced.contains(" = ImportModule "));
-    assert!(replaced.contains(" = Builtin builtin=PromiseResolve"));
-    for loaded in ["'node:buffer'", "name"] {
+    for (head, specifier) in [
+        ("", "'bun'"),
+        ("", "'b' + 'un'"),
+        ("const name = 'bun';\n", "name"),
+    ] {
+        let replaced = print(head, specifier);
+        assert!(!replaced.contains(" = ImportModule "), "{head}{specifier}");
         assert!(
-            !print(loaded).contains(" = Builtin builtin=PromiseResolve"),
-            "{loaded}"
+            replaced.contains(" = Builtin builtin=PromiseResolve"),
+            "{head}{specifier}"
         );
     }
-    assert!(print("'node:buffer'").contains(" = ImportModule "));
+    for (head, specifier) in [
+        ("", "'node:buffer'"),
+        ("console.log(1);\nconst name = 'bun';\n", "name"),
+        ("let name = 'bun';\n", "name"),
+    ] {
+        assert!(
+            !print(head, specifier).contains(" = Builtin builtin=PromiseResolve"),
+            "{head}{specifier}"
+        );
+    }
+    assert!(print("", "'node:buffer'").contains(" = ImportModule "));
 }
 
 #[test]
@@ -414,7 +412,7 @@ fn two_importers_of_one_specifier_have_two_records() {
 }
 
 #[test]
-fn declaration_file_record_is_a_library() {
+fn declaration_file_record_is_a_module_without_a_body() {
     let program = link_program(&[
         ("main.js", "import './types.d.ts';\n"),
         ("types.d.ts", "export declare const x: number;\n"),
@@ -422,7 +420,6 @@ fn declaration_file_record_is_a_library() {
     let record = record_named(&program, "types.d.ts");
     let expected = Module {
         kind: ModuleKind::SourceText,
-        flags: ModuleFlags::IS_LIBRARY,
         ..blank_record(record)
     };
     assert_eq!(*record, expected);
@@ -430,7 +427,8 @@ fn declaration_file_record_is_a_library() {
 
 #[test]
 fn function_files_of_bun_have_only_positions() {
-    with_lowered_units(&[("main.js", "console.log(1);\n")], |units, projects| {
+    let sorts = [("main.js", "console.log([2, 1].sort());\n")];
+    with_lowered_units(&sorts, |units, projects| {
         let entry_points = projects.runtime.sources.entry_points().iter();
         let libraries: Vec<ProgramModule> = entry_points
             .filter(|entry_point| entry_point.kind == EntryPointKind::Library)
@@ -446,29 +444,11 @@ fn function_files_of_bun_have_only_positions() {
 
         let linked = link_units(units, projects, &forward).expect("the program links");
 
-        let bundled_by_bun = [bun_builtin_sources::VIRTUAL_ROOT, b"builtins/"].concat();
-        let mut has_seen_bundled = false;
-        let mut has_seen_written = false;
         for library in libraries {
-            let index = linked
-                .keys
-                .modules
-                .iter()
-                .position(|&module| module == library);
+            let index = linked.modules.iter().position(|&module| module == library);
             let record = &linked.program.modules[index.expect("a function file has no record")];
             let path = bstr::BStr::new(linked.program.strings.get(record.path));
-            let positions = &record.positions;
-            match path.starts_with(&bundled_by_bun) {
-                true => {
-                    has_seen_bundled = true;
-                    assert!(positions.line_starts.is_empty(), "{path}");
-                    assert!(!positions.column_adjustments.is_empty(), "{path}");
-                }
-                false => {
-                    has_seen_written = true;
-                    assert!(!positions.line_starts.is_empty(), "{path}");
-                }
-            }
+            assert!(!record.positions.line_starts.is_empty(), "{path}");
             let expected = Module {
                 kind: ModuleKind::SourceText,
                 flags: ModuleFlags::IS_LIBRARY,
@@ -478,8 +458,55 @@ fn function_files_of_bun_have_only_positions() {
             };
             assert_eq!(*record, expected);
         }
-        assert!(has_seen_bundled && has_seen_written);
     });
+}
+
+const GRAPH_WITH_A_MISTAKE: [(&str, &str); 4] = [
+    (
+        "above.js",
+        "import './sibling.js';\nimport { part } from './broken.js';\nconsole.log(part);\n",
+    ),
+    ("sibling.js", "export {};\n"),
+    (
+        "broken.js",
+        "import './below.js';\nexport let part = 1;\nlet part = 2;\n",
+    ),
+    ("below.js", "export {};\n"),
+];
+
+fn targets_of(program: &Program, path_suffix: &str, kind: ModuleRequestKind) -> Vec<ModuleId> {
+    let requests = record_named(program, path_suffix).requests.iter();
+    let of_kind = requests.filter(|request| request.kind == kind);
+    of_kind.map(|request| request.target).collect()
+}
+
+#[test]
+fn a_load_that_leads_to_a_module_that_throws_follows_the_way_there_alone() {
+    let mut files = vec![("graph.test.js", "import './above.js';\n")];
+    files.extend_from_slice(&GRAPH_WITH_A_MISTAKE);
+    let program = link_test_run(&files);
+    let named = |path_suffix| module_named(&program, path_suffix);
+    let imports_of = |path_suffix| targets_of(&program, path_suffix, ModuleRequestKind::Import);
+    let flags = record_named(&program, "broken.js").flags;
+    assert!(flags.contains(ModuleFlags::THROWS_AT_LOAD));
+    assert!(imports_of("broken.js").is_empty());
+    assert_eq!(imports_of("above.js"), [named("broken.js")]);
+    assert_eq!(imports_of("graph.test.js"), [named("above.js")]);
+    assert!(record_named(&program, "above.js").required_names.is_empty());
+    let only_named = |path_suffix| targets_of(&program, path_suffix, ModuleRequestKind::Require);
+    assert_eq!(only_named("broken.js"), [named("below.js")]);
+    assert_eq!(only_named("above.js"), [named("sibling.js")]);
+}
+
+#[test]
+fn a_mock_in_place_of_a_module_that_throws_lets_the_load_pass() {
+    let test = "import { mock } from 'bun:test';\nmock.module('./broken.js', () => ({ part: 1 }));\nawait import('./above.js');\n";
+    let mut files = vec![("graph.test.js", test)];
+    files.extend_from_slice(&GRAPH_WITH_A_MISTAKE);
+    let program = link_test_run(&files);
+    let imports_of = |path_suffix| targets_of(&program, path_suffix, ModuleRequestKind::Import);
+    assert!(imports_of("broken.js").is_empty());
+    assert!(imports_of("above.js").contains(&module_named(&program, "sibling.js")));
 }
 
 #[test]
@@ -496,7 +523,6 @@ fn top_level_await_is_flagged() {
     assert!(!has_await("plain.js"));
 }
 
-// Each file is imported for nothing.
 fn files_left_out(package: &[(&str, &str)]) -> Vec<String> {
     let main = "import 's';\nimport 's/lib/b.js';\nimport 's/lib/c.cjs';\nimport 's/esm/d.js';\nimport './local.js';\n";
     let mut files = vec![
@@ -540,7 +566,6 @@ fn side_effects_field_decides_which_unused_files_are_left_out() {
             r#", "sideEffects": ["./lib/b.js"]"#,
             &["s/a.js", "lib/c.cjs", "esm/d.js"],
         ),
-        // A list that names no file of the program speaks for every file.
         (r#", "sideEffects": ["./other.js"]"#, every_file),
         (r#", "sideEffects": ["./lib/*", "./a.js"]"#, &["esm/d.js"]),
     ];
@@ -630,7 +655,26 @@ fn exports_are_sorted_by_code_units_not_by_string_id() {
         ("names.js", names),
     ];
     with_lowered_units(&files, |units, projects| {
-        let mut numbered = number_units(units, projects);
+        let prepared = prepare(units, projects);
+        let merged = Merged {
+            units: &prepared.units,
+            tables: &prepared.tables,
+            modules: &prepared.modules,
+            functions: &prepared.functions,
+            layouts: &prepared.layouts,
+            variables: &prepared.variables,
+            in_parallel: &forward,
+        };
+        let atoms = &projects.application.loaded.files().atoms;
+        let synthetic_exports = synthetic_export_keys(projects);
+        let shown = variables_shown_by_export_tables(projects, atoms, &prepared.modules);
+        let numbering = number_program(
+            &merged,
+            &prepared.definitions,
+            &synthetic_exports,
+            &shown,
+            &crate::link::beside::run_one_after_the_other,
+        );
         let names_in_order: [&[u8]; 4] = [
             b"ExportedUpper",
             b"exportedLower",
@@ -638,19 +682,29 @@ fn exports_are_sorted_by_code_units_not_by_string_id() {
             "\u{FF5E}".as_bytes(),
         ];
         assert!(names_in_order[3] < names_in_order[2]);
+        let mut strings = StringTable::default();
         for name in names_in_order.into_iter().rev() {
-            assert_eq!(numbered.strings.find(name), None);
-            numbered.strings.intern(name);
+            strings.intern(name);
         }
 
-        let records = build_records(projects, &mut numbered).expect("every module has a record");
+        let input = RecordInput {
+            projects,
+            atoms,
+            modules: &prepared.modules,
+            functions: &prepared.functions,
+            variables: &prepared.variables,
+            definitions: &prepared.definitions,
+            numbering: &numbering,
+            in_parallel: &forward,
+        };
+        let records = build_module_records(&prepared.units, &input, &mut strings);
 
         let exporter = ProgramModule::File(application_file(find_file(projects, "names.js")));
-        let exporter = numbered.prepared.modules.index_of(exporter) as usize;
-        let exporter = numbered.numbering.modules[exporter].expect("the module has no record");
+        let exporter = prepared.modules.index_of(exporter) as usize;
+        let exporter = numbering.modules[exporter].expect("the module has no record");
         let record = &records.modules[exporter.index()];
         let ids: Vec<StringId> = record.exports.iter().map(|export| export.name).collect();
-        let names: Vec<&[u8]> = ids.iter().map(|&id| numbered.strings.get(id)).collect();
+        let names: Vec<&[u8]> = ids.iter().map(|&id| strings.get(id)).collect();
         assert_eq!(names, names_in_order);
         assert!(ids.is_sorted_by(|first, second| first > second));
     });
@@ -835,6 +889,21 @@ fn synthetic_exports_of_two_projects_are_sorted_together() {
 }
 
 #[test]
+fn name_that_only_a_spy_names_is_listed_without_a_variable() {
+    let find_resolve = |spy: &str| {
+        let main = format!("import * as path from 'node:path';\n{spy}console.log(path);\n");
+        let program = link_test_run(&[("main.test.js", main.as_str())]);
+        let record = runtime_record(&program, RuntimeModule::NodePath);
+        let mut exports = record.synthetic_exports.iter();
+        let resolve = exports.find(|export| program.strings.get(export.name) == b"resolve");
+        resolve.map(|export| (export.variable, export.is_replaceable))
+    };
+    let spy = "import { spyOn } from 'bun:test';\nspyOn(path, 'resolve');\n";
+    assert_eq!(find_resolve(spy), Some((None, true)));
+    assert_eq!(find_resolve(""), None);
+}
+
+#[test]
 fn module_has_a_record_where_reached_code_requires_it() {
     let lazy = ("lazy.cjs", "module.exports = 1;\n");
     let main = "export const loaded = require('./lazy.cjs');\n";
@@ -931,8 +1000,29 @@ fn only_sources_of_bun_modules_are_loaded_by_import_only() {
 }
 
 #[test]
+fn test_run_lists_its_files_in_the_cache() {
+    let files = [
+        (
+            "main.test.js",
+            "import 'node:path';\nexport const dep = require('./dep.cjs');\n",
+        ),
+        ("dep.cjs", "module.exports = 1;\n"),
+    ];
+    let is_listed = |record: &Module| record.flags.contains(ModuleFlags::IS_LISTED_IN_CACHE);
+    let test_run = link_test_run(&files);
+    assert!(is_listed(record_named(&test_run, "main.test.js")));
+    assert!(is_listed(record_named(&test_run, "dep.cjs")));
+    assert!(!is_listed(runtime_record(
+        &test_run,
+        RuntimeModule::NodePath
+    )));
+    let executable = link_program(&files);
+    assert!(!executable.modules.iter().any(is_listed));
+}
+
+#[test]
 fn runtime_functions_ascend_by_id() {
-    let program = link_program(&[("main.js", "export {};\n")]);
+    let program = link_program(&[("main.js", "console.log([2, 1].sort());\n")]);
     let entries = &program.runtime_functions;
     assert!(!entries.is_empty());
     assert!(entries.is_sorted_by(|first, second| first.id < second.id));
@@ -960,6 +1050,9 @@ fn main_entry_lists_the_default_export_for_serve() {
     let default_read = default_read.expect("the host reads the default export");
     assert_eq!(default_read.builtin, Some(BuiltinId::BunServe));
     assert_eq!(default_read.parameter, 0);
+    let names = default_read.names_looked_for.iter();
+    let names: Vec<&[u8]> = names.map(|&name| program.strings.get(name)).collect();
+    assert_eq!(names, [&b"fetch"[..], b"app"]);
 }
 
 #[test]

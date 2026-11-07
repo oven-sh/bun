@@ -1,0 +1,170 @@
+#### this-of-a-plain-call.cjs
+
+function f() { "use strict"; return typeof this; }
+function g() { return typeof this; }
+console.log(f(), g());
+#### this-of-a-plain-call.cjs prints
+undefined object
+#### this-of-a-call-with-a-number.cjs
+function f() { "use strict"; return typeof this; }
+function g() { return typeof this; }
+console.log(f.call(5), g.call(5), f.call(null), g.call(null));
+#### this-of-a-call-with-a-number.cjs prints
+number object object object
+#### a-frozen-object.cjs
+const o = Object.freeze({ z: 0 });
+function f() { "use strict"; try { o.z = 1; } catch (e) { return e.name; } return "silent"; }
+function g() { try { o.z = 1; } catch (e) { return e.name; } return "silent"; }
+console.log(f(), g());
+#### a-frozen-object.cjs prints
+TypeError silent
+#### a-getter-without-a-setter.cjs
+const o = { get p() { return 1; } };
+function f() { "use strict"; try { o.p = 1; } catch (e) { return e.name; } return "silent"; }
+function g() { try { o.p = 1; } catch (e) { return e.name; } return "silent"; }
+console.log(f(), g());
+#### a-getter-without-a-setter.cjs prints
+TypeError silent
+#### an-object-that-takes-no-more.cjs
+const o = Object.preventExtensions({});
+function f() { "use strict"; try { o.n = 1; } catch (e) { return e.name; } return "silent"; }
+function g() { try { o.n = 1; } catch (e) { return e.name; } return "silent"; }
+console.log(f(), g());
+#### an-object-that-takes-no-more.cjs prints
+TypeError silent
+#### a-property-of-a-string.cjs
+
+function f() { "use strict"; try { "s".x = 1; } catch (e) { return e.name; } return "silent"; }
+function g() { try { "s".x = 1; } catch (e) { return e.name; } return "silent"; }
+console.log(f(), g());
+#### a-property-of-a-string.cjs prints
+TypeError silent
+#### the-length-of-a-frozen-array.cjs
+const l = Object.freeze([1]);
+function f() { "use strict"; try { l.length = 1; } catch (e) { return e.name; } return "silent"; }
+function g() { try { l.length = 1; } catch (e) { return e.name; } return "silent"; }
+console.log(f(), g());
+#### the-length-of-a-frozen-array.cjs prints
+TypeError silent
+#### a-name-nobody-declares.cjs
+function f() { "use strict"; try { leakedOne = 1; } catch (e) { return e.name; } return "silent"; }
+function g() { try { leakedTwo = 1; } catch (e) { return e.name; } return "silent"; }
+console.log(f(), g(), typeof leakedOne, typeof leakedTwo);
+#### a-name-nobody-declares.cjs prints
+ReferenceError silent undefined number
+#### the-functions-own-name.cjs
+const f = function k() { "use strict"; try { k = 1; } catch (e) { return e.name; } return "silent"; };
+const g = function k() { try { k = 1; } catch (e) { return e.name; } return "silent"; };
+console.log(f(), g());
+#### the-functions-own-name.cjs prints
+TypeError silent
+#### delete-of-a-fixed-property.cjs
+const o = Object.freeze({ z: 0 });
+function f() { "use strict"; try { return delete o.z; } catch (e) { return e.name; } }
+function g() { try { return delete o.z; } catch (e) { return e.name; } }
+console.log(f(), g());
+#### delete-of-a-fixed-property.cjs prints
+TypeError false
+#### arguments-and-parameters.cjs
+function f(a) { "use strict"; arguments[0] = 2; return a; }
+function g(a) { arguments[0] = 2; return a; }
+console.log(f(1), g(1));
+#### arguments-and-parameters.cjs prints
+1 2
+#### arguments-callee.cjs
+
+function f() { "use strict"; try { return typeof arguments.callee; } catch (e) { return e.name; } }
+function g() { try { return typeof arguments.callee; } catch (e) { return e.name; } }
+console.log(f(), g());
+#### arguments-callee.cjs prints
+TypeError function
+#### a-var-of-eval.cjs
+
+function f() { "use strict"; eval("var leaked = 1"); return typeof leaked; }
+function g() { eval("var leaked = 1"); return typeof leaked; }
+console.log(f(), g());
+#### a-var-of-eval.cjs prints
+undefined number
+#### a-function-in-a-block.cjs
+
+function f() { "use strict"; { function inner() {} } return typeof inner; }
+function g() { { function inner() {} } return typeof inner; }
+console.log(f(), g());
+#### a-function-in-a-block.cjs prints
+undefined function
+#### an-arrow-inside.cjs
+const o = Object.freeze({ z: 0 });
+function f() { "use strict"; return (() => { try { o.z = 1; } catch (e) { return e.name; } return "silent"; })(); }
+function g() { return (() => { try { o.z = 1; } catch (e) { return e.name; } return "silent"; })(); }
+console.log(f(), g());
+#### an-arrow-inside.cjs prints
+TypeError silent
+#### an-arrows-own-directive.cjs
+const o = Object.freeze({ z: 0 });
+const f = () => { "use strict"; try { o.z = 1; } catch (e) { return e.name; } return "silent"; };
+const g = () => { try { o.z = 1; } catch (e) { return e.name; } return "silent"; };
+console.log(f(), g());
+#### an-arrows-own-directive.cjs prints
+TypeError silent
+#### a-method.cjs
+const o = Object.freeze({ z: 0 });
+const h = { f() { "use strict"; try { o.z = 1; } catch (e) { return e.name; } return "silent"; }, g() { try { o.z = 1; } catch (e) { return e.name; } return "silent"; } };
+console.log(h.f(), h.g());
+#### a-method.cjs prints
+TypeError silent
+#### a-getter.cjs
+const h = { get f() { "use strict"; return typeof this; }, get g() { return typeof this; } };
+const get = name => Object.getOwnPropertyDescriptor(h, name).get;
+console.log(get("f").call(5), get("g").call(5));
+#### a-getter.cjs prints
+number object
+#### generators-and-async-functions.cjs
+function* a() { "use strict"; yield typeof this; }
+async function b() { "use strict"; return typeof this; }
+function* c() { yield typeof this; }
+async function d() { return typeof this; }
+(async () => console.log(a().next().value, await b(), c().next().value, await d()))();
+#### generators-and-async-functions.cjs prints
+undefined undefined object object
+#### functions-inside-the-function-at-the-head-of-a-package.cjs
+(function () {
+  "use strict";
+  function inner() { return typeof this; }
+  console.log(typeof this, inner());
+})();
+(function () {
+  function inner() { return typeof this; }
+  console.log(typeof this, inner());
+})();
+#### functions-inside-the-function-at-the-head-of-a-package.cjs prints
+undefined undefined
+object object
+#### a-callback.cjs
+const seen = [];
+[1].forEach(function () { "use strict"; seen.push(typeof this); }, "s");
+[1].forEach(function () { seen.push(typeof this); }, "s");
+console.log(seen.join(" "));
+#### a-callback.cjs prints
+string object
+#### behind-another-directive.cjs
+function f() { "use asm"; "use strict"; return typeof this; }
+function g() { "use\x20strict"; return typeof this; }
+function h() { ("use strict"); return typeof this; }
+console.log(f(), g(), h());
+#### behind-another-directive.cjs prints
+undefined object object
+#### a-js-file-that-is-commonjs.js
+module.exports = 1;
+const o = Object.freeze({ z: 0 });
+function f() { "use strict"; try { o.z = 1; } catch (e) { return e.name; } return "silent"; }
+function g() { try { o.z = 1; } catch (e) { return e.name; } return "silent"; }
+console.log(f(), g());
+#### a-js-file-that-is-commonjs.js prints
+TypeError silent
+#### a-cts-file.cts
+const o = Object.freeze({ z: 0 }) as { z: number };
+function f(): string { "use strict"; try { o.z = 1; } catch (e) { return (e as Error).name; } return "silent"; }
+function g(): string { try { o.z = 1; } catch (e) { return (e as Error).name; } return "silent"; }
+console.log(f(), g());
+#### a-cts-file.cts prints
+TypeError silent

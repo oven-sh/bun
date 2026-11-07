@@ -171,7 +171,8 @@ impl Checker<'_, '_> {
             (None, &[(bare, display_type)]) => (bare, display_type, Some(2417), 0),
             (None, _) => (self.type_of_properties(static_base), printed, Some(2417), 0),
         };
-        let (lines, related) = self.relation_lines_with_related(static_type, target, head, level);
+        let (lines, related, subject) =
+            self.relation_lines_with_related(static_type, target, head, level);
         // `r.overflow`: that's the whole diagnostic, and it's about the two types passed in.
         if lines.first().is_some_and(|line| line.code == 2859) {
             let types = [Arg::Type(static_type), Arg::Type(printed)];
@@ -207,6 +208,7 @@ impl Checker<'_, '_> {
         let mut diagnostic = Reported::new(at, 2417, held(vec![heir, base]));
         super::explain::add_lines(&mut diagnostic.message_chain, reasons);
         diagnostic.related_information = related;
+        diagnostic.subject = subject;
         self.add_diagnostic(diagnostic);
     }
 
@@ -1075,8 +1077,12 @@ impl Checker<'_, '_> {
             };
             let (key, value) = (Arg::Type(info.key), Arg::Type(info.value));
             let args = [Arg::Bytes(&name), Arg::Type(prop_type), key, value];
+            let is_brought = (info.declaration).is_some_and(|(of, _)| self.files().is_brought(of));
             let diagnostic = self.error_at((cx.file, start, end), 2411, &args);
             diagnostic.related_information.extend(related);
+            if is_brought {
+                diagnostic.subject = super::aot::DiagnosticSubject::BroughtDeclaration;
+            }
         }
     }
 

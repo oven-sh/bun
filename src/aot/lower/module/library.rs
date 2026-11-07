@@ -96,7 +96,6 @@ pub(super) fn declare_library_functions(file: &mut FileLowering<'_, '_, '_, '_>)
     }
 }
 
-/// The functions at the top of a file of library functions, each with the positions it is written between.
 pub fn collect_library_functions<'s>(
     hir: &hir::File<'s>,
     analysis: &FileAnalysis<'s>,
@@ -148,7 +147,6 @@ pub(super) fn collect_link_time_constant_functions(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    // `None`: the function serves the others of its file.
     fn find_runtime_function(&self, function: FnId) -> Option<RuntimeFunction> {
         let func = &self.hir[function];
         if !func.flags.contains(Flags::EXPORT) || func.name.is_none() {
@@ -232,7 +230,6 @@ fn adjust_header(
     }
     match table::runtime_function(id).map(|data| data.role) {
         Some(RuntimeFunctionRole::Model) => header.role = FunctionRole::Model,
-        // Only a directive names a built-in of the host.
         Some(RuntimeFunctionRole::HostBuiltin) if directive_name.is_none() => {
             header.name = None;
             header.flags = header.flags.without(FunctionFlags::HAS_EXPLICIT_NAME);

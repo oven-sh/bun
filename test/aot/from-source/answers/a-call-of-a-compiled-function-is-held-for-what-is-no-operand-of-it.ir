@@ -1,0 +1,31 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# let level = 1;
+# const table: any = { held: 1 };
+# function raise(): number { let work = 0; for (let i = 0; i < 3; i++) work = (work + i) | 0; level += work; return work; }
+# function spoil(): number { let work = 0; for (let i = 0; i < 3; i++) work = (work + i) | 0; table.held += work; return work; }
+# function readLevel(): number { const before = level; raise(); return before * 100 + level; }
+# function readTable(): number { const mine = table; const before = mine.held; spoil(); return before * 100 + mine.held; }
+# print(readLevel());
+# print(readTable());
+# print("went on");
+# -- end of source
+# testing=CheckEffectsAtRunTime: a call of a compiled function is held to what Link says of the callee not for its operands alone:
+# f1 = raise, f2 = spoil
+# RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# NET: 104
+# NET-NEXT: 104
+# NET-NEXT: went on
+# What emitted code stores into a variable of a module is counted, and the counts hold a call that runs no unknown code.
+# RUN(VARIABLE): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Callee/f1/ModuleVariables mechanisms=all
+# VARIABLE: the rows of effects of operation:CallDirect and of what Link says of the callee say that the call will not write ModuleVariables, and under it compiled code has stored into a variable of a module. This is a bug in Bun.
+# VARIABLE-NOT: went on
+# VARIABLE: crashed
+# VARIABLE: with
+# What the variables of modules hold that the caller's unit reads is hashed round the call: the callee reaches the object without an operand.
+# RUN(OBJECT): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Callee/f2/ObjectFields mechanisms=all
+# OBJECT: 104
+# OBJECT: the rows of effects of operation:CallDirect and of what Link says of the callee say that the call will not write ObjectFields, and those words of what the variable g{{*}} of a module holds, no operand of the call, are others behind it. This is a bug in Bun.
+# OBJECT-NOT: went on
+# OBJECT: crashed
+# OBJECT: with

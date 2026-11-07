@@ -86,6 +86,15 @@ static SignalHandler callLibcSignal(int signalNumber, SignalHandler handler)
     return findNextDefinition<SignalHandler(int, SignalHandler)>(LibcFunction::Signal)(signalNumber, handler);
 }
 
+extern "C" char __executable_start[];
+extern "C" char _end[];
+
+// Bun's own calls mean the kernel's action.
+static ALWAYS_INLINE bool isInExecutable(void* address)
+{
+    return reinterpret_cast<uintptr_t>(address) - reinterpret_cast<uintptr_t>(__executable_start) < static_cast<uintptr_t>(_end - __executable_start);
+}
+
 #else // !DEFINES_SIGNAL_FUNCTIONS_OF_LIBC
 
 static void findDefinitionsForSignalHandler() {}
@@ -122,19 +131,40 @@ struct AccessFaultSignal {
     std::atomic<int> flags { 0 };
     std::atomic<uint64_t> mask[wordsInMask] {};
     sigset_t maskOfEngine {};
+    // The action that was there first: it ends in the report of a crash.
+    SignalHandlerWithInfo handlerOfEngine { nullptr };
+    int flagsOfEngine { 0 };
 };
-static constinit AccessFaultSignal accessFaultSignals[2];
+// A trap of compiled code is an illegal instruction.
+static constinit AccessFaultSignal accessFaultSignals[3];
 
 static AccessFaultSignal& accessFaultSignal(int signalNumber)
 {
-    return accessFaultSignals[signalNumber == SIGBUS];
+    return accessFaultSignals[signalNumber == SIGBUS ? 1 : signalNumber == SIGILL ? 2
+                                                                                  : 0];
 }
 
 static AccessFaultSignal* findAccessFaultSignalOfCompiledCode(int signalNumber)
 {
-    if ((signalNumber != SIGSEGV && signalNumber != SIGBUS) || !JSC::AOT::Image::isRegistered()) [[likely]]
+    if ((signalNumber != SIGSEGV && signalNumber != SIGBUS && signalNumber != SIGILL) || !JSC::AOT::Image::isRegistered()) [[likely]]
         return nullptr;
     return &accessFaultSignal(signalNumber);
+}
+
+static bool isInCompiledCode(const ucontext_t& context)
+{
+#if OS(LINUX) && CPU(X86_64)
+    uintptr_t instructionPointer = context.uc_mcontext.gregs[REG_RIP];
+#elif OS(LINUX) && CPU(ARM64)
+    uintptr_t instructionPointer = context.uc_mcontext.pc;
+#elif OS(FREEBSD) && CPU(X86_64)
+    uintptr_t instructionPointer = context.uc_mcontext.mc_rip;
+#elif OS(FREEBSD) && CPU(ARM64)
+    uintptr_t instructionPointer = context.uc_mcontext.mc_gpregs.gp_elr;
+#else
+#error "Where is the instruction pointer?"
+#endif
+    return JSC::AOT::Image::findByCodeAddress(reinterpret_cast<const void*>(instructionPointer));
 }
 
 static bool isRaisedByInstruction(const siginfo_t& info)
@@ -151,16 +181,33 @@ static bool isHandler(SignalHandlerWithInfo handler, SignalHandler other)
     return reinterpret_cast<SignalHandler>(handler) == other;
 }
 
+// A library may fill the memory that it hands out when a page is first touched. A trap of compiled code is nobody else's to serve.
+static bool mayServeFaultOfCompiledCode(int signalNumber, SignalHandlerWithInfo handler)
+{
+#if DEFINES_SIGNAL_FUNCTIONS_OF_LIBC
+    return signalNumber != SIGILL && !isHandler(handler, SIG_DFL) && !isHandler(handler, SIG_IGN) && !isInExecutable(reinterpret_cast<void*>(handler));
+#else
+    UNUSED_PARAM(signalNumber);
+    UNUSED_PARAM(handler);
+    return false;
+#endif
+}
+
 static void handleAccessFaultSignal(int signalNumber, siginfo_t* info, void* context)
 {
     auto* userContext = static_cast<ucontext_t*>(context);
     bool isFault = isRaisedByInstruction(*info);
-    if (isFault && JSC::AOT::handleAccessFault(info->si_addr, WTF::registersFromUContext(userContext)))
+    if (isFault && signalNumber != SIGILL && JSC::AOT::handleAccessFault(info->si_addr, WTF::registersFromUContext(userContext)))
         return;
 
     AccessFaultSignal& signal = accessFaultSignal(signalNumber);
     SignalHandlerWithInfo handler = signal.handler.load(std::memory_order_relaxed);
     int flags = signal.flags.load(std::memory_order_relaxed);
+    // Bun's handler for a listener of the program notes the signal and returns, onto the same instruction, for ever.
+    if (isFault && isInCompiledCode(*userContext) && !mayServeFaultOfCompiledCode(signalNumber, handler)) {
+        handler = signal.handlerOfEngine;
+        flags = signal.flagsOfEngine & ~SA_RESETHAND;
+    }
     if (isHandler(handler, SIG_DFL) || isHandler(handler, SIG_IGN)) {
         if (isFault) {
             // The instruction runs again under the default action: a fault cannot be ignored.
@@ -237,6 +284,8 @@ static void installHandlerOnce(int signalNumber, AccessFaultSignal& signal)
     struct sigaction actionOfEngine;
     callLibcSigaction(signalNumber, nullptr, &actionOfEngine);
     signal.maskOfEngine = actionOfEngine.sa_mask;
+    signal.handlerOfEngine = actionOfEngine.sa_sigaction;
+    signal.flagsOfEngine = actionOfEngine.sa_flags;
     exchangeAction(signal, &actionOfEngine);
     installHandlerInKernel(signalNumber, signal, actionOfEngine.sa_flags);
     signal.state.store(State::Installed, std::memory_order_release);
@@ -391,15 +440,6 @@ static void* const replacementsOfLibcFunctions[numberOfLibcFunctions] = {
     reinterpret_cast<void*>(setSignalMaskBits<LibcFunction::Sigblock>),
     reinterpret_cast<void*>(setSignalMaskBits<LibcFunction::Sigsetmask>),
 };
-
-extern "C" char __executable_start[];
-extern "C" char _end[];
-
-// Bun's own calls mean the kernel's action.
-static ALWAYS_INLINE bool isInExecutable(void* address)
-{
-    return reinterpret_cast<uintptr_t>(address) - reinterpret_cast<uintptr_t>(__executable_start) < static_cast<uintptr_t>(_end - __executable_start);
-}
 
 #endif // DEFINES_SIGNAL_FUNCTIONS_OF_LIBC
 

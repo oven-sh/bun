@@ -22,6 +22,7 @@ export default {
   kUpgradeServerTLS: Symbol.for("::bunUpgradeServerTLS::"),
 
   constructors: { Socket: undefined },
+  resumeOfSocket: undefined,
 } as unknown as {
   readonly kArmHandshakeTimeout: unique symbol;
   readonly kDestroyOnRead: unique symbol;
@@ -35,4 +36,5 @@ export default {
   readonly kNativeSecureContextCtor: unique symbol;
   readonly kUpgradeServerTLS: unique symbol;
   readonly constructors: { Socket: $Node.SocketConstructor | undefined };
+  resumeOfSocket: unknown;
 };

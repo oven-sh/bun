@@ -1,46 +1,20 @@
-use bun_sema::bind::{Binding, CommonJsVariable, Decl, ScopeId, SymbolId};
-use bun_sema::hir::{ExprId, ExprKind, Flags, Span, StmtId, StmtKind, VarDeclId, VarKind};
+use bun_sema::bind::{CommonJsVariable, Decl, ScopeId, SymbolId};
+use bun_sema::hir::{Flags, Span, StmtId, StmtKind, VarDeclId, VarKind};
 
 use super::{Context, PatternRole, Task, WalkedLoop, WalkedTry, Walker};
 use crate::lower::scope::ScopeSlot;
 
 impl Walker<'_, '_> {
-    // Whether Bun's transpiler prints nothing for the statement: it names a variable, or tests one, and has nothing else to run.
-    fn is_unprinted(&self, statement: StmtId) -> bool {
-        if statement.is_none() || self.decisions.is_dead_stmt(statement) {
-            return true;
-        }
-        let hir = self.hir;
-        let names_variable = |expression: ExprId| {
-            matches!(hir[expression].kind, ExprKind::Ident(_))
-                && matches!(self.bound.binding(expression), Binding::Symbol(_))
-        };
-        match hir[statement].kind {
-            StmtKind::Empty => true,
-            StmtKind::Expr(expression) => names_variable(expression),
-            StmtKind::Block(list) => hir.ids(list).all(|inner| self.is_unprinted(inner)),
-            StmtKind::If { test, yes, no } => {
-                names_variable(test) && self.is_unprinted(yes) && self.is_unprinted(no)
-            }
-            _ => false,
-        }
-    }
-
     pub(super) fn visit_statement(&mut self, statement: StmtId, context: Context) {
         if statement.is_none() || self.decisions.is_dead_stmt(statement) {
             return;
         }
-        // The module graph turned the statement into facts of the build, `exports.__esModule = true` or a getter that only names a variable of another module: it has no code, so nothing in it is a use and no function in it is created.
         let is_module_body = self.walk.functions[context.function.index()]
             .creator
             .is_none();
         if is_module_body && self.input.modules.erased(self.input.file, statement) {
             return;
         }
-        let context = match !context.is_unprinted && self.is_unprinted(statement) {
-            true => context.unprinted(),
-            false => context,
-        };
         let (hir, bound) = (self.hir, self.bound);
         let own_scope = bound.own_scope(statement);
         let outer_scope = bound.scope_of_stmt(statement);
@@ -54,13 +28,6 @@ impl Walker<'_, '_> {
             StmtKind::Expr(expression)
             | StmtKind::Return(expression)
             | StmtKind::Throw(expression) => self.push_expressions([expression], context),
-            StmtKind::ExportNamed(export) if !hir[export].has_module_specifier => {
-                for specifier in hir[export].items.iter() {
-                    if let Binding::Symbol(symbol) = bound.exported_binding(specifier) {
-                        self.walk.symbols_in_export_lists.push(symbol);
-                    }
-                }
-            }
             StmtKind::ExportNamed(_) => {}
             StmtKind::ExportDefault(value) => {
                 self.push_expressions([value], context);
@@ -84,25 +51,27 @@ impl Walker<'_, '_> {
             StmtKind::Enum(id) if hir[id].flags.contains(Flags::AMBIENT) => {}
             StmtKind::Enum(id) => {
                 self.push_initialization(bound.declared_symbol(Decl::Enum(id)), context);
+                self.enter_container_scope(bound.enum_scope[id.idx()], context);
                 for member in hir[id].members.iter() {
                     let member = hir[member];
                     self.push_expressions([member.computed_name, member.init], context);
-                    self.record_symbols_read_by_enum(member.init);
                 }
             }
             StmtKind::Module(id) => {
                 if bound.makes_namespace_object(hir, id) {
                     self.push_initialization(bound.declared_symbol(Decl::Module(id)), context);
-                    self.enter_scope(bound.module_scope[id.idx()], context);
+                    self.enter_container_scope(bound.module_scope[id.idx()], context);
                     self.push_statements(hir.ids(hir[id].body), context);
                 }
             }
             StmtKind::ImportEquals(import) => {
+                self.note_binding_is_looked_at(bound.entity_root_binding(import));
                 self.record_binding_use(context, bound.entity_root_binding(import), false);
                 let symbol = bound.declared_symbol(Decl::ImportEquals(import));
                 self.push_initialization(symbol, context);
             }
             StmtKind::If { test, yes, no } => {
+                self.note_name_that_nobody_looks_at(test);
                 self.push_expressions([test], context);
                 self.push_statements([yes, no], context.conditional());
             }
@@ -141,7 +110,6 @@ impl Walker<'_, '_> {
             | StmtKind::ForOf {
                 left, expr, body, ..
             } => {
-                // `for (var a = 0 in b)` evaluates `0` first, and once.
                 if let StmtKind::Var(declarations) = hir[left].kind {
                     let initializers = declarations.iter().map(|id| hir[id].init);
                     self.push_expressions(initializers, context);
@@ -168,20 +136,30 @@ impl Walker<'_, '_> {
                 let context = context.conditional();
                 let index = self.walk.tries.len() as u32;
                 self.walk.tries.push(WalkedTry {
+                    statement,
                     boundary: outer_scope,
                     function: context.function,
                     parent: context.enclosing_try,
                     stored: Vec::new(),
+                    size: self.number_walked,
                 });
                 let covered = Context {
                     enclosing_try: Some(index),
                     ..context
                 };
                 self.push_statements([block], covered);
+                let around_handler = if finalizer.is_some() {
+                    covered
+                } else {
+                    context
+                };
                 if param.is_some() {
-                    self.visit_pattern(hir[param].pat, PatternRole::LexicalDeclaration, context);
+                    let pattern = hir[param].pat;
+                    self.visit_pattern(pattern, PatternRole::LexicalDeclaration, around_handler);
                 }
-                self.push_statements([handler, finalizer], context);
+                self.push_statements([handler], around_handler);
+                self.push_statements([finalizer], context);
+                self.push_task(Task::EndTry(index), context);
             }
             StmtKind::Empty
             | StmtKind::Debugger
@@ -194,6 +172,12 @@ impl Walker<'_, '_> {
             | StmtKind::ExportAsNamespace(_)
             | StmtKind::Directive { .. } => {}
         }
+    }
+
+    fn enter_container_scope(&mut self, scope: ScopeId, context: Context) {
+        let parameter = self.bound.container_parameter(scope);
+        self.push_task(Task::InitializeParameter(parameter), context);
+        self.enter_scope(scope, context);
     }
 
     pub(super) fn push_initialization(&mut self, symbol: SymbolId, context: Context) {
@@ -209,12 +193,17 @@ impl Walker<'_, '_> {
 
     fn enter_loop(&mut self, statement: StmtId, boundary: ScopeId, outer: Context) -> Context {
         let index = self.walk.loops.len() as u32;
+        let around = outer.enclosing_loop;
+        let entered_at = self.tick();
         self.walk.loops.push(WalkedLoop {
             statement,
             boundary,
             function: outer.function,
-            parent: outer.enclosing_loop,
+            parent: around,
+            entered_at,
+            outermost: around.map_or(index, |around| self.walk.loops[around as usize].outermost),
             stored: Vec::new(),
+            symbols_stored_within: Vec::new(),
         });
         let inner = Context {
             enclosing_loop: Some(index),

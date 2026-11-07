@@ -1,0 +1,30 @@
+# `new Map(list)` reads 0 and 1 off each entry by [[Get]], which goes on above the entry: the getters of its class run. The row says OwnValues and PrototypeChain, and Link asked nothing for the second:
+# the getters counted as never reached, and the Map took what stood in for their answers: size 1 for 3.
+# -- source: getters-above-the-entries.ts
+# class Pair {
+#     key: string;
+#     value: number;
+#     constructor(key: string, value: number) {
+#         this.key = key;
+#         this.value = value;
+#     }
+#     get 0() {
+#         return this.key;
+#     }
+#     get 1() {
+#         return this.value;
+#     }
+# }
+# const list: any[] = [];
+# for (let i = 0; i < 3; i++)
+#     list.push(new Pair("k" + i, i));
+# console.log(new Map(list).size);
+# -- end of source
+# RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: function f2 cycle=
+# CHECK: function f3 cycle=
+# RUN(LAYOUTS): link layouts mechanisms=all
+# REQUIRES(LAYOUTS): entries-of-bun
+# LAYOUTS-NOT: layout L0 {{*}}stays-with-compiled-code
+# LAYOUTS: layout L1

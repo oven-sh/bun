@@ -1,0 +1,21 @@
+# `nodes.push(i & 1 ? { v: i } : { v: -i })` in a loop: the method is read in front of operands that may be seen, and at the head of the loop the walk's own state has let the list go. Link has followed the list:
+# it stays as its class makes it (LinkTables::receiversThatStayAsMade), so the read of the method is the member of the class, the call is the row with its code in line, nothing leaves, and `nodes[i & 7]` asks the list nothing.
+# f1 = sums. Control: f2 = handsOut: unseen code has the list: the read and the call stay closed
+# -- source: method-of-a-list-that-stays-as-made-is-the-row-itself-in-a-loop.ts
+# declare function sink(...values: unknown[]): void;
+# type N = { v: number };
+# function sums(n: number) { const nodes: N[] = []; for (let i = 0; i < 8; i++) nodes.push(i & 1 ? { v: i } : { v: -i }); let total = 0; for (let i = 0; i < n; i++) total += nodes[i & 7].v; return total; }
+# function handsOut(n: number) { const nodes: N[] = []; sink(nodes); for (let i = 0; i < 8; i++) nodes.push(i & 1 ? { v: i } : { v: -i }); return nodes[n & 7]; }
+# sink(sums, handsOut);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: TryCallInline {{*}}inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+# CHECK: = GetArrayElement {{*}}level=Proven
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = PropGet {{*}}key="push"
+# NEVER-NOT: level=Expected
+# RUN(OUT): walk f2 mechanisms=all
+# OUT-LABEL: code f2:Body
+# OUT: = PropGet {{*}}key="push"
+# OUT: = GetArrayElement {{*}}level=Expected

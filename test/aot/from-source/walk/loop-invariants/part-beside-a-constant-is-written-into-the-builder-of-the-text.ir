@@ -1,0 +1,14 @@
+# `line += c + ","` in a loop, c only written a number: one test, and where it passes the digits and the comma are written into the builder: no string is made of the two
+# f1 = joins
+# -- source: part-beside-a-constant-is-written-into-the-builder-of-the-text.ts
+# declare function sink(...values: unknown[]): void;
+# function joins(list: number[]): string { let line = ""; for (const c of list) { line += c + ","; } return line; }
+# sink(joins, joins([1, 2]));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: form=StringAndPrimitive
+# CHECK: = StackStringBuilderAppendNumber
+# CHECK: = StackStringBuilderAppendConstant
+# CHECK-NOT: form=StringAndPrimitive

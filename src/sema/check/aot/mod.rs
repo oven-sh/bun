@@ -19,6 +19,7 @@ pub(in crate::check) mod enum_constants;
 mod inferred_from_use;
 mod kept_answers;
 mod left_out_bodies;
+mod lowering_hooks;
 mod member_types;
 mod object_members;
 mod program_symbols;
@@ -35,22 +36,25 @@ mod written_type;
 pub use answers::{
     CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource,
     ClassParent, ClassRef, ClassShape, EnumConstant, FunctionRef, GaveUp, IndexKey, IndexSignature,
-    ListedMember, MemberLookup, MemberName, MemberTypedOtherwise, ObjectMember, ObjectMemberKind,
-    PositionTypes, QueryStatistics, SignatureParameter, SignatureShape, SymbolCreation,
-    TypeArgument, TypeDisplayName, TypeParameterRef, WrittenType,
+    ListedMember, MemberForm, MemberLookup, MemberName, MemberTypedOtherwise, MethodsAbove,
+    ObjectMember, ObjectMemberKind, PositionTypes, QueryLimit, QueryLimits, QueryStatistics,
+    SignatureParameter, SignatureShape, SymbolCreation, TypeArgument, TypeParameterRef,
+    WrittenParameter, WrittenType,
 };
 pub use builtin_types::{
     BuiltinClassIndex, BuiltinTypeClass, BuiltinTypePath, BuiltinTypeSymbols, BuiltinValueIndex,
     BuiltinValuePath, BuiltinValuePathList, Denotation,
 };
-pub use const_inlining::ConstLocalPrefixes;
-pub(crate) use const_inlining::has_export_from;
+pub(crate) use const_inlining::ConstLocalPrefixes;
 pub use diagnostic_class::DiagnosticClass;
 pub use diagnostic_effect::{Effect, FileOrigin, effect_of};
 pub use diagnostic_subject::{DiagnosticSubject, containers_completed_by_bun_types};
-pub use enum_constants::{find_link_followed_by_transpiler, is_member_visited_before};
+pub(crate) use enum_constants::is_declared_around;
+pub use enum_constants::{
+    find_link_followed_by_transpiler, find_member_followed_by_transpiler, is_member_visited_before,
+};
 pub(crate) use kept_answers::KeptAnswers;
-pub use kept_answers::KeptFact;
+pub use kept_answers::{Blocks, KeptFact, RowsCarriedOver};
 pub use left_out_bodies::LeftOutBodies;
 pub use program_symbols::COMPILER_DECLARATIONS_PATH;
 pub use prototype_links::{NamedValue, NamedValues, PrototypeOperation};

@@ -67,6 +67,7 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
+    #[inline]
     pub fn member_key(&self, e: ExprId) -> Option<(ExprId, MemberKey)> {
         match self.exprs.get(e.idx())?.kind {
             ExprKind::Dot { obj, name, .. }
@@ -80,8 +81,6 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
-    /// The node as the text has it. A build parses `a["b"]` into the node of `a.b`, with `"b"` as the expression in front
-    /// of it. Only what shows the text to somebody asks: an error of TypeScript's, a position in a stack trace.
     #[inline]
     pub fn written_kind(&self, e: ExprId) -> ExprKind {
         match self.exprs[e.idx()].kind {
@@ -98,7 +97,6 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
-    /// The node as TypeScript's rules take it. No error is reported in the JavaScript of a build.
     #[inline]
     pub fn checked_kind(&self, e: ExprId) -> ExprKind {
         match self.exprs[e.idx()].kind {
@@ -125,8 +123,6 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
-    /// The transpiler resolves `object["name"]` like `object.name` only when it stores the key as
-    /// bytes, which it does for ASCII text (`E::String::is_utf16`).
     pub fn is_name_resolved_by_transpiler(&self, access: ExprId, name: &[u8]) -> bool {
         !self.is_written_in_brackets(access) || name.is_ascii()
     }

@@ -5,14 +5,12 @@ use bun_sema::hir::{self, ExprKind, Flags, FnBody, FnId, FnKind, StmtKind};
 
 use crate::builtins::SourceDialect;
 use crate::builtins::id::BuiltinClass;
-use crate::ir::generated::{
-    Function, FunctionFlags, FunctionKind, FunctionSyntax, LimitId, SourceRange,
-};
+use crate::builtins::table::{FramesMark, frames_mark_of};
+use crate::ir::generated::{Function, FunctionFlags, FunctionKind, FunctionSyntax, SourceRange};
 use crate::ir::{
     Body, DeclaredType, FunctionId, FunctionKey, Mapped, PositionFlags, Primitives, StringId, Type,
-    TypeTable,
+    TypeRef, TypeTable,
 };
-use crate::load;
 use crate::lower::{FileLowering, class, generator};
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -24,17 +22,7 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             _ => Binding::Free,
         };
-        self.intern_function_name(binding, func.name, func.name_pos)
-    }
-
-    // What an indirect `eval` is given is the body of a function without a name, which is all that its file holds. `Function` makes a function that has a name.
-    fn is_evaluated_script(&self, key: FunctionKey) -> bool {
-        let FunctionKey::Source(source) = key else {
-            return false;
-        };
-        self.inputs.sources.kind(self.file) == load::SourceKind::EvaluatedText
-            && self.hir[source.function].name.is_none()
-            && self.find_enclosing_key(key).is_none()
+        self.intern_function_name(binding, func.name)
     }
 
     pub(in crate::lower) fn is_derived_constructor(&self, function: FnId) -> bool {
@@ -72,6 +60,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     | FunctionKey::WrappedModuleBody(_)
                     | FunctionKey::FaceBody(_)
                     | FunctionKey::CheckBody(_)
+                    | FunctionKey::Instantiation(_)
                     | FunctionKey::Source(_)
                     | FunctionKey::Signature(_)
                     | FunctionKey::ClassSignature(_)
@@ -105,18 +94,17 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The function makes the array itself, so nothing tests that it is one. What an array type says it holds is expected.
     fn compute_rest_position(&mut self, position: DeclaredType) -> DeclaredType {
         let types = &mut self.fragment.types;
         let declared = types.without_primitives(position.ty, Primitives::NULLISH);
-        let (ty, site) = match is_array_type(types.get(declared)) {
-            true => (declared, position.site),
-            false => (TypeTable::ARRAY, None),
+        let ty = match is_array_type(&types.get(declared)) {
+            true => declared,
+            false => TypeTable::ARRAY,
         };
         let flags = position.flags.without(PositionFlags::IS_EXPECTED);
         DeclaredType::new(
             Mapped::checked(ty),
-            site,
+            None,
             flags | PositionFlags::IS_FROM_COMPILER,
         )
     }
@@ -131,29 +119,13 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // A stub makes `this` for a plain function before the function has a frame. Bytecode makes it in the frame of the function, so a stack trace lists the function there.
-    // JSC records no position for it. Its lookup falls on the first position that the function records, and on the parameters where there is none.
-    fn position_of_making_this_in(&self, function: FnId, header: &Function) -> u32 {
-        let parameters = self.parameters_position(function);
-        // JSC records no positions in a function that is written inside a built-in function.
-        let records_positions = header.enclosing_runtime_function.is_none();
-        self.transpiled
-            .as_ref()
-            .filter(|_| records_positions && !self.is_shown_without_source_map())
-            .and_then(|transpiled| {
-                let is_strict = self.hir[function].is_strict;
-                transpiled.find_first_recorded_position_of_function(parameters, is_strict)
-            })
-            .unwrap_or(parameters)
-    }
-
     fn compute_text_range(&self, function: FnId) -> SourceRange {
         let Some(end) = self.find_end_of_function(function) else {
             return SourceRange::default();
         };
         SourceRange {
-            start: self.type_ranges.map_offset(self.hir[function].text_start),
-            end: self.type_ranges.map_offset(end),
+            start: self.hir[function].text_start,
+            end,
         }
     }
 }
@@ -164,10 +136,7 @@ pub(crate) fn create_header(
     kind: FunctionKind,
     position: u32,
 ) -> Function {
-    let mut syntax = match file.is_evaluated_script(key) {
-        true => FunctionSyntax::IS_EVALUATED_SCRIPT,
-        false => FunctionSyntax::default(),
-    };
+    let mut syntax = FunctionSyntax::default();
     let (enclosing_runtime_function, inherited_flags) = match file.find_enclosing_key(key) {
         Some(enclosing) => {
             let enclosing = file.reference_function(enclosing);
@@ -184,12 +153,6 @@ pub(crate) fn create_header(
     let mut flags = file.scopes.entry_flags(key) | inherited_flags;
     if file.is_checked() {
         flags |= FunctionFlags::IS_CHECKED;
-    }
-    if file.scopes.has_too_many_captures(key) {
-        file.gave_up(LimitId::MaxCaptures, position);
-    }
-    if file.scopes.has_fields_for_handlers(key) {
-        file.gave_up(LimitId::MaxHandlerArguments, position);
     }
     Function {
         name: None,
@@ -250,31 +213,6 @@ fn declare(
     id
 }
 
-// JSC runs the body of a generator as a function of its own, which starts at the `{`.
-fn find_generator_body(hir: &hir::File<'_>, function: FnId) -> Option<u32> {
-    let node = hir[function];
-    if !node.flags.contains(Flags::GENERATOR) || node.flags.contains(Flags::ASYNC) {
-        return None;
-    }
-    let text: &[u8] = &hir.text;
-    let mut depth = 0u32;
-    let mut position = node.anchor as usize;
-    loop {
-        match *text.get(position)? {
-            b'(' => depth += 1,
-            b')' => depth = depth.checked_sub(1)?,
-            _ => {}
-        }
-        position += 1;
-        if depth == 0 {
-            break;
-        }
-    }
-    let rest = text.get(position..)?;
-    let brace = position + rest.iter().position(|byte| !byte.is_ascii_whitespace())?;
-    (text[brace] == b'{').then_some(brace as u32)
-}
-
 fn create_source_header(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FnId,
@@ -289,7 +227,6 @@ fn create_source_header(
     let key = FunctionKey::Source(source);
     let declared = file.function_positions(function);
     let kind = file.compute_function_kind(function);
-    // A constructor begins where its parameters start: JSC shows the frame of a class that is called without `new` there.
     let position = match kind {
         FunctionKind::BaseConstructor | FunctionKind::DerivedConstructor => {
             file.parameters_position(function)
@@ -299,32 +236,17 @@ fn create_source_header(
     let mut header = create_header(file, key, kind, position);
     match find_frames_mark(file, function) {
         Some(FramesMark::NativeCode) => header.syntax |= FunctionSyntax::IS_SHOWN_AS_NATIVE_CODE,
-        Some(FramesMark::ModuleOfHelpers) => {
-            header.syntax |= FunctionSyntax::IS_SHOWN_IN_MODULE_OF_HELPERS
-        }
         Some(FramesMark::Hidden) => header.flags |= FunctionFlags::IS_HIDDEN_IN_STACK_TRACES,
         None => {}
     }
-    // JSC records no positions in a function that is written inside a built-in function.
     if header.enclosing_runtime_function.is_some()
         || header
             .syntax
             .contains(FunctionSyntax::IS_SHOWN_AS_NATIVE_CODE)
     {
-        let body = find_generator_body(hir, function);
-        header.position = body.unwrap_or_else(|| file.parameters_position(function));
+        header.position = file.parameters_position(function);
     }
     header.flags |= compute_source_flags(hir, function);
-    let is_coroutine = header
-        .flags
-        .intersects(FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR);
-    if kind == FunctionKind::Plain && !is_coroutine {
-        let position = file.position_of_making_this_in(function, &header);
-        file.where_this_is_made.push((header.position, position));
-    }
-    if file.is_anonymous_in_bundle(func.name_pos) || file.is_printed_without_name(function) {
-        header.flags = header.flags.without(FunctionFlags::HAS_EXPLICIT_NAME);
-    }
     if file.inputs.library_functions.is_left_out(source) {
         header.flags = header
             .flags
@@ -334,15 +256,12 @@ fn create_source_header(
         Some(name) => Some(name),
         None if func.name.is_some() => Some(file.intern_own_name(function)),
         None if func.flags.contains(Flags::DEFAULT) => {
-            if file.is_default_export_name_its_own(func.start) {
-                header.flags |= FunctionFlags::HAS_EXPLICIT_NAME;
-            }
-            file.default_export_name(func.start)
+            header.flags |= FunctionFlags::HAS_EXPLICIT_NAME;
+            file.default_export_name()
         }
         None => None,
     };
     if header.flags.contains(FunctionFlags::IS_ASYNC)
-        && !header.flags.contains(FunctionFlags::HAS_EXPLICIT_NAME)
         && has_live_await(hir, &file.decisions().as_folded_by_bun_run(), function)
     {
         header.syntax |= FunctionSyntax::HAS_WRITTEN_AWAIT;
@@ -370,7 +289,8 @@ fn create_source_header(
     header
         .parameters
         .extend(std::iter::repeat_n(DeclaredType::untyped(), undeclared));
-    header.results = vec![declared.result];
+    header.results.clear();
+    header.results.push(declared.result);
     if hir.runtime_function_kind(function) == FnKind::Constructor {
         let class = file.bound.function_class(function);
         let class = class.expect("a constructor has a class");
@@ -379,15 +299,6 @@ fn create_source_header(
     header
 }
 
-enum FramesMark {
-    NativeCode,
-    Hidden,
-    /// `bun run` has the function in bun:wrap.
-    ModuleOfHelpers,
-}
-
-/// `bun run` has some functions of the library inside a built-in function, whose frames are native code, where an executable has them in a module.
-/// The first statement of such a function says how a stack trace lists it.
 fn find_frames_mark(file: &FileLowering<'_, '_, '_, '_>, function: FnId) -> Option<FramesMark> {
     let hir = file.hir;
     if file.source.dialect() == SourceDialect::Runtime
@@ -396,12 +307,7 @@ fn find_frames_mark(file: &FileLowering<'_, '_, '_, '_>, function: FnId) -> Opti
         && let StmtKind::Expr(first) = hir[hir.id_at(statements, 0)].kind
         && let ExprKind::String(text) = hir[first].kind
     {
-        return match file.queries.atom_bytes(text) {
-            b"frames are native code" => Some(FramesMark::NativeCode),
-            b"has no frames" => Some(FramesMark::Hidden),
-            b"frames are of bun:wrap" => Some(FramesMark::ModuleOfHelpers),
-            _ => None,
-        };
+        return frames_mark_of(file.queries.atom_bytes(text));
     }
     None
 }
@@ -429,8 +335,8 @@ fn compute_source_flags(hir: &hir::File<'_>, function: FnId) -> FunctionFlags {
     flags
 }
 
-fn is_array_type(ty: &Type) -> bool {
-    let [part] = ty.classes.as_slice() else {
+fn is_array_type(ty: &TypeRef<'_>) -> bool {
+    let [part] = ty.classes else {
         return false;
     };
     part.builtin_class == BuiltinClass::Array

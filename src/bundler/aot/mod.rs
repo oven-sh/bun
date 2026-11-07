@@ -2,10 +2,10 @@ pub mod plugins;
 
 mod assets;
 mod components;
+mod css_modules;
 mod data_loaders;
 mod data_values;
 mod defines;
-mod macros;
 mod metafile;
 mod native_plugins;
 mod options;
@@ -18,14 +18,13 @@ pub mod testing;
 
 use crate::bundle_v2::{BundleV2, FileMap, JSBundlerPlugin, dispatch};
 use crate::{EventLoop, OutputFile, Transpiler};
+use bun_aot::BuildFailed;
 use bun_aot::engine::{EngineResult, ExecutableIdentity, TargetImageForm};
-use bun_aot::link::ProgramNames;
 use bun_aot::module_list::ModuleList;
 use bun_aot::report::SourceTexts;
 use bun_aot::statistics::{Stage, Statistics};
-use bun_aot::{BuildFailed, Compilation};
 use bun_ast::{Loc, Log};
-use bun_options_types::aot_options::{AotOptions, ReplacedByTests};
+use bun_options_types::aot_options::AotOptions;
 use bun_resolver::package_names::{
     BuildPaths, FurtherPackageName, PackageName, PathAlias, add_hidden_names, add_written_names,
 };
@@ -33,7 +32,7 @@ use bun_sema_driver::Libs;
 use core::ptr::NonNull;
 pub use metafile::{MetafileFiles, MetafileOutput, write_metafile, write_metafile_files};
 pub use options::expand_entry_points;
-use options::{OptionsInput, embedded_entry_point_names, options_from_bundler};
+use options::{OptionsInput, options_from_bundler};
 use services::BundlerServices;
 pub use services::FileFinder;
 
@@ -51,7 +50,11 @@ pub struct AotBuildRequest<'r, 'a> {
     pub executable_identity: ExecutableIdentity,
     pub image_form: Option<TargetImageForm>,
     pub module_prefix: &'r [u8],
-    pub log: &'r mut Log,
+    /// The absolute path of the executable that the build writes.
+    pub outfile: Option<&'r [u8]>,
+    /// `transpiler.log`. The resolver and the bundler write through that pointer while the build
+    /// runs, so no reference to the log is held across a call that may reach them.
+    pub log: *mut Log,
     pub arena: &'a bun_alloc::Arena,
     pub event_loop: EventLoop,
     pub worker_pool: Option<NonNull<bun_threading::ThreadPool>>,
@@ -68,18 +71,17 @@ pub struct AotEntryPoint {
 pub struct AotBuild {
     /// `Compilation::root_folders_spelled`
     pub root_folders_spelled: Vec<u8>,
+    /// `Compilation::levels_above_root`
+    pub levels_above_root: usize,
     /// `Compilation::holds_source_paths`
     pub holds_source_paths: bool,
-    /// `Compilation::imports_file_with_query`
-    pub imports_file_with_query: bool,
-    /// `Compilation::replaced_builtins`
-    pub replaced_builtins: ReplacedByTests,
+    pub names_plugin: bool,
+    /// `Compilation::names_added_to_builtins`
+    pub names_added_to_builtins: Vec<(u32, Vec<u8>)>,
     /// `Resolver::find_further_package_names`
     pub further_package_names: Vec<FurtherPackageName>,
     pub output_files: Vec<OutputFile>,
     pub engine: EngineResult,
-    /// `Compilation::further_programs`
-    pub further_programs: Vec<EngineResult>,
     /// `Compilation::starts_workers_from_unseen_code`
     pub starts_workers_from_unseen_code: bool,
     pub entry_points: Vec<AotEntryPoint>,
@@ -88,7 +90,6 @@ pub struct AotBuild {
     pub package_names: Vec<PackageName>,
     /// "paths" and "baseUrl" of the tsconfig.json files of the program.
     pub path_aliases: Vec<PathAlias>,
-    pub names: ProgramNames,
     pub texts: SourceTexts,
     pub statistics: Statistics,
     /// For a build that writes a metafile.
@@ -99,8 +100,6 @@ pub struct AotBuildFailure {
     pub stage: Option<Stage>,
     pub is_internal_error: bool,
     pub statistics: Statistics,
-    pub compilation: Option<Box<Compilation>>,
-    pub refused_entry_points: Option<Vec<u32>>,
 }
 
 pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailure> {
@@ -112,6 +111,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         executable_identity,
         image_form,
         module_prefix,
+        outfile,
         log,
         arena,
         event_loop,
@@ -121,6 +121,9 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         typescript_libs,
     } = request;
 
+    if let Some(outfile) = outfile {
+        transpiler.resolver.pass_over_outfile(outfile);
+    }
     let input = OptionsInput {
         bundle_options: &transpiler.options,
         entry_points,
@@ -134,21 +137,8 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         working_directory: crate::bun_fs::FileSystem::get().top_level_dir(),
         node_path: transpiler.env().get(b"NODE_PATH"),
     };
-    let Some(options) = options_from_bundler(&input, log) else {
-        return Err(failure_before_pipeline(false));
-    };
-    // A program that runs in place has the paths of its files on disk, and no other names.
-    let embedded_names = match aot.runs_in_place {
-        true => Some(Vec::new()),
-        false => embedded_entry_point_names(
-            &transpiler.options,
-            input.working_directory,
-            &options.entry_points,
-            &options.paths.root_directory,
-            log,
-        ),
-    };
-    let Some(embedded_names) = embedded_names else {
+    // SAFETY: the log outlives the build, and nothing below this call reaches the transpiler.
+    let Some(options) = options_from_bundler(&input, unsafe { &mut *log }) else {
         return Err(failure_before_pipeline(false));
     };
     transpiler.options.root_dir = Box::from(&options.paths.root_directory[..]);
@@ -170,7 +160,8 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     let mut bundle = match started {
         Ok(bundle) => bundle,
         Err(error) => {
-            log.add_error_fmt(
+            // SAFETY: the log outlives the build, and the reference ends with the statement.
+            unsafe { &mut *log }.add_error_fmt(
                 None,
                 Loc::EMPTY,
                 format_args!("{} while starting the build", error.name()),
@@ -190,8 +181,15 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         module_prefix,
         &aot.user_defined_names,
     );
-    let result = bun_aot::compile(&options, &services, log);
+    let mut said_by_compiler = Log::init();
+    let result = bun_aot::compile(&options, &services, &mut said_by_compiler);
+    // SAFETY: the log outlives the build, and the reference ends with the statement.
+    said_by_compiler.append_to(unsafe { &mut *log });
 
+    let levels_above_root = match &result {
+        Ok(compilation) => compilation.levels_above_root,
+        Err(_) => 0,
+    };
     let refused_names = services.take_refused_names();
     let embedded = services.shut_down();
     let (package_names, path_aliases) = match &result {
@@ -221,6 +219,28 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         }
         Ok(_) | Err(_) => (Vec::new(), Vec::new()),
     };
+    let package_names = match &result {
+        Ok(compilation) if !aot.runs_in_place => {
+            let folders = compilation.summary.folders.iter();
+            let folders: Vec<BuildPaths<'_>> = folders
+                .map(|it| BuildPaths {
+                    source_path: &it.source_path,
+                    public_path: &it.public_path,
+                })
+                .collect();
+            let files = compilation.program_files.iter();
+            let files: Vec<BuildPaths<'_>> = files
+                .map(|it| BuildPaths {
+                    source_path: &it.source_path,
+                    public_path: &it.public_path,
+                })
+                .collect();
+            let resolver = &mut bundle.transpiler.resolver;
+            let names = add_hidden_names(package_names, resolver.find_nearer_packages(&folders));
+            add_hidden_names(names, resolver.find_names_that_lead_outside(&files))
+        }
+        Ok(_) | Err(_) => package_names,
+    };
     // A program that runs in place reads the package.json files itself.
     let package_names = match result.is_ok() && !aot.runs_in_place && !refused_names.is_empty() {
         true => {
@@ -231,13 +251,13 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             let resolver = &mut bundle.transpiler.resolver;
             add_hidden_names(
                 package_names,
-                resolver.find_hidden_names(&refused_names, root),
+                resolver.find_hidden_names(&refused_names, root, levels_above_root),
             )
         }
         false => package_names,
     };
     let further_package_names = match &result {
-        Ok(compilation) if !compilation.program_files.is_empty() => {
+        Ok(compilation) if aot.loads_code_from_disk && !compilation.program_files.is_empty() => {
             let files = compilation.program_files.iter();
             let files: Vec<BuildPaths<'_>> = files
                 .map(|it| BuildPaths {
@@ -254,6 +274,17 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         }
         Ok(_) | Err(_) => Vec::new(),
     };
+    let mut further_package_names = further_package_names;
+    if let Ok(compilation) = &result {
+        let followed = compilation.names_followed.iter();
+        further_package_names.extend(followed.map(|name| FurtherPackageName {
+            path: name.folder_and_name_as_written.clone(),
+            required: name.public_path_for_require.clone(),
+            imported: name.public_path_for_import.clone(),
+            hides_other_paths: false,
+        }));
+        further_package_names.sort_by(|a, b| a.path.cmp(&b.path));
+    }
     bundle.deinit_without_freeing_arena();
     bun_sema_driver::wake_idle_region_threads();
     drop(bundle);
@@ -262,8 +293,9 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         Ok(compilation) => {
             let names = output::EntryPointNames {
                 module_prefix,
+                levels_above_root,
                 shown: &options.paths.entry_point_names,
-                embedded: &embedded_names,
+                embedded: &options.paths.entry_point_file_names,
             };
             let mut build = output::finish_build(compilation, &names, embedded);
             build.package_names = package_names;
@@ -276,14 +308,10 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             stage,
             is_internal_error,
             statistics,
-            compilation,
-            refused_entry_points,
         }) => Err(AotBuildFailure {
             stage: Some(stage),
             is_internal_error,
             statistics,
-            compilation,
-            refused_entry_points,
         }),
     }
 }
@@ -293,7 +321,5 @@ fn failure_before_pipeline(is_internal_error: bool) -> AotBuildFailure {
         stage: None,
         is_internal_error,
         statistics: Statistics::default(),
-        compilation: None,
-        refused_entry_points: None,
     }
 }

@@ -1,22 +1,16 @@
 use super::assets::EmbeddedFiles;
-use super::macros::MacroThread;
 use super::plugins::PluginRequests;
 use super::{assets, components, data_loaders, defines, native_plugins, page_bundles};
 use crate::options_impl::BundleOptions;
 use crate::{BundleV2, OutputFile, Transpiler, Worker};
 use bun_alloc::Arena;
 use bun_aot::load::source_provider::{
-    ComponentFile, DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, ModuleName, Resolution,
-    ResolveRequest, SourceFile, TranspiledTree,
+    ComponentFile, DataFailure, DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution,
+    ResolveRequest, SourceFile,
 };
 use bun_aot::{SourceProvider, WithoutServices};
-use bun_ast::{
-    ASTMemoryAllocator, ExportsKind, Indentation, Loader, Log, Part, Source, Stmt, StoreSlice,
-    Target, symbol,
-};
-use bun_js_parser::Define;
-use bun_js_printer::renamer::{NoOpRenamer, Renamer};
-use bun_js_printer::{self as js_printer, PrintResult};
+use bun_ast::{ASTMemoryAllocator, Loader, Log};
+use bun_js_parser::{Define, ExpandedImportMetaGlob};
 use bun_paths::resolve_path::posix_to_platform_in_place;
 use bun_react_compiler::Observer;
 use bun_resolver::options::{ExternalModules, Packages};
@@ -25,13 +19,12 @@ use bun_resolver::package_names::RefusedName;
 use bun_resolver::{DataURL, GlobalCache, Resolver, ResultUnion};
 use bun_sema::atom::Interner;
 use bun_sema::fold::FoldOptions;
-use bun_sema::hir_from_data::{DataModule, DataValue};
+use bun_sema::hir_from_data::DataModule;
 use bun_sema::resolve::{AOT_CONDITION, CodeFailure, CodeImportKind, FileSearch, FoundCode, Host};
 use bun_sema_driver::host::{from_native, to_native};
 use bun_threading::Guarded;
 use core::ptr::NonNull;
 
-#[derive(Clone)]
 pub(crate) struct BuildContext {
     bundle: NonNull<BundleV2<'static>>,
     pub module_prefix: Box<[u8]>,
@@ -227,7 +220,6 @@ pub(crate) struct BundlerServices {
     user_defined_names: Box<[Box<[u8]>]>,
     plugins: Option<PluginRequests>,
     embedded: EmbeddedFiles,
-    macros: MacroThread,
     /// Those that no thread holds.
     file_finders: Guarded<Vec<FileFinder>>,
     refused_names: Guarded<Vec<RefusedName>>,
@@ -253,7 +245,6 @@ impl BundlerServices {
             user_defined_names: Box::from(user_defined_names),
             plugins,
             embedded: EmbeddedFiles::default(),
-            macros: MacroThread::new(),
             file_finders: Guarded::new(Vec::new()),
             refused_names: Guarded::new(Vec::new()),
         }
@@ -264,7 +255,6 @@ impl BundlerServices {
     }
 
     pub(crate) fn shut_down(self) -> Vec<OutputFile> {
-        self.macros.shut_down();
         if let Some(plugins) = self.plugins {
             plugins.shut_down();
         }
@@ -287,69 +277,9 @@ impl SourceProvider for BundlerServices {
         Some(&*self.context.options().define)
     }
 
-    fn enabled_features(&self) -> Vec<&[u8]> {
-        let flags = self.context.options().bundler_feature_flags.iter();
-        flags
-            .flat_map(|flags| flags.keys())
-            .map(|name| &**name)
-            .collect()
-    }
-
-    // The options are those of `Transpiler::print_ast_esm_ascii` in a virtual machine.
-    fn print_as_run(
-        &self,
-        file: TranspiledTree<'_>,
-        statements: &[(Stmt, u32)],
-    ) -> Option<Vec<Box<[u8]>>> {
-        let TranspiledTree {
-            tree,
-            symbols,
-            source,
-            arena,
-        } = file;
-        let renamer = NoOpRenamer::init(symbol::Map::init_with_one_list(symbols), source);
-        // The printer reserves as much as its source holds, on every call.
-        let source_without_text = Source::init_path_string(source.path.text, b"");
-        let print = |&(statement, indentation): &(Stmt, u32)| {
-            let mut statements = [statement];
-            let part = Part {
-                stmts: StoreSlice::new_mut(&mut statements),
-                ..Default::default()
-            };
-            let options = js_printer::Options {
-                require_ref: Some(tree.require_ref),
-                import_meta_ref: tree.import_meta_ref,
-                hmr_ref: tree.wrapper_ref,
-                indent: Indentation {
-                    count: indentation as usize,
-                    ..Default::default()
-                },
-                target: Target::Bun,
-                minify_syntax: true,
-                print_dce_annotations: false,
-                inline_require_and_import_errors: false,
-                module_type: match tree.exports_kind {
-                    ExportsKind::Cjs => crate::options::Format::Cjs,
-                    _ => crate::options::Format::Esm,
-                },
-                ..Default::default()
-            };
-            let printed = js_printer::print::<false>(
-                arena,
-                Target::Bun,
-                tree,
-                &source_without_text,
-                options,
-                tree.import_records.as_slice(),
-                &[part],
-                Renamer::NoOpRenamer(&renamer),
-            );
-            match printed {
-                PrintResult::Result(printed) => Some(printed.code),
-                PrintResult::Err(_) => None,
-            }
-        };
-        statements.iter().map(print).collect()
+    fn outfile(&self) -> Option<&[u8]> {
+        let resolver = &self.context.bundle().transpiler().resolver;
+        resolver.outfile_of_build()
     }
 
     fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
@@ -396,38 +326,6 @@ impl SourceProvider for BundlerServices {
         native_plugins::run_before_parse(&self.context, request.module, loaded, log)
     }
 
-    fn decode_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
-        DataURL::parse(url).ok()??.decode_data().ok()
-    }
-
-    // As `Blob::constructor` takes the type and `Blob::get_loader` reads it.
-    fn loader_of_blob(&self, r#type: Option<&[u8]>) -> Option<Loader> {
-        use crate::options::LoaderExt as _;
-        use bun_http_types::MimeType;
-        let is_taken = |written: &&[u8]| {
-            !written.is_empty() && written.iter().all(|&byte| matches!(byte, 0x20..=0x7E))
-        };
-        let Some(written) = r#type.filter(is_taken) else {
-            return Some(Loader::from_mime_type(MimeType::NONE));
-        };
-        let kept = match MimeType::by_name_static(written) {
-            Some(known) => known.value.to_vec(),
-            None => written.to_ascii_lowercase(),
-        };
-        Some(Loader::from_mime_type(MimeType::MimeType::init(
-            &kept, false, None,
-        )))
-    }
-
-    fn write_url(&self, text: &[u8], base: Option<&[u8]>) -> Option<Vec<u8>> {
-        let text = bun_core::StringView::borrow_utf8(text);
-        let href = match base {
-            None => bun_url::href_from_string(&text),
-            Some(base) => bun_url::join(&bun_core::StringView::borrow_utf8(base), &text),
-        };
-        (!href.is_dead()).then(|| href.to_owned_slice())
-    }
-
     fn has_load_plugin(&self, module: ModuleName<'_>) -> bool {
         self.plugins
             .as_ref()
@@ -459,6 +357,38 @@ impl SourceProvider for BundlerServices {
             .collect()
     }
 
+    fn decode_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
+        let url = DataURL::parse(url).ok().flatten()?;
+        url.decode_data().ok()
+    }
+
+    fn loader_of_blob(&self, r#type: Option<&[u8]>) -> Option<Loader> {
+        use crate::options::LoaderExt as _;
+        use bun_http_types::MimeType;
+        // The constructor takes no type that is empty or holds more than printable ASCII. It keeps what goes with a name that it knows, and any other in lower case.
+        let is_taken = |written: &&[u8]| {
+            !written.is_empty() && written.iter().all(|&byte| matches!(byte, 0x20..=0x7E))
+        };
+        let Some(written) = r#type.filter(is_taken) else {
+            return Some(Loader::from_mime_type(MimeType::NONE));
+        };
+        let kept = match MimeType::by_name_static(written) {
+            Some(known) => known.value.into_owned(),
+            None => written.to_ascii_lowercase(),
+        };
+        let kept = MimeType::MimeType::init(&kept, false, None);
+        Some(Loader::from_mime_type(kept))
+    }
+
+    fn write_url(&self, text: &[u8], base: Option<&[u8]>) -> Option<Vec<u8>> {
+        let text = bun_core::StringView::borrow_utf8(text);
+        let href = match base {
+            None => bun_url::href_from_string(&text),
+            Some(base) => bun_url::join(&bun_core::StringView::borrow_utf8(base), &text),
+        };
+        (!href.is_dead()).then(|| href.to_owned_slice())
+    }
+
     fn asset_paths_ignore_contents(&self) -> bool {
         assets::asset_paths_ignore_contents(&self.context)
     }
@@ -467,56 +397,26 @@ impl SourceProvider for BundlerServices {
         self.embedded.set_contents(&self.context, file, log)
     }
 
-    fn clear_embedded_files(&self) {
-        self.embedded.clear();
-    }
-
-    fn embed_at_module_path(&self, file: &SourceFile<'_>, module_path: &[u8]) {
-        (self.embedded).embed_at_module_path(&self.context, file, module_path);
-    }
-
     fn parse_data<'s>(
         &self,
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
         log: &mut Log,
-    ) -> Result<DataModule<'s>, Failed> {
+    ) -> Result<DataModule<'s>, DataFailure> {
         data_loaders::parse_data(&self.context, &self.embedded, file, arena, atoms, log)
     }
 
-    fn run_macro<'s>(
-        &self,
-        call: &MacroCall<'_, 's>,
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<&'s DataValue<'s>, Failed> {
-        self.macros
-            .run_macro(&self.context, call, arena, atoms, log)
+    fn bundle_pages(&self, pages: &[&[u8]], log: &mut Log) -> Result<Vec<Vec<u8>>, Failed> {
+        page_bundles::bundle_pages(&self.context, &self.embedded, pages, log)
     }
 
     fn compile_components(&self, file: &ComponentFile<'_>, observer: &mut dyn Observer) -> bool {
-        match file.can_import_macros {
-            true => (self.macros).compile_components(&self.context, file, observer),
-            false => components::compile_components(
-                &self.context,
-                file,
-                observer,
-                None,
-                &mut Log::init(),
-            ),
-        }
+        components::compile_components(&self.context, file, observer, None, &mut Log::init())
     }
 
-    fn bundle_pages<'s>(
-        &self,
-        pages: &[&[u8]],
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<Vec<&'s DataValue<'s>>, Failed> {
-        page_bundles::bundle_pages(&self.context, &self.embedded, pages, arena, atoms, log)
+    fn expand_globs(&self, file: &ComponentFile<'_>) -> Vec<ExpandedImportMetaGlob> {
+        components::expand_globs(&self.context, file, &mut Log::init())
     }
 
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {

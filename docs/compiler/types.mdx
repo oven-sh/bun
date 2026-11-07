@@ -66,14 +66,15 @@ console.log(page + 1);
 
 `as`, `any` and `!` do nothing at run time. With the cast, `page` is still a string and this prints `21`, compiled or not. With the conversion, the compiler knows that `page` is a number, so there's no guard to fail.
 
-### Declare the type where you parse
+### Build your own objects from what you parse
 
 ```ts
-const read = (text: string): any => JSON.parse(text); // [!code --]
-const read = (text: string): User => JSON.parse(text); // [!code ++]
+const user: User = JSON.parse(text); // [!code --]
+const { id, name } = JSON.parse(text); // [!code ++]
+const user: User = { id, name }; // [!code ++]
 ```
 
-Bun compiles a parser for the type that a `JSON.parse` call is declared as, whether by an annotation, a cast, a parameter or a return type. `response.json()` and `request.json()` work the same way. If the text matches, the objects get the fixed layout of `User`. If it doesn't, you get what `JSON.parse` normally returns. Nothing is validated. To reject bad data, take the value as `unknown`, check it, and [build a new object from it](/compiler/explain#unknown-object).
+`JSON.parse` returns ordinary objects, whatever type you declare for the result. So do `response.json()` and `request.json()`. They have the right properties but not the fixed layout of `User`, so the guard fails and every read looks the property up. An object that your own code creates has the layout. Nothing is validated either way. To reject bad data, take the value as `unknown`, check it, and [build a new object from it](/compiler/explain#unknown-object).
 
 ### Declare every property
 
@@ -105,4 +106,6 @@ class Cursor {
 }
 ```
 
-The build has to prove that every value you store in an `int32` is a whole number in range. Where it can't, it stops, and the error says what to write. That's usually `| 0`, which gives the same value in every JavaScript engine. `int32` only counts as the whole type of a variable, field, parameter or return value. Inside `int32[]` or `Map<string, int32>` it's a `number`. It pays off in the fields of objects that you create by the million.
+The build has to prove that every value you store in an `int32` is a whole number in range. It checks this in every function that the program can reach. Where it can't prove it, it stops, and the error says what to write. That's usually `| 0`, which gives the same value in every JavaScript engine. `int32` only counts as the whole type of a variable, field, parameter or return value. Inside `int32[]` or `Map<string, int32>` it's a `number`. It pays off in the fields of objects that you create by the million.
+
+The proof covers what you store through a type that says `int32`. TypeScript also lets you pass an object typed `{ x: number }`, an instance of `class Pixel { x: number }` or an object with a getter for `x` where `{ x: int32 }` is expected, and the build doesn't stop there. Reading `x` from such an object checks the value first, so you get the same number as under `bun run`.

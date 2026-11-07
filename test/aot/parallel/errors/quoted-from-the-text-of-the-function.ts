@@ -1,3 +1,5 @@
+// Flags: --minify-syntax
+// `bun run` minifies syntax, and a message quotes what the same build prints without --aot.
 // A TypeError quotes the read or the call that failed as the function spells it, where the executable holds the text of the function: it does for a function that
 // is handed on as a value, which these are by being exported.
 const thrown = (run: () => unknown): string => {
@@ -238,12 +240,6 @@ export function callOverLines(api: any, one: number, two: string) {
     two,
   );
 }
-export function callOfObject(api: any) {
-  api.fetchUser({
-    name: "a name that is long enough to keep the object on several lines",
-    more: [1, 2, "and a text that is long enough to do the same for this one"],
-  });
-}
 export function readBehindCallOverLines(api: any) {
   // prettier-ignore
   const value = api.get(
@@ -275,7 +271,6 @@ export function castOverLines(config: any) {
 console.log(thrown(() => chainRead({ get: () => ({}) })));
 console.log(thrown(() => chainCall({ first: () => ({ second: () => ({}) }) })));
 console.log(thrown(() => callOverLines({}, 1, "2")));
-console.log(thrown(() => callOfObject({})));
 console.log(thrown(() => readBehindCallOverLines({ get: () => ({}) })));
 console.log(thrown(() => constructOverLines({})));
 console.log(thrown(() => storeOverLines({}, 1)));

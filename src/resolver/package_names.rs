@@ -3,9 +3,12 @@
 use core::ptr::NonNull;
 
 use bun_ast::{ImportKind, Log};
+use bun_core::strings;
 use bun_paths::is_sep_native;
 
-use crate::compiled_program::{compare_source_paths, normalize_separator, public_path_from_root};
+use crate::compiled_program::{
+    ENDS_SEARCH, LEADS_OUTSIDE, compare_source_paths, normalize_separator, public_path_from_root,
+};
 use crate::package_json::Package;
 use crate::resolver::{Resolver, TSConfigRef};
 
@@ -171,6 +174,26 @@ pub fn add_written_names(
     names
 }
 
+/// What may stand behind the name of a file where a program writes the name without it.
+const SPELLINGS: [&[u8]; 11] = [
+    b"", b".tsx", b".ts", b".mts", b".cts", b".jsx", b".js", b".mjs", b".cjs", b".json", b".node",
+];
+
+/// The names other than its own under which the executable finds a file called `base`: without its extension, and with the extension of JavaScript that its extension of TypeScript stands for.
+fn list_other_names(base: &[u8]) -> Vec<Vec<u8>> {
+    let Some(dot) = strings::last_index_of_char(base, b'.').filter(|&dot| dot > 0) else {
+        return Vec::new();
+    };
+    let (stem, extension) = base.split_at(dot);
+    let written: &[&[u8]] = match extension {
+        b".ts" | b".tsx" => &[b"", b".js", b".jsx"],
+        b".mts" => &[b"", b".js", b".jsx", b".mjs"],
+        b".cts" => &[b"", b".cjs"],
+        _ => &[b""],
+    };
+    written.iter().map(|&it| [stem, it].concat()).collect()
+}
+
 /// `names` and `hidden`, each name once.
 pub fn add_hidden_names(mut names: Vec<PackageName>, hidden: Vec<PackageName>) -> Vec<PackageName> {
     names.extend(hidden);
@@ -308,6 +331,247 @@ impl Resolver<'_> {
         self.prefer_module_field = prefers_module_field;
         names.sort_by(|a, b| a.path.cmp(&b.path));
         names.dedup_by(|later, earlier| later.path == earlier.path);
+        names
+    }
+
+    /// The names in the cached listing of `folder`, in lower case and in their order.
+    fn list_names_in(&mut self, folder: &[u8]) -> Vec<Vec<u8>> {
+        let Some(directory) = self.read_dir_info_ignore_error(folder) else {
+            return Vec::new();
+        };
+        let _lock = crate::fs::FileSystem::instance()
+            .fs
+            .entries_mutex
+            .lock_guard();
+        let entries = directory.get_entries_ref_locked(self.generation);
+        let mut names: Vec<Vec<u8>> = entries.map_or_else(Vec::new, |entries| {
+            entries.data.keys().map(|name| name.to_vec()).collect()
+        });
+        names.sort_unstable();
+        names
+    }
+
+    /// Where `<place>/node_modules/<package>` leads: packages may be links into a store.
+    fn find_folder_of_package(&mut self, place: &[u8], package: &[u8]) -> Option<Vec<u8>> {
+        let separator = &[bun_paths::SEP][..];
+        let folder = [place, separator, NODE_MODULES, separator, package].concat();
+        let directory = self.read_dir_info_ignore_error(&folder)?;
+        let real_path = match directory.abs_real_path {
+            b"" => directory.abs_path,
+            real_path => real_path,
+        };
+        Some(bun_paths::strings::without_trailing_slash(real_path).to_vec())
+    }
+
+    /// What an earlier build left at `path`, where this build writes its executable, is no file of the program: `app` beside `app.ts`. No name finds it.
+    pub fn pass_over_outfile(&mut self, path: &[u8]) {
+        self.outfile_of_build = self.fs_ref().dirname_store.append_slice(path).ok();
+    }
+
+    pub fn outfile_of_build(&self) -> Option<&'static [u8]> {
+        self.outfile_of_build
+    }
+
+    /// A mark for each place, a folder with compiled files or one above, whose copy of a package with compiled files is another than that of the next place further up. It is hidden from a kind of load that finds the name of the package outside the copy further up.
+    pub fn find_nearer_packages(&mut self, folders: &[BuildPaths<'_>]) -> Vec<PackageName> {
+        let separator = &[bun_paths::SEP][..];
+        let mut compiled: Vec<(Vec<u8>, Vec<u8>)> = folders
+            .iter()
+            .filter_map(|it| find_name_of_package(&[it.source_path, separator, b"."].concat()))
+            .map(|name| (name.to_ascii_lowercase(), name))
+            .collect();
+        compiled.sort_unstable();
+        compiled.dedup();
+        let mut unread_log = Log::default();
+        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
+        let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
+        let mut places = list_places(folders);
+        places.retain(|place| {
+            self.read_dir_info_ignore_error(place.source_path)
+                .is_some_and(|directory| directory.has_node_modules())
+        });
+        let mut names = Vec::new();
+        for place in &places {
+            let above: Vec<&[u8]> = with_folders_above(*place)
+                .skip(1)
+                .map(|it| it.source_path)
+                .filter(|it| {
+                    places
+                        .binary_search_by(|place| place.source_path.cmp(it))
+                        .is_ok()
+                })
+                .collect();
+            if above.is_empty() {
+                continue;
+            }
+            let node_modules = [place.source_path, separator, NODE_MODULES].concat();
+            let mut installed = self.list_names_in(&node_modules);
+            for scope in installed.clone() {
+                if !scope.starts_with(b"@") {
+                    continue;
+                }
+                let start_of_names = [&scope[..], b"/"].concat();
+                let start = compiled.partition_point(|(lower, _)| lower < &start_of_names);
+                let mut scopes_as_written: Vec<&[u8]> = compiled[start..]
+                    .iter()
+                    .take_while(|(lower, _)| lower.starts_with(&start_of_names))
+                    .map(|(_, written)| &written[..scope.len()])
+                    .collect();
+                scopes_as_written.sort_unstable();
+                scopes_as_written.dedup();
+                for written in scopes_as_written {
+                    let inside =
+                        self.list_names_in(&[&node_modules[..], separator, written].concat());
+                    installed.extend(
+                        inside
+                            .iter()
+                            .map(|it| [&start_of_names[..], &it[..]].concat()),
+                    );
+                }
+            }
+            let as_written = |listed: &Vec<u8>| {
+                let start = compiled.partition_point(|(lower, _)| lower < listed);
+                let same = compiled[start..].iter();
+                same.take_while(|(lower, _)| lower == listed)
+                    .map(|(_, written)| &written[..])
+                    .collect::<Vec<&[u8]>>()
+            };
+            for package in installed.iter().flat_map(as_written) {
+                let nearer = self.find_folder_of_package(place.source_path, package);
+                let mut further_up = above.iter();
+                let further = further_up.find_map(|it| self.find_folder_of_package(it, package));
+                let (Some(nearer), Some(further)) = (nearer, further) else {
+                    continue;
+                };
+                if nearer == further {
+                    continue;
+                }
+                // The resolver keeps what it is asked for.
+                let store = &self.fs_ref().dirname_store;
+                let Ok(specifier) = store.append_parts(&[package]) else {
+                    continue;
+                };
+                let mut leads_elsewhere = |kind: ImportKind| {
+                    let found = self.resolve(place.source_path, specifier, kind).ok();
+                    found.is_some_and(|found| {
+                        strip_folder(found.path_pair.primary.text(), &further).is_none()
+                    })
+                };
+                let is_hidden_from_require = leads_elsewhere(ImportKind::Require);
+                let is_hidden_from_import = leads_elsewhere(ImportKind::Dynamic);
+                names.push(PackageName {
+                    public_path: [place.public_path, b"/node_modules/", package, ENDS_SEARCH]
+                        .concat()
+                        .into_iter()
+                        .map(normalize_separator)
+                        .collect(),
+                    required: None,
+                    imported: None,
+                    hides_other_paths: false,
+                    is_hidden_from_require,
+                    is_hidden_from_import,
+                });
+            }
+        }
+        self.log = log_of_build;
+        self.prefer_module_field = prefers_module_field;
+        names
+    }
+
+    /// A mark for each name under which the executable finds one of `files`, the compiled files, and `bun run` another file on the disk of the build, which was not compiled.
+    pub fn find_names_that_lead_outside(&mut self, files: &[BuildPaths<'_>]) -> Vec<PackageName> {
+        let mut compiled: Vec<&[u8]> = files.iter().map(|file| file.source_path).collect();
+        compiled.sort_unstable_by(|a, b| compare_source_paths(a, b));
+        let mut asked: Vec<(BuildPaths<'_>, Vec<u8>, bool)> = Vec::new();
+        for file in files {
+            let (Some(source_path), Some(public_path)) =
+                (parent(file.source_path), parent(file.public_path))
+            else {
+                continue;
+            };
+            let folder = BuildPaths {
+                source_path,
+                public_path,
+            };
+            let names = list_other_names(last_component(file.source_path));
+            if names.first().is_some_and(|stem| stem == b"index")
+                && let (Some(source_path), Some(public_path)) =
+                    (parent(folder.source_path), parent(folder.public_path))
+            {
+                let above = BuildPaths {
+                    source_path,
+                    public_path,
+                };
+                asked.push((above, last_component(folder.source_path).to_vec(), true));
+            }
+            asked.extend(names.into_iter().map(|name| (folder, name, false)));
+        }
+        asked.sort_unstable();
+        asked.dedup();
+        let separator = &[bun_paths::SEP][..];
+        let generation = self.generation;
+        let mut unread_log = Log::default();
+        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
+        let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
+        let mut names = Vec::new();
+        let is_compiled = |path: &[u8]| {
+            compiled
+                .binary_search_by(|file| compare_source_paths(file, path))
+                .is_ok()
+        };
+        let mut listed: (&[u8], Vec<Vec<u8>>) = (b"", Vec::new());
+        for (folder, name, is_folder) in &asked {
+            if listed.0 != folder.source_path {
+                listed = (folder.source_path, self.list_names_in(folder.source_path));
+            }
+            let names_main_file = *is_folder
+                && self
+                    .read_dir_info_ignore_error(
+                        &[folder.source_path, separator, &name[..]].concat(),
+                    )
+                    .is_some_and(|it| it.get_entry(generation, b"package.json").is_some());
+            let lower = name.to_ascii_lowercase();
+            let start = listed.1.partition_point(|entry| entry[..] < lower[..]);
+            let beside = listed.1[start..].iter();
+            let mut spellings = beside
+                .take_while(|entry| entry.starts_with(&lower))
+                .map(|entry| &entry[lower.len()..]);
+            let lies_beside = spellings.any(|spelling| {
+                SPELLINGS[usize::from(*is_folder)..].contains(&spelling)
+                    && !is_compiled(&[folder.source_path, separator, &name[..], spelling].concat())
+            });
+            if !lies_beside && !names_main_file {
+                continue;
+            }
+            // The resolver keeps what it is asked for.
+            let store = &self.fs_ref().dirname_store;
+            let Ok(specifier) = store.append_parts(&[b"./", &name[..]]) else {
+                continue;
+            };
+            let mut leads_outside = |kind: ImportKind| {
+                let found = self.resolve(folder.source_path, specifier, kind).ok();
+                found.is_some_and(|found| !is_compiled(found.path_pair.primary.text()))
+            };
+            let is_hidden_from_require = leads_outside(ImportKind::Require);
+            let is_hidden_from_import = leads_outside(ImportKind::Dynamic);
+            if !is_hidden_from_require && !is_hidden_from_import {
+                continue;
+            }
+            names.push(PackageName {
+                public_path: [folder.public_path, b"/", &name[..], LEADS_OUTSIDE]
+                    .concat()
+                    .into_iter()
+                    .map(normalize_separator)
+                    .collect(),
+                required: None,
+                imported: None,
+                hides_other_paths: false,
+                is_hidden_from_require,
+                is_hidden_from_import,
+            });
+        }
+        self.log = log_of_build;
+        self.prefer_module_field = prefers_module_field;
         names
     }
 
@@ -542,6 +806,7 @@ impl Resolver<'_> {
         &mut self,
         refused: &[RefusedName],
         root: BuildPaths<'_>,
+        levels_above_root: usize,
     ) -> Vec<PackageName> {
         let root_directory: Vec<u8> = root
             .source_path
@@ -568,7 +833,7 @@ impl Resolver<'_> {
             else {
                 continue;
             };
-            let place = public_path_from_root(root.public_path, &relative);
+            let place = public_path_from_root(root.public_path, levels_above_root, &relative);
             names.push(PackageName {
                 public_path: [&place[..], b"/node_modules/", &name.specifier]
                     .concat()
@@ -630,6 +895,16 @@ mod tests {
     }
 
     #[test]
+    fn other_names_of_a_file() {
+        let names = |base: &[u8]| list_other_names(base).join(&b" "[..]);
+        assert_eq!(names(b"lib.js"), b"lib");
+        assert_eq!(names(b"mod.ts"), b"mod mod.js mod.jsx");
+        assert_eq!(names(b"a.b.cts"), b"a.b a.b.cjs");
+        assert_eq!(names(b"LICENSE"), b"");
+        assert_eq!(names(b".hidden"), b"");
+    }
+
+    #[test]
     fn path_as_relative_specifier() {
         let relative = |folder, path| to_relative_specifier(folder, path).unwrap();
         assert_eq!(relative(b"/app", b"/app/aliased/*"), b"./aliased/*");
@@ -661,12 +936,12 @@ mod tests {
             expected
         );
         let outside: [&[u8]; 3] = [
-            b"/$bunfs/root/_.._/shared/lib",
-            b"/$bunfs/root/_.._/shared",
-            b"/$bunfs/root/_.._",
+            b"/$bunfs/_.._/_.._/shared/lib",
+            b"/$bunfs/_.._/_.._/shared",
+            b"/$bunfs/_.._/_.._",
         ];
         assert_eq!(
-            above(b"/work/shared/lib", b"/$bunfs/root/_.._/shared/lib"),
+            above(b"/work/shared/lib", b"/$bunfs/_.._/_.._/shared/lib"),
             outside
         );
     }

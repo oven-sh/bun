@@ -1,0 +1,17 @@
+# a callee whose loop leaves by a `return` under a `try` is copied, and a guess at a value from in front of that loop would have the loop built twice. Each return of the copy leads on behind the call
+# the block of the return throws to the handler, which goes on with the loop: so it is a member of the loop. It was "the walk is over and an edge leads to a block that has no end"
+# f2 = deed
+# -- source: callee-copied-with-a-loop-that-returns-under-a-handler-comes-to-its-end.ts
+# declare function sink(...values: unknown[]): void;
+# class Limits { most: number; constructor(most: number) { this.most = most; } }
+# let current: Limits = new Limits(5);
+# function firstOver(list: number[], weigh: (x: number) => number): number { const limits = current; for (let i = 0; i < list.length; i++) { try { if (weigh(list[i]) > limits.most) return i; } catch { continue; } } return -1; }
+# function deed(turns: number) { const list = [1, 2, 3, 4]; let total = 0; for (let turn = 0; turn < turns; turn++) { total += firstOver(list, x => { if (x === 2 && turn % 5 === 4) throw new Error("no weight"); return x * (turn & 3); }); } return total; }
+# sink(deed(1), deed(300));
+# current = JSON.parse('{"most":2}');
+# sink(deed(300));
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f2:Body
+# CHECK: = GetSlot {{*}}key="most"

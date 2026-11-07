@@ -1,0 +1,9 @@
+# `const [before, k] = [line, i]; line += "k" + k;`: a step of the pattern goes back to the element of the literal by its value of the body, which is bound to the builder again by then. Such a literal is not iterated in place.
+# f1 = gather
+# -- source: text-that-grows-is-taken-apart-out-of-a-list-literal.js
+# function gather(count) { let line = ""; let seen = 0; for (let i = 0; i < count; i++) { const [before, k] = [line, i]; line += "k" + k; seen += before.length; } return line + "/" + seen; }
+# let turns = 3; print(gather(turns));
+# -- end of source
+# RUN(ANSWERS): run-in-shell
+# REQUIRES(ANSWERS): entries-of-bun
+# ANSWERS: k0k1k2/6

@@ -1,0 +1,14 @@
+# the look at the loop asks the question that the walk asks: what comes round is the code unit, and the parameter of the head is an integer
+# f1 = last
+# -- source: char-code-read-inside-a-text-comes-round-as-an-integer.ts
+# function last(text: string): number { let code = 0; for (let pos = 0; pos < text.length; pos++) code = text.charCodeAt(pos); return code; }
+# console.log(last("abc"), last(""));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK: : int[0, 65535] @Int32{{*}}isLoopHead=true
+# CHECK: = GetStringCodeUnit
+# RUN(NEVER): walk f1 mechanisms=all
+# REQUIRES(NEVER): entries-of-bun
+# NEVER-NOT: : number @

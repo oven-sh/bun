@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { tlsOptionNames } from "../../codegen/builtins/host/socket-options.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 import { SecureContext } from "../api/bun/SecureContext.bind.ts";
 
@@ -31,11 +32,27 @@ const fromOptions = { args: { options: b.any }, capability: "js", throws: true }
 export const connect = b.fn({ ...fromOptions, returns: b.any, rustPath: "crate::socket::Listener::connect" });
 export const listen = b.fn({ ...fromOptions, returns: Listener, rustPath: "crate::socket::Listener::listen" });
 
+/** `tls` is a `SecureContext`, or what `SSLConfig` takes, which is read under its names and copied. */
 export const addServerName = b.fn({
   args: { listener: Listener, hostname: b.string.utf8, tls: b.any },
   capability: "js",
   throws: true,
   rustPath: "crate::socket::Listener::add_server_name",
+  uses: {
+    listener: table.handedOver,
+    tls: [
+      table.retained,
+      table.reachableValuesStoredIn(table.nativeMemory),
+      table.runsTransitively(
+        "OwnKeys",
+        "OwnValues",
+        "PrototypeChain",
+        "Iterate",
+        "ToPrimitive",
+        table.named(...tlsOptionNames),
+      ),
+    ],
+  },
 });
 
 /** `handle` is the `_handle` of a `tls.Server`. A cluster worker's is no `Listener`: JS wraps its connections. */

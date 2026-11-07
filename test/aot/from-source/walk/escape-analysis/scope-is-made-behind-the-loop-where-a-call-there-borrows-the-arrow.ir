@@ -1,0 +1,22 @@
+# -- source: scope-is-made-behind-the-loop-where-a-call-there-borrows-the-arrow.js
+# function sum(list) { let total = 0; list.forEach(x => { total += x; }); return total; }
+# const list = [];
+# for (let i = 0; i < 12; i++) list.push(i);
+# let out = 0;
+# for (let k = 0; k < 5; k++) out += sum(list);
+# print(out);
+# -- end of source
+# `sum`, the fast loops of `forEach` and the arrow are copied into the loop of the module, and `total` comes round the fast loops as a parameter. Behind them stands a call of the rest of `forEach` with the
+# arrow, on a way that is not rare. Lending the first scope there would keep its allocation and the store of every turn. The call stands behind the loops that the variable has come round and in none of them,
+# so a scope is made there out of what the state holds, lent and read back; the first scope falls to the sweep.
+# RUN: walk f0 mechanisms=all
+# CHECK-LABEL: code f0:Body
+# CHECK: @Double{{*}}) isInLoop=true isLoopHead=true:
+# CHECK: [[copy]]: {{*}} = NewObject {{*}}fields=[0]
+# CHECK: = NewClosure [[copy]] {{*}}loan=ToFunctionEntered
+# CHECK: = CallDirect
+# CHECK: = GetEnvironmentField [[copy]]
+# RUN(STORES): walk f0 mechanisms=all
+# STORES-NOT: PutEnvironmentField
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

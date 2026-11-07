@@ -1,0 +1,26 @@
+# -- source: a-condition-in-front-of-every-loop-of-a-nest-costs-no-walk-of-the-loops-inside.js
+# function sum(m, mask) {
+#   let a = 0;
+#   for (let i0 = 0; i0 < m; i0++) { if (i0 & mask) a = a & 7;
+#   for (let i1 = 0; i1 < m; i1++) { if (i1 & mask) a = a & 7;
+#   for (let i2 = 0; i2 < m; i2++) { if (i2 & mask) a = a & 7;
+#   for (let i3 = 0; i3 < m; i3++) { if (i3 & mask) a = a & 7;
+#   for (let i4 = 0; i4 < m; i4++) { if (i4 & mask) a = a & 7;
+#   for (let i5 = 0; i5 < m; i5++) { if (i5 & mask) a = a & 7;
+#   for (let i6 = 0; i6 < m; i6++) { if (i6 & mask) a = a & 7;
+#   for (let i7 = 0; i7 < m; i7++) { a = (a + i7 - 6) | 0;
+#   }}}}}}}}
+#   return a;
+# }
+# const limits = JSON.parse("[1,3]");
+# sink(sum(limits[0] | 0, limits[1] | 0));
+# -- end of source
+# The guess for `a` enters each head inside through a meeting block. A head did not know then that it took a guess in: where the int32 came round it climbed by itself and was walked again, and so was each head around in its turn,
+# with all the loops inside it: 87 walks for eight loops, 4,287 for sixty-four. What enters is looked through like what comes round: the misfit goes up all the heads at once and the walk goes on: three walks a loop.
+# f1 = sum
+# OPTIONS: check=Validate
+# RUN: compile WalksOfLoops
+# CHECK: statistic WalksOfLoops 24
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: -6
+# SHELL: exited with 0

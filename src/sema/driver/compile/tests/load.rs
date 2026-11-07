@@ -1,9 +1,10 @@
 use super::support::{
     ClaimsNodeFs, DEPENDENCY_MANIFEST, GLOBAL_TYPES, HostScript, PROJECT, ScriptedHost,
-    SlowToQueueAgain, codes, from_bun_check, from_bun_check_without_configuration, load,
-    load_with_host, load_with_tsconfig_override, project_disk, with_host, with_program,
-    with_runtime_project,
+    SlowToQueueAgain, check_whole_files, codes, from_bun_check,
+    from_bun_check_without_configuration, load, load_in_place, load_with_host,
+    load_with_tsconfig_override, project_disk, with_host, with_program, with_runtime_project,
 };
+use crate::compile::BunTypes;
 use crate::{EntryPointFailure, Locator, global};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{bind, specifiers_of_closed_module};
@@ -136,18 +137,45 @@ fn configuration_error_of_runtime_project_is_internal() {
 }
 
 #[test]
+fn run_in_place_is_checked_by_configuration_in_working_directory() {
+    let legacy =
+        r#"{ "compilerOptions": { "noLib": true, "types": [], "experimentalDecorators": true } }"#;
+    let files = [
+        ("tsconfig.json", legacy),
+        ("main.ts", ""),
+        ("below/main.ts", ""),
+    ];
+    for (working_directory, is_legacy) in [(PROJECT, true), (&b"/project/below"[..], false)] {
+        load_in_place(&files, working_directory, |loaded| {
+            let program = loaded.expect("load_program failed");
+            let options = program.files().options;
+            assert_eq!(options.experimental_decorators, is_legacy);
+        });
+    }
+}
+
+#[test]
 fn tsconfig_override_replaces_nearest_configuration() {
     let no_roots = r#"{ "compilerOptions": { "noLib": true, "types": [] }, "files": [] }"#;
     let files = [("main.ts", ""), ("configs/tsconfig.json", no_roots)];
     for tsconfig_override in ["configs", "configs/tsconfig.json"] {
-        load_with_tsconfig_override(&files, "./main.ts", tsconfig_override, |loaded| {
-            let program = loaded.expect("load_program failed");
-            let config_path = &program.files().options.config_path;
-            assert_eq!(config_path, b"/project/configs/tsconfig.json");
-            assert_eq!(codes(&program.loaded.diagnostics), [0; 0]);
-        });
+        for builds_executable in [false, true] {
+            let main = "./main.ts";
+            load_with_tsconfig_override(&files, main, tsconfig_override, builds_executable, |it| {
+                let program = it.expect("load_program failed");
+                let config_path = &program.files().options.config_path;
+                assert_eq!(config_path, b"/project/configs/tsconfig.json");
+                assert_eq!(codes(&program.loaded.diagnostics), [0; 0]);
+            });
+        }
     }
-    load_with_tsconfig_override(&files, "./main.ts", "missing.json", |loaded| {
+    let nearest = [("main.ts", ""), ("tsconfig.json", no_roots)];
+    load_with_tsconfig_override(&nearest, "./main.ts", "missing.json", false, |loaded| {
+        let program = loaded.expect("load_program failed");
+        assert_eq!(program.files().options.config_path, b"");
+        assert_eq!(codes(&program.loaded.diagnostics), [0; 0]);
+    });
+    load_with_tsconfig_override(&files, "./main.ts", "missing.json", true, |loaded| {
         let failure = loaded.map(|_| ()).unwrap_err();
         assert!(failure.unresolved_entry_points.is_empty());
         assert_eq!(codes(&failure.diagnostics), [5083]);
@@ -210,6 +238,107 @@ fn tree_of_leaf_that_no_task_reads_is_freed() {
 }
 
 #[test]
+fn tree_of_file_with_export_star_that_no_task_reads_is_freed() {
+    let files = [
+        (
+            "main.ts",
+            "import { a } from './read-barrel.ts';\nimport type { Size } from './types-barrel.ts';\nexport const b: Size = a;\n",
+        ),
+        ("read-barrel.ts", "export * from './used.ts';\n"),
+        ("used.ts", "export const a = 1;\n"),
+        ("types-barrel.ts", "export * from './types.ts';\n"),
+        ("types.ts", "export type Size = number;\n"),
+        (
+            "unread-barrel.ts",
+            "export * from './only-behind-barrel.ts';\nexport * from './used.ts';\n",
+        ),
+        (
+            "only-behind-barrel.ts",
+            "export const hidden = [1, 2, 3];\n",
+        ),
+    ];
+    with_program(&files, &["./main.ts"], 1, |program| {
+        let files = program.files();
+        let has_tree = |name: &str| !files.module(program.file(name)).hir.stmts.is_empty();
+        let has_text = |name: &str| !files.module(program.file(name)).hir.text.is_empty();
+        for name in ["unread-barrel.ts", "only-behind-barrel.ts"] {
+            assert!(files.module(program.file(name)).is_leaf, "{name}");
+            assert!(!has_tree(name), "{name}");
+            assert!(!has_text(name), "{name}");
+        }
+        for name in [
+            "main.ts",
+            "read-barrel.ts",
+            "used.ts",
+            "types-barrel.ts",
+            "types.ts",
+        ] {
+            assert!(has_tree(name), "{name}");
+            assert!(has_text(name), "{name}");
+        }
+    });
+}
+
+#[test]
+fn build_reports_the_same_beside_a_file_with_export_star_that_no_task_reads() {
+    let first = ("a-first.ts", "export {};\n");
+    let uses_a = (
+        "main.ts",
+        "import { a } from './x.ts';\nexport const b = a;\n",
+    );
+    let uses_ambient = (
+        "main.ts",
+        "import { a } from 'ambient';\nexport const b = a;\n",
+    );
+    let ambient = (
+        "z-ambient.d.ts",
+        "declare module 'ambient' {\n  export var a: number;\n  export var a: number;\n}\n",
+    );
+    let scenes: [(&[(&str, &str)], &str, &[u32]); 3] = [
+        (
+            &[
+                first,
+                uses_a,
+                (
+                    "x.ts",
+                    "// @ts-nocheck\nexport var a = 1;\nexport var a = 2;\n",
+                ),
+            ],
+            "export * from './x.ts';\n",
+            &[2300],
+        ),
+        (
+            &[
+                first,
+                uses_a,
+                ("x.ts", "export var a = 1;\nexport var a = 2;\n"),
+            ],
+            "export * from './x.ts';\n",
+            &[2323, 2300, 2323],
+        ),
+        (
+            &[first, uses_ambient, ambient],
+            "export * from 'ambient';\n",
+            &[],
+        ),
+    ];
+    for (files, barrel, expected) in scenes {
+        let codes = |files: &[(&str, &str)]| {
+            with_program(files, &["./main.ts"], 1, |program| {
+                check_whole_files(program).codes()
+            })
+        };
+        assert_eq!(codes(files), expected);
+        let mut with_barrel = files.to_vec();
+        with_barrel.push(("b-barrel.ts", barrel));
+        with_program(&with_barrel, &["./main.ts"], 1, |program| {
+            assert!(program.files().module(program.file("b-barrel.ts")).is_leaf);
+        });
+        assert_eq!(codes(&with_barrel), expected);
+    }
+}
+
+#[test]
 fn file_that_is_not_compiled_is_bound_when_a_file_that_is_read_refers_to_it() {
     let files = [
         (
@@ -240,16 +369,11 @@ fn file_that_is_not_compiled_is_bound_when_a_file_that_is_read_refers_to_it() {
         let files = program.files();
         let is_unbound = |name: &str| files.module(program.file(name)).bound.is_unbound;
         let symbol_count = |name: &str| files.module(program.file(name)).bound.symbols.len();
-        assert!(files.module(program.file("unread.test.ts")).is_leaf);
-        assert_eq!(symbol_count("unread.test.ts"), 0);
-        for name in [
-            "types.ts",
-            "inner.ts",
-            "helper.ts",
-            "hands-on.ts",
-            "adds-global.ts",
-            "of-global.ts",
-        ] {
+        for name in ["unread.test.ts", "helper.ts", "hands-on.ts"] {
+            assert!(files.module(program.file(name)).is_leaf, "{name}");
+            assert_eq!(symbol_count(name), 0, "{name}");
+        }
+        for name in ["types.ts", "inner.ts", "adds-global.ts", "of-global.ts"] {
             assert!(!is_unbound(name), "{name}");
             assert!(symbol_count(name) > 0, "{name}");
         }
@@ -636,7 +760,8 @@ fn libraries_match_bun_check() {
 
         let configured = with_program(&files, &["./main.ts"], 1, |program| {
             assert!(!program.files().options.config_path.is_empty());
-            assert_eq!(program.loaded.has_bun_types_installed, has_bun_types);
+            let is_installed = matches!(program.loaded.bun_types, BunTypes::InstalledAndNotNamed);
+            assert_eq!(is_installed, has_bun_types);
             libraries_of(program.files().options)
         });
         let checked = from_bun_check(&files, |files| libraries_of(files.options));
@@ -647,7 +772,8 @@ fn libraries_match_bun_check() {
         let tool = "node_modules/tool/main.ts";
         let unconfigured = with_program(&files, &["./node_modules/tool/main.ts"], 1, |program| {
             assert!(program.files().options.config_path.is_empty());
-            assert_eq!(program.loaded.has_bun_types_installed, has_bun_types);
+            let is_installed = matches!(program.loaded.bun_types, BunTypes::InstalledAndNotNamed);
+            assert_eq!(is_installed, has_bun_types);
             libraries_of(program.files().options)
         });
         let checked = from_bun_check_without_configuration(&files, &[tool], |files| {
@@ -681,12 +807,10 @@ fn locator_names_file() {
 
 #[test]
 fn file_queued_again_is_read_and_parsed_again() {
-    const FILES: [(&str, &str); 2] = [
-        (
-            "main.ts",
-            "import \"./first\";\nvar flag = true;\nexport function which() { return flag ? 1 : 2; }\n",
-        ),
-        ("first.ts", "import { which } from \"./main\";\nwhich();\n"),
+    const FILES: [(&str, &str); 3] = [
+        ("package.json", r#"{ "name": "project", "type": "module" }"#),
+        ("main.ts", "import \"./first.cjs\";\n"),
+        ("first.cjs", "globalThis.seen = 1;\n"),
     ];
     for reads_on_other_threads in [false, true] {
         let (ended, has_ended) = std::sync::mpsc::channel();
@@ -697,10 +821,10 @@ fn file_queued_again_is_read_and_parsed_again() {
             };
             let host = SlowToQueueAgain(&disk, Default::default());
             let is_loaded = load_with_host(&host, &["./main.ts"]).is_ok();
-            let times_queued = ["main.ts", "first.ts"].map(|path| host.times_queued(path));
+            let times_queued = ["main.ts", "first.cjs"].map(|path| host.times_queued(path));
             let _ = ended.send((is_loaded, times_queued));
         });
         let outcome = has_ended.recv_timeout(std::time::Duration::from_secs(120));
-        assert_eq!(outcome, Ok((true, [2, 1])), "{reads_on_other_threads}");
+        assert_eq!(outcome, Ok((true, [1, 2])), "{reads_on_other_threads}");
     }
 }

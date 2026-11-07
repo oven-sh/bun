@@ -1480,4 +1480,205 @@ describe("bundler", () => {
       run: { stdout: "1" },
     });
   });
+
+  // The refresh runtime keeps the state of a component between two values that a module
+  // registers under one id. This runtime prints each call, so stdout is what a module registers.
+  describe.concurrent("a component in a wrapper call, with React Fast Refresh", () => {
+    const runtime = {
+      "/node_modules/react/index.js": /* js */ `
+        export const memo = (type, compare) => ({ kind: "memo", of: type });
+        export const forwardRef = render => ({ kind: "forwardRef", of: render });
+        export const createContext = () => ({ kind: "context" });
+        export const useState = value => [value, () => {}];
+      `,
+      "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+        export const jsxDEV = type => ({ kind: "element" });
+      `,
+      "/node_modules/react-refresh/runtime.js": /* js */ `
+        const show = value =>
+          typeof value === "function" ? "function" : value?.kind ? value.kind + "(" + (value.of ? show(value.of) : "") + ")" : typeof value;
+        exports.register = (value, id) => console.log("register " + id + " = " + show(value));
+        exports.createSignatureFunctionForTransform = () => (value, key, force, hooks) => {
+          if (typeof key === "string") console.log("sign " + show(value) + (hooks ? " with " + hooks().length + " custom" : ""));
+          return value;
+        };
+      `,
+    };
+    // The bundle loads the runtime when it runs.
+    const external = ["react-refresh/runtime"];
+    const lines = (text: string) =>
+      text
+        .trim()
+        .split("\n")
+        .map(line => line.trim())
+        .join("\n");
+
+    const registered = {
+      "/index.jsx": /* js */ `
+        import * as React from "react";
+        import { memo, forwardRef, useState } from "react";
+        import { withTheme } from "./wrappers.js";
+
+        export const Plain = () => <div />;
+        export const Memo = memo(() => <div />);
+        export const Both = memo(forwardRef((props, ref) => <div ref={ref} />));
+        export const Member = React.memo(function Named() { return <div />; });
+        export const Compare = memo(() => <div />, () => true);
+        const NotExported = withTheme(() => <div />);
+        export const OfAWrapper = withTheme(Memo);
+        export default memo(() => <div />);
+      `,
+      "/wrappers.js": /* js */ `
+        export const withTheme = Inner => ({ kind: "withTheme", of: Inner });
+      `,
+    };
+    const registeredStdout = lines(`
+      register index.jsx:Plain = function
+      register index.jsx:Memo$memo = function
+      register index.jsx:Memo%memo = memo(function)
+      register index.jsx:Both$memo$forwardRef = function
+      register index.jsx:Both$memo%forwardRef = forwardRef(function)
+      register index.jsx:Both%memo$forwardRef = memo(forwardRef(function))
+      register index.jsx:Member$memo = function
+      register index.jsx:Member%memo = memo(function)
+      register index.jsx:Compare$memo = function
+      register index.jsx:Compare%memo = memo(function)
+      register index.jsx:NotExported$withTheme = function
+      register index.jsx:NotExported%withTheme = withTheme(function)
+      register index.jsx:OfAWrapper%withTheme(Memo) = withTheme(memo(function))
+      register index.jsx:default$memo = function
+      register index.jsx:default%memo = memo(function)
+    `);
+    for (const backend of ["cli", "api"] as const) {
+      itBundled(`jsx/FastRefreshWrapperCalls.${backend}`, {
+        files: { ...registered, ...runtime },
+        backend,
+        reactFastRefresh: true,
+        external,
+        run: { stdout: registeredStdout },
+      });
+    }
+    itBundled("jsx/FastRefreshWrapperCallsMinified", {
+      files: { ...registered, ...runtime },
+      minifyIdentifiers: true,
+      minifySyntax: true,
+      minifyWhitespace: true,
+      reactFastRefresh: true,
+      external,
+      run: { stdout: registeredStdout },
+    });
+
+    // A wrapper such as mobx's observer() calls the function inside its own component. The
+    // value of each call gets the hook signature of the function, so that the runtime mounts
+    // the wrapper again when the hooks change.
+    itBundled("jsx/FastRefreshWrapperCallsAreSigned", {
+      files: {
+        "/index.jsx": /* js */ `
+          import { memo, forwardRef, useState } from "react";
+          function useCustom() { return useState(0); }
+
+          export const Hooked = memo(forwardRef((props, ref) => { const [s] = useState(0); return <div>{s}</div>; }));
+          export const Custom = memo(() => { const [s] = useCustom(); return <div>{s}</div>; });
+          function Declared() { const [s] = useState(0); return <div>{s}</div>; }
+          export const OfDeclared = memo(Declared);
+          export const First = () => { const [s] = useState(1); return s; }, Second = () => { const [s] = useState(2); return s; };
+          export const OfSecond = memo(Second);
+        `,
+        ...runtime,
+      },
+      reactFastRefresh: true,
+      external,
+      run: {
+        stdout: lines(`
+          sign function
+          sign function
+          sign forwardRef(function)
+          sign memo(forwardRef(function))
+          register index.jsx:Hooked$memo$forwardRef = function
+          register index.jsx:Hooked$memo%forwardRef = forwardRef(function)
+          register index.jsx:Hooked%memo$forwardRef = memo(forwardRef(function))
+          sign function with 1 custom
+          sign memo(function) with 1 custom
+          register index.jsx:Custom$memo = function
+          register index.jsx:Custom%memo = memo(function)
+          sign function
+          register index.jsx:Declared = function
+          sign memo(function)
+          register index.jsx:OfDeclared%memo(Declared) = memo(function)
+          sign function
+          register index.jsx:First = function
+          sign function
+          register index.jsx:Second = function
+          sign memo(function)
+          register index.jsx:OfSecond%memo(Second) = memo(function)
+        `),
+      },
+    });
+
+    itBundled("jsx/FastRefreshNotAWrapperCall", {
+      files: {
+        "/index.jsx": /* js */ `
+          import { memo, createContext } from "react";
+          import { withTheme, Imported, requireComponent } from "./other.js";
+
+          export const Plain = () => <div />;
+          const lowercase = memo(() => <div />);
+          export const Context = createContext(null);
+          export const Element = <Plain />;
+          export const Configured = withTheme({ dark: true });
+          export const Curried = withTheme("dark")(() => <div />);
+          export const Optional = memo?.(() => <div />);
+          export const OfImported = memo(Imported);
+          export const OfLowercase = memo(lowercase);
+          export const Loaded = requireComponent(Plain);
+          export function nested() {
+            const Inner = memo(() => <div />);
+            return Inner;
+          }
+          console.log(typeof lowercase, typeof nested());
+        `,
+        "/other.js": /* js */ `
+          export const withTheme = () => () => ({});
+          export const Imported = () => null;
+          export const requireComponent = component => component;
+        `,
+        ...runtime,
+      },
+      reactFastRefresh: true,
+      external,
+      // `Imported` is a component of other.js. index.jsx does not know what it holds.
+      run: { stdout: "register other.js:Imported = function\nregister index.jsx:Plain = function\nobject object" },
+    });
+
+    // Each of these modules declares a variable for its default export.
+    itBundled("jsx/FastRefreshDefaultExportsInOneChunk", {
+      files: {
+        "/index.jsx": /* js */ `
+          import a from "./a.jsx";
+          import b from "./b.jsx";
+          import c from "./c.jsx";
+          import d from "./d.jsx";
+          console.log(typeof a, typeof b, c.kind, d.kind);
+        `,
+        "/a.jsx": `export default () => <div />;`,
+        "/b.jsx": `export default (function () { return <div />; });`,
+        "/c.jsx": `import { memo } from "react"; export default memo(() => <div />);`,
+        "/d.jsx": `import { memo } from "react"; export default memo(() => <div />);`,
+        ...runtime,
+      },
+      reactFastRefresh: true,
+      external,
+      run: {
+        stdout: lines(`
+          register a.jsx:default = function
+          register b.jsx:default = function
+          register c.jsx:default$memo = function
+          register c.jsx:default%memo = memo(function)
+          register d.jsx:default$memo = function
+          register d.jsx:default%memo = memo(function)
+          function function memo memo
+        `),
+      },
+    });
+  });
 });

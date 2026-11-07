@@ -79,6 +79,15 @@ describe("bun <file.md>", () => {
     expect(await runMd(["```", "plain text", "no highlighting", "```", ""].join("\n"))).toMatchSnapshot();
   });
 
+  test("renders a file that starts with a byte order mark as the file without it", async () => {
+    const source = ["# Title", "", "```js", "let a = 1;", "```", "", "~~~", "plain text", "~~~", ""].join("\n");
+    const without = await runMd(source);
+    const withoutExitCode = lastExitCode;
+    // afterEach checks the exit code of this second run.
+    expect(await runMd("\uFEFF" + source)).toBe(without);
+    expect(withoutExitCode).toBe(0);
+  });
+
   test("renders link text with url fallback when no TTY", async () => {
     // runMd() spawns Bun with stdout:"pipe", so Output.isStdoutTTY() is
     // false and hyperlinks fall back to `text (url)`. The OSC 8 path fires

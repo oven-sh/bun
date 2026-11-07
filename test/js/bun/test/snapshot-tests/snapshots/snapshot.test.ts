@@ -768,8 +768,29 @@ describe("inline snapshots", () => {
       expect(value).toMatchInlineSnapshot();
     }
   `;
+  // Each of these ends in the call, so the call is a tail call unless `bun test` keeps its frame.
+  const returning_helpers = {
+    "returns-imported.js": /*js*/ `
+      import {expect} from "bun:test";
+      export function wrongFile(value) {
+        return expect(value).toMatchInlineSnapshot();
+      }
+    `,
+    "returns-global.js": /*js*/ `
+      export const wrongFile = value => expect(value).toMatchInlineSnapshot();
+    `,
+  };
+  // Uses nothing of the test API: the test file passes `expect` in.
+  const returns_passed_in_js = /*js*/ `
+    export function returnsCall(e, value, snapshot) {
+      return e(value).toMatchInlineSnapshot(snapshot);
+    }
+  `;
   const tester = new InlineSnapshotTester({
     "helper.js": helper_js,
+    ...returning_helpers,
+    "returns-passed-in.js": returns_passed_in_js,
+    "fixtures.js": `export { test, expect } from "bun:test";`,
   });
   test("changing inline snapshot", async () => {
     await tester.test(
@@ -798,6 +819,28 @@ describe("inline snapshots", () => {
         test("cases", () => {
           check("a");
           run(() => expect("b").toMatchInlineSnapshot(${v("", bad, '`"b"`')}));
+        });
+      `,
+    );
+  });
+  // Nothing before the call, or in the whole file, shows that these use the test API. They are the file that runs.
+  test("in a function that ends in the call, above the first test global", async () => {
+    await tester.test(
+      v => /*js*/ `
+        const check = (e, value) => e(value).toMatchInlineSnapshot(${v("", bad, '`"a"`')});
+        test("cases", () => {
+          check(expect, "a");
+        });
+      `,
+    );
+  });
+  test("in a function that ends in the call, with the test API of another module", async () => {
+    await tester.test(
+      v => /*js*/ `
+        import { test, expect } from "./fixtures";
+        const check = value => expect(value).toMatchInlineSnapshot(${v("", bad, '`"a"`')});
+        test("cases", () => {
+          check("a");
         });
       `,
     );
@@ -1093,6 +1136,52 @@ Date)
       `,
     );
     expect(readFileSync(tester.tmpdir + "/helper.js", "utf-8")).toBe(helper_js);
+  });
+  it.each(Object.keys(returning_helpers) as (keyof typeof returning_helpers)[])(
+    "must be in test file, also when %s ends in the call",
+    async helper => {
+      await tester.testError(
+        {
+          update: true,
+          msg: "Inline snapshot matchers must be called from the test file",
+        },
+        /*js*/ `
+          import {wrongFile} from "./${helper}";
+          test("cases", () => {
+            wrongFile("interesting");
+          });
+        `,
+      );
+      expect(readFileSync(tester.tmpdir + "/" + helper, "utf-8")).toBe(returning_helpers[helper]);
+    },
+  );
+  it("a module that uses no test API can end in the call", async () => {
+    const thefile = tester.tmpfile(/*js*/ `
+      import {returnsCall} from "./returns-passed-in";
+      test("cases", () => {
+        returnsCall(expect, "matches", '"matches"');
+      });
+    `);
+    const { stderr, exitCode } = await tester.spawn([], thefile);
+    expect(stderr.toString()).toContain(" 1 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+    expect(readFileSync(tester.tmpdir + "/returns-passed-in.js", "utf-8")).toBe(returns_passed_in_js);
+  });
+  // The call is a tail call there, so the update looks for the matcher where the test file calls the helper.
+  it("a module that uses no test API leaves a stale snapshot as it is", async () => {
+    await tester.testError(
+      {
+        update: true,
+        msg: "error: Failed to update inline snapshot: Could not find 'toMatchInlineSnapshot' here",
+      },
+      /*js*/ `
+        import {returnsCall} from "./returns-passed-in";
+        test("cases", () => {
+          returnsCall(expect, "new", '"old"');
+        });
+      `,
+    );
+    expect(readFileSync(tester.tmpdir + "/returns-passed-in.js", "utf-8")).toBe(returns_passed_in_js);
   });
   it("is right file", async () => {
     await tester.test(

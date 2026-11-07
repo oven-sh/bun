@@ -1812,6 +1812,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
     );
     const isModified = (t: string) => modifiedTests.has(t.replaceAll("\\", "/"));
     const isBucketCandidate = (t: string) =>
+      !cliOptions.junit &&
       parallelism === 1 &&
       isTestStrict(t) &&
       !isNodeTest(t) &&

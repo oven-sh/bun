@@ -348,9 +348,6 @@ export interface BundlerTestInput {
   /** Run after bundle happens but before runtime. */
   onAfterBundle?(api: BundlerTestBundleAPI): Promise<void> | void;
 
-  /* TODO: remove this from the tests after this is implemented */
-  skipIfWeDidNotImplementWildcardSideEffects?: boolean;
-
   snapshotSourceMap?: Record<string, SourceMapTests>;
 
   expectExactFilesize?: Record<string, number>;
@@ -579,7 +576,6 @@ function expectBundled(
     mangleProps,
     mangleQuoted,
     nodePaths,
-    skipIfWeDidNotImplementWildcardSideEffects,
     stdin,
     targetFromAPI,
     mode,
@@ -656,7 +652,6 @@ function expectBundled(
     mangleProps,
     mangleQuoted,
     nodePaths,
-    skipIfWeDidNotImplementWildcardSideEffects,
     stdin,
     targetFromAPI,
   })) {

@@ -1314,7 +1314,6 @@ describe("bundler", () => {
       "foo/dir/x.js": `global.dce6 = 123`,
       "foo/package.json": `{ "main": "dir/x", "sideEffects": ["x.*"] }`,
     },
-    skipIfWeDidNotImplementWildcardSideEffects: true,
     run: true,
   });
   itBundled(`extra/TreeShaking9`, {
@@ -1323,7 +1322,6 @@ describe("bundler", () => {
       "foo/dir/x.js": `global.dce6 = 123`,
       "foo/package.json": `{ "main": "dir/x", "sideEffects": ["**/x.*"] }`,
     },
-    skipIfWeDidNotImplementWildcardSideEffects: true,
     run: true,
   });
   itBundled(`extra/TreeShaking10`, {

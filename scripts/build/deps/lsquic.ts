@@ -120,6 +120,11 @@ export const lsquic: Dependency = {
     // lsquic_conn_transport_params, lsquic_conn_make_uni_stream, and the
     // server-side CONNECTION_CLOSE / IFC_TIMED_OUT immediate-close fixes.
     "patches/lsquic/node-quic-accessors.patch",
+    // A read shutdown queued STOP_SENDING without making the conn tickable
+    // (lsquic_stream_shutdown() only does that `if (how && ...)`). Outside a
+    // tick, on a stream whose send side was done, the frame waited for an
+    // unrelated alarm or packet instead of the next tick.
+    "patches/lsquic/stop-sending-tickable.patch",
     // send_packets_out() leaked every packet already coalesced into the
     // current out_spec when encrypting a later one failed.
     "patches/lsquic/coalesce-batch-drop.patch",

@@ -675,9 +675,8 @@ impl Expect {
     pub(crate) fn is_in_vitest_test(&self, buntest: &mut bun_test::BunTest) -> bool {
         let Some(parent) = self.parent.as_ref() else { return false };
         let test = parent.phase.sequence(buntest).and_then(|sequence| sequence.test_entry);
-        let entry = test.or_else(|| parent.phase.entry(buntest).map(core::ptr::NonNull::from));
-        // SAFETY: `buntest` owns the entries of its sequences.
-        entry.is_some_and(|entry| unsafe { entry.as_ref() }.calling.is_vitest())
+        let flavor = bun_test::Flavor::of(test, || parent.phase.entry(buntest).map(core::ptr::NonNull::from));
+        flavor == bun_test::Flavor::Vitest
     }
 
     /// Whether to side with Vitest where it and Jest disagree: the running test was registered through `"vitest"`.

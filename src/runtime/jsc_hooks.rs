@@ -2061,39 +2061,42 @@ fn console_print_runtime_object_inner<const C: bool>(
         let result = blob.write_format::<_, _, C>(formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
-    if let Some(s3client) = value.as_class_ref::<S3Client>() {
-        let mut w = AsFmt::new(writer_);
-        let result = s3client.write_format::<_, _, C>(formatter, &mut w);
-        return rethrow_pending(global, result.is_err());
-    }
-    if let Some(archive) = value.as_class_ref::<Archive>() {
-        let mut w = AsFmt::new(writer_);
-        let result = archive.write_format::<_, _, C>(formatter, &mut w);
-        return rethrow_pending(global, result.is_err());
-    }
-    if bun_jsc::FetchHeaders::cast_(value, formatter.global_this.vm()).is_some() {
-        if let Some(to_json_function) = value.get(formatter.global_this, "toJSON")? {
-            formatter.add_for_new_line("Headers ".len());
-            let _ = bun_io::Write::write_all(writer_, pf!("<r>Headers ").as_bytes());
-            let result = to_json_function.call(formatter.global_this, value, &[])?;
-            let prev_quote_keys = formatter.quote_keys;
-            formatter.quote_keys = true;
+    // Snapshots print these with the generic object printer.
+    if !formatter.is_snapshot {
+        if let Some(s3client) = value.as_class_ref::<S3Client>() {
             let mut w = AsFmt::new(writer_);
-            // UFCS — `Formatter` has an inherent `print_as` (const-generic
-            // `FORMAT`, `&mut dyn bun_io::Write`); we need the trait's
-            // runtime-tag overload that accepts our `core::fmt::Write` adapter.
-            let r = bun_jsc::ConsoleFormatter::print_as::<_, C>(
-                formatter,
-                bun_jsc::FormatTag::Object,
-                &mut w,
-                result,
-                bun_jsc::JSType::Object,
-            );
-            formatter.quote_keys = prev_quote_keys;
-            r?;
-            return Ok(true);
+            let result = s3client.write_format::<_, _, C>(formatter, &mut w);
+            return rethrow_pending(global, result.is_err());
         }
-        // Spec falls through (no `return`) when `toJSON` is absent.
+        if let Some(archive) = value.as_class_ref::<Archive>() {
+            let mut w = AsFmt::new(writer_);
+            let result = archive.write_format::<_, _, C>(formatter, &mut w);
+            return rethrow_pending(global, result.is_err());
+        }
+        if bun_jsc::FetchHeaders::cast_(value, formatter.global_this.vm()).is_some() {
+            if let Some(to_json_function) = value.get(formatter.global_this, "toJSON")? {
+                formatter.add_for_new_line("Headers ".len());
+                let _ = bun_io::Write::write_all(writer_, pf!("<r>Headers ").as_bytes());
+                let result = to_json_function.call(formatter.global_this, value, &[])?;
+                let prev_quote_keys = formatter.quote_keys;
+                formatter.quote_keys = true;
+                let mut w = AsFmt::new(writer_);
+                // UFCS — `Formatter` has an inherent `print_as` (const-generic
+                // `FORMAT`, `&mut dyn bun_io::Write`); we need the trait's
+                // runtime-tag overload that accepts our `core::fmt::Write` adapter.
+                let r = bun_jsc::ConsoleFormatter::print_as::<_, C>(
+                    formatter,
+                    bun_jsc::FormatTag::Object,
+                    &mut w,
+                    result,
+                    bun_jsc::JSType::Object,
+                );
+                formatter.quote_keys = prev_quote_keys;
+                r?;
+                return Ok(true);
+            }
+            // Spec falls through (no `return`) when `toJSON` is absent.
+        }
     }
     if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
         let internals = &timer.internals;
@@ -2175,13 +2178,7 @@ fn console_print_asymmetric_matcher<const C: bool>(
     writer_: &mut dyn bun_io::Write,
     value: JSValue,
 ) -> JsResult<bool> {
-    use crate::test_runner::pretty_format::{JestPrettyFormat, WrappedWriter};
-    // `writer_` is `&mut dyn bun_io::Write`; wrap once more so the
-    // (sized) `&mut dyn bun_io::Write` satisfies `WrappedWriter<W>`'s
-    // `W: bun_io::Write` bound via the blanket `impl Write for &mut W`.
-    let mut sink: &mut dyn bun_io::Write = &mut *writer_;
-    let mut wrapped = WrappedWriter::new(&mut sink);
-    JestPrettyFormat::print_asymmetric_matcher::<_, _, C>(formatter, &mut wrapped, value)
+    crate::test_runner::expect::print_asymmetric_matcher::<C>(formatter, writer_, value)
 }
 
 // ════════════════════════════════════════════════════════════════════════════

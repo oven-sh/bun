@@ -1524,7 +1524,7 @@ impl JSValue {
     }
 
     /// `JSValue.jsonStringify`.
-    pub fn json_stringify(
+    pub(crate) fn json_stringify(
         self,
         global: &JSGlobalObject,
         indent: u32,
@@ -2489,7 +2489,7 @@ impl JSValue {
     /// Like `for_each_property_ordered`, but passes what a getter returns, or the accessor itself if the getter throws.
     /// Returns true if `for_each_property_ordered_with_non_enumerable` is sure to visit the same properties.
     #[inline(always)]
-    pub fn for_each_property_ordered_calling_getters(
+    pub(crate) fn for_each_property_ordered_calling_getters(
         self,
         global: &JSGlobalObject,
         ctx: *mut c_void,
@@ -2511,7 +2511,7 @@ impl JSValue {
     }
     /// Also visits own non-enumerable properties, to reproduce what older versions of `bun:test` printed.
     #[inline(always)]
-    pub fn for_each_property_ordered_with_non_enumerable(
+    pub(crate) fn for_each_property_ordered_with_non_enumerable(
         self,
         global: &JSGlobalObject,
         ctx: *mut c_void,
@@ -2570,7 +2570,7 @@ impl JSValue {
     }
     /// `JSValue.getNameProperty` — the value's `.name` (function/class
     /// name). Empty for empty/`undefined`/`null`.
-    pub fn get_name_property(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
+    pub(crate) fn get_name_property(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
         if self.is_empty_or_undefined_or_null() {
             return Ok(bun_core::String::EMPTY);
         }

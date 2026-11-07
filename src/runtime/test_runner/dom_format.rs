@@ -66,12 +66,11 @@ pub(crate) fn print_in_message(
 #[optimize(size)]
 pub(crate) fn print_in_snapshot(
     formatter: &mut pretty_format::Formatter<'_>,
-    writer: &mut dyn bun_io::Write,
+    writer: &mut Vec<u8>,
     value: JSValue,
 ) -> JsResult<bool> {
-    let format = formatter.snapshot_format;
-    // pretty-format lets an exception from a plugin's `test()` propagate. `is_dom` swallows it.
-    if !if format.is_pretty_format() { classify(formatter.global_this, value)?.is_some() } else { is_dom(formatter.global_this, value)? } {
+    // pretty-format lets an exception from a plugin's `test()` propagate.
+    if classify(formatter.global_this, value)?.is_none() {
         return Ok(false);
     }
     let indent = formatter.indent;
@@ -81,8 +80,8 @@ pub(crate) fn print_in_snapshot(
         out: Vec::new(),
         min: formatter.is_inline,
         is_inline: formatter.is_inline,
-        keeps_carriage_returns: format.is_pretty_format(),
-        shadow_roots: format == super::snapshot::Format::Vitest,
+        keeps_carriage_returns: true,
+        shadow_roots: formatter.snapshot_format == super::snapshot::Format::Vitest,
         max_depth: formatter.max_depth,
         max_width: formatter.max_width,
         give_up_at: usize::MAX,
@@ -93,7 +92,39 @@ pub(crate) fn print_in_snapshot(
     }
     let out = printer.out;
     formatter.count_copied(out.len())?;
-    let extra_line_breaks = indent == 0 && !format.is_pretty_format() && strings::contains_char(&out, b'\n');
+    writer.extend_from_slice(&out);
+    Ok(true)
+}
+
+#[optimize(size)]
+pub(crate) fn print_in_bun_snapshot(
+    formatter: &mut console_object::Formatter<'_>,
+    writer: &mut dyn bun_io::Write,
+    value: JSValue,
+) -> JsResult<bool> {
+    let global = formatter.global_this;
+    if !is_dom(global, value)? {
+        return Ok(false);
+    }
+    let indent = formatter.indent;
+    let mut printer = Printer {
+        global,
+        out: Vec::new(),
+        min: false,
+        is_inline: false,
+        keeps_carriage_returns: false,
+        shadow_roots: false,
+        max_depth: u32::MAX,
+        max_width: u32::MAX,
+        give_up_at: usize::MAX,
+        host: formatter,
+    };
+    if !printer.print_dom(value, indent, 0)? {
+        return Ok(false);
+    }
+    let out = printer.out;
+    pretty_format::count_copied(global, &mut formatter.snapshot.copied, out.len())?;
+    let extra_line_breaks = indent == 0 && strings::contains_char(&out, b'\n');
     if extra_line_breaks {
         let _ = writer.write_all(b"\n");
     }
@@ -113,7 +144,13 @@ trait Host {
 }
 
 impl Host for console_object::Formatter<'_> {
-    fn print(&mut self, out: &mut Vec<u8>, value: JSValue, _indent: u32, _depth: u32) -> JsResult<()> {
+    fn print(&mut self, out: &mut Vec<u8>, value: JSValue, indent: u32, _depth: u32) -> JsResult<()> {
+        if self.is_snapshot {
+            let outer = (core::mem::replace(&mut self.indent, indent), core::mem::replace(&mut self.quote_strings, true));
+            let result = self.format_value::<false>(value, out);
+            (self.indent, self.quote_strings) = outer;
+            return result;
+        }
         let global = self.global_this;
         let tag = console_object::Tag::get(value, global)?;
         let prev_single_line = core::mem::replace(&mut self.single_line, true);
@@ -121,26 +158,21 @@ impl Host for console_object::Formatter<'_> {
         self.single_line = prev_single_line;
         result
     }
+
+    fn check_length(&mut self, printed: usize, copied: usize) -> JsResult<()> {
+        if !self.is_snapshot {
+            return Ok(());
+        }
+        pretty_format::check_length(self.global_this, printed)?;
+        pretty_format::count_copied(self.global_this, &mut self.snapshot.copied, copied)
+    }
 }
 
 impl Host for pretty_format::Formatter<'_> {
     fn print(&mut self, out: &mut Vec<u8>, value: JSValue, indent: u32, depth: u32) -> JsResult<()> {
-        let global = self.global_this;
-        if self.snapshot_format.is_pretty_format() {
-            let outer = (core::mem::replace(&mut self.indent, indent), core::mem::replace(&mut self.depth, depth));
-            let result = self.print_like_pretty_format(out, value, false);
-            (self.indent, self.depth) = outer;
-            return result;
-        }
-        let tag = pretty_format::Tag::get(value, global)?;
-        let mut bridge = bun_io::AsFmt::new(out);
-        let mut writer = bun_io::write::FmtAdapter::new(&mut bridge);
-        let (prev_indent, prev_quote_strings) = (self.indent, self.quote_strings);
-        self.indent = indent;
-        self.quote_strings = true;
-        let result = self.format::<_, false>(tag, &mut writer, value, global);
-        self.indent = prev_indent;
-        self.quote_strings = prev_quote_strings;
+        let outer = (core::mem::replace(&mut self.indent, indent), core::mem::replace(&mut self.depth, depth));
+        let result = self.print_like_pretty_format(out, value, false);
+        (self.indent, self.depth) = outer;
         result
     }
 

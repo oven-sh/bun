@@ -68,6 +68,10 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
 
 MessagePort::~MessagePort()
 {
+    // Backstop for peerClosed(): its task holds the port weakly, so a listening port that is collected first gives its loop ref back here.
+    ASSERT(!m_hasRef);
+    m_isRefd = false;
+    updateListenerEventLoopRef();
     if (!m_isDetached)
         m_pipe->close(m_side, MessagePortPipe::CloseKind::Collected);
 }
@@ -559,7 +563,7 @@ WebCoreOpaqueRoot root(MessagePort* port)
     return WebCoreOpaqueRoot { port };
 }
 
-void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
+void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject, ListenerHold listenerHold)
 {
     // A closed or transferred-away port can never receive messages again, so
     // taking a self-ref (and an event-loop ref) here would only leak:
@@ -573,7 +577,7 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
         return;
 
     // Re-acquire the message-listener loop-ref (if a listener is present) that .unref() released.
-    if (!m_isRefd) {
+    if (listenerHold == ListenerHold::Switch && !m_isRefd) {
         m_isRefd = true;
         updateListenerEventLoopRef();
     }
@@ -585,11 +589,11 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
     }
 }
 
-void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
+void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject, ListenerHold listenerHold)
 {
     // Also release the listener loop-ref; otherwise an always-listening transferred
     // port (a postMessageToThread control port) would pin the event loop forever.
-    if (m_isRefd) {
+    if (listenerHold == ListenerHold::Switch && m_isRefd) {
         m_isRefd = false;
         updateListenerEventLoopRef();
     }

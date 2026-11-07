@@ -449,6 +449,7 @@ describe("own properties of an error with a code", () => {
     for (const e of [await abortError(), redisError()]) {
       expect(Bun.inspect(e)).toContain(`${e.name}: ${e.message}\n code: "${e.code}"\n`);
       expect(Bun.inspect(e)).not.toMatch(/^\s*name: /m);
+      expect(util.inspect(e).split("\n")[0]).toContain(e.name);
       expect(util.inspect(e)).toContain(`code: '${e.code}'`);
       expect(util.inspect(e)).not.toMatch(/^\s*name: /m);
     }

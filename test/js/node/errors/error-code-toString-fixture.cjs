@@ -107,6 +107,7 @@ const producers = {
           name: err.name,
           string: string === `${err.name}: ${err.message}` ? "name: message" : string,
           inheritsToString: err.toString === Error.prototype.toString,
+          hasOwnToString: Object.hasOwn(err, "toString"),
         }),
       );
     }

@@ -119,6 +119,7 @@ describe("an error that is no NodeError in Node inherits Error.prototype.toStrin
     expect(err).toBeInstanceOf(Error);
     expect(String(err)).toBe(`${err.name}: ${err.message}`);
     expect(err.toString).toBe(Error.prototype.toString);
+    expect(Object.hasOwn(err, "toString")).toBe(false);
     expect(Object.hasOwn(Object.getPrototypeOf(err), "toString")).toBe(false);
     // The first line of the stack never had the code.
     expect(err.stack.split("\n")[0]).toBe(String(err));
@@ -210,6 +211,7 @@ describe("an error that is no NodeError in Node inherits Error.prototype.toStrin
           code: err.code,
           string: String(err),
           inherits: err.toString === Error.prototype.toString,
+          hasOwnToString: Object.hasOwn(err, "toString"),
           prototypeHasToString: Object.hasOwn(Object.getPrototypeOf(err), "toString"),
         }));
       }
@@ -230,6 +232,7 @@ describe("an error that is no NodeError in Node inherits Error.prototype.toStrin
         "UnhandledPromiseRejection: This error originated either by throwing inside of an async function without a catch block, " +
         'or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "1".',
       inherits: true,
+      hasOwnToString: false,
       prototypeHasToString: false,
     };
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
@@ -270,7 +273,9 @@ describe("an error that is no NodeError in Node inherits Error.prototype.toStrin
       ["ERR_UNHANDLED_REJECTION", "UnhandledPromiseRejection"],
       ["ERR_VM_MODULE_CACHED_DATA_REJECTED", "Error"],
       ["ERR_ZLIB_INITIALIZATION_FAILED", "Error"],
-    ].map(([code, name]) => JSON.stringify({ code, name, string: "name: message", inheritsToString: true }));
+    ].map(([code, name]) =>
+      JSON.stringify({ code, name, string: "name: message", inheritsToString: true, hasOwnToString: false }),
+    );
 
     // The producers were held against v26.3.0, v26.12.1 and v26.13.0. An older Node refuses some of their inputs in another way.
     for (const [name, runtime, runtimeFlags] of [

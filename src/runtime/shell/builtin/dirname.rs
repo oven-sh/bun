@@ -17,9 +17,7 @@ enum State {
     Done,
 }
 
-/// POSIX `dirname(1)`: <https://pubs.opengroup.org/onlinepubs/9699919799/utilities/dirname.html>.
-/// Unlike `bun_paths::resolve_path::dirname`, this drops the whole run of
-/// slashes before the last component (`a//b` is `a`, not `a/`).
+/// POSIX `dirname(1)`: <https://pubs.opengroup.org/onlinepubs/9699919799/utilities/dirname.html>
 fn posix_dirname(path: &[u8]) -> &[u8] {
     let mut end = path.len();
     while end > 0 && path[end - 1] == b'/' {

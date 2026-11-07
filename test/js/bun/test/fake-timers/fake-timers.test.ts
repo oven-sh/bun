@@ -9,6 +9,7 @@ import { once } from "node:events";
 import http from "node:http";
 import net, { type AddressInfo } from "node:net";
 import { performance as perfHooksPerformance, PerformanceObserver } from "node:perf_hooks";
+import { PassThrough } from "node:stream";
 import nodeTimers, { setTimeout as nodeSetTimeout } from "node:timers";
 import { setTimeout as nodeSetTimeoutPromise } from "node:timers/promises";
 import { promisify } from "node:util";
@@ -2703,7 +2704,48 @@ describe("a faked process.nextTick and queueMicrotask", () => {
     expect(order).toEqual(["tick", "timeout 1", "tick of timeout 1", "timeout 2", "microtask of timeout 2"]);
   });
 
-  // As in Jest and Vitest. sinon's nextAsync() runs none of them before the timer. The tick by 0 ms that follows runs them.
+  describe.each([
+    ["vi", vi],
+    ["jest", jest],
+  ] as const)("%s: with no timer pending", (_, api) => {
+    const ways = {
+      advanceTimersByTime: () => api.advanceTimersByTime(20),
+      advanceTimersToNextTimer: () => api.advanceTimersToNextTimer(),
+      advanceTimersToNextFrame: () => api.advanceTimersToNextFrame(),
+      runAllTimers: () => api.runAllTimers(),
+      runOnlyPendingTimers: () => api.runOnlyPendingTimers(),
+      advanceTimersByTimeAsync: () => api.advanceTimersByTimeAsync(20),
+      advanceTimersToNextTimerAsync: () => api.advanceTimersToNextTimerAsync(),
+      runAllTimersAsync: () => api.runAllTimersAsync(),
+      runOnlyPendingTimersAsync: () => api.runOnlyPendingTimersAsync(),
+    };
+
+    test.each(Object.entries(ways))("%s() runs them", async (_, advance) => {
+      const programs = {
+        "a process.nextTick": (order: string[]) => process.nextTick(() => order.push("tick")),
+        "a queueMicrotask": (order: string[]) => queueMicrotask(() => order.push("microtask")),
+        "a tick that queues a tick": (order: string[]) =>
+          process.nextTick(() => (order.push("tick 1"), process.nextTick(() => order.push("tick 2")))),
+      };
+      const ran: Record<string, unknown> = {};
+      for (const [name, program] of Object.entries(programs)) {
+        api.useFakeTimers({ toFake: [...toFake] });
+        const order: string[] = [];
+        program(order);
+        await advance();
+        ran[name] = { order, pending: api.getTimerCount() };
+      }
+      expect(ran).toEqual({
+        "a process.nextTick": { order: ["tick"], pending: 0 },
+        "a queueMicrotask": { order: ["microtask"], pending: 0 },
+        "a tick that queues a tick": { order: ["tick 1", "tick 2"], pending: 0 },
+      });
+    });
+  });
+
+  // The order is that of @sinonjs/fake-timers 15.4.0, which Jest 30.5.2 and Vitest 5.1.0 run: nextAsync() runs the timer and none
+  // of them, then a tick by 0 ms runs them. https://github.com/sinonjs/fake-timers/issues/597 asks for the order of next().
+  // Not theirs: `vi` takes `steps`, which Vitest's `vi` drops, and one that threw is gone, where sinon keeps it queued.
   describe.each([
     ["vi", vi],
     ["jest", jest],
@@ -2717,16 +2759,24 @@ describe("a faked process.nextTick and queueMicrotask", () => {
       expect(order).toEqual(["timeout", "tick"]);
     });
 
-    test("runs them when no timer is pending", async () => {
-      api.useFakeTimers({ toFake: [...toFake] });
+    // The sync advanceTimersToNextTimer() runs it: sinon's next() looks for the timer after them.
+    test.each([
+      ["a timer", (fn: () => void) => void setTimeout(fn, 5)],
+      ["a timer without a delay", (fn: () => void) => void setTimeout(fn, 0)],
+      ["an immediate", (fn: () => void) => void setImmediate(fn)],
+    ])("with no timer pending, does not run %s that one of them sets", async (_, set) => {
+      api.useFakeTimers({ toFake: [...toFake, "setImmediate", "performance"] });
       const order: string[] = [];
-      process.nextTick(() => order.push("tick"));
-      queueMicrotask(() => order.push("microtask"));
+      process.nextTick(() => (order.push("tick"), set(() => order.push("set by the tick"))));
       await api.advanceTimersToNextTimerAsync();
-      expect({ order, pending: api.getTimerCount() }).toEqual({ order: ["tick", "microtask"], pending: 0 });
+      expect({ order, pending: api.getTimerCount(), now: performance.now() }).toEqual({
+        order: ["tick"],
+        pending: 1,
+        now: 0,
+      });
     });
 
-    test("goes on to a timer that one of them sets when no timer is pending", async () => {
+    test("with no timer pending, the next step runs a timer that one of them sets", async () => {
       api.useFakeTimers({ toFake: [...toFake] });
       const order: string[] = [];
       process.nextTick(() => (order.push("tick"), setTimeout(() => order.push("timeout of the tick"), 5)));
@@ -2734,7 +2784,7 @@ describe("a faked process.nextTick and queueMicrotask", () => {
       expect({ order, pending: api.getTimerCount() }).toEqual({ order: ["tick", "timeout of the tick"], pending: 0 });
     });
 
-    test("rejects with the error of one when no timer is pending", async () => {
+    test("with no timer pending, rejects with the error of one", async () => {
       api.useFakeTimers({ toFake: [...toFake] });
       const after = vi.fn();
       process.nextTick(() => {
@@ -2743,6 +2793,76 @@ describe("a faked process.nextTick and queueMicrotask", () => {
       process.nextTick(after);
       await expect(api.advanceTimersToNextTimerAsync()).rejects.toThrow("from a tick");
       expect({ ran: after.mock.calls.length, pending: api.getTimerCount() }).toEqual({ ran: 0, pending: 1 });
+    });
+
+    test("runs one that is queued after the call", async () => {
+      api.useFakeTimers({ toFake: [...toFake] });
+      const order: string[] = [];
+      const advanced = api.advanceTimersToNextTimerAsync();
+      process.nextTick(() => order.push("tick"));
+      Promise.resolve().then(() => queueMicrotask(() => order.push("microtask of a promise job")));
+      await advanced;
+      expect({ order, pending: api.getTimerCount() }).toEqual({
+        order: ["tick", "microtask of a promise job"],
+        pending: 0,
+      });
+    });
+
+    test("the next step runs one that is queued after the last timer is cleared", async () => {
+      api.useFakeTimers({ toFake: [...toFake] });
+      const order: string[] = [];
+      const gate = Promise.withResolvers<void>();
+      const second = setTimeout(() => order.push("timeout 2"), 10);
+      setTimeout(async () => {
+        order.push("timeout 1");
+        process.nextTick(gate.resolve);
+        await gate.promise;
+        clearTimeout(second);
+        process.nextTick(() => order.push("tick"));
+      }, 5);
+      await api.advanceTimersToNextTimerAsync(2);
+      expect({ order, pending: api.getTimerCount() }).toEqual({ order: ["timeout 1", "tick"], pending: 0 });
+    });
+
+    test("the next step runs one that another queues after an await", async () => {
+      api.useFakeTimers({ toFake: [...toFake] });
+      const order: string[] = [];
+      process.nextTick(async () => {
+        order.push("tick 1");
+        await null;
+        process.nextTick(() => order.push("tick 2"));
+      });
+      await api.advanceTimersToNextTimerAsync(2);
+      expect({ order, pending: api.getTimerCount() }).toEqual({ order: ["tick 1", "tick 2"], pending: 0 });
+    });
+
+    test("the next step runs a timer that one of them sets after an await", async () => {
+      api.useFakeTimers({ toFake: [...toFake] });
+      const order: string[] = [];
+      setTimeout(() => order.push("timeout"), 10);
+      process.nextTick(async () => {
+        order.push("tick");
+        await null;
+        setTimeout(() => order.push("timeout of the tick"), 5);
+      });
+      await api.advanceTimersToNextTimerAsync(2);
+      expect({ order, pending: api.getTimerCount() }).toEqual({
+        order: ["timeout", "tick", "timeout of the tick"],
+        pending: 0,
+      });
+    });
+
+    // With `nextTick` faked, node:stream, node:net and node:http queue theirs here too.
+    test("runs the ones that a stream queues", async () => {
+      api.useFakeTimers({ toFake: ["nextTick"] });
+      const seen: string[] = [];
+      const stream = new PassThrough();
+      stream.on("data", chunk => seen.push(String(chunk)));
+      stream.on("end", () => seen.push("end"));
+      stream.write("a");
+      stream.end("b");
+      await api.advanceTimersToNextTimerAsync();
+      expect(seen).toEqual(["a", "b", "end"]);
     });
   });
 
@@ -2948,7 +3068,7 @@ describe("a faked tick that queues itself again", () => {
     ["vi.advanceTimersToNextFrame()", 0],
     ["vi.advanceTimersByTimeAsync(10)", 0],
     ["vi.runOnlyPendingTimersAsync()", 0],
-    // Runs the next timer first.
+    // Runs the next timer first, as @sinonjs/fake-timers 15.4.0 does (https://github.com/sinonjs/fake-timers/issues/597).
     ["vi.advanceTimersToNextTimerAsync()", 1],
     ["vi.waitFor(() => {})", 0],
     ["vi.waitUntil(() => true)", 0],
@@ -2956,18 +3076,20 @@ describe("a faked tick that queues itself again", () => {
   ])("%s stops at the loop limit", async (drive, timers) => {
     using dir = tempDir("fake-timers-endless-ticks", {
       "endless.test.ts": `${prelude}
-        test.each([again, throwsAndAgain])("%p", async tick => {
-          vi.useFakeTimers(options);
-          ticks = timers = attempts = 0;
-          process.nextTick(tick);
-          setTimeout(() => timers++, 5);
-          let thrown;
-          try {
-            await ${drive};
-          } catch (error) {
-            thrown = error;
-          }
-          console.log(JSON.stringify({ thrown: thrown?.message, ticks, timers, now: performance.now() }));
+        describe.each([true, false])("with a timer pending: %p", pending => {
+          test.each([again, throwsAndAgain])("%p", async tick => {
+            vi.useFakeTimers(options);
+            ticks = timers = attempts = 0;
+            process.nextTick(tick);
+            if (pending) setTimeout(() => timers++, 5);
+            let thrown;
+            try {
+              await ${drive};
+            } catch (error) {
+              thrown = error;
+            }
+            console.log(JSON.stringify({ thrown: thrown?.message, ticks, timers, now: performance.now() }));
+          });
         });
       `,
     });
@@ -2976,6 +3098,8 @@ describe("a faked tick that queues itself again", () => {
       printed: [
         { thrown: limit, ticks: 100, timers, now: timers * 5 },
         { thrown: "from a tick", ticks: 1, timers, now: timers * 5 },
+        { thrown: limit, ticks: 100, timers: 0, now: 0 },
+        { thrown: "from a tick", ticks: 1, timers: 0, now: 0 },
       ],
       exitCode: 0,
       signalCode: null,

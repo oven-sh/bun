@@ -224,8 +224,7 @@ if (kind !== "terminal") {
   globalThis.anchor.push(child);
   await child.exited;
 }
-// The first spawnSync of a process creates the loop it waits on, which stays. Without pipes: theirs are closed on
-// the work pool, some time after the call.
+// The first spawnSync of a process creates the loop it waits on, which stays.
 const quiet = { cmd: ["true"], stdin: "ignore", stdout: "ignore", stderr: "ignore" };
 if (kind.includes("unwatchable") || kind.startsWith("sync-") || kind.endsWith("-running")) Bun.spawnSync(quiet);
 const fdBaseline = openFds();

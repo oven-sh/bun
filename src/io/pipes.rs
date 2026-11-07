@@ -4,8 +4,8 @@ use bun_sys::Fd;
 #[cfg(not(windows))]
 use bun_sys::FdExt;
 
-#[cfg(target_os = "macos")]
-use crate::FilePollFlag;
+#[cfg(not(windows))]
+use crate::{FilePollFlag, PollTag};
 use crate::{FilePollRef, Owner};
 
 pub enum PollOrFd {
@@ -59,34 +59,36 @@ impl PollOrFd {
     ) where
         F: FnOnce(*mut c_void),
     {
+        #[cfg(not(windows))]
+        let pipe = match self {
+            PollOrFd::Poll(poll) => {
+                // Only the poll of a writer says what its fd is: a pipe, a socket or the pty of `Bun.Terminal`, or else the tty of a `FileSink`.
+                debug_assert!(!close_fd || poll.owner_tag() != PollTag::BufferedReader);
+                !poll.has_flag(FilePollFlag::Tty)
+            }
+            _ => false,
+        };
+        #[cfg(windows)]
+        let pipe = false;
+        self.close_as(ctx, on_close_fn, close_fd, pipe);
+    }
+
+    /// `close_impl` for a caller that knows whether the fd is a pipe, a socket or the pty of `Bun.Terminal`. The other end waits for the close(2) of one (a child for the end of its stdin), so it runs here, before `on_close_fn`. The close(2) of any other fd can block, so the work pool runs it later.
+    pub fn close_as<F>(
+        &mut self,
+        ctx: Option<*mut c_void>,
+        on_close_fn: Option<F>,
+        close_fd: bool,
+        pipe: bool,
+    ) where
+        F: FnOnce(*mut c_void),
+    {
         let fd = self.get_fd();
-        #[cfg(target_os = "macos")]
-        let mut close_async = true;
-        #[cfg(all(not(target_os = "macos"), not(windows)))]
-        let close_async = true;
         if matches!(self, PollOrFd::Poll(_)) {
-            // workaround kqueue bug.
-            // 1) non-blocking FIFO
-            // 2) open for writing only = fd 2, nonblock
-            // 3) open for reading only = fd 3, nonblock
-            // 4) write(3, "something") = 9
-            // 5) read(2, buf, 9) = 9
-            // 6) read(2, buf, 9) = -1 (EAGAIN)
-            // 7) ON ANOTHER THREAD: close(3) = 0,
-            // 8) kevent(2, EVFILT_READ, EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0, 0) = 0
-            // 9) ??? No more events for fd 2
             // Take ownership of the Box before
             // calling deinit_force_unregister, then leave self = Closed.
             let old = core::mem::replace(self, PollOrFd::Closed);
             if let PollOrFd::Poll(poll) = old {
-                #[cfg(target_os = "macos")]
-                {
-                    if poll.has_flag(FilePollFlag::PollWritable)
-                        && poll.has_flag(FilePollFlag::Nonblocking)
-                    {
-                        close_async = false;
-                    }
-                }
                 // Consumes the underlying allocation.
                 poll.deinit_force_unregister();
             }
@@ -98,18 +100,22 @@ impl PollOrFd {
             // TODO: We should make this call compatible using bun.FD
             #[cfg(windows)]
             {
+                let _ = pipe;
                 if close_fd {
                     crate::closer::Closer::close(fd, bun_sys::windows::libuv::Loop::get());
                 }
             }
             #[cfg(not(windows))]
             {
-                if close_async && close_fd {
+                if close_fd && pipe {
+                    debug_assert!(!fstat_is(fd, bun_sys::S::ISREG));
+                    // Not on another thread: kqueue then delivers no more events to the reader of a nonblocking FIFO.
+                    fd.close();
+                } else if close_fd {
+                    debug_assert!(!fstat_is(fd, |mode| {
+                        bun_sys::S::ISFIFO(mode) || bun_sys::S::ISSOCK(mode)
+                    }));
                     crate::closer::Closer::close(fd, ());
-                } else {
-                    if close_fd {
-                        let _ = fd.close_allowing_bad_file_descriptor(None);
-                    }
                 }
             }
             if let Some(f) = on_close_fn {
@@ -133,6 +139,12 @@ impl PollOrFd {
     pub fn close_without_closing_fd(&mut self) {
         self.close_impl(None, None::<fn(*mut c_void)>, false);
     }
+}
+
+/// For the debug assertions of `close_as`. False when fstat fails.
+#[cfg(not(windows))]
+fn fstat_is(fd: Fd, is: fn(bun_sys::Mode) -> bool) -> bool {
+    bun_sys::fstat(fd).is_ok_and(|stat| is(stat.st_mode as bun_sys::Mode))
 }
 
 // Sunk to `bun_io` so `FilePoll::file_type()` needs no aio→io edge; re-export

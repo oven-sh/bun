@@ -846,15 +846,13 @@ describe("Bun.Terminal", () => {
         function churn() {
           for (let i = 0; i < 500; i++) sink = { i, a: new Array(32).fill(i) };
         }
-        // Collection runs the finalizer, which hands the remaining pty fds to
-        // a close thread; poll both conditions rather than a delay.
-        let fdsAfter = openFds();
-        for (let i = 0; i < 50 && (collected < N || fdsAfter > fdsBefore); i++) {
+        // Collection runs the finalizer, which closes the remaining pty fds.
+        for (let i = 0; i < 50 && collected < N; i++) {
           churn();
           Bun.gc(true);
           await new Promise(r => setImmediate(r));
-          fdsAfter = openFds();
         }
+        const fdsAfter = openFds();
         console.log(JSON.stringify({ exits, collected, callbacksAfterExit, leakedFds: Math.max(0, fdsAfter - fdsBefore) }));
       `;
 

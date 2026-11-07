@@ -1017,6 +1017,8 @@ impl FakeTimers {
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         unsafe { (*timer_all()).fake_timers.advance_clock_to(global, at) };
         let _firing = Firing::begin();
+        // Keeps the callback's exit from draining microtasks inside the control that fires it.
+        let _entered = global.bun_vm().enter_event_loop_scope_without_checkpoint();
         let vm = VirtualMachine::get_mut_ptr();
         let mut thrown = JSValue::ZERO;
         // SAFETY: `timer` is live and its tag names its owner; the callees take raw pointers (noalias re-entrancy).
@@ -1052,6 +1054,12 @@ impl FakeTimers {
     fn run_ticks(global: &JSGlobalObject) -> Result<(), Stop> {
         let all = timer_all();
         // SAFETY: per-thread `timer::All`; each borrow lasts one statement and none spans a callback.
+        if unsafe { (*all).fake_timers.ticks.is_empty() } {
+            return Ok(());
+        }
+        // As in `fire`, for a native call that a tick makes and that runs a callback of its own.
+        let _entered = global.bun_vm().enter_event_loop_scope_without_checkpoint();
+        // SAFETY: as above.
         let limit = unsafe { (*all).fake_timers.loop_limit };
         let mut ran: u32 = 0;
         // SAFETY: as above.
@@ -1447,7 +1455,7 @@ impl FakeTimers {
         let TickMode::Interval(delta) = mode else {
             return Ok(());
         };
-        // Holds back the microtask drain until the whole advance is done, like sinon's `tick()`.
+        // Drains microtasks once the whole advance is done, like sinon's `tick()`.
         // SAFETY: the live event loop of the per-thread VM.
         let _entered =
             unsafe { bun_jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };

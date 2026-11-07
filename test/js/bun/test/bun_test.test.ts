@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 test("describe/test", async () => {
@@ -457,4 +457,171 @@ test("no --only flag with multiple files", async () => {
     file2.1"
   `);
   expect(exitCode).toBe(0);
+});
+
+describe.concurrent("the callbacks of a test run with the event loop entered", () => {
+  async function printedBy(files: Record<string, string>) {
+    using dir = tempDir("bun-test-event-loop-entered", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", `./${Object.keys(files)[0]}`],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const printed = stdout
+      .split("\n")
+      .filter(line => line.startsWith("{"))
+      .map(line => JSON.parse(line));
+    return { printed, stderr, exitCode };
+  }
+
+  test("a native call in a promise job of a test returns before the next promise job runs", async () => {
+    const { printed, stderr, exitCode } = await printedBy({
+      "native-call.test.ts": `
+        import { afterAll, test } from "bun:test";
+        import { once } from "node:events";
+        import net from "node:net";
+
+        const opened = Promise.withResolvers();
+        const server = Bun.serve({
+          port: 0,
+          fetch: (request, server) => (server.upgrade(request, { data: {} }) ? undefined : new Response(null, { status: 400 })),
+          websocket: {
+            open: opened.resolve,
+            message() {},
+            close: socket => void socket.data.order.push("close handler"),
+          },
+        });
+        const client = new WebSocket("ws://localhost:" + server.port);
+        const serverSocket = await opened.promise;
+        const tcpServer = net.createServer(socket => socket.on("error", () => {})).listen(0, "127.0.0.1");
+        await once(tcpServer, "listening");
+        const tcpSocket = net.connect(tcpServer.address().port, "127.0.0.1");
+        await once(tcpSocket, "connect");
+        afterAll(() => {
+          server.stop(true);
+          tcpServer.close();
+        });
+
+        async function cell(where, call, native) {
+          const order = [];
+          await 0;
+          Promise.resolve().then(() => order.push("promise job"));
+          native(order);
+          order.push("returned");
+          await 0;
+          console.log(JSON.stringify({ where, call, order }));
+        }
+        // An HTMLRewriter handler runs in a promise job, and reader.cancel() settles a promise from native code.
+        async function cancelsReader(where) {
+          let controller;
+          const input = new ReadableStream({ start: c => void (controller = c) });
+          const order = [];
+          const response = new HTMLRewriter()
+            .on("p", {
+              element() {
+                order.push("handler start");
+                reader.cancel();
+                order.push("handler end");
+              },
+            })
+            .transform(new Response(input));
+          const reader = response.body.getReader();
+          const closed = reader.closed.then(() => order.push("reader.closed"));
+          controller.enqueue(new TextEncoder().encode("<p>x</p>"));
+          controller.close();
+          await closed;
+          console.log(JSON.stringify({ where, call: "reader.cancel()", order }));
+        }
+
+        // The file has loaded, and no test before these waits for the event loop.
+        const first = "the first tests of a file";
+        test(first + ": ServerWebSocket.close() calls the close handler", () =>
+          cell(first, "ServerWebSocket.close()", order => {
+            serverSocket.data.order = order;
+            serverSocket.close();
+          }));
+        test(first + ": net.Socket.destroy()", () => cell(first, "net.Socket.destroy()", () => tcpSocket.destroy()));
+        test(first + ": reader.cancel()", () => cancelsReader(first));
+        test("a test that waits for a real timer", () => new Promise(resolve => setTimeout(resolve, 1)));
+        test("a later test: reader.cancel()", () => cancelsReader("a later test"));
+      `,
+    });
+    const first = "the first tests of a file";
+    expect({ printed, exitCode }, stderr).toEqual({
+      printed: [
+        { where: first, call: "ServerWebSocket.close()", order: ["close handler", "returned", "promise job"] },
+        { where: first, call: "net.Socket.destroy()", order: ["returned", "promise job"] },
+        { where: first, call: "reader.cancel()", order: ["handler start", "handler end", "reader.closed"] },
+        { where: "a later test", call: "reader.cancel()", order: ["handler start", "handler end", "reader.closed"] },
+      ],
+      exitCode: 0,
+    });
+  });
+
+  // The task that reports a timeout runs the next steps, up to the first one that waits for the event loop.
+  // Their callbacks have one more entry below them.
+  test("in the steps that follow a test that timed out", async () => {
+    const { printed, stderr, exitCode } = await printedBy({
+      "after-timeout.test.ts": `
+        import { afterEach, describe, jest, test } from "bun:test";
+
+        test("times out", () => new Promise(() => {}), 1);
+
+        test("a fake timer control runs no promise job before it returns", async () => {
+          await 0;
+          jest.useFakeTimers();
+          const order = [];
+          setTimeout(async () => {
+            order.push("timer 1");
+            await 0;
+            order.push("after the await of timer 1");
+          }, 1);
+          setTimeout(() => order.push("timer 2"), 2);
+          jest.advanceTimersByTime(2);
+          order.push("returned");
+          jest.useRealTimers();
+          console.log(JSON.stringify({ order }));
+        });
+
+        describe("afterEach runs before an immediate that is pending", () => {
+          let where = "";
+          let fired = Promise.withResolvers();
+          const seen = [];
+          const callback = () => {
+            seen.push(where);
+            fired.resolve();
+          };
+          afterEach(async () => {
+            where = "afterEach";
+            await fired.promise;
+            fired = Promise.withResolvers();
+          });
+          test("when the test only waited for a promise job", async () => {
+            setImmediate(callback);
+            await 0;
+            where = "after the test";
+          });
+          test("when an earlier immediate resumed the test", async () => {
+            const resumed = new Promise(resolve => setImmediate(resolve));
+            setImmediate(callback);
+            await resumed;
+            where = "after the test";
+          });
+          test("prints", () => {
+            fired.resolve();
+            console.log(JSON.stringify({ seen }));
+          });
+        });
+      `,
+    });
+    expect({ printed, exitCode }, stderr).toEqual({
+      printed: [{ order: ["timer 1", "timer 2", "returned"] }, { seen: ["afterEach", "afterEach"] }],
+      exitCode: 1,
+    });
+    expect(stderr).toContain("(fail) times out");
+    expect(stderr).toContain(" 4 pass");
+  });
 });

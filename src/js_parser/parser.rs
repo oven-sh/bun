@@ -200,6 +200,8 @@ pub mod Runtime {
         pub own_test_globals: u32,
 
         pub no_macros: bool,
+        /// Nothing runs the result of this parse. The caller reads the imports and exports, or compares a re-print.
+        pub output_never_runs: bool,
 
         pub commonjs_named_exports: bool,
 
@@ -303,6 +305,7 @@ pub mod Runtime {
                 vitest_globals: false,
                 own_test_globals: 0,
                 no_macros: false,
+                output_never_runs: false,
                 commonjs_named_exports: true,
                 minify_syntax: false,
                 is_library: false,
@@ -675,7 +678,7 @@ pub struct MacroRefData<'a> {
     pub(crate) name: Option<&'a [u8]>,
 }
 
-type MacroRefs<'a> = ArrayHashMap<Ref, MacroRefData<'a>>;
+pub(crate) type MacroRefs<'a> = ArrayHashMap<Ref, MacroRefData<'a>>;
 
 pub(crate) enum Substitution {
     Success(Expr),

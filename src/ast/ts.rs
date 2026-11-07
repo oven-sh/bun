@@ -171,9 +171,8 @@ pub enum Metadata {
     MSymbol,
     MPromise,
     MIdentifier(Ref),
-    // A heap `Vec` is used here because `Metadata` is lifetime-free.
-    // Decorator metadata is rare and the lists are tiny.
-    MDot(Vec<Ref>),
+    // `AstAlloc`: the node that holds this list is never dropped, so a heap `Vec` leaks.
+    MDot(Vec<Ref, AstAlloc>),
 }
 
 impl Metadata {

@@ -2507,6 +2507,7 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
       const { log, stderr, exitCode } = await logOf({
         "a.test.js": `
           import { test, expect } from ${JSON.stringify(module)};
+          ${firstLine}
           const matchers = () => ({
             url: expect.any(URL),
             buffer: expect.not.any(Buffer),
@@ -2518,14 +2519,19 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
           test("inline", () => {
             expect(matchers()).toMatchInlineSnapshot(\`\n${printed}\n\`);
             // No version wrote these.
-            expect(() => expect(expect.any(Number)).toMatchInlineSnapshot(\`Any<Function>\`)).toThrow();
-            expect(() => expect(expect.any(Response)).toMatchInlineSnapshot(\`Any<Function>\`)).toThrow();
-            expect(() => expect(expect.any(URL)).toMatchInlineSnapshot(\`Any<Buffer>\`)).toThrow();
+            console.log("Number", firstLine(() => expect(expect.any(Number)).toMatchInlineSnapshot(\`Any<Function>\`)));
+            console.log("Response", firstLine(() => expect(expect.any(Response)).toMatchInlineSnapshot(\`Any<Function>\`)));
+            console.log("URL", firstLine(() => expect(expect.any(URL)).toMatchInlineSnapshot(\`Any<Buffer>\`)));
           });
         `,
         "__snapshots__/a.test.js.snap": headers.bun + `\nexports[\`in a file 1\`] = \`\n${printed}\n\`;\n`,
       });
-      expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
+      const mismatch = "expect(received).toMatchInlineSnapshot(expected)";
+      expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({
+        log: [`Number ${mismatch}`, `Response ${mismatch}`, `URL ${mismatch}`],
+        stderr: "",
+        exitCode: 0,
+      });
     },
   );
 

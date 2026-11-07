@@ -1316,14 +1316,14 @@ fn is_never_packed_on_disk(abs_workspace_path: &[u8], bin_path: &[u8]) -> bool {
             lstat(&[abs_workspace_path, parent, listed])
                 .is_ok_and(|st| st.st_dev == found.st_dev && st.st_ino == found.st_ino)
         });
-        let is_never_packed = |listed: &Box<[u8]>| {
+        let is_never_packed = |listed: &[u8]| {
             is_unconditionally_excluded(listed, 2).is_some()
-                || (is_root_file && **listed == *b"package.json")
+                || (is_root_file && listed == b"package.json")
         };
         let Some(first) = same_file.next() else {
             return true;
         };
-        if is_never_packed(first) || same_file.any(is_never_packed) {
+        if is_never_packed(first) || same_file.any(|listed| is_never_packed(listed)) {
             return true;
         }
     }

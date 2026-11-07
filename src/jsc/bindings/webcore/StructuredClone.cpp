@@ -33,9 +33,23 @@
 #include "SerializedScriptValue.h"
 #include "MessagePort.h"
 #include "JSStructuredSerializeOptions.h"
+#include "ZigGlobalObject.h"
 
 namespace WebCore {
 using namespace JSC;
+
+// Out of line: most calls transfer no port.
+static NEVER_INLINE bool transferPorts(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& throwScope, Vector<RefPtr<MessagePort>>& ports)
+{
+    auto disentangled = MessagePort::disentanglePorts(WTF::move(ports));
+    if (disentangled.hasException()) {
+        WebCore::propagateException(*globalObject, throwScope, disentangled.releaseException());
+        return false;
+    }
+    auto* context = defaultGlobalObject(globalObject)->currentScriptExecutionContext();
+    ports = MessagePort::entanglePorts(*context, disentangled.releaseReturnValue());
+    return true;
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -68,6 +82,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
         RELEASE_AND_RETURN(throwScope, {});
     }
     RETURN_IF_EXCEPTION(throwScope, {});
+
+    if (!ports.isEmpty() && !transferPorts(globalObject, throwScope, ports))
+        RELEASE_AND_RETURN(throwScope, {});
 
     JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -135,6 +152,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced, (JSC::JSGlobalObject
         RELEASE_AND_RETURN(throwScope, {});
     }
     RETURN_IF_EXCEPTION(throwScope, {});
+
+    if (!ports.isEmpty() && !transferPorts(globalObject, throwScope, ports))
+        RELEASE_AND_RETURN(throwScope, {});
 
     JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
     RETURN_IF_EXCEPTION(throwScope, {});

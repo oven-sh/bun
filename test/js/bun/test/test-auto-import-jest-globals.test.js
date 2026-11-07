@@ -372,6 +372,74 @@ describe.concurrent("a name that a script puts on globalThis after the file is l
     });
   });
 
+  // With --isolate the second file gets the module as it was transpiled for the first.
+  test("for one of two files that load the same module: --isolate", async () => {
+    const file = name => `
+      import { test } from "bun:test";
+      import { read } from "./reads";
+      test("test", () => console.log("row: ${name}", read() === globalThis.own ? "own" : typeof read()));
+    `;
+    using dir = tempDir("jest-globals-late", {
+      "preload.ts": `
+        import { existsSync, writeFileSync } from "node:fs";
+        if (!existsSync("./is-set")) {
+          writeFileSync("./is-set", "");
+          globalThis.own = globalThis.expect = () => {};
+        }
+      `,
+      "reads.ts": `
+        import { mock } from "bun:test";
+        export const read = () => expect;
+      `,
+      "a.test.ts": file("a"),
+      "b.test.ts": file("b"),
+    });
+    const { stdout, exitCode } = await run(String(dir), ["test", "--isolate", "--preload=./preload.ts"]);
+    expect({ rows: rowsOf(stdout), exitCode }).toEqual({ rows: ["row: a own", "row: b function"], exitCode: 0 });
+  });
+
+  test("in a hook that the React Compiler compiles", async () => {
+    using dir = tempDir("jest-globals-late", {
+      "node_modules/react/package.json": JSON.stringify({
+        name: "react",
+        version: "19.0.0",
+        exports: { ".": "./index.js", "./compiler-runtime": "./compiler-runtime.js" },
+      }),
+      "node_modules/react/index.js": `export const useState = value => [value, () => {}];`,
+      "node_modules/react/compiler-runtime.js": `export const c = size => Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "useRunner.ts": `
+        import { mock } from "bun:test";
+        import { useState } from "react";
+        export function useRunner(own: unknown) {
+          const [factor] = useState(2);
+          const seen = { isOwn: expect === own, describe: typeof describe, factor };
+          return seen;
+        }
+      `,
+      "hook.test.ts": `
+        import { test } from "bun:test";
+        import { useRunner } from "./useRunner";
+        test("test", () => {
+          const before = useRunner(null);
+          const own = (globalThis.expect = () => {});
+          const isCompiled = /\\$\\[\\d+\\]/.test(String(useRunner));
+          console.log("row: hook", isCompiled, JSON.stringify([before, useRunner(own)]));
+        });
+      `,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["test", "--react-compiler"]);
+    const seen = { describe: "function", factor: 2 };
+    expect({ rows: rowsOf(stdout), exitCode }).toEqual({
+      rows: [
+        `row: hook true ${JSON.stringify([
+          { isOwn: false, ...seen },
+          { isOwn: true, ...seen },
+        ])}`,
+      ],
+      exitCode: 0,
+    });
+  });
+
   test("undefined and null count as not set, and a store goes to globalThis", async () => {
     using dir = tempDir("jest-globals-late", {
       "presence.test.ts": `

@@ -165,9 +165,10 @@ pub(crate) fn to_js_from_multipart_data(
                 let filename = EncodedSlice::utf8(filename_str);
 
                 if !field.content_type.is_empty() {
+                    // Same normalization as `new File(bytes, name, { type })`.
                     let ct = field.content_type.slice(buf);
                     blob.content_type
-                        .set(crate::webcore::blob::BlobContentType::Owned(ct.into()));
+                        .set(crate::webcore::blob::BlobContentType::from_script(ct));
                     blob.content_type_was_set.set(true);
                 } else {
                     let mime = 'brk: {
@@ -294,6 +295,11 @@ pub(crate) fn for_each_multipart_entry<C>(
                 b""
             };
             if strings::eql_case_insensitive_ascii(key, b"content-disposition", true) {
+                // A later Content-Disposition replaces the earlier one whole
+                // (fetch spec: "set name and filename to null").
+                name = bun_semver::String::default();
+                filename = None;
+                is_file = false;
                 // OWS after the colon is SP or HTAB (RFC 9112 §5.6.3); the
                 // disposition type is a case-insensitive token (RFC 2183 §2).
                 value = strings::trim(value, b" \t");
@@ -348,7 +354,6 @@ pub(crate) fn for_each_multipart_entry<C>(
                     }
                 }
             } else if !value.is_empty()
-                && field.content_type.is_empty()
                 && strings::eql_case_insensitive_ascii(key, b"content-type", true)
             {
                 let trimmed = strings::trim(value, b"; \t");

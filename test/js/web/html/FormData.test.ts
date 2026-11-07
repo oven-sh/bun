@@ -354,6 +354,32 @@ describe("FormData", () => {
         await expect(parse(C, field)).rejects.toThrow(message);
         await expect(parse(C, file)).rejects.toThrow(message);
       });
+
+      // The parsed File has the type `new File(bytes, name, { type })` gives it.
+      it(`lowercases the declared type like the File constructor (${C.name})`, async () => {
+        const body = buildPart([disposition("banner"), "Content-Type: IMAGE/WebP"], webp);
+        expect(((await parse(C, body)).get("file") as File).type).toBe("image/webp");
+      });
+
+      it(`uses the last Content-Type line (${C.name})`, async () => {
+        const body = buildPart([disposition("banner"), "Content-Type: text/plain", "Content-Type: image/webp"], webp);
+        expect(((await parse(C, body)).get("file") as File).type).toBe("image/webp");
+      });
+
+      it(`uses the last Content-Disposition line whole (${C.name})`, async () => {
+        const toFile = buildPart(
+          [`Content-Disposition: form-data; name="a"`, disposition("b.bin"), "Content-Type: image/webp"],
+          webp,
+        );
+        const toField = buildPart(
+          [disposition("a.bin"), `Content-Disposition: form-data; name="b"`, "Content-Type: image/webp"],
+          Buffer.from("text"),
+        );
+        const asFile = await parse(C, toFile);
+        const file = asFile.get("file") as File;
+        expect([[...asFile.keys()], file.name, file.type]).toEqual([["file"], "b.bin", "image/webp"]);
+        expect([...(await parse(C, toField)).entries()]).toEqual([["b", "text"]]);
+      });
     }
   });
 

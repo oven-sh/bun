@@ -1934,4 +1934,102 @@ describe("res.useChunkedEncodingByDefault = false makes the response close-delim
       closedByServer: true,
     });
   });
+
+  // Node's _send("") prepends the rendered header block, so an empty first
+  // write() commits the framing the header block chose. The heads below are
+  // what node v26.3.0 puts on the wire for the same handlers.
+  describe("an empty first write() commits the header section", () => {
+    test.concurrent.each([
+      [
+        "chunked: write('') + end(data)",
+        GET11,
+        (res: any) => {
+          res.write("");
+          res.end("hello");
+        },
+        {
+          head: "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked",
+          body: "5\r\nhello\r\n0\r\n\r\n",
+          framing: "chunked",
+          connection: "reused",
+        },
+      ],
+      [
+        "chunked: write('') + end()",
+        GET11,
+        (res: any) => {
+          res.write("");
+          res.end();
+        },
+        {
+          head: "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked",
+          body: "0\r\n\r\n",
+          framing: "chunked",
+          connection: "reused",
+        },
+      ],
+      [
+        "Content-Length: writeHead() + write('') + end(data)",
+        GET11,
+        (res: any) => {
+          res.writeHead(200, { "Content-Length": "5" });
+          res.write("");
+          res.end("hello");
+        },
+        {
+          head: "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nDate: <D>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5",
+          body: "hello",
+          framing: "content-length",
+          connection: "reused",
+        },
+      ],
+      [
+        "Content-Length: write('') + write(data) + end()",
+        GET11,
+        (res: any) => {
+          res.setHeader("Content-Length", "5");
+          res.write("");
+          res.write("hello");
+          res.end();
+        },
+        {
+          head: "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nDate: <D>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5",
+          body: "hello",
+          framing: "content-length",
+          connection: "reused",
+        },
+      ],
+      [
+        "HTTP/1.0: write('') + end(data)",
+        "GET / HTTP/1.0\r\nHost: x\r\n\r\n",
+        (res: any) => {
+          res.write("");
+          res.end("hello");
+        },
+        {
+          head: "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close",
+          body: "hello",
+          framing: "close-delimited",
+          connection: "closed",
+        },
+      ],
+      [
+        "close-delimited: write('') + end(data)",
+        GET11,
+        (res: any) => {
+          res.useChunkedEncodingByDefault = false;
+          res.write("");
+          res.end("hello");
+        },
+        {
+          head: "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close",
+          body: "hello",
+          framing: "close-delimited",
+          connection: "closed",
+        },
+      ],
+    ] as const)("%s", async (_, request, respond, expected) => {
+      expect(await exchange((req, res) => respond(res), request)).toEqual(expected);
+    });
+  });
 });

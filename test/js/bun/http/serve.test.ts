@@ -3344,6 +3344,44 @@ it.concurrent("should not send extra bytes when using sendfile", async () => {
   expect(content_length).toBe(payload.byteLength);
 });
 
+it.concurrent("an empty first stream chunk does not change the framing of the response", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(0));
+            controller.enqueue("hello");
+            controller.close();
+          },
+        }),
+      );
+    },
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const socket = net.connect(server.port!, "localhost", () => {
+    socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+  });
+  let raw = "";
+  socket.on("data", (data: Buffer) => (raw += data.toString("latin1")));
+  socket.on("error", reject);
+  socket.on("close", () => resolve(raw));
+
+  const response = await promise;
+  const [head, body] = response.split("\r\n\r\n");
+  expect({
+    status: head.split("\r\n")[0],
+    body,
+    framing: head.split("\r\n").filter(l => /^(content-length|transfer-encoding):/i.test(l)),
+  }).toEqual({
+    status: "HTTP/1.1 200 OK",
+    body: "hello",
+    framing: ["Content-Length: 5"],
+  });
+});
+
 it.concurrent("we should always send date", async () => {
   const payload = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   const tmpFile = join(tmpdirSync(), "test.bin");

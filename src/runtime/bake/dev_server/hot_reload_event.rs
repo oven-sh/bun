@@ -357,6 +357,11 @@ impl HotReloadEvent {
             TestingBatchEvents::EnableAfterBundle => debug_assert!(false),
         }
 
+        // Before the plugins are loaded nothing is bundled, so the first request bundles these files.
+        if dev_ref.plugin_state != PluginState::Loaded {
+            return;
+        }
+
         if let Err(_err) = dev_ref.start_async_bundle(entry_points, true, timer) {
             return;
         }

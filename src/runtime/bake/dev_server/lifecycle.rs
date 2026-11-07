@@ -100,7 +100,17 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             }
         );
         w!(source_maps, SourceMapStore::empty());
-        w!(plugin_state, PluginState::Unknown);
+        w!(
+            plugin_state,
+            if options.bundler_options.pending_plugin_setup.is_some() {
+                // `ServePlugins::adopt_pending_app_setup` tells the dev server when the last `setup()` has settled.
+                PluginState::Pending
+            } else if options.bundler_options.plugin.is_some() {
+                PluginState::Loaded
+            } else {
+                PluginState::Unknown
+            }
+        );
         w!(bundling_failures, Default::default());
         w!(
             assume_perfect_incremental_bundling,

@@ -59,6 +59,7 @@ JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_generateDeferPromise);
+JSC_DECLARE_CUSTOM_GETTER(jsBundlerPluginGetter_tombstoned);
 
 void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, unsigned& index)
 {
@@ -116,6 +117,7 @@ static const HashTableValue JSBundlerPluginHashTable[] = {
     { "onResolveAsync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onResolveAsync, 4 } },
     { "onBeforeParse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onBeforeParse, 4 } },
     { "generateDeferPromise"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_generateDeferPromise, 0 } },
+    { "tombstoned"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsBundlerPluginGetter_tombstoned, 0 } },
 };
 
 class JSBundlerPlugin final : public JSC::JSDestructibleObject {
@@ -222,6 +224,15 @@ static JSBundlerPlugin* pluginReceiver(JSC::JSGlobalObject* globalObject, JSC::C
     if (!thisObject) [[unlikely]]
         Bun::throwInvalidThisCallError(globalObject, callFrame, "BundlerPlugin"_s);
     return thisObject;
+}
+
+/// `BundlerPlugin.prototype.tombstoned: boolean`. `runSetupFunction` reads it before a `setup()` of `Bun.serve({ app })` that a pending one held back.
+JSC_DEFINE_CUSTOM_GETTER(jsBundlerPluginGetter_tombstoned, (JSC::JSGlobalObject*, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* thisObject = dynamicDowncast<JSBundlerPlugin>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(thisObject->plugin.tombstoned));
 }
 
 /// `BundlerPlugin.prototype.addFilter(filter: RegExp, namespace: string, isOnLoad: 0 | 1): void`
@@ -561,6 +572,7 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
     this->putDirect(vm, Identifier::fromString(vm, String("onResolve"_s)), jsUndefined(), 0);
     this->putDirect(vm, Identifier::fromString(vm, String("onEndCallbacks"_s)), jsUndefined(), 0);
     this->putDirect(vm, Identifier::fromString(vm, String("promises"_s)), jsUndefined(), 0);
+    this->putDirect(vm, Identifier::fromString(vm, String("pendingSetup"_s)), jsUndefined(), 0);
     Bun::reifyStaticPropertyTable(vm, JSBundlerPlugin::info(), JSBundlerPluginHashTable, *this);
 }
 

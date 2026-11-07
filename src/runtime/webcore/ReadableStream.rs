@@ -408,7 +408,7 @@ impl ReadableStream {
                 }
                 set_source(SourceHandle::FileReader(file_reader));
                 file_reader.parent_const().set_sink_owner(owner_cell);
-                file_reader.sink.set(sink);
+                file_reader.attach_sink(sink);
                 file_reader.sink_paused.set(true);
                 file_reader.pull_into_sink();
                 return NativeWireResult::Wired;

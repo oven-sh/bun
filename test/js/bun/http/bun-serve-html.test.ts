@@ -1021,6 +1021,39 @@ describe("html route whose file a plugin resolves to a different file", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/22887
+// The server and the page's bundler read a package.json from one shared cache. The server reads
+// it first here, and selects "main". The page still takes the file that "browser" names.
+test.concurrent('an html route takes the "browser" file of a package that the server imports too', async () => {
+  using dir = tempDir("bun-serve-html-browser-main-field", {
+    "node_modules/dual/package.json": JSON.stringify({ name: "dual", main: "./node.js", browser: "./browser.js" }),
+    "node_modules/dual/node.js": `module.exports = "dual/node.js";`,
+    "node_modules/dual/browser.js": `module.exports = "dual/browser.js";`,
+    "index.html": `<!DOCTYPE html><html><head></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `import it from "dual"; console.log(it);`,
+    "serve.ts": /*ts*/ `
+      import it from "dual";
+      import page from "./index.html";
+
+      async function pageTakes(development) {
+        using server = Bun.serve({ port: 0, development, routes: { "/": page } });
+        const html = await (await fetch(server.url)).text();
+        const script = await (await fetch(new URL(html.match(/<script[^>]*\\ssrc="([^"]+)"/)[1], server.url))).text();
+        return /"(dual\\/\\w+\\.js)"/.exec(script)?.[1];
+      }
+
+      console.log(JSON.stringify({ server: it, production: await pageTakes(false), development: await pageTakes(true) }));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect(stdout === "" ? stderr : JSON.parse(stdout)).toEqual({
+    server: "dual/node.js",
+    production: "dual/browser.js",
+    development: "dual/browser.js",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // server.reload() hands the dev server a new route object for the same html
 // file. The dev server used to give it a second route bundle and deliver the
 // bundled html there, so a request that was deferred on the original bundle

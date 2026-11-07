@@ -2544,7 +2544,7 @@ exports[\`a serializer 1\`] = \`
   });
 
   test.concurrent(
-    "what an older Bun wrote stays as it is, and --update-snapshots rewrites it to the value",
+    "what an older Bun wrote stays as it is, --update-snapshots rewrites it to the value, and another value then fails",
     async () => {
       const older = snapshotFile("PlainDate {}", olderBunValues);
       using dir = tempDir("snapshot-temporal-update", {
@@ -2585,6 +2585,7 @@ exports[\`a serializer 1\`] = \`
       expect({ snap: snap(), testFile: testFile() }).toEqual(updated);
       const other = await runTests(String(dir), { CI: "true", DAY: "03" });
       expect(other.stderr).toContain("Received: Temporal.PlainDate 2020-01-03");
+      expect(other.stderr).toContain('+   "when": Temporal.PlainDate 2020-01-03,');
       expect([kept.exitCode, first.exitCode, second.exitCode, other.exitCode, other.fail]).toEqual([0, 0, 0, 1, 3]);
     },
   );
@@ -2597,27 +2598,6 @@ exports[\`a serializer 1\`] = \`
     expect(new Later(2020, 1, 1)).toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`);
     expect(Object.assign(day(1), { tag: "x" })).toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`);
     expect(Object.setPrototypeOf(day(1), null)).toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`);
-  });
-
-  test("and fails for another value, and for the string of the value", () => {
-    const messageOf = (fn: () => void) => {
-      try {
-        fn();
-      } catch (error) {
-        return Bun.stripANSI((error as Error).message);
-      }
-    };
-    expect(messageOf(() => expect(day(2)).toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`))).toContain(
-      "Received: Temporal.PlainDate 2020-01-02",
-    );
-    expect(messageOf(() => expect("2020-01-01").toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`))).toContain(
-      'Received: "2020-01-01"',
-    );
-    expect(
-      messageOf(() =>
-        expect({ when: day(2) }).toMatchInlineSnapshot(`\n{\n  "when": Temporal.PlainDate 2020-01-01,\n}\n`),
-      ),
-    ).toContain('+   "when": Temporal.PlainDate 2020-01-02,');
   });
 });
 

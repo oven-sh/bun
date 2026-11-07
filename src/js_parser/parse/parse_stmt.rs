@@ -557,7 +557,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TVar => {
                     is_var = true;
                     p.lexer.next()?;
-                    let mut stmt_opts = ParseStatementOptions::default();
+                    let mut stmt_opts = ParseStatementOptions {
+                        is_for_loop_init: true,
+                        ..Default::default()
+                    };
                     let decls =
                         p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?;
                     decls_ptr = bun_ast::StoreSlice::new(decls.slice());
@@ -692,15 +695,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ));
             }
 
-            // Only require "const" statement initializers when we know we're a normal for loop
+            // Only require "const"/"using" initializers when we know we're a normal for loop
             if let Some(init_stmt) = &init_ {
-                match &init_stmt.data {
-                    js_ast::StmtData::SLocal(local) => {
-                        if local.kind == js_ast::s::Kind::KConst {
-                            p.require_initializers(js_ast::s::Kind::KConst, decls_ptr.slice())?;
-                        }
+                if let js_ast::StmtData::SLocal(local) = &init_stmt.data {
+                    if local.kind == js_ast::s::Kind::KConst || local.kind.is_using() {
+                        p.require_initializers(local.kind, decls_ptr.slice())?;
                     }
-                    _ => {}
                 }
             }
 

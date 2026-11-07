@@ -5751,6 +5751,10 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
+            // No AST scope is active on this thread. What the link makes here lives in the bundle's heap.
+            let mut ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(self.graph.heap);
+            let ast_scope = ast_memory_store.enter();
+
             self.clone_ast().map_err(|_| AllocError)?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -6129,6 +6133,10 @@ pub mod bv2_impl {
             .map_err(|_| AllocError)?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
+
+            // `finalize_bundle` runs JS and frees the bundle. The state holds the small lists that it reads.
+            drop(ast_scope);
+            let _ast_alloc_state = ast_memory_store.take_ast_state();
 
             dev_server
                 .finalize_bundle(

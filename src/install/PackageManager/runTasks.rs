@@ -382,6 +382,33 @@ fn resolve_waiters_and_notify(
 /// Resolves the dependencies that waited for `task_id` to `pkg`, and fills in the package's name
 /// where a dependency did not know it. Entries that a linker queued stay in the task's list.
 /// Sets `any_root` if an import of the runtime was resolved.
+/// Drops the list of a tarball task that failed. A range that waited for the tarball as its local
+/// source (`Settled::WaitsFor`) takes the registry instead.
+fn forget_failed_tarball_task(manager: &mut PackageManager, task_id: Task::Id, install_peer: bool) {
+    let Some(waiters) = manager.task_queue.remove(&task_id) else {
+        return;
+    };
+    for waiter in waiters {
+        let bun_install::TaskCallbackContext::Dependency(id) = waiter else {
+            continue;
+        };
+        let dependency = manager.lockfile.buffers.dependencies[id as usize].clone();
+        if dependency.version.tag != bun_install::dependency::VersionTag::Npm {
+            continue;
+        }
+        let resolution = manager.lockfile.buffers.resolutions[id as usize];
+        if let Err(err) = enqueue::enqueue_dependency_with_main(
+            manager,
+            id,
+            &dependency,
+            resolution,
+            install_peer,
+        ) {
+            enqueue::add_dependency_error(manager, &dependency, err);
+        }
+    }
+}
+
 pub(crate) fn resolve_waiters_of_appended_package(
     manager: &mut PackageManager,
     task_id: Task::Id,
@@ -1037,7 +1064,7 @@ fn run_tasks_erased(
                         is_required,
                     );
 
-                    let _ = manager.task_queue.remove(&task.task_id);
+                    forget_failed_tarball_task(manager, task.task_id, install_peer);
 
                     continue;
                 };
@@ -1100,7 +1127,7 @@ fn run_tasks_erased(
                         is_required,
                     );
 
-                    let _ = manager.task_queue.remove(&task.task_id);
+                    forget_failed_tarball_task(manager, task.task_id, install_peer);
 
                     continue;
                 }
@@ -1331,7 +1358,7 @@ fn run_tasks_erased(
                     // Void-callback fallback (resolve phase): drain the
                     // `task_queue` entry too so a later install-phase
                     // `enqueuePackageForDownload` doesn't wedge on `found_existing`.
-                    let _ = manager.task_queue.remove(&task.id);
+                    forget_failed_tarball_task(manager, task.id, install_peer);
 
                     continue;
                 }

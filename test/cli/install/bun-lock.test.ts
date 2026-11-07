@@ -1212,21 +1212,21 @@ it("names folder and tarball packages without a package.json name after their fo
         },
       },
       "packages": {
-        "empty-name-dep": ["empty-name-pkg@file:pkgs/empty-name-pkg", {}],
+        "empty-name-dep": ["empty-name-pkg@file:pkgs/empty-name-pkg", { "version": "1.0.0" }],
 
-        "folder-dep": ["folder-pkg@file:pkgs/folder-pkg", {}],
+        "folder-dep": ["folder-pkg@file:pkgs/folder-pkg", { "version": "1.0.0" }],
 
-        "fragment-url-dep": ["pinned-pkg@http://localhost:1234/pinned-pkg.tgz#abc/def", {}, "<integrity>"],
+        "fragment-url-dep": ["pinned-pkg@http://localhost:1234/pinned-pkg.tgz#abc/def", { "version": "1.0.0" }, "<integrity>"],
 
-        "hash-folder-dep": ["c#-utils@file:pkgs/c#-utils", {}],
+        "hash-folder-dep": ["c#-utils@file:pkgs/c#-utils", { "version": "1.0.0" }],
 
-        "odd-folder-dep": ["unnamed-package@file:pkgs/odd@folder", {}],
+        "odd-folder-dep": ["unnamed-package@file:pkgs/odd@folder", { "version": "1.0.0" }],
 
-        "remote-dep": ["remote-pkg@http://localhost:1234/remote-pkg.tgz", {}, "<integrity>"],
+        "remote-dep": ["remote-pkg@http://localhost:1234/remote-pkg.tgz", { "version": "1.0.0" }, "<integrity>"],
 
-        "signed-url-dep": ["signed-pkg@http://localhost:1234/signed-pkg.tgz?token=abc/def", {}, "<integrity>"],
+        "signed-url-dep": ["signed-pkg@http://localhost:1234/signed-pkg.tgz?token=abc/def", { "version": "1.0.0" }, "<integrity>"],
 
-        "tarball-dep": ["tarball-pkg@./tarball-pkg.tgz", {}, "<integrity>"],
+        "tarball-dep": ["tarball-pkg@./tarball-pkg.tgz", { "version": "1.0.0" }, "<integrity>"],
       }
     }
     "
@@ -1253,7 +1253,7 @@ it("names folder and tarball packages without a package.json name after their fo
   await write(packageJson, JSON.stringify({ name: "deps-without-names", dependencies }));
   await runBunInstall(env, packageDir);
   expect(await file(join(packageDir, "bun.lock")).text()).toContain(
-    '"folder-dep-again": ["folder-pkg@file:pkgs/folder-pkg", {}]',
+    '"folder-dep-again": ["folder-pkg@file:pkgs/folder-pkg", { "version": "1.0.0" }]',
   );
 });
 
@@ -3197,9 +3197,9 @@ it.concurrent.each(["hoisted", "isolated"] as const)(
   },
 );
 
-// Only the registry can resolve a range, so the install that writes bun.lock leaves this one unresolved. Loading
-// bun.lock used to bind it to the root's package with that name. That gave a second copy of a folder, which never
-// hoists, or (with the isolated linker) a link that the first install didn't create.
+// The root's package answers the range, as in npm, because its version satisfies it. The install that writes
+// bun.lock binds the dependency without asking the registry, and a frozen install reads that binding, so both
+// install the same files. Loading bun.lock used to bind an unresolved range to the root's package by name only.
 describe.each(["hoisted", "isolated"] as const)(
   "optional dependency the registry does not have, with a local package of that name at the root (%s linker)",
   linker => {
@@ -3240,10 +3240,11 @@ describe.each(["hoisted", "isolated"] as const)(
         ).toSorted();
 
       await installWithOwnCache(String(dir));
-      expect(registry.requests).toEqual(["/local"]);
+      expect(registry.requests).toEqual([]);
       const lockfile = await file(lockfilePath).text();
+      expect(lockfile).not.toContain("dependent/local");
       const fresh = installed();
-      expect(fresh.filter(path => path.endsWith("local"))).not.toBeEmpty();
+      expect(fresh).toContain(join("node_modules", "local"));
 
       await installWithOwnCache(String(dir), "--frozen-lockfile");
       expect(installed()).toEqual(fresh);
@@ -3254,10 +3255,10 @@ describe.each(["hoisted", "isolated"] as const)(
   },
 );
 
-// npm lets the root's folder answer the range. The migration keeps that, and a folder never hoists,
-// so bun.lock has a row for the dependent's own copy.
+// npm lets the root's folder answer the range. The migration keeps that, and the range shares the
+// folder's row at the root, as a fresh install would.
 it.concurrent.each(["hoisted", "isolated"] as const)(
-  "an optional dependency keeps the folder bun.lock prints under its dependent (%s linker)",
+  "an optional dependency keeps the root's folder that package-lock.json binds it to (%s linker)",
   async linker => {
     using registry = await serveRegistry({});
     const dependencies = { local: "file:vendor/local", dependent: "file:vendor/dependent" };
@@ -3287,7 +3288,9 @@ it.concurrent.each(["hoisted", "isolated"] as const)(
       ).toSorted();
 
     await installWithOwnCache(String(dir));
-    expect(await file(join(String(dir), "bun.lock")).text()).toContain('"dependent/local": ["local@file:vendor/local"');
+    const lockfile = await file(join(String(dir), "bun.lock")).text();
+    expect(lockfile).toContain('"local": ["local@file:vendor/local"');
+    expect(lockfile).not.toContain('"dependent/local"');
     const migrated = installed();
 
     await rm(join(String(dir), "node_modules"), { recursive: true });
@@ -5099,7 +5102,9 @@ describe.concurrent("re-resolving file: dependencies declared by a file: package
 
     await run(["install", "--save-text-lockfile", "--lockfile-only"]);
     const lockfile = await file(join(packageDir, "bun.lock")).text();
-    expect(lockfile).toContain('"a": ["a@file:vendor/a", { "dependencies": { "b": "file:../b" } }]');
+    expect(lockfile).toContain(
+      '"a": ["a@file:vendor/a", { "version": "1.0.0", "dependencies": { "b": "file:../b" } }]',
+    );
     expect(lockfile).toContain('"a/b": ["b@file:vendor/b", {}]');
   });
 
@@ -5155,13 +5160,15 @@ describe.concurrent("re-resolving file: dependencies declared by a file: package
     const run = makeInstallRunner(packageDir);
 
     await run(["install"]);
-    expect(await file(join(packageDir, "bun.lock")).text()).toContain('"ws1/b": ["b@file:vendor/b2", {}]');
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain(
+      '"ws1/b": ["b@file:vendor/b2", { "version": "2.0.0" }]',
+    );
 
     await write(packageJson, workspaceRoot());
     await run(["install"]);
     const lockfile = await file(join(packageDir, "bun.lock")).text();
     expect(lockfile).toContain('"b": "file:../../vendor/b"');
-    expect(lockfile).toContain('"ws1/b": ["b@file:vendor/b", {}]');
+    expect(lockfile).toContain('"ws1/b": ["b@file:vendor/b", { "version": "1.0.0" }]');
     expect(await installedVersion(packageDir, "packages", "ws1", "node_modules", "b")).toBe("1.0.0");
     await run(["install", "--frozen-lockfile"]);
   });
@@ -5759,7 +5766,7 @@ describe.each(["hoisted", "isolated"] as const)(
 
       await project.expectInstallToSaveLockfile();
       expect(await lock()).toContain(
-        `"vdir@file:vendor/vdir", { "dependencies": { "no-deps": "1.0.0" }${"scripts" in vdirExtra ? `, "hasInstallScript": true` : ""} }]`,
+        `"vdir@file:vendor/vdir", { "version": "1.0.0", "dependencies": { "no-deps": "1.0.0" }${"scripts" in vdirExtra ? `, "hasInstallScript": true` : ""} }]`,
       );
       return project;
     }
@@ -5778,7 +5785,7 @@ describe.each(["hoisted", "isolated"] as const)(
       await project.expectInstallToSaveLockfile();
 
       expect(await project.lock()).toContain(
-        `"vdir@file:vendor/vdir", { "dependencies": { "a-dep": "1.0.2", "no-deps": "1.0.0" } }`,
+        `"vdir@file:vendor/vdir", { "version": "1.0.0", "dependencies": { "a-dep": "1.0.2", "no-deps": "1.0.0" } }`,
       );
       expect(await project.lock()).toContain(`"a-dep@1.0.2"`);
       expect(await project.versionsResolvedByVdir()).toEqual({
@@ -5802,7 +5809,7 @@ describe.each(["hoisted", "isolated"] as const)(
       await project.expectInstallToSaveLockfile();
 
       expect(await project.lock()).toContain(
-        `"vdir@file:vendor/vdir", { "dependencies": { "a-dep": "^1.0.3" }, "optionalDependencies": { "no-deps-bins": "1.0.0" }, "peerDependencies": { "basic-1": "^1.0.0" } }`,
+        `"vdir@file:vendor/vdir", { "version": "1.0.0", "dependencies": { "a-dep": "^1.0.3" }, "optionalDependencies": { "no-deps-bins": "1.0.0" }, "peerDependencies": { "basic-1": "^1.0.0" } }`,
       );
       expect(await project.lock()).not.toContain(`"no-deps@`);
       expect(await project.versionsResolvedByVdir()).toMatchObject({
@@ -5821,7 +5828,7 @@ describe.each(["hoisted", "isolated"] as const)(
       await project.expectInstallToSaveLockfile();
 
       expect(await project.lock()).toContain(
-        `"vdir@file:vendor/vdir", { "dependencies": { "no-deps": "1.0.0" }, "bin": { "vdir-cli": "index.js" } }`,
+        `"vdir@file:vendor/vdir", { "version": "1.0.0", "dependencies": { "no-deps": "1.0.0" }, "bin": { "vdir-cli": "index.js" } }`,
       );
       expect(Bun.which("vdir-cli", { PATH: join(project.packageDir, "node_modules", ".bin") })).not.toBeNull();
       await project.expectInstallToBeANoop();
@@ -5835,7 +5842,7 @@ describe.each(["hoisted", "isolated"] as const)(
       await project.expectInstallToSaveLockfile();
 
       expect(await project.lock()).toContain(
-        `"vdir@file:vendor/vdir", { "dependencies": { "a-dep": "1.0.2", "no-deps": "1.0.0" }, "bin": "index.js" }`,
+        `"vdir@file:vendor/vdir", { "version": "1.0.0", "dependencies": { "a-dep": "1.0.2", "no-deps": "1.0.0" }, "bin": "index.js" }`,
       );
       expect(await project.lock()).toContain(`"a-dep@1.0.2"`);
       // the hoisted linker hoists vdir and its bin to the root, the isolated linker links them into the workspace
@@ -5855,7 +5862,7 @@ describe.each(["hoisted", "isolated"] as const)(
       await project.expectInstallToSaveLockfile();
 
       expect(await project.lock()).toContain(
-        `"vdir@file:vendor/vdir", { "dependencies": { "a-dep": "1.0.2", "no-deps": "1.0.0" } }`,
+        `"vdir@file:vendor/vdir", { "version": "1.0.0", "dependencies": { "a-dep": "1.0.2", "no-deps": "1.0.0" } }`,
       );
       expect(await project.lock()).toContain(`"a-dep@1.0.2"`);
       await project.expectInstallToBeANoop();

@@ -296,6 +296,7 @@ pub fn install_with_manager(
                         .scripts
                         .clone_into(&lockfile.buffers.string_bytes, builder);
                     builder.clamp();
+                    manager.lockfile.index_all_local_sources()?;
                     if bare_update {
                         transitive = TransitiveUpdate::plan(manager, &direct_deps_before)?;
                         transitive.enqueue(manager)?;
@@ -498,6 +499,7 @@ pub fn install_with_manager(
                         .overridden_names
                         .clone_from(&all_name_hashes);
                     let rows = lockfile::DependencySlice::new(off, len);
+                    manager.lockfile.index_all_local_sources()?;
                     Diff::keep_while_refreshing(manager, 0, root.dependencies, rows);
 
                     let invalidates_rows = (manager.summary.overrides_changed
@@ -2371,6 +2373,7 @@ fn clean_lockfile(
     // lockfile.
     manager.lockfile.package_extensions.rules =
         core::mem::take(&mut before_clean.package_extensions.rules);
+    manager.lockfile.index_all_local_sources()?;
     // The log had no errors before this, so the tree builder refused a name. Stop before the linker
     // runs.
     if manager.log_mut().has_errors() {

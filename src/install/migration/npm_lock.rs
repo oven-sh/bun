@@ -401,7 +401,7 @@ impl<'a> Migrator<'a> {
             os: parse_platform_list(pkg.get(b"os"), Npm::OperatingSystem::ALL)?,
             libc: parse_platform_list(pkg.get(b"libc"), Npm::Libc::NONE)?,
 
-            man_dir: SemverString::default(),
+            package_json_version: SemverString::default(),
 
             has_install_script: if let Some(h) = pkg.get(b"hasInstallScript") {
                 let E::JsonValue::Boolean(b) = h else {

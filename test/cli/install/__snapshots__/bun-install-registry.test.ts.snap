@@ -155,13 +155,13 @@ exports[`binaries each type of binary serializes correctly to text lockfile 1`] 
     },
   },
   "packages": {
-    "dir-bin": ["dir-bin@file:dir-bin", { "binDir": "./bins" }],
+    "dir-bin": ["dir-bin@file:dir-bin", { "version": "1.1.1", "binDir": "./bins" }],
 
-    "file-bin": ["file-bin@file:file-bin", { "bin": "./file-bin.js" }],
+    "file-bin": ["file-bin@file:file-bin", { "version": "1.1.1", "bin": "./file-bin.js" }],
 
-    "map-bin": ["map-bin@file:map-bin", { "bin": { "map-bin-1": "./map-bin-1.js", "map-bin-2": "./map-bin-2.js" } }],
+    "map-bin": ["map-bin@file:map-bin", { "version": "1.1.1", "bin": { "map-bin-1": "./map-bin-1.js", "map-bin-2": "./map-bin-2.js" } }],
 
-    "named-file-bin": ["named-file-bin@file:named-file-bin", { "bin": { "named-file-bin": "./named-file-bin.js" } }],
+    "named-file-bin": ["named-file-bin@file:named-file-bin", { "version": "1.1.1", "bin": { "named-file-bin": "./named-file-bin.js" } }],
   }
 }
 "

@@ -44,11 +44,8 @@ pub(crate) struct Printer {
     pub(crate) x_ind: i32,
     pub(crate) x_sp: i32,
     pub(crate) x_remeasure: i32,
-    /// WAIT_SUFFIX: line suffixes wait for the end of the line; WAIT_CURSOR: see Op.Cursor
+    /// WAIT_SUFFIX: line suffixes wait for the end of the line
     pub(crate) x_waiting: i32,
-    /// Where the output stood at each `cursor` command.
-    pub(crate) cursor_positions: Vec<i32>,
-    pub(crate) cursor_count: i32,
     pub(crate) x_stub: i32,
     /// slow_step() is called from inside a group that is printed flat without a look at the column
     pub(crate) x_all_flat: bool,
@@ -83,8 +80,6 @@ impl Printer {
             x_sp: 0,
             x_remeasure: 0,
             x_waiting: 0,
-            cursor_positions: zeros(2),
-            cursor_count: 0,
             x_stub: 0,
             x_all_flat: false,
             has_wrong_guess: false,
@@ -120,7 +115,18 @@ pub(crate) const IT_PREFIX_WIDTH: i32 = 13;
 pub(crate) const IT_REAL_SPACES: i32 = 14;
 // More than the output buffer ever holds (see grow_out()): "is there room for the indentation?" is what sends print_doc() there.
 pub(crate) const HUGE: i32 = 1 << 30;
+const WIDEST: i32 = 1 << 28;
 impl Quick {
+    /// The numbers of an indentation are added up and multiplied by the width of a tab from one record to the next. One of WIDEST columns
+    /// is more than is ever written: it ends the run.
+    fn is_too_wide(&mut self, columns: i64) -> bool {
+        if columns < WIDEST as i64 {
+            return false;
+        }
+        self.end_run(why::TOO_LARGE);
+        true
+    }
+
     /// `from`: the record whose prefix the new one starts with; -1 for none.
     pub(crate) fn new_indent(
         &mut self,
@@ -136,6 +142,29 @@ impl Quick {
         }
         let r = self.printer.it_pos;
         self.printer.it_pos = r + IT_STRIDE;
+        let prefix_length = if from < 0 {
+            0
+        } else {
+            self.printer.it.at(from + IT_PREFIX_LEN)
+        };
+        let tab_width = if self.options.use_tabs {
+            self.options.tab_width
+        } else {
+            1
+        };
+        let columns = flushed as i64 * tab_width as i64
+            + last_spaces as i64
+            + if prefix_length != 0 {
+                self.printer.it.at(from + IT_PREFIX_WIDTH) as i64
+            } else {
+                0
+            };
+        let (flushed, last_tabs, last_spaces) =
+            if self.is_too_wide(columns) || self.is_too_wide(last_tabs as i64) {
+                (0, 0, 0)
+            } else {
+                (flushed, last_tabs, last_spaces)
+            };
         let mut width: i32;
         let spaces: i32;
         if self.options.use_tabs {
@@ -147,11 +176,6 @@ impl Quick {
             self.printer.it.put(r + IT_TABS, 0);
             spaces = flushed + last_spaces;
         }
-        let prefix_length = if from < 0 {
-            0
-        } else {
-            self.printer.it.at(from + IT_PREFIX_LEN)
-        };
         if prefix_length != 0 {
             self.printer
                 .it
@@ -222,10 +246,15 @@ impl Quick {
             i += 1;
         }
         self.printer.ib_pos = at + total;
-        let width = self.printer.it.at(r + IT_PREFIX_WIDTH)
-            + tabs * self.options.tab_width
-            + spaces
-            + length;
+        let width = self.printer.it.at(r + IT_PREFIX_WIDTH) as i64
+            + tabs as i64 * self.options.tab_width as i64
+            + spaces as i64
+            + length as i64;
+        let width = if self.is_too_wide(width) {
+            0
+        } else {
+            width as i32
+        };
         let child = self.new_indent(r, 0, 0, 0, self.printer.it.at(r + IT_ROOT), -1);
         self.printer.it.put(child + IT_PREFIX, at);
         self.printer.it.put(child + IT_PREFIX_LEN, total);
@@ -635,10 +664,6 @@ impl Quick {
                     pc += 1;
                     continue;
                 }
-                op::Cursor => {
-                    pc += 1;
-                    continue;
-                }
                 op::SuffixClose | op::End => {
                     return true;
                 }
@@ -650,7 +675,6 @@ impl Quick {
     }
 }
 pub(crate) const WAIT_SUFFIX: i32 = 1;
-pub(crate) const WAIT_CURSOR: i32 = 2;
 impl Quick {
     /// For whoever finds out in another way that a short cut should not have been taken.
     pub(crate) fn redo(&self) -> Stop {
@@ -685,7 +709,6 @@ impl Quick {
         let root_indent = self.new_indent(0, 0, 0, 0, 0, -1);
         self.printer.sx_end = 0;
         self.printer.sx_start = 0;
-        self.printer.cursor_count = 0;
         self.printer.has_wrong_guess = false;
         self.printer.x_stub = stub;
         let sixteen_spaces = u128::from_le_bytes([32; 16]);
@@ -1786,17 +1809,6 @@ impl Quick {
                     {
                         return Err(self.rare(rare::BROKEN));
                     }
-                    if (waiting & WAIT_CURSOR) != 0 {
-                        // the white space at the end of the line is gone, and a cursor that stood in it stands at the end of the line
-                        let mut i: i32 = 0;
-                        while i < self.printer.cursor_count {
-                            if self.printer.cursor_positions.at(i) > o {
-                                self.printer.cursor_positions.put(i, o);
-                            }
-                            i += 1;
-                        }
-                        waiting &= !WAIT_CURSOR;
-                    }
                     let tabs = self.printer.it.at(r + IT_TABS);
                     let spaces = self.printer.it.at(r + IT_REAL_SPACES);
                     let prefix_length = self.printer.it.at(r + IT_PREFIX_LEN);
@@ -2006,22 +2018,11 @@ impl Quick {
                             self.printer.sx_start = v0;
                         }
                     }
-                    waiting = (waiting & WAIT_CURSOR)
-                        | (if self.printer.sx_start != self.printer.sx_end {
-                            WAIT_SUFFIX
-                        } else {
-                            0
-                        });
-                }
-                op::Cursor => {
-                    if self.printer.cursor_count < 2 {
-                        self.printer
-                            .cursor_positions
-                            .put(self.printer.cursor_count, o);
-                        self.printer.cursor_count += 1;
-                    }
-                    waiting |= WAIT_CURSOR;
-                    pc += 1;
+                    waiting = if self.printer.sx_start != self.printer.sx_end {
+                        WAIT_SUFFIX
+                    } else {
+                        0
+                    };
                 }
                 op::SuffixBoundary => {
                     if (waiting & WAIT_SUFFIX) == 0 {

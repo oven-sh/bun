@@ -549,18 +549,7 @@ fn format_block_in(
     scratch: &mut Scratches,
 ) -> bool {
     // The name only says which language it is.
-    let is_script = [
-        &b".js"[..],
-        b".jsx",
-        b".ts",
-        b".tsx",
-        b".mjs",
-        b".cjs",
-        b".mts",
-        b".cts",
-    ]
-    .iter()
-    .any(|extension| path.ends_with(extension))
+    let is_script = files::has_script_extension(path)
         && options.filepath.is_none()
         && options.parser.is_none()
         && !matches!(code, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..]);
@@ -1174,20 +1163,6 @@ pub fn format_for_tests(
     text: &[u8],
     options: &FormatOptions,
 ) -> Result<(Vec<u8>, Option<u32>), FormatFailure> {
-    format_for_tests_with(path, text, options, &mut ScratchForTests::default())
-}
-
-/// What a thread of `bun fmt` keeps from one file to the next.
-#[derive(Default)]
-pub struct ScratchForTests(Scratches);
-
-/// The same with buffers that have been used for other files, as in a run over many files.
-pub fn format_for_tests_with(
-    path: &[u8],
-    text: &[u8],
-    options: &FormatOptions,
-    scratch: &mut ScratchForTests,
-) -> Result<(Vec<u8>, Option<u32>), FormatFailure> {
     let resolved = Resolved {
         options: FormatOptions {
             format_javascript: Some(format_block),
@@ -1204,7 +1179,7 @@ pub fn format_for_tests_with(
         text,
         &resolved,
         (&Interner::new_in(&names), &names),
-        &mut scratch.0,
+        &mut Scratches::default(),
         false,
     )
     .map_err(|failure| match failure {

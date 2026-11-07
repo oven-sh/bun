@@ -9,18 +9,82 @@
 
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
-    EXT_AT, F_ACCESSOR, F_ASSERTS, F_ASYNC, F_CHAIN, F_COMPUTED, F_CONST, F_DEFINITE, F_ESCAPE,
-    F_EXT, F_EXTRA, F_GENERATOR, F_IN, F_OPTIONAL, F_OUT, F_PAREN, F_STATIC, IK_SHIFT, IK_TYPE,
+    EXT_AT, F_ACCESSOR, F_ASSERTS, F_ASYNC, F_CHAIN, F_COMPUTED, F_CONST, F_DEFINITE, F_EXT,
+    F_EXTRA, F_GENERATOR, F_IN, F_OPTIONAL, F_OUT, F_PAREN, F_STATIC, IK_SHIFT, IK_TYPE,
     M_CONSTRUCTOR, M_GET, M_METHOD, M_SET, MK_GLOBAL, MK_MODULE, MK_NAMESPACE, MOD_ABSTRACT,
     MOD_ACCESSIBILITY, MOD_DECLARE, MOD_OVERRIDE, MOD_PRIVATE, MOD_PROTECTED, MOD_PUBLIC,
-    MOD_READONLY, MT_MINUS, MT_NONE, MT_PLAIN, MT_PLUS, TO_KEYOF, TO_READONLY, TO_UNIQUE, V_CONST,
-    V_LET, V_USING, V_VAR, k, type_keyword,
+    MOD_READONLY, MT_MINUS, MT_NONE, MT_PLAIN, MT_PLUS, Set, TO_KEYOF, TO_READONLY, TO_UNIQUE,
+    V_CONST, V_LET, V_USING, V_VAR, is_in_set, k, set_of, type_keyword,
 };
 use crate::fast::MEMBER_OF_INTERFACE;
 use crate::lexer::{PREC, kw, tk};
 use crate::parse::core::{TRIAL_GENERIC_ARROW, TRIAL_TYPE_ARGUMENTS};
 use crate::words::w;
 use crate::{Quick, R, Stop, Words, rare, why};
+
+/// The tokens that a type can start with.
+static STARTS_TYPE: Set = set_of(&[
+    tk::Name,
+    tk::String,
+    tk::Num,
+    tk::BigInt,
+    tk::True,
+    tk::False,
+    tk::Null,
+    tk::Void,
+    tk::This,
+    tk::Typeof,
+    tk::New,
+    tk::Import,
+    tk::BraceL,
+    tk::BracketL,
+    tk::ParenL,
+    tk::Lt,
+    tk::BitOr,
+    tk::BitAnd,
+    tk::BackQuote,
+    tk::Sub,
+    tk::Ellipsis,
+    tk::Function,
+    tk::Mul,
+    tk::Question,
+    tk::Not,
+]);
+
+/// The tokens that an expression can start with.
+static STARTS_EXPRESSION: Set = set_of(&[
+    tk::Name,
+    tk::PrivateName,
+    tk::Num,
+    tk::BigInt,
+    tk::String,
+    tk::BackQuote,
+    tk::BraceL,
+    tk::ParenL,
+    tk::BracketL,
+    tk::At,
+    tk::Inc,
+    tk::Dec,
+    tk::Not,
+    tk::Tilde,
+    tk::Lt,
+    tk::Add,
+    tk::Sub,
+    tk::Div,
+    tk::DivEq,
+    tk::Typeof,
+    tk::Void,
+    tk::Delete,
+    tk::Class,
+    tk::False,
+    tk::Function,
+    tk::Import,
+    tk::New,
+    tk::Null,
+    tk::Super,
+    tk::This,
+    tk::True,
+]);
 
 #[derive(Clone, Copy)]
 pub(crate) struct ParseTypescript {
@@ -111,7 +175,7 @@ impl Quick {
     /// The word that the current token is, if it is a name.
     #[inline]
     pub(crate) fn word(&self) -> i32 {
-        return if self.lexer.tok == tk::Name && (self.lexer.tok_flags & F_ESCAPE) == 0 {
+        return if self.lexer.tok == tk::Name {
             self.word_at(self.lexer.tok_start, self.lexer.tok_end)
         } else {
             w::None
@@ -661,37 +725,27 @@ impl Quick {
     }
 
     pub(crate) fn is_start_of_type(&self) -> bool {
-        match self.lexer.tok {
-            tk::Name
-            | tk::String
-            | tk::Num
-            | tk::BigInt
-            | tk::True
-            | tk::False
-            | tk::Null
-            | tk::Void
-            | tk::This
-            | tk::Typeof
-            | tk::New
-            | tk::Import
-            | tk::BraceL
-            | tk::BracketL
-            | tk::ParenL
-            | tk::Lt
-            | tk::BitOr
-            | tk::BitAnd
-            | tk::BackQuote
-            | tk::Sub
-            | tk::Ellipsis
-            | tk::Function
-            | tk::Mul
-            | tk::Question
-            | tk::Not => {
-                return true;
+        return is_in_set(&STARTS_TYPE, self.lexer.tok);
+    }
+
+    /// The current token follows the `?` behind a type and can start a type. TypeScript asks more: a `(` starts a type if what follows it could be in one,
+    /// which it asks of a second `(` in the same way, and a `-` does before a number. Not in `a as B ? (class {}) : c`, `a as B ? -c : d`: there the `?`
+    /// ends a type of JSDoc. Moves the lexer.
+    fn ts_check_start_of_type(&mut self) -> R<()> {
+        let mut depth = 0;
+        while self.lexer.tok == tk::ParenL {
+            depth += 1;
+            self.next()?;
+            if depth > 2 || (self.lexer.tok != tk::ParenR && !self.is_start_of_type()) {
+                return Err(self.text_refuse());
             }
-            _ => {}
         }
-        return false;
+        if self.lexer.tok == tk::Sub
+            && !matches!(self.t.at(self.blanks(self.lexer.tok_end)), 46 | 48..=57)
+        {
+            return Err(self.text_refuse());
+        }
+        Ok(())
     }
 
     pub(crate) fn parse_postfix_type_or_higher(&mut self) -> R<i32> {
@@ -720,20 +774,9 @@ impl Quick {
                 self.next()?;
                 let is_conditional = self.is_start_of_type();
                 if is_conditional {
-                    // A `(` starts a type if what follows it could be in one, a `-` does before a number: not in `a as B ? (class {}) : c`,
-                    // `a as B ? -c : d`. (Where type arguments are tried, `a < b ? -c : d`, there are none either way.)
+                    // (Where type arguments are tried, `a < b ? -c : d`, there are none either way; ts_parse_as_or_satisfies() asks for its own type.)
                     if self.parse.speculating == 0 {
-                        if self.lexer.tok == tk::ParenL {
-                            self.next()?;
-                            if self.lexer.tok != tk::ParenR && !self.is_start_of_type() {
-                                return Err(self.text_refuse());
-                            }
-                        }
-                        if self.lexer.tok == tk::Sub
-                            && !matches!(self.t.at(self.blanks(self.lexer.tok_end)), 46 | 48..=57)
-                        {
-                            return Err(self.text_refuse());
-                        }
+                        self.ts_check_start_of_type()?;
                     }
                     self.restore(saved);
                     return Ok(type_);
@@ -2611,7 +2654,18 @@ impl Quick {
             type_ = if self.parse.typed == FLOW {
                 self.flow_parse_type_fresh()?
             } else {
-                self.ts_parse_type()?
+                let type_ = self.ts_parse_type()?;
+                // In a trial that can come to its end with this expression in it, the type itself has not asked.
+                if self.parse.speculating != 0
+                    && self.lexer.tok == tk::Question
+                    && self.lexer.tok_nl == 0
+                {
+                    let saved = self.save();
+                    self.next()?;
+                    self.ts_check_start_of_type()?;
+                    self.restore(saved);
+                }
+                type_
             };
         }
         // a name in this place can need parentheses: see needs_parens()
@@ -2628,43 +2682,7 @@ impl Quick {
     }
 
     pub(crate) fn is_start_of_expression(&self) -> bool {
-        match self.lexer.tok {
-            tk::Name
-            | tk::PrivateName
-            | tk::Num
-            | tk::BigInt
-            | tk::String
-            | tk::BackQuote
-            | tk::BraceL
-            | tk::ParenL
-            | tk::BracketL
-            | tk::At
-            | tk::Inc
-            | tk::Dec
-            | tk::Not
-            | tk::Tilde
-            | tk::Lt
-            | tk::Add
-            | tk::Sub
-            | tk::Div
-            | tk::DivEq
-            | tk::Typeof
-            | tk::Void
-            | tk::Delete
-            | tk::Class
-            | tk::False
-            | tk::Function
-            | tk::Import
-            | tk::New
-            | tk::Null
-            | tk::Super
-            | tk::This
-            | tk::True => {
-                return true;
-            }
-            _ => {}
-        }
-        return false;
+        return is_in_set(&STARTS_EXPRESSION, self.lexer.tok);
     }
 
     /// Behind `f<T>`: was that a list of type arguments?
@@ -2829,6 +2847,7 @@ impl Quick {
                 } else {
                     from
                 };
+                let looked_from = p;
                 loop {
                     let c = self.t.at(p);
                     if c == 0 || (c == 10 && is_one_token) || c == 59 {
@@ -2843,6 +2862,8 @@ impl Quick {
                     self.parse_typescript.no_call_from = from;
                 }
                 self.parse_typescript.no_call_to = p;
+                // (a trial around this one that fails forgets what has been looked through)
+                self.waste(p - looked_from)?;
             }
         }
         return Ok(result);
@@ -2861,6 +2882,10 @@ impl Quick {
         let mut depth: i32 = 0;
         let mut result = false;
         let mut is_read = false;
+        // Tokens are read here as they are anywhere, so a string or a comment can start in a regular expression or in the text of an element, and hold a `<` that the
+        // parser comes to.
+        let mut is_as_parsed = true;
+        let comments = self.lexer.c_count;
         loop {
             if !is_read && self.next().is_err() {
                 // (a regular expression, or text of JSX, read as something else)
@@ -2909,10 +2934,13 @@ impl Quick {
                     result = true;
                     break;
                 }
+                tk::String | tk::Div | tk::DivEq => {
+                    is_as_parsed = false;
+                }
                 _ => {}
             }
         }
-        if !result {
+        if !result && is_as_parsed && (!self.parse.jsx_enabled || self.lexer.c_count == comments) {
             self.parse_typescript.no_end_from = from;
             self.parse_typescript.no_end_to = self.lexer.tok_start;
         }

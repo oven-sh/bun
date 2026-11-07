@@ -13,11 +13,23 @@ use crate::{Quick, R, Words};
 pub(crate) struct PrintBinaryish {
     /// A node whose leading comments its parent has printed already.
     pub(crate) skip_leading_comments_of: i32,
+    /// The `|` that is_vue_filter_sequence_expression() was asked about last, and its answer, which is that of the `|` around it too.
+    /// Whoever prints an operand puts it back.
+    filters: VueFilters,
+}
+#[derive(Clone, Copy)]
+struct VueFilters {
+    known: i32,
+    known_is_sequence: bool,
 }
 impl PrintBinaryish {
     pub(crate) fn new() -> Self {
         Self {
             skip_leading_comments_of: 0,
+            filters: VueFilters {
+                known: 0,
+                known_is_sequence: false,
+            },
         }
     }
 }
@@ -57,29 +69,52 @@ impl Quick {
     }
 
     /// `a | b | c` at the top of an expression of Vue: every ancestor is another `|`, up to the root.
-    fn is_vue_filter_sequence_expression(&self, n: i32) -> bool {
+    fn is_vue_filter_sequence_expression(&mut self, n: i32) -> bool {
         if (self.n.at(n) & 0xff) != k::BinaryExpression
             || ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 != tk::BitOr
         {
             return false;
         }
-        let mut p = self.n.at(n + 3);
-        while p != 0 {
+        let VueFilters {
+            known,
+            known_is_sequence,
+        } = self.print_binaryish.filters;
+        let mut is_sequence = true;
+        // (a `|` or the root, like all between it and `n`)
+        let mut p = n;
+        loop {
+            // What is around a `|` is around its operand, and what is wrong around the operand is not this `|`.
+            if known != 0 && (p == known || p == self.n.at(known + 3)) {
+                is_sequence = known_is_sequence;
+                break;
+            }
+            p = self.n.at(p + 3);
+            if p == 0 {
+                break;
+            }
             let kind = self.n.at(p) & 0xff;
             if kind != k::JsExpressionRoot
                 && !(kind == k::BinaryExpression
                     && ((self.n.at(p) as u32) >> SUB_SHIFT) as i32 == tk::BitOr)
             {
-                return false;
+                is_sequence = false;
+                break;
             }
-            p = self.n.at(p + 3);
         }
-        return true;
+        self.print_binaryish.filters = VueFilters {
+            known: n,
+            known_is_sequence: is_sequence,
+        };
+        return is_sequence;
     }
 
-    pub(crate) fn line_before_operator(&self, n: i32) -> bool {
-        return (((self.n.at(n) as u32) >> SUB_SHIFT) as i32 == tk::Pipeline
-            || (self.mode.has_vue_filters && self.is_vue_filter_sequence_expression(n)))
+    pub(crate) fn forget_vue_filters(&mut self) {
+        self.print_binaryish.filters.known = 0;
+    }
+
+    pub(crate) fn line_before_operator(&mut self, n: i32) -> bool {
+        return self.mode.has_vue_filters
+            && self.is_vue_filter_sequence_expression(n)
             && !self.has_leading_own_line_comment(self.n.at(n + 5));
     }
 
@@ -108,6 +143,7 @@ impl Quick {
         let left = self.n.at(n + 4);
         let right = self.n.at(n + 5);
         let operator = OPERATOR.at(((self.n.at(n) as u32) >> SUB_SHIFT) as i32);
+        let filters = self.print_binaryish.filters;
         let should_break = self.has_trailing_line_comment(left);
         let should_group = should_break
             || (!(is_inside_parenthesis && k == k::LogicalExpression)
@@ -144,6 +180,7 @@ impl Quick {
             self.line();
             self.print(right)?;
         }
+        self.print_binaryish.filters = filters;
         if should_group {
             self.group_close_with(g, should_break, 0);
         }
@@ -178,7 +215,9 @@ impl Quick {
             return Ok(());
         }
         let g = self.group_open();
+        let filters = self.print_binaryish.filters;
         self.print(left)?;
+        self.print_binaryish.filters = filters;
         self.group_close(g);
         if indent_after_head {
             self.indent_open();

@@ -20,6 +20,8 @@
 //! - Whoever calls itself, directly or not, asks `self.stack()?` first.
 
 #![forbid(unsafe_code)]
+#![feature(optimize_attribute)]
+#![feature(rust_cold_cc)]
 #![allow(
     clippy::needless_late_init,
     clippy::if_same_then_else,
@@ -95,19 +97,22 @@ use std::cell::Cell;
 pub(crate) struct Stop;
 pub(crate) type R<T> = Result<T, Stop>;
 
-pub(crate) mod why {
-    pub(crate) const NONE: i32 = 0;
-    pub(crate) const SYNTAX: i32 = 1;
-    pub(crate) const REDO: i32 = 2;
-    pub(crate) const BUG: i32 = 4;
-    pub(crate) const TOO_LARGE: i32 = 5;
-    pub(crate) const STACK: i32 = 6;
+/// What [`Quick::why`] returns.
+pub mod why {
+    pub const NONE: i32 = 0;
+    pub const SYNTAX: i32 = 1;
+    pub const REDO: i32 = 2;
+    /// A mistake in here.
+    pub const BUG: i32 = 4;
+    /// The text, what is made of it or what is tried on it is too much.
+    pub const TOO_LARGE: i32 = 5;
+    pub const STACK: i32 = 6;
     /// Something rare that is left to the long way.
-    pub(crate) const RARE: i32 = 7;
+    pub const RARE: i32 = 7;
     /// There is code in another language in the file.
-    pub(crate) const GUEST: i32 = 8;
+    pub const GUEST: i32 = 8;
     /// Something was written or read beyond the end of a buffer.
-    pub(crate) const LOST: i32 = 9;
+    pub const LOST: i32 = 9;
 }
 
 /// What is left to the long way: `Quick::which_rare` has the number, for those who count.
@@ -126,6 +131,7 @@ pub(crate) mod rare {
     /// A `,` that starts a line: an empty line behind it is looked for behind the item by one way and behind the comma by the other.
     pub(crate) const COMMA: i32 = 4;
     /// A cell of the table of `test.each` that takes several lines: the long way prints such a cell on one line where it can.
+    /// A line break in a cell of the header, which a host cannot be told about.
     pub(crate) const EACH_TABLE: i32 = 5;
     /// An empty line between two elements of a tuple type: the long way keeps it, and the type broken.
     pub(crate) const TUPLE: i32 = 6;
@@ -137,7 +143,7 @@ pub(crate) mod rare {
     /// TypeScript: `a < b > c`. The long way ends no line with what looks like type arguments.
     pub(crate) const LESS_GREATER: i32 = 9;
     /// A chain of calls in the default value of a parameter of a function that is hugged: it is indented otherwise.
-    /// A call there that hugs a function itself, an element of JSX there.
+    /// A call there that hugs a function itself, an element of JSX there. A function with hugged parameters in a type of another one.
     pub(crate) const HUGGED_CHAIN: i32 = 10;
     /// `<T>` before something that breaks whatever its width, or with a type that does; `<const>`, which the long way never breaks.
     pub(crate) const ASSERTION: i32 = 11;
@@ -146,12 +152,14 @@ pub(crate) mod rare {
     /// Flow: a type guard as the return type of an arrow function, which gets no parentheses though there may be a function type in it;
     /// a `declare module` with nothing in it, whose braces stand on two lines; one parameter and `?{..}` as the return type, of which
     /// the long way breaks the parameter; `<*>` and its like, which the long way does not break, in a type on the left of a `=`.
+    /// A type guard whose type is an object type, and an object type as the key of an indexer: the long way breaks them otherwise.
     pub(crate) const FLOW: i32 = 13;
     /// `tabWidth: 1` and a conditional as a branch of a conditional: the long way moves it by one column where Prettier moves it by two.
     pub(crate) const TAB_WIDTH: i32 = 14;
     /// Where the long way is not Prettier's way, and nobody has said that it should not be: a template with a private name as its tag,
     /// a member with the name `export` in a class of Flow, `A<B<>>` and `(a: B<>)` in Flow, import attributes on several lines with
     /// `objectWrap: "collapse"`, a test call with `?.` in its callee, `boolean | null` in Flow where the group around it is not its own.
+    /// The name of a placeholder of HTML in parentheses.
     pub(crate) const UNLIKE_PRETTIER: i32 = 15;
 }
 
@@ -163,7 +171,7 @@ thread_local! {
 /// The writers trust that somebody has made room. Where that is not so, what they write is lost, and nothing of this run can be trusted.
 #[cold]
 #[inline(never)]
-fn lose() {
+extern "rust-cold" fn lose() {
     LOST.set(true);
 }
 
@@ -613,14 +621,6 @@ pub struct Quick {
     redone: i32,
     /// Where the syntax error is, from the start of the text.
     pub(crate) failed_at: Cell<i32>,
-    #[cfg(feature = "stages")]
-    pub(crate) no_guests: bool,
-    #[cfg(feature = "stages")]
-    stages: [u64; 3],
-    #[cfg(feature = "stages")]
-    keep_stages: bool,
-    #[cfg(feature = "stages")]
-    kept: Vec<Vec<i32>>,
     pub(crate) text: text::Text,
     pub(crate) arena: arena::Arena,
     pub(crate) holes: holes::Holes,
@@ -676,14 +676,6 @@ impl Quick {
             had_bom: false,
             redone: 0,
             failed_at: Cell::new(0),
-            #[cfg(feature = "stages")]
-            no_guests: false,
-            #[cfg(feature = "stages")]
-            stages: [0; 3],
-            #[cfg(feature = "stages")]
-            keep_stages: false,
-            #[cfg(feature = "stages")]
-            kept: Vec::new(),
             text: text::Text::new(),
             arena: arena::Arena::new(),
             holes: holes::Holes::new(),
@@ -801,16 +793,7 @@ impl Quick {
         let redone = self.redone;
         let (why, which_rare, failed_at) =
             (self.why.get(), self.which_rare.get(), self.failed_at.get());
-        let fresh = Self::new();
-        #[cfg(feature = "stages")]
-        let fresh = Self {
-            no_guests: self.no_guests,
-            stages: self.stages,
-            keep_stages: self.keep_stages,
-            kept: std::mem::take(&mut self.kept),
-            ..fresh
-        };
-        *self = fresh;
+        *self = Self::new();
         self.lend_guests(guests);
         self.redone = redone;
         self.why.set(why);
@@ -822,7 +805,7 @@ impl Quick {
     /// for long: the next one who asks for room on the stack is told that there is none, and nothing of what a stage leaves behind is read.
     #[cold]
     #[inline(never)]
-    pub(crate) fn end_run(&mut self, why: i32) {
+    pub(crate) extern "rust-cold" fn end_run(&mut self, why: i32) {
         self.ended = why;
         self.stack_check = bun_core::StackCheck::exhausted();
     }
@@ -850,7 +833,7 @@ impl Quick {
     /// grow() for a buffer that is kept whole. Whoever calls this writes without a look at what has become of it.
     #[cold]
     #[inline(never)]
-    pub(crate) fn make_room<T: Default + Copy>(
+    pub(crate) extern "rust-cold" fn make_room<T: Default + Copy>(
         &mut self,
         buffer: fn(&mut Quick) -> &mut Vec<T>,
         need: i32,

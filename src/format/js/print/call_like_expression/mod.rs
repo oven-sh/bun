@@ -258,21 +258,23 @@ fn is_simple_module_import<'a>(call: Call<'a>, f: &Formatter<'a>) -> bool {
         return false;
     }
     let callee = call.callee();
+    let is_cast = |e: Expr<'a>| is_cast_target_that_hides_its_kind(e, f);
     let is_module_function = match callee.kind() {
         ExprKind::Ident(_) => callee.text() == b"require",
-        ExprKind::Dot { obj, name, .. } => match name.bytes() {
+        ExprKind::Dot { obj, name, .. } if !is_cast(obj) => match name.bytes() {
             b"resolve" => {
                 is_identifier(obj, b"require") || matches!(obj.kind(), ExprKind::ImportMeta)
             }
             b"paths" => matches!(
                 obj.kind(),
-                ExprKind::Dot { obj, name, .. } if is_identifier(obj, b"require") && name.bytes() == b"resolve"
+                ExprKind::Dot { obj, name, .. }
+                    if is_identifier(obj, b"require") && name.bytes() == b"resolve" && !is_cast(obj)
             ),
             _ => false,
         },
         _ => false,
     };
-    is_module_function && is_lone_string_without_comments(call.args(), f)
+    is_module_function && !is_cast(callee) && is_lone_string_without_comments(call.args(), f)
 }
 
 /// `require("a" // comment⏎)` is `require("a"); // comment` for oxfmt.
@@ -287,7 +289,10 @@ fn is_commonjs_or_amd_module_definition<'a>(
     f: &Formatter<'a>,
 ) -> bool {
     let callee = call.callee();
-    if callee.tag() != ExprTag::Ident || call.is_optional() {
+    if callee.tag() != ExprTag::Ident
+        || call.is_optional()
+        || is_cast_target_that_hides_its_kind(callee, f)
+    {
         return false;
     }
     let args = call.args();

@@ -8,7 +8,7 @@
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     F_AFTER_EMPTY, F_BLANK, F_BLANK_LINE, F_COMMENTS, F_ESCAPE, F_EXTRA, F_QUOTE, F_SELF_CLOSING,
-    F_SHORTHAND, F_SLOW_TEXT, k,
+    F_SHORTHAND, F_SLOW_TEXT, Set, is_in_set, k, set_of,
 };
 use crate::holes::FILTER_END_OF_LINE;
 use crate::options::EOL_LF;
@@ -18,6 +18,36 @@ use crate::print::statics::{
     RAW_WHITESPACE_SINGLE, RBRACE, RPAREN, SELF_CLOSE, SLASH_GT, SPACE, SQUOTE,
 };
 use crate::{Quick, R, Words, rare, why, zeros};
+
+/// is_in_odd_place(): the parents in which an element stands in such a place, and those in which their first child does.
+static ODD_PLACES: Set = set_of(&[
+    k::Decorator,
+    k::ClassDeclaration,
+    k::ClassExpression,
+    k::JSXSpreadAttribute,
+    k::AwaitExpression,
+]);
+static ODD_PLACES_OF_KEYS: Set = set_of(&[
+    k::ObjectProperty,
+    k::ObjectMethod,
+    k::ClassMethod,
+    k::ClassProperty,
+]);
+
+/// The parents in which an element that breaks gets no parentheses.
+static PARENTS_WITHOUT_WRAP: Set = set_of(&[
+    k::ArrayExpression,
+    k::JSXAttribute,
+    k::JSXElement,
+    k::JSXExpressionContainer,
+    k::JSXFragment,
+    k::ExpressionStatement,
+    k::JsExpressionRoot,
+    k::NewExpression,
+    k::CallExpression,
+    k::ConditionalExpression,
+    k::MatchExpressionCase,
+]);
 
 pub(crate) struct PrintJsx {
     pub(crate) jx: Vec<i32>,
@@ -907,8 +937,6 @@ impl Quick {
             self.print_jsx.jx_top = saved;
             return Ok(());
         }
-        // printJsxChildren() does not print a JSXText as a node, so the marks of a cursor in one go around all the children
-        let cursor_marks = 0;
         let mut c: i32 = 0;
         let mut st: i32 = 0;
         if !forced_break {
@@ -934,13 +962,7 @@ impl Quick {
             self.print(opening)?;
         }
         self.indent_hardline();
-        if (cursor_marks & 1) != 0 {
-            self.cursor();
-        }
         self.print_multiline_children(base, top, contains_text)?;
-        if (cursor_marks & 2) != 0 {
-            self.cursor();
-        }
         self.dedent_hardline();
         self.print_closing(closing)?;
         self.group_close(g);
@@ -969,17 +991,9 @@ impl Quick {
     /// a key, what a class extends, what is spread into an element or waited for.
     fn is_in_odd_place(&self, n: i32) -> bool {
         let parent = self.n.at(n + 3);
-        match self.n.at(parent) & 0xff {
-            k::Decorator
-            | k::ClassDeclaration
-            | k::ClassExpression
-            | k::JSXSpreadAttribute
-            | k::AwaitExpression => true,
-            k::ObjectProperty | k::ObjectMethod | k::ClassMethod | k::ClassProperty => {
-                self.n.at(parent + 4) == n
-            }
-            _ => false,
-        }
+        let pk = self.n.at(parent) & 0xff;
+        is_in_set(&ODD_PLACES, pk)
+            || (is_in_set(&ODD_PLACES_OF_KEYS, pk) && self.n.at(parent + 4) == n)
     }
 
     pub(crate) fn print_jsx_element(&mut self, n: i32) -> R<()> {
@@ -987,24 +1001,7 @@ impl Quick {
         if self.doc.remove_lines_depth != 0 {
             return Err(self.rare(rare::HUGGED_CHAIN));
         }
-        let mut wrap = true;
-        match self.n.at(self.n.at(n + 3)) & 0xff {
-            k::ArrayExpression
-            | k::JSXAttribute
-            | k::JSXElement
-            | k::JSXExpressionContainer
-            | k::JSXFragment
-            | k::ExpressionStatement
-            | k::JsExpressionRoot
-            | k::NewExpression
-            | k::CallExpression
-            | k::ConditionalExpression
-            | k::MatchExpressionCase => {
-                wrap = false;
-            }
-            _ => {}
-        }
-        if !wrap {
+        if is_in_set(&PARENTS_WITHOUT_WRAP, self.n.at(self.n.at(n + 3)) & 0xff) {
             self.print_leading_comments(n);
             self.print_jsx_element_internal(n)?;
             self.print_trailing_comments(n);

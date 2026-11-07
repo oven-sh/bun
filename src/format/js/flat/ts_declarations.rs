@@ -6,7 +6,7 @@ use super::*;
 /// Writes `member` of an interface, or of a type literal whose members are each on a line. The caller writes the `;`.
 pub(crate) fn write_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) -> bool {
     let least = u32::from(f.options().semicolons.is_always());
-    f.write_line(member.span(), (least, 1), |line| {
+    f.write_line(member.span(), (least, 1), &|line| {
         line.only_in_typescript()?;
         line.type_member(member, true)
     })
@@ -20,7 +20,7 @@ pub(crate) fn write_enum_member<'a>(member: EnumMember<'a>, f: &mut Formatter<'a
             StmtKind::Enum(declaration) if declaration.members().last() == Some(member)
         ));
     let after = u32::from(has_comma);
-    f.write_line(member.span(), (after, after), |line| {
+    f.write_line(member.span(), (after, after), &|line| {
         line.only_in_typescript()?;
         line.enum_member(member)
     })

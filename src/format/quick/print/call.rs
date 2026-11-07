@@ -29,6 +29,9 @@ pub(crate) struct PrintCall {
     pub(crate) chain_should_merge: bool,
     pub(crate) chain_has_comment: bool,
     pub(crate) chain_is_short: bool,
+    // -------------------------------------------------------------------------------------------------- hugged arguments
+    /// How many functions with hugged parameters have their signature open: see print_function().
+    pub(crate) hugged_signatures: i32,
 }
 impl PrintCall {
     pub(crate) fn new() -> Self {
@@ -38,6 +41,7 @@ impl PrintCall {
             chain_should_merge: false,
             chain_has_comment: false,
             chain_is_short: false,
+            hugged_signatures: 0,
         }
     }
 }

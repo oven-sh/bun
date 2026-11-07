@@ -53,7 +53,7 @@ impl Quick {
 
     #[cold]
     #[inline(never)]
-    pub(crate) fn grow_ast(&mut self, need: i32) {
+    pub(crate) extern "rust-cold" fn grow_ast(&mut self, need: i32) {
         if grow(&mut self.n, self.arena.n_pos, need, SPARE) {
             self.arena.n_cap = self.n.len() as i32 - SPARE;
         } else {
@@ -262,7 +262,7 @@ impl Quick {
 
     #[cold]
     #[inline(never)]
-    fn grow_list(&mut self) {
+    extern "rust-cold" fn grow_list(&mut self) {
         self.make_room(|q| &mut q.arena.ls, self.arena.ls_pos + 4);
     }
 

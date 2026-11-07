@@ -7,7 +7,7 @@
 use crate::ast::{F_CHAIN, F_COMPUTED, F_ESCAPE, k};
 use crate::doc::{LABEL_EMBED, LABEL_EMBED_NO_HUG, op};
 use crate::holes::{FILTER_BACKTICK, FILTER_END_OF_LINE, FILTER_UNCOOK};
-use crate::lang::{GUEST_BETWEEN_LINES, lang};
+use crate::lang::lang;
 use crate::options::WHITESPACE_IGNORE;
 use crate::print::statics::{BACKQUOTE, SPACE};
 use crate::scan::is_space;
@@ -412,6 +412,18 @@ impl Quick {
         return value;
     }
 
+    /// The value of the `\uXXXX` or `\u{..}` whose `u` is at p, and where its last byte is.
+    fn unicode_escape(&self, p: i32) -> (i32, i32) {
+        if self.t.at(p + 1) != 123 {
+            return (self.hex_digits_value(p + 1, p + 5), p + 4);
+        }
+        let mut q = p + 2;
+        while self.t.at(q) != 125 {
+            q += 1;
+        }
+        (self.hex_digits_value(p + 2, q), q)
+    }
+
     /// Appends the cooked value of the raw text T[start, end) to the generated area. There is room for it.
     pub(crate) fn gen_cooked(&mut self, start: i32, end: i32) {
         let mut p = start;
@@ -452,31 +464,25 @@ impl Quick {
                         p += 2;
                     }
                     117 => {
-                        if self.t.at(p + 1) == 123 {
-                            let mut q = p + 2;
-                            while self.t.at(q) != 125 {
-                                q += 1;
-                            }
-                            self.gen_code_point(self.hex_digits_value(p + 2, q));
-                            p = q;
-                        } else {
-                            let mut cp = self.hex_digits_value(p + 1, p + 5);
-                            p += 4;
-                            // a surrogate pair is one code point
-                            if cp >= 0xd800
-                                && cp <= 0xdbff
-                                && self.t.at(p + 1) == 92
-                                && self.t.at(p + 2) == 117
-                                && self.t.at(p + 3) != 123
-                            {
-                                let low = self.hex_digits_value(p + 3, p + 7);
-                                if low >= 0xdc00 && low <= 0xdfff {
-                                    cp = 0x10000 + ((cp - 0xd800) << 10) + (low - 0xdc00);
-                                    p += 6;
-                                }
-                            }
-                            self.gen_code_point(cp);
+                        let (mut cp, last) = self.unicode_escape(p);
+                        p = last;
+                        // a surrogate pair is one code point, however its halves are written, and with a line that goes on between them
+                        let mut next = p + 1;
+                        while self.t.at(next) == 92 && self.t.at(next + 1) == 10 {
+                            next += 2;
                         }
+                        if cp >= 0xd800
+                            && cp <= 0xdbff
+                            && self.t.at(next) == 92
+                            && self.t.at(next + 1) == 117
+                        {
+                            let (low, last) = self.unicode_escape(next + 1);
+                            if low >= 0xdc00 && low <= 0xdfff {
+                                cp = 0x10000 + ((cp - 0xd800) << 10) + (low - 0xdc00);
+                                p = last;
+                            }
+                        }
+                        self.gen_code_point(cp);
                     }
                     _ => {
                         self.gen_byte(e);
@@ -579,6 +585,7 @@ pub(crate) const CSS_PREFIX_TEXT: &[u8] = b"@prettier-placeholder-";
 pub(crate) const CSS_PREFIX: i32 = 1752; // staticText(CSS_PREFIX_TEXT)
 pub(crate) const CSS_SUFFIX: i32 = 1774; // staticText("-id")
 impl Quick {
+    #[optimize(size)]
     pub(crate) fn print_embed_css(&mut self, n: i32) -> R<bool> {
         let quasis = self.n.at(n + 4);
         let count = self.n.at(quasis);
@@ -702,6 +709,7 @@ impl Quick {
         return seen_comment;
     }
 
+    #[optimize(size)]
     pub(crate) fn print_embed_graph_ql(&mut self, n: i32) -> R<bool> {
         let quasis = self.n.at(n + 4);
         let count = self.n.at(quasis);
@@ -848,6 +856,7 @@ impl Quick {
         self.guest.template_line_to = 0;
     }
 
+    #[optimize(size)]
     pub(crate) fn print_embed_html(&mut self, n: i32, language: i32) -> R<bool> {
         let quasis = self.n.at(n + 4);
         let count = self.n.at(quasis);
@@ -916,9 +925,6 @@ impl Quick {
             self.set_hole(i, self.print_embed.ex.at(base + i));
             i += 1;
         }
-        if has_linebreak && self.options.short_cuts {
-            self.set_guest_column(GUEST_BETWEEN_LINES);
-        }
         self.set_template(self.n.at(n + 1));
         let ok = self.embed(language, start, end)?;
         self.end_holes();
@@ -954,6 +960,7 @@ impl Quick {
     }
 
     // --------------------------------------------------------------------------------------------------------- Markdown
+    #[optimize(size)]
     pub(crate) fn print_embed_markdown(&mut self, n: i32) -> R<bool> {
         let quasi = self.n.at(self.n.at(n + 4) + 1);
         let raw_start = self.n.at(quasi + 1);
@@ -1051,12 +1058,9 @@ impl Quick {
             self.literalline();
             self.dedent_to_root_open();
         }
-        let saved = self.options.in_js_template;
-        self.set_in_js_template(true);
         self.push_text_filter(FILTER_BACKTICK);
         let ok = self.embed(lang::Markdown, start, end)?;
         self.pop_text_filter();
-        self.set_in_js_template(saved);
         if !ok {
             return Ok(false);
         }
@@ -1088,6 +1092,7 @@ pub(crate) fn guest_of(kind: i32) -> i32 {
 
 impl Quick {
     /// The doc of the template literal `n` as embedded code, or -1 if it is none (or does not parse).
+    #[optimize(size)]
     pub(crate) fn embed_doc_of(&mut self, n: i32) -> R<i32> {
         let key = n.wrapping_neg();
         let cached = self.cache_get(key);

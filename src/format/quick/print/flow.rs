@@ -13,7 +13,7 @@ use crate::print::statics::{
     PROTO_, QUESTION, RBRACE, RBRACKET, RBRACKET_COLON_, READONLY_, RPAREN, SEMI, SET_, SPACE,
     STATIC_, SUPER_, THIS, UNDERSCORE, VAR, WRITEONLY_,
 };
-use crate::{Quick, R, Words};
+use crate::{Quick, R, Words, rare};
 
 impl Quick {
     pub(crate) fn print_variance(&mut self, n: i32) {
@@ -348,6 +348,10 @@ impl Quick {
                     self.text(COLON_SPACE);
                 }
                 let key = self.n.at(n + 5);
+                // (the long way breaks an object here with the members around it)
+                if self.is_object_type(key) {
+                    return Err(self.rare(rare::FLOW));
+                }
                 if (self.n.at(key) & 0xff) == k::UnionType {
                     // The long way does not indent a union that breaks here.
                     let g = self.group_open();
@@ -631,13 +635,6 @@ impl Quick {
             k::MatchRestPattern => {
                 self.text(ELLIPSIS);
                 self.print(self.n.at(n + 4))?;
-                return Ok(true);
-            }
-            k::RecordExpression => {
-                self.print(self.n.at(n + 4))?;
-                self.print(self.n.at(n + 5))?;
-                self.text(SPACE);
-                self.print(self.n.at(n + 6))?;
                 return Ok(true);
             }
             k::RecordDeclarationProperty => {

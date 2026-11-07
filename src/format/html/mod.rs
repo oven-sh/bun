@@ -845,6 +845,7 @@ fn format_once(
             && options.line_ending.resolve(original) == crate::options::LineEnding::Lf
             && let Some(whole) = (if is_in_text { &text[..] } else { &printed[..] })
                 .get(span.start as usize..span.end as usize)
+            && !crate::is_too_long(out.len() + whole.len() + 1)
         {
             if front_matter_len == 0 && (is_in_text || !strings::contains_char(whole, 0)) {
                 out.extend_from_slice(whole);

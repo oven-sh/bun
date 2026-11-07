@@ -332,29 +332,61 @@ impl Quick {
             }
         }
         let is_declared = (((self.n.at(n) as u32) >> SUB_SHIFT) as i32 & MOD_DECLARE) != 0;
-        if is_declared {
-            self.text(DECLARE_);
+        // The call around it prints the function once for each way to lay out its arguments. A signature whose parameters are not hugged
+        // is the same in all of them, and is written once, as the body is: a call in it can hug a function with a call in it, and so on.
+        let is_printed_again = (args & ARG_SHARE) != 0 && self.doc.remove_lines_depth == 0;
+        let is_shared = is_printed_again && !should_expand_parameters;
+        let is_hugged = is_printed_again && should_expand_parameters;
+        let mut signature = if is_shared { self.cache_get(n) } else { 0 };
+        if signature == 0 {
+            // With hugged parameters it is another one, and what is in its types is written twice. Not in turn for a function in them.
+            if is_hugged {
+                if self.print_call.hugged_signatures != 0 {
+                    return Err(self.rare(rare::HUGGED_CHAIN));
+                }
+                self.print_call.hugged_signatures += 1;
+            }
+            let h = if is_shared { self.detach_open() } else { 0 };
+            if is_declared {
+                self.text(DECLARE_);
+            }
+            if (self.n.at(n) & F_ASYNC) != 0 {
+                self.text(ASYNC_);
+            }
+            self.text(if (self.n.at(n) & 0xff) == k::HookDeclaration {
+                HOOK
+            } else {
+                FUNCTION
+            });
+            if (self.n.at(n) & F_GENERATOR) != 0 {
+                self.text(STAR);
+            }
+            self.text(SPACE);
+            self.print(self.n.at(n + 4))?;
+            self.print(self.n.at(n + FN_TYPE_PARAMETERS))?;
+            let g = self.group_open();
+            self.print_parameters_and_return_type(
+                n,
+                should_expand_parameters,
+                false,
+                false,
+                false,
+            )?;
+            if is_hugged {
+                self.print_call.hugged_signatures -= 1;
+            }
+            if self.print.bailout {
+                return Ok(());
+            }
+            self.group_close(g);
+            if is_shared {
+                signature = self.detach_close(h);
+                self.cache_set(n, signature);
+            }
         }
-        if (self.n.at(n) & F_ASYNC) != 0 {
-            self.text(ASYNC_);
+        if is_shared {
+            self.call(signature);
         }
-        self.text(if (self.n.at(n) & 0xff) == k::HookDeclaration {
-            HOOK
-        } else {
-            FUNCTION
-        });
-        if (self.n.at(n) & F_GENERATOR) != 0 {
-            self.text(STAR);
-        }
-        self.text(SPACE);
-        self.print(self.n.at(n + 4))?;
-        self.print(self.n.at(n + FN_TYPE_PARAMETERS))?;
-        let g = self.group_open();
-        self.print_parameters_and_return_type(n, should_expand_parameters, false, false, false)?;
-        if self.print.bailout {
-            return Ok(());
-        }
-        self.group_close(g);
         if self.n.at(n + 5) != 0 {
             self.text(SPACE);
             self.print_body(self.n.at(n + 5), args)?;
@@ -480,7 +512,8 @@ impl Quick {
                 type_ = self.n.at(return_type + 5);
             }
             if self.is_object_type(type_) {
-                if rk == k::NullableType {
+                // (the long way looks at the type of a type guard of TypeScript alone)
+                if rk == k::NullableType || (rk == k::TypePredicate && self.mode.is_flow) {
                     return Err(self.rare(rare::FLOW));
                 }
                 should_group = true;

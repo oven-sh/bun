@@ -2,12 +2,24 @@
 
 use super::*;
 use crate::css::embed::may_be_in_another_language;
+use crate::html::in_js::is_placeholder_in_js;
 use crate::js::parentheses::expression::is_name_that_may_need_parentheses;
 use crate::js::print::arrow_function_expression::GroupedCallArgumentLayout;
 use crate::js::print::call_like_expression::arguments::{
     ArgumentsLayout, arguments_layout, hugged_function_keeps_parameters_on_one_line,
 };
 use crate::js::utils::object::{printed_key, should_preserve_quote};
+
+/// How long the shortest name is that [`is_placeholder_in_parentheses`] can be true for.
+pub(super) const SHORTEST_PLACEHOLDER: u32 = "PRETTIER_HTML_PLACEHOLDER_0_0_IN_JS".len() as u32;
+
+/// True for a name that stands for an expression of the template around this code and is in parentheses, which it
+/// keeps wherever it is.
+#[cold]
+#[inline(never)]
+pub(super) fn is_placeholder_in_parentheses(e: Expr<'_>) -> bool {
+    e.is_parenthesized() && (e.as_ident()).is_some_and(|name| is_placeholder_in_js(name.bytes()))
+}
 
 /// `a`, `this`, `a.b.c`
 fn is_path_of_names(mut e: Expr<'_>) -> bool {
@@ -314,6 +326,9 @@ impl<'a> Line<'_, 'a> {
                     && (3..=9).contains(&span.len())
                     && needs_parentheses(e, self.f)
                 {
+                    return Err(Refused);
+                }
+                if span.len() >= SHORTEST_PLACEHOLDER && is_placeholder_in_parentheses(e) {
                     return Err(Refused);
                 }
                 return self.source(span);

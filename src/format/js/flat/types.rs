@@ -144,7 +144,7 @@ impl<'a> Line<'_, 'a> {
         (self.limit, self.is_too_wide) = (limit.saturating_sub(1), false);
         let written = self.types_between(types, " | ");
         if written.is_ok() && !self.has_parts_since(mark) {
-            self.limit = limit;
+            self.limit = self.limit_since(mark);
             self.end_indent();
             return Ok(());
         }

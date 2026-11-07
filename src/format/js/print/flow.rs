@@ -421,7 +421,13 @@ pub(crate) fn predicate_prefix(ty: TypeNode<'_>) -> &'static str {
 /// in the tree.
 pub(crate) fn as_declared_predicate(ty: TypeNode<'_>) -> Option<(Option<TypeNode<'_>>, Expr<'_>)> {
     match ty.kind() {
-        TypeKind::Typeof { expr, args, .. } if ty.first_token() != b"typeof" => {
+        // The `T` stands before the `e`, the type arguments of a query behind what it asks about. `T` can be a query itself.
+        TypeKind::Typeof { expr, args, .. }
+            if match args.first() {
+                Some(return_type) => return_type.span().start < expr.span().start,
+                None => ty.first_token() != b"typeof",
+            } =>
+        {
             Some((args.first(), expr))
         }
         _ => None,
@@ -585,9 +591,13 @@ pub(crate) fn is_shorthand_function_type(func: Func<'_>) -> bool {
         return false;
     }
     let is_function_type = keyword_of_function_type(ty, func).is_none();
-    // For `T %checks(e)`, Prettier's return type is the `T`.
+    // For `T %checks(e)` and `T %checks`, Prettier's return type is the `T`.
     let parent = match ty.parent() {
-        Node::Type(parent) if as_declared_predicate(parent).is_some() => parent.parent(),
+        Node::Type(parent)
+            if as_declared_predicate(parent).is_some() || is_checks_predicate(parent) =>
+        {
+            parent.parent()
+        }
         parent => parent,
     };
     match parent {
@@ -611,6 +621,13 @@ pub(crate) fn is_shorthand_function_type(func: Func<'_>) -> bool {
         Node::Func(owner) => match owner.owner() {
             Node::Type(_) => true,
             Node::Member(member) if member.kind() == MemberKind::IndexSignature => false,
+            // A hook that is only declared is a `HookTypeAnnotation`.
+            Node::Stmt(statement)
+                if !owner.has_body()
+                    && has_word_in(statement.file(), statement.modifiers(), b"hook") =>
+            {
+                false
+            }
             // A signature and a function that is only declared are a `FunctionTypeAnnotation` too.
             _ => is_function_type || (!owner.has_body() && !owner.is_arrow()),
         },

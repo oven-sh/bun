@@ -231,6 +231,10 @@ pub(crate) mod k {
     pub(crate) const RecordDeclaration: i32 = 214;
     pub(crate) const RecordDeclarationBody: i32 = 215;
     pub(crate) const RecordDeclarationProperty: i32 = 216;
+    #[expect(
+        dead_code,
+        reason = "no parser makes one; the tables of kinds have its place"
+    )]
     pub(crate) const RecordExpression: i32 = 217;
     // A statement that fast.rs has read and printed in one go. The sub-kind is the kind of node that the parser would have made, and start
     // and end are those of that node. No children; two numbers: where the text to print stands, and its length.
@@ -242,7 +246,10 @@ pub(crate) mod k {
     // A comment that stands alone on its lines in front of a statement or a member of a class: an item of the list like the others, which is what it
     // is printed as. Start and end are those of the comment. One number: its flags (CF_BLOCK ..).
     pub(crate) const ReadyComment: i32 = 220;
-    // The statements and comments at the start of a program of which stands.rs has found that they are printed as they stand, at column 0. Start and end are those of the text.
+    #[expect(
+        dead_code,
+        reason = "no parser makes one; the tables of kinds have its place"
+    )]
     pub(crate) const ReadyLines: i32 = 221;
 }
 // ---- flags (bits 8..23 of word 0)
@@ -268,7 +275,7 @@ pub(crate) const F_OPTIONAL: i32 = 1 << 18;
 pub(crate) const F_CHAIN: i32 = 1 << 19;
 /// UpdateExpression; also delegate of yield, await of for-of, self_closing, tail
 pub(crate) const F_PREFIX: i32 = 1 << 20;
-/// a string with a backslash, an identifier with an escape
+/// a string or a template with a backslash, a text of JSX with an entity
 pub(crate) const F_ESCAPE: i32 = 1 << 21;
 /// a string whose content has a quote character
 pub(crate) const F_QUOTE: i32 = 1 << 22;
@@ -327,8 +334,6 @@ pub(crate) const F_BLANK: i32 = F_EXTRA;
 pub(crate) const F_BLANK_LINE: i32 = F_SHORTHAND;
 /// JSXElement, JSXFragment: the child before it, but for text, is `{}`, maybe with a comment in it
 pub(crate) const F_AFTER_EMPTY: i32 = F_EXTRA;
-/// a type: printed as it is in the source, because of a "prettier-ignore" that belongs to another node
-pub(crate) const F_IGNORED: i32 = F_GENERATOR;
 /// a LogicalExpression with a word more: see make_logical()
 pub(crate) const F_MOVED: i32 = F_EXTRA;
 // sub-kinds of methods: the two low bits of the sub-kind
@@ -390,10 +395,6 @@ pub(crate) mod type_keyword {
     /// `*`
     pub(crate) const All: i32 = 17;
 }
-// NullableType
-pub(crate) const NT_NULLABLE: i32 = 0;
-pub(crate) const NT_NON_NULLABLE: i32 = 1;
-pub(crate) const NT_NON_NULLABLE_POSTFIX: i32 = 2;
 // TypeOperator
 pub(crate) const TO_KEYOF: i32 = 1;
 pub(crate) const TO_UNIQUE: i32 = 2;
@@ -458,6 +459,26 @@ pub(crate) static EXT_AT: [u8; 222] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
+
+/// A set of kinds, or of tokens: one bit for each.
+pub(crate) type Set = [u64; 4];
+
+pub(crate) const fn set_of(members: &[i32]) -> Set {
+    let mut set = [0; 4];
+    let mut i = 0;
+    while i < members.len() {
+        set[members[i] as usize >> 6] |= 1 << (members[i] & 63);
+        i += 1;
+    }
+    set
+}
+
+/// Is `member` in the set? Not if it is no kind and no token at all.
+#[inline]
+pub(crate) fn is_in_set(set: &Set, member: i32) -> bool {
+    set.get((member as u32 >> 6) as usize)
+        .is_some_and(|&bits| (bits >> (member & 63)) & 1 != 0)
+}
 impl Quick {
     // ---- making the larger nodes
     pub(crate) fn ast_adopt(&mut self, l: i32, n: i32) {

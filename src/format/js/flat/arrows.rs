@@ -139,7 +139,7 @@ impl<'a> Line<'_, 'a> {
         };
         match is_signature_on_one_line {
             true => self.arrow_body(func, body, is_hugged),
-            false => self.fits_or_breaks(self.tail, |line| line.arrow_body(func, body, is_hugged)),
+            false => self.fits_or_breaks(self.tail, &|line| line.arrow_body(func, body, is_hugged)),
         }
     }
 

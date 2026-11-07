@@ -372,6 +372,8 @@ impl Reader<'_> {
                 operator_end += 1;
                 operator_end += usize::from(self.at(operator_end) == b'=');
             }
+            // In TypeScript, `a < b, c > `d`` is a template with a tag that has types.
+            b'>' if self.is(operator_end, b" `") => return None,
             b'>' | b'<' => operator_end += usize::from(self.at(operator_end) == b'='),
             b'+' | b'-' | b'*' | b'/' | b'%' => {}
             _ => return Some(at),

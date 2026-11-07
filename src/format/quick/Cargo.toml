@@ -12,9 +12,5 @@ bun_core.workspace = true
 [dev-dependencies]
 bun_sema_standalone = { path = "../../sema/standalone", features = ["test_support"] }
 
-[features]
-# Keeps what each stage leaves behind. For tools, never for a build that ships.
-stages = []
-
 [lints]
 workspace = true

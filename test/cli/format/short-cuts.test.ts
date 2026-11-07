@@ -61,21 +61,27 @@ function expectSame(name: string, texts: string[], options: string[][]) {
   );
 }
 
+/** `unit` so many times. (`String.prototype.repeat` is slow in a debug build.) */
+const repeated = (unit: string, times: number) => Buffer.alloc(Buffer.byteLength(unit) * times, unit).toString();
+
+/** How many seconds of the processor `bun fmt` with `flags` takes in `cwd`, and its exit code. */
+async function cpuTime(cwd: string, flags: string[]) {
+  await using proc = spawn({
+    cmd: [bunExe(), "fmt", "--no-config", "--no-editorconfig", "--log-level=silent", ...flags],
+    cwd,
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  const exitCode = await proc.exited;
+  // (Windows counts in ticks of 1/64 s)
+  return { seconds: Math.max(Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1e6, 1 / 64), exitCode };
+}
+
 /** How much time of the processor formatting `text` takes, as a multiple of what it takes without the short cuts. */
 async function cpuTimeOfShortCuts(name: string, text: string) {
   using dir = tempDir("format-short-cuts", { [name]: text });
-  const cpu = async (own: string[]) => {
-    await using proc = spawn({
-      cmd: [bunExe(), "fmt", "--check", "--no-config", "--no-editorconfig", "--log-level=silent", ...own, name],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    await proc.exited;
-    // (Windows counts in ticks of 1/64 s)
-    return Math.max(Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1e6, 1 / 64);
-  };
+  const cpu = async (own: string[]) => (await cpuTime(String(dir), ["--check", ...own, name])).seconds;
   return (await cpu([])) / (await cpu(["--no-short-cuts"]));
 }
 
@@ -191,8 +197,9 @@ describe.skipIf(!hasFlag)("--debug-check is about what is written", () => {
     ["a.js", "// @flow\nx = a ? (b) : c % checks;\nfunction f() {}\n"],
     ["a.ts", "type A = { [await(x).y]: B };\n"],
     ["a.js.flow", "function f<const /* keep me */ T>(a: T) {}\n"],
-  ])("%s %j passes only if the short cut prints what the long way prints", async (name, text) => {
+  ])("%s %j is printed as on the long way, and passes", async (name, text) => {
     const [short, long] = await formatBothWays({ [name]: text }, plainly);
+    expect(short).toEqual(long);
     expect(long.exitCode).toBe(0);
     using dir = tempDir("format-short-cuts", { [name]: text });
     await using proc = spawn({
@@ -202,7 +209,8 @@ describe.skipIf(!hasFlag)("--debug-check is about what is written", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(await proc.exited).toBe(short.files[name] === long.files[name] ? 0 : 2);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   });
 });
 
@@ -295,6 +303,12 @@ describe("YAML", () => {
     "- a\nb: 1\n",
     "a: @b\n",
     "a: 1\0\n",
+    // An item that goes the long way by itself ends its lines as the file does: with CRLF, with CRLF from far down, with CR, and
+    // with no "\r" at all.
+    'a: b\r\nc: !t d\r\ne: [1, 2]\r\nf: "g\r\n  h"\r\nk: &x y\r\n',
+    'a: !t v\na: !t v\na: !t v\nb: c\r\nd: &x e\nf: "g\n  h"\n',
+    'a: !t v\nb: "c\rd"\ne: &x f\r\ng: h\n',
+    `${"k".repeat(20)}: ${"v".repeat(50)}\na: !t v\n`.repeat(3),
   ];
   // Lines are looked at 56 bytes at a time. Everything that ends a key, starts a comment or closes a string, at every
   // place around the ends of the first windows.
@@ -353,6 +367,16 @@ describe("YAML", () => {
         `- item\n\n  \`\`\`yaml\n${text.replace(/^/gm, "  ")}\n  \`\`\`\n`,
       ]);
     expectSame("a.md", hosts, [[], ["--tab-width=4", "--print-width=30"], ["--end-of-line=crlf"]]);
+    // The guest ends its lines with "\n", and a line break in one of its texts is "\r\n".
+    describe("an item that goes the long way by itself, where the end of a line is the file's", () =>
+      expectSame(
+        "a.md",
+        [
+          '- a\n\n  ```yaml\n  k: !t v\n  s: "a\n\n    b"\n  l:   m\n  ```\n',
+          '- a\r\n\r\n  ```yaml\r\n  k: !t v\r\n  s: "a\r\n\r\n    b"\r\n  l:   m\r\n  ```\r\n',
+        ],
+        [["--end-of-line=auto"]],
+      ));
   });
 
   test.skipIf(!hasFlag)("a text that is formatted stays as it is", async () => {
@@ -810,7 +834,7 @@ describe("GraphQL", () => {
   });
 
   test.skipIf(!hasFlag)("long names with nothing but a `$` between them take linear time", async () => {
-    const variables = `$${Buffer.alloc(70, "a")}`.repeat(isDebug ? 4_000 : 60_000);
+    const variables = repeated(`$${Buffer.alloc(70, "a")}`, isDebug ? 4_000 : 60_000);
     // 0.5 in a release build, and 65 when each name looked for the end of all of them.
     expect(await cpuTimeOfShortCuts("a.graphql", `{\n  a(b: [${variables}])\n}\n`)).toBeLessThan(3);
   });
@@ -819,24 +843,6 @@ describe("GraphQL", () => {
     expect(await memoryInMegabytes("a.graphql", "{a{b}}\n", ["--tab-width=4294967295"])).toBeLessThan(2000);
   });
 });
-
-/** How much longer it takes to format `text` with the short cuts than without them: the CPU time of the one by that of the other. */
-async function slowdownByShortCuts(name: string, text: string) {
-  using dir = tempDir("format-short-cuts", { [name]: text });
-  const cpu = async (own: string[]) => {
-    await using proc = spawn({
-      cmd: [bunExe(), "fmt", "--check", "--no-config", "--no-editorconfig", "--log-level=silent", ...own, name],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    await proc.exited;
-    // (Windows counts in ticks of 1/64 s)
-    return Math.max(Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1e6, 1 / 64);
-  };
-  return (await cpu([])) / (await cpu(["--no-short-cuts"]));
-}
 
 const markdownOptions = [
   [],
@@ -882,6 +888,21 @@ describe("Markdown", () => {
     "**a\u2028** b and **\u2029a** b and **\u00a0a** and **中文**中文 and 中文**中文**\n",
     "**a\u00a0** b** and **a \u3000** b** and **\u2003a** b and **a\u200b** b** and **a\ufeff** b** and **a \u0085** b**\n",
     "e\n*http://a\n\ne\n*a*\n\ne\n**a**\n\ne\n* a\n",
+    // A reference for a space or a tab in front of a line break is not the white space that is dropped there.
+    "**Note:**&#x20;\nnext line\n",
+    "- &#x20;\n  w\n",
+    "&#9;\n&#9;\nw\n",
+    "&#32; \nw\n",
+    "**a**&#32; \nb\n",
+    "**a** &#32;\nb\n",
+    "> **a**&#32;\n> b\n",
+    "- **a**&#32;\n  b\n",
+    "- [x] &#32;\n  w\n",
+    "**a**&#32;\nb\n===\n",
+    "**a**&#32;\r\nb\r\n",
+    // A hard break behind one, and white space in front of one, are as they were.
+    "**a**&#32;&Tab;  \nb\n",
+    "a&#x20;\nb and a&#x20; \nb and a &#x20;\nb\n",
     // HTML and code that nothing ends, in a list, take the line break with them if a container follows.
     "- <!--\n> a\n",
     "- <!--\n# a\n",
@@ -975,11 +996,12 @@ describe("Markdown", () => {
   // 0.15 in a release build and 0.5 in a debug build, which takes long to start. 1 and more when all of the text was parsed on
   // account of a comment.
   test.skipIf(!hasFlag)("a comment that says to leave a block alone is about that block", async () => {
-    const blocks = "Some *text* with `code` and a [link](http://a.b/c).\n\n- item one\n- item two\n\n".repeat(
+    const blocks = repeated(
+      "Some *text* with `code` and a [link](http://a.b/c).\n\n- item one\n- item two\n\n",
       isDebug || isASAN ? 4_000 : 8_000,
     );
     const text = `<!-- please ignore -->\n\n${blocks}<!-- prettier-ignore -->\n\n${blocks}`;
-    expect(await slowdownByShortCuts("a.md", text)).toBeLessThan(0.8);
+    expect(await cpuTimeOfShortCuts("a.md", text)).toBeLessThan(0.8);
   });
 
   test.skipIf(!hasFlag).concurrent("bytes that aren't UTF-8", async () => {
@@ -1043,6 +1065,10 @@ describe("MDX", () => {
     "| a | b |\n| --- | --- |\n| `c\\|d` | e\\|f |\n| <br/> | < 1 |\n| _g_ | **h** |\n\n| a |\n|-|\n| `b|c` |\n\n| a | b |\n|-|-|\n| c |\n",
     "{|||\n|-\n\n|||||\n|-|-|-:|-|\n",
     "\f\n```\n\n```\n",
+    // A reference for a space or a tab in front of a line break stays.
+    "**Note:**&#x20;\nnext line\n",
+    "&#9;\n&#9;\nw\n",
+    "**a**&#32; \nb\n",
     "a\n\n\n\nb\n# c\nd\n```\ne\n```\nf\n",
   ];
   expectSame("a.mdx", texts, [
@@ -1078,8 +1104,8 @@ describe("MDX", () => {
 
   // 0.5 in a release build, and 500 when every `_` looked at all of the word.
   test.skipIf(!hasFlag)("a word with many `_` is looked at once", async () => {
-    const text = `${"foo_bar_baz,".repeat(isDebug || isASAN ? 6_000 : 24_000)}\n`;
-    expect(await slowdownByShortCuts("a.mdx", text)).toBeLessThan(4);
+    const text = `${repeated("foo_bar_baz,", isDebug || isASAN ? 6_000 : 24_000)}\n`;
+    expect(await cpuTimeOfShortCuts("a.mdx", text)).toBeLessThan(4);
   });
 
   // What is formatted already isn't as it's printed if its classes are sorted.
@@ -1415,6 +1441,27 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     "url-that-no-parenthesis-has-taken.less":
       "// the url\n@media (min-width: 1px) {\n  c {\n    d: (e);\n  }\n}\n// the url of\n.a {\n  b: c;\n  .m((d));\n}\n@media (f: g) {\n  .h {\n    i: j;\n  }\n}\n",
     "url-that-no-parenthesis-has-taken.scss": "$a: url;\n$b: ((c: d));\n@include e((f));\n// url\n$g: (h: i);\n",
+    // A `/` that ends a string behind an empty string meets what the next string starts with.
+    "slash-at-the-end-of-a-string-in-selectors.css":
+      '[x=""][a="/"]>[b="*"]{c:d}\na,[y=\'\'][a=\'/\'][b=\'/\'],b>c{c:d}\na[alt=""]>b[href$="/"]{c:d}\na[href$="/"]>b[c^="*"]{c:d}\n' +
+      'a[alt=""] > b[href$="/"] {\n  e: f;\n}\na[alt=""],\na[href="/"],\nb[c="/d"] {\n  e: f;\n}\n',
+    "slash-at-the-end-of-a-string-in-selectors.scss":
+      '[x=""][a="/"]>[b="*"]{c:d}\na,[y=\'\'][a=\'/\'][b=\'/\'],b>c{c:d}\na[alt=""]>b[href$="/"]{c:d}\na[href$="/"]>b[c^="*"]{c:d}\n' +
+      'a[alt=""] > b[href$="/"] {\n  e: f;\n}\na[alt=""],\na[href="/"],\nb[c="/d"] {\n  e: f;\n}\n',
+    "slash-at-the-end-of-a-string-in-selectors.less":
+      '[x=""][a="/"]>[b="*"]{c:d}\na,[y=\'\'][a=\'/\'][b=\'/\'],b>c{c:d}\na[alt=""]>b[href$="/"]{c:d}\na[href$="/"]>b[c^="*"]{c:d}\n' +
+      'a[alt=""] > b[href$="/"] {\n  e: f;\n}\na[alt=""],\na[href="/"],\nb[c="/d"] {\n  e: f;\n}\n',
+    "number-in-an-interpolation.scss":
+      "a {\n  b: #{-1e03};\n  c: #{-1q} #{-5khz};\n  $d: #{-1e0} !default;\n  b:  #{-1q};\n  b: f(#{-1q},c);\n  g: (h: #{-1q},\n i: j);\n" +
+      "  b: #{--1e03} #{$a.-1e03} #{a.$-1q} #{$-1e03};\n  b: #{-a1e03} #{$-a} #{--a} #{-_1q} #{a-1e03} #{$a-1q} #{a1e03};\n  b: #{-1e03}px a#{-1q}b;\n}\n" +
+      "@include i(#{-1hz});\n@if #{-1e-03} == 1 {\n  j: k;\n}\n@each $a in #{-1e03}, b {\n}\n@mixin a($b: #{-1e03}) {\n}\n@function f() {\n  @return #{-1e03};\n}\n",
+    "number-in-an-interpolation-in-selectors.scss":
+      ".e#{1e03},\n.f#{$-1q} {\n  g: h;\n}\n.a#{1e03}{}\n.a#{$-1q}{}\n#{a.-1e03}{}\n.a#{$1e03}{}\n.a#{$$1e03}{}\n.a#{$a.$1e03}{}\n.a#{--1e03}{}\n" +
+      ".a#{-1e0}{}\n.a#{-1e-03}{}\n.a#{-1e03px}{}\n.a#{-0e0}{}\n#{1e03}{}\n.a#{-1q}>b{c:d}\n.a#{$-1q} > b {\n  c: d;\n}\n" +
+      ".a#{$-a}-b#{$_1} .c#{--a}{}\n.a#{$a-1e03} .b#{a1e03} .c#{$a_1q}{}\n",
+    "many-dollars-in-a-string.scss":
+      '@include a("$b $c ...");\n@include a("$b $c", "...");\n@include a("$ $  ...", $c...);\n@return "$$ ...";\n' +
+      'a {\n  c: "$b $c ...";\n  c: "$$";\n  c: "$ $" "...";\n  c:  "$a$b" \'$a "$b" ...\';\n}\n',
     "unclosed.css": "a {\n  b: c;\n  d {\n    e: f;\n",
     "closed-twice.css": "a {\n  b: c;\n}\n}\n",
     "empty.css": "",
@@ -1464,6 +1511,12 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     const count = isDebug ? 4_000 : 40_000;
     const text = Array.from({ length: count }, (_, index) => `@a${index}{b{c:d e}}\n`).join("");
     // 0.7 in a release build, and 24 when each at-rule was looked for among all that came before it.
+    expect(await cpuTimeOfShortCuts("a.css", text)).toBeLessThan(4);
+  });
+
+  test("a string with many `$` takes linear time", async () => {
+    const text = `a{b:"${repeated("$", isDebug ? 60_000 : 600_000)}"}\n`;
+    // 25 in a debug build when the closing quote was looked for from each `$`.
     expect(await cpuTimeOfShortCuts("a.css", text)).toBeLessThan(4);
   });
 });
@@ -2943,6 +2996,9 @@ describe.skipIf(!hasFlag)("Vue", () => {
     "a // b",
     "a /* b */",
     "aVeryLongNameThatTakesRoom.anotherVeryLongNameThatTakesRoom(yetAnotherLongName, andOneMore)",
+    // With a script in TypeScript, `a < b, c > `x`` is a template with a tag that has types, and `a < b, c > (d)` is a call.
+    "f(a < b, c > `x`)",
+    "f(a < b, c > (d))",
     "f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(a))))))))))))))))))))",
   ];
   const escaped = (text: string) => text.replaceAll('"', "&quot;");
@@ -2993,6 +3049,13 @@ describe.skipIf(!hasFlag)("Vue", () => {
     // A `<` that starts no tag goes on with the text.
     "<template><h>\n}<code></code>\n>\n<",
     "<template>\n  <title>{{a}}</title>\n  <textarea>{{a}}</textarea>\n</template>\n",
+    // In a file whose script is TypeScript, `a < b, c > `x`` is a template with a tag that has types.
+    '<script lang="ts">\nexport default {};\n</script>\n\n<template>\n  <p :a="f(a < b, c > `x`)">a</p>\n</template>\n',
+    '<script setup lang="ts">\nconst a = 1;\n</script>\n\n<template>\n  <p v-for="x in f(a < b, c > `x`)" @click="g(a < b, c > `y`)" v-if="[a < b, c > `z`]">a</p>\n</template>\n',
+    '<script lang="ts">\nexport default {};\n</script>\n\n<template>\n  <!-- display: block -->\n  <div>\n    <p :a="f(a < b, c > `x`)">a</p>\n  </div>\n</template>\n',
+    // What is none: another operator or a name behind the `>`, and a file without TypeScript.
+    '<script lang="ts">\nexport default {};\n</script>\n\n<template>\n  <p :a="f(a < b, c >= `x`)" :b="[a < b, c > -`x`]" :c="f(a < b, c > d)" :d="f(a < b > c)">a</p>\n</template>\n',
+    '<template>\n  <p :a="f(a < b, c > `x`)">a</p>\n</template>\n',
   );
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.vue`, input]));
 
@@ -3579,8 +3642,8 @@ describe.skipIf(!hasFlag)("code in a Vue file that is read from the bytes", () =
   // 1 in a release build, and 60 when each `<script` looked for the `>` behind all of them.
   test("whether the code is TypeScript is found out in one pass", async () => {
     const count = isDebug || isASAN ? 16_000 : 64_000;
-    const text = `<template>\n  <div :a="b  +  c"></div>\n  <!-- ${"<script ".repeat(count)} -->\n</template>\n`;
-    expect(await slowdownByShortCuts("a.vue", text)).toBeLessThan(6);
+    const text = `<template>\n  <div :a="b  +  c"></div>\n  <!-- ${repeated("<script ", count)} -->\n</template>\n`;
+    expect(await cpuTimeOfShortCuts("a.vue", text)).toBeLessThan(6);
   });
 
   test("code in a file that is read from the bytes is formatted", async () => {
@@ -3614,24 +3677,24 @@ describe.skipIf(!hasFlag)("code in a Vue file that is read from the bytes", () =
   });
 });
 
-describe.skipIf(!hasFlag)("where lines are written without a document", () => {
-  /** Formats `files` with `flags`, and returns what they are afterwards. */
-  async function format(files: Record<string, string>, flags: string[]) {
-    using dir = tempDir("format-short-cuts", files);
-    await using proc = spawn({
-      cmd: [bunExe(), "fmt", "--write", "--no-editorconfig", "--log-level=error", ...flags, "."],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    const texts = Object.fromEntries(
-      Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "latin1")]),
-    );
-    return { texts, stderr, exitCode };
-  }
+/** Formats `files` in place with `flags`, and returns what they are afterwards. */
+async function formatInPlace(files: Record<string, string>, flags: string[]) {
+  using dir = tempDir("format-short-cuts", files);
+  await using proc = spawn({
+    cmd: [bunExe(), "fmt", "--write", "--no-editorconfig", ...flags, "."],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const texts = Object.fromEntries(
+    Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "latin1")]),
+  );
+  return { texts, stderr, exitCode };
+}
 
+describe.skipIf(!hasFlag)("where lines are written without a document", () => {
   const files: Record<string, string> = {
     // A block comment that is printed on the line of what is before it counts for the width, wherever it is written.
     "comment-after-stray-semicolon.js": `import { aaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbb } from "./cccccccccccccc";\n;/** The comment is on that line */\nd();\n`,
@@ -3699,8 +3762,11 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
     [["--bracket-same-line", "--jsx-single-quote", "--print-width=40"]],
     [["--single-attribute-per-line", "--print-width=27"]],
   ])("the same with %j", async flags => {
-    flags = ["--no-config", ...flags];
-    const [short, long] = await Promise.all([format(files, flags), format(files, [...flags, "--no-short-cuts"])]);
+    flags = ["--no-config", "--log-level=error", ...flags];
+    const [short, long] = await Promise.all([
+      formatInPlace(files, flags),
+      formatInPlace(files, [...flags, "--no-short-cuts"]),
+    ]);
     expect(short).toEqual(long);
     expect(long.stderr).toBe("");
     expect(long.texts).not.toEqual(files);
@@ -3723,7 +3789,11 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
       "empty-line-in-chain.js": `e=a.\n\ne(wo)\n`,
       "types-in-javascript.js": `type A = { b: C; d: E };\ndeclare export { f };\n`,
     };
-    const [short, long] = await Promise.all([format(all, flags), format(all, [...flags, "--no-short-cuts"])]);
+    flags = ["--log-level=error", ...flags];
+    const [short, long] = await Promise.all([
+      formatInPlace(all, flags),
+      formatInPlace(all, [...flags, "--no-short-cuts"]),
+    ]);
     expect(short).toEqual(long);
     // oxfmt takes neither Flow, nor types in JavaScript, nor a rest parameter with a `?`.
     const others = ["types-in-javascript.js", "rest-parameter.ts"];
@@ -3731,24 +3801,80 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
     expect(Array.from(long.stderr.matchAll(/^ {4}at ([^:\n]+)/gm), match => match[1]).sort()).toEqual(rejected.sort());
     expect(long.exitCode).toBe(2);
   });
-});
 
-/** Formats `files` in place, and returns what they are afterwards. */
-async function formatInPlace(files: Record<string, string>, flags: string[]) {
-  using dir = tempDir("format-short-cuts", files);
-  await using proc = spawn({
-    cmd: [bunExe(), "fmt", "--no-editorconfig", "--log-level=silent", ...flags, "."],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+  // With a pragma to insert, and for oxfmt, the quick way is not asked: what takes a line here is the long way's own short cut.
+  describe("scripts that the quick way is not asked about", () => {
+    const blanks = "\u0085\u00a0\u1680\u2000\u200a\u200b\u2028\u2029\u202f\u205f\u3000\ufeff";
+    const names = ["PRETTIER_HTML_PLACEHOLDER_3_14_IN_JS", "NOT_A_PLACEHOLDER_BUT_A_NAME_OF_THAT_LENGTH"];
+    const withNames = (texts: string[]) => texts.flatMap(text => names.map(name => text.replaceAll("@", name)));
+    expectSame(
+      "a.js",
+      [
+        // A block comment beyond a name that is not ASCII: what is around an item is looked at no further than that name.
+        "a;\né; /* c */\n",
+        "a;\né /* c */;\n",
+        "/* c */ é; b;\nd;\n",
+        "x; /* c */\n// コメント\nfoo();\nbar(); // 日本語\nbaz();\n",
+        "x; /* c */\nmodule.exports = {\n  имя,\n  имя, /* d */\n  имя,\n  /* e */ имя,\n  имя,\n};\n",
+        "x; /* c */\nclass A {\n  é;\n  é; /* d */\n  é;\n  /* e */ é;\n  é;\n}\n",
+        "x; /* c */\nswitch (a) {\n  case é:\n  case é: /* d */\n  case é:\n    b;\n}\n",
+        // White space that is not ASCII between an item and a comment.
+        ...Array.from(blanks).flatMap(s => [
+          `a;${s}/* c */\nb;\n`,
+          `a;\n${s}/* c */ b;\nd;\n`,
+          `/* c */${s};${s}b;\nd;\n`,
+          `x = {\n  a,${s}/* c */\n  b,\n  ${s}/* d */${s}e,\n  f,\n};\n`,
+        ]),
+        // A head with more bytes than columns: 78, 79, 80 and 81 columns.
+        ...[59, 60, 61, 62].flatMap(n => {
+          const a = repeated("a", n);
+          return [
+            `if (${a} && 日本語日) {\n  b;\n}\n`,
+            `if (${a} && 日本語日) {\n  b;\n} else {\n  c;\n}\n`,
+            `if (${a} && "日本語") {\n  b;\n}\n`,
+            `if (${a} && éééééééé) {\n  b;\n}\n`,
+            `function f() {\n  if (${a.slice(2)} && 日本語日) {\n    b;\n  }\n}\n`,
+          ];
+        }),
+        // The name of a placeholder of HTML keeps its parentheses, and another name of that length loses them.
+        ...withNames([
+          "switch ((@)) {\n  case (@):\n}\n",
+          "(@);\n",
+          "(@).b.c();\n",
+          "x = (@) + 1;\n",
+          "function f() {\n  return (@);\n}\n",
+          "x = {\n  a: (@),\n  b: 1,\n};\n",
+          "(@) = 1;\n",
+          "x = @;\n@.a();\nf(@);\n",
+        ]),
+      ],
+      [["--insert-pragma"], ["--flavor=oxfmt"]],
+    );
+    expectSame(
+      "a.ts",
+      [
+        "x; /* c */\nenum Буквы {\n  Я,\n  Я /* d */,\n  Я,\n}\n",
+        ...[50, 51, 52, 53].flatMap(n => [
+          `function f(${repeated("a", n)} = "日本語", bbbbbbbbbbbbbb = "日本", c = 1) {\n  d;\n}\n`,
+          `type A = "${repeated("a", n)}" | "日本語日本語" | "bbbbbbbbbbbb";\n`,
+        ]),
+        ...withNames(["(@) as any;\n", "x = (@)!;\n"]),
+      ],
+      [["--insert-pragma"], ["--flavor=oxfmt"]],
+    );
+    expectSame(
+      "a.jsx",
+      [
+        "x = <a>\n  日本語\n  <b />\n  {/* c */} <c />\n  日本語\n</a>;\n",
+        ...withNames(["x = <a b={(@)}>{(@)}</a>;\n"]),
+        // An element behind a cast of JSDoc.
+        "x = <div>{items.map(/** @type {A} */ ((item) => <a b={item} />))}</div>;\nx = <div>{/** @type {A} */ (items.map((item) => <a b={item} />))}</div>;\n",
+        'x = (\n  <div>\n    <b />\n    {items.map(/** @type {A} */ ((item) => <a b={item} />))}\n    {/** @type {A} */ (items.map((item) => <a b={item} />))}\n    <c d={/** @type {A} */ (items.map((item) => <a b={item} />))} e={1} f="2" gggggggggggggggggggggggggg="hhhhhhhhhhhhhhhhhhhhhhhhhhh" />\n  </div>\n);\n',
+      ],
+      [["--insert-pragma"], ["--flavor=oxfmt"]],
+    );
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  const formatted = Object.fromEntries(
-    Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "latin1")]),
-  );
-  return { formatted, stderr, exitCode };
-}
+});
 
 /** `inputs` once for each set of options, each time in a directory with a `.prettierrc`. */
 function inDirectoriesWithOptions(inputs: Record<string, string>, options: object[]) {
@@ -3822,7 +3948,11 @@ describe.skipIf(!hasFlag)("expressions that are too wide for their line", () => 
   );
 
   test("are the same with and without short cuts", async () => {
-    const [short, long] = await Promise.all([formatInPlace(files, []), formatInPlace(files, ["--no-short-cuts"])]);
+    const flags = ["--log-level=silent"];
+    const [short, long] = await Promise.all([
+      formatInPlace(files, flags),
+      formatInPlace(files, [...flags, "--no-short-cuts"]),
+    ]);
     expect(short).toEqual(long);
     expect(short.stderr).toBe("");
     expect(short.exitCode).toBe(0);
@@ -3975,6 +4105,40 @@ describe.skipIf(!hasFlag)("casts of JSDoc", () => {
         ),
       ),
       [[], ["--print-width=40"]],
+    ));
+
+  // A name that a rule looks for is no such name in the parentheses of a cast, and neither is what a rule looks for around it.
+  describe("names, tags and arguments that a rule looks for", () =>
+    expectSame(
+      "a.jsx",
+      [
+        // the tag of a table of tests
+        '/** @type {A} */ (describe.each)`\na|b\n${1}|${2}\n`("x", () => {});\n/** @type {A} */ (describe).each`\na|b\n${1}|${2}\n`("x", () => {});\n',
+        // a test function, `require` and `define` that are called
+        '/** @type {A} */ (it)("does something really long and complicated so I have to write a very long name for the test", () => { a; });\n/** @type {A} */ (require)("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");\n/** @type {A} */ (require).resolve("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");\n/** @type {A} */ (define)(["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"], function (a, b) {});\n',
+        // the callback of a call that is the only child of an element
+        "x = <div>{items.map(/** @type {A} */ ((item) => <a b={item} />))}</div>;\nx = <div>{/** @type {A} */ (items.map((item) => <a b={item} />))}</div>;\n",
+        // the operand of `!` in a condition
+        "if (!/** @type {A} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && cccccccccccccccccccccccccccccc)) {}\n",
+        // the tag of a template in another language, and such a template
+        "const c = /** @type {A} */ (styled).div`\ndisplay:flex;\n`;\nconst d = /** @type {A} */ (graphql)`\nquery { a }\n`;\nconst e = /** @type {A} */ (html)`<div>  <b>x</b></div>`;\nconst m = /** @type {A} */ (markdown)`\n  # hi\n`;\ngraphql(schema, /** @type {A} */ (`\nquery { a }\n`));\nconst j = <style jsx>{/** @type {A} */ (`\ndiv{color:red}\n`)}</style>;\n",
+        "const a = <style jsx>{/** @type {any} */ (`a{color:red}`)}</style>;\nconst b = <div css={/** @type {any} */ (`color:red`)} />;\n",
+        // an argument of a test function
+        'it("does something", /** @type {X} */ ((aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccccccccc) => {\n  a;\n}));\n',
+        'it("x", /** @type {X} */ (fakeAsync)(() => {\n  a;\n}));\n',
+        '/** @type {X} */ (it)("x", fakeAsync(() => {\n  a;\n}));\n',
+        // a function in an argument of an argument
+        "f(g(/** @type {X} */ (() => {})), b);\n",
+        'it("does something", useEffect(/** @type {X} */ ((a) => b), []));\n',
+        // `require` on the right of `=`, as the value of a property, and a template with a label as the only argument
+        'const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = /** @type {X} */ (require)("a");\n',
+        'a = { aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: /** @type {A} */ (require)("a") };\ndo {} while (!/** @type {A} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && ccccccccccccccccccccc));\nfoo(/** @type {A} */ (css`\ndisplay:flex;\n`));\nfoo(/** @type {A} */ (graphql`\nquery { a }\n`));\n',
+        // a template of Angular
+        "@Component({ styles: [/** @type {any} */ (`  a {  color : red }`)] }) class A {}\n",
+        // without a cast
+        'describe.each`\na|b\n${1}|${2}\n`("x", () => {});\nx = <div>{items.map((item) => <a b={item} />)}</div>;\nif (!(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && cccccccccccccccccccccccccccccc)) {}\n',
+      ],
+      [[]],
     ));
 });
 
@@ -4232,7 +4396,7 @@ describe("Handlebars", () => {
   test.skipIf(!hasFlag)("expressions in expressions take linear time", async () => {
     const nest = (open: string) => `{{a ${open.repeat(120)}c${")".repeat(120)}}}\n`;
     // 0.6 in a release build, and 3 when each one read all that are in it to find that they don't fit.
-    const text = (nest("(b ") + nest("(b d=")).repeat(isDebug ? 20 : 400);
+    const text = repeated(nest("(b ") + nest("(b d="), isDebug ? 20 : 400);
     expect(await cpuTimeOfShortCuts("a.hbs", text)).toBeLessThan(1.8);
   });
 
@@ -4418,6 +4582,12 @@ describe("templates in another language", () => {
     '(html`<script type="text/x-handlebars-template"><div><h1></h1><div></div></div></script><script>\n  ${(m>html`<`)}</script>`)\n',
     // A text without width.
     "/* HTML */` he fix happened. \u000b\n`;\n",
+    // A character of GraphQL that is written as two halves, each with `\u{}`.
+    'const a = gql`\n  query {   a(b: "\\u{d83d}\\u{de00}") }\n`;\n',
+    'const a = gql`\n  query {   a(b: "\\ud83d\\ude00") }\n`;\n',
+    'const a = gql`\n  query {   a(b: "\\u{d83d}\\u{41}") }\n`;\n',
+    // The two halves with a line continuation between them.
+    'a = gql`\n  query   { a(b: "\\uD83D\\\n\\uDE00")   { c } }\n`;\n',
   ];
   expectSame("a.ts", texts, [
     [],
@@ -4441,7 +4611,7 @@ describe("templates in another language", () => {
 describe("JavaScript that is deep, long or full of comments", () => {
   // What is written behind a deep nest or a long chain has to find room in the buffers: nothing of the output may be missing.
   const nest = (open: string, middle: string, close: string, depth: number) =>
-    `x = ${open.repeat(depth)}${middle}${close.repeat(depth)};\n`;
+    `x = ${repeated(open, depth)}${middle}${repeated(close, depth)};\n`;
   describe("nests and chains", () =>
     expectSame(
       "a.jsx",
@@ -4470,6 +4640,27 @@ describe("JavaScript that is deep, long or full of comments", () => {
     "a chain of %d calls goes the quick way",
     async count => {
       using dir = tempDir("format-short-cuts", { "a.js": nest("", "a", ".b()", count) });
+      await using proc = spawn({
+        cmd: [bunExe(), "fmt", "--check", "--bench=1", "--threads=1", "--no-config", "--no-editorconfig", "a.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout + stderr).toContain("the quick way: 1 scripts");
+    },
+  );
+
+  // What a call prints once for each way to lay out its arguments is not printed again for each level of calls in it.
+  const hugged = [
+    ["f(function (a = ", ") {})"],
+    ["f(function ({ a = ", " }) {\n  return a;\n}, b)"],
+  ];
+  test.skipIf(!hasFlag).concurrent.each(hugged)(
+    "a function that is hugged, in a default value of one that is hugged, goes the quick way: %j, %j",
+    async (open, close) => {
+      using dir = tempDir("format-short-cuts", { "a.js": nest(open, "x", close, 40) });
       await using proc = spawn({
         cmd: [bunExe(), "fmt", "--check", "--bench=1", "--threads=1", "--no-config", "--no-editorconfig", "a.js"],
         cwd: String(dir),
@@ -4524,10 +4715,10 @@ describe("JavaScript that is deep, long or full of comments", () => {
   const beyondAscii = ["\u00a0", "\u2028", "\u2029", "\ufeff", "\u3000"];
   const rows = (separators: string[], count: number) =>
     separators.flatMap(separator => [
-      `a(${`/* c */${separator}`.repeat(count)}b);\n`,
-      `a;\n${`/* c */${separator}`.repeat(count)}\n`,
-      `function f() ${`/* c */${separator}`.repeat(count)}{}\n`,
-      `x = [${`/* c */${separator}`.repeat(count)}];\n`,
+      `a(${repeated(`/* c */${separator}`, count)}b);\n`,
+      `a;\n${repeated(`/* c */${separator}`, count)}\n`,
+      `function f() ${repeated(`/* c */${separator}`, count)}{}\n`,
+      `x = [${repeated(`/* c */${separator}`, count)}];\n`,
     ]);
   describe("rows of comments", () =>
     expectSame(
@@ -4540,35 +4731,14 @@ describe("JavaScript that is deep, long or full of comments", () => {
 
   // A row is looked through once, not once for each of its comments.
   test.skipIf(!hasFlag)("many rows of 500 comments take no longer than on the long way", async () => {
-    const row = "/* c */ ".repeat(500);
+    const row = repeated("/* c */ ", 500);
     const times = isDebug || isASAN ? 25 : 100;
     using dir = tempDir("format-short-cuts", {
-      "a.js": `a(${row}b);\n`.repeat(times),
-      "b.js": `x = [${row}];\n`.repeat(times),
-      "c.js": `function f() ${row}{}\n`.repeat(times),
+      "a.js": repeated(`a(${row}b);\n`, times),
+      "b.js": repeated(`x = [${row}];\n`, times),
+      "c.js": repeated(`function f() ${row}{}\n`, times),
     });
-    const cpu = async (own: string[]) => {
-      await using proc = spawn({
-        cmd: [
-          bunExe(),
-          "fmt",
-          "--check",
-          "--no-config",
-          "--no-editorconfig",
-          "--log-level=silent",
-          "--threads=1",
-          ...own,
-          ".",
-        ],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "ignore",
-        stderr: "ignore",
-      });
-      await proc.exited;
-      // (Windows counts in ticks of 1/64 s)
-      return Math.max(Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1e6, 1 / 64);
-    };
+    const cpu = async (own: string[]) => (await cpuTime(String(dir), ["--check", "--threads=1", ...own, "."])).seconds;
     // 0.8 in a release build, and 12 when each comment looked past its row.
     expect((await cpu([])) / (await cpu(["--no-short-cuts"]))).toBeLessThan(4);
   });
@@ -4577,10 +4747,167 @@ describe("JavaScript that is deep, long or full of comments", () => {
   // A row has the name of the file, what stands before the unit, the unit, what stands behind it, how many units the shorter text has, and flags. A unit "a¦b¦c" is a
   // nest: so many times "a", then "b", then so many times "c". With these numbers the longer text took 12 to 16 times as long as the shorter one, between 0.3 s and 2 s in a
   // release build, when the time grew with the square of the length.
-  type Shape = [name: string, before: string, unit: string, after: string, count: number, flags?: string[]];
+  // A nest that is too deep for the stack is rejected, and then nothing is timed. Such a row has two numbers: for a release build, and for a debug build.
+  // What is kept from one item to the next is kept for the right node: the list of members that needs quotes, the await around an
+  // await, the `|` around a `|`, the link of a chain above a link, the only statement of a program.
+  describe("answers that are kept for the neighbour", () => {
+    describe("quoteProps: consistent", () =>
+      expectSame(
+        "a.ts",
+        [
+          `x = {\n${repeated(`  a: { "b": 1, c: { "d-e": 1 }, f: { g: 1, "h": { i: 1 } } },\n  "j": { k: 1, 1: { "l": 1 }, m: [{ "n-o": 1 }, { "p": 1 }] },\n`, 25)}};\n`,
+          `x = {\n${repeated(`  "a": { "b": 1, c: { "d": 1 } },\n`, 50)}  "needs-quotes": 1,\n};\n`,
+          `x = {\n  "needs-quotes": 1,\n${repeated(`  a: { "b": 1, c: { "d": 1 } },\n`, 50)}};\n`,
+          `class A {\n  "a" = { "b": 1, c: { "d-e": 1 } };\n  f() {\n    return { "g": 1, h: { i: 1, "j": 2 } };\n  }\n  "k-l"() {}\n  static "m" = { n: 1 };\n}\n`,
+          `f({ "a": 1, b: { "c": 2 } }, function () {\n  return { "d-e": 1, f: { "g": 1 } };\n});\n`,
+          `interface I {\n  "a": { "b": string; c: { "d-e": number } };\n  f: { "g": 1 };\n  "h-i": 1;\n}\ntype T = { "a": { b: 1; "c": { "d": 1 } }; e: { "f-g": 1 } };\n`,
+          `x = { 1: { 1: 1, "a": { 2: 2, b: 1 }, c: { 0x10: 1, "d": 1 } }, "e": { 1.5: 1, "f-g": 1 } };\n`,
+        ],
+        [["--quote-props=consistent"]],
+      ));
+    describe("an await that is called or read from", () =>
+      expectSame(
+        "a.mjs",
+        [
+          `x = ${repeated("(await x).y + (await x)() + (await aVeryLongNameForTheValue).anotherLongName + ", 16)}z;\n`,
+          `x = ${repeated("(await (await x).y).z + (await (await x)()).z + await (await x).y + (await (await (await x).a.b).c.d).e + ", 10)}z;\n`,
+          `async function f() {\n  await (await someFunction(argumentNumberOne, argumentNumberTwo)).someProperty.anotherProperty(argumentNumberThree);\n  const a = await (async () => (await (await fetch(someLongUrlName)).json()).someLongPropertyName.another)();\n  await (async function () {\n    if (a) {\n      return (await (await aVeryLongFunctionName(a)).anotherVeryLongPropertyName).yetAnotherPropertyName;\n    }\n    for (const b of (await a).b) await (await b.c()).d[(await e).f];\n  })();\n  return (await ((await a).b ? (await a).c : (await (await a).d).e)) + ((await x) ?? (await y).z);\n}\n`,
+        ],
+        [[]],
+      ));
+    describe("filters of Vue", () => {
+      const expressions = [
+        `a${repeated(" | f", 50)}`,
+        `a | f(x | y) | g(h(i | j | k)) | (l | m) | n(o | (p | q))${repeated(" | f(x | y)", 10)}`,
+        "a | (b | (c | (d | (e | (f | (g | (h | (i | (j | k)))))))))",
+        "a || b | c && d | e + f | (g | h) + i | j ? k | l : m | n",
+        "(a | b | c) + (d | e | f) | g | [h | i, j | k] | { l: m | n } | o",
+        `${repeated("aVeryLongOperandName | anotherVeryLongOperandName | ", 4)}x + (aVeryLongOperandName | anotherVeryLongOperandName | yetAnotherVeryLongOperandName | z)`,
+      ];
+      expectSame(
+        "a.vue",
+        [
+          `<template>\n  <div>\n${expressions.map(e => `    <p :a="${e}">{{ ${e} }}</p>\n`).join("")}  </div>\n</template>\n`,
+          ...expressions.map(e => `<template>\n  <a-very-long-element-name :a="${e}" />\n</template>\n`),
+        ],
+        [[], ["--print-width=40"]],
+      );
+    });
+    describe("the right side of an assignment that is a chain", () =>
+      expectSame(
+        "a.ts",
+        [
+          "a",
+          "this",
+          '""',
+          "a(b, c)",
+          "a(someVeryLongArgumentNameThatIsNotShortAtAll)",
+          "(await a)",
+          "new A()",
+          "a!",
+        ].flatMap(head =>
+          [
+            "[0]()",
+            ".b()",
+            "(1, 2)",
+            ".i(someVeryLongArgumentNameThatIsNotShortAtAll)",
+            "?.j()",
+            "[l.m]()",
+            ".c<A, B>()",
+            "!.d()",
+          ].flatMap(link => [
+            `x = ${head}${repeated(link, 12)};\n`,
+            `const someLongVariableName = ${head}${repeated(link, 3)}.b()[0]();\n`,
+          ]),
+        ),
+        [[], ["--print-width=40"]],
+      ));
+    describe("member expressions in the brackets of a chain", () =>
+      expectSame(
+        "a.ts",
+        [
+          `a${repeated("[b.c]", 50)}();\n`,
+          `a${repeated("[b.c].d", 50)}();\n`,
+          `x = a${repeated("[b.c]", 50)};\n`,
+          `a${repeated("?.[b?.c]?.d", 50)}();\n`,
+          `a${repeated("![b.c!]", 50)}();\n`,
+          `new (a${repeated("[b.c]", 10)}())();\n`,
+          `x = (a?.[b.c])${repeated("![d?.e]", 10)};\n`,
+          `a${repeated(".b[c.d]", 3)}.e()${repeated("[f.g]", 3)}.h();\n`,
+        ],
+        [[], ["--print-width=30"]],
+      ));
+    // (with a `<` in it, a block may be an element of JSX, which gets no semicolon if it is the only statement)
+    describe("the only statement of a block of Markdown", () =>
+      expectSame(
+        "a.md",
+        [
+          `${repeated("// c\n", 50)}<a>b</a>;\n`,
+          `${repeated("// c\n", 50)}a < b;\n${repeated("a  ?  b  :  (c, d) ;\n", 50)}`,
+          "/* c */\n<a />\n// d\n",
+          "<a />;\n<b />;\n",
+          "// c\n<a />;\n// d\n<b />;\n// e\n",
+          "// c\n(a < b);\n",
+          '"use strict";\n// c\n<a />;\n',
+          "<>\n  <a />\n</>;\n",
+        ].map((_, i, blocks) =>
+          blocks
+            .slice(0, i + 1)
+            .map(code => `Text.\n\n\`\`\`jsx\n${code}\`\`\`\n\n`)
+            .join(""),
+        ),
+        [[], ["--no-semi"]],
+      ));
+    describe("Flow: an object type with the type of a function in it, in the return type of an arrow function", () =>
+      expectSame(
+        "a.js",
+        ["number", "() => void", "Array<(x: number) => string>", "?(() => void)"].flatMap(inner =>
+          [1, 2, 5].flatMap(depth =>
+            ["%", "Array<%>", "?%", "(() => %)", "A | %"].map(
+              around =>
+                `// @flow\nconst f = (): ${around.replace("%", `${repeated("{ a: ", depth)}{ b: string, c: ${inner} }${repeated(", d: number }", depth)}`)} => x;\n`,
+            ),
+          ),
+        ),
+        [[]],
+      ));
+    describe("a skin tone that starts a character", () =>
+      expectSame(
+        "a.js",
+        [
+          "\u{1F3FB}\u200d",
+          "\u{1F3FB}",
+          "\u{1F44B}\u{1F3FB}",
+          "\u{1F44B}\u{1F3FB}\u200d\u{1F468}",
+          "\u{1F3FB}\u200d\u{1F468}\u200d\u{1F3FB}",
+          "\u{1F3FB}\ufe0f\u200d\u{1F3FB}",
+          "\u200d\u{1F3FB}\u200d",
+        ].flatMap(text =>
+          [70, 72, 74, 76, 78, 80].map(
+            width =>
+              `f("${repeated("x", width - 8 - 2 * [...text].length)}${text}", a);\nx = [${repeated(`"${text}${text}${text}", `, 8)}];\n`,
+          ),
+        ),
+        [[]],
+      ));
+    describe("the indentation in front of `${` in a template", () =>
+      expectSame(
+        "a.js",
+        [0, 1, 2, 3, 6].flatMap(tabs =>
+          [0, 1, 4].map(
+            blanks =>
+              `a = \`\n${repeated("\t", tabs)}${repeated(" ", blanks)}${repeated("\t", tabs % 3)}\${foo(\nbar, baz)}\`;\nb = \`x\n${repeated(" ", blanks)}\${a ? b : c} \${foo(\nbar, baz)}\n${repeated("\t", tabs)}\${a.b.c(\nd)}\`;\n`,
+          ),
+        ),
+        [[], ["--use-tabs", "--tab-width=3"]],
+      ));
+  });
+
+  type Count = number | [release: number, debug: number];
+  type Shape = [name: string, before: string, unit: string, after: string, count: Count, flags?: string[]];
   const textOf = ([, before, unit, after]: Shape, count: number) => {
     const [open, middle, close] = unit.includes("¦") ? unit.split("¦") : [unit, "", ""];
-    return before + open.repeat(count) + middle + close.repeat(count) + after;
+    return before + repeated(open, count) + middle + repeated(close, count) + after;
   };
   const shapes: Shape[] = [
     // whether TypeScript without a name is tried with JSX first
@@ -4588,8 +4915,10 @@ describe("JavaScript that is deep, long or full of comments", () => {
     ["a.vue", '<script lang="ts">\n// ', "<a/> ", "\n</script>\n", 4000],
     // what follows a `<<` on its line
     ["a.ts", "x = [", "1 << 2, ", "];\n", 4000],
+    // what follows a `<<` on its line, in a trial that is given up
+    ["a.ts", "x = [", "<T>/**/(y = a << b + 1), ", "];\n", [8000, 500]],
     // blocks that have been read, in a statement that is parsed again
-    ["a.js", "if (a) {\n  x;\n}", " else if (b) {\n  y;\n}", " else z;\n", 8000],
+    ["a.js", "if (a) {\n  x;\n}", " else if (b) {\n  y;\n}", " else z;\n", [8000, 1000]],
     // doc comments that start where another one ends
     ["a.js", "", "/**\n * a\n *//**\n * b\n */\na;\n", "", 4000],
     // the child before an element
@@ -4606,8 +4935,8 @@ describe("JavaScript that is deep, long or full of comments", () => {
     ["a.jsx", "x = ", "(¦<a />¦ ? b : c)", ";\n", 3000, ["--print-width=10000000"]],
     ["a.jsx", "x = ", "(¦a¦ ? b : c)", " ? <b /> : c;\n", 3000, ["--print-width=10000000"]],
     // `a || (b || c)` is `(a || b) || c`
-    ["a.js", "x = ", "a || (¦a¦)", ";\n", 1500],
-    ["a.js", "x = ", "z || ((¦a¦) || (p || q))", ";\n", 700],
+    ["a.js", "x = ", "a || (¦a¦)", ";\n", [600, 40]],
+    ["a.js", "x = ", "z || ((¦a¦) || (p || q))", ";\n", [350, 20]],
     // a row of comments
     ["a.js", "a(", "/* c */ ", "b);\n", 8000],
     ["a.js", "a;\n", "/* c */ ", "\n", 8000],
@@ -4623,36 +4952,49 @@ describe("JavaScript that is deep, long or full of comments", () => {
     ["a.js.flow", "declare class A mixins ", "B, ¦C implements ¦D, ", "E {\n  // c\n  a: F;\n}\n", 4000],
     // templates in templates
     ["a.js", "x = ", `\`${"a".repeat(100)}\${¦a¦}\``, ";\n", 1500],
+    // an item of YAML that goes the long way by itself, where the end of a line is the file's
+    ["a.yaml", "", `${"k".repeat(20)}: ${"v".repeat(50)}\na: !t v\n`, "", [8000, 500], ["--end-of-line=auto"]],
+    // a line of the long way's own short cut, in a file with a block comment on a line of code: what is around the line is
+    // looked at no further than the next name
+    ["a.js", "x; /* c */\n", "é;\n", "", 20000, ["--insert-pragma"]],
+    ["a.js", "x; /* c */\nmodule.exports = {\n", "  имя,\n", "};\n", 20000, ["--insert-pragma"]],
+    ["a.ts", "x; /* c */\nenum Буквы {\n", "  Я,\n", "}\n", 20000, ["--insert-pragma"]],
+    ["a.js", "x; /* c */\nclass A {\n", "  é;\n", "}\n", 20000, ["--insert-pragma"]],
+    // the members of an object whose values are objects, when a key may need quotes
+    ["a.js", "x = {\n", "  a: { b: 1 },\n", "};\n", 8000, ["--quote-props=consistent"]],
+    // awaits that are read from or called, in one expression
+    ["a.mjs", "x = ", "(await x).y + ", "z;\n", 8000],
+    ["a.mjs", "x = ", "(await x)() + ", "z;\n", 8000],
+    // filters of Vue
+    ["a.vue", "<template>\n  <p>{{ a", " | f", " }}</p>\n</template>\n", 8000],
+    ["a.vue", '<template>\n  <p :b="a', " | f", '"></p>\n</template>\n', 8000],
+    // a chain behind `=` that the arguments of its head, or the head itself, rule out as one that stays on its line
+    ["a.js", "x = a(b, c)", "[0]()", ";\n", 2000],
+    ["a.js", 'x = ""', "[0]()", ";\n", 2000],
+    // comments in front of the statements of a block of Markdown that may be JSX
+    ["a.md", "```jsx\n", "// c\n¦a < b;\n¦a  ?  b  :  (c, d) ;\n", "```\n", 8000],
+    ["a.md", "```jsx\n", "// c\n¦¦<a />;\n", "```\n", 8000],
+    // a skin tone and a joiner, again and again: on the quick way, and on the long way
+    ["a.js", 'x = "', "\u{1F3FB}\u200d", '";\n', 10000],
+    ["a.js", 'x = "', "\u{1F3FB}\u200d", '";\n', 10000, ["--insert-pragma"]],
+    // member expressions in the brackets of the links of a member chain
+    ["a.js", "a", "[b.c]", "();\n", 8000],
+    ["a.js", "a", "[b.c].d", "();\n", 8000],
   ];
   describe("four times the text takes about four times as long", () => {
     test.concurrent.each(shapes)("%s: %j, %j, %j", async (...shape) => {
       const [name, , , , count, flags = []] = shape;
-      const short = Math.ceil(count / (isDebug || isASAN ? 4 : 1));
+      const isSlow = isDebug || isASAN;
+      const short = typeof count === "number" ? Math.ceil(count / (isSlow ? 4 : 1)) : count[isSlow ? 1 : 0];
       using dir = tempDir("format-short-cuts", {
         [`1/${name}`]: textOf(shape, short),
         [`4/${name}`]: textOf(shape, 4 * short),
       });
+      // (in place: that exits with 0 for every text that is formatted)
       const cpu = async (file: string) => {
-        await using proc = spawn({
-          cmd: [
-            bunExe(),
-            "fmt",
-            "--check",
-            "--no-config",
-            "--no-editorconfig",
-            "--log-level=silent",
-            "--threads=1",
-            ...flags,
-            file,
-          ],
-          cwd: String(dir),
-          env: bunEnv,
-          stdout: "ignore",
-          stderr: "ignore",
-        });
-        await proc.exited;
-        // (Windows counts in ticks of 1/64 s)
-        return Math.max(Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1e6, 1 / 64);
+        const { seconds, exitCode } = await cpuTime(String(dir), ["--threads=1", ...flags, file]);
+        expect(exitCode).toBe(0);
+        return seconds;
       };
       expect((await cpu(`4/${name}`)) / (await cpu(`1/${name}`))).toBeLessThan(8);
     });
@@ -4676,7 +5018,7 @@ describe("scripts that are too much for the quick way", () => {
   // Its buffers have a limit. What comes to one goes the long way, soon and without much memory.
   const isSlow = isDebug || isASAN;
   const nest = (open: string, middle: string, close: string, depth: number) =>
-    `x = ${open.repeat(depth)}${middle}${close.repeat(depth)};\n`;
+    `x = ${repeated(open, depth)}${middle}${repeated(close, depth)};\n`;
 
   /** Formats `text` both ways. Returns what each has printed and said, and the most memory that it had, in MiB. */
   async function bothWays(name: string, text: string) {
@@ -4762,12 +5104,12 @@ describe("scripts that are too much for the quick way", () => {
           nest("<T>(a = ", "<T>() => @", ")", depth),
           nest("f < { [a = ", "1", "]: 1 }", depth),
           nest("a ? (b) : (c = ", "1", ")", depth),
-          `type A = ${"T extends (infer U extends ".repeat(depth)}X${" ? 1 : 2) ? 1 : 2".repeat(depth)};\n`,
-          `x = [${"a < b, ".repeat(depth * 40)}];\n`,
-          `x = ${"a < ".repeat(depth * 40)}b;\n`,
+          `type A = ${repeated("T extends (infer U extends ", depth)}X${repeated(" ? 1 : 2) ? 1 : 2", depth)};\n`,
+          `x = [${repeated("a < b, ", depth * 40)}];\n`,
+          `x = ${repeated("a < ", depth * 40)}b;\n`,
           // a look ahead from each `(` to the end of what may be a pattern
-          `type A = ${"({ a: ".repeat(depth * 13)}1${" })".repeat(depth * 13)};\n`,
-          `type A = ${"([".repeat(depth * 13)}1${"])".repeat(depth * 13)};\n`,
+          `type A = ${repeated("({ a: ", depth * 13)}1${repeated(" })", depth * 13)};\n`,
+          `type A = ${repeated("([", depth * 13)}1${repeated("])", depth * 13)};\n`,
         ]),
         [[]],
       ));
@@ -4949,6 +5291,8 @@ describe("JavaScript and TypeScript in a host", () => {
         '<script lang="ts">\nexport default {}\n</script>\n\n<script setup lang="ts">\nconst  a=1\n</script>\n\n<template>\n  <div>{{ a }}</div>\n</template>\n\n<style>\na{color:red}\n</style>\n',
         '<script src="a.js">\nconst  a=1\n</script>\n',
         '<script lang="coffee">\na  =  1\n</script>\n',
+        // `graphql` with type arguments: its template is GraphQL
+        '<script lang="ts">\ngraphql<T>(schema, `query { a }`);\n</script>\n\n<template>\n  <div>x</div>\n</template>\n',
         '<script lang="ts">\nconst  a=1\n</script>text\n',
         '<script lang="ts">\nconst  a=1\n</script><b>c</b>\n',
         '<script lang="ts">\nconst  a=1\n',
@@ -5201,6 +5545,8 @@ describe("JavaScript and TypeScript in a host", () => {
         "<pre>\n<script>\n  const  a=1\n</script>\n</pre>\n",
         "<script>\n  const  a=1\n",
         "<!-- prettier-ignore -->\n<script>\n  const  a=1\n</script>\n",
+        // `graphql` with type arguments: its template is GraphQL
+        '<script lang="ts">\nconst r = await graphql<Result>(schema, `{ a }`);\n</script>\n',
       ],
       options,
     );
@@ -5230,6 +5576,10 @@ describe("JavaScript and TypeScript in a host", () => {
       '```js\nconst a = `b`;\n```\n\n```js\nconst a = css`b`;\n```\n\n```js\nconst a = 中;\n```\n\n```js\nconst a = "中";\n```\n',
       '```js title="a"\nconst a = 1;\n```\n\n````js\nconst a = 1;\n````\n\n~~~js\nconst a = 1;\n~~~\n\n``` js\nconst a = 1;\n```\n\n```js\nconst a = 1;\n``` \n',
       "```js\r\nconst a = 1;\r\n```\r\n",
+      // `graphql` with type arguments: its template is GraphQL
+      "# a\n\n```ts\ngraphql<T>(schema, `query { a }`);\n```\n",
+      // A table of tests with a line break in a cell of its header: the block is indented by its host.
+      "- a\n\n  ```js\n  describe.each`\n  a\n\n  bbbbbbbb | c\n  ${1} | ${2}\n  `;\n  ```\n",
       // Many that aren't, then some that are.
       "```js\nconst  a=1\n```\n\n".repeat(30) + "```js\nconst a = 1;\n```\n\n".repeat(30),
       // HTML: below the root it is read like a file, but for what is no code in a text with a parent.
@@ -6022,12 +6372,26 @@ describe("TypeScript that the long way rejects", () => {
     "x = a\u1acf;\n",
     "class A { #\ua7cb; }\n",
     "x = { a\ud803\udd4a: 1 };\n",
+    // `as T ? ((` is read as the start of the type of a function, and what follows as its parameters
+    "x = a as B ? ((-c) * e) : d;\n",
+    "x = a as B ? ((class {})) : d;\n",
+    // the same with one parenthesis, in a trial that comes to its end
+    "x = <T>(y = a as B ? -c : d) => y;\n",
+    "f<(a = b as C ? -d : e) => void>(g);\n",
+    "type X = A extends infer U extends (a = b as C ? -d : e) => void ? 1 : 2;\n",
+    // what is kept of the look for the end of type arguments, where a regular expression or a string holds a quote
+    "x = [a < (b, c), /'/, a < b < (c, d) >> (e), /'/];\n",
+    "x = [a < (b, c), /[//]/, a < b < (c, d) >> (e)];\n",
   ]);
   expectRejected("a.tsx", [
     // a comment directly behind the `<` of type arguments in a tag
     "x = <a><Component<// c\nnumber> foo></Component></a>;\n",
     // characters that are letters since Unicode 16
     "x = <a\u0897 />;\n",
+    // `as T ? ((` and `as T ? -c` in a trial, and text of JSX in the look for the end of type arguments
+    "x = <div>{a as B ? ((-c) * 2) : d}</div>;\n",
+    "x = <T,>(y = a as B ? -c : d) => y;\n",
+    "x = [a < (b, c), <a>http://x {a < b < (c, d) >> (e)}</a>];\n",
   ]);
   describe("what looks like it and is printed", () =>
     expectSame(
@@ -6050,6 +6414,14 @@ describe("TypeScript that the long way rejects", () => {
         "x = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.b < cccccccccccccccccccccccc()) > dddddddddddddddddddddddd[0];\n",
         "import a from 'b'\nwith { a: 'b' }\n",
         "interface A {\n  in: T;\n  out: T;\n  const: T;\n}\n",
+        // `as T ? ((` in front of what the type of a function can start with too
+        "x = a as B ? ((c)) : d;\n",
+        "x = a as B ? ((-1)) : d;\n",
+        "x = <T>(y = a as B ? ((c)) : d) => y;\n",
+        // two parentheses behind the `?` of a conditional type
+        "type A<T> = T extends string ? ((x: T) => void) | null : never;\n",
+        "type A<T> = T extends U ? ((x: T) => void) : ((y: T) => void)[];\n",
+        "type A<T> = T extends string\n  ? ((x: T) => void) | null\n  : never;\n",
       ],
       [[]],
     ));
@@ -6127,9 +6499,34 @@ describe("what the quick way for scripts is asked about, and what is done around
         "// @flow\n/* flow-include type A = 1; */\n",
         "#!/usr/bin/env node\n// @flow\ntype A = ?B;\n",
         "a;\n// @flow\ntype A = ?B;\n",
+        // a byte order mark in front of a `#!` line: the comment behind that line is not the first of the file
+        "\ufeff#!/usr/bin/env node\n// @flow\nvar x /*: number */ = 1;\n",
+        "\ufeff#!/usr/bin/env node\n// @flow\ntype A = number;\nfunction f(a: A): A {\n  return a;\n}\n",
+        "\ufeff// @flow\nvar x /*: number */ = 1;\n",
       ],
       [[]],
     ));
+
+  // What a refusal was too wide for once.
+  test.skipIf(!hasFlag).concurrent.each([
+    [
+      "a.js",
+      ["--no-semi"],
+      "/** @type {import('next').NextConfig} */\nconst nextConfig = {\n  reactStrictMode: true,\n}\n\nmodule.exports = nextConfig\n",
+    ],
+    ["a.ts", [], "type A<T> = T extends string ? ((x: T) => void) | null : never;\n"],
+  ])("goes the quick way: %s %j %j", async (name, flags, text) => {
+    using dir = tempDir("format-short-cuts", { [name]: text });
+    await using proc = spawn({
+      cmd: [bunExe(), "fmt", "--check", "--bench=1", "--threads=1", "--no-config", "--no-editorconfig", ...flags, name],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toContain("the quick way: 1 scripts");
+  });
 
   // One row for each kind of text that the two ways printed differently once: the name of the file, the flags, the text.
   describe("what the quick way prints", () => {
@@ -6241,6 +6638,153 @@ describe("what the quick way for scripts is asked about, and what is done around
       ["a.js", "--print-width=14", "{/**/;\n\n;\nd(()=>(b?e:x()))\n}\n"],
       ["a.js", "--print-width=14", "{/**/\nd(()=>(b?e:x()))\n}\n"],
       ["a.js", "--print-width=18", "{/**/;\nx = d(()=>(b?e:x()))\n}\n"],
+      // A call of `graphql` with type arguments: its template is GraphQL. Another name, or a member of that name, is none.
+      ["a.ts", "", "const r = await graphql<{ a: string }>(schema, `{ a }`, root);\n"],
+      ["a.tsx", "", "export const q = () => graphql<T>(`{ a }`);\n"],
+      ["a.js.flow", "", "graphql<T>(schema, `query { a }`);\n"],
+      ["a.ts", "", "const r = graphqx<T>(schema, `{ a }`);\nconst s = a.graphql<T>(schema, `{ a }`);\n"],
+      // A lone argument that is short behind its unary operators, or is `this`, behind `=`.
+      [
+        "a.js",
+        "",
+        "const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = ffffffffffffffff(\n  -12345678901234567890123456789,\n);\nb = 1;\n",
+      ],
+      [
+        "a.js",
+        "",
+        "const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = ffffffffffffffff(\n  typeof typeof typeof typeof a,\n);\nb = 1;\n",
+      ],
+      [
+        "a.js",
+        "",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.b = ffffffffffffffff(\n  void 12345678901234567890123456789,\n);\nb = 1;\n",
+      ],
+      ["a.js", "--print-width=15", "const a = ff(\n  this,\n);\nb = 1;\n"],
+      [
+        "a.js",
+        "",
+        "const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = ffffffffffffffff(\n  -12345678901234567890123456789,\n  b,\n);\nffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff(\n  -12345678901234567890123456789,\n);\n",
+      ],
+      // More tabs in front of a statement or a property than a column can count, and one tab fewer.
+      ["a.js", "--tab-width=16384", `a;\n${repeated("\t", 131072)}b;\n`],
+      ["a.js", "--tab-width=16384", `x = {\n  a: 1,\n${repeated("\t", 131072)}b: 2,\n};\n`],
+      ["a.js", "--tab-width=16384", `a;\n${repeated("\t", 131071)}b;\n`],
+      // The same in front of `${` in a template: a column is a number of tabs times the width of one.
+      ["a.js", "--tab-width=16384", `a = \`\n${repeated("\t", 131072)}\${foo(\nbar, baz)}\`;\n`],
+      ["a.js", "--use-tabs --tab-width=16384", `a = \`\n${repeated("\t", 131072)}\${foo(\nbar, baz)}\`;\n`],
+      [
+        "a.js",
+        "--use-tabs --tab-width=16384",
+        `if (a) {\n\tb = \`\n${repeated("\t", 131071)}\${foo(\nbar, baz)}\`;\n}\n`,
+      ],
+      [
+        "a.js",
+        "--use-tabs --tab-width=16384",
+        `x = \`\n${repeated("\t", 131071)}\${foo(function () {\n  return 1;\n})}\n\`;\n`,
+      ],
+      // Two block comments that touch, where the second one is not printed with the first: in a conditional, behind a statement,
+      // behind `default:`. A half that may be a cast, and both on lines of their own.
+      ["a.js", "", "x = s ? b : /**\n * a\n *//**\n * b\n */\n null;\n"],
+      ["a.js", "", "a; /**\n * @type {A}\n *//**\n * b\n */\nb;\n"],
+      [
+        "a.js",
+        "",
+        "switch (a) {\n  case 1:\n    b;\n    break;\n  default:\n    /**\n * a\n *//**\n * b\n */\nc;\n}\n",
+      ],
+      ["a.js", "", "a;\n/**\n * @type {A}\n *//**\n * b\n */\nb;\n"],
+      ["a.js", "", "a;\n/**\n * a\n *//**\n * b\n */\nb;\n"],
+      // A comment that may be a cast at the end of a line, in front of a statement that gets a `;` at its start.
+      ["a.js", "--no-semi", "x = 1; /** @type {A} */ // d\n[a].b();\n"],
+      ["a.js", "--no-semi", "x = 1; /** @type {A} */\n[a].b();\n"],
+      ["a.js", "--no-semi", "x = 1; /* type {A} */ // d\n[a].b();\n"],
+      // The same, and two doc comments that touch, as the first comment of the file.
+      [
+        "a.js",
+        "--no-semi",
+        "/** @type {import('next').NextConfig} */\nconst nextConfig = {\n  reactStrictMode: true,\n}\n\nmodule.exports = nextConfig\n",
+      ],
+      ["a.js", "", "/**\n * a\n *//**\n * b\n */\nfoo();\n"],
+      // The same at the end of the line of a member of an interface, with an empty line behind it.
+      ["a.ts", "", "interface A {\n  c: void; /** @type {A} */\n\n  b: string;\n}\n"],
+      ["a.ts", "", "interface A {\n  a(): void, /**\n   * @type {A}\n   */\n\n  b: string,\n}\n"],
+      [
+        "a.ts",
+        "",
+        "interface A {\n  c: void; /** type {A} */\n\n  b: string;\n}\ntype B = {\n  c: void; /** @type {A} */\n\n  b: string;\n};\n",
+      ],
+      // A table of tests with a line break in a cell of its header.
+      ["a.js", "", "describe.each`\na\n\nbbbbbbbb | c\n${1} | ${2}\n`;\n"],
+      ["a.js", "", 'describe.each`\n  a    | b\n  ${1} | ${2}\n`("x", () => {});\n'],
+      // Flow: an object type as the type of a type guard, and as the key of an indexer.
+      [
+        "a.js.flow",
+        "",
+        "declare function isPoint(value: mixed): value is { x: number, y: number, label: string, visible: boolean };\ntype Guard = (value: mixed) => value is { x: number, y: number, label: string, visible: boolean };\n",
+      ],
+      [
+        "a.js.flow",
+        "",
+        "type G = (value: mixed) => implies value is { x: number, y: number, label: string, visible: boolean };\n",
+      ],
+      [
+        "a.js.flow",
+        "",
+        "declare function f(value: mixed): value is Point;\ntype G = (value: mixed) => { x: number, y: number, label: string, visible: boolean, more: string };\n",
+      ],
+      ["a.js", "", "// @flow\ndeclare class C {\n  [k: { a: A }]: X;\n}\ninterface I {\n  [k: { a: A }]: X;\n}\n"],
+      ["a.js.flow", "", "declare export class C {\n  static [{| a: A |}]: X;\n  +[k: { ...A }]: X;\n}\n"],
+      ["a.js.flow", "", "type T = {\n  [k: string]: X,\n  [k: A | B]: X,\n  [K]: { a: A },\n};\n"],
+      // The name of a placeholder of HTML in parentheses, as the target of an assignment and in a cast of JSDoc.
+      [
+        "a.js",
+        "--no-semi",
+        "(PRETTIER_HTML_PLACEHOLDER_3_14_IN_JS)++;\n(PRETTIER_HTML_PLACEHOLDER_3_14_IN_JS) += 1;\n",
+      ],
+      [
+        "a.js",
+        "",
+        "/** @type {x} */ (PRETTIER_HTML_PLACEHOLDER_3_14_IN_JS);\nx = /** @type {x} */ (PRETTIER_HTML_PLACEHOLDER_3_14_IN_JS);\n",
+      ],
+      [
+        "a.js",
+        "",
+        "x = PRETTIER_HTML_PLACEHOLDER_3_14_IN_JS + 1;\nx = /** @type {x} */ (PRETTIER_HTML_PLACEHOLDER_3_IN_JS);\n",
+      ],
+      // A function that is hugged, in the signature of one that is hugged: the signature is written once for all the ways to print the
+      // call. In the type of such a function, a call that hugs one is refused.
+      ["a.js", "", "x = f(function (a = f(function (a = f(function (a = x) {})) {})) {});\n"],
+      ["a.js", "", "x = f(function (a = f(function (a = f(function (a = x) {}, b)) {}, b)) {}, b);\n"],
+      ["a.js", "", "f(function (/* a */ a = g(function (b /* b */ = 1) {\n  // c\n}) /* d */) {\n  // e\n});\n"],
+      ["a.js", "", "f(function (\n  a = g(function (b = 1) {}), // c\n) {});\n"],
+      [
+        "a.ts",
+        "",
+        "f(function <T>(this: A, a: T = g(function (b: B = h(function (c?: C): void {})): D {\n  return b;\n})): { a: T } {\n  return a;\n});\n",
+      ],
+      ["a.ts", "", "x = f(function (a): { [f(function (a): { [x]: 1 } {})]: 1 } {});\n"],
+      ["a.ts", "", "x = f(function <T = { [f(function <T = { [x]: 1 }>(a) {})]: 1 }>(a) {});\n"],
+      ["a.ts", "", "f(function (a, b): { [key(function (c, d): E {})]: 1 } {\n  return a;\n});\n"],
+      ["a.js", "--print-width=40", "x = f(function (a = f(function (a = f(function (a = x) {})) {})) {});\n"],
+      [
+        "a.js",
+        "--print-width=40",
+        "x = f(function ({ a = f(function ({ a = f(function ({ a = x }) {}) }) {}) }) {});\n",
+      ],
+      [
+        "a.js",
+        "--print-width=40",
+        "x = f(function (a = f(function (a = f(function (a = x) {\n  return a;\n}, b)) {\n  return a;\n}, b)) {\n  return a;\n}, b);\n",
+      ],
+      ["a.js", "--print-width=40", "x = f(b, function (a = f(b, function (a = x) {})) {});\n"],
+      [
+        "a.js",
+        "--print-width=40",
+        "setTimeout(function (a = wrap(function (b = wrap(function (c = 1) {\n  c;\n}, 3)) {\n  b;\n}, 2)) {\n  a;\n}, 1);\n",
+      ],
+      // A template whose expression has a fill, in such a template.
+      ["a.js", "", "x = `${[1, 2, `${[1, 2, `${[1, 2, 3]}`]}`]}`;\n"],
+      ["a.js", "", "x = f(function (a = `${[1, 2, `${[3, 4, 5]}`]}`) {});\n"],
+      ["a.jsx", "", "x = `${<a>b c {`${<a>b c {`${<a>b c {x} d</a>}`} d</a>}`} d</a>}`;\n"],
     ];
     for (const [title, group] of Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim())) {
       const [[name, flags]] = group;
@@ -7026,6 +7570,77 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     ["a.cjs", "--print-width=11", "{/**@type*/(e.a().c())}\n"],
     // `yield` as a computed key that is short.
     ["a.mjs", "--print-width=15 --tab-width=7", "class a{@a*a(){({[yield]:a})}}\n"],
+    // The tag of a template of GraphQL that is a computed member.
+    ["a.js", "", "graphql[experimental]`query { a }`;\n"],
+    // The tag of a table of tests with a comment that names a language: the template is in that language, if it is one.
+    [
+      "a.js",
+      "",
+      'it.each/* GraphQL */`\nquery { a }\n`;\ntest.only.each/* HTML */`<a   b="c"></a>`;\ndescribe.each/* GraphQL */`\na|b\n${1}|${2}\n`;\ndescribe.each/* css */`\na|b\n${1}|${2}\n`;\n',
+    ],
+    // A computed key that is short, with a comment or a type that is wider than its bytes, or narrower.
+    [
+      "a.js",
+      "--tab-width=8",
+      'a = {\n  [/*日日*/ a]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+    ],
+    [
+      "a.js",
+      "--tab-width=8",
+      'a = {\n  [/*\t\t\t*/ a]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+    ],
+    [
+      "a.js",
+      "--tab-width=8",
+      'a = {\n  [/**/1234]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n  [/**/    1]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+    ],
+    [
+      "a.js",
+      "--tab-width=8",
+      'a = {\n  [/**/`ab`]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+    ],
+    [
+      "a.ts",
+      "--tab-width=8",
+      'a = {\n  [a as  A[ ]]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+    ],
+    [
+      "a.ts",
+      "--tab-width=8",
+      'a = {\n  [a as 日日]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+    ],
+    [
+      "a.ts",
+      "--tab-width=8",
+      'a = {\n  [await /**/ a]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+    ],
+    // A number or parentheses in the type of such a key: the key is as wide as it is printed.
+    [
+      "a.ts",
+      "--tab-width=8",
+      'x = { [kk as .5]: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" };\nx = { [k as (T)[]]: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" };\nx = { [k as 0.50]: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" };\n',
+    ],
+    [
+      "a.ts",
+      "--tab-width=8",
+      'x = { [kkk as 5.]: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" };\n',
+    ],
+    [
+      "a.js",
+      "",
+      'a = {\n  [1 // c\n  ]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+    ],
+    // Flow: the type of a function without parentheses around its parameter, as what a declared hook returns.
+    [
+      "a.js.flow",
+      "--arrow-parens=avoid",
+      "declare export hook useA(): X => Y;\ndeclare function f(): X => Y %checks;\nhook useB(): X => Y {}\nfunction g(a: X): X => Y {}\ndeclare function h(): X => Y;\ndeclare hook useC(a: X => Y): void;\n",
+    ],
+    [
+      "a.js.flow",
+      "",
+      "declare hook useA(): X => Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\n",
+    ],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {
@@ -7065,18 +7680,13 @@ it.each\`
 
   // The comment before `class` is refused, and what takes over pays for its own short cuts and for the long way.
   test("a class with many decorators takes linear time where it is refused", async () => {
-    using dir = tempDir("format-short-cuts", { "a.js": "@a // c\n".repeat(isDebug ? 2_000 : 40_000) + "class A {}\n" });
+    using dir = tempDir("format-short-cuts", {
+      "a.js": repeated("@a // c\n", isDebug ? 2_000 : 40_000) + "class A {}\n",
+    });
     const cpu = async (own: string[]) => {
-      await using proc = spawn({
-        cmd: [bunExe(), "fmt", "--check", "--no-config", "--no-editorconfig", "--log-level=silent", ...own, "a.js"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "ignore",
-        stderr: "ignore",
-      });
-      expect(await proc.exited).toBe(0);
-      // (Windows counts in ticks of 1/64 s)
-      return Math.max(Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1e6, 1 / 64);
+      const { seconds, exitCode } = await cpuTime(String(dir), ["--check", ...own, "a.js"]);
+      expect(exitCode).toBe(0);
+      return seconds;
     };
     // 1.4 in a release build, and 17 when each decorator walked all of them.
     expect((await cpu([])) / (await cpu(["--no-short-cuts"]))).toBeLessThan(6);
@@ -7762,6 +8372,32 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "record A { static prototype: T = 1 }\n",
     'record A { static "prototype": T = 1 }\n',
     "record A { static prototype() {} }\n",
+    // a hook or a component in what is declared, or as a statement of a declared module or namespace
+    "declare const x = () => { hook useA() {} };\n",
+    "declare module M { if (x) { component A() {} } }\n",
+    "declare module M { hook useA(x: T): void {} }\n",
+    // a component with a rest parameter and "use strict"
+    'component A(...a: T) { "use strict"; }\n',
+    "export default component A(...a: T) { 'use strict'; }\n",
+    // `super` behind the supertype of an opaque type
+    "opaque type A: S super L = I;\n",
+    "declare opaque type A: S super L;\n",
+    // `in` and `readonly` in front of what is no name
+    "type A = <in extends>(B) => C;\n",
+    "type A = [readonly extends T ? U : V];\n",
+    // `yield` and `await` as the name in a type guard and behind `implements`, where they are no names
+    "function* g() { function h(x): yield is T {} }\n",
+    "function* g() { class Z implements yield {} }\n",
+    "x = async () => { function h(x): implies await is T {} };\n",
+    // `match` anywhere in what a class extends
+    "class A extends foo(match (x) { 1 => 2 }) {}\n",
+    "class A extends foo(() => { const y = match (x) { 1 => 2 }; }) {}\n",
+    // `component` and `hook` in front of `satisfies`
+    "component satisfies() {}\n",
+    "hook satisfies() {}\n",
+    // a decorated parameter of a component, in a function in the default value of a parameter of a method
+    'class A {\n  m(a = function () { component C("a" as @d x) {} }) {}\n}\n',
+    'class A {\n  m(a = class { static { component C("a" as @d x) {} } }) {}\n}\n',
   ]);
   expectRejected(
     "a.js with @flow, what only Flow has",
@@ -7770,6 +8406,8 @@ describe("JavaScript and Flow that the long way rejects", () => {
       // text behind `<a>` that is no token: the long way tries type parameters
       "<a>'</a>;\n",
       "x = (\n  <a>\n    1st\n  </a>\n);\n",
+      // `await` behind `implements` in an async function
+      "async function f() { class Z implements await {} }\n",
     ].map(text => `// @flow\n${text}`),
   );
   expectRejected("a.d.ts", "a.d.ts", [
@@ -7876,6 +8514,25 @@ describe("programs that are read as written", () => {
         "type A = hook () => T => X;\n",
         "[].reduce(() => {\n  [];\n}, ([]: Array<>\n));\n",
         "const a =\n  /** @type {X} */\n  (b);\n",
+        // `infer A` in front of `[]`, `[K]` and `?.[K]`, in what a function type returns
+        "type A = (x: T) => infer T[];\n",
+        "type E = <T>(x: T) => infer V?.[K];\n",
+        "type A = infer T[];\n",
+        // what is read in another way where nothing has a body: behind `declare`, and in a declared module or namespace
+        "declare var x = function () { class A { m() { return 1; } } };\n",
+        "declare enum E { A = () => { class B { m() {} } } }\n",
+        "declare module M { declare var a: T; hook useA(x: T): void\n{} }\n",
+        'declare module M {\n  declare var a: T;\n  "abc";\n}\n',
+        // what only looks like what is rejected: `"use strict"` that is no directive, `in` and `yield` as names, `match` in a function
+        'async component A(...a: T) { f(); "use strict"; }\n',
+        "type A = <in>(B) => C;\n",
+        "function h(x): yield is T {}\n",
+        "class A extends foo(function () { match (x) { 1 => {} } }) {}\n",
+        // `record` in front of `satisfies`
+        "record satisfies {a: T}\n",
+        // a predicate behind a type that ends with `typeof`
+        'declare function f(x: mixed): typeof y %checks(x);\ndeclare function g(x: mixed): typeof y[] %checks(x);\ndeclare function h(x: mixed): typeof y %checks(typeof x === "a");\n',
+        "declare function f(x: mixed): /* c */ typeof y %checks(x);\n",
       ],
       [[], ["--print-width=10"]],
     ));
@@ -7890,6 +8547,8 @@ describe("programs that are read as written", () => {
         "type A = { +[[a]]: T };\n",
         // a cast as a decorator
         "@(a ?? b: c) class D {}\n",
+        // a class in a function in what is declared
+        "declare var x = function () { class A { m() { return 1; } } };\n",
       ].map(text => `// @flow\n${text}`),
       [[]],
     ));

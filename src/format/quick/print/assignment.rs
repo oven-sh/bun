@@ -9,7 +9,6 @@ use crate::ast::{F_CHAIN, F_EXT, F_SHORTHAND, FN_TYPE_PARAMETERS, k};
 use crate::print::core::ARG_LAYOUT_SHIFT;
 use crate::print::statics::{EQ, OPERATOR, SPACE};
 use crate::print::util::is_literal_kind;
-use crate::scan::is_space;
 use crate::{Quick, R, Words};
 
 pub(crate) const LAYOUT_BREAK_AFTER_OPERATOR: i32 = 1;
@@ -31,30 +30,8 @@ impl Quick {
     }
 
     pub(crate) fn is_indentable_block_comment_at(&self, c: i32) -> bool {
-        if !self.is_block_comment(c) {
-            return false;
-        }
-        let start = self.comment_start(c);
-        let end = self.comment_end(c);
-        let mut saw_newline = false;
-        let mut p = start + 2;
-        while p < end - 1 {
-            'c1: {
-                if self.t.at(p) != 10 {
-                    break 'c1;
-                }
-                saw_newline = true;
-                let mut q = p + 1;
-                while is_space(self.t.at(q)) && self.t.at(q) != 10 {
-                    q += 1;
-                }
-                if self.t.at(q) != 42 {
-                    return false;
-                }
-            }
-            p += 1;
-        }
-        return saw_newline;
+        return self.is_block_comment(c)
+            && self.is_indentable_block_comment(self.comment_start(c), self.comment_end(c));
     }
 
     pub(crate) fn has_leading_indentable_block_comment(&self, n: i32) -> bool {
@@ -223,35 +200,44 @@ impl Quick {
 
     pub(crate) fn is_poorly_breakable_member_or_call_chain(
         &mut self,
-        mut n: i32,
+        n: i32,
         mut deep: bool,
     ) -> R<bool> {
+        // The arguments and the head first: a look at each, where is_member_chain_labeled() goes through all of the chain below a call.
+        let mut link = n;
         loop {
-            let k = self.n.at(n) & 0xff;
+            let k = self.n.at(link) & 0xff;
             if k == k::CallExpression {
-                let args = self.n.at(n + 5);
+                let args = self.n.at(link + 5);
                 let count = self.n.at(args);
                 if !(count == 0
                     || (count == 1 && self.is_lone_short_argument(self.n.at(args + 1))?))
                 {
                     return Ok(false);
                 }
-                if self.is_member_chain_labeled(n)? {
+            } else if k != k::MemberExpression && k != k::NonNullExpression {
+                if !(deep && (k == k::Identifier || k == k::ThisExpression)) {
                     return Ok(false);
                 }
-                if self.is_call_expression_with_complex_type_arguments(n)? {
+                break;
+            }
+            link = self.n.at(link + 4);
+            deep = true;
+        }
+        let mut link = n;
+        loop {
+            let k = self.n.at(link) & 0xff;
+            if k == k::CallExpression {
+                if self.is_member_chain_labeled(link)? {
                     return Ok(false);
                 }
-                n = self.n.at(n + 4);
-                deep = true;
-                continue;
+                if self.is_call_expression_with_complex_type_arguments(link)? {
+                    return Ok(false);
+                }
+            } else if k != k::MemberExpression && k != k::NonNullExpression {
+                return Ok(true);
             }
-            if k == k::MemberExpression || k == k::NonNullExpression {
-                n = self.n.at(n + 4);
-                deep = true;
-                continue;
-            }
-            return Ok(deep && (k == k::Identifier || k == k::ThisExpression));
+            link = self.n.at(link + 4);
         }
     }
 

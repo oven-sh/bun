@@ -1228,11 +1228,9 @@ impl<'a> Direct<'a, '_> {
         self.at += 1;
         match (is_class, mode) {
             (true, Mode::Free) => {
-                let is_broken = self
-                    .slice(self.at, self.source.len())
-                    .iter()
-                    .find(|byte| **byte == b'\n' || **byte == delimiter)
-                    == Some(&b'\n');
+                let rest = self.slice(self.at, self.source.len());
+                let is_broken = strings::index_of_any(rest, &[b'\n', delimiter])
+                    .is_some_and(|at| rest.get(at) == Some(&b'\n'));
                 self.group(is_broken, Rest::Columns(1), |this, mode| {
                     this.classes(mode, level, delimiter)
                 })?;

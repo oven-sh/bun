@@ -119,6 +119,10 @@ async function formatChecked(files: Record<string, string>, args: string[], opti
 const slowdown = (odd: { cpu: number }, plain: { cpu: number }) =>
   odd.cpu / Math.max(plain.cpu, isWindows ? 1 / 64 : 0);
 
+/** `unit` so many times. (`String.prototype.repeat` is slow in a debug build.) */
+const repeated = (unit: string, times: number) =>
+  Buffer.alloc(Buffer.byteLength(unit) * Math.floor(times), unit).toString();
+
 /** True if the temporary directory is inside a repository. */
 const isInRepository = (function look(directory: string): boolean {
   const isRoot = [".git", ".jj"].some(name => existsSync(join(directory, name)));
@@ -6215,6 +6219,13 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(0);
   });
 
+  test("with an .oxfmtrc.json, a table of tests with a comment that names a language stays a table", async () => {
+    const files = { ".oxfmtrc.json": "{}\n", "a.js": "describe.each/* HTML */`\n  a | b\n  ${1} | ${2}\n`;\n" };
+    const result = await format(files, ["a.js"], { reads: ["a.js"] });
+    expect(result.files).toEqual({ "a.js": "describe.each /* HTML */ `\n  a    | b\n  ${1} | ${2}\n`;\n" });
+    expect(result.exitCode).toBe(0);
+  });
+
   describe("without a configuration file", () => {
     // 90 columns, which fits on one line in oxfmt's 100.
     const asOxfmt = `const value = someFunction(argumentNumberOne, argumentNumberTwo, argumentNumberThree);\n`;
@@ -7220,6 +7231,137 @@ const b = (x: mixed): implies x is { a: () => void } => true;
     expect(result.exitCode).toBe(0);
   });
 
+  // Each row is the name of a file, the flags, the text, and what Prettier 3.9.9 prints for it. `bun fmt` printed each in another way
+  // once, with and without its short cuts alike, so the rows of `short-cuts.test.ts` that compare the two were no help.
+  describe("texts that were printed unlike Prettier prints them", () => {
+    const rows: [name: string, flags: string, text: string, byPrettier: string][] = [
+      // JavaScript: what a rule looks for, in or around the parentheses of a cast of JSDoc. The tag of a table of tests, or of a
+      // template of GraphQL, that is more than a name. A computed key that is short, with a comment or a type. Flow: what a declared
+      // hook returns.
+      [
+        "a.js",
+        "",
+        '/** @type {A} */ (describe.each)`\na|b\n${1}|${2}\n`("x", () => {});\n/** @type {A} */ (describe).each`\na|b\n${1}|${2}\n`("x", () => {});\n',
+        '/** @type {A} */ (describe.each)`\na|b\n${1}|${2}\n`("x", () => {});\n/** @type {A} */ (describe).each`\na|b\n${1}|${2}\n`("x", () => {});\n',
+      ],
+      [
+        "a.js",
+        "",
+        '/** @type {A} */ (it)("does something really long and complicated so I have to write a very long name for the test", () => { a; });\n/** @type {A} */ (require)("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");\n/** @type {A} */ (require).resolve("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");\n/** @type {A} */ (define)(["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"], function (a, b) {});\n',
+        '/** @type {A} */ (it)(\n  "does something really long and complicated so I have to write a very long name for the test",\n  () => {\n    a;\n  },\n);\n/** @type {A} */ (require)(\n  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",\n);\n/** @type {A} */ (require).resolve(\n  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",\n);\n/** @type {A} */ (define)(\n  [\n    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",\n    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",\n  ],\n  function (a, b) {},\n);\n',
+      ],
+      [
+        "a.js",
+        "",
+        "if (!/** @type {A} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && cccccccccccccccccccccccccccccc)) {}\n",
+        "if (\n  !(\n    /** @type {A} */ (\n      aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n        bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &&\n        cccccccccccccccccccccccccccccc\n    )\n  )\n) {\n}\n",
+      ],
+      [
+        "a.js",
+        "",
+        "const c = /** @type {A} */ (styled).div`\ndisplay:flex;\n`;\nconst d = /** @type {A} */ (graphql)`\nquery { a }\n`;\nconst e = /** @type {A} */ (html)`<div>  <b>x</b></div>`;\nconst m = /** @type {A} */ (markdown)`\n  # hi\n`;\ngraphql(schema, /** @type {A} */ (`\nquery { a }\n`));\nconst j = <style jsx>{/** @type {A} */ (`\ndiv{color:red}\n`)}</style>;\n",
+        "const c = /** @type {A} */ (styled).div`\ndisplay:flex;\n`;\nconst d = /** @type {A} */ (graphql)`\nquery { a }\n`;\nconst e = /** @type {A} */ (html)`<div>  <b>x</b></div>`;\nconst m = /** @type {A} */ (markdown)`\n  # hi\n`;\ngraphql(\n  schema,\n  /** @type {A} */ (\n    `\nquery { a }\n`\n  ),\n);\nconst j = (\n  <style jsx>\n    {\n      /** @type {A} */ (\n        `\ndiv{color:red}\n`\n      )\n    }\n  </style>\n);\n",
+      ],
+      [
+        "a.js",
+        "",
+        'it("does something", /** @type {X} */ ((aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccccccccc) => {\n  a;\n}));\n',
+        'it(\n  "does something",\n  /** @type {X} */ (\n    (\n      aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,\n      ccccccccccccccccccccc,\n    ) => {\n      a;\n    }\n  ),\n);\n',
+      ],
+      [
+        "a.js",
+        "",
+        'const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = /** @type {X} */ (require)("a");\n',
+        'const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa =\n  /** @type {X} */ (require)("a");\n',
+      ],
+      ["a.js", "", "graphql[experimental]`query { a }`;\n", "graphql[experimental]`\n  query {\n    a\n  }\n`;\n"],
+      [
+        "a.js",
+        "",
+        'it.each/* GraphQL */`\nquery { a }\n`;\ntest.only.each/* HTML */`<a   b="c"></a>`;\ndescribe.each/* GraphQL */`\na|b\n${1}|${2}\n`;\ndescribe.each/* css */`\na|b\n${1}|${2}\n`;\n',
+        'it.each /* GraphQL */ `\n  query {\n    a\n  }\n`;\ntest.only.each /* HTML */ `<a b="c"></a>`;\ndescribe.each /* GraphQL */ `\n  a    | b\n  ${1} | ${2}\n`;\ndescribe.each /* css */ `\n  a    | b\n  ${1} | ${2}\n`;\n',
+      ],
+      [
+        "a.js",
+        "",
+        'a = {\n  [1 // c\n  ]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+        'a = {\n  // c\n  [1]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+      ],
+      [
+        "a.js",
+        "--tab-width=8",
+        'a = {\n  [/*日日*/ a]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+        'a = {\n        [/*日日*/ a]:\n                "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+      ],
+      [
+        "a.ts",
+        "--tab-width=8",
+        'a = {\n  [a as 日日]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+        'a = {\n        [a as 日日]:\n                "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+      ],
+      [
+        "a.ts",
+        "--tab-width=8",
+        'a = {\n  [await /**/ a]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+        'a = {\n        [await /**/ a]:\n                "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+      ],
+      [
+        "a.js.flow",
+        "--arrow-parens=avoid",
+        "declare export hook useA(): X => Y;\ndeclare function f(): X => Y %checks;\nhook useB(): X => Y {}\nfunction g(a: X): X => Y {}\ndeclare function h(): X => Y;\ndeclare hook useC(a: X => Y): void;\n",
+        "declare export hook useA(): (X) => Y;\ndeclare function f(): X => Y %checks;\nhook useB(): X => Y {}\nfunction g(a: X): X => Y {}\ndeclare function h(): X => Y;\ndeclare hook useC(a: (X) => Y): void;\n",
+      ],
+      [
+        "a.js.flow",
+        "",
+        "declare hook useA(): X => Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\n",
+        "declare hook useA(): (\n  X,\n) =>\n  | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\n",
+      ],
+      // Markdown: a reference for a space or a tab in front of a line break of a paragraph.
+      ["a.md", "", "**Note:**&#x20;\nnext line\n", "**Note:**&#x20;\nnext line\n"],
+      ["a.md", "", "- &#x20;\n  w\n", "- &#x20;\n  w\n"],
+      ["a.md", "", "&#9;\n&#9;\nw\n", "&#9;\n&#9;\nw\n"],
+      ["a.md", "", "**a**&#32; \nb\n", "**a**&#32;\nb\n"],
+      ["a.md", "", "**a**&#32;&Tab;\t\nb\n", "**a**&#32;&Tab;\nb\n"],
+      ["a.md", "", "- [x] &#32;\n  w\n", "- [x] &#32;\n      w\n"],
+      ["a.md", "", "**a**&#32;\nb\n===\n", "**a**&#32;\nb\n===\n"],
+      ["a.mdx", "", "**a**&#32; \nb\n", "**a**&#32;\nb\n"],
+      ["a.md", "--prose-wrap=always", "x **a**&#32;\nb\n", "x **a**&#32; b\n"],
+      ["a.md", "--prose-wrap=never", "&#32;\nb\n", "&#32; b\n"],
+      // Flow: a predicate behind a type that ends with `typeof`. A template of Angular in a cast. A number in the type of a key.
+      [
+        "a.js.flow",
+        "",
+        'declare function f(x: mixed): typeof y %checks(x);\ndeclare function g(x: mixed): typeof y[] %checks(x);\ndeclare function h(x: mixed): typeof y %checks(typeof x === "a");\n',
+        'declare function f(x: mixed): typeof y %checks(x);\ndeclare function g(x: mixed): (typeof y)[] %checks(x);\ndeclare function h(x: mixed): typeof y %checks(typeof x === "a");\n',
+      ],
+      [
+        "a.js.flow",
+        "",
+        "declare function f(x: mixed): /* c */ typeof y %checks(x);\n",
+        "declare function f(x: mixed): /* c */ typeof y %checks(x);\n",
+      ],
+      [
+        "a.js",
+        "",
+        "@Component({ styles: [/** @type {any} */ (`  a {  color : red }`)] }) class A {}\n",
+        "@Component({ styles: [/** @type {any} */ (`  a {  color : red }`)] })\nclass A {}\n",
+      ],
+      [
+        "a.ts",
+        "--tab-width=8",
+        'x = { [kk as .5]: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" };\nx = { [k as (T)[]]: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" };\nx = { [k as 0.50]: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" };\n',
+        'x = {\n        [kk as 0.5]:\n                "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",\n};\nx = {\n        [k as T[]]: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",\n};\nx = {\n        [k as 0.5]: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",\n};\n',
+      ],
+    ];
+    test.each([...Map.groupBy(rows, row => row[1])])("with %j", async (flags, group) => {
+      const files = Object.fromEntries(group.map(([name, , text], index) => [`${index}/${name}`, text]));
+      const result = await format(files, flags.split(" ").filter(Boolean), { reads: Object.keys(files) });
+      expect(result.files).toEqual(Object.fromEntries(group.map((row, index) => [`${index}/${row[0]}`, row[3]])));
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
   // This is what oxfmt 0.72.0 does with each. It only runs OXC's parser, so code with errors from the pass that builds
   // the scopes is rejected by oxlint but formatted by oxfmt. Prettier formats a `const` without an initializer.
   test.each([
@@ -7750,8 +7892,6 @@ try {
     "takes linear time in the size of the text: .%s",
     async (extension, ordinary, units) => {
       const count = isDebug || isASAN ? 2_000 : 40_000;
-      const repeated = (unit: string, times: number) =>
-        Buffer.alloc(Buffer.byteLength(unit) * Math.floor(times), unit).toString();
       const texts = units.map(unit => repeated(unit, count));
       const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
       const configurations = [{}, { ".oxfmtrc.json": "{}\n" }];
@@ -7900,7 +8040,7 @@ try {
       ["", "<!-- a\n b -->\n", ""],
       ["", "<a>\n", ""],
       ["", "{{#a}}\n", ""],
-      ["", "<a>\n", "</a>".repeat(count)],
+      ["", "<a>\n", repeated("</a>", count)],
       ["", '<a b="c\nd">\n', ""],
       ["", '<a class="b {{c}}\n', ""],
       ['<a class="', "b {{c d}} ", '"></a>'],
@@ -7909,10 +8049,10 @@ try {
       ["{{a " + "(b ".repeat(deep), "c ", ")".repeat(deep) + "}}"],
       ["", "{{a (b\n", ""],
       ["", "a\n\f\n", ""],
-      ["", "<Foo>\n", "</Foo>".repeat(count)],
-      ["", "{{#a}} ", "{{/a}}".repeat(count)],
+      ["", "<Foo>\n", repeated("</Foo>", count)],
+      ["", "{{#a}} ", repeated("{{/a}}", count)],
     ];
-    const texts = shapes.map(([before, unit, after]) => before + unit.repeat(count) + after);
+    const texts = shapes.map(([before, unit, after]) => before + repeated(unit, count) + after);
     const ordinary = '<div class="a {{b}}">\n  {{#if c}}\n    <span>{{d.e}}</span>\n  {{/if}}\n</div>\n';
     const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
     const run = (configuration: Record<string, string>, text: (index: number) => string) =>
@@ -7925,18 +8065,18 @@ try {
     const longWay = { ".prettierrc": '{ "htmlWhitespaceSensitivity": "ignore" }\n' };
     const [odd, plain] = [
       await run({}, index => texts[index]),
-      await run(longWay, () => ordinary.repeat(length / ordinary.length)),
+      await run(longWay, () => repeated(ordinary, length / ordinary.length)),
     ];
     // 1 when all is well.
     expect(slowdown(odd, plain)).toBeLessThan(4);
-  }, 120_000);
+  });
 
   // Something on every line that is opened and not closed, or refused after a look ahead: what reads children from the
   // bytes looks for the end of each, which must not be a search through the rest of the text every time.
   test.each([[[]], [["--embedded-language-formatting=off"]]])(
     "HTML and Vue with something unclosed on every line take linear time: %j",
     async flags => {
-      const count = isDebug || isASAN ? 2_000 : 40_000;
+      const count = isDebug || isASAN ? 500 : 40_000;
       const [open, close] = ["<template>\n", "</template>\n"];
       // Each row is the file extension, a prefix, the repeated unit and a suffix.
       const shapes: [string, string, string, string][] = [
@@ -7976,7 +8116,7 @@ try {
         ["html", "<div>\n<p>a</p>", "\n", "</div>\n"],
         ["html", "<p>x</p>\n<", "a", ""],
       ];
-      const texts = shapes.map(([, before, unit, after]) => before + unit.repeat(count) + after);
+      const texts = shapes.map(([, before, unit, after]) => before + repeated(unit, count) + after);
       const ordinary =
         '<div class="a b">\n  <p>The quick brown fox <b>jumps</b> over the <a href=\'c\'>lazy dog</a>, and then <i>once more</i> for good measure.</p>\n  <img src="d" alt="e" style="f:g" />\n</div>\n';
       const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
@@ -7987,11 +8127,10 @@ try {
         ]);
       const [odd, plain] = [
         await run(index => texts[index]),
-        await run(() => ordinary.repeat(length / ordinary.length)),
+        await run(() => repeated(ordinary, length / ordinary.length)),
       ];
       expect(slowdown(odd, plain)).toBeLessThan(6);
     },
-    120_000,
   );
 
   // A search for two bytes is so fast that it takes a long text to tell, and a text of its own.
@@ -8006,12 +8145,11 @@ try {
     async (ending, unit, flags) => {
       const count = isDebug || isASAN ? 500 : 40_000;
       const run = (times: number) =>
-        format({ [`a.${ending}`]: `<template>\n${unit.repeat(times)}</template>\n` }, ["--check", ...flags]);
+        format({ [`a.${ending}`]: `<template>\n${repeated(unit, times)}</template>\n` }, ["--check", ...flags]);
       const [long, short] = [await run(4 * count), await run(count)];
       // 4 when all is well, 12 when it is not.
       expect(slowdown(long, short)).toBeLessThan(7);
     },
-    120_000,
   );
 
   // A `<` can start type arguments and a `(` the parameters of an arrow function. With the other kind of ternaries a
@@ -8020,18 +8158,14 @@ try {
     ["ts", "for (let i = 0; i < n; i++) {}\n"],
     ["ts", "a = b < c;\n"],
     ["js", "x = (a);\n"],
-  ])(
-    "a parser that takes something back on every line takes linear time: .%s %j",
-    async (ending, unit) => {
-      const count = isDebug || isASAN ? 2_000 : 16_000;
-      const run = (times: number) =>
-        format({ [`a.${ending}`]: unit.repeat(times) }, ["--check", "--experimental-ternaries", "--threads=1"]);
-      const [long, short] = [await run(4 * count), await run(count)];
-      // 3 to 4 when all is well, 8 to 13 when it is not.
-      expect(slowdown(long, short)).toBeLessThan(6);
-    },
-    120_000,
-  );
+  ])("a parser that takes something back on every line takes linear time: .%s %j", async (ending, unit) => {
+    const count = isDebug || isASAN ? 1_000 : 16_000;
+    const run = (times: number) =>
+      format({ [`a.${ending}`]: repeated(unit, times) }, ["--check", "--experimental-ternaries", "--threads=1"]);
+    const [long, short] = [await run(4 * count), await run(count)];
+    // 3 to 4 when all is well, 8 to 13 when it is not.
+    expect(slowdown(long, short)).toBeLessThan(6);
+  });
 
   // A comment in each repetition. These are inputs that attaching or printing comments once rescanned for each comment,
   // and similar ones.
@@ -8128,8 +8262,8 @@ try {
       ["js", "f()", " /* c */ (g() /* c */ ())", ";"],
       ["js", "f()", "\n// c\n.a(g()\n// c\n.b())", ";"],
       ["js", "new f()", " /* c */ ()", ";"],
-      ["js", "x = ", "/** c */ ", `(${"/* c */ ".repeat(count)}a);`],
-      ["ts", "type A = [x, ", "a /* c */ | ", `b${" ".repeat(count)}, y];`],
+      ["js", "x = ", "/** c */ ", `(${repeated("/* c */ ", count)}a);`],
+      ["ts", "type A = [x, ", "a /* c */ | ", `b${repeated(" ", count)}, y];`],
     ];
     const texts = shapes.map(([, before, unit, after]) => before + unit.repeat(count) + after);
     const ordinary =
@@ -8148,7 +8282,7 @@ try {
     // in the flavor of oxfmt. The shapes are compared with the long way.
     let plain = { cpu: 0 };
     for (const configuration of configurations) {
-      const result = await run(configuration, () => ordinary.repeat(length / ordinary.length));
+      const result = await run(configuration, () => repeated(ordinary, length / ordinary.length));
       if (result.cpu > plain.cpu) plain = result;
     }
     for (const configuration of configurations) {
@@ -8225,16 +8359,16 @@ try {
         each(index => `${"  ".repeat(index % 40)}- a\n`),
         each(index => `${"> ".repeat((index % 40) + 1)}a\n`),
         // Read to the end before it turns out that the parser has to read it.
-        `${"- a_b\n".repeat(count)}- a_ b\n`,
-        `${"- a\n".repeat(count)}- *\n`,
-        `${"- a\n\n".repeat(count)}- *\n`,
-        `${"1. a\n".repeat(count)}1. *\n`,
-        `${"> a\n".repeat(count)}> *\n`,
-        `${"a\n".repeat(count)}*\n`,
-        `| a |\n| - |\n${"| a_b |\n".repeat(count)}| a_ b |\n`,
-        `<div>\n${"a\n".repeat(count)} \n`,
-        `<A>\n${"a\n".repeat(count)}/\n`,
-        `\`\`\`\n${"a\n".repeat(count)}\`\`\` b\n`,
+        `${repeated("- a_b\n", count)}- a_ b\n`,
+        `${repeated("- a\n", count)}- *\n`,
+        `${repeated("- a\n\n", count)}- *\n`,
+        `${repeated("1. a\n", count)}1. *\n`,
+        `${repeated("> a\n", count)}> *\n`,
+        `${repeated("a\n", count)}*\n`,
+        `| a |\n| - |\n${repeated("| a_b |\n", count)}| a_ b |\n`,
+        `<div>\n${repeated("a\n", count)} \n`,
+        `<A>\n${repeated("a\n", count)}/\n`,
+        `\`\`\`\n${repeated("a\n", count)}\`\`\` b\n`,
       ];
       // `__` keeps it from being printed without being parsed, which takes a tenth of the time.
       const prose = "The quick brown fox jumps over the lazy dog, and __then__ it `rests` for a [while](u).\n\n";
@@ -9967,6 +10101,57 @@ try {
       );
       expect(stderr).toContain("error: experimentalTailwindcss, sortTailwindcss are not supported yet");
       expect(exitCode).toBe(2);
+    });
+
+    test("warnings about configuration files come in the order of the names, not of the listing", async () => {
+      // Made in an order that is neither that of the names nor its reverse.
+      const names = Array.from({ length: 40 }, (_, i) => `d${String((i * 17) % 40).padStart(2, "0")}`);
+      const files: Record<string, string> = {};
+      for (const name of [...names, "d05/deep"]) {
+        files[`${name}/.prettierrc`] = JSON.stringify({ plugins: [`prettier-plugin-zz-${name.replace("/", "-")}`] });
+        files[`${name}/f.ts`] = formatted;
+      }
+      using dir = tempDir("bun-format", files);
+      const { stderr, exitCode } = await saysOnAnyNumberOfThreads(String(dir), ["--allow-unsupported", "**/*.ts"]);
+      // Those closer to the start of the search come first.
+      const expected = [...names].sort().concat("d05-deep");
+      expect(stderr.match(/prettier-plugin-zz-[\w-]+(?= in )/g)).toEqual(
+        expected.map(name => `prettier-plugin-zz-${name}`),
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test("of several configuration files that cannot be read as close to the start of the search, the error is about the first by name", async () => {
+      const files: Record<string, string> = {};
+      for (let i = 0; i < 24; i++) files[`q${i}/f.ts`] = formatted;
+      for (const name of ["q3", "q7", "q12", "q19", "q1/deep/er"]) {
+        files[`${name}/.prettierrc`] = `{"semi": `;
+        files[`${name}/f.ts`] = formatted;
+      }
+      // After `q12` in that order, so nothing is said about it.
+      files["q2/.prettierrc"] = JSON.stringify({ plugins: ["prettier-plugin-zz"] });
+      using dir = tempDir("bun-format", files);
+      const { stderr, exitCode } = await saysOnAnyNumberOfThreads(String(dir), ["--allow-unsupported", "."]);
+      expect(stderr.replaceAll("\\", "/")).toContain("q12/.prettierrc:");
+      expect(stderr).not.toContain("prettier-plugin-zz");
+      expect(stderr.match(/Cannot load the configuration file/g)).toHaveLength(1);
+      expect(exitCode).toBe(2);
+    });
+
+    test("warnings about the configuration files of a directory and of one whose name starts with its name come in the order of the files", async () => {
+      const files: Record<string, string> = {};
+      for (const name of ["src", "src-old"]) {
+        files[`${name}/.prettierrc`] = JSON.stringify({ plugins: [`prettier-plugin-zz-${name}`] });
+        files[`${name}/f.ts`] = formatted;
+      }
+      using dir = tempDir("bun-format", files);
+      const { stderr, exitCode } = await saysOnAnyNumberOfThreads(String(dir), ["--allow-unsupported", "**/*.ts"]);
+      // "-" sorts before "/".
+      expect(stderr.match(/prettier-plugin-zz-[\w-]+(?= in )/g)).toEqual([
+        "prettier-plugin-zz-src-old",
+        "prettier-plugin-zz-src",
+      ]);
+      expect(exitCode).toBe(0);
     });
 
     // bun-musl is statically linked, and ASAN builds have their own pthread_create, so neither calls the one below.

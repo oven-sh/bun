@@ -82,7 +82,7 @@ impl QuickGuests {
 
     fn query<'q>(&mut self, text: &'q [u8], sink: &mut Sink<'q>) -> Answer {
         // The long way looks at that only after an escape.
-        if std::str::from_utf8(text).is_err() {
+        if !strings::is_valid_utf8(text) {
             return Answer::Refused;
         }
         if !crate::graphql::embed::parse_text(text, &mut self.graphql) {

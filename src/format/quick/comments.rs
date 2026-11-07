@@ -8,8 +8,8 @@
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     CL_EXTENDS, CL_IMPLEMENTS, CL_MIXINS, CL_TYPE_PARAMETERS, EXT_AT, F_CHAIN, F_DANGLING, F_EXT,
-    F_IGNORED, F_LEADING, F_LINES, F_PAREN, F_SHORTHAND, F_TRAILING, FN_RETURN_TYPE, M_MASK,
-    M_METHOD, MOD_ABSTRACT, MOD_DECLARE, SHAPE, k,
+    F_LEADING, F_LINES, F_PAREN, F_SHORTHAND, F_TRAILING, FN_RETURN_TYPE, M_MASK, M_METHOD,
+    MOD_ABSTRACT, MOD_DECLARE, SHAPE, k,
 };
 use crate::lexer::{
     C_ENCLOSING, C_END, C_FLAGS, C_FOLLOWING, C_NEXT, C_NODE, C_PRECEDING, C_START, C_STRIDE,
@@ -446,7 +446,7 @@ impl Quick {
             return false;
         }
         // `prettier-ignore`: on lines of its own, right before a statement, a member or a property that starts a line
-        if self.is_prettier_ignore()
+        if self.is_prettier_ignore_comment(i)
             && !((form == OWN_LINE || form == OWN_BLOCK)
                 && i == c.gap_last
                 && c.h_following != 0
@@ -501,6 +501,34 @@ impl Quick {
         }
         // it starts where another one ends
         if i > self.lexer.c_base && self.lexer.c.at((i - 1) * C_STRIDE + C_END) == c.h_start {
+            return false;
+        }
+        // The first comment of a text follows nothing on its line.
+        let starts_text = before == 0 && i == self.lexer.c_base;
+        // Two that were made one are two on the long way, which gives each a node of its own. On lines of their own among statements
+        // and members both go to the same one; a `@type` in either makes a type cast of JSDoc of it there.
+        if (self.lexer.c.at(i * C_STRIDE + C_FLAGS) & CF_NESTLED) != 0
+            && !((form == OWN_BLOCK || starts_text)
+                && matches!(
+                    inside,
+                    k::Program
+                        | k::BlockStatement
+                        | k::ModuleBlock
+                        | k::ClassBody
+                        | k::InterfaceBody
+                        | k::TypeLiteral
+                )
+                && !self.has_byte_in_range(64, c.h_start, c.h_end))
+        {
+            return false;
+        }
+        // What may be a type cast of JSDoc at the end of a line goes before the next statement or member: the long way puts the `;` that
+        // guards a statement behind it, and no empty line before it in an interface.
+        if form == END_BLOCK
+            && (!self.options.semi || inside == k::InterfaceBody)
+            && !(starts_text && (is_part_of_word(behind) || behind == 123))
+            && self.is_type_cast_comment_at(i)
+        {
             return false;
         }
         // Some trees have a node more around an optional chain. So none in a chain but among the arguments of a call that has some, none
@@ -603,13 +631,20 @@ impl Quick {
             && behind == 40
             && self.t.at(c.h_start + 2) == 42
             && (((self.parse.typed == TYPED_FLOW || inside == k::ConditionalExpression)
-                && (form == MID_BLOCK || self.is_type_cast_comment(i)))
+                && (form == MID_BLOCK || self.is_type_cast_comment_at(i)))
                 // (at the start of a statement Prettier writes a `;` before it)
                 || (form == MID_BLOCK && !self.options.semi)
                 // (an object at the start of a statement has parentheses of its own on the long way)
                 || c.gap_in_parentheses == 123)
         {
             return false;
+        }
+        // (the name that stands for a `${}` of a template of HTML: the long way doubles the parentheses of a cast around it)
+        if c.h_is_block && behind == 40 && c.gap_in_parentheses == 80 {
+            let name = self.next_significant_index(self.next_significant_index(c.h_end) + 1);
+            if self.is_html_placeholder_name(name, self.name_end(name)) {
+                return false;
+            }
         }
         match inside {
             // nothing but comments in the file
@@ -811,10 +846,10 @@ pub(crate) const CF_MARK_EXTENDS: i32 = 2048;
 pub(crate) const CF_MARK_MIXINS: i32 = 4096;
 pub(crate) const CF_MARKERS: i32 =
     CF_BEFORE_ARROW | CF_MARK_IMPLEMENTS | CF_MARK_EXTENDS | CF_MARK_MIXINS;
-/// a "prettier-ignore" that was taken note of in another way (F_IGNORED)
-pub(crate) const CF_UNIGNORE: i32 = 8192;
 /// print_comment() has written it, at least once: see check_that_comments_are_written()
 pub(crate) const CF_WRITTEN: i32 = 32768;
+/// two comments that merge_nestled_jsdoc_comments() made one
+pub(crate) const CF_NESTLED: i32 = 65536;
 impl Quick {
     pub(crate) fn reset_comments(&mut self) {
         self.comments.trailing_count = 0;
@@ -1481,76 +1516,13 @@ impl Quick {
         return false;
     }
 
-    pub(crate) fn is_prettier_ignore(&self) -> bool {
-        let mut s = self.comments.h_start + 2;
-        let mut e = if self.comments.h_is_block {
-            self.comments.h_end - 2
-        } else {
-            self.comments.h_end
-        };
-        while s < e && is_space(self.t.at(s)) {
-            s += 1;
-        }
-        while e > s && is_space(self.t.at(e - 1)) {
-            e -= 1;
-        }
-        if e - s != 15 {
-            return false;
-        }
-        let word = b"prettier-ignore";
-        let mut i: i32 = 0;
-        while i < 15 {
-            if self.t.at(s + i) != word.at(i) {
-                return false;
-            }
-            i += 1;
-        }
-        return true;
-    }
-
-    pub(crate) fn unignore(&mut self) {
-        let v0 = self.comments.h_comment * C_STRIDE + C_FLAGS;
-        self.lexer.c.put(v0, self.lexer.c.at(v0) | CF_UNIGNORE);
-    }
-
-    pub(crate) fn handle_ignore_comments(&mut self) -> bool {
-        if self.comments.h_enclosing_kind == k::MappedType
-            && self.comments.h_following == self.n.at(self.comments.h_enclosing + 4)
-            && self.is_prettier_ignore()
-        {
-            let v0 = self.comments.h_enclosing;
-            self.n.put(v0, self.n.at(v0) | F_IGNORED);
-            self.unignore();
-            self.lexer
-                .c
-                .put(self.comments.h_comment * C_STRIDE + C_NODE, 0);
-            return true;
-        }
-        return false;
-    }
-
     pub(crate) fn handle_union_type_comments(&mut self) -> bool {
-        if self.comments.h_enclosing_kind == k::UnionType
-            || self.comments.h_enclosing_kind == k::MatchOrPattern
+        if (self.comments.h_enclosing_kind == k::UnionType
+            || self.comments.h_enclosing_kind == k::MatchOrPattern)
+            && self.comments.h_preceding != 0
         {
-            if self.is_prettier_ignore() {
-                let v0 = self.comments.h_following;
-                self.n.put(v0, self.n.at(v0) | F_IGNORED);
-                self.unignore();
-            }
-            if self.comments.h_preceding != 0 {
-                self.add_trailing(self.comments.h_preceding, self.comments.h_comment);
-                return true;
-            }
-            return false;
-        }
-        if (self.comments.h_following_kind == k::UnionType
-            || self.comments.h_following_kind == k::MatchOrPattern)
-            && self.is_prettier_ignore()
-        {
-            let v1 = self.n.at(self.n.at(self.comments.h_following + 4) + 1);
-            self.n.put(v1, self.n.at(v1) | F_IGNORED);
-            self.unignore();
+            self.add_trailing(self.comments.h_preceding, self.comments.h_comment);
+            return true;
         }
         return false;
     }
@@ -1560,7 +1532,7 @@ impl Quick {
         if (self.n.at(node) & 0xff) != k::UnionType
             || !self.comments.h_is_block
             || self.has_newline_in_range(self.comments.h_start, self.comments.h_end)
-            || self.is_prettier_ignore()
+            || self.is_prettier_ignore_comment(self.comments.h_comment)
         {
             return false;
         }
@@ -2152,9 +2124,6 @@ impl Quick {
         return false;
     }
 }
-pub(crate) fn handle_nested_conditional_expression_comments() -> bool {
-    return false;
-}
 
 impl Quick {
     pub(crate) fn is_type_cast_comment_at(&self, comment: i32) -> bool {
@@ -2180,16 +2149,7 @@ impl Quick {
                     && self.t.at(p + 4) == 101
                 {
                     after = self.t.at(p + 5);
-                } else if self.t.at(p + 1) == 115
-                    && self.t.at(p + 2) == 97
-                    && self.t.at(p + 3) == 116
-                    && self.t.at(p + 4) == 105
-                    && self.t.at(p + 5) == 115
-                    && self.t.at(p + 6) == 102
-                    && self.t.at(p + 7) == 105
-                    && self.t.at(p + 8) == 101
-                    && self.t.at(p + 9) == 115
-                {
+                } else if self.text_is(p + 1, p + 10, b"satisfies") {
                     after = self.t.at(p + 10);
                 } else {
                     break 'c1;
@@ -2421,7 +2381,6 @@ impl Quick {
 
     pub(crate) fn handle_own_line(&mut self) -> bool {
         return self.handle_comment_in_empty_parens()
-            || self.handle_ignore_comments()
             || self.handle_conditional_expression_comments()
             || self.handle_last_function_parameter_comments()
             || self.handle_member_expression_comments()
@@ -2437,7 +2396,6 @@ impl Quick {
             || self.handle_assignment_pattern_comments()
             || self.handle_method_name_comments()
             || self.handle_labeled_statement_comments()
-            || handle_nested_conditional_expression_comments()
             || self.handle_comments_in_destructuring_pattern()
             || self.handle_ts_mapped_type_comments()
             || self.handle_binary_cast_expression_comment()
@@ -2473,7 +2431,6 @@ impl Quick {
 
     pub(crate) fn handle_remaining(&mut self) -> bool {
         return self.handle_comment_in_empty_parens()
-            || self.handle_ignore_comments()
             || self.handle_if_statement_comments()
             || self.handle_while_like_comments()
             || self.handle_switch_statement_comments()
@@ -2490,34 +2447,6 @@ impl Quick {
             || self.handle_union_type_leading_comments();
     }
 
-    pub(crate) fn is_indentable_block(&self, comment: i32) -> bool {
-        let at = comment * C_STRIDE;
-        if (self.lexer.c.at(at + C_FLAGS) & CF_BLOCK) == 0 {
-            return false;
-        }
-        let start = self.lexer.c.at(at + C_START);
-        let end = self.lexer.c.at(at + C_END);
-        let mut saw_newline = false;
-        let mut p = start + 2;
-        while p < end - 1 {
-            'c1: {
-                if self.t.at(p) != 10 {
-                    break 'c1;
-                }
-                saw_newline = true;
-                let mut q = p + 1;
-                while is_space(self.t.at(q)) && self.t.at(q) != 10 {
-                    q += 1;
-                }
-                if self.t.at(q) != 42 {
-                    return false;
-                }
-            }
-            p += 1;
-        }
-        return saw_newline;
-    }
-
     /// merge_nestled_jsdoc_comments: a doc comment that starts where another ends is one comment with it.
     pub(crate) fn merge_nestled_jsdoc_comments(&mut self) {
         const GONE: i32 = -1;
@@ -2529,18 +2458,21 @@ impl Quick {
             let at = i * C_STRIDE;
             let mut this = None;
             if self.lexer.c.at(at + C_END) == self.lexer.c.at(at + C_STRIDE + C_START) {
-                let is_indentable = self.is_indentable_block(i);
+                let is_indentable = self.is_indentable_block_comment_at(i);
                 this = Some(is_indentable);
-                if is_indentable && behind.unwrap_or_else(|| self.is_indentable_block(i + 1)) {
+                if is_indentable
+                    && behind.unwrap_or_else(|| self.is_indentable_block_comment_at(i + 1))
+                {
                     self.lexer
                         .c
                         .put(at + C_END, self.lexer.c.at(at + C_STRIDE + C_END));
                     let v0 = at + C_FLAGS;
                     self.lexer.c.put(
                         v0,
-                        self.lexer.c.at(v0)
+                        (self.lexer.c.at(v0)
                             & (self.lexer.c.at(at + C_STRIDE + C_FLAGS)
-                                | !(CF_PLAIN | CF_INDENTABLE)),
+                                | !(CF_PLAIN | CF_INDENTABLE)))
+                            | CF_NESTLED,
                     );
                     self.lexer.c.put(at + C_STRIDE + C_START, GONE);
                     any_gone = true;

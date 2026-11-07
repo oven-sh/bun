@@ -304,8 +304,6 @@ pub fn stands(text: &[u8], dialect: Dialect, options: &Options, scratch: &mut Qu
     scratch.set_type_script_spaces(language == lang::TypeScript);
     let stands = scratch.program_stands(language, SRC_BASE, SRC_BASE + length);
     scratch.set_short_cuts(false);
-    // The text is gone when the parser comes.
-    scratch.set_verified(0, 0);
     if stands.is_err() {
         scratch.forget_run();
     }
@@ -520,7 +518,6 @@ impl Quick {
             self.note_guess(true, length);
             self.forget_run();
             self.set_short_cuts(false);
-            self.unwind_source(0);
             let end_of_line = self.options.end_of_line;
             self.set_options(options, dialect);
             self.options.end_of_line = end_of_line;
@@ -570,7 +567,6 @@ impl Quick {
         if self.doc.met_rare >= 0 {
             return Err(self.rare(self.doc.met_rare));
         }
-        self.stage(2);
         self.print_doc(DOC_START, stub)?;
         self.nothing_lost()?;
         if self.text.overflowed
@@ -582,7 +578,7 @@ impl Quick {
         Ok(())
     }
 
-    /// Why the last file was refused: 1 a syntax error, 4 a mistake in here, 5 the text, what is made of it or what is tried on it is too much, 6 the stack is full, 7 something rare, 8 code in another language.
+    /// Why the last file was refused: one of [`why`].
     pub fn why(&self) -> i32 {
         self.why.get()
     }
@@ -600,67 +596,5 @@ impl Quick {
     /// How many files were formatted twice.
     pub fn redone(&self) -> i32 {
         self.redone
-    }
-
-    #[inline(always)]
-    pub(crate) fn stage(&mut self, _stage: i32) {
-        #[cfg(feature = "stages")]
-        self.note_stage(_stage);
-    }
-}
-
-/// For tools that compare what each stage leaves behind.
-#[cfg(feature = "stages")]
-impl Quick {
-    fn note_stage(&mut self, stage: i32) {
-        fn hash_words(words: &[i32], from: (i32, i32)) -> (i32, i32) {
-            let (mut h1, mut h2) = from;
-            for &w in words {
-                h1 = (h1 ^ w).wrapping_mul(16777619);
-                h2 = h2.wrapping_add(w).wrapping_mul(0x9e3779b1u32 as i32)
-                    ^ ((h2 as u32) >> 15) as i32;
-            }
-            (h1, h2)
-        }
-        let h = match stage {
-            0 | 1 => hash_words(
-                self.lexer.c.sub(0, self.lexer.c_count * 8),
-                hash_words(self.n.sub(0, self.arena.n_pos), (1, 2)),
-            ),
-            _ => hash_words(self.d.sub(0, self.doc.d_pos), (1, 2)),
-        };
-        let h = ((h.0 as u32 as u64) << 32) | h.1 as u32 as u64;
-        if let Some(slot) = self.stages.get_mut(stage as usize) {
-            *slot = h;
-        }
-        if self.keep_stages {
-            match stage {
-                0 | 1 => {
-                    let mut words = self.n.sub(0, self.arena.n_pos).to_vec();
-                    words.push(-1);
-                    words.extend_from_slice(self.lexer.c.sub(0, self.lexer.c_count * 8));
-                    self.kept.push(words);
-                }
-                _ => self.kept.push(self.d.sub(0, self.doc.d_pos).to_vec()),
-            }
-        }
-    }
-    pub fn stages(&self) -> [u64; 3] {
-        self.stages
-    }
-    pub fn clear_stages(&mut self, keep: bool) {
-        self.stages = [0; 3];
-        self.keep_stages = keep;
-        self.kept.clear();
-    }
-    pub fn kept(&self) -> &[Vec<i32>] {
-        &self.kept
-    }
-    pub fn set_no_guests(&mut self, value: bool) {
-        self.no_guests = value;
-    }
-    /// How much work of the last run was for nothing: see `waste()`.
-    pub fn wasted(&self) -> i32 {
-        self.wasted
     }
 }

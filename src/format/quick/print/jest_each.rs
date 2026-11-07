@@ -162,6 +162,10 @@ impl Quick {
                     while cell_end > cell_start && is_space(self.t.at(cell_end - 1)) {
                         cell_end -= 1;
                     }
+                    // (a line break in a text is the host's to write)
+                    if self.has_line_break(cell_start, cell_end) {
+                        return Err(self.rare(rare::EACH_TABLE));
+                    }
                     self.push_cell(cell_start, cell_end);
                     cell_start = p + 1;
                     while cell_start < to && is_space(self.t.at(cell_start)) {

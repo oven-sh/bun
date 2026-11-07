@@ -784,33 +784,40 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.flush();
         let start = self.f.elements().len();
         let result = write(self.f);
-        if let Some(quick) = &mut self.quick {
-            let elements = self.f.storage.pool.get(start..).unwrap_or_default();
-            if elements.is_empty() {
-                return result;
-            }
-            quick.is_line_suffix_waiting =
-                super::map_strings::is_line_suffix_waiting(elements, quick.is_line_suffix_waiting);
-            let translation = FromIr::new(
-                quick.sink,
-                &self.f.storage,
-                self.f.source_text().as_bytes(),
-                &mut quick.buffers.groups,
-                quick.last,
-                quick.has_line_suffix,
-            );
-            match translation.write(elements) {
-                Ok((last, has_line_suffix)) => {
-                    (quick.last, quick.has_line_suffix) = (last, has_line_suffix)
-                }
-                Err(unwritten) => quick.unwritten = Some(unwritten),
-            }
-            return result;
-        }
-        if self.f.elements().len() > start {
-            self.empty_line = EmptyLine::No;
+        match self.quick.is_some() {
+            true => self.translate_from(start),
+            false if self.f.elements().len() > start => self.empty_line = EmptyLine::No,
+            false => {}
         }
         result
+    }
+
+    /// Hands the elements from `start` on to the quick way. One copy for every `foreign`.
+    #[inline(never)]
+    fn translate_from(&mut self, start: usize) {
+        let Some(quick) = &mut self.quick else {
+            return;
+        };
+        let elements = self.f.storage.pool.get(start..).unwrap_or_default();
+        if elements.is_empty() {
+            return;
+        }
+        quick.is_line_suffix_waiting =
+            super::map_strings::is_line_suffix_waiting(elements, quick.is_line_suffix_waiting);
+        let translation = FromIr::new(
+            quick.sink,
+            &self.f.storage,
+            self.f.source_text().as_bytes(),
+            &mut quick.buffers.groups,
+            quick.last,
+            quick.has_line_suffix,
+        );
+        match translation.write(elements) {
+            Ok((last, has_line_suffix)) => {
+                (quick.last, quick.has_line_suffix) = (last, has_line_suffix)
+            }
+            Err(unwritten) => quick.unwritten = Some(unwritten),
+        }
     }
 
     /// Writes a style sheet's `document`.

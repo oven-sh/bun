@@ -7,7 +7,7 @@
 use crate::ast::k;
 use crate::doc::ALIGN_TO_ROOT;
 use crate::print::statics::{BACKQUOTE, DOLLAR_BRACE, RBRACE, SPACE};
-use crate::{Quick, R, Words, div, rare, rem};
+use crate::{Quick, R, Words, div, rare, rem, why};
 
 impl Quick {
     /// An expression that prints as plain text whatever the width.
@@ -31,9 +31,10 @@ impl Quick {
         let mut size: i32 = 0;
         while p < end {
             if self.t.at(p) == 9 {
-                size = size + self.options.tab_width - rem(size, self.options.tab_width);
+                size =
+                    size.saturating_add(self.options.tab_width - rem(size, self.options.tab_width));
             } else if self.t.at(p) == 32 {
-                size += 1;
+                size = size.saturating_add(1);
             } else {
                 break;
             }
@@ -83,6 +84,8 @@ impl Quick {
                 }
                 // A fill measures the line whatever the mode is, so for once the doc is printed to a text, as Prettier does.
                 self.print_to_text(doc, 1 << 28)?;
+                // (a template in it that has been printed this way is laid out once more, and so is what is in that one)
+                self.waste(self.printer.printed_end - self.printer.printed_start)?;
                 let filter = self.doc.text_filter;
                 let g = self.group_open();
                 self.text(DOLLAR_BRACE);
@@ -130,6 +133,10 @@ impl Quick {
             self.align_open(ALIGN_TO_ROOT);
             closes = 1;
         } else if indent_size > 0 {
+            // (indent_size_of() counts no further)
+            if indent_size == i32::MAX {
+                return Err(self.stop(why::TOO_LARGE));
+            }
             self.align_open(ALIGN_TO_ROOT);
             self.align_open(rem(indent_size, self.options.tab_width));
             closes = 2;

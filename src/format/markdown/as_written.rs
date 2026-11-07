@@ -994,8 +994,8 @@ impl<'t> Reader<'t> {
         matches!(self.text.get(end), None | Some(b'\n')).then_some(end)
     }
 
-    /// What the `<` at `at` is, going by what follows it on its line, or with `CELL` in its cell.
-    fn angle<const CELL: bool>(&self, at: usize) -> Angle {
+    /// What the `<` at `at` is, going by what follows it on its line, or with `cell` in its cell.
+    fn angle(&self, at: usize, cell: bool) -> Angle {
         let text = self.text;
         let byte = |at: usize| text.get(at).copied().unwrap_or(0);
         let skip = |mut at: usize, is_skipped: &dyn Fn(u8) -> bool| {
@@ -1066,7 +1066,7 @@ impl<'t> Reader<'t> {
             let is_quoted = matches!(quote, b'"' | b'\'');
             let value_start = end + usize::from(is_quoted);
             end = skip(value_start, &|byte| {
-                is_in_value(byte) && !matches!(byte, 0 | b'\n') && !(CELL && byte == b'|')
+                is_in_value(byte) && !matches!(byte, 0 | b'\n') && !(cell && byte == b'|')
             });
             match is_quoted {
                 true if byte(end) == quote => end += 1,
@@ -1083,7 +1083,7 @@ impl<'t> Reader<'t> {
         });
         if (2..=32).contains(&(scheme_end - at - 1)) && byte(scheme_end) == b':' {
             let end = skip(scheme_end + 1, &|byte| {
-                byte > b' ' && !matches!(byte, b'<' | b'>' | 0x7F) && !(CELL && byte == b'|')
+                byte > b' ' && !matches!(byte, b'<' | b'>' | 0x7F) && !(cell && byte == b'|')
             });
             if byte(end) == b'>' {
                 return Angle::Ends {
@@ -1113,7 +1113,7 @@ impl<'t> Reader<'t> {
                 _ => HtmlStart::Unknown,
             };
         }
-        match self.angle::<false>(at) {
+        match self.angle(at, false) {
             Angle::Ends { end, name_end } if name_end > at + 1 => match self.is_blank_from(end) {
                 true => HtmlStart::Text { is_alone: true },
                 false => HtmlStart::Text { is_alone: false },
@@ -1819,24 +1819,26 @@ impl<'t> Reader<'t> {
             return (is_trimmed && !self.has_two_spaces(from, end)).then_some(end);
         }
         let (mark, leaf_before) = (self.mark(), *leaf);
-        let (end, _) = self.content::<false, false>(from, leaf)?;
+        let (end, _) = self.content::<true>(from, leaf, false)?;
         if !self.text[from..end].ends_with(b" ") && !has_two_spaces::<true>(self.text, from, end) {
             return Some(end);
         }
         // Once more, with a look at the spaces and at what could start an address.
         self.reset(mark);
         *leaf = leaf_before;
-        Some(self.content::<false, true>(from, leaf)?.1)
+        Some(self.content::<false>(from, leaf, false)?.1)
     }
 
-    /// Reads a line of text, or with `CELL` the content of a cell, from `from`, its first character, on. If its output
-    /// is known: where it ends, and where the line break, the end of the text or the pipe behind it is. Without `CELL`
-    /// and `WITH_CARE`, spaces and `.` aren't looked at.
-    fn content<const CELL: bool, const WITH_CARE: bool>(
+    /// Reads a line of text, or with `cell` the content of a cell, from `from`, its first character, on. If its output
+    /// is known: where it ends, and where the line break, the end of the text or the pipe behind it is. With `FAST`,
+    /// which reads no cell, spaces and `.` aren't looked at.
+    fn content<const FAST: bool>(
         &mut self,
         from: usize,
         leaf: &mut Leaf,
+        cell: bool,
     ) -> Option<(usize, usize)> {
+        let cell = cell && !FAST;
         let text = self.text;
         let byte = |at: usize| text.get(at).copied().unwrap_or(0);
         let before = |at: usize| match at > from {
@@ -1854,10 +1856,10 @@ impl<'t> Reader<'t> {
             let rest = text.get(at..).unwrap_or_default();
             rest.iter().take_while(|&&byte| byte == counted).count()
         };
-        let skip_text = |at: usize| match (CELL, WITH_CARE) {
-            (true, _) => skip(at, &STOPS_CELL),
-            (false, true) => skip(at, &STOPS_TEXT_WITH_CARE),
-            (false, false) => first_of(text, at, STOPS_TEXT),
+        let skip_text = |at: usize| match (FAST, cell) {
+            (true, _) => first_of(text, at, STOPS_TEXT),
+            (false, true) => skip(at, &STOPS_CELL),
+            (false, false) => skip(at, &STOPS_TEXT_WITH_CARE),
         };
         let mut at = from;
         // After a `[` or a `![` that waits for its `]`.
@@ -1872,13 +1874,13 @@ impl<'t> Reader<'t> {
             }
             match text[at] {
                 b'\n' => break at,
-                b'|' if CELL => break at,
+                b'|' if cell => break at,
                 b' ' => {
                     let spaces = count(at, b' ');
                     let is_at_end = matches!(byte(at + spaces), 0 | b'\n')
-                        || (CELL && byte(at + spaces) == b'|');
+                        || (cell && byte(at + spaces) == b'|');
                     match (is_at_end, spaces) {
-                        (true, _) if CELL => {
+                        (true, _) if cell => {
                             at += spaces;
                             break at - spaces;
                         }
@@ -1890,7 +1892,7 @@ impl<'t> Reader<'t> {
                         }
                         (false, 1) => {}
                         // The text of an image is printed as it's written.
-                        (false, _) if !CELL && !is_in_image => {
+                        (false, _) if !cell && !is_in_image => {
                             self.replace(at, at + spaces, b" ");
                             at += spaces;
                             continue;
@@ -1926,7 +1928,7 @@ impl<'t> Reader<'t> {
                                 runs |= 1 << (run - 1).min(63);
                                 end += run;
                             }
-                            b'|' if !CELL => end += 1,
+                            b'|' if !cell => end += 1,
                             // `\|` is a pipe in the code.
                             b'|' if byte(end - 1) == b'\\' && byte(end - 2) != b'\\' => end += 1,
                             _ => return None,
@@ -1994,7 +1996,7 @@ impl<'t> Reader<'t> {
                         && byte(end + 1) != b'*'
                         && byte(end - 1).is_ascii_alphanumeric()
                         && (end + 1 >= text.len() || FOLLOWS_EMPHASIS[byte(end + 1) as usize])
-                        && !CELL
+                        && !cell
                         && !leaf.has_single_star
                         && !leaf.has_open_underscore
                         && !self.has_two_spaces(at, end)
@@ -2079,7 +2081,7 @@ impl<'t> Reader<'t> {
                     if has_destination && !is_image && is_after_bracket {
                         return None;
                     }
-                    let starts_liquid = has_destination && self.liquid_end(at + 2, CELL).is_some();
+                    let starts_liquid = has_destination && self.liquid_end(at + 2, cell).is_some();
                     if starts_liquid {
                         // What starts first comes first. It's Liquid after `](` unless that is a link, with the Liquid
                         // up to the first space for a destination: then `)` or a title follows.
@@ -2147,7 +2149,7 @@ impl<'t> Reader<'t> {
                     at = end + 1;
                     continue;
                 }
-                b'<' => match self.angle::<CELL>(at) {
+                b'<' => match self.angle(at, cell) {
                     Angle::Ends { end, .. } => {
                         // `[[` is looked for in an address too, and so is the `]` of a definition's label.
                         let skipped = text.get(at..end)?;
@@ -2174,7 +2176,7 @@ impl<'t> Reader<'t> {
                 b'$' if byte(at + 1) != b'$' => {}
                 b'{' if !matches!(byte(at + 1), b'{' | b'%') => {}
                 b'{' => {
-                    let end = self.liquid_end(at, CELL)?;
+                    let end = self.liquid_end(at, cell)?;
                     // A `[` before it finds its `]` in it.
                     if (is_in_link || is_in_image)
                         && bun_core::strings::contains_char(text.get(at..end)?, b']')
@@ -2206,7 +2208,7 @@ impl<'t> Reader<'t> {
                         let ends = match byte(at) {
                             b' ' | b'\n' => true,
                             b']' => is_in_link || is_in_image,
-                            b'|' => CELL,
+                            b'|' => cell,
                             _ => at >= text.len(),
                         };
                         if !ends {
@@ -2392,7 +2394,7 @@ impl<'t> Reader<'t> {
                     at = end + 1;
                     continue;
                 }
-                b'<' if limit == self.text.len() => match self.angle::<CELL>(at) {
+                b'<' if limit == self.text.len() => match self.angle(at, CELL) {
                     Angle::Ends { end, .. } => {
                         // `[[` is looked for in an address too.
                         if bun_core::strings::index_of(text.get(at..end)?, b"[[").is_some() {
@@ -2549,7 +2551,7 @@ impl<'t> Reader<'t> {
                     let mut leaf = Leaf::default();
                     let (end, pipe) = match self.is_mdx {
                         true => self.mdx_content::<true>(from, text.len(), false, &mut leaf)?,
-                        false => self.content::<true, true>(from, &mut leaf)?,
+                        false => self.content::<false>(from, &mut leaf, true)?,
                     };
                     if self.byte(pipe) != b'|' || !leaf.is_known() {
                         return None;

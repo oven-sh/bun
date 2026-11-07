@@ -14,7 +14,8 @@ fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> b
     ) && template.quasi_count() == 1
         && matches!(e.ast_parent(), AstNodes::TaggedTemplateExpression(tagged)
             if matches!(tagged.kind(), ExprKind::TaggedTemplate(call)
-                if matches!(call.callee().kind(), ExprKind::Ident(_)) && matches!(call.callee().text(), b"md" | b"markdown")))
+                if matches!(call.callee().kind(), ExprKind::Ident(_)) && matches!(call.callee().text(), b"md" | b"markdown")
+                    && !crate::js::utils::typecast::is_cast_target_that_hides_its_kind(call.callee(), f)))
         && template.cooked(0).is_some()
 }
 

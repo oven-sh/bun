@@ -692,11 +692,39 @@ fn with_printer<R>(
     options: &FormatOptions,
     tree: &mut ast::Tree,
     mode: Mode,
-    mut format_block: Option<&mut FormatBlock<'_>>,
+    format_block: Option<&mut FormatBlock<'_>>,
     as_written: Option<&mut as_written::Memory>,
     guests: &mut Guests,
     then: impl FnOnce(&mut printer::Printer<'_, '_>, ast::NodeId) -> R,
 ) -> Result<R, FormatError> {
+    let (mut then, mut result) = (Some(then), None);
+    let once = &mut |printer: &mut printer::Printer<'_, '_>, root| {
+        result = then.take().map(|then| then(printer, root));
+    };
+    print_with(
+        text,
+        options,
+        tree,
+        mode,
+        format_block,
+        as_written,
+        guests,
+        once,
+    )?;
+    result.ok_or(FormatError::InvalidDocument)
+}
+
+/// [`with_printer`], compiled once for all that call it.
+fn print_with(
+    text: &[u8],
+    options: &FormatOptions,
+    tree: &mut ast::Tree,
+    mode: Mode,
+    mut format_block: Option<&mut FormatBlock<'_>>,
+    as_written: Option<&mut as_written::Memory>,
+    guests: &mut Guests,
+    then: &mut dyn FnMut(&mut printer::Printer<'_, '_>, ast::NodeId),
+) -> Result<(), FormatError> {
     let blanked = parse::blank_front_matter(text);
     let original = text;
     let text = blanked.as_deref().unwrap_or(text);
@@ -784,10 +812,10 @@ fn with_printer<R>(
         stack: Stack::for_tree(),
         failure: None,
     };
-    let result = then(&mut printer, root);
+    then(&mut printer, root);
     match printer.failure {
         _ if printer.stack.ran_out() => Err(FormatError::NestedTooDeeply),
         Some(failure) => Err(failure),
-        None => Ok(result),
+        None => Ok(()),
     }
 }

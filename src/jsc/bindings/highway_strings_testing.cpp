@@ -44,7 +44,7 @@ namespace Bun {
 // `haystack.length` meaning "not found" for the index_of family), a count, or
 // for memmem/memrmem the match offset with -1 for "not found". scannerRunStops
 // writes its three bitmaps into `arg`, a third of the view each, and returns 0.
-// yamlMarks does the same with its four bitmaps, htmlMarks with its eight.
+// yamlMarks does the same with its four bitmaps, htmlMarks with its seven.
 // lineStarts writes uint32 offsets into `arg` and returns how many.
 // oddBlocks writes its uint64 words into `arg` and returns 0.
 // The kernels that look for slashes ignore `arg`. commonPrefixLength compares `haystack` with `arg`.

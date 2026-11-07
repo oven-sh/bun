@@ -434,6 +434,39 @@ fn has_odd_line(text: &[u8]) -> bool {
     strings::contains(text, b"\xE2\x80\xA8") || strings::contains(text, b"\xE2\x80\xA9")
 }
 
+/// How many bytes the white space has that `text` starts with and that isn't ASCII, as the lexer has it: U+0085, U+00A0,
+/// U+1680, U+2000 to U+200B, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF. 0 for the start of a name.
+#[cold]
+#[inline(never)]
+fn odd_space_at_start(text: &[u8]) -> usize {
+    match text {
+        [0xC2, 0x85 | 0xA0, ..] => 2,
+        [0xE1, 0x9A, 0x80, ..]
+        | [0xE2, 0x80, 0x80..=0x8B | 0xA8 | 0xA9 | 0xAF, ..]
+        | [0xE2, 0x81, 0x9F, ..]
+        | [0xE3, 0x80, 0x80, ..]
+        | [0xEF, 0xBB, 0xBF, ..] => 3,
+        _ => 0,
+    }
+}
+
+/// The same for what `text` ends with.
+#[cold]
+#[inline(never)]
+fn odd_space_at_end(text: &[u8]) -> usize {
+    let len = match text {
+        [.., 0xC2, _] => 2,
+        _ => 3,
+    };
+    let last = text
+        .get(text.len().saturating_sub(len)..)
+        .unwrap_or_default();
+    match odd_space_at_start(last) == len {
+        true => len,
+        false => 0,
+    }
+}
+
 /// True if a block comment follows what ends at `end` and is printed on its line: nothing but commas and semicolons is
 /// between the two, and the comment doesn't start a line.
 #[inline(never)]
@@ -447,11 +480,18 @@ fn is_before_block_comment(source: &[u8], end: u32) -> bool {
             // `a;⏎/* b */;`: the `;` is an empty statement, which isn't printed, and the comment follows `a;` on its line.
             // `a⏎/* b */,`, `a⏎/* b */⏎,`: the comment is printed before the comma.
             [b',' | b';', ..] if is_behind_comment => return true,
-            // A comment after other white space, also what isn't ASCII, doesn't count as one that starts its line.
-            [b',' | b';' | 0x0B | 0x0C | 0x80.., tail @ ..] => {
+            // A comment after other white space doesn't count as one that starts its line.
+            [b',' | b';' | 0x0B | 0x0C, tail @ ..] => {
                 starts_line = false;
                 tail
             }
+            [0x80..=0xFF, ..] => match odd_space_at_start(rest) {
+                0 => return false,
+                len => {
+                    starts_line = false;
+                    rest.get(len..).unwrap_or_default()
+                }
+            },
             [b'\n', tail @ ..] => {
                 starts_line = true;
                 tail
@@ -480,9 +520,18 @@ fn is_after_block_comment(source: &[u8], start: u32) -> bool {
     let mut ends_line = false;
     loop {
         (before, ends_line) = match before {
-            [rest @ .., b' ' | b'\t' | 0x0B | 0x0C | 0x80..] => (rest, ends_line),
+            [rest @ .., b' ' | b'\t' | 0x0B | 0x0C] => (rest, ends_line),
             [rest @ .., b';' | b':'] => (rest, false),
             [rest @ .., b'\n' | b'\r'] => (rest, true),
+            [.., 0x80..=0xFF] => match odd_space_at_end(before) {
+                0 => return false,
+                len => (
+                    before
+                        .get(..before.len().saturating_sub(len))
+                        .unwrap_or_default(),
+                    ends_line,
+                ),
+            },
             _ => return !ends_line && before.ends_with(b"*/"),
         };
     }
@@ -505,7 +554,7 @@ impl<'a> Formatter<'a> {
         &mut self,
         span: Span,
         after: (u32, u32),
-        write: impl Fn(&mut Line<'_, 'a>) -> Written,
+        write: &dyn Fn(&mut Line<'_, 'a>) -> Written,
     ) -> bool {
         let state = self.context().short_cuts;
         if state.mode == Mode::Off {
@@ -586,7 +635,7 @@ impl<'a> Formatter<'a> {
             nesting: 0,
             parts,
         };
-        let mut written = line.finish(&write, span.end, after);
+        let mut written = line.finish(write, span.end, after);
         let mut is_last = false;
         while written.is_err() && !is_last {
             if !line.is_careful
@@ -608,7 +657,7 @@ impl<'a> Formatter<'a> {
             (line.is_too_wide, line.is_odd) = (false, false);
             (line.width, line.must_fit, line.has_measured) =
                 (Width::Known, usize::MAX, line.breaks);
-            written = line.finish(&write, span.end, after);
+            written = line.finish(write, span.end, after);
         }
         let Line {
             text,
@@ -715,7 +764,7 @@ impl<'a> Formatter<'a> {
 /// Writes `statement`, which a list of statements is about to write on a line of its own. Returns false if it has to go
 /// the long way.
 pub(crate) fn write_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) -> bool {
-    f.write_line(statement.span(), (0, 0), |line| {
+    f.write_line(statement.span(), (0, 0), &|line| {
         line.tail = usize::from(line.has_semicolons);
         if !line.has_semicolons {
             line.semicolon_before(statement)?;
@@ -730,7 +779,7 @@ pub(crate) fn write_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) -> b
         || !matches!(property.parent(), Node::Expr(object)
             if object.as_object().and_then(List::last) == Some(property));
     let after = u32::from(has_comma);
-    f.write_line(property.span(), (after, after), |line| {
+    f.write_line(property.span(), (after, after), &|line| {
         line.property(property, true)
     })
 }
@@ -741,7 +790,7 @@ pub(crate) fn write_class_member<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
         MemberKind::Property => (u32::from(f.options().semicolons.is_always()), 1),
         _ => (0, 0),
     };
-    f.write_line(member.span(), after, |line| {
+    f.write_line(member.span(), after, &|line| {
         if line.is_flow {
             line.check_flow_member(member)?;
         }
@@ -752,7 +801,7 @@ pub(crate) fn write_class_member<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
 impl<'a> Line<'_, 'a> {
     fn finish(
         &mut self,
-        write: &impl Fn(&mut Self) -> Written,
+        write: &dyn Fn(&mut Line<'_, 'a>) -> Written,
         end: u32,
         (least, most): (u32, u32),
     ) -> Written {
@@ -870,22 +919,34 @@ impl<'a> Line<'_, 'a> {
         self.long_bytes(&printed)
     }
 
+    /// [`Line::chunk`], once for all tokens and bytes.
+    #[inline(never)]
+    fn put(&mut self, block: &[u8; 16], len: usize) -> Written {
+        self.chunk(block, len)
+    }
+
     /// A keyword or a punctuator.
     #[inline(always)]
     fn token(&mut self, text: &'static str) -> Written {
         match Token::new(text) {
-            Some(token) => self.chunk(token.padded(), token.len()),
+            Some(token) => {
+                let mut block = [0; 16];
+                if let Some(start) = block.first_chunk_mut() {
+                    *start = *token.padded();
+                }
+                self.put(&block, token.len())
+            }
             None => self.long_bytes(text.as_bytes()),
         }
     }
 
     #[inline(always)]
     fn byte(&mut self, byte: u8) -> Written {
-        self.chunk(&[byte], 1)
+        self.put(&[byte, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 1)
     }
 
     /// The source at `span`: a name, a keyword, a literal.
-    #[inline(always)]
+    #[inline(never)]
     fn source(&mut self, span: Span) -> Written {
         if span.len() <= 16
             && let Some(block) = (self.plain_source)

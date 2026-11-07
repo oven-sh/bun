@@ -12,6 +12,12 @@ pub(crate) struct PrintMember {
     known_first_non_member: i32,
     known_is_callee_of_new: bool,
     known_is_in_chain_expression: bool,
+    /// The first and the last of these answers for one more member expression: the one around the last that found nothing known above
+    /// it. The links of a member chain are not printed by print_member_expression(), and what is in the brackets of each asks about
+    /// the links above it.
+    around: i32,
+    around_first_non_member: i32,
+    around_is_in_chain_expression: bool,
 }
 impl PrintMember {
     pub(crate) fn new() -> Self {
@@ -20,6 +26,9 @@ impl PrintMember {
             known_first_non_member: 0,
             known_is_callee_of_new: false,
             known_is_in_chain_expression: false,
+            around: 0,
+            around_first_non_member: 0,
+            around_is_in_chain_expression: false,
         }
     }
 }
@@ -91,6 +100,37 @@ impl Quick {
             )
     }
 
+    pub(crate) fn forget_member_around(&mut self) {
+        self.print_member.around = 0;
+    }
+
+    /// Are the answers that are kept for `around` those for the member expression `member`? They are those for every member expression
+    /// above `around` up to where an optional chain ends or something else than a member expression or a `!` follows: for the links of its
+    /// chain. If `member` is one of these, the answers are kept for it from now on, so no link is climbed past twice.
+    fn knows_member_around(&mut self, member: i32) -> bool {
+        let mut link = self.print_member.around;
+        if link == 0 {
+            return false;
+        }
+        while link != member {
+            let is_chain = (self.n.at(link) & F_CHAIN) != 0 && self.mode.wraps_chains;
+            loop {
+                let above = self.n.at(link + 3);
+                if is_chain && self.ends_chain(link, above) {
+                    return false;
+                }
+                link = above;
+                match self.n.at(above) & 0xff {
+                    k::MemberExpression => break,
+                    k::NonNullExpression => {}
+                    _ => return false,
+                }
+            }
+        }
+        self.print_member.around = member;
+        true
+    }
+
     pub(crate) fn print_member_expression(&mut self, n: i32) -> R<()> {
         let object = self.n.at(n + 4);
         let mut parent = self.n.at(n + 3);
@@ -100,6 +140,8 @@ impl Quick {
         let mut is_in_chain_expression = false;
         let mut child = n;
         let mut is_chain = false;
+        let mut around: i32 = 0;
+        let mut ends_chain_below = false;
         loop {
             // (a `!` is what is in front of it)
             if (self.n.at(child) & 0xff) == k::MemberExpression {
@@ -119,8 +161,25 @@ impl Quick {
                 is_in_chain_expression |= self.print_member.known_is_in_chain_expression;
                 break;
             }
+            if child == n && (self.n.at(first_non_member) & 0xff) == k::MemberExpression {
+                if self.knows_member_around(first_non_member) {
+                    first_non_member = self.print_member.around_first_non_member;
+                    is_in_chain_expression |= self.print_member.around_is_in_chain_expression;
+                    break;
+                }
+                // (from here on the answers are those for the parent)
+                around = first_non_member;
+                ends_chain_below = is_in_chain_expression;
+                is_in_chain_expression = false;
+            }
             child = first_non_member;
             first_non_member = self.n.at(first_non_member + 3);
+        }
+        if around != 0 {
+            self.print_member.around = around;
+            self.print_member.around_first_non_member = first_non_member;
+            self.print_member.around_is_in_chain_expression = is_in_chain_expression;
+            is_in_chain_expression |= ends_chain_below;
         }
         let is_callee_of_new =
             !is_in_chain_expression && self.should_inline_new_expression_callee(n);

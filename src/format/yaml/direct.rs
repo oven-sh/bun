@@ -246,8 +246,6 @@ struct Scan<'a> {
     text: &'a [u8],
     marks: YamlMarks<'a>,
     options: &'a FormatOptions,
-    /// The text as the file has it, for `endOfLine: "auto"`.
-    original: &'a [u8],
     elements: &'a mut Elements,
     out: &'a mut Vec<u8>,
     /// A range of `text` that comes after `out` and hasn't been copied yet. It's made of whole lines.
@@ -339,7 +337,6 @@ pub(super) fn format(
         text,
         marks: scratch.marks.find(text),
         options,
-        original,
         elements,
         out,
         stretch: (0, 0),
@@ -1250,7 +1247,8 @@ impl Scan<'_> {
         else {
             return false;
         };
-        let mut printer = doc::Printer::new(self.options, self.original, self.out);
+        // `endOfLine: "auto"` reads `new_line` as itself, and looks at no more of the file for each item.
+        let mut printer = doc::Printer::new(self.options, self.new_line, self.out);
         printer.print(self.elements, 0, out);
         if printer.result().is_err() {
             return false;

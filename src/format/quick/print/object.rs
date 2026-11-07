@@ -12,17 +12,19 @@ use crate::print::statics::{
     RBRACKET, SPACE, SQUOTE, STRING, SYMBOL,
 };
 use crate::print::util::IS_FUNCTION_LIKE;
-use crate::{Quick, R, Words, rare, why};
+use crate::{Quick, R, Words, rare, why, zeros};
 
 pub(crate) struct PrintObject {
-    pub(crate) siblings_parent: i32,
-    pub(crate) siblings_require_quotes: bool,
+    /// What has_siblings_require_quoted() has found for the lists around the member that it was asked about last, the innermost last:
+    /// the node with the list, and 1 if a member of it needs its quotes. `siblings_top` words of it count.
+    siblings: Vec<i32>,
+    siblings_top: i32,
 }
 impl PrintObject {
     pub(crate) fn new() -> Self {
         Self {
-            siblings_parent: 0,
-            siblings_require_quotes: false,
+            siblings: zeros(32),
+            siblings_top: 0,
         }
     }
 }
@@ -57,7 +59,7 @@ impl Quick {
         return p == end;
     }
 }
-pub(crate) fn print_object_in_ranges(table: &[i32], cp: i32) -> bool {
+pub(crate) fn print_object_in_ranges(table: &[u16], cp: i32) -> bool {
     let mut lo: i32 = 0;
     let mut hi = ((table.len() as i32) >> 1) - 1;
     while lo <= hi {
@@ -199,8 +201,21 @@ impl Quick {
 
     pub(crate) fn has_siblings_require_quoted(&mut self, member: i32) -> R<bool> {
         let parent = self.n.at(member + 3);
-        if parent == self.print_object.siblings_parent {
-            return Ok(self.print_object.siblings_require_quotes);
+        // The lists that are not around this member are done with.
+        let mut top = self.print_object.siblings_top;
+        while top > 0 {
+            let known = self.print_object.siblings.at(top - 2);
+            if known == parent {
+                self.print_object.siblings_top = top;
+                return Ok(self.print_object.siblings.at(top - 1) != 0);
+            }
+            let (start, end) = (self.n.at(known + 1), self.n.at(known + 2));
+            let (inner_start, inner_end) = (self.n.at(parent + 1), self.n.at(parent + 2));
+            if start <= inner_start && inner_end <= end && (start, end) != (inner_start, inner_end)
+            {
+                break;
+            }
+            top -= 2;
         }
         let list = self.members_of(parent);
         let mut result = false;
@@ -228,13 +243,21 @@ impl Quick {
             }
             i += 1;
         }
-        self.print_object.siblings_parent = parent;
-        self.print_object.siblings_require_quotes = result;
+        if top + 2 > self.print_object.siblings.len() as i32 {
+            self.make_room(|q| &mut q.print_object.siblings, top + 2);
+        }
+        self.print_object.siblings.put(top, parent);
+        self.print_object.siblings.put(top + 1, result as i32);
+        self.print_object.siblings_top = top + 2;
         return Ok(result);
     }
 
+    /// What the printers have kept about nodes of the tree: the next tree has other nodes in their places.
     pub(crate) fn reset_key_cache(&mut self) {
-        self.print_object.siblings_parent = 0;
+        self.print_object.siblings_top = 0;
+        self.forget_vue_filters();
+        self.forget_member_around();
+        self.forget_only_statement();
     }
 
     pub(crate) fn print_key(&mut self, member: i32) -> R<()> {

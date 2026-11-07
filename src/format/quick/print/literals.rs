@@ -103,25 +103,14 @@ impl Quick {
                 }
                 return;
             }
-            if self.lang.depth == 0 {
-                // The other quotes go into the source itself, and the literal is one text. Not in a guest: its host may still give up and
-                // print the source as it stood.
-                self.t.put(start, preferred);
-                self.t.put(end - 1, preferred);
-                if (flags & F_SLOW_TEXT) == 0 {
-                    self.slice(start, end);
-                } else {
-                    self.slice_any(start, end);
-                }
-                return;
-            }
-            self.text(if prefer_single { SQUOTE } else { DQUOTE });
+            // The other quotes go into the source itself, and the literal is one text.
+            self.t.put(start, preferred);
+            self.t.put(end - 1, preferred);
             if (flags & F_SLOW_TEXT) == 0 {
-                self.slice(start + 1, end - 1);
+                self.slice(start, end);
             } else {
-                self.slice_any(start + 1, end - 1);
+                self.slice_any(start, end);
             }
-            self.text(if prefer_single { SQUOTE } else { DQUOTE });
             return;
         }
         let quote = self.preferred_quote(start + 1, end - 1, prefer_single);

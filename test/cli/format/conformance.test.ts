@@ -68,12 +68,13 @@ test.skipIf(!hasRunner).concurrent.each([
   5 * 60_000,
 );
 
-// Most fixtures are printed by a short cut, and the long way prints them only where the short cut is turned off. The
-// quick way has printed another program for each of these inputs, and the long way the same one.
+// Most fixtures are printed by a short cut, and the long way prints them only where the short cut is turned off, so
+// the runner prints each fixture both ways. The quick way has printed another program for each of these inputs.
+// (Where only one way fails, the line names it. Nothing makes the ways differ here, so that is not tested.)
 test.skipIf(!hasRunner).concurrent.each([
   ["a.ts", "type A = { [await(x).y]: B };\n"],
   ["a.js", "// @flow\nx = a ? (b) : c % checks;\nfunction f() {}\n"],
-])("a fixture that only one way prints as expected fails, and the line says which way: %s %j", async (name, input) => {
+])("both ways print %s %j alike, and a fixture fails only if its snapshot is something else", async (name, input) => {
   using dir = tempDir("format-both-ways", {});
   const run = async (args: string[], stdin?: string) => {
     await using proc = spawn({
@@ -90,21 +91,24 @@ test.skipIf(!hasRunner).concurrent.each([
   };
   const piped = ["--no-config", "--no-editorconfig", `--stdin-filepath=${name}`];
   const [short, long] = await Promise.all([run(piped, input), run([...piped, "--no-short-cuts"], input)]);
+  expect(short).toBe(long);
   const options = "{ printWidth: 80 }";
   const rule = Buffer.alloc(options.length, "-").toString();
-  for (const [expected, way] of [
-    [long, "with the short cuts only"],
-    [short, "the long way only"],
-  ]) {
-    const bundle = join(String(dir), `${way}.txt`);
+  /** What the runner says about the fixture with `expected` as its snapshot: the failures and the count. */
+  const said = async (title: string, expected: string) => {
+    const bundle = join(String(dir), `${title}.txt`);
     const files = { [name]: input, [`${name}.prettier.snap`]: `${rule}\n${options}\n${rule}\n${expected}\n` };
     await Bun.write(
       bundle,
       concatenate(new Map(Object.entries(files).map(([name, text]) => [name, Buffer.from(text)]))),
     );
-    const failures = (await run(["--run-oxfmt-tests", bundle])).split("\n").filter(line => line.startsWith("FAIL "));
-    expect(failures).toEqual(short === long ? [] : [`FAIL prettier ${name} ${options} (${way})`]);
-  }
+    return (await run(["--run-oxfmt-tests", bundle])).split("\n").filter(line => /^FAIL |^as Prettier/.test(line));
+  };
+  expect(await said("right", long)).toEqual(["as Prettier prints them: 1/1"]);
+  expect(await said("wrong", `${long}0;\n`)).toEqual([
+    `FAIL prettier ${name} ${options}`,
+    "as Prettier prints them: 0/1",
+  ]);
 });
 
 // `own/comment-owners.txt` lists the node that Prettier attaches each comment in our own inputs to.

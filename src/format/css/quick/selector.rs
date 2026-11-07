@@ -9,7 +9,7 @@
 use super::super::Parser as Syntax;
 use super::super::selector_parser::has_comment;
 use super::layout::Page;
-use super::value::starts_with_url;
+use super::value::{starts_with_number, starts_with_url};
 use super::{BLANK, DASH, DIGIT, LOWER, Shape, UNDERSCORE, UPPER, byte, class, skip, skip_long};
 
 pub(super) struct Read {
@@ -29,8 +29,9 @@ struct Scanner<'a> {
     has_upper: bool,
     /// The compound selector that's being read has a string in the quotes that aren't printed.
     has_other_quotes: bool,
-    /// A string has `//` or `/*` in it. Behind an empty string, that's outside of a string to who looks for comments, and
-    /// selectors with a comment are printed as they're written: `has_comment`.
+    /// A string has `//` or `/*` in it, or ends with `/`. Behind an empty string, what's in a string is outside of one to
+    /// who looks for comments, and what's between two strings is gone: `[a="/"][b="*"]` has `/*`. Selectors with a
+    /// comment are printed as they're written: `has_comment`.
     has_comment_mark: bool,
 }
 
@@ -85,7 +86,10 @@ fn end_of_simple_compound(css: &[u8], start: usize, syntax: Syntax) -> Option<us
                 }
                 (Syntax::Scss, b'#', b'{') if byte(css, p + 2) == b'$' => {
                     let end = skip_long(css, p + 3, NAME);
-                    if end == p + 3 || starts_with_url(css, p + 3) || byte(css, end) != b'}' {
+                    if class(byte(css, p + 3)) & (LOWER | UNDERSCORE) == 0
+                        || starts_with_url(css, p + 3)
+                        || byte(css, end) != b'}'
+                    {
                         return None;
                     }
                     end + 1
@@ -235,7 +239,7 @@ impl Scanner<'_> {
         (byte(css, end) == b'}').then_some(end + 1)
     }
 
-    /// `#{$name}` of SCSS, from its `#`. Returns its end.
+    /// `#{$name}` of SCSS, from its `#`. As for `name`, no part of it starts with a number. Returns its end.
     fn scss_interpolation(&self, hash: usize) -> Option<usize> {
         let css = self.css;
         let mut p = hash + 2;
@@ -246,7 +250,10 @@ impl Scanner<'_> {
             if byte(css, p) == b'}' && p > hash + 2 {
                 return Some(p + 1);
             }
-            if class(byte(css, p)) & NAME == 0 || starts_with_url(css, p) {
+            if class(byte(css, p)) & (LOWER | DASH | UNDERSCORE) == 0
+                || starts_with_number(css, p)
+                || starts_with_url(css, p)
+            {
                 return None;
             }
             p = skip_long(css, p, NAME);
@@ -327,7 +334,7 @@ impl Scanner<'_> {
                     break;
                 }
                 p += 1;
-                self.has_comment_mark |= matches!(byte(css, p), b'/' | b'*');
+                self.has_comment_mark |= matches!(byte(css, p), b'/' | b'*' | b'"' | b'\'');
             }
             if byte(css, p) != quote {
                 return None;

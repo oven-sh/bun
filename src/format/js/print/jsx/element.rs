@@ -81,7 +81,7 @@ impl<'a> AnyJsxTagWithChildren<'a> {
                         soft_block_indent(element),
                         (!needs_parentheses).then_some(if_group_breaks(&")"))
                     ))
-                    .should_expand(should_expand(parent))
+                    .should_expand(should_expand(parent, f))
                 );
             }
         }
@@ -241,7 +241,9 @@ pub(crate) fn parentheses_around<'a>(e: Expr<'a>, jsx: Jsx<'a>) -> Parentheses {
     let parent = e.ast_parent();
     match (AnyJsxTagWithChildren { expr: e, jsx }).get_wrap_state(parent) {
         WrapState::NoWrap => Parentheses::None,
-        WrapState::WrapOnBreak if should_expand(parent) => Parentheses::Always,
+        WrapState::WrapOnBreak if callback_and_call_in_braces(parent).is_some() => {
+            Parentheses::Always
+        }
         WrapState::WrapOnBreak => Parentheses::IfItBreaks,
     }
 }
@@ -271,26 +273,36 @@ pub(crate) fn ignored_jsx_gets_no_parentheses(f: &Formatter<'_>) -> bool {
 }
 
 /// `{items.map((item) => <a />)}`: the body of an arrow function that's an argument of a call, where the call is the
-/// only thing in the braces.
-fn should_expand(parent: AstNodes<'_>) -> bool {
+/// only thing in the braces. Not with a type cast around the function or the call.
+fn should_expand<'a>(parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
+    callback_and_call_in_braces(parent).is_some_and(|(arrow, call)| {
+        !is_cast_target_that_hides_its_kind(arrow, f)
+            && !is_cast_target_that_hides_its_kind(call, f)
+    })
+}
+
+/// The arrow function and the call of [`should_expand`], whatever parentheses they are in.
+fn callback_and_call_in_braces(parent: AstNodes<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
     let AstNodes::ExpressionStatement(statement) = parent else {
-        return false;
+        return None;
     };
     if !statement.is_arrow_function_body() {
-        return false;
+        return None;
     }
     // The `FunctionBody`, and then the arrow function.
     let arrow = parent.parent().parent();
     match arrow.parent() {
-        call @ AstNodes::CallExpression(e) => {
-            e.callee()
+        call @ AstNodes::CallExpression(e)
+            if e.callee()
                 .is_none_or(|callee| callee.span() != arrow.span())
                 && matches!(
                     call.parent().without_chain_expression(),
                     AstNodes::JSXExpressionContainer(_)
-                )
+                ) =>
+        {
+            Some((arrow.as_expression()?, e))
         }
-        _ => false,
+        _ => None,
     }
 }
 

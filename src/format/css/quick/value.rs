@@ -159,6 +159,12 @@ pub(super) fn starts_with_url(css: &[u8], at: usize) -> bool {
     )
 }
 
+/// True for dashes and a digit: in `#{..}`, that's a number, which is printed like one, and no name.
+#[inline]
+pub(super) fn starts_with_number(css: &[u8], at: usize) -> bool {
+    class(byte(css, skip(css, at, DASH))) & DIGIT != 0
+}
+
 /// What ends a `//` comment that's taken. The parsers have ideas of their own about a backslash and an asterisk in one.
 fn end_of_line_comment(css: &[u8], from: usize) -> usize {
     let rest = css.get(from..).unwrap_or_default();
@@ -258,6 +264,7 @@ struct StringRead {
 fn read_string(css: &[u8], start: usize) -> Option<StringRead> {
     let quote = css[start];
     let (mut is_plain, mut has_inner_quotes, mut is_ascii) = (true, false, true);
+    let mut has_dollar = false;
     let mut p = start + 1;
     loop {
         p = skip_long(css, p, PLAIN);
@@ -275,11 +282,14 @@ fn read_string(css: &[u8], start: usize) -> Option<StringRead> {
             // `postcss-less` looks for `extend(..)` in all of a value's text.
             b'(' if p >= 6 && css[p - 6..p].eq_ignore_ascii_case(b"extend") => return None,
             // In the params of an at-rule of SCSS, the blanks between what follows a `$` and `...` move, wherever that is.
+            // What follows a later `$` of the string follows the first one too.
             b'$' => {
-                let rest = &css[p..];
-                let len = strings::index_of_char_usize(rest, quote).unwrap_or(rest.len());
-                if strings::contains(&rest[..len], b"...") {
-                    return None;
+                if !std::mem::replace(&mut has_dollar, true) {
+                    let rest = &css[p..];
+                    let len = strings::index_of_char_usize(rest, quote).unwrap_or(rest.len());
+                    if strings::contains(&rest[..len], b"...") {
+                        return None;
+                    }
                 }
                 is_plain = false;
             }
@@ -412,7 +422,10 @@ fn end_of_simple_interpolations(css: &[u8], mut p: usize) -> Option<usize> {
             while byte(css, p) == b'$' {
                 p += 1;
             }
-            if class(byte(css, p)) & (LOWER | UNDERSCORE | DASH) == 0 || starts_with_url(css, p) {
+            if class(byte(css, p)) & (LOWER | UNDERSCORE | DASH) == 0
+                || starts_with_number(css, p)
+                || starts_with_url(css, p)
+            {
                 return None;
             }
             p = skip_long(css, p, NAME);
@@ -1143,7 +1156,10 @@ impl Scanner<'_> {
                 p += 1;
             }
             let c = byte(css, p);
-            if !(class(c) & (LOWER | UNDERSCORE | DASH) != 0) || starts_with_url(css, p) {
+            if !(class(c) & (LOWER | UNDERSCORE | DASH) != 0)
+                || starts_with_number(css, p)
+                || starts_with_url(css, p)
+            {
                 return None;
             }
             p = skip_long(css, p, NAME);

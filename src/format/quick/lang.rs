@@ -5,18 +5,14 @@
 //! the place of placeholders, and keep it in a map until the printer comes by. All of it asynchronous.
 //!
 //! Here there is no separate pass and no separate result. The printer of the host, when it stands at the node, calls
-//! embed(), and the guest's printer appends to the same stream, between what the host wrote before and what it writes after.
-//! If the code does not parse, the stream is cut back to where it was and the host prints the node as plain text.
+//! embed() (guest.rs), and the guest writes into the document of the file, between what the host wrote before and what it
+//! writes after. If the code does not parse, the document is cut back to where it was and the host prints the node as plain text.
 
 use crate::Quick;
 
 pub(crate) struct Lang {
     /// options.parser: the language that is running.
     pub(crate) lang: i32,
-    /// 0 for the file itself. A language prints the line break at the end of its output only at depth 0.
-    pub(crate) depth: i32,
-    pub(crate) guest_column: i32,
-    pub(crate) next_guest_column: i32,
     /// Prettier's `__onHtmlRoot`: HTML as a guest says how many children its root has.
     pub(crate) top_level_count: i32,
 }
@@ -24,9 +20,6 @@ impl Lang {
     pub(crate) fn new() -> Self {
         Self {
             lang: 0,
-            depth: 0,
-            guest_column: 0,
-            next_guest_column: -1,
             top_level_count: 0,
         }
     }
@@ -50,29 +43,8 @@ pub(crate) mod lang {
     /// babel-flow, and babel for a file with the @flow pragma: Flow as Babel reads it
     pub(crate) const BabelFlow: i32 = 31;
 }
-/// The column at which the lines of the running guest start, if its host knows that for sure: the guest starts a line there, the indentation is blanks (or
-/// nothing), every line of the guest is indented from there, and a line break follows the guest. -1 if the host does not know, which is the rule. 0 for the
-/// file itself. A language that writes texts with line breaks in them can do so where this is 0.
-/// GUEST_BETWEEN_LINES: the column is not known, but the guest stands between two lines of a group, which break if anything in the guest does.
-pub(crate) const GUEST_BETWEEN_LINES: i32 = -2;
 impl Quick {
-    /// A host, right before embed(): holds for that guest only.
-    pub(crate) fn set_guest_column(&mut self, column: i32) {
-        self.lang.next_guest_column = column;
-    }
-
     pub(crate) fn set_top_level_count(&mut self, count: i32) {
         self.lang.top_level_count = count;
-    }
-}
-
-impl Quick {
-    /// For tools: code in other languages is printed as if nobody knew these languages.
-    #[inline(always)]
-    pub(crate) fn has_no_guests(&self) -> bool {
-        #[cfg(feature = "stages")]
-        return self.no_guests;
-        #[cfg(not(feature = "stages"))]
-        false
     }
 }

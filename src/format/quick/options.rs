@@ -33,7 +33,6 @@ pub(crate) struct Options {
     pub(crate) name_ends_in_ts: bool,
     /// The name of the file ends in ".js.flow".
     pub(crate) name_ends_in_js_flow: bool,
-    pub(crate) in_js_template: bool,
     /// A language may take short cuts that rest on a guess about the layout, see fitted() of doc.rs. Off while a file is formatted for the
     /// second time because a guess was wrong, and wherever more than the text is asked for (a cursor, a range).
     pub(crate) short_cuts: bool,
@@ -79,7 +78,6 @@ impl Options {
             indentation: 0,
             name_ends_in_ts: false,
             name_ends_in_js_flow: false,
-            in_js_template: false,
             short_cuts: false,
             guess_margin: 0,
             guessing: true,
@@ -157,9 +155,5 @@ impl Quick {
 
     pub(crate) fn set_print_width(&mut self, width: i32) {
         self.options.print_width = width;
-    }
-
-    pub(crate) fn set_in_js_template(&mut self, value: bool) {
-        self.options.in_js_template = value;
     }
 }

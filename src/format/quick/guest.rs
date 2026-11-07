@@ -93,7 +93,6 @@ impl Quick {
 
     pub(crate) fn is_registered(&self, language: i32) -> bool {
         match (&self.guest.guests, Guest::of(language)) {
-            _ if self.has_no_guests() => false,
             (Some(guests), Some(guest)) => guests.knows(guest),
             // `embed()` refuses the file.
             (None, _) => true,
@@ -126,7 +125,6 @@ impl Quick {
     /// `textToDoc()`: appends the document of T[start, end), read as `language`, without a line break at its end.
     /// Returns false, and leaves the document as it was, if that text has a syntax error.
     pub(crate) fn embed(&mut self, language: i32, start: i32, end: i32) -> R<bool> {
-        self.lang.next_guest_column = -1;
         let Some(guest) = Guest::of(language) else {
             return Ok(false);
         };

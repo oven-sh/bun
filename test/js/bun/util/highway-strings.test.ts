@@ -605,16 +605,15 @@ describe("yamlMarks", () => {
 
 describe("htmlMarks", () => {
   const isPrintable = (b: number) => b >= 0x20 && b <= 0x7e;
-  const isOneOf = (bytes: string) => (b: number) => bytes.includes(String.fromCharCode(b));
   // One per bitmap, in the kernel's order.
   const MARKS = [
-    (b: number) => (!isPrintable(b) && b !== 0x0a) || isOneOf("&\\")(b),
-    isOneOf(" \t\n"),
-    isOneOf("\n"),
-    isOneOf("<"),
-    isOneOf('"'),
-    isOneOf("{"),
-    (b: number) => !/[a-z0-9-]/.test(String.fromCharCode(b)),
+    (b: number) => (!isPrintable(b) && b !== 0x0a) || b === 0x26 || b === 0x5c,
+    (b: number) => b === 0x20 || b === 0x09 || b === 0x0a,
+    (b: number) => b === 0x0a,
+    (b: number) => b === 0x3c,
+    (b: number) => b === 0x22,
+    (b: number) => b === 0x7b,
+    (b: number) => !((b >= 0x61 && b <= 0x7a) || (b >= 0x30 && b <= 0x39) || b === 0x2d),
   ];
 
   function compareMarks(text: Uint8Array, at: string) {

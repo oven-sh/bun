@@ -112,6 +112,11 @@ impl<'a> Line<'_, 'a> {
         self.parts.len() != mark.parts
     }
 
+    /// The limit of the line of `mark`, on which nothing has ended since: what has been measured since then has moved it.
+    pub(super) fn limit_since(&self, mark: Mark) -> usize {
+        (mark.limit).saturating_add(self.extra.saturating_sub(mark.extra))
+    }
+
     /// True if there's a comment in `span`, or something that owns one.
     pub(super) fn has_comments_in(&self, span: Span) -> bool {
         !self.is_quiet && self.f.comments().has_comment_or_owner_in(span)
@@ -147,7 +152,7 @@ impl<'a> Line<'_, 'a> {
         (self.breaks, self.limit) = (false, mark.limit.saturating_sub(after));
         let written = write(self).and_then(|()| self.check_source_up_to(span.end));
         if written.is_ok() && !self.has_parts_since(mark) {
-            (self.breaks, self.limit) = (mark.breaks, mark.limit);
+            (self.breaks, self.limit) = (mark.breaks, self.limit_since(mark));
             return Ok(());
         }
         self.go_back_to(mark);

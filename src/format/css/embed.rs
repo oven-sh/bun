@@ -4,6 +4,7 @@ use super::doc::{self, Doc, Line};
 use super::sink::Sink;
 use crate::ir::element::{Condition, Group, GroupMode, LineMode, PrintMode, TextWidth};
 use crate::js::print::template::write_embedded_template_expression;
+use crate::js::utils::typecast::{cast_parentheses, is_cast_target_that_hides_its_kind};
 use crate::prelude::*;
 use crate::text;
 
@@ -397,11 +398,35 @@ fn call_callee(e: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
+/// What a rule knows of the type casts of JSDoc: nothing where `--debug-check` asks which templates may be in another
+/// language, and the formatter everywhere else.
+#[derive(Clone, Copy)]
+struct Casts<'a, 'f>(Option<&'f Formatter<'a>>);
+
+impl<'a> Casts<'a, '_> {
+    /// True if `e` is the `ParenthesizedExpression` of a cast for Prettier, so no name, member access or call.
+    fn hides(self, e: Expr<'a>) -> bool {
+        self.0
+            .is_some_and(|f| is_cast_target_that_hides_its_kind(e, f))
+    }
+
+    /// True if `e` is in the parentheses of more than one cast.
+    fn hides_twice(self, e: Expr<'a>) -> bool {
+        self.0.is_some_and(|f| cast_parentheses(e, f).len() > 1)
+    }
+}
+
+fn is_name<'a>(e: Expr<'a>, name: &[u8], casts: Casts<'a, '_>) -> bool {
+    is_identifier(e, name) && !casts.hides(e)
+}
+
 /// `Component.extend`, and `Component[extend]`, whose property has that name too.
-fn is_styled_extend(e: Expr<'_>) -> bool {
+fn is_styled_extend<'a>(e: Expr<'a>, casts: Casts<'a, '_>) -> bool {
     let (object, name) = match e.kind() {
         ExprKind::Dot { obj, name, .. } => (obj, name.bytes()),
-        ExprKind::Index { obj, index, .. } if matches!(index.kind(), ExprKind::Ident(_)) => {
+        ExprKind::Index { obj, index, .. }
+            if matches!(index.kind(), ExprKind::Ident(_)) && !casts.hides(index) =>
+        {
             (obj, index.text())
         }
         _ => return false,
@@ -410,39 +435,52 @@ fn is_styled_extend(e: Expr<'_>) -> bool {
         && name == b"extend"
         && matches!(object.kind(), ExprKind::Ident(_))
         && object.text().first().is_some_and(u8::is_ascii_uppercase)
+        && !casts.hides(object)
 }
 
-fn is_styled_object(e: Expr<'_>) -> bool {
-    member_object(e).is_some_and(|object| is_identifier(object, b"styled")) || is_styled_extend(e)
+fn is_styled_object<'a>(e: Expr<'a>, casts: Casts<'a, '_>) -> bool {
+    member_object(e).is_some_and(|object| is_name(object, b"styled", casts))
+        || is_styled_extend(e, casts)
 }
 
 /// `isStyledComponents` and the first half of `isStyledJsx`. `tag` is the template's tag.
-fn is_styled_tag(tag: Expr<'_>) -> bool {
+///
+/// `isStyledComponents` looks through one `ParenthesizedExpression` around the tag, so `` /** @type {A} */ (css)`..` ``
+/// and `` /** @type {A} */ (styled.a)`..` `` are style sheets. A cast anywhere else in the tag is none of the names.
+fn is_styled_tag<'a>(tag: Expr<'a>, casts: Casts<'a, '_>) -> bool {
+    let is_in_cast = casts.hides(tag);
+    if is_in_cast && casts.hides_twice(tag) {
+        return false;
+    }
     // css``, css.global``, css.resolve``
     if is_identifier(tag, b"css") {
         return true;
     }
-    if let ExprKind::Dot { obj, name, .. } = tag.kind()
+    if !is_in_cast
+        && let ExprKind::Dot { obj, name, .. } = tag.kind()
         && member_object(tag).is_some()
-        && is_identifier(obj, b"css")
+        && is_name(obj, b"css", casts)
         && matches!(name.bytes(), b"global" | b"resolve")
     {
         return true;
     }
     // styled.foo``, Component.extend``
-    if is_styled_object(tag) {
+    if is_styled_object(tag, casts) {
         return true;
     }
     let Some(callee) = call_callee(tag) else {
         return false;
     };
     // styled(Component)``
-    is_identifier(callee, b"styled")
-        || member_object(callee).is_some_and(|object| {
-            // styled.foo.attrs({})``, Component.extend.attrs({})``, styled(Component).attrs({})``
-            is_styled_object(object)
-                || call_callee(object).is_some_and(|callee| is_identifier(callee, b"styled"))
-        })
+    is_name(callee, b"styled", casts)
+        || (!casts.hides(callee)
+            && member_object(callee).is_some_and(|object| {
+                // styled.foo.attrs({})``, Component.extend.attrs({})``, styled(Component).attrs({})``
+                !casts.hides(object)
+                    && (is_styled_object(object, casts)
+                        || call_callee(object)
+                            .is_some_and(|callee| is_name(callee, b"styled", casts)))
+            }))
 }
 
 fn has_name(prop: Prop<'_>, name: &[u8]) -> bool {
@@ -490,20 +528,27 @@ pub(crate) fn root_name_of_tag(mut tag: Expr<'_>) -> Option<&[u8]> {
     }
 }
 
-/// Prettier's `isEmbedCss`. `e` is a template.
+/// Prettier's `isEmbedCss`, whatever type casts are around the template `e` and its tag.
 pub(crate) fn is_embed_css(e: Expr<'_>) -> bool {
-    is_embed_css_for(e, Flavor::Prettier)
+    is_embed_css_for(e, Flavor::Prettier, Casts(None))
 }
 
-fn is_embed_css_for(e: Expr<'_>, flavor: Flavor) -> bool {
+/// Prettier's `isEmbedCss`. `e` is a template.
+pub(crate) fn is_embed_css_in<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    is_embed_css_for(e, Flavor::Prettier, Casts(Some(f)))
+}
+
+fn is_embed_css_for<'a>(e: Expr<'a>, flavor: Flavor, casts: Casts<'a, '_>) -> bool {
     let parent = e.ast_parent();
     match parent {
         AstNodes::TaggedTemplateExpression(tagged) => {
             matches!(tagged.kind(), ExprKind::TaggedTemplate(call) if call.callee() != e && match flavor.is_oxfmt() {
                 true => matches!(root_name_of_tag(call.callee()), Some(b"css" | b"styled")),
-                false => is_styled_tag(call.callee()),
+                false => is_styled_tag(call.callee(), casts),
             })
         }
+        // The braces hold the parentheses of a cast, not the template.
+        AstNodes::JSXExpressionContainer(_) if casts.hides(e) => false,
         AstNodes::JSXExpressionContainer(_) => match parent.parent() {
             // <style jsx>{`div{color:red}`}</style>
             AstNodes::JSXElement(element) => matches!(element.kind(), ExprKind::Jsx(jsx)
@@ -513,17 +558,20 @@ fn is_embed_css_for(e: Expr<'_>, flavor: Flavor) -> bool {
             AstNodes::JSXAttribute(attribute) => has_name(attribute, b"css"),
             _ => false,
         },
+        // An element in the parentheses of a cast is no element of the array.
+        AstNodes::ArrayExpression(_) if casts.hides(e) => false,
         _ => is_angular_component_styles(parent),
     }
 }
 
 /// True if Prettier's `embed` would try to format the template `e`.
-fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, options: &FormatOptions) -> bool {
+fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> bool {
+    let options = f.options();
     matches!(
         options.embedded_language_formatting,
         EmbeddedLanguageFormatting::Auto
     ) && (0..template.quasi_count()).all(|index| template.cooked(index).is_some())
-        && is_embed_css_for(e, options.flavor)
+        && is_embed_css_for(e, options.flavor, Casts(Some(f)))
 }
 
 /// True if `template` is printed as ` `` `.
@@ -537,7 +585,7 @@ pub(crate) fn write_template<'a>(
     template: Template<'a>,
     f: &mut Formatter<'a>,
 ) -> bool {
-    if !is_candidate(e, template, f.options()) {
+    if !is_candidate(e, template, f) {
         return false;
     }
     if is_blank(template) {
@@ -559,7 +607,7 @@ pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     else {
         return false;
     };
-    is_candidate(quasi, template, f.options())
+    is_candidate(quasi, template, f)
         && (tag_alone_decides_template_layout(f)
             || (!is_blank(template) && print_embed_css(template, f.options(), Action::Check)))
 }
@@ -570,7 +618,7 @@ pub(crate) fn may_be_in_another_language<'a>(e: Expr<'a>, f: &Formatter<'a>) -> 
     let ExprKind::Template(template) = e.kind() else {
         return false;
     };
-    is_candidate(e, template, f.options())
+    is_candidate(e, template, f)
         || crate::graphql::embed::is_candidate(e, template, f)
         || crate::html::in_js::is_candidate(e, template, f)
 }

@@ -5,6 +5,7 @@ use super::parser::{self, Tree};
 use super::printer::Builder;
 use crate::ir::element::LineMode;
 use crate::js::print::template::write_embedded_template_expression;
+use crate::js::utils::typecast::is_cast_target_that_hides_its_kind;
 use crate::prelude::*;
 use smallvec::SmallVec;
 
@@ -45,30 +46,42 @@ pub(crate) fn has_language_comment<'a>(
     })
 }
 
-/// Prettier's `isEmbedGraphQL`. `e` is a template.
+/// Prettier's `isEmbedGraphQL`. `e` is a template. A type cast around the template, its tag or the callee hides it.
 pub(crate) fn is_embed_graphql<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let parent = e.ast_parent();
+    let is_cast = |e: Expr<'a>| is_cast_target_that_hides_its_kind(e, f);
     let is_marked = match parent {
         AstNodes::TaggedTemplateExpression(tagged) => match tagged.kind() {
             ExprKind::TaggedTemplate(call) if f.options().flavor.is_oxfmt() => matches!(
                 crate::css::embed::root_name_of_tag(call.callee()),
                 Some(b"gql" | b"graphql")
             ),
-            ExprKind::TaggedTemplate(call) => match call.callee().kind() {
-                ExprKind::Dot { obj, name, .. } => {
-                    matches!(
-                        call.callee().as_ast_nodes(),
-                        AstNodes::StaticMemberExpression(_)
-                    ) && is_identifier(obj, &[b"graphql"])
-                        && name.bytes() == b"experimental"
-                }
-                _ => is_identifier(call.callee(), &[b"gql", b"graphql"]),
-            },
+            ExprKind::TaggedTemplate(call) => {
+                let tag = call.callee();
+                // `graphql.experimental` and `graphql[experimental]` are the same `MemberExpression` to Prettier.
+                let is_tag = match (tag.as_ast_nodes(), tag.kind()) {
+                    (AstNodes::StaticMemberExpression(_), ExprKind::Dot { obj, name, .. }) => {
+                        is_identifier(obj, &[b"graphql"])
+                            && !is_cast(obj)
+                            && name.bytes() == b"experimental"
+                    }
+                    (AstNodes::ComputedMemberExpression(_), ExprKind::Index { obj, index, .. }) => {
+                        is_identifier(obj, &[b"graphql"])
+                            && !is_cast(obj)
+                            && is_identifier(index, &[b"experimental"])
+                            && !is_cast(index)
+                    }
+                    _ => is_identifier(tag, &[b"gql", b"graphql"]),
+                };
+                is_tag && !is_cast(tag)
+            }
             _ => false,
         },
-        AstNodes::CallExpression(call) => call
-            .callee()
-            .is_some_and(|callee| is_identifier(callee, &[b"graphql"])),
+        AstNodes::CallExpression(call) => {
+            !is_cast(e)
+                && (call.callee())
+                    .is_some_and(|callee| is_identifier(callee, &[b"graphql"]) && !is_cast(callee))
+        }
         _ => false,
     };
     is_marked || has_language_comment(e, parent, b" GraphQL ", f)

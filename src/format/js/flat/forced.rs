@@ -17,7 +17,7 @@ pub(crate) fn write_array_element<'a>(
     }
     let has_comma = !is_last || !f.options().trailing_commas.is_none();
     let after = u32::from(has_comma);
-    f.write_line(element.outer_span(), (after, after), |line| {
+    f.write_line(element.outer_span(), (after, after), &|line| {
         line.last_expr(element, Place::Free)
     })
 }

@@ -25,7 +25,7 @@ pub(crate) fn write_case_head<'a>(case: Case<'a>, f: &mut Formatter<'a>) -> bool
         _ => 0,
     };
     let end = first.map_or_else(|| case.span().end, |first| first.span().start);
-    f.write_line(Span::new(case.span().start, end), (after, after), |line| {
+    f.write_line(Span::new(case.span().start, end), (after, after), &|line| {
         // Where the expression breaks is another matter.
         if line.breaks {
             return Err(Refused);
@@ -409,7 +409,10 @@ impl<'a> Line<'_, 'a> {
         let was_too_wide = std::mem::replace(&mut self.is_too_wide, false);
         self.limit = limit.saturating_sub(after);
         let written = self.expr_of_statement(test);
-        self.limit = limit;
+        self.limit = match self.has_parts_since(mark) {
+            true => limit,
+            false => self.limit_since(mark),
+        };
         let is_too_wide = std::mem::replace(&mut self.is_too_wide, was_too_wide);
         if written.is_ok() {
             return self.byte(b')');

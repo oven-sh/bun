@@ -269,8 +269,8 @@ pub(crate) fn write_do_while_statement<'a>(
     );
 }
 
-/// `!(a || b)` or `!!(a || b)`
-fn is_negated_logical_expression(test: Expr<'_>) -> bool {
+/// `!(a || b)` or `!!(a || b)`. With a type cast around the operand of a `!`, that operand is the parentheses.
+fn is_negated_logical_expression<'a>(test: Expr<'a>, f: &Formatter<'a>) -> bool {
     fn logical_not_argument(e: Expr<'_>) -> Option<Expr<'_>> {
         match e.kind() {
             ExprKind::Unary {
@@ -283,8 +283,12 @@ fn is_negated_logical_expression(test: Expr<'_>) -> bool {
     let Some(argument) = logical_not_argument(test) else {
         return false;
     };
-    let argument = logical_not_argument(argument).unwrap_or(argument);
+    let argument = match logical_not_argument(argument) {
+        Some(inner) if !is_cast_target(argument, f) => inner,
+        _ => argument,
+    };
     matches!(argument.kind(), ExprKind::Binary { op, .. } if op.is_logical())
+        && !is_cast_target(argument, f)
 }
 
 /// Prettier 3.9 prints `if (!(` on one line. oxfmt follows 3.8, which breaks after `if (`.
@@ -295,7 +299,7 @@ fn hugs_negated_condition(f: &Formatter<'_>) -> bool {
 /// Prettier's `shouldInlineCondition`: a negated logical expression starts right after the statement's `(`, so its
 /// operands are indented the same as without the `!`.
 fn should_inline_condition<'a>(test: Expr<'a>, f: &Formatter<'a>) -> bool {
-    is_negated_logical_expression(test)
+    is_negated_logical_expression(test, f)
         && hugs_negated_condition(f)
         && !has_comments(test, f)
         && !is_cast_target(test, f)

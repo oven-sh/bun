@@ -14,6 +14,7 @@ use crate::js::utils::tailwindcss::{
 use crate::js::utils::typecast::has_comments;
 use crate::prelude::*;
 use crate::{format_args, write};
+use std::cell::Cell;
 
 /// True if Prettier's `embed` could apply to the template `e`. For most templates it can't.
 fn may_have_embedded_language<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
@@ -52,9 +53,12 @@ pub(crate) fn write_template_literal<'a>(
     template: Template<'a>,
     f: &mut Formatter<'a>,
 ) {
-    if is_jest_each_template_literal(e, template, f) {
+    // A table of tests that is in another language is printed as that: ``it.each/* GraphQL */`..` ``.
+    let is_table = is_jest_each_template_literal(e, template, f);
+    if is_table && f.options().flavor.is_oxfmt() {
         return EachTemplateTable::from_template(template, f).fmt(f);
     }
+    let is_table_as_written = Cell::new(false);
     let context = f.context().tailwind_context();
     let content = format_with(|f| {
         if !may_have_embedded_language(e, f)
@@ -63,10 +67,16 @@ pub(crate) fn write_template_literal<'a>(
                 && !crate::html::in_js::write_template(e, template, f)
                 && !crate::markdown::embed::write_template(e, template, f))
         {
-            TemplateLike::TemplateLiteral(template).fmt(f);
+            match is_table {
+                true => is_table_as_written.set(true),
+                false => TemplateLike::TemplateLiteral(template).fmt(f),
+            }
         }
     });
     InTailwindContext(context.map(|it| it.in_template(e, f)), content).fmt(f);
+    if is_table_as_written.get() {
+        EachTemplateTable::from_template(template, f).fmt(f);
+    }
 }
 
 /// `${e}` at `i` in a template that's printed as its embedded language. Prettier's `printEmbeddedTemplateExpressions`.

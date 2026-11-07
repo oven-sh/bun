@@ -4,11 +4,10 @@
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
     CL_TYPE_PARAMETERS, EXT_AT, F_ANY_WIDTH, F_COMMENTS, F_DECIDED, F_DEFINITE, F_DELEGATE,
-    F_ESCAPE, F_EXT, F_EXTRA, F_IGNORED, F_LEADING, F_LINES, F_OPTIONAL, F_PAREN, F_PREFIX,
+    F_ESCAPE, F_EXT, F_EXTRA, F_GENERATOR, F_LEADING, F_LINES, F_OPTIONAL, F_PAREN, F_PREFIX,
     F_SLOW_TEXT, F_TRAILING, k,
 };
 use crate::lexer::tk;
-use crate::options::EOL_LF;
 use crate::print::jsx::{KIND_AND_SUB, READY_ELEMENT};
 use crate::print::statics::{
     AT, AWAIT, BANG, DEBUGGER, DOT, ELLIPSIS, EQ_SPACES, LPAREN, OPERATOR, QUESTION, RPAREN, SEMI,
@@ -24,6 +23,10 @@ pub(crate) struct Print {
     /// The first line break at or behind the one is at the other (the end of the text if there is none): see has_newline_in_interpolation().
     pub(crate) line_break_from: i32,
     pub(crate) line_break_at: i32,
+    /// A program, and the one statement of it that is no comment, or NO_STATEMENT, or SEVERAL_STATEMENTS: see
+    /// is_special_single_expression_statement().
+    pub(crate) only_statement_of: i32,
+    pub(crate) only_statement: i32,
 }
 impl Print {
     pub(crate) fn new() -> Self {
@@ -31,9 +34,13 @@ impl Print {
             bailout: false,
             line_break_from: 0,
             line_break_at: -1,
+            only_statement_of: 0,
+            only_statement: NO_STATEMENT,
         }
     }
 }
+pub(crate) const NO_STATEMENT: i32 = -1;
+pub(crate) const SEVERAL_STATEMENTS: i32 = -2;
 
 // what a parent can ask of a child
 pub(crate) const ARG_EXPAND_FIRST: i32 = 1;
@@ -47,6 +54,10 @@ impl Quick {
         self.print.bailout = value;
     }
 
+    pub(crate) fn forget_only_statement(&mut self) {
+        self.print.only_statement_of = 0;
+    }
+
     pub(crate) fn is_iife_callee_or_tag(&self, n: i32) -> bool {
         let k = self.n.at(n) & 0xff;
         if k != k::FunctionExpression && k != k::ArrowFunctionExpression {
@@ -58,7 +69,7 @@ impl Quick {
             && self.n.at(parent + 4) == n;
     }
 
-    pub(crate) fn should_expression_statement_print_own_comments(&self, n: i32) -> R<bool> {
+    pub(crate) fn should_expression_statement_print_own_comments(&mut self, n: i32) -> R<bool> {
         if !self.expression_statement_needs_leading_semicolon(n)? {
             return Ok(false);
         }
@@ -66,7 +77,7 @@ impl Quick {
         return Ok(last >= 0 && self.is_type_cast_comment_at(last));
     }
 
-    pub(crate) fn will_print_own_comments(&self, n: i32, k: i32) -> R<bool> {
+    pub(crate) fn will_print_own_comments(&mut self, n: i32, k: i32) -> R<bool> {
         let parent = self.n.at(n + 3);
         match self.n.at(parent) & 0xff {
             k::JSXSpreadAttribute | k::JSXSpreadChild => {
@@ -135,7 +146,8 @@ impl Quick {
             return Ok(());
         }
         let k = head & 0xff;
-        if (head & (F_COMMENTS | F_IGNORED)) == 0 {
+        // (a function with `*` goes the way of a node with comments)
+        if (head & (F_COMMENTS | F_GENERATOR)) == 0 {
             if NEEDS_CARE.at(k) == 0 {
                 self.dispatch(n, k, args)?;
                 self.set_label(0);
@@ -353,67 +365,10 @@ impl Quick {
         Ok(())
     }
 
-    /// An identifier with `\u` escapes is printed decoded, like Babel's `name`.
-    pub(crate) fn print_escaped_name(&mut self, start: i32, end: i32) {
-        self.reserve_gen(end - start);
-        let from = self.text.gen_pos;
-        let mut p = start;
-        while p < end {
-            let c = self.t.at(p);
-            if c != 92 {
-                self.gen_byte(c);
-                p += 1;
-                continue;
-            }
-            let mut cp: i32 = 0;
-            if self.t.at(p + 2) == 123 {
-                p += 3;
-                while self.t.at(p) != 125 {
-                    cp = cp * 16 + print_hex_value(self.t.at(p));
-                    p += 1;
-                }
-                p += 1;
-            } else {
-                let mut i: i32 = 2;
-                while i < 6 {
-                    cp = cp * 16 + print_hex_value(self.t.at(p + i));
-                    i += 1;
-                }
-                p += 6;
-            }
-            if cp < 0x80 {
-                self.gen_byte(cp);
-            } else if cp < 0x800 {
-                self.gen_byte(0xc0 | (cp >> 6));
-                self.gen_byte(0x80 | (cp & 63));
-            } else if cp < 0x10000 {
-                self.gen_byte(0xe0 | (cp >> 12));
-                self.gen_byte(0x80 | ((cp >> 6) & 63));
-                self.gen_byte(0x80 | (cp & 63));
-            } else {
-                self.gen_byte(0xf0 | (cp >> 18));
-                self.gen_byte(0x80 | ((cp >> 12) & 63));
-                self.gen_byte(0x80 | ((cp >> 6) & 63));
-                self.gen_byte(0x80 | (cp & 63));
-            }
-        }
-        self.slice_any(from, self.text.gen_pos);
-    }
-}
-pub(crate) fn print_hex_value(c: i32) -> i32 {
-    if c <= 57 {
-        return c - 48;
-    }
-    return (c | 32) - 87;
-}
-
-impl Quick {
     pub(crate) fn print_name(&mut self, n: i32) {
         let head = self.n.at(n);
-        if (head & (F_SLOW_TEXT | F_ESCAPE)) == 0 {
+        if (head & F_SLOW_TEXT) == 0 {
             self.slice(self.n.at(n + 1), self.n.at(n + 2));
-        } else if (head & F_ESCAPE) != 0 {
-            self.print_escaped_name(self.n.at(n + 1), self.n.at(n + 2));
         } else {
             self.slice_any(self.n.at(n + 1), self.n.at(n + 2));
         }
@@ -428,21 +383,13 @@ impl Quick {
             && self.n.at(parent + 4) == n
         {
             // an await that is called or read from: (await x).y
-            let mut ancestor = parent;
-            while ancestor != 0 {
-                let ak = self.n.at(ancestor) & 0xff;
-                if ak == k::AwaitExpression || ak == k::BlockStatement {
-                    break;
-                }
-                ancestor = self.n.at(ancestor + 3);
-            }
-            let mut should_group = true;
-            if ancestor != 0 && (self.n.at(ancestor) & 0xff) == k::AwaitExpression {
-                let top = self.climb_left_spine(n);
-                if top == self.n.at(ancestor + 4) {
-                    should_group = false;
-                }
-            }
+            // No group where the closest await or block around it is an await whose argument starts with this one. climb_left_spine() goes
+            // through neither, so that await is the parent of where it ends, or there is none: no await is climbed past twice.
+            let top = self.climb_left_spine(n);
+            let around = self.n.at(top + 3);
+            let should_group = around == 0
+                || (self.n.at(around) & 0xff) != k::AwaitExpression
+                || self.n.at(around + 4) != top;
             let g = if should_group { self.group_open() } else { 0 };
             self.indent_softline();
             self.text(AWAIT);
@@ -820,14 +767,6 @@ impl Quick {
                 self.print_comment_at(self.n.at(n + 1), self.n.at(n + 2), self.n.at(n + 4));
                 return Ok(());
             }
-            k::ReadyLines => {
-                if self.options.end_of_line == EOL_LF {
-                    self.slice_lines_at_margin(self.n.at(n + 1), self.n.at(n + 2), 0);
-                } else {
-                    self.slice_with_newlines(self.n.at(n + 1), self.n.at(n + 2));
-                }
-                return Ok(());
-            }
             k::ReadyWrap => {
                 let blocks = self.n.at(n + 4);
                 let count = self.n.at(blocks);
@@ -897,18 +836,12 @@ impl Quick {
         let mut p = self.name_start(n);
         while p < end {
             let c = self.t.at(p);
-            if c == 92 && self.t.at(p + 2) == 123 {
-                // \u{..}
-                while self.t.at(p) != 125 {
-                    p += 1;
-                }
-            } else if c < 128
+            if c < 128
                 && !((c >= 97 && c <= 122)
                     || (c >= 65 && c <= 90)
                     || (c >= 48 && c <= 57)
                     || c == 95
-                    || c == 36
-                    || c == 92)
+                    || c == 36)
             {
                 break;
             }

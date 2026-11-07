@@ -21,7 +21,7 @@ pub(crate) fn write_jsx_child<'a>(child: Expr<'a>, f: &mut Formatter<'a>) -> boo
         _ => true,
     };
     let slot = f.reserve_tag();
-    let is_written = f.write_line(span, (0, 0), |line| line.jsx_child(child));
+    let is_written = f.write_line(span, (0, 0), &|line| line.jsx_child(child));
     if is_written && has_group {
         f.group_from(slot, false);
     }
@@ -30,7 +30,7 @@ pub(crate) fn write_jsx_child<'a>(child: Expr<'a>, f: &mut Formatter<'a>) -> boo
 
 /// Writes `attribute` of an element whose attributes are each on a line.
 pub(super) fn write_jsx_attribute<'a>(attribute: Prop<'a>, f: &mut Formatter<'a>) -> bool {
-    f.write_line(attribute.span(), (0, 0), |line| {
+    f.write_line(attribute.span(), (0, 0), &|line| {
         line.jsx_attribute(attribute, true)
     })
 }

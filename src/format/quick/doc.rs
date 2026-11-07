@@ -169,8 +169,6 @@ pub(crate) mod op {
     pub(crate) const FillClose: i32 = 25;
     /// [op | len << 5] [start]                 align("> ", ..): closed by IndentClose
     pub(crate) const AlignTextOpen: i32 = 26;
-    /// the printer notes how far the output has come
-    pub(crate) const Cursor: i32 = 27;
     // Three pairs and triples of commands that stand together so often that they are one command
     /// [op | len << 5 | bytes << 13]            ifBreak(text), for the group around it: a Short that is printed in break mode
     pub(crate) const BreakText: i32 = 28;
@@ -263,7 +261,7 @@ impl Quick {
 
     #[cold]
     #[inline(never)]
-    pub(crate) fn grow_doc(&mut self, need: i32) {
+    pub(crate) extern "rust-cold" fn grow_doc(&mut self, need: i32) {
         if self.doc.d_pos > self.doc.d_cap {
             self.doc.overflowed = true;
         }
@@ -434,25 +432,6 @@ impl Quick {
         self.doc.acc_w = self.doc.acc_w + width + self.doc.pending;
         self.doc.pending = 0;
     }
-
-    /// slice_w() for lines that a short cut has put together, at the left margin (guest_column of lang.rs is 0); `width` is that of the last line. A filter that
-    /// makes literal lines of the line breaks, and nothing else, would give the same output in more commands, so the text passes it by.
-    pub(crate) fn slice_lines_at_margin(&mut self, start: i32, end: i32, width: i32) {
-        if self.doc.narrow_filter != 0 {
-            self.slice_w(start, end, width);
-            return;
-        }
-        let len = end - start;
-        if len <= 0 {
-            return;
-        }
-        let p = self.doc.d_pos;
-        self.d
-            .put_several(p, [op::TextW | (len << 5), start, width]);
-        self.doc.d_pos = p + 3;
-        self.doc.acc_w = self.doc.acc_w + width + self.doc.pending;
-        self.doc.pending = 0;
-    }
 }
 pub(crate) const STANDING: i32 = -1 << 30;
 /// The third word of a TextW is below this if standing() wrote it. (It can be a little below 0 otherwise: a text of several lines can end left of where it starts.)
@@ -460,7 +439,7 @@ pub(crate) const STANDING_BELOW: i32 = -1 << 29;
 impl Quick {
     /// Lines of the source that are printed as they stand there: T[start, start + length), with the line breaks and the indentation in it. It starts a line that is indented by `column`
     /// blanks, says whoever writes this; if the printer finds itself at another column, it moves all the lines, or with `is_exact` gives up (Redo). The last line has `last_length` bytes behind its indentation.
-    /// Only where guest_column is 0, lines end in "\n" and there is no filter for texts. `column` is below 4096.
+    /// Only where lines end in "\n" and there is no filter for texts. `column` is below 4096.
     pub(crate) fn standing(
         &mut self,
         start: i32,
@@ -623,7 +602,10 @@ impl Quick {
         if !is_in(EMOJI, first) {
             return 0;
         }
-        let alone = q;
+        // no emoji that the package knows starts with a skin tone, so the joiner behind it counts as a column
+        if is_skin_tone(first) {
+            return q;
+        }
         let mut base = first;
         loop {
             let (mut next, mut behind) = self.character_at(q, end);
@@ -652,8 +634,7 @@ impl Quick {
                     continue;
                 }
             }
-            // no emoji that the package knows starts with a skin tone, so the joiner behind it counts as a column
-            return if is_skin_tone(first) { alone } else { q };
+            return q;
         }
     }
 }
@@ -784,14 +765,6 @@ impl Quick {
         self.doc.impure_count += 1;
     }
 
-    /// `cursor`: at most two in a doc.
-    pub(crate) fn cursor(&mut self) {
-        self.d.put(self.doc.d_pos, op::Cursor);
-        self.doc.d_pos += 1;
-        // no group around it is skipped or copied without a look
-        self.doc.impure_count += 1;
-    }
-
     pub(crate) fn set_suffix_possible(&mut self, value: bool) {
         self.doc.suffix_possible = value;
     }
@@ -838,7 +811,7 @@ impl Quick {
         return h;
     }
 
-    #[inline]
+    #[inline(never)]
     pub(crate) fn group_close_with(&mut self, h: i32, should_break: bool, id: i32) {
         let p = self.doc.d_pos;
         self.d.put(p, op::GroupClose);
@@ -1380,8 +1353,7 @@ impl Quick {
         self.doc.es.put(s + 7, self.doc.fill_mark);
         self.doc.es.put(s + 8, self.doc.line_count);
         self.doc.es.put(s + 9, self.doc.cache_log_pos);
-        self.doc.es.put(s + 10, self.doc.group_ids);
-        self.doc.es_pos = s + 11;
+        self.doc.es_pos = s + 10;
         return s;
     }
 

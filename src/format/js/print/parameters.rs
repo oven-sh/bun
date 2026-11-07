@@ -80,7 +80,7 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
                 function.parent(),
                 Node::Expr(call) if call.tag() == ExprTag::Call
                     && is_test_call_expression_in_flavor(call, f)
-                    && !is_angular_test_wrapper(call)
+                    && !is_angular_test_wrapper(call, f)
             )
         ) {
         ParameterLayout::Hug
@@ -117,7 +117,7 @@ pub(crate) fn can_break_between_parameters<'a>(func: Func<'a>, f: &Formatter<'a>
                 function.parent(),
                 Node::Expr(call) if call.tag() == ExprTag::Call
                     && is_test_call_expression_in_flavor(call, f)
-                    && !is_angular_test_wrapper(call)
+                    && !is_angular_test_wrapper(call, f)
             )
         )
 }

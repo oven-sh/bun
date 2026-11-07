@@ -50,7 +50,8 @@ impl Quick {
             return true;
         }
         let mut p = self.text.src_start;
-        if self.t.at(p) == 35 && self.t.at(p + 1) == 33 {
+        // (behind a byte order mark the long way takes `#!` for no line of its own)
+        if !self.had_bom && self.t.at(p) == 35 && self.t.at(p + 1) == 33 {
             while p < self.text.src_end && self.t.at(p) != 10 && self.t.at(p) != 13 {
                 p += 1;
             }
@@ -115,7 +116,6 @@ impl Quick {
 impl Quick {
     /// What has to happen before a new file is looked at.
     pub(crate) fn begin_root(&mut self, language: i32) {
-        self.set_verified(0, 0);
         self.set_comment_window(0, 0);
         self.reset_comments();
         self.reset_key_cache();
@@ -124,8 +124,6 @@ impl Quick {
         self.print_ternary.known = 0;
         self.print.line_break_at = -1;
         self.lang.lang = language;
-        self.lang.depth = 0;
-        self.lang.guest_column = 0;
     }
 
     /// TypeScript: whether `<a>` is an element or a type assertion depends on the name of the file. Without one, both are tried.
@@ -159,7 +157,6 @@ impl Quick {
     fn parse_once(&mut self) -> R<i32> {
         self.set_parser_mode(0, true);
         self.set_is_common_js(self.dialect.common_js);
-        self.set_flow_comments(self.mode.js_mode_language == lang::BabelFlow);
         self.set_type_script_spaces(self.lang.lang == lang::TypeScript);
         self.set_lenient_jsx_text(false);
         if self.mode.js_mode_language == lang::BabelFlow || self.lang.lang == lang::Flow {
@@ -213,13 +210,11 @@ impl Quick {
             self.assert_only_imports_and_exports(root)?;
         }
         self.nothing_lost()?;
-        self.stage(0);
         self.attach_comments(root)?;
         if self.comments.trailing_count == 0 {
             self.set_suffix_possible(false);
         }
         self.nothing_lost()?;
-        self.stage(1);
         if self.host.wrap != WRAP_NONE {
             return self.print_expression(root);
         }

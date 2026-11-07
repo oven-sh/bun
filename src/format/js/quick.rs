@@ -339,11 +339,7 @@ fn format_mdx_jsx(
     let done = quick::format_expression(&how, quick_options, quick, out);
     quick.lend_guests(guests);
     if done.is_err() {
-        let reason = match quick.why() {
-            1 => Reason::SyntaxError,
-            8 => Reason::Guest,
-            _ => Reason::Rare,
-        };
+        let reason = reason_for_expression(quick.why());
         return Err(scratch.refuse(reason, text));
     }
     if let Some(counts) = &mut scratch.counts {
@@ -527,11 +523,7 @@ pub(crate) fn format_expression(
     let quick = scratch.quick.get_or_insert_default();
     quick.lend_guests(None);
     if quick::format_expression(&how, &quick_options, quick, out).is_err() {
-        let reason = match quick.why() {
-            1 => Reason::SyntaxError,
-            8 => Reason::Guest,
-            _ => Reason::Rare,
-        };
+        let reason = reason_for_expression(quick.why());
         return Err(scratch.refuse(reason, text));
     }
     // The text has no double quote, but what is printed for it can have one: around the value of an attribute of JSX,
@@ -546,6 +538,15 @@ pub(crate) fn format_expression(
         counts.printed.add(text);
     }
     Ok(())
+}
+
+/// Why an expression went the long way, given [`quick::Quick::why`].
+fn reason_for_expression(why: i32) -> Reason {
+    match why {
+        quick::why::SYNTAX => Reason::SyntaxError,
+        quick::why::GUEST => Reason::Guest,
+        _ => Reason::Rare,
+    }
 }
 
 /// `file`: the options and the name for what is in a template in another language.
@@ -581,12 +582,12 @@ fn format_as(
     }
     if quick::format(code.text, dialect, quick_options, quick, out).is_err() {
         let reason = match quick.why() {
-            1 => Reason::SyntaxError,
-            5 => Reason::TooLong,
-            6 => Reason::Stack,
-            7 => Reason::Rare,
-            8 => Reason::Guest,
-            9 => Reason::Lost,
+            quick::why::SYNTAX => Reason::SyntaxError,
+            quick::why::TOO_LARGE => Reason::TooLong,
+            quick::why::STACK => Reason::Stack,
+            quick::why::RARE => Reason::Rare,
+            quick::why::GUEST => Reason::Guest,
+            quick::why::LOST => Reason::Lost,
             _ => Reason::Other,
         };
         let which = usize::try_from(quick.which_rare()).unwrap_or(0);

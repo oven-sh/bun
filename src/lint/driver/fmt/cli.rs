@@ -108,7 +108,7 @@ const OUTPUT: &[Param] = &[
 
 const OTHER: &[Param] = &[
     clap::param!(
-        "--threads <n>                   Number of threads <d>(default: one per CPU core)<r>"
+        "--threads <n>                   Number of threads <d>(default: as many as the work pays for, up to one per CPU core)<r>"
     ),
     clap::param!(
         "--debug-check                   Do not write. Fail if formatting a file would change what it means"

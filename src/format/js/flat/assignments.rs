@@ -81,7 +81,7 @@ impl<'a> Line<'_, 'a> {
             if value.tag() == ExprTag::Assign {
                 return Err(Refused);
             }
-            return self.fits_or_breaks(self.tail, |line| match line.breaks {
+            return self.fits_or_breaks(self.tail, &|line| match line.breaks {
                 true => line.assigned_too_wide_after(value, true),
                 false => line.last_expr(value, Place::Free),
             });

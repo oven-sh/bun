@@ -54,9 +54,6 @@ pub(crate) struct Fast {
     pub(crate) ready_block_flags: i32,
     pub(crate) ready_pending: i32,
     pub(crate) ready_column: i32,
-    /// What stands.rs has found out about the start of the window that starts at verified_start: up to verified_end, the end of a line, it is printed as it stands. The parser goes on from there.
-    pub(crate) verified_start: i32,
-    pub(crate) verified_end: i32,
     pub(crate) why: i32,
     // ---- the statement at hand
     /// TypeScript
@@ -191,8 +188,6 @@ impl Fast {
             ready_block_flags: 0,
             ready_pending: 0,
             ready_column: 0,
-            verified_start: 0,
-            verified_end: 0,
             why: 0,
             ts: false,
             flow: false,
@@ -325,12 +320,6 @@ pub(crate) const BLOCK_ARROW: i32 = 64;
 pub(crate) const BLOCK_CONSTRUCTOR: i32 = 128;
 /// with BLOCK_CLASS: the class has a superclass
 pub(crate) const BLOCK_DERIVED: i32 = 256;
-impl Quick {
-    pub(crate) fn set_verified(&mut self, start: i32, end: i32) {
-        self.fast.verified_start = start;
-        self.fast.verified_end = end;
-    }
-}
 // ---- why statements are refused
 #[allow(non_upper_case_globals)]
 pub(crate) mod refusal {
@@ -1986,14 +1975,15 @@ impl Quick {
         } else if is_outermost && value && count == 1 {
             let width = flat - 2;
             let is_string = last_byte == 34 || last_byte == 39;
-            if self.fast.shape == SH_NAME
-                || self.fast.shape == SH_THIS
-                || (self.fast.shape == SH_LITERAL && is_string)
-            {
+            if self.fast.shape == SH_NAME || (self.fast.shape == SH_LITERAL && is_string) {
                 if width * 4 <= self.options.print_width {
                     self.fast.has_lone_short_argument = true;
                 }
-            } else if self.fast.shape == SH_LITERAL {
+            } else if self.fast.shape == SH_LITERAL
+                || self.fast.shape == SH_THIS
+                // (what is measured is the operand)
+                || self.fast.shape == SH_UNARY
+            {
                 self.fast.has_lone_short_argument = true;
             } else if (width - 8) * 4 <= self.options.print_width
                 // (`a<B>()`: the type arguments do not count)
@@ -2808,6 +2798,10 @@ impl Quick {
                 target = false;
             } else if d == 60 && self.fast.has_types {
                 // a<B>(c): a `<` right behind a name is taken for nothing else
+                if ((sh == SH_NAME && q - p == 7) || (optional && q - p == 9)) && self.is_graphql(p)
+                {
+                    self.fast.no_templates += 1;
+                }
                 q = self.type_arguments(q)?;
                 if q < 0 || self.t.at(q) != 40 {
                     return Ok(self.no(refusal::Less));
@@ -3719,6 +3713,69 @@ impl Quick {
         e - p != 7 || !self.text_is(p, e, b"default") || !self.is_second_default_export(p)
     }
 
+    /// One name of the list of an import or export, at q: `a`, `a as b`, `type a`. Returns where it ends.
+    fn specifier(&mut self, mut q: i32, is_export: bool) -> i32 {
+        if (CC.at(self.t.at(q)) & ID_START) == 0 {
+            return self.no(refusal::Import);
+        }
+        let mut e = self.word_end(q);
+        if (CC.at(self.t.at(e)) & BEYOND) != 0 {
+            return self.no(refusal::NotAscii);
+        }
+        if e > self.fast.limit {
+            return self.no(refusal::Long);
+        }
+        if e - q == 4 && self.text_is(q, e, b"type") {
+            // `type A`, in TypeScript. `type` as a name, and `type as ..`, are left to the parser.
+            let name = self.blanks(e);
+            if !self.fast.has_types
+                || (self.fast.flow && is_export)
+                || name == e
+                || (CC.at(self.t.at(name)) & ID_START) == 0
+                || self.word_is(name, b"as")
+            {
+                return self.no(refusal::Import);
+            }
+            q = self.spaced(e);
+            e = self.word_end(q);
+            if (CC.at(self.t.at(e)) & BEYOND) != 0 {
+                return self.no(refusal::NotAscii);
+            }
+            if (self.keyword_at(q, e - q) & 255) > tk::Name {
+                return self.no(refusal::Import);
+            }
+        }
+        let is_word_of_language = Self::is_word_of_language(self.keyword_at(q, e - q));
+        if is_word_of_language {
+            self.fast.needs_from = true;
+        }
+        let mut name = q;
+        q = e;
+        let a = self.blanks(q);
+        if a != q && self.word_is(a, b"as") {
+            self.spaced(q);
+            q = self.spaced(a + 2);
+            if (CC.at(self.t.at(q)) & ID_START) == 0 {
+                return self.no(refusal::Import);
+            }
+            e = self.word_end(q);
+            if (CC.at(self.t.at(e)) & BEYOND) != 0 {
+                return self.no(refusal::NotAscii);
+            }
+            if !is_export && Self::is_word_of_language(self.keyword_at(q, e - q)) {
+                return self.no(refusal::Import);
+            }
+            name = q;
+            q = e;
+        } else if is_word_of_language && !is_export {
+            return self.no(refusal::Import);
+        }
+        if is_export && !self.may_export(name, q) {
+            return self.no(refusal::Export);
+        }
+        return q;
+    }
+
     /// `{ a, b as c }` of an import or export; p is at the `{`.
     pub(crate) fn specifiers(&mut self, p: i32, is_export: bool) -> i32 {
         self.fast.needs_from = false;
@@ -3732,63 +3789,9 @@ impl Quick {
         }
         q = self.in_brace(p + 1);
         loop {
-            if (CC.at(self.t.at(q)) & ID_START) == 0 {
-                return self.no(refusal::Import);
-            }
-            let mut e = self.word_end(q);
-            if (CC.at(self.t.at(e)) & BEYOND) != 0 {
-                return self.no(refusal::NotAscii);
-            }
-            if e > self.fast.limit {
-                return self.no(refusal::Long);
-            }
-            if e - q == 4 && self.text_is(q, e, b"type") {
-                // `type A`, in TypeScript. `type` as a name, and `type as ..`, are left to the parser.
-                let name = self.blanks(e);
-                if !self.fast.has_types
-                    || (self.fast.flow && is_export)
-                    || name == e
-                    || (CC.at(self.t.at(name)) & ID_START) == 0
-                    || self.word_is(name, b"as")
-                {
-                    return self.no(refusal::Import);
-                }
-                q = self.spaced(e);
-                e = self.word_end(q);
-                if (CC.at(self.t.at(e)) & BEYOND) != 0 {
-                    return self.no(refusal::NotAscii);
-                }
-                if (self.keyword_at(q, e - q) & 255) > tk::Name {
-                    return self.no(refusal::Import);
-                }
-            }
-            let is_word_of_language = Self::is_word_of_language(self.keyword_at(q, e - q));
-            if is_word_of_language {
-                self.fast.needs_from = true;
-            }
-            let mut name = q;
-            q = e;
-            let a = self.blanks(q);
-            if a != q && self.word_is(a, b"as") {
-                self.spaced(q);
-                q = self.spaced(a + 2);
-                if (CC.at(self.t.at(q)) & ID_START) == 0 {
-                    return self.no(refusal::Import);
-                }
-                e = self.word_end(q);
-                if (CC.at(self.t.at(e)) & BEYOND) != 0 {
-                    return self.no(refusal::NotAscii);
-                }
-                if !is_export && Self::is_word_of_language(self.keyword_at(q, e - q)) {
-                    return self.no(refusal::Import);
-                }
-                name = q;
-                q = e;
-            } else if is_word_of_language && !is_export {
-                return self.no(refusal::Import);
-            }
-            if is_export && !self.may_export(name, q) {
-                return self.no(refusal::Export);
+            q = self.specifier(q, is_export);
+            if q < 0 {
+                return q;
             }
             let s = self.blanks(q);
             let c = self.t.at(s);
@@ -3828,64 +3831,11 @@ impl Quick {
         let mut width = if self.options.bracket_spacing { 2 } else { 0 };
         self.fast.needs_from = false;
         loop {
-            if (CC.at(self.t.at(q)) & ID_START) == 0 {
-                return self.no(refusal::Import);
-            }
-            let mut e = self.word_end(q);
-            if (CC.at(self.t.at(e)) & BEYOND) != 0 {
-                return self.no(refusal::NotAscii);
-            }
-            if e > self.fast.limit {
-                return self.no(refusal::Long);
-            }
             let before = self.width_up_to(q);
             count += 1;
-            if e - q == 4 && self.text_is(q, e, b"type") {
-                let name = self.blanks(e);
-                if !self.fast.has_types
-                    || (self.fast.flow && is_export)
-                    || name == e
-                    || (CC.at(self.t.at(name)) & ID_START) == 0
-                    || self.word_is(name, b"as")
-                {
-                    return self.no(refusal::Import);
-                }
-                q = self.spaced(e);
-                e = self.word_end(q);
-                if (CC.at(self.t.at(e)) & BEYOND) != 0 {
-                    return self.no(refusal::NotAscii);
-                }
-                if (self.keyword_at(q, e - q) & 255) > tk::Name {
-                    return self.no(refusal::Import);
-                }
-            }
-            let is_word_of_language = Self::is_word_of_language(self.keyword_at(q, e - q));
-            if is_word_of_language {
-                self.fast.needs_from = true;
-            }
-            let mut name = q;
-            q = e;
-            let a = self.blanks(q);
-            if a != q && self.word_is(a, b"as") {
-                self.spaced(q);
-                q = self.spaced(a + 2);
-                if (CC.at(self.t.at(q)) & ID_START) == 0 {
-                    return self.no(refusal::Import);
-                }
-                e = self.word_end(q);
-                if (CC.at(self.t.at(e)) & BEYOND) != 0 {
-                    return self.no(refusal::NotAscii);
-                }
-                if !is_export && Self::is_word_of_language(self.keyword_at(q, e - q)) {
-                    return self.no(refusal::Import);
-                }
-                name = q;
-                q = e;
-            } else if is_word_of_language && !is_export {
-                return self.no(refusal::Import);
-            }
-            if is_export && !self.may_export(name, q) {
-                return self.no(refusal::Export);
+            q = self.specifier(q, is_export);
+            if q < 0 {
+                return q;
             }
             width = width + 2 + self.width_up_to(q) - before;
             let s = self.white(q);
@@ -5898,6 +5848,10 @@ impl Quick {
                 } else {
                     1
                 };
+                // (prepare_at() takes no more, and a sum of these has an end)
+                if indentation > 4095 {
+                    return fast_refuse(refusal::Narrow, start);
+                }
                 b -= 1;
             }
         }

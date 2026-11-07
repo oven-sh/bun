@@ -57,7 +57,7 @@ impl<'a> Line<'_, 'a> {
                 {
                     self.byte(b'(')?;
                     self.break_line(1)?;
-                    self.fits_or_breaks(0, |line| match line.breaks {
+                    self.fits_or_breaks(0, &|line| match line.breaks {
                         true => line.operands(e, false, false, 0),
                         false => line.expr_of(ExprTag::Binary, e),
                     })?;

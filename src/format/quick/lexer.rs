@@ -43,9 +43,6 @@ pub(crate) struct Lexer {
     pub(crate) c_count: i32,
     pub(crate) c_base: i32,
     /// Length of the white space character that starts with the non-ASCII byte at p, or 0. Line separators count + 16.
-    /// Babel with the plugin "flow_comments": what stands in `/*:: .. */`, `/*: .. */` and `/* flow-include .. */` is code.
-    pub(crate) flow_comments: bool,
-    pub(crate) flow_comment_end: i32,
     /// flow-parser takes `>` and `}` in the text of an element for text.
     pub(crate) lenient_jsx_text: bool,
     /// The scanner of TypeScript takes U+0085 and U+200B for white space.
@@ -65,8 +62,6 @@ impl Lexer {
             c: zeros(4096),
             c_count: 0,
             c_base: 0,
-            flow_comments: false,
-            flow_comment_end: -1,
             lenient_jsx_text: false,
             type_script_spaces: false,
         }
@@ -314,6 +309,7 @@ impl Quick {
 
     /// Where the lexer stands, for a look ahead over a few tokens: [`Quick::restore`] goes back there. Between the two nothing is called but the lexer: whoever
     /// calls a parser on trial takes `begin_trial()`.
+    #[inline(never)]
     pub(crate) fn save(&self) -> Saved {
         Saved {
             pos: self.lexer.pos,
@@ -328,6 +324,7 @@ impl Quick {
         }
     }
 
+    #[inline(never)]
     pub(crate) fn restore(&mut self, saved: Saved) {
         self.lexer.pos = saved.pos;
         self.lexer.tok = saved.tok;
@@ -356,41 +353,12 @@ impl Quick {
         Ok(())
     }
 
-    pub(crate) fn set_flow_comments(&mut self, value: bool) {
-        self.lexer.flow_comments = value;
-        self.lexer.flow_comment_end = -1;
-    }
-
     pub(crate) fn set_lenient_jsx_text(&mut self, value: bool) {
         self.lexer.lenient_jsx_text = value;
     }
 
     pub(crate) fn set_type_script_spaces(&mut self, value: bool) {
         self.lexer.type_script_spaces = value;
-    }
-
-    /// How much of the comment that starts at `p` to skip to get to the code in it; 0 if it is a comment like any other.
-    pub(crate) fn flow_comment_start(&self, p: i32) -> i32 {
-        let mut shift: i32 = 2;
-        while self.t.at(p + shift) == 32 || self.t.at(p + shift) == 9 {
-            shift += 1;
-        }
-        if self.t.at(p + shift) == 58 {
-            return if self.t.at(p + shift + 1) == 58 {
-                shift + 2
-            } else {
-                shift
-            };
-        }
-        let word = b"flow-include";
-        let mut i: i32 = 0;
-        while i < 12 {
-            if self.t.at(p + shift + i) != word.at(i) {
-                return 0;
-            }
-            i += 1;
-        }
-        return shift + 12;
     }
 
     /// How many bytes the character at `p` of a comment has, which is neither a printable character of ASCII nor a tab; 0 if it is a
@@ -542,36 +510,6 @@ impl Quick {
                     }
                     self.push_comment(start, p, flags);
                 } else if d == 42 {
-                    if self.lexer.flow_comments {
-                        let skip = self.flow_comment_start(p);
-                        if skip != 0 {
-                            // (a declaration does not start outside of it and go on inside)
-                            if self.lexer.tok == tk::Export {
-                                return Err(self.text_refuse());
-                            }
-                            // Where it ends is all there is to remember: looking ahead and going back need no care.
-                            let mut end = p + skip;
-                            // the end stands behind `//` on its line
-                            let mut is_hidden = false;
-                            while !(self.t.at(end) == 42 && self.t.at(end + 1) == 47) {
-                                if end >= self.text.src_end {
-                                    return Err(self.fail(p));
-                                }
-                                if self.t.at(end) == 47 && self.t.at(end + 1) == 47 {
-                                    is_hidden = true;
-                                } else if self.t.at(end) == 10 {
-                                    is_hidden = false;
-                                }
-                                end += 1;
-                            }
-                            if is_hidden {
-                                return Err(self.text_refuse());
-                            }
-                            self.lexer.flow_comment_end = end;
-                            p += skip;
-                            continue;
-                        }
-                    }
                     let start = p;
                     let mut flags = CF_BLOCK | CF_PLAIN;
                     let mut indentable: i32 = 1;
@@ -1068,18 +1006,6 @@ impl Quick {
         Ok(())
     }
 
-    // The token behind the end, at `p`, of a comment of Flow whose text is code.
-    pub(crate) fn next_behind_flow_comment(&mut self, p: i32) -> R<()> {
-        self.stack()?;
-        let end = self.lexer.tok_end;
-        let nl = self.lexer.tok_nl;
-        self.lexer.pos = p + 2;
-        self.next()?;
-        self.lexer.prev_end = end;
-        self.lexer.tok_nl |= nl;
-        Ok(())
-    }
-
     pub(crate) fn next(&mut self) -> R<()> {
         self.lexer.prev_end = self.lexer.tok_end;
         let mut p = self.lexer.pos;
@@ -1240,8 +1166,6 @@ impl Quick {
                     }
                 } else if self.t.at(p + 1) == 61 {
                     self.lexer_finish(tk::MulEq, p + 2);
-                } else if p == self.lexer.flow_comment_end {
-                    self.next_behind_flow_comment(p)?;
                 } else {
                     self.lexer_finish(tk::Mul, p + 1);
                 }

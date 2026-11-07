@@ -183,7 +183,7 @@ impl<'a> Line<'_, 'a> {
                 continue;
             }
             let after = width_up_to_next_break(members.get(index + 1..).unwrap_or_default(), tail)?;
-            self.fits_or_breaks(after, |line| line.arguments(e, call.args(), true, true))?;
+            self.fits_or_breaks(after, &|line| line.arguments(e, call.args(), true, true))?;
         }
         Ok(())
     }

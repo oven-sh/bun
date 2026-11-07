@@ -93,6 +93,8 @@ pub(crate) struct Parse {
     pub(crate) no_record_expression: i32,
     /// The call of parse_subscripts() that comes next is for a decorator.
     pub(crate) in_decorator: i32,
+    /// What a class extends is read, however deep in it: Flow has no `match` there.
+    pub(crate) in_superclass: bool,
     /// Set when an item between parentheses got a `?` or a type: an arrow has to follow.
     pub(crate) saw_typed_item: i32,
     /// TypeScript, Flow: the arguments that are parsed next may be the parameters of `async (..) => ..`
@@ -154,6 +156,7 @@ pub(crate) struct Outside {
     jumps: u64,
     labels_base: i32,
     in_parameters: bool,
+    parameters_owner: i32,
     suspensions: i32,
 }
 
@@ -221,6 +224,7 @@ impl Parse {
             pending_decorators: 0,
             no_record_expression: 0,
             in_decorator: 0,
+            in_superclass: false,
             saw_typed_item: 0,
             arguments_may_be_parameters: 0,
             arguments_were_typed: false,
@@ -422,11 +426,13 @@ impl Quick {
             jumps: place.jumps,
             labels_base: place.labels_base,
             in_parameters: place.in_parameters,
+            parameters_owner: self.parse.parameters_owner,
             suspensions: self.parse.suspensions,
         };
         place.jumps = 0;
         place.labels_base = place.labels_top;
         place.in_parameters = false;
+        self.parse.parameters_owner = PARAMETERS_PLAIN;
         return outside;
     }
 
@@ -435,6 +441,7 @@ impl Quick {
         self.parse.place.jumps = outside.jumps;
         self.parse.place.labels_base = outside.labels_base;
         self.parse.place.in_parameters = outside.in_parameters;
+        self.parse.parameters_owner = outside.parameters_owner;
         self.parse.suspensions = outside.suspensions;
     }
 
@@ -649,30 +656,12 @@ impl Quick {
             !self.parse.is_common_js && (self.parse.typed != TYPED_FLOW || self.mode.is_babel_flow);
         // (MDX looks at each statement)
         self.parse.joins_lines = self.parse.reads_ahead
-            && self.lang.guest_column == 0
             && self.doc.text_filter == 0
             && self.options.end_of_line == EOL_LF
             && !self.options.use_tabs
             && self.mode.single_statement_mode == 0
             && !self.options.is_mdx_es_syntax;
         self.set_may_break_lines(self.parse.joins_lines);
-        let mut known: i32 = 0;
-        if self.fast.verified_end != 0 {
-            if self.parse.reads_ahead
-                && self.fast.verified_start == self.text.src_start
-                && self.parse.typed != TYPED_FLOW
-                && self.lang.guest_column == 0
-            {
-                known = self.node_raw(
-                    k::ReadyLines,
-                    self.text.src_start,
-                    self.fast.verified_end,
-                    0,
-                );
-                self.set_pos(self.fast.verified_end);
-            }
-            self.set_verified(0, 0);
-        }
         self.next()?;
         let mut i = self.lexer.c_base;
         while i < self.lexer.c_count {
@@ -685,15 +674,8 @@ impl Quick {
             }
             i += 1;
         }
-        let directives = if known == 0 {
-            self.parse_directives()?
-        } else {
-            0
-        };
+        let directives = self.parse_directives()?;
         let mark = self.arena.ls_pos;
-        if known != 0 {
-            self.list_push(known);
-        }
         if self.parse.pending_statement != 0 {
             self.list_push(self.parse.pending_statement);
             self.parse.pending_statement = 0;
@@ -794,6 +776,7 @@ impl Quick {
         self.parse.pending_decorators = 0;
         self.parse.no_record_expression = 0;
         self.parse.in_decorator = 0;
+        self.parse.in_superclass = false;
         self.parse.arguments_may_be_parameters = 0;
         self.parse.saw_typed_item = 0;
         self.parse.paren_item = 0;
@@ -3715,6 +3698,8 @@ impl Quick {
             }
             // (whoever reads the parentheses takes it back; nobody else does)
             self.parse.is_operand = self.lexer.tok == tk::ParenL;
+            let in_superclass = self.parse.in_superclass;
+            self.parse.in_superclass = true;
             self.parse_typescript.in_heritage = true;
             let super_start = self.lexer.tok_start;
             super_class = self.parse_expr_atom()?;
@@ -3726,6 +3711,7 @@ impl Quick {
                 super_class = self.parse_subscripts(super_class, super_start, false)?;
             }
             self.parse_typescript.in_heritage = false;
+            self.parse.in_superclass = in_superclass;
             self.parse.is_operand = false;
             self.parse.no_record_expression = 0;
             if self.is_bare_arrow(super_class) {
@@ -5369,47 +5355,6 @@ impl Quick {
         }
     }
 
-    pub(crate) fn is_type_cast_comment(&self, index: i32) -> bool {
-        let at = index * C_STRIDE;
-        if (self.lexer.c.at(at + C_FLAGS) & CF_BLOCK) == 0 {
-            return false;
-        }
-        let s = self.lexer.c.at(at + C_START);
-        let e = self.lexer.c.at(at + C_END);
-        if self.t.at(s + 2) != 42 {
-            return false;
-        }
-        let mut p = s + 3;
-        while p < e - 2 {
-            'c1: {
-                if self.t.at(p) != 64 {
-                    break 'c1;
-                }
-                let after: i32;
-                if self.t.at(p + 1) == 116
-                    && self.t.at(p + 2) == 121
-                    && self.t.at(p + 3) == 112
-                    && self.t.at(p + 4) == 101
-                {
-                    after = self.t.at(p + 5);
-                } else if self.text_is(p + 1, p + 10, b"satisfies") {
-                    after = self.t.at(p + 10);
-                } else {
-                    break 'c1;
-                }
-                let is_word_char = (after >= 48 && after <= 57)
-                    || (after >= 65 && after <= 90)
-                    || (after >= 97 && after <= 122)
-                    || after == 95;
-                if !is_word_char {
-                    return true;
-                }
-            }
-            p += 1;
-        }
-        return false;
-    }
-
     pub(crate) fn parse_paren_and_distinguish(&mut self) -> R<i32> {
         let start = self.lexer.tok_start;
         let is_operand = self.parse.is_operand;
@@ -5419,7 +5364,7 @@ impl Quick {
             && self.lexer.c_count > self.lexer.c_base
             && self.lexer.c.at((self.lexer.c_count - 1) * C_STRIDE + C_END) > self.lexer.prev_end
             && self.lexer.c.at((self.lexer.c_count - 1) * C_STRIDE + C_END) <= start
-            && self.is_type_cast_comment(self.lexer.c_count - 1);
+            && self.is_type_cast_comment_at(self.lexer.c_count - 1);
         self.next()?;
         let saved_no_in = self.parse.no_in;
         let saved_typed_item = self.parse.saw_typed_item;

@@ -626,6 +626,8 @@ struct Builder<'t, 'r> {
     text_range: Option<(u32, u32)>,
     text_value: Vec<u8>,
     text_matches_source: bool,
+    /// Where the last character reference that was decoded into `text_value` ends in it.
+    text_reference_end: usize,
     /// The text content of the open image.
     alt: Vec<u8>,
     /// Where its last part ends.
@@ -1591,6 +1593,7 @@ impl Builder<'_, '_> {
             }
         };
         self.text_value.clear();
+        self.text_reference_end = 0;
         let node = self.tree.add(Kind::Text, start, end);
         if let Some(node) = self.tree.get_mut(node) {
             node.value = value;
@@ -2186,8 +2189,9 @@ impl RendererImpl for Builder<'_, '_> {
             TextType::Entity => {
                 self.add_text(b"", false);
                 unescape(content, &mut self.text_value);
+                self.text_reference_end = self.text_value.len();
             }
-            // The whitespace before it isn't part of the text.
+            // The whitespace before it isn't part of the text, unless a character reference stands for it.
             TextType::Softbr => {
                 let so_far = match self.text_range {
                     Some((start, end)) if self.text_matches_source => {
@@ -2195,7 +2199,8 @@ impl RendererImpl for Builder<'_, '_> {
                     }
                     _ => &self.text_value[..],
                 };
-                let whitespace_len = so_far.iter().rev().take_while(|it| is_white(it)).count();
+                let written = so_far.get(self.text_reference_end..).unwrap_or_default();
+                let whitespace_len = written.iter().rev().take_while(|it| is_white(it)).count();
                 if whitespace_len > 0 {
                     self.copy_text();
                     self.text_value
@@ -2404,6 +2409,7 @@ fn parse_lines_with(
         marker_ends: Vec::new(),
         text_range: None,
         text_value: Vec::new(),
+        text_reference_end: 0,
         text_matches_source: false,
         alt: Vec::new(),
         alt_end: 0,

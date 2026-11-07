@@ -7,6 +7,7 @@ use crate::ast::{
 use crate::lexer::tk;
 use crate::mode::SINGLE_JSX_IN_MARKDOWN;
 use crate::print::comments::DANGLING_NO_MARKER;
+use crate::print::core::{NO_STATEMENT, SEVERAL_STATEMENTS};
 use crate::print::statics::{
     _AWAIT, _IN_, _LBRACE, _LPAREN, _OF_, AWAIT_USING, BREAK, CASE_, CATCH_, COLON, COMMA, CONST,
     CONTINUE, DECLARE_, DEFAULT_COLON, DO, ELSE, FINALLY, FOR, FOR_EVER, FOR_LPAREN, IF_LPAREN,
@@ -107,9 +108,7 @@ impl Quick {
         if k == k::Program {
             if has_content {
                 self.print_block_body(n, directives, body)?;
-                if self.lang.depth == 0 {
-                    self.hardline();
-                }
+                self.hardline();
             }
             return Ok(());
         }
@@ -198,27 +197,39 @@ impl Quick {
     }
 
     /// The only statement of a program that is the value of an attribute, or a JSX element in Markdown.
-    pub(crate) fn is_special_single_expression_statement(&self, n: i32) -> bool {
+    pub(crate) fn is_special_single_expression_statement(&mut self, n: i32) -> bool {
         let parent = self.n.at(n + 3);
         if (self.n.at(parent) & 0xff) != k::Program || self.n.at(self.n.at(parent + 4)) != 0 {
             return false;
         }
         // (comments that are items of the list do not count)
-        let body = self.n.at(parent + 5);
-        let mut i: i32 = 1;
-        while i <= self.n.at(body) {
-            if self.n.at(body + i) != n
-                && (self.n.at(self.n.at(body + i)) & 0xff) != k::ReadyComment
-            {
-                return false;
+        if self.print.only_statement_of != parent {
+            let body = self.n.at(parent + 5);
+            let mut only = NO_STATEMENT;
+            let mut i: i32 = 1;
+            while i <= self.n.at(body) {
+                let item = self.n.at(body + i);
+                if (self.n.at(item) & 0xff) != k::ReadyComment {
+                    if only != NO_STATEMENT && only != item {
+                        only = SEVERAL_STATEMENTS;
+                        break;
+                    }
+                    only = item;
+                }
+                i += 1;
             }
-            i += 1;
+            self.print.only_statement_of = parent;
+            self.print.only_statement = only;
+        }
+        let only = self.print.only_statement;
+        if only != NO_STATEMENT && only != n {
+            return false;
         }
         return self.mode.single_statement_mode != SINGLE_JSX_IN_MARKDOWN
             || self.is_jsx_element(self.n.at(n + 4));
     }
 
-    pub(crate) fn expression_statement_needs_leading_semicolon(&self, n: i32) -> R<bool> {
+    pub(crate) fn expression_statement_needs_leading_semicolon(&mut self, n: i32) -> R<bool> {
         if self.options.semi {
             return Ok(false);
         }

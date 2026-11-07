@@ -7,10 +7,8 @@
 //!
 //! So "a text" is (offset, length) everywhere, and every position in a tree is an offset into this buffer.
 //!
-//! The window [src_start, src_end) is what the running language takes for its whole input. At first that is the file. For
-//! code in another language inside it (a <style>, a fenced block, an attribute) the window is narrowed to that range, in
-//! place: enter_source() puts a 0 before and behind the range and leave_source() puts the two bytes back. A lexer stops at
-//! a 0 and a scan to the left does too, so neither needs an "end of input" test, and nothing is copied.
+//! The window [src_start, src_end) is what the language takes for its whole input: the file. Zeros stand behind it, and a
+//! lexer stops at a 0, so it needs no "end of input" test.
 
 use crate::{Quick, Stop, Words, grow, rare, why};
 
@@ -21,7 +19,6 @@ pub(crate) struct Text {
     pub(crate) src_start: i32,
     pub(crate) src_end: i32,
     pub(crate) gen_pos: i32,
-    pub(crate) ws_pos: i32,
 }
 impl Text {
     pub(crate) fn new() -> Self {
@@ -31,7 +28,6 @@ impl Text {
             src_start: 32768,
             src_end: 32768,
             gen_pos: 32832,
-            ws_pos: 0,
         }
     }
 }
@@ -47,7 +43,9 @@ impl Quick {
 }
 impl Quick {
     /// `used`: how much of the buffer is to be kept.
-    pub(crate) fn grow_text(&mut self, need: i32, used: i32) {
+    #[cold]
+    #[inline(never)]
+    pub(crate) extern "rust-cold" fn grow_text(&mut self, need: i32, used: i32) {
         if grow(&mut self.t, used, need, 0) {
             self.text.t_cap = self.t.len() as i32;
         } else {
@@ -71,31 +69,9 @@ impl Quick {
         self.t.fill_range(0, end, end + PAD);
         self.text.gen_pos = end + PAD;
         self.text.overflowed = false;
-        self.text.ws_pos = 0;
     }
 }
-// ---- windows
-/// [src_start, src_end, the byte before the new window, the byte behind it]
-pub(crate) static WS: [i32; 64] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-];
 impl Quick {
-    pub(crate) fn leave_source(&mut self) {
-        self.text.ws_pos -= 4;
-        self.t
-            .put(self.text.src_start - 1, WS.at(self.text.ws_pos + 2));
-        self.t.put(self.text.src_end, WS.at(self.text.ws_pos + 3));
-        self.text.src_start = WS.at(self.text.ws_pos);
-        self.text.src_end = WS.at(self.text.ws_pos + 1);
-    }
-
-    pub(crate) fn unwind_source(&mut self, depth: i32) {
-        while self.text.ws_pos > depth {
-            self.leave_source();
-        }
-    }
-
     // ---- generated texts
     /// After this, `bytes` bytes can be written at gen_pos. It may replace T: read T again.
     pub(crate) fn reserve_gen(&mut self, bytes: i32) {
@@ -140,8 +116,7 @@ impl Quick {
     }
 
     /// For a source that has to be put together (a template literal with placeholders, a block without its indentation):
-    /// call this, write the bytes with gen_byte() .. and pass [the result, gen_pos) to enter_source(). Leaves a byte free in
-    /// front for the 0.
+    /// call this and write the bytes with gen_byte() ..: the source is [the result, gen_pos). Puts a 0 in front of it.
     pub(crate) fn gen_source_start(&mut self, expected_bytes: i32) -> i32 {
         self.reserve_gen(expected_bytes + 1);
         self.t.put(self.text.gen_pos, 0);
@@ -158,6 +133,7 @@ impl Quick {
     }
 
     /// Compares T[at, end) with an ASCII text. Only for rare paths.
+    #[inline(never)]
     pub(crate) fn text_is(&self, at: i32, end: i32, text: &[u8]) -> bool {
         let length = text.len() as i32;
         if end - at != length {

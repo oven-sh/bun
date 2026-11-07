@@ -6,9 +6,8 @@ use crate::ast::{
     F_ASSERTS, F_CONST, F_EXTENDS_BOUND, F_EXTRA, F_IN, F_OPTIONAL, F_OUT, F_REST, F_STATIC,
     F_THIS, FN_RETURN_TYPE, IK_MASK, IK_SHIFT, IK_TYPE, IK_TYPEOF, M_GET, M_MASK, M_SET, MK_GLOBAL,
     MK_MODULE, MOD_ABSTRACT, MOD_ACCESSIBILITY, MOD_DECLARE, MOD_OVERRIDE, MOD_PRIVATE,
-    MOD_PROTECTED, MOD_PUBLIC, MOD_READONLY, MT_MINUS, MT_NONE, MT_PLUS, NT_NON_NULLABLE,
-    NT_NON_NULLABLE_POSTFIX, NT_NULLABLE, SHAPE, TO_KEYOF, TO_READONLY, TO_RENDERS,
-    TO_RENDERS_MAYBE, TP_ASSERTS, TP_IMPLIES, k, type_keyword,
+    MOD_PROTECTED, MOD_PUBLIC, MOD_READONLY, MT_MINUS, MT_NONE, MT_PLUS, SHAPE, TO_KEYOF,
+    TO_READONLY, TO_RENDERS, TO_RENDERS_MAYBE, TP_ASSERTS, TP_IMPLIES, k, type_keyword,
 };
 use crate::options::TRAILING_COMMA_NONE;
 use crate::print::assignment::LAYOUT_BREAK_AFTER_OPERATOR;
@@ -193,23 +192,30 @@ impl Quick {
         Ok(())
     }
 
-    pub(crate) fn has_function_type(&self, n: i32) -> R<bool> {
-        return self.any_descendant(n, k::FunctionType, false);
-    }
-
     /// Is `n`, or something below it, of the kind `kind` (and, if `with_function_type`, holds a function type)?
     pub(crate) fn any_descendant(&self, n: i32, kind: i32, with_function_type: bool) -> R<bool> {
+        if with_function_type {
+            self.any_descendant_in(n, k::FunctionType, kind, false)
+        } else {
+            self.any_descendant_in(n, kind, kind, true)
+        }
+    }
+
+    /// Is `n`, or something below it, of the kind `kind`, and is it, or something around it up to where the search started, of the kind
+    /// `around`? `is_in`: something around `n` is.
+    fn any_descendant_in(&self, n: i32, kind: i32, around: i32, mut is_in: bool) -> R<bool> {
         self.stack()?;
         if n == 0 {
             return Ok(false);
         }
         let k = self.n.at(n) & 0xff;
-        if k == kind && (!with_function_type || self.has_function_type(n)?) {
+        is_in |= k == around;
+        if is_in && k == kind {
             return Ok(true);
         }
         // a member of an object type that fast.rs has read says whether there is the type of a function in it
         if k == k::Ready {
-            return Ok(kind == k::FunctionType && (self.n.at(n) & F_EXTRA) != 0);
+            return Ok(is_in && kind == k::FunctionType && (self.n.at(n) & F_EXTRA) != 0);
         }
         let shape = SHAPE.at(k);
         let mut f = n + 4;
@@ -217,7 +223,7 @@ impl Quick {
         while round < 2 {
             let mut i = shape.wrapping_shr((round * 8) as u32) & 15;
             while i > 0 {
-                if self.any_descendant(self.n.at(f), kind, with_function_type)? {
+                if self.any_descendant_in(self.n.at(f), kind, around, is_in)? {
                     return Ok(true);
                 }
                 f += 1;
@@ -229,7 +235,7 @@ impl Quick {
                 f += 1;
                 let mut j: i32 = 1;
                 while j <= self.n.at(l) {
-                    if self.any_descendant(self.n.at(l + j), kind, with_function_type)? {
+                    if self.any_descendant_in(self.n.at(l + j), kind, around, is_in)? {
                         return Ok(true);
                     }
                     j += 1;
@@ -1101,16 +1107,8 @@ impl Quick {
                 return Ok(true);
             }
             k::NullableType => {
-                let which = ((self.n.at(n) as u32) >> SUB_SHIFT) as i32;
-                if which == NT_NULLABLE {
-                    self.text(QUESTION);
-                } else if which == NT_NON_NULLABLE {
-                    self.text(BANG);
-                }
+                self.text(QUESTION);
                 self.print(self.n.at(n + 4))?;
-                if which == NT_NON_NULLABLE_POSTFIX {
-                    self.text(BANG);
-                }
                 return Ok(true);
             }
             k::FunctionType | k::ConstructorType | k::CallSignature | k::ConstructSignature => {

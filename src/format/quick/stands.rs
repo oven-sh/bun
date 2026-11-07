@@ -6,7 +6,7 @@
 //! stands where the printer would put it. Here the column is not guessed. There are no tokens, no nodes, no doc, and nothing to lay out.
 //!
 //! What the printer does between the items is checked here: the indentation, one empty line at most and none behind a `{` or in front of a `}`, the comma behind the last
-//! property. Whatever is not certain is answered with no, and the guest is formatted like any other; the parser then starts behind the statements that were read (K.ReadyLines).
+//! property. Whatever is not certain is answered with no, and the guest is formatted like any other.
 
 use crate::fast::{
     AFTER_BLOCK, AFTER_DONE, BLOCK_ASYNC, BLOCK_CLASS, BLOCK_FUNCTION, BLOCK_INTERFACE, BLOCK_JSX,
@@ -23,21 +23,10 @@ pub(crate) struct Stands {
     pub(crate) typed: i32,
     /// the end of the text
     pub(crate) last: i32,
-    /// the end of the last line of the last statement of the program that was read
-    pub(crate) up_to: i32,
-    /// the line at which the reading stopped, for the tests
-    pub(crate) reached: i32,
-    pub(crate) comment_behind: bool,
 }
 impl Stands {
     pub(crate) fn new() -> Self {
-        Self {
-            typed: 0,
-            last: 0,
-            up_to: 0,
-            reached: 0,
-            comment_behind: false,
-        }
+        Self { typed: 0, last: 0 }
     }
 }
 
@@ -48,15 +37,13 @@ pub(crate) fn is_name_start(c: i32) -> bool {
 
 impl Quick {
     /// p is behind an item. What follows on its line is nothing, or one blank and a comment. Returns the end of the line, or -1.
-    pub(crate) fn rest_of_line(&mut self, mut p: i32) -> i32 {
-        self.stands.comment_behind = false;
+    pub(crate) fn rest_of_line(&self, mut p: i32) -> i32 {
         if self.t.at(p) == 10 || p == self.stands.last {
             return p;
         }
         if self.t.at(p) != 32 || self.t.at(p + 1) != 47 || self.t.at(p + 2) != 47 {
             return -1;
         }
-        self.stands.comment_behind = true;
         p += 3;
         while self.t.at(p) != 10 && p < self.stands.last {
             // U+2028 and U+2029 end the comment
@@ -128,13 +115,6 @@ impl Quick {
             if self.fast.ready_block != end || self.t.at(end + 1) != 10 || (flags & BLOCK_JSX) != 0
             {
                 return Ok(-1);
-            }
-            // "use strict" in a function whose parameters are more than names
-            if (flags & BLOCK_FUNCTION) != 0 {
-                let c = self.t.at(self.blanks(end + 2));
-                if (c == 34 || c == 39) && self.has_odd_parameters(end) {
-                    return Ok(-1);
-                }
             }
             let inner = if (flags & BLOCK_FUNCTION) != 0 {
                 (flags & BLOCK_ASYNC) != 0
@@ -286,7 +266,6 @@ impl Quick {
         };
         let fill = if self.options.use_tabs { 9 } else { 32 };
         loop {
-            self.stands.reached = p;
             if p >= self.stands.last {
                 return Ok(if depth == 0 && !after_empty_line && !first {
                     p
@@ -410,11 +389,6 @@ impl Quick {
             }
             first = false;
             after_empty_line = false;
-            // (Up to a statement: whether there is more than one in the program matters, and the comments in front of a statement are its own. And not one with a comment behind it:
-            // how the next comment is printed can depend on that.)
-            if depth == 0 && c != 47 && !self.stands.comment_behind {
-                self.stands.up_to = q;
-            }
             p = q + 1;
             if q >= self.stands.last {
                 p = self.stands.last;
@@ -440,7 +414,6 @@ impl Quick {
         self.set_jsx_is_on(self.stands.typed == 0);
         self.stands.last = end;
         self.forget_source_unit();
-        self.stands.up_to = 0;
         // Nobody keeps the place here: fast.rs finds itself outside of every loop, function and class, and leaves what depends on the place to the parser. Two things the parser
         // looks for in the text of a whole item or file: `arguments` in the value of a field, and a comment that names a file.
         self.forget_place();
@@ -452,9 +425,6 @@ impl Quick {
         {
             return Ok(false);
         }
-        let stands = self.items(start, 0, STATEMENTS, true)? == end;
-        // what was read is not lost: the parser starts behind it
-        self.set_verified(start, if stands { 0 } else { self.stands.up_to });
-        return Ok(stands);
+        return Ok(self.items(start, 0, STATEMENTS, true)? == end);
     }
 }

@@ -309,7 +309,9 @@ fn is_function_composition_args<'a>(args: List<'a, Expr<'a>>, f: &Formatter<'a>)
             has_seen_function_like = true;
         } else if matches!(arg.tag(), ExprTag::Call | ExprTag::NonNull)
             && let ExprKind::Call(call) = strip_chain_element_wrappers(arg).kind()
-            && call.args().iter().any(is_function_like)
+            && (call.args().iter()).any(|inner| {
+                is_function_like(inner) && !is_cast_target_that_hides_its_kind(inner, f)
+            })
         {
             return true;
         }
@@ -420,10 +422,12 @@ fn arguments_grouped_layout<'a>(
     args: List<'a, Expr<'a>>,
     f: &Formatter<'a>,
 ) -> Option<GroupedCallArgumentLayout> {
-    // An ignored template is copied verbatim, so it has no label. oxfmt doesn't check that.
+    // An ignored template is copied verbatim, so it has no label. oxfmt doesn't check that. Nor have the parentheses
+    // of a type cast around the template.
     if args.len() == 1
         && args.first().is_some_and(|only| {
             has_embed_label_with_hug(only, f)
+                && !is_cast_target_that_hides_its_kind(only, f)
                 && (f.is_quiet()
                     || f.options().flavor.is_oxfmt()
                     || !f.comments().is_ignored(only.as_ast_nodes()))

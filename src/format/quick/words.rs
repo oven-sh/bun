@@ -102,6 +102,7 @@ pub(crate) static LENGTHS: [i32; 128] = [
 ];
 impl Quick {
     /// Which word is T[start, end)?
+    #[inline(never)]
     pub(crate) fn word_at(&self, start: i32, end: i32) -> i32 {
         let length = end - start;
         if length < 2 || length > 10 {

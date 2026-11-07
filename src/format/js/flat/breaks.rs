@@ -124,7 +124,7 @@ impl<'a> Line<'_, 'a> {
     pub(super) fn fits_or_breaks(
         &mut self,
         tail: usize,
-        write: impl Fn(&mut Self) -> Written,
+        write: &dyn Fn(&mut Line<'_, 'a>) -> Written,
     ) -> Written {
         let nesting = self.nesting;
         if nesting + NESTING_OF_LINE_BREAKS >= MAX_NESTING {
@@ -177,7 +177,7 @@ impl<'a> Line<'_, 'a> {
     ) -> Written {
         let span = e.outer_span();
         self.check_source_up_to(span.start)?;
-        let written = self.fits_or_breaks(tail, |line| {
+        let written = self.fits_or_breaks(tail, &|line| {
             line.last_expr(e, place)?;
             line.check_source_up_to(span.end)
         });

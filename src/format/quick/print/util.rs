@@ -2,10 +2,10 @@
 
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
-    F_CHAIN, F_COMMENTS, F_DANGLING, F_IGNORED, F_LEADING, F_NEXT_LINE_EMPTY, F_NEXT_LINE_KNOWN,
-    F_PREFIX, F_TRAILING, k,
+    F_CHAIN, F_COMMENTS, F_DANGLING, F_LEADING, F_NEXT_LINE_EMPTY, F_NEXT_LINE_KNOWN, F_PREFIX,
+    F_TRAILING, Set, is_in_set, k, set_of,
 };
-use crate::comments::{CF_LEADING, CF_TRAILING, CF_UNIGNORE};
+use crate::comments::{CF_LEADING, CF_TRAILING};
 use crate::lexer::{C_END, C_FLAGS, C_START, C_STRIDE, CF_BLOCK, tk};
 use crate::scan::is_space;
 use crate::{Quick, Words};
@@ -209,18 +209,9 @@ impl Quick {
     }
 
     pub(crate) fn has_ignore_comment(&self, n: i32) -> bool {
-        if (self.n.at(n) & (F_COMMENTS | F_IGNORED)) == 0 {
-            return false;
-        }
-        if (self.n.at(n) & F_IGNORED) != 0
-            && (self.n.at(n) & 0xff) >= k::TypeAnnotation
-            && (self.n.at(n) & 0xff) != k::TSDeclareFunction
-        {
-            return true;
-        }
         let mut c = self.first_comment(n);
         while c >= 0 {
-            if (self.comment_flags(c) & CF_UNIGNORE) == 0 && self.is_prettier_ignore_comment(c) {
+            if self.is_prettier_ignore_comment(c) {
                 return true;
             }
             c = self.next_comment(c);
@@ -320,6 +311,7 @@ impl Quick {
     }
 
     /// Is the text of this leaf exactly `word`?
+    #[inline(never)]
     pub(crate) fn name_is(&self, n: i32, word: &[u8]) -> bool {
         let s = self.n.at(n + 1);
         let len = word.len() as i32;
@@ -530,6 +522,30 @@ pub(crate) fn should_flatten(parent_op: i32, node_op: i32) -> bool {
     return true;
 }
 
+/// The statements whose end leaves the semicolon out.
+static ENDS_BEFORE_SEMICOLON: Set = set_of(&[
+    k::ExpressionStatement,
+    k::Directive,
+    k::ImportDeclaration,
+    k::ExportDefaultDeclaration,
+    k::ExportNamedDeclaration,
+    k::ExportAllDeclaration,
+    k::ReturnStatement,
+    k::ThrowStatement,
+    k::DoWhileStatement,
+    k::BreakStatement,
+    k::ContinueStatement,
+    k::DebuggerStatement,
+    k::VariableDeclaration,
+    k::IfStatement,
+    k::ForInStatement,
+    k::ForOfStatement,
+    k::ForStatement,
+    k::LabeledStatement,
+    k::WithStatement,
+    k::WhileStatement,
+]);
+
 impl Quick {
     /// The kind of a node in a list of statements: of a statement that was read by fast.rs, what the parser would have made of it.
     pub(crate) fn statement_kind(&self, n: i32) -> i32 {
@@ -545,31 +561,10 @@ impl Quick {
     /// locEndWithFullText: the end with the semicolon, for the statements whose end leaves it out.
     pub(crate) fn full_end(&self, n: i32) -> i32 {
         let end = self.n.at(n + 2);
-        match self.statement_kind(n) {
-            k::ExpressionStatement
-            | k::Directive
-            | k::ImportDeclaration
-            | k::ExportDefaultDeclaration
-            | k::ExportNamedDeclaration
-            | k::ExportAllDeclaration
-            | k::ReturnStatement
-            | k::ThrowStatement
-            | k::DoWhileStatement
-            | k::BreakStatement
-            | k::ContinueStatement
-            | k::DebuggerStatement
-            | k::VariableDeclaration
-            | k::IfStatement
-            | k::ForInStatement
-            | k::ForOfStatement
-            | k::ForStatement
-            | k::LabeledStatement
-            | k::WithStatement
-            | k::WhileStatement => {
-                let p = self.next_char_index(end);
-                return if self.t.at(p) == 59 { p + 1 } else { end };
-            }
-            _ => {}
+        let kind = self.statement_kind(n);
+        if is_in_set(&ENDS_BEFORE_SEMICOLON, kind) {
+            let p = self.next_char_index(end);
+            return if self.t.at(p) == 59 { p + 1 } else { end };
         }
         return end;
     }
@@ -734,7 +729,7 @@ const PARENTS_BY_KIND: &[(&[i32], &[i32])] = &[
     ),
 ];
 
-const fn parens_look() -> [u8; 222 << 8] {
+const fn parens_look_of_pairs() -> [u8; 222 << 8] {
     let mut table = [1; 222 << 8];
     let mut group = 0;
     while group < PARENTS_BY_KIND.len() {
@@ -764,8 +759,72 @@ const fn parens_look() -> [u8; 222 << 8] {
     table
 }
 
-/// [kind << 8 | kind of the parent]: 0 where needs_parens() is false.
-pub(crate) static PARENS_LOOK: [u8; 222 << 8] = parens_look();
+/// One set of kinds of parent for each group of PARENTS_BY_KIND, and one with every kind in it for the kinds that are in no group.
+pub(crate) struct ParensLook {
+    row_of: [u8; 222],
+    rows: [[u32; 8]; PARENTS_BY_KIND.len() + 1],
+}
+
+impl ParensLook {
+    /// Is needs_parens() false for a node of the kind `k` in a parent of the kind `pk`? Also for a pair that is no pair of kinds.
+    #[inline]
+    pub(crate) const fn leaves_out(&self, k: i32, pk: i32) -> bool {
+        let at = ((k << 8) | pk) as u32;
+        let kind = (at >> 8) as usize;
+        if kind >= self.row_of.len() {
+            return true;
+        }
+        let row = self.row_of[kind] as usize;
+        if row >= self.rows.len() {
+            return true;
+        }
+        (self.rows[row][((at >> 5) & 7) as usize] >> (at & 31)) & 1 == 0
+    }
+}
+
+const fn parens_look() -> ParensLook {
+    let mut look = ParensLook {
+        row_of: [0; 222],
+        rows: [[0; 8]; PARENTS_BY_KIND.len() + 1],
+    };
+    look.rows[0] = [u32::MAX; 8];
+    let mut group = 0;
+    while group < PARENTS_BY_KIND.len() {
+        let (kinds, parents) = PARENTS_BY_KIND[group];
+        let mut i = 0;
+        while i < kinds.len() {
+            look.row_of[kinds[i] as usize] = group as u8 + 1;
+            i += 1;
+        }
+        let row = &mut look.rows[group + 1];
+        let mut j = 0;
+        while j < PARENTS_OF_ALL.len() {
+            row[PARENTS_OF_ALL[j] as usize >> 5] |= 1 << (PARENTS_OF_ALL[j] & 31);
+            j += 1;
+        }
+        let mut j = 0;
+        while j < parents.len() {
+            row[parents[j] as usize >> 5] |= 1 << (parents[j] & 31);
+            j += 1;
+        }
+        group += 1;
+    }
+    look
+}
+
+pub(crate) static PARENS_LOOK: ParensLook = parens_look();
+
+// The sets say what the table of all pairs says, [kind << 8 | kind of the parent], and "left out" beyond it.
+const _: () = {
+    let pairs = parens_look_of_pairs();
+    let look = parens_look();
+    let mut at = 0;
+    while at < 1 << 16 {
+        let in_table = at < pairs.len() && pairs[at] != 0;
+        assert!(look.leaves_out((at >> 8) as i32, (at & 0xff) as i32) == !in_table);
+        at += 1;
+    }
+};
 // print_node(): 0 for the kinds that, without comments, go straight to their printer.
 pub(crate) static NEEDS_CARE: [u8; 222] = [
     0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1, 0,

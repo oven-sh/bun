@@ -1,13 +1,11 @@
 //! import and export declarations (module.js).
 
 use crate::arena::SUB_SHIFT;
-use crate::ast::{
-    F_EXTRA, F_SHORTHAND, IK_MASK, IK_SHIFT, IK_TYPE, P_DEFER, P_MASK, P_MODULE, P_SOURCE, k,
-};
+use crate::ast::{F_EXTRA, F_SHORTHAND, IK_MASK, IK_SHIFT, IK_TYPE, P_DEFER, P_MASK, P_SOURCE, k};
 use crate::options::TRAILING_COMMA_NONE;
 use crate::print::statics::{
     _AS_, _ASSERT_, _STAR, _WITH_, BRACES, COMMA, COMMA_SPACE, DEFER_, EXPORT, EXPORT_DEFAULT,
-    FROM, IMPORT, LBRACE, MODULE_, RBRACE, SEMI, SOURCE_, SPACE, STAR_AS_,
+    FROM, IMPORT, LBRACE, RBRACE, SEMI, SOURCE_, SPACE, STAR_AS_,
 };
 use crate::{Quick, R, Words, rare};
 
@@ -220,10 +218,6 @@ impl Quick {
             P_SOURCE => {
                 self.text(SPACE);
                 self.text(SOURCE_);
-            }
-            P_MODULE => {
-                self.text(SPACE);
-                self.text(MODULE_);
             }
             _ => {}
         }

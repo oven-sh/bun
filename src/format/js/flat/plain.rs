@@ -4,24 +4,13 @@
 //! and end. So they're written from the records ([`File::plain_expr`]), without handles. What's written is what
 //! [`Line::expr`] writes. Whatever isn't plain is left to it.
 
+use super::expressions::{SHORTEST_PLACEHOLDER, is_placeholder_in_parentheses};
 use super::*;
+use crate::js::parentheses::expression::is_name_that_may_need_parentheses;
 use bun_sema::hir::{self, ExprId};
 
 /// How many links a chain of member accesses and calls can have here.
 const MAX_LINKS: u32 = 24;
-
-/// True for a name that needs parentheses in some places.
-#[inline]
-fn is_special_name(name: &[u8]) -> bool {
-    match name.len() {
-        3 => name == b"let",
-        4 => name == b"type" || name == b"hook",
-        5 => matches!(name, b"async" | b"await" | b"using" | b"yield"),
-        6 => name == b"module",
-        9 => name == b"interface" || name == b"component",
-        _ => false,
-    }
-}
 
 impl<'a> Line<'_, 'a> {
     /// Writes `e` if it's plain. Returns `None`, with nothing written, if it isn't.
@@ -239,7 +228,10 @@ impl<'a> Line<'_, 'a> {
         let span = Span::new(raw.pos, raw.end);
         Some(match raw.kind {
             hir::ExprKind::Ident(_) => {
-                if place != Place::Free && is_special_name(self.text_of(span)) {
+                // A name that long can be a placeholder in parentheses, which the record doesn't say.
+                if (place != Place::Free && is_name_that_may_need_parentheses(self.text_of(span)))
+                    || span.len() >= SHORTEST_PLACEHOLDER
+                {
                     return None;
                 }
                 self.source(span)
@@ -394,7 +386,11 @@ impl<'a> Line<'_, 'a> {
                 hir::ExprKind::Ident(_) => {
                     let name = self.text_of(Span::new(raw.pos, raw.end));
                     // `graphql(schema, `..`)` has another language in it.
-                    if is_special_name(name) || (was_callee && name == b"graphql") {
+                    if is_name_that_may_need_parentheses(name)
+                        || (was_callee && name == b"graphql")
+                        || (name.len() >= SHORTEST_PLACEHOLDER as usize
+                            && is_placeholder_in_parentheses(file.handle_of_plain_expr(id)))
+                    {
                         return None;
                     }
                     return Some(copied);

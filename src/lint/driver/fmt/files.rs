@@ -207,10 +207,7 @@ impl Kind {
             return Kind::from_parser(parser);
         }
         // Most files. Such a path ends with its extension, wherever its name starts.
-        const SCRIPTS: [&[u8]; 8] = [
-            b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts",
-        ];
-        if SCRIPTS.iter().any(|it| path.ends_with(it)) {
+        if has_script_extension(path) {
             return Some(Kind::Script);
         }
         // No name and no extension that the languages go by which are asked before theirs ends like one of these.
@@ -240,10 +237,8 @@ impl Kind {
         };
         let extension =
             strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
-        if matches!(
-            extension,
-            b"js" | b"mjs" | b"cjs" | b"jsx" | b"ts" | b"mts" | b"cts" | b"tsx"
-        ) || name.ends_with(b".js.flow")
+        if has_script_extension(name)
+            || name.ends_with(b".js.flow")
             || extension == b"wxs"
             || is_other_javascript_name(name, extension)
             || name == b"jakefile"
@@ -298,6 +293,14 @@ fn is_other_javascript_name(name: &[u8], extension: &[u8]) -> bool {
     ) || matches!(name, b"Jakefile" | b"start.frag" | b"end.frag")
         || name.ends_with(b".start.frag")
         || name.ends_with(b".end.frag")
+}
+
+/// True if `path` ends with an extension of JavaScript or TypeScript, as written here.
+pub(crate) fn has_script_extension(path: &[u8]) -> bool {
+    const EXTENSIONS: [&[u8]; 8] = [
+        b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts",
+    ];
+    EXTENSIONS.iter().any(|it| path.ends_with(it))
 }
 
 /// Returns true for the file names oxfmt treats as TOML.
@@ -540,6 +543,15 @@ fn collation_key(path: &[u8]) -> Vec<u8> {
     key
 }
 
+/// The key of a directory in a search: those closer to where the search starts first, then where its files are among
+/// those of other directories, so `a-b/c` is before `a/c`.
+fn directory_key(directory: &[u8]) -> Vec<u8> {
+    let depth = strings::count_char(directory, b'/') as u32;
+    let mut key = depth.to_be_bytes().to_vec();
+    key.extend(collation_key(&paths::join(directory, b"")));
+    key
+}
+
 /// The arguments that start with `!`, read the way Prettier reads them: files they match are excluded from the files
 /// the other arguments select. `bun lint` reads them the same way.
 #[derive(Default)]
@@ -736,14 +748,6 @@ struct Directory {
     /// True if the `ignorePatterns` of the configuration above it match it. It's still listed, because a configuration
     /// file in it starts over.
     is_ignored_by_configuration: bool,
-    /// Where it is in the listing of its parent directory, after the same about that directory, and so on.
-    position: Vec<u32>,
-}
-
-/// The order in which one thread comes by the directories at these [positions](Directory::position): those closer to
-/// where the search starts first.
-fn order_of_search(a: &[u32], b: &[u32]) -> std::cmp::Ordering {
-    (a.len(), a).cmp(&(b.len(), b))
 }
 
 /// About what it takes to list a directory and then to format what is in it, in nanoseconds.
@@ -760,12 +764,13 @@ fn search(
     // Git's ignore files that apply in `base`, or `None` if they aren't read.
     git: Option<GitIgnores>,
 ) -> Result<Vec<Target>, Fatal> {
-    // Of the directories whose configuration can't be used, the first in the order of the search: where it is, and why.
-    let failure = Guarded::new(None::<(Vec<u32>, Fatal)>);
+    // Of the directories whose configuration can't be used, the first in the order of the search: its key, and why.
+    let failure = Guarded::new(None::<(Vec<u8>, Fatal)>);
     let has_failed = AtomicBool::new(false);
-    let is_before_failure = |position: &[u32]| {
+    let is_before_failure = |path: &[u8]| {
+        let key = directory_key(path);
         let failure = failure.lock();
-        (failure.as_ref()).is_none_or(|(failed, _)| order_of_search(position, failed).is_lt())
+        (failure.as_ref()).is_none_or(|(failed, _)| key < *failed)
     };
     let reads_gitignore = git.is_some();
     let git = git.unwrap_or_default();
@@ -779,7 +784,6 @@ fn search(
             base,
         ),
         above,
-        position: Vec::new(),
     };
     // Adds what is in `directory`.
     let search_in =
@@ -799,11 +803,10 @@ fn search(
             let scope = match scope {
                 Ok(scope) => scope,
                 Err(error) => {
+                    let key = directory_key(&directory.path);
                     let mut failure = failure.lock();
-                    if (failure.as_ref())
-                        .is_none_or(|it| order_of_search(&directory.position, &it.0).is_lt())
-                    {
-                        *failure = Some((directory.position.clone(), error));
+                    if failure.as_ref().is_none_or(|it| key < it.0) {
+                        *failure = Some((key, error));
                     }
                     has_failed.store(true, Ordering::Relaxed);
                     return;
@@ -820,7 +823,7 @@ fn search(
                 });
             }
             // Links are neither followed nor formatted.
-            for (index, entry) in entries.iter().enumerate().filter(|it| !it.1.is_link) {
+            for entry in entries.iter().filter(|it| !it.is_link) {
                 let path = paths::join(&directory.path, &entry.name);
                 if ignored.is_never_visited(&path, &entry.name, entry.is_directory) {
                     continue;
@@ -847,7 +850,6 @@ fn search(
                             is_first: false,
                             git: git.clone(),
                             is_ignored_by_configuration,
-                            position: [&directory.position[..], &[index as u32]].concat(),
                         });
                     }
                 } else if !is_ignored_by_configuration
@@ -877,7 +879,8 @@ fn search(
     // About what it takes to format the files that are found, in nanoseconds.
     let time_for_files = AtomicU64::new(0);
     let searchers = pool.threads();
-    type AllRemarks = Vec<(Vec<u32>, Remarks)>;
+    // With the paths of their directories.
+    type AllRemarks = Vec<(Vec<u8>, Remarks)>;
     let mut found: Vec<Guarded<(Vec<Target>, AllRemarks)>> =
         (0..searchers).map(|_| Default::default()).collect();
     let search_all = |searcher: usize| {
@@ -899,11 +902,11 @@ fn search(
             let (files_before, own_before) = (files.len(), own.len());
             // The error is that of the first directory that has one, whichever a thread finds first. What is above a
             // directory comes before it, so everything that comes before the failure is still found.
-            if !has_failed.load(Ordering::Relaxed) || is_before_failure(&directory.position) {
+            if !has_failed.load(Ordering::Relaxed) || is_before_failure(&directory.path) {
                 let kept_back =
                     Configs::keeping_back(|| search_in(&directory, &mut files, &mut own));
                 if !kept_back.is_empty() {
-                    remarks.push((directory.position, kept_back));
+                    remarks.push((directory.path, kept_back));
                 }
             }
             let left = unfinished.fetch_add(own.len() - own_before, Ordering::SeqCst)
@@ -937,7 +940,7 @@ fn search(
         .flat_map(|it| std::mem::take(&mut it.get_mut().1))
         .filter(|it| is_before_failure(&it.0))
         .collect();
-    index_sort::sort_slice_by(&mut remarks[..], |a, b| order_of_search(&a.0, &b.0));
+    index_sort::sort_slice_by_cached_key(&mut remarks[..], |it| directory_key(&it.0));
     for (_, remarks) in &remarks {
         configs.pass_on(remarks);
     }

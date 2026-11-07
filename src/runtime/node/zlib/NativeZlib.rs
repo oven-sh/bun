@@ -88,6 +88,7 @@ mod _impl {
             write_state: JsLocal<'_>,
             process_callback: JsLocal<'_>,
             dictionary: JsLocal<'_>,
+            reject_garbage_after_end: bool,
         ) -> JsResult<()> {
             let global = cx.global();
             let this_value = this_value.to_js();
@@ -162,8 +163,10 @@ mod _impl {
                 write_callback.with_async_context_if_needed(global),
             );
 
-            self.stream
-                .with_mut(|s| s.init(level, window_bits, mem_level, strategy, dictionary));
+            self.stream.with_mut(|s| {
+                s.reject_garbage_after_end = reject_garbage_after_end;
+                s.init(level, window_bits, mem_level, strategy, dictionary)
+            });
             // `Context::init` leaves `mode` at `NONE` when `deflateInit2_` /
             // `inflateInit2_` rejects its arguments; mark the wrapper closed so
             // the next operation is rejected instead of re-entering `NONE`.
@@ -218,7 +221,12 @@ pub(crate) struct Context {
     pub flush: c::FlushValue,
     pub dictionary: Vec<u8>,
     pub(crate) gzip_id_bytes_read: u8,
+    /// `options.rejectGarbageAfterEnd`: input after the first gzip member stays unconsumed, and `zlib.ts` refuses it.
+    pub(crate) reject_garbage_after_end: bool,
 }
+
+// The flag sits in the padding after `gzip_id_bytes_read`.
+const _: () = assert!(core::mem::size_of::<Context>() == 48);
 
 impl Default for Context {
     fn default() -> Self {
@@ -229,6 +237,7 @@ impl Default for Context {
             flush: c::FlushValue::NoFlush,
             dictionary: Vec::new(),
             gzip_id_bytes_read: 0,
+            reject_garbage_after_end: false,
         }
     }
 }
@@ -506,6 +515,7 @@ impl Context {
         while self.state.avail_in() > 0
             && self.mode == c::NodeMode::GUNZIP
             && self.err == c::ReturnCode::StreamEnd
+            && !self.reject_garbage_after_end
             // SAFETY: avail_in > 0 ⇒ next_in points to ≥1 readable byte.
             && unsafe { *self.state.next_in() } != 0
         {

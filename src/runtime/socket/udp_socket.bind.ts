@@ -64,16 +64,14 @@ export const udpSocket = b.fn({
   rustPath: "crate::socket::udp_socket::UDPSocket::udp_socket",
 });
 
+/** Node's `handle.connect(ip, port)`: 0 or a negative libuv error code. `ipv6` is the socket type. */
 export const connect = b.fn({
-  args: { socket: UDPSocket, host: b.string.loose, port: b.i32 },
+  args: { socket: UDPSocket, host: b.string.loose.utf8, port: b.i32, ipv6: b.bool },
+  returns: b.i32,
   capability: "js",
-  throws: true,
 });
-export const disconnect = b.fn({
-  args: { socket: UDPSocket },
-  capability: "heap",
-  throws: true,
-});
+/** Node's `handle.disconnect()`: 0 or a negative libuv error code. */
+export const disconnect = b.fn({ args: { socket: UDPSocket }, returns: b.i32 });
 export const bufferSize = b.fn({
   args: { socket: UDPSocket, size: b.i32.wrap, isRecv: b.bool },
   returns: b.i32,

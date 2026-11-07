@@ -945,7 +945,24 @@ const _: () = {
     assert!(AF::INET6 as c_int == ares::AF::INET6);
 };
 
-/// Fills `out` with `host`:`port` when `host` is numeric (inet_aton shorthand and `%zone` included) and returns 1, or 0 when it is a name — the one parse behind uSockets' connect paths, so a literal never reaches the resolver; `host` must be NUL-terminated and `out` writable.
+/// Writes `host`:`port` to `out` and returns it when `host` is numeric (inet_aton shorthand and `%zone` included), or returns `None` when it is a name. The one parse in front of a resolver, so a literal never reaches it.
+#[inline(always)]
+pub(crate) fn parse_ip_address<'a>(
+    host: &[u8],
+    port: u16,
+    out: &'a mut mem::MaybeUninit<bun_sys::posix::sockaddr_storage>,
+) -> Option<&'a mut bun_sys::posix::sockaddr_storage> {
+    let ip = bun_core::ip_address::to_ip_address(host)?;
+    let mut addr = bun_sys::net::Address::from_ip(ip, port);
+    if ip.is_ipv6() {
+        if let Some(pct) = strings::index_of_char_usize(host, b'%') {
+            addr.set_scope_id(scope_index(&host[pct + 1..]));
+        }
+    }
+    Some(out.write(addr.into_storage()))
+}
+
+/// [`parse_ip_address`] for uSockets' connect paths: 1 and `out` filled, or 0 when `host` is a name; `host` must be NUL-terminated and `out` writable.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Bun__parseIpAddress(
     host: *const core::ffi::c_char,
@@ -960,17 +977,34 @@ pub(crate) unsafe extern "C" fn Bun__parseIpAddress(
     };
     // SAFETY: caller contract — `host` is a NUL-terminated C string.
     let bytes = unsafe { core::ffi::CStr::from_ptr(host) }.to_bytes();
-    let Some(ip) = bun_core::ip_address::to_ip_address(bytes) else {
-        return 0;
+    c_int::from(parse_ip_address(bytes, port, out).is_some())
+}
+
+/// The address that Node.js's UDP handle takes, by libuv's `uv_ip4_addr` / `uv_ip6_addr` (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/uv-common.c#L254-L296): a literal of the handle's own family, no name and no inet_aton shorthand. Unlike libuv, a zone may also be a decimal index off Windows, which is how `dns.lookup()` here prints a link-local answer.
+pub(crate) fn parse_uv_ip_address(
+    host: &[u8],
+    port: u16,
+    ipv6: bool,
+    out: &mut bun_sys::posix::sockaddr_storage,
+) -> bool {
+    // libuv reads a C string and connects to the text in front of a NUL, which `sendBlockList` did not check.
+    if strings::contains_char(host, 0) {
+        return false;
+    }
+    let Some(ip) = bun_core::ip_address::parse_uv_inet_pton(host) else {
+        return false;
     };
+    if ip.is_ipv6() != ipv6 {
+        return false;
+    }
     let mut addr = bun_sys::net::Address::from_ip(ip, port);
-    if ip.is_ipv6() {
-        if let Some(pct) = strings::index_of_char_usize(bytes, b'%') {
-            addr.set_scope_id(scope_index(&bytes[pct + 1..]));
+    if ipv6 {
+        if let Some((_, zone)) = strings::split_once_char(host, b'%') {
+            addr.set_scope_id(scope_index(zone));
         }
     }
-    out.write(addr.into_storage());
-    1
+    *out = addr.into_storage();
+    true
 }
 
 /// A `%zone` is an interface name (`en0`) everywhere but Windows, where it is already the index.
@@ -987,14 +1021,14 @@ fn scope_index(zone: &[u8]) -> u32 {
             }
         }
     }
-    let mut idx: u32 = 0;
-    for &b in zone {
-        if !b.is_ascii_digit() {
-            return 0;
-        }
-        idx = idx.wrapping_mul(10).wrapping_add((b - b'0') as u32);
-    }
-    idx
+    zone.iter()
+        .try_fold(0u32, |idx, &b| {
+            if !b.is_ascii_digit() {
+                return None;
+            }
+            idx.checked_mul(10)?.checked_add(u32::from(b - b'0'))
+        })
+        .unwrap_or(0)
 }
 
 #[cfg(windows)]

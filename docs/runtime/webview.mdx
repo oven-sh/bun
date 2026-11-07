@@ -343,7 +343,7 @@ An element is actionable when it:
 - has been **stable** (bounding box unchanged) for two consecutive animation frames
 - is the topmost element at its center point (not covered by an overlay)
 
-The check runs page-side at `requestAnimationFrame` rate. If the element never becomes actionable within `timeout` milliseconds (default `30000`), the promise rejects with an error like `timeout waiting for '#submit' to be actionable`.
+The check runs page-side at `requestAnimationFrame` rate. If the element never becomes actionable within `timeout` milliseconds (default `30000`), the promise rejects with an error like `timeout waiting for '#submit' to be actionable`. The deadline does not depend on frames: a page that renders no frames still rejects on time.
 
 Bun passes the selector as data instead of interpolating it into a script, so selectors containing quotes or JavaScript syntax are safe.
 

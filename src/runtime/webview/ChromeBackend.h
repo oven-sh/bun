@@ -272,6 +272,13 @@ enum class Method : uint8_t {
 // The predicate: attached + has size + in viewport + stable for 2 frames
 // + elementFromPoint at center returns the element (not obscured). Returns
 // the center coords as [cx, cy]; throws on timeout.
+//
+// The frame wait races a setTimeout bound to the deadline. A page that
+// renders no frames (a display nothing serves, a renderer Chrome has
+// throttled) never runs a rAF callback, and without the timer the loop
+// would never reach the deadline check again. The timer stays at the
+// deadline, not a shorter poll: a sample between two frames could read the
+// same rect twice within one frame and call an animating element stable.
 constexpr ASCIILiteral kActionabilityIIFE = R"js((async (sel, timeout) => {
 const deadline = performance.now() + timeout;
 let last;
@@ -289,19 +296,25 @@ for (;;) {
     } else last = undefined;
   } else last = undefined;
   if (performance.now() > deadline) throw "timeout waiting for '" + sel + "' to be actionable";
-  await new Promise(f => requestAnimationFrame(f));
+  await new Promise(f => {
+    const id = setTimeout(f, Math.max(0, deadline - performance.now()));
+    requestAnimationFrame(() => { clearTimeout(id); f(); });
+  });
 }
 }))js"_s;
 
 // scrollIntoView is page-side atomic — just wait for the element, scroll,
-// return. No coords to parse.
+// return. No coords to parse. Same deadline-bound frame wait as above.
 constexpr ASCIILiteral kScrollToIIFE = R"js((async (sel, timeout, block) => {
 const deadline = performance.now() + timeout;
 for (;;) {
   const el = document.querySelector(sel);
   if (el) { el.scrollIntoView({ block, behavior: 'instant' }); return; }
   if (performance.now() > deadline) throw "timeout waiting for '" + sel + "'";
-  await new Promise(f => requestAnimationFrame(f));
+  await new Promise(f => {
+    const id = setTimeout(f, Math.max(0, deadline - performance.now()));
+    requestAnimationFrame(() => { clearTimeout(id); f(); });
+  });
 }
 }))js"_s;
 

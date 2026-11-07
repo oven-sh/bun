@@ -261,12 +261,22 @@ pub(crate) fn convert_stmts_for_chunk(
                                     },
                                     stmt.loc,
                                 ))?;
+                        } else if !chunk.prints_entry_point_file_in_place(source_index, wrap) {
+                            // Turn this statement into "import 'path'": the entry point tail has the export
+                            stmt = Stmt::alloc(
+                                S::Import {
+                                    namespace_ref: s.namespace_ref,
+                                    import_record_index: s.import_record_index,
+                                    ..Default::default()
+                                },
+                                stmt.loc,
+                            );
+                        }
 
-                            // Make sure these don't end up in the wrapper closure
-                            if should_extract_esm_stmts_for_wrap {
-                                stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
-                                continue 'stmt_loop;
-                            }
+                        // Make sure these don't end up in the wrapper closure
+                        if should_extract_esm_stmts_for_wrap {
+                            stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
+                            continue 'stmt_loop;
                         }
                     } else {
                         if record.source_index.is_valid() {

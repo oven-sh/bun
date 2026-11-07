@@ -34,6 +34,12 @@ export const knownToday: Record<string, string> = {
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "bundler_minify: minify/StringAdditionFolding":
     "each file: code bytes 659 -> 625, operations 22 -> 20; bundled: code bytes 659 -> 625, operations 22 -> 20",
+  "bundler_minify: minify/StringFoldsOfNonAsciiDefineText":
+    "each file: code bytes 662 -> 243, operations 19 -> 10, run-time operations 337 -> 332; bundled: code bytes 662 -> 243, operations 19 -> 10, run-time operations 337 -> 332",
+  "bundler_minify: minify/StringFoldsOfNonAsciiDefineTextWithoutMinify":
+    "each file: code bytes 333 -> 149, operations 8 -> 5, run-time operations 329 -> 327; bundled: code bytes 333 -> 149, operations 8 -> 5, run-time operations 329 -> 327",
+  "bundler_minify: minify/StringFoldsOfNonAsciiFileName":
+    'written: "/$bunfs/root/c000/dép.cjs 117 47\\n\\nexit 0", bun run "<its folder>/c000/dép.cjs 112 47\\n\\nexit 0"; bundled: code bytes 548 -> 165, operations 20 -> 9, run-time operations 332 -> 329',
   "bundler_minify: minify/TypeOfRequire":
     "each file: code bytes 190 -> 110, operations 11 -> 7; bundled: code bytes 190 -> 110, operations 11 -> 7",
   "bundler_minify: minify/UnusedInCommaExpression": "each file: code bytes 390 -> 362; bundled: code bytes 390 -> 362",

@@ -809,7 +809,7 @@ fn push_units(out: &mut Vec<u16>, s: &bun_ast::E::EString) {
     if s.is_utf16 {
         out.extend_from_slice(s.slice16());
     } else {
-        out.extend(s.slice8().iter().map(|&b| b as u16));
+        out.extend(bun_core::strings::wtf8_to_utf16(s.slice8()));
     }
 }
 

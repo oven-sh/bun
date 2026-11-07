@@ -1130,8 +1130,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = e_.target.unwrap_inlined();
         let index = e_.index.unwrap_inlined();
 
-        // `[x][0] = v` writes into the temporary, not `x`.
-        if p.options.features.minify_syntax && in_.assign_target == js_ast::AssignTarget::None {
+        // `[x][0] = v` writes into the temporary, not `x`, and `delete [x][0]` deletes from it.
+        if p.options.features.minify_syntax
+            && in_.assign_target == js_ast::AssignTarget::None
+            && !is_delete_target
+        {
             if let Some(number) = index.data.as_e_number() {
                 if number.value() >= 0.0
                     && number.value() < (usize::MAX as f64)
@@ -1146,8 +1149,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .e_number()
                                 .expect("infallible: variant checked")
                                 .to_usize();
-                            debug_assert!(strings::is_all_ascii(&literal));
-                            if num < literal.len() {
+                            // A byte is a character only behind text that is ASCII.
+                            if num < literal.len() && strings::is_all_ascii(&literal[..=num]) {
                                 *e = p.new_expr(
                                     E::String {
                                         data: E::Str::new(&literal[num..num + 1]),
@@ -2577,7 +2580,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let float = n.value();
                             if float % 1.0 == 0.0 && float < (str_.len() as f64) && float >= 0.0 {
                                 let char_ = str_[float as usize];
-                                if char_ < 0x80 {
+                                // A byte is a character only behind text that is ASCII.
+                                if strings::is_all_ascii(&str_[..=float as usize]) {
                                     *e = p.new_expr(E::Number::new(f64::from(char_)), expr.loc);
                                     return;
                                 }

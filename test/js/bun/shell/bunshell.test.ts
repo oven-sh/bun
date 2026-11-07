@@ -98,6 +98,92 @@ describe("bunshell", () => {
             .runAsTest(cmdstr)
         : "",
     );
+
+    // POSIX 2.8.2: the status is 127 when the command is not found.
+    describe("a command that is not found exits 127", () => {
+      const notFound = "bun: command not found: zz-made-up-command\n";
+
+      TestBuilder.command`zz-made-up-command`.exitCode(127).stderr(notFound).runAsTest("bare name");
+      // .quiet() captures stderr in memory, which finishes the command without an IO write.
+      TestBuilder.command`zz-made-up-command`.quiet().exitCode(127).stderr(notFound).runAsTest("bare name, quiet");
+      TestBuilder.command`./zz-made-up-command`
+        .exitCode(127)
+        .stderr("bun: command not found: ./zz-made-up-command\n")
+        .runAsTest("path that does not exist");
+      TestBuilder.command`echo hi | zz-made-up-command`
+        .exitCode(127)
+        .stderr(notFound)
+        .runAsTest("last member of a pipeline");
+      TestBuilder.command`(zz-made-up-command)`.exitCode(127).stderr(notFound).runAsTest("subshell");
+      TestBuilder.command`$(echo zz-made-up-command)`
+        .exitCode(127)
+        .stderr(notFound)
+        .runAsTest("name from a command substitution");
+      TestBuilder.command`$(echo zz-made-up-command)`
+        .quiet()
+        .exitCode(127)
+        .stderr(notFound)
+        .runAsTest("name from a command substitution, quiet");
+      TestBuilder.command`zz-made-up-command || echo fallback`
+        .stdout("fallback\n")
+        .stderr(notFound)
+        .runAsTest("|| runs the fallback");
+      // The shell searches for the command before it opens the redirect. bash opens the redirect first and exits 1.
+      TestBuilder.command`zz-made-up-command < missing-input.txt`
+        .ensureTempDir()
+        .exitCode(127)
+        .stderr(notFound)
+        .runAsTest("with a redirect that cannot be opened");
+
+      test("$ rejects with a ShellError whose exitCode is 127", async () => {
+        const err = await $`zz-made-up-command`
+          .quiet()
+          .throws(true)
+          .then(
+            () => undefined,
+            e => e,
+          );
+        expect(err).toBeInstanceOf($.ShellError);
+        expect({ exitCode: err.exitCode, stderr: err.stderr.toString() }).toEqual({ exitCode: 127, stderr: notFound });
+      });
+    });
+
+    // The command exists. The shell fails while it sets up the command, which is not "command not found".
+    describe("a command line that cannot be set up exits 1", () => {
+      TestBuilder.command`cat < missing-input.txt`
+        .ensureTempDir()
+        .exitCode(1)
+        .stderr(s => expect(s).toContain("missing-input.txt"))
+        .runAsTest("builtin with a stdin redirect that cannot be opened");
+      TestBuilder.command`${BUN} -e ${"console.log(1)"} > missing-dir/out.txt`
+        .ensureTempDir()
+        .exitCode(1)
+        .stderr(s => expect(s).toContain("missing-dir/out.txt"))
+        .runAsTest("external command with a redirect that cannot be opened");
+      TestBuilder.command`${BUN} -e ${"console.log(1)"} > $EMPTY`
+        .exitCode(1)
+        .stderr(s => expect(s).toContain("ambiguous redirect"))
+        .runAsTest("external command with an ambiguous redirect");
+      // The child cannot enter the working directory. Windows does not remove a directory that is in use.
+      if (isPosix) {
+        TestBuilder.command`mkdir gone && cd gone && rm -r ../gone && ${BUN} -e ${"console.log(1)"}`
+          .ensureTempDir()
+          .exitCode(1)
+          .stderr(s => expect(s).toContain("No such file or directory"))
+          .runAsTest("external command after the working directory was removed");
+      }
+
+      // cmd.exe reads the arguments of a batch file a second time, so the shell refuses them.
+      test.if(isWindows)("batch file argument with cmd.exe special characters", async () => {
+        using dir = tempDir("shell-batch-refusal", { "tool.cmd": "@echo off\r\necho arg=%1\r\n" });
+        const { stdout, stderr, exitCode } = await $`./tool.cmd ${"a&b"}`.cwd(String(dir)).quiet().nothrow();
+        expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+          stdout: "",
+          stderr: "bun: refusing to pass argument with cmd.exe special characters to a batch file: a&b\n",
+          exitCode: 1,
+        });
+      });
+    });
   });
 
   describe("concurrency", () => {
@@ -290,7 +376,7 @@ describe("bunshell", () => {
 
     test("in command position", async () => {
       const x = "echo hi";
-      await TestBuilder.command`${x}`.exitCode(1).stderr("bun: command not found: echo hi\n").run();
+      await TestBuilder.command`${x}`.exitCode(127).stderr("bun: command not found: echo hi\n").run();
     });
 
     test("arrays", async () => {
@@ -2283,7 +2369,7 @@ fi
   else
     c
   fi`
-    .exitCode(1)
+    .exitCode(127)
     .file("package.json", "lol")
     .stderr("bun: command not found: a\nbun: command not found: b\n")
     .runAsTest("multi statement then");
@@ -2305,7 +2391,7 @@ fi
   ["if", "else", "elif", "then", "fi"].map(tok => {
     TestBuilder.command`"${{ raw: tok }}"`
       .stderr(`bun: command not found: ${tok}\n`)
-      .exitCode(1)
+      .exitCode(127)
       .runAsTest(`quoted ${tok} doesn't break`);
 
     TestBuilder.command`echo ${{ raw: "lksdfjklsdjf" + tok }}`
@@ -3070,7 +3156,10 @@ describe("subshell", () => {
     .stdout("undefined\nbar\nundefined\n")
     .runAsTest("does not modify export env of parent");
 
-  TestBuilder.command`\(echo hi \)`.stderr("bun: command not found: (echo\n").exitCode(1).runAsTest("escaped subshell");
+  TestBuilder.command`\(echo hi \)`
+    .stderr("bun: command not found: (echo\n")
+    .exitCode(127)
+    .runAsTest("escaped subshell");
   TestBuilder.command`echo \\\(hi\\\)`.stdout("\\(hi\\)\n").runAsTest("escaped subshell 2");
 
   TestBuilder.command /* sh */ `
@@ -3299,14 +3388,14 @@ describe("interpolated values in assignment position", () => {
   // reinterpreted as an environment-variable assignment applied to the rest of
   // the command line.
   TestBuilder.command`${"FOO_INJECTED=1"} echo hi`
-    .exitCode(1)
+    .exitCode(127)
     .stderr("bun: command not found: FOO_INJECTED=1\n")
     .runAsTest("interpolated word containing equals stays a single command word");
 
   // The assignment-shaped value must not land in a spawned child's environment
   // with the following word promoted to the command name.
   TestBuilder.command`${"SHELL_TEST_INJECTED=evil"} ${BUN} -e ${"console.log(process.env.SHELL_TEST_INJECTED)"}`
-    .exitCode(1)
+    .exitCode(127)
     .stderr("bun: command not found: SHELL_TEST_INJECTED=evil\n")
     .runAsTest("interpolated word containing equals is not exported to the child environment");
 

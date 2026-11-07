@@ -1118,6 +1118,402 @@ describe("bun build --metafile-md", () => {
     expect(content).toContain(".css");
   });
 
+  // In the metafile, each output of an entry point has its "entryPoint": the JS chunk, the CSS bundle
+  // and, for a page, the HTML file. The report lists them together, as one entry point.
+  describe.concurrent("markdown reports each entry point once", () => {
+    const withoutHash = (text: string) => text.replace(/-[a-z0-9]{8}\./g, "-[hash].");
+
+    /**
+     * Builds `files` with the CLI. Returns what the report says about entry points: the count rows, each line of
+     * "Entry Point Analysis" (sizes as `<size>`, without the blank lines and the table headers), and the raw lines.
+     */
+    async function entryPointReport(files: Record<string, string>, args: string[]) {
+      using dir = tempDir("metafile-md-entry-points", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", ...args, "--outdir=dist", "--metafile=meta.json", "--metafile-md=meta.md"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+      const metafile = (await Bun.file(`${dir}/meta.json`).json()) as Metafile;
+      const outputs = Object.fromEntries(
+        Object.entries(metafile.outputs).map(([path, output]) => [withoutHash(path), output]),
+      );
+      const markdown = await Bun.file(`${dir}/meta.md`).text();
+      const lines = withoutHash(markdown).split("\n");
+
+      const rows = lines.filter(line => /^\| (Entry points|Code-split chunks) \|/.test(line));
+      const raw = lines.filter(line => /^\[ENTRY(_OUTPUT)?: /.test(line));
+      const notShown = [
+        "",
+        "Each entry point and the total code it loads (including shared chunks).",
+        "| Bytes | Module |",
+        "|-------|--------|",
+      ];
+      const section = lines
+        .slice(lines.indexOf("## Entry Point Analysis") + 1, lines.indexOf("## Dependency Chains"))
+        .filter(line => !notShown.includes(line))
+        .map(line => line.replace(/\d[\d.]* (bytes|KB|MB)/g, "<size>"));
+
+      // The count, the headings and the `[ENTRY:` lines agree with each other and with the metafile.
+      const entryPoints = new Set(Object.values(outputs).flatMap(output => output.entryPoint ?? [])).size;
+      expect({
+        row: rows[0],
+        headings: section.filter(line => line.startsWith("### Entry: ")).length,
+        entryLines: raw.filter(line => line.startsWith("[ENTRY: ")).length,
+      }).toEqual({ row: `| Entry points | ${entryPoints} |`, headings: entryPoints, entryLines: entryPoints });
+
+      /** A raw line, with the size that the metafile has for the output. */
+      const line = (marker: "ENTRY" | "ENTRY_OUTPUT", entryPoint: string, path: string) =>
+        `[${marker}: ${entryPoint} -> ${path} (${outputs[path]?.bytes} bytes)]`;
+      return { rows, section, raw, line, markdown, outputs };
+    }
+
+    /** The headings and the files of a section, for a build whose module tables and chunk lists are not the subject. */
+    const filesOnly = (section: string[]) =>
+      section.filter(line =>
+        /^(### Entry: |\*\*(Output file|CSS bundle)\*\*: |\*\*Bundled modules\*\*: see )/.test(line),
+      );
+
+    const entryWithStylesheet = {
+      "entry.js": `import "./style.css";\nconsole.log("entry");\n`,
+      "style.css": `.a { color: red }\n`,
+    };
+    const page = (head: string, body: string) =>
+      `<!doctype html><html><head>${head}</head><body>${body}</body></html>\n`;
+    const pageWithStylesheet = page(
+      `<link rel="stylesheet" href="./style.css">`,
+      `<script type="module" src="./app.js"></script>`,
+    );
+
+    test("a JS entry point that imports CSS", async () => {
+      const { rows, section, raw, line, markdown } = await entryPointReport(entryWithStylesheet, ["./entry.js"]);
+      expect({ rows, section, raw }).toEqual({
+        rows: ["| Entry points | 1 |"],
+        section: [
+          "### Entry: `entry.js`",
+          "**Output file**: `./entry.js`",
+          "**Bundle size**: <size>",
+          "**Bundled modules** (sorted by contribution):",
+          "| <size> | `entry.js` |",
+          "**CSS bundle**: `./entry.css`",
+          "**Bundle size**: <size>",
+          "**Bundled modules** (sorted by contribution):",
+          "| <size> | `style.css` |",
+        ],
+        raw: [line("ENTRY", "entry.js", "./entry.js"), line("ENTRY_OUTPUT", "entry.js", "./entry.css")],
+      });
+      expect(markdown).toContain("- `[ENTRY_OUTPUT:` - Find the other output files of an entry point\n");
+    });
+
+    test("two JS entry points that share a CSS bundle", async () => {
+      // More stylesheets than the 15 rows that a module table shows.
+      const names = Array.from({ length: 16 }, (_, i) => `m${String(i + 1).padStart(2, "0")}`);
+      const { rows, section, raw, line } = await entryPointReport(
+        {
+          "a.js": `import "./style.css";\nexport const x = 1;\n`,
+          "b.js": `import "./style.css";\nexport const y = 2;\n`,
+          "style.css": names.map(name => `@import "./${name}.css";\n`).join(""),
+          ...Object.fromEntries(names.map(name => [`${name}.css`, `.${name} { color: red }\n`])),
+        },
+        ["./a.js", "./b.js"],
+      );
+      // The metafile gives the bundle the "entryPoint" of a.js, and the exports of a.js. Its modules are listed there.
+      expect({ rows, section, raw }).toEqual({
+        rows: ["| Entry points | 2 |"],
+        section: [
+          "### Entry: `a.js`",
+          "**Output file**: `./a.js`",
+          "**Bundle size**: <size>",
+          "**Exports**: `x`",
+          "**Bundled modules** (sorted by contribution):",
+          "| <size> | `a.js` |",
+          "**CSS bundle**: `./a.css`",
+          "**Bundle size**: <size>",
+          "**Bundled modules** (sorted by contribution):",
+          ...names.slice(0, 15).map(name => `| <size> | \`${name}.css\` |`),
+          "*...and 2 more modules*",
+          "### Entry: `b.js`",
+          "**Output file**: `./b.js`",
+          "**Bundle size**: <size>",
+          "**Exports**: `y`",
+          "**Bundled modules** (sorted by contribution):",
+          "| <size> | `b.js` |",
+          "**CSS bundle**: `./a.css`",
+          "**Bundle size**: <size>",
+          "**Bundled modules**: see entry `a.js`",
+        ],
+        raw: [
+          line("ENTRY", "a.js", "./a.js"),
+          line("ENTRY_OUTPUT", "a.js", "./a.css"),
+          line("ENTRY", "b.js", "./b.js"),
+          line("ENTRY_OUTPUT", "b.js", "./a.css"),
+        ],
+      });
+    });
+
+    test("a page with a stylesheet and a script", async () => {
+      const { rows, section, raw, line } = await entryPointReport(
+        { "index.html": pageWithStylesheet, "app.js": `console.log("app");\n`, "style.css": `.a { color: red }\n` },
+        ["./index.html"],
+      );
+      // The HTML file comes first: it is the file that the entry point names.
+      expect({ rows, section, raw }).toEqual({
+        rows: ["| Entry points | 1 |"],
+        section: [
+          "### Entry: `index.html`",
+          "**Output file**: `./index.html`",
+          "**Bundle size**: <size>",
+          "**Output file**: `./index-[hash].js`",
+          "**Bundle size**: <size>",
+          "**Bundled modules** (sorted by contribution):",
+          "| <size> | `app.js` |",
+          "| <size> | `index.html` |",
+          "**CSS bundle**: `./index-[hash].css`",
+          "**Bundle size**: <size>",
+          "**Bundled modules** (sorted by contribution):",
+          "| <size> | `style.css` |",
+        ],
+        raw: [
+          line("ENTRY", "index.html", "./index.html"),
+          line("ENTRY_OUTPUT", "index.html", "./index-[hash].js"),
+          line("ENTRY_OUTPUT", "index.html", "./index-[hash].css"),
+        ],
+      });
+    });
+
+    test("a page with only a script", async () => {
+      const { rows, section, raw, line } = await entryPointReport(
+        { "index.html": page("", `<script type="module" src="./app.js"></script>`), "app.js": `console.log("app");\n` },
+        ["./index.html"],
+      );
+      expect({ rows, section, raw }).toEqual({
+        rows: ["| Entry points | 1 |"],
+        section: [
+          "### Entry: `index.html`",
+          "**Output file**: `./index.html`",
+          "**Bundle size**: <size>",
+          "**Output file**: `./index-[hash].js`",
+          "**Bundle size**: <size>",
+          "**Bundled modules** (sorted by contribution):",
+          "| <size> | `app.js` |",
+          "| <size> | `index.html` |",
+        ],
+        raw: [line("ENTRY", "index.html", "./index.html"), line("ENTRY_OUTPUT", "index.html", "./index-[hash].js")],
+      });
+    });
+
+    test("two pages that share a stylesheet", async () => {
+      const { rows, section, raw, line } = await entryPointReport(
+        {
+          "a.html": pageWithStylesheet,
+          "b.html": pageWithStylesheet,
+          "app.js": `console.log("app");\n`,
+          "style.css": `.a { color: red }\n`,
+        },
+        ["./a.html", "./b.html"],
+      );
+      // The JS chunk of b.html names the bundle, not b.html itself.
+      expect({ rows, section, raw }).toEqual({
+        rows: ["| Entry points | 2 |"],
+        section: [
+          "### Entry: `a.html`",
+          "**Output file**: `./a.html`",
+          "**Bundle size**: <size>",
+          "**Output file**: `./a-[hash].js`",
+          "**Bundle size**: <size>",
+          "**Bundled modules** (sorted by contribution):",
+          "| <size> | `app.js` |",
+          "| <size> | `a.html` |",
+          "**CSS bundle**: `./a-[hash].css`",
+          "**Bundle size**: <size>",
+          "**Bundled modules** (sorted by contribution):",
+          "| <size> | `style.css` |",
+          "### Entry: `b.html`",
+          "**Output file**: `./b.html`",
+          "**Bundle size**: <size>",
+          "**Output file**: `./b-[hash].js`",
+          "**Bundle size**: <size>",
+          "**Bundled modules** (sorted by contribution):",
+          "| <size> | `app.js` |",
+          "| <size> | `b.html` |",
+          "**CSS bundle**: `./a-[hash].css`",
+          "**Bundle size**: <size>",
+          "**Bundled modules**: see entry `a.html`",
+        ],
+        raw: [
+          line("ENTRY", "a.html", "./a.html"),
+          line("ENTRY_OUTPUT", "a.html", "./a-[hash].js"),
+          line("ENTRY_OUTPUT", "a.html", "./a-[hash].css"),
+          line("ENTRY", "b.html", "./b.html"),
+          line("ENTRY_OUTPUT", "b.html", "./b-[hash].js"),
+          line("ENTRY_OUTPUT", "b.html", "./a-[hash].css"),
+        ],
+      });
+    });
+
+    test("a page whose script has an import(), with --splitting", async () => {
+      const { rows, section, raw, line } = await entryPointReport(
+        {
+          "index.html": page("", `<script type="module" src="./app.js"></script>`),
+          "app.js": `import("./lazy.js").then(m => console.log(m.lazy));\n`,
+          "lazy.js": `export const lazy = "lazy";\n`,
+        },
+        ["./index.html", "--splitting"],
+      );
+      expect({ rows, section, raw }).toEqual({
+        rows: ["| Entry points | 2 |"],
+        section: [
+          "### Entry: `index.html`",
+          "**Output file**: `./index.html`",
+          "**Bundle size**: <size>",
+          "**Output file**: `./index-[hash].js`",
+          "**Bundle size**: <size>",
+          "**Loads these chunks** (code-splitting):",
+          "- `./lazy-[hash].js` (<size>, dynamic-import)",
+          "**Bundled modules** (sorted by contribution):",
+          "| <size> | `app.js` |",
+          "| <size> | `index.html` |",
+          "### Entry: `lazy.js`",
+          "**Output file**: `./lazy-[hash].js`",
+          "**Bundle size**: <size>",
+          "**Exports**: `lazy`",
+          "**Bundled modules** (sorted by contribution):",
+          "| <size> | `lazy.js` |",
+        ],
+        raw: [
+          line("ENTRY", "index.html", "./index.html"),
+          line("ENTRY_OUTPUT", "index.html", "./index-[hash].js"),
+          line("ENTRY", "lazy.js", "./lazy-[hash].js"),
+        ],
+      });
+    });
+
+    test("a stylesheet entry point beside a JS entry point that imports it", async () => {
+      const { rows, section, raw, line } = await entryPointReport(entryWithStylesheet, ["./style.css", "./entry.js"]);
+      expect({ rows, files: filesOnly(section), raw }).toEqual({
+        rows: ["| Entry points | 2 |"],
+        files: [
+          "### Entry: `entry.js`",
+          "**Output file**: `./entry.js`",
+          "**CSS bundle**: `./entry.css`",
+          "### Entry: `style.css`",
+          "**Output file**: `./style.css`",
+        ],
+        raw: [
+          line("ENTRY", "entry.js", "./entry.js"),
+          line("ENTRY_OUTPUT", "entry.js", "./entry.css"),
+          line("ENTRY", "style.css", "./style.css"),
+        ],
+      });
+    });
+
+    test("a stylesheet entry point that is the CSS bundle of a JS entry point, with --css-chunking", async () => {
+      const { rows, section, raw, line, outputs } = await entryPointReport(entryWithStylesheet, [
+        "./style.css",
+        "./entry.js",
+        "--css-chunking",
+      ]);
+      // One output is the file of one entry point and the CSS bundle of another.
+      expect(Object.entries(outputs).map(([path, output]) => [path, output.entryPoint, output.cssBundle])).toEqual([
+        ["./entry.js", "entry.js", "./style.css"],
+        ["./style.css", "style.css", undefined],
+      ]);
+      expect({ rows, files: filesOnly(section), raw }).toEqual({
+        rows: ["| Entry points | 2 |"],
+        files: [
+          "### Entry: `entry.js`",
+          "**Output file**: `./entry.js`",
+          "**CSS bundle**: `./style.css`",
+          "**Bundled modules**: see entry `style.css`",
+          "### Entry: `style.css`",
+          "**Output file**: `./style.css`",
+        ],
+        raw: [
+          line("ENTRY", "entry.js", "./entry.js"),
+          line("ENTRY_OUTPUT", "entry.js", "./style.css"),
+          line("ENTRY", "style.css", "./style.css"),
+        ],
+      });
+    });
+
+    test("an import() target that imports CSS, with --splitting", async () => {
+      const { rows, section, raw, line } = await entryPointReport(
+        {
+          "entry.js": `import { shared } from "./shared.js";\nconsole.log(shared);\nimport("./lazy.js").then(m => console.log(m.lazy));\n`,
+          "lazy.js": `import "./lazy.css";\nimport { shared } from "./shared.js";\nexport const lazy = "lazy " + shared;\n`,
+          "shared.js": `export const shared = "shared value";\n`,
+          "lazy.css": `.lazy { color: red }\n`,
+        },
+        ["./entry.js", "--splitting"],
+      );
+      // The chunk of shared.js belongs to no entry point. The CSS bundle is not a code-split chunk.
+      expect({ rows, files: filesOnly(section), raw }).toEqual({
+        rows: ["| Entry points | 2 |", "| Code-split chunks | 1 |"],
+        files: [
+          "### Entry: `entry.js`",
+          "**Output file**: `./entry.js`",
+          "**CSS bundle**: `./entry.css`",
+          "### Entry: `lazy.js`",
+          "**Output file**: `./lazy-[hash].js`",
+          "**CSS bundle**: `./entry.css`",
+          "**Bundled modules**: see entry `entry.js`",
+        ],
+        raw: [
+          line("ENTRY", "entry.js", "./entry.js"),
+          line("ENTRY_OUTPUT", "entry.js", "./entry.css"),
+          line("ENTRY", "lazy.js", "./lazy-[hash].js"),
+          line("ENTRY_OUTPUT", "lazy.js", "./entry.css"),
+        ],
+      });
+    });
+
+    // Passes without the fix too: a build with one output for each entry point keeps its report.
+    test("entry points with one output each have no [ENTRY_OUTPUT: line", async () => {
+      const { rows, section, raw, line, markdown } = await entryPointReport(
+        {
+          "a.js": `import { shared } from "./shared.js";\nconsole.log("a", shared);\n`,
+          "b.js": `import { shared } from "./shared.js";\nconsole.log("b", shared);\n`,
+          "shared.js": `export const shared = "shared value";\n`,
+        },
+        ["./a.js", "./b.js", "--splitting"],
+      );
+      expect({ rows, files: filesOnly(section), raw }).toEqual({
+        rows: ["| Entry points | 2 |", "| Code-split chunks | 1 |"],
+        files: ["### Entry: `a.js`", "**Output file**: `./a.js`", "### Entry: `b.js`", "**Output file**: `./b.js`"],
+        raw: [line("ENTRY", "a.js", "./a.js"), line("ENTRY", "b.js", "./b.js")],
+      });
+      expect(markdown).not.toContain("ENTRY_OUTPUT");
+    });
+
+    test("Bun.build writes the same report", async () => {
+      using dir = tempDir("metafile-md-entry-points-api", entryWithStylesheet);
+      const result = await Bun.build({
+        entrypoints: [`${dir}/entry.js`],
+        outdir: `${dir}/dist`,
+        metafile: { markdown: "meta.md" } as any,
+      });
+      expect(result.success).toBe(true);
+
+      const markdown = await Bun.file(`${dir}/dist/meta.md`).text();
+      expect({
+        entryPoints: markdown.match(/^\| Entry points \| \d+ \|$/m)?.[0],
+        headings: markdown.match(/^### Entry: /gm)?.length,
+        files: markdown.match(/^\*\*(Output file|CSS bundle)\*\*: .*$/gm),
+        entryLines: markdown.match(/^\[ENTRY(_OUTPUT)?: /gm),
+      }).toEqual({
+        entryPoints: "| Entry points | 1 |",
+        headings: 1,
+        files: ["**Output file**: `./entry.js`", "**CSS bundle**: `./entry.css`"],
+        entryLines: ["[ENTRY: ", "[ENTRY_OUTPUT: "],
+      });
+    });
+  });
+
   test("markdown includes import kinds", async () => {
     using dir = tempDir("metafile-md-import-kinds", {
       "entry.js": `

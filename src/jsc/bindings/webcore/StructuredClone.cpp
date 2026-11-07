@@ -57,12 +57,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
     RETURN_IF_EXCEPTION(throwScope, {});
 
     Vector<RefPtr<MessagePort>> ports;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(serializeOptions.transfer), ports);
+    // structuredClone never leaves this agent cluster, so SABs may share their backing store per
+    // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal —
+    // only the WorkerPostMessage context takes the SAB-sharing path; Default would copy to a plain AB.
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(serializeOptions.transfer), ports,
+        SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    RETURN_IF_EXCEPTION(throwScope, {});
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
     }
-    throwScope.assertNoException();
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -88,16 +93,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced, (JSC::JSGlobalObject
 
     SerializationContext serializationContext = SerializationContext::Default;
     if (serializationContextValue.isString()) {
-        if (serializationContextValue.getString(globalObject) == "worker"_s) {
+        String serializationContextString = serializationContextValue.getString(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (serializationContextString == "worker"_s) {
             serializationContext = SerializationContext::WorkerPostMessage;
-        } else if (serializationContextValue.getString(globalObject) == "window"_s) {
+        } else if (serializationContextString == "window"_s) {
             serializationContext = SerializationContext::WindowPostMessage;
-        } else if (serializationContextValue.getString(globalObject) == "postMessage"_s) {
+        } else if (serializationContextString == "postMessage"_s) {
             serializationContext = SerializationContext::WindowPostMessage;
-        } else if (serializationContextValue.getString(globalObject) == "default"_s) {
+        } else if (serializationContextString == "default"_s) {
             serializationContext = SerializationContext::Default;
         } else {
             throwTypeError(globalObject, throwScope, "invalid serialization context"_s);
+            return {};
         }
     }
 
@@ -121,11 +129,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced, (JSC::JSGlobalObject
 
     Vector<RefPtr<MessagePort>> ports;
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(transferList), ports, forStorage, serializationContext, forTransfer);
+    RETURN_IF_EXCEPTION(throwScope, {});
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
     }
-    throwScope.assertNoException();
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
     RETURN_IF_EXCEPTION(throwScope, {});

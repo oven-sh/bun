@@ -3,13 +3,31 @@ import { promisify } from "util";
 
 let active = false;
 export class FakeTimers {
+  static [key: string]: any;
+  [key: string]: any;
   private constructor() {}
-  static install(opts: { now?: number } = { now: 0 }) {
+  static install(opts: { now?: number | Date; [key: string]: any } = {}) {
     if (active) {
       vi.useRealTimers();
     }
     active = true;
-    vi.useFakeTimers({ now: opts.now });
+    // Unlike vi.useFakeTimers(), @sinonjs/fake-timers defaults to now = 0 and fakes everything.
+    vi.useFakeTimers({
+      now: opts.now ?? 0,
+      toFake: opts.toFake ?? [
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        "setImmediate",
+        "clearImmediate",
+        "Date",
+        "performance",
+        "hrtime",
+        "nextTick",
+        "queueMicrotask",
+      ],
+    });
     return new FakeTimers();
   }
   uninstall() {
@@ -19,11 +37,17 @@ export class FakeTimers {
   tick(ms: number) {
     vi.advanceTimersByTime(ms);
   }
+  async tickAsync(ms: number) {
+    await vi.advanceTimersByTimeAsync(ms);
+  }
   hrtime(...args: Parameters<typeof process.hrtime>) {
     return process.hrtime(...args);
   }
   get setTimeout() {
     return setTimeout;
+  }
+  get setInterval() {
+    return setInterval;
   }
   get now() {
     return Date.now();
@@ -34,10 +58,16 @@ export function NOOP() {
   return undefined;
 }
 
-export const assert = (value: boolean) => {
+export const assert: any = (value: boolean) => {
   expect(value).toBeTrue();
 };
 Object.assign(assert, {
+  isTrue(actual: unknown) {
+    expect(actual).toBe(true);
+  },
+  isFalse(actual: unknown) {
+    expect(actual).toBe(false);
+  },
   equals(actual: unknown, expected: unknown) {
     expect(actual).toBe(expected);
   },
@@ -51,17 +81,27 @@ Object.assign(assert, {
     expect(a.calls.length).toBe(2);
   },
   alwaysCalledWith(a, arg) {
-    expect(a.calls.every(c => c.includes(arg))).toBeTrue(2);
+    (expect(a.calls.every(c => c.includes(arg))) as any).toBeTrue(2);
   },
 });
-export const refute = {};
-export const sinon = {
+export const refute: any = {};
+export const sinon: any = {
   stub() {
-    let calls = [];
+    let calls: any[] = [];
     const result = (...args) => {
       calls.push(args);
     };
     result.calls = calls;
+    Object.defineProperty(result, "called", {
+      get() {
+        return calls.length > 0;
+      },
+    });
+    Object.defineProperty(result, "calledThrice", {
+      get() {
+        return calls.length === 3;
+      },
+    });
     Object.defineProperty(result, "notCalled", {
       get() {
         return calls.length === 0;

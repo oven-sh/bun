@@ -30,6 +30,9 @@ static_assert(real_v8::internal::Internals::kFrameCPSlotCount == 0,
 static_assert(v8::FunctionCallbackInfo<v8::Value>::kFrameTypeApiCallExit
         == real_v8::internal::Internals::kFrameTypeApiCallExit,
     "Frame type for API callback exit frames does not match V8");
+static_assert(v8::FunctionCallbackInfo<v8::Value>::kFrameTypeApiConstructExit
+        == real_v8::internal::Internals::kFrameTypeApiConstructExit,
+    "Frame type for API construct exit frames does not match V8");
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::FunctionCallbackInfo<v8::Value>)
 

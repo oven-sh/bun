@@ -1,11 +1,17 @@
-fixtures/wpt
+# Keep the wpt tree unvendored except the url resources the vendored
+# whatwg-url tests require.
+fixtures/wpt/*
+!fixtures/wpt/LICENSE.md
+!fixtures/wpt/README.md
+!fixtures/wpt/url/
 fixtures/tools
 fixtures/v8-coverage
 fixtures/test-runner/*
 !fixtures/test-runner/index.js
 !fixtures/test-runner/tagged.js
 fixtures/source-map
-fixtures/snapshot
+fixtures/snapshot/*
+!fixtures/snapshot/typescript.js
 fixtures/repl*
 .tmp.*
 **/fails.txt

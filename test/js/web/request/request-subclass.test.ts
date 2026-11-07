@@ -5,7 +5,7 @@ import { RequestInit } from "undici-types";
 test("fetch() calls request.method & request.url getters on subclass", async () => {
   class MyRequest extends Request {
     constructor(input: string, init?: RequestInit, actual_url?: string) {
-      super(input, init);
+      super(input, init as globalThis.RequestInit);
 
       Object.defineProperty(this, "url", {
         get() {
@@ -46,7 +46,7 @@ test("fetch() calls request.method & request.url getters on subclass", async () 
 test("fetch() with subclass containing invalid HTTP headers throws without crashing", async () => {
   class MyRequest extends Request {
     constructor(input: string, init?: RequestInit, actual_url?: string) {
-      super(input, init);
+      super(input, init as globalThis.RequestInit);
 
       Object.defineProperty(this, "url", {
         get() {

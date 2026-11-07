@@ -1,0 +1,11 @@
+import { check } from "../src/show";
+import { Shape, live, bump, registry, remember, range, accessors } from "fake-shapes";
+import { counter, increment, list, table, config, Vec2, Temperature } from "fake-typed";
+import { created, noteCreated, defaults } from "../src/models";
+import { callbacks, register, hits, cached } from "../src/store";
+import { setting, setSetting } from "../src/middle";
+const F = "35b";
+const atStart = [Shape.count, live, registry.size, range.closed, accessors._v, counter, [...list], { ...table }, config.depth, config.nested.names.length, Vec2.made, Temperature.made, created, defaults.tags.length, callbacks.length, hits("fresh"), setting, (globalThis as any).leaked, globalThis.preloaded.runs, globalThis.preloaded.registered];
+new Shape("x"); bump(); remember("k", 1); accessors.v = 9; increment(3); list.push(9); table.added = 1; config.depth = 99; config.nested.names.push("z"); new Vec2(0, 0); new Temperature(0); noteCreated(); defaults.tags.push("y"); register(n => n); cached("fresh", () => 1); setSetting("dirty"); (globalThis as any).leaked = "b"; for (const _ of range(0, 3)) break;
+check(F, "module state at the start of the file", () => atStart);
+check(F, "and after", () => [Shape.count > 0, live, registry.size, counter, list.length, table.added, config.depth, created, callbacks.length, setting]);

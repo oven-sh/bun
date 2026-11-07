@@ -1,0 +1,7 @@
+{
+  "name": "@isaacs/testing-rebuild-bundle-parent",
+  "version": "1.0.1",
+  "dependencies": {
+    "@isaacs/testing-rebuild-bundle-a": ""
+  }
+}

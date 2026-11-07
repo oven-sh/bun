@@ -57,19 +57,9 @@ extern "C" StrongRefImpl* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject,
     return encodeStrongRef(block, index);
 }
 
-extern "C" JSC::EncodedJSValue Bun__StrongRef__get(StrongRefImpl* _Nonnull ref)
-{
-    return JSC::JSValue::encode(decodeStrongRefBlock(ref)->read(decodeStrongRefIndex(ref)));
-}
-
 extern "C" void Bun__StrongRef__set(StrongRefImpl* _Nonnull ref, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
     decodeStrongRefBlock(ref)->write(JSC::getVM(globalObject), decodeStrongRefIndex(ref), JSC::JSValue::decode(encodedValue));
-}
-
-extern "C" void Bun__StrongRef__clear(StrongRefImpl* _Nonnull ref)
-{
-    decodeStrongRefBlock(ref)->clearValue(decodeStrongRefIndex(ref));
 }
 
 // The Rust caller (Strong.rs Impl::destroy) skips this call once
@@ -82,10 +72,14 @@ extern "C" void Bun__StrongRef__delete(StrongRefImpl* _Nonnull ref)
     auto* block = decodeStrongRefBlock(ref);
     auto& vm = block->vm();
     auto* clientData = clientDataFast(vm);
+    bool empty = block->clear(decodeStrongRefIndex(ref));
+    // Mid-sweep (a JSCell destructor) only the slot may change; acquire() reclaims empties later.
+    if (vm.heap.mutatorState() == JSC::MutatorState::Sweeping) [[unlikely]]
+        return;
     // This block just freed a slot, so the next acquire() should try it first
     // (covers the FIFO pattern where the oldest-armed block gets room while
     // the cursor sits at a full head).
     clientData->m_strongRootBlockCursor = block;
-    if (block->clear(decodeStrongRefIndex(ref))) [[unlikely]]
+    if (empty) [[unlikely]]
         StrongRootBlock::release(clientData, vm, block);
 }

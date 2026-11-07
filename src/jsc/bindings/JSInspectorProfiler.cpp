@@ -59,18 +59,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning, (JSGlobalObject*, Call
 
 // Precise code coverage via JSC's control-flow profiler. Unlike V8 (which
 // deopts and instruments already-compiled code), only functions compiled from
-// this point on are instrumented; recompiling would corrupt live TLA modules.
+// this point on are instrumented: JSC's own toggle recompiles everything
+// (deleteAllCode when idle), which would corrupt suspended TLA module bodies.
+//
+// Compiled instrumented code writes through raw BasicBlockLocation pointers the
+// profiler owns (op_profile_control_flow), so without that recompile the
+// profiler can never be freed again once code has been compiled against it: it
+// is enabled once and stays for the VM's lifetime. "stop" is protocol state in
+// node/inspector.ts only.
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startPreciseCoverage);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_startPreciseCoverage, (JSGlobalObject * globalObject, CallFrame*))
 {
-    globalObject->vm().enableControlFlowProfiler();
+    auto& vm = globalObject->vm();
+    if (!vm.controlFlowProfiler())
+        vm.enableControlFlowProfiler();
     return JSValue::encode(jsUndefined());
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_stopPreciseCoverage);
-JSC_DEFINE_HOST_FUNCTION(jsFunction_stopPreciseCoverage, (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_stopPreciseCoverage, (JSGlobalObject*, CallFrame*))
 {
-    globalObject->vm().disableControlFlowProfiler();
     return JSValue::encode(jsUndefined());
 }
 
@@ -111,7 +119,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
     auto scripts = JSON::Array::create();
     for (auto& provider : providers) {
         SourceID sourceID = provider->asID();
-        auto blocks = profiler->getBasicBlocksForSourceIDWithoutFunctionRange(sourceID, vm);
+        auto blocks = profiler->getBasicBlocksForSourceIDWithoutFunctionRange(sourceID, vm, JSC::ControlFlowProfiler::Gaps::With);
         auto functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
         if (blocks.isEmpty() && functionRanges.isEmpty())
             continue;
@@ -124,11 +132,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
         script->setDouble("scriptId"_s, static_cast<double>(sourceID));
         script->setDouble("sourceLength"_s, static_cast<double>(provider->source().length()));
 
+        // JSC's ranges include their last character; V8's end after it.
         auto blockArray = JSON::Array::create();
         for (const auto& block : blocks) {
+            // V8 has no range for a part of a loop header.
+            if (block.m_isInLoopHeader)
+                continue;
             auto range = JSON::Array::create();
             range->pushInteger(block.m_startOffset);
-            range->pushInteger(block.m_endOffset);
+            range->pushInteger(block.m_endOffset + 1);
             range->pushDouble(static_cast<double>(block.m_executionCount));
             blockArray->pushValue(WTF::move(range));
         }
@@ -136,9 +148,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
 
         auto functionArray = JSON::Array::create();
         for (const auto& functionRange : functionRanges) {
+            // V8 has a static block as a function, and a generator or an async function once.
+            // The program has the whole-script entry.
+            auto parseMode = std::get<3>(functionRange);
+            if (JSC::isProgramOrModuleParseMode(parseMode) || JSC::isGeneratorOrAsyncFunctionBodyParseMode(parseMode))
+                continue;
             auto range = JSON::Array::create();
             range->pushDouble(static_cast<double>(std::get<1>(functionRange)));
-            range->pushDouble(static_cast<double>(std::get<2>(functionRange)));
+            range->pushDouble(static_cast<double>(std::get<2>(functionRange)) + 1);
             range->pushBoolean(std::get<0>(functionRange));
             functionArray->pushValue(WTF::move(range));
         }

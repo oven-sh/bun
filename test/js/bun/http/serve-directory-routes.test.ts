@@ -1,11 +1,34 @@
 import { serve, type Server } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { symlinkSync } from "fs";
-import { isLinux, tempDir } from "harness";
+import { symlinkSync, utimesSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 
+const strace = isLinux ? Bun.which("strace") : null;
+const straceEnv = {
+  ...bunEnv,
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+  LSAN_OPTIONS: "detect_leaks=0",
+};
+const straceInjectArgs = (traceFile: string) => [
+  "-o",
+  traceFile,
+  "-e",
+  "trace=openat2",
+  "-e",
+  "inject=openat2:error=EPERM:when=1",
+];
+const canInjectOpenat2Error =
+  !!strace &&
+  Bun.spawnSync({
+    cmd: [strace, ...straceInjectArgs("/dev/null"), bunExe(), "--version"],
+    env: straceEnv,
+    stdout: "ignore",
+    stderr: "ignore",
+  }).exitCode === 0;
+
 describe("Bun.serve() directory routes", () => {
-  let server: Server | undefined;
+  let server: Server<undefined> | undefined;
 
   afterEach(() => {
     server?.stop(true);
@@ -21,7 +44,7 @@ describe("Bun.serve() directory routes", () => {
     let buf = "";
     const sock = await Bun.connect({
       hostname: "127.0.0.1",
-      port: server!.port,
+      port: server!.port!,
       socket: {
         data(_s, chunk) {
           buf += chunk.toString("latin1");
@@ -305,6 +328,55 @@ describe("Bun.serve() directory routes", () => {
     expect(unsat.headers.get("content-range")).toBe("bytes */10");
   });
 
+  // RFC 9110 §13.1.5: only an If-Range validator that matches may get a 206.
+  // The ETag of a directory route is weak, and a weak tag never matches
+  // If-Range, so the date is the one validator a client can resume with.
+  it("honors If-Range", async () => {
+    using dir = tempDir("serve-dir-if-range", {
+      "public/data.bin": "0123456789",
+    });
+    const file = join(String(dir), "public", "data.bin");
+    utimesSync(file, new Date("2020-01-02T03:04:05Z"), new Date("2020-01-02T03:04:05Z"));
+
+    server = serve({
+      port: 0,
+      routes: { "/*": { dir: join(String(dir), "public") } },
+    });
+    const url = `${server.url}data.bin`;
+
+    async function get(headers: Record<string, string>, method = "GET") {
+      const res = await fetch(url, { method, headers });
+      return { status: res.status, contentRange: res.headers.get("content-range"), body: await res.text() };
+    }
+    const partial = { status: 206, contentRange: "bytes 2-5/10", body: "2345" };
+    const full = { status: 200, contentRange: null, body: "0123456789" };
+
+    const first = await fetch(url);
+    const lastModified = first.headers.get("last-modified")!;
+    const etag = first.headers.get("etag")!;
+    expect(lastModified).toBe("Thu, 02 Jan 2020 03:04:05 GMT");
+    expect(etag).toStartWith('W/"');
+    await first.text();
+
+    const range = "bytes=2-5";
+    expect(await get({ range, "if-range": lastModified })).toEqual(partial);
+    expect(await get({ range, "if-range": "Thu, 02 Jan 2020 03:04:06 GMT" })).toEqual(full);
+    expect(await get({ range, "if-range": "Thu, 02 Jan 2020 03:04:04 GMT" })).toEqual(full);
+    expect(await get({ range, "if-range": etag })).toEqual(full);
+    expect(await get({ range, "if-range": etag.slice(2) })).toEqual(full);
+    expect(await get({ range, "if-range": '"does-not-match"' })).toEqual(full);
+    expect(await get({ range: "bytes=100-200", "if-range": '"does-not-match"' })).toEqual(full);
+    expect(await get({ range, "if-range": lastModified }, "HEAD")).toEqual({ ...partial, body: "" });
+    expect(await get({ range, "if-range": etag }, "HEAD")).toEqual({ ...full, body: "" });
+
+    // The file changes on disk. A client that resumes with the old validator
+    // gets the new file in full, not its tail.
+    writeFileSync(file, "abcdefghij");
+    utimesSync(file, new Date("2021-06-07T08:09:10Z"), new Date("2021-06-07T08:09:10Z"));
+    expect(await get({ range, "if-range": lastModified })).toEqual({ ...full, body: "abcdefghij" });
+    expect(await get({ range, "if-range": "Mon, 07 Jun 2021 08:09:10 GMT" })).toEqual({ ...partial, body: "cdef" });
+  });
+
   it("rejects path traversal", async () => {
     using dir = tempDir("serve-dir-traversal", {
       "secret.txt": "SECRET",
@@ -341,38 +413,149 @@ describe("Bun.serve() directory routes", () => {
     expect(dbl.body).not.toContain("SECRET");
   });
 
-  it.skipIf(!isLinux)("rejects symlink escapes on Linux via RESOLVE_IN_ROOT", async () => {
-    using dir = tempDir("serve-dir-symlink", {
+  describe.skipIf(isWindows).each([
+    ["by default", {}],
+    ["when the kernel is not asked", { BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH: "1" }],
+  ] as const)("symlinks %s", (_, env) => {
+    it.concurrent("only lead to what is inside the root", async () => {
+      using dir = tempDir("serve-dir-symlink", {
+        "secret.txt": "SECRET",
+        "public-other/secret.txt": "SECRET",
+        "public/index.html": "root index",
+        "public/inside.txt": "inside",
+        "public/sub/index.html": "index",
+      });
+      const root = join(String(dir), "public");
+      const links = {
+        "alias": "inside.txt",
+        "alias-dir": "sub",
+        "alias-up": "sub/../inside.txt",
+        "alias-abs": join(root, "inside.txt"),
+        "alias-back": "../public/inside.txt",
+        "alias-root": "../public",
+        "alias-slash": "/sub/../../inside.txt",
+        "sub/alias-slash": "/inside.txt",
+        "escape-rel": "../secret.txt",
+        "escape-abs": join(String(dir), "secret.txt"),
+        "escape-down": "sub/../../secret.txt",
+        "escape-dir": "..",
+        "escape-sibling": "../public-other/secret.txt",
+        "escape-sibling-abs": root + "-other/secret.txt",
+        "loop": "loop",
+      };
+      for (const [name, target] of Object.entries(links)) symlinkSync(target, join(root, name));
+
+      const script = `
+        const server = Bun.serve({ port: 0, routes: { "/static/*": { dir: ${JSON.stringify(root)} } } });
+        const out = {};
+        for (const path of JSON.parse(process.argv.at(-1))) {
+          const res = await fetch(server.url + "static/" + path);
+          out[path] = res.status + " " + (await res.text());
+        }
+        server.stop(true);
+        console.log(JSON.stringify(out));
+      `;
+      const inside = { "alias": "200 inside", "alias-dir/": "200 index", "alias-up": "200 inside" };
+      // The root is `/` and its own parent.
+      const rootIsSlash = {
+        "alias-slash": "200 inside",
+        "sub/alias-slash": "200 inside",
+        "escape-dir/": "200 root index",
+        "alias-abs": "404 ",
+        "alias-back": "404 ",
+        "alias-root/": "404 ",
+      };
+      const outside = Object.fromEntries(
+        [
+          "escape-rel",
+          "escape-abs",
+          "escape-down",
+          "escape-dir/secret.txt",
+          "escape-sibling",
+          "escape-sibling-abs",
+          "loop",
+        ].map(path => [path, "404 "]),
+      );
+      const expected = { ...inside, ...rootIsSlash, ...outside };
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script, JSON.stringify(Object.keys(expected))],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout && JSON.parse(stdout), stderr).toEqual(expected);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  it.skipIf(!canInjectOpenat2Error)("keeps clamping symlinks to the root after an open error on one path", async () => {
+    using dir = tempDir("serve-dir-open-error", {
       "secret.txt": "SECRET",
       "public/ok.txt": "ok",
-      "public/inside.txt": "inside",
     });
-
     const root = String(dir);
-    // Absolute target: IN_ROOT resolves it against dirfd, so this looks for
-    // public/<abs path> which doesn't exist.
-    symlinkSync(join(root, "secret.txt"), join(root, "public", "escape-abs"));
-    // Relative target climbing out: `..` is clamped at the root.
     symlinkSync("../secret.txt", join(root, "public", "escape-rel"));
-    symlinkSync("inside.txt", join(root, "public", "alias"));
+    symlinkSync(join(root, "secret.txt"), join(root, "public", "escape-abs"));
 
-    server = serve({
-      port: 0,
-      routes: { "/static/*": { dir: join(root, "public") } },
-      fetch: () => new Response("fallback", { status: 404 }),
+    const script = `
+        const server = Bun.serve({
+          port: 0,
+          routes: { "/static/*": { dir: ${JSON.stringify(join(root, "public"))} } },
+        });
+        const out = [];
+        for (const p of ["escape-rel", "escape-abs", "ok.txt"]) {
+          const res = await fetch(server.url + "static/" + p);
+          out.push([res.status, await res.text()]);
+        }
+        server.stop(true);
+        console.log(JSON.stringify(out));
+      `;
+    const traceFile = join(root, "strace.log");
+    await using proc = Bun.spawn({
+      cmd: [strace!, ...straceInjectArgs(traceFile), bunExe(), "-e", script],
+      env: straceEnv,
+      stdout: "pipe",
+      stderr: "pipe",
     });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const trace = await Bun.file(traceFile).text();
+    expect(trace, stderr).toMatch(/openat2\(.*"escape-rel".*= -1 EPERM .*\(INJECTED\)/);
+    expect(stdout.trim(), stderr).toBe(`[[404,""],[404,""],[200,"ok"]]`);
+    expect(exitCode).toBe(0);
+  });
 
-    // Symlink that stays inside the root is allowed.
-    const inside = await fetch(`${server.url}static/alias`);
-    expect(inside.status).toBe(200);
-    expect(await inside.text()).toBe("inside");
+  it.skipIf(!isLinux)("keeps clamping symlinks to the root when only Android's variables are set", async () => {
+    using dir = tempDir("serve-dir-android-env", {
+      "secret.txt": "SECRET",
+      "public/ok.txt": "ok",
+    });
+    const root = String(dir);
+    symlinkSync("../secret.txt", join(root, "public", "escape-rel"));
+    symlinkSync(join(root, "secret.txt"), join(root, "public", "escape-abs"));
 
-    // Symlinks that escape the root are clamped by the kernel.
-    for (const name of ["escape-abs", "escape-rel"]) {
-      const res = await fetch(`${server.url}static/${name}`);
-      expect(await res.text()).not.toContain("SECRET");
-      expect(res.status).toBe(404);
-    }
+    const script = `
+        const server = Bun.serve({
+          port: 0,
+          routes: { "/static/*": { dir: ${JSON.stringify(join(root, "public"))} } },
+        });
+        const out = [];
+        for (const p of ["escape-rel", "escape-abs", "ok.txt"]) {
+          const res = await fetch(server.url + "static/" + p);
+          out.push([res.status, await res.text()]);
+        }
+        server.stop(true);
+        console.log(JSON.stringify(out));
+      `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, ANDROID_ROOT: join(root, "system"), ANDROID_DATA: join(root, "data") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim(), stderr).toBe(`[[404,""],[404,""],[200,"ok"]]`);
+    expect(exitCode).toBe(0);
   });
 
   it("percent-decodes file names", async () => {

@@ -1,4 +1,5 @@
-import { LoaderKeys } from "../api/schema";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import NodeErrors from "../jsc/bindings/ErrorCode.ts";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
@@ -9,34 +10,35 @@ import { registerNativeCall } from "./generate-js2native";
 export const replacements: ReplacementRule[] = [
   { from: /\bthrow new TypeError\b/g, to: "$throwTypeError" },
   { from: /\bthrow new RangeError\b/g, to: "$throwRangeError" },
-  { from: /\bthrow new OutOfMemoryError\b/g, to: "$throwOutOfMemoryError" },
   { from: /\bnew TypeError\b/g, to: "$makeTypeError" },
   { from: /\bexport\s*default/g, to: "$exports =" },
 ];
 
-let error_i = 0;
-for (let i = 0; i < NodeErrors.length; i++) {
-  const [code, _constructor, _name, ...other_constructors] = NodeErrors[i];
+/** `$<name>(` is `$makeErrorWithCode(<number>, `. The numbers are `Bun::ErrorCode` (generate-node-errors.ts). */
+export const numberedErrorCodes: readonly { name: string; number: number }[] = NodeErrors.flatMap(
+  ([code, _constructor, _name, ...otherConstructors]) => [
+    code,
+    ...otherConstructors.flatMap(constructor => (constructor == null ? [] : [`${code}_${constructor.name}`])),
+  ],
+).map((name, number) => ({ name, number }));
+
+/** `$inherits<name>(` is `$inherits(<number>, `. */
+export const numberedClasses: readonly { name: string; number: number }[] = jsclasses.map((name, number) => ({
+  name,
+  number,
+}));
+
+for (const { name, number } of numberedErrorCodes) {
   replacements.push({
-    from: new RegExp(`\\b\\__intrinsic__${code}\\(`, "g"),
-    to: `$makeErrorWithCode(${error_i}, `,
+    from: new RegExp(`\\b\\__intrinsic__${name}\\(`, "g"),
+    to: `$makeErrorWithCode(${number}, `,
   });
-  error_i += 1;
-  for (const con of other_constructors) {
-    if (con == null) continue;
-    replacements.push({
-      from: new RegExp(`\\b\\__intrinsic__${code}_${con.name}\\(`, "g"),
-      to: `$makeErrorWithCode(${error_i}, `,
-    });
-    error_i += 1;
-  }
 }
 
-for (let id = 0; id < jsclasses.length; id++) {
-  const name = jsclasses[id][0];
+for (const { name, number } of numberedClasses) {
   replacements.push({
     from: new RegExp(`\\b\\__intrinsic__inherits${name}\\(`, "g"),
-    to: `$inherits(${id}, `,
+    to: `$inherits(${number}, `,
   });
 }
 
@@ -61,9 +63,16 @@ export const globalsToPrefix = [
   "AbortSignal",
   "Array",
   "ArrayBuffer",
+  "BigInt64Array",
+  "BigUint64Array",
   "Buffer",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
   "Infinity",
-  "Loader",
+  "Int16Array",
+  "Int32Array",
+  "Int8Array",
   "Promise",
   "ReadableByteStreamController",
   "ReadableStream",
@@ -73,9 +82,11 @@ export const globalsToPrefix = [
   "ReadableStreamDefaultReader",
   "TransformStream",
   "TransformStreamDefaultController",
+  "Uint16Array",
+  "Uint32Array",
   "Uint8Array",
+  "Uint8ClampedArray",
   "String",
-  "Buffer",
   "RegExp",
   "WritableStream",
   "WritableStreamDefaultController",
@@ -89,10 +100,70 @@ replacements.push({
   to: "extends __no_intrinsic__%1",
 });
 
-// These enums map to $<enum>IdToLabel and $<enum>LabelToId
+// Classes and objects in ZigGlobalObject.lut.txt. `Blob` becomes `@natives.Blob` (NativeGlobals, ZigGlobalObject.cpp).
+// Its functions are left out, except nativeFunctions: the one in `@natives` is not the one on globalThis.
+export const nativeGlobals = Array.from(
+  readFileSync(join(import.meta.dir, "../jsc/bindings/ZigGlobalObject.lut.txt"), "utf8").matchAll(
+    /^ +(\w+) +(\S+) +(\S+)$/gm,
+  ),
+)
+  .filter(
+    ({ 2: value, 3: kind }) =>
+      /\b(CellProperty|ClassStructure)\b/.test(kind) || /ConstructorCallback$|::get\w+Constructor$/.test(value),
+  )
+  .map(({ 1: name }) => name)
+  .filter(name => !globalsToPrefix.includes(name) && name !== "Bun" && name !== "process");
+
+// What fake timers replace. As in Node, they don't stop the timers of builtin modules.
+// Only the bare name is `@natives.setTimeout`. `globalThis.setTimeout` is what script sees, for node:timers.
+export const nativeFunctions = [
+  "setTimeout",
+  "setInterval",
+  "setImmediate",
+  "clearTimeout",
+  "clearInterval",
+  "clearImmediate",
+  "queueMicrotask",
+];
+
+/** The defines for globalsToPrefix and nativeGlobals don't apply to `const { Blob } = globalThis`. */
+export function assertNoDestructuredGlobalThis(source: string, file: string) {
+  if (/}\s*=\s*globalThis\b/.test(source)) {
+    throw new Error(
+      `${file}: do not destructure globalThis, script may have replaced its properties. Write the bare name (\`Blob\`): the bundler turns it into a read that script cannot reach, see nativeGlobals in src/codegen/replacements.ts`,
+    );
+  }
+}
+
+// These enums map to $<enum>IdToLabel and $<enum>LabelToId (ids start at 1)
 // Make sure to define in ./builtins.d.ts
 export const enums = {
-  Loader: LoaderKeys,
+  // Ids are the `bun_options_types::schema::api::Loader` discriminants
+  // (JSBundler passes those numbers to BundlerPlugin.ts).
+  Loader: [
+    "jsx",
+    "js",
+    "ts",
+    "tsx",
+    "css",
+    "file",
+    "json",
+    "jsonc",
+    "toml",
+    "wasm",
+    "napi",
+    "base64",
+    "dataurl",
+    "text",
+    "bunsh",
+    "sqlite",
+    "sqlite_embedded",
+    "html",
+    "yaml",
+    "json5",
+    "md",
+    "xml",
+  ],
   ImportKind: [
     "entry-point-run",
     "entry-point-build",
@@ -106,28 +177,21 @@ export const enums = {
   ],
 };
 
-// These identifiers have typedef but not present at runtime (converted with replacements)
-// If they are present in the bundle after runtime, we warn at the user.
-// TODO: implement this check.
-export const warnOnIdentifiersNotPresentAtRuntime = [
-  //
-  "OutOfMemoryError",
-  "notImplementedIssue",
-  "notImplementedIssueFn",
-];
-
 // These are passed to --define to the bundler
 const debug = process.argv[2] === "--debug=ON";
+/** Schemas this build only takes types from (`isCompiled` in scripts/build/codegen.ts). `$bindgen` of one is `void 0`, which the minifier folds. */
+const typesOnly = (process.argv.find(arg => arg.startsWith("--types-only=")) ?? "=").split("=")[1].split(",");
 export const define: Record<string, string> = {
   "process.env.NODE_ENV": JSON.stringify(debug ? "development" : "production"),
   "IS_BUN_DEVELOPMENT": String(debug),
-
-  $streamClosed: "1",
-  $streamClosing: "2",
-  $streamErrored: "3",
-  $streamReadable: "4",
-  $streamWaiting: "5",
-  $streamWritable: "6",
+  // `bun compile` replaces the value: false in an executable that refuses code that was not compiled into it.
+  "CAN_LOAD_CODE_AT_RUN_TIME": "true",
+  // `bun compile` replaces the value: false for a program that never names node:cluster.
+  "CAN_BE_CLUSTER_WORKER": "true",
+  // `bun compile` replaces the value: false, but for a test run one of whose tests replaces a built-in function.
+  "CAN_REPLACE_BUILT_INS": "true",
+  // `bun compile` replaces the value: true where these files are compiled ahead of time.
+  "IS_COMPILED_AHEAD_OF_TIME": "false",
 
   "process.platform": JSON.stringify(Bun.env.TARGET_PLATFORM ?? process.platform),
   "process.arch": JSON.stringify(Bun.env.TARGET_ARCH ?? process.arch),
@@ -135,17 +199,21 @@ export const define: Record<string, string> = {
 
 // ------------------------------ //
 
-for (const name in enums) {
-  const value = enums[name];
-  if (typeof value !== "object") throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
-  if (typeof value === null) throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
-  const keys = Array.isArray(value) ? value : Object.keys(value).filter(k => !k.match(/^[0-9]+$/));
+for (const [name, keys] of Object.entries(enums)) {
   define[`$${name}IdToLabel`] = "[" + keys.map(k => `"${k}"`).join(", ") + "]";
-  define[`$${name}LabelToId`] = "{" + keys.map(k => `"${k}": ${keys.indexOf(k) + 1}`).join(", ") + "}";
+  define[`$${name}LabelToId`] = "{" + keys.map((k, i) => `"${k}": ${i + 1}`).join(", ") + "}";
 }
 
 for (const name of globalsToPrefix) {
   define[name] = "__intrinsic__" + name;
+}
+
+for (const name of nativeGlobals) {
+  define[name] = define["globalThis." + name] = "__intrinsic__natives." + name;
+}
+
+for (const name of nativeFunctions) {
+  define[name] = "__intrinsic__natives." + name;
 }
 
 for (const key in define) {
@@ -159,33 +227,35 @@ export interface ReplacementRule {
   from: RegExp;
   to?: string;
   toRaw?: string;
-  global?: boolean;
 }
 
 export const function_replacements = [
   "$debug",
   "$assert",
-  "$rust",
-  "$newRustFunction",
   "$cpp",
   "$newCppFunction",
   "$isPromiseFulfilled",
   "$isPromiseRejected",
   "$isPromisePending",
-  "$bindgenFn",
+  "$bindgen",
 ];
 const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("|").replaceAll("$", "")})`);
 
 /** Applies source code replacements as defined in `replacements` */
+let anyReplacement: RegExp | undefined;
+
 export function applyReplacements(src: string, length: number) {
   let slice = src.slice(0, length);
   let rest = src.slice(length);
   slice = slice.replace(/([^a-zA-Z0-9_\$])\$([a-zA-Z0-9_]+\b)/gm, `$1__intrinsic__$2`);
-  for (const replacement of replacements) {
-    slice = slice.replace(
-      replacement.from,
-      replacement.toRaw ?? replacement.to!.replaceAll("$", "__intrinsic__").replaceAll("%", "$"),
-    );
+  anyReplacement ??= new RegExp(replacements.map(replacement => replacement.from.source).join("|"));
+  if (anyReplacement.test(slice)) {
+    for (const replacement of replacements) {
+      slice = slice.replace(
+        replacement.from,
+        replacement.toRaw ?? replacement.to!.replaceAll("$", "__intrinsic__").replaceAll("%", "$"),
+      );
+    }
   }
   let match;
   if ((match = slice.match(function_regexp)) && rest.startsWith("(")) {
@@ -222,8 +292,7 @@ export function applyReplacements(src: string, length: number) {
         rest2,
         true,
       ];
-    } else if (["rust", "cpp", "newRustFunction", "newCppFunction"].includes(name)) {
-      const kind = name.includes("ust") ? "rust" : "cpp";
+    } else if (["cpp", "newCppFunction"].includes(name)) {
       const is_create_fn = name.startsWith("new");
 
       const inner = sliceSourceCode(rest, true);
@@ -253,7 +322,7 @@ export function applyReplacements(src: string, length: number) {
         }
       }
 
-      const id = registerNativeCall(kind, args[0], args[1], is_create_fn ? args[2] : null);
+      const id = registerNativeCall("cpp", args[0], args[1], is_create_fn ? args[2] : null);
 
       return [slice.slice(0, match.index) + "__intrinsic__lazy(" + id + ")", inner.rest, true];
     } else if (name === "isPromiseFulfilled" || name === "isPromiseRejected" || name === "isPromisePending") {
@@ -268,7 +337,7 @@ export function applyReplacements(src: string, length: number) {
         args = `(__intrinsic__peekPromiseStatus${inner.result} === ${status})`;
       }
       return [slice.slice(0, match.index) + args, inner.rest, true];
-    } else if (name === "bindgenFn") {
+    } else if (name === "bindgen") {
       const inner = sliceSourceCode(rest, true);
       let args;
       try {
@@ -286,6 +355,8 @@ export function applyReplacements(src: string, length: number) {
       if (args.length != 2 || typeof args[0] !== "string" || typeof args[1] !== "string") {
         throw new Error(`$${name} takes two string arguments, but got '$${name}${inner.result}'`);
       }
+
+      if (typesOnly.includes(args[0])) return [slice.slice(0, match.index) + "void 0", inner.rest, true];
 
       const id = registerNativeCall("bind", args[0], args[1], null);
 

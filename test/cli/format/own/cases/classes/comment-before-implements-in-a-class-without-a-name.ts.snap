@@ -1,0 +1,61 @@
+------------------
+{ printWidth: 80 }
+------------------
+a = class
+  // comment
+  implements A, B {};
+
+b = class
+  // comment
+  implements A, B {};
+
+c = class /* comment */ implements A {};
+
+d = class
+  /* comment */
+  implements A, B {};
+
+e = class
+  /* comment */
+  implements A, B {};
+
+f = class
+  // comment 1
+  // comment 2
+  implements A, B {};
+
+export default class
+  // comment
+  implements A, B {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a = class
+  // comment
+  implements A, B {};
+
+b = class
+  // comment
+  implements A, B {};
+
+c = class /* comment */ implements A {};
+
+d = class
+  /* comment */
+  implements A, B {};
+
+e = class
+  /* comment */
+  implements A, B {};
+
+f = class
+  // comment 1
+  // comment 2
+  implements A, B {};
+
+export default class
+  // comment
+  implements A, B {}
+
+===================== End =====================

@@ -8,18 +8,6 @@ pub struct SASLInitialResponse {
     pub data: Data,
 }
 
-impl Default for SASLInitialResponse {
-    fn default() -> Self {
-        Self {
-            mechanism: Data::Empty,
-            data: Data::Empty,
-        }
-    }
-}
-
-// `deinit` only called `.deinit()` on owned `Data` fields; `Data: Drop` handles this.
-// (No explicit `impl Drop` needed — see PORTING.md §Idiom map: deinit.)
-
 impl SASLInitialResponse {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
@@ -35,7 +23,7 @@ impl SASLInitialResponse {
         let header: [u8; 5] = {
             let mut h = [0u8; 5];
             h[0] = b'p';
-            h[1..].copy_from_slice(&int32(count));
+            h[1..].copy_from_slice(&int32(count)?);
             h
         };
         writer.write(&header)?;

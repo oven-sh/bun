@@ -165,8 +165,6 @@ pub enum OptionsFromJsError {
     InvalidProtocol,
     InvalidBackend,
     InvalidFlags,
-    InvalidOptions,
-    JSError,
 }
 
 #[repr(u8)]
@@ -175,7 +173,6 @@ pub enum Family {
     Unspecified,
     Inet,
     Inet6,
-    Unix,
 }
 
 bun_core::comptime_string_map! {
@@ -194,7 +191,6 @@ impl Family {
             Family::Unspecified => 0,
             Family::Inet => sock::AF_INET,
             Family::Inet6 => sock::AF_INET6,
-            Family::Unix => sock::AF_UNIX,
         }
     }
 }
@@ -288,12 +284,6 @@ impl Backend {
     #[cfg(all(not(any(target_os = "macos", windows)), not(target_os = "android")))]
     pub const fn default() -> Backend {
         Backend::CAres
-    }
-}
-
-impl Default for Backend {
-    fn default() -> Self {
-        Backend::default()
     }
 }
 
@@ -404,11 +394,7 @@ pub fn address_to_string(address: &Address) -> BunString {
             // included), so no cfg.
             // SAFETY: family() == AF_UNIX; sockaddr_storage is >= sizeof(sockaddr_un).
             let un = unsafe { &*address.as_sockaddr().cast::<sock::sockaddr_un>() };
-            // SAFETY: reinterpreting [c_char; N] as [u8; N] (same size/align).
-            let path: &[u8] = unsafe {
-                core::slice::from_raw_parts(un.sun_path.as_ptr().cast::<u8>(), un.sun_path.len())
-            };
-            BunString::clone_latin1(path)
+            BunString::clone_latin1(bun_core::slice_as_bytes(&un.sun_path))
         }
         _ => BunString::EMPTY,
     }
@@ -472,6 +458,26 @@ impl Order {
     }
 }
 
+/// A numeric address, or a host name within the RFC 1035 limits made of the bytes
+/// c-ares allows in one (`ares_is_hostnamech`) or of non-ASCII bytes (UTF-8 mDNS names).
+pub fn is_valid_hostname(name: &[u8]) -> bool {
+    fn is_hostname_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'/' | b'*') || !b.is_ascii()
+    }
+    if name.is_empty() || bun_core::strings::contains_char(name, 0) {
+        return false;
+    }
+    if bun_core::ip_address::to_ip_address(name).is_some() {
+        return true;
+    }
+    let name = name.strip_suffix(b".").unwrap_or(name);
+    if name.is_empty() || name.len() > 253 {
+        return false;
+    }
+    bun_core::strings::split(name, b".")
+        .all(|label| (1..=63).contains(&label.len()) && label.iter().all(|&b| is_hostname_byte(b)))
+}
+
 /// The process-wide DNS
 /// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC
 /// stat counters). Lower-tier crates (`bun_http`, `bun_install`) reach it via
@@ -493,22 +499,14 @@ pub mod internal {
         /// `bun_runtime::dns_jsc::internal::prefetch`; lower-tier crates
         /// (`bun_install`) reach it via this link-time extern to avoid a crate
         /// cycle. Defined `#[no_mangle]` in `bun_runtime::dns_jsc`.
-        fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16);
+        fn __bun_dns_prefetch(loop_: *mut c_void, hostname: &[u8], port: u16);
     }
 
     #[inline]
     pub fn prefetch<L>(loop_: *mut L, hostname: &[u8], port: u16) {
-        // SAFETY: link-time extern; `hostname` is NUL-terminated and live for
-        // the call. Prefetch is a perf hint — the body short-circuits if no
-        // resolver is available.
-        unsafe {
-            __bun_dns_prefetch(
-                loop_.cast::<c_void>(),
-                hostname.as_ptr(),
-                hostname.len(),
-                port,
-            )
-        }
+        // SAFETY: link-time extern of this signature. The macOS body dereferences
+        // `loop_`, for which the one caller passes its live uws loop.
+        unsafe { __bun_dns_prefetch(loop_.cast::<c_void>(), hostname, port) }
     }
 
     /// Register `pc` to be notified when the addrinfo `request` resolves.

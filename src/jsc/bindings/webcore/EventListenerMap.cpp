@@ -35,8 +35,6 @@
 
 #include "AddEventListenerOptions.h"
 #include "Event.h"
-#include "EventTarget.h"
-#include "JSEventListener.h"
 #include <wtf/MainThread.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
@@ -86,20 +84,6 @@ static inline size_t findListener(const EventListenerVector& listeners, EventLis
             return i;
     }
     return notFound;
-}
-
-void EventListenerMap::replace(const AtomString& eventType, EventListener& oldListener, Ref<EventListener>&& newListener, const RegisteredEventListener::Options& options)
-{
-    releaseAssertOrSetThreadUID();
-    Locker locker { m_lock };
-
-    auto* listeners = find(eventType);
-    ASSERT(listeners);
-    size_t index = findListener(*listeners, oldListener, options.capture);
-    ASSERT(index != notFound);
-    auto& registeredListener = listeners->at(index);
-    registeredListener->markAsRemoved();
-    registeredListener = RegisteredEventListener::create(WTF::move(newListener), options);
 }
 
 RegisteredEventListener* EventListenerMap::add(const AtomString& eventType, Ref<EventListener>&& listener, const RegisteredEventListener::Options& options)
@@ -158,49 +142,6 @@ EventListenerVector* EventListenerMap::find(const AtomString& eventType)
     }
 
     return nullptr;
-}
-
-static void removeFirstListenerCreatedFromMarkup(EventListenerVector& listenerVector)
-{
-    bool foundListener = listenerVector.removeFirstMatching([](const auto& registeredListener) {
-        if (JSEventListener::wasCreatedFromMarkup(registeredListener->callback())) {
-            registeredListener->markAsRemoved();
-            return true;
-        }
-        return false;
-    });
-    ASSERT_UNUSED(foundListener, foundListener);
-}
-
-void EventListenerMap::removeFirstEventListenerCreatedFromMarkup(const AtomString& eventType)
-{
-    releaseAssertOrSetThreadUID();
-    Locker locker { m_lock };
-
-    for (unsigned i = 0; i < m_entries.size(); ++i) {
-        if (m_entries[i].first == eventType) {
-            removeFirstListenerCreatedFromMarkup(m_entries[i].second);
-            if (m_entries[i].second.isEmpty())
-                m_entries.removeAt(i);
-            return;
-        }
-    }
-}
-
-static void copyListenersNotCreatedFromMarkupToTarget(const AtomString& eventType, EventListenerVector& listenerVector, EventTarget* target)
-{
-    for (auto& registeredListener : listenerVector) {
-        // Event listeners created from markup have already been transfered to the shadow tree during cloning.
-        if (JSEventListener::wasCreatedFromMarkup(registeredListener->callback()))
-            continue;
-        target->addEventListener(eventType, registeredListener->callback(), registeredListener->useCapture());
-    }
-}
-
-void EventListenerMap::copyEventListenersNotCreatedFromMarkupToTarget(EventTarget* target)
-{
-    for (auto& entry : m_entries)
-        copyListenersNotCreatedFromMarkupToTarget(entry.first, entry.second, target);
 }
 
 } // namespace WebCore

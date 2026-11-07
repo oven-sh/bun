@@ -3,10 +3,7 @@
 let MAX_ALLOWED_MEMORY_USAGE = 0;
 let MAX_ALLOWED_MEMORY_USAGE_INCREMENT = 15;
 const { randomUUID } = require("crypto");
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 
 const s3Dest = randomUUID() + "-s3-stream-leak-fixture";
 

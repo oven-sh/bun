@@ -116,6 +116,14 @@ declare global {
       prependOnceListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
       emit(event: "memoryPressure", level: "warning" | "critical"): boolean;
 
+      // @types/node <= 24 does not declare `off`/`removeListener` directly on
+      // `Process` (they are only inherited from EventEmitter), so the
+      // `memoryPressure` overloads above would hide the inherited generic
+      // signatures and reject every other event name (#40003). Re-declare the
+      // generic signatures so both stay visible.
+      off(event: string | symbol, listener: (...args: any[]) => void): this;
+      removeListener(event: string | symbol, listener: (...args: any[]) => void): this;
+
       binding(m: "constants"): {
         os: typeof import("node:os").constants;
         fs: typeof import("node:fs").constants;
@@ -152,6 +160,7 @@ declare global {
       };
       binding(m: "uv"): {
         errname(code: number): string;
+        getErrorMap(): Map<number, [name: string, description: string]>;
         UV_E2BIG: number;
         UV_EACCES: number;
         UV_EADDRINUSE: number;
@@ -338,6 +347,22 @@ declare global {
 
 declare module "node:fs/promises" {
   function exists(path: Bun.PathLike): Promise<boolean>;
+}
+
+declare module "node:fs" {
+  interface StreamOptions {
+    /**
+     * A raw Win32 `HANDLE` to read from or write to, in place of a path or `fd`.
+     * Use it for a handle that is not a CRT file descriptor, such as an
+     * anonymous pipe handle inherited from another process.
+     *
+     * The stream wraps the handle in a file descriptor that it owns and
+     * closes. Windows only: on other platforms the constructor throws
+     * `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM`. It cannot be combined with `fd`
+     * or `fs`.
+     */
+    windowsHandle?: bigint | undefined;
+  }
 }
 
 declare module "node:tls" {

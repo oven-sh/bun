@@ -1,0 +1,29 @@
+# An upcast that says what a list is expected to hold stays where the list itself is proven and its contents are not: the expected contents say how the elements are stored.
+# It goes where a proof behind it says as much.
+# FORM: Prepared
+# RUN: pass SimplifyCasts
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="contentsAreOnlyExpected" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = AssumeType v0 provenType=undefined|Array
+    v2: undefined|Array ~ undefined|Array<undefined|null|object> = Upcast v1 castType=anything
+    v3 = AssumeType v2 provenType=undefined|Array
+    Return v3
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: v1: undefined|Array = AssumeType v0 provenType=undefined|Array
+# CHECK-NEXT: v2: undefined|Array ~ undefined|Array<undefined|null|object> = Upcast v1 castType=anything
+# CHECK-NEXT: Return v2
+}
+
+function f1 name="proofBehindSaysAsMuch" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = AssumeType v0 provenType=Array
+    v2: Array ~ Array<number> = Upcast v1 castType=anything
+    v3 = AssumeType v2 provenType=Array<number, proven>
+    Return v3
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: v1: Array = AssumeType v0 provenType=Array
+# CHECK-NEXT: v2: Array ~ Array<number> = Upcast v1 castType=anything
+# CHECK-NEXT: v3: Array<number, proven> = AssumeType v1 provenType=Array<number, proven>
+# CHECK-NEXT: Return v3
+}

@@ -89,7 +89,10 @@ macro_rules! comptime_table {
     ($params:expr) => {
         $crate::comptime_table!(
             @build
-            { #[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".rodata.startup"))] }
+            {
+                #[cfg_attr(all(any(target_os = "linux", target_os = "android"), not(bun_hardened)), unsafe(link_section = ".rodata.startup"))]
+                #[cfg_attr(bun_hardened, unsafe(link_section = ".data.rel.ro.startup"))]
+            }
             $params
         )
     };
@@ -200,7 +203,7 @@ pub struct Names {
 
 impl Names {
     /// Check if the given name matches the primary long name or any alias
-    pub(crate) fn matches_long(&self, name: &[u8]) -> bool {
+    pub fn matches_long(&self, name: &[u8]) -> bool {
         if let Some(l) = self.long {
             if name == l {
                 return true;
@@ -224,6 +227,7 @@ pub enum Values {
     One,
     Many,
     OneOptional,
+    ManyOptional,
 }
 
 /// Represents a parameter for the command line.
@@ -296,6 +300,11 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
+    /// Without the dashes.
+    pub fn long(&self) -> Option<&[u8]> {
+        self.long.as_deref()
+    }
+
     /// Default diagnostics reporter when all you want is English with no colors.
     /// Use this as a reference for implementing your own if needed.
     ///
@@ -334,11 +343,6 @@ impl Diagnostic {
             crate::Error::InvalidArgument => {
                 bun_core::pretty_errorln!("<red>error<r><d>:<r> Invalid Argument '{}'", name)
             }
-            _ => bun_core::pretty_errorln!(
-                "<red>error<r><d>:<r> {} while parsing argument '{}'",
-                err,
-                name
-            ),
         }
         bun_core::Output::flush();
         Ok(())
@@ -369,11 +373,72 @@ impl Default for Help {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct UnknownLongFlag<'a> {
+    pub name: &'a [u8],
+    pub is_from_bun_options: bool,
+}
+
 /// Options that can be set to customize the behavior of parsing.
 #[derive(Default)]
 pub struct ParseOptions<'a> {
     pub diagnostic: Option<&'a mut Diagnostic>,
     pub stop_after_positional_at: usize,
+    /// Whole-token rewrites applied only where a token is being classified as a
+    /// flag, never to an option's value or a `--` target. Node keeps its own
+    /// aliases on exactly that branch (node_options-inl.h).
+    /// An alias written as `--name=value` also matches the two tokens `--name value`. An empty
+    /// replacement removes the flag from the arguments.
+    pub short_aliases: &'static [(&'static [u8], &'static [u8])],
+    /// A `--flag` or `--flag=value` that no param names is a positional, with its dashes, in its
+    /// place among the others. For a command that hands flags on: `bun check --strict`. Otherwise
+    /// such a flag is skipped.
+    pub unknown_long_flags_are_positional: bool,
+    /// Such a flag fails the parse, unless it comes from `BUN_OPTIONS`, which applies to every
+    /// command.
+    pub unknown_long_flags_are_errors: bool,
+    pub ignored_long_flags: IgnoredLongFlags,
+    pub unknown_long_flags: Option<&'a mut Vec<UnknownLongFlag<'static>>>,
+}
+
+/// Long flags, written without the dashes, that are skipped instead of failing the parse when
+/// `unknown_long_flags_are_errors` is set.
+#[derive(Default, Clone, Copy)]
+pub struct IgnoredLongFlags {
+    /// Skips `--name`, `--no-name`, `--name=value`, `--name true` and `--name false`.
+    pub flags: &'static [&'static [u8]],
+    /// Skips `--name=value` and `--name value`, unless `value` starts with a dash. Also skips
+    /// `--no-name`, like for the command's own flags.
+    pub options: &'static [&'static [u8]],
+    /// Skips every `--name` and `--name=value` whose name starts with one of these.
+    pub prefixes: &'static [&'static [u8]],
+}
+
+impl IgnoredLongFlags {
+    /// Returns `None` if `--name` isn't skipped. Otherwise returns whether `next`, the argument
+    /// after it, is its value. `is_own_flag` tells whether the command has a flag of that name.
+    pub fn value_is_next_arg(
+        &self,
+        name: &[u8],
+        next: &[u8],
+        is_own_flag: impl Fn(&[u8]) -> bool,
+    ) -> Option<bool> {
+        if self.options.contains(&name) {
+            return Some(!next.starts_with(b"-"));
+        }
+        if self.flags.contains(&name)
+            || name.strip_prefix(b"no-").is_some_and(|positive| {
+                self.flags.contains(&positive)
+                    || self.options.contains(&positive)
+                    || (!self.flags.is_empty() && is_own_flag(positive))
+            })
+        {
+            return Some(next == b"true" || next == b"false");
+        }
+        (self.prefixes.iter())
+            .any(|prefix| name.starts_with(prefix))
+            .then_some(false)
+    }
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -426,6 +491,12 @@ impl<Id: 'static> Args<Id> {
         self.clap.options(name)
     }
 
+    /// Returns true if the parameter was passed. Works for flags and for parameters that take
+    /// values.
+    pub fn has(&self, name: &'static [u8]) -> bool {
+        self.clap.has(name)
+    }
+
     pub fn positionals(&self) -> &[&'static [u8]] {
         self.clap.positionals()
     }
@@ -455,6 +526,11 @@ pub fn parse<Id: 'static>(
         ParseOptions {
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
+            short_aliases: opt.short_aliases,
+            unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
+            unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
+            ignored_long_flags: opt.ignored_long_flags,
+            unknown_long_flags: opt.unknown_long_flags,
         },
     )?;
     Ok(Args { clap })
@@ -474,6 +550,11 @@ pub fn parse_with_table<Id: 'static>(
         ParseOptions {
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
+            short_aliases: opt.short_aliases,
+            unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
+            unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
+            ignored_long_flags: opt.ignored_long_flags,
+            unknown_long_flags: opt.unknown_long_flags,
         },
     )?;
     Ok(Args { clap })
@@ -838,6 +919,22 @@ mod tests {
         assert_eq!(MACRO_PARAMS_SLICE[2].takes_value, Values::One);
     }
 
+    #[test]
+    fn parse_param_many_optional() {
+        let many_optional = parse_param!("--explain <STR>?...  Reports");
+        assert_eq!(many_optional.takes_value, Values::ManyOptional);
+        assert_eq!(many_optional.id.value, b"STR");
+        assert_eq!(many_optional.id.msg, b"Reports");
+
+        let one_optional = parse_param!("--explain <STR>?  Reports");
+        assert_eq!(one_optional.takes_value, Values::OneOptional);
+        assert_eq!(one_optional.id.msg, b"Reports");
+
+        let many = parse_param!("--explain <STR>...  Reports");
+        assert_eq!(many.takes_value, Values::Many);
+        assert_eq!(many.id.msg, b"Reports");
+    }
+
     // Compile-time check: comptime_table!/find_param_index are const-evaluable.
     const CT_PARAMS: &[Param<Help>] = concat_params!(
         &[parse_param!("-h, --help          Display this help")],
@@ -856,5 +953,62 @@ mod tests {
         assert_eq!(CT_TABLE.converted[CT_HELP_IDX].id, 0);
         assert_eq!(CT_TABLE.converted[CT_CONFIG_IDX].id, 0);
         assert_eq!(CT_TABLE.converted[CT_CONFIG_IDX].takes_value, Values::One);
+    }
+
+    const CT_MULTI_PARAMS: &[Param<Help>] = concat_params!(
+        &[parse_param!("--define <K=V>...     Define")],
+        &[parse_param!("--explain <STR>?...   Reports")],
+        &[parse_param!("<POS> ...             ")],
+    );
+    static CT_MULTI_TABLE: &ConvertedTable = comptime_table!(CT_MULTI_PARAMS, cold);
+    const CT_DEFINE_IDX: usize = comptime::find_param_index(CT_MULTI_TABLE.converted, b"--define");
+    const CT_EXPLAIN_IDX: usize =
+        comptime::find_param_index(CT_MULTI_TABLE.converted, b"--explain");
+
+    #[test]
+    fn comptime_table_many_optional() {
+        assert_eq!(CT_MULTI_TABLE.n_multi, 2);
+        assert_eq!(CT_MULTI_TABLE.converted[CT_DEFINE_IDX].id, 0);
+        assert_eq!(CT_MULTI_TABLE.converted[CT_EXPLAIN_IDX].id, 1);
+    }
+
+    #[test]
+    fn parse_with_table_many_optional() {
+        const ARGS: &[&[u8]] = &[b"--explain", b"app.ts", b"--explain=json"];
+        let mut iter = args::SliceIterator { remain: ARGS };
+        let clap = ComptimeClap::<Help>::parse_with_table(
+            CT_MULTI_TABLE,
+            &mut iter,
+            ParseOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(clap.options(b"--explain"), &[b"" as &[u8], b"json"]);
+        assert_eq!(clap.positionals(), &[b"app.ts" as &[u8]]);
+        assert!(clap.has(b"--explain"));
+        assert!(!clap.has(b"--define"));
+    }
+
+    #[test]
+    fn parse_with_table_unknown_long_flags() {
+        const ARGS: &[&[u8]] = &[b"--q", b"app.ts", b"--r"];
+        let mut iter = args::SliceIterator { remain: ARGS };
+        let mut unknown = Vec::new();
+        let clap = ComptimeClap::<Help>::parse_with_table(
+            CT_MULTI_TABLE,
+            &mut iter,
+            ParseOptions {
+                stop_after_positional_at: 1,
+                unknown_long_flags: Some(&mut unknown),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(clap.positionals(), &[b"app.ts" as &[u8]]);
+        assert_eq!(clap.remaining(), &[b"--r" as &[u8]]);
+        let expected = UnknownLongFlag {
+            name: b"q",
+            is_from_bun_options: false,
+        };
+        assert_eq!(unknown, [expected]);
     }
 }

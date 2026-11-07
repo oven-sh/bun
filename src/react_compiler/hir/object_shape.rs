@@ -8,7 +8,7 @@
 //! Defines the shape registry used by Environment to resolve property types
 //! and function call signatures for built-in objects, hooks, and user-defined types.
 
-use std::collections::HashMap;
+use crate::collections::FxHashMap as HashMap;
 
 use crate::hir::Effect;
 use crate::hir::Type;
@@ -132,7 +132,6 @@ pub struct ObjectShape {
 ///   `build_builtin_shapes` / `build_default_globals` to construct the static base.
 /// - **Overlay mode** (`base=Some`): holds a `&'static HashMap` base plus a small
 ///   extras HashMap. Lookups check extras first, then base. Inserts go into extras.
-///   Cloning only copies the extras map (the base pointer is shared).
 pub struct ShapeRegistry {
     base: Option<&'static HashMap<&'static str, ObjectShape>>,
     entries: HashMap<&'static str, ObjectShape>,
@@ -144,7 +143,7 @@ impl ShapeRegistry {
     pub fn new() -> Self {
         Self {
             base: None,
-            entries: HashMap::new(),
+            entries: HashMap::default(),
             next_anon: 0,
         }
     }
@@ -153,7 +152,7 @@ impl ShapeRegistry {
     pub fn with_base(base: &'static HashMap<&'static str, ObjectShape>) -> Self {
         Self {
             base: Some(base),
-            entries: HashMap::new(),
+            entries: HashMap::default(),
             next_anon: 0,
         }
     }
@@ -208,16 +207,6 @@ impl ShapeRegistry {
             "into_inner() called on overlay-mode ShapeRegistry"
         );
         self.entries
-    }
-}
-
-impl Clone for ShapeRegistry {
-    fn clone(&self) -> Self {
-        Self {
-            base: self.base,
-            entries: self.entries.clone(),
-            next_anon: self.next_anon,
-        }
     }
 }
 

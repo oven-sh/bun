@@ -377,6 +377,27 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
       exitCode: 0,
     });
   });
+
+  test.concurrent("zlib: params() after a buffered writeSync keeps the pending input in the stream", async () => {
+    expect(
+      await run(
+        `const d = zlib.createDeflate({ level: 0 });
+         const h = d._handle;
+         const ws = d._writeState;
+         const input = Buffer.alloc(1024, 97);
+         const out1 = Buffer.alloc(4096);
+         h.writeSync(zlib.constants.Z_NO_FLUSH, input, 0, input.length, out1, 0, out1.length);
+         const head = Buffer.from(out1.subarray(0, out1.length - ws[0]));
+         out1.buffer.transfer();
+         h.params(1, 0);
+         const out2 = Buffer.alloc(4096);
+         h.writeSync(zlib.constants.Z_FINISH, null, 0, 0, out2, 0, out2.length);
+         const tail = out2.subarray(0, out2.length - ws[0]);
+         const result = zlib.inflateSync(Buffer.concat([head, tail]));
+         console.log(head.length + " " + result.length + " " + result.equals(input));`,
+      ),
+    ).toEqual({ stdout: "2 1024 true", exitCode: 0 });
+  });
 });
 
 describe.concurrent("zlib native handle argument validation", () => {
@@ -445,7 +466,8 @@ describe.concurrent("zlib native handle argument validation", () => {
          catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
       ),
     ).toEqual({
-      stdout: 'threw ERR_INVALID_ARG_VALUE: The "out" argument must not be backed by a resizable ArrayBuffer',
+      stdout:
+        'threw ERR_INVALID_ARG_VALUE: The "out" argument must not be backed by a resizable ArrayBuffer or a WebAssembly.Memory',
       exitCode: 0,
     });
   });
@@ -508,5 +530,46 @@ describe.concurrent("zlib native handle argument validation", () => {
          console.log("ok " + zlib.inflateRawSync(out.subarray(0, written)).toString());`,
       ),
     ).toEqual({ stdout: "ok hello world", exitCode: 0 });
+  });
+});
+
+// With ZSTD_c_nbWorkers >= 1, a write posts a job to zstd's worker threads and returns. A frame's first
+// job reads the stream's dictionary. Level 19 keeps the job running after the write callback.
+describe("zstd compressor with workers and a dictionary", () => {
+  const prelude = /* js */ `
+    const zlib = require("node:zlib");
+    const { pbkdf2Sync } = require("node:crypto");
+    const { finished } = require("node:stream/promises");
+    const { ZSTD_c_compressionLevel, ZSTD_c_jobSize, ZSTD_c_nbWorkers, ZSTD_c_overlapLog } = zlib.constants;
+
+    const hex = (seed, length) => Buffer.from(pbkdf2Sync(seed, "", 1, length / 2, "sha256").toString("hex"));
+    // Large enough that the allocator returns the freed dictionary to the OS.
+    const dictionary = hex("dictionary", 192 * 1024);
+    const input = hex("input", 512 * 1024);
+    const stream = zlib
+      .createZstdCompress({
+        dictionary,
+        params: {
+          [ZSTD_c_nbWorkers]: 2,
+          [ZSTD_c_jobSize]: input.length,
+          [ZSTD_c_overlapLog]: 1,
+          [ZSTD_c_compressionLevel]: 19,
+        },
+      })
+      .on("data", () => {});
+    await new Promise(done => stream.write(input, done));
+  `;
+
+  test.each([
+    ["destroy()", `stream.destroy(); console.log("ok");`],
+    ["reset() and the next frame", `stream.reset(); stream.end("x"); await finished(stream); console.log("ok");`],
+  ])("doesn't crash on %s while a job is running", async (_, body) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + body],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
   });
 });

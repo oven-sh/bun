@@ -1,0 +1,23 @@
+# process.nextTick(callback), in a program that does not hold initializeNextTickQueue
+# Nothing says what the entry holds, so its overload speaks for the call: the callback is called, and nobody else gets hold of it.
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# RUN(ESCAPED): valueflow-why escaped=f1
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = Builtin builtin=ProcessNextTick
+    v2 = NewClosure function=f1
+    v3 = Call v1, v0, v2
+    Return
+}
+function f1 name="callback" results=[{type=anything}] {
+  b0():
+    Return
+}

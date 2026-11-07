@@ -99,7 +99,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             value: Some(value),
                             ..Default::default()
                         });
-                        i += 1; // defer i += 1
+                        i += 1;
                     }
                     T::TOpenBrace => {
                         // This arm must increment `i` once before exiting.
@@ -206,7 +206,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         p.lexer.next_inside_jsx_element()?;
-                        i += 1; // defer i += 1
+                        i += 1;
                     }
                     _ => {
                         break 'parse_attributes;
@@ -363,7 +363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     return Ok(p.new_expr(
                         E::JSXElement {
-                            tag: end_tag.data.as_expr(),
+                            tag: tag.data.as_expr(),
                             children: ExprNodeList::move_from_list(children),
                             properties,
                             key_prop_index: key_prop_i,

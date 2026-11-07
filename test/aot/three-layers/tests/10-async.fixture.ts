@@ -1,0 +1,15 @@
+import { check } from "../src/show";
+import { ticks, thenable, thrower, PkgError } from "fake-shapes";
+import { later, failLater, mapAsync } from "fake-typed";
+import { AppError, makeUser } from "../src/models";
+const F = "10";
+check(F, "order of jobs", async () => { const log: string[] = []; const a = later("a", log).then(v => log.push("then " + v)); Promise.resolve().then(() => log.push("job 1")).then(() => log.push("job 2")); queueMicrotask(() => log.push("micro")); log.push("sync"); await a; await null; return log; });
+check(F, "thenables", async () => { const log: string[] = []; const p = Promise.resolve(thenable(1, log)); log.push("made"); const v = await p; const w = await thenable(2, log); return [v, w, log, await Promise.all([thenable(3), later(4), 5]), await Promise.race([later(6), thenable(7)])]; });
+check(F, "for await", async () => { const log: string[] = []; const out: number[] = []; for await (const each of ticks(3, log)) { out.push(each); log.push("body " + each); } for await (const each of ticks(5, log)) if (each === 1) break; return [out, log]; });
+check(F, "for await over sync things", async () => { const out: unknown[] = []; for await (const each of [later(1), 2, thenable(3)]) out.push(each); return out; });
+check(F, "async generator here over the package's", async () => { async function* doubled() { for await (const each of ticks(2)) { yield each; yield await later(each * 10); } return "end"; } const g = doubled(); const out: unknown[] = []; for (;;) { const r = await g.next(); out.push(r.value); if (r.done) break; } return out; });
+check(F, "rejections", async () => { const out: unknown[] = []; try { await failLater("late"); } catch (e) { out.push(e); } out.push(await failLater("caught").catch(e => (e as Error).name)); out.push(await Promise.allSettled([failLater("x"), later(1), Promise.reject(new AppError("app", { at: "t" }))])); try { await Promise.any([failLater("a"), failLater("b")]); } catch (e) { out.push((e as AggregateError).errors.length, (e as Error).name); } return out; });
+check(F, "a throw inside a callback inside an await", async () => { try { return await mapAsync([1, 2, 3], async n => { if (n === 2) thrower("pkg"); return n; }); } catch (e) { return [e instanceof PkgError, (e as PkgError).summary]; } });
+check(F, "mapAsync with records", async () => mapAsync([1, 2, 3], (n, i) => (i % 2 ? later(makeUser(n)) : makeUser(n))));
+check(F, "finally and return values", async () => { const log: string[] = []; const f = async () => { try { return await later("value", log); } finally { log.push("finally"); await null; log.push("after"); } }; return [await f(), log]; });
+check(F, "timers", async () => { const log: string[] = []; await new Promise<void>(resolve => { const say = (text: string) => { if (log.push(text) === 5) resolve(); }; setTimeout(() => say("timeout 2"), 2); setTimeout(() => say("timeout 0"), 0); setImmediate(() => say("immediate")); process.nextTick(() => say("tick")); later("x").then(() => say("later")); }); return [log.slice(0, 2), log.slice(2).sort()]; });

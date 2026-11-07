@@ -13,7 +13,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTty_isatty, (JSGlobalObject * globalObject, C
         return JSValue::encode(jsBoolean(false));
     }
 
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd = callFrame->argument(0).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -31,17 +31,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTty_isatty, (JSGlobalObject * globalObject, C
 #endif
 
     return JSValue::encode(jsBoolean(isTTY));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplementedYet,
-    (JSGlobalObject * globalObject,
-        CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    throwException(globalObject, throwScope,
-        createError(globalObject, "Not implemented yet"_s));
-    return {};
 }
 
 } // namespace Zig

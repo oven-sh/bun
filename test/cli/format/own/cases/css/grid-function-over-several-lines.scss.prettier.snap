@@ -1,0 +1,43 @@
+------------------
+{ printWidth: 80 }
+------------------
+.a {
+  grid-template-columns:
+    minmax(
+      calc(70vmin * var(---board-scale)),
+      calc(
+        100vh * var(---board-scale) - calc(var(---site-header-height) + 3rem)
+      )
+    )
+    minmax(240px, 400px);
+  grid-template-columns:
+    [full-start] minmax(1em, 1fr)
+    [main-start] minmax(0, 40em)
+    [main-end] minmax(1em, 1fr)
+    [full-end];
+  grid-template-areas:
+    "a b"
+    "c d";
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+.a {
+  grid-template-columns:
+    minmax(
+      calc(70vmin * var(---board-scale)),
+      calc(100vh * var(---board-scale) - calc(var(---site-header-height) + 3rem))
+    )
+    minmax(240px, 400px);
+  grid-template-columns:
+    [full-start] minmax(1em, 1fr)
+    [main-start] minmax(0, 40em)
+    [main-end] minmax(1em, 1fr)
+    [full-end];
+  grid-template-areas:
+    "a b"
+    "c d";
+}
+
+===================== End =====================

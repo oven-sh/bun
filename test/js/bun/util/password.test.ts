@@ -1,8 +1,32 @@
 import { password } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 
 const placeholder = "hey";
+
+const notBytes = [
+  null,
+  5,
+  true,
+  1n,
+  Symbol(),
+  {},
+  [],
+  () => {},
+  new Blob(["abc"]),
+  { toString: () => "abc" },
+  {
+    toString() {
+      throw new Error("toString() failed");
+    },
+  },
+];
+const mustBeBytes = (name: string) =>
+  expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: `${name} must be a string, ArrayBuffer or ArrayBufferView`,
+  });
 
 // argon2id iterates so slowly under debug/ASAN that the 60 000 warm-up
 // iterations blow past the 90 s test timeout before the leak check even
@@ -24,7 +48,7 @@ describe.skipIf(isDebug)("does not leak", () => {
 
   test("hashSync", async () => {
     await run(/* js */ `
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const opts = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
         // Large warm-up so the JSC heap and allocator arenas reach steady state
         // before we start measuring (debug/ASAN builds especially need this).
@@ -43,7 +67,7 @@ describe.skipIf(isDebug)("does not leak", () => {
 
   test("hash", async () => {
     await run(/* js */ `
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const opts = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
         async function batch(n) {
           const promises = [];
@@ -73,7 +97,11 @@ describe("hash", () => {
 
       test("password is required", () => {
         // @ts-expect-error
-        expect(() => hash()).toThrow();
+        expect(() => hash()).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }));
+        // @ts-expect-error
+        expect(() => hash(undefined)).toThrow("password must be a string");
+        // @ts-expect-error
+        expect(() => hash(undefined, "bcrypt")).toThrow("password must be a string");
       });
 
       test("invalid algorithm throws", () => {
@@ -139,17 +167,76 @@ describe("hash", () => {
         ).toThrow();
       });
 
-      test("coercion throwing doesn't crash", () => {
-        // @ts-expect-error
-        expect(() => hash(Symbol())).toThrow();
+      test("cost values are range-checked before ToInt32 narrowing", () => {
+        // These used to wrap modulo 2^32 (cost: 2^32 + 4 hashed with cost 4)
+        // or truncate (cost: 4.5 hashed with cost 4) instead of throwing.
         expect(() =>
-          // @ts-expect-error
-          hash({
-            toString() {
-              throw new Error("toString() failed");
-            },
+          hash(placeholder, {
+            algorithm: "bcrypt",
+            cost: 2 ** 32 + 4,
           }),
-        ).toThrow();
+        ).toThrow("Rounds must be an integer between 4 and 31");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "bcrypt",
+            cost: 4.5,
+          }),
+        ).toThrow("Rounds must be an integer between 4 and 31");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            timeCost: 2 ** 32 + 2,
+          }),
+        ).toThrow("Time cost must be an integer between 1 and 4294967295");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            timeCost: 1.5,
+          }),
+        ).toThrow("Time cost must be an integer between 1 and 4294967295");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            memoryCost: 2 ** 32 + 4608,
+          }),
+        ).toThrow("Memory cost must be an integer between 8 and 4294967295");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            memoryCost: 8.5,
+          }),
+        ).toThrow("Memory cost must be an integer between 8 and 4294967295");
+
+        // Non-finite values: NaN and -Infinity fail the lower-bound check,
+        // +Infinity fails the integer/upper-bound check.
+        for (const timeCost of [NaN, -Infinity]) {
+          expect(() => hash(placeholder, { algorithm: "argon2id", timeCost })).toThrow(
+            "Time cost must be greater than 0",
+          );
+        }
+        expect(() => hash(placeholder, { algorithm: "argon2id", timeCost: Infinity })).toThrow(
+          "Time cost must be an integer between 1 and 4294967295",
+        );
+        for (const memoryCost of [NaN, -Infinity]) {
+          expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost })).toThrow(
+            "Memory cost must be at least 8",
+          );
+        }
+        expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost: Infinity })).toThrow(
+          "Memory cost must be an integer between 8 and 4294967295",
+        );
+      });
+
+      test("a password that is neither a string nor bytes throws", () => {
+        for (const value of notBytes) {
+          // @ts-expect-error
+          expect(() => hash(value, { algorithm: "bcrypt", cost: 4 })).toThrow(mustBeBytes("password"));
+        }
       });
 
       for (let ArrayBufferView of [
@@ -176,10 +263,15 @@ describe("verify", () => {
   describe("arguments parsing", () => {
     for (let verify of [password.verify, password.verifySync]) {
       test("minimum args", () => {
+        const invalidArgument = expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
         // @ts-expect-error
-        expect(() => verify()).toThrow();
+        expect(() => verify()).toThrow(invalidArgument);
         // @ts-expect-error
-        expect(() => verify("")).toThrow();
+        expect(() => verify("")).toThrow(invalidArgument);
+        // @ts-expect-error
+        expect(() => verify(undefined, "$")).toThrow("password must be a string");
+        // @ts-expect-error
+        expect(() => verify("$", undefined)).toThrow("hash must be a string");
       });
 
       test("empty values return false", async () => {
@@ -202,28 +294,13 @@ describe("verify", () => {
         ).toThrow();
       });
 
-      test("coercion throwing doesn't crash", () => {
-        // @ts-expect-error
-        expect(() => verify(Symbol(), Symbol())).toThrow();
-        expect(() =>
-          verify(
-            // @ts-expect-error
-            {
-              toString() {
-                throw new Error("toString() failed");
-              },
-            },
-            "valid",
-          ),
-        ).toThrow();
-        expect(() =>
+      test("a password or a hash that is neither a string nor bytes throws", () => {
+        for (const value of notBytes) {
           // @ts-expect-error
-          verify("valid", {
-            toString() {
-              throw new Error("toString() failed");
-            },
-          }),
-        ).toThrow();
+          expect(() => verify(value, "$")).toThrow(mustBeBytes("password"));
+          // @ts-expect-error
+          expect(() => verify("$", value)).toThrow(mustBeBytes("hash"));
+        }
       });
 
       for (let ArrayBufferView of [
@@ -250,6 +327,68 @@ describe("verify", () => {
 // The async hashing tests below only await the thread-pooled password.hash /
 // password.verify on closure-local inputs (no shared mutable state, no RSS
 // assertions), so they can safely overlap.
+test.concurrent.each([
+  ["an ArrayBuffer", (bytes: Uint8Array<ArrayBuffer>) => bytes.buffer],
+  [
+    "a SharedArrayBuffer",
+    (bytes: Uint8Array<ArrayBuffer>) => {
+      const shared = new SharedArrayBuffer(bytes.length);
+      new Uint8Array(shared).set(bytes);
+      return shared;
+    },
+  ],
+  ["a DataView", (bytes: Uint8Array<ArrayBuffer>) => new DataView(bytes.buffer)],
+  ["a Uint16Array", (bytes: Uint8Array<ArrayBuffer>) => new Uint16Array(bytes.buffer)],
+  [
+    "a part of a larger buffer",
+    (bytes: Uint8Array<ArrayBuffer>) => {
+      const larger = new Uint8Array(bytes.length + 8).fill(0x61);
+      larger.set(bytes, 4);
+      return larger.subarray(4, 4 + bytes.length);
+    },
+  ],
+])("a password and a hash can be %s", async (_, wrap) => {
+  const bytesOf = (text: string) => wrap(new TextEncoder().encode(text)) as Bun.StringOrBuffer;
+  const options = { algorithm: "bcrypt", cost: 4 } as const;
+  const hashed = await password.hash(bytesOf("abcd"), options);
+  expect({
+    string: await password.verify("abcd", hashed),
+    password: await password.verify(bytesOf("abcd"), hashed),
+    hash: await password.verify("abcd", bytesOf(hashed)),
+    other: await password.verify(bytesOf("abce"), hashed),
+    sync: password.verifySync(bytesOf("abcd"), bytesOf(password.hashSync(bytesOf("abcd"), options))),
+  }).toEqual({ string: true, password: true, hash: true, other: false, sync: true });
+});
+
+test.concurrent("verifySync() takes a hash in memory that another thread is writing", async () => {
+  const script = `
+    const { Worker } = require("node:worker_threads");
+    // Of a version that is refused, so that each call only parses.
+    const text = "$argon2id$v=18$m=8,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA";
+    const hash = new Uint8Array(new SharedArrayBuffer(text.length));
+    hash.set(Buffer.from(text));
+    new Worker(
+      \`const hash = require("node:worker_threads").workerData;
+        for (;;) {
+          hash[10] = 0x80;
+          hash[10] = 0x76;
+        }\`,
+      { eval: true, workerData: hash },
+    );
+    while (Atomics.load(hash, 10) !== 0x80);
+    for (let i = 0; i < ${isDebug ? 1000 : 5000}; i++) {
+      try {
+        Bun.password.verifySync("password", hash);
+      } catch {}
+    }
+    console.log("done");
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "done\n", exitCode: 0 });
+});
+
 test.concurrent("bcrypt uses the SHA-512 of passwords longer than 72 characters", async () => {
   const boop = Buffer.from("hey".repeat(100));
   const hashed = await password.hash(boop, "bcrypt");
@@ -280,6 +419,35 @@ test.concurrent("argon2 memoryCost at the 8 minimum is encoded faithfully (regre
   expect(await password.verify("test", hashed)).toBeTrue();
 });
 
+describe.concurrent("argon2 hashes with memoryCost below 8 from earlier Bun versions still verify", () => {
+  // Generated by Bun 1.3.14, which accepted memoryCost < 8.
+  const legacy = {
+    argon2id:
+      "$argon2id$v=19$m=4,t=1,p=1$jaFm03353WIBtbqnvp4hx6Pd0Pk2keYfomedORTs6bI$Q+62iWiDQhCP3VFQvnMnGptmDAHFQGqY3d/dmRcGVOw",
+    argon2i:
+      "$argon2i$v=19$m=4,t=1,p=1$ccFUBS8pl1c6HrbfKTnDVnFuL7ZzrWWfn/HmEmPhXZs$SnmF2IobheA3dXrQ6PTAIFOI2mW7cmXaEdYOyeepuCc",
+    argon2d:
+      "$argon2d$v=19$m=4,t=1,p=1$l/aF7c94XVVjN+DEIojRJp2DueSSsSnIugDMmAm1h1E$h7CusZJfNR1nJQPyQsJMoHVpwlC/rCjYBS7Mc1bQdD0",
+    "argon2id m=1":
+      "$argon2id$v=19$m=1,t=1,p=1$BigwogH2c6TyJp0Po2odtNo1utvkW2MJbgm3liMV4xU$cw5OZZOZRBfd+bOnf1knGDZ67UwQN9j4nzpzt8P6JDY",
+  };
+
+  for (const [name, hash] of Object.entries(legacy)) {
+    test(name, async () => {
+      expect(await password.verify("hello", hash)).toBeTrue();
+      expect(await password.verify("hellp", hash)).toBeFalse();
+      expect(password.verifySync("hello", hash)).toBeTrue();
+      expect(password.verifySync("hellp", hash)).toBeFalse();
+    });
+  }
+
+  test("hashing with memoryCost below 8 is still rejected", () => {
+    expect(() => password.hashSync("hello", { algorithm: "argon2id", memoryCost: 4 })).toThrow(
+      "Memory cost must be at least 8",
+    );
+  });
+});
+
 const defaultAlgorithm = "argon2id";
 const algorithms = [undefined, "argon2id", "bcrypt"];
 const argons = ["argon2i", "argon2id", "argon2d"];
@@ -288,19 +456,19 @@ for (let algorithmValue of algorithms) {
   const prefix = algorithmValue === "bcrypt" ? "$2" : "$" + (algorithmValue || defaultAlgorithm);
 
   describe(algorithmValue ? algorithmValue : "default", () => {
-    const hash = (value: string | TypedArray) => {
+    const hash = (value: string | NodeJS.TypedArray) => {
+      return algorithmValue ? password.hash(value, algorithmValue as any) : password.hash(value);
+    };
+
+    const hashSync = (value: string | NodeJS.TypedArray) => {
       return algorithmValue ? password.hashSync(value, algorithmValue as any) : password.hashSync(value);
     };
 
-    const hashSync = (value: string | TypedArray) => {
-      return algorithmValue ? password.hashSync(value, algorithmValue as any) : password.hashSync(value);
-    };
-
-    const verify = (pw: string | TypedArray, value: string | TypedArray) => {
+    const verify = (pw: string | NodeJS.TypedArray, value: string | NodeJS.TypedArray) => {
       return algorithmValue ? password.verify(pw, value, algorithmValue as any) : password.verify(pw, value);
     };
 
-    const verifySync = (pw: string | TypedArray, value: string | TypedArray) => {
+    const verifySync = (pw: string | NodeJS.TypedArray, value: string | NodeJS.TypedArray) => {
       return algorithmValue ? password.verifySync(pw, value, algorithmValue as any) : password.verifySync(pw, value);
     };
 
@@ -425,6 +593,86 @@ test("verify rejects encoded argon2 hashes with cost parameters above the suppor
   expect(hugeParallelism).not.toBe(hashed);
   expect(() => password.verifySync("correct horse", hugeParallelism)).toThrow("WeakParameters");
   await expect(password.verify("correct horse", hugeParallelism)).rejects.toThrow("WeakParameters");
+
+  // The argon2 decoder accepts a leading `+` on the cost fields (Rust's integer
+  // grammar), so the ceiling check must too rather than skipping the field.
+  const plusMemory = hashed.replace("$m=8,", "$m=+4294967294,");
+  expect(plusMemory).not.toBe(hashed);
+  expect(() => password.verifySync("correct horse", plusMemory)).toThrow("WeakParameters");
+  await expect(password.verify("correct horse", plusMemory)).rejects.toThrow("WeakParameters");
+
+  // A cost field the decoder can't parse is rejected up front as well.
+  const junkMemory = hashed.replace("$m=8,", "$m=8x,");
+  expect(() => password.verifySync("correct horse", junkMemory)).toThrow("InvalidEncoding");
+  await expect(password.verify("correct horse", junkMemory)).rejects.toThrow("InvalidEncoding");
+});
+
+// argon2 allocates memoryCost KiB up front. verify() reads the cost from the encoded hash.
+describe("argon2 when memoryCost can't be allocated", () => {
+  const script = (memoryCost: number) => /* js */ `
+    const { password } = Bun;
+    const describeError = e => ({ name: e.name, code: e.code, message: e.message });
+    const options = { algorithm: "argon2id", memoryCost: ${memoryCost}, timeCost: 1 };
+    const small = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
+    const encoded = password.hashSync("hunter2", small).replace("$m=8,", "$m=${memoryCost},");
+    const results = {};
+    try {
+      password.hashSync("hunter2", options);
+      results.hashSync = "resolved";
+    } catch (e) {
+      results.hashSync = describeError(e);
+    }
+    results.hash = await password.hash("hunter2", options).then(() => "resolved", describeError);
+    try {
+      results.verifySync = password.verifySync("hunter2", encoded);
+    } catch (e) {
+      results.verifySync = describeError(e);
+    }
+    results.verify = await password.verify("hunter2", encoded).then(v => v, describeError);
+    results.afterwards = await password.verify("hunter2", await password.hash("hunter2", small));
+    console.log(JSON.stringify(results));
+  `;
+  const outOfMemory = (verb: string) => ({
+    name: "Error",
+    code: "PASSWORD_OUT_OF_MEMORY",
+    message: `Password ${verb} failed with error "OutOfMemory"`,
+  });
+  const expected = {
+    hashSync: outOfMemory("hashing"),
+    hash: outOfMemory("hashing"),
+    verifySync: outOfMemory("verification"),
+    verify: outOfMemory("verification"),
+    afterwards: true,
+  };
+
+  async function runChild(cmd: string[], env: NodeJS.Dict<string>) {
+    await using proc = Bun.spawn({ cmd, env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr isn't checked because ASAN prints a warning for every allocation it rejects.
+    return { result: JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode })), exitCode };
+  }
+
+  test.skipIf(!isASAN)("throws PASSWORD_OUT_OF_MEMORY (ASAN allocation cap)", async () => {
+    const { result, exitCode } = await runChild([bunExe(), "-e", script(65536)], {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=32"]
+        .filter(Boolean)
+        .join(":"),
+    });
+    expect(result).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isASAN || !isLinux)("throws PASSWORD_OUT_OF_MEMORY (address-space limit)", async () => {
+    // 4 GiB is the largest cost verify() accepts. ASAN builds can't start under this limit.
+    const gib = 1024 * 1024; // in KiB, the unit of both ulimit -v and memoryCost
+    const { result, exitCode } = await runChild(
+      ["/bin/sh", "-c", `ulimit -v ${4 * gib} && exec "$0" "$@"`, bunExe(), "-e", script(4 * gib)],
+      bunEnv,
+    );
+    expect(result).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("verifySync reads the password buffer only after every argument has been coerced", () => {

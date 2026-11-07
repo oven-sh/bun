@@ -332,7 +332,7 @@ test("cloneable and non-transferable equals (net.BlockList)", async () => {
   await promise;
 });
 
-// close() sets m_isDetached and then queues the 'close' event as a task. While that
+// close() detaches the port and then queues the 'close' event as a task. While that
 // task is pending, hasPendingActivity() must keep the JS wrapper alive: otherwise a
 // GC in that window severs the JSEventListener weak and the dispatch hits a dead
 // wrapper (debug: ASSERTION FAILED: m_wrapper).
@@ -433,7 +433,7 @@ test("on('close') before on('message') still delivers queued messages before 'cl
 
 // A 'message' handler running inside peerClosed()'s flush can transfer this port; the
 // remaining inbox belongs to the new owner and must not be popped-and-dropped by the
-// stale port. flushQueuedMessagesBeforeClose() breaks on m_isDetached to guard this.
+// stale port. flushQueuedMessagesBeforeClose() breaks on isDetached() to guard this.
 test("transferring a port from inside peerClosed()'s flush preserves the remaining inbox", async () => {
   require("worker_threads");
   const { port1, port2 } = new MessageChannel();

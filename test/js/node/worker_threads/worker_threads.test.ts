@@ -1689,7 +1689,7 @@ test("MessagePort NodeEventTarget methods", () => {
   port1.close();
 });
 
-// jsRef() only gated on m_isDetached, so .ref()/onmessage= after the peer closed
+// jsRef() only gated on isDetached(), so .ref()/onmessage= after the peer closed
 // re-took an event-loop ref that nothing releases and the process hung. Node no-ops
 // both. Spawned, because the symptom is "the process never exits".
 test("ref()/onmessage after the peer closes does not pin the loop", async () => {
@@ -2156,11 +2156,11 @@ test("MessageEvent ports validation walks the iterator once and gives a detailed
   port1.close();
 });
 
-test("MessagePort: transferring a port from inside its own close()'s flush window throws DataCloneError", async () => {
-  // Queue two messages. The first handler calls A.close(); close()'s flush
-  // (running because m_inMessageDispatch is true) delivers the second, whose
-  // handler tries to transfer A. A is m_isClosing at that point, so the
-  // transfer path rejects it with DataCloneError.
+test("MessagePort: transferring a port that was close()d earlier in the same batch throws DataCloneError", async () => {
+  // Queue two messages. The first handler calls A.close(), which only marks A closing:
+  // the drain still delivers the second message once that handler returns, and its
+  // handler tries to transfer A. The transfer path rejects a closing port the same as a
+  // detached one.
   const { port1: A, port2: A2 } = new MessageChannel();
   const { port1: B1, port2: B2 } = new MessageChannel();
   let err: any;
@@ -2171,13 +2171,13 @@ test("MessagePort: transferring a port from inside its own close()'s flush windo
     n++;
     if (n === 1) {
       A.close();
-      done();
     } else {
       try {
         B1.postMessage(null, [A]);
       } catch (e) {
         err = e;
       }
+      done();
     }
   });
   A2.postMessage("first");
@@ -2355,6 +2355,22 @@ test("parentPort.close() ends a worker that is only listening for messages", asy
   w.postMessage("close");
   expect(await exited).toBe(0);
   expect(messages).toEqual(["got hello", "got close"]);
+});
+
+// The one-shot worker: reply, then parentPort.close(), with more requests already queued.
+// The listener still runs for each of them, and only the reply made before close() leaves.
+test("a worker that replies and then closes parentPort sends one reply for three queued requests", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("worker_threads");
+     parentPort.on("message", value => { parentPort.postMessage("pong for " + value); parentPort.close(); });`,
+    { eval: true },
+  );
+  const replies: string[] = [];
+  w.on("message", m => replies.push(m));
+  const exited = new Promise<number>(resolve => w.on("exit", resolve));
+  for (let i = 1; i <= 3; i++) w.postMessage("ping" + i);
+  expect(await exited).toBe(0);
+  expect(replies).toEqual(["pong for ping1"]);
 });
 
 test("parentPort.unref() lets a listening worker exit", async () => {

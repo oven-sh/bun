@@ -596,12 +596,11 @@ test("error.stack doesnt lose frames", () => {
           at middle (<dir>/inspect.test.ts:<num>:<num>)
           at IGNORE_ME_BEFORE_THIS_LINE (<dir>/inspect.test.ts:<num>:<num>)
           at accessErrorStackProperty (<dir>/inspect.test.ts:<num>:<num>)
-          at <dir>/inspect.test.ts:<num>:<num>
+          at <anonymous> (<dir>/inspect.test.ts:<num>:<num>)
     "
   `);
 
-  // We allow it to differ by the existence of <anonymous> as a string. But that's it.
-  expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
+  expect(yes).toBe(no);
 });
 
 test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv isn't an array", async () => {
@@ -671,3 +670,140 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
   expect(child.exitCode).toBe(null);
   webSocket.close();
 });
+
+// A frontend reads each pair of `lineColumns` as a line and a column that count from 1.
+test("LifecycleReporter.error has a position for each frame it lists", async () => {
+  // The frames of this error are read from its stack. One has no line, and one has no column.
+  const stack = [
+    "Error: boom",
+    "    at first (node:child_process)",
+    "    at second (/fake/lib.js:7)",
+    "    at third (/fake/lib.js:3:4)",
+  ].join("\n");
+  // --hot keeps the process after the error. Without it the process ends, and the event can be lost.
+  using dir = tempDir("inspect-lifecycle-error", { "idle.js": "setInterval(() => {}, 1000);" });
+  await using child = spawn({
+    cmd: [bunExe(), "--hot", "--inspect=ws://127.0.0.1:0/", "idle.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  let url: string | undefined;
+  const decoder = new TextDecoder();
+  for await (const chunk of child.stderr as ReadableStream) {
+    stderr += decoder.decode(chunk);
+    url = stderr.match(/(ws:\/\/[^\s]+)/)?.[1];
+    if (url) break;
+  }
+  if (!url) throw new Error(`Unable to find the inspector URL in:\n${stderr}`);
+
+  const opened = Promise.withResolvers<void>();
+  const reported = Promise.withResolvers<unknown>();
+  const webSocket = new WebSocket(url);
+  try {
+    webSocket.addEventListener("open", () => opened.resolve());
+    webSocket.addEventListener("close", () => reported.reject(new Error("the inspector closed the socket")));
+    webSocket.addEventListener("error", () => reported.reject(new Error("the inspector socket failed")));
+    webSocket.addEventListener("message", ({ data }) => {
+      const message = JSON.parse(data.toString());
+      if (message.method === "LifecycleReporter.error") reported.resolve(message.params);
+    });
+    await Promise.race([opened.promise, reported.promise]);
+
+    const expression = `const error = new Error("boom"); error.stack = ${JSON.stringify(stack)}; reportError(error);`;
+    webSocket.send(JSON.stringify({ id: 1, method: "LifecycleReporter.enable", params: {} }));
+    webSocket.send(JSON.stringify({ id: 2, method: "Runtime.evaluate", params: { expression } }));
+
+    expect(await reported.promise).toMatchObject({
+      name: "Error",
+      message: "boom",
+      urls: ["/fake/lib.js", "/fake/lib.js"],
+      lineColumns: [7, 1, 3, 4],
+    });
+    expect(child.exitCode).toBe(null);
+  } finally {
+    webSocket.close();
+  }
+});
+
+// The console of an inspector makes the stack of a logged error into text before bun prints
+// the error. The debug adapter of the VS Code extension sends Console.enable.
+test.concurrent.each([[[]], [["Console.enable"]]])(
+  "console.error prints every frame of an error after an inspector sent %j",
+  async methods => {
+    using dir = tempDir("inspect-console-error", {
+      "logs.mjs": [
+        "function inner() {",
+        '  console.error(new Error("boom"));',
+        "}",
+        "function outer() {",
+        "  inner();",
+        "}",
+        "const keepAlive = setInterval(() => {}, 1000);",
+        "await (globalThis.inspector ??= Promise.withResolvers()).promise;",
+        "clearInterval(keepAlive);",
+        "outer();",
+        'console.error("done");',
+        "",
+      ].join("\n"),
+    });
+    await using child = spawn({
+      cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/", "logs.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+    let stderr = "";
+    const reader = (child.stderr as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    async function stderrUntil(pattern: RegExp) {
+      while (!pattern.test(stderr)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`${pattern} is not in:\n${stderr}`);
+        stderr += decoder.decode(value, { stream: true });
+      }
+      return pattern.exec(stderr)!;
+    }
+
+    const [url] = await stderrUntil(/ws:\/\/[^\s]+/);
+    const opened = Promise.withResolvers<void>();
+    const webSocket = new WebSocket(url);
+    try {
+      webSocket.addEventListener("open", () => opened.resolve());
+      webSocket.addEventListener("close", () => {
+        // With no inspector the program waits and its stderr does not end.
+        child.kill();
+        opened.reject(new Error("the inspector closed the socket"));
+      });
+      webSocket.addEventListener("error", () => opened.reject(new Error("the inspector socket failed")));
+      await opened.promise;
+
+      let id = 1;
+      for (const method of methods) webSocket.send(JSON.stringify({ id: id++, method, params: {} }));
+      // The inspector can run this before the module makes the promise.
+      const expression = "(globalThis.inspector ??= Promise.withResolvers()).resolve()";
+      webSocket.send(JSON.stringify({ id: id++, method: "Runtime.evaluate", params: { expression } }));
+
+      await stderrUntil(/^done$/m);
+      const frames = stderr
+        .replaceAll("\\", "/")
+        .replaceAll(String(dir).replaceAll("\\", "/") + "/", "")
+        .split("\n")
+        .filter(line => /^\s+at /.test(line))
+        .map(line => line.trim());
+      expect(frames).toEqual([
+        // The column is of `new` when the frames are JSC's, and of `Error` when they are read from the stack.
+        `at inner (logs.mjs:2:${methods.length ? 21 : 17})`,
+        "at outer (logs.mjs:5:3)",
+        "at logs.mjs:10:1",
+      ]);
+    } finally {
+      webSocket.close();
+    }
+  },
+);

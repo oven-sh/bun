@@ -48,11 +48,6 @@
 #include <JavaScriptCore/VMInlines.h>
 #include "wtf-bindings.h"
 
-static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsigned end)
-{
-    return sv.substring(start, end - start);
-}
-
 using namespace JSC;
 using namespace WebCore;
 
@@ -263,12 +258,14 @@ public:
     public:
         StringView functionName {};
         StringView sourceURL {};
-        WTF::OrdinalNumber lineNumber = WTF::OrdinalNumber::fromZeroBasedInt(0);
-        WTF::OrdinalNumber columnNumber = WTF::OrdinalNumber::fromZeroBasedInt(0);
+        WTF::OrdinalNumber lineNumber = WTF::OrdinalNumber::beforeFirst();
+        WTF::OrdinalNumber columnNumber = WTF::OrdinalNumber::beforeFirst();
 
         bool isConstructor = false;
         bool isGlobalCode = false;
         bool isAsync = false;
+        // The line has a name before its location, be it "<anonymous>".
+        bool isFunction = false;
     };
 
     WTF::StringView stack;
@@ -277,6 +274,62 @@ public:
     V8StackTraceIterator(WTF::StringView stack_)
         : stack(stack_)
     {
+    }
+
+    static bool isDigits(StringView segment)
+    {
+        return !segment.isEmpty() && segment.containsOnly<isASCIIDigit>();
+    }
+
+    // Lines and columns count from 1. A 0, or a number that is too large, is none.
+    static WTF::OrdinalNumber parseOrdinal(StringView digits)
+    {
+        auto value = WTF::parseInteger<int>(digits);
+        return value && value.value() > 0 ? WTF::OrdinalNumber::fromOneBasedInt(value.value()) : WTF::OrdinalNumber::beforeFirst();
+    }
+
+    // location = url[:line[:column]], read from the right: a URL has colons of its own.
+    static void parseLocation(StringView location, StackFrame& frame)
+    {
+        frame.sourceURL = location;
+        auto lastColon = location.reverseFind(':');
+        if (lastColon == WTF::notFound)
+            return;
+        auto last = location.substring(lastColon + 1);
+        if (!isDigits(last))
+            return;
+        frame.sourceURL = location.left(lastColon);
+        frame.lineNumber = parseOrdinal(last);
+
+        auto previousColon = lastColon ? location.reverseFind(':', lastColon - 1) : WTF::notFound;
+        if (previousColon == WTF::notFound)
+            return;
+        auto previous = location.substring(previousColon + 1, lastColon - previousColon - 1);
+        if (!isDigits(previous))
+            return;
+        frame.sourceURL = location.left(previousColon);
+        frame.lineNumber = parseOrdinal(previous);
+        // A column with no line is no position.
+        if (frame.lineNumber != WTF::OrdinalNumber::beforeFirst())
+            frame.columnNumber = parseOrdinal(last);
+    }
+
+    // Where the name of "name (location)" ends: at the " (" that balances the final ")", else at the first " (".
+    static size_t functionNameEnd(StringView line)
+    {
+        if (!line.endsWith(')'))
+            return WTF::notFound;
+        unsigned depth = 0;
+        for (unsigned i = line.length(); i-- > 1;) {
+            if (line[i] == ')') {
+                depth++;
+            } else if (line[i] == '(' && !--depth) {
+                if (line[i - 1] == ' ')
+                    return i - 1;
+                break;
+            }
+        }
+        return line.find(" ("_s);
     }
 
     bool parseFrame(StackFrame& frame)
@@ -300,108 +353,26 @@ public:
             end = offset;
         }
 
-        if (start >= end || start == WTF::notFound) {
-            return false;
-        }
-
         StringView line = stack.substring(start, end - start);
+        while (!line.isEmpty() && isASCIIWhitespace(line[line.length() - 1]))
+            line = line.left(line.length() - 1);
         offset = end;
 
-        // A path can have parentheses of its own. The location is in parentheses only if the line ends with one,
-        // and they open after the function's name.
-        auto closingParentheses = line.endsWith(')') ? line.length() - 1 : WTF::notFound;
-        auto openingParentheses = closingParentheses == WTF::notFound ? WTF::notFound : line.find(" ("_s);
-        if (openingParentheses != WTF::notFound)
-            openingParentheses++;
-
-        if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
-            // Special case: "unknown" frames don't have parentheses but are valid
-            // These appear in stack traces from certain error paths
-            if (line == "unknown"_s) {
-                frame.sourceURL = line;
-                frame.functionName = StringView();
-                return true;
-            }
-
-            // For any other frame without parentheses, terminate parsing as before
-            offset = stack.length();
-            return false;
+        // line = [async ]name (location) | [async ]location
+        StringView functionName;
+        StringView location = line;
+        auto nameEnd = functionNameEnd(line);
+        if (nameEnd != WTF::notFound) {
+            functionName = line.left(nameEnd);
+            location = line.substring(nameEnd + 2, line.length() - nameEnd - 3);
+        } else if (line.startsWith("async "_s)) {
+            frame.isAsync = true;
+            location = line.substring(6);
         }
-
-        auto lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
-
-        {
-            auto marker1 = 0;
-            auto marker2 = lineInner.find(':', marker1);
-
-            if (marker2 == WTF::notFound) {
-                frame.sourceURL = lineInner;
-                goto done_block;
-            }
-
-            auto marker3 = lineInner.find(':', marker2 + 1);
-            if (marker3 == WTF::notFound) {
-                // /path/to/file.js:
-                // /path/to/file.js:1
-                // node:child_process
-                // C:\Users\chloe\bun\file.js
-
-                marker3 = lineInner.length();
-
-                auto segment1 = StringView_slice(lineInner, marker1, marker2);
-                auto segment2 = StringView_slice(lineInner, marker2 + 1, marker3);
-
-                if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment2)) {
-                    frame.sourceURL = segment1;
-                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
-                } else {
-                    frame.sourceURL = StringView_slice(lineInner, marker1, marker3);
-                }
-                goto done_block;
-            }
-
-            // /path/to/file.js:1:
-            // /path/to/file.js:1:2
-            // node:child_process:1:2
-            // C:\Users\chloe\bun\file.js:
-            // C:\Users\chloe\bun\file.js:1
-            // C:\Users\chloe\bun\file.js:1:2
-
-            while (true) {
-                auto newcolon = lineInner.find(':', marker3 + 1);
-                if (newcolon == WTF::notFound)
-                    break;
-                marker2 = marker3;
-                marker3 = newcolon;
-            }
-
-            auto marker4 = lineInner.length();
-
-            auto segment1 = StringView_slice(lineInner, marker1, marker2);
-            auto segment2 = StringView_slice(lineInner, marker2 + 1, marker3);
-            auto segment3 = StringView_slice(lineInner, marker3 + 1, marker4);
-
-            if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment2)) {
-                if (auto int2 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment3)) {
-                    frame.sourceURL = segment1;
-                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
-                    frame.columnNumber = WTF::OrdinalNumber::fromOneBasedInt(int2.value());
-                } else {
-                    frame.sourceURL = segment1;
-                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
-                }
-            } else {
-                if (auto int2 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment3)) {
-                    frame.sourceURL = StringView_slice(lineInner, marker1, marker3);
-                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int2.value());
-                } else {
-                    frame.sourceURL = StringView_slice(lineInner, marker1, marker4);
-                }
-            }
-        }
-    done_block:
-
-        StringView functionName = line.substring(0, openingParentheses - 1);
+        parseLocation(location, frame);
+        // What a stack has for a frame with no URL.
+        if (frame.sourceURL == "native"_s || frame.sourceURL == "unknown"_s)
+            frame.sourceURL = StringView();
 
         if (functionName == "global code"_s) {
             functionName = StringView();
@@ -417,6 +388,8 @@ public:
             frame.isConstructor = true;
             functionName = functionName.substring(4);
         }
+
+        frame.isFunction = !functionName.isEmpty();
 
         if (functionName == "<anonymous>"_s) {
             functionName = StringView();
@@ -636,6 +609,9 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
 
                     iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
                         ASSERT(except.stack.frames_len < frame_count);
+                        // A call into native code has no URL and no line. populateStackTrace skips it too.
+                        if (frame.sourceURL.isEmpty() && frame.lineNumber == WTF::OrdinalNumber::beforeFirst())
+                            return;
                         auto& current = except.stack.frames_ptr[except.stack.frames_len];
                         current = {};
 
@@ -645,6 +621,7 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                         current.source_url = Bun::toStringRef(sourceURL);
                         current.position.line_zero_based = frame.lineNumber.zeroBasedInt();
                         current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
+                        current.position.byte_position = -1;
 
                         current.remapped = true;
                         current.is_async = frame.isAsync;
@@ -653,6 +630,8 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                             current.code_type = ZigStackFrameCodeConstructor;
                         } else if (frame.isGlobalCode) {
                             current.code_type = ZigStackFrameCodeGlobal;
+                        } else if (frame.isFunction) {
+                            current.code_type = ZigStackFrameCodeFunction;
                         }
 
                         except.stack.frames_len += 1;

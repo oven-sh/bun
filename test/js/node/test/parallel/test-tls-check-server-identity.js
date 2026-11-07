@@ -62,6 +62,11 @@ const tests = [
     cert: { subject: { CN: '.a.com' } },
     error: 'Host: a.com. is not cert\'s CN: .a.com'
   },
+  {
+    host: 'bad.x.example.com',
+    cert: { subject: { CN: 'bad..example.com' } },
+    error: 'Host: bad.x.example.com. is not cert\'s CN: bad..example.com'
+  },
 
   // IP address in CN. Technically allowed but so rare that we reject
   // it anyway. If we ever do start allowing them, we should take care
@@ -93,6 +98,27 @@ const tests = [
   {
     host: '8.8.8.8',
     cert: { subject: { CN: '8.8.8.8' }, subjectaltname: 'IP Address:8.8.8.8' }
+  },
+
+  // An "IP Address:" SAN also matches an IPv6 host. Regression test for the
+  // IDNA-normalization change: domainToASCII('::1') === '' (an IPv6 literal is
+  // not a domain), which made the normalized host skip IPv6 IP-SAN matching.
+  {
+    host: '::1',
+    cert: { subject: {}, subjectaltname: 'IP Address:::1' }
+  },
+
+  // IPv6 hosts and SANs are matched canonically.
+  {
+    host: '2001:db8::1',
+    cert: { subject: {}, subjectaltname: 'IP Address:2001:DB8:0:0:0:0:0:1' }
+  },
+
+  // A non-matching IPv6 "IP Address:" SAN is rejected.
+  {
+    host: '::1',
+    cert: { subject: {}, subjectaltname: 'IP Address:::2' },
+    error: 'IP: ::1 is not in the cert\'s list: ::2'
   },
 
   // But not when it's a CIDR.
@@ -129,6 +155,16 @@ const tests = [
     cert: { subject: { CN: 'b*b.a.com' } },
     error: 'Host: b.a.com. is not cert\'s CN: b*b.a.com'
   },
+  {
+    host: 'bxa.a.com',
+    cert: { subject: { CN: 'b**.a.com' } },
+    error: 'Host: bxa.a.com. is not cert\'s CN: b**.a.com'
+  },
+  {
+    host: 'xbcd.a.com',
+    cert: { subject: { CN: 'ab*cd.a.com' } },
+    error: 'Host: xbcd.a.com. is not cert\'s CN: ab*cd.a.com'
+  },
 
   // Empty Cert
   {
@@ -157,6 +193,11 @@ const tests = [
     host: 'foo.com', cert: {
       subject: { CN: ['foo.com', 'bar.com'] } // CN=foo.com; CN=bar.com;
     }
+  },
+  {
+    host: 'a.com',
+    cert: { subject: { CN: [''] } },
+    error: 'Host: a.com. is not cert\'s CN: '
   },
 
   // DNS names and CN
@@ -213,6 +254,46 @@ const tests = [
 
   // DNS names
   {
+    host: 'a.com',
+    cert: {
+      subjectaltname: 'DNS:',
+      subject: {}
+    },
+    error: 'Host: a.com. is not in the cert\'s altnames: DNS:'
+  },
+  {
+    host: 'bad.x.example.com',
+    cert: {
+      subjectaltname: 'DNS:bad..example.com',
+      subject: {}
+    },
+    error: 'Host: bad.x.example.com. is not in the cert\'s altnames: DNS:bad..example.com'
+  },
+  {
+    host: 'x.example.com',
+    cert: {
+      subjectaltname: 'DNS:caf\u00E9.example.com', // "café.example.com"
+      subject: {}
+    },
+    error: 'Host: x.example.com. is not in the cert\'s altnames: DNS:caf\u00E9.example.com'
+  },
+  {
+    host: 'xbcd.a.com',
+    cert: {
+      subjectaltname: 'DNS:ab*cd.a.com',
+      subject: {}
+    },
+    error: 'Host: xbcd.a.com. is not in the cert\'s altnames: DNS:ab*cd.a.com'
+  },
+  {
+    host: 'x.example.com',
+    cert: {
+      subjectaltname: 'DNS:bad label.com',
+      subject: {}
+    },
+    error: 'Host: x.example.com. is not in the cert\'s altnames: DNS:bad label.com'
+  },
+  {
     host: 'a.com', cert: {
       subjectaltname: 'DNS:*.a.com',
       subject: {}
@@ -260,6 +341,14 @@ const tests = [
       subjectaltname: 'DNS:*b.a.com, DNS:a.b.a.com',
       subject: {}
     }
+  },
+  {
+    host: 'bxa.a.com',
+    cert: {
+      subjectaltname: 'DNS:b**.a.com',
+      subject: {}
+    },
+    error: 'Host: bxa.a.com. is not in the cert\'s altnames: DNS:b**.a.com'
   },
   // URI names
   {
@@ -312,6 +401,15 @@ const tests = [
     },
     error: 'Host: localhost. is not in the cert\'s altnames: ' +
            'DNS:a.com'
+  },
+  {
+    host: 'foo。bar.example.com',
+    cert: {
+      subjectaltname: 'DNS:*.example.com',
+      subject: {}
+    },
+    error: 'Host: foo。bar.example.com. is not in the cert\'s altnames: ' +
+           'DNS:*.example.com'
   },
   // IDNA
   {

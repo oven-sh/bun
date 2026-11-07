@@ -22,7 +22,6 @@
 
 #ifdef LIBUS_USE_EPOLL
 #include <sys/epoll.h>
-#include <sys/timerfd.h>
 #include <sys/eventfd.h>
 #define LIBUS_SOCKET_READABLE EPOLLIN
 #define LIBUS_SOCKET_WRITABLE EPOLLOUT
@@ -113,7 +112,5 @@ struct us_poll_t {
         unsigned int poll_type : 5;
     } state;
 };
-
-#undef FD_BITS
 
 #endif // EPOLL_KQUEUE_H

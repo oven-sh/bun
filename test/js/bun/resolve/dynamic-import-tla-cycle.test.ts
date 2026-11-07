@@ -199,3 +199,44 @@ test("static sibling import waits for an indirectly-shared TLA dep in the same E
   expect(stdout.trim()).toBe("456");
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/30634
+test("sibling dynamic imports sharing a TLA wrapper wait for its post-await exports", async () => {
+  using dir = tempDir("dyn-tla-shared-wrapper", {
+    "entry.mjs": `
+      const [c1, c2] = await Promise.all([import("./consumer1.mjs"), import("./consumer2.mjs")]);
+      console.log(c1.FOO, c2.BAR);
+    `,
+    "wrapper.mjs": `
+      const mod = await import("./inner.mjs");
+      export const FOO = mod.FOO;
+      export const BAR = mod.BAR;
+    `,
+    "inner.mjs": `
+      export const FOO = "foo";
+      export const BAR = "bar";
+    `,
+    "consumer1.mjs": `
+      import { FOO as wrapped } from "./wrapper.mjs";
+      export const FOO = wrapped;
+    `,
+    "consumer2.mjs": `
+      import { BAR as wrapped } from "./wrapper.mjs";
+      export const BAR = wrapped;
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("foo bar");
+  expect(exitCode).toBe(0);
+});

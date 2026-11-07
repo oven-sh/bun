@@ -1,0 +1,20 @@
+# handedOver(process)
+# An argument puts `process` into hands nobody sees: whoever holds it may list its members and read each of them, so each counts as read, and what hangs on it in the table comes into the image.
+# A receiver is only what a member was found on: store-under-a-key-nobody-knows-is-no-use-of-a-host-built-in.ir is that program
+# LIBRARY: own
+# RUN: valueflow-why used-builtin=ProcessSend used-builtin=ProcessChannel
+# CHECK: used-builtin=ProcessSend
+# CHECK-NOT: not held
+# CHECK: used-builtin=ProcessChannel
+# CHECK-NOT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedOver" [isFreeName]
+    v2 = Builtin builtin=Process
+    v3 = Call v1, -, v2
+    Return
+}

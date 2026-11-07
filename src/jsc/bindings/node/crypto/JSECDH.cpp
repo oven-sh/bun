@@ -19,6 +19,9 @@ const JSC::ClassInfo JSECDH::s_info = { "ECDH"_s, &Base::s_info, nullptr, nullpt
 void JSECDH::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
+
+    m_sizeForGC = (EC_GROUP_get_degree(m_group) + 7) / 8;
+    vm.heap.reportExtraMemoryAllocated(this, m_sizeForGC);
 }
 
 template<typename Visitor>
@@ -27,6 +30,8 @@ void JSECDH::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSECDH* thisObject = uncheckedDowncast<JSECDH>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+
+    visitor.reportExtraMemoryVisited(thisObject->m_sizeForGC);
 }
 
 point_conversion_form_t JSECDH::getFormat(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue formatValue)
@@ -62,6 +67,8 @@ EncodedJSValue JSECDH::getPublicKey(JSGlobalObject* globalObject, ThrowScope& sc
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_STATE, "Failed to get ECDH public key"_s);
         return {};
     }
+
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     // Calculate the length needed for the result
     size_t bufLen = EC_POINT_point2oct(group, pubKey, form, nullptr, 0, nullptr);

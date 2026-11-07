@@ -1,0 +1,605 @@
+# Hawk (https://github.com/astral-sh/hawk) cross-crate dead-code analysis config.
+#
+# The analysis targets the shipped surface: a release-profile compile of the
+# workspace for each of the 11 targets Bun ships, unioned so an item used on
+# any platform is treated as live. `bun_runtime` is analyzed through a throwaway
+# `bun_hawk_root` bin (see tools/hawk/); the real reachability roots are the
+# #[no_mangle] exports, which Hawk pins automatically.
+
+targets = [
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-musl",
+  "x86_64-unknown-linux-musl",
+  "aarch64-linux-android",
+  "x86_64-linux-android",
+  "x86_64-unknown-freebsd",
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  "aarch64-pc-windows-msvc",
+  "x86_64-pc-windows-msvc",
+]
+
+# Analyze the shipped surface: release across all targets.
+# (asan-release x linux-x64 will be added once profiles can pin their own targets.)
+[[feature-profile]]
+name = "release"
+cargo-profile = "release"
+
+# The workspace doctest pass hits a pre-existing latent bug in bun_http's
+# ref-count derive under --release (E0407, reproduces on main); scope the pass
+# to a crate whose doc examples build so the analysis can complete.
+[[doctest]]
+package = "bun_semver"
+
+[[production]]
+package = "bun_runtime"
+bin = "bun_hawk_root"
+reason = "throwaway analysis root; real roots are the #[no_mangle] exports"
+
+# `// HOST_EXPORT(...)` fns are scraped by src/codegen/generate-host-exports.ts
+# and must stay `pub fn`.
+[[root-marker]]
+comment = "HOST_EXPORT("
+reason = "codegen-scraped host export"
+
+# Group A: enum variants whose discriminants form external code tables (kept on purpose).
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_http_types"
+item = "h2::FrameType::HTTP_FRAME_ALTSVC"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: HTTP/2 frame type numbering"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_http_types"
+item = "h2::FrameType::HTTP_FRAME_ORIGIN"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: HTTP/2 frame type numbering"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::IndexSizeError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::HierarchyRequestError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::WrongDocumentError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::InvalidCharacterError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::NoModificationAllowedError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::NotFoundError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::NotSupportedError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::InUseAttributeError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::InvalidStateError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::SyntaxError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::InvalidModificationError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::NamespaceError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::InvalidAccessError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::SecurityError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::NetworkError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::AbortError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::URLMismatchError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::QuotaExceededError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::TimeoutError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::InvalidNodeTypeError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::DataCloneError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::EncodingError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::NotReadableError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::UnknownError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::ConstraintError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::DataError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::TransactionInactiveError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::ReadonlyError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::VersionError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::OperationError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::NotAllowedError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::RangeError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::TypeError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::JSSyntaxError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::StackOverflowError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::OutOfMemoryError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::ExistingExceptionError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::InvalidThisError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::InvalidURLError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "js_error_code::DOMExceptionCode::CryptoOperationFailedError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: mirrors the DOM exception code numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "regular_expression::Flags::HasIndices"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: regular-expression flag bits shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "regular_expression::Flags::Global"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: regular-expression flag bits shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "regular_expression::Flags::IgnoreCase"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: regular-expression flag bits shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "regular_expression::Flags::Multiline"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: regular-expression flag bits shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "regular_expression::Flags::DotAll"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: regular-expression flag bits shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "regular_expression::Flags::Unicode"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: regular-expression flag bits shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "regular_expression::Flags::UnicodeSets"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: regular-expression flag bits shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "regular_expression::Flags::Sticky"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: regular-expression flag bits shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_jsc"
+item = "weak::WeakRefType::PostgreSQLQueryClient"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: weak-ref type numbering shared with JSC"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "bake::dev_server::serialized_failure::ErrorKind::JsError"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: serialized-failure wire format"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "bake::dev_server::serialized_failure::ErrorKind::JsErrorType"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: serialized-failure wire format"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "bake::dev_server::serialized_failure::ErrorKind::JsErrorRange"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: serialized-failure wire format"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "bake::dev_server::serialized_failure::ErrorKind::JsErrorExtra"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: serialized-failure wire format"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "bake::dev_server::serialized_failure::ErrorKind::JsPrimitiveException"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: serialized-failure wire format"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "bake::dev_server::serialized_failure::ErrorKind::JsPrimitive"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: serialized-failure wire format"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "bake::dev_server::serialized_failure::ErrorKind::JsAggregate"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: serialized-failure wire format"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "napi::napi_body::NapiStatus::string_expected"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: public N-API C ABI status values"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "napi::napi_body::NapiStatus::name_expected"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: public N-API C ABI status values"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "napi::napi_body::NapiStatus::number_expected"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: public N-API C ABI status values"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "napi::napi_body::NapiStatus::boolean_expected"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: public N-API C ABI status values"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "napi::napi_body::NapiStatus::handle_scope_mismatch"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: public N-API C ABI status values"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "napi::napi_body::NapiStatus::callback_scope_mismatch"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: public N-API C ABI status values"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "napi::napi_body::NapiStatus::bigint_expected"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: public N-API C ABI status values"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "napi::napi_body::NapiStatus::date_expected"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: public N-API C ABI status values"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "napi::napi_body::NapiStatus::arraybuffer_expected"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: public N-API C ABI status values"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "napi::napi_body::NapiStatus::detachable_arraybuffer_expected"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: public N-API C ABI status values"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "napi::napi_body::NapiStatus::would_deadlock"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: public N-API C ABI status values"
+
+[[override]]
+lint = "hawk::dead_public"
+crate = "bun_runtime"
+item = "webcore::bake_response::SSRKind::Regular"
+kind = "enum_variant"
+level = "expect"
+reason = "external code table: SSR kind tag consumed by generated code"

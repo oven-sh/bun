@@ -74,7 +74,7 @@ assert.strictEqual(buffer.readFloatLE(0), -Infinity);
     );
   });
 
-  [-1, 1].forEach((offset) => {
+  [Infinity, -1, 1].forEach((offset) => {
     assert.throws(
       () => buffer[fn](offset),
       {
@@ -93,7 +93,7 @@ assert.strictEqual(buffer.readFloatLE(0), -Infinity);
       message: 'Attempt to access memory outside buffer bounds'
     });
 
-  [Infinity, NaN, 1.01].forEach((offset) => {
+  [NaN, 1.01].forEach((offset) => {
     assert.throws(
       () => buffer[fn](offset),
       {

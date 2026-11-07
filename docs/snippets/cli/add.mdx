@@ -30,12 +30,25 @@ bun add <package> <@version>
   Add dependency to <code>peerDependencies</code>
 </ParamField>
 
+<ParamField path="--save-prod" type="boolean">
+  Add dependency to <code>dependencies</code>, also when another group lists it
+</ParamField>
+
 <ParamField path="--exact" type="boolean">
   Add the exact version instead of the <code>^</code> range. Alias: <code>-E</code>
 </ParamField>
 
 <ParamField path="--only-missing" type="boolean">
   Only add dependencies to <code>package.json</code> if they are not already present
+</ParamField>
+
+<ParamField path="--catalog" type="string">
+  Add the resolved version to the root <code>package.json</code> catalog and depend on it as <code>catalog:</code>;{" "}
+  <code>--catalog=NAME</code> targets <code>catalogs.NAME</code>
+</ParamField>
+
+<ParamField path="--filter" type="string">
+  Add the package(s) to the matching workspaces instead of the current package. Alias: <code>-F</code>
 </ParamField>
 
 ### Project Files & Lockfiles
@@ -49,7 +62,7 @@ bun add <package> <@version>
 </ParamField>
 
 <ParamField path="--save" type="boolean" default="true">
-  Save to <code>package.json</code> (true by default)
+  Save to <code>package.json</code>
 </ParamField>
 
 <ParamField path="--frozen-lockfile" type="boolean">
@@ -71,7 +84,8 @@ bun add <package> <@version>
 ### Installation Control
 
 <ParamField path="--dry-run" type="boolean">
-  Don't install anything
+  Resolve the packages but don't install them, update an existing <code>package.json</code>, save a lockfile, or run the
+  project's lifecycle scripts
 </ParamField>
 
 <ParamField path="--force" type="boolean">
@@ -83,7 +97,7 @@ bun add <package> <@version>
 </ParamField>
 
 <ParamField path="--ignore-scripts" type="boolean">
-  Skip lifecycle scripts in the project's <code>package.json</code> (dependency scripts are never run)
+  Skip lifecycle scripts for all packages, including the project's <code>package.json</code> and trusted dependencies
 </ParamField>
 
 <ParamField path="--analyze" type="boolean">
@@ -101,24 +115,36 @@ bun add <package> <@version>
   Same as <code>--ca</code>, but as a file path to the certificate
 </ParamField>
 
+<ParamField path="--use-system-ca" type="boolean">
+  Use the system's trusted certificate authorities
+</ParamField>
+
+<ParamField path="--use-openssl-ca" type="boolean">
+  Use OpenSSL's default CA store instead of the bundled one
+</ParamField>
+
+<ParamField path="--use-bundled-ca" type="boolean">
+  Use bundled CA store
+</ParamField>
+
 <ParamField path="--registry" type="string">
   Use a specific registry by default, overriding <code>.npmrc</code>, <code>bunfig.toml</code>, and environment
   variables
 </ParamField>
 
-<ParamField path="--network-concurrency" type="number" default="48">
-  Maximum number of concurrent network requests (default 48)
+<ParamField path="--network-concurrency" type="number" default="64">
+  Maximum number of concurrent network requests
 </ParamField>
 
 ### Performance &amp; Resource
 
-<ParamField path="--backend" type="string" default="clonefile">
-  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default),{" "}
-  <code>hardlink</code>, <code>symlink</code>, <code>copyfile</code>
+<ParamField path="--backend" type="string">
+  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default on
+  macOS), <code>hardlink</code> (default on Linux and Windows), <code>symlink</code>, <code>copyfile</code>
 </ParamField>
 
-<ParamField path="--concurrent-scripts" type="number" default="5">
-  Maximum number of concurrent jobs for lifecycle scripts (default 5)
+<ParamField path="--concurrent-scripts" type="number">
+  Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)
 </ParamField>
 
 ### Caching
@@ -157,6 +183,14 @@ bun add <package> <@version>
 
 <ParamField path="--cwd" type="string">
   Set a specific current working directory
+</ParamField>
+
+<ParamField path="--env-file" type="string">
+  Load environment variables from the specified file(s)
+</ParamField>
+
+<ParamField path="--no-env-file" type="boolean">
+  Disable automatic loading of .env files
 </ParamField>
 
 ### Help

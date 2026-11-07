@@ -10,18 +10,23 @@ pub enum Authentication {
     ClearTextPassword,
     MD5Password { salt: [u8; 4] },
     KerberosV5,
-    SCMCredential,
     GSS,
     GSSContinue { data: Data },
     SSPI,
-    SASL,
+    SASL(SASLMechanisms),
     SASLContinue(SASLContinue),
     SASLFinal { data: Data },
     Unknown,
 }
 
+#[derive(Copy, Clone, Default)]
+pub struct SASLMechanisms {
+    pub scram_sha_256: bool,
+    pub scram_sha_256_plus: bool,
+}
+
 pub struct SASLContinue {
-    pub data: Data,
+    pub(crate) data: Data,
     // r/s/i are sub-slices borrowed from `data.slice()` (self-referential).
     // `RawSlice` encapsulates the back-reference invariant: the backing `data`
     // buffer outlives every `SASLContinue` (it is a sibling field), so the safe
@@ -32,16 +37,14 @@ pub struct SASLContinue {
 }
 
 impl SASLContinue {
-    pub fn iteration_count(&self) -> Result<u32, bun_core::Error> {
-        bun_core::fmt::parse_int(self.i.slice(), 10).map_err(|_| bun_core::err!("InvalidCharacter"))
+    pub fn iteration_count(&self) -> crate::Result<u32> {
+        bun_core::fmt::parse_int(self.i.slice(), 10).map_err(|_| crate::Error::InvalidCharacter)
     }
 }
 
 impl Drop for Authentication {
     fn drop(&mut self) {
         match self {
-            Authentication::MD5Password { .. } => {}
-            Authentication::SASL => {}
             Authentication::SASLContinue(v) => {
                 v.data.zdeinit();
             }
@@ -112,8 +115,17 @@ impl Authentication {
                 if message_length < 9 {
                     return Err(AnyPostgresError::InvalidMessageLength);
                 }
-                reader.skip((message_length - 8) as usize)?;
-                Ok(Authentication::SASL)
+                // A NUL-terminated name per mechanism, then one more NUL.
+                let names = reader.bytes((message_length - 8) as usize)?;
+                let mut mechanisms = SASLMechanisms::default();
+                for name in bun_core::split(names.slice(), b"\0") {
+                    match name {
+                        b"SCRAM-SHA-256" => mechanisms.scram_sha_256 = true,
+                        b"SCRAM-SHA-256-PLUS" => mechanisms.scram_sha_256_plus = true,
+                        _ => {}
+                    }
+                }
+                Ok(Authentication::SASL(mechanisms))
             }
 
             11 => {
@@ -132,6 +144,10 @@ impl Authentication {
                     // remain valid because `bytes` is moved into the result below).
                     let mut iter = bun_core::split(bytes.slice(), b",");
                     while let Some(item) = iter.next() {
+                        // RFC 5802 §5.1: a mandatory extension, and this client knows none.
+                        if item.starts_with(b"m=") {
+                            return Err(AnyPostgresError::InvalidMessage);
+                        }
                         if item.len() > 2 {
                             let key = item[0];
                             let after_equals = RawSlice::new(&item[2..]);
@@ -182,11 +198,5 @@ impl Authentication {
 
             _ => Ok(Authentication::Unknown),
         }
-    }
-
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        context: Container,
-    ) -> Result<Self, AnyPostgresError> {
-        Self::decode_internal(&mut NewReader { wrapped: context })
     }
 }

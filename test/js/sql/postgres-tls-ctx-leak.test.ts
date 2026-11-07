@@ -1,7 +1,13 @@
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+
 import { SQL } from "bun";
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
-import net from "net";
+import { listeningServer, pgAuthenticationOk, pgReadyForQuery, pgSSLResponse } from "./wire-frames";
 
 // PostgresSQLConnection.deinit() must free the per-connection SSL SocketContext
 // (tls_ctx). Previously it freed tls_config but leaked tls_ctx, so every
@@ -14,9 +20,9 @@ import net from "net";
 //
 // This test doesn't need a real Postgres server: the tls_ctx is allocated up
 // front in PostgresSQLConnection.call() as soon as sslmode != disable, before
-// any TLS handshake. A minimal mock server refuses SSL ('N') but then
-// immediately sends AuthenticationOk + ReadyForQuery so the client reaches
-// `.connected`, letting close() -> disconnect() -> GC -> finalize() ->
+// any TLS handshake. A minimal mock server refuses SSL ('N'), then answers the
+// plaintext StartupMessage with AuthenticationOk + ReadyForQuery so the client
+// reaches `.connected`, letting close() -> disconnect() -> GC -> finalize() ->
 // deinit() exercise the teardown path.
 
 async function countPostgresConnectionsAfterGC(maxWait = 3000): Promise<number> {
@@ -34,15 +40,13 @@ async function countPostgresConnectionsAfterGC(maxWait = 3000): Promise<number> 
 }
 
 test("Postgres connections with sslmode != disable are finalized after close", async () => {
-  // 'N' (SSL refused) + AuthenticationOk ('R', len=8, type=0) + ReadyForQuery ('Z', len=5, 'I')
-  const handshake = Buffer.from([0x4e, 0x52, 0, 0, 0, 8, 0, 0, 0, 0, 0x5a, 0, 0, 0, 5, 0x49]);
-
-  const server = net.createServer(socket => {
-    socket.once("data", () => socket.write(handshake));
+  const { server, port } = await listeningServer(socket => {
+    socket.once("data", () => {
+      socket.write(pgSSLResponse("N"));
+      socket.once("data", () => socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery("I")])));
+    });
     socket.on("error", () => {});
   });
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  const port = (server.address() as net.AddressInfo).port;
 
   try {
     async function once() {
@@ -79,12 +83,10 @@ test("Postgres connections with sslmode != disable are finalized after close", a
 // so the connection fails before ever reaching `.connected`. Previously these
 // failed connections also stayed alive forever via hasPendingActivity.
 test("Postgres connections that fail TLS negotiation are finalized", async () => {
-  const server = net.createServer(socket => {
-    socket.once("data", () => socket.write("N"));
+  const { server, port } = await listeningServer(socket => {
+    socket.once("data", () => socket.write(pgSSLResponse("N")));
     socket.on("error", () => {});
   });
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  const port = (server.address() as net.AddressInfo).port;
 
   try {
     async function once() {

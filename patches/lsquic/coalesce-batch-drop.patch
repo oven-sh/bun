@@ -1,0 +1,69 @@
+--- a/src/liblsquic/lsquic_engine.c	2026-07-07 16:55:39
++++ b/src/liblsquic/lsquic_engine.c	2026-07-07 16:55:39
+@@ -2906,6 +2906,22 @@
+     while (++iov < end);
+ 
+     return size;
++}
++
++
++/* Give back the packets already staged into the current, not-yet-finalized
++ * out_spec.  A coalescing bail-out (encrypt failure, OOM, copy failure) only
++ * returned the packet it failed on; the ones batched before it had already
++ * been removed from the scheduled queue, so nothing sent them and nothing
++ * freed them.  Reverse order, to match send_batch()'s ordering rule.
++ */
++static void
++return_staged_packets (lsquic_conn_t *conn,
++                       struct lsquic_packet_out **first,
++                       struct lsquic_packet_out **past_last)
++{
++    while (past_last > first)
++        conn->cn_if->ci_packet_not_sent(conn, *--past_last);
+ }
+ 
+ 
+@@ -2916,7 +2932,7 @@
+ {
+     unsigned n, w, n_sent, n_batches_sent;
+     lsquic_packet_out_t *packet_out;
+-    struct lsquic_packet_out **packet;
++    struct lsquic_packet_out **packet, **packet_spec;
+     lsquic_conn_t *conn;
+     struct out_batch *const batch = &engine->out_batch;
+     struct iovec *iov, *packet_iov;
+@@ -2950,6 +2966,7 @@
+             continue;
+         }
+         batch->outs[n].iov = packet_iov = iov;
++        packet_spec = packet;
+   next_coa:
+         if (!(packet_out->po_flags & (PO_ENCRYPTED|PO_NOENCRYPT)))
+         {
+@@ -2959,10 +2976,16 @@
+             case ENCPA_NOMEM:
+                 /* Send what we have and wait for a more opportune moment */
+                 conn->cn_if->ci_packet_not_sent(conn, packet_out);
++                return_staged_packets(conn, packet_spec, packet);
++                packet = packet_spec;
++                iov = packet_iov;
+                 goto end_for;
+             case ENCPA_BADCRYPT:
+                 /* This is pretty bad: close connection immediately */
+                 conn->cn_if->ci_packet_not_sent(conn, packet_out);
++                return_staged_packets(conn, packet_spec, packet);
++                packet = packet_spec;
++                iov = packet_iov;
+                 LSQ_INFOC("conn %"CID_FMT" has unsendable packets",
+                                         CID_BITS(lsquic_conn_log_cid(conn)));
+                 if (!(conn->cn_flags & LSCONN_EVANESCENT))
+@@ -2982,6 +3005,9 @@
+             {
+                 /* Copy can only fail if packet could not be allocated */
+                 conn->cn_if->ci_packet_not_sent(conn, packet_out);
++                return_staged_packets(conn, packet_spec, packet);
++                packet = packet_spec;
++                iov = packet_iov;
+                 goto end_for;
+             }
+         }

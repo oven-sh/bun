@@ -1,0 +1,49 @@
+# A call that is written against the signature of a query function answers a query, whoever the callee is: the query is marked with the layout of its rows right after the call
+# FORM: Prepared
+# OPTIONS: report=Declines
+# RUN: pass SelectTypedResults SelectTypedResults
+# STATISTIC: TypedResultsSelected = 2
+# STATISTIC: ReturnCallsDemoted = 1
+# STATISTIC: ParsersCreated = 0
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+# CHECK-NOT: decline
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=Array<undefined|null|L0> layouts=[L0] flags=[IsRowsOfQuery]
+expectedresult x1 type=Array<undefined|null|L0> layouts=[L0]
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+
+function f0 name="calleeNobodyKnows" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 expectedResult=x0
+    v3 = Await v2
+    Return v3
+}
+# CHECK-LABEL: function f0 name="calleeNobodyKnows"
+# CHECK-NOT: expectedResult
+# CHECK: v2:{{*}}= Call v0, -, v1
+# CHECK-NEXT: ExpectRows v2 layout=L0
+# CHECK-NEXT: v3:{{*}}= Await v2
+# CHECK-NOT: ExpectRows
+
+function f1 name="queryIsReturned" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 expectedResult=x0
+    ReturnCall v2
+}
+# CHECK-LABEL: function f1 name="queryIsReturned"
+# CHECK: v2:{{*}}= Call v0, -, v1
+# CHECK-NEXT: ExpectRows v2 layout=L0
+# CHECK-NEXT: Return v2
+
+function f2 name="describedResultOfAnotherFunction" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 expectedResult=x1
+    v3 = Await v2
+    Return v3
+}
+# CHECK-LABEL: function f2 name="describedResultOfAnotherFunction"
+# CHECK: v2:{{*}}= Call v0, -, v1 expectedResult=x1
+# CHECK-NEXT: v3:{{*}}= Await v2
+# CHECK-NOT: ExpectRows

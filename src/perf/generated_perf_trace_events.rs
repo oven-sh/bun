@@ -1,9 +1,7 @@
-// Hand-maintained: scripts/generate-perf-trace-events.sh does not emit Rust,
-// so this file mirrors the generated event list manually until the generator
-// learns to emit Rust. Variants are added piecemeal as call sites un-gate; the
-// discriminants are assigned EXPLICITLY to the canonical ids from
-// src/jsc/bindings/generated_perf_trace_events.h (the Darwin signpost path
-// passes `event as i32`, so the numeric id must match the generated header).
+// Generated with scripts/generate-perf-trace-events.sh
+//
+// Discriminants match the ids in src/jsc/bindings/generated_perf_trace_events.h
+// (the Darwin signpost path reads the event by integer id).
 #[repr(i32)]
 #[derive(Clone, Copy, Debug)]
 pub enum PerfEvent {

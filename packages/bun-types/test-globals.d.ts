@@ -1,6 +1,6 @@
 // Do not include this file in ./index.d.ts
 //
-// This file gets loaded by developers including the following triple slash directive:
+// Developers load this file with the following triple-slash directive:
 //
 // ```ts
 // /// <reference types="bun-types/test-globals" />
@@ -20,3 +20,6 @@ declare var vi: typeof import("bun:test").vi;
 declare var xit: typeof import("bun:test").xit;
 declare var xtest: typeof import("bun:test").xtest;
 declare var xdescribe: typeof import("bun:test").xdescribe;
+declare var onTestFinished: typeof import("bun:test").onTestFinished;
+declare var aroundEach: typeof import("bun:test").aroundEach;
+declare var aroundAll: typeof import("bun:test").aroundAll;

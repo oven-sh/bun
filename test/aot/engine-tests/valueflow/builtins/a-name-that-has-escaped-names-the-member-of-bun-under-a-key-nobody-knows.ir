@@ -1,0 +1,19 @@
+# Bun[somebody("Glob")]()
+# The name is in unknown hands, and the key may be what they hand back: that is a use of Bun.Glob. No other member is named
+# RUN: valueflow-solve used
+# CHECK: BunGlob
+# CHECK-NOT: BunArchive
+# CHECK-NOT: BunSql
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somebody" [isFreeName]
+    v2 = String string="Glob"
+    v3 = Call v1, -, v2
+    v4 = Builtin builtin=Bun
+    v5 = ElemGet v4, v3
+    v6 = Call v5, v4
+    Return v6
+}

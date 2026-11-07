@@ -7,7 +7,7 @@ if (typeof Bun === "undefined")
     (globalThis.Bun = {
       deepMatch(a, b) {
         try {
-          expect(b).toMatchObject(a);
+          expect(b).toMatchObject(a as object);
           return true;
         } catch (e) {
           if (e instanceof TypeError) throw e;

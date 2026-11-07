@@ -1,7 +1,13 @@
+use super::compat;
 use super::helpers;
-use super::parser::Parser;
+use super::parser::{self, Parser};
 use super::types;
 use super::types::{Align, Container, OFF};
+
+/// `<![CDATA[` without the `<` the caller already matched. The longest
+/// OFF-typed fixed lookahead the parser performs; `parser::MAX_LOOKAHEAD`
+/// (and with it the accepted input length) is derived from its length.
+pub(crate) const CDATA_OPEN: &[u8] = b"![CDATA[";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Result types, kept as named structs (not tuples) for readable field access.
@@ -9,34 +15,34 @@ use super::types::{Align, Container, OFF};
 
 #[derive(Copy, Clone)]
 pub struct SetextResult {
-    pub is_setext: bool,
-    pub level: u32,
+    pub(crate) is_setext: bool,
+    pub(crate) level: u32,
 }
 
 #[derive(Copy, Clone)]
 pub struct AtxResult {
-    pub is_atx: bool,
-    pub level: u32,
-    pub content_beg: OFF,
+    pub(crate) is_atx: bool,
+    pub(crate) level: u32,
+    pub(crate) content_beg: OFF,
 }
 
 #[derive(Copy, Clone)]
 pub struct FenceResult {
-    pub is_fence: bool,
-    pub fence_data: u32,
+    pub(crate) is_fence: bool,
+    pub(crate) fence_data: u32,
 }
 
 #[derive(Copy, Clone)]
 pub struct TableUnderlineResult {
-    pub is_underline: bool,
-    pub col_count: u32,
+    pub(crate) is_underline: bool,
+    pub(crate) col_count: u32,
 }
 
 #[derive(Clone)]
 pub struct ContainerMarkResult {
-    pub is_container: bool,
-    pub container: Container,
-    pub off: OFF,
+    pub(crate) is_container: bool,
+    pub(crate) container: Container,
+    pub(crate) off: OFF,
 }
 
 // Small helper: index `self.text` (a `&[u8]`) by an `OFF`.
@@ -46,7 +52,7 @@ fn ch(text: &[u8], pos: OFF) -> u8 {
 }
 
 impl Parser<'_> {
-    pub fn is_setext_underline(&self, off: OFF) -> SetextResult {
+    pub(crate) fn is_setext_underline(&self, off: OFF) -> SetextResult {
         let c = ch(self.text, off);
         if c != b'=' && c != b'-' {
             return SetextResult {
@@ -79,9 +85,15 @@ impl Parser<'_> {
         }
     }
 
-    pub fn is_hr_line(&self, off: OFF) -> bool {
+    pub(crate) fn is_hr_line(&self, off: OFF) -> bool {
         let c = ch(self.text, off);
         if c != b'-' && c != b'_' && c != b'*' {
+            return false;
+        }
+        // `- - - a`: what has kept the first marker from being one keeps the
+        // others too. Looking for it from each of them is quadratic.
+        let not_hr = self.not_hr.get();
+        if not_hr.0 <= off && off < not_hr.1 {
             return false;
         }
 
@@ -91,6 +103,7 @@ impl Parser<'_> {
             if ch(self.text, pos) == c {
                 count += 1;
             } else if !helpers::is_blank(ch(self.text, pos)) {
+                self.not_hr.set((off, pos));
                 return false;
             }
             pos += 1;
@@ -99,7 +112,7 @@ impl Parser<'_> {
         count >= 3
     }
 
-    pub fn is_atx_header_line(&self, off: OFF) -> AtxResult {
+    pub(crate) fn is_atx_header_line(&self, off: OFF) -> AtxResult {
         let mut pos = off;
         let mut level: u32 = 0;
 
@@ -142,7 +155,7 @@ impl Parser<'_> {
         }
     }
 
-    pub fn is_opening_code_fence(&self, off: OFF) -> FenceResult {
+    pub(crate) fn is_opening_code_fence(&self, off: OFF) -> FenceResult {
         if off >= self.size {
             return FenceResult {
                 is_fence: false,
@@ -158,7 +171,7 @@ impl Parser<'_> {
             pos += 1;
         }
 
-        if count < 3 {
+        if count < if fence_char == b'$' { 2 } else { 3 } {
             return FenceResult {
                 is_fence: false,
                 fence_data: 0,
@@ -166,10 +179,10 @@ impl Parser<'_> {
         }
 
         // Backtick fences can't have backticks in info string
-        if fence_char == b'`' {
+        if fence_char != b'~' {
             let mut check = pos;
             while check < self.size && !helpers::is_newline(ch(self.text, check)) {
-                if ch(self.text, check) == b'`' {
+                if ch(self.text, check) == fence_char {
                     return FenceResult {
                         is_fence: false,
                         fence_data: 0,
@@ -187,7 +200,7 @@ impl Parser<'_> {
         }
     }
 
-    pub fn is_closing_code_fence(&self, off: OFF, fence_data: u32) -> bool {
+    pub(crate) fn is_closing_code_fence(&self, off: OFF, fence_data: u32) -> bool {
         let fence_char: u8 = fence_data as u8; // @truncate
         let fence_count = fence_data >> 8;
 
@@ -210,19 +223,30 @@ impl Parser<'_> {
         pos >= self.size || helpers::is_newline(ch(self.text, pos))
     }
 
-    pub fn is_html_block_start_condition(&self, off: OFF) -> u8 {
+    // Only lines that start with `<` get here. Inlined, it costs every other line a few instructions.
+    #[inline(never)]
+    pub(crate) fn is_html_block_start_condition(&self, off: OFF) -> u8 {
         if off + 1 >= self.size {
             return 0;
+        }
+
+        if compat::every_tag_starts_html(&self.flags)
+            && let Some(block_type) = self.jsx_block_type(off)
+        {
+            return block_type;
         }
 
         // Type 1: <script, <pre, <style, <textarea (case insensitive)
         // Only opening tags start type 1 blocks. Closing tags like </pre> are
         // only END conditions for type 1, not start conditions.
+        let (name, name_end) = self.html_tag_name(off);
+        let is_named = |tag: &[u8]| helpers::ascii_case_eql(name, tag);
         if ch(self.text, off + 1) != b'/'
-            && (self.match_html_tag(off, b"script")
-                || self.match_html_tag(off, b"pre")
-                || self.match_html_tag(off, b"style")
-                || self.match_html_tag(off, b"textarea"))
+            && self.can_end_html_tag_name(name_end)
+            && (is_named(b"script")
+                || is_named(b"pre")
+                || is_named(b"style")
+                || is_named(b"textarea"))
         {
             return 1;
         }
@@ -241,23 +265,29 @@ impl Parser<'_> {
             return 3;
         }
 
-        // Type 4: <! followed by uppercase letter (declaration)
+        // Type 4: <! followed by a letter (declaration)
         if ch(self.text, off + 1) == b'!'
             && off + 2 < self.size
-            && ch(self.text, off + 2) >= b'A'
-            && ch(self.text, off + 2) <= b'Z'
+            && helpers::is_alpha(ch(self.text, off + 2))
         {
             return 4;
         }
 
-        // Type 5: <![CDATA[
-        if off + 9 <= self.size && &self.text[(off + 1) as usize..(off + 9) as usize] == b"![CDATA["
+        // Type 5: <![CDATA[. This is the longest OFF-typed fixed lookahead
+        // in the parser; `parser::MAX_LOOKAHEAD` (which bounds the accepted
+        // input length) is derived from `CDATA_OPEN`, so extending it cannot
+        // silently reintroduce `off + k` overflow.
+        if off + parser::MAX_LOOKAHEAD <= self.size
+            && &self.text[(off + 1) as usize..(off + 1) as usize + CDATA_OPEN.len()] == CDATA_OPEN
         {
             return 5;
         }
 
         // Type 6: block-level tags
-        if self.is_block_level_html_tag(off) {
+        if (self.can_end_html_tag_name(name_end)
+            || (self.ch(name_end) == b'/' && self.ch(name_end + 1) == b'>'))
+            && Self::is_block_level_html_tag(name)
+        {
             return 6;
         }
 
@@ -269,7 +299,35 @@ impl Parser<'_> {
         0
     }
 
-    pub fn is_html_block_end_condition(&self, off: OFF, block_type: u8) -> bool {
+    /// See `compat::every_tag_starts_html`.
+    fn jsx_block_type(&self, off: OFF) -> Option<u8> {
+        let is_closing = self.ch(off + 1) == b'/';
+        let name_beg = off + if is_closing { 2 } else { 1 };
+        let mut pos = name_beg;
+        while helpers::is_alpha(self.ch(pos)) {
+            while helpers::is_alpha_num(self.ch(pos)) {
+                pos += 1;
+            }
+            if self.ch(pos) == b'.' && helpers::is_alpha(self.ch(pos + 1)) {
+                pos += 1;
+            } else {
+                break;
+            }
+        }
+        let name = &self.text[name_beg as usize..pos as usize];
+        let is_raw = !is_closing
+            && [&b"pre"[..], b"script", b"style"]
+                .iter()
+                .any(|raw| helpers::ascii_case_eql(name, raw));
+        match self.ch(pos) {
+            b' ' | b'\t' | b'>' | b'\n' | b'\r' => Some(if is_raw { 1 } else { 6 }),
+            0 if pos >= self.size => Some(if is_raw { 1 } else { 6 }),
+            b'/' if self.ch(pos + 1) == b'>' => Some(6),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn is_html_block_end_condition(&self, off: OFF, block_type: u8) -> bool {
         // Types 6 and 7: end condition is a blank line
         if block_type >= 6 {
             return off >= self.size || helpers::is_newline(ch(self.text, off));
@@ -285,10 +343,16 @@ impl Parser<'_> {
                         && pos + 1 < self.size
                         && ch(self.text, pos + 1) == b'/'
                     {
-                        if self.match_html_tag(pos, b"script")
-                            || self.match_html_tag(pos, b"pre")
-                            || self.match_html_tag(pos, b"style")
-                            || self.match_html_tag(pos, b"textarea")
+                        let rest = &self.text[pos as usize + 2..];
+                        let is_end_tag = |name: &[u8]| {
+                            rest.len() > name.len()
+                                && rest[name.len()] == b'>'
+                                && helpers::ascii_case_eql(&rest[..name.len()], name)
+                        };
+                        if is_end_tag(b"script")
+                            || is_end_tag(b"pre")
+                            || is_end_tag(b"style")
+                            || is_end_tag(b"textarea")
                         {
                             return true;
                         }
@@ -336,31 +400,29 @@ impl Parser<'_> {
         false
     }
 
-    pub fn match_html_tag(&self, off: OFF, tag: &[u8]) -> bool {
-        if (off as usize) + 1 + tag.len() >= self.size as usize {
-            return false;
+    /// The letters and digits that the tag at `off` starts with, and where they end. The tag can be a closing tag.
+    fn html_tag_name(&self, off: OFF) -> (&[u8], OFF) {
+        let mut start = off + 1;
+        if self.ch(start) == b'/' {
+            start += 1;
         }
-        let start = off + 1;
-        // Allow optional / for closing tags
-        let mut pos = start;
-        if pos < self.size && ch(self.text, pos) == b'/' {
-            pos += 1;
+        let mut end = start;
+        while self.ch(end).is_ascii_alphanumeric() {
+            end += 1;
         }
-        if (pos as usize) + tag.len() > self.size as usize {
-            return false;
-        }
-        if !helpers::ascii_case_eql(&self.text[pos as usize..pos as usize + tag.len()], tag) {
-            return false;
-        }
-        pos += u32::try_from(tag.len()).expect("int cast");
+        (&self.text[start as usize..end as usize], end)
+    }
+
+    /// Whether what is at `pos` can follow a tag name: the end of the text, `>`, or white space.
+    fn can_end_html_tag_name(&self, pos: OFF) -> bool {
         if pos >= self.size {
             return true;
         }
         let after = ch(self.text, pos);
-        after == b'>' || after == b'/' || helpers::is_blank(after) || helpers::is_newline(after)
+        after == b'>' || helpers::is_blank(after) || helpers::is_newline(after)
     }
 
-    pub fn is_block_level_html_tag(&self, off: OFF) -> bool {
+    fn is_block_level_html_tag(name: &[u8]) -> bool {
         const BLOCK_TAGS: &[&[u8]] = &[
             b"address",
             b"article",
@@ -426,15 +488,12 @@ impl Parser<'_> {
             b"ul",
         ];
 
-        for tag in BLOCK_TAGS {
-            if self.match_html_tag(off, tag) {
-                return true;
-            }
-        }
-        false
+        BLOCK_TAGS
+            .iter()
+            .any(|tag| helpers::ascii_case_eql(name, tag))
     }
 
-    pub fn is_complete_html_tag(&self, off: OFF) -> bool {
+    pub(crate) fn is_complete_html_tag(&self, off: OFF) -> bool {
         if off + 1 >= self.size {
             return false;
         }
@@ -558,6 +617,7 @@ impl Parser<'_> {
                     pos += 1;
                 } else {
                     // Unquoted value
+                    let value_start = pos;
                     while pos < self.size
                         && !helpers::is_blank(ch(self.text, pos))
                         && !helpers::is_newline(ch(self.text, pos))
@@ -570,6 +630,9 @@ impl Parser<'_> {
                     {
                         pos += 1;
                     }
+                    if pos == value_start {
+                        return false;
+                    }
                 }
             }
         }
@@ -581,10 +644,11 @@ impl Parser<'_> {
         pos >= self.size || helpers::is_newline(ch(self.text, pos))
     }
 
-    pub fn is_table_underline(&mut self, off: OFF) -> TableUnderlineResult {
+    pub(crate) fn is_table_underline(&mut self, off: OFF) -> TableUnderlineResult {
         let mut pos = off;
         let mut col_count: u32 = 0;
         let mut had_pipe = false;
+        let mut had_colon = false;
 
         // Skip leading pipe
         if pos < self.size && ch(self.text, pos) == b'|' {
@@ -619,6 +683,8 @@ impl Parser<'_> {
             if has_right_colon {
                 pos += 1;
             }
+
+            had_colon |= has_left_colon || has_right_colon;
 
             // Determine alignment
             if col_count < types::TABLE_MAXCOLCOUNT {
@@ -666,14 +732,13 @@ impl Parser<'_> {
             }
         }
 
-        if col_count == 0 || (!had_pipe && col_count < 2) {
+        if col_count == 0 || (!had_pipe && !had_colon && col_count < 2) {
             return TableUnderlineResult {
                 is_underline: false,
                 col_count: 0,
             };
         }
 
-        self.table_col_count = col_count;
         TableUnderlineResult {
             is_underline: true,
             col_count,
@@ -682,8 +747,8 @@ impl Parser<'_> {
 
     /// Count the number of pipe-delimited columns in a table row.
     /// Used to validate that header and delimiter row column counts match (GFM requirement).
-    pub fn count_table_row_columns(&self, beg: OFF, end: OFF) -> u32 {
-        let row = &self.text[beg as usize..end as usize];
+    pub(crate) fn count_table_row_columns(&self, beg: OFF, end: OFF) -> u32 {
+        let row = self.text[beg as usize..end as usize].trim_ascii_end();
         let mut col_count: u32 = 0;
         let mut pos: usize = 0;
 
@@ -721,7 +786,68 @@ impl Parser<'_> {
         col_count
     }
 
-    pub fn is_container_mark(&self, indent: u32, off: OFF) -> ContainerMarkResult {
+    /// Where the `[^label]:` at `off` ends. The label has no white space and no
+    /// `[` in it.
+    fn footnote_definition_mark_end(&self, off: OFF) -> Option<OFF> {
+        if self.ch(off + 1) != b'^' {
+            return None;
+        }
+        let label_beg = off + 2;
+        let mut pos = label_beg;
+        loop {
+            match self.ch(pos) {
+                b']' => break,
+                b'[' | b' ' | b'\t' | b'\n' | b'\r' => return None,
+                0 if pos >= self.size => return None,
+                b'\\' if matches!(self.ch(pos + 1), b'[' | b'\\' | b']') => pos += 2,
+                _ => pos += 1,
+            }
+            if (pos - label_beg) as usize > crate::ref_defs::MAX_LINK_LABEL_LEN {
+                return None;
+            }
+        }
+        (pos > label_beg && self.ch(pos + 1) == b':').then_some(pos + 2)
+    }
+
+    /// Whether the line that starts at `line_beg` would end a paragraph by
+    /// starting a container.
+    pub(crate) fn starts_container_in_paragraph(&self, line_beg: OFF) -> bool {
+        let indentation = helpers::line_indentation(self.text, 0, line_beg);
+        let off = indentation.off;
+        if off >= self.size || self.is_hr_line(off) {
+            return false;
+        }
+        let mark = self.is_container_mark(indentation.indent, off);
+        if !mark.is_container {
+            return false;
+        }
+        if matches!(mark.container.ch, b'>' | b'^') {
+            return true;
+        }
+        let after_mark = helpers::line_indentation(self.text, 0, mark.off).off;
+        let is_empty = after_mark >= self.size || helpers::is_newline(self.ch(after_mark));
+        let is_ordered = matches!(mark.container.ch, b'.' | b')');
+        !is_empty && (!is_ordered || mark.container.start == 1)
+    }
+
+    /// Where the colons at `off` end.
+    fn directive_run_end(&self, off: OFF) -> OFF {
+        let mut end = off;
+        while end < self.size && ch(self.text, end) == b':' {
+            end += 1;
+        }
+        end
+    }
+
+    /// Whether the line is, from `off` on, `fence_len` colons or more and nothing else.
+    pub(crate) fn ends_directive(&self, off: OFF, fence_len: u32) -> bool {
+        let run_end = self.directive_run_end(off);
+        let after = helpers::line_indentation(self.text, 0, run_end).off;
+        run_end - off >= fence_len
+            && (after >= self.size || helpers::is_newline(ch(self.text, after)))
+    }
+
+    pub(crate) fn is_container_mark(&self, indent: u32, off: OFF) -> ContainerMarkResult {
         if off >= self.size {
             return ContainerMarkResult {
                 is_container: false,
@@ -756,6 +882,49 @@ impl Parser<'_> {
                 },
                 off: off + 1,
             };
+        }
+
+        // The definition of a footnote: [^label]:
+        if c == b'[' && self.flags.footnotes {
+            if let Some(mark_end) = self.footnote_definition_mark_end(off) {
+                return ContainerMarkResult {
+                    is_container: true,
+                    container: Container {
+                        ch: b'^',
+                        mark_indent: indent,
+                        contents_indent: indent + (mark_end - off),
+                        ..Container::default()
+                    },
+                    off: mark_end,
+                };
+            }
+        }
+
+        // `:::name`, `::: name title`, `::: {.class}`: the whole line is the mark
+        if c == b':' && self.flags.directives {
+            let name = self.directive_run_end(off);
+            let fence_len = name - off;
+            let name = helpers::line_indentation(self.text, 0, name).off;
+            let starts_name = name < self.size
+                && (matches!(ch(self.text, name), b'_' | b'{' | b'[')
+                    || char::from_u32(helpers::decode_utf8(self.text, name as usize).codepoint)
+                        .is_some_and(char::is_alphanumeric));
+            // Every line is asked about each of them, however short it is
+            if fence_len >= 3 && starts_name && self.directives.len() < 32 {
+                let rest = &self.text[name as usize..];
+                let len = bun_core::strings::index_of_any(rest, b"\r\n").unwrap_or(rest.len());
+                return ContainerMarkResult {
+                    is_container: true,
+                    container: Container {
+                        ch: b':',
+                        start: fence_len,
+                        mark_indent: indent,
+                        contents_indent: indent,
+                        ..Container::default()
+                    },
+                    off: name + len as OFF,
+                };
+            }
         }
 
         // Unordered list: -, +, *

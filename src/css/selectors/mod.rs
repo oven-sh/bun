@@ -10,7 +10,7 @@
 //! `SelectorParseErrorKind`, `compute_specificity`, the recursive-descent
 //! `parse_*` functions). `selector.rs` carries the high-level API
 //! (`is_equivalent`/`downlevel_selectors`/`get_prefix`/`is_compatible`) and
-//! the two serializer namespaces (`serialize::*`, `tocss_servo::*`).
+//! the serializer (`serialize::*`).
 //! `builder.rs` carries `SelectorBuilder`.
 //!
 //! The `impl_::Selectors` marker lives here in
@@ -40,7 +40,6 @@ pub mod impl_ {
     pub struct Selectors;
 
     impl super::parser::SelectorImpl for Selectors {
-        type ExtraMatchingData = ();
         type AttrValue = CssString;
         type Identifier = Ident;
         /// An identifier which could be a local name for use in CSS modules
@@ -49,8 +48,6 @@ pub mod impl_ {
         type NamespacePrefix = Ident;
         // TODO: lifetime — should borrow the parser input.
         type NamespaceUrl = &'static [u8];
-        type BorrowedNamespaceUrl = &'static [u8];
-        type BorrowedLocalName = Ident;
         type NonTSPseudoClass = super::parser::PseudoClass;
         type PseudoElement = super::parser::PseudoElement;
         type VendorPrefix = VendorPrefix;

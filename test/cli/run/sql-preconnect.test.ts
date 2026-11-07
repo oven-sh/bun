@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("--sql-preconnect", () => {
   test("should attempt to preconnect to PostgreSQL on startup", async () => {
@@ -22,7 +22,7 @@ describe("--sql-preconnect", () => {
       },
     });
 
-    const testDir = tempDirWithFiles("sql-preconnect-test", {
+    await using testDir = tempDir("sql-preconnect-test", {
       "index.js": `console.log("Script executed");`,
     });
 
@@ -58,7 +58,7 @@ describe("--sql-preconnect", () => {
       },
     });
 
-    const testDir = tempDirWithFiles("sql-no-preconnect", {
+    await using testDir = tempDir("sql-no-preconnect", {
       "index.js": `console.log("Normal script executed");`,
     });
 
@@ -80,5 +80,23 @@ describe("--sql-preconnect", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain("Normal script executed");
     expect(connectionAttempts).toBe(0); // No connection should be attempted without the flag
+  });
+
+  test("a refused connection does not fail the script", async () => {
+    const listener = Bun.listen({ port: 0, hostname: "127.0.0.1", socket: { data() {} } });
+    const port = listener.port;
+    listener.stop(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--sql-preconnect", "-e", `console.log("script done")`],
+      env: { ...bunEnv, DATABASE_URL: `postgres://127.0.0.1:${port}/db` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("script done\n");
+    expect(exitCode).toBe(0);
   });
 });

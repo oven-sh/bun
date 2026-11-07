@@ -1,0 +1,151 @@
+# Base.call(this) finds Function.prototype.call while Base has only its `prototype` property. Then Base gets a `call` of its own, loses it, gets another parent, and is frozen.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="constructor-fn-gets-call-of-its-own.js" displayPath="constructor-fn-gets-call-of-its-own.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 position=193 constructor=f1 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Derived" module=m0 position=303 base=L0 constructor=f2 fields=[{key="tag" declared={type=anything}}, {key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+variable g0 name="Base" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Derived" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = GetModuleVariable variable=g0
+    v3 = NewClosure function=f4
+    v4 = Convert v3 declared={type=undefined|null|function|f4 flags=[IsExpected]}
+    PropSet v2, v4 key="call"
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectCreate
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="Function" [isFreeName]
+    v10 = Convert v9 declared={type=builtin(Function) flags=[IsExpected]}
+    v11 = PropGet v10 key="prototype"
+    v12 = Convert v11 declared={type=builtin(FunctionPrototype) flags=[IsExpected]}
+    v13 = NewDictionary
+    v14 = Call v7, v6, v12, v13 calleeName="Object.create"
+    v15 = Convert v14 declared={type=undefined|null|object flags=[IsExpected]}
+    v16 = Builtin builtin=Object
+    v17 = Builtin builtin=ObjectSetPrototypeOf
+    v18 = GetModuleVariable variable=g0
+    v19 = Call v17, v16, v18, v15 calleeName="Object.setPrototypeOf"
+    v20 = Builtin builtin=Object
+    v21 = Builtin builtin=ObjectSetPrototypeOf
+    v22 = GetModuleVariable variable=g0
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="Function" [isFreeName]
+    v25 = Convert v24 declared={type=builtin(Function) flags=[IsExpected]}
+    v26 = PropGet v25 key="prototype"
+    v27 = Convert v26 declared={type=builtin(FunctionPrototype) flags=[IsExpected]}
+    v28 = Call v21, v20, v22, v27 calleeName="Object.setPrototypeOf"
+    v29 = Integer integer=1
+    v30 = String string="g"
+    v31 = Call v1, -, v29, v30 calleeName="make"
+    v32 = Undefined
+    Return v32
+}
+function f1 name="Base" module=m0 position=193 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0|L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+function f2 name="Derived" module=m0 position=303 flags=[HasThis, HasExplicitName] length=2 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: anything, v2: anything):
+    v3 = GetModuleVariable variable=g0
+    v4 = PropGet v3 key="call"
+    v5 = Convert v4 declared={type=undefined|null|function|f4 flags=[IsExpected]}
+    v6 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v7 = Call v5, v3, v6, v1 calleeKey="call" calleeName="Base.call"
+    v8 = Undefined
+    Return v8
+}
+function f3 name="make" module=m0 position=428 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string):
+    v2 = Undefined
+    v3 = Integer
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Convert v0 declared={type=number flags=[IsExpected]}
+    v9 = GetModuleVariable variable=g1
+    v10 = Construct v9, -, v1, v6 calleeName="Derived"
+    v11 = Increment v6
+    v12 = Convert v11 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v10, v12)
+}
+function f4 module=m0 position=587 length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 Derived make
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f3 = NewClosure function=f3 allocationSite=0
+# CHECK-NEXT: v1: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v2: f4 = NewClosure function=f4 allocationSite=1
+# CHECK-NEXT: PropSet v1, v2 key="call" accessSite=0
+# CHECK-NEXT: v4: builtin(Object) = Builtin builtin=Object
+# CHECK-NEXT: v5: builtin(ObjectCreate) = Builtin builtin=ObjectCreate
+# CHECK-NEXT: v6: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v7: anything = PropGet v6 key="Function" accessSite=1 [isFreeName]
+# CHECK-NEXT: v31: undefined|builtin(Function) = AssumeType v7 provenType=undefined|builtin(Function)
+# CHECK-NEXT: v8: undefined|builtin(Function) ~ builtin(Function) = Upcast v31 castType=anything
+# CHECK-NEXT: v32: undefined|builtin(Function) ~ builtin(Function) = AssumeType v8 provenType=undefined|builtin(Function)
+# CHECK-NEXT: v9: anything = PropGet v32 key="prototype" accessSite=2
+# CHECK-NEXT: v33: builtin(FunctionPrototype) = AssumeType v9 provenType=builtin(FunctionPrototype)
+# CHECK-NEXT: v10: builtin(FunctionPrototype) = Upcast v33 castType=anything
+# CHECK-NEXT: v34: builtin(FunctionPrototype) = AssumeType v10 provenType=builtin(FunctionPrototype)
+# CHECK-NEXT: v11: object = NewDictionary
+# CHECK-NEXT: v35: Object = AssumeType v11 provenType=Object
+# CHECK-NEXT: v12: anything = Call v5, v4, v34, v35 calleeName="Object.create" accessSite=3 callees=[builtin(ObjectCreate)]
+# CHECK-NEXT: v36: Object = AssumeType v12 provenType=Object
+# CHECK-NEXT: v13: Object = Upcast v36 castType=anything
+# CHECK-NEXT: v37: Object = AssumeType v13 provenType=Object
+# CHECK-NEXT: v14: builtin(Object) = Builtin builtin=Object
+# CHECK-NEXT: v15: builtin(ObjectSetPrototypeOf) = Builtin builtin=ObjectSetPrototypeOf
+# CHECK-NEXT: v16: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v17: anything = Call v15, v14, v16, v37 calleeName="Object.setPrototypeOf" accessSite=4 callees=[builtin(ObjectSetPrototypeOf)]
+# CHECK-NEXT: v18: builtin(Object) = Builtin builtin=Object
+# CHECK-NEXT: v19: builtin(ObjectSetPrototypeOf) = Builtin builtin=ObjectSetPrototypeOf
+# CHECK-NEXT: v20: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v21: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v22: anything = PropGet v21 key="Function" accessSite=5 [isFreeName]
+# CHECK-NEXT: v38: undefined|builtin(Function) = AssumeType v22 provenType=undefined|builtin(Function)
+# CHECK-NEXT: v23: undefined|builtin(Function) ~ builtin(Function) = Upcast v38 castType=anything
+# CHECK-NEXT: v39: undefined|builtin(Function) ~ builtin(Function) = AssumeType v23 provenType=undefined|builtin(Function)
+# CHECK-NEXT: v24: anything = PropGet v39 key="prototype" accessSite=6
+# CHECK-NEXT: v40: builtin(FunctionPrototype) = AssumeType v24 provenType=builtin(FunctionPrototype)
+# CHECK-NEXT: v25: builtin(FunctionPrototype) = Upcast v40 castType=anything
+# CHECK-NEXT: v41: builtin(FunctionPrototype) = AssumeType v25 provenType=builtin(FunctionPrototype)
+# CHECK-NEXT: v26: anything = Call v19, v18, v20, v41 calleeName="Object.setPrototypeOf" accessSite=7 callees=[builtin(ObjectSetPrototypeOf)]
+# CHECK-NEXT: v27: 1 = Integer integer=1
+# CHECK-NEXT: v28: "g" = String string="g"
+# CHECK-NEXT: v29: anything = Call v0, -, v27, v28 calleeName="make" accessSite=8 callees=[f3]
+# CHECK-NEXT: v30: undefined = Undefined
+# CHECK-NEXT: Return v30
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Derived"
+# CHECK: module=m0 position=303 flags=[HasThis, HasExplicitName] length=2 thisType={type=L1} parameters=[{type="g"}, {type=int|whole}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L1 {
+# CHECK-NEXT: b0(v0: L1, v1: "g", v2: int|whole):
+# CHECK-NEXT: v8: L1 = AssumeType v0 provenType=L1
+# CHECK-NEXT: v3: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v4: anything = PropGet v3 key="call" accessSite=9
+# CHECK-NEXT: v9: f4|builtin(FunctionPrototypeCall) = AssumeType v4 provenType=f4|builtin(FunctionPrototypeCall)
+# CHECK-NEXT: v5: f4|builtin(FunctionPrototypeCall) = Upcast v9 castType=anything
+# CHECK-NEXT: v10: f4|builtin(FunctionPrototypeCall) = AssumeType v5 provenType=f4|builtin(FunctionPrototypeCall)
+# CHECK-NEXT: v6: anything = Call v10, v3, v8, v1 calleeKey="call" calleeName="Base.call" accessSite=10 callees=[f4, builtin(FunctionPrototypeCall)]
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="make"
+# CHECK: module=m0 position=428 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=1}, {type="g"}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: 1, v1: "g"):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v2, v3)
+# CHECK-NEXT: b1(v4: anything ~ undefined|object, v5: int|whole):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: 1 = Upcast v0 castType=anything
+# CHECK-NEXT: v8: f2 = GetModuleVariable variable=g1
+# CHECK-NEXT: v9: anything ~ object = Construct v8, -, v1, v5 calleeName="Derived" accessSite=11 callees=[f2]
+# CHECK-NEXT: v10: int|whole = Increment v5
+# CHECK-NEXT: Jump -> next b1(v9, v10)
+# CHECK-NEXT: }

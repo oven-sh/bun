@@ -27,11 +27,12 @@ test("Hash native digest() throws ERR_INVALID_THIS instead of segfaulting on bad
   expect(() => nativeDigest.call(null)).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
 });
 
-test("Hash.update() throws ERR_INVALID_STATE on detached ArrayBufferView", () => {
+test("Hash.update() does not crash on a detached ArrayBufferView", () => {
   const hash = createHash("sha256");
   const view = new Uint8Array(16);
   // @ts-ignore - transfer() detaches the underlying buffer
   view.buffer.transfer();
 
-  expect(() => hash.update(view)).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+  // Node.js treats a detached view as 0 bytes; the digest matches sha256("").
+  expect(hash.update(view).digest("hex")).toBe(createHash("sha256").digest("hex"));
 });

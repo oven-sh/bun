@@ -7,9 +7,9 @@
 import { expect, test } from "bun:test";
 import { once } from "node:events";
 import tls from "node:tls";
-// @ts-expect-error - debug-only export
+// debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
-import { isASAN, isDebug, tls as tlsCerts } from "harness";
+import { isASAN, isDebug, rss, tls as tlsCerts } from "harness";
 
 test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () => {
   const server = tls.createServer({ ...tlsCerts, rejectUnauthorized: false }, sock => {
@@ -24,7 +24,7 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
     await connectOnce(port);
     Bun.gc(true);
     const ctxBefore = sslCtxLiveCount();
-    const rssBefore = process.memoryUsage.rss();
+    const rssBefore = rss();
 
     // 50 is enough to prove O(1): the old code leaked one SSL_CTX per connect,
     // so the count delta would be ~50 not ≤2. (200 was used originally but
@@ -37,7 +37,7 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
     Bun.gc(true);
 
     const ctxAfter = sslCtxLiveCount();
-    const rssAfter = process.memoryUsage.rss();
+    const rssAfter = rss();
 
     // The whole point: no per-connection SSL_CTX. Allow a tiny slack for the
     // close-list / GC race, but 200 connects must not move this by 200.
@@ -48,7 +48,11 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
     // first verify all bump it). The original regression was ~50 KB/conn of
     // SSL_CTX; bound at 16 MB so a return of that leak (50 × 50 KB ≈ 2.5 MB on
     // top of the noise floor) would still trip without flaking on the noise.
-    const rssBound = isASAN || isDebug ? 64 * 1024 * 1024 : 16 * 1024 * 1024;
+    // ASAN/debug bound is high because BoringSSL's per-handshake allocation
+    // churn (PQ key shares, transcript buffers) lands in the ASAN quarantine
+    // and isn't released by Bun.gc — when this file runs after the rest of the
+    // tls/ suite the delta hits ~150 MB with zero LSAN-reported per-conn leak.
+    const rssBound = isASAN || isDebug ? 300 * 1024 * 1024 : 16 * 1024 * 1024;
     expect(rssAfter - rssBefore).toBeLessThan(rssBound);
   } finally {
     server.close();
@@ -59,17 +63,19 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
   // crypto, not a wait-for-condition.
 }, 30_000);
 
-test("createSecureContext memoises the native SSL_CTX (not the wrapper) by config", () => {
+test("createSecureContext owns its native SSL_CTX exclusively (fresh wrapper too)", () => {
   const a = tls.createSecureContext({ cert: tlsCerts.cert });
-  const b = tls.createSecureContext({ cert: tlsCerts.cert, servername: "other.example" });
-  // Same SSL_CTX-relevant fields → same native handle…
-  expect(a.context).toBe(b.context);
-  // …but the wrapper is fresh so per-call fields don't leak across callers.
+  const b = tls.createSecureContext({ cert: tlsCerts.cert, servername: "other.example" } as tls.SecureContextOptions);
+  // The user-facing constructor owns its SSL_CTX exclusively so addCACert on
+  // one context can never affect another; only the internal connect/listen
+  // paths memoise by config digest.
+  expect(a.context).not.toBe(b.context);
+  // The wrapper is fresh too, so per-call fields don't leak across callers.
   expect(a).not.toBe(b);
-  expect(b.servername).toBe("other.example");
-  expect(a.servername).toBeUndefined();
+  expect((b as any).servername).toBe("other.example");
+  expect((a as any).servername).toBeUndefined();
   // Different SSL_CTX-relevant config → different native handle.
-  const c = tls.createSecureContext({ cert: tlsCerts.cert, rejectUnauthorized: false });
+  const c = tls.createSecureContext({ cert: tlsCerts.cert, rejectUnauthorized: false } as tls.SecureContextOptions);
   expect(c.context).not.toBe(a.context);
 });
 
@@ -96,7 +102,7 @@ test("defaultClientSslCtx attaches bundled roots (verify error proves store was 
     hostname: "127.0.0.1",
     tls: true, // ← no ca/cert: this is the defaultClientSslCtx path
     socket: {
-      handshake(_s, _ok, err) {
+      handshake(_s, _ok, err: NodeJS.ErrnoException | null) {
         resolve(
           err?.code === "DEPTH_ZERO_SELF_SIGNED_CERT" ? 18 : err?.code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE" ? 21 : -1,
         );
@@ -115,7 +121,7 @@ test("defaultClientSslCtx attaches bundled roots (verify error proves store was 
 
 async function connectOnce(port: number) {
   await new Promise<void>((resolve, reject) => {
-    const sock = tls.connect({ port, host: "127.0.0.1", ca: tlsCerts.ca, rejectUnauthorized: false }, () => {
+    const sock = tls.connect({ port, host: "127.0.0.1", ca: (tlsCerts as any).ca, rejectUnauthorized: false }, () => {
       sock.destroy();
     });
     // Resolve on full close, not on secureConnect: TLS destroy() sends

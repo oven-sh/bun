@@ -1,0 +1,91 @@
+------------------
+{ printWidth: 80 }
+------------------
+function a() {
+  "use strict";
+
+}
+function b() {
+  "use strict";
+}
+function c() {
+  "use strict";
+
+  // c
+
+}
+function d() {
+  "use strict";
+  // d
+}
+function e() {
+  "use strict"; // e
+
+}
+function g() {
+  "use strict";
+
+  "use asm";
+
+}
+const h = () => {
+  "use strict";
+
+};
+class I {
+  m() {
+    "use strict";
+
+  }
+}
+function j() {
+  "use strict";
+  // j
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function a() {
+  "use strict";
+
+}
+function b() {
+  "use strict";
+}
+function c() {
+  "use strict";
+
+  // c
+
+}
+function d() {
+  "use strict";
+  // d
+}
+function e() {
+  "use strict"; // e
+
+}
+function g() {
+  "use strict";
+
+  "use asm";
+
+}
+const h = () => {
+  "use strict";
+
+};
+class I {
+  m() {
+    "use strict";
+
+  }
+}
+function j() {
+  "use strict";
+  // j
+}
+
+===================== End =====================

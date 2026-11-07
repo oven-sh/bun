@@ -9,16 +9,18 @@ on:
     branches: [main]
     paths:
       - "packages/bun-types/**"
-      - "packages/@types/bun/**"
       - "test/integration/bun-types/**"
       - "src/cli/init/tsconfig.default.json"
+      - "src/**/*.bind.ts"
+      - "src/codegen/**"
       - ".github/workflows/bun-types.yml"
   pull_request:
     paths:
       - "packages/bun-types/**"
-      - "packages/@types/bun/**"
       - "test/integration/bun-types/**"
       - "src/cli/init/tsconfig.default.json"
+      - "src/**/*.bind.ts"
+      - "src/codegen/**"
       - ".github/workflows/bun-types.yml"
 
 env:
@@ -30,7 +32,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -39,5 +43,15 @@ jobs:
         run: |
           bun install
           bun install --cwd test
+      - name: Fetch the engine's code generators
+        # The code generators import TypeScript of the engine. A release of WebKit has it as an asset of its own; an
+        # older one only inside its tarballs.
+        run: |
+          version=$(sed -n 's/^export const WEBKIT_VERSION = "\(.*\)";$/\1/p' scripts/build/deps/webkit.ts)
+          release="https://github.com/oven-sh/WebKit/releases/download/autobuild-${version#autobuild-}"
+          mkdir -p vendor/WebKit
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "$release/bun-webkit-aot-sources.tar.gz" ||
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "$release/bun-webkit-linux-amd64-lto.tar.gz"
+          tar -xzf "$RUNNER_TEMP/engine.tar.gz" -C vendor/WebKit --strip-components=1 --exclude=bun-webkit/Source/JavaScriptCore/aot/tests bun-webkit/Source/JavaScriptCore/aot
       - name: Check types
         run: bun test test/integration/bun-types/bun-types.test.ts

@@ -1,4 +1,4 @@
-use core::ptr;
+use core::cell::Cell;
 
 use bun_alloc::ArenaVecExt as _;
 use bun_alloc::{AllocError, Arena as Bump};
@@ -11,29 +11,25 @@ use smallvec::SmallVec;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Moved from `bun_shell`:
-//   StringEncoding, SrcAscii, SrcUnicode, ShellCharIter, CharIter, has_eq_sign
+//   StringEncoding, SrcAscii, SrcUnicode, ShellCharIter, CharIter
 // These live here so `bun_shell` (higher tier) can depend on `shell_parser`
 // without a back-edge. `bun_shell` re-exports these under its old paths.
 // ═══════════════════════════════════════════════════════════════════════════
 
-use bun_core::immutable::CodePoint; // i32
-use bun_core::immutable::{CodepointIterator, Cursor};
-use bun_core::strings;
+use bun_core::strings::{CodepointIterator, Cursor};
 
 /// Encoding of the shell input bytes being expanded.
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum StringEncoding {
     Ascii,
     Wtf8,
-    Utf16,
 }
 
 // ─── SrcAscii ──────────────────────────────────────────────────────────────
 
-// Copy: bitwise OK — `bytes` borrows caller-owned input (BACKREF, non-owning).
 #[derive(Copy, Clone)]
-struct SrcAscii {
-    bytes: *const [u8], // raw slice ptr — borrowed caller input; lifetime erased (BACKREF).
+struct SrcAscii<'a> {
+    bytes: &'a [u8],
     i: usize,
 }
 
@@ -42,49 +38,38 @@ struct SrcAscii {
 // encoding if profiling shows it matters.
 #[derive(Copy, Clone)]
 pub struct InputChar {
-    pub char: u32,
-    pub escaped: bool,
+    pub(crate) char: u32,
+    pub(crate) escaped: bool,
 }
 
 #[derive(Copy, Clone)]
 struct AsciiIndexValue {
     char: u32,
-    escaped: bool,
 }
 
-impl SrcAscii {
+impl<'a> SrcAscii<'a> {
     #[inline]
-    fn init(bytes: &[u8]) -> Self {
-        Self {
-            bytes: std::ptr::from_ref::<[u8]>(bytes),
-            i: 0,
-        }
-    }
-    #[inline]
-    fn bytes(&self) -> &[u8] {
-        // SAFETY: `bytes` outlives the iter by construction (caller contract).
-        unsafe { &*self.bytes }
+    fn init(bytes: &'a [u8]) -> Self {
+        Self { bytes, i: 0 }
     }
     #[inline]
     fn index(&self) -> Option<AsciiIndexValue> {
-        let b = self.bytes();
+        let b = self.bytes;
         if self.i >= b.len() {
             return None;
         }
         Some(AsciiIndexValue {
             char: u32::from(b[self.i]),
-            escaped: false,
         })
     }
     #[inline]
     fn index_next(&self) -> Option<AsciiIndexValue> {
-        let b = self.bytes();
+        let b = self.bytes;
         if self.i + 1 >= b.len() {
             return None;
         }
         Some(AsciiIndexValue {
             char: u32::from(b[self.i + 1]),
-            escaped: false,
         })
     }
     #[inline]
@@ -95,8 +80,8 @@ impl SrcAscii {
 
 // ─── SrcUnicode ────────────────────────────────────────────────────────────
 
-struct SrcUnicode {
-    iter: CodepointIterator<'static>, // lifetime erased; see SrcAscii.bytes note.
+struct SrcUnicode<'a> {
+    iter: CodepointIterator<'a>,
     cursor: Cursor,
     next_cursor: Cursor,
 }
@@ -104,12 +89,11 @@ struct SrcUnicode {
 #[derive(Copy, Clone)]
 struct UnicodeIndexValue {
     char: u32,
-    width: u8,
 }
 
-impl SrcUnicode {
+impl<'a> SrcUnicode<'a> {
     #[inline]
-    fn next_cursor(iter: &CodepointIterator<'static>, cursor: &mut Cursor) {
+    fn next_cursor(iter: &CodepointIterator<'a>, cursor: &mut Cursor) {
         if !CodepointIterator::next(iter, cursor) {
             // This will make `i > sourceBytes.len` so the condition in `index` will fail
             cursor.i = u32::try_from(iter.bytes.len() + 1).unwrap();
@@ -117,10 +101,7 @@ impl SrcUnicode {
             cursor.c = CodepointIterator::ZERO_VALUE;
         }
     }
-    fn init(bytes: &[u8]) -> Self {
-        // SAFETY: erase lifetime — caller guarantees `bytes` outlives the iter.
-        let bytes: &'static [u8] =
-            unsafe { core::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
+    fn init(bytes: &'a [u8]) -> Self {
         let iter = CodepointIterator::init(bytes);
         let mut cursor = Cursor::default();
         Self::next_cursor(&iter, &mut cursor);
@@ -139,7 +120,6 @@ impl SrcUnicode {
         }
         Some(UnicodeIndexValue {
             char: self.cursor.c as u32,
-            width: self.cursor.width,
         })
     }
     #[inline]
@@ -149,7 +129,6 @@ impl SrcUnicode {
         }
         Some(UnicodeIndexValue {
             char: self.next_cursor.c as u32,
-            width: self.next_cursor.width,
         })
     }
     #[inline]
@@ -169,109 +148,46 @@ impl SrcUnicode {
 
 // ─── ShellCharIter ─────────────────────────────────────────────────────────
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum ShellCharIterState {
-    Normal,
-    Single,
-    Double,
-}
-
 // PERF: Rust const
 // generics can't pick a field type from an enum value without an aux trait, so we
 // store both arms in a small enum and branch at runtime. Could split into three
 // `impl CharIter for ShellCharIter<{StringEncoding::*}>` blocks if profiling
 // shows the branch matters.
-enum ShellSrc {
-    Ascii(SrcAscii),
-    Unicode(SrcUnicode),
+enum ShellSrc<'a> {
+    Ascii(SrcAscii<'a>),
+    Unicode(SrcUnicode<'a>),
 }
 
-pub struct ShellCharIter<const E: StringEncoding> {
-    src: ShellSrc,
-    pub state: ShellCharIterState,
-    pub prev: Option<InputChar>,
-    pub current: Option<InputChar>,
+pub struct ShellCharIter<'a, const E: StringEncoding> {
+    src: ShellSrc<'a>,
 }
 
 /// Surface trait so callers can name `<ShellCharIter<E> as CharIter>::InputChar` /
 /// `::CodepointType` without inherent associated types.
-pub trait CharIter: Sized {
+trait CharIter<'a>: Sized {
     type CodepointType: Copy;
     type InputChar: Copy;
-    fn init(bytes: &[u8]) -> Self;
+    fn init(bytes: &'a [u8]) -> Self;
     fn eat(&mut self) -> Option<Self::InputChar>;
-    fn peek(&mut self) -> Option<Self::InputChar>;
     fn read_char(&mut self) -> Option<Self::InputChar>;
-    fn src_bytes(&self) -> &[u8];
-    fn src_bytes_at_cursor(&self) -> &[u8];
-    fn cursor_pos(&self) -> usize;
 }
 
-impl<const E: StringEncoding> ShellCharIter<E> {
-    #[inline]
-    pub fn is_whitespace(c: InputChar) -> bool {
-        matches!(
-            c.char,
-            0x09 /* \t */ | 0x0D /* \r */ | 0x0A /* \n */ | 0x20 /* ' ' */
-        )
-    }
-}
-
-impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
+impl<'a, const E: StringEncoding> CharIter<'a> for ShellCharIter<'a, E> {
     // PERF: unified to u32 for ascii and unicode (see InputChar note).
     type CodepointType = u32;
     type InputChar = InputChar;
 
-    fn init(bytes: &[u8]) -> Self {
+    fn init(bytes: &'a [u8]) -> Self {
         let src = if E == StringEncoding::Ascii {
             ShellSrc::Ascii(SrcAscii::init(bytes))
         } else {
             ShellSrc::Unicode(SrcUnicode::init(bytes))
         };
-        Self {
-            src,
-            state: ShellCharIterState::Normal,
-            prev: None,
-            current: None,
-        }
-    }
-
-    fn src_bytes(&self) -> &[u8] {
-        match &self.src {
-            ShellSrc::Ascii(a) => a.bytes(),
-            ShellSrc::Unicode(u) => u.iter.bytes,
-        }
-    }
-
-    fn src_bytes_at_cursor(&self) -> &[u8] {
-        let bytes = self.src_bytes();
-        match &self.src {
-            ShellSrc::Ascii(a) => {
-                if a.i >= bytes.len() {
-                    return b"";
-                }
-                &bytes[a.i..]
-            }
-            ShellSrc::Unicode(u) => {
-                if u.cursor.i as usize >= bytes.len() {
-                    return b"";
-                }
-                &bytes[u.cursor.i as usize..]
-            }
-        }
-    }
-
-    fn cursor_pos(&self) -> usize {
-        match &self.src {
-            ShellSrc::Ascii(a) => a.i,
-            ShellSrc::Unicode(u) => u.cursor.i as usize,
-        }
+        Self { src }
     }
 
     fn eat(&mut self) -> Option<InputChar> {
         if let Some(result) = self.read_char() {
-            self.prev = self.current;
-            self.current = Some(result);
             match &mut self.src {
                 ShellSrc::Ascii(a) => a.eat(result.escaped),
                 ShellSrc::Unicode(u) => u.eat(result.escaped),
@@ -281,25 +197,12 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
         None
     }
 
-    fn peek(&mut self) -> Option<InputChar> {
-        self.read_char()
-    }
-
     fn read_char(&mut self) -> Option<InputChar> {
-        let (mut ch, _width_or_escaped);
-        match &self.src {
-            ShellSrc::Ascii(a) => {
-                let iv = a.index()?;
-                ch = iv.char;
-                _width_or_escaped = iv.escaped as u8;
-            }
-            ShellSrc::Unicode(u) => {
-                let iv = u.index()?;
-                ch = iv.char;
-                _width_or_escaped = iv.width;
-            }
-        }
-        if ch != u32::from(b'\\') || self.state == ShellCharIterState::Single {
+        let mut ch = match &self.src {
+            ShellSrc::Ascii(a) => a.index()?.char,
+            ShellSrc::Unicode(u) => u.index()?.char,
+        };
+        if ch != u32::from(b'\\') {
             return Some(InputChar {
                 char: ch,
                 escaped: false,
@@ -307,69 +210,16 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
         }
 
         // Handle backslash
-        match self.state {
-            ShellCharIterState::Normal => {
-                let peeked = match &self.src {
-                    ShellSrc::Ascii(a) => a.index_next()?.char,
-                    ShellSrc::Unicode(u) => u.index_next()?.char,
-                };
-                ch = peeked;
-            }
-            ShellCharIterState::Double => {
-                let peeked = match &self.src {
-                    ShellSrc::Ascii(a) => a.index_next()?.char,
-                    ShellSrc::Unicode(u) => u.index_next()?.char,
-                };
-                match peeked {
-                    // Backslash only applies to these characters
-                    c if c == u32::from(b'$')
-                        || c == u32::from(b'`')
-                        || c == u32::from(b'"')
-                        || c == u32::from(b'\\')
-                        || c == u32::from(b'\n')
-                        || c == u32::from(b'#') =>
-                    {
-                        ch = peeked;
-                    }
-                    _ => {
-                        return Some(InputChar {
-                            char: ch,
-                            escaped: false,
-                        });
-                    }
-                }
-            }
-            // We checked `self.state == .Single` above so this is impossible.
-            // was `unreachable_unchecked()`; the lexer is on a
-            // cold path so trade the elided check for a defined panic.
-            ShellCharIterState::Single => unreachable!(),
-        }
+        ch = match &self.src {
+            ShellSrc::Ascii(a) => a.index_next()?.char,
+            ShellSrc::Unicode(u) => u.index_next()?.char,
+        };
 
         Some(InputChar {
             char: ch,
             escaped: true,
         })
     }
-}
-
-// ─── has_eq_sign ───────────────────────────────────────────────────────────
-
-/// Returns the index of the first `=` in the string, if any
-/// (codepoint-aware for non-ASCII input).
-pub fn has_eq_sign(str_: &[u8]) -> Option<u32> {
-    if strings::is_all_ascii(str_) {
-        return bun_core::immutable::index_of_char(str_, b'=');
-    }
-
-    // TODO actually i think that this can also use the simd stuff
-    let iter = CodepointIterator::init(str_);
-    let mut cursor = Cursor::default();
-    while CodepointIterator::next(&iter, &mut cursor) {
-        if cursor.c == b'=' as CodePoint {
-            return Some(cursor.i);
-        }
-    }
-    None
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -401,8 +251,8 @@ impl ExpansionVariant {
 
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
 pub struct ExpansionVariants {
-    pub idx: u16,
-    pub end: u16,
+    pub(crate) idx: u16,
+    pub(crate) end: u16,
 }
 
 #[derive(bun_core::EnumTag)]
@@ -472,7 +322,7 @@ pub enum TokenTag {
 }
 
 impl Token {
-    pub fn to_text(&self) -> SmolStr {
+    pub(crate) fn to_text(&self) -> SmolStr {
         match self {
             Token::Open(_) => SmolStr::from_char(b'{'),
             Token::Comma => SmolStr::from_char(b','),
@@ -526,13 +376,13 @@ pub fn tokens_to_json(tokens: &[Token]) -> Vec<u8> {
     out
 }
 
-pub fn ast_to_json(root: &ast::Group) -> Vec<u8> {
+pub fn ast_to_json(root: &ast::Group<'_>) -> Vec<u8> {
     let mut out = Vec::new();
     ast_group_to_json(root, &mut out);
     out
 }
 
-fn ast_atom_to_json(atom: &ast::Atom, out: &mut Vec<u8>) {
+fn ast_atom_to_json(atom: &ast::Atom<'_>, out: &mut Vec<u8>) {
     match atom {
         ast::Atom::Text(txt) => {
             out.extend_from_slice(b"{\"text\":");
@@ -541,9 +391,7 @@ fn ast_atom_to_json(atom: &ast::Atom, out: &mut Vec<u8>) {
         }
         ast::Atom::Expansion(exp) => {
             out.extend_from_slice(b"{\"expansion\":{\"variants\":[");
-            // SAFETY: `variants` is a bump-allocated slice live for the parse arena.
-            let variants = unsafe { &*exp.variants };
-            for (i, g) in variants.iter().enumerate() {
+            for (i, g) in exp.variants.iter().enumerate() {
                 if i > 0 {
                     out.push(b',');
                 }
@@ -554,17 +402,18 @@ fn ast_atom_to_json(atom: &ast::Atom, out: &mut Vec<u8>) {
     }
 }
 
-fn ast_group_to_json(group: &ast::Group, out: &mut Vec<u8>) {
+fn ast_group_to_json(group: &ast::Group<'_>, out: &mut Vec<u8>) {
     use std::io::Write as _;
     out.extend_from_slice(b"{\"bubble_up\":");
-    if group.bubble_up.is_null() {
-        out.extend_from_slice(b"null");
-    } else {
-        // Optional pointers are encoded as the pointer address.
-        let _ = write!(out, "{}", group.bubble_up as usize);
+    match group.bubble_up.get() {
+        None => out.extend_from_slice(b"null"),
+        Some(bubble_up) => {
+            // Optional pointers are encoded as the pointer address.
+            let _ = write!(out, "{}", std::ptr::from_ref(bubble_up) as usize);
+        }
     }
     out.extend_from_slice(b",\"bubble_up_next\":");
-    match group.bubble_up_next {
+    match group.bubble_up_next.get() {
         Some(n) => {
             let _ = write!(out, "{}", n);
         }
@@ -579,8 +428,6 @@ fn ast_group_to_json(group: &ast::Group, out: &mut Vec<u8>) {
         }
         ast::GroupAtoms::Many(atoms) => {
             out.extend_from_slice(b"{\"many\":[");
-            // SAFETY: bump-allocated slice live for the parse arena.
-            let atoms = unsafe { &**atoms };
             for (i, a) in atoms.iter().enumerate() {
                 if i > 0 {
                     out.push(b',');
@@ -596,38 +443,28 @@ fn ast_group_to_json(group: &ast::Group, out: &mut Vec<u8>) {
 pub mod ast {
     use super::*;
 
-    pub enum Atom {
+    pub enum Atom<'a> {
         Text(SmolStr),
-        Expansion(Expansion),
+        Expansion(Expansion<'a>),
     }
 
-    pub enum GroupAtoms {
-        Single(Atom),
-        // bump-owned slice; raw because Group has raw backrefs (see bubble_up).
-        Many(*mut [Atom]),
+    pub enum GroupAtoms<'a> {
+        Single(Atom<'a>),
+        // bump-owned slice
+        Many(&'a [Atom<'a>]),
     }
 
-    pub struct Group {
+    pub struct Group<'a> {
         /// BACKREF: child points back to owning parent Group (LIFETIMES.tsv).
-        pub bubble_up: *mut Group,
-        pub bubble_up_next: Option<u16>,
-        pub atoms: GroupAtoms,
+        pub(crate) bubble_up: Cell<Option<&'a Group<'a>>>,
+        pub(crate) bubble_up_next: Cell<Option<u16>>,
+        pub(crate) atoms: GroupAtoms<'a>,
     }
 
-    impl Default for Group {
-        fn default() -> Self {
-            Self {
-                bubble_up: ptr::null_mut(),
-                bubble_up_next: None,
-                atoms: GroupAtoms::Single(Atom::Text(SmolStr::empty())),
-            }
-        }
-    }
-
-    pub struct Expansion {
-        // bump-owned mutable slice; raw because expand_nested writes
-        // bubble_up backrefs into elements while recursing through the parent.
-        pub variants: *mut [Group],
+    pub struct Expansion<'a> {
+        // bump-owned slice; expand_nested writes the `bubble_up` cells of its
+        // elements while recursing through the parent.
+        pub(crate) variants: &'a [Group<'a>],
     }
 }
 
@@ -658,12 +495,12 @@ pub enum ParserError {
 
 bun_core::oom_from_alloc!(ParserError);
 
-impl From<ParserError> for bun_core::Error {
+impl From<ParserError> for crate::Error {
     fn from(e: ParserError) -> Self {
         match e {
-            ParserError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            ParserError::UnexpectedToken => bun_core::err!("UnexpectedToken"),
-            ParserError::TooManyBraces => bun_core::err!("TooManyBraces"),
+            ParserError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ParserError::UnexpectedToken => crate::Error::UnexpectedToken,
+            ParserError::TooManyBraces => crate::Error::TooManyBraces,
         }
     }
 }
@@ -678,7 +515,7 @@ pub fn expand(
     contains_nested: bool,
 ) -> Result<(), ExpandError> {
     check_brace_group_count(tokens)?;
-    let mut out_key_counter: u16 = 1;
+    let mut out_key_counter: usize = 1;
     if !contains_nested {
         let expansions_table = build_expansion_table_alloc(tokens)?;
 
@@ -695,43 +532,31 @@ pub fn expand(
     }
 
     let mut parser = Parser::init(tokens, bump);
-    let mut root_node = parser.parse()?;
-    // SAFETY: root_node lives on this stack frame for the duration of expand_nested;
-    // all bubble_up backrefs written during recursion point into bump-owned Groups
-    // or back at this root.
-    unsafe { expand_nested(&raw mut root_node, out, 0, &mut out_key_counter, 0) }
+    let root_node = parser.parse()?;
+    expand_nested(&root_node, out, 0, &mut out_key_counter, 0)
 }
 
-// SAFETY contract: `root` must be a valid *mut Group whose `atoms` slices and
-// `expansion.variants` slices are bump-owned and outlive this call. The function
-// writes `bubble_up` backrefs (raw pointers) into child Groups and re-enters the
-// parent through them; raw-pointer access is used throughout to avoid creating
-// overlapping `&mut` borrows.
-//
-// Aliasing audit: no reference is held across a recursive call. The shared
-// borrows created from raw pointers (`&(*root).atoms` match scrutinees,
-// `&(*many)[i_]`, `expansion`) are consumed before recursion — `variants` is
-// hoisted to a raw pointer copy ahead of the variant loop, and every arm that
-// recurses either tail-returns or returns immediately after its loop. Writes
-// during recursion target only `Group` structs (the stack root or bump-owned
-// `variants` elements), never the `[Atom]` slices a caller frame borrowed
-// from, and bubble-up re-entry always resumes past the caller's in-progress
-// atom index, so no frame's expansion is mutated while it is on the stack.
-unsafe fn expand_nested(
-    root: *mut ast::Group,
+fn expand_nested<'a>(
+    root: &'a ast::Group<'a>,
     out: &mut [Vec<u8>],
-    out_key: u16,
-    out_key_counter: &mut u16,
+    out_key: usize,
+    out_key_counter: &mut usize,
     start: u32,
 ) -> Result<(), ExpandError> {
-    // SAFETY: see fn doc comment —
-    // bump-owned Groups outlive this call, no overlapping `&mut` borrows are held.
-    unsafe {
-        if let ast::GroupAtoms::Single(_) = (*root).atoms {
-            if start > 0 {
-                if !(*root).bubble_up.is_null() {
-                    let bubble_up = (*root).bubble_up;
-                    let next = (*root).bubble_up_next.unwrap();
+    if let ast::GroupAtoms::Single(_) = root.atoms {
+        if start > 0 {
+            if let Some(bubble_up) = root.bubble_up.get() {
+                let next = root.bubble_up_next.get().unwrap();
+                return expand_nested(bubble_up, out, out_key, out_key_counter, u32::from(next));
+            }
+            return Ok(());
+        }
+
+        match &root.atoms {
+            ast::GroupAtoms::Single(ast::Atom::Text(txt)) => {
+                out[out_key].extend_from_slice(txt.slice());
+                if let Some(bubble_up) = root.bubble_up.get() {
+                    let next = root.bubble_up_next.get().unwrap();
                     return expand_nested(
                         bubble_up,
                         out,
@@ -742,107 +567,81 @@ unsafe fn expand_nested(
                 }
                 return Ok(());
             }
+            ast::GroupAtoms::Single(ast::Atom::Expansion(expansion)) => {
+                let length = out[out_key].len();
+                for (j, group) in expansion.variants.iter().enumerate() {
+                    group.bubble_up.set(Some(root));
+                    group.bubble_up_next.set(Some(1));
+                    let new_key = if j == 0 {
+                        out_key
+                    } else {
+                        let new_key = *out_key_counter;
+                        // new_key > out_key always (counter is bumped past out_key before
+                        // any recursion into it), and the j==0 recursion only appends to
+                        // out[out_key], so its [..length] prefix is stable.
+                        let (lo, hi) = out.split_at_mut(new_key);
+                        hi[0].extend_from_slice(&lo[out_key][..length]);
+                        *out_key_counter += 1;
+                        new_key
+                    };
 
-            match &(*root).atoms {
-                ast::GroupAtoms::Single(ast::Atom::Text(txt)) => {
-                    out[usize::from(out_key)].extend_from_slice(txt.slice());
-                    if !(*root).bubble_up.is_null() {
-                        let bubble_up = (*root).bubble_up;
-                        let next = (*root).bubble_up_next.unwrap();
-                        return expand_nested(
-                            bubble_up,
-                            out,
-                            out_key,
-                            out_key_counter,
-                            u32::from(next),
-                        );
-                    }
-                    return Ok(());
+                    expand_nested(group, out, new_key, out_key_counter, 0)?;
                 }
-                ast::GroupAtoms::Single(ast::Atom::Expansion(expansion)) => {
-                    let length = out[usize::from(out_key)].len();
-                    // reshaped for borrowck — snapshot prefix once.
-                    // PERF: extra Vec alloc for prefix snapshot — profile if hot.
-                    let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
-                    let variants = expansion.variants;
-                    let variants_len = variants.len();
-                    for j in 0..variants_len {
-                        let group: *mut ast::Group = (*variants).as_mut_ptr().add(j);
-                        (*group).bubble_up = root;
-                        (*group).bubble_up_next = Some(1);
-                        let new_key = if j == 0 {
-                            out_key
-                        } else {
-                            let new_key = *out_key_counter;
-                            out[usize::from(new_key)].extend_from_slice(&prefix);
-                            *out_key_counter += 1;
-                            new_key
-                        };
-
-                        expand_nested(group, out, new_key, out_key_counter, 0)?;
-                    }
-                    return Ok(());
-                }
-                ast::GroupAtoms::Many(_) => unreachable!(),
+                return Ok(());
             }
+            ast::GroupAtoms::Many(_) => unreachable!(),
         }
+    }
 
-        let many: *mut [ast::Atom] = match &(*root).atoms {
-            ast::GroupAtoms::Many(m) => *m,
-            _ => unreachable!(),
-        };
-        let many_len = many.len();
+    let many: &[ast::Atom<'a>] = match &root.atoms {
+        ast::GroupAtoms::Many(m) => m,
+        _ => unreachable!(),
+    };
+    let many_len = many.len();
 
-        if start as usize >= many_len {
-            if !(*root).bubble_up.is_null() {
-                let bubble_up = (*root).bubble_up;
-                let next = (*root).bubble_up_next.unwrap();
-                return expand_nested(bubble_up, out, out_key, out_key_counter, u32::from(next));
-            }
-            return Ok(());
-        }
-
-        for i_ in (start as usize)..many_len {
-            let i: u16 = u16::try_from(i_).expect("int cast");
-            let atom: &ast::Atom = &(*many)[i_];
-            match atom {
-                ast::Atom::Text(txt) => {
-                    out[usize::from(out_key)].extend_from_slice(txt.slice());
-                }
-                ast::Atom::Expansion(expansion) => {
-                    let length = out[usize::from(out_key)].len();
-                    // reshaped for borrowck — see above.
-                    let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
-                    let variants = expansion.variants;
-                    let variants_len = variants.len();
-                    for j in 0..variants_len {
-                        let group: *mut ast::Group = (*variants).as_mut_ptr().add(j);
-                        (*group).bubble_up = root;
-                        (*group).bubble_up_next = Some(i + 1);
-                        let new_key = if j == 0 {
-                            out_key
-                        } else {
-                            let new_key = *out_key_counter;
-                            out[usize::from(new_key)].extend_from_slice(&prefix);
-                            *out_key_counter += 1;
-                            new_key
-                        };
-
-                        expand_nested(group, out, new_key, out_key_counter, 0)?;
-                    }
-                    return Ok(());
-                }
-            }
-        }
-
-        // After execution we need to go up a level
-        if !(*root).bubble_up.is_null() {
-            let bubble_up = (*root).bubble_up;
-            let next = (*root).bubble_up_next.unwrap();
+    if start as usize >= many_len {
+        if let Some(bubble_up) = root.bubble_up.get() {
+            let next = root.bubble_up_next.get().unwrap();
             return expand_nested(bubble_up, out, out_key, out_key_counter, u32::from(next));
         }
-        Ok(())
-    } // unsafe
+        return Ok(());
+    }
+
+    for i_ in (start as usize)..many_len {
+        let i: u16 = u16::try_from(i_).expect("int cast");
+        let atom: &ast::Atom<'a> = &many[i_];
+        match atom {
+            ast::Atom::Text(txt) => {
+                out[out_key].extend_from_slice(txt.slice());
+            }
+            ast::Atom::Expansion(expansion) => {
+                let length = out[out_key].len();
+                for (j, group) in expansion.variants.iter().enumerate() {
+                    group.bubble_up.set(Some(root));
+                    group.bubble_up_next.set(Some(i + 1));
+                    let new_key = if j == 0 {
+                        out_key
+                    } else {
+                        let new_key = *out_key_counter;
+                        let (lo, hi) = out.split_at_mut(new_key);
+                        hi[0].extend_from_slice(&lo[out_key][..length]);
+                        *out_key_counter += 1;
+                        new_key
+                    };
+
+                    expand_nested(group, out, new_key, out_key_counter, 0)?;
+                }
+                return Ok(());
+            }
+        }
+    }
+
+    // After execution we need to go up a level
+    if let Some(bubble_up) = root.bubble_up.get() {
+        let next = root.bubble_up_next.get().unwrap();
+        return expand_nested(bubble_up, out, out_key, out_key_counter, u32::from(next));
+    }
+    Ok(())
 }
 
 /// This function is fast but does not work for nested brace expansions
@@ -851,8 +650,8 @@ fn expand_flat(
     tokens: &[Token],
     expansion_table: &[ExpansionVariant],
     out: &mut [Vec<u8>],
-    out_key: u16,
-    out_key_counter: &mut u16,
+    out_key: usize,
+    out_key_counter: &mut usize,
     depth_: u8,
     start: usize,
     end: usize,
@@ -866,30 +665,29 @@ fn expand_flat(
     for atom in tokens[start..end].iter() {
         match atom {
             Token::Text(txt) => {
-                out[usize::from(out_key)].extend_from_slice(txt.slice());
+                out[out_key].extend_from_slice(txt.slice());
             }
             Token::Close => {
                 depth -= 1;
             }
             Token::Open(expansion_variants) => {
                 depth += 1;
-                if cfg!(debug_assertions) {
-                    debug_assert!(expansion_variants.end - expansion_variants.idx >= 1);
-                }
+                debug_assert!(expansion_variants.end - expansion_variants.idx >= 1);
 
                 let variants = &expansion_table
                     [usize::from(expansion_variants.idx)..usize::from(expansion_variants.end)];
                 let skip_over_idx = variants[variants.len() - 1].end();
 
-                let starting_len = out[usize::from(out_key)].len();
-                // reshaped for borrowck — snapshot prefix once.
-                let prefix: Vec<u8> = out[usize::from(out_key)][..starting_len].to_vec();
+                let starting_len = out[out_key].len();
                 for (i, variant) in variants.iter().enumerate() {
                     let new_key = if i == 0 {
                         out_key
                     } else {
                         let new_key = *out_key_counter;
-                        out[usize::from(new_key)].extend_from_slice(&prefix);
+                        // new_key > out_key always; the i==0 recursion only appends to
+                        // out[out_key], so its [..starting_len] prefix is stable.
+                        let (lo, hi) = out.split_at_mut(new_key);
+                        hi[0].extend_from_slice(&lo[out_key][..starting_len]);
                         *out_key_counter += 1;
                         new_key
                     };
@@ -923,8 +721,7 @@ fn expand_flat(
 }
 
 // FIXME error location
-// lifetime on transient parser struct; `tokens`/`bump` borrowed from caller
-// for the parse() call only — not an AST node.
+// `tokens`/`bump` borrowed from caller; the AST that parse() returns lives in `bump`.
 pub struct Parser<'a> {
     current: usize,
     tokens: &'a [Token],
@@ -940,9 +737,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(&mut self) -> Result<ast::Group, ParserError> {
+    pub fn parse(&mut self) -> Result<ast::Group<'a>, ParserError> {
         check_brace_group_count(self.tokens)?;
-        let mut nodes: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
+        let mut nodes: BumpVec<'a, ast::Atom<'a>> = BumpVec::new_in(self.bump);
         while !self.r#match(TokenTag::Eof) {
             match self.parse_atom()? {
                 Some(atom) => nodes.push(atom),
@@ -953,21 +750,21 @@ impl<'a> Parser<'a> {
         if nodes.len() == 1 {
             let single = nodes.into_iter().next().unwrap();
             Ok(ast::Group {
-                bubble_up: ptr::null_mut(),
-                bubble_up_next: None,
+                bubble_up: Cell::new(None),
+                bubble_up_next: Cell::new(None),
                 atoms: ast::GroupAtoms::Single(single),
             })
         } else {
-            let many = std::ptr::from_mut::<[ast::Atom]>(nodes.into_bump_slice_mut());
+            let many = nodes.into_bump_slice();
             Ok(ast::Group {
-                bubble_up: ptr::null_mut(),
-                bubble_up_next: None,
+                bubble_up: Cell::new(None),
+                bubble_up_next: Cell::new(None),
                 atoms: ast::GroupAtoms::Many(many),
             })
         }
     }
 
-    fn parse_atom(&mut self) -> Result<Option<ast::Atom>, ParserError> {
+    fn parse_atom(&mut self) -> Result<Option<ast::Atom<'a>>, ParserError> {
         match self.advance() {
             Token::Open(_) => {
                 let expansion_ptr = self.parse_expansion()?;
@@ -979,40 +776,36 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_expansion(&mut self) -> Result<ast::Expansion, ParserError> {
-        let mut variants: BumpVec<'a, ast::Group> = BumpVec::new_in(self.bump);
-        while !self.match_any(&[TokenTag::Close, TokenTag::Eof]) {
-            if self.r#match(TokenTag::Eof) {
-                break;
-            }
-            let mut group: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
-            let mut close = false;
-            while !self.r#match(TokenTag::Eof) {
-                if self.r#match(TokenTag::Close) {
-                    close = true;
-                    break;
+    fn parse_expansion(&mut self) -> Result<ast::Expansion<'a>, ParserError> {
+        let mut variants: BumpVec<'a, ast::Group<'a>> = BumpVec::new_in(self.bump);
+        loop {
+            let mut group: BumpVec<'a, ast::Atom<'a>> = BumpVec::new_in(self.bump);
+            // Only this inner loop consumes Close/Eof so a trailing empty
+            // variant (`{a,}`) is pushed before the outer loop exits.
+            let close = loop {
+                if self.match_any(&[TokenTag::Close, TokenTag::Eof]) {
+                    break true;
                 }
                 if self.r#match(TokenTag::Comma) {
-                    break;
+                    break false;
                 }
-                let group_atom = match self.parse_atom()? {
-                    Some(a) => a,
-                    None => break,
-                };
-                group.push(group_atom);
-            }
+                match self.parse_atom()? {
+                    Some(a) => group.push(a),
+                    None => break true,
+                }
+            };
             if group.len() == 1 {
                 let single = group.into_iter().next().unwrap();
                 variants.push(ast::Group {
-                    bubble_up: ptr::null_mut(),
-                    bubble_up_next: None,
+                    bubble_up: Cell::new(None),
+                    bubble_up_next: Cell::new(None),
                     atoms: ast::GroupAtoms::Single(single),
                 });
             } else {
-                let many = std::ptr::from_mut::<[ast::Atom]>(group.into_bump_slice_mut());
+                let many = group.into_bump_slice();
                 variants.push(ast::Group {
-                    bubble_up: ptr::null_mut(),
-                    bubble_up_next: None,
+                    bubble_up: Cell::new(None),
+                    bubble_up_next: Cell::new(None),
                     atoms: ast::GroupAtoms::Many(many),
                 });
             }
@@ -1022,7 +815,7 @@ impl<'a> Parser<'a> {
         }
 
         Ok(ast::Expansion {
-            variants: std::ptr::from_mut::<[ast::Group]>(variants.into_bump_slice_mut()),
+            variants: variants.into_bump_slice(),
         })
     }
 
@@ -1129,7 +922,6 @@ fn build_expansion_table(
     #[derive(Copy, Clone)]
     struct BraceState {
         tok_idx: u16,
-        variants: u16,
         prev_tok_end: u16,
     }
     let mut brace_stack: SmallVec<[BraceState; MAX_NESTED_BRACES]> = SmallVec::new();
@@ -1139,7 +931,6 @@ fn build_expansion_table(
     }
 
     let mut i: u16 = 0;
-    let mut prev_close = false;
     while (i as usize) < tokens.len() {
         match &mut tokens[i as usize] {
             Token::Open(open) => {
@@ -1147,40 +938,29 @@ fn build_expansion_table(
                 open.idx = table_idx;
                 brace_stack.push(BraceState {
                     tok_idx: i,
-                    variants: 0,
                     prev_tok_end: i,
                 });
             }
             Token::Close => {
-                let mut top = brace_stack.pop().unwrap();
+                let top = brace_stack.pop().unwrap();
 
                 table.push(ExpansionVariant::new(top.prev_tok_end + 1, i));
-
-                top.prev_tok_end = i;
-                top.variants += 1;
 
                 if let Token::Open(open) = &mut tokens[top.tok_idx as usize] {
                     open.end = u16::try_from(table.len()).expect("int cast");
                 }
-                prev_close = true;
             }
             Token::Comma => {
                 let top = brace_stack.last_mut().unwrap();
 
                 table.push(ExpansionVariant::new(top.prev_tok_end + 1, i));
 
-                prev_close = false;
-
                 top.prev_tok_end = i;
-                top.variants += 1;
             }
-            _ => {
-                prev_close = false;
-            }
+            _ => {}
         }
         i += 1;
     }
-    let _ = prev_close;
 
     if cfg!(debug_assertions) {
         for variant in table.iter() {
@@ -1190,9 +970,9 @@ fn build_expansion_table(
     Ok(())
 }
 
-pub type Lexer = NewLexer<{ Encoding::Ascii }>;
+pub type Lexer<'a> = NewLexer<'a, { Encoding::Ascii }>;
 
-type Chars<const E: Encoding> = ShellCharIter<E>;
+type Chars<'a, const E: Encoding> = ShellCharIter<'a, E>;
 
 pub struct LexerOutput {
     pub tokens: Vec<Token>,
@@ -1201,14 +981,14 @@ pub struct LexerOutput {
 
 pub(crate) type BraceLexerError = AllocError;
 
-pub struct NewLexer<const ENCODING: Encoding> {
-    chars: Chars<ENCODING>,
+pub struct NewLexer<'a, const ENCODING: Encoding> {
+    chars: Chars<'a, ENCODING>,
     tokens: Vec<Token>,
     contains_nested: bool,
 }
 
-impl<const ENCODING: Encoding> NewLexer<ENCODING> {
-    pub fn tokenize(src: &[u8]) -> Result<LexerOutput, BraceLexerError> {
+impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
+    pub fn tokenize(src: &'a [u8]) -> Result<LexerOutput, BraceLexerError> {
         let mut this = Self {
             chars: Chars::<ENCODING>::init(src),
             tokens: Vec::new(),
@@ -1246,7 +1026,12 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         // - If unclosed or encounter bad token:
         //   - Start at beginning of brace, replacing special tokens back with
         //     chars, skipping over actual closed braces
-        let mut brace_stack: SmallVec<[u32; MAX_NESTED_BRACES]> = SmallVec::new();
+        #[derive(Copy, Clone)]
+        struct OpenBrace {
+            tok_idx: u32,
+            has_comma: bool,
+        }
+        let mut brace_stack: SmallVec<[OpenBrace; MAX_NESTED_BRACES]> = SmallVec::new();
 
         loop {
             let Some(input) = self.eat() else { break };
@@ -1257,19 +1042,30 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                 // `char` is u32 (CodepointType unified across encodings).
                 match char {
                     c if c == u32::from(b'{') => {
-                        brace_stack.push(u32::try_from(self.tokens.len()).expect("int cast"));
+                        brace_stack.push(OpenBrace {
+                            tok_idx: u32::try_from(self.tokens.len()).expect("int cast"),
+                            has_comma: false,
+                        });
                         self.tokens.push(Token::Open(ExpansionVariants::default()));
                         continue;
                     }
                     c if c == u32::from(b'}') => {
-                        if brace_stack.len() > 0 {
-                            let _ = brace_stack.pop();
-                            self.tokens.push(Token::Close);
+                        if let Some(top) = brace_stack.pop() {
+                            if top.has_comma {
+                                self.tokens.push(Token::Close);
+                            } else {
+                                // A `{...}` group with no top-level comma is not a
+                                // brace expansion (bash semantics): demote the Open
+                                // back to a literal `{` and emit this `}` as text.
+                                self.replace_token_with_string(top.tok_idx);
+                                self.tokens.push(Token::Text(SmolStr::from_char(b'}')));
+                            }
                             continue;
                         }
                     }
                     c if c == u32::from(b',') => {
-                        if brace_stack.len() > 0 {
+                        if let Some(top) = brace_stack.last_mut() {
+                            top.has_comma = true;
                             self.tokens.push(Token::Comma);
                             continue;
                         }
@@ -1278,16 +1074,12 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                 }
             }
 
-            // if (char_stack.push(char) == char_stack.Error.StackFull) {
-            //     try self.app
-            // }
             self.append_char(char)?;
         }
 
         // Unclosed braces
-        while brace_stack.len() > 0 {
-            let top_idx = brace_stack.pop().unwrap();
-            self.rollback_braces(top_idx);
+        while let Some(top) = brace_stack.pop() {
+            self.rollback_braces(top.tok_idx);
         }
 
         self.flatten_tokens()?;
@@ -1297,44 +1089,34 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
     }
 
     fn flatten_tokens(&mut self) -> Result<(), AllocError> {
-        if self.tokens.is_empty() {
-            return Ok(());
-        }
-        let mut brace_count: u32 = if matches!(self.tokens[0], Token::Open(_)) {
-            1
-        } else {
-            0
-        };
-        let mut i: u32 = 0;
-        let mut j: u32 = 1;
-        while (i as usize) < self.tokens.len() && (j as usize) < self.tokens.len() {
-            // reshaped for borrowck — branch on tags first, then borrow once.
-            let itok_is_text = matches!(self.tokens[i as usize], Token::Text(_));
-            let jtok_is_text = matches!(self.tokens[j as usize], Token::Text(_));
-
-            if itok_is_text && jtok_is_text {
-                let jtok_text = self.tokens[j as usize].to_text();
-                if let Token::Text(itxt) = &mut self.tokens[i as usize] {
-                    itxt.append_slice(jtok_text.slice())?;
+        let mut brace_count: u32 = 0;
+        let mut write = 0usize;
+        for read in 0..self.tokens.len() {
+            match &self.tokens[read] {
+                Token::Open(_) => {
+                    brace_count += 1;
+                    if brace_count > 1 {
+                        self.contains_nested = true;
+                    }
                 }
-                let _ = self.tokens.remove(j as usize);
+                Token::Close => brace_count -= 1,
+                _ => {}
+            }
+            if write > 0
+                && matches!(self.tokens[write - 1], Token::Text(_))
+                && matches!(self.tokens[read], Token::Text(_))
+            {
+                let taken = core::mem::replace(&mut self.tokens[read], Token::Eof);
+                if let (Token::Text(prev), Token::Text(cur)) = (&mut self.tokens[write - 1], taken)
+                {
+                    prev.append_slice(cur.slice())?;
+                }
             } else {
-                match &self.tokens[j as usize] {
-                    Token::Close => {
-                        brace_count -= 1;
-                    }
-                    Token::Open(_) => {
-                        brace_count += 1;
-                        if brace_count > 1 {
-                            self.contains_nested = true;
-                        }
-                    }
-                    _ => {}
-                }
-                i += 1;
-                j += 1;
+                self.tokens.swap(write, read);
+                write += 1;
             }
         }
+        self.tokens.truncate(write);
         Ok(())
     }
 
@@ -1344,7 +1126,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             debug_assert!(matches!(first, Token::Open(_)));
         }
 
-        let mut braces: u8 = 0;
+        let mut braces: u32 = 0;
 
         self.replace_token_with_string(starting_idx);
         let mut i: u32 = starting_idx + 1;
@@ -1386,14 +1168,14 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
 
     fn append_char(
         &mut self,
-        char: <Chars<ENCODING> as CharIter>::CodepointType,
+        char: <Chars<'a, ENCODING> as CharIter<'a>>::CodepointType,
     ) -> Result<(), AllocError> {
         if !self.tokens.is_empty() {
             let last_idx = self.tokens.len() - 1;
             if let Token::Text(last) = &mut self.tokens[last_idx] {
                 if ENCODING == Encoding::Ascii {
                     // SAFETY: ascii codepoint is u8
-                    last.append_char(char as u8)?;
+                    last.append_slice(&[char as u8])?;
                     return Ok(());
                 }
                 let mut buf = [0u8; 4];
@@ -1415,7 +1197,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         Ok(())
     }
 
-    fn eat(&mut self) -> Option<<Chars<ENCODING> as CharIter>::InputChar> {
+    fn eat(&mut self) -> Option<<Chars<'a, ENCODING> as CharIter<'a>>::InputChar> {
         self.chars.eat()
     }
 }
@@ -1428,19 +1210,26 @@ mod tests {
     fn lexer() {
         struct TestCase(&'static [u8], Vec<Token>);
         let test_cases: Vec<TestCase> = vec![
+            // No comma: the whole group is literal text.
             TestCase(
                 b"{}",
-                vec![
-                    Token::Open(ExpansionVariants::default()),
-                    Token::Close,
-                    Token::Eof,
-                ],
+                vec![Token::Text(SmolStr::from_slice(b"{}").unwrap()), Token::Eof],
             ),
             TestCase(
                 b"{foo}",
                 vec![
+                    Token::Text(SmolStr::from_slice(b"{foo}").unwrap()),
+                    Token::Eof,
+                ],
+            ),
+            // With a comma: a real brace group.
+            TestCase(
+                b"{a,b}",
+                vec![
                     Token::Open(ExpansionVariants::default()),
-                    Token::Text(SmolStr::from_slice(b"foo").unwrap()),
+                    Token::Text(SmolStr::from_slice(b"a").unwrap()),
+                    Token::Comma,
+                    Token::Text(SmolStr::from_slice(b"b").unwrap()),
                     Token::Close,
                     Token::Eof,
                 ],

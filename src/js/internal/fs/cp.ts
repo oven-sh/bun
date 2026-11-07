@@ -1,122 +1,139 @@
 // Taken and modified from node.js: https://github.com/nodejs/node/blob/main/lib/internal/fs/cp/cp.js
+const {
+  errno: { EEXIST, EINVAL, EISDIR, ENOTDIR },
+  fsCpDirToNonDirError,
+  fsCpEExistError,
+  fsCpEinvalError,
+  fsCpFifoPipeError,
+  fsCpNonDirToDirError,
+  fsCpSocketError,
+  fsCpSymlinkToSubdirectoryError,
+  fsCpUnknownError,
+  fsEisdirError,
+  areIdentical,
+  isSrcSubdir,
+} = require("internal/fs/cp-sync");
 
-// const {
-//   codes: {
-//     ERR_FS_CP_DIR_TO_NON_DIR,
-//     ERR_FS_CP_EEXIST,
-//     ERR_FS_CP_EINVAL,
-//     ERR_FS_CP_FIFO_PIPE,
-//     ERR_FS_CP_NON_DIR_TO_DIR,
-//     ERR_FS_CP_SOCKET,
-//     ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY,
-//     ERR_FS_CP_UNKNOWN,
-//     ERR_FS_EISDIR,
-//   },
-// } = require("internal/errors");
-// const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
-const { chmod, copyFile, lstat, mkdir, opendir, readlink, stat, symlink, unlink, utimes } = require("node:fs/promises");
-const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
+const {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  opendir,
+  readdir,
+  readlink,
+  stat,
+  symlink,
+  unlink,
+  utimes,
+} = require("node:fs/promises");
+const { dirname, isAbsolute, join, parse, resolve } = require("node:path");
 
 const PromisePrototypeThen = $Promise.prototype.$then;
 const PromiseReject = Promise.$reject;
-const ArrayPrototypeFilter = Array.prototype.filter;
-const StringPrototypeSplit = String.prototype.split;
-const ArrayPrototypeEvery = Array.prototype.every;
 
-async function cpFn(src, dest, opts) {
-  const stats = await checkPaths(src, dest, opts);
-  const { srcStat, destStat, skipped } = stats;
-  if (skipped) return;
-  await checkParentPaths(src, srcStat, dest);
-  return checkParentDir(destStat, src, dest, opts);
+type Stats = $Node.Stats;
+type BigIntStats = $Node.BigIntStats;
+type DestinationStats = BigIntStats | null | undefined;
+
+interface CpOptions {
+  dereference: boolean;
+  errorOnExist: boolean;
+  filter: ((src: string, dest: string) => boolean | Promise<boolean>) | undefined;
+  force: boolean;
+  preserveTimestamps: boolean;
+  recursive: boolean;
+  verbatimSymlinks: boolean;
+  mode: number;
 }
 
-async function checkPaths(src, dest, opts) {
+interface CheckedPaths {
+  __proto__: null;
+  srcStat: BigIntStats;
+  destStat: DestinationStats;
+  skipped: false;
+}
+
+interface SkippedPaths {
+  __proto__: null;
+  srcStat?: undefined;
+  destStat?: undefined;
+  skipped: true;
+}
+
+async function checkPaths(src: string, dest: string, opts: CpOptions & { filter: undefined }): Promise<CheckedPaths>;
+async function checkPaths(src: string, dest: string, opts: CpOptions): Promise<CheckedPaths | SkippedPaths>;
+async function checkPaths(src: string, dest: string, opts: CpOptions): Promise<CheckedPaths | SkippedPaths> {
   if (opts.filter && !(await opts.filter(src, dest))) {
     return { __proto__: null, skipped: true };
   }
   const { 0: srcStat, 1: destStat } = await getStats(src, dest, opts);
   if (destStat) {
     if (areIdentical(srcStat, destStat)) {
-      throw new Error("Source and destination must not be the same.");
+      throw fsCpEinvalError({
+        message: "src and dest cannot be the same",
+        path: dest,
+        syscall: "cp",
+        errno: EINVAL,
+        code: "EINVAL",
+      });
     }
     if (srcStat.isDirectory() && !destStat.isDirectory()) {
-      // throw new ERR_FS_CP_DIR_TO_NON_DIR({
-      //   message: `cannot overwrite directory ${src} with non-directory ${dest}`,
-      //   path: dest,
-      //   syscall: "cp",
-      //   errno: EISDIR,
-      //   code: "EISDIR",
-      // });
-      throw new Error(`cannot overwrite directory ${src} with non-directory ${dest}`);
+      throw fsCpDirToNonDirError({
+        message: `cannot overwrite non-directory ${dest} with directory ${src}`,
+        path: dest,
+        syscall: "cp",
+        errno: EISDIR,
+        code: "EISDIR",
+      });
     }
     if (!srcStat.isDirectory() && destStat.isDirectory()) {
-      // throw new ERR_FS_CP_NON_DIR_TO_DIR({
-      //   message: `cannot overwrite non-directory ${src} with directory ${dest}`,
-      //   path: dest,
-      //   syscall: "cp",
-      //   errno: ENOTDIR,
-      //   code: "ENOTDIR",
-      // });
-      throw new Error(`cannot overwrite non-directory ${src} with directory ${dest}`);
+      throw fsCpNonDirToDirError({
+        message: `cannot overwrite directory ${dest} with non-directory ${src}`,
+        path: dest,
+        syscall: "cp",
+        errno: ENOTDIR,
+        code: "ENOTDIR",
+      });
     }
   }
 
   if (srcStat.isDirectory() && isSrcSubdir(src, dest)) {
-    // throw new ERR_FS_CP_EINVAL({
-    //   message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-    //   path: dest,
-    //   syscall: "cp",
-    //   errno: EINVAL,
-    //   code: "EINVAL",
-    // });
-    throw new Error(`cannot copy ${src} to a subdirectory of self ${dest}`);
+    throw fsCpEinvalError({
+      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
+      path: dest,
+      syscall: "cp",
+      errno: EINVAL,
+      code: "EINVAL",
+    });
   }
   return { __proto__: null, srcStat, destStat, skipped: false };
 }
 
-function areIdentical(srcStat, destStat) {
-  return destStat.ino && destStat.dev && destStat.ino === srcStat.ino && destStat.dev === srcStat.dev;
-}
-
-function getStats(src, dest, opts) {
-  const statFunc = opts.dereference ? file => stat(file, { bigint: true }) : file => lstat(file, { bigint: true });
+function getStats(src: string, dest: string, opts: CpOptions) {
+  const statFunc = opts.dereference
+    ? (file: string) => stat(file, { bigint: true })
+    : (file: string) => lstat(file, { bigint: true });
   return Promise.all([
     statFunc(src),
     PromisePrototypeThen.$call(statFunc(dest), undefined, err => {
       if (err.code === "ENOENT") return null;
       throw err;
-    }),
+    }) as Promise<BigIntStats | null>,
   ]);
-}
-
-async function checkParentDir(destStat, src, dest, opts) {
-  const destParent = dirname(dest);
-  const dirExists = await pathExists(destParent);
-  if (dirExists) return getStatsForCopy(destStat, src, dest, opts);
-  await mkdir(destParent, { recursive: true });
-  return getStatsForCopy(destStat, src, dest, opts);
-}
-
-function pathExists(dest) {
-  return PromisePrototypeThen.$call(
-    stat(dest),
-    () => true,
-    err => (err.code === "ENOENT" ? false : PromiseReject(err)),
-  );
 }
 
 // Recursively check if dest parent is a subdirectory of src.
 // It works for all file types including symlinks since it
 // checks the src and dest inodes. It starts from the deepest
 // parent and stops once it reaches the src parent or the root path.
-async function checkParentPaths(src, srcStat, dest) {
+async function checkParentPaths(src: string, srcStat: BigIntStats, dest: string) {
   const srcParent = resolve(dirname(src));
   const destParent = resolve(dirname(dest));
   if (destParent === srcParent || destParent === parse(destParent).root) {
     return;
   }
-  let destStat;
+  let destStat: BigIntStats;
   try {
     destStat = await stat(destParent, { bigint: true });
   } catch (err: any) {
@@ -124,98 +141,169 @@ async function checkParentPaths(src, srcStat, dest) {
     throw err;
   }
   if (areIdentical(srcStat, destStat)) {
-    // throw new ERR_FS_CP_EINVAL({
-    //   message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-    //   path: dest,
-    //   syscall: "cp",
-    //   errno: EINVAL,
-    //   code: "EINVAL",
-    // });
-    throw new Error(`cannot copy ${src} to a subdirectory of self ${dest}`);
+    throw fsCpEinvalError({
+      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
+      path: dest,
+      syscall: "cp",
+      errno: EINVAL,
+      code: "EINVAL",
+    });
   }
   return checkParentPaths(src, srcStat, destParent);
 }
 
-const normalizePathToArray = path =>
-  ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(path), sep), Boolean);
-
-// Return true if dest is a subdir of src, otherwise false.
-// It only checks the path strings.
-function isSrcSubdir(src, dest) {
-  const srcArr = normalizePathToArray(src);
-  const destArr = normalizePathToArray(dest);
-  return ArrayPrototypeEvery.$call(srcArr, (cur, i) => destArr[i] === cur);
+// The native recursive copy (a single clonefile() on macOS) copies symlinks
+// verbatim and clones special files, while node rewrites relative symlink
+// targets against the source tree and raises ERR_FS_CP_SOCKET /
+// ERR_FS_CP_FIFO_PIPE. It is therefore only node-equivalent for trees made of
+// regular files and directories; anything else — including entries whose type
+// the filesystem does not report — bails to the ported walker. Scan errors
+// also bail so the walker surfaces them the way node would.
+async function treeContainsOnlyFilesAndDirs(root: string) {
+  const stack = [root];
+  while (stack.length) {
+    const dir = stack.pop()!;
+    let entries: $Node.Dirent[];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      if (entry.isDirectory()) {
+        stack.push(join(dir, entry.name));
+      } else if (!entry.isFile()) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
-async function getStatsForCopy(destStat, src, dest, opts) {
+// node-correct validation before handing off to the native fast path
+// (which performs the copy but does not implement node's cp error codes).
+async function tryNativeFastPath(src: string, dest: string, opts: CpOptions & { filter: undefined }) {
+  const checked = await checkPaths(src, dest, opts);
+  const { srcStat, destStat } = checked;
+  await checkParentPaths(src, srcStat, dest);
+  if (srcStat.isDirectory() && !opts.recursive) {
+    throw fsEisdirError({
+      message: `${src} is a directory (not copied)`,
+      path: src,
+      syscall: "cp",
+      errno: EISDIR,
+      code: "EISDIR",
+    });
+  }
+  if (srcStat.isDirectory()) {
+    // On macOS the native path clones the whole tree with a single
+    // clonefile(). Only take it when the result is indistinguishable from
+    // node's walker: dest must not exist (no merge semantics) and the tree
+    // must contain only regular files and directories.
+    return {
+      ok: process.platform === "darwin" && !destStat && (await treeContainsOnlyFilesAndDirs(src)),
+      checked,
+    };
+  }
+  // The single-file native copy is only node-equivalent for regular-file ->
+  // regular-file (or missing dest). Symlinks (node resolves relative link
+  // targets) and special files (node-specific error codes) must go through
+  // the ported implementation.
+  return { ok: srcStat.isFile() && (!destStat || destStat.isFile()), checked };
+}
+
+async function cpFn(src: string, dest: string, opts: CpOptions, checked?: CheckedPaths) {
+  // `checked` carries the stats from a preceding tryNativeFastPath so the
+  // fallback doesn't re-run the same checkPaths/checkParentPaths syscalls.
+  const { srcStat, destStat, skipped } = checked ?? (await checkPaths(src, dest, opts));
+  if (skipped) return;
+  if (checked === undefined) await checkParentPaths(src, srcStat, dest);
+  return checkParentDir(destStat, src, dest, opts);
+}
+
+async function checkParentDir(destStat: DestinationStats, src: string, dest: string, opts: CpOptions) {
+  const destParent = dirname(dest);
+  const dirExists = await pathExists(destParent);
+  if (dirExists) return getStatsForCopy(destStat, src, dest, opts);
+  await mkdir(destParent, { recursive: true });
+  return getStatsForCopy(destStat, src, dest, opts);
+}
+
+function pathExistsFulfilled() {
+  return true;
+}
+function pathExistsRejected(err: Error) {
+  return err.code === "ENOENT" ? false : PromiseReject(err);
+}
+function pathExists(dest: string) {
+  return PromisePrototypeThen.$call(stat(dest), pathExistsFulfilled, pathExistsRejected);
+}
+
+async function getStatsForCopy(destStat: DestinationStats, src: string, dest: string, opts: CpOptions) {
   const statFn = opts.dereference ? stat : lstat;
   const srcStat = await statFn(src);
   if (srcStat.isDirectory() && opts.recursive) {
     return onDir(srcStat, destStat, src, dest, opts);
   } else if (srcStat.isDirectory()) {
-    // throw new ERR_FS_EISDIR({
-    //   message: `${src} is a directory (not copied)`,
-    //   path: src,
-    //   syscall: "cp",
-    //   errno: EISDIR,
-    //   code: "EISDIR",
-    // });
-    throw new Error(`${src} is a directory (not copied)`);
+    throw fsEisdirError({
+      message: `${src} is a directory (not copied)`,
+      path: src,
+      syscall: "cp",
+      errno: EISDIR,
+      code: "EISDIR",
+    });
   } else if (srcStat.isFile() || srcStat.isCharacterDevice() || srcStat.isBlockDevice()) {
     return onFile(srcStat, destStat, src, dest, opts);
   } else if (srcStat.isSymbolicLink()) {
     return onLink(destStat, src, dest, opts);
   } else if (srcStat.isSocket()) {
-    // throw new ERR_FS_CP_SOCKET({
-    //   message: `cannot copy a socket file: ${dest}`,
-    //   path: dest,
-    //   syscall: "cp",
-    //   errno: EINVAL,
-    //   code: "EINVAL",
-    // });
-    throw new Error(`cannot copy a socket file: ${dest}`);
+    throw fsCpSocketError({
+      message: `cannot copy a socket file: ${dest}`,
+      path: dest,
+      syscall: "cp",
+      errno: EINVAL,
+      code: "EINVAL",
+    });
   } else if (srcStat.isFIFO()) {
-    // throw new ERR_FS_CP_FIFO_PIPE({
-    //   message: `cannot copy a FIFO pipe: ${dest}`,
-    //   path: dest,
-    //   syscall: "cp",
-    //   errno: EINVAL,
-    //   code: "EINVAL",
-    // });
-    throw new Error(`cannot copy a FIFO pipe: ${dest}`);
+    throw fsCpFifoPipeError({
+      message: `cannot copy a FIFO pipe: ${dest}`,
+      path: dest,
+      syscall: "cp",
+      errno: EINVAL,
+      code: "EINVAL",
+    });
   }
-  // throw new ERR_FS_CP_UNKNOWN({
-  //   message: `cannot copy an unknown file type: ${dest}`,
-  //   path: dest,
-  //   syscall: "cp",
-  //   errno: EINVAL,
-  //   code: "EINVAL",
-  // });
-  throw new Error(`cannot copy an unknown file type: ${dest}`);
+  throw fsCpUnknownError({
+    message: `cannot copy an unknown file type: ${dest}`,
+    path: dest,
+    syscall: "cp",
+    errno: EINVAL,
+    code: "EINVAL",
+  });
 }
 
-function onFile(srcStat, destStat, src, dest, opts) {
+function onFile(srcStat: Stats, destStat: DestinationStats, src: string, dest: string, opts: CpOptions) {
   if (!destStat) return _copyFile(srcStat, src, dest, opts);
   return mayCopyFile(srcStat, src, dest, opts);
 }
 
-async function mayCopyFile(srcStat, src, dest, opts) {
+async function mayCopyFile(srcStat: Stats, src: string, dest: string, opts: CpOptions) {
   if (opts.force) {
     await unlink(dest);
     return _copyFile(srcStat, src, dest, opts);
   } else if (opts.errorOnExist) {
-    // throw new ERR_FS_CP_EEXIST({
-    //   message: `${dest} already exists`,
-    //   path: dest,
-    //   syscall: "cp",
-    //   errno: EEXIST,
-    //   code: "EEXIST",
-    // });
-    throw new Error(`${dest} already exists`);
+    throw fsCpEExistError({
+      message: `${dest} already exists`,
+      path: dest,
+      syscall: "cp",
+      errno: EEXIST,
+      code: "EEXIST",
+    });
   }
 }
 
-async function _copyFile(srcStat, src, dest, opts) {
+async function _copyFile(srcStat: Stats, src: string, dest: string, opts: CpOptions) {
   await copyFile(src, dest, opts.mode);
   if (opts.preserveTimestamps) {
     return handleTimestampsAndMode(srcStat.mode, src, dest);
@@ -223,7 +311,7 @@ async function _copyFile(srcStat, src, dest, opts) {
   return setDestMode(dest, srcStat.mode);
 }
 
-async function handleTimestampsAndMode(srcMode, src, dest) {
+async function handleTimestampsAndMode(srcMode: number, src: string, dest: string) {
   // Make sure the file is writable before setting the timestamp
   // otherwise open fails with EPERM when invoked with 'r+'
   // (through utimes call)
@@ -234,24 +322,24 @@ async function handleTimestampsAndMode(srcMode, src, dest) {
   return setDestTimestampsAndMode(srcMode, src, dest);
 }
 
-function fileIsNotWritable(srcMode) {
+function fileIsNotWritable(srcMode: number) {
   return (srcMode & 0o200) === 0;
 }
 
-function makeFileWritable(dest, srcMode) {
+function makeFileWritable(dest: string, srcMode: number) {
   return setDestMode(dest, srcMode | 0o200);
 }
 
-async function setDestTimestampsAndMode(srcMode, src, dest) {
+async function setDestTimestampsAndMode(srcMode: number, src: string, dest: string) {
   await setDestTimestamps(src, dest);
   return setDestMode(dest, srcMode);
 }
 
-function setDestMode(dest, srcMode) {
+function setDestMode(dest: string, srcMode: number) {
   return chmod(dest, srcMode);
 }
 
-async function setDestTimestamps(src, dest) {
+async function setDestTimestamps(src: string, dest: string) {
   // The initial srcStat.atime cannot be trusted
   // because it is modified by the read(2) system call
   // (See https://nodejs.org/api/fs.html#fs_stat_time_values)
@@ -259,18 +347,27 @@ async function setDestTimestamps(src, dest) {
   return utimes(dest, updatedSrcStat.atime, updatedSrcStat.mtime);
 }
 
-function onDir(srcStat, destStat, src, dest, opts) {
+function onDir(srcStat: Stats, destStat: DestinationStats, src: string, dest: string, opts: CpOptions) {
   if (!destStat) return mkDirAndCopy(srcStat.mode, src, dest, opts);
+  if (opts.errorOnExist && !opts.force) {
+    throw fsCpEExistError({
+      message: `${dest} already exists`,
+      path: dest,
+      syscall: "cp",
+      errno: EEXIST,
+      code: "EEXIST",
+    });
+  }
   return copyDir(src, dest, opts);
 }
 
-async function mkDirAndCopy(srcMode, src, dest, opts) {
+async function mkDirAndCopy(srcMode: number, src: string, dest: string, opts: CpOptions) {
   await mkdir(dest);
   await copyDir(src, dest, opts);
   return setDestMode(dest, srcMode);
 }
 
-async function copyDir(src, dest, opts) {
+async function copyDir(src: string, dest: string, opts: CpOptions) {
   const dir = await opendir(src);
 
   for await (const { name } of dir) {
@@ -281,7 +378,7 @@ async function copyDir(src, dest, opts) {
   }
 }
 
-async function onLink(destStat, src, dest, opts) {
+async function onLink(destStat: DestinationStats, src: string, dest: string, opts: CpOptions) {
   let resolvedSrc = await readlink(src);
   if (!opts.verbatimSymlinks && !isAbsolute(resolvedSrc)) {
     resolvedSrc = resolve(dirname(src), resolvedSrc);
@@ -304,36 +401,37 @@ async function onLink(destStat, src, dest, opts) {
   if (!isAbsolute(resolvedDest)) {
     resolvedDest = resolve(dirname(dest), resolvedDest);
   }
-  if (isSrcSubdir(resolvedSrc, resolvedDest)) {
-    // throw new ERR_FS_CP_EINVAL({
-    //   message: `cannot copy ${resolvedSrc} to a subdirectory of self ${resolvedDest}`,
-    //   path: dest,
-    //   syscall: "cp",
-    //   errno: EINVAL,
-    //   code: "EINVAL",
-    // });
-    throw new Error(`cannot copy ${resolvedSrc} to a subdirectory of self ${resolvedDest}`);
+  // stat(src) follows the link; a dangling src symlink throws ENOENT here,
+  // same as before (both gated checks below only apply to directories).
+  const srcStat = await stat(src);
+  const srcIsDir = srcStat.isDirectory();
+  if (srcIsDir && isSrcSubdir(resolvedSrc, resolvedDest)) {
+    throw fsCpEinvalError({
+      message: `cannot copy ${resolvedSrc} to a subdirectory of self ${resolvedDest}`,
+      path: dest,
+      syscall: "cp",
+      errno: EINVAL,
+      code: "EINVAL",
+    });
   }
   // Do not copy if src is a subdir of dest since unlinking
   // dest in this case would result in removing src contents
   // and therefore a broken symlink would be created.
-  const srcStat = await stat(src);
-  if (srcStat.isDirectory() && isSrcSubdir(resolvedDest, resolvedSrc)) {
-    // throw new ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY({
-    //   message: `cannot overwrite ${resolvedDest} with ${resolvedSrc}`,
-    //   path: dest,
-    //   syscall: "cp",
-    //   errno: EINVAL,
-    //   code: "EINVAL",
-    // });
-    throw new Error(`cannot overwrite ${resolvedDest} with ${resolvedSrc}`);
+  if (srcIsDir && isSrcSubdir(resolvedDest, resolvedSrc)) {
+    throw fsCpSymlinkToSubdirectoryError({
+      message: `cannot overwrite ${resolvedDest} with ${resolvedSrc}`,
+      path: dest,
+      syscall: "cp",
+      errno: EINVAL,
+      code: "EINVAL",
+    });
   }
   return copyLink(resolvedSrc, dest);
 }
 
-async function copyLink(resolvedSrc, dest) {
+async function copyLink(resolvedSrc: string, dest: string) {
   await unlink(dest);
   return symlink(resolvedSrc, dest);
 }
 
-export default cpFn;
+export default { cpFn, tryNativeFastPath };

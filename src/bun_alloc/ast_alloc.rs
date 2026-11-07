@@ -274,14 +274,6 @@ impl ScopedAstAlloc {
         }
     }
 
-    /// Install a state with a lazily created owned spill heap.
-    #[inline]
-    pub fn new() -> Self {
-        Self {
-            prev: swap_state(Some(acquire_state())),
-        }
-    }
-
     /// Uninstall the scope's state and return it **without** bulk-freeing it,
     /// restoring the previous occupant exactly as `drop` would. For callers
     /// that hand the parsed AST to an async consumer: small `AstVec`s live in
@@ -296,11 +288,6 @@ impl ScopedAstAlloc {
             "ScopedAstAlloc state was uninstalled by someone else"
         );
         installed
-    }
-}
-impl Default for ScopedAstAlloc {
-    fn default() -> Self {
-        Self::new()
     }
 }
 impl Drop for ScopedAstAlloc {
@@ -327,6 +314,20 @@ pub struct AstAlloc;
 
 /// `Vec` whose backing buffer lives in the thread-local AST allocation state.
 pub type AstVec<T> = Vec<T, AstAlloc>;
+
+/// `Box` whose header lives in the thread-local AST allocation state.
+/// `AstAlloc::deallocate` is a no-op, so the header is reclaimed by spill-heap
+/// reset rather than `Drop` — same lifetime story as `AstVec`. As with any
+/// arena-backed value, **`T::drop` is not guaranteed to run**: a `T` that owns
+/// a global-heap allocation, refcount, or fd will leak it. Use only for
+/// AST-lifetime payloads whose own storage is also `AstAlloc`/arena-backed.
+pub type AstBox<T> = Box<T, AstAlloc>;
+
+/// See [`AstBox`] for the drop-safety contract.
+#[inline]
+pub fn ast_box<T>(value: T) -> AstBox<T> {
+    Box::new_in(value, AstAlloc)
+}
 
 use crate::alloc_result;
 
@@ -486,7 +487,6 @@ unsafe impl Allocator for AstAlloc {
         // `old.align()` alignment, and `new.size() <= old.size()` per the
         // `Allocator::shrink` contract. No `mi_realloc`: see `grow` note.
         debug_assert!(new.align() <= old.align());
-        let _ = old;
         Ok(NonNull::slice_from_raw_parts(ptr, new.size()))
     }
 }
@@ -519,10 +519,7 @@ impl AstAlloc {
         v
     }
 
-    /// Move `items` element-wise into a fresh AST-heap allocation. Replaces
-    /// both `VecExt::from_owned_slice` (`Box<[T]>` → `Vec`) and
-    /// `VecExt::from_bump_slice` (leaked `&mut [T]` → `Vec`): in either case
-    /// the source storage is on the wrong heap, so a copy is unavoidable.
+    /// Moves the items of `iter` into a fresh AST-heap allocation.
     #[inline]
     pub fn vec_from_iter<T, I: IntoIterator<Item = T>>(iter: I) -> AstVec<T> {
         let iter = iter.into_iter();

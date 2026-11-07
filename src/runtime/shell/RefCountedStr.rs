@@ -2,7 +2,7 @@ use core::cell::Cell;
 
 bun_core::declare_scope!(RefCountedEnvStr, hidden);
 
-pub struct RefCountedStr {
+pub(crate) struct RefCountedStr {
     pub(super) refcount: Cell<u32>,
     // Owning `Box<[u8]>`, so `byte_slice`/`free_str` need no raw-parts rebuild.
     data: Box<[u8]>,
@@ -10,7 +10,7 @@ pub struct RefCountedStr {
 
 impl RefCountedStr {
     // Takes ownership of `slice` (global mimalloc) and stores it directly.
-    pub fn init(slice: Box<[u8]>) -> *mut RefCountedStr {
+    pub(crate) fn init(slice: Box<[u8]>) -> *mut RefCountedStr {
         bun_core::scoped_log!(RefCountedEnvStr, "init: {}", bstr::BStr::new(&*slice));
         // bun.handleOom(bun.default_allocator.create(...)) → Box::new (aborts on OOM)
         bun_core::heap::into_raw(Box::new(RefCountedStr {
@@ -19,17 +19,17 @@ impl RefCountedStr {
         }))
     }
 
-    pub fn byte_slice(&self) -> &[u8] {
+    pub(crate) fn byte_slice(&self) -> &[u8] {
         &self.data
     }
 
-    pub fn ref_(&self) {
+    pub(crate) fn ref_(&self) {
         self.refcount.set(self.refcount.get() + 1);
     }
 
     // Takes `*mut Self` because reaching refcount==0 deallocates the
     // `Box<Self>` that backs `this`; a `&self` borrow would dangle across that drop.
-    pub unsafe fn deref(this: *mut RefCountedStr) {
+    pub(crate) unsafe fn deref(this: *mut RefCountedStr) {
         // SAFETY: caller guarantees `this` was produced by `init` and is still
         // live; on hitting 0, `this` is uniquely owned and Box-allocated.
         unsafe {
@@ -60,14 +60,5 @@ impl RefCountedStr {
         // Dropping the old `Box<[u8]>` returns its allocation; an empty box
         // owns no heap storage so the `len == 0` early-out is preserved.
         self.data = Box::default();
-    }
-}
-
-impl Default for RefCountedStr {
-    fn default() -> Self {
-        Self {
-            refcount: Cell::new(1),
-            data: Box::default(),
-        }
     }
 }

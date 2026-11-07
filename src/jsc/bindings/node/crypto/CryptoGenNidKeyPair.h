@@ -24,9 +24,7 @@ public:
 };
 
 struct NidKeyPairJob {
-    static NidKeyPairJob* create(JSC::JSGlobalObject*, NidKeyPairJobCtx&&, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject*, NidKeyPairJobCtx&&, JSC::JSValue callback);
-    void schedule();
 };
 
 } // namespace Bun

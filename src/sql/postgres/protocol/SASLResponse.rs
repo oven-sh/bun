@@ -21,16 +21,9 @@ impl SASLResponse {
         let mut header = [0u8; 5];
         header[0] = b'p';
         // `int32(count)` already returns the big-endian `[u8; 4]`.
-        header[1..5].copy_from_slice(&int32(count));
+        header[1..5].copy_from_slice(&int32(count)?);
         writer.write(&header)?;
         writer.write(data)?;
         Ok(())
-    }
-
-    pub fn write<Context: super::new_writer::WriterContext>(
-        &self,
-        writer: &mut NewWriter<Context>,
-    ) -> Result<(), AnyPostgresError> {
-        self.write_internal(writer)
     }
 }

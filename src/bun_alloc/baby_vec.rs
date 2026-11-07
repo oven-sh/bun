@@ -56,35 +56,6 @@ impl<'a, T> BabyVec<'a, T> {
         v
     }
 
-    /// # Safety
-    /// `(ptr, len, cap)` must describe a valid allocation owned by `alloc`
-    /// (i.e. obtainable from a prior `BabyVec::into_raw_parts` or
-    /// `<&MimallocArena as Allocator>::allocate` with `Layout::array::<T>(cap)`),
-    /// with `len <= cap` initialized elements.
-    #[inline]
-    pub unsafe fn from_raw_parts_in(
-        ptr: *mut T,
-        len: usize,
-        cap: usize,
-        alloc: &'a MimallocArena,
-    ) -> Self {
-        debug_assert!(len <= cap && cap <= u32::MAX as usize);
-        BabyVec {
-            // SAFETY: caller contract — `ptr` is a valid (or dangling-for-empty)
-            // allocation pointer; `Vec` uses the same dangling-NonNull encoding.
-            ptr: unsafe { NonNull::new_unchecked(ptr) },
-            len: len as u32,
-            cap: if Self::T_IS_ZST { u32::MAX } else { cap as u32 },
-            alloc,
-        }
-    }
-
-    #[inline]
-    pub fn into_raw_parts(self) -> (*mut T, usize, usize, &'a MimallocArena) {
-        let me = ManuallyDrop::new(self);
-        (me.ptr.as_ptr(), me.len as usize, me.cap as usize, me.alloc)
-    }
-
     #[inline]
     pub fn allocator(&self) -> &&'a MimallocArena {
         &self.alloc
@@ -145,6 +116,7 @@ impl<'a, T> BabyVec<'a, T> {
         }
     }
 
+    /// `Vec::reserve_exact` parity.
     #[inline]
     pub fn reserve_exact(&mut self, additional: usize) {
         let need = self.len as usize + additional;
@@ -190,21 +162,17 @@ impl<'a, T> BabyVec<'a, T> {
         self.len += 1;
     }
 
-    pub fn swap_remove(&mut self, index: usize) -> T {
+    /// `Vec::remove` parity — order-preserving removal.
+    pub fn remove(&mut self, index: usize) -> T {
         let len = self.len as usize;
-        assert!(
-            index < len,
-            "BabyVec::swap_remove index {index} >= len {len}"
-        );
-        // SAFETY: `index < len`; reading the hole then overwriting with the
-        // last element (possibly itself) is the standard swap-remove. Len is
-        // decremented before the read of `last` so the moved-from tail slot
-        // is no longer considered initialized.
+        assert!(index < len, "BabyVec::remove index {index} >= len {len}");
+        // SAFETY: `index < len`; the hole is read out before the tail
+        // `[index+1, len)` is shifted down over it, then `len` shrinks by one.
         unsafe {
-            let p = self.ptr.as_ptr();
-            let v = p.add(index).read();
+            let p = self.ptr.as_ptr().add(index);
+            let v = p.read();
+            ptr::copy(p.add(1), p, len - index - 1);
             self.len -= 1;
-            ptr::copy(p.add(self.len as usize), p.add(index), 1);
             v
         }
     }
@@ -253,20 +221,6 @@ impl<'a, T> BabyVec<'a, T> {
         }
     }
 
-    pub fn remove(&mut self, index: usize) -> T {
-        let len = self.len as usize;
-        assert!(index < len, "BabyVec::remove index {index} >= len {len}");
-        // SAFETY: `index < len`; read moves out the element, then shift the
-        // `len-1-index` initialized tail down by one. `len` decremented after.
-        unsafe {
-            let p = self.ptr.as_ptr().add(index);
-            let v = p.read();
-            ptr::copy(p.add(1), p, len - index - 1);
-            self.len -= 1;
-            v
-        }
-    }
-
     #[inline]
     pub fn truncate(&mut self, new_len: usize) {
         if new_len >= self.len as usize {
@@ -290,10 +244,22 @@ impl<'a, T> BabyVec<'a, T> {
         self.truncate(0);
     }
 
+    /// `Vec::retain` parity — order-preserving.
+    pub fn retain(&mut self, mut keep: impl FnMut(&T) -> bool) {
+        let mut kept = 0;
+        for i in 0..self.len() {
+            if keep(&self[i]) {
+                self.swap(kept, i);
+                kept += 1;
+            }
+        }
+        self.truncate(kept);
+    }
+
     /// `Vec::leak` parity — forget the `BabyVec`, return the buffer as an
     /// arena-lifetime slice. Reclaimed when the arena resets/drops.
     #[inline]
-    pub fn leak(self) -> &'a mut [T] {
+    pub(crate) fn leak(self) -> &'a mut [T] {
         let me = ManuallyDrop::new(self);
         // SAFETY: `[ptr, ptr+len)` are `len` initialized `T` valid for `'a`
         // (the buffer is owned by `me.alloc`, which outlives `'a`).
@@ -330,6 +296,43 @@ impl<'a, T> BabyVec<'a, T> {
             ptr::copy_nonoverlapping(other.as_ptr(), self.ptr.as_ptr().add(self.len as usize), n);
             self.len += n as u32;
         }
+    }
+
+    /// Resizes the block to the length. An empty vector gives its block back.
+    pub fn shrink_to_fit(&mut self) {
+        if Self::T_IS_ZST || self.cap == self.len {
+            return;
+        }
+        let old_layout = Layout::array::<T>(self.cap as usize).unwrap();
+        if self.len == 0 {
+            // SAFETY: `cap != 0`, so `self.ptr` is a block that `self.alloc` allocated with
+            // `old_layout`. It is not used again: `ptr` dangles and `cap` is 0 from here on.
+            unsafe { (&self.alloc).deallocate(self.ptr.cast::<u8>(), old_layout) };
+            self.ptr = NonNull::dangling();
+            self.cap = 0;
+            return;
+        }
+        let new_layout = Layout::array::<T>(self.len as usize).unwrap();
+        // SAFETY: `self.ptr` is a block that `self.alloc` allocated with `old_layout`, and
+        // `new_layout.size() <= old_layout.size()`.
+        let new_ptr =
+            unsafe { (&self.alloc).shrink(self.ptr.cast::<u8>(), old_layout, new_layout) };
+        self.ptr = new_ptr
+            .unwrap_or_else(|_| crate::out_of_memory())
+            .cast::<T>();
+        self.cap = self.len;
+    }
+
+    /// The elements in a block of their exact size. They are copied only if the allocator moves
+    /// the block to resize it.
+    pub fn into_boxed_slice(mut self) -> Box<[T], &'a MimallocArena> {
+        self.shrink_to_fit();
+        let me = ManuallyDrop::new(self);
+        let elements = ptr::slice_from_raw_parts_mut(me.ptr.as_ptr(), me.len as usize);
+        // SAFETY: `elements` are `len` initialized `T`. After `shrink_to_fit` they fill a block
+        // that `me.alloc` allocated with the layout of `[T; len]`, or there is no block and
+        // `len` is 0 or `T` is zero-sized, for which a box frees nothing. `me` is not dropped.
+        unsafe { Box::from_raw_in(elements, me.alloc) }
     }
 
     #[cold]
@@ -415,31 +418,6 @@ impl<'a, T> Extend<T> for BabyVec<'a, T> {
     }
 }
 
-impl<'a, 'b, T: Copy> Extend<&'b T> for BabyVec<'a, T> {
-    #[inline]
-    fn extend<I: IntoIterator<Item = &'b T>>(&mut self, iter: I) {
-        for v in iter {
-            self.push(*v);
-        }
-    }
-}
-
-impl<'a, 'b, T> IntoIterator for &'b BabyVec<'a, T> {
-    type Item = &'b T;
-    type IntoIter = slice::Iter<'b, T>;
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.as_slice().iter()
-    }
-}
-impl<'a, 'b, T> IntoIterator for &'b mut BabyVec<'a, T> {
-    type Item = &'b mut T;
-    type IntoIter = slice::IterMut<'b, T>;
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.as_mut_slice().iter_mut()
-    }
-}
 impl<'a, T> IntoIterator for BabyVec<'a, T> {
     type Item = T;
     type IntoIter = IntoIter<'a, T>;
@@ -453,6 +431,24 @@ impl<'a, T> IntoIterator for BabyVec<'a, T> {
             cap: me.cap,
             alloc: me.alloc,
         }
+    }
+}
+
+impl<'v, 'a, T> IntoIterator for &'v BabyVec<'a, T> {
+    type Item = &'v T;
+    type IntoIter = slice::Iter<'v, T>;
+    #[inline]
+    fn into_iter(self) -> slice::Iter<'v, T> {
+        self.iter()
+    }
+}
+
+impl<'v, 'a, T> IntoIterator for &'v mut BabyVec<'a, T> {
+    type Item = &'v mut T;
+    type IntoIter = slice::IterMut<'v, T>;
+    #[inline]
+    fn into_iter(self) -> slice::IterMut<'v, T> {
+        self.iter_mut()
     }
 }
 
@@ -505,18 +501,5 @@ impl<'a, T> Drop for IntoIter<'a, T> {
 impl<'a, T: fmt::Debug> fmt::Debug for BabyVec<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.as_slice().fmt(f)
-    }
-}
-
-impl<'a, T> core::borrow::Borrow<[T]> for BabyVec<'a, T> {
-    #[inline]
-    fn borrow(&self) -> &[T] {
-        self.as_slice()
-    }
-}
-impl<'a, T> AsRef<[T]> for BabyVec<'a, T> {
-    #[inline]
-    fn as_ref(&self) -> &[T] {
-        self.as_slice()
     }
 }

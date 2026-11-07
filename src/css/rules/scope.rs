@@ -9,13 +9,13 @@ use crate::{PrintErr, Printer};
 /// }
 pub struct ScopeRule<R> {
     /// A selector list used to identify the scoping root(s).
-    pub scope_start: Option<SelectorList>,
+    pub(crate) scope_start: Option<SelectorList>,
     /// A selector list used to identify any scoping limits.
-    pub scope_end: Option<SelectorList>,
+    pub(crate) scope_end: Option<SelectorList>,
     /// Nested rules within the `@scope` rule.
-    pub rules: CssRuleList<R>,
+    pub(crate) rules: CssRuleList<R>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl<R> ScopeRule<R> {
@@ -40,28 +40,14 @@ impl<R> ScopeRule<R> {
             dest.write_char(b')')?;
             dest.whitespace()?;
         }
+        let was_in_scope_rule = core::mem::replace(&mut dest.in_scope_rule, true);
         if let Some(scope_end) = &self.scope_end {
             if dest.minify {
                 dest.write_char(b' ')?;
             }
             dest.write_str("to (")?;
-            // <scope-start> is treated as an ancestor of scope end.
-            // https://drafts.csswg.org/css-nesting/#nesting-at-scope
-            if let Some(scope_start) = &self.scope_start {
-                // `Printer::with_context` carries the captured state as the
-                // first closure arg (no `&self` capture across `&mut dest`).
-                dest.with_context(
-                    scope_start,
-                    scope_end,
-                    |scope_end: &SelectorList, d: &mut Printer| -> Result<(), PrintErr> {
-                        let ctx = d.ctx;
-                        serialize_selector_list(scope_end.v.slice(), d, ctx, false)
-                    },
-                )?;
-            } else {
-                let ctx = dest.ctx;
-                return serialize_selector_list(scope_end.v.slice(), dest, ctx, false);
-            }
+            // `&` in <scope-end> is the scoping root, not <scope-start>.
+            serialize_selector_list(scope_end.v.slice(), dest, None, false)?;
             dest.write_char(b')')?;
             dest.whitespace()?;
         }
@@ -72,6 +58,8 @@ impl<R> ScopeRule<R> {
         // so clear our style context while printing them to avoid replacing & ourselves.
         // https://drafts.csswg.org/css-cascade-6/#scoped-rules
         dest.with_cleared_context(&self.rules, |rules, d: &mut Printer| rules.to_css(d))?;
+        dest.in_scope_rule = was_in_scope_rule;
+        dest.pending_semicolon = false;
         dest.dedent();
         dest.newline()?;
         dest.write_char(b'}')?;
@@ -80,7 +68,7 @@ impl<R> ScopeRule<R> {
 }
 
 impl<R> ScopeRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {

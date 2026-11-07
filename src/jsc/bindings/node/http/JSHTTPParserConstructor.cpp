@@ -20,7 +20,8 @@ JSC_DEFINE_HOST_FUNCTION(constructHTTPParser, (JSGlobalObject * lexicalGlobalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    Structure* structure = globalObject->m_JSHTTPParserClassStructure.get(globalObject);
+    Structure* structure = structureForNewTarget(lexicalGlobalObject, callFrame->newTarget(), &Zig::GlobalObject::m_JSHTTPParserClassStructure);
+    RETURN_IF_EXCEPTION(scope, {});
     JSHTTPParser* HTTPParser = JSHTTPParser::create(vm, structure, globalObject);
 
     return JSValue::encode(HTTPParser);
@@ -53,6 +54,7 @@ void JSHTTPParserConstructor::finishCreation(VM& vm, JSObject* prototype)
     putDirect(vm, Identifier::fromString(vm, "kLenientOptionalCRLFAfterChunk"_s), jsNumber(kLenientOptionalCRLFAfterChunk));
     putDirect(vm, Identifier::fromString(vm, "kLenientOptionalCRBeforeLF"_s), jsNumber(kLenientOptionalCRBeforeLF));
     putDirect(vm, Identifier::fromString(vm, "kLenientSpacesAfterChunkSize"_s), jsNumber(kLenientSpacesAfterChunkSize));
+    putDirect(vm, Identifier::fromString(vm, "kLenientHeaderValueRelaxed"_s), jsNumber(kLenientHeaderValueRelaxed));
     putDirect(vm, Identifier::fromString(vm, "kLenientAll"_s), jsNumber(kLenientAll));
 }
 

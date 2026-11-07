@@ -1,0 +1,10 @@
+{
+  "name": "workspaces-conflicting-deps",
+  "version": "1.0.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "dependencies": {
+    "abbrev": "^1.1.1"
+  }
+}

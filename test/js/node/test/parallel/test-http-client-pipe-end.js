@@ -23,7 +23,8 @@
 // See https://github.com/joyent/node/issues/3257
 
 const common = require('../common');
-if (common.isWindows) return; // TODO: BUN
+if (common.isWindows)
+  common.skip('Bun does not support listening on a Windows named pipe yet');
 const http = require('http');
 
 const server = http.createServer(function(req, res) {

@@ -248,7 +248,7 @@ static bool supportedAlgorithmIdentifier(CryptoAlgorithmIdentifier identifier, c
     }
 }
 
-RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
+RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch, bool* curveMismatch)
 {
     // In this function we extract the subjectPublicKey after verifying that the algorithm in the SPKI data
     // match the given identifier and curve. Then construct an EC key with the named curve and set the public key.
@@ -282,15 +282,29 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier id
     if (!algorithm)
         return nullptr;
 
-    if (sk_ASN1_TYPE_num(algorithm.get()) != 2)
+    // A well-formed AlgorithmIdentifier whose shape or OID does not match EC is a key
+    // of another type; gate on the real parser so garbage is not misreported as such.
+    auto reportKeyTypeMismatch = [&] {
+        if (keyTypeMismatch) {
+            const uint8_t* p = keyData.begin();
+            if (EvpPKeyPtr(d2i_PUBKEY(nullptr, &p, keyData.size())))
+                *keyTypeMismatch = true;
+        }
+    };
+
+    if (sk_ASN1_TYPE_num(algorithm.get()) != 2) {
+        reportKeyTypeMismatch();
         return nullptr;
+    }
 
     value = sk_ASN1_TYPE_value(algorithm.get(), 0);
     if (value->type != V_ASN1_OBJECT)
         return nullptr;
 
-    if (!supportedAlgorithmIdentifier(identifier, value->value.object))
+    if (!supportedAlgorithmIdentifier(identifier, value->value.object)) {
+        reportKeyTypeMismatch();
         return nullptr;
+    }
 
     // ECParameters ::= CHOICE {
     //  namedCurve         OBJECT IDENTIFIER
@@ -304,8 +318,11 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier id
         return nullptr;
 
     int curveNID = OBJ_obj2nid(value->value.object);
-    if (curveNID != curveIdentifier(curve))
+    if (curveNID != curveIdentifier(curve)) {
+        if (curveMismatch)
+            *curveMismatch = true;
         return nullptr;
+    }
 
     // subjectPublicKey must be a BIT STRING.
     value = sk_ASN1_TYPE_value(subjectPublicKeyInfo.get(), 1);
@@ -345,7 +362,7 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier id
     return adoptRef(new CryptoKeyEC(identifier, curve, CryptoKeyType::Public, WTF::move(pkey), extractable, usages));
 }
 
-RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
+RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch, bool* curveMismatch)
 {
     // We need a local pointer variable to pass to d2i (DER to internal) functions().
     const uint8_t* ptr = keyData.begin();
@@ -358,8 +375,13 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier i
         return nullptr;
 
     auto pkey = EvpPKeyPtr(EVP_PKCS82PKEY(p8inf.get()));
-    if (!pkey || EVP_PKEY_base_id(pkey.get()) != EVP_PKEY_EC)
+    if (!pkey)
         return nullptr;
+    if (EVP_PKEY_base_id(pkey.get()) != EVP_PKEY_EC) {
+        if (keyTypeMismatch)
+            *keyTypeMismatch = true;
+        return nullptr;
+    }
 
     auto ecKey = EVP_PKEY_get0_EC_KEY(pkey.get());
     if (!ecKey)
@@ -368,8 +390,11 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier i
     if (EC_KEY_check_key(ecKey) <= 0)
         return nullptr;
 
-    if (!verifyCurve(EC_KEY_get0_group(ecKey), curve))
+    if (!verifyCurve(EC_KEY_get0_group(ecKey), curve)) {
+        if (curveMismatch)
+            *curveMismatch = true;
         return nullptr;
+    }
 
     EC_KEY_set_asn1_flag(ecKey, OPENSSL_EC_NAMED_CURVE);
 
@@ -444,7 +469,19 @@ Vector<uint8_t> CryptoKeyEC::platformExportPkcs8() const
     if (type() != CryptoKeyType::Private)
         return {};
 
-    auto p8inf = PKCS8PrivKeyInfoPtr(EVP_PKEY2PKCS8(platformKey()));
+    // A key that came without its optional public key has a flag that leaves it out again. As in ncrypto's
+    // Ec::ExportPrivatePkcs8, a copy without the flag is what is encoded. One that came with a compressed point
+    // would keep that form too.
+    auto ecKey = ECKeyPtr(EC_KEY_dup(EVP_PKEY_get0_EC_KEY(platformKey())));
+    if (!ecKey)
+        return {};
+    EC_KEY_set_enc_flags(ecKey.get(), EC_KEY_get_enc_flags(ecKey.get()) & ~EC_PKEY_NO_PUBKEY);
+    EC_KEY_set_conv_form(ecKey.get(), POINT_CONVERSION_UNCOMPRESSED);
+    auto pkey = EvpPKeyPtr(EVP_PKEY_new());
+    if (!pkey || EVP_PKEY_set1_EC_KEY(pkey.get(), ecKey.get()) != 1)
+        return {};
+
+    auto p8inf = PKCS8PrivKeyInfoPtr(EVP_PKEY2PKCS8(pkey.get()));
     if (!p8inf)
         return {};
 

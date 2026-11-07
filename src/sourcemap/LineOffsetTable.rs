@@ -21,9 +21,8 @@ use smallvec::SmallVec;
 /// Generic over `A` so the bundler can put both the SoA slab and every
 /// `columns_for_non_ascii` payload into the per-worker AST heap (`AstAlloc`)
 /// and bulk-free them on `mi_heap_destroy` instead of walking
-/// `LinkerGraph.files` in `deinit_without_freeing_arena`. Non-bundler callers
-/// (`CodeCoverage`, the runtime printer's lazy table) keep the `Global`
-/// default and free normally.
+/// `LinkerGraph.files` in `deinit_without_freeing_arena`. The runtime printer's
+/// lazy table keeps the `Global` default and frees normally.
 pub struct LineOffsetTable<A: Allocator = Global> {
     pub columns_for_non_ascii: Box<[i32], A>,
     /// Byte offset of the first non-ASCII byte on this line, or `i32::MAX as u32`
@@ -62,7 +61,7 @@ impl<A: Allocator + 'static> LineOffsetTableColumns for List<A> {
 
 impl LineOffsetTable {
     #[inline]
-    pub fn find_line(byte_offsets_to_start_of_line: &[u32], loc: Loc) -> i32 {
+    pub(crate) fn find_line(byte_offsets_to_start_of_line: &[u32], loc: Loc) -> i32 {
         debug_assert!(loc.start > -1); // checked by caller
         let mut original_line: usize = 0;
         let loc_start = usize::try_from(loc.start).expect("int cast");
@@ -94,7 +93,7 @@ impl LineOffsetTable {
     /// call; this short-circuits to a couple of compares for the common case
     /// and falls back to the binary search otherwise.
     #[inline]
-    pub fn find_line_with_hint(offsets: &[u32], loc: Loc, hint: u32) -> i32 {
+    pub(crate) fn find_line_with_hint(offsets: &[u32], loc: Loc, hint: u32) -> i32 {
         debug_assert!(loc.start > -1);
         let loc_start = loc.start as u32;
         let len = offsets.len();
@@ -118,44 +117,12 @@ impl LineOffsetTable {
         Self::find_line(offsets, loc)
     }
 
-    pub fn find_index(byte_offsets_to_start_of_line: &[u32], loc: Loc) -> Option<usize> {
-        debug_assert!(loc.start > -1); // checked by caller
-        let mut original_line: usize = 0;
-        let loc_start = usize::try_from(loc.start).expect("int cast");
-
-        let mut count = byte_offsets_to_start_of_line.len();
-        while count > 0 {
-            let step = count / 2;
-            let i = original_line + step;
-            let byte_offset = byte_offsets_to_start_of_line[i] as usize;
-            if byte_offset == loc_start {
-                return Some(i);
-            }
-            if i + 1 < byte_offsets_to_start_of_line.len() {
-                let next_byte_offset = byte_offsets_to_start_of_line[i + 1] as usize;
-                if byte_offset < loc_start && loc_start < next_byte_offset {
-                    return Some(i);
-                }
-            }
-
-            if byte_offset < loc_start {
-                original_line = i + 1;
-                count = count - step - 1;
-            } else {
-                count = step;
-            }
-        }
-
-        None
-    }
-
     /// `Global`-allocator convenience wrapper around [`generate_in`].
     pub fn generate(contents: &[u8], approximate_line_count: i32) -> Result<List, AllocError> {
         Self::generate_in::<Global>(contents, approximate_line_count)
     }
 
-    // Callers pass mixed allocators (printer/bundler arenas vs VM default
-    // allocator in code coverage): the bundler routes `A = AstAlloc` so the
+    // Callers pass mixed allocators: the bundler routes `A = AstAlloc` so the
     // table bulk-frees with the per-worker AST heap, everyone else uses
     // [`generate`] (`A = Global`).
     pub fn generate_in<A: Allocator + Copy + Default + 'static>(
@@ -192,17 +159,19 @@ impl LineOffsetTable {
             let len_ = strings::wtf8_byte_sequence_length_with_invalid(b0);
             // After the SIMD skip below lands, the loop head
             // is overwhelmingly an ASCII '\r'/'\n' or a non-ASCII lead byte, so keep the
-            // 1-byte path branch-only and confine the zero+min+copy pad to the cold
+            // 1-byte path branch-only and confine the zero+copy pad to the cold
             // multibyte arm.
+            // `len_` is the lead byte's *declared* width; a source whose final bytes are
+            // a truncated multibyte sequence declares more bytes than remain, so every
+            // slice below (decode, SIMD-skip offset, advance) must use the clamped width.
+            let cp_len = (len_ as usize).min(remaining.len());
             let c: i32 = if len_ == 1 {
                 b0 as i32
             } else {
                 let mut cp_bytes = [0u8; 4];
-                let take = (len_ as usize).min(remaining.len());
-                cp_bytes[..take].copy_from_slice(&remaining[..take]);
+                cp_bytes[..cp_len].copy_from_slice(&remaining[..cp_len]);
                 strings::decode_wtf8_rune_t::<i32>(cp_bytes, len_, 0)
             };
-            let cp_len = len_ as usize;
 
             let offset = (remaining.as_ptr() as usize - base) as u32;
 
@@ -210,18 +179,17 @@ impl LineOffsetTable {
                 line_byte_offset = offset;
             }
 
-            if c > 0x7F && columns_for_non_ascii.is_empty() {
+            // `byte_offset_to_first_non_ascii` doubles as the "line has non-ASCII"
+            // flag (`i32::MAX as u32` = none so far). The extend below appends this
+            // byte's entry; seeding one here too would shift every later column by one.
+            if c > 0x7F && byte_offset_to_first_non_ascii == i32::MAX as u32 {
                 debug_assert!(remaining.as_ptr() as usize >= base);
-                // we have a non-ASCII character, so we need to keep track of the
-                // mapping from byte offsets to UTF-16 code unit counts
-                // Scratch is empty here with 256 inline slots, so this never reallocs.
-                columns_for_non_ascii.push(column);
                 column_byte_offset = offset - line_byte_offset;
                 byte_offset_to_first_non_ascii = column_byte_offset;
             }
 
             // Update the per-byte column offsets
-            if !columns_for_non_ascii.is_empty() {
+            if byte_offset_to_first_non_ascii != i32::MAX as u32 {
                 let line_bytes_so_far = offset - line_byte_offset;
                 let need = (line_bytes_so_far - column_byte_offset + 1) as usize;
                 columns_for_non_ascii.extend(core::iter::repeat_n(column, need));
@@ -233,7 +201,7 @@ impl LineOffsetTable {
                         // skip ahead to the next newline or non-ascii character
                         if let Some(j) = strings::index_of_newline_or_non_ascii_check_start::<false>(
                             remaining,
-                            len_ as u32,
+                            cp_len as u32,
                         ) {
                             column += i32::try_from(j).expect("int cast");
                             remaining = &remaining[j as usize..];

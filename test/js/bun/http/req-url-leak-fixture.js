@@ -1,3 +1,4 @@
+const rss = process.memoryUsage.rss;
 let existingPromise = null;
 const server = Bun.serve({
   port: 0,
@@ -10,12 +11,12 @@ const server = Bun.serve({
     if (existingPromise === waitedUpon) {
       existingPromise = null;
     }
-    return new Response(process.memoryUsage.rss().toString());
+    return new Response(rss().toString());
   },
 });
 
 setInterval(() => {
-  console.log("RSS", (process.memoryUsage.rss() / 1024 / 1024) | 0);
+  console.log("RSS", (rss() / 1024 / 1024) | 0);
 }, 1000);
 console.log("Server started on", server.url.href);
 

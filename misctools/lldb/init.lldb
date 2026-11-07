@@ -11,10 +11,6 @@ process handle -p true -s false -n false SIGPWR
 process handle -p true -s false -n false SIGUSR1
 process handle -p true -s false -n false SIGUSR2
 
-command script import -c lldb_pretty_printers.py
-type category enable zig.lang
-type category enable zig.std
-
 command script import -c lldb_webkit.py
 
 command script import -c bun_pretty_printer.py

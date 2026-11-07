@@ -34,12 +34,14 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
     JSC::JSGlobalObject* globalObject,
     Ref<ScriptArguments>&& arguments)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (globalObject->inspectable()) {
         if (auto client = globalObject->inspectorController().consoleClient()) {
             client->messageWithTypeAndLevel(type, level, globalObject, arguments.copyRef());
+            RETURN_IF_EXCEPTION(scope, );
         }
     }
-    auto& vm = JSC::getVM(globalObject);
     auto args = arguments.ptr();
     JSC::EncodedJSValue jsArgs[255];
 
@@ -50,39 +52,37 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
     }
 
     if (type == MessageType::Table && count >= 2 && !args->argumentAt(1).isUndefined() && (!args->argumentAt(1).isCell() || args->argumentAt(1).asCell()->type() != JSC::JSType::ArrayType)) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::throwTypeError(globalObject, scope, "The \"properties\" argument must be an instance of Array."_s);
         return;
     }
 
-    Bun__ConsoleObject__messageWithTypeAndLevel(this->m_client, static_cast<uint32_t>(type), static_cast<uint32_t>(level), globalObject, jsArgs, count);
+    RELEASE_AND_RETURN(scope, Bun__ConsoleObject__messageWithTypeAndLevel(this->m_client, static_cast<uint32_t>(type), static_cast<uint32_t>(level), globalObject, jsArgs, count));
 }
 void ConsoleObject::count(JSGlobalObject* globalObject, const String& label)
 {
-    auto input = label.tryGetUTF8().value();
-    Bun__ConsoleObject__count(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
+    auto input = Bun::toString(label);
+    Bun__ConsoleObject__count(this->m_client, globalObject, &input);
 }
 
 void ConsoleObject::countReset(JSGlobalObject* globalObject, const String& label)
 {
-    auto input = label.tryGetUTF8().value();
-    Bun__ConsoleObject__countReset(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
+    auto input = Bun::toString(label);
+    Bun__ConsoleObject__countReset(this->m_client, globalObject, &input);
 }
 
-void ConsoleObject::takeHeapSnapshot(JSC::JSGlobalObject* globalObject, const String& label)
+void ConsoleObject::takeHeapSnapshot(JSC::JSGlobalObject* globalObject, const String&)
 {
-    auto input = label.tryGetUTF8().value();
-    Bun__ConsoleObject__takeHeapSnapshot(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
+    Bun__ConsoleObject__takeHeapSnapshot(this->m_client, globalObject);
 }
 void ConsoleObject::time(JSGlobalObject* globalObject, const String& label)
 {
-    auto input = label.tryGetUTF8().value();
-    Bun__ConsoleObject__time(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
+    auto input = Bun::toString(label);
+    Bun__ConsoleObject__time(this->m_client, globalObject, &input);
 }
 void ConsoleObject::timeLog(JSGlobalObject* globalObject, const String& label,
     Ref<ScriptArguments>&& arguments)
 {
-    auto input = label.tryGetUTF8().value();
+    auto input = Bun::toString(label);
 
     auto args = arguments.ptr();
     JSC::EncodedJSValue jsArgs[255];
@@ -92,12 +92,12 @@ void ConsoleObject::timeLog(JSGlobalObject* globalObject, const String& label,
         jsArgs[i] = JSC::JSValue::encode(val);
     }
 
-    Bun__ConsoleObject__timeLog(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length(), jsArgs, count);
+    Bun__ConsoleObject__timeLog(this->m_client, globalObject, &input, jsArgs, count);
 }
 void ConsoleObject::timeEnd(JSGlobalObject* globalObject, const String& label)
 {
-    auto input = label.tryGetUTF8().value();
-    Bun__ConsoleObject__timeEnd(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
+    auto input = Bun::toString(label);
+    Bun__ConsoleObject__timeEnd(this->m_client, globalObject, &input);
 }
 void ConsoleObject::timeStamp(JSGlobalObject* globalObject, Ref<ScriptArguments>&& args)
 {
@@ -108,7 +108,6 @@ void ConsoleObject::recordEnd(JSGlobalObject*, Ref<ScriptArguments>&&) {}
 void ConsoleObject::screenshot(JSGlobalObject*, Ref<ScriptArguments>&&)
 {
 }
-void ConsoleObject::warnUnimplemented(const String& method) {}
 
 void ConsoleObject::profile(JSC::JSGlobalObject* globalObject, const String& title)
 {

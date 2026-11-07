@@ -1,0 +1,50 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      plain:
+        specifier: file:../plain-1.0.0.tar
+        version: file:../plain-1.0.0.tar
+      tar-gz-pkg:
+        specifier: file:../tar-gz-pkg-1.0.0.tar.gz
+        version: file:../tar-gz-pkg-1.0.0.tar.gz
+      tar-pkg:
+        specifier: file:../tar-pkg-1.0.0.tgz
+        version: file:../tar-pkg-1.0.0.tgz
+      upper:
+        specifier: file:../UPPER-1.0.0.TGZ
+        version: file:../UPPER-1.0.0.TGZ
+
+packages:
+
+  plain@file:../plain-1.0.0.tar:
+    resolution: {integrity: sha512-HP/5Rgt3pVFLzjmN9qJJ6vZMgCwoCIl/m2bPndYT283CUqnmFiMx0GeeIJ7SyK6TYoJM78SEvFEOQie++caHqw==}
+    version: 1.0.0
+
+  tar-gz-pkg@file:../tar-gz-pkg-1.0.0.tar.gz:
+    resolution: {integrity: sha512-HP/5Rgt3pVFLzjmN9qJJ6vZMgCwoCIl/m2bPndYT283CUqnmFiMx0GeeIJ7SyK6TYoJM78SEvFEOQie++caHqw==}
+    version: 1.0.0
+
+  tar-pkg@file:../tar-pkg-1.0.0.tgz:
+    resolution: {integrity: sha512-HP/5Rgt3pVFLzjmN9qJJ6vZMgCwoCIl/m2bPndYT283CUqnmFiMx0GeeIJ7SyK6TYoJM78SEvFEOQie++caHqw==, tarball: file:../tar-pkg-1.0.0.tgz}
+    version: 1.0.0
+
+  upper@file:../UPPER-1.0.0.TGZ:
+    resolution: {integrity: sha512-HP/5Rgt3pVFLzjmN9qJJ6vZMgCwoCIl/m2bPndYT283CUqnmFiMx0GeeIJ7SyK6TYoJM78SEvFEOQie++caHqw==}
+    version: 1.0.0
+
+snapshots:
+
+  plain@file:../plain-1.0.0.tar: {}
+
+  tar-gz-pkg@file:../tar-gz-pkg-1.0.0.tar.gz: {}
+
+  tar-pkg@file:../tar-pkg-1.0.0.tgz: {}
+
+  upper@file:../UPPER-1.0.0.TGZ: {}

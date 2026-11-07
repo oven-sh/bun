@@ -17,6 +17,13 @@ Local<External> External::New(Isolate* isolate, void* value)
     return isolate->currentHandleScope()->createLocal<External>(vm, val);
 }
 
+Local<External> External::New(Isolate* isolate, void* value, uint16_t tag)
+{
+    // see V8External.h for why the tag is ignored
+    (void)tag;
+    return New(isolate, value);
+}
+
 void* External::Value() const
 {
     auto* external = localToObjectPointer<Bun::NapiExternal>();
@@ -24,6 +31,13 @@ void* External::Value() const
         return nullptr;
     }
     return external->value();
+}
+
+void* External::Value(uint16_t tag) const
+{
+    // see V8External.h for why the tag is ignored
+    (void)tag;
+    return Value();
 }
 
 } // namespace v8

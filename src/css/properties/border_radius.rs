@@ -18,17 +18,17 @@ use bun_alloc::ArenaVecExt as _;
 // `Size2D::deep_clone`/`Size2D::eql` directly.
 pub struct BorderRadius {
     /// The x and y radius values for the top left corner.
-    pub top_left: Size2D<LengthPercentage>,
+    pub(crate) top_left: Size2D<LengthPercentage>,
     /// The x and y radius values for the top right corner.
-    pub top_right: Size2D<LengthPercentage>,
+    pub(crate) top_right: Size2D<LengthPercentage>,
     /// The x and y radius values for the bottom right corner.
-    pub bottom_right: Size2D<LengthPercentage>,
+    pub(crate) bottom_right: Size2D<LengthPercentage>,
     /// The x and y radius values for the bottom left corner.
-    pub bottom_left: Size2D<LengthPercentage>,
+    pub(crate) bottom_left: Size2D<LengthPercentage>,
 }
 
 impl BorderRadius {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         BorderRadius {
             top_left: self.top_left.deep_clone(bump),
             top_right: self.top_right.deep_clone(bump),
@@ -44,26 +44,12 @@ impl BorderRadius {
             && Size2D::eql(&self.bottom_left, &other.bottom_left)
     }
 
-    // Kept as assoc consts for a future shorthand trait/derive to consume.
-    pub const PROPERTY_FIELD_MAP: [(&'static str, &'static str); 4] = [
-        ("top_left", "border-top-left-radius"),
-        ("top_right", "border-top-right-radius"),
-        ("bottom_right", "border-bottom-right-radius"),
-        ("bottom_left", "border-bottom-left-radius"),
-    ];
-
-    pub const VENDOR_PREFIX_MAP: [(&'static str, bool); 4] = [
-        ("top_left", true),
-        ("top_right", true),
-        ("bottom_right", true),
-        ("bottom_left", true),
-    ];
-
     pub fn parse(input: &mut css::Parser) -> css::Result<BorderRadius> {
-        let widths = Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?;
+        let widths =
+            Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse_non_negative)?;
         let heights = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
             // errdefer-style cleanup of `widths` is implicit via Drop on the `?` path.
-            Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?
+            Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse_non_negative)?
         } else {
             // `LengthPercentage` is
             // `Clone`-via-derive (no arena indirection), so per-field `.clone()` is exact.
@@ -155,18 +141,18 @@ impl BorderRadius {
 
 #[derive(Default)]
 pub struct BorderRadiusHandler {
-    pub top_left: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
-    pub top_right: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
-    pub bottom_right: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
-    pub bottom_left: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
-    pub start_start: Option<Property>,
-    pub start_end: Option<Property>,
-    pub end_end: Option<Property>,
-    pub end_start: Option<Property>,
+    pub(crate) top_left: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
+    pub(crate) top_right: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
+    pub(crate) bottom_right: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
+    pub(crate) bottom_left: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
+    pub(crate) start_start: Option<Property>,
+    pub(crate) start_end: Option<Property>,
+    pub(crate) end_end: Option<Property>,
+    pub(crate) end_start: Option<Property>,
     // derive(Default) is sound here because
     // PropertyCategory::default() == Physical (see src/css/logical.rs).
-    pub category: PropertyCategory,
-    pub has_any: bool,
+    pub(crate) category: PropertyCategory,
+    pub(crate) has_any: bool,
 }
 
 // There is no field-by-name reflection, so these helpers are
@@ -213,7 +199,8 @@ macro_rules! property_helper {
 
         // Otherwise, update the value and add the prefix.
         if let Some(existing) = &mut $self.$prop {
-            *existing = ($val.deep_clone($bump), $vp);
+            existing.0 = $val.deep_clone($bump);
+            existing.1.insert($vp);
         } else {
             $self.$prop = Some(($val.deep_clone($bump), $vp));
             $self.has_any = true;
@@ -287,7 +274,7 @@ macro_rules! logical_property {
 }
 
 impl BorderRadiusHandler {
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut DeclarationList,
@@ -437,7 +424,11 @@ impl BorderRadiusHandler {
         true
     }
 
-    pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    pub(crate) fn finalize(
+        &mut self,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         self.flush(dest, context);
     }
 
@@ -533,7 +524,7 @@ impl BorderRadiusHandler {
     }
 }
 
-pub fn is_border_radius_property(property_id: PropertyIdTag) -> bool {
+pub(crate) fn is_border_radius_property(property_id: PropertyIdTag) -> bool {
     if is_logical_border_radius_property(property_id) {
         return true;
     }
@@ -548,7 +539,7 @@ pub fn is_border_radius_property(property_id: PropertyIdTag) -> bool {
     )
 }
 
-pub fn is_logical_border_radius_property(property_id: PropertyIdTag) -> bool {
+pub(crate) fn is_logical_border_radius_property(property_id: PropertyIdTag) -> bool {
     matches!(
         property_id,
         PropertyIdTag::BorderStartStartRadius

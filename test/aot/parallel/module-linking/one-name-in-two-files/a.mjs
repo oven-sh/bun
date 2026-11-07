@@ -1,0 +1,1 @@
+function helper() { return "a"; } class Box {} const arrow = () => {}; const obj = { method() {} }; export const A = [helper.name, Box.name, arrow.name, obj.method.name, String(helper).slice(0, 17), String(Box), new Box().constructor.name, (() => { try { null.x; } catch (e) { return e.stack.split("\n")[1].trim().split(" ")[1]; } })()];

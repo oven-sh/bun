@@ -1,7 +1,9 @@
 import { beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isDebug } from "harness";
 // Namespace import so a missing binding fails only the kernel tests below
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
+import { bunEnv, bunExe } from "harness";
 
 beforeAll(() => {
   // expect(Headers).toBeDefined();
@@ -38,6 +40,98 @@ describe("Headers", () => {
       const headers = new Headers(record);
       expect(headers.get("content-type")).toBeNull();
       expect(headers.get("user-agent")).toBe("bun");
+    });
+    // Web IDL record conversion interleaves Get with value conversion: mutations made by a
+    // value's toString() are observed by the keys that follow it.
+    test("constructing headers from an object interleaves Get with value conversion", () => {
+      const record: any = {
+        "x-first": {
+          toString() {
+            record["x-second"] = "replaced";
+            delete record["x-third"];
+            return "first";
+          },
+        },
+        "x-second": "second",
+        "x-third": "third",
+      };
+      const headers = new Headers(record);
+      expect(headers.get("x-first")).toBe("first");
+      expect(headers.get("x-second")).toBe("replaced");
+      expect(headers.get("x-third")).toBeNull();
+    });
+    test("constructing headers from an object with a getter interleaves Get with value conversion", () => {
+      const record: any = {
+        "x-first": {
+          toString() {
+            record["x-second"] = "replaced";
+            delete record["x-third"];
+            return "first";
+          },
+        },
+        "x-second": "second",
+        "x-third": "third",
+      };
+      Object.defineProperty(record, "x-fourth", { get: () => "fourth", enumerable: true });
+      const headers = new Headers(record);
+      expect(headers.get("x-first")).toBe("first");
+      expect(headers.get("x-second")).toBe("replaced");
+      expect(headers.get("x-third")).toBeNull();
+      expect(headers.get("x-fourth")).toBe("fourth");
+    });
+    // The literal takes the fast path; redefining "x-second" transitions the structure, so the
+    // remaining keys must be re-read through [[GetOwnProperty]], which invokes the new getter.
+    test("constructing headers from an object observes a getter installed by an earlier value's toString", () => {
+      const record: any = {
+        "x-first": {
+          toString() {
+            Object.defineProperty(record, "x-second", { get: () => "from-getter", enumerable: true });
+            return "first";
+          },
+        },
+        "x-second": "second",
+        "x-third": "third",
+      };
+      expect([...new Headers(record)]).toEqual([
+        ["x-first", "first"],
+        ["x-second", "from-getter"],
+        ["x-third", "third"],
+      ]);
+    });
+    test("constructing headers from an object propagates an exception from a getter installed by an earlier value's toString", () => {
+      const record: any = {
+        "x-first": {
+          toString() {
+            Object.defineProperty(record, "x-second", {
+              get: () => {
+                throw new Error("getter boom");
+              },
+              enumerable: true,
+            });
+            return "first";
+          },
+        },
+        "x-second": "second",
+      };
+      expect(() => new Headers(record)).toThrow("getter boom");
+    });
+    test("constructing headers from an object keeps own-property semantics after setPrototypeOf mid-conversion", () => {
+      const proto = { "x-second": "from-proto" };
+      const record: any = {
+        "x-first": {
+          toString() {
+            delete record["x-second"];
+            Object.setPrototypeOf(record, proto);
+            return "first";
+          },
+        },
+        "x-second": "second",
+        "x-third": "third",
+      };
+      expect([...new Headers(record)]).toEqual([
+        ["x-first", "first"],
+        ["x-third", "third"],
+      ]);
     });
     test("can create headers from object with duplicates", () => {
       const headers = new Headers({
@@ -80,11 +174,9 @@ describe("Headers", () => {
       expect(() => new Headers(["notanentry"])).toThrow(TypeError);
     });
     test("cannot create headers from array with entry of length 1", () => {
-      // @ts-expect-error
       expect(() => new Headers([["age"]])).toThrow(TypeError);
     });
     test("cannot create headers from array with entry of length 3", () => {
-      // @ts-expect-error
       expect(() => new Headers([["age", "60", "extra"]])).toThrow(TypeError);
     });
     test("can create headers from empty headers", () => {
@@ -117,14 +209,14 @@ describe("Headers", () => {
       expect(copy.get("user-agent")).toBe("bun");
     });
     test("can create headers from empty iterator", () => {
-      expect(() => new Headers((function* () {})())).not.toThrow();
+      expect(() => new Headers((function* () {})() as any)).not.toThrow();
     });
     test("can create headers from iterator", () => {
       const headers = new Headers(
         (function* () {
           yield ["server", "bun"];
           yield ["content-type", "application/json"];
-        })(),
+        })() as any,
       );
       expect(headers.get("server")).toBe("bun");
       expect(headers.get("content-type")).toBe("application/json");
@@ -136,7 +228,7 @@ describe("Headers", () => {
           new Headers(
             (function* () {
               throw error;
-            })(),
+            })() as any,
           ),
       ).toThrow(error);
     });
@@ -164,6 +256,46 @@ describe("Headers", () => {
       // @ts-expect-error
       expect(() => headers.append("expires")).toThrow(TypeError);
     });
+    test.each(["accept", "cookie", "x-repeated"])("throws when the joined %s value is too long", name => {
+      const half = Buffer.alloc(512 * 1024, "a").toString();
+      const headers = new Headers([[name, half]]);
+      const originalLimit = internalForTesting.setSyntheticAllocationLimitForTesting(1024 * 1024);
+      try {
+        expect(() => headers.append(name, half)).toThrow("Out of memory");
+        expect(headers.get(name)).toHaveLength(half.length);
+      } finally {
+        internalForTesting.setSyntheticAllocationLimitForTesting(originalLimit);
+      }
+    });
+    test("throws when the set-cookie list can't grow", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            // With a 64 KiB limit the list is capped at 8192 values.
+            const headers = new Headers();
+            for (let i = 0; i < 8192; i++) headers.append("set-cookie", "a");
+            try {
+              headers.append("set-cookie", "a");
+              console.log("no error");
+            } catch (e) {
+              console.log(e.name, e.message);
+            }
+            console.log(headers.getSetCookie().length);
+          `,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "RangeError Out of memory\n8192\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
   describe("set()", () => {
     test("can set header", () => {
@@ -180,7 +312,7 @@ describe("Headers", () => {
     });
     test("can set header with non-string value", () => {
       const headers = new Headers();
-      const values = [
+      const values: [unknown, string][] = [
         [60, "60"],
         [60n, "60"],
         [true, "true"],
@@ -268,7 +400,6 @@ describe("Headers", () => {
       expect(() => cookies.getAll("not-set-cookie")).toThrow(TypeError);
     });
     test("can get header with set-cookie using getSetCookie()", () => {
-      // @ts-expect-error
       expect(cookies.getSetCookie()).toEqual([
         "__Secure-ID=123; Secure; Domain=example.com",
         "__Host-ID=123; Secure; Path=/",
@@ -278,6 +409,28 @@ describe("Headers", () => {
       const headers = new Headers();
       // @ts-expect-error
       expect(() => headers.get()).toThrow(TypeError);
+    });
+    test("throws when the joined set-cookie values are too long", () => {
+      const half = Buffer.alloc(512 * 1024, "a").toString();
+      const headers = new Headers([
+        ["set-cookie", half],
+        ["set-cookie", half],
+      ]);
+      const originalLimit = internalForTesting.setSyntheticAllocationLimitForTesting(1024 * 1024);
+      try {
+        expect(() => headers.get("set-cookie")!.length).toThrow("Out of memory");
+        expect(headers.getSetCookie()).toHaveLength(2);
+      } finally {
+        internalForTesting.setSyntheticAllocationLimitForTesting(originalLimit);
+      }
+    });
+    test("joins many set-cookie values after a long first value", () => {
+      const headers = new Headers();
+      headers.append("set-cookie", Buffer.alloc(2 ** 20, "x").toString());
+      for (let i = 0; i < 2047; i++) headers.append("set-cookie", "a");
+      const joined = headers.get("set-cookie")!;
+      expect(joined.length).toBe(2 ** 20 + 3 * 2047);
+      expect(joined.slice(-4)).toBe("a, a");
     });
   });
   describe("has()", () => {
@@ -295,6 +448,12 @@ describe("Headers", () => {
       const headers = new Headers();
       // @ts-expect-error
       expect(() => headers.has()).toThrow(TypeError);
+    });
+    test("quotes an invalid name in the error, like get() and delete()", () => {
+      const headers = new Headers();
+      for (const method of ["has", "get", "delete"] as const) {
+        expect(() => headers[method]("a b")).toThrow(new TypeError("Invalid header name: 'a b'"));
+      }
     });
   });
   describe("entries()", () => {
@@ -427,6 +586,431 @@ describe("Headers", () => {
       ]);
     });
   });
+  describe("iteration", () => {
+    // prettier-ignore
+    const knownNames = [
+      "Accept", "Accept-Charset", "Accept-Encoding", "Accept-Language", "Accept-Ranges", "Access-Control-Allow-Credentials",
+      "Access-Control-Allow-Headers", "Access-Control-Allow-Methods", "Access-Control-Allow-Origin",
+      "Access-Control-Expose-Headers", "Access-Control-Max-Age", "Access-Control-Request-Headers",
+      "Access-Control-Request-Method", "Age", "Authorization", "Cache-Control", "Connection", "Content-Disposition",
+      "Content-Encoding", "Content-Language", "Content-Length", "Content-Location", "Content-Range",
+      "Content-Security-Policy", "Content-Security-Policy-Report-Only", "Content-Type", "Cookie", "Cookie2",
+      "Cross-Origin-Embedder-Policy", "Cross-Origin-Embedder-Policy-Report-Only", "Cross-Origin-Opener-Policy",
+      "Cross-Origin-Opener-Policy-Report-Only", "Cross-Origin-Resource-Policy", "DNT", "Date", "Default-Style", "ETag",
+      "Expect", "Expires", "Host", "Icy-MetaInt", "Icy-Metadata", "If-Match", "If-Modified-Since", "If-None-Match",
+      "If-Range", "If-Unmodified-Since", "Keep-Alive", "Last-Event-ID", "Last-Modified", "Link", "Location", "Origin",
+      "Ping-From", "Ping-To", "Pragma", "Proxy-Authorization", "Proxy-Connection", "Purpose", "Range", "Referer",
+      "Referrer-Policy", "Refresh", "Report-To", "Sec-Fetch-Dest", "Sec-Fetch-Mode", "Sec-WebSocket-Accept",
+      "Sec-WebSocket-Extensions", "Sec-WebSocket-Key", "Sec-WebSocket-Protocol", "Sec-WebSocket-Version",
+      "Server-Timing", "Service-Worker", "Service-Worker-Allowed", "Service-Worker-Navigation-Preload", "Set-Cookie2",
+      "SourceMap", "Strict-Transport-Security", "TE", "Timing-Allow-Origin", "Trailer", "Transfer-Encoding", "Upgrade",
+      "Upgrade-Insecure-Requests", "User-Agent", "Vary", "Via", "X-Content-Type-Options", "X-DNS-Prefetch-Control",
+      "X-Frame-Options", "X-SourceMap", "X-Temp-Tablet", "X-XSS-Protection",
+    ];
+    // Names that sort right before, right after and in between the ones above.
+    // prettier-ignore
+    const customNames = [
+      "A", "Accept-", "Accept-Charsets", "Dat", "Date-", "Dns", "Dnt-", "Icy-Meta", "Icy-Metab", "Icy-Metaj", "Set-Cookie3",
+      "X-", "X-Custom", "X-XSS-Protection-", "Z", "_", "~", "0", "!",
+    ];
+    const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+    function expectEveryWalk(headers: Headers, expected: string[][]) {
+      const forEach: string[][] = [];
+      headers.forEach((value, key, parent) => {
+        expect(parent).toBe(headers);
+        forEach.push([key, value]);
+      });
+      const values = [...headers.values()];
+      expect({
+        forEach,
+        forOf: [...headers],
+        entries: [...headers.entries()],
+        keysAndValues: [...headers.keys()].map((key, i) => [key, values[i]]),
+      }).toEqual({ forEach: expected, forOf: expected, entries: expected, keysAndValues: expected });
+    }
+
+    test.each([
+      ["in the order they are listed", (names: string[]) => names],
+      ["in reverse", (names: string[]) => names.toReversed()],
+      [
+        "custom names first",
+        (names: string[]) => [...names.slice(knownNames.length), ...names.slice(0, knownNames.length)],
+      ],
+      ["interleaved", (names: string[]) => names.map((_, i) => names[(i * 37) % names.length])],
+    ])("every known name and the names around them come out sorted, set %s", (_, order) => {
+      const names = order([...knownNames, ...customNames]);
+      expect(new Set(names).size).toBe(knownNames.length + customNames.length);
+      const headers = new Headers();
+      for (const name of names) headers.set(name, `value of ${name}`);
+
+      const expected = names
+        .map(name => [name.toLowerCase(), `value of ${name}`])
+        .sort((a, b) => byCodeUnit(a[0], b[0]));
+      expectEveryWalk(headers, expected);
+    });
+
+    // What Bun does today. The Fetch spec sorts "set-cookie" in with the other names.
+    test("Set-Cookie headers come last, one entry each", () => {
+      const headers = new Headers([
+        ["Set-Cookie", "a=1"],
+        ["X-Last", "1"],
+        ["Set-Cookie", "b=2"],
+        ["Accept", "*/*"],
+      ]);
+      const expected = [
+        ["accept", "*/*"],
+        ["x-last", "1"],
+        ["set-cookie", "a=1"],
+        ["set-cookie", "b=2"],
+      ];
+      expectEveryWalk(headers, expected);
+    });
+
+    test("a name stored as UTF-16 is lowercased and sorted like any other", () => {
+      const wide = (name: string) => ("\u{1F600}" + name).slice(2);
+      const headers = new Headers();
+      headers.set(wide("X-Wide-B"), "1");
+      headers.set("X-Wide-C", "2");
+      headers.set(wide("X-Wide-A"), "3");
+      headers.set(wide("Content-Type"), "4");
+      expect([...headers]).toEqual([
+        ["content-type", "4"],
+        ["x-wide-a", "3"],
+        ["x-wide-b", "1"],
+        ["x-wide-c", "2"],
+      ]);
+    });
+
+    describe("while the headers change", () => {
+      const start = () =>
+        new Headers([
+          ["Accept", "a"],
+          ["Content-Type", "c"],
+          ["Host", "h"],
+          ["X-Custom", "x"],
+          ["X-Other", "y"],
+        ]);
+      // Takes some steps, applies the change, and collects the rest.
+      function walkWith(change: (headers: Headers) => void, steps = 1) {
+        const headers = start();
+        const iterator = headers.entries();
+        const seen: unknown[] = [];
+        for (let i = 0; i < steps; i++) seen.push(iterator.next().value);
+        change(headers);
+        for (const entry of iterator) seen.push(entry);
+        return seen;
+      }
+
+      test("a new value for a known name that is still to come is seen", () => {
+        expect(walkWith(headers => headers.set("host", "changed"))).toEqual([
+          ["accept", "a"],
+          ["content-type", "c"],
+          ["host", "changed"],
+          ["x-custom", "x"],
+          ["x-other", "y"],
+        ]);
+      });
+      test("a new value for a custom name that is still to come is seen", () => {
+        expect(walkWith(headers => headers.set("x-other", "changed"))).toEqual([
+          ["accept", "a"],
+          ["content-type", "c"],
+          ["host", "h"],
+          ["x-custom", "x"],
+          ["x-other", "changed"],
+        ]);
+      });
+      test("an appended value is seen", () => {
+        expect(walkWith(headers => headers.append("X-Custom", "more"))).toEqual([
+          ["accept", "a"],
+          ["content-type", "c"],
+          ["host", "h"],
+          ["x-custom", "x, more"],
+          ["x-other", "y"],
+        ]);
+      });
+      test("a name deleted before it is reached is skipped", () => {
+        expect(walkWith(headers => headers.delete("x-custom"))).toEqual([
+          ["accept", "a"],
+          ["content-type", "c"],
+          ["host", "h"],
+          ["x-other", "y"],
+        ]);
+        expect(walkWith(headers => headers.delete("host"))).toEqual([
+          ["accept", "a"],
+          ["content-type", "c"],
+          ["x-custom", "x"],
+          ["x-other", "y"],
+        ]);
+      });
+      test("the iterator keeps its position in the new sorted list", () => {
+        // One name fewer before the position: the next one is passed over.
+        expect(walkWith(headers => headers.delete("accept"), 2)).toEqual([
+          ["accept", "a"],
+          ["content-type", "c"],
+          ["x-custom", "x"],
+          ["x-other", "y"],
+        ]);
+        // One name more before the position: the last one comes again.
+        expect(walkWith(headers => headers.set("Aa", "new"), 2)).toEqual([
+          ["accept", "a"],
+          ["content-type", "c"],
+          ["content-type", "c"],
+          ["host", "h"],
+          ["x-custom", "x"],
+          ["x-other", "y"],
+        ]);
+      });
+      test("a name added after the position is reached", () => {
+        expect(walkWith(headers => headers.set("X-Later", "new"), 4)).toEqual([
+          ["accept", "a"],
+          ["content-type", "c"],
+          ["host", "h"],
+          ["x-custom", "x"],
+          ["x-later", "new"],
+          ["x-other", "y"],
+        ]);
+      });
+      test("everything deleted ends the iteration", () => {
+        expect(
+          walkWith(headers => {
+            for (const key of [...headers.keys()]) headers.delete(key);
+          }),
+        ).toEqual([["accept", "a"]]);
+      });
+      test("cookies added and removed", () => {
+        expect(walkWith(headers => headers.append("Set-Cookie", "a=1"), 5)).toEqual([
+          ["accept", "a"],
+          ["content-type", "c"],
+          ["host", "h"],
+          ["x-custom", "x"],
+          ["x-other", "y"],
+          ["set-cookie", "a=1"],
+        ]);
+
+        const headers = start();
+        headers.append("Set-Cookie", "a=1");
+        headers.append("Set-Cookie", "b=2");
+        headers.append("Set-Cookie", "c=3");
+        const iterator = headers.values();
+        const seen: unknown[] = [];
+        for (let i = 0; i < 6; i++) seen.push(iterator.next().value);
+        headers.append("Set-Cookie", "d=4");
+        seen.push(iterator.next().value);
+        headers.delete("Set-Cookie");
+        seen.push(iterator.next());
+        expect(seen).toEqual(["a", "c", "h", "x", "y", "a=1", "b=2", { value: undefined, done: true }]);
+      });
+      // Script did not ask for these, so unlike delete() they leave the iterator on the name it stood on.
+      describe("a name that native code removes", () => {
+        const names = ["accept", "content-length", "content-type", "host", "x-custom"];
+        const response = () =>
+          new Response("ok", {
+            headers: { "Accept": "a", "Content-Length": "2", "Content-Type": "t/t", "Host": "h", "X-Custom": "x" },
+          });
+        function take(iterator: Iterator<string>, steps: number) {
+          const seen: string[] = [];
+          for (let i = 0; i < steps; i++) seen.push(iterator.next().value);
+          return seen;
+        }
+        // Content-Length is only seen by an iterator that got to it before it went away. Nothing else is lost.
+        const expected = (steps: number) => (steps >= 2 ? names : names.filter(name => name !== "content-length"));
+
+        test.each([0, 1, 2, 3, 4, 5])("as the server writes the response, after %d steps", async steps => {
+          let iterator: Iterator<string> & Iterable<string>;
+          let seen: string[] = [];
+          using server = Bun.serve({
+            port: 0,
+            fetch() {
+              const res = response();
+              iterator = res.headers.keys();
+              seen = take(iterator, steps);
+              return res;
+            },
+          });
+          expect(await (await fetch(server.url)).text()).toBe("ok");
+          expect([...seen, ...iterator!]).toEqual(expected(steps));
+        });
+
+        test.each([0, 1, 2, 3, 4, 5])("as a static route takes the response, after %d steps", steps => {
+          const res = response();
+          const iterator = res.headers.keys();
+          const seen = take(iterator, steps);
+          using server = Bun.serve({ port: 0, routes: { "/": res }, fetch: () => new Response() });
+          expect([...seen, ...iterator]).toEqual(expected(steps));
+        });
+
+        test("as server.upgrade() takes the headers", async () => {
+          let seen: string[] = [];
+          using server = Bun.serve({
+            port: 0,
+            fetch(req, server) {
+              const headers = new Headers({
+                "Age": "0",
+                "Sec-WebSocket-Extensions": "",
+                "Sec-WebSocket-Protocol": "a",
+                "Server-Timing": "t",
+                "X-Custom": "x",
+              });
+              const iterator = headers.keys();
+              seen = take(iterator, 3);
+              server.upgrade(req, { headers });
+              seen.push(...iterator);
+            },
+            websocket: {
+              open: ws => ws.close(),
+              message() {},
+            },
+          });
+          const { promise, resolve } = Promise.withResolvers();
+          const ws = new WebSocket(server.url.href.replace("http", "ws"), ["a"]);
+          ws.onclose = ws.onerror = resolve;
+          await promise;
+          expect(seen).toEqual([
+            "age",
+            "sec-websocket-extensions",
+            "sec-websocket-protocol",
+            "server-timing",
+            "x-custom",
+          ]);
+        });
+
+        test("and a change by script after that", async () => {
+          let res: Response;
+          let iterator: Iterator<string> & Iterable<string>;
+          let seen: string[] = [];
+          using server = Bun.serve({
+            port: 0,
+            fetch() {
+              res = response();
+              iterator = res.headers.keys();
+              seen = take(iterator, 2);
+              return res;
+            },
+          });
+          expect(await (await fetch(server.url)).text()).toBe("ok");
+          res!.headers.set("X-Later", "l");
+          // The index is kept, as after any change by script: one name fewer before it, so "content-type" is passed over.
+          expect([...seen, ...iterator!]).toEqual(["accept", "content-length", "host", "x-custom", "x-later"]);
+        });
+      });
+      test("forEach sees what its callback changes", () => {
+        const headers = start();
+        const seen: [string, string][] = [];
+        headers.forEach((value, key) => {
+          seen.push([key, value]);
+          if (key === "accept") {
+            headers.set("Host", "changed");
+            headers.delete("X-Custom");
+            headers.set("X-Zzz", "new");
+          }
+        });
+        expect(seen).toEqual([
+          ["accept", "a"],
+          ["content-type", "c"],
+          ["host", "changed"],
+          ["x-other", "y"],
+          ["x-zzz", "new"],
+        ]);
+      });
+      test("forEach stops at what its callback throws", () => {
+        const headers = start();
+        const seen: string[] = [];
+        expect(() =>
+          headers.forEach((_, key) => {
+            seen.push(key);
+            if (key === "host") throw new RangeError("stop");
+          }),
+        ).toThrow(new RangeError("stop"));
+        expect(seen).toEqual(["accept", "content-type", "host"]);
+      });
+    });
+
+    test("forEach passes thisArg and rejects what it cannot call", () => {
+      const headers = new Headers({ a: "1" });
+      const thisArg = {};
+      let receiver: unknown;
+      headers.forEach(function (this: unknown) {
+        receiver = this;
+      }, thisArg);
+      expect(receiver).toBe(thisArg);
+      // @ts-expect-error
+      expect(() => headers.forEach({})).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+      // @ts-expect-error
+      expect(() => new Headers().forEach()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    });
+
+    test("an iterator that is done stays done", () => {
+      const headers = new Headers({ a: "1" });
+      const iterator = headers.entries();
+      expect(iterator.next()).toEqual({ value: ["a", "1"], done: false });
+      expect(iterator.next()).toEqual({ value: undefined, done: true });
+      headers.set("b", "2");
+      expect(iterator.next()).toEqual({ value: undefined, done: true });
+    });
+
+    test("an iterator over empty headers finds what is added before its first step", () => {
+      const headers = new Headers();
+      const iterator = headers.keys();
+      headers.set("X-Added", "1");
+      expect([...iterator]).toEqual(["x-added"]);
+    });
+
+    test("an iterator keeps its headers alive", () => {
+      const valueOf = (i: number) => Buffer.alloc(64, "v").toString() + i;
+      const iterator = (() => {
+        const headers = new Headers();
+        for (let i = 0; i < 32; i++) headers.set(`X-Custom-${i}`, valueOf(i));
+        headers.set("Content-Type", "text/plain");
+        const iterator = headers.entries();
+        iterator.next();
+        return iterator;
+      })();
+      Bun.gc(true);
+      expect([...iterator]).toEqual(
+        Array.from({ length: 32 }, (_, i) => [`x-custom-${i}`, valueOf(i)]).sort((a, b) => byCodeUnit(a[0], b[0])),
+      );
+    });
+
+    test("each entry is a new array in a new result object", () => {
+      const headers = new Headers({ "Content-Type": "text/plain" });
+      const [first, second] = [headers.entries().next(), headers.entries().next()];
+      expect(first).not.toBe(second);
+      expect(first.value).not.toBe(second.value);
+      first.value![0] = "changed";
+      expect(second.value).toEqual(["content-type", "text/plain"]);
+      expect([...headers]).toEqual([["content-type", "text/plain"]]);
+      expect(Object.getPrototypeOf(first.value)).toBe(Array.prototype);
+    });
+
+    test("walking known names makes no string per name", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { heapStats } from "bun:jsc";
+           const headers = new Headers({ "Content-Type": "a", "Content-Length": "1", "Cache-Control": "b", "Accept": "c", "Host": "d", "User-Agent": "e", "ETag": "f", "Date": "g" });
+           const kept = [];
+           const walk = () => {
+             kept.push(...headers.keys());
+             for (const [key] of headers) kept.push(key);
+             headers.forEach((_, key) => kept.push(key));
+           };
+           walk();
+           const before = heapStats().objectTypeCounts.string;
+           for (let i = 0; i < 500; i++) walk();
+           console.log(kept.length, heapStats().objectTypeCounts.string - before < 500);`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("12024 true\n");
+      expect(exitCode).toBe(0);
+    });
+  });
   describe("Bun.inspect()", () => {
     const it = "toJSON" in new Headers() ? test : test.skip;
     it("can convert to json when empty", () => {
@@ -505,6 +1089,66 @@ describe("Headers", () => {
       ]);
       expect(headers.count).toBe(2);
     });
+  });
+
+  // Debug builds need minutes to validate the 4 GiB of values the child appends.
+  test.skipIf(isDebug)("fetch() and Bun.serve() reject headers that total 4 GiB or more", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          // The 16 values share one 256 MiB string. Names and values total 2 ** 32 - 1 bytes,
+          // which is the maximum.
+          const value = Buffer.alloc(2 ** 28, "a").toString("latin1");
+          const headers = new Headers();
+          for (let i = 0; i < 15; i++) headers.append("set-cookie", value);
+          headers.append("set-cookie", value.slice(0, 2 ** 28 - 161));
+
+          async function outcome(fn) {
+            try {
+              await fn();
+              return "no error";
+            } catch (e) {
+              return e.name + ": " + e.message;
+            }
+          }
+          function serve(response) {
+            Bun.serve({ port: 0, routes: { "/": response } }).stop(true);
+          }
+
+          await using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+          const url = server.url.href;
+          const file = Bun.file(process.execPath);
+
+          // The headers fit by themselves, but not with the Content-Type that fetch() adds for the body.
+          const body = new Blob(["x"], { type: "text/plain" });
+          console.log("content-type:", await outcome(() => fetch(url, { method: "POST", body, headers })));
+
+          // This brings the total to 2 ** 32 + 10 bytes.
+          headers.append("set-cookie", "x");
+          console.log("fetch:", await outcome(() => fetch(url, { headers })));
+          console.log("proxy:", await outcome(() => fetch(url, { proxy: { url, headers } })));
+          console.log("static route:", await outcome(() => serve(new Response("body", { headers }))));
+          console.log("file route:", await outcome(() => serve(new Response(file, { headers }))));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    const error = "RangeError: Headers exceed the maximum total size of 4294967295 bytes";
+    expect(stdout.split("\n")).toEqual([
+      `content-type: ${error}`,
+      `fetch: ${error}`,
+      `proxy: ${error}`,
+      `static route: ${error}`,
+      `file route: ${error}`,
+      "",
+    ]);
+    expect(exitCode).toBe(0);
   });
 
   // Header-name lowercasing on iteration (Object.fromEntries / spread / toJSON /

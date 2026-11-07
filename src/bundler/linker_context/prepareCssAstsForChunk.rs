@@ -7,8 +7,7 @@ use crate::{BundleV2, Chunk, LinkerContext};
 
 use crate::bun_css::css_parser::{
     BundlerCssRule, BundlerCssRuleList, BundlerLayerBlockRule, BundlerMediaRule,
-    BundlerSupportsRule, ImportRule, LayerName, LayerStatementRule, Location, ParserOptions,
-    SmallList,
+    BundlerSupportsRule, ImportRule, LayerName, LayerStatementRule, Location, SmallList,
 };
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, ImportInfo, PrinterOptions, Targets};
 use crate::bun_fs::Path;
@@ -18,25 +17,18 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_resolver::DataURL;
 
-use crate::chunk::{Content, CssImportOrderKind};
+use crate::chunk::{Content, CssImportOrder, CssImportOrderKind};
 
 // Raw pointers rather than `&mut` / `&` so that
 // (a) the container_of `container_of` recovery of `*mut BundleV2` from
 // `linker` retains write provenance over the whole bundle, and (b) multiple
 // tasks may hold pointers to the same `LinkerContext` concurrently without
 // materializing aliased Rust references.
-pub struct PrepareCssAstTask {
-    pub task: ThreadPoolLib::Task,
-    pub chunk: *mut Chunk,
-    pub linker: *mut LinkerContext<'static>,
+pub(crate) struct PrepareCssAstTask {
+    pub(crate) task: ThreadPoolLib::CountedTask,
+    pub(crate) chunk: *mut Chunk<'static>,
+    pub(crate) linker: *mut LinkerContext<'static>,
 }
-
-// SAFETY: scheduled on the worker pool via raw `*mut Task` (bypassing the
-// `OwnedTask: Send` route). Both raw-ptr fields point at `Send` types
-// (`Chunk: Send`, `LinkerContext: Send`); the callback writes only the
-// per-chunk `chunk.content.css` cell (see `prepare_css_asts_for_chunk`
-// CONCURRENCY note).
-unsafe impl Send for PrepareCssAstTask {}
 
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // CSS chunk. Writes: `chunk.content.css.{asts, ordered_import_records}`
@@ -44,15 +36,13 @@ unsafe impl Send for PrepareCssAstTask {}
 // SoA columns + `linker.graph.ast.css` shared. Every CSS chunk gets exactly
 // one task, so `&mut *chunk` is unique; `linker` is shared across all tasks
 // and is therefore borrowed as `&LinkerContext` (the impl only reads `c` and
-// only ever writes `chunk`). `PrepareCssAstTask` is `Send` by virtue of
-// `LinkerContext: Send` + `Chunk: Send` (both raw-ptr fields point at types
-// with `unsafe impl Send`).
+// only ever writes `chunk`).
 /// # Safety
 ///
 /// `task` must be the intrusive `task` field of a live [`PrepareCssAstTask`]
 /// scheduled by `generate_chunks_in_parallel`. Matches the
 /// `Task::callback: unsafe fn(*mut Task)` contract.
-pub unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
+pub(crate) unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `PrepareCssAstTask.task` (intrusive thread-pool
     // node); the thread pool hands us exclusive access for the callback's
     // duration. We only read the two raw-pointer fields.
@@ -80,9 +70,7 @@ pub unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
 }
 
 fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &Bump) {
-    // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-    // across the log write below (split borrow).
-    let parse_graph = unsafe { &*c.parse_graph };
+    let parse_graph = c.parse_graph();
     let asts = c.graph.ast.items_css();
 
     // Prepare CSS asts
@@ -100,6 +88,9 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
         let mut i: usize = css_chunk.imports_in_chunk_in_order.len() as usize;
         while i != 0 {
             i -= 1;
+            let SharedAnonymousConditions { before, after } =
+                shared_anonymous_conditions(css_chunk.imports_in_chunk_in_order.slice(), i);
+            let private_conditions = before.max(after);
             let entry = css_chunk.imports_in_chunk_in_order.mut_(i);
             // Reshaped for borrowck — match on entry.kind while also touching
             // entry.conditions / entry.condition_import_records relies on disjoint field borrows.
@@ -108,13 +99,6 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     let inner = layers.inner();
                     let len = inner.len();
                     let rules = if len > 0 {
-                        // The `Chunk::Layers` payload is the lifetime-erased shadow
-                        // `bun_css::LayerName { v: Vec<Box<[u8]>> }`,
-                        // not the real `css_parser::LayerName { v: SmallList<&'static [u8],1> }`,
-                        // so the layouts differ. Rebuild the real list element-by-element;
-                        // segments are arena-owned (`'bump`-laundered to `'static`) so the
-                        // `&[u8]` reborrows below are valid for the chunk lifetime.
-                        //
                         // Both `SmallList` levels go into the arena-backed rule list
                         // that `CssChunk::Drop` `set_len(0)`s without running element
                         // destructors, so any global heap spill would leak. Build them
@@ -148,11 +132,14 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         sources: Default::default(),
                         source_map_urls: Default::default(),
                         license_comments: Default::default(),
-                        options: ParserOptions::default(None),
                         composes: Default::default(),
                         ..BundlerStyleSheet::empty()
                     };
-                    wrap_rules_with_conditions(&mut ast, bump, &entry.conditions);
+                    wrap_rules_with_conditions(
+                        &mut ast,
+                        bump,
+                        &entry.conditions.slice()[private_conditions..],
+                    );
                     css_chunk.asts[i] = ast;
                 }
                 CssImportOrderKind::ExternalPath(p) => {
@@ -170,7 +157,6 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             tag: ImportRecordTag::None,
                             loader: None,
                             source_index: AstIndex::default(),
-                            module_id: 0,
                             original_path: b"",
                             flags: ImportRecordFlags::default(),
                         });
@@ -197,24 +183,25 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             // `ManuallyDrop` so the duplicate is abandoned instead; the rule
                             // slab itself is arena-owned so it is reclaimed on arena reset.
                             let ast_import = core::mem::ManuallyDrop::new(BundlerStyleSheet {
-                                options: ParserOptions::default(None),
                                 license_comments: Default::default(),
                                 sources: Default::default(),
                                 source_map_urls: Default::default(),
                                 rules: {
-                                    let mut import_rule = ImportRule {
-                                        url: p.pretty,
+                                    let import_rule = ImportRule {
+                                        // SAFETY: `bun_css` types its strings `'static`. This
+                                        // stylesheet is printed and dropped with the chunk.
+                                        url: unsafe { bun_ptr::detach_lifetime(p.pretty) },
+                                        // SAFETY: shallow struct
+                                        // copy. The duplicate is never dropped (`ManuallyDrop`
+                                        // above), so the aliased heap stays singly-owned by
+                                        // `entry.conditions[j]`.
+                                        conditions: unsafe {
+                                            core::ptr::read(entry.conditions.at(j))
+                                        },
                                         import_record_idx: entry.condition_import_records.len()
                                             as u32,
                                         loc: Location::dummy(),
-                                        ..Default::default()
                                     };
-                                    // SAFETY: shallow struct
-                                    // copy. The duplicate is never dropped (`ManuallyDrop`
-                                    // above), so the aliased heap stays singly-owned by
-                                    // `entry.conditions[j]`.
-                                    *import_rule.conditions_mut() =
-                                        unsafe { core::ptr::read(entry.conditions.at(j)) };
                                     arena_rule_list_one(bump, BundlerCssRule::Import(import_rule))
                                 },
                                 composes: Default::default(),
@@ -236,26 +223,14 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 Some(ImportInfo {
                                     import_records: &entry.condition_import_records,
                                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),
-                                    // SAFETY: read-only `&[Box<[u8]>]`→`&[&[u8]]` view; relies on
-                                    // fat-pointer field-order equivalence (see fn doc).
-                                    ast_unique_key_for_additional_file: unsafe {
-                                        bun_ptr::boxed_slices_as_borrowed(
-                                            parse_graph
-                                                .input_files
-                                                .items_unique_key_for_additional_file(),
-                                        )
-                                    },
+                                    ast_unique_key_for_additional_file: parse_graph
+                                        .input_files
+                                        .items_unique_key_for_additional_file(),
                                 }),
                                 // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>`
                                 // alias as `bun_js_printer::MangledProps`; no cast needed.
                                 Some(&c.mangled_props),
-                                // SAFETY: `to_css` takes `&bun_ast::symbol::Map`; `c.graph.symbols`
-                                // is `bun_ast::symbol::Map`. Both are
-                                // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is
-                                // `repr(transparent)`), so layouts match — bridge by pointer cast.
-                                unsafe {
-                                    &*(&raw const c.graph.symbols).cast::<bun_ast::symbol::Map>()
-                                },
+                                &c.graph.symbols,
                             ) {
                                 Ok(v) => v,
                                 Err(e) => {
@@ -301,7 +276,6 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         tag: ImportRecordTag::None,
                         loader: None,
                         source_index: AstIndex::default(),
-                        module_id: 0,
                         original_path: b"",
                         flags: ImportRecordFlags::default(),
                     });
@@ -309,7 +283,8 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     css_chunk.asts[i] = BundlerStyleSheet {
                         rules: {
                             let mut import_rule = ImportRule::from_url_and_import_record_idx(
-                                p.pretty,
+                                // SAFETY: as for the `ImportRule` above.
+                                unsafe { bun_ptr::detach_lifetime(p.pretty) },
                                 entry.condition_import_records.len() as u32,
                             );
                             // SAFETY: shallow struct copy. The duplicate lives in an
@@ -318,14 +293,12 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             // (`CssChunk::Drop` frees the slab via `set_len(0)`), so
                             // `entry.conditions[0]` / `empty_conditions` remain the sole
                             // owners of the interior heap.
-                            *import_rule.conditions_mut() =
-                                unsafe { core::ptr::read(actual_conditions) };
+                            import_rule.conditions = unsafe { core::ptr::read(actual_conditions) };
                             arena_rule_list_one(bump, BundlerCssRule::Import(import_rule))
                         },
                         sources: Default::default(),
                         source_map_urls: Default::default(),
                         license_comments: Default::default(),
-                        options: ParserOptions::default(None),
                         composes: Default::default(),
                         ..BundlerStyleSheet::empty()
                     };
@@ -369,13 +342,21 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         // the tail).
                         //
                         // Regression: #28914
+                        //
+                        // The statements ahead of the first "@import" have an entry
+                        // of their own in the order.
                         let original_rules = ast.rules.v.as_slice();
+                        let keep_leading_layers = ast.layers_pre_import.is_empty();
+                        let mut keep_layers = keep_leading_layers;
                         let mut layer_count: usize = 0;
                         let mut prefix_end: usize = original_rules.len();
                         'prefix_scan: for (idx, rule) in original_rules.iter().enumerate() {
                             match rule {
-                                BundlerCssRule::Import(_) | BundlerCssRule::Ignored => {}
-                                BundlerCssRule::LayerStatement(_) => layer_count += 1,
+                                BundlerCssRule::Import(_) => keep_layers = true,
+                                BundlerCssRule::Ignored => {}
+                                BundlerCssRule::LayerStatement(_) => {
+                                    layer_count += usize::from(keep_layers);
+                                }
                                 _ => {
                                     prefix_end = idx;
                                     break 'prefix_scan;
@@ -397,8 +378,11 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                     layer_count + (original_rules.len() - prefix_end),
                                     bump,
                                 );
+                            keep_layers = keep_leading_layers;
                             for rule in &original_rules[0..prefix_end] {
-                                if matches!(rule, BundlerCssRule::LayerStatement(_)) {
+                                keep_layers |= matches!(rule, BundlerCssRule::Import(_));
+                                if keep_layers && matches!(rule, BundlerCssRule::LayerStatement(_))
+                                {
                                     // SAFETY: bitwise duplicate of a rule. The copy goes into
                                     // an `arena_rule_list` slab installed in `css_chunk.asts[i]`,
                                     // whose elements never run `Drop` (see `arena_rule_list` /
@@ -427,7 +411,11 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         }
                     }
 
-                    wrap_rules_with_conditions(ast, bump, &entry.conditions);
+                    wrap_rules_with_conditions(
+                        ast,
+                        bump,
+                        &entry.conditions.slice()[private_conditions..],
+                    );
                     // TODO: Remove top-level duplicate rules across files
                 }
             }
@@ -464,18 +452,63 @@ fn arena_rule_list_one(bump: &Bump, rule: BundlerCssRule) -> BundlerCssRuleList 
     arena_rule_list(v)
 }
 
+/// The number of leading conditions that an entry shares with its neighbours.
+#[derive(Clone, Copy)]
+pub(crate) struct SharedAnonymousConditions {
+    pub before: usize,
+    pub after: usize,
+}
+
+/// The entries of one anonymous layer must print in one block, so they open and
+/// close the conditions they share only once.
+pub(crate) fn shared_anonymous_conditions(
+    order: &[CssImportOrder],
+    i: usize,
+) -> SharedAnonymousConditions {
+    let shared = |a: &CssImportOrder, b: &CssImportOrder| {
+        if matches!(a.kind, CssImportOrderKind::ExternalPath(_))
+            || matches!(b.kind, CssImportOrderKind::ExternalPath(_))
+        {
+            return 0;
+        }
+        let (a, b) = (a.conditions.slice(), b.conditions.slice());
+        a.iter()
+            .zip(b)
+            .rposition(|(a, b)| a.has_anonymous_layer() && ImportConditions::layers_eql(a, b))
+            .map_or(0, |last| last + 1)
+    };
+    SharedAnonymousConditions {
+        before: i
+            .checked_sub(1)
+            .map_or(0, |prev| shared(&order[prev], &order[i])),
+        after: order.get(i + 1).map_or(0, |next| shared(&order[i], next)),
+    }
+}
+
+/// The blocks of `conditions` around no rules. `ManuallyDrop`, because the rules
+/// alias `conditions`.
+pub(crate) fn empty_blocks(
+    bump: &Bump,
+    conditions: &[ImportConditions],
+) -> core::mem::ManuallyDrop<BundlerStyleSheet> {
+    let mut ast = core::mem::ManuallyDrop::new(BundlerStyleSheet {
+        rules: arena_rule_list_one(bump, BundlerCssRule::Ignored),
+        sources: Default::default(),
+        source_map_urls: Default::default(),
+        license_comments: Default::default(),
+        composes: Default::default(),
+        ..BundlerStyleSheet::empty()
+    });
+    wrap_rules_with_conditions(&mut ast, bump, conditions);
+    ast
+}
+
 fn wrap_rules_with_conditions(
     ast: &mut BundlerStyleSheet,
     temp_bump: &Bump,
-    conditions: &Vec<ImportConditions>,
+    conditions: &[ImportConditions],
 ) {
-    let mut dummy_import_records: Vec<ImportRecord> = Vec::new();
-
-    let mut i: usize = conditions.len() as usize;
-    while i > 0 {
-        i -= 1;
-        let item = conditions.at(i);
-
+    for item in conditions.iter().rev() {
         // Generate "@layer" wrappers. Note that empty "@layer" rules still have
         // a side effect (they set the layer order) so they cannot be removed.
         if let Some(l) = &item.layer {
@@ -528,8 +561,8 @@ fn wrap_rules_with_conditions(
                 ast.rules = arena_rule_list_one(
                     temp_bump,
                     BundlerCssRule::Supports(BundlerSupportsRule {
-                        condition: supports
-                            .clone_with_import_records(temp_bump, &mut dummy_import_records),
+                        // SAFETY: as for `layer` above.
+                        condition: unsafe { core::ptr::read(supports) },
                         rules: core::mem::take(&mut ast.rules),
                         loc: Location::dummy(),
                     }),
@@ -543,19 +576,14 @@ fn wrap_rules_with_conditions(
             ast.rules = arena_rule_list_one(
                 temp_bump,
                 BundlerCssRule::Media(BundlerMediaRule {
-                    query: item
-                        .media
-                        .clone_with_import_records(temp_bump, &mut dummy_import_records),
+                    // SAFETY: as for `layer` above.
+                    query: unsafe { core::ptr::read(&raw const item.media) },
                     rules: core::mem::take(&mut ast.rules),
                     loc: Location::dummy(),
                 }),
             );
         }
     }
-
-    debug_assert!(dummy_import_records.len() == 0);
 }
 
-pub use crate::DeferredBatchTask;
-pub use crate::ParseTask;
 pub use crate::ThreadPool;

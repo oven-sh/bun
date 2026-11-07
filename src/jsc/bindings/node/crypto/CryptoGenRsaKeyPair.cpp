@@ -2,7 +2,6 @@
 #include "ErrorCode.h"
 #include "NodeValidator.h"
 #include "CryptoUtil.h"
-#include "BunProcess.h"
 
 using namespace Bun;
 using namespace JSC;
@@ -26,22 +25,9 @@ extern "C" void Bun__RsaKeyPairJobCtx__runTask(RsaKeyPairJobCtx* ctx, JSGlobalOb
     ctx->runTask(globalObject, keyCtx);
 }
 
-extern "C" void Bun__RsaKeyPairJobCtx__runFromJS(RsaKeyPairJobCtx* ctx, JSGlobalObject* globalObject, EncodedJSValue callback)
+extern "C" void Bun__RsaKeyPairJobCtx__runFromJS(RsaKeyPairJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(globalObject, JSValue::decode(callback));
-}
-
-extern "C" RsaKeyPairJob* Bun__RsaKeyPairJob__create(JSGlobalObject* globalObject, RsaKeyPairJobCtx* ctx, EncodedJSValue callback);
-RsaKeyPairJob* RsaKeyPairJob::create(JSGlobalObject* globalObject, RsaKeyPairJobCtx&& ctx, JSValue callback)
-{
-    RsaKeyPairJobCtx* ctxCopy = new RsaKeyPairJobCtx(WTF::move(ctx));
-    return Bun__RsaKeyPairJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__RsaKeyPairJob__schedule(RsaKeyPairJob* job);
-void RsaKeyPairJob::schedule()
-{
-    Bun__RsaKeyPairJob__schedule(this);
+    *out = ctx->runFromJS(globalObject);
 }
 
 extern "C" void Bun__RsaKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, RsaKeyPairJobCtx* ctx, EncodedJSValue callback);
@@ -97,7 +83,7 @@ ncrypto::EVPKeyCtxPointer RsaKeyPairJobCtx::setup()
     return ctx;
 }
 
-std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const JSC::GCOwnedDataScope<WTF::StringView>& typeView, JSC::JSValue optionsValue, const KeyEncodingConfig& encodingConfig)
+__attribute__((minsize)) std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const JSC::GCOwnedDataScope<WTF::StringView>& typeView, JSC::JSValue optionsValue, const KeyEncodingConfig& encodingConfig)
 {
     VM& vm = globalObject->vm();
 
@@ -118,6 +104,14 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
         RETURN_IF_EXCEPTION(scope, std::nullopt);
     }
 
+    // BoringSSL hangs on e=1 and only reports a misleading error for other invalid exponents
+    // after the full keygen loop, so reject them up-front exactly like Node's BoringSSL branch.
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_rsa.cc#L138-L148
+    if (publicExponent < 3 || (publicExponent & 1) == 0) {
+        ERR::OUT_OF_RANGE(scope, globalObject, "publicExponent is invalid"_s);
+        return std::nullopt;
+    }
+
     if (typeView == "rsa"_s) {
         return RsaKeyPairJobCtx(
             RsaKeyVariant::RSA_SSA_PKCS1_v1_5,
@@ -126,10 +120,7 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
             encodingConfig);
     }
 
-    JSValue hashValue = optionsValue.get(globalObject, Identifier::fromString(vm, "hash"_s));
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    JSValue mgf1HashValue = optionsValue.get(globalObject, Identifier::fromString(vm, "mgf1Hash"_s));
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/keygen.js#L197-L230
     JSValue hashAlgorithmValue = optionsValue.get(globalObject, Identifier::fromString(vm, "hashAlgorithm"_s));
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     JSValue mgf1HashAlgorithmValue = optionsValue.get(globalObject, Identifier::fromString(vm, "mgf1HashAlgorithm"_s));
@@ -138,13 +129,9 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
     JSString* hashString = nullptr;
-    GCOwnedDataScope<WTF::StringView> hashView(hashString, WTF::nullStringView());
-    JSString* hashAlgorithmString = nullptr;
-    GCOwnedDataScope<WTF::StringView> hashAlgorithmView(hashAlgorithmString, WTF::nullStringView());
+    GCOwnedDataScope<WTF::StringView> hash(hashString, WTF::nullStringView());
     JSString* mgf1HashString = nullptr;
-    GCOwnedDataScope<WTF::StringView> mgf1HashView(mgf1HashString, WTF::nullStringView());
-    JSString* mgf1HashAlgorithmString = nullptr;
-    GCOwnedDataScope<WTF::StringView> mgf1HashAlgorithmView(mgf1HashAlgorithmString, WTF::nullStringView());
+    GCOwnedDataScope<WTF::StringView> mgf1Hash(mgf1HashString, WTF::nullStringView());
     std::optional<int32_t> saltLength = std::nullopt;
 
     if (!saltLengthValue.isUndefined()) {
@@ -158,48 +145,25 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         hashString = hashAlgorithmValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        hashView = hashString->view(globalObject);
+        hash = hashString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
     }
     if (!mgf1HashAlgorithmValue.isUndefined()) {
         V::validateString(scope, globalObject, mgf1HashAlgorithmValue, "options.mgf1HashAlgorithm"_s);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        mgf1HashAlgorithmString = mgf1HashAlgorithmValue.toString(globalObject);
+        mgf1HashString = mgf1HashAlgorithmValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        mgf1HashView = mgf1HashAlgorithmString->view(globalObject);
+        mgf1Hash = mgf1HashString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
     }
-    if (!hashValue.isUndefined()) {
-        Bun::Process::emitWarning(globalObject, jsString(vm, makeString("\"options.hash\" is deprecated, use \"options.hashAlgorithm\" instead."_s)), jsString(vm, makeString("DeprecationWarning"_s)), jsString(vm, makeString("DEP0154"_s)), jsUndefined());
-        CLEAR_IF_EXCEPTION(scope);
-        V::validateString(scope, globalObject, hashValue, "options.hash"_s);
+    for (auto name : { "hash"_s, "mgf1Hash"_s }) {
+        JSValue removed = optionsValue.get(globalObject, Identifier::fromString(vm, name));
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        hashString = hashValue.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-        hashView = hashString->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-        if (!hashAlgorithmView->isNull() && hashAlgorithmView != hashView) {
-            ERR::INVALID_ARG_VALUE(scope, globalObject, "options.hash"_s, hashValue);
+        if (!removed.isUndefined()) {
+            ERR::INVALID_ARG_VALUE(scope, globalObject, makeString("options."_s, name), removed, "is no longer supported"_s);
             return std::nullopt;
         }
     }
-    if (!mgf1HashValue.isUndefined()) {
-        Bun::Process::emitWarning(globalObject, jsString(vm, makeString("\"options.mgf1Hash\" is deprecated, use \"options.mgf1HashAlgorithm\" instead."_s)), jsString(vm, makeString("DeprecationWarning"_s)), jsString(vm, makeString("DEP0154"_s)), jsUndefined());
-        CLEAR_IF_EXCEPTION(scope);
-        V::validateString(scope, globalObject, mgf1HashValue, "options.mgf1Hash"_s);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-        mgf1HashString = mgf1HashValue.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-        mgf1HashView = mgf1HashString->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-        if (!mgf1HashAlgorithmView->isNull() && mgf1HashAlgorithmView != mgf1HashView) {
-            ERR::INVALID_ARG_VALUE(scope, globalObject, "options.mgf1Hash"_s, mgf1HashValue);
-            return std::nullopt;
-        }
-    }
-
-    GCOwnedDataScope<WTF::StringView> hash = hashAlgorithmView->isNull() ? hashView : hashAlgorithmView;
-    GCOwnedDataScope<WTF::StringView> mgf1Hash = mgf1HashAlgorithmView->isNull() ? mgf1HashView : mgf1HashAlgorithmView;
 
     ncrypto::Digest md = nullptr;
     ncrypto::Digest mgf1Md = nullptr;

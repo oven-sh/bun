@@ -1,0 +1,38 @@
+# try { throw new Error("x") } catch (error) { console.log(error.code) }
+# The formatter looks for the custom inspect method of what it prints under one name, and calls it with a function of a start-up module. Nobody knows the operand.
+# It has such a method only if some statement has stored one under that name, on whatever object, or if it may be an instance of a class of the table that has one. Neither is so here:
+# the module is not read. (What native code answers without a description may be a Buffer, which has the method: no such value comes into being here.)
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal/util/inspect" displayPath="internal/util/inspect" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f1
+entry module=m0
+layout L0 name="Exports" fields=[{key="inspect" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b2():
+    v0 = Builtin builtin=Error
+    v1 = String string="x"
+    v2 = Construct v0, -, v1
+    Throw v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    v4 = PropGet v3 key="code"
+    v5 = Builtin builtin=Console
+    v6 = Builtin builtin=ConsoleLog
+    v7 = Call v6, v5, v4
+    Return
+}
+function f1 name="inspectModule" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f2 name="inspect" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

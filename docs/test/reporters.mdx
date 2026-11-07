@@ -3,7 +3,7 @@ title: Test Reporters
 description:
 ---
 
-bun test supports different output formats through reporters. This document covers both built-in reporters and how to implement your own custom reporters.
+`bun test` supports different output formats through reporters, both built-in and custom.
 
 ---
 
@@ -11,7 +11,7 @@ bun test supports different output formats through reporters. This document cove
 
 ### Default Console Reporter
 
-By default, bun test outputs results to the console in a human-readable format:
+By default, `bun test` outputs results to the console in a human-readable format:
 
 ```sh terminal icon="terminal"
 test/package-json-lint.test.ts:
@@ -23,10 +23,10 @@ test/package-json-lint.test.ts:
  4 pass
  0 fail
  4 expect() calls
-Ran 4 tests in 1.44ms
+Ran 4 tests across 1 file. [8.00ms]
 ```
 
-When a terminal doesn't support colors, the output avoids non-ascii characters:
+When a terminal doesn't support colors, the output avoids non-ASCII characters:
 
 ```sh terminal icon="terminal"
 test/package-json-lint.test.ts:
@@ -38,12 +38,12 @@ test/package-json-lint.test.ts:
  4 pass
  0 fail
  4 expect() calls
-Ran 4 tests across 1 files. [0.66ms]
+Ran 4 tests across 1 file. [9.00ms]
 ```
 
 ### Dots Reporter
 
-The dots reporter shows `.` for passing tests and `F` for failures—useful for large test suites.
+The dots reporter shows `.` for passing tests and prints full error details for failures, useful for large test suites.
 
 ```sh terminal icon="terminal"
 bun test --dots
@@ -52,7 +52,7 @@ bun test --reporter=dots
 
 ### JUnit XML Reporter
 
-For CI/CD environments, Bun supports generating JUnit XML reports. JUnit XML is a widely-adopted format for test results that can be parsed by many CI/CD systems, including GitLab, Jenkins, and others.
+For CI/CD environments, Bun can generate JUnit XML reports. JUnit XML is a widely-adopted test result format that many CI/CD systems can parse, including GitLab and Jenkins.
 
 #### Using the JUnit Reporter
 
@@ -62,22 +62,70 @@ To generate a JUnit XML report, use the `--reporter=junit` flag along with `--re
 bun test --reporter=junit --reporter-outfile=./junit.xml
 ```
 
-This continues to output to the console as usual while also writing the JUnit XML report to the specified path at the end of the test run.
+Console output is unchanged; Bun writes the JUnit XML report to the specified path at the end of the test run, and creates the folder if it doesn't exist.
+
+The report omits characters that XML 1.0 doesn't allow, such as most control characters and U+FFFE.
+
+Every test file that ran has a `<testsuite>`, even if it has no tests. Its `timestamp` is the time the file started, in the format of `Date.prototype.toISOString()`.
+
+An uncaught exception or unhandled rejection while a test is running fails that test, and its `<failure>`, `<flakyFailure>` or `<rerunFailure>` has `uncaught="true"`. Examples are an error thrown by a timer and a rejected promise that the test didn't await. The attribute is absent when the test function itself throws, returns a promise that rejects, or calls `done(error)`.
+
+An error outside of any test is reported as a failed `<testcase>` named `(unhandled error)` in that file's `<testsuite>`. Examples are a test file or a preload script that throws while it loads, has a syntax error, or imports a module that doesn't exist.
+
+With `--parallel`, a file whose worker crashed has a failed `<testcase>` named `(worker crashed)`. The files that the crash kept from finishing or from starting have one named `(aborted)`. After `SIGINT` or `SIGTERM`, a file that was running has one named `(interrupted)`, and a file that hadn't started has one named `(aborted)`.
 
 #### Configuring via bunfig.toml
 
-You can also configure the JUnit reporter in your `bunfig.toml` file:
+You can also configure the JUnit reporter in `bunfig.toml`:
 
 ```toml title="bunfig.toml" icon="settings"
 [test.reporter]
 junit = "path/to/junit.xml"  # Output path for JUnit XML report
 ```
 
+#### Describe Blocks in JUnit Reports
+
+By default, each `describe` block becomes a `<testsuite>` nested inside its file's `<testsuite>`. Some tools only read the `<testcase>` elements directly inside a file's `<testsuite>`. For those tools, use `--reporter-junit-suites=flat`:
+
+```sh terminal icon="terminal"
+bun test --reporter=junit --reporter-outfile=./junit.xml --reporter-junit-suites=flat
+```
+
+```toml title="bunfig.toml" icon="settings"
+[test.reporter]
+junit = "path/to/junit.xml"
+junitSuites = "flat"  # "nested" (default) or "flat"
+```
+
+The report then has one `<testsuite>` per file. Each test's name is prefixed with its `describe` block names, and `classname` is the file:
+
+```xml junit.xml icon="file-code"
+<testsuite name="math.test.ts" file="math.test.ts" tests="1" ...>
+  <testcase name="add &gt; negative numbers &gt; returns the sum" classname="math.test.ts" file="math.test.ts" line="5" ... />
+</testsuite>
+```
+
+#### Retried tests
+
+A test with [`retry`](/test/writing-tests#retries-and-repeats) is one `<testcase>`, with its final result. The attempts before the last one are in the elements that Maven Surefire uses, which CI tools read to find flaky tests:
+
+```xml junit.xml icon="file-code"
+<testcase name="passes on the third attempt" ...>
+  <flakyFailure type="Error" message="attempt 1">...</flakyFailure>
+  <flakyFailure type="Error" message="attempt 2">...</flakyFailure>
+</testcase>
+<testcase name="never passes" ...>
+  <failure type="Error" message="attempt 3">...</failure>
+  <rerunFailure type="Error" message="attempt 1">...</rerunFailure>
+  <rerunFailure type="Error" message="attempt 2">...</rerunFailure>
+</testcase>
+```
+
 #### Environment Variables in JUnit Reports
 
-The JUnit reporter automatically includes environment information as `<properties>` in the XML output. This can be helpful for tracking test runs in CI environments.
+The JUnit reporter includes environment information as `<properties>` in the XML output, so you can tell which environment and commit a test run was for.
 
-Specifically, it includes the following environment variables when available:
+It includes the following environment variables when available:
 
 | Environment Variable                                                    | Property Name | Description            |
 | ----------------------------------------------------------------------- | ------------- | ---------------------- |
@@ -85,39 +133,35 @@ Specifically, it includes the following environment variables when available:
 | `GITHUB_SHA`, `CI_COMMIT_SHA`, `GIT_SHA`                                | `commit`      | Git commit identifiers |
 | System hostname                                                         | `hostname`    | Machine hostname       |
 
-This makes it easier to track which environment and commit a particular test run was for.
-
 #### Current Limitations
 
-The JUnit reporter currently has a few limitations that will be addressed in future updates:
+The JUnit reporter does not include:
 
-- `stdout` and `stderr` output from individual tests are not included in the report
-- Precise timestamp fields per test case are not included
+- `stdout` and `stderr` output from individual tests
+- Precise timestamp fields per test case
 
 ### GitHub Actions reporter
 
-Bun test automatically detects when it's running inside GitHub Actions and emits GitHub Actions annotations to the console directly. No special configuration is needed beyond installing Bun and running `bun test`.
+`bun test` detects when it's running inside GitHub Actions and emits GitHub Actions annotations to the console directly. No configuration is needed beyond installing Bun and running `bun test`.
 
-For a GitHub Actions workflow configuration example, see the [CI/CD integration](/pm/cli/install#ci%2Fcd) section of the CLI documentation.
+For an example GitHub Actions workflow, see [CI/CD integration](/pm/cli/install#ci%2Fcd).
 
 ---
 
 ## Custom Reporters
 
-Bun allows developers to implement custom test reporters by extending the WebKit Inspector Protocol with additional testing-specific domains.
+You can implement custom test reporters with Bun's testing-specific extensions to the WebKit Inspector Protocol, which report detailed information about test execution in real time.
 
 ### Inspector Protocol for Testing
 
-To support test reporting, Bun extends the standard WebKit Inspector Protocol with two custom domains:
+Bun extends the standard WebKit Inspector Protocol with two custom domains:
 
 1. **TestReporter**: Reports test discovery, execution start, and completion events
 2. **LifecycleReporter**: Reports errors and exceptions during test execution
 
-These extensions allow you to build custom reporting tools that can receive detailed information about test execution in real-time.
-
 ### Key Events
 
-Custom reporters can listen for these key events:
+Custom reporters can listen for these events:
 
 - `TestReporter.found`: Emitted when a test is discovered
 - `TestReporter.start`: Emitted when a test starts running

@@ -1,10 +1,13 @@
 import { randomUUIDv7, SQL } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { Database } from "bun:sqlite";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import path from "path";
+
+const largeRowCount = isDebug ? 100 : 1000;
 
 describe("Connection & Initialization", () => {
   describe("common default connection strings", () => {
@@ -30,7 +33,7 @@ describe("Connection & Initialization", () => {
   });
 
   test("should connect to file-based SQLite database", async () => {
-    const dir = tempDirWithFiles("sqlite-db-test", {});
+    await using dir = tempDir("sqlite-db-test", {});
     const dbPath = path.join(dir, "test.db");
 
     const sql = new SQL(`sqlite://${dbPath}`);
@@ -82,8 +85,31 @@ describe("Connection & Initialization", () => {
     expect(oncloseArg instanceof Error).toBe(true);
   });
 
+  test("what onconnect and onclose throw is reported, as on the other adapters", async () => {
+    const script = `
+      const reported = [];
+      process.on("uncaughtException", error => void reported.push(error.message));
+      const sql = new Bun.SQL({
+        adapter: "sqlite",
+        filename: ":memory:",
+        onconnect() { throw new Error("from onconnect"); },
+        onclose() { throw new Error("from onclose"); },
+      });
+      const rows = await sql\`select 1 as x\`;
+      await sql.close();
+      console.log(JSON.stringify({ rows, reported }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ rows: [{ x: 1 }], reported: ["from onconnect", "from onclose"] }) + "\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
   test("onconnect receives Error when open fails (readonly non-existent)", async () => {
-    const dir = tempDirWithFiles("sqlite-onconnect-error", {});
+    await using dir = tempDir("sqlite-onconnect-error", {});
     const dbPath = join(dir, "missing.db");
 
     const onconnect = mock((err?: any) => {});
@@ -109,8 +135,34 @@ describe("Connection & Initialization", () => {
     await rm(dir, { recursive: true });
   });
 
+  test("a mistake in the open options throws from new SQL(); a file that cannot be opened rejects the queries", async () => {
+    using dir = tempDir("sqlite-open-mistakes", {});
+    const filename = join(String(dir), "missing.db");
+    const onconnect = mock();
+
+    expect(() => new SQL({ adapter: "sqlite", filename, onconnect, readOnly: true } as never)).toThrow(TypeError);
+    expect(onconnect).not.toHaveBeenCalled();
+
+    // read-only wins over `create` and `readwrite`
+    for (const options of [
+      { readonly: true },
+      { readonly: true, create: true },
+      { readonly: true, readwrite: true },
+      { readwrite: false, create: true },
+    ]) {
+      onconnect.mockClear();
+      await using sql = new SQL({ adapter: "sqlite", filename, onconnect, ...options });
+      const cannotOpen = { name: "SQLiteError", code: "SQLITE_CANTOPEN" };
+      expect(onconnect.mock.calls).toEqual([[expect.objectContaining(cannotOpen)]]);
+      const error = await sql`select 1`.catch(e => e);
+      expect(error).toBeInstanceOf(SQL.SQLiteError);
+      expect(error).toMatchObject(cannotOpen);
+    }
+    expect(existsSync(filename)).toBe(false);
+  });
+
   test("should create database file if it doesn't exist", async () => {
-    const dir = tempDirWithFiles("sqlite-create-test", {});
+    await using dir = tempDir("sqlite-create-test", {});
     const dbPath = path.join(dir, "new.db");
 
     const sql = new SQL(`sqlite://${dbPath}`);
@@ -124,7 +176,7 @@ describe("Connection & Initialization", () => {
   });
 
   test("should work with relative paths", async () => {
-    const dir = tempDirWithFiles("sqlite-test", {});
+    await using dir = tempDir("sqlite-test", {});
     const sql = new SQL({
       adapter: "sqlite",
       filename: path.join(dir, "test.db"),
@@ -158,7 +210,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should use DATABASE_URL for SQLite when it's a SQLite URL", async () => {
-      const dir = tempDirWithFiles("sqlite-env-test", {});
+      await using dir = tempDir("sqlite-env-test", {});
       const dbPath = path.join(dir, "env-test.db");
 
       Bun.env.DATABASE_URL = `sqlite://${dbPath}`;
@@ -191,7 +243,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle SQLITE_URL env var when specified", async () => {
-      const dir = tempDirWithFiles("sqlite-url-test", {});
+      await using dir = tempDir("sqlite-url-test", {});
       const dbPath = path.join(dir, "sqlite-url.db");
 
       // This doesn't exist in the current implementation but testing anyway
@@ -233,7 +285,7 @@ describe("Connection & Initialization", () => {
       const sql = new SQL("http://wrong-host/db", {
         adapter: "postgres",
         url: "postgres://correct-host:5432/mydb",
-      });
+      } as SQL.Options);
 
       expect(sql.options.adapter).toBe("postgres");
       expect(sql.options.hostname).toBe("correct-host");
@@ -247,7 +299,7 @@ describe("Connection & Initialization", () => {
       const sql = new SQL("http://wrong-host/wrongdb", {
         adapter: "mysql",
         url: "mysql://user:pass@mysql-host:3306/correctdb",
-      });
+      } as SQL.Options);
 
       expect(sql.options.adapter).toBe("mysql");
       expect(sql.options.hostname).toBe("mysql-host");
@@ -261,7 +313,7 @@ describe("Connection & Initialization", () => {
       const sql = new SQL("http://wrong-host:1234/wrongdb", {
         adapter: "mariadb",
         url: "mariadb://maria-host:3307/mariadb",
-      });
+      } as SQL.Options);
 
       expect(sql.options.adapter).toBe("mariadb");
       expect(sql.options.hostname).toBe("maria-host");
@@ -287,7 +339,7 @@ describe("Connection & Initialization", () => {
 
   describe("file:// Protocol URLs", () => {
     test("should handle file:// URLs", async () => {
-      const dir = tempDirWithFiles("file-protocol-test", {});
+      await using dir = tempDir("file-protocol-test", {});
       const dbPath = path.join(dir, "file-test.db");
 
       const sql = new SQL(`file://${dbPath}`);
@@ -303,7 +355,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle file: URLs without slashes", async () => {
-      const dir = tempDirWithFiles("file-no-slash-test", {});
+      await using dir = tempDir("file-no-slash-test", {});
       const dbPath = path.join(dir, "file-noslash.db");
 
       const sql = new SQL(`file:${dbPath}`);
@@ -328,7 +380,7 @@ describe("Connection & Initialization", () => {
 
   describe("Query Parameters in SQLite URLs", () => {
     test("should handle mode=ro (readonly)", async () => {
-      const dir = tempDirWithFiles("readonly-test", {});
+      await using dir = tempDir("readonly-test", {});
       const dbPath = path.join(dir, "readonly.db");
 
       // First create a database
@@ -355,7 +407,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle mode=rw (read-write)", async () => {
-      const dir = tempDirWithFiles("readwrite-test", {});
+      await using dir = tempDir("readwrite-test", {});
       const dbPath = path.join(dir, "readwrite.db");
 
       // Create database first
@@ -366,6 +418,7 @@ describe("Connection & Initialization", () => {
       const sql = new SQL(`sqlite://${dbPath}?mode=rw`);
       expect(sql.options.adapter).toBe("sqlite");
       expect(sql.options.readonly).toBe(false);
+      expect(sql.options.create).toBe(false);
 
       await sql`INSERT INTO test VALUES (1)`;
       const result = await sql`SELECT * FROM test`;
@@ -376,7 +429,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle mode=rwc (read-write-create)", async () => {
-      const dir = tempDirWithFiles("rwc-test", {});
+      await using dir = tempDir("rwc-test", {});
       const dbPath = path.join(dir, "rwc.db");
 
       const sql = new SQL(`sqlite://${dbPath}?mode=rwc`);
@@ -394,7 +447,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle multiple query parameters", async () => {
-      const dir = tempDirWithFiles("multi-param-test", {});
+      await using dir = tempDir("multi-param-test", {});
       const dbPath = path.join(dir, "multi.db");
 
       // Note: Only mode is supported for SQLite, other params should be ignored
@@ -408,7 +461,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should ignore fragment in URL", async () => {
-      const dir = tempDirWithFiles("fragment-test", {});
+      await using dir = tempDir("fragment-test", {});
       const dbPath = path.join(dir, "test#file.db");
 
       // # is a valid filename character in SQLite
@@ -427,7 +480,7 @@ describe("Connection & Initialization", () => {
 
   describe("Special Characters in Filenames", () => {
     test("should handle spaces in filename", async () => {
-      const dir = tempDirWithFiles("space-test", {});
+      await using dir = tempDir("space-test", {});
       const dbPath = path.join(dir, "test database.db");
 
       const sql = new SQL(`sqlite://${dbPath}`);
@@ -443,7 +496,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle special characters # and % in filename", async () => {
-      const dir = tempDirWithFiles("special-chars-test", {});
+      await using dir = tempDir("special-chars-test", {});
       const dbPath = path.join(dir, "test#123%data.db");
 
       const sql = new SQL(`sqlite://${dbPath}`);
@@ -459,7 +512,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle unicode characters in filename", async () => {
-      const dir = tempDirWithFiles("unicode-test", {});
+      await using dir = tempDir("unicode-test", {});
       const dbPath = path.join(dir, "测试数据库.db");
 
       const sql = new SQL(`sqlite://${dbPath}`);
@@ -475,7 +528,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle dots in filename", async () => {
-      const dir = tempDirWithFiles("dots-test", {});
+      await using dir = tempDir("dots-test", {});
       const dbPath = path.join(dir, "my.app.v2.0.db");
 
       const sql = new SQL(`sqlite://${dbPath}`);
@@ -493,7 +546,7 @@ describe("Connection & Initialization", () => {
 
   describe("Path Handling", () => {
     test("should handle absolute paths", async () => {
-      const dir = tempDirWithFiles("absolute-test", {});
+      await using dir = tempDir("absolute-test", {});
       const dbPath = path.resolve(dir, "absolute.db");
 
       const sql = new SQL(`sqlite://${dbPath}`);
@@ -509,11 +562,11 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle relative paths with ./", async () => {
-      const dir = tempDirWithFiles("relative-dot-test", {});
+      await using dir = tempDir("relative-dot-test", {});
       const originalCwd = process.cwd();
 
       try {
-        process.chdir(dir);
+        process.chdir(String(dir));
 
         const sql = new SQL("sqlite://./test.db");
         expect(sql.options.adapter).toBe("sqlite");
@@ -531,7 +584,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle paths with ../", async () => {
-      const parentDir = tempDirWithFiles("parent-test", {});
+      await using parentDir = tempDir("parent-test", {});
       const childDir = path.join(parentDir, "child");
       await Bun.$`mkdir -p ${childDir}`;
       const originalCwd = process.cwd();
@@ -555,7 +608,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle nested paths", async () => {
-      const dir = tempDirWithFiles("nested-test", {});
+      await using dir = tempDir("nested-test", {});
       const nestedPath = path.join(dir, "data", "databases", "app.db");
       await Bun.$`mkdir -p ${path.dirname(nestedPath)}`;
 
@@ -623,7 +676,7 @@ describe("Connection & Initialization", () => {
 
   describe("Mixed Configurations", () => {
     test("should prefer explicit URL over env var", async () => {
-      const dir = tempDirWithFiles("explicit-test", {});
+      await using dir = tempDir("explicit-test", {});
       const envPath = path.join(dir, "env.db");
       const explicitPath = path.join(dir, "explicit.db");
 
@@ -643,7 +696,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should prefer options object over URL", async () => {
-      const dir = tempDirWithFiles("options-override-test", {});
+      await using dir = tempDir("options-override-test", {});
       const urlPath = path.join(dir, "url.db");
       const optionsPath = path.join(dir, "options.db");
 
@@ -664,7 +717,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle URL in options object", async () => {
-      const dir = tempDirWithFiles("url-in-options-test", {});
+      await using dir = tempDir("url-in-options-test", {});
       const dbPath = path.join(dir, "url-options.db");
 
       const sql = new SQL({
@@ -699,7 +752,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("SQLite readonly mode creates connection but fails on missing file access", async () => {
-      const dir = tempDirWithFiles("ro-nonexist-test", {});
+      await using dir = tempDir("ro-nonexist-test", {});
       const dbPath = path.join(dir, "nonexistent.db");
 
       const sql = new SQL(`sqlite://${dbPath}?mode=ro`);
@@ -914,7 +967,335 @@ describe("Query Execution", () => {
     expect(result2).toHaveLength(1);
     expect(result2[0].id).toBe(2);
   });
+
+  describe("the statements after one that returns rows run too", () => {
+    const open = async () => {
+      const sql = new SQL("sqlite://:memory:");
+      await sql`CREATE TABLE tail (id INTEGER PRIMARY KEY)`;
+      return sql;
+    };
+    const ids = async (sql: SQL) => (await sql`SELECT id FROM tail ORDER BY id`.values()).flat();
+
+    test("SELECT, then INSERT", async () => {
+      await using sql = await open();
+      const result = await sql.unsafe("SELECT 1 AS one; INSERT INTO tail VALUES (7)");
+      expect(result).toEqual([{ one: 1 }]);
+      expect({ command: result.command, count: result.count }).toEqual({ command: "SELECT", count: 1 });
+      expect(await ids(sql)).toEqual([7]);
+    });
+
+    test("PRAGMA, then CREATE TABLE, through sql.file()", async () => {
+      using dir = tempDir("sqlite-sql-tail", {
+        "migrate.sql":
+          "PRAGMA journal_mode = WAL;\nCREATE TABLE migrated (id INTEGER);\nINSERT INTO migrated VALUES (1);\n",
+      });
+      await using sql = new SQL({ adapter: "sqlite", filename: join(String(dir), "migrated.sqlite") });
+      expect(await sql.file(join(String(dir), "migrate.sql"))).toEqual([{ journal_mode: "wal" }]);
+      expect(await sql`SELECT id FROM migrated`).toEqual([{ id: 1 }]);
+    });
+
+    test("three statements, of which the second returns rows as well", async () => {
+      await using sql = await open();
+      expect(await sql.unsafe("SELECT 1 AS a; SELECT 2 AS b; INSERT INTO tail VALUES (3)")).toEqual([{ a: 1 }]);
+      expect(await ids(sql)).toEqual([3]);
+    });
+
+    test("one that fails rejects the query, and what ran before it stays", async () => {
+      await using sql = await open();
+      const error = await sql
+        .unsafe(
+          "INSERT INTO tail VALUES (1) RETURNING id; INSERT INTO tail VALUES (2); INSERT INTO tail VALUES (1); INSERT INTO tail VALUES (4)",
+        )
+        .catch(e => e);
+      expect(error).toBeInstanceOf(SQL.SQLiteError);
+      expect(error.code).toBe("SQLITE_CONSTRAINT_PRIMARYKEY");
+      expect(await ids(sql)).toEqual([1, 2]);
+    });
+
+    test.each([
+      ["a ';' in a literal", "SELECT 'a; b' AS v; INSERT INTO tail VALUES (1)", "a; b", [1]],
+      ["a ';' in a comment", "SELECT 1 AS v /* ; */; -- ;\n INSERT INTO tail VALUES (1)", 1, [1]],
+      ["a comment at the end", "SELECT 1 AS v; INSERT INTO tail VALUES (1); -- the end", 1, [1]],
+      ["text that is longer in UTF-8 than in UTF-16", "SELECT 'é😀' AS v; INSERT INTO tail VALUES (1)", "é😀", [1]],
+      [
+        "a trigger body",
+        "SELECT 1 AS v; CREATE TRIGGER g AFTER INSERT ON tail WHEN new.id = 1 BEGIN INSERT INTO tail VALUES (2); END; INSERT INTO tail VALUES (1)",
+        1,
+        [1, 2],
+      ],
+      // One statement each: nothing follows that could run or fail.
+      ["only a ';' in a literal", "SELECT 'a; INSERT INTO tail VALUES (1)' AS v", "a; INSERT INTO tail VALUES (1)", []],
+      ["only a line comment", "SELECT 1 AS v; -- INSERT INTO tail VALUES (1)", 1, []],
+      ["only a block comment, semicolons and white space", "SELECT 1 AS v;; /* ; */ ;\n ", 1, []],
+    ])("%s", async (_, text, v, expected) => {
+      await using sql = await open();
+      expect(await sql.unsafe(text)).toEqual([{ v }]);
+      expect(await ids(sql)).toEqual(expected);
+    });
+
+    test("in every result mode, with parameters, and in a tagged template", async () => {
+      await using sql = await open();
+      expect(await sql.unsafe("SELECT 1 AS a; INSERT INTO tail VALUES (1)").values()).toEqual([[1]]);
+      expect(await sql.unsafe("SELECT 'x' AS a; INSERT INTO tail VALUES (2)").raw()).toEqual([[Buffer.from("x")]]);
+      // The first statement gets the parameters, as when it returns no rows.
+      expect(await sql.unsafe("SELECT ? AS a; INSERT INTO tail VALUES (3)", [5])).toEqual([{ a: 5 }]);
+      expect(await sql`SELECT ${6} AS a; INSERT INTO tail VALUES (4)`).toEqual([{ a: 6 }]);
+      expect(await ids(sql)).toEqual([1, 2, 3, 4]);
+    });
+  });
+
+  describe("empty statements in front of the first one", () => {
+    const open = async () => {
+      const sql = new SQL("sqlite://:memory:");
+      await sql`CREATE TABLE semi (a)`;
+      await sql`INSERT INTO semi VALUES (1), (2)`;
+      return sql;
+    };
+    const both = [{ a: 1 }, { a: 2 }];
+
+    test.each([
+      ["; select a from semi", "SELECT", both, [1, 2]],
+      [";select a from semi", "SELECT", both, [1, 2]],
+      [";\nselect a from semi;", "SELECT", both, [1, 2]],
+      ["-- header\n;select a from semi", "SELECT", both, [1, 2]],
+      [" ;; /* ; */ ; -- ;\n ;select a from semi", "SELECT", both, [1, 2]],
+      [";insert into semi values (3) returning a", "INSERT", [{ a: 3 }], [1, 2, 3]],
+      [";pragma user_version", "PRAGMA", [{ user_version: 0 }], [1, 2]],
+      ["; select a from semi where a = 1; delete from semi where a = 2", "SELECT", [{ a: 1 }], [1]],
+      ["; insert into semi values (3); insert into semi values (4)", "INSERT", [], [1, 2, 3, 4]],
+    ])("%j", async (text, command, rows, after) => {
+      await using sql = await open();
+      const result = await sql.unsafe(text);
+      expect({ command: result.command, rows: [...result] }).toEqual({ command, rows });
+      expect((await sql`SELECT a FROM semi`.values()).flat()).toEqual(after);
+    });
+
+    test("explain", async () => {
+      await using sql = await open();
+      const plan = await sql.unsafe(";explain select 1");
+      expect(plan.command).toBe("EXPLAIN");
+      expect(plan[0]).toHaveProperty("opcode");
+    });
+
+    test("in a file and in a tagged template", async () => {
+      using dir = tempDir("sqlite-sql-semi", { "semi.sql": ";\nselect a from semi;\n" });
+      await using sql = await open();
+      expect(await sql.file(join(String(dir), "semi.sql"))).toEqual(both);
+      expect(await sql`; select a from semi where a = ${2}`).toEqual([{ a: 2 }]);
+    });
+  });
+
+  describe("no statement runs with a parameter that got no value, and no value is dropped", () => {
+    const open = async () => {
+      const sql = new SQL("sqlite://:memory:");
+      await sql`CREATE TABLE flags (id INTEGER PRIMARY KEY, flag)`;
+      await sql`INSERT INTO flags VALUES (1, 'kept'), (2, 'kept')`;
+      return sql;
+    };
+    const flags = (sql: SQL) => sql`SELECT * FROM flags ORDER BY id`.values();
+    const untouched = [
+      [1, "kept"],
+      [2, "kept"],
+    ];
+    const messageOf = (query: PromiseLike<unknown>) =>
+      query.then(
+        () => "no error",
+        error => error.message,
+      );
+
+    describe("values for a first statement without parameters", () => {
+      const inEveryMode = async (sql: SQL, text: string) => ({
+        objects: await messageOf(sql.unsafe(text, [1])),
+        values: await messageOf(sql.unsafe(text, [1]).values()),
+        raw: await messageOf(sql.unsafe(text, [1]).raw()),
+      });
+      const thrice = (message: string) => ({ objects: message, values: message, raw: message });
+
+      test("which returns rows are ignored, as bun:sqlite ignores them", async () => {
+        await using sql = await open();
+        const text = "SELECT count(*) AS n FROM flags";
+        expect({
+          objects: await sql.unsafe(text, [1]),
+          values: await sql.unsafe(text, [1, 2]).values(),
+          raw: await sql.unsafe(text, [1]).raw(),
+          nested: await sql`SELECT ${sql.unsafe("count(*) AS n", [1])} FROM flags`,
+        }).toEqual({ objects: [{ n: 2 }], values: [[2]], raw: await sql.unsafe(text).raw(), nested: [{ n: 2 }] });
+      });
+
+      test("which returns rows are ignored, and what follows runs", async () => {
+        await using sql = await open();
+        expect(await sql.unsafe("SELECT count(*) AS n FROM flags; UPDATE flags SET flag = 'written'", [1])).toEqual([
+          { n: 2 },
+        ]);
+        expect(await flags(sql)).toEqual([
+          [1, "written"],
+          [2, "written"],
+        ]);
+      });
+
+      test("which returns rows do not go to a parameter that follows, and NULL does not either", async () => {
+        await using sql = await open();
+        expect(await inEveryMode(sql, "SELECT count(*) AS n FROM flags; UPDATE flags SET flag = ?")).toEqual(
+          thrice("Only the first statement of a SQLite query can have parameters"),
+        );
+        expect(await flags(sql)).toEqual(untouched);
+      });
+
+      test.each(["UPDATE flags SET flag = 'written'", "UPDATE flags SET flag = 'written'; UPDATE flags SET flag = ?"])(
+        "which returns no rows reject before anything runs: %s",
+        async text => {
+          await using sql = await open();
+          expect(await inEveryMode(sql, text)).toEqual(thrice("SQLite query expected 0 values, received 1"));
+          expect(await flags(sql)).toEqual(untouched);
+        },
+      );
+    });
+
+    describe.each(["?", "?1", ":a", "$a", "@a"])("%s after the first statement", parameter => {
+      const refused = "Only the first statement of a SQLite query can have parameters";
+      // The second statement ran, the third is refused, the fourth does not run.
+      const tail = `UPDATE flags SET flag = 'ran' WHERE id = 1; UPDATE flags SET flag = ${parameter}; DELETE FROM flags`;
+      const stopped = [
+        [1, "ran"],
+        [2, "kept"],
+      ];
+
+      test("which returns rows", async () => {
+        await using sql = await open();
+        expect(await messageOf(sql.unsafe(`SELECT 1 AS a; ${tail}`))).toBe(refused);
+        expect(await flags(sql)).toEqual(stopped);
+      });
+
+      test("which returns rows and takes the values", async () => {
+        await using sql = await open();
+        expect(await messageOf(sql.unsafe(`SELECT ? AS a; ${tail}`, [1]))).toBe(refused);
+        expect(await flags(sql)).toEqual(stopped);
+      });
+
+      test("which returns no rows", async () => {
+        await using sql = await open();
+        expect(await messageOf(sql.unsafe(`INSERT INTO flags VALUES (3, 'new'); ${tail}`))).toBe(refused);
+        expect(await flags(sql)).toEqual([...stopped, [3, "new"]]);
+      });
+
+      test("which returns no rows and takes the values", async () => {
+        await using sql = await open();
+        expect(await messageOf(sql.unsafe(`INSERT INTO flags VALUES (?, 'new'); ${tail}`, [3]))).toBe(refused);
+        expect(await flags(sql)).toEqual([...stopped, [3, "new"]]);
+      });
+    });
+
+    test("behind an empty statement", async () => {
+      await using sql = await open();
+      for (const values of [undefined, [1]]) {
+        expect(await messageOf(sql.unsafe("; SELECT 1 AS a; UPDATE flags SET flag = ?", values))).toBe(
+          "Only the first statement of a SQLite query can have parameters",
+        );
+      }
+      expect(await flags(sql)).toEqual(untouched);
+    });
+
+    test("an object of named values is the first statement's too", async () => {
+      await using sql = await open();
+      expect(
+        await messageOf(sql.unsafe("INSERT INTO flags VALUES (3, :a); UPDATE flags SET flag = :a", { ":a": "named" })),
+      ).toBe("Only the first statement of a SQLite query can have parameters");
+      expect(await flags(sql)).toEqual([...untouched, [3, "named"]]);
+    });
+
+    test("values for every parameter of the text are too many for the first statement", async () => {
+      await using sql = await open();
+      const expected = "SQLite query expected 1 values, received 2";
+      expect(await messageOf(sql.unsafe("SELECT ? AS a; UPDATE flags SET flag = ?", [1, 2]))).toBe(expected);
+      expect(await messageOf(sql`SELECT ${1} AS a; UPDATE flags SET flag = ${2}`)).toBe(expected);
+      expect(await messageOf(sql`INSERT INTO flags VALUES (${3}, 'new'); UPDATE flags SET flag = ${2}`)).toBe(expected);
+      expect(await flags(sql)).toEqual(untouched);
+    });
+
+    test("values for the first statement, and statements without parameters after it", async () => {
+      await using sql = await open();
+      const result = await sql.unsafe(
+        "INSERT INTO flags VALUES (?, 'a'); INSERT INTO flags VALUES (4, 'b'), (5, 'c')",
+        [3],
+      );
+      expect({ rows: [...result], count: result.count, lastInsertRowid: result.lastInsertRowid }).toEqual({
+        rows: [],
+        count: 3,
+        lastInsertRowid: 5,
+      });
+      expect(await flags(sql)).toEqual([...untouched, [3, "a"], [4, "b"], [5, "c"]]);
+    });
+  });
+
+  // SQLite copies text that does not end in a NUL once per statement. The same text with a NUL is the control.
+  // On Linux without ASAN malloc is mimalloc, so heapStats() sees what SQLite allocates.
+  test.skipIf(!isLinux || isASAN || isDebug)(
+    "unsafe() and file() of 800 statements allocate nothing per statement in SQLite",
+    async () => {
+      const statement = "insert into t values (0);";
+      const text = "begin;" + Buffer.alloc(800 * statement.length, statement).toString() + "rollback;";
+      using dir = tempDir("sqlite-many-statements", {
+        "plain.sql": text,
+        "nul.sql": text + "\0",
+        "mallocs.fixture.mjs": `
+          import { SQL } from "bun";
+          import { heapStats } from "bun:jsc";
+          import { readFileSync } from "node:fs";
+          const count = () => heapStats().mimalloc.malloc_normal_count;
+          const sql = new SQL({ adapter: "sqlite", filename: ":memory:" });
+          await sql.unsafe("create table t (v)");
+          // The fewest of 5 runs: heapStats() and the other threads only add to a count.
+          const during = async fn => {
+            let fewest = Infinity;
+            for (let i = 0; i < 5; i++) {
+              const before = count();
+              await fn();
+              fewest = Math.min(fewest, count() - before);
+            }
+            return fewest;
+          };
+          const plain = readFileSync("plain.sql", "utf8");
+          const nul = readFileSync("nul.sql", "utf8");
+          console.log(JSON.stringify({
+            unsafe: [await during(() => sql.unsafe(plain)), await during(() => sql.unsafe(nul))],
+            file: [await during(() => sql.file("plain.sql")), await during(() => sql.file("nul.sql"))],
+          }));
+          await sql.close();
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "mallocs.fixture.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+      const result: Record<string, unknown> = {};
+      for (const [api, [plain, withNul]] of Object.entries(JSON.parse(stdout) as Record<string, [number, number]>)) {
+        result[api] = { counted: withNul > 0, more: plain - withNul < 300 ? "under 300" : plain - withNul };
+      }
+      expect(result).toEqual({
+        unsafe: { counted: true, more: "under 300" },
+        file: { counted: true, more: "under 300" },
+      });
+    },
+  );
 });
+
+// Bun's bundled SQLite allows 250000 parameters. A system libsqlite3 (macOS) can stop at 32766.
+const sqliteAllowsMoreThan65535Parameters = (() => {
+  using db = new Database(":memory:");
+  try {
+    db.prepare("SELECT ?65538").finalize();
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 describe("Parameterized Queries", () => {
   let sql: SQL;
@@ -948,6 +1329,21 @@ describe("Parameterized Queries", () => {
 
     const result = await sql.unsafe(`SELECT * FROM ${tableName}`);
     expect(Object.values(result[0])).toEqual(values);
+  });
+
+  test.skipIf(!sqliteAllowsMoreThan65535Parameters)("binds more than 65535 values in one statement", async () => {
+    await sql`CREATE TABLE many_values (a TEXT)`;
+
+    // ?65538 gives the statement 65538 parameters without the long SQL text of a
+    // bulk insert. A 16-bit parameter count wraps that to 2:
+    // "SQLite query expected 2 values, received 65538".
+    const count = 65538;
+    const values: (string | null)[] = Array(count).fill(null);
+    values[count - 1] = "last";
+
+    await sql.unsafe(`INSERT INTO many_values (a) VALUES (?${count})`, values);
+    expect(await sql`SELECT a FROM many_values`).toEqual([{ a: "last" }]);
+    expect(await sql.unsafe(`SELECT ?${count} AS v`, values)).toEqual([{ v: "last" }]);
   });
 
   test("escapes special characters in parameters", async () => {
@@ -1051,8 +1447,91 @@ describe("Template Literal Security", () => {
     const sql = new SQL("sqlite://:memory:");
     expect(
       async () => await sql`SELECT 'this has where in inside a string' ${sql([1, 2])}`.execute(),
-    ).toThrowErrorMatchingInlineSnapshot(`"Helpers are only allowed for INSERT, UPDATE and WHERE IN commands"`);
+    ).toThrowErrorMatchingInlineSnapshot(`"Helpers are only allowed for INSERT, UPDATE and IN commands"`);
     await sql.close();
+  });
+
+  describe("an object or array interpolated as a value cannot stand in for the parameter list", () => {
+    const bindError = "Binding expected string, TypedArray, boolean, number, bigint or null";
+    const rejectsBinding = (query: Promise<unknown>) => expect(async () => await query).toThrow(bindError);
+    // e.g. a parsed request body: taken as the binding set it binds ?1 = 2 and ?2 = "bob"
+    const attackerId = JSON.parse('{"0": 2, "1": "bob"}');
+    const serverTenant = "alice";
+    let sql: SQL;
+
+    beforeAll(async () => {
+      sql = new SQL("sqlite://:memory:");
+      await sql`CREATE TABLE docs (id INTEGER, tenant TEXT, body TEXT)`;
+      await sql`INSERT INTO docs VALUES (1, 'alice', 'A-secret'), (2, 'bob', 'B-secret')`;
+    });
+
+    afterAll(async () => {
+      await sql?.close();
+    });
+
+    test("SELECT: indexed-key object in the first slot throws instead of rebinding every parameter", async () => {
+      await rejectsBinding(sql`SELECT * FROM docs WHERE id = ${attackerId} AND tenant = ${serverTenant}`);
+    });
+
+    test("SELECT: array in the first slot throws instead of becoming the parameter list", async () => {
+      await rejectsBinding(sql`SELECT * FROM docs WHERE id = ${[2, "bob"]} AND tenant = ${serverTenant}`);
+    });
+
+    test("SELECT: plain object or Date in the first slot throws instead of binding NULL", async () => {
+      await rejectsBinding(sql`SELECT ${{ a: 1 }} AS a, ${{ b: 2 }} AS b`);
+      await rejectsBinding(sql`SELECT ${new Date(0)} AS a`);
+    });
+
+    test(".values() and .raw() result modes bind the same way", async () => {
+      await rejectsBinding(sql`SELECT * FROM docs WHERE id = ${attackerId} AND tenant = ${serverTenant}`.values());
+      await rejectsBinding(sql`SELECT * FROM docs WHERE id = ${attackerId} AND tenant = ${serverTenant}`.raw());
+    });
+
+    test("INSERT: object or array in the first slot throws and writes nothing", async () => {
+      await rejectsBinding(
+        sql`INSERT INTO docs VALUES (${{ 0: 99, 1: "eve", 2: "PWNED" }}, ${serverTenant}, ${"legit"})`,
+      );
+      await rejectsBinding(sql`INSERT INTO docs VALUES (${[99, "eve", "PWNED"]}, ${serverTenant}, ${"legit"})`);
+      expect(await sql`SELECT * FROM docs WHERE id = 99 OR tenant = 'eve'`).toEqual([]);
+    });
+
+    test("INSERT: plain object as the only value throws instead of storing NULL", async () => {
+      await sql`CREATE TABLE object_value (v)`;
+      await rejectsBinding(sql`INSERT INTO object_value VALUES (${{ x: 1 }})`);
+      expect(await sql`SELECT count(*) AS n FROM object_value`).toEqual([{ n: 0 }]);
+    });
+
+    test("unsafe(): object as the first element of the parameter array throws", async () => {
+      await rejectsBinding(sql.unsafe("SELECT * FROM docs WHERE id = ? AND tenant = ?", [attackerId, serverTenant]));
+      await rejectsBinding(sql.unsafe("SELECT ? AS a", [{ x: 1 }]));
+    });
+
+    test("sql() insert helper: object as the first column's value throws instead of filling the row from it", async () => {
+      await sql`CREATE TABLE helper_first_column (a TEXT, b TEXT)`;
+      await rejectsBinding(
+        sql`INSERT INTO helper_first_column ${sql({ a: { 0: "x", 1: "y" } as any, b: serverTenant })}`,
+      );
+      expect(await sql`SELECT * FROM helper_first_column`).toEqual([]);
+    });
+
+    test("positional values, helpers and unsafe() arrays still bind in order", async () => {
+      expect(await sql`SELECT * FROM docs WHERE id = ${1} AND tenant = ${serverTenant}`).toEqual([
+        { id: 1, tenant: "alice", body: "A-secret" },
+      ]);
+      expect(await sql`SELECT id FROM docs WHERE id IN ${sql([1, 2])} ORDER BY id`).toEqual([{ id: 1 }, { id: 2 }]);
+      expect(await sql`SELECT typeof(${new Uint8Array([1, 2])}) AS blob, ${null} AS n, ${3n} AS big`).toEqual([
+        { blob: "blob", n: null, big: 3 },
+      ]);
+      expect(await sql.unsafe("SELECT ? AS a, ? AS b", [1, "two"])).toEqual([{ a: 1, b: "two" }]);
+
+      const inserted = await sql`INSERT INTO docs VALUES (${3}, ${"carol"}, ${"C"})`;
+      expect(inserted.count).toBe(1);
+      await sql`INSERT INTO docs ${sql({ id: 4, tenant: "dave", body: "D" })}`;
+      expect(await sql`SELECT id, tenant FROM docs WHERE id IN ${sql([3, 4])} ORDER BY id`).toEqual([
+        { id: 3, tenant: "carol" },
+        { id: 4, tenant: "dave" },
+      ]);
+    });
   });
 });
 describe("Transactions", () => {
@@ -1249,7 +1728,7 @@ describe("SQLite-specific features", () => {
   });
 
   test("ATTACH DATABASE", async () => {
-    const dir = tempDirWithFiles("sqlite-attach-test", {});
+    await using dir = tempDir("sqlite-attach-test", {});
     const attachPath = path.join(dir, "attached.db");
 
     await sql`ATTACH DATABASE ${attachPath} AS attached`;
@@ -1356,6 +1835,120 @@ describe("SQL helpers", () => {
     expect(results[0].value).toBe("test");
   });
 
+  test("unsafe with named parameters (strict mode)", async () => {
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE named_test (id INTEGER, name TEXT, age INTEGER)`;
+
+    const insert = await strictSql.unsafe("INSERT INTO named_test VALUES (:id, :name, :age)", {
+      id: 1,
+      name: "Alice",
+      age: 30,
+    });
+    expect(insert.count).toBe(1);
+
+    const results = await strictSql.unsafe("SELECT * FROM named_test WHERE name = :name", { name: "Alice" });
+    expect(results).toEqual([{ id: 1, name: "Alice", age: 30 }]);
+  });
+
+  test("unsafe with named parameters using different prefixes", async () => {
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE prefix_test (col TEXT)`;
+
+    await strictSql.unsafe("INSERT INTO prefix_test VALUES (:value)", { value: "colon" });
+    await strictSql.unsafe("INSERT INTO prefix_test VALUES ($value)", { value: "dollar" });
+    await strictSql.unsafe("INSERT INTO prefix_test VALUES (@value)", { value: "at" });
+
+    const results = await strictSql.unsafe("SELECT * FROM prefix_test WHERE col = :wanted", { wanted: "dollar" });
+    expect(results).toEqual([{ col: "dollar" }]);
+
+    const all = await strictSql.unsafe("SELECT * FROM prefix_test");
+    expect(all.map(r => r.col).sort()).toEqual(["at", "colon", "dollar"]);
+  });
+
+  test("unsafe with named parameters without strict mode (requires prefix in keys)", async () => {
+    await using defaultSql = new SQL({ adapter: "sqlite", filename: ":memory:" });
+    await defaultSql`CREATE TABLE default_named_test (id INTEGER, name TEXT)`;
+
+    await defaultSql.unsafe("INSERT INTO default_named_test VALUES (:id, :name)", { ":id": 1, ":name": "Bob" });
+    await defaultSql.unsafe("INSERT INTO default_named_test VALUES ($id, $name)", { $id: 2, $name: "Dan" });
+    await defaultSql.unsafe("INSERT INTO default_named_test VALUES (@id, @name)", { "@id": 3, "@name": "Eve" });
+
+    const byColon = await defaultSql.unsafe("SELECT * FROM default_named_test WHERE id = :id_param", {
+      ":id_param": 1,
+    });
+    expect(byColon).toEqual([{ id: 1, name: "Bob" }]);
+
+    const byDollar = await defaultSql.unsafe("SELECT name FROM default_named_test WHERE id = $wanted", {
+      $wanted: 2,
+    });
+    expect(byDollar).toEqual([{ name: "Dan" }]);
+
+    const byAt = await defaultSql.unsafe("SELECT name FROM default_named_test WHERE id = @wanted", {
+      "@wanted": 3,
+    });
+    expect(byAt).toEqual([{ name: "Eve" }]);
+  });
+
+  test("unsafe with named parameters supports values() and raw() modes", async () => {
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE named_modes_test (id INTEGER, name TEXT)`;
+    await strictSql.unsafe("INSERT INTO named_modes_test VALUES (:id, :name)", { id: 7, name: "Carol" });
+
+    const values = await strictSql.unsafe("SELECT id, name FROM named_modes_test WHERE id = :id", { id: 7 }).values();
+    expect(values).toEqual([[7, "Carol"]]);
+
+    const raw = await strictSql.unsafe("SELECT id FROM named_modes_test WHERE id = :id", { id: 7 }).raw();
+    expect(raw).toHaveLength(1);
+    expect(raw[0]).toHaveLength(1);
+    const idBuf = raw[0][0] as Uint8Array;
+    expect(idBuf).toBeInstanceOf(Uint8Array);
+    expect(new DataView(idBuf.buffer, idBuf.byteOffset, idBuf.byteLength).getBigInt64(0, true)).toBe(7n);
+  });
+
+  test("unsafe with named parameters rejects on missing bindings in strict mode", async () => {
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE missing_binding_test (id INTEGER, name TEXT)`;
+    await strictSql.unsafe("INSERT INTO missing_binding_test VALUES (:id, :name)", { id: 1, name: "Alice" });
+
+    await expect(
+      async () =>
+        await strictSql.unsafe("SELECT * FROM missing_binding_test WHERE id = :id AND name = :name", { id: 1 }),
+    ).toThrow('Missing parameter "name"');
+
+    // The connection stays usable after a rejected bind.
+    const rows = await strictSql.unsafe("SELECT * FROM missing_binding_test WHERE id = :id", { id: 1 });
+    expect(rows).toEqual([{ id: 1, name: "Alice" }]);
+  });
+
+  test("unsafe with named parameters for UPDATE and DELETE", async () => {
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE named_update_test (id INTEGER, name TEXT)`;
+    await strictSql.unsafe("INSERT INTO named_update_test VALUES (:id, :name)", { id: 1, name: "before" });
+
+    const update = await strictSql.unsafe("UPDATE named_update_test SET name = :name WHERE id = :id", {
+      id: 1,
+      name: "after",
+    });
+    expect(update.count).toBe(1);
+
+    const results = await strictSql.unsafe("SELECT name FROM named_update_test WHERE id = :id", { id: 1 });
+    expect(results).toEqual([{ name: "after" }]);
+
+    const del = await strictSql.unsafe("DELETE FROM named_update_test WHERE id = :id", { id: 1 });
+    expect(del.count).toBe(1);
+  });
+
+  test("unsafe with named parameters inside a transaction", async () => {
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE named_tx_test (id INTEGER, name TEXT)`;
+
+    const rows = await strictSql.begin(async tx => {
+      await tx.unsafe("INSERT INTO named_tx_test VALUES (:id, :name)", { id: 1, name: "tx" });
+      return await tx.unsafe("SELECT * FROM named_tx_test WHERE id = :id", { id: 1 });
+    });
+    expect(rows).toEqual([{ id: 1, name: "tx" }]);
+  });
+
   test("insert into with select helper using where IN", async () => {
     const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
     await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
@@ -1425,7 +2018,7 @@ describe("SQL helpers", () => {
     try {
       await sql`UPDATE ${sql(random_name)} SET ${sql({ name: undefined, age: undefined })} WHERE id IN ${sql([1, 2])}`;
       expect.unreachable();
-    } catch (e) {
+    } catch (e: any) {
       expect(e).toBeInstanceOf(SyntaxError);
       expect(e.message).toBe("Update needs to have at least one column");
     }
@@ -1481,7 +2074,7 @@ describe("SQL helpers", () => {
   });
 
   test("file execution", async () => {
-    const dir = tempDirWithFiles("sql-files", {
+    await using dir = tempDir("sql-files", {
       "schema.sql": `
           CREATE TABLE file_test (
             id INTEGER PRIMARY KEY,
@@ -1499,13 +2092,34 @@ describe("SQL helpers", () => {
   });
 
   test("file with parameters", async () => {
-    const dir = tempDirWithFiles("sql-params", {
+    await using dir = tempDir("sql-params", {
       "query.sql": `SELECT ? as param1, ? as param2`,
     });
 
     const result = await sql.file(path.join(dir, "query.sql"), ["value1", "value2"]);
     expect(result[0].param1).toBe("value1");
     expect(result[0].param2).toBe("value2");
+  });
+
+  test("file with named parameters", async () => {
+    await using dir = tempDir("sql-file-named", {
+      "query.sql": `SELECT * FROM file_named_test WHERE name = :name`,
+    });
+
+    await using strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE file_named_test (id INTEGER, name TEXT)`;
+    await strictSql.unsafe("INSERT INTO file_named_test VALUES (:id, :name)", { id: 1, name: "Alice" });
+
+    const result = await strictSql.file(path.join(dir, "query.sql"), { name: "Alice" });
+    expect(result).toEqual([{ id: 1, name: "Alice" }]);
+
+    // Non-strict connections use the same file with prefixed keys.
+    await using defaultSql = new SQL({ adapter: "sqlite", filename: ":memory:" });
+    await defaultSql`CREATE TABLE file_named_test (id INTEGER, name TEXT)`;
+    await defaultSql.unsafe("INSERT INTO file_named_test VALUES (:id, :name)", { ":id": 2, ":name": "Bob" });
+
+    const defaultResult = await defaultSql.file(path.join(dir, "query.sql"), { ":name": "Bob" });
+    expect(defaultResult).toEqual([{ id: 2, name: "Bob" }]);
   });
 });
 
@@ -1574,11 +2188,12 @@ describe("Helper argument validation", () => {
     ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
   });
 
-  test("ArrayBuffer (not a view) is invalid in helper", async () => {
-    const ab = new ArrayBuffer(8);
-    expect(
-      async () => await sql`INSERT INTO helper_invalid ${sql({ id: 9, blob_val: ab as any })}`.execute(),
-    ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
+  test("ArrayBuffer (not a view) is a BLOB in helper", async () => {
+    const bytes = new Uint8Array([1, 2, 0, 255]);
+    await sql`INSERT INTO helper_invalid ${sql({ id: 9, blob_val: bytes.buffer })}`;
+    expect(await sql`SELECT blob_val, typeof(blob_val) AS type FROM helper_invalid WHERE id = 9`).toEqual([
+      { blob_val: bytes, type: "blob" },
+    ]);
   });
 
   test("Promise, Date, RegExp are invalid in helper", async () => {
@@ -1818,6 +2433,72 @@ describe("Error handling", () => {
       expect((err as Error).message).toContain("FOREIGN KEY");
     }
   });
+
+  test("byteOffset counts from the start of the query text", async () => {
+    await sql`CREATE TABLE offsets (id, name)`;
+    // The system SQLite of macOS before 13 has no sqlite3_error_offset. Bun reports -1 there.
+    const hasErrorOffset = !(isMacOS && !isMacOSVersionAtLeast(13));
+    const at = (text: string, token: string) => (hasErrorOffset ? Buffer.from(text).indexOf(token) : -1);
+    const byteOffsetOf = (query: PromiseLike<unknown>) =>
+      query.then(
+        () => "no error",
+        error => error.byteOffset,
+      );
+
+    const indented = "\n      DELETE FROM offsets WHERE nmae = 1";
+    // the second and the third statement are compiled where the one before them ended
+    const second = "DELETE FROM offsets WHERE name = 'é'; DELETE FROM offsets WHERE nmae = 1";
+    const third = second.replace("nmae", "name") + ";\n  DELETE FROM offsets WHERE nmae = 2; DELETE FROM offsets";
+    const select = "\n      SELECT nmae FROM offsets";
+    const afterRows = "SELECT 'é' AS a; DELETE FROM offsets WHERE nmae = 1";
+    const afterEmpty = ";\n ; SELECT nmae FROM offsets";
+    const afterEmptyAndRows = "; " + afterRows;
+    using dir = tempDir("sqlite-sql-offsets", { "statements.sql": second });
+
+    expect({
+      tagged: await byteOffsetOf(sql`
+      DELETE FROM offsets WHERE nmae = 1`),
+      unsafe: await byteOffsetOf(sql.unsafe(second)),
+      third: await byteOffsetOf(sql.unsafe(third)),
+      file: await byteOffsetOf(sql.file(join(String(dir), "statements.sql"))),
+      transaction: await byteOffsetOf(sql.begin(tx => tx.unsafe(second))),
+      select: await byteOffsetOf(sql.unsafe(select)),
+      afterRows: await byteOffsetOf(sql.unsafe(afterRows)),
+      afterEmpty: await byteOffsetOf(sql.unsafe(afterEmpty)),
+      afterEmptyAndRows: await byteOffsetOf(sql.unsafe(afterEmptyAndRows)),
+    }).toEqual({
+      tagged: at(indented, "nmae"),
+      unsafe: at(second, "nmae"),
+      third: at(third, "nmae"),
+      file: at(second, "nmae"),
+      transaction: at(second, "nmae"),
+      select: at(select, "nmae"),
+      afterRows: at(afterRows, "nmae"),
+      afterEmpty: at(afterEmpty, "nmae"),
+      afterEmptyAndRows: at(afterEmptyAndRows, "nmae"),
+    });
+
+    const closed = new SQL("sqlite://:memory:");
+    await closed.close();
+    const error = await closed`SELECT 1`.catch(e => e);
+    expect({ code: error.code, hasByteOffset: "byteOffset" in error }).toEqual({
+      code: "ERR_SQLITE_CONNECTION_CLOSED",
+      hasByteOffset: false,
+    });
+  });
+
+  test("a text of several statements stops at the first one that fails", async () => {
+    await sql`CREATE TABLE stops (id INTEGER PRIMARY KEY)`;
+    const error = await sql
+      .unsafe("INSERT INTO stops VALUES (1); INSERT INTO stops VALUES (1); INSERT INTO stops VALUES (2)")
+      .catch(e => e);
+    expect({ name: error.name, code: error.code }).toEqual({
+      name: "SQLiteError",
+      code: "SQLITE_CONSTRAINT_PRIMARYKEY",
+    });
+    expect(error).toBeInstanceOf(SQL.SQLiteError);
+    expect(await sql`SELECT id FROM stops`).toEqual([{ id: 1 }]);
+  });
 });
 
 describe("Connection management", () => {
@@ -1863,14 +2544,80 @@ describe("Connection management", () => {
     await sql.close();
   });
 
-  test("flush throws for SQLite", async () => {
+  test("flush is a no-op for SQLite", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+
+    expect(sql.flush()).toBeUndefined();
+    await sql.begin(async tx => {
+      expect(tx.flush()).toBeUndefined();
+    });
+  });
+
+  test("close() checks its timeout like the other adapters", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    for (const timeout of [-1, NaN]) {
+      expect(await sql.close({ timeout }).catch(e => e.code)).toBe("ERR_INVALID_ARG_VALUE");
+    }
+    expect(await sql`select 1 as x`).toEqual([{ x: 1 }]);
+  });
+
+  const connectionClosed = { name: "SQLiteError", code: "ERR_SQLITE_CONNECTION_CLOSED", message: "Connection closed" };
+
+  test("a begin() waits for the begin() before it; a plain query joins", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`create table t (n integer primary key)`;
+    const order: string[] = [];
+    const firstMayEnd = Promise.withResolvers<void>();
+    const firstIsOpen = Promise.withResolvers<void>();
+
+    const first = sql.begin(async tx => {
+      order.push("first starts");
+      await tx`insert into t values (1)`;
+      firstIsOpen.resolve();
+      await firstMayEnd.promise;
+      await tx`insert into t values (2)`;
+      order.push("first ends");
+    });
+    const second = sql
+      .begin(async tx => {
+        order.push("second starts");
+        await tx`insert into t values (3)`;
+        throw new Error("second fails");
+      })
+      .catch(err => err.message);
+    const third = sql.begin(async tx => {
+      order.push("third starts");
+      await tx`insert into t values (4)`;
+    });
+
+    await firstIsOpen.promise;
+    // on the one connection, so inside the first transaction
+    expect(await sql`select n from t`).toEqual([{ n: 1 }]);
+    expect(order).toEqual(["first starts"]);
+    firstMayEnd.resolve();
+
+    expect(await Promise.all([first, second, third])).toEqual([undefined, "second fails", undefined]);
+    expect(order).toEqual(["first starts", "first ends", "second starts", "third starts"]);
+    expect(await sql`select n from t`).toEqual([{ n: 1 }, { n: 2 }, { n: 4 }]);
+  });
+
+  test("close() rejects the begin() calls that wait", async () => {
     const sql = new SQL("sqlite://:memory:");
+    const started = Promise.withResolvers<void>();
+    const running = sql
+      .begin(async () => {
+        started.resolve();
+        await new Promise(() => {});
+      })
+      .catch(err => err);
+    let ran = false;
+    const waiting = sql.begin(async () => void (ran = true)).catch(err => err);
 
-    expect(() => sql.flush()).toThrowErrorMatchingInlineSnapshot(
-      `"SQLite doesn't support flush() - queries are executed synchronously"`,
-    );
-
+    await started.promise;
     await sql.close();
+    expect(await waiting).toMatchObject(connectionClosed);
+    expect(await running).toMatchObject(connectionClosed);
+    expect(ran).toBe(false);
   });
 });
 
@@ -1880,7 +2627,7 @@ describe("Performance & Edge Cases", () => {
 
     await sql`CREATE TABLE large (id INTEGER PRIMARY KEY, data TEXT)`;
 
-    const rowCount = 1000;
+    const rowCount = largeRowCount;
     const data = Buffer.alloc(100, "x").toString();
 
     await sql.begin(async tx => {
@@ -1961,7 +2708,7 @@ describe("Performance & Edge Cases", () => {
 
 describe("WAL mode and concurrency", () => {
   test("can enable WAL mode", async () => {
-    const dir = tempDirWithFiles("sqlite-wal-test", {});
+    await using dir = tempDir("sqlite-wal-test", {});
     const dbPath = path.join(dir, "wal-test.db");
     const sql = new SQL(`sqlite://${dbPath}`);
 
@@ -2014,7 +2761,9 @@ describe("Memory and resource management", () => {
 
     await sql`CREATE TABLE stmt_test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    const iterations = 10000;
+    // Debug builds run the serial awaited inserts 10-100x slower, so use a
+    // smaller workload there to stay under the default timeout.
+    const iterations = isDebug ? 400 : 10000;
 
     for (let i = 0; i < iterations; i++) {
       await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;
@@ -2043,14 +2792,14 @@ describe("Memory and resource management", () => {
     await sql`CREATE TABLE concurrent_test (id INTEGER, value TEXT)`;
 
     const promises: Promise<void>[] = [];
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < largeRowCount; i++) {
       promises.push(sql`INSERT INTO concurrent_test VALUES (${i}, ${"value" + i})`);
     }
 
     await Promise.all(promises);
 
     const result = await sql`SELECT COUNT(*) as count FROM concurrent_test`;
-    expect(result[0].count).toBe(1000);
+    expect(result[0].count).toBe(largeRowCount);
 
     const selectPromises: Promise<any>[] = [];
     for (let i = 0; i < 100; i++) {
@@ -2069,7 +2818,7 @@ describe("Memory and resource management", () => {
 
 describe("Connection URL Edge Cases", () => {
   test("handles various file:// URL formats", async () => {
-    const dir = tempDirWithFiles("sqlite-url-test", {});
+    await using dir = tempDir("sqlite-url-test", {});
 
     const dbPath1 = path.join(dir, "test1.db");
     const sql1 = new SQL(`file://${dbPath1}`);
@@ -2104,7 +2853,7 @@ describe("Connection URL Edge Cases", () => {
     ];
 
     for (const name of specialNames) {
-      const dir = tempDirWithFiles(`sqlite-special-${Math.random()}`, {});
+      await using dir = tempDir(`sqlite-special-${Math.random()}`, {});
       const dbPath = path.join(dir, name);
 
       const sql = new SQL(`sqlite://${dbPath}`);
@@ -2122,11 +2871,11 @@ describe("Connection URL Edge Cases", () => {
   });
 
   test("handles relative vs absolute paths", async () => {
-    const dir = tempDirWithFiles("sqlite-path-test", {});
+    await using dir = tempDir("sqlite-path-test", {});
     const originalCwd = process.cwd();
 
     try {
-      process.chdir(dir);
+      process.chdir(String(dir));
 
       const sql1 = new SQL("sqlite://./relative.db");
       await sql1`CREATE TABLE test (id INTEGER)`;
@@ -2147,7 +2896,7 @@ describe("Connection URL Edge Cases", () => {
   });
 
   test("handles readonly mode via URL parameters", async () => {
-    const dir = tempDirWithFiles("sqlite-readonly-test", {});
+    await using dir = tempDir("sqlite-readonly-test", {});
     const dbPath = path.join(dir, "readonly.db");
 
     const sql1 = new SQL(`sqlite://${dbPath}`);
@@ -2173,7 +2922,7 @@ describe("Connection URL Edge Cases", () => {
   });
 
   test("handles URI parameters for cache and other settings", async () => {
-    const dir = tempDirWithFiles("sqlite-uri-test", {});
+    await using dir = tempDir("sqlite-uri-test", {});
     const dbPath = path.join(dir, "uri.db");
 
     const sql = new SQL(`sqlite://${dbPath}?cache=shared&mode=rwc`);
@@ -2208,6 +2957,22 @@ describe("BLOB Edge Cases and Binary Data", () => {
 
     const result = await sql`SELECT * FROM blob_test`;
     expect(Buffer.from(result[0].data)).toHaveLength(0);
+  });
+
+  test("binds a detached TypedArray as a zero-length BLOB, not NULL", async () => {
+    await sql`CREATE TABLE detached_blob_test (id INTEGER, data BLOB NOT NULL)`;
+
+    const detached = new Uint8Array([1, 2, 3]);
+    detached.buffer.transfer();
+    await sql`INSERT INTO detached_blob_test VALUES (1, ${new Uint8Array(0)})`;
+    await sql`INSERT INTO detached_blob_test VALUES (2, ${detached})`;
+
+    expect(
+      await sql`SELECT id, typeof(data) AS type, length(data) AS length FROM detached_blob_test ORDER BY id`,
+    ).toEqual([
+      { id: 1, type: "blob", length: 0 },
+      { id: 2, type: "blob", length: 0 },
+    ]);
   });
 
   test("handles large BLOBs", async () => {
@@ -2534,12 +3299,12 @@ describe("Indexes and Query Optimization", () => {
 
     await sql`CREATE INDEX idx_type ON stats_test(type)`;
 
-    await sql.begin(async tx => {
-      for (let i = 1; i <= 1000; i++) {
-        const type = i <= 900 ? "common" : i <= 990 ? "uncommon" : "rare";
-        await tx`INSERT INTO stats_test VALUES (${i}, ${type}, ${i})`;
-      }
-    });
+    const rows = Array.from({ length: 1000 }, (_, i) => ({
+      id: i + 1,
+      type: i < 900 ? "common" : i < 990 ? "uncommon" : "rare",
+      value: i + 1,
+    }));
+    await sql`INSERT INTO stats_test ${sql(rows)}`;
 
     await sql`ANALYZE`;
 
@@ -2575,17 +3340,14 @@ describe("Indexes and Query Optimization", () => {
 
 describe("VACUUM and Database Maintenance", () => {
   test("VACUUM command", async () => {
-    const dir = tempDirWithFiles("sqlite-vacuum-test", {});
+    await using dir = tempDir("sqlite-vacuum-test", {});
     const dbPath = path.join(dir, "vacuum.db");
     const sql = new SQL(`sqlite://${dbPath}`);
 
     await sql`CREATE TABLE vacuum_test (id INTEGER, data TEXT)`;
 
-    await sql.begin(async tx => {
-      for (let i = 0; i < 1000; i++) {
-        await tx`INSERT INTO vacuum_test VALUES (${i}, ${Buffer.alloc(100, "x").toString()})`;
-      }
-    });
+    const data = Buffer.alloc(100, "x").toString();
+    await sql`INSERT INTO vacuum_test ${sql(Array.from({ length: 1000 }, (_, id) => ({ id, data })))}`;
 
     await sql`DELETE FROM vacuum_test WHERE id % 2 = 0`;
 
@@ -2604,7 +3366,7 @@ describe("VACUUM and Database Maintenance", () => {
   });
 
   test("incremental VACUUM with auto_vacuum", async () => {
-    const dir = tempDirWithFiles("sqlite-auto-vacuum-test", {});
+    await using dir = tempDir("sqlite-auto-vacuum-test", {});
     const dbPath = path.join(dir, "auto_vacuum.db");
     const sql = new SQL(`sqlite://${dbPath}`);
 
@@ -2632,7 +3394,7 @@ describe("VACUUM and Database Maintenance", () => {
 
 describe("Backup and Restore Operations", () => {
   test("backup to another file", async () => {
-    const dir = tempDirWithFiles("sqlite-backup-test", {});
+    await using dir = tempDir("sqlite-backup-test", {});
     const sourcePath = path.join(dir, "source.db");
     const backupPath = path.join(dir, "backup.db");
 
@@ -3102,7 +3864,7 @@ describe("WITHOUT ROWID Tables", () => {
 
 describe("Concurrency and Locking", () => {
   test("concurrent reads work correctly", async () => {
-    const dir = tempDirWithFiles("sqlite-concurrent-test", {});
+    await using dir = tempDir("sqlite-concurrent-test", {});
     const dbPath = path.join(dir, "concurrent.db");
 
     const sql1 = new SQL(`sqlite://${dbPath}`);
@@ -3134,7 +3896,7 @@ describe("Concurrency and Locking", () => {
   });
 
   test("write lock prevents concurrent writes", async () => {
-    const dir = tempDirWithFiles("sqlite-write-lock-test", {});
+    await using dir = tempDir("sqlite-write-lock-test", {});
     const dbPath = path.join(dir, "writelock.db");
 
     const sql = new SQL(`sqlite://${dbPath}`);
@@ -3166,7 +3928,7 @@ describe("Concurrency and Locking", () => {
   });
 
   test("busy timeout handling", async () => {
-    const dir = tempDirWithFiles("sqlite-busy-test", {});
+    await using dir = tempDir("sqlite-busy-test", {});
     const dbPath = path.join(dir, "busy.db");
 
     const sql1 = new SQL(`sqlite://${dbPath}`);
@@ -3761,7 +4523,7 @@ describe("System Tables and Introspection", () => {
 
 describe("Error Recovery and Database Integrity", () => {
   test("handles corrupted data gracefully", async () => {
-    const dir = tempDirWithFiles("sqlite-corrupt-test", {});
+    await using dir = tempDir("sqlite-corrupt-test", {});
     const dbPath = path.join(dir, "test.db");
     const sql = new SQL(`sqlite://${dbPath}`);
 
@@ -3852,7 +4614,7 @@ describe("Temp Tables and Attached Databases", () => {
   });
 
   test("cross-database queries with ATTACH", async () => {
-    const dir = tempDirWithFiles("sqlite-attach-cross-test", {});
+    await using dir = tempDir("sqlite-attach-cross-test", {});
     const mainPath = path.join(dir, "main.db");
     const attachPath = path.join(dir, "attached.db");
 
@@ -3897,16 +4659,13 @@ describe("Query Explain and Optimization", () => {
       description TEXT
     )`;
 
-    await sql.begin(async tx => {
-      for (let i = 1; i <= 1000; i++) {
-        await tx`INSERT INTO large_table VALUES (
-          ${i},
-          ${"category" + (i % 10)},
-          ${i * 10},
-          ${"description for item " + i}
-        )`;
-      }
-    });
+    const rows = Array.from({ length: 1000 }, (_, i) => ({
+      id: i + 1,
+      category: "category" + ((i + 1) % 10),
+      value: (i + 1) * 10,
+      description: "description for item " + (i + 1),
+    }));
+    await sql`INSERT INTO large_table ${sql(rows)}`;
   });
 
   afterAll(async () => {
@@ -4876,16 +5635,19 @@ describe("Query Normalization Fuzzing Tests", () => {
     await sql`CREATE TABLE weird_cols ("123" TEXT, "!" INTEGER, "@#$" REAL)`;
     await sql.unsafe(`SELECT "123", "!", "@#$" FROM weird_cols`);
 
-    const longName = "a".repeat(50_000_000);
+    const longName = Buffer.alloc(100_000, "a").toString();
 
     await sql.unsafe(`CREATE TABLE "${longName}" (col TEXT)`);
+    expect(
+      (await sql.unsafe(`SELECT name FROM sqlite_master WHERE type='table' AND length(name) = 100000`)).length,
+    ).toBe(1);
     await sql.unsafe(`SELECT * FROM "${longName}"`);
     await sql.unsafe(`DROP TABLE "${longName}"`);
   });
 
   describe("Result Modes", () => {
     test("values() mode returns arrays instead of objects", async () => {
-      const dir = tempDirWithFiles("sqlite-values-mode", {});
+      await using dir = tempDir("sqlite-values-mode", {});
       const sql = new SQL(`sqlite://${dir}/test.db`);
 
       await sql`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)`;
@@ -4908,7 +5670,7 @@ describe("Query Normalization Fuzzing Tests", () => {
     });
 
     test("raw() mode returns buffers for SQLite", async () => {
-      const dir = tempDirWithFiles("sqlite-raw-mode", {});
+      await using dir = tempDir("sqlite-raw-mode", {});
       const sql = new SQL(`sqlite://${dir}/test.db`);
 
       await sql`CREATE TABLE test (id INTEGER, name TEXT, data BLOB, score REAL)`;
@@ -4955,7 +5717,7 @@ describe("Query Normalization Fuzzing Tests", () => {
     });
 
     test("values() mode works with PRAGMA commands", async () => {
-      const dir = tempDirWithFiles("sqlite-values-pragma", {});
+      await using dir = tempDir("sqlite-values-pragma", {});
       const sql = new SQL(`sqlite://${dir}/test.db`);
 
       const pragmaValues = await sql`PRAGMA table_info('sqlite_master')`.values();
@@ -5140,30 +5902,8 @@ describe("Unicode & Encoding Fuzzing Tests", () => {
       const result = await sql`SELECT text_data, description FROM unicode_fuzz WHERE id = ${i}`;
       expect(result).toHaveLength(1);
 
-      // SQLite's actual behavior with problematic Unicode:
-      // - Lone surrogates (\uD800, \uDFFF) bind via sqlite3_bind_text16 and are
-      //   stored by SQLite as invalid UTF-8 (WTF-8, e.g. ED A0 80). On read-back
-      //   those invalid bytes decode leniently to U+FFFD, matching node:sqlite.
-      // - BOM inverse (\uFFFE) is dropped by SQLite itself (stored as 0 bytes),
-      //   so it reads back as an empty string.
-      // - Null characters are preserved (not truncated).
-      const lenientlyReplaced: Record<string, string> = {
-        // 3 invalid bytes -> 3 replacement characters (maximal-subpart replacement)
-        "High surrogate (invalid alone)": "\uFFFD\uFFFD\uFFFD",
-        "Low surrogate (invalid alone)": "\uFFFD\uFFFD\uFFFD",
-      };
-      const droppedBySqlite = ["Byte order mark inverse"];
-
-      if (desc in lenientlyReplaced) {
-        // Invalid UTF-8 bytes decode leniently to U+FFFD rather than dropping the field.
-        expect(result[0].text_data).toBe(lenientlyReplaced[desc]);
-      } else if (droppedBySqlite.includes(desc)) {
-        // SQLite stores nothing for these, so they come back empty.
-        expect(result[0].text_data).toBe("");
-      } else {
-        // All other characters should be preserved exactly, including null bytes
-        expect(result[0].text_data).toBe(text);
-      }
+      // Text is bound as UTF-8: a lone surrogate is U+FFFD, everything else is kept, null characters included.
+      expect(result[0].text_data).toBe(text.toWellFormed());
       expect(result[0].description).toBe(desc);
     }
 
@@ -5398,5 +6138,220 @@ describe("Unicode & Encoding Fuzzing Tests", () => {
       expect(result[0].text_data).toBe(text);
       expect(Buffer.from(result[0].blob_data).toString()).toBe(text);
     }
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/30811
+describe("rows or changes", () => {
+  async function seeded() {
+    const sql = new SQL("sqlite://:memory:");
+    await sql.unsafe(`
+      create table t (id integer primary key, v text);
+      insert into t (v) values ('a'), ('b"c'), ('d');
+    `);
+    return sql;
+  }
+
+  test.each([
+    [`select v from t where v like '%"%'`, "SELECT", [['b"c']]],
+    [`/*hdr*/select id from t`, "SELECT", [[1], [2], [3]]],
+    [`-- header\n  -- it's two\nselect id from t`, "SELECT", [[1], [2], [3]]],
+    [`select*from t where id = 1`, "SELECT", [[1, "a"]]],
+    [`select(id)from t where id = 1`, "SELECT", [[1]]],
+    [`values (1),(2)`, "VALUES", [[1], [2]]],
+    [`select 'x -- y' as a, 'x /* y */ z' as b`, "SELECT", [["x -- y", "x /* y */ z"]]],
+    [`with x as (select id from t where id > 1) select * from x`, "WITH", [[2], [3]]],
+    [`with x as (select replace (v, 'a', 'x') as "update" from t where id = 1) select * from x`, "WITH", [["x"]]],
+    [`pragma user_version`, "PRAGMA", [[0]]],
+    [`insert into t(v)values('x')returning id,v`, "INSERT", [[4, "x"]]],
+    [`update t set v = 'u' where id = 1 returning v`, "UPDATE", [["u"]]],
+    [`delete from t where id > 1 returning id`, "DELETE", [[2], [3]]],
+    [`with x as (select 9 as id) insert into t (id) select id from x returning id`, "WITH", [[9]]],
+  ])("%s returns its rows", async (text, command, rows) => {
+    await using sql = await seeded();
+    const result = await sql.unsafe(text).values();
+    expect([...result]).toEqual(rows);
+    expect({ command: result.command, count: result.count }).toEqual({ command, count: rows.length });
+  });
+
+  test.each([
+    [`insert into t (v) select v || '2' from t`, "INSERT", 3, 6],
+    [`with x as (select 'w' as v) insert into t (v) select v from x`, "WITH", 1, 4],
+    [`update t set v = 'z' where id in (\n  select id from t where id < 3\n)`, "UPDATE", 2, 3],
+    [`delete from t where id in (\n  select max(id) from t\n)`, "DELETE", 1, 2],
+    [`with x as (select id from t where id > 1) update t set v = 'z' where id in (select id from x)`, "WITH", 2, 3],
+    [`with x as (select id from t where id > 1) delete from t where id in (select id from x)`, "WITH", 2, 1],
+    [`/* tag=me */ insert into t (v) select v from t where id = 1`, "INSERT", 1, 4],
+    [`-- tag=me\ninsert into t (v) select v from t where id = 1`, "INSERT", 1, 4],
+    [`insert into t (v) values ('a -- b'), ('select /* d */ e')`, "INSERT", 2, 5],
+    [`insert into t (v) values ('x');`, "INSERT", 1, 4],
+    [`insert into t (v) values ('a;b')`, "INSERT", 1, 4],
+    [`insert into t (v) values ('x'); -- done\n/* end */`, "INSERT", 1, 4],
+    [`insert into t (id, v) values (1, 'x') on conflict (id) do update set v = excluded.v`, "INSERT", 1, 3],
+    [`replace into t (id, v) values (7, 'x')`, "REPLACE", 1, 4],
+    [`pragma user_version = 5`, "PRAGMA", 0, 3],
+    [`create table select_returning (id)`, "CREATE", 0, 3],
+    [`create trigger g after insert on t begin update t set v = 'x' where id = new.id; end`, "CREATE", 0, 3],
+    [`begin; delete from t where id = 1; commit`, "BEGIN", 1, 2],
+  ])("%s reports its changes", async (text, command, count, rowsAfter) => {
+    await using sql = await seeded();
+    const result = await sql.unsafe(text);
+    expect({
+      rows: result.length,
+      command: result.command,
+      count: result.count,
+      affectedRows: result.affectedRows,
+    }).toEqual({ rows: 0, command, count, affectedRows: count });
+    expect(await sql`select count(*) as n from t`).toEqual([{ n: rowsAfter }]);
+  });
+
+  // The adapter compiles a text to learn whether it returns rows. Database#run compiles it again.
+  test("a write is compiled once, also with ';' and white space behind it", async () => {
+    await using sql = await seeded();
+    const prepare = spyOn(Database.prototype, "prepare");
+    const run = spyOn(Database.prototype, "run");
+    try {
+      const seen: Record<string, unknown> = {};
+      const expected: Record<string, unknown> = {};
+      for (const tail of ["", ";", "; ", ";\n  ", ";;", "; ;", ";\t\r\n\v\f"]) {
+        prepare.mockClear();
+        run.mockClear();
+        const { count } = await sql.unsafe(`insert into t (v) values (?)${tail}`, ["x"]);
+        seen[JSON.stringify(tail)] = { count, prepare: prepare.mock.calls.length, run: run.mock.calls.length };
+        expected[JSON.stringify(tail)] = { count: 1, prepare: 1, run: 0 };
+      }
+      expect(seen).toEqual(expected);
+    } finally {
+      prepare.mockRestore();
+      run.mockRestore();
+    }
+  });
+
+  test.each([
+    ["; insert into t (v) values ('y')", 2],
+    ["; ", 'near " ": syntax error'],
+    ["; ", 'near " ": syntax error'],
+    ["; x", 'near "x": syntax error'],
+  ])("what follows the ';' in %p is SQLite's to judge", async (tail, outcome) => {
+    await using sql = await seeded();
+    const settled = await sql.unsafe(`insert into t (v) values ('x')${tail}`).then(
+      result => result.count,
+      error => error.message,
+    );
+    expect(settled).toBe(outcome);
+  });
+
+  test("explain returns the plan and runs nothing", async () => {
+    await using sql = await seeded();
+    const plan = await sql.unsafe(`explain insert into t (v) values ('e')`);
+    expect(plan.command).toBe("EXPLAIN");
+    expect(plan[0]).toHaveProperty("opcode");
+    expect(await sql`select count(*) as n from t`).toEqual([{ n: 3 }]);
+  });
+
+  test("objects, values() and raw() of a write that returns rows", async () => {
+    await using sql = await seeded();
+    expect([...(await sql`insert into t (v) values (${"x"}) returning id, v`)]).toEqual([{ id: 4, v: "x" }]);
+    expect([...(await sql`insert into t (v) values (${"x"}) returning id, v`.values())]).toEqual([[5, "x"]]);
+    expect([...(await sql`insert into t (v) values (${"x"}) returning v`.raw())]).toEqual([[Buffer.from("x")]]);
+  });
+
+  test("text without a statement", async () => {
+    await using sql = await seeded();
+    for (const text of [
+      "   ",
+      "-- noop",
+      "/* placeholder */",
+      "-- a\n-- b\n",
+      ";",
+      " ; /* x */ ;",
+      "/* c",
+      ";-- c\n;",
+    ]) {
+      expect(await sql.unsafe(text).catch(e => e.message)).toBe(
+        "Query contained no valid SQL statement; likely empty query.",
+      );
+    }
+    expect(await sql.unsafe("").catch(e => e.message)).toBe("SQL string mustn't be blank");
+  });
+
+  test("bindings that the statement has no place for", async () => {
+    await using sql = await seeded();
+    for (const text of ["insert into t (v) values ('x')", "insert into t (v) values ('x'); delete from t"]) {
+      expect(await sql.unsafe(text, [42]).catch(e => e.message)).toBe("SQLite query expected 0 values, received 1");
+    }
+    expect(await sql`select count(*) as n from t`).toEqual([{ n: 3 }]);
+  });
+
+  describe("a named value called length is not a number of values", () => {
+    test("the rows are there", async () => {
+      await using sql = await seeded();
+      expect(await sql.unsafe("select count(*) as n from t", { length: 5 })).toEqual([{ n: 3 }]);
+    });
+
+    test("a later statement with a parameter is still refused", async () => {
+      await using sql = await seeded();
+      const text = "select count(*) as n from t; delete from t where v is not ?";
+      expect(await sql.unsafe(text, { length: 5 }).catch(e => e.message)).toBe(
+        "Only the first statement of a SQLite query can have parameters",
+      );
+      expect(await sql`select count(*) as n from t`).toEqual([{ n: 3 }]);
+    });
+  });
+
+  test("execute() has run the query: values() and raw() come too late", async () => {
+    await using sql = await seeded();
+    expect(await sql`select ${7} as a`.execute().values()).toEqual([{ a: 7 }]);
+    expect(await sql`select ${7} as a`.execute().raw()).toEqual([{ a: 7 }]);
+  });
+
+  test("a statement that SQLite cannot compile rejects, it does not resolve empty", async () => {
+    using dir = tempDir("sqlite-sql-busy", {});
+    const filename = join(String(dir), "db.sqlite");
+    using holder = new Database(filename);
+    holder.run("create table t (v text)");
+    holder.run("insert into t values ('a')");
+    holder.run("begin exclusive");
+
+    await using sql = new SQL({ adapter: "sqlite", filename });
+    expect(await sql`select v from t`.catch(e => ({ name: e.name, code: e.code }))).toEqual({
+      name: "SQLiteError",
+      code: "SQLITE_BUSY",
+    });
+    holder.run("rollback");
+    expect(await sql`select v from t`).toEqual([{ v: "a" }]);
+  });
+
+  test("a scalar given to unsafe() is bound, also when it is falsy", async () => {
+    await using sql = await seeded();
+    const bound: unknown[] = [];
+    for (const value of [5, 0, "", false]) {
+      bound.push(...(await sql.unsafe("select ? as x, typeof(?1) as t", value as any)));
+    }
+    expect(bound).toEqual([
+      { x: 5, t: "integer" },
+      { x: 0, t: "integer" },
+      { x: "", t: "text" },
+      { x: 0, t: "integer" },
+    ]);
+  });
+
+  test("the rows are not spread into a call", async () => {
+    await using sql = await seeded();
+    // A spread is visible to user code, and a RangeError at about 640,000 rows.
+    const original = Array.prototype[Symbol.iterator];
+    let iteratedRows = 0;
+    Array.prototype[Symbol.iterator] = function (this: any[]) {
+      if (this.length === 3 && this[0]?.marker === 1) iteratedRows++;
+      return original.call(this);
+    };
+    let rows;
+    try {
+      rows = await sql`select id as marker from t`;
+    } finally {
+      Array.prototype[Symbol.iterator] = original;
+    }
+    expect(rows).toEqual([{ marker: 1 }, { marker: 2 }, { marker: 3 }]);
+    expect(iteratedRows).toBe(0);
   });
 });

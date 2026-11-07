@@ -4,27 +4,43 @@
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Kind {
+pub(crate) enum Kind {
     // worker → coordinator
     /// (empty)
     Ready,
     /// u32 file_idx
     FileStart,
-    /// u32 file_idx, str formatted_line (ANSI included; printed verbatim)
+    /// u32 file_idx, str formatted_line (ANSI included; printed verbatim);
+    /// then, only when the worker runs with `--reporter`, the structured
+    /// result (`runner::encode_test_case`): u32 status, u32 assertions,
+    /// u64 elapsed_ns, u32 line, str name, u32 n × {str scope_name,
+    /// u32 scope_line}, u32 has_failure [, str name, str message, str body, u32 uncaught]
     TestDone,
-    /// 9 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label, files, unhandled
+    /// 10 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
+    /// files, shuffled, unhandled; u64 elapsed_ns; 4 × u32, 0 where nobody measures: the megabytes by which the worker grew at most, those of its largest child,
+    /// the worker's peak RSS so far, and what it holds of its own now that the file has ended
+    /// then u32: 0, or one more than the `process.exitCode` that the file has left other than it found it
+    /// then str: `runner::first_loads`
     FileDone,
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
-    /// str path
-    JunitFile,
-    /// str path
-    CoverageFile,
     // coordinator → worker
-    /// u32 file_idx, str path
+    /// u32 file_idx, str path, u32: 0, or one more than the `process.exitCode` that the files before it have left,
+    /// str: what the last FileDone of the worker's slot said of first loads,
+    /// u32: 1 where the worker stands for the one process of plain `bun test` and prints what that prints,
+    /// u32: there, how many more failures `--bail` allows; 0 without it
     Run,
     /// (empty)
     Shutdown,
+    /// str report — one source file's coverage from this worker, sent at exit
+    /// as `bun_sourcemap_jsc::code_coverage::wire`. The coordinator merges
+    /// every worker's per file and writes the one report.
+    CoverageFile,
+    /// str line — one write to a read-only built-in that failed in a file that ran compiled, sent ahead of the file's FileDone
+    RefusedChange,
+    /// 5 × u32: the snapshots that this worker counted in all its files (total, passed, failed, added), and 1 where it could not
+    /// write an inline one; sent at exit by a worker that runs compiled code
+    Snapshots,
 }
 
 impl TryFrom<u8> for Kind {
@@ -37,10 +53,11 @@ impl TryFrom<u8> for Kind {
             2 => Kind::TestDone,
             3 => Kind::FileDone,
             4 => Kind::RepeatBufs,
-            5 => Kind::JunitFile,
-            6 => Kind::CoverageFile,
-            7 => Kind::Run,
-            8 => Kind::Shutdown,
+            5 => Kind::Run,
+            6 => Kind::Shutdown,
+            7 => Kind::CoverageFile,
+            8 => Kind::RefusedChange,
+            9 => Kind::Snapshots,
             _ => return Err(()),
         })
     }
@@ -56,13 +73,11 @@ pub(crate) const MAX_PAYLOAD: u32 = 64 * 1024 * 1024;
 /// then flush in a single write so partial reads on the other side never see a
 /// torn header.
 #[derive(Default)]
-pub struct Frame {
+pub(crate) struct Frame {
     buf: Vec<u8>,
 }
 
 impl Frame {
-    pub(crate) const DEFAULT: Self = Self { buf: Vec::new() };
-
     pub(crate) fn begin(&mut self, kind: Kind) {
         self.buf.clear();
         // reserve header; payload_len patched in send()
@@ -70,36 +85,34 @@ impl Frame {
         self.buf.push(kind as u8);
     }
 
-    pub(crate) fn u32_(&mut self, v: u32) {
+    pub(crate) fn u32(&mut self, v: u32) {
+        self.buf.extend_from_slice(&v.to_le_bytes());
+    }
+
+    pub(crate) fn u64(&mut self, v: u64) {
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
 
     pub(crate) fn str(&mut self, s: &[u8]) {
         // Never let a single frame exceed `MAX_PAYLOAD` — the receiver treats that
         // as a corrupt-channel signal and closes, which would surface as a spurious
-        // worker crash. Truncate the string in place instead. Leave a small
-        // headroom so a few following u32s/short paths in the same frame still fit.
+        // worker crash. Truncate the string in place instead. Leave headroom
+        // so the fixed-size tail of the frame (u32s, short paths, and the
+        // 4-byte prefixes of any further strings, which go empty) still fits.
         const TRUNC: &[u8] = b"\n... [output truncated: would exceed --parallel IPC frame limit]\n";
-        const HEADROOM: usize = 256;
+        const HEADROOM: usize = 4096;
         let used: usize = (self.buf.len() - 5) + 4; // current payload + str-len prefix
-        let room: usize = if (MAX_PAYLOAD as usize) > used + HEADROOM {
-            (MAX_PAYLOAD as usize) - used - HEADROOM
+        let room: usize = ((MAX_PAYLOAD as usize) - HEADROOM).saturating_sub(used);
+        let (keep, marker): (usize, &[u8]) = if s.len() <= room {
+            (s.len(), b"")
+        } else if room >= TRUNC.len() {
+            (room - TRUNC.len(), TRUNC)
         } else {
-            0
+            (0, b"")
         };
-        if s.len() <= room {
-            self.u32_(u32::try_from(s.len()).unwrap());
-            self.buf.extend_from_slice(s);
-            return;
-        }
-        let keep: usize = if room > TRUNC.len() {
-            room - TRUNC.len()
-        } else {
-            0
-        };
-        self.u32_(u32::try_from(keep + TRUNC.len()).unwrap());
+        self.u32(u32::try_from(keep + marker.len()).unwrap());
         self.buf.extend_from_slice(&s[0..keep]);
-        self.buf.extend_from_slice(TRUNC);
+        self.buf.extend_from_slice(marker);
     }
 
     /// Finalize the header and return the encoded bytes. Caller hands them to
@@ -115,12 +128,12 @@ impl Frame {
 // `deinit` dropped: `Vec<u8>` frees on Drop.
 
 /// Payload reader; bounds-checked, returns zero/empty on truncation.
-pub struct Reader<'a> {
+pub(crate) struct Reader<'a> {
     pub p: &'a [u8],
 }
 
 impl<'a> Reader<'a> {
-    pub(crate) fn u32_(&mut self) -> u32 {
+    pub(crate) fn u32(&mut self) -> u32 {
         if self.p.len() < 4 {
             return 0;
         }
@@ -129,8 +142,17 @@ impl<'a> Reader<'a> {
         v
     }
 
+    pub(crate) fn u64(&mut self) -> u64 {
+        if self.p.len() < 8 {
+            return 0;
+        }
+        let v = u64::from_le_bytes(self.p[0..8].try_into().unwrap());
+        self.p = &self.p[8..];
+        v
+    }
+
     pub(crate) fn str(&mut self) -> &'a [u8] {
-        let n = self.u32_() as usize;
+        let n = self.u32() as usize;
         if self.p.len() < n {
             return b"";
         }

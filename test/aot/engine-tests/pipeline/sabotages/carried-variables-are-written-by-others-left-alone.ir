@@ -1,0 +1,452 @@
+# FORM: AsRead
+# RUN: run-in-shell globalThis.argumentCount = 2;
+# CHECK: one ,3,7,13,21,,23,27,33,41,finally,41,,43,47,53,61,caught,61,finally,61,,63,67,73,81,,83,87,93,101,finally,101,,103,107,113,121,,123,127,133,141,finally,141,141
+# CHECK: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="say" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="tell" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="fail" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="poke" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="run" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="said" module=m0 declared={type=undefined|null|absent|Array flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g6 name="extraTurns" module=m0 declared={type=number|absent} flags=[IsImmutable]
+variable g7 name="held" module=m0 declared={type=number|absent}
+variable g8 name="caller" module=m0 declared={type=undefined|null|absent|f13 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d2 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f6
+    v1 = Convert v0 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f7
+    v3 = Convert v2 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Data data=d0
+    v5 = Convert v4 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v5 variable=g5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="argumentCount" [isFreeName]
+    v9 = Integer integer=99
+    v10 = Greater v8, v9
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    v11 = Integer integer=1
+    Jump -> next b4(v11)
+  b3():
+    v12 = Integer
+    Jump -> next b4(v12)
+  b4(v13):
+    v14 = Convert v13 declared={type=number}
+    PutModuleVariable v14 variable=g6
+    v16 = Integer
+    v17 = Convert v16 declared={type=number}
+    PutModuleVariable v17 variable=g7
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="Function" [isFreeName]
+    v21 = Convert v20 declared={type=builtin(Function) flags=[IsExpected]}
+    v22 = String string="callee"
+    v23 = String string="by"
+    v24 = Builtin builtin=GlobalThis
+    v25 = PropGet v24 key="argumentCount" [isFreeName]
+    v26 = Integer integer=99
+    v27 = Greater v25, v26
+    Branch v27 -> taken b5(), notTaken b6()
+  b5():
+    v28 = String string=""
+    Jump -> next b7(v28)
+  b6():
+    v29 = String string="callee(by);"
+    Jump -> next b7(v29)
+  b7(v30):
+    v31 = Construct v21, -, v22, v23, v30 calleeName="Function"
+    v32 = Convert v31 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v33 = Convert v32 declared={type=undefined|null|f13 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PutModuleVariable v33 variable=g8
+    v35 = String string="one"
+    v36 = NewClosure function=f8
+    v37 = Call v1, -, v35, v36 calleeName="attempt"
+    v38 = String string="two"
+    v39 = NewClosure function=f9
+    v40 = Call v1, -, v38, v39 calleeName="attempt"
+    v41 = Undefined
+    Return v41
+}
+
+function f1 name="say" module=m0 flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: Array):
+    Jump -> next b1()
+  b1():
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    Jump -> next b2(v2)
+  b2(v3: number):
+    LoopHint
+    v5 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    v6 = PropGet v0 key="length"
+    v7 = Convert v6 declared={type=number} illTypedCause=Assertion
+    v8 = Less v5, v7
+    Branch v8 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v9):
+    Jump -> next b4()
+  b4():
+    v10 = GetModuleVariable variable=g5
+    v11 = CheckInitialized v10 name="said"
+    v12 = PropGet v11 key="push"
+    v13 = Convert v9 declared={type=i32 flags=[IsExpected]}
+    v14 = ElemGet v0, v13
+    v15 = Call v12, v11, v14 calleeKey="push" calleeName="said.push"
+    v16 = Convert v15 declared={type=number} illTypedCause=DeclarationWithoutBody
+    Jump -> next b5()
+  b5():
+    v17 = Increment v13
+    v18 = Convert v17 declared={type=number}
+    Jump -> next b2(v18)
+  b6(v19):
+    Jump -> next b7()
+  b7():
+    v20 = Undefined
+    Return v20
+}
+
+function f2 name="tell" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v1 = String string=""
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b2(v2, v4)
+  b2(v5: undefined|null|string, v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = GetModuleVariable variable=g5
+    v10 = CheckInitialized v9 name="said"
+    v11 = PropGet v10 key="length"
+    v12 = Convert v11 declared={type=number} illTypedCause=Assertion
+    v13 = Less v8, v12
+    Branch v13 -> taken b3(| 0), notTaken b11(| 0)
+  b3(v14):
+    Jump -> next b4()
+  b4():
+    v15 = Convert v14 declared={type=i32 flags=[IsExpected]}
+    v16 = ToBoolean v15
+    Branch v16 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v17):
+    Jump -> next b6()
+  b6():
+    v18 = String string=","
+    Jump -> next b9(v18, v17)
+  b7(v19):
+    Jump -> next b8()
+  b8():
+    v20 = String string=""
+    Jump -> next b9(v20, v19)
+  b9(v21, v22: number):
+    v23 = Builtin builtin=String
+    v24 = GetModuleVariable variable=g5
+    v25 = CheckInitialized v24 name="said"
+    v26 = Convert v22 declared={type=i32 flags=[IsExpected]}
+    v27 = ElemGet v25, v26
+    v28 = Call v23, -, v27 calleeName="String"
+    v29 = Convert v28 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v30 = Add v21, v29
+    v31 = Add v5, v30
+    v32 = Convert v31 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Jump -> next b10()
+  b10():
+    v33 = Increment v26
+    v34 = Convert v33 declared={type=number}
+    Jump -> next b2(v32, v34)
+  b11(v35):
+    Jump -> next b12()
+  b12():
+    v36 = GetModuleVariable variable=g5
+    v37 = CheckInitialized v36 name="said"
+    v38 = Integer
+    v39 = Convert v38 declared={type=number}
+    PropSet v37, v39 key="length"
+    v41 = Builtin builtin=GlobalThis
+    v42 = PropGet v41 key="print" [isFreeName]
+    v43 = Call v42, -, v0, v5 calleeName="print"
+    v44 = Undefined
+    Return v44
+}
+
+function f3 name="fail" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Jump -> next b1()
+  b1():
+    v1 = ToBoolean v0
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v2):
+    Jump -> next b3()
+  b3():
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="RangeError" [isFreeName]
+    v5 = Convert v4 declared={type=builtin(RangeError) flags=[IsExpected]}
+    v6 = String string="stop"
+    v7 = Construct v5, -, v6 calleeName="RangeError"
+    v8 = Convert v7 declared={type=undefined|null|RangeError flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    Throw v8
+  b4(v9):
+    Jump -> next b5()
+  b5():
+    v10 = Undefined
+    Return v10
+}
+
+function f4 name="poke" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] functionTypes=[f11] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g7
+    v2 = CheckInitialized v1 name="held"
+    v3 = GetModuleVariable variable=g7
+    v4 = CheckInitialized v3 name="held"
+    v5 = Add v4, v0
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    v8 = Convert v7 declared={type=number}
+    PutModuleVariable v8 variable=g7
+    v10 = Undefined
+    Return v10
+}
+
+function f5 name="run" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g7
+    v2 = CheckInitialized v1 name="held"
+    v3 = Convert v0 declared={type=number}
+    PutModuleVariable v3 variable=g7
+    v5 = Integer
+    v6 = Convert v5 declared={type=number}
+    Jump -> next b2(v6)
+  b2(v7: number):
+    LoopHint
+    v9 = Integer integer=4
+    v10 = Less v7, v9
+    Branch v10 -> taken b3(| 0), notTaken b29(| 0)
+  b3(v11):
+    Jump -> next b4()
+  b4():
+    Jump -> next b5()
+  b5() handler=b23():
+    Jump -> next b6()
+  b6() handler=b20():
+    v12 = String string=""
+    v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v14 = Data data=d1
+    v15 = PropGet v14 key="slice"
+    v16 = GetModuleVariable variable=g6
+    v17 = CheckInitialized v16 name="extraTurns"
+    v18 = Call v15, v14, v17 calleeKey="slice" calleeName="slice"
+    v19 = Convert v18 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v20 = IteratorOpen v19
+    Jump -> next b7(v13)
+  b7(v21: undefined|null|string) handler=b20():
+    LoopHint
+    v23 = IteratorResume v20
+    v24 = ResultAt v23
+    v25 = ResultAt v23 index=1
+    Branch v24 -> taken b8(), notTaken b16()
+  b8() handler=b20():
+    v26 = GetModuleVariable variable=g0
+    v27 = Call v26, -, v21 calleeName="say"
+    v28 = GetModuleVariable variable=g2
+    v29 = StrictEq v11, v0
+    v30 = Call v28, -, v29 calleeName="fail"
+    v31 = String string=""
+    v32 = Convert v31 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v33 = Data data=d2
+    v34 = PropGet v33 key="slice"
+    v35 = GetModuleVariable variable=g6
+    v36 = CheckInitialized v35 name="extraTurns"
+    v37 = Call v34, v33, v36 calleeKey="slice" calleeName="slice"
+    v38 = Convert v37 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v39 = IteratorOpen v38
+    Jump -> next b9(v32)
+  b9(v40: undefined|null|string) handler=b20():
+    LoopHint
+    v42 = IteratorResume v39
+    v43 = ResultAt v42
+    v44 = ResultAt v42 index=1
+    Branch v43 -> taken b10(), notTaken b12()
+  b10() handler=b20():
+    v45 = GetModuleVariable variable=g0
+    v46 = Call v45, -, v40 calleeName="say"
+    Jump -> next b11()
+  b11() handler=b23():
+    Jump -> next b21()
+  b12() handler=b20():
+    Jump -> next b13()
+  b13() handler=b15():
+    v47 = Convert v44 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v48 = GetModuleVariable variable=g7
+    v49 = CheckInitialized v48 name="held"
+    v50 = GetModuleVariable variable=g7
+    v51 = CheckInitialized v50 name="held"
+    v52 = Add v51, v47
+    v53 = Integer integer=1
+    v54 = Add v52, v53
+    v55 = Convert v54 declared={type=number}
+    PutModuleVariable v55 variable=g7
+    v57 = GetModuleVariable variable=g8
+    v58 = CheckInitialized v57 name="caller"
+    v59 = GetModuleVariable variable=g3
+    v60 = Call v58, -, v59, v47 calleeName="caller"
+    v61 = String string=","
+    v62 = GetModuleVariable variable=g7
+    v63 = CheckInitialized v62 name="held"
+    v64 = Add v61, v63
+    v65 = Add v40, v64
+    v66 = Convert v65 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Jump -> next b14()
+  b14() handler=b15():
+    Jump -> next b9(v66)
+  b15() role=IterationCleanup subject=v39 handler=b20():
+    v67 = CatchException
+    IteratorClose v39 completion=Throw
+    Rethrow v67
+  b16() handler=b20():
+    Jump -> next b17()
+  b17() handler=b19():
+    v69 = Convert v25 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v70 = GetModuleVariable variable=g7
+    v71 = CheckInitialized v70 name="held"
+    v72 = GetModuleVariable variable=g7
+    v73 = CheckInitialized v72 name="held"
+    v74 = Add v73, v69
+    v75 = Integer integer=1
+    v76 = Add v74, v75
+    v77 = Convert v76 declared={type=number}
+    PutModuleVariable v77 variable=g7
+    v79 = GetModuleVariable variable=g8
+    v80 = CheckInitialized v79 name="caller"
+    v81 = GetModuleVariable variable=g3
+    v82 = Call v80, -, v81, v69 calleeName="caller"
+    v83 = String string=","
+    v84 = GetModuleVariable variable=g7
+    v85 = CheckInitialized v84 name="held"
+    v86 = Add v83, v85
+    v87 = Add v21, v86
+    v88 = Convert v87 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Jump -> next b18()
+  b18() handler=b19():
+    Jump -> next b7(v88)
+  b19() role=IterationCleanup subject=v20 handler=b20():
+    v89 = CatchException
+    IteratorClose v20 completion=Throw
+    Rethrow v89
+  b20() role=CatchHandler handler=b23():
+    v91 = CatchValue
+    v92 = GetModuleVariable variable=g0
+    v93 = String string="caught"
+    v94 = GetModuleVariable variable=g7
+    v95 = CheckInitialized v94 name="held"
+    v96 = Call v92, -, v93, v95 calleeName="say"
+    Jump -> next b21()
+  b21() handler=b23():
+    Jump -> next b22()
+  b22():
+    v97 = Integer
+    v98 = Undefined
+    Jump -> next b24(v97, v98)
+  b23() role=CleanupHandler:
+    v99 = CatchValue
+    v100 = Integer integer=1
+    Jump -> next b24(v100, v99)
+  b24(v101, v102):
+    v103 = GetModuleVariable variable=g0
+    v104 = String string="finally"
+    v105 = GetModuleVariable variable=g7
+    v106 = CheckInitialized v105 name="held"
+    v107 = Call v103, -, v104, v106 calleeName="say"
+    Switch v101 cases=[0] -> case b25(), otherwise b28()
+  b25():
+    Jump -> next b26()
+  b26():
+    Jump -> next b27()
+  b27():
+    v108 = Increment v11
+    v109 = Convert v108 declared={type=number}
+    Jump -> next b2(v109)
+  b28():
+    Throw v102
+  b29(v110):
+    Jump -> next b30()
+  b30():
+    v111 = GetModuleVariable variable=g0
+    v112 = GetModuleVariable variable=g7
+    v113 = CheckInitialized v112 name="held"
+    v114 = Call v111, -, v113 calleeName="say"
+    v115 = Undefined
+    Return v115
+}
+
+function f6 name="attempt" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|f10 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|string, v1: undefined|null|f10):
+    Jump -> next b1()
+  b1():
+    Jump -> next b2()
+  b2() handler=b4():
+    v2 = Call v1 calleeName="run"
+    Jump -> next b3()
+  b3():
+    Jump -> next b5()
+  b4() role=CatchHandler:
+    v3 = CatchValue
+    v4 = GetModuleVariable variable=g0
+    v5 = String string="threw"
+    v6 = Convert v3 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v7 = PropGet v6 key="name"
+    v8 = Convert v7 declared={type=undefined|null|string} illTypedCause=Assertion
+    v9 = Call v4, -, v5, v8 calleeName="say"
+    Jump -> next b5()
+  b5():
+    v10 = GetModuleVariable variable=g1
+    v11 = Call v10, -, v0 calleeName="tell"
+    v12 = Undefined
+    Return v12
+}
+
+function f7 name="attemptLater" module=m0 flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1()
+  b1():
+    v3 = NewRuntimeError runtimeError=LeftOutOfExecutable name="attemptLater"
+    Throw v3
+}
+
+function f8 module=m0 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f14] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g4
+    v1 = Integer integer=1
+    v2 = Call v0, -, v1 calleeName="run"
+    ReturnCall v2
+}
+
+function f9 module=m0 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f15] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g4
+    v1 = Integer integer=2
+    v2 = Call v0, -, v1 calleeName="run"
+    ReturnCall v2
+}
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]

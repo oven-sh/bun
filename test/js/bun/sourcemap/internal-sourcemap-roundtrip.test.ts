@@ -269,7 +269,7 @@ describe("InternalSourceMap.toVLQ", () => {
         `const { internalSourceMap } = require("bun:internal-for-testing");
          // Blob layout (see src/sourcemap/InternalSourceMap.rs):
          // [0..8] total_len u64, [8..16] mapping_count u64,
-         // [16..24] input_line_count u64, [24..28] sync_count u32,
+         // [16..24] unused, [24..28] sync_count u32,
          // [28..32] stream_offset u32, [32..56] SyncEntry, [56..88] window
          // header (count=1, no deltas), [88] stream tail pad.
          const blob = new Uint8Array(89);
@@ -293,7 +293,147 @@ describe("InternalSourceMap.toVLQ", () => {
   });
 });
 
+describe("InternalSourceMap with a corrupt body", () => {
+  // Only the outer header is validated when a blob is read back from disk, so find() and toVLQ()
+  // must bounds-check every offset and length they read from the body.
+  //
+  // Builds 72 mappings, 8 per line. Window 0 has the first 64 and window 1 has the rest.
+  // The 3-line gap and the second source give window 0 both optional sections
+  // (gen-line exceptions, src-idx). Window 1 has neither.
+  function buildTwoWindowVLQ(): string {
+    let out = "";
+    let prev = { col: 0, src: 0, origLine: 0, origCol: 0 };
+    for (let line = 0; line < 9; line++) {
+      for (let k = 0; k < 8; k++) {
+        const cur = { col: k * 5, src: line < 4 ? 0 : 1, origLine: line * 2, origCol: k * 7 + (k & 1) };
+        if (k > 0) out += ",";
+        out +=
+          encodeVLQ(cur.col - prev.col) +
+          encodeVLQ(cur.src - prev.src) +
+          encodeVLQ(cur.origLine - prev.origLine) +
+          encodeVLQ(cur.origCol - prev.origCol);
+        prev = cur;
+      }
+      out += line === 2 ? ";;;" : ";";
+      prev.col = 0;
+    }
+    return out;
+  }
+
+  test.concurrent("find() and toVLQ() don't read out of bounds", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { internalSourceMap } = require("bun:internal-for-testing");
+         const pristine = internalSourceMap.fromVLQ(process.env.VLQ);
+         const total = pristine.length;
+         const header = new DataView(pristine.buffer);
+         const streamOffset = header.getUint32(28, true);
+         console.log("windows " + header.getUint32(24, true));
+         // A column past every mapping makes the reader scan to the end of the line.
+         function probe(blob) {
+           let found = 0;
+           for (let line = 0; line < 12; line++) {
+             if (internalSourceMap.find(blob, line, 0x7fffffff) !== null) found++;
+           }
+           return found;
+         }
+         console.log("pristine " + probe(pristine));
+
+         // Corrupt a whole section. Every window is now out of bounds, so every
+         // lookup returns null. toVLQ() stops at the first unreadable window. For
+         // stream_80 it has already emitted that window's seed mapping.
+         const fills = {
+           stream_offset_last: b => new DataView(b.buffer).setUint32(28, total - 1, true),
+           sync_ff: b => b.fill(0xff, 32, streamOffset),
+           stream_ff: b => b.fill(0xff, streamOffset),
+           stream_80: b => b.fill(0x80, streamOffset),
+         };
+         for (const [name, damage] of Object.entries(fills)) {
+           const blob = pristine.slice();
+           damage(blob);
+           console.log(name + " " + probe(blob) + " " + JSON.stringify(internalSourceMap.toVLQ(blob)));
+         }
+
+         // Corrupt one byte at every body offset. The byte may still decode, so
+         // the lookup's result is unspecified. It only has to return.
+         let blobs = 0;
+         for (let at = 32; at < total; at++) {
+           for (const value of [0x00, 0x80, 0xff]) {
+             if (pristine[at] === value) continue;
+             const blob = pristine.slice();
+             blob[at] = value;
+             probe(blob);
+             blobs++;
+           }
+         }
+         console.log("swept " + (blobs > 500));`,
+      ],
+      env: { ...bunEnv, VLQ: buildTwoWindowVLQ() },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.split("\n")).toEqual([
+      "windows 2",
+      "pristine 9",
+      'stream_offset_last 0 ""',
+      'sync_ff 0 ""',
+      'stream_ff 0 ""',
+      'stream_80 0 "AAAA"',
+      "swept true",
+      "",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("InternalSourceMap round-trip", () => {
+  test("large blank-line run and many mappings re-encode byte-identically", () => {
+    // append_vlq_to() reserves mapping_count * 6 bytes upfront and writes
+    // multi-line `;` gaps in one shot; this input exercises both with a
+    // 50 000-line gap and >2000 mappings (many sync windows).
+    let vlqIn = "";
+    let prevGenCol = 0;
+    let prevOrigLine = 0;
+    let prevOrigCol = 0;
+    const emit = (genCol: number, origLine: number, origCol: number) => {
+      if (vlqIn.length && !vlqIn.endsWith(";")) vlqIn += ",";
+      vlqIn +=
+        encodeVLQ(genCol - prevGenCol) +
+        encodeVLQ(0) +
+        encodeVLQ(origLine - prevOrigLine) +
+        encodeVLQ(origCol - prevOrigCol);
+      prevGenCol = genCol;
+      prevOrigLine = origLine;
+      prevOrigCol = origCol;
+    };
+    const newline = (n: number) => {
+      vlqIn += Buffer.alloc(n, ";").toString();
+      prevGenCol = 0;
+    };
+    for (let line = 0; line < 500; line++) {
+      for (let k = 0; k < 4; k++) emit(k * 4, line, k * 3);
+      newline(1);
+    }
+    newline(50_000);
+    emit(0, 600, 0);
+    newline(1);
+    for (let k = 0; k < 100; k++) emit(k * 2, 601, k * 2);
+
+    const reference = decodeMappings(vlqIn);
+    expect(reference.length).toBe(2101);
+
+    const blob = internalSourceMap.fromVLQ(vlqIn);
+    const vlqOut = internalSourceMap.toVLQ(blob);
+
+    // The gap re-encodes as exactly 50 001 consecutive ';'.
+    expect(vlqOut.indexOf(Buffer.alloc(50_001, ";").toString())).toBeGreaterThan(0);
+    // Semantics preserved end to end.
+    expect(decodeMappings(vlqOut)).toEqual(reference);
+  });
+
   test("synthetic: fromVLQ → toVLQ preserves all 4-field positions; names dropped, 1-field skipped", () => {
     const vlqIn = buildSyntheticVLQ();
     const reference = decodeMappings(vlqIn);
@@ -407,4 +547,68 @@ console.log(go());
       });
     }
   });
+});
+
+// LineOffsetTable::generate builds the per-line column table directly from the
+// raw source bytes, so it must tolerate a truncated trailing multi-byte UTF-8
+// sequence: a lead byte that declares more bytes than the file has left.
+describe.concurrent("sourcemap of a source with a truncated trailing UTF-8 sequence", () => {
+  test.each([
+    ["lone 4-byte lead 0xF0", [0xf0]],
+    ["lone 3-byte lead 0xE2", [0xe2]],
+    ["lone 2-byte lead 0xC3", [0xc3]],
+    ["overlong 2-byte lead 0xC1", [0xc1]],
+    ["2 of 3 bytes 0xE0 0x81", [0xe0, 0x81]],
+    ["3 of 4 bytes 0xF0 0x9F 0x92", [0xf0, 0x9f, 0x92]],
+  ] as [string, number[]][])("%s", async (_name, tail) => {
+    using dir = tempDir("sourcemap-truncated-utf8", {
+      "in.js": Buffer.concat([Buffer.from("console.log(1);//"), Buffer.from(tail)]),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--sourcemap=external", "--outdir=out", "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ exitCode, stdout, stderr }).toEqual({
+      exitCode: 0,
+      stdout: expect.any(String),
+      stderr: expect.any(String),
+    });
+    // `console.log(1);` is identical in every variant and the truncated bytes
+    // live in a stripped comment, so the encoded mappings must be identical too.
+    const map = await Bun.file(path.join(String(dir), "out", "in.js.map")).json();
+    expect(map).toMatchObject({
+      sources: ["../in.js"],
+      mappings: ";AAAA,QAAQ,IAAI,CAAC;",
+    });
+  });
+});
+
+// `sources` entries in the emitted map are URLs: the path from the chunk
+// directory to each source must use forward slashes on every platform, never
+// the host path separator.
+test.concurrent("sourcemap sources use forward slashes on every platform", async () => {
+  using dir = tempDir("sourcemap-forward-slashes", {
+    "src/nested/in.js": `import { v } from "../dep.js";\nconsole.log(v);\n`,
+    "src/dep.js": `export const v = 1;\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--sourcemap=external", "--outdir=out", "src/nested/in.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toEqual({
+    exitCode: 0,
+    stdout: expect.any(String),
+    stderr: expect.any(String),
+  });
+  // Two sources so both `sources` emission paths (first entry and the rest) are covered.
+  const map = await Bun.file(path.join(String(dir), "out", "in.js.map")).json();
+  expect(map.sources).toEqual(["../src/dep.js", "../src/nested/in.js"]);
 });

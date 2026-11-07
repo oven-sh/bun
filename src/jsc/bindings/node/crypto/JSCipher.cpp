@@ -21,6 +21,11 @@ const JSC::ClassInfo JSCipher::s_info = { "Cipher"_s, &Base::s_info, nullptr, nu
 void JSCipher::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
+
+    if (m_ctx) {
+        m_sizeForGC = sizeof(EVP_CIPHER_CTX);
+        vm.heap.reportExtraMemoryAllocated(this, m_sizeForGC);
+    }
 }
 
 template<typename Visitor>
@@ -29,6 +34,8 @@ void JSCipher::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSCipher* thisObject = uncheckedDowncast<JSCipher>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+
+    visitor.reportExtraMemoryVisited(thisObject->m_sizeForGC);
 }
 
 DEFINE_VISIT_CHILDREN(JSCipher);
@@ -59,14 +66,67 @@ enum class CipherOperation {
     recover,
 };
 
+// Reads an option that names a digest. `digest` stays empty if the option is undefined.
+static void getDigestOption(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* options, ASCIILiteral name, ASCIILiteral argName, ncrypto::Digest& digest)
+{
+    JSValue value = options->get(globalObject, Identifier::fromString(globalObject->vm(), name));
+    RETURN_IF_EXCEPTION(scope, );
+    if (value.isUndefined())
+        return;
+    V::validateString(scope, globalObject, value, argName);
+    RETURN_IF_EXCEPTION(scope, );
+    GCOwnedDataScope<WTF::StringView> view = asString(value)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    digest = ncrypto::Digest::FromName(view);
+    if (!digest)
+        ERR::OSSL_EVP_INVALID_DIGEST(scope, globalObject);
+}
+
 JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, KeyType keyType, CipherOperation operation, int32_t defaultPadding)
 {
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     JSValue optionsValue = callFrame->argument(0);
     JSValue bufferValue = callFrame->argument(1);
+
+    // The cipher options (padding, oaepHash, mgf1Hash, oaepLabel) are validated before any key
+    // parsing so an invalid digest is reported even when the key material itself is invalid.
+    ncrypto::Digest digest;
+    ncrypto::Digest mgf1Digest;
+    int32_t padding = defaultPadding;
+    std::optional<WTF::Vector<uint8_t>> oaepLabel;
+    JSValue encodingValue = jsUndefined();
+    if (JSObject* options = optionsValue.getObject()) {
+        JSValue paddingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "padding"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        // Node: `key.padding || defaultPadding`
+        if (paddingValue.toBoolean(lexicalGlobalObject)) {
+            padding = paddingValue.toInt32(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
+        getDigestOption(lexicalGlobalObject, scope, options, "oaepHash"_s, "key.oaepHash"_s, digest);
+        RETURN_IF_EXCEPTION(scope, {});
+        getDigestOption(lexicalGlobalObject, scope, options, "mgf1Hash"_s, "key.mgf1Hash"_s, mgf1Digest);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        encodingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "encoding"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSValue oaepLabelValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepLabel"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!oaepLabelValue.isUndefined()) {
+            // Key parsing below runs user JS (option getters, warning events) that could
+            // detach a borrowed label buffer, so copy the bytes instead of holding a view.
+            auto view = getArrayBufferOrView2(lexicalGlobalObject, scope, oaepLabelValue, "key.oaepLabel"_s, encodingValue);
+            RETURN_IF_EXCEPTION(scope, {});
+            oaepLabel = copyArgumentBytes(lexicalGlobalObject, scope, std::span { view->data(), view->size() }, "oaepLabel"_s);
+            if (!oaepLabel) return {};
+        }
+    }
 
     KeyObject keyObject;
     switch (keyType) {
@@ -116,45 +176,6 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
 
     auto& pkey = keyObject.asymmetricKey();
 
-    ncrypto::Digest digest;
-    int32_t padding = defaultPadding;
-    GCOwnedDataScope<std::span<const uint8_t>> oaepLabel = { nullptr, {} };
-    JSValue encodingValue = jsUndefined();
-    if (JSObject* options = optionsValue.getObject()) {
-        JSValue paddingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "padding"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!paddingValue.isUndefined()) {
-            padding = paddingValue.toInt32(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-
-        JSValue oaepHashValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepHash"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!oaepHashValue.isUndefined()) {
-            V::validateString(scope, lexicalGlobalObject, oaepHashValue, "options.oaepHash"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSString* oaepHashString = oaepHashValue.toString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            GCOwnedDataScope<WTF::StringView> oaepHashView = oaepHashString->view(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            digest = ncrypto::Digest::FromName(oaepHashView);
-            if (!digest) {
-                ERR::OSSL_EVP_INVALID_DIGEST(scope, lexicalGlobalObject);
-                return {};
-            }
-        }
-
-        encodingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "encoding"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-
-        JSValue oaepLabelValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepLabel"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!oaepLabelValue.isUndefined()) {
-            oaepLabel = getArrayBufferOrView2(lexicalGlobalObject, scope, oaepLabelValue, "options.oaepLabel"_s, encodingValue);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-    }
-
     auto buffer = getArrayBufferOrView2(lexicalGlobalObject, scope, bufferValue, "buffer"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -170,10 +191,17 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
         return {};
     }
 
+    // Under another padding, OpenSSL's encryption and decryption ignore the OAEP options. BoringSSL refuses them.
+    if (padding != RSA_PKCS1_OAEP_PADDING && (operation == CipherOperation::encrypt || operation == CipherOperation::decrypt)) {
+        digest = nullptr;
+        mgf1Digest = nullptr;
+        oaepLabel.reset();
+    }
+
     ncrypto::Buffer<const void> labelBuf = {};
-    if (oaepLabel.owner) {
+    if (oaepLabel) {
         labelBuf = {
-            .data = oaepLabel->data(),
+            .data = oaepLabel->begin(),
             .len = oaepLabel->size(),
         };
     }
@@ -181,6 +209,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     ncrypto::Cipher::CipherParams cipherParams {
         .padding = padding,
         .digest = digest,
+        .mgf1_digest = mgf1Digest,
         .label = labelBuf,
     };
 

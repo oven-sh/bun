@@ -1,6 +1,12 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { createCipheriv, createSecretKey, KeyObject, type webcrypto } from "node:crypto";
+
+type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
+type HmacImportParams = webcrypto.HmacImportParams;
+type JsonWebKey = webcrypto.JsonWebKey;
+type KeyUsage = webcrypto.KeyUsage;
 
 // This is consistent with what Node.js does, probably for polyfills to continue to work.
 it("crypto.subtle setter should not throw", () => {
@@ -8,6 +14,11 @@ it("crypto.subtle setter should not throw", () => {
   // @ts-expect-error
   expect(() => (globalThis.crypto.subtle = 123)).not.toThrow();
   expect(globalThis.crypto.subtle).toBe(subtle);
+});
+
+it("getRandomValues and randomUUID have the lengths of the IDL", () => {
+  expect(crypto.getRandomValues.length).toBe(1);
+  expect(crypto.randomUUID.length).toBe(0);
 });
 
 describe("Web Crypto", () => {
@@ -109,7 +120,7 @@ describe("Web Crypto", () => {
     // Setup: AES-GCM key that can encrypt arbitrary bytes and also unwrap keys.
     // We encrypt payloads that decrypt to invalid JWK data so the JWK parse path
     // inside SubtleCrypto::unwrapKey fails.
-    async function setup(payload: Uint8Array) {
+    async function setup(payload: Uint8Array<ArrayBuffer>) {
       const keyData = new Uint8Array(32).fill(1);
       const iv = new Uint8Array(12).fill(2);
       const key = await crypto.subtle.importKey("raw", keyData, { name: "AES-GCM" }, false, [
@@ -134,9 +145,8 @@ describe("Web Crypto", () => {
       expect(err.name).toBe("DataError");
     });
 
-    // Previously this promise never settled: the TypeError from JsonWebKey
-    // dictionary conversion escaped as an uncaught exception and the
-    // DeferredPromise was left in m_pendingPromises forever.
+    // With kty optional, a foreign object converts into an (empty-ish) JWK and
+    // rejects from the import algorithm itself.
     it("rejects when wrapped bytes are valid JSON but not a valid JWK", async () => {
       const { key, iv, wrapped } = await setup(new TextEncoder().encode(JSON.stringify({ foo: "bar" })));
       const err = await crypto.subtle
@@ -145,8 +155,26 @@ describe("Web Crypto", () => {
           () => null,
           e => e,
         );
+      expect(err).toBeInstanceOf(DOMException);
+      expect(err.name).toBe("DataError");
+    });
+
+    // Previously this promise never settled: the error thrown during
+    // JsonWebKey dictionary conversion (here a key_ops that is not a sequence)
+    // escaped as an uncaught exception and the DeferredPromise was left in
+    // m_pendingPromises forever. kty is optional now, and a key_ops entry that
+    // is not known is skipped, so this is what still reaches the
+    // conversion-exception branch.
+    it("settles when JsonWebKey dictionary conversion itself throws", async () => {
+      const { key, iv, wrapped } = await setup(new TextEncoder().encode(JSON.stringify({ key_ops: 5 })));
+      const err = await crypto.subtle
+        .unwrapKey("jwk", wrapped, key, { name: "AES-GCM", iv }, { name: "AES-GCM" }, true, ["encrypt", "decrypt"])
+        .then(
+          () => null,
+          e => e,
+        );
       expect(err).toBeInstanceOf(TypeError);
-      expect(err.message).toContain("kty");
+      expect(err.message).toBe("Value is not a sequence");
     });
 
     it("does not leak DeferredPromise in m_pendingPromises on JWK parse errors", async () => {
@@ -162,10 +190,13 @@ describe("Web Crypto", () => {
         const key = await crypto.subtle.importKey("raw", keyData, { name: "AES-GCM" }, false, [
           "encrypt", "decrypt", "wrapKey", "unwrapKey",
         ]);
+        // A key_ops that is not a sequence throws during dictionary
+        // conversion, which is the leaky branch this fixture guards (a
+        // merely-unusable JWK now converts fine and rejects downstream).
         const wrapped = await crypto.subtle.encrypt(
           { name: "AES-GCM", iv },
           key,
-          new TextEncoder().encode(JSON.stringify({ foo: "bar" })),
+          new TextEncoder().encode(JSON.stringify({ key_ops: 5 })),
         );
         async function once() {
           await crypto.subtle
@@ -318,6 +349,161 @@ describe("oversized inputs", () => {
   });
 });
 
+describe("oversized outputs", () => {
+  // The output can be larger than the input because of a tag, padding, 8 bytes for AES-KW, or base64 for a JWK.
+  // The synthetic limit lowers the cap to 1 MiB.
+  it.concurrent("rejects an output over the buffer limit and accepts one at the limit", async () => {
+    const script = `
+      import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+      const limit = 1024 * 1024;
+      setSyntheticAllocationLimitForTesting(limit);
+      const { subtle } = crypto;
+
+      const gcmKey = await subtle.importKey("raw", new Uint8Array(32).fill(1), "AES-GCM", false, ["encrypt", "decrypt"]);
+      const cbcKey = await subtle.importKey("raw", new Uint8Array(32).fill(2), "AES-CBC", false, ["encrypt"]);
+      const chachaKey = await subtle.importKey("raw-secret", new Uint8Array(32).fill(3), "ChaCha20-Poly1305", false, ["encrypt"]);
+      const kek = await subtle.importKey("raw", new Uint8Array(32).fill(4), "AES-KW", false, ["wrapKey"]);
+      const ctrKey = await subtle.importKey("raw", new Uint8Array(32).fill(5), "AES-CTR", false, ["encrypt"]);
+      const cfbKey = await subtle.importKey("raw", new Uint8Array(32).fill(6), "AES-CFB-8", false, ["encrypt"]);
+      const iv12 = new Uint8Array(12);
+      const iv16 = new Uint8Array(16);
+
+      const results = {};
+      const record = async (label, promise) => {
+        try {
+          results[label] = (await promise).byteLength;
+        } catch (e) {
+          results[label] = e.name;
+        }
+      };
+      const hmac = size => subtle.importKey("raw", new Uint8Array(size), { name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+      const wrap = async (format, size) => subtle.wrapKey(format, await hmac(size), kek, "AES-KW");
+      const exportJwk = async size => {
+        try {
+          results["HMAC jwk export " + (size * 4 > limit * 3 ? "over" : "at") + " limit"] = (await subtle.exportKey("jwk", await hmac(size))).k.length;
+        } catch (e) {
+          results["HMAC jwk export over limit"] = e.name;
+        }
+      };
+
+      await record("AES-GCM at limit", subtle.encrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, new Uint8Array(limit - 16)));
+      await record("AES-GCM over limit", subtle.encrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, new Uint8Array(limit - 15)));
+      await record("ChaCha20-Poly1305 at limit", subtle.encrypt({ name: "ChaCha20-Poly1305", iv: iv12 }, chachaKey, new Uint8Array(limit - 16)));
+      await record("ChaCha20-Poly1305 over limit", subtle.encrypt({ name: "ChaCha20-Poly1305", iv: iv12 }, chachaKey, new Uint8Array(limit - 15)));
+      await record("AES-CBC at limit", subtle.encrypt({ name: "AES-CBC", iv: iv16 }, cbcKey, new Uint8Array(limit - 1)));
+      await record("AES-CBC over limit", subtle.encrypt({ name: "AES-CBC", iv: iv16 }, cbcKey, new Uint8Array(limit)));
+      await record("AES-CTR at limit", subtle.encrypt({ name: "AES-CTR", counter: iv16, length: 64 }, ctrKey, new Uint8Array(limit)));
+      await record("AES-CTR over limit", subtle.encrypt({ name: "AES-CTR", counter: iv16, length: 64 }, ctrKey, new Uint8Array(limit + 1)));
+      await record("AES-CFB-8 at limit", subtle.encrypt({ name: "AES-CFB-8", iv: iv16 }, cfbKey, new Uint8Array(limit)));
+      await record("AES-CFB-8 over limit", subtle.encrypt({ name: "AES-CFB-8", iv: iv16 }, cfbKey, new Uint8Array(limit + 1)));
+      await record("AES-KW at limit", wrap("raw", limit - 8));
+      await record("AES-KW over limit", wrap("raw", limit));
+      // base64url encodes 3 bytes as 4 characters, so a 768 KiB key encodes to exactly 1 MiB.
+      await exportJwk((limit / 4) * 3);
+      await exportJwk((limit / 4) * 3 + 3);
+      await record("AES-KW jwk over limit", wrap("jwk", (limit / 4) * 3));
+
+      // The process is still usable after a rejection.
+      const small = await subtle.encrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, new Uint8Array(16).fill(5));
+      const roundTrip = new Uint8Array(await subtle.decrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, small));
+      results["small round-trip"] = roundTrip.every(b => b === 5) ? "ok" : "mismatch";
+
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "AES-GCM at limit": 1024 * 1024,
+      "AES-GCM over limit": "OperationError",
+      "ChaCha20-Poly1305 at limit": 1024 * 1024,
+      "ChaCha20-Poly1305 over limit": "OperationError",
+      "AES-CBC at limit": 1024 * 1024,
+      "AES-CBC over limit": "OperationError",
+      "AES-CTR at limit": 1024 * 1024,
+      "AES-CTR over limit": "OperationError",
+      "AES-CFB-8 at limit": 1024 * 1024,
+      "AES-CFB-8 over limit": "OperationError",
+      "AES-KW at limit": 1024 * 1024,
+      "AES-KW over limit": "OperationError",
+      "HMAC jwk export at limit": 1024 * 1024,
+      "HMAC jwk export over limit": "OperationError",
+      "AES-KW jwk over limit": "OperationError",
+      "small round-trip": "ok",
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("RSA-PSS saltLength", () => {
+  // saltLength is an unsigned long, but the OpenSSL setter takes an int whose
+  // negative values select a salt length: -1 is the digest length and -2 means
+  // "whatever fits" on sign and "accept any salt length" on verify. 2**32 - 1
+  // and 2**32 - 2 used to turn into exactly those two values.
+  it("does not treat values that do not fit in an int as the -1/-2 selectors", async () => {
+    const { privateKey, publicKey } = await crypto.subtle.generateKey(
+      { name: "RSA-PSS", modulusLength: 1024, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      false,
+      ["sign", "verify"],
+    );
+    const data = new TextEncoder().encode("hello");
+    const signedWithSalt20 = await crypto.subtle.sign({ name: "RSA-PSS", saltLength: 20 }, privateKey, data);
+
+    const sign = (saltLength: number) =>
+      crypto.subtle.sign({ name: "RSA-PSS", saltLength }, privateKey, data).then(
+        () => "signed",
+        e => `rejected ${e.name}`,
+      );
+    const verifySalt20Signature = (saltLength: number) =>
+      crypto.subtle.verify({ name: "RSA-PSS", saltLength }, publicKey, signedWithSalt20, data).then(
+        ok => String(ok),
+        e => `rejected ${e.name}`,
+      );
+
+    expect({
+      sign: {
+        "2**32 - 1": await sign(2 ** 32 - 1),
+        "2**32 - 2": await sign(2 ** 32 - 2),
+        "2**31": await sign(2 ** 31),
+        // Fits in an int; BoringSSL rejects it because it does not fit the key.
+        "2**31 - 1": await sign(2 ** 31 - 1),
+        // 1024-bit key, SHA-256: 128 - 32 - 2 = 94 is the largest salt that fits.
+        "95": await sign(95),
+        "94": await sign(94),
+      },
+      verify: {
+        "2**32 - 1": await verifySalt20Signature(2 ** 32 - 1),
+        "2**32 - 2": await verifySalt20Signature(2 ** 32 - 2),
+        "2**31": await verifySalt20Signature(2 ** 31),
+        "32": await verifySalt20Signature(32),
+        "20": await verifySalt20Signature(20),
+      },
+    }).toEqual({
+      sign: {
+        "2**32 - 1": "rejected OperationError",
+        "2**32 - 2": "rejected OperationError",
+        "2**31": "rejected OperationError",
+        "2**31 - 1": "rejected OperationError",
+        "95": "rejected OperationError",
+        "94": "signed",
+      },
+      verify: {
+        // A salt length that does not match the signature is a failed verification, not an error.
+        "2**32 - 1": "false",
+        "2**32 - 2": "false",
+        "2**31": "false",
+        "32": "false",
+        "20": "true",
+      },
+    });
+  });
+});
+
 describe("Ed25519", () => {
   describe("generateKey", () => {
     it("should return CryptoKeys without namedCurve in algorithm field", async () => {
@@ -333,4 +519,1393 @@ describe("Ed25519", () => {
       expect(privateKey.algorithm!.namedCurve).toBe(undefined);
     });
   });
+
+  describe("importKey", () => {
+    it("rejects a 64-byte JWK d whose trailing half is not the public key derived from the seed", async () => {
+      const { publicKey, privateKey } = (await crypto.subtle.generateKey("Ed25519", true, [
+        "sign",
+        "verify",
+      ])) as CryptoKeyPair;
+      const jwk = await crypto.subtle.exportKey("jwk", privateKey);
+      const seed = Buffer.from(jwk.d!, "base64url");
+      const pub = Buffer.from(jwk.x!, "base64url");
+      expect(seed.byteLength).toBe(32);
+      expect(pub.byteLength).toBe(32);
+
+      const outcome = (d: Buffer) =>
+        crypto.subtle.importKey("jwk", { ...jwk, d: d.toString("base64url") }, "Ed25519", true, ["sign"]).then(
+          key => (key instanceof CryptoKey ? "imported" : "other"),
+          e => `${e.name}: ${e.message}`,
+        );
+
+      expect({
+        mismatchedTrailingHalf: await outcome(Buffer.concat([seed, Buffer.alloc(32, 0)])),
+        oneBitOffTrailingHalf: await outcome(
+          Buffer.concat([seed, Buffer.from(pub.map((b, i) => (i === 0 ? b ^ 1 : b)))]),
+        ),
+        seedOnly: await outcome(seed),
+        seedWithDerivedPublicKey: await outcome(Buffer.concat([seed, pub])),
+      }).toEqual({
+        mismatchedTrailingHalf: "DataError: Invalid keyData",
+        oneBitOffTrailingHalf: "DataError: Invalid keyData",
+        seedOnly: "imported",
+        seedWithDerivedPublicKey: "imported",
+      });
+
+      const data = new TextEncoder().encode("hello ed25519");
+      const consistent = await crypto.subtle.importKey(
+        "jwk",
+        { ...jwk, d: Buffer.concat([seed, pub]).toString("base64url") },
+        "Ed25519",
+        true,
+        ["sign"],
+      );
+      const reexported = await crypto.subtle.exportKey("jwk", consistent);
+      expect({ d: reexported.d, x: reexported.x }).toEqual({ d: jwk.d, x: jwk.x });
+      expect(
+        await crypto.subtle.verify("Ed25519", publicKey, await crypto.subtle.sign("Ed25519", consistent, data), data),
+      ).toBe(true);
+
+      for (const cloned of [structuredClone(privateKey), structuredClone(consistent)]) {
+        expect(
+          await crypto.subtle.verify("Ed25519", publicKey, await crypto.subtle.sign("Ed25519", cloned, data), data),
+        ).toBe(true);
+      }
+    });
+  });
+});
+
+describe("ChaCha20-Poly1305 and AKP review fixes", () => {
+  it("raw-public import of an RSA key reports Node's aliased-format message", async () => {
+    // Node aliases raw-public/raw-secret to raw for every algorithm (verified
+    // v26.3.0: HKDF accepts raw-public), so the rejection names "raw".
+    for (const name of ["RSA-OAEP", "RSA-PSS"]) {
+      const err = await crypto.subtle
+        .importKey("raw-public", new Uint8Array(32), { name, hash: "SHA-256" }, false, [])
+        .then(
+          () => null,
+          e => e,
+        );
+      expect(err).toBeInstanceOf(DOMException);
+      expect({ name: err.name, message: err.message }).toEqual({
+        name: "NotSupportedError",
+        message: `Unable to import ${name} using raw format`,
+      });
+    }
+    // The broad aliasing itself: HKDF accepts raw-public like node.
+    const k = await crypto.subtle.importKey("raw-public", new Uint8Array(32), "HKDF", false, ["deriveBits"]);
+    expect(k.type).toBe("secret");
+  });
+
+  it("wrapKey rejects a non-extractable key before the format aliasing, like exportKey", async () => {
+    const ed = (await crypto.subtle.generateKey("Ed25519", false, ["sign", "verify"])) as CryptoKeyPair;
+    const kek = await crypto.subtle.importKey("raw", new Uint8Array(32), "AES-KW", false, ["wrapKey"]);
+    for (const op of [
+      () => crypto.subtle.exportKey("raw-seed", ed.privateKey),
+      () => crypto.subtle.wrapKey("raw-seed", ed.privateKey, kek, "AES-KW"),
+    ]) {
+      const err = await op().then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(DOMException);
+      expect({ name: err.name, message: err.message }).toEqual({
+        name: "InvalidAccessError",
+        message: "key is not extractable",
+      });
+    }
+  });
+
+  it("JWK import rejects duplicate key_ops entries for every oct algorithm", async () => {
+    // Node routes all algorithms through the same validateKeyOps: the
+    // duplicate scan wins over the usage-mismatch check but loses to "use".
+    const k = Buffer.alloc(32, 1).toString("base64url");
+    const cases: [Record<string, unknown>, AlgorithmIdentifier | HmacImportParams, KeyUsage[], string][] = [
+      [{ kty: "oct", k, key_ops: ["encrypt", "encrypt"] }, "ChaCha20-Poly1305", ["encrypt"], "Duplicate key operation"],
+      [
+        { kty: "oct", k, key_ops: ["sign", "sign"] },
+        { name: "HMAC", hash: "SHA-256" },
+        ["sign"],
+        "Duplicate key operation",
+      ],
+      [
+        { kty: "oct", k, key_ops: ["verify", "verify"] },
+        { name: "HMAC", hash: "SHA-256" },
+        ["sign"],
+        "Duplicate key operation",
+      ],
+      [
+        { kty: "oct", k, use: "enc", key_ops: ["sign", "sign"] },
+        { name: "HMAC", hash: "SHA-256" },
+        ["sign"],
+        'Invalid JWK "use" Parameter',
+      ],
+    ];
+    for (const [jwk, alg, usages, message] of cases) {
+      const err = await crypto.subtle.importKey("jwk", jwk as JsonWebKey, alg, true, usages).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(DOMException);
+      expect({ name: err.name, message: err.message }).toEqual({ name: "DataError", message });
+    }
+  });
+
+  it("HMAC JWK import reports Node's member-check messages in Node's order", async () => {
+    const k = Buffer.alloc(32, 1).toString("base64url");
+    const alg = { name: "HMAC", hash: "SHA-256" };
+    const cases: [Record<string, unknown>, string][] = [
+      [{ kty: "oct", k, use: "enc" }, 'Invalid JWK "use" Parameter'],
+      [{ kty: "oct", k, key_ops: ["verify"] }, "Key operations and usage mismatch"],
+      [{ kty: "oct", k, ext: false }, 'JWK "ext" Parameter and extractable mismatch'],
+      [{ kty: "oct", k: "!!!" }, "Zero-length key is not supported"],
+      // use precedes alg, the decoded key, and the length check in node.
+      [{ kty: "oct", k, use: "enc", alg: "HS384" }, 'Invalid JWK "use" Parameter'],
+      [{ kty: "oct", k: "!!!", use: "enc" }, 'Invalid JWK "use" Parameter'],
+    ];
+    for (const [jwk, message] of cases) {
+      const err = await crypto.subtle.importKey("jwk", jwk as JsonWebKey, alg, true, ["sign"]).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(DOMException);
+      expect({ name: err.name, message: err.message }).toEqual({ name: "DataError", message });
+    }
+  });
+
+  it("buffer-format importKey never reads JWK members; jwk propagates getter errors", async () => {
+    // Node picks the keyData converter by format (verified on v26.3.0:
+    // 0 getter calls for raw, 1 for jwk with the original error surfaced).
+    let getterCalls = 0;
+    const evil = {
+      get kty() {
+        getterCalls++;
+        throw new Error("getter boom");
+      },
+    };
+    let err: any;
+    try {
+      await crypto.subtle.importKey("raw", evil as any, "HKDF", false, ["deriveBits"]);
+    } catch (e) {
+      err = e;
+    }
+    expect({ code: err.code, getterCalls }).toEqual({ code: "ERR_INVALID_ARG_TYPE", getterCalls: 0 });
+    err = undefined;
+    try {
+      await crypto.subtle.importKey("jwk", evil as any, "HKDF", false, ["deriveBits"]);
+    } catch (e) {
+      err = e;
+    }
+    expect({ message: err.message, getterCalls }).toEqual({ message: "getter boom", getterCalls: 1 });
+  });
+
+  it("importKey with a plain object for a buffer format rejects with Node's ERR_INVALID_ARG_TYPE", async () => {
+    for (const format of ["raw", "raw-secret"] as const) {
+      let err: any;
+      try {
+        await crypto.subtle.importKey(format, {} as any, "AES-GCM", true, ["encrypt"]);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(TypeError);
+      expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(err.message).toBe(
+        "Failed to execute 'importKey' on 'SubtleCrypto': 2nd argument is not instance of ArrayBuffer, Buffer, TypedArray, or DataView.",
+      );
+    }
+  });
+
+  it("an invalid KeyFormat coerces its argument exactly once", async () => {
+    // Node stringifies the format argument once; a second coercion is
+    // observable through an adversarial toString.
+    let calls = 0;
+    const evil = {
+      toString() {
+        calls++;
+        return "bogus";
+      },
+    };
+    let err: any;
+    try {
+      await crypto.subtle.importKey(evil as any, new Uint8Array(16), "AES-GCM", true, ["encrypt"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err.code).toBe("ERR_INVALID_ARG_VALUE");
+    expect(calls).toBe(1);
+  });
+
+  it("toCryptoKey rejects AES-CFB with Node's NotSupportedError", async () => {
+    // Node v26.3.0 has no AES-CFB in webcrypto; Bun's subtle.importKey
+    // accepts it as an extension but the node:crypto API matches node.
+    const ko = createSecretKey(Buffer.alloc(16));
+    let err: any;
+    try {
+      ko.toCryptoKey("AES-CFB", true, ["encrypt"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DOMException);
+    expect(err.name).toBe("NotSupportedError");
+    expect(err.message).toBe("Unrecognized algorithm name");
+  });
+
+  it("structuredClone round-trips ChaCha20-Poly1305 keys", async () => {
+    const material = new Uint8Array(32).fill(7);
+    const key = await crypto.subtle.importKey("raw-secret", material, "ChaCha20-Poly1305", true, [
+      "encrypt",
+      "decrypt",
+    ]);
+    const clone = structuredClone(key);
+    expect(clone.algorithm).toEqual(key.algorithm);
+    expect(clone.type).toBe("secret");
+    expect(clone.extractable).toBe(true);
+    expect(clone.usages).toEqual(key.usages);
+    expect(new Uint8Array(await crypto.subtle.exportKey("raw-secret", clone))).toEqual(material);
+    // Clones must be usable, not just inspectable.
+    const iv = new Uint8Array(12);
+    const ct = await crypto.subtle.encrypt({ name: "ChaCha20-Poly1305", iv }, clone, new Uint8Array([1, 2, 3]));
+    expect(new Uint8Array(await crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv }, key, ct))).toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+  });
+
+  it("structuredClone preserves extractable=false for ChaCha20-Poly1305 keys", async () => {
+    const key = await crypto.subtle.importKey("raw-secret", new Uint8Array(32), "ChaCha20-Poly1305", false, [
+      "encrypt",
+    ]);
+    const clone = structuredClone(key);
+    expect(clone.extractable).toBe(false);
+    await expect(crypto.subtle.exportKey("raw-secret", clone)).rejects.toThrow("key is not extractable");
+  });
+
+  it.each(["ML-DSA-65", "ML-KEM-768"])("structuredClone round-trips %s key pairs", async alg => {
+    const usages = alg.startsWith("ML-DSA") ? ["sign", "verify"] : ["encapsulateBits", "decapsulateBits"];
+    const pair = (await crypto.subtle.generateKey(alg, true, usages as KeyUsage[])) as CryptoKeyPair;
+    const pub = structuredClone(pair.publicKey);
+    const priv = structuredClone(pair.privateKey);
+    expect(pub.algorithm).toEqual(pair.publicKey.algorithm);
+    expect(pub.type).toBe("public");
+    expect(pub.usages).toEqual(pair.publicKey.usages);
+    expect(priv.type).toBe("private");
+    expect(priv.extractable).toBe(true);
+    expect(priv.usages).toEqual(pair.privateKey.usages);
+    expect(new Uint8Array(await crypto.subtle.exportKey("spki", pub))).toEqual(
+      new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey)),
+    );
+    expect(new Uint8Array(await crypto.subtle.exportKey("pkcs8", priv))).toEqual(
+      new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey)),
+    );
+    // Like Node, the clone keeps the FIPS seed (pkcs8 embeds it).
+    expect(new Uint8Array(await crypto.subtle.exportKey("raw-seed", priv))).toEqual(
+      new Uint8Array(await crypto.subtle.exportKey("raw-seed", pair.privateKey)),
+    );
+  });
+
+  it("Worker postMessage delivers ChaCha20-Poly1305 and ML-DSA keys", async () => {
+    const material = new Uint8Array(32).fill(9);
+    const chacha = await crypto.subtle.importKey("raw-secret", material, "ChaCha20-Poly1305", true, ["encrypt"]);
+    const pair = (await crypto.subtle.generateKey("ML-DSA-65", true, ["sign", "verify"])) as CryptoKeyPair;
+    const worker = new Worker(
+      URL.createObjectURL(
+        new Blob(
+          [
+            `self.onmessage = async ({ data }) => {
+              const raw = new Uint8Array(await crypto.subtle.exportKey("raw-secret", data.chacha));
+              const spki = new Uint8Array(await crypto.subtle.exportKey("spki", data.mlPublic));
+              postMessage({
+                raw,
+                spki,
+                chachaAlg: data.chacha.algorithm.name,
+                mlUsages: data.mlPublic.usages,
+              });
+            };`,
+          ],
+          { type: "application/javascript" },
+        ),
+      ),
+    );
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<any>();
+      worker.onmessage = e => resolve(e.data);
+      worker.onerror = e => reject(new Error(e.message));
+      worker.postMessage({ chacha, mlPublic: pair.publicKey });
+      const result = await promise;
+      expect(new Uint8Array(result.raw)).toEqual(material);
+      expect(result.chachaAlg).toBe("ChaCha20-Poly1305");
+      expect(result.mlUsages).toEqual(["verify"]);
+      expect(new Uint8Array(result.spki)).toEqual(
+        new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey)),
+      );
+    } finally {
+      worker.terminate();
+    }
+  });
+
+  it.each<[string, "raw" | "raw-secret"]>([
+    ["ChaCha20-Poly1305", "raw-secret"],
+    ["AES-GCM", "raw"],
+  ])("decrypt of undersized %s input rejects with Node's generic message", async (name, format) => {
+    const key = await crypto.subtle.importKey(format, new Uint8Array(32), { name }, false, ["decrypt"]);
+    await expect(crypto.subtle.decrypt({ name, iv: new Uint8Array(12) }, key, new Uint8Array(5))).rejects.toThrow(
+      "The operation failed for an operation-specific reason",
+    );
+  });
+
+  it("encapsulateBits and encapsulateKey enumerate results in Node's order", async () => {
+    // Node v26.3.0: encapsulateBits results are sharedKey-first while
+    // encapsulateKey results are ciphertext-first.
+    const bitsPair = (await crypto.subtle.generateKey("ML-KEM-768", true, [
+      "encapsulateBits",
+      "decapsulateBits",
+    ])) as CryptoKeyPair;
+    const bits = await crypto.subtle.encapsulateBits({ name: "ML-KEM-768" }, bitsPair.publicKey);
+    expect(Object.keys(bits)).toEqual(["sharedKey", "ciphertext"]);
+    const keyPair = (await crypto.subtle.generateKey("ML-KEM-768", true, [
+      "encapsulateKey",
+      "decapsulateKey",
+    ])) as CryptoKeyPair;
+    const res = await crypto.subtle.encapsulateKey({ name: "ML-KEM-768" }, keyPair.publicKey, "HKDF", false, [
+      "deriveBits",
+    ]);
+    expect(Object.keys(res)).toEqual(["ciphertext", "sharedKey"]);
+  });
+
+  it("deriveKey can derive a ChaCha20-Poly1305 key", async () => {
+    const base = await crypto.subtle.importKey("raw", new Uint8Array(32), "HKDF", false, ["deriveKey"]);
+    const derived = await crypto.subtle.deriveKey(
+      { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(8), info: new Uint8Array(0) },
+      base,
+      { name: "ChaCha20-Poly1305" },
+      true,
+      ["encrypt", "decrypt"],
+    );
+    expect(derived.algorithm.name).toBe("ChaCha20-Poly1305");
+    const iv = new Uint8Array(12);
+    const ct = await crypto.subtle.encrypt({ name: "ChaCha20-Poly1305", iv }, derived, new Uint8Array([1, 2, 3]));
+    const pt = await crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv }, derived, ct);
+    expect(new Uint8Array(pt)).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
+  it("rejects a ChaCha20-Poly1305 iv that is not 12 bytes with Node's message", async () => {
+    const key = await crypto.subtle.importKey("raw-secret", new Uint8Array(32), "ChaCha20-Poly1305", true, [
+      "encrypt",
+      "decrypt",
+    ]);
+    for (const size of [0, 11, 16]) {
+      await expect(
+        crypto.subtle.encrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(size) }, key, new Uint8Array(4)),
+      ).rejects.toThrow("algorithm.iv must contain exactly 12 bytes");
+    }
+    const ct = await crypto.subtle.encrypt(
+      { name: "ChaCha20-Poly1305", iv: new Uint8Array(12) },
+      key,
+      new Uint8Array(4),
+    );
+    await expect(crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(16) }, key, ct)).rejects.toThrow(
+      "algorithm.iv must contain exactly 12 bytes",
+    );
+  });
+
+  it("importKey('raw') still rejects for ChaCha20-Poly1305 like Node", async () => {
+    const err = await crypto.subtle.importKey("raw", new Uint8Array(32), "ChaCha20-Poly1305", true, ["encrypt"]).then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(DOMException);
+    expect(err.name).toBe("NotSupportedError");
+  });
+
+  it("wrapKey and unwrapKey accept raw-public for Ed25519 public keys", async () => {
+    const kek = await crypto.subtle.importKey("raw", new Uint8Array(32), "AES-KW", false, ["wrapKey", "unwrapKey"]);
+    const pair = (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
+    const wrapped = await crypto.subtle.wrapKey("raw-public", pair.publicKey, kek, "AES-KW");
+    expect(wrapped.byteLength).toBeGreaterThan(0);
+    const unwrapped = await crypto.subtle.unwrapKey("raw-public", wrapped, kek, "AES-KW", "Ed25519", true, ["verify"]);
+    const a = new Uint8Array(await crypto.subtle.exportKey("raw-public", unwrapped));
+    const b = new Uint8Array(await crypto.subtle.exportKey("raw-public", pair.publicKey));
+    expect(a).toEqual(b);
+  });
+
+  // One case per branch of SubtleCrypto::getPublicKey: AKP (ML-DSA/ML-KEM),
+  // RSA, EC, and the Ed25519/X25519 owned-EVP_PKEY path. X25519 public keys
+  // carry no usages in Node v26.3.0, so its pubUsages is empty.
+  const getPublicKeyCases: [
+    string,
+    AlgorithmIdentifier | webcrypto.RsaHashedKeyGenParams | webcrypto.EcKeyGenParams,
+    KeyUsage[],
+    KeyUsage[],
+  ][] = [
+    ["ML-DSA-65", "ML-DSA-65", ["sign", "verify"], ["verify"]],
+    ["ML-KEM-768", "ML-KEM-768", ["encapsulateBits", "decapsulateBits"], ["encapsulateBits"]],
+    [
+      "RSA-PSS",
+      { name: "RSA-PSS", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      ["sign", "verify"],
+      ["verify"],
+    ],
+    ["ECDSA P-256", { name: "ECDSA", namedCurve: "P-256" }, ["sign", "verify"], ["verify"]],
+    ["Ed25519", "Ed25519", ["sign", "verify"], ["verify"]],
+    ["X25519", "X25519", ["deriveBits"], []],
+  ];
+  it.each(getPublicKeyCases)("getPublicKey round-trips the %s public key", async (_label, alg, usages, pubUsages) => {
+    const pair = (await crypto.subtle.generateKey(alg, true, usages)) as CryptoKeyPair;
+    const pub = await crypto.subtle.getPublicKey(pair.privateKey, pubUsages);
+    expect(pub.type).toBe("public");
+    expect(pub.usages).toEqual(pubUsages);
+    const a = new Uint8Array(await crypto.subtle.exportKey("spki", pub));
+    const b = new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey));
+    expect(a).toEqual(b);
+  });
+
+  it("generateKey reports Node's unsupported-usage messages", async () => {
+    await expect(crypto.subtle.generateKey({ name: "AES-CBC", length: 256 }, true, ["sign"])).rejects.toThrow(
+      "Unsupported key usage for an AES key",
+    );
+    await expect(
+      crypto.subtle.generateKey(
+        { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+        true,
+        ["sign"],
+      ),
+    ).rejects.toThrow("Unsupported key usage for a RSA key");
+  });
+
+  // The KEM usage spellings must stay invalid for every RSA variant: these
+  // cases fail if CryptoKeyUsageKemMask is dropped from the RSA predicates.
+  const kemUsages = ["encapsulateKey", "encapsulateBits", "decapsulateKey", "decapsulateBits"] as const;
+  it.each(["RSASSA-PKCS1-v1_5", "RSA-OAEP", "RSA-PSS"].flatMap(name => kemUsages.map(usage => [name, usage] as const)))(
+    "generateKey rejects the KEM usage %s/%s for RSA keys",
+    async (name, usage) => {
+      await expect(
+        crypto.subtle.generateKey(
+          { name, modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+          true,
+          [usage as KeyUsage],
+        ),
+      ).rejects.toThrow("Unsupported key usage for a RSA key");
+    },
+  );
+
+  it("generateKey rejects RSAES-PKCS1-v1_5 with its deprecation notice", async () => {
+    // RSAES is gated off at normalize, before any usage check runs, so the
+    // KEM-usage matrix the other RSA variants get cannot observe its
+    // parameter here.
+    await expect(
+      crypto.subtle.generateKey(
+        { name: "RSAES-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+        true,
+        ["encapsulateKey" as KeyUsage],
+      ),
+    ).rejects.toThrow("RSAES-PKCS1-v1_5 support is deprecated");
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/32613
+describe("AES-KW wrapKey/unwrapKey with jwk format", () => {
+  // The serialized JWK is rarely a multiple of 8 bytes, which AES-KW (RFC 3394)
+  // requires. Bun used to reject these with OperationError; it now pads the JWK
+  // JSON with trailing spaces, matching Node.js.
+  it.each(["SHA-256", "SHA-384", "SHA-512"])("round-trips an HMAC %s key", async hash => {
+    const hmacKey = await crypto.subtle.generateKey({ name: "HMAC", hash }, true, ["sign", "verify"]);
+    const wrappingKey = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, true, [
+      "wrapKey",
+      "unwrapKey",
+    ]);
+    const originalJwk = (await crypto.subtle.exportKey("jwk", hmacKey)) as JsonWebKey;
+
+    const wrapped = await crypto.subtle.wrapKey("jwk", hmacKey, wrappingKey, "AES-KW");
+
+    const unwrapped = await crypto.subtle.unwrapKey(
+      "jwk",
+      wrapped,
+      wrappingKey,
+      "AES-KW",
+      { name: "HMAC", hash },
+      true,
+      ["sign", "verify"],
+    );
+    const roundTrippedJwk = (await crypto.subtle.exportKey("jwk", unwrapped)) as JsonWebKey;
+    expect(roundTrippedJwk.kty).toBe("oct");
+    expect(roundTrippedJwk.k).toBe(originalJwk.k);
+  });
+
+  it("does not apply jwk padding to raw-format keys", async () => {
+    const wrappingKey = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, true, [
+      "wrapKey",
+      "unwrapKey",
+    ]);
+
+    // A 32-byte key is already a multiple of 8; wrapped output is key + 8 bytes.
+    const alignedKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+    const wrapped = await crypto.subtle.wrapKey("raw", alignedKey, wrappingKey, "AES-KW");
+    expect(wrapped.byteLength).toBe(40);
+
+    // A raw key whose length is not a multiple of 8 must still be rejected: the
+    // jwk whitespace padding must not leak into the raw branch. A 56-bit HMAC
+    // key exports to 7 raw bytes, which AES-KW cannot wrap.
+    const unalignedKey = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256", length: 56 }, true, [
+      "sign",
+      "verify",
+    ]);
+    expect((await crypto.subtle.exportKey("raw", unalignedKey)).byteLength).toBe(7);
+    const err = await crypto.subtle.wrapKey("raw", unalignedKey, wrappingKey, "AES-KW").then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(DOMException);
+    expect(err.name).toBe("OperationError");
+  });
+
+  it("unwraps an AES-KW jwk blob produced by Node.js", async () => {
+    // Fixed wrapping key + HMAC SHA-512 key wrapped by Node.js, proving interop.
+    const wrappingKey = await crypto.subtle.importKey(
+      "raw",
+      Buffer.from("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "hex"),
+      "AES-KW",
+      false,
+      ["unwrapKey"],
+    );
+    const wrapped = Buffer.from(
+      "8bb2ba91c19d8e05a8c07a4634bacc1fb3eac4725a5c206452865a3d034cc8d1cad992b8d6e45cea1369d2a3073306ab8f2fe826e71da572dc404a9662a05fdd759dcfd4fea26f8b980d87d4871ed12b3b681bb090f29ee19d0def9c708a462ab29789f59c1b68861877667fd39a3e20bae77eb0f6581ad758cd4a70b1659dd5005db7405b88cd1a15aa1397c3dbde2b11a61a84d467881375cb5a779cdcab00e4faabba1121e450",
+      "hex",
+    );
+    const unwrapped = await crypto.subtle.unwrapKey(
+      "jwk",
+      wrapped,
+      wrappingKey,
+      "AES-KW",
+      { name: "HMAC", hash: "SHA-512" },
+      true,
+      ["sign", "verify"],
+    );
+    const jwk = (await crypto.subtle.exportKey("jwk", unwrapped)) as JsonWebKey;
+    expect(jwk.kty).toBe("oct");
+    expect(jwk.k).toBe("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4_QA");
+  });
+});
+
+// The WebIDL for deriveBits is `optional unsigned long? length = null`: `null` (and an
+// omitted/undefined argument) mean "the whole secret", while `0` asks for zero bits.
+// Bun used to treat `0` as the null sentinel and hand back the entire ECDH/X25519 shared
+// secret, and never zeroed the unused trailing bits of the last byte for lengths that
+// are not a multiple of 8. https://w3c.github.io/webcrypto/#SubtleCrypto-method-deriveBits
+describe("SubtleCrypto.deriveBits length", () => {
+  // Fixed P-256 pair so every value below is a known answer; all expectations in this
+  // block were produced by Node.js v26 against the same keys.
+  const ecPriv: JsonWebKey = {
+    kty: "EC",
+    crv: "P-256",
+    x: "bq-02N-hB7K4namaV9F4R30CuRDUhO_JlwjUS10Ns1o",
+    y: "Q2YhmQFI9uq8U1ZzzlmPy25Zar2wWz_jZh7I5QhAeW8",
+    d: "XVoo_2zmaH8lEJOdQMkGgMOIibOecvksDPBRXnhAKo8",
+  };
+  const ecPub: JsonWebKey = {
+    kty: "EC",
+    crv: "P-256",
+    x: "3DyR3pdz7BDZtoAVvm4Mn55Ashdl84LCJB9kcUI3IrQ",
+    y: "r6xDaTpWl7d958Y4HMq6OR4F8PLe1wl7m41I2ZX1yoU",
+  };
+  const ecSecret = "a2a0e8fbdc79f55e5178ee9850f05069d47876abbc1d4db453e6523e6574a17b";
+  const enc = new TextEncoder();
+  const hex = (b: ArrayBuffer) => Buffer.from(b).toString("hex");
+  const probe = (p: Promise<ArrayBuffer>) => p.then(hex, e => e.name);
+
+  async function importEcPair() {
+    const [priv, pub] = await Promise.all([
+      crypto.subtle.importKey("jwk", ecPriv, { name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits", "deriveKey"]),
+      crypto.subtle.importKey("jwk", ecPub, { name: "ECDH", namedCurve: "P-256" }, false, []),
+    ]);
+    return { name: "ECDH" as const, public: pub, priv };
+  }
+
+  it("declares length as optional", () => {
+    expect(crypto.subtle.deriveBits.length).toBe(2);
+  });
+
+  it("ECDH: distinguishes a null/omitted length from a zero length", async () => {
+    const { priv, ...alg } = await importEcPair();
+    expect({
+      null: await probe(crypto.subtle.deriveBits(alg, priv, null)),
+      undefined: await probe(crypto.subtle.deriveBits(alg, priv, undefined)),
+      omitted: await probe(crypto.subtle.deriveBits(alg, priv)),
+      zero: await probe(crypto.subtle.deriveBits(alg, priv, 0)),
+      exact: await probe(crypto.subtle.deriveBits(alg, priv, 256)),
+      tooLong: await probe(crypto.subtle.deriveBits(alg, priv, 257)),
+    }).toEqual({
+      null: ecSecret,
+      undefined: ecSecret,
+      omitted: ecSecret,
+      zero: "",
+      exact: ecSecret,
+      tooLong: "OperationError",
+    });
+  });
+
+  it("ECDH: zeroes the unused trailing bits when length is not a multiple of 8", async () => {
+    const { priv, ...alg } = await importEcPair();
+    const results: Record<number, string> = {};
+    for (const length of [1, 3, 9, 17, 33, 255]) {
+      results[length] = await probe(crypto.subtle.deriveBits(alg, priv, length));
+    }
+    expect(results).toEqual({
+      1: "80",
+      3: "a0",
+      9: "a280",
+      17: "a2a080",
+      33: "a2a0e8fb80",
+      255: "a2a0e8fbdc79f55e5178ee9850f05069d47876abbc1d4db453e6523e6574a17a",
+    });
+  });
+
+  it("HKDF/PBKDF2: a zero length yields zero bytes, a null length is an error", async () => {
+    const [hk, pb] = await Promise.all([
+      crypto.subtle.importKey("raw", enc.encode("secret"), "HKDF", false, ["deriveBits"]),
+      crypto.subtle.importKey("raw", enc.encode("secret"), "PBKDF2", false, ["deriveBits"]),
+    ]);
+    const hkAlg = { name: "HKDF", hash: "SHA-256", salt: enc.encode("salt"), info: enc.encode("info") };
+    const pbAlg = { name: "PBKDF2", hash: "SHA-256", salt: enc.encode("salt"), iterations: 10 };
+    // A zero iteration count is an OperationError even when zero bits are requested;
+    // the zero-length path must still run the algorithm's parameter validation.
+    const pbIter0 = { ...pbAlg, iterations: 0 };
+    expect({
+      "hkdf 0": await probe(crypto.subtle.deriveBits(hkAlg, hk, 0)),
+      "hkdf null": await probe(crypto.subtle.deriveBits(hkAlg, hk, null)),
+      "hkdf 7": await probe(crypto.subtle.deriveBits(hkAlg, hk, 7)),
+      "hkdf 16": await probe(crypto.subtle.deriveBits(hkAlg, hk, 16)),
+      "pbkdf2 0": await probe(crypto.subtle.deriveBits(pbAlg, pb, 0)),
+      "pbkdf2 null": await probe(crypto.subtle.deriveBits(pbAlg, pb, null)),
+      "pbkdf2 7": await probe(crypto.subtle.deriveBits(pbAlg, pb, 7)),
+      "pbkdf2 16": await probe(crypto.subtle.deriveBits(pbAlg, pb, 16)),
+      "pbkdf2 iterations 0 length 0": await probe(crypto.subtle.deriveBits(pbIter0, pb, 0)),
+      "pbkdf2 iterations 0 length 256": await probe(crypto.subtle.deriveBits(pbIter0, pb, 256)),
+    }).toEqual({
+      "hkdf 0": "",
+      "hkdf null": "OperationError",
+      "hkdf 7": "OperationError",
+      "hkdf 16": "f6d2",
+      "pbkdf2 0": "",
+      "pbkdf2 null": "OperationError",
+      "pbkdf2 7": "OperationError",
+      "pbkdf2 16": "2fb1",
+      "pbkdf2 iterations 0 length 0": "OperationError",
+      "pbkdf2 iterations 0 length 256": "OperationError",
+    });
+  });
+
+  it("takes the length as an [EnforceRange] unsigned long", async () => {
+    const key = await crypto.subtle.importKey("raw", enc.encode("secret"), "HKDF", false, ["deriveBits"]);
+    const hkdf = { name: "HKDF", hash: "SHA-256", salt: enc.encode("salt"), info: enc.encode("info") };
+    const results: Record<string, string> = {};
+    for (const length of [16, 16.9, "16", NaN, -1, 2 ** 32, 2 ** 32 + 16, Infinity, "x", {}]) {
+      results[Bun.inspect(length)] = await probe(crypto.subtle.deriveBits(hkdf, key, length as number));
+    }
+    expect(results).toEqual({
+      "16": "f6d2",
+      "16.9": "f6d2",
+      '"16"': "f6d2",
+      NaN: "TypeError",
+      "-1": "TypeError",
+      "4294967296": "TypeError",
+      "4294967312": "TypeError",
+      Infinity: "TypeError",
+      '"x"': "TypeError",
+      "{}": "TypeError",
+    });
+  });
+
+  // deriveKey(derivedKeyType: HKDF) has no inherent key length, so the entire shared
+  // secret must become the imported HKDF key; a derivedKeyType with a concrete length
+  // (AES-GCM 256) must still flow that length through.
+  it("deriveKey still derives the whole secret for length-less derived key types", async () => {
+    const { priv, ...alg } = await importEcPair();
+    const hkdfKey = await crypto.subtle.deriveKey(alg, priv, { name: "HKDF", hash: "SHA-256" }, false, ["deriveBits"]);
+    const bits = await crypto.subtle.deriveBits(
+      { name: "HKDF", hash: "SHA-256", salt: enc.encode("salt"), info: enc.encode("info") },
+      hkdfKey,
+      256,
+    );
+    expect(hex(bits)).toBe("823ff972ada0b090c2f03e1704d01d95bbf67629f44af00b23f5ab2c9e307afc");
+
+    const aesKey = await crypto.subtle.deriveKey(alg, priv, { name: "AES-GCM", length: 256 }, true, ["encrypt"]);
+    expect(hex(await crypto.subtle.exportKey("raw", aesKey))).toBe(ecSecret);
+  });
+});
+
+describe("X25519 JWK import", () => {
+  const x25519Public: JsonWebKey = {
+    kty: "OKP",
+    crv: "X25519",
+    x: "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo",
+  };
+  const x25519Private: JsonWebKey = {
+    ...x25519Public,
+    d: "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo",
+  };
+  const outcome = (jwk: JsonWebKey, extractable: boolean, usages: KeyUsage[]) =>
+    crypto.subtle.importKey("jwk", jwk, "X25519", extractable, usages).then(
+      key => (key instanceof CryptoKey ? "imported" : "other"),
+      e => e.name,
+    );
+
+  it("rejects a JWK whose kty is not OKP", async () => {
+    expect({
+      wrongKty: await outcome({ ...x25519Public, kty: "EC" }, true, []),
+      okp: await outcome({ ...x25519Public, ext: true }, true, []),
+    }).toEqual({ wrongKty: "DataError", okp: "imported" });
+  });
+
+  it("rejects a JWK whose key_ops does not include the requested usages", async () => {
+    expect({
+      missingUsage: await outcome({ ...x25519Private, key_ops: ["deriveKey"] }, true, ["deriveBits"]),
+      supersetOfUsages: await outcome({ ...x25519Private, key_ops: ["deriveBits", "deriveKey"], ext: true }, true, [
+        "deriveBits",
+      ]),
+    }).toEqual({ missingUsage: "DataError", supersetOfUsages: "imported" });
+  });
+
+  it("rejects a JWK with ext set to false when extractable is requested", async () => {
+    expect({
+      extFalse: await outcome({ ...x25519Public, ext: false }, true, []),
+      extTrue: await outcome({ ...x25519Public, ext: true }, true, []),
+    }).toEqual({ extFalse: "DataError", extTrue: "imported" });
+  });
+});
+
+// Ed25519 and X25519 share the 1.3.101.* OID prefix and differ only in the last
+// byte, so importing one as the other must report the type mismatch rather than
+// the generic "Invalid keyData" the prefix-only check gave.
+describe("OKP spki/pkcs8 cross-curve import", () => {
+  const rejection = (p: Promise<unknown>) =>
+    p.then(
+      () => "imported",
+      e => `${e.name}: ${e.message}`,
+    );
+
+  it("Ed25519 key imported as X25519 reports 'Invalid key type'", async () => {
+    const ed = (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
+    const spki = await crypto.subtle.exportKey("spki", ed.publicKey);
+    const pkcs8 = await crypto.subtle.exportKey("pkcs8", ed.privateKey);
+    expect({
+      spki: await rejection(crypto.subtle.importKey("spki", spki, "X25519", true, [])),
+      pkcs8: await rejection(crypto.subtle.importKey("pkcs8", pkcs8, "X25519", true, ["deriveBits"])),
+    }).toEqual({ spki: "DataError: Invalid key type", pkcs8: "DataError: Invalid key type" });
+  });
+
+  it("X25519 key imported as Ed25519 reports 'Invalid key type'", async () => {
+    const x = (await crypto.subtle.generateKey("X25519", true, ["deriveBits"])) as CryptoKeyPair;
+    const spki = await crypto.subtle.exportKey("spki", x.publicKey);
+    const pkcs8 = await crypto.subtle.exportKey("pkcs8", x.privateKey);
+    expect({
+      spki: await rejection(crypto.subtle.importKey("spki", spki, "Ed25519", true, ["verify"])),
+      pkcs8: await rejection(crypto.subtle.importKey("pkcs8", pkcs8, "Ed25519", true, ["sign"])),
+    }).toEqual({ spki: "DataError: Invalid key type", pkcs8: "DataError: Invalid key type" });
+  });
+
+  // OKP keys encode a one-element AlgorithmIdentifier (parameters MUST be absent), so
+  // the EC importer's two-element guard bailed without reaching the OID check and
+  // reported the generic "Invalid keyData" instead of the type mismatch.
+  it("OKP key imported as ECDSA/ECDH reports 'Invalid key type'", async () => {
+    const ed = (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
+    const spki = await crypto.subtle.exportKey("spki", ed.publicKey);
+    const pkcs8 = await crypto.subtle.exportKey("pkcs8", ed.privateKey);
+    expect({
+      ecdsaSpki: await rejection(
+        crypto.subtle.importKey("spki", spki, { name: "ECDSA", namedCurve: "P-256" }, true, ["verify"]),
+      ),
+      ecdhSpki: await rejection(crypto.subtle.importKey("spki", spki, { name: "ECDH", namedCurve: "P-256" }, true, [])),
+      ecdsaPkcs8: await rejection(
+        crypto.subtle.importKey("pkcs8", pkcs8, { name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]),
+      ),
+    }).toEqual({
+      ecdsaSpki: "DataError: Invalid key type",
+      ecdhSpki: "DataError: Invalid key type",
+      ecdsaPkcs8: "DataError: Invalid key type",
+    });
+  });
+});
+
+it.each([
+  ["ECDSA", "sign"],
+  ["ECDH", "deriveBits"],
+] as const)("%s: a pkcs8 key without its optional public key is exported with it", async (name, usage) => {
+  const algorithm = { name, namedCurve: "P-256" };
+  const { privateKey } = await crypto.subtle.generateKey(algorithm, true, [usage]);
+  const { d } = await crypto.subtle.exportKey("jwk", privateKey);
+  // A PrivateKeyInfo whose ECPrivateKey (RFC 5915) is only the version and the private key.
+  const withoutPublicKey = Buffer.concat([
+    Buffer.from("3041020100301306072a8648ce3d020106082a8648ce3d030107042730250201010420", "hex"),
+    Buffer.from(d!, "base64url"),
+  ]);
+  const imported = await crypto.subtle.importKey("pkcs8", withoutPublicKey, algorithm, true, [usage]);
+  expect(Buffer.from(await crypto.subtle.exportKey("pkcs8", imported))).toEqual(
+    Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey)),
+  );
+  // The key itself stays as it came.
+  expect(KeyObject.from(imported).export({ format: "der", type: "pkcs8" })).toEqual(withoutPublicKey);
+});
+
+// importKey's empty-usages guard got Node's message; the same predicate in
+// generateKey, deriveKey's inner import and unwrapKey's inner import still
+// carried the empty-message SyntaxError.
+describe("empty usages on a private or secret key", () => {
+  const rejection = (p: Promise<unknown>) =>
+    p.then(
+      () => "resolved",
+      e => `${e.name}: ${e.message}`,
+    );
+
+  it("generateKey reports 'Usages cannot be empty when creating a key.'", async () => {
+    expect({
+      secret: await rejection(crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [])),
+      pair: await rejection(crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, [])),
+    }).toEqual({
+      secret: "SyntaxError: Usages cannot be empty when creating a key.",
+      pair: "SyntaxError: Usages cannot be empty when creating a key.",
+    });
+  });
+
+  it("deriveKey and unwrapKey report the importKey message", async () => {
+    const pb = await crypto.subtle.importKey("raw", new Uint8Array(16), "PBKDF2", false, ["deriveKey"]);
+    const pbkdf2 = { name: "PBKDF2", salt: new Uint8Array(8), iterations: 1, hash: "SHA-256" };
+    const kw = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, true, ["wrapKey", "unwrapKey"]);
+    const hm = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+    const wrapped = await crypto.subtle.wrapKey("raw", hm, kw, "AES-KW");
+    expect({
+      deriveKey: await rejection(crypto.subtle.deriveKey(pbkdf2, pb, { name: "AES-GCM", length: 256 }, false, [])),
+      unwrapKey: await rejection(
+        crypto.subtle.unwrapKey("raw", wrapped, kw, "AES-KW", { name: "HMAC", hash: "SHA-256" }, false, []),
+      ),
+    }).toEqual({
+      deriveKey: "SyntaxError: Usages cannot be empty when importing a secret key.",
+      unwrapKey: "SyntaxError: Usages cannot be empty when importing a secret key.",
+    });
+  });
+
+  it("the SyntaxError is a DOMException", async () => {
+    const errors = await Promise.all(
+      [
+        crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, []),
+        crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["sign"]),
+        crypto.subtle.importKey("raw", new Uint8Array(16), "AES-GCM", false, ["sign"]),
+        (async () => createSecretKey(new Uint8Array(16)).toCryptoKey("AES-GCM", false, []))(),
+        (async () => createSecretKey(new Uint8Array(16)).toCryptoKey("AES-GCM", false, ["sign"]))(),
+      ].map(promise => promise.catch(e => e)),
+    );
+    for (const error of errors) {
+      expect(error).toBeInstanceOf(DOMException);
+      expect({ name: error.name, code: error.code }).toEqual({ name: "SyntaxError", code: DOMException.SYNTAX_ERR });
+      expect(error.stack).toBeString();
+    }
+  });
+});
+
+// X25519 deriveBits is a line-for-line parallel of ECDH's; ECDH got Node's
+// mismatch messages but the X25519 twin was left with the empty-message
+// InvalidAccessError. The cfrg vendored test only covers this under X448.
+it("X25519 deriveBits with an ECDH public key reports 'key algorithm mismatch'", async () => {
+  const x = (await crypto.subtle.generateKey("X25519", false, ["deriveBits"])) as CryptoKeyPair;
+  const ec = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]);
+  const rejection = (p: Promise<unknown>) =>
+    p.then(
+      () => "resolved",
+      e => `${e.name}: ${e.message}`,
+    );
+  expect({
+    x25519WithEcdhPublic: await rejection(
+      crypto.subtle.deriveBits({ name: "X25519", public: ec.publicKey }, x.privateKey, 256),
+    ),
+    ecdhWithX25519Public: await rejection(
+      crypto.subtle.deriveBits({ name: "ECDH", namedCurve: "P-256", public: x.publicKey } as any, ec.privateKey, 256),
+    ),
+  }).toEqual({
+    x25519WithEcdhPublic: "InvalidAccessError: key algorithm mismatch",
+    ecdhWithX25519Public: "InvalidAccessError: key algorithm mismatch",
+  });
+});
+
+// The RSA importKey usage guards are the same shape as ECDSA/Ed25519's, which
+// got Node's message; the RSA parallels carried the empty-message SyntaxError.
+// RSAES-PKCS1-v1_5 is deprecated in Bun and blocked at normalize, so untested.
+it("RSA importKey with an unsupported usage names the algorithm", async () => {
+  const { publicKey } = await crypto.subtle.generateKey(
+    { name: "RSA-PSS", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign", "verify"],
+  );
+  const spki = await crypto.subtle.exportKey("spki", publicKey);
+  const rejection = (p: Promise<unknown>) =>
+    p.then(
+      () => "resolved",
+      e => `${e.name}: ${e.message}`,
+    );
+  expect({
+    pss: await rejection(
+      crypto.subtle.importKey("spki", spki, { name: "RSA-PSS", hash: "SHA-256" }, true, ["encrypt"]),
+    ),
+    rsassa: await rejection(
+      crypto.subtle.importKey("spki", spki, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, true, ["encrypt"]),
+    ),
+    oaep: await rejection(crypto.subtle.importKey("spki", spki, { name: "RSA-OAEP", hash: "SHA-256" }, true, ["sign"])),
+  }).toEqual({
+    pss: "SyntaxError: Unsupported key usage for an RSA-PSS key",
+    rsassa: "SyntaxError: Unsupported key usage for an RSASSA-PKCS1-v1_5 key",
+    oaep: "SyntaxError: Unsupported key usage for an RSA-OAEP key",
+  });
+});
+
+// CryptoKey.usages and the JWK key_ops it is built from are ordered by the
+// KeyUsage enum in https://w3c.github.io/webcrypto/#dfn-KeyUsage, not
+// alphabetically, and not by the order the caller passed them in.
+describe("CryptoKey.usages ordering", () => {
+  it("normalizes to KeyUsage enum order regardless of input order", async () => {
+    const forward = await crypto.subtle.importKey("raw", new Uint8Array(32), { name: "AES-CBC" }, true, [
+      "encrypt",
+      "decrypt",
+    ]);
+    const reversed = await crypto.subtle.importKey("raw", new Uint8Array(32), { name: "AES-CBC" }, true, [
+      "decrypt",
+      "encrypt",
+    ]);
+    expect(forward.usages).toEqual(["encrypt", "decrypt"]);
+    expect(reversed.usages).toEqual(["encrypt", "decrypt"]);
+  });
+
+  it("orders deriveKey before deriveBits", async () => {
+    const { privateKey } = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, [
+      "deriveBits",
+      "deriveKey",
+    ]);
+    expect(privateKey.usages).toEqual(["deriveKey", "deriveBits"]);
+  });
+
+  it("orders sign before verify", async () => {
+    const key = await crypto.subtle.importKey("raw", new Uint8Array(32), { name: "HMAC", hash: "SHA-256" }, true, [
+      "verify",
+      "sign",
+    ]);
+    expect(key.usages).toEqual(["sign", "verify"]);
+  });
+
+  it("applies the same order to JWK key_ops", async () => {
+    const key = await crypto.subtle.importKey("raw", new Uint8Array(32), { name: "AES-CBC" }, true, [
+      "decrypt",
+      "encrypt",
+    ]);
+    const jwk = await crypto.subtle.exportKey("jwk", key);
+    expect(jwk.key_ops).toEqual(["encrypt", "decrypt"]);
+  });
+
+  it("orders wrapKey/unwrapKey after encrypt/decrypt on an RSA-OAEP pair", async () => {
+    const { publicKey, privateKey } = await crypto.subtle.generateKey(
+      { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["unwrapKey", "decrypt", "wrapKey", "encrypt"],
+    );
+    expect(publicKey.usages).toEqual(["encrypt", "wrapKey"]);
+    expect(privateKey.usages).toEqual(["decrypt", "unwrapKey"]);
+  });
+});
+
+// getRandomValues takes integer-typed views only; every other ArrayBufferView
+// raises TypeMismatchError rather than being filled.
+describe("crypto.getRandomValues argument types", () => {
+  const integerViews = [
+    ["Int8Array", () => new Int8Array(4)],
+    ["Uint8Array", () => new Uint8Array(4)],
+    ["Uint8ClampedArray", () => new Uint8ClampedArray(4)],
+    ["Int16Array", () => new Int16Array(4)],
+    ["Uint16Array", () => new Uint16Array(4)],
+    ["Int32Array", () => new Int32Array(4)],
+    ["Uint32Array", () => new Uint32Array(4)],
+    ["BigInt64Array", () => new BigInt64Array(4)],
+    ["BigUint64Array", () => new BigUint64Array(4)],
+    // Node and the specification refuse these two.
+    ["Uint8Array on a SharedArrayBuffer", () => new Uint8Array(new SharedArrayBuffer(4))],
+    ["Uint8Array on a resizable ArrayBuffer", () => new Uint8Array(new ArrayBuffer(4, { maxByteLength: 8 }))],
+  ] as const;
+
+  for (const [name, make] of integerViews) {
+    it(`accepts ${name}`, () => {
+      const view = make();
+      expect(crypto.getRandomValues(view)).toBe(view);
+    });
+  }
+
+  const rejected = [
+    ["Float16Array", () => new Float16Array(4)],
+    ["Float32Array", () => new Float32Array(4)],
+    ["Float64Array", () => new Float64Array(4)],
+    ["DataView", () => new DataView(new ArrayBuffer(4))],
+  ] as const;
+
+  for (const [name, make] of rejected) {
+    it(`rejects ${name} with TypeMismatchError`, () => {
+      expect(() => crypto.getRandomValues(make() as any)).toThrow(
+        expect.objectContaining({
+          name: "TypeMismatchError",
+          message: "The data argument must be an integer-type TypedArray",
+        }),
+      );
+    });
+  }
+
+  // Web IDL's conversion of the argument to an ArrayBufferView comes first.
+  const notConverted = [
+    ["ArrayBuffer", () => new ArrayBuffer(4)],
+    ["SharedArrayBuffer", () => new SharedArrayBuffer(4)],
+    ["plain object", () => ({})],
+  ] as const;
+
+  it("needs an argument", () => {
+    // @ts-expect-error
+    expect(() => crypto.getRandomValues()).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_MISSING_ARGS",
+        message: 'The "array" argument must be specified',
+      }),
+    );
+  });
+
+  for (const [name, make] of notConverted) {
+    it(`rejects ${name} with TypeError`, () => {
+      expect(() => crypto.getRandomValues(make() as any)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "Failed to execute 'getRandomValues' on 'Crypto': 1st argument is not an ArrayBufferView.",
+        }),
+      );
+    });
+  }
+});
+
+describe("exception scope discipline", () => {
+  // BUN_JSC_validateExceptionChecks=1 aborts on the first unchecked throw scope, so the
+  // fixture (every SubtleCrypto op, success and normalize-failure) only produces the full
+  // transcript when every call site is disciplined. Two cases also fail without the option.
+  it("every subtle.* path survives BUN_JSC_validateExceptionChecks", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), import.meta.resolveSync("./exception-scope-fixture.ts")],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // `exitCode` and the transcript length are what fail when a scope goes unchecked;
+    // `uncheckedScopes` just surfaces the offending pair from the validator's stderr
+    // report so the diff names the call site instead of only showing a truncated log.
+    const uncheckedScopes = stderr
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
+    expect({ transcript: stdout.trimEnd().split("\n"), uncheckedScopes, exitCode }).toEqual({
+      transcript: [
+        "encrypt ok = RESOLVED",
+        "encrypt bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "encrypt thrower = REJECTED Error: boom",
+        "decrypt ok = RESOLVED",
+        "decrypt bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "sign ok = RESOLVED",
+        "sign bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "verify ok = RESOLVED",
+        "verify bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "digest ok = RESOLVED",
+        "digest bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "digest thrower = REJECTED Error: boom",
+        "generateKey ok = RESOLVED",
+        "generateKey bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "generateKey nested bogus hash = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "generateKey thrower = REJECTED Error: boom",
+        "deriveKey ok = RESOLVED",
+        "deriveKey bogus algorithm = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "deriveKey bogus derived type = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "deriveKey importable but no key length = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "deriveBits ok = RESOLVED",
+        "deriveBits bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "importKey ok = RESOLVED",
+        "importKey bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "importKey nested bogus hash = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "importKey thrower = REJECTED Error: boom",
+        "exportKey raw = RESOLVED",
+        "exportKey jwk = RESOLVED",
+        "wrapKey raw = RESOLVED",
+        "wrapKey jwk = RESOLVED",
+        "wrapKey via encrypt = RESOLVED",
+        "wrapKey bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "wrapKey thrower = REJECTED Error: boom",
+        "wrapKey jwk with throwing Object.prototype.toJSON = REJECTED Error: poisoned toJSON",
+        "unwrapKey raw = RESOLVED",
+        "unwrapKey jwk = RESOLVED",
+        "unwrapKey via decrypt = RESOLVED",
+        "unwrapKey jwk not json = REJECTED DataError: WrappedKey cannot be converted to a JSON object",
+        "unwrapKey bogus unwrap algorithm = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "unwrapKey bogus unwrapped type = REJECTED NotSupportedError: Unrecognized algorithm name",
+      ],
+      uncheckedScopes: [],
+      exitCode: 0,
+    });
+  });
+});
+
+describe("JWK import validation", () => {
+  const rejection = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      e => e.name,
+    );
+
+  it.each([
+    ["Ed25519", "sign", "K1wIouqnuiA04b3WrMa-xKIKIpfHetNZRv3h9fBf768", "wVK6M3SMhQh3NK-7GRrSV-BVWQx1FO5pW8hhQeu_NdA"],
+    [
+      "X25519",
+      "deriveBits",
+      "aSb8Q-RndwfNnPeOYGYPDUN3uhAPnMLzXyfi-mqfhig",
+      "mL_IWm55RrALUGRfJYzw40gEYWMvtRkesP9mj8o8Omc",
+    ],
+  ] as const)("%s private keys need the matching x", async (name, usage, x, d) => {
+    const importJwk = (members: JsonWebKey) =>
+      crypto.subtle.importKey("jwk", { kty: "OKP", crv: name, x, d, ...members }, name, true, [usage]);
+
+    // Node decodes both like Buffer.from(encoded, "base64"): either alphabet, skipping what is in neither.
+    const standard = (encoded: string) => Buffer.from(encoded, "base64url").toString("base64");
+    const wrapped = (encoded: string) => encoded.slice(0, 10) + "\n" + encoded.slice(10);
+    for (const spelled of [{}, { x: standard(x), d: standard(d) }, { x: wrapped(x), d: wrapped(d) }]) {
+      expect(await crypto.subtle.exportKey("jwk", await importJwk(spelled))).toMatchObject({ x, d });
+    }
+
+    expect({
+      otherKey: await rejection(importJwk({ x: d })),
+      missing: await rejection(importJwk({ x: undefined })),
+      notBase64: await rejection(importJwk({ x: "!!" })),
+      shortX: await rejection(importJwk({ x: x.slice(4) })),
+      shortD: await rejection(importJwk({ d: "AA" })),
+    }).toEqual({
+      otherKey: "DataError",
+      missing: "DataError",
+      notBase64: "DataError",
+      shortX: "DataError",
+      shortD: "DataError",
+    });
+  });
+
+  it("RSA private keys need the n that is p times q, and no oth", async () => {
+    const algorithm = {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 1024,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    };
+    const { privateKey } = await crypto.subtle.generateKey(algorithm, true, ["sign", "verify"]);
+    const jwk = await crypto.subtle.exportKey("jwk", privateKey);
+    const { kty, n, e } = jwk;
+    const importJwk = (members: JsonWebKey) =>
+      crypto.subtle.importKey("jwk", { ...jwk, ...members }, algorithm, true, ["sign"]);
+
+    expect({
+      unchanged: await rejection(importJwk({})),
+      n: await rejection(importJwk({ n: jwk.d })),
+      p: await rejection(importJwk({ p: jwk.q })),
+      q: await rejection(importJwk({ q: jwk.p })),
+      oth: await rejection(importJwk({ oth: [] })),
+      publicOth: await rejection(crypto.subtle.importKey("jwk", { kty, n, e, oth: [] }, algorithm, true, ["verify"])),
+    }).toEqual({
+      unchanged: "resolved",
+      n: "DataError",
+      p: "DataError",
+      q: "DataError",
+      oth: "DataError",
+      publicOth: "DataError",
+    });
+  });
+
+  it("rejects a repeated key_ops entry for every key type", async () => {
+    const pair = async (algorithm: any, usages: KeyUsage[]) =>
+      crypto.subtle.exportKey(
+        "jwk",
+        ((await crypto.subtle.generateKey(algorithm, true, usages)) as CryptoKeyPair).publicKey,
+      );
+    const rsa = {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 1024,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    };
+    const ec = { name: "ECDSA", namedCurve: "P-256" };
+    const cases: [any, JsonWebKey, KeyUsage][] = [
+      ["AES-GCM", { kty: "oct", k: Buffer.alloc(16).toString("base64url") }, "encrypt"],
+      [rsa, await pair(rsa, ["sign", "verify"]), "verify"],
+      [ec, await pair(ec, ["sign", "verify"]), "verify"],
+      ["Ed25519", await pair("Ed25519", ["sign", "verify"]), "verify"],
+    ];
+    for (const [algorithm, jwk, usage] of cases) {
+      const importWith = (key_ops: string[]) =>
+        crypto.subtle.importKey("jwk", { ...jwk, key_ops }, algorithm, true, [usage]);
+      expect({
+        algorithm,
+        once: await rejection(importWith([usage])),
+        twice: await rejection(importWith([usage, usage])),
+      }).toEqual({ algorithm, once: "resolved", twice: "DataError" });
+    }
+  });
+
+  it("takes a key_ops with many entries", async () => {
+    const jwk = { kty: "oct", k: Buffer.alloc(16).toString("base64url") };
+    const many = Array.from({ length: 10_000 }, (_, i) => `operation ${i}`);
+    const importWith = (key_ops: string[]) =>
+      crypto.subtle.importKey("jwk", { ...jwk, key_ops }, "AES-GCM", true, ["encrypt"]);
+    expect({
+      distinct: await rejection(importWith([...many, "encrypt"])),
+      lastRepeatsFirst: await rejection(importWith(["encrypt", ...many, many[0]])),
+    }).toEqual({ distinct: "resolved", lastRepeatsFirst: "DataError" });
+  });
+
+  it("reports the modulus length in bits", async () => {
+    const n = Buffer.alloc(256);
+    n[0] = 0x40;
+    n[255] = 1;
+    const key = await crypto.subtle.importKey(
+      "jwk",
+      { kty: "RSA", n: n.toString("base64url"), e: "AQAB" },
+      { name: "RSA-OAEP", hash: "SHA-256" },
+      true,
+      ["encrypt"],
+    );
+    expect((key.algorithm as RsaHashedKeyAlgorithm).modulusLength).toBe(2047);
+  });
+});
+
+describe("AES-CTR", () => {
+  // 2^64 blocks are left before these counters wrap, which does not fit the size_t it was counted in.
+  it.each([
+    ["ffffffffffffffff0000000000000000", 128],
+    ["7fffffffffffffff0000000000000000", 127],
+    ["aabbccddffffffff0000000000000000", 96],
+    ["aabbccddeeff00010000000000000000", 65],
+  ])("counter %s with length %d", async (counter, length) => {
+    const rawKey = Buffer.alloc(16, 7);
+    const data = Buffer.alloc(40, 1);
+    const key = await crypto.subtle.importKey("raw", rawKey, "AES-CTR", false, ["encrypt"]);
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-CTR", counter: Buffer.from(counter, "hex"), length },
+      key,
+      data,
+    );
+    expect(Buffer.from(encrypted).toString("hex")).toBe(
+      createCipheriv("aes-128-ctr", rawKey, Buffer.from(counter, "hex")).update(data).toString("hex"),
+    );
+  });
+});
+
+describe.each([
+  ["Ed25519", "70", ["verify"], ["sign"]],
+  ["X25519", "6e", [], ["deriveBits"]],
+] as const)("%s keys in DER", (name, oid, publicUsages, privateUsages) => {
+  const key = Buffer.alloc(32, 0x11).toString("hex");
+  const bytes = (hex: string) => Buffer.from(hex.replaceAll(" ", ""), "hex");
+  const dataError = expect.objectContaining({ name: "DataError" });
+
+  it("are imported", async () => {
+    const spki = bytes(`302a 3005 0603 2b65${oid} 0321 00 ${key}`);
+    const publicKey = await crypto.subtle.importKey("spki", spki, name, true, publicUsages);
+    expect(Buffer.from(await crypto.subtle.exportKey("raw", publicKey)).toString("hex")).toBe(key);
+    expect(Buffer.from(await crypto.subtle.exportKey("spki", publicKey))).toEqual(spki);
+
+    const pkcs8 = bytes(`302e 020100 3005 0603 2b65${oid} 0422 0420 ${key}`);
+    const privateKey = await crypto.subtle.importKey("pkcs8", pkcs8, name, true, privateUsages);
+    expect(Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey))).toEqual(pkcs8);
+
+    // The attributes of a PrivateKeyInfo are optional, and are not kept.
+    const withAttributes = bytes(`3030 020100 3005 0603 2b65${oid} 0422 0420 ${key} a000`);
+    const sameKey = await crypto.subtle.importKey("pkcs8", withAttributes, name, true, privateUsages);
+    expect(Buffer.from(await crypto.subtle.exportKey("pkcs8", sameKey))).toEqual(pkcs8);
+  });
+
+  it.each([
+    ["another outer tag", `312a 3005 0603 2b65${oid} 0321 00 ${key}`],
+    ["no outer tag", `002a 3005 0603 2b65${oid} 0321 00 ${key}`],
+    ["an outer length that is too long", `302b 3005 0603 2b65${oid} 0321 00 ${key}`],
+    ["an outer length that is too short", `3029 3005 0603 2b65${oid} 0321 00 ${key}`],
+    ["an outer length of 0", `3000 3005 0603 2b65${oid} 0321 00 ${key}`],
+    ["another tag for the algorithm", `302a 3105 0603 2b65${oid} 0321 00 ${key}`],
+    ["a wrong length for the algorithm", `302a 3006 0603 2b65${oid} 0321 00 ${key}`],
+    ["a BIT STRING that is longer than the data", `302a 3005 0603 2b65${oid} 0322 00 ${key}`],
+    ["parameters", `302c 3007 0603 2b65${oid} 0500 0321 00 ${key}`],
+    ["unused bits", `302a 3005 0603 2b65${oid} 0321 01 ${key}`],
+    ["a byte after the end", `302a 3005 0603 2b65${oid} 0321 00 ${key} 00`],
+    ["a key of 31 bytes", `3029 3005 0603 2b65${oid} 0320 00 ${key.slice(2)}`],
+    ["nothing", ``],
+  ])("are refused as spki with %s", async (_, hex) => {
+    expect(crypto.subtle.importKey("spki", bytes(hex), name, true, publicUsages)).rejects.toThrow(dataError);
+  });
+
+  it.each([
+    ["another outer tag", `312e 020100 3005 0603 2b65${oid} 0422 0420 ${key}`],
+    ["an outer length that is too long", `302f 020100 3005 0603 2b65${oid} 0422 0420 ${key}`],
+    ["an outer length that is too short", `302d 020100 3005 0603 2b65${oid} 0422 0420 ${key}`],
+    ["version 2", `302e 020102 3005 0603 2b65${oid} 0422 0420 ${key}`],
+    ["another tag for the version", `302e 040100 3005 0603 2b65${oid} 0422 0420 ${key}`],
+    ["an inner length that is too short", `302e 020100 3005 0603 2b65${oid} 0422 041f ${key}`],
+    ["another inner tag", `302e 020100 3005 0603 2b65${oid} 0422 0320 ${key}`],
+    ["parameters", `3030 020100 3005 0603 2b65${oid} 0500 0422 0420 ${key}`],
+    ["a byte after the end", `302e 020100 3005 0603 2b65${oid} 0422 0420 ${key} 00`],
+    ["a key of 33 bytes", `302f 020100 3005 0603 2b65${oid} 0423 0421 ${key}11`],
+    ["nothing", ``],
+  ])("are refused as pkcs8 with %s", async (_, hex) => {
+    expect(crypto.subtle.importKey("pkcs8", bytes(hex), name, true, privateUsages)).rejects.toThrow(dataError);
+  });
+});
+
+describe("key_ops of a JWK", () => {
+  const jwk = { kty: "oct", k: "AAAAAAAAAAAAAAAAAAAAAA", alg: "A128GCM", ext: true };
+  const importKey = (key_ops: unknown) =>
+    crypto.subtle.importKey("jwk", { ...jwk, key_ops } as JsonWebKey, "AES-GCM", true, ["encrypt"]);
+
+  it.each([[["encrypt", "nope"]], [["nope", "encrypt", "decrypt", "other"]], [["encrypt", 5]]])(
+    "%j: what is not known is skipped",
+    async key_ops => {
+      expect((await importKey(key_ops)).usages).toEqual(["encrypt"]);
+    },
+  );
+
+  it.each([[["nope"]], [["Encrypt"]], [["encrypt", "nope", "nope"]], [["encrypt", "encrypt"]], [[]]])(
+    "%j is a DataError",
+    async key_ops => {
+      expect(importKey(key_ops)).rejects.toThrow(expect.objectContaining({ name: "DataError" }));
+    },
+  );
+
+  it.each(["encrypt", 5, null])("%j is a TypeError", async key_ops => {
+    expect(importKey(key_ops)).rejects.toThrow(TypeError);
+  });
+
+  it("is skipped the same way when a key is unwrapped", async () => {
+    const wrappingKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 128 }, false, [
+      "encrypt",
+      "unwrapKey",
+    ]);
+    const algorithm = { name: "AES-GCM", iv: new Uint8Array(12) };
+    const text = Buffer.from(JSON.stringify({ ...jwk, key_ops: ["encrypt", "nope"] }));
+    const wrapped = await crypto.subtle.encrypt(algorithm, wrappingKey, text);
+    const key = await crypto.subtle.unwrapKey("jwk", wrapped, wrappingKey, algorithm, "AES-GCM", true, ["encrypt"]);
+    expect(key.usages).toEqual(["encrypt"]);
+  });
+});
+
+it.each(["ECDSA", "ECDH"])("%s: a pkcs8 key that came with a compressed point leaves with a whole one", async name => {
+  const compressed = Buffer.from(
+    "3067020100301306072a8648ce3d020106082a8648ce3d030107044d304b0201010420c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721a12403220003" +
+      "60fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb6",
+    "hex",
+  );
+  const algorithm = { name, namedCurve: "P-256" };
+  const key = await crypto.subtle.importKey("pkcs8", compressed, algorithm, true, [
+    name === "ECDSA" ? "sign" : "deriveBits",
+  ]);
+  const exported = Buffer.from(await crypto.subtle.exportKey("pkcs8", key));
+  expect(exported).toHaveLength(138);
+  expect(exported.subarray(-65).toString("hex")).toBe(
+    "0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb67903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299",
+  );
 });

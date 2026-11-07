@@ -1,7 +1,5 @@
 'use strict';
-const isCI = process.env.CI !== undefined;
 const common = require('../common');
-if (common.isWindows && isCI) return; // TODO: BUN
 if (!common.hasCrypto)
   common.skip('missing crypto');
 const assert = require('assert');
@@ -28,7 +26,7 @@ server.on('stream', common.mustCall((stream) => {
 }));
 
 server.listen(0, common.mustCall(() => {
-  const client = http2.connect(`https://127.0.0.1:${server.address().port}`,
+  const client = http2.connect(`https://localhost:${server.address().port}`,
                                { rejectUnauthorized: false });
 
   const req = client.request({ ':path': '/' });

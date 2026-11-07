@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -402,7 +402,10 @@ describe("bundler", () => {
         // 'Cannot use global name "y" with "composes"',
         // 'Cannot use global name "x" with "composes"',
       ],
-      "/file.module.css": ['The name "z" never appears in "file.module.css"'],
+      "/file.module.css": [
+        'The name "y" never appears in "file.module.css"',
+        'The name "z" never appears in "file.module.css"',
+      ],
       "/file.css": ['The name "x" never appears in "file.css"'],
     },
     bundleWarnings: {
@@ -542,7 +545,8 @@ describe("bundler", () => {
   });
 
   // Define all the invalid cases
-  const invalidComposesTests = [
+  type InvalidComposesTest = { name: string; cssContent: string; expectedError?: string; expectedWarning?: string };
+  const invalidComposesTests: InvalidComposesTest[] = [
     {
       name: "IDSelector",
       cssContent: `
@@ -1176,7 +1180,93 @@ b {
 }
 
 /* entry.css */
+
 `);
+    },
+  });
+
+  // A url()'s `?query` / `#fragment` suffix must survive path rewriting so that
+  // SVG fragment references like `url(sprites.svg#icon)` keep addressing the
+  // element inside the asset. esbuild also preserves these.
+  itBundled("css/URLQueryFragmentPreservedFileLoader", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { mask: url(./sprites.svg#icon) }
+        .b { clip-path: url("./sprites.svg?v=3#c") }
+        .c { background: url(./sprites.svg) }
+        .d { --bg: url("./sprites.svg#custom") }
+      `,
+      "/sprites.svg": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
+    },
+    loader: {
+      ".svg": "file",
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+.a {
+  mask: url("./sprites-mrrzcz3w.svg#icon");
+}
+.b {
+  clip-path: url("./sprites-mrrzcz3w.svg?v=3#c");
+}
+.c {
+  background: url("./sprites-mrrzcz3w.svg");
+}
+.d {
+  --bg: url("./sprites-mrrzcz3w.svg#custom");
+}
+`);
+    },
+  });
+  itBundled("css/URLQueryFragmentPreservedDataURL", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { mask: url(./small.svg#m1) }
+        .b { background: url("./small.svg?v=2") }
+        .c { mask: url(./small.svg?v=2#m1) }
+        .d { background: url(./small.svg) }
+      `,
+      "/small.svg": `<svg xmlns="http://www.w3.org/2000/svg"><mask id="m1"/></svg>`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      // A `?query` appended to a base64 data: URL lands in the body and fails
+      // decoding, so only the `#fragment` is kept on the inline path.
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+.a {
+  mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==#m1");
+}
+.b {
+  background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==");
+}
+.c {
+  mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==#m1");
+}
+.d {
+  background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==");
+}
+`);
+    },
+  });
+  itBundled("css/URLQueryFragmentPreservedMinified", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { mask: url(./sprites.svg#icon) }
+      `,
+      "/sprites.svg": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
+    },
+    loader: {
+      ".svg": "file",
+    },
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/entry.css")
+        .toEqualIgnoringWhitespace(/* css */ `.a{mask:url("./sprites-mrrzcz3w.svg#icon")}`);
     },
   });
 
@@ -1189,6 +1279,33 @@ b {
           a { color: red }
         }
       `,
+    },
+  });
+
+  itBundled("css/URLInEnvFallbackOfAtImportMediaQuery", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./b.css" (min-width: env(foo, url(sub/g.css)));
+        .c0 { color: blue }
+      `,
+      "/b.css": `.b1 { color: green }`,
+      "/sub/g.css": `.c0 { color: red }`,
+    },
+    backend: "cli",
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toBe(`/* b.css */
+@media (min-width: env(foo, url(sub/g.css))) {
+  .b1 {
+    color: green;
+  }
+}
+
+/* entry.css */
+.c0 {
+  color: #00f;
+}
+`);
     },
   });
 
@@ -1246,6 +1363,7 @@ c {
 }
 
 /* entry.css */
+
 `);
     },
   });
@@ -1283,6 +1401,7 @@ c {
 @import "https://example.com/print.css" print;
 
 /* entry.css */
+
 `);
     },
   });
@@ -1349,6 +1468,7 @@ c {
         @import "http://example.com/foo.css" layer;
         @import "http://example.com/foo.css" layer(layer-name);
         @import "http://example.com/foo.css" layer(layer-name) supports(display: flex);
+        @import "http://example.com/foo.css" layer(layer-name) supports(display: flex) (min-width: 768px) and (max-width: 1024px);
         @import "http://example.com/foo.css" layer(layer-name) (min-width: 768px) and (max-width: 1024px);
         @import "http://example.com/foo.css" supports(display: flex);
         @import "http://example.com/foo.css" (min-width: 768px) and (max-width: 1024px);
@@ -1573,6 +1693,7 @@ c {
 }
 
 /* entry.css */
+
 `);
     },
   });
@@ -2203,5 +2324,895 @@ c {
       "/across-files.css",
       "/across-files-url.css",
     ],
+  });
+});
+
+describe("bundler", () => {
+  // tachyons, handsontable and jasmine ship the IE star hack.
+  itBundled("css/StarHackIsSkipped", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./clearfix.css";
+        .inline-block { display: inline-block; *display: inline; *background: url(./missing.png); *zoom: 1 }
+      `,
+      "/clearfix.css": /* css */ `.cf:after { clear: both } .cf { *zoom: 1 }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* clearfix.css */
+        .cf:after {
+          clear: both;
+        }
+
+        /* entry.css */
+        .inline-block {
+          display: inline-block;
+        }
+      `);
+    },
+  });
+
+  // The bundler puts the path of a copied file in after printing. Unquoted, a space or a parenthesis ends the url().
+  itBundled("css/FileLoaderURLWithSpecialCharsMinified", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { background: url("./my image.png") }
+        .b { background: url("./a(b).png") }
+        .c { --bg: url("./my image.png") }
+        @font-face { font-family: I; src: url("./plain.png") }
+      `,
+      "/my image.png": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
+      "/a(b).png": Buffer.alloc(128 * 1024 + 1, "Y").toString(),
+      "/plain.png": Buffer.alloc(128 * 1024 + 1, "X").toString(),
+    },
+    loader: {
+      ".png": "file",
+    },
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/entry.css")
+        .toBe(
+          '.a{background:url("./my image-mrrzcz3w.png")}.b{background:url("./a(b)-nkpagkva.png")}.c{--bg:url("./my image-mrrzcz3w.png")}' +
+            '@font-face{font-family:I;src:url("./plain-w49ecq2a.png")}\n',
+        );
+    },
+  });
+  itBundled("css/FileLoaderURLAssetNamingDirAndPublicPath", {
+    files: {
+      "/entry.css": `@font-face { font-family: I; src: url("./Brand Fonts/inter.woff2") }`,
+      "/Brand Fonts/inter.woff2": Buffer.alloc(128 * 1024 + 1, "W").toString(),
+    },
+    loader: {
+      ".woff2": "file",
+    },
+    assetNaming: "[dir]/[name]-[hash].[ext]",
+    publicPath: "https://cdn.example.com/a/",
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/entry.css")
+        .toBe('@font-face{font-family:I;src:url("https://cdn.example.com/a/Brand Fonts/inter-tny5bcvp.woff2")}\n');
+    },
+  });
+
+  // The same url text in two files names two files.
+  itBundled("css/RulesWithTheSameURLTextInTwoFilesStayApart", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./one/a.css";
+        @import "./two/b.css";
+      `,
+      "/one/a.css": `.a { background: url(./x.png) }`,
+      "/two/b.css": `.b { background: url(./x.png) }`,
+      "/one/x.png": "1",
+      "/two/x.png": "2",
+    },
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/entry.css")
+        .toEqualIgnoringWhitespace(
+          /* css */ `.a{background:url(data:image/png;base64,MQ==)}.b{background:url(data:image/png;base64,Mg==)}`,
+        );
+    },
+  });
+});
+
+describe("bundler", () => {
+  // `zoom`, `line-clamp`, `--a` and `--b` have no type. No import makes an earlier one redundant.
+  itBundled("css/CSSAtImportConditionsSupportsUnknownProperty", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./foo.css" supports(zoom: 1);
+        @import "./foo.css" supports(line-clamp: 1);
+        @import "./foo.css" supports(--a: 1);
+        @import "./foo.css" supports(--b: 1);
+        @import "./foo.css" supports(--b: 1);
+      `,
+      "/foo.css": /* css */ `body { color: red }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      const block = (condition: string) => `/* foo.css */ @supports (${condition}) { body { color: red; } }`;
+      api
+        .expectFile("/out.css")
+        .toEqualIgnoringWhitespace(
+          ["zoom: 1", "line-clamp: 1", "--a: 1", "--b: 1"].map(block).join("") + "/* entry.css */",
+        );
+    },
+  });
+
+  // The empty blocks put `foo` before `bar` in the layer order, so `bar` wins.
+  itBundled("css/CSSAtLayerEmptyBlockKeepsLayerOrder", {
+    files: {
+      "/entry.css": /* css */ `
+        @layer foo {}
+        @layer bar {}
+        @layer bar { .box { background-color: green; } }
+        @layer foo { .box { background-color: red; } }
+      `,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* entry.css */
+        @layer foo {}
+        @layer bar {}
+        @layer bar { .box { background-color: green; } }
+        @layer foo { .box { background-color: red; } }
+      `);
+    },
+  });
+
+  // What Tailwind 4 prints: a declaration for old browsers, then its override in `@supports`.
+  itBundled("css/CSSAtSupportsSameConditionKeepsAllRules", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { --x: 1; @supports (color: red) { --x: 2; } --y: 1; @supports (color: red) { --y: 2; } }
+      `,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toBe(".a{--x:1}@supports (color: red){.a{--x:2}}.a{--y:1}@supports (color: red){.a{--y:2}}\n");
+    },
+  });
+});
+
+describe("bundler", () => {
+  itBundled("css/CSSUrlInPropertyInitialValue", {
+    files: {
+      "/a.css": /* css */ `
+          @property --url {
+            syntax: "<url>";
+            inherits: false;
+            initial-value: url(./hi.svg);
+          }
+          @property --image {
+            initial-value: url("./hi.svg");
+            syntax: "<image>";
+            inherits: false;
+          }
+          /* The first initial-value is replaced, so its file is not an import. */
+          @property --last {
+            syntax: "<url>";
+            inherits: false;
+            initial-value: url(./replaced.svg);
+            initial-value: url(./hi.svg);
+          }
+        `,
+      "/hi.svg": /* svg */ `<svg xmlns="http://www.w3.org/2000/svg"><circle r="4" /></svg>`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      const url = `url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxjaXJjbGUgcj0iNCIgLz48L3N2Zz4=")`;
+      api.expectFile("/out/a.css").toEqualIgnoringWhitespace(`
+  /* a.css */
+  @property --url {
+    syntax: "<url>";
+    inherits: false;
+    initial-value: ${url};
+  }
+  @property --image {
+    syntax: "<image>";
+    inherits: false;
+    initial-value: ${url};
+  }
+  @property --last {
+    syntax: "<url>";
+    inherits: false;
+    initial-value: ${url};
+  }
+  `);
+    },
+  });
+
+  // Each case prints the layers in the order of the source files. `.t` gets the same color from `out` as from them.
+  const layerOrderCases: Record<string, { files: Record<string, string>; out: string }> = {
+    StatementBeforeImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer first;
+          @import "./imported.css" layer(second);
+          @layer third { .t { c: d } }
+        `,
+        "/imported.css": `.i { c: d }`,
+      },
+      out: "@layer first;@layer second{.i{c:d}}@layer third{.t{c:d}}",
+    },
+    StatementBeforeImportInImportedFile: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./ui/index.css";
+          @layer components { .card { c: e } }
+        `,
+        "/ui/index.css": /* css */ `
+          @layer theme, base, components, utilities;
+          @import "./theme.css" layer(theme);
+          @import "./utilities.css" layer(utilities);
+        `,
+        "/ui/theme.css": `:root { --x: 1 }`,
+        "/ui/utilities.css": `.u { c: d }`,
+      },
+      out: "@layer theme,base,components,utilities;@layer theme{:root{--x:1}}@layer utilities{.u{c:d}}@layer components{.card{c:e}}",
+    },
+    StatementUnderImportConditions: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer outer;
+          @import "./mid.css" layer(wrap) supports(display: flex);
+        `,
+        "/mid.css": /* css */ `
+          @layer inner;
+          @import "./leaf.css" layer(leafy);
+          @layer after;
+          .mid { c: d }
+        `,
+        "/leaf.css": `.leaf { c: d }`,
+      },
+      out: "@layer outer;@supports (display:flex){@layer wrap{@layer inner;}}@supports (display:flex){@layer wrap{@layer leafy{.leaf{c:d}}}}@supports (display:flex){@layer wrap{@layer after;.mid{c:d}}}",
+    },
+    // "a" and "wrap.a" are different layers, so the first list does not cover the second.
+    SameStatementInLayeredImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer a, b;
+          @import "./lib.css" layer(wrap);
+          .e { c: d }
+        `,
+        "/lib.css": /* css */ `
+          @layer a, b;
+          @import "./leaf.css";
+          @layer b { .lb { c: d } }
+          @layer a { .la { c: d } }
+        `,
+        "/leaf.css": `.leaf { c: d }`,
+      },
+      out: "@layer a,b;@layer wrap{@layer a,b;}@layer wrap{.leaf{c:d}}@layer wrap{@layer b{.lb{c:d}}@layer a{.la{c:d}}}.e{c:d}",
+    },
+    StatementOfAFileImportedTwice: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+        `,
+        "/f.css": /* css */ `
+          @layer a;
+          @import "./leaf.css";
+          .f { c: d }
+        `,
+        "/g.css": `@layer b { .g { c: d } }`,
+        "/leaf.css": `.leaf { c: d }`,
+      },
+      out: "@layer a;@layer b{.g{c:d}}.leaf{c:d}.f{c:d}",
+    },
+    // A statement ahead of the imports stays ahead of them in the one anonymous layer.
+    StatementInAnonymousLayerImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./lib.css" layer;
+          .z { c: d }
+        `,
+        "/lib.css": /* css */ `
+          @layer p, q;
+          @import "./leaf.css";
+          @layer q { .x { c: e } }
+          @layer p { .x { c: f } }
+        `,
+        "/leaf.css": `.leaf { c: d }`,
+      },
+      out: "@layer{@layer p,q;.leaf{c:d}@layer q{.x{c:e}}@layer p{.x{c:f}}}.z{c:d}",
+    },
+    // The first copy of "f.css" declares "w" ahead of "v", also inside an anonymous layer.
+    SublayerOfADuplicateImportInAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer;`,
+        "/a.css": /* css */ `
+          @import "./f.css" layer(w);
+          @import "./g.css";
+          @import "./f.css" layer(w);
+          .a { color: green }
+        `,
+        "/g.css": `@layer v { .t { color: blue } }`,
+        "/f.css": `.t { color: red }`,
+      },
+      out: "@layer{@layer w;@layer v{.t{color:#00f}}@layer w{.t{color:red}}.a{color:green}}",
+    },
+    // The first copy of "f.css" stays in the anonymous layer of its neighbours.
+    DuplicateImportBetweenAnonymousLayers: {
+      files: {
+        "/entry.css": `@import "./c.css" layer;`,
+        "/c.css": `@import "./d.css" layer(w);`,
+        "/d.css": `@import "./e.css" layer;`,
+        "/e.css": /* css */ `
+          @import "./h.css";
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+        `,
+        "/h.css": `.t.t { color: green }`,
+        "/f.css": `.t { color: red }`,
+        "/g.css": `.g { color: blue }`,
+      },
+      out: "@layer{@layer w{@layer{.t.t{color:green}.g{color:#00f}.t{color:red}}}@layer w;}",
+    },
+    SublayerOfADuplicateImportInNestedAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer(x);`,
+        "/a.css": `@import "./b.css" layer;`,
+        "/b.css": /* css */ `
+          @import "./f.css" layer(w);
+          @import "./g.css";
+          @import "./f.css" layer(w);
+        `,
+        "/g.css": `@layer v { .t { color: blue } }`,
+        "/f.css": `.t { color: red }`,
+      },
+      out: "@layer x{@layer{@layer w;@layer v{.t{color:#00f}}@layer w{.t{color:red}}}}@layer x;",
+    },
+    // An import that closes a cycle is not loaded, but it declares its layer.
+    SublayerOfACycleInAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer;`,
+        "/a.css": /* css */ `
+          @import "./a.css" layer(w);
+          @import "./g.css";
+        `,
+        "/g.css": `@layer v { .t { color: blue } }`,
+      },
+      out: "@layer{@layer w;@layer v{.t{color:#00f}}}",
+    },
+    // A copy with no layer does not cover a list under "layer(w)": the list is what declares "w" ahead of "u".
+    ListForADuplicateImportUnderLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./base.css";
+          @import "./btn.css" layer(w);
+          @import "./other.css";
+          @import "./btn.css" layer(w);
+        `,
+        "/base.css": `.base { color: black }`,
+        "/btn.css": `.t { color: red }`,
+        "/other.css": `@layer u { .t { color: blue } }`,
+      },
+      out: ".base{color:#000}@layer w;@layer u{.t{color:#00f}}@layer w{.t{color:red}}",
+    },
+    ListForADuplicateImportAheadOfAStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./base.css";
+          @import "./btn.css" layer(w);
+          @import "./card.css";
+        `,
+        "/base.css": `.x { color: green }`,
+        "/btn.css": `.t { color: red }`,
+        "/card.css": /* css */ `
+          @layer u;
+          @import "./btn.css" layer(w);
+          @layer u { .t { color: blue } }
+        `,
+      },
+      out: ".x{color:green}@layer w;@layer u;@layer w{.t{color:red}}@layer u{.t{color:#00f}}",
+    },
+    // The rules of the first copy are in "w.c" and "w.a", not in "c" and "a".
+    LayeredCopyBehindABareCopy: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer a;
+          @import "./f1.css";
+          @layer c { .t { color: red } }
+        `,
+        "/f1.css": /* css */ `
+          @layer c;
+          @import "./f2.css" layer(w);
+          @import "./f2.css";
+        `,
+        "/f2.css": /* css */ `
+          @layer c;
+          @layer a { .t { color: blue } }
+        `,
+      },
+      out: "@layer a;@layer c;@layer w{@layer c;@layer a{.t{color:#00f}}}@layer c;@layer a{.t{color:#00f}}@layer c{.t{color:red}}",
+    },
+    AnonymousCopyBehindABareCopy: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer a;
+          @import "./f1.css";
+          @layer c { .t { color: red } }
+        `,
+        "/f1.css": /* css */ `
+          @layer c;
+          @import "./f2.css" layer;
+          @import "./f2.css";
+        `,
+        "/f2.css": /* css */ `
+          @layer c;
+          @layer a { .t { color: blue } }
+        `,
+      },
+      out: "@layer a;@layer c;@layer{@layer c;@layer a{.t{color:#00f}}}@layer c;@layer a{.t{color:#00f}}@layer c{.t{color:red}}",
+    },
+    FileWithImportsUnderBareLayerAndBare: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer a;
+          @import "./lib.css" layer;
+          @import "./lib.css";
+        `,
+        "/lib.css": /* css */ `
+          @import "./leaf.css";
+          @layer a { @layer c { .t { color: red } } }
+        `,
+        "/leaf.css": `@layer a { .t { color: blue } }`,
+      },
+      out: "@layer a;@layer{@layer a{.t{color:#00f}}@layer a{@layer c{.t{color:red}}}}@layer a{.t{color:#00f}}@layer a{@layer c{.t{color:red}}}",
+    },
+    ImportantUnderBareLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f2.css" layer;
+          @import "./f1.css";
+        `,
+        "/f1.css": /* css */ `
+          @layer a;
+          @import "./f2.css" layer;
+          @layer a { .t { color: red !important } }
+        `,
+        "/f2.css": `.t { color: blue !important }`,
+      },
+      out: "@layer{.t{color:#00f!important}}@layer a;@layer{.t{color:#00f!important}}@layer a{.t{color:red!important}}",
+    },
+    // Each visit of a bare "layer" is a layer of its own, so a copy in one does not cover a copy in the other.
+    TwoBareImportsOfFilesWithOneImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css" layer;
+          @import "./b.css" layer;
+        `,
+        "/a.css": /* css */ `
+          @import "./leaf.css";
+          .a { c: d }
+        `,
+        "/b.css": /* css */ `
+          @import "./leaf.css";
+          .b { c: d }
+        `,
+        "/leaf.css": `.leaf { c: d }`,
+      },
+      out: "@layer{.leaf{c:d}.a{c:d}}@layer{.leaf{c:d}.b{c:d}}",
+    },
+    SameFileVisitedTwiceWithABareImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "./z.css";
+          @import "./a.css";
+        `,
+        "/a.css": /* css */ `
+          @import "./leaf.css" layer;
+          .a { c: d }
+        `,
+        "/leaf.css": `.leaf { c: d }`,
+        "/z.css": `.z { c: d }`,
+      },
+      out: "@layer{.leaf{c:d}}.z{c:d}@layer{.leaf{c:d}}.a{c:d}",
+    },
+    // "p" and "q" of the first x.css order the layers inside the block, where the later copy prints.
+    MaskedCopyInsideABareImport: {
+      files: {
+        "/entry.css": `@import "./lib.css" layer;`,
+        "/lib.css": /* css */ `
+          @import "./x.css";
+          @import "./y.css";
+          @import "./x.css";
+        `,
+        "/x.css": /* css */ `
+          @layer p, q;
+          @layer q { .x { c: d } }
+        `,
+        "/y.css": `@layer q { .y { c: d } } @layer p { .y { c: e } }`,
+      },
+      out: "@layer{@layer p,q,q;@layer q{.y{c:d}}@layer p{.y{c:e}}@layer p,q;@layer q{.x{c:d}}}",
+    },
+    BlocksInsideAndOutsideABareImport: {
+      files: {
+        "/entry.css": `@import "./mid.css" screen;`,
+        "/mid.css": /* css */ `
+          @import "./lib.css" layer(w) supports(display: grid);
+          .mid { c: d }
+        `,
+        "/lib.css": /* css */ `
+          @import "./one.css" layer;
+          .lib { c: d }
+        `,
+        "/one.css": /* css */ `
+          @import "./two.css" print;
+          @import "./three.css" layer;
+          .one { c: d }
+        `,
+        "/two.css": `.two { c: d }`,
+        "/three.css": /* css */ `
+          @import "./four.css";
+          .three { c: d }
+        `,
+        "/four.css": `.four { c: d }`,
+      },
+      out:
+        "@media screen{@supports (display:grid){@layer w{@layer{@media print{.two{c:d}}" +
+        "@layer{.four{c:d}.three{c:d}}.one{c:d}}}}}" +
+        "@media screen{@supports (display:grid){@layer w{.lib{c:d}}}}" +
+        "@media screen{.mid{c:d}}",
+    },
+    // An "@import" that closes a cycle is not loaded, but it still declares its layer.
+    CyclicLayeredImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./entry.css" layer(w);
+          @import "./b.css" layer(b);
+          @import "./c.css" layer(w);
+        `,
+        "/b.css": `.t { color: blue }`,
+        "/c.css": `.t { color: red }`,
+      },
+      out: "@layer w;@layer b{.t{color:#00f}}@layer w{.t{color:red}}",
+    },
+    CyclicLayeredImportAheadOfAStatement: {
+      files: {
+        "/entry.css": `@import "./f2.css";`,
+        "/f2.css": /* css */ `
+          @import "./entry.css" layer(w);
+          @import "./f3.css";
+        `,
+        "/f3.css": /* css */ `
+          @layer b;
+          @import "./f4.css" layer(w);
+          @layer b { .t { color: blue } }
+        `,
+        "/f4.css": `.t { color: red }`,
+      },
+      out: "@layer w;@layer b;@layer w{.t{color:red}}@layer b{.t{color:#00f}}",
+    },
+    // g.css names "a" only under "@media", so it does not stand for the statement of f.css.
+    NameDeclaredUnderMediaInAnEarlierFile: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./g.css";
+          @import "./f.css";
+        `,
+        "/g.css": `@media print { @layer a { .g { color: green } } }`,
+        "/f.css": /* css */ `
+          @layer a;
+          @import "./y.css" layer(b);
+          @layer a { .t { color: red } }
+        `,
+        "/y.css": `.t { color: blue }`,
+      },
+      out: "@media print{@layer a{.g{color:green}}}@layer a;@layer b{.t{color:#00f}}@layer a{.t{color:red}}",
+    },
+    NameDeclaredBehindAnAnonymousBlock: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer a;
+          @import "./g.css";
+        `,
+        "/g.css": /* css */ `
+          @layer { .t { color: blue } }
+          @layer a { .t { color: red } }
+        `,
+      },
+      out: "@layer a;@layer{.t{color:#00f}}@layer a{.t{color:red}}",
+    },
+  };
+  for (const [name, { files, out }] of Object.entries(layerOrderCases)) {
+    itBundled(`css/CSSAtLayerOrder${name}`, {
+      files,
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toBe(out + "\n");
+      },
+    });
+  }
+
+  itBundled("css/CSSAtLayerBareImportPrintsOneIndentedBlock", {
+    files: {
+      "/entry.css": `@import "./lib.css" layer print;`,
+      "/lib.css": /* css */ `
+        @import "./leaf.css";
+        .lib { color: red }
+      `,
+      "/leaf.css": `@layer a { .leaf { color: red } }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toBe(`/* leaf.css */
+@media print {
+  @layer {
+    @layer a {
+      .leaf {
+        color: red;
+      }
+    }
+
+/* lib.css */
+    .lib {
+      color: red;
+    }
+  }
+}
+
+/* entry.css */
+
+`);
+    },
+  });
+
+  // esbuild's TestCSSAtLayerBeforeImportBundle, with its snapshot.
+  itBundled("css/CSSAtLayerBeforeImportBundle", {
+    files: {
+      "/entry.css": /* css */ `
+        @layer layer1, layer2.layer3;
+        @import "a.css";
+        @import "b.css";
+        @layer layer6.layer7, layer8;
+      `,
+      "/a.css": `@layer layer4 { a { color: red } }`,
+      "/b.css": `@layer layer5 { b { color: red } }`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+        @layer layer1, layer2.layer3;
+
+        /* a.css */
+        @layer layer4 {
+          a {
+            color: red;
+          }
+        }
+
+        /* b.css */
+        @layer layer5 {
+          b {
+            color: red;
+          }
+        }
+
+        /* entry.css */
+        @layer layer6.layer7, layer8;
+      `);
+    },
+  });
+
+  // Only "@charset" and "@layer" statements are valid ahead of an "@import", and the parser rejects anything else.
+  const importPrologueCases: Record<string, { files: Record<string, string>; out: string }> = {
+    StatementBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer first;
+          @import "https://example.com/e.css";
+          @import "./local.css" layer(second);
+        `,
+        "/local.css": `.l { c: d }`,
+      },
+      out: '@layer first;@import "https://example.com/e.css";@layer second{.l{c:d}}',
+    },
+    // Under import conditions a list prints as a block, so it stays behind the import.
+    StatementUnderConditionsBeforeExternalImport: {
+      files: {
+        "/entry.css": `@import "./mid.css" layer(wrap) supports(display: flex);`,
+        "/mid.css": /* css */ `
+          @layer inner;
+          @import "https://example.com/e.css";
+        `,
+      },
+      out: '@import "https://example.com/e.css" layer(wrap) supports(display:flex);@supports (display:flex){@layer wrap{@layer inner;}}@supports (display:flex){@layer wrap;}',
+    },
+    // A list here would print as a block. Only the first copy says that "a" comes before "b" in print.
+    DuplicateExternalImportUnderMedia: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/a.css" layer(a) print;
+          @import "https://example.com/b.css" layer(b);
+          @import "https://example.com/a.css" layer(a) print;
+        `,
+      },
+      out: `@import "https://example.com/a.css" layer(a) print;@import "https://example.com/b.css" layer(b);@import "https://example.com/a.css" layer(a) print;`,
+    },
+    // The first copy declares the layer. The second copy adds nothing.
+    ThreeCopiesOfAnExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/a.css" layer(a) print;
+          @import "https://example.com/b.css" layer(b);
+          @import "https://example.com/a.css" layer(a) print;
+          @import "https://example.com/a.css" layer(a) print;
+        `,
+      },
+      out: `@import "https://example.com/a.css" layer(a) print;@import "https://example.com/b.css" layer(b);@import "https://example.com/a.css" layer(a) print;`,
+    },
+    // The middle copy loses its media condition, and must not print between the two imports.
+    ThreeCopiesUnderALayerAndMedia: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "./b.css";
+          @import "./c.css";
+        `,
+        "/a.css": /* css */ `@import "./theme.css" layer(theme); .a { color: red }`,
+        "/b.css": /* css */ `@import "./theme.css" layer(theme); .b { color: red }`,
+        "/c.css": /* css */ `@import "./theme.css" layer(theme); .c { color: red }`,
+        "/theme.css": /* css */ `@import "https://example.com/x.css" screen;`,
+      },
+      out: `@import "data:text/css,@import \\"https://example.com/x.css\\" screen;" layer(theme);@import "data:text/css,@import \\"https://example.com/x.css\\" screen;" layer(theme);@layer theme;.a{color:red}.b{color:red}@layer theme;.c{color:red}`,
+    },
+    // A statement is not valid between two "@import" rules.
+    DuplicateExternalImportAfterOtherImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/first.css" layer(first);
+          @import "https://example.com/a.css" layer(a);
+          @import "https://example.com/b.css" layer(b);
+          @import "https://example.com/a.css" layer(a);
+        `,
+      },
+      out: `@import "https://example.com/first.css" layer(first);@import "https://example.com/a.css" layer(a);@import "https://example.com/b.css" layer(b);@import "https://example.com/a.css" layer(a);`,
+    },
+    DuplicateExternalImportBehindALeadingStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/a.css" layer(a);
+          @import "https://example.com/b.css" layer(b);
+          @import "https://example.com/a.css" layer(a);
+        `,
+      },
+      out: `@layer a;@import "https://example.com/b.css" layer(b);@import "https://example.com/a.css" layer(a);`,
+    },
+    // The rules of the two copies are in different layers, so both stay.
+    ExternalImportUnderLayerAndBare: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer x;
+          @import "https://example.com/a.css" layer(v);
+          @import "./m.css" layer(w);
+          @import "https://example.com/a.css";
+        `,
+        "/m.css": `.m { color: red }`,
+      },
+      out: '@layer x;@import "https://example.com/a.css" layer(v);@import "https://example.com/a.css";@layer w{.m{color:red}}',
+    },
+  };
+  for (const [name, { files, out }] of Object.entries(importPrologueCases)) {
+    itBundled(`css/CSSImportPrologue${name}`, {
+      files,
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      async onAfterBundle(api) {
+        api.expectFile("/out.css").toBe(out + "\n");
+        const again = await Bun.build({ entrypoints: [api.outfile], throw: false });
+        expect(again.logs.map(log => log.message)).toEqual([]);
+        expect(again.success).toBe(true);
+      },
+    });
+  }
+
+  // A media or container condition the parser does not know is kept as written.
+  itBundled("css/GeneralEnclosedCondition", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "https://example.com/b.css" (layer(x));
+        @import "./ie.css" screen and (min-width:0\\0);
+        @media screen and (min-width:0\\0) { .media { color: red } }
+        @container scroll-state(stuck: top) { .container { color: red } }
+      `,
+      "/ie.css": /* css */ `.ie { color: red }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        @import "https://example.com/b.css" (layer(x));
+
+        /* ie.css */
+        @media screen and (min-width:0\\0) {
+          .ie {
+            color: red;
+          }
+        }
+
+        /* entry.css */
+        @media screen and (min-width:0\\0) {
+          .media {
+            color: red;
+          }
+        }
+
+        @container scroll-state(stuck: top) {
+          .container {
+            color: red;
+          }
+        }
+      `);
+    },
+  });
+
+  // The text of a kept condition is not an import.
+  itBundled("css/GeneralEnclosedConditionURL", {
+    files: {
+      "/entry.css": /* css */ `
+        @media (foo: url("./missing.png")) { .media { color: red } }
+        @container (style(--bg: url(./missing.png)) junk) { .container { color: red } }
+      `,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* entry.css */
+        @media (foo: url("./missing.png")) {
+          .media {
+            color: red;
+          }
+        }
+
+        @container (style(--bg: url(./missing.png)) junk) {
+          .container {
+            color: red;
+          }
+        }
+      `);
+    },
+  });
+});
+
+describe("bundler", () => {
+  // The default browser targets start at Chrome 80 and Safari 14.
+  itBundled("css/DefaultTargetsKeepWhatBrowsersRead", {
+    files: {
+      "/entry.css": /* css */ `
+        .overlay { position: fixed; top: 0; right: 0; bottom: 0; left: 0 }
+        .clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; flex-direction: column; overflow: hidden }
+        .frame { border: 4px solid; border-image: linear-gradient(red, blue); border-image-slice: 1 }
+        .menu { max-width: calc(100vw - 32px); max-width: var(--menu-max-width, calc(100vw - 32px)) }
+      `,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* entry.css */
+        .overlay { position: fixed; top: 0; bottom: 0; left: 0; right: 0; }
+        .clamp { display: -webkit-box; -webkit-line-clamp: 3; overflow: hidden; -webkit-box-orient: vertical; flex-direction: column; }
+        .frame { border: 4px solid; border-image: linear-gradient(red, #00f) 1; }
+        .menu { max-width: calc(100vw - 32px); max-width: var(--menu-max-width, calc(100vw - 32px)); }
+      `);
+    },
   });
 });

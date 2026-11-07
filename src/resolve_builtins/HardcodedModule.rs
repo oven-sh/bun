@@ -9,8 +9,8 @@ pub enum HardcodedModule {
     Bun,
     #[strum(serialize = "abort-controller")]
     AbortController,
-    #[strum(serialize = "bun:app")]
-    BunApp,
+    #[strum(serialize = "bun:bake")]
+    BunBake,
     #[strum(serialize = "bun:ffi")]
     BunFfi,
     #[strum(serialize = "bun:jsc")]
@@ -19,6 +19,8 @@ pub enum HardcodedModule {
     BunMain,
     #[strum(serialize = "bun:test")]
     BunTest,
+    #[strum(serialize = "bun:test/vitest")]
+    BunTestVitest,
     #[strum(serialize = "bun:wrap")]
     BunWrap,
     #[strum(serialize = "bun:sqlite")]
@@ -77,10 +79,16 @@ pub enum HardcodedModule {
     NodeReadline,
     #[strum(serialize = "node:readline/promises")]
     NodeReadlinePromises,
+    #[strum(serialize = "node:sqlite")]
+    NodeSqlite,
     #[strum(serialize = "node:stream")]
     NodeStream,
     #[strum(serialize = "node:stream/consumers")]
     NodeStreamConsumers,
+    #[strum(serialize = "node:stream/iter")]
+    NodeStreamIter,
+    #[strum(serialize = "node:zlib/iter")]
+    NodeZlibIter,
     #[strum(serialize = "node:stream/promises")]
     NodeStreamPromises,
     #[strum(serialize = "node:stream/web")]
@@ -137,6 +145,8 @@ pub enum HardcodedModule {
     NodeInspectorPromises,
     #[strum(serialize = "node:http2")]
     NodeHttp2,
+    #[strum(serialize = "node:quic")]
+    NodeQuic,
     #[strum(serialize = "node:diagnostics_channel")]
     NodeDiagnosticsChannel,
     #[strum(serialize = "node:dgram")]
@@ -157,6 +167,8 @@ pub enum HardcodedModule {
     NodeStreamWritableInternal,
     #[strum(serialize = "node:_tls_common")]
     NodeTlsCommonInternal,
+    #[strum(serialize = "node:_tls_wrap")]
+    NodeTlsWrapInternal,
     #[strum(serialize = "node:_http_agent")]
     NodeHttpAgentInternal,
     #[strum(serialize = "node:_http_client")]
@@ -172,6 +184,22 @@ pub enum HardcodedModule {
     /// This is gated behind '--expose-internals'
     #[strum(serialize = "bun:internal-for-testing")]
     BunInternalForTesting,
+    #[strum(serialize = "internal:cluster/RoundRobinHandle")]
+    InternalClusterRoundRobinHandle,
+    // Node internal modules exposed for the vendored Node.js test suite.
+    // Gated like `bun:internal-for-testing` (debug builds / --expose-internals).
+    #[strum(serialize = "internal:repl")]
+    NodeInternalRepl,
+    #[strum(serialize = "internal:repl/await")]
+    NodeInternalReplAwait,
+    #[strum(serialize = "internal:repl/history")]
+    NodeInternalReplHistory,
+    #[strum(serialize = "internal:util/inspect")]
+    NodeInternalUtilInspect,
+    /// Node.js-internal testing shim (`require('internal/test/binding')`),
+    /// gated behind '--expose-internals' like `bun:internal-for-testing`.
+    #[strum(serialize = "internal/test/binding")]
+    InternalTestBinding,
 }
 
 bun_core::comptime_string_map! {
@@ -181,14 +209,21 @@ bun_core::comptime_string_map! {
     pub static HARDCODED_MODULE_MAP: HardcodedModule = {
         // Bun
         b"bun" => HardcodedModule::Bun,
-        b"bun:app" => HardcodedModule::BunApp,
+        b"bun:bake" => HardcodedModule::BunBake,
         b"bun:ffi" => HardcodedModule::BunFfi,
         b"bun:jsc" => HardcodedModule::BunJsc,
         b"bun:main" => HardcodedModule::BunMain,
         b"bun:test" => HardcodedModule::BunTest,
+        b"bun:test/vitest" => HardcodedModule::BunTestVitest,
         b"bun:sqlite" => HardcodedModule::BunSqlite,
         b"bun:wrap" => HardcodedModule::BunWrap,
         b"bun:internal-for-testing" => HardcodedModule::BunInternalForTesting,
+        b"internal:cluster/RoundRobinHandle" => HardcodedModule::InternalClusterRoundRobinHandle,
+        b"internal/repl" => HardcodedModule::NodeInternalRepl,
+        b"internal/repl/await" => HardcodedModule::NodeInternalReplAwait,
+        b"internal/repl/history" => HardcodedModule::NodeInternalReplHistory,
+        b"internal/util/inspect" => HardcodedModule::NodeInternalUtilInspect,
+        b"internal/test/binding" => HardcodedModule::InternalTestBinding,
         // Node.js
         b"node:assert" => HardcodedModule::NodeAssert,
         b"node:assert/strict" => HardcodedModule::NodeAssertStrict,
@@ -209,6 +244,7 @@ bun_core::comptime_string_map! {
         b"node:fs/promises" => HardcodedModule::NodeFsPromises,
         b"node:http" => HardcodedModule::NodeHttp,
         b"node:http2" => HardcodedModule::NodeHttp2,
+        b"node:quic" => HardcodedModule::NodeQuic,
         b"node:https" => HardcodedModule::NodeHttps,
         b"node:inspector" => HardcodedModule::NodeInspector,
         b"node:inspector/promises" => HardcodedModule::NodeInspectorPromises,
@@ -226,8 +262,11 @@ bun_core::comptime_string_map! {
         b"node:querystring" => HardcodedModule::NodeQuerystring,
         b"node:readline/promises" => HardcodedModule::NodeReadlinePromises,
         b"node:repl" => HardcodedModule::NodeRepl,
+        b"node:sqlite" => HardcodedModule::NodeSqlite,
         b"node:stream" => HardcodedModule::NodeStream,
         b"node:stream/consumers" => HardcodedModule::NodeStreamConsumers,
+        b"node:stream/iter" => HardcodedModule::NodeStreamIter,
+        b"node:zlib/iter" => HardcodedModule::NodeZlibIter,
         b"node:stream/promises" => HardcodedModule::NodeStreamPromises,
         b"node:stream/web" => HardcodedModule::NodeStreamWeb,
         b"node:string_decoder" => HardcodedModule::NodeStringDecoder,
@@ -251,6 +290,7 @@ bun_core::comptime_string_map! {
         b"node:_stream_wrap" => HardcodedModule::NodeStreamWrapInternal,
         b"node:_stream_writable" => HardcodedModule::NodeStreamWritableInternal,
         b"node:_tls_common" => HardcodedModule::NodeTlsCommonInternal,
+        b"node:_tls_wrap" => HardcodedModule::NodeTlsWrapInternal,
         b"node:_http_agent" => HardcodedModule::NodeHttpAgentInternal,
         b"node:_http_client" => HardcodedModule::NodeHttpClientInternal,
         b"node:_http_common" => HardcodedModule::NodeHttpCommonInternal,
@@ -288,17 +328,6 @@ pub struct Alias {
     pub tag: import_record::Tag,
     pub node_builtin: bool,
     pub node_only_prefix: bool,
-}
-
-impl Default for Alias {
-    fn default() -> Self {
-        Self {
-            path: zstr!(""),
-            tag: import_record::Tag::Builtin,
-            node_builtin: false,
-            node_only_prefix: false,
-        }
-    }
 }
 
 /// Prepend `"node:"` to a literal at compile time iff it isn't already prefixed.
@@ -368,8 +397,7 @@ macro_rules! entry {
 
 // `comptime_string_map!` only accepts inline literal entries, so it cannot
 // consume const slices directly; instead the const tables stay the source of
-// truth (callers like `ModuleLoader` iterate them) and `lookup` goes through
-// lazily-built hash maps.
+// truth and `lookup` goes through lazily-built hash maps.
 
 type AliasKv = (&'static [u8], Alias);
 
@@ -412,6 +440,8 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     node_entry!("node:repl"),
     node_entry!("node:stream"),
     node_entry!("node:stream/consumers"),
+    node_entry!("node:stream/iter"),
+    node_entry!("node:zlib/iter"),
     node_entry!("node:stream/promises"),
     node_entry!("node:stream/web"),
     node_entry!("node:string_decoder"),
@@ -429,7 +459,9 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     node_entry!("node:worker_threads"),
     node_entry!("node:zlib"),
     // New Node.js builtins only resolve from the prefixed one.
+    node_entry_only_prefix!("node:sqlite"),
     node_entry_only_prefix!("node:test"),
+    node_entry_only_prefix!("node:quic"),
     //
     node_entry!("assert"),
     node_entry!("assert/strict"),
@@ -468,6 +500,8 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     node_entry!("repl"),
     node_entry!("stream"),
     node_entry!("stream/consumers"),
+    node_entry!("stream/iter"),
+    node_entry!("zlib/iter"),
     node_entry!("stream/promises"),
     node_entry!("stream/web"),
     node_entry!("string_decoder"),
@@ -578,7 +612,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     (
         b"node:_tls_wrap",
         Alias {
-            path: zstr!("node:tls"),
+            path: zstr!("node:_tls_wrap"),
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
@@ -650,7 +684,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     (
         b"_tls_wrap",
         Alias {
-            path: zstr!("node:tls"),
+            path: zstr!("node:_tls_wrap"),
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
@@ -678,13 +712,30 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
         },
     ),
     entry!("bun:test"),
-    entry!("bun:app"),
+    entry!("bun:test/vitest"),
+    entry!("bun:bake"),
     entry!("bun:ffi"),
     entry!("bun:jsc"),
     entry!("bun:main"),
     entry!("bun:sqlite"),
     entry!("bun:wrap"),
     entry!("bun:internal-for-testing"),
+    (
+        b"internal/cluster/round_robin_handle",
+        Alias {
+            path: zstr!("internal:cluster/RoundRobinHandle"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: false,
+            node_only_prefix: false,
+        },
+    ),
+    // Node internal modules for the vendored Node.js test suite (gated in
+    // jsc_hooks like bun:internal-for-testing: debug / --expose-internals).
+    entry!("internal/repl"),
+    entry!("internal/repl/await"),
+    entry!("internal/repl/history"),
+    entry!("internal/util/inspect"),
+    entry!("internal/test/binding"),
     (
         b"ffi",
         Alias {
@@ -767,7 +818,7 @@ const BUN_TEST_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     (
         b"vitest",
         Alias {
-            path: zstr!("bun:test"),
+            path: zstr!("bun:test/vitest"),
             tag: import_record::Tag::Builtin,
             node_builtin: false,
             node_only_prefix: false,
@@ -775,9 +826,16 @@ const BUN_TEST_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     ),
 ];
 
-// A lazily-built `HashMap` per alias table (see `lookup`); the const
-// slice-of-tables form is kept public because `ModuleLoader` iterates the raw
-// entries.
+// `is_test_module` must cover these, or a file importing one would share its transpiler cache entry with `bun run`.
+const _: () = {
+    let mut i = 0;
+    while i < BUN_TEST_EXTRA_ALIAS_KVS.len() {
+        assert!(import_record::is_test_module(BUN_TEST_EXTRA_ALIAS_KVS[i].0));
+        i += 1;
+    }
+};
+
+// A lazily-built `HashMap` per alias table (see `lookup`).
 const NODE_ALIASES: &[&[AliasKv]] = &[COMMON_ALIAS_KVS];
 pub const BUN_ALIASES: &[&[AliasKv]] = &[COMMON_ALIAS_KVS, BUN_EXTRA_ALIAS_KVS];
 const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
@@ -785,6 +843,66 @@ const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
     BUN_EXTRA_ALIAS_KVS,
     BUN_TEST_EXTRA_ALIAS_KVS,
 ];
+
+static EXPOSE_INTERNALS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static ARE_INTERNALS_SEALED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Node's `--expose-internals`.
+pub fn expose_internals_enabled() -> bool {
+    EXPOSE_INTERNALS.load(std::sync::atomic::Ordering::Relaxed) && !are_internals_sealed()
+}
+
+pub fn are_internals_sealed() -> bool {
+    ARE_INTERNALS_SEALED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn seal_internals() {
+    ARE_INTERNALS_SEALED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn set_expose_internals_enabled(enabled: bool) {
+    EXPOSE_INTERNALS.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+static STREAM_ITER_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// `--experimental-stream-iter` (node parity): `stream/iter` resolves as a
+/// builtin only when the flag was passed on the CLI as an exec argument.
+/// Set once during CLI parsing (`cli/Arguments.rs`), which owns the
+/// exec-arg/script-positional distinction — a raw argv scan here would also
+/// match the flag appearing after the script name, where node treats it as
+/// a script argument.
+pub fn stream_iter_enabled() -> bool {
+    STREAM_ITER_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_stream_iter_enabled(enabled: bool) {
+    STREAM_ITER_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Read by C++ (`createStreamIterEnabledFlag`, NodeModuleModule.cpp) so JS
+/// builtins can consult the write-once CLI bit instead of the user-mutable
+/// `process.execArgv`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__streamIterEnabled() -> bool {
+    stream_iter_enabled()
+}
+
+/// True when `name` is a stream/iter specifier that must stay invisible
+/// because `--experimental-stream-iter` was not passed.
+fn stream_iter_alias_gated(name: &[u8]) -> bool {
+    is_stream_iter_alias(name) && !stream_iter_enabled()
+}
+
+/// A stream/iter specifier: a builtin only with `--experimental-stream-iter`.
+fn is_stream_iter_alias(name: &[u8]) -> bool {
+    name == b"stream/iter"
+        || name == b"node:stream/iter"
+        || name == b"zlib/iter"
+        || name == b"node:zlib/iter"
+}
 
 fn build_alias_map(tables: &[&[AliasKv]]) -> bun_collections::HashMap<&'static [u8], Alias> {
     let mut map = bun_collections::HashMap::with_capacity(tables.iter().map(|t| t.len()).sum());
@@ -824,6 +942,13 @@ impl Alias {
     }
 
     pub fn get(name: &[u8], target: Target, cfg: Cfg) -> Option<Alias> {
+        // Without `--experimental-stream-iter` the aliases stay invisible so
+        // the bare specifier falls through to filesystem resolution
+        // ("Cannot find module") and the node:-prefixed one reports
+        // "No such built-in module", matching node.
+        if stream_iter_alias_gated(name) {
+            return None;
+        }
         if target.is_bun() {
             if cfg.rewrite_jest_for_tests {
                 return lookup(&BUN_TEST_ALIAS_MAP, name);
@@ -834,5 +959,21 @@ impl Alias {
             return lookup(&NODE_ALIAS_MAP, name);
         }
         None
+    }
+
+    /// Programs import `bun:fs` (#16883), so `bun:` + a bare Node builtin name means that builtin.
+    #[inline]
+    pub fn bun_prefixed_builtin(specifier: &[u8]) -> Option<&[u8]> {
+        Self::bare_node_builtin(specifier.strip_prefix(b"bun:")?)
+    }
+
+    // Reads no flag or mode: the answer goes into cached output. A name behind a flag is not kept.
+    #[cold]
+    #[inline(never)]
+    fn bare_node_builtin(name: &[u8]) -> Option<&[u8]> {
+        (!name.starts_with(b"node:")
+            && !is_stream_iter_alias(name)
+            && lookup(&NODE_ALIAS_MAP, name).is_some())
+        .then_some(name)
     }
 }

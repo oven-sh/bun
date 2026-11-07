@@ -18,7 +18,7 @@ pub struct PosixStat {
     pub blocks: u64,
 
     /// Access time
-    pub atim: Timespec,
+    pub(crate) atim: Timespec,
     /// Modification time
     pub mtim: Timespec,
     /// Change time (metadata)
@@ -26,9 +26,7 @@ pub struct PosixStat {
     /// Birth time (creation time) - may be zero if not supported
     pub birthtim: Timespec,
 }
-// SAFETY: ten `u64` + four `Timespec{i64,i64}` fields; all-zero is the
-// documented "no stat yet" value (see `node:fs` StatWatcher initial emit).
-unsafe impl bun_core::ffi::Zeroable for PosixStat {}
+bun_core::impl_zeroable!(PosixStat);
 
 /// C's implicit integer → `uint64_t` conversion, i.e. what libuv does
 /// when copying platform `struct stat` fields into `uv_stat_t`.
@@ -126,9 +124,10 @@ pub fn stat_ctime(s: &Stat) -> Timespec {
 }
 #[inline]
 pub fn stat_birthtime(s: &Stat) -> Timespec {
-    // Linux gets the epoch arm; everything else reads the real birthtime.
-    // Windows `Stat` is `uv_stat_t` and libuv fills `birthtim` from NTFS
-    // CreationTime, so it must NOT fall into the epoch arm.
+    // Linux `struct stat` has no birthtime (only `statx` does), so it gets the
+    // ctime arm like libuv's `uv__to_stat`; everything else reads the real
+    // birthtime. Windows `Stat` is `uv_stat_t` and libuv fills `birthtim` from
+    // NTFS CreationTime, so it must NOT fall into the ctime arm.
     #[cfg(windows)]
     {
         Timespec {
@@ -160,8 +159,7 @@ pub fn stat_birthtime(s: &Stat) -> Timespec {
         target_os = "dragonfly"
     )))]
     {
-        let _ = s;
-        Timespec::EPOCH
+        stat_ctime(s)
     }
 }
 
@@ -225,9 +223,5 @@ impl PosixStat {
 
     pub fn ctime(&self) -> Timespec {
         self.ctim
-    }
-
-    pub fn birthtime(&self) -> Timespec {
-        self.birthtim
     }
 }

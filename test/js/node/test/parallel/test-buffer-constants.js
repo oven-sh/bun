@@ -9,6 +9,7 @@ assert.strictEqual(typeof MAX_LENGTH, 'number');
 assert.strictEqual(typeof MAX_STRING_LENGTH, 'number');
 assert(MAX_STRING_LENGTH <= MAX_LENGTH);
 assert.throws(() => ' '.repeat(MAX_STRING_LENGTH + 1),
+              // JSC throws "Out of memory" here instead of V8's "Invalid string length".
               /^RangeError: Out of memory$/);
 
 ' '.repeat(MAX_STRING_LENGTH); // Should not throw.

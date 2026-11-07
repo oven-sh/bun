@@ -1,0 +1,43 @@
+# holder = {}; either = holder; hide(holder); holder.load = process.getBuiltinModule; either = hide(); step = { next: () => either.load(name) }; step.next()
+# The call reads `load` from an unknown value. The holder has escaped, so that value may be the holder and the call may load a module by name.
+# In this order the callee set of the call is the unknown object alone, and the record has no call site.
+# OPTIONS: testing=DelayFlowRules:12
+# RUN: valueflow-solve unseen
+# CHECK: unseen LoadsModuleByName ProcessGetBuiltinModule
+# CHECK: modules-by-name yes
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+layout L0 fields=[{key="next" declared={type=anything}}]
+layout L1
+variable g0 name="either" module=m0 declared={type=anything}
+variable g1 name="step" module=m0 declared={type=anything}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hide" [isFreeName]
+    v2 = Builtin builtin=Process
+    v3 = PropGet v2 key="getBuiltinModule"
+    v4 = NewObject layout=L1
+    v5 = FinishObject v4
+    PutModuleVariable v5 variable=g0
+    v7 = Call v1, -, v5
+    PropSet v5, v3 key="load"
+    v9 = Call v1, -
+    PutModuleVariable v9 variable=g0
+    v11 = NewClosure function=f1
+    v12 = NewObject layout=L0
+    PropDefine v12, v11 key="next"
+    v14 = FinishObject v12
+    PutModuleVariable v14 variable=g1
+    v16 = PropGet v14 key="next"
+    v17 = Call v16, v14
+    Return v17
+}
+function f1 name="next" module=m0 kind=Arrow results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = PropGet v2 key="load"
+    v4 = Call v3, v2, v1
+    Return v4
+}

@@ -1,25 +1,43 @@
-import { expect, test } from "bun:test";
+import { beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 // Regression test for https://github.com/oven-sh/bun/issues/22157
 // Compiled binaries were including executable name in process.argv
-test("issue 22157: compiled binary should not include executable name in process.argv", async () => {
-  const dir = tempDirWithFiles("22157-basic", {
+//
+// One fixture handles both cases so we only pay for a single `--compile`:
+// with no user args it exercises the parseArgs path, with user args it
+// verifies they are passed through at the expected argv indices.
+let dir: string;
+
+beforeAll(async () => {
+  dir = tempDirWithFiles("22157", {
     "index.js": /* js */ `
       import { parseArgs } from "node:util"
-      
+
       console.log(JSON.stringify(process.argv));
-      
-      // This should work - no extra executable name should cause parseArgs to throw
-      parseArgs({
-        args: process.argv.slice(2),
-      });
-      
+
+      if (process.argv.length === 2) {
+        // This should work - no extra executable name should cause parseArgs to throw
+        parseArgs({
+          args: process.argv.slice(2),
+        });
+      } else {
+        // Expect: ["bun", "/$bunfs/root/..." or "B:/~BUN/root/...", "arg1", "arg2"]
+        if (process.argv.length !== 4) {
+          console.error("Expected 4 argv items, got", process.argv.length);
+          process.exit(1);
+        }
+
+        if (process.argv[2] !== "arg1" || process.argv[3] !== "arg2") {
+          console.error("User args not correct");
+          process.exit(1);
+        }
+      }
+
       console.log("SUCCESS");
     `,
   });
 
-  // Compile the binary
   await using compileProc = Bun.spawn({
     cmd: [bunExe(), "build", "--compile", "--outfile=test-binary", "./index.js"],
     cwd: dir,
@@ -28,8 +46,13 @@ test("issue 22157: compiled binary should not include executable name in process
     stderr: "pipe",
   });
 
-  await compileProc.exited;
+  const [stderr, exitCode] = await Promise.all([compileProc.stderr.text(), compileProc.exited]);
+  if (exitCode !== 0) {
+    throw new Error(`bun build --compile failed with exit code ${exitCode}:\n${stderr}`);
+  }
+});
 
+test("issue 22157: compiled binary should not include executable name in process.argv", async () => {
   // Run the compiled binary - should not throw
   await using runProc = Bun.spawn({
     cmd: ["./test-binary"],
@@ -56,35 +79,6 @@ test("issue 22157: compiled binary should not include executable name in process
 });
 
 test("issue 22157: compiled binary with user args should pass them correctly", async () => {
-  const dir = tempDirWithFiles("22157-args", {
-    "index.js": /* js */ `
-      console.log(JSON.stringify(process.argv));
-      
-      // Expect: ["bun", "/$bunfs/root/..." or "B:/~BUN/root/...", "arg1", "arg2"]
-      if (process.argv.length !== 4) {
-        console.error("Expected 4 argv items, got", process.argv.length);
-        process.exit(1);
-      }
-      
-      if (process.argv[2] !== "arg1" || process.argv[3] !== "arg2") {
-        console.error("User args not correct");
-        process.exit(1);
-      }
-      
-      console.log("SUCCESS");
-    `,
-  });
-
-  await using compileProc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--outfile=test-binary", "./index.js"],
-    cwd: dir,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  await compileProc.exited;
-
   await using runProc = Bun.spawn({
     cmd: ["./test-binary", "arg1", "arg2"],
     cwd: dir,

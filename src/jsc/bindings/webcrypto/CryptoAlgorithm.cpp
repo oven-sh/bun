@@ -62,7 +62,7 @@ void CryptoAlgorithm::generateKey(const CryptoAlgorithmParameters&, bool, Crypto
     exceptionCallback(NotSupportedError, ""_s);
 }
 
-void CryptoAlgorithm::deriveBits(const CryptoAlgorithmParameters&, Ref<CryptoKey>&&, size_t, VectorCallback&&, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&, WorkQueue&)
+void CryptoAlgorithm::deriveBits(const CryptoAlgorithmParameters&, Ref<CryptoKey>&&, std::optional<size_t>, VectorCallback&&, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&, WorkQueue&)
 {
     exceptionCallback(NotSupportedError, ""_s);
 }
@@ -87,18 +87,41 @@ void CryptoAlgorithm::unwrapKey(Ref<CryptoKey>&&, Vector<uint8_t>&&, VectorCallb
     exceptionCallback(NotSupportedError, ""_s);
 }
 
-ExceptionOr<size_t> CryptoAlgorithm::getKeyLength(const CryptoAlgorithmParameters&)
+void CryptoAlgorithm::encapsulate(Ref<CryptoKey>&&, VectorPairCallback&&, ExceptionCallback&& exceptionCallback)
+{
+    exceptionCallback(NotSupportedError, ""_s);
+}
+
+void CryptoAlgorithm::decapsulate(Ref<CryptoKey>&&, Vector<uint8_t>&&, VectorCallback&&, ExceptionCallback&& exceptionCallback)
+{
+    exceptionCallback(NotSupportedError, ""_s);
+}
+
+ExceptionOr<std::optional<size_t>> CryptoAlgorithm::getKeyLength(const CryptoAlgorithmParameters&)
 {
     return Exception { NotSupportedError };
+}
+
+std::optional<Vector<uint8_t>> CryptoAlgorithm::extractDerivedBits(std::optional<size_t> length, Vector<uint8_t>&& secret)
+{
+    if (!length)
+        return WTF::move(secret);
+    auto lengthInBytes = (*length + 7) / 8;
+    if (lengthInBytes > secret.size())
+        return std::nullopt;
+    secret.shrink(lengthInBytes);
+    if (auto remainder = *length % 8)
+        secret.last() &= static_cast<uint8_t>(0xFF << (8 - remainder));
+    return WTF::move(secret);
 }
 
 template<typename ResultCallbackType, typename OperationType>
 static void dispatchAlgorithmOperation(WorkQueue& workQueue, ScriptExecutionContext& context, ResultCallbackType&& callback, CryptoAlgorithm::ExceptionCallback&& exceptionCallback, OperationType&& operation)
 {
     workQueue.dispatch(context.globalObject(),
-        [operation = WTF::move(operation), callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback), contextIdentifier = context.identifier()]() mutable {
+        [operation = WTF::move(operation), callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback), contextIdentifier = context.identifier(), loopKind = context.currentLoopKind()]() mutable {
             auto result = operation();
-            ScriptExecutionContext::postTaskTo(contextIdentifier, [result = crossThreadCopy(WTF::move(result)), callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback)](auto& context) mutable {
+            ScriptExecutionContext::postTaskTo(contextIdentifier, loopKind, [result = crossThreadCopy(WTF::move(result)), callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback)](auto& context) mutable {
                 if (result.hasException()) {
                     exceptionCallback(result.releaseException().code(), ""_s);
                     return;

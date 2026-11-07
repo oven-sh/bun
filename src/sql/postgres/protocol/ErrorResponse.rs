@@ -1,5 +1,3 @@
-use core::fmt;
-
 use crate::postgres::AnyPostgresError;
 use crate::postgres::protocol::field_message::FieldMessage;
 use crate::postgres::protocol::new_reader::NewReader;
@@ -9,51 +7,44 @@ pub struct ErrorResponse {
     pub messages: Vec<FieldMessage>,
 }
 
-impl fmt::Display for ErrorResponse {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for message in &self.messages {
-            writeln!(f, "{}", message)?;
-        }
-        Ok(())
-    }
-}
-
 impl ErrorResponse {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
-        let mut remaining_bytes = reader.length()?;
-        if remaining_bytes < 4 {
-            return Err(AnyPostgresError::InvalidMessageLength);
-        }
-        remaining_bytes = remaining_bytes.saturating_sub(4);
-
+        let remaining_bytes = reader.body_length()?;
         if remaining_bytes > 0 {
             return Ok(Self {
-                messages: FieldMessage::decode_list::<Container>(reader)?,
+                messages: FieldMessage::decode_list::<Container>(reader, remaining_bytes)?,
             });
         }
         Ok(Self::default())
     }
 
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        context: Container,
-    ) -> Result<Self, AnyPostgresError> {
-        Self::decode_internal(NewReader { wrapped: context })
+    fn has_code(&self, sqlstate: &[u8]) -> bool {
+        self.messages
+            .iter()
+            .any(|field| matches!(field, FieldMessage::Code(code) if code.eq_ascii(sqlstate)))
     }
 
-    /// `NoticeResponse` decode: a declared length below 4 decodes as an empty
-    /// notice instead of failing, unlike `ErrorResponse`.
-    pub fn decode_notice_internal<Container: super::new_reader::ReaderContext>(
-        mut reader: NewReader<Container>,
-    ) -> Result<Self, AnyPostgresError> {
-        let remaining_bytes = reader.length()?.saturating_sub(4);
-        if remaining_bytes > 0 {
-            return Ok(Self {
-                messages: FieldMessage::decode_list::<Container>(reader)?,
-            });
-        }
-        Ok(Self::default())
+    pub fn is_fatal(&self) -> bool {
+        self.messages.iter().any(|field| {
+            matches!(field, FieldMessage::Severity(severity)
+                if severity.eq_ascii(b"FATAL") || severity.eq_ascii(b"PANIC"))
+        })
+    }
+
+    pub fn is_query_canceled(&self) -> bool {
+        self.has_code(b"57014")
+    }
+
+    /// 26000: the server lost the statement. 0A000 from this routine: its result columns changed.
+    pub fn invalidates_prepared_statement(&self) -> bool {
+        self.has_code(b"26000")
+            || (self.has_code(b"0A000")
+                && self.messages.iter().any(|field| {
+                    matches!(field, FieldMessage::Routine(routine)
+                        if routine.eq_ascii(b"RevalidateCachedQuery"))
+                }))
     }
 }
 

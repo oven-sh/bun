@@ -1,6 +1,4 @@
 // Hardcoded module "node:vm"
-const { SafePromiseAllReturnArrayLike } = require("internal/primordials");
-const { throwNotImplemented } = require("internal/shared");
 const {
   validateObject,
   validateString,
@@ -9,16 +7,49 @@ const {
   validateInt32,
   validateBuffer,
   validateFunction,
+  validateArray,
+  validateOneOf,
 } = require("internal/validators");
-const util = require("node:util");
 
-const vm = $cpp("NodeVM.cpp", "Bun::createNodeVMBinding");
+const vm: {
+  Script: new (code: string, options?: ScriptOptions) => $Node.NodeVMScript;
+  Module: {
+    new (
+      identifier: string,
+      context: Context | undefined,
+      sourceText: string,
+      lineOffset: number | undefined,
+      columnOffset: number | undefined,
+      cachedData: Buffer | ArrayBufferView | undefined,
+      initializeImportMeta: ((meta: object, module: Module) => void) | undefined,
+      module: Module,
+      importModuleDynamically: ImportModuleDynamically | undefined,
+    ): $Node.NodeVMModule;
+    new (
+      identifier: string,
+      context: Context | undefined,
+      exportNames: string[] | undefined,
+      evaluationSteps: (this: SyntheticModule) => unknown,
+      module: Module,
+    ): $Node.NodeVMModule;
+  };
+  createContext(contextObject?: object | symbol, options?: ContextOptions): Context;
+  isContext(value: object): boolean;
+  compileFunction(code: string, parameters?: string[], options?: object): (...args: unknown[]) => unknown;
+  isModuleNamespaceObject(value: unknown): boolean;
+  kLinked: number;
+  kEvaluated: number;
+  kErrored: number;
+  DONT_CONTEXTIFY: symbol;
+  USE_MAIN_CONTEXT_DEFAULT_LOADER: symbol;
+} = $cpp("NodeVM.cpp", "Bun::createNodeVMBinding");
 
 const ObjectFreeze = Object.freeze;
 const ObjectDefineProperty = Object.defineProperty;
 const ArrayPrototypeMap = Array.prototype.map;
 const PromisePrototypeThen = $Promise.prototype.$then;
 const PromiseResolve = Promise.$resolve.bind(Promise);
+const PromiseReject = Promise.$reject.bind(Promise);
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -38,14 +69,69 @@ const kNoError = Symbol("kNoError");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
+type Context = object & { [kPerContextModuleId]?: number };
+
+interface ContextOptions {
+  microtaskMode?: "afterEvaluate";
+}
+
+interface ScriptOptions extends ContextOptions {
+  filename?: string;
+  lineOffset?: number;
+  columnOffset?: number;
+  cachedData?: ArrayBufferView;
+  produceCachedData?: boolean;
+  displayErrors?: boolean;
+  importModuleDynamically?: ImportModuleDynamically;
+}
+
+type ImportModuleDynamically = (
+  this: unknown,
+  specifier: string,
+  referrer: unknown,
+  attributes: object,
+  phase: string,
+) => unknown;
+
+type ModuleLinker = (
+  specifier: string,
+  referencingModule: Module,
+  extra: { attributes: object; assert: object },
+) => Module | Promise<Module>;
+
+interface ModuleRequest {
+  __proto__: null;
+  specifier: string;
+  attributes: object;
+  phase: string;
+}
+
+interface ModuleOptions {
+  context?: Context;
+  identifier?: string;
+}
+
+interface SourceTextModuleOptions extends ModuleOptions {
+  lineOffset?: number;
+  columnOffset?: number;
+  cachedData?: Buffer | ArrayBufferView;
+  initializeImportMeta?: (meta: object, module: Module) => void;
+  importModuleDynamically?: ImportModuleDynamically;
+}
+
+interface ModuleConstructorOptions extends SourceTextModuleOptions {
+  sourceText?: string;
+  syntheticExportNames?: string[];
+  syntheticEvaluationSteps?: (this: SyntheticModule) => unknown;
+}
+
 const {
   Script,
   Module: ModuleNative,
-  createContext,
+  createContext: createContextNative,
   isContext,
   compileFunction,
   isModuleNamespaceObject,
-  kUnlinked,
   kLinked,
   kEvaluated,
   kErrored,
@@ -53,42 +139,146 @@ const {
   USE_MAIN_CONTEXT_DEFAULT_LOADER,
 } = vm;
 
-function runInContext(code, context, options) {
+// Live vm contexts, tracked so measureMemory({ mode: "detailed" }) can report
+// one entry per context like Node. WeakRefs so tracking doesn't keep contexts
+// alive; dead entries are pruned on each measurement and, amortized, on
+// creation (so a process that never measures doesn't accumulate dead refs).
+const trackedContexts: WeakRef<object>[] = [];
+let trackedContextsPruneAt = 64;
+
+function pruneTrackedContexts() {
+  let alive = 0;
+  for (let i = 0; i < trackedContexts.length; i++) {
+    const ref = trackedContexts[i];
+    if (ref.deref() !== undefined) {
+      trackedContexts[alive++] = ref;
+    }
+  }
+  trackedContexts.length = alive;
+  return alive;
+}
+
+function createContext(contextObject?: object | symbol, options?: ContextOptions) {
+  if (typeof options === "object" && options !== null) {
+    validateOneOf(options.microtaskMode, "options.microtaskMode", ["afterEvaluate", undefined]);
+  }
+  const alreadyContextified = $isObject(contextObject) && isContext(contextObject);
+  const context = createContextNative(contextObject, options);
+  if (!alreadyContextified) {
+    if (trackedContexts.length >= trackedContextsPruneAt) {
+      const alive = pruneTrackedContexts();
+      trackedContextsPruneAt = alive * 2 < 64 ? 64 : alive * 2;
+    }
+    trackedContexts.push(new WeakRef(context));
+  }
+  return context;
+}
+
+// Node's runInContext()/runInNewContext() (lib/vm.js) spread `options` into a
+// fresh object before handing it to Script, so unlike the Script methods they
+// accept any non-string options value.
+function runInContext(code: string, context: object | symbol, options?: string | ScriptOptions) {
   validateContext(context);
   if (typeof options === "string") {
     options = { filename: options };
+  } else {
+    options = { ...options };
   }
   return new Script(code, options).runInContext(context, options);
 }
 
-function runInThisContext(code, options) {
+function runInThisContext(code: string, options?: string | ScriptOptions) {
   if (typeof options === "string") {
     options = { filename: options };
   }
   return new Script(code, options).runInThisContext(options);
 }
 
-function runInNewContext(code, context, options) {
+function runInNewContext(code: string, context?: object | symbol, options?: string | ScriptOptions) {
   if (context !== undefined && (typeof context !== "object" || context === null)) {
     validateContext(context);
   }
   if (typeof options === "string") {
     options = { filename: options };
   }
-  context = createContext(context, options);
+  if (context !== DONT_CONTEXTIFY) {
+    context = createContext(context, getContextOptions(options));
+  }
+  options = { ...options };
   return createScript(code, options).runInNewContext(context, options);
 }
 
-function createScript(code, options) {
+// Reads and validates options in the same order as getContextOptions in Node's lib/vm.js.
+function getContextOptions(options) {
+  if (!options) return {};
+  const name = options.contextName;
+  const origin = options.contextOrigin;
+  const microtaskMode = options.microtaskMode;
+  if (name !== undefined) validateString(name, "options.contextName");
+  if (origin !== undefined) validateString(origin, "options.contextOrigin");
+  let codeGeneration;
+  const contextCodeGeneration = options.contextCodeGeneration;
+  if (contextCodeGeneration !== undefined) {
+    validateObject(contextCodeGeneration, "options.contextCodeGeneration");
+    const { strings, wasm } = contextCodeGeneration;
+    if (strings !== undefined) validateBoolean(strings, "options.contextCodeGeneration.strings");
+    if (wasm !== undefined) validateBoolean(wasm, "options.contextCodeGeneration.wasm");
+    codeGeneration = { strings, wasm };
+  }
+  if (microtaskMode !== undefined) validateString(microtaskMode, "options.microtaskMode");
+  return { name, origin, codeGeneration, microtaskMode, importModuleDynamically: options.importModuleDynamically };
+}
+
+function createScript(code: string, options?: ScriptOptions) {
   return new Script(code, options);
 }
 
-function measureMemory() {
-  throwNotImplemented("node:vm measureMemory");
+let emittedExperimentalWarnings: Set<string> | undefined;
+function emitExperimentalWarning(feature: string) {
+  emittedExperimentalWarnings ??= new Set();
+  if (emittedExperimentalWarnings.$has(feature)) return;
+  emittedExperimentalWarnings.$add(feature);
+  process.emitWarning(`${feature} is an experimental feature and might change at any time`, "ExperimentalWarning");
 }
 
-function validateContext(contextifiedObject) {
-  if (contextifiedObject !== constants.DONT_CONTEXTIFY && !isContext(contextifiedObject)) {
+function measureMemory(options: { mode?: string; execution?: string } = kEmptyObject) {
+  emitExperimentalWarning("vm.measureMemory");
+  validateObject(options, "options");
+  const { mode = "summary", execution = "default" } = options as { mode?: string; execution?: string };
+  validateOneOf(mode, "options.mode", ["summary", "detailed"]);
+  validateOneOf(execution, "options.execution", ["default", "eager"]);
+
+  // JSC has no per-context memory accounting like V8's
+  // performance.measureMemory, so report the whole heap as the total and
+  // attribute the heap range to each context. The result shape matches Node.
+  const { memoryUsage }: { memoryUsage(): { current: number; peak: number } } = require("bun:jsc");
+  const { current, peak } = memoryUsage();
+  const upperBound = peak > current ? peak : current;
+
+  const measurement = () => ({ jsMemoryEstimate: current, jsMemoryRange: [current, upperBound] });
+
+  type Measurement = ReturnType<typeof measurement>;
+  const result: { total: Measurement; current?: Measurement; other?: object[] } = { total: measurement() };
+  if (mode === "detailed") {
+    result.current = measurement();
+    const other: object[] = [];
+    let aliveCount = 0;
+    for (let i = 0; i < trackedContexts.length; i++) {
+      const ref = trackedContexts[i];
+      if (ref.deref() !== undefined) {
+        trackedContexts[aliveCount++] = ref;
+        other.push(measurement());
+      }
+    }
+    trackedContexts.length = aliveCount;
+    result.other = other;
+  }
+
+  return PromiseResolve(result);
+}
+
+function validateContext(contextifiedObject: object | symbol) {
+  if (contextifiedObject !== constants.DONT_CONTEXTIFY && !isContext(contextifiedObject as object)) {
     const error = new Error('The "contextifiedObject" argument must be an vm.Context');
     error.code = "ERR_INVALID_ARG_TYPE";
     error.name = "TypeError";
@@ -96,20 +286,25 @@ function validateContext(contextifiedObject) {
   }
 }
 
-function validateModule(module, typename = "Module") {
+function validateModule(module: unknown, typename = "Module") {
   if (!isModule(module)) {
-    const error = new Error('The "this" argument must be an instance of ' + typename);
-    error.code = "ERR_INVALID_ARG_TYPE";
-    error.name = "TypeError";
-    throw error;
+    throw $ERR_INVALID_THIS(typename);
   }
 }
 
 let globalModuleId = 0;
 const defaultModuleName = "vm:module";
 
+// oxlint-disable-next-line typescript/no-unsafe-declaration-merging
+interface Module {
+  [kLink](linker: ModuleLinker): Promise<void> | void;
+}
+
 class Module {
-  constructor(options) {
+  declare [kNative]: $Node.NodeVMModule;
+  declare [kContext]: Context | undefined;
+
+  constructor(options: ModuleConstructorOptions) {
     if (new.target === Module) {
       throw new TypeError("Module is not a constructor");
     }
@@ -196,47 +391,71 @@ class Module {
     return this[kNative].getError();
   }
 
-  async link(linker) {
+  // SyntheticModule's link() is synchronous, as in node.
+  link(linker?: ModuleLinker): Promise<void> | void;
+  async link(linker: ModuleLinker) {
     validateModule(this);
     validateFunction(linker, "linker");
 
-    if (this[kNative].getStatusCode() === kLinked) {
+    // Check the JS-level status (it reflects the "linking" override while a
+    // link() is in flight), not the native status which stays unlinked until
+    // instantiate().
+    if (this.status === "linked") {
       throw $ERR_VM_MODULE_ALREADY_LINKED();
     }
 
-    if (this[kNative].getStatusCode() !== kUnlinked) {
+    if (this.status !== "unlinked") {
       throw $ERR_VM_MODULE_STATUS("must be unlinked");
     }
 
     await this[kLink](linker);
-    // FIXME(module-loader): [kLink] flips the native wrapper to Linked before
-    // instantiate() runs JSC's record->link(). If instantiate() throws, the
-    // wrapper stays Linked so a retry hits ERR_VM_MODULE_ALREADY_LINKED and
-    // evaluate() walks an uninitialized environment. Reset native status to
-    // Unlinked on failure once NodeVMSourceTextModule exposes a status setter.
     this[kNative].instantiate();
   }
 
-  async evaluate(options = kEmptyObject) {
-    validateModule(this);
-    validateObject(options, "options");
+  // Not async: a synchronously-completed evaluation must return an
+  // already-settled promise (util.inspect shows `Promise { undefined }`
+  // immediately), matching Node where evaluate() forwards ModuleWrap's
+  // promise and maps sync throws to a rejected promise.
+  evaluate(options: { timeout?: number; breakOnSigint?: boolean } = kEmptyObject) {
+    try {
+      validateModule(this);
+      validateObject(options, "options");
 
-    let timeout = options.timeout;
-    if (timeout === undefined) {
-      timeout = -1;
-    } else {
-      validateUint32(timeout, "options.timeout", true);
+      let timeout = options.timeout;
+      if (timeout === undefined) {
+        timeout = -1;
+      } else {
+        validateUint32(timeout, "options.timeout", true);
+      }
+      const { breakOnSigint = false } = options;
+      validateBoolean(breakOnSigint, "options.breakOnSigint");
+      const status = this[kNative].getStatusCode();
+      if (status !== kLinked && status !== kEvaluated && status !== kErrored) {
+        throw $ERR_VM_MODULE_STATUS("must be one of linked, evaluated, or errored");
+      }
+      // Always call into native, even when already evaluated: Node re-enters
+      // ModuleWrap::Evaluate, which performs the afterEvaluate microtask
+      // checkpoint for contexts with their own microtask queue.
+      const result = this[kNative].evaluate(timeout, breakOnSigint);
+      if (status === kEvaluated) {
+        // Re-evaluating a settled module resolves synchronously with
+        // undefined (a then-chain on the cached promise would be pending).
+        return PromiseResolve(undefined);
+      }
+      if ($isPromise(result)) {
+        // Spec-style module evaluation capability: already settled (with
+        // undefined) for synchronous modules, pending for top-level await.
+        // Return it directly like Node returns ModuleWrap's promise — a
+        // then-chain would make a synchronously-settled result look pending.
+        return result;
+      }
+      return PromiseResolve(undefined);
+    } catch (e) {
+      return PromiseReject(e);
     }
-    const { breakOnSigint = false } = options;
-    validateBoolean(breakOnSigint, "options.breakOnSigint");
-    const status = this[kNative].getStatusCode();
-    if (status !== kLinked && status !== kEvaluated && status !== kErrored) {
-      throw $ERR_VM_MODULE_STATUS("must be one of linked, evaluated, or errored");
-    }
-    await this[kNative].evaluate(timeout, breakOnSigint);
   }
 
-  [util.inspect.custom](depth, options) {
+  [Symbol.for("nodejs.util.inspect.custom")](depth: number, options: object) {
     validateModule(this);
     if (typeof depth === "number" && depth < 0) return this;
 
@@ -253,15 +472,17 @@ class Module {
       configurable: true,
     });
 
-    return util.inspect(o, { ...options, customInspect: false });
+    return require("node:util").inspect(o, { ...options, customInspect: false });
   }
 }
 
 class SourceTextModule extends Module {
-  #error: any = kNoError;
-  #statusOverride: any;
+  #error: unknown = kNoError;
+  #statusOverride: string | undefined;
+  #moduleRequests: readonly ModuleRequest[];
+  declare [kDependencySpecifiers]: readonly string[] | undefined;
 
-  constructor(sourceText, options = kEmptyObject) {
+  constructor(sourceText: string, options: SourceTextModuleOptions = kEmptyObject) {
     validateString(sourceText, "sourceText");
     validateObject(options, "options");
 
@@ -301,10 +522,26 @@ class SourceTextModule extends Module {
       importModuleDynamically,
     });
 
+    // Parse eagerly so a SyntaxError surfaces from the constructor and
+    // moduleRequests is available immediately, matching Node where ModuleWrap
+    // compiles the module during construction. JSC has no source-phase
+    // imports, so every request is an evaluation-phase request.
+    const requests = this[kNative].createModuleRecord();
+    this.#moduleRequests = ObjectFreeze(
+      ArrayPrototypeMap.$call(requests, (request: { specifier: string; attributes: object }) =>
+        ObjectFreeze({
+          __proto__: null,
+          specifier: request.specifier,
+          attributes: request.attributes,
+          phase: "evaluation",
+        }),
+      ) as ModuleRequest[],
+    );
+
     this[kDependencySpecifiers] = undefined;
   }
 
-  async [kLink](linker) {
+  async [kLink](linker: ModuleLinker) {
     validateModule(this, "SourceTextModule");
 
     if (this[kNative].getStatusCode() >= kLinked) {
@@ -312,7 +549,7 @@ class SourceTextModule extends Module {
     }
 
     this.#statusOverride = "linking";
-    const moduleRequests = this[kNative].createModuleRecord();
+    const moduleRequests = this.#moduleRequests;
 
     // Iterates the module requests and links with the linker.
     // Specifiers should be aligned with the moduleRequests array in order.
@@ -327,7 +564,7 @@ class SourceTextModule extends Module {
         assert: attributes,
       });
 
-      const modulePromise = PromisePrototypeThen.$call(PromiseResolve(linkerResult), async mod => {
+      const modulePromise = PromisePrototypeThen.$call(PromiseResolve(linkerResult), async (mod: unknown) => {
         if (!isModule(mod)) {
           throw $ERR_VM_MODULE_NOT_MODULE();
         }
@@ -335,7 +572,10 @@ class SourceTextModule extends Module {
           throw $ERR_VM_MODULE_DIFFERENT_CONTEXT();
         }
         if (mod.status === "errored") {
-          throw $ERR_VM_MODULE_LINK_FAILURE(`request for '${specifier}' resolved to an errored mod`, mod.error);
+          throw $ERR_VM_MODULE_LINK_FAILURE(
+            `request for '${specifier}' resolved to an errored mod`,
+            mod.error as Error,
+          );
         }
         if (mod.status === "unlinked") {
           await mod[kLink](linker);
@@ -347,7 +587,7 @@ class SourceTextModule extends Module {
     }
 
     try {
-      const moduleNatives = await SafePromiseAllReturnArrayLike(modulePromises);
+      const moduleNatives = await require("internal/primordials").SafePromiseAllReturnArrayLike(modulePromises);
       this[kNative].link(specifiers, moduleNatives, 0);
     } catch (e) {
       this.#error = e;
@@ -357,10 +597,64 @@ class SourceTextModule extends Module {
     }
   }
 
+  linkRequests(modules: Module[]) {
+    validateModule(this, "SourceTextModule");
+    if (this.status !== "unlinked") {
+      throw $ERR_VM_MODULE_STATUS("must be unlinked");
+    }
+    validateArray(modules, "modules");
+    const moduleRequests = this.#moduleRequests;
+    const requestCount = moduleRequests.length;
+    const moduleCount = modules.length;
+    if (moduleCount !== requestCount) {
+      throw $ERR_MODULE_LINK_MISMATCH(`Expected ${requestCount} modules, got ${moduleCount}`);
+    }
+    const specifiers = Array(moduleCount);
+    const moduleNatives = Array(moduleCount);
+    for (let idx = 0; idx < moduleCount; idx++) {
+      const mod = modules[idx];
+      if (!isModule(mod)) {
+        throw $ERR_VM_MODULE_NOT_MODULE();
+      }
+      if (mod.context !== this.context) {
+        throw $ERR_VM_MODULE_DIFFERENT_CONTEXT();
+      }
+      specifiers[idx] = moduleRequests[idx].specifier;
+      moduleNatives[idx] = mod[kNative];
+    }
+    this[kNative].link(specifiers, moduleNatives, 0);
+  }
+
+  instantiate() {
+    validateModule(this, "SourceTextModule");
+    if (this.status !== "unlinked") {
+      throw $ERR_VM_MODULE_STATUS("must be unlinked");
+    }
+    this[kNative].instantiate();
+  }
+
+  get moduleRequests() {
+    validateModule(this, "SourceTextModule");
+    return this.#moduleRequests;
+  }
+
+  hasAsyncGraph() {
+    validateModule(this, "SourceTextModule");
+    if (this[kNative].getStatusCode() < kLinked) {
+      throw $ERR_VM_MODULE_STATUS("must be instantiated");
+    }
+    return this[kNative].hasAsyncGraph();
+  }
+
+  hasTopLevelAwait() {
+    validateModule(this, "SourceTextModule");
+    return this[kNative].hasTopLevelAwait();
+  }
+
   get dependencySpecifiers() {
     validateModule(this, "SourceTextModule");
     this[kDependencySpecifiers] ??= ObjectFreeze(
-      ArrayPrototypeMap.$call(this[kNative].getModuleRequests(), request => request[0]),
+      ArrayPrototypeMap.$call(this.#moduleRequests, (request: ModuleRequest) => request.specifier) as string[],
     );
     return this[kDependencySpecifiers];
   }
@@ -395,11 +689,15 @@ class SourceTextModule extends Module {
 }
 
 class SyntheticModule extends Module {
-  constructor(exportNames, evaluateCallback, options = kEmptyObject) {
-    if (!ArrayIsArray(exportNames) || ArrayPrototypeSome.$call(exportNames, e => typeof e !== "string")) {
+  constructor(
+    exportNames: string[],
+    evaluateCallback: (this: SyntheticModule) => unknown,
+    options: ModuleOptions = kEmptyObject,
+  ) {
+    if (!ArrayIsArray(exportNames) || ArrayPrototypeSome.$call(exportNames, (e: unknown) => typeof e !== "string")) {
       throw $ERR_INVALID_ARG_TYPE("exportNames", "Array of unique strings", exportNames);
     } else {
-      ArrayPrototypeForEach.$call(exportNames, (name, i) => {
+      ArrayPrototypeForEach.$call(exportNames, (name: string, i: number) => {
         if (ArrayPrototypeIndexOf.$call(exportNames, name, i + 1) !== -1) {
           throw $ERR_INVALID_ARG_VALUE(`exportNames.${name}`, name, "is duplicated");
         }
@@ -417,13 +715,22 @@ class SyntheticModule extends Module {
       context,
       identifier,
     });
+    // A synthetic module does not have dependencies; Node instantiates it
+    // directly in the constructor so setExport()/evaluate() work right away.
+    this[kNative].instantiate();
+  }
+
+  link() {
+    validateModule(this, "SyntheticModule");
+    // No-op for synthetic modules; do not invoke super.link() as the module
+    // is already linked from the constructor and it would throw.
   }
 
   [kLink]() {
     /** nothing to do for synthetic modules */
   }
 
-  setExport(name, value) {
+  setExport(name: string, value: unknown) {
     validateModule(this, "SyntheticModule");
     validateString(name, "name");
     if (this[kNative].getStatusCode() < kLinked) {
@@ -439,13 +746,26 @@ const constants = {
   DONT_CONTEXTIFY,
 };
 
-function isModule(object) {
+function isModule(object: unknown): object is Module {
   return typeof object === "object" && object !== null && ObjectPrototypeHasOwnProperty.$call(object, kNative);
 }
 
-function importModuleDynamicallyWrap(importModuleDynamically) {
-  const importModuleDynamicallyWrapper = async (...args) => {
-    const m: any = await importModuleDynamically.$apply(this, args);
+function importModuleDynamicallyWrap(this: unknown, importModuleDynamically: ImportModuleDynamically) {
+  const importModuleDynamicallyWrapper = async (
+    specifier: string,
+    referrer: unknown,
+    attributes: object,
+    phase?: string,
+  ) => {
+    // JSC has no source-phase imports, so every dynamic import is an
+    // evaluation-phase request (Node passes the phase name as 4th argument).
+    const m: unknown = await importModuleDynamically.$call(
+      this,
+      specifier,
+      referrer,
+      attributes,
+      phase ?? "evaluation",
+    );
     if (isModuleNamespaceObject(m)) {
       return m;
     }
@@ -460,11 +780,14 @@ function importModuleDynamicallyWrap(importModuleDynamically) {
   return importModuleDynamicallyWrapper;
 }
 
-function getConstructorOf(obj) {
+function getConstructorOf(obj: object | null): { name: string } | undefined {
   while (obj) {
     const descriptor = ObjectGetOwnPropertyDescriptor(obj, "constructor");
-    if (descriptor !== undefined && typeof descriptor.value === "function" && descriptor.value.name !== "") {
-      return descriptor.value;
+    if (descriptor !== undefined) {
+      const value = descriptor.value;
+      if (typeof value === "function" && value.name !== "") {
+        return value;
+      }
     }
 
     obj = ObjectGetPrototypeOf(obj);

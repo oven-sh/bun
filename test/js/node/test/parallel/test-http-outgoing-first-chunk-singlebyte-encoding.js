@@ -28,7 +28,7 @@ for (const enc of ['utf8', 'utf16le', 'latin1', 'UTF-8']) {
       const body = received.toString(enc, headerEnd + 4);
 
       assert.strictEqual(header[0], 'HTTP/1.1 200 OK');
-      assert.strictEqual(header[1], `Content-Type: text/plain; charset=${enc}`);
+      assert.strictEqual(header[1], `content-type: text/plain; charset=${enc}`);
       assert.strictEqual(body, 'helloworld');
       server.close();
     }));

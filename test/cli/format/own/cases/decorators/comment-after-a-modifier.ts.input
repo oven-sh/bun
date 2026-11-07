@@ -1,0 +1,11 @@
+class A {
+  @a private /* 1 */ readonly b = 2;
+  @a static // 2
+  c() {}
+  @a static
+  // 3
+  #d;
+  @a public /* 4 */ async e() {}
+  constructor(@a private /* 5 */ readonly f: B) {}
+}
+@a abstract /* 6 */ class C {}

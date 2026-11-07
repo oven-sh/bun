@@ -1,11 +1,8 @@
 "use strict";
 
-const { validateAbortSignal, validateInteger, validateObject } = require("internal/validators");
-const { kWeakHandler, kResistStopPropagation } = require("internal/shared");
+const { validateAbortSignal, validateFunction, validateInteger, validateObject } = require("internal/validators");
+const { kWeakHandler, resistStopPropagation } = require("internal/shared");
 const { finished } = require("internal/streams/end-of-stream");
-const staticCompose = require("internal/streams/compose");
-const { addAbortSignalNoValidate } = require("internal/streams/add-abort-signal");
-const { isWritable, isNodeStream } = require("internal/streams/utils");
 
 const MathFloor = Math.floor;
 const PromiseResolve = Promise.$resolve.bind(Promise);
@@ -18,32 +15,11 @@ const ObjectDefineProperty = Object.defineProperty;
 const kEmpty = Symbol("kEmpty");
 const kEof = Symbol("kEof");
 
-function compose(stream, options) {
-  if (options != null) {
-    validateObject(options, "options");
-  }
-  if (options?.signal != null) {
-    validateAbortSignal(options.signal, "options.signal");
-  }
+type Operator = $Node.OperatorCallback<unknown>;
+type Options = $Node.OperatorOptions | null | undefined;
 
-  if (isNodeStream(stream) && !isWritable(stream)) {
-    throw $ERR_INVALID_ARG_VALUE("stream", stream, "must be writable");
-  }
-
-  const composedStream = staticCompose(this, stream);
-
-  if (options?.signal) {
-    // Not validating as we already validated before
-    addAbortSignalNoValidate(options.signal, composedStream);
-  }
-
-  return composedStream;
-}
-
-function map(fn, options) {
-  if (typeof fn !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("fn", ["Function", "AsyncFunction"], fn);
-  }
+function map(this: $Node.Readable, fn: Operator, options?: Options) {
+  validateFunction(fn, "fn");
   if (options != null) {
     validateObject(options, "options");
   }
@@ -66,14 +42,14 @@ function map(fn, options) {
 
   highWaterMark += concurrency;
 
-  return async function* map() {
-    const signal = AbortSignal.any([options?.signal].filter(Boolean));
+  return async function* map(this: $Node.Readable) {
+    const signal = AbortSignal.any([options?.signal].filter(Boolean) as AbortSignal[]);
     const stream = this;
     const queue: (Promise<any> | typeof kEof)[] = [];
     const signalOpt = { signal };
 
-    let next;
-    let resume;
+    let next: ((value?: unknown) => void) | null | undefined;
+    let resume: ((value?: unknown) => void) | null | undefined;
     let done = false;
     let cnt = 0;
 
@@ -121,7 +97,7 @@ function map(fn, options) {
 
           PromisePrototypeThen.$call(val, afterItemProcessed, onCatch);
 
-          queue.push(val);
+          queue.push(val as Promise<unknown>);
           if (next) {
             next();
             next = null;
@@ -184,39 +160,35 @@ function map(fn, options) {
   }.$call(this);
 }
 
-async function some(fn, options = undefined) {
+async function some(this: $Node.Readable, fn: Operator, options: Options = undefined) {
   for await (const unused of filter.$call(this, fn, options)) {
     return true;
   }
   return false;
 }
 
-async function every(fn, options = undefined) {
-  if (typeof fn !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("fn", ["Function", "AsyncFunction"], fn);
-  }
+async function every(this: $Node.Readable, fn: Operator, options: Options = undefined) {
+  validateFunction(fn, "fn");
   // https://en.wikipedia.org/wiki/De_Morgan's_laws
   return !(await some.$call(
     this,
-    async (...args) => {
+    async (...args: Parameters<Operator>) => {
       return !(await fn(...args));
     },
     options,
   ));
 }
 
-async function find(fn, options) {
+async function find(this: $Node.Readable, fn: Operator, options?: Options) {
   for await (const result of filter.$call(this, fn, options)) {
     return result;
   }
   return undefined;
 }
 
-async function forEach(fn, options) {
-  if (typeof fn !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("fn", ["Function", "AsyncFunction"], fn);
-  }
-  async function forEachFn(value, options) {
+async function forEach(this: $Node.Readable, fn: Operator, options?: Options) {
+  validateFunction(fn, "fn");
+  async function forEachFn(value: unknown, options: { signal: AbortSignal }) {
     await fn(value, options);
     return kEmpty;
   }
@@ -224,11 +196,9 @@ async function forEach(fn, options) {
   for await (const unused of map.$call(this, forEachFn, options));
 }
 
-function filter(fn, options) {
-  if (typeof fn !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("fn", ["Function", "AsyncFunction"], fn);
-  }
-  async function filterFn(value, options) {
+function filter(this: $Node.Readable, fn: Operator, options?: Options) {
+  validateFunction(fn, "fn");
+  async function filterFn(value: unknown, options: { signal: AbortSignal }) {
     if (await fn(value, options)) {
       return value;
     }
@@ -247,10 +217,13 @@ class ReduceAwareErrMissingArgs extends TypeError {
   }
 }
 
-async function reduce(reducer, initialValue, options) {
-  if (typeof reducer !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("reducer", ["Function", "AsyncFunction"], reducer);
-  }
+async function reduce(
+  this: $Node.Readable,
+  reducer: (previous: unknown, data: unknown, options: { signal: AbortSignal }) => unknown,
+  initialValue?: unknown,
+  options?: Options,
+) {
+  validateFunction(reducer, "reducer");
   if (options != null) {
     validateObject(options, "options");
   }
@@ -268,7 +241,7 @@ async function reduce(reducer, initialValue, options) {
   const ac = new AbortController();
   const signal = ac.signal;
   if (options?.signal) {
-    const opts = { once: true, [kWeakHandler]: this, [kResistStopPropagation]: true };
+    const opts = resistStopPropagation({ once: true, [kWeakHandler]: this });
     options.signal.addEventListener("abort", () => ac.abort(), opts);
   }
   let gotAnyItemFromStream = false;
@@ -294,7 +267,7 @@ async function reduce(reducer, initialValue, options) {
   return initialValue;
 }
 
-async function toArray(options) {
+async function toArray(this: $Node.Readable, options?: Options) {
   if (options != null) {
     validateObject(options, "options");
   }
@@ -302,7 +275,7 @@ async function toArray(options) {
     validateAbortSignal(options.signal, "options.signal");
   }
 
-  const result = [];
+  const result: unknown[] = [];
   for await (const val of this) {
     if (options?.signal?.aborted) {
       throw $makeAbortError(undefined, { cause: options.signal.reason });
@@ -312,7 +285,7 @@ async function toArray(options) {
   return result;
 }
 
-function flatMap(fn, options) {
+function flatMap(this: $Node.Readable, fn: Operator, options?: Options) {
   const values = map.$call(this, fn, options);
   async function* flatMapInner() {
     for await (const val of values) {
@@ -322,7 +295,7 @@ function flatMap(fn, options) {
   return flatMapInner.$call(this);
 }
 
-function toIntegerOrInfinity(number) {
+function toIntegerOrInfinity(number: number) {
   // We coerce here to align with the spec
   // https://github.com/tc39/proposal-iterator-helpers/issues/169
   number = Number(number);
@@ -335,7 +308,7 @@ function toIntegerOrInfinity(number) {
   return number;
 }
 
-function drop(number, options?) {
+function drop(this: $Node.Readable, number: number, options?: Options) {
   if (options != null) {
     validateObject(options, "options");
   }
@@ -344,7 +317,7 @@ function drop(number, options?) {
   }
 
   number = toIntegerOrInfinity(number);
-  return async function* drop() {
+  return async function* drop(this: $Node.Readable) {
     if (options?.signal?.aborted) {
       throw $makeAbortError();
     }
@@ -360,7 +333,7 @@ function drop(number, options?) {
 }
 ObjectDefineProperty(drop, "length", { value: 1 });
 
-function take(number, options?: { signal: AbortSignal }) {
+function take(this: $Node.Readable, number: number, options?: Options) {
   if (options != null) {
     validateObject(options, "options");
   }
@@ -369,7 +342,7 @@ function take(number, options?: { signal: AbortSignal }) {
   }
 
   number = toIntegerOrInfinity(number);
-  return async function* take() {
+  return async function* take(this: $Node.Readable) {
     if (options?.signal?.aborted) {
       throw $makeAbortError();
     }
@@ -397,7 +370,6 @@ export default {
     flatMap,
     map,
     take,
-    compose,
   },
   promiseReturningOperators: {
     every,

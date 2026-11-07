@@ -1,0 +1,32 @@
+# const split = $bindgen("node_util_binding.bind.ts", "extractedSplitNewLinesFastPathStringsOnly"); split("a\nb", ignored).length
+# The entry of the binding has the signature that its schema declares: it takes a string and answers an array of strings or undefined. So nothing is handed over, and nothing that nobody knows comes back.
+# LIBRARY: own
+# RUN: valueflow-solve calls
+# CHECK: f1 v3 -> NativeFunctionsNode_util_bindingBindTsExtractedSplitNewLinesFastPathStringsOnly
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f2
+# RUN(ANSWER): valueflow-why values=f1:v4
+# ANSWER: values=f1:v4
+# ANSWER: operand 0 {{*}} 2 members: primitive0 object{{*}}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    Return
+}
+function f1 name="library" role=Library results=[{type=anything}] {
+  b0():
+    v0 = NativeBinding builtin=NativeBindgenNode_util_bindingBindTsExtractedSplitNewLinesFastPathStringsOnly
+    v1 = String string="a\nb"
+    v2 = NewClosure function=f2
+    v3 = Call v0, -, v1, v2
+    v4 = PropGet v3 key="length"
+    Return v4
+}
+function f2 name="ignored" results=[{type=anything}] {
+  b0():
+    Return
+}

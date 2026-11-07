@@ -55,7 +55,7 @@ describe("issue #207 - nanosecond round-off errors on high-res timer", function 
     assert.equals(clock.now, 1);
   });
 
-  it.failing("should floor negative now values", function () {
+  it("should floor negative now values", function () {
     clock = FakeTimers.install({ now: -1.2 });
 
     assert.equals(clock.now, -2);
@@ -66,12 +66,12 @@ describe("issue #207 - nanosecond round-off errors on high-res timer", function 
     assert.equals(clock.now, 1);
   });
 
-  it.failing("should floor negative start times", function () {
+  it("should floor negative start times", function () {
     clock = FakeTimers.install({ now: -1.2 });
     assert.equals(clock.now, -2);
   });
 
-  it.failing("should handle ticks on the negative side of the Epoch", function () {
+  it("should handle ticks on the negative side of the Epoch", function () {
     clock = FakeTimers.install({ now: -2 });
     clock.tick(0.8); // -1.2
     clock.tick(0.5); // -0.7

@@ -13,7 +13,6 @@
 #include "NodeValidator.h"
 #include "JSBuffer.h"
 #include "CryptoUtil.h"
-#include "BunString.h"
 #include <openssl/bn.h>
 #include <openssl/ecdsa.h>
 #include <openssl/rsa.h>
@@ -74,6 +73,18 @@ void JSVerify::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     Base::finishCreation(vm);
 }
 
+template<typename Visitor>
+void JSVerify::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSVerify* thisObject = uncheckedDowncast<JSVerify>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.reportExtraMemoryVisited(thisObject->m_sizeForGC);
+}
+
+DEFINE_VISIT_CHILDREN(JSVerify);
+
 JSVerify* JSVerify::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject)
 {
     JSVerify* verify = new (NotNull, JSC::allocateCell<JSVerify>(vm)) JSVerify(vm, structure);
@@ -83,7 +94,7 @@ JSVerify* JSVerify::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobal
 
 JSC::Structure* JSVerify::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 }
 
 template<typename CellType, JSC::SubspaceAccess mode>
@@ -91,12 +102,7 @@ JSC::GCClient::IsoSubspace* JSVerify::subspaceFor(JSC::VM& vm)
 {
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
         return nullptr;
-    return WebCore::subspaceForImpl<JSVerify, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSVerify.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSVerify = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSVerify.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSVerify = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSVerify, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSVerify, m_subspaceForJSVerify));
 }
 
 // JSVerifyPrototype implementation
@@ -109,8 +115,8 @@ JSVerifyPrototype::JSVerifyPrototype(JSC::VM& vm, JSC::Structure* structure)
 void JSVerifyPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSVerify::info(), JSVerifyPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSVerify::info(), JSVerifyPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSVerifyPrototype* JSVerifyPrototype::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
@@ -122,7 +128,7 @@ JSVerifyPrototype* JSVerifyPrototype::create(JSC::VM& vm, JSC::JSGlobalObject* g
 
 JSC::Structure* JSVerifyPrototype::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 }
 
 // JSVerifyConstructor implementation
@@ -147,7 +153,7 @@ JSVerifyConstructor* JSVerifyConstructor::create(JSC::VM& vm, JSC::Structure* st
 
 JSC::Structure* JSVerifyConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
 }
 
 // Function stubs for implementation later
@@ -202,6 +208,11 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncInit, (JSGlobalObject * globalObject, 
     // Store the initialized context in the JSVerify object
     thisObject->m_mdCtx = WTF::move(mdCtx);
 
+    if (!thisObject->m_sizeForGC) {
+        thisObject->m_sizeForGC = sizeof(EVP_MD_CTX);
+        vm.heap.reportExtraMemoryAllocated(thisObject, thisObject->m_sizeForGC);
+    }
+
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -248,12 +259,6 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
 
         auto* view = dynamicDowncast<JSC::JSArrayBufferView>(buf);
 
-        // Update the digest context with the buffer data
-        if (view->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
-        }
-
         size_t byteLength = view->byteLength();
         if (byteLength > INT_MAX) {
             throwRangeError(globalObject, scope, "data is too long"_s);
@@ -265,6 +270,11 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
             .len = byteLength,
         };
 
+        if (!thisObject->m_mdCtx) {
+            return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Not initialised"_s);
+        }
+
+        ncrypto::ClearErrorOnReturn clearErrorOnReturn;
         if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
             throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
             return {};
@@ -273,37 +283,33 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
         return JSValue::encode(wrappedVerify);
     }
 
-    if (!data.isCell() || !JSC::isTypedArrayTypeIncludingDataView(data.asCell()->type())) {
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data);
+    if (!view) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);
     }
 
-    // Handle ArrayBufferView input
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data)) {
-        if (view->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
-        }
-
-        size_t byteLength = view->byteLength();
-        if (byteLength > INT_MAX) {
-            throwRangeError(globalObject, scope, "data is too long"_s);
-            return {};
-        }
-
-        auto buffer = ncrypto::Buffer<const void> {
-            .data = view->vector(),
-            .len = byteLength,
-        };
-
-        if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
-            throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
-            return {};
-        }
-
-        return JSValue::encode(wrappedVerify);
+    size_t byteLength = view->byteLength();
+    if (byteLength > INT_MAX) {
+        throwRangeError(globalObject, scope, "data is too long"_s);
+        return {};
     }
 
-    return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);
+    auto buffer = ncrypto::Buffer<const void> {
+        .data = view->vector(),
+        .len = byteLength,
+    };
+
+    if (!thisObject->m_mdCtx) {
+        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Not initialised"_s);
+    }
+
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+    if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
+        throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
+        return {};
+    }
+
+    return JSValue::encode(wrappedVerify);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -317,12 +323,6 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     JSVerify* thisObject = dynamicDowncast<JSVerify>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Verify"_s, "verify"_s);
-        return {};
-    }
-
-    // Check if the context is initialized
-    if (!thisObject->m_mdCtx) {
-        throwTypeError(globalObject, scope, "Verify.prototype.verify cannot be called before Verify.prototype.init"_s);
         return {};
     }
 
@@ -366,8 +366,31 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     DSASigEnc dsaSigEnc = getDSASigEnc(globalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_sig.cc#L530-L607
+    if (keyPtr.isOneShotVariant()) {
+        return ERR::CRYPTO_UNSUPPORTED_OPERATION(scope, globalObject);
+    }
+
+    ncrypto::Buffer<const unsigned char> sigBuf {
+        .data = static_cast<const unsigned char*>(signatureBuffer->vector()),
+        .len = signatureBuffer->byteLength(),
+    };
+
+    WTF::Vector<uint8_t> derBuffer;
+    if (dsaSigEnc == DSASigEnc::P1363 && keyPtr.isSigVariant()) {
+        if (!convertP1363ToDER(sigBuf, keyPtr, derBuffer)) {
+            return ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Malformed signature"_s);
+        }
+        sigBuf = { .data = derBuffer.begin(), .len = derBuffer.size() };
+    }
+
+    if (!thisObject->m_mdCtx) {
+        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Not initialised"_s);
+    }
+
     // Move mdCtx out of JSVerify object to finalize it
     ncrypto::EVPMDCtxPointer mdCtx = WTF::move(thisObject->m_mdCtx);
+    thisObject->m_sizeForGC = 0;
 
     // Validate DSA parameters
     if (!keyPtr.validateDsaParameters()) {
@@ -382,64 +405,31 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
         return {};
     }
 
-    // Create verification context
+    // Create verification context. A key that cannot verify is -2 from OpenSSL, which Node throws for, and 0 from BoringSSL.
     auto pkctx = keyPtr.newCtx();
     if (!pkctx || pkctx.initForVerify() <= 0) {
-        throwCryptoError(globalObject, scope, ERR_peek_error(), "Failed to initialize verification context"_s);
+        throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to initialize verification context"_s);
         return {};
     }
 
-    // Set RSA padding mode and salt length if applicable
+    // For PSS padding without explicit salt length for verification,
+    // we don't need to calculate - use RSA_PSS_SALTLEN_AUTO (-2) to auto-detect
+    // This matches Node.js behavior for verification
+    if (padding == RSA_PKCS1_PSS_PADDING && !saltLen.has_value()) {
+        saltLen = RSA_PSS_SALTLEN_AUTO;
+    }
+
     if (keyPtr.isRsaVariant()) {
-        std::optional<int> effective_salt_len = saltLen;
-
-        // For PSS padding without explicit salt length for verification,
-        // we don't need to calculate - use RSA_PSS_SALTLEN_AUTO (-2) to auto-detect
-        // This matches Node.js behavior for verification
-        if (padding == RSA_PKCS1_PSS_PADDING && !saltLen.has_value()) {
-            effective_salt_len = RSA_PSS_SALTLEN_AUTO;
-        }
-
-        if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, effective_salt_len)) {
-            throwCryptoError(globalObject, scope, ERR_peek_error(), "Failed to set RSA padding"_s);
-            return {};
-        }
-    }
-
-    // Set signature MD from the digest context
-    if (!pkctx.setSignatureMd(mdCtx)) {
-        throwCryptoError(globalObject, scope, ERR_peek_error(), "Failed to set signature message digest"_s);
+        // Options that the key does not take are a signature that does not verify, not an error.
+        if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, saltLen) || !pkctx.setSignatureMd(mdCtx))
+            return JSValue::encode(jsBoolean(false));
+    } else if (!pkctx.setSignatureMd(mdCtx)) {
+        // BoringSSL refuses digests for an EC key that OpenSSL takes, so the signature may be a valid one.
+        throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to set signature message digest"_s);
         return {};
     }
 
-    // Handle P1363 format conversion for EC keys if needed
-    ncrypto::Buffer<const unsigned char> sigBuf {
-        .data = static_cast<const unsigned char*>(signatureBuffer->vector()),
-        .len = signatureBuffer->byteLength(),
-    };
-
-    if (dsaSigEnc == DSASigEnc::P1363 && keyPtr.isSigVariant()) {
-        WTF::Vector<uint8_t> derBuffer;
-
-        // If the signature cannot be converted to DER (e.g. its length is not
-        // 2 * bytesOfRS), fail verification instead of reinterpreting the raw
-        // bytes as a DER signature, matching Node.js.
-        if (!convertP1363ToDER(sigBuf, keyPtr, derBuffer)) {
-            return JSValue::encode(jsBoolean(false));
-        }
-
-        ncrypto::Buffer<const uint8_t> derSigBuf {
-            .data = derBuffer.begin(),
-            .len = derBuffer.size(),
-        };
-
-        bool result = pkctx.verify(derSigBuf, data);
-        return JSValue::encode(jsBoolean(result));
-    }
-
-    // Perform verification with the original signature
-    bool result = pkctx.verify(sigBuf, data);
-    return JSValue::encode(jsBoolean(result));
+    return JSValue::encode(jsBoolean(pkctx.verify(sigBuf, data)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callVerify, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -471,39 +461,6 @@ void setupJSVerifyClassStructure(LazyClassStructure::Initializer& init)
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);
-}
-
-std::optional<ncrypto::EVPKeyPointer> keyFromPublicString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView)
-{
-    ncrypto::EVPKeyPointer::PublicKeyEncodingConfig publicConfig;
-    publicConfig.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
-
-    UTF8View keyUtf8(keyView);
-    auto keySpan = keyUtf8.span();
-
-    ncrypto::Buffer<const unsigned char> ncryptoBuf {
-        .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
-        .len = keySpan.size(),
-    };
-
-    auto publicRes = ncrypto::EVPKeyPointer::TryParsePublicKey(publicConfig, ncryptoBuf);
-    if (publicRes) {
-        ncrypto::EVPKeyPointer keyPtr(WTF::move(publicRes.value));
-        return keyPtr;
-    }
-
-    if (publicRes.error.value() == ncrypto::EVPKeyPointer::PKParseError::NOT_RECOGNIZED) {
-        ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig privateConfig;
-        privateConfig.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
-        auto privateRes = ncrypto::EVPKeyPointer::TryParsePrivateKey(privateConfig, ncryptoBuf);
-        if (privateRes) {
-            ncrypto::EVPKeyPointer keyPtr(WTF::move(privateRes.value));
-            return keyPtr;
-        }
-    }
-
-    throwCryptoError(lexicalGlobalObject, scope, publicRes.openssl_error.value_or(0), "Failed to read public key"_s);
-    return std::nullopt;
 }
 
 } // namespace Bun

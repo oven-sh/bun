@@ -662,8 +662,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     return;
                 }
 
-                /* If we have no failed write or if we shut down, then stop polling for more writable */
-                if (!s->flags.last_write_failed || us_socket_is_shut_down(s)) {
+                /* If we have no failed write or if we shut down, then stop polling for more writable. A TLS
+                 * socket that sealed its close_notify is shut down, and still owes the kernel what it spilled. */
+                if (!s->flags.last_write_failed ||
+                    (us_socket_is_shut_down(s) && !(s->ssl && s->ssl_spilled && us_internal_socket_can_raw_write(s)))) {
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
                 } else {
                     #ifdef LIBUS_USE_KQUEUE

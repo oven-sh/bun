@@ -180,6 +180,11 @@ public:
          * sit in the cork buffer, and JS that runs before the loop ends
          * (a graceful stop() from a microtask) gets here. close() sends
          * it first. */
+        if constexpr (SSL) {
+            /* Without the FIN, a TLS close reads on for the peer's close_notify, up to a deadline. */
+            Super::uncork();
+            Super::shutdown();
+        }
         Super::close();
         return true;
     }

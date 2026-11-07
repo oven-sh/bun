@@ -488,6 +488,34 @@ describe("_repeat", () => {
     }
   });
 
+  it.concurrent("a timeout whose callback calls jest.useRealTimers() is not armed again", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { jest } = Bun.jest();
+          jest.useFakeTimers();
+          let fires = 0;
+          process.on("exit", () => console.log(fires, t._destroyed));
+          const t = setTimeout(() => {
+            fires++;
+            jest.useRealTimers();
+          }, 1);
+          t._repeat = 1;
+          jest.advanceTimersByTime(1);
+          // Runs only if the timeout is still armed and keeps the event loop alive.
+          setTimeout(() => process.exit(1), 1).unref();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1 true\n", stderr: "", exitCode: 0 });
+  });
+
   it.concurrent("a timeout that fires again under its own callback is promoted once (fake clock)", async () => {
     await using proc = Bun.spawn({
       cmd: [

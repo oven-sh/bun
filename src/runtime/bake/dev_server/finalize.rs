@@ -453,8 +453,10 @@ fn finalize_bundle_inner(
         }
         if !is_served {
             // The page has the stylesheet of the browser's copy. This copy only needs its server record.
-            dev.server_graph
-                .insert_css_file_on_server(&mut ctx, index, key, None)?;
+            if metadata.imported_on_server {
+                dev.server_graph
+                    .insert_css_file_on_server(&mut ctx, index, key, None)?;
+            }
             continue;
         }
 
@@ -523,7 +525,7 @@ fn finalize_bundle_inner(
 
         // If imported on server, there needs to be a server-side file entry
         // so that edges can be attached.
-        if metadata.imported_on_server || graph != bake::Graph::Client {
+        if metadata.imported_on_server {
             dev.server_graph
                 .insert_css_file_on_server(&mut ctx, index, key, None)?;
         }

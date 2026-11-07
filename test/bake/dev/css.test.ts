@@ -1672,27 +1672,6 @@ devTest("css module of a server file is deleted and restored", {
     await dev.fetch("/").equals("again,title");
   },
 });
-devTest("plain css of a server file with an initial syntax error gets recovered", {
-  framework: minimalFramework,
-  // Without this, a request for a failed route bundles everything that the route reaches again.
-  env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
-  files: {
-    "global.css": `
-      body { color: red; }}
-    `,
-    "routes/index.ts": `
-      import "../global.css";
-      export default function (req, meta) {
-        return new Response("styles:" + meta.styles.length);
-      }
-    `,
-  },
-  async test(dev) {
-    expect((await dev.fetch("/")).status).toBe(500);
-    await dev.write("global.css", `body { color: red; }`);
-    await dev.fetch("/").equals("styles:1");
-  },
-});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

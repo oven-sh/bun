@@ -1,5 +1,6 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
+import { isASAN, isDebug } from "harness";
 import assert from "node:assert";
 import { devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
@@ -1149,6 +1150,40 @@ devTest("plain css imported with a binding is an empty module, as in bun build",
     await c.expectMessage("again:" + JSON.stringify({ sheet: {}, ns: ["default"], nsDefault: {} }));
   },
 });
+devTest("plain css with an initial syntax error, imported with a binding", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "plain.css": `
+      body {
+        color: red;
+      }}
+    `,
+    "index.ts": `
+      import sheet from "./plain.css";
+      console.log("sheet:" + JSON.stringify(sheet));
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["plain.css:3:3: error: Unexpected end of input"],
+    });
+    // The importer is not bundled again when the stylesheet is fixed. Its binding must exist.
+    await c.expectReload(async () => {
+      await dev.write(
+        "plain.css",
+        `
+          body {
+            color: red;
+          }
+        `,
+      );
+    });
+    await c.expectMessage("sheet:{}");
+    await c.style("body").color.expect.toBe("red");
+  },
+});
 devTest("css module with an initial syntax error gets recovered", {
   files: {
     "index.html": emptyHtmlFile({
@@ -1447,12 +1482,14 @@ for (const graph of ["server", "ssr"] as const) {
         globalThis.pageEvals = (globalThis.pageEvals ?? 0) + 1;
         export async function render() {
           const dyn = await import("./styles.module.css");
+          globalThis.firstStyles ??= styles;
           return Response.json({
             v: 1,
             keys: Object.keys(styles).sort(),
             scoped: styles.title.startsWith("title_"),
             shapes: [title === styles.title, ns.default === styles, dyn.default === styles, required() === styles, fromOther() === styles],
             evals: globalThis.pageEvals,
+            sameModule: styles === globalThis.firstStyles,
           });
         }
       `,
@@ -1462,15 +1499,22 @@ for (const graph of ["server", "ssr"] as const) {
       `,
     },
     async test(dev) {
-      const first = { v: 1, keys: ["title"], scoped: true, shapes: [true, true, true, true, true], evals: 1 };
+      const first = {
+        v: 1,
+        keys: ["title"],
+        scoped: true,
+        shapes: [true, true, true, true, true],
+        evals: 1,
+        sameModule: true,
+      };
       await dev.fetch("/").equals(first);
-      // A save that changes no class name sends nothing to the server.
+      // A save that changes no class name sends no class-name module to the server.
       await dev.patch("styles.module.css", { find: "red", replace: "blue" });
       await dev.fetch("/").equals(first);
       // The importer is bundled again while the stylesheet is cached.
       await dev.patch("page.ts", { find: "v: 1", replace: "v: 2" });
       await dev.fetch("/").equals({ ...first, v: 2, evals: 2 });
-      // A new class reaches the next render.
+      // A new class reaches the next render, in a new module. The importer is not evaluated again.
       await dev.write(
         "styles.module.css",
         `
@@ -1478,7 +1522,7 @@ for (const graph of ["server", "ssr"] as const) {
           .title { color: blue; }
         `,
       );
-      await dev.fetch("/").equals({ ...first, v: 2, keys: ["extra", "title"], evals: 2 });
+      await dev.fetch("/").equals({ ...first, v: 2, keys: ["extra", "title"], evals: 2, sameModule: false });
     },
   });
 }
@@ -1603,51 +1647,77 @@ devTest("css module imported by a server file after a client file", {
     expect(await c.js<string>`document.querySelector("#server").textContent`).toBe(title);
   },
 });
-devTest("css module composes and errors in the server graph", {
-  framework: minimalFramework,
-  files: {
-    "base.module.css": `
-      #base { font-weight: 700; }
-    `,
-    "button.module.css": `
-      .btn {
-        composes: base from "./base.module.css";
-        color: red;
-      }
-    `,
-    "routes/index.ts": `
-      import styles from "../button.module.css";
-      export default function () {
-        return new Response(styles.btn.split(" ").map(name => name.replace(/_.*/, "")).sort().join(","));
-      }
-    `,
-  },
-  async test(dev) {
-    // The first bundle fails on `composes`. A fix in the other file bundles the module again.
-    expect((await dev.fetch("/")).status).toBe(500);
-    await dev.write(
-      "base.module.css",
-      `
-        .base { font-weight: 700; }
+for (const graph of ["server", "ssr"] as const) {
+  devTest(`css module composes and errors in the ${graph} graph`, {
+    framework: {
+      ...minimalFramework,
+      serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph: graph === "ssr" },
+    },
+    files: {
+      "base.module.css": `
+        #base { font-weight: 700; }
       `,
-    );
-    await dev.fetch("/").equals("base,btn");
-    // A change of what the other file composes changes this module's names.
-    await dev.write(
-      "base.module.css",
-      `
-        .extra { font-style: italic; }
-        .base { composes: extra; font-weight: 700; }
+      "button.module.css": `
+        .btn {
+          composes: base from "./base.module.css";
+          color: red;
+        }
       `,
-    );
-    await dev.fetch("/").equals("base,btn,extra");
-    // A syntax error, then the fix.
-    await dev.write("button.module.css", `.btn { color: red; }}`, { errors: null });
-    expect((await dev.fetch("/")).status).toBe(500);
-    await dev.write("button.module.css", `.btn { color: red; }`);
-    await dev.fetch("/").equals("btn");
-  },
-});
+      "page.ts": `
+        import styles from "./button.module.css";
+        export const render = () =>
+          new Response(styles.btn.split(" ").map(name => name.replace(/_.*/, "")).sort().join(","));
+      `,
+      "routes/index.ts": `
+        import { render } from "../page.ts"${graph === "ssr" ? ` with { bunBakeGraph: "ssr" }` : ""};
+        export default () => render();
+      `,
+    },
+    async test(dev) {
+      const composesBase = `
+        .btn {
+          composes: base from "./base.module.css";
+          color: red;
+        }
+      `;
+      // The first bundle fails on `composes`. A fix in the other file bundles the module again.
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.write(
+        "base.module.css",
+        `
+          .base { font-weight: 700; }
+        `,
+      );
+      await dev.fetch("/").equals("base,btn");
+      // A change of what the other file composes changes this module's names.
+      await dev.write(
+        "base.module.css",
+        `
+          .extra { font-style: italic; }
+          .base { composes: extra; font-weight: 700; }
+        `,
+      );
+      await dev.fetch("/").equals("base,btn,extra");
+      // A save adds a `composes` error after a good build. Each request gets the error until the fix.
+      await dev.write("button.module.css", `.btn { composes: missing; color: red; }`, { errors: null });
+      expect((await dev.fetch("/")).status).toBe(500);
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.write("button.module.css", composesBase);
+      await dev.fetch("/").equals("base,btn,extra");
+      // The same, with the error and the fix in the other file.
+      await dev.write("base.module.css", `#base { font-weight: 700; }`, { errors: null });
+      expect((await dev.fetch("/")).status).toBe(500);
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.write("base.module.css", `.base { font-weight: 700; }`);
+      await dev.fetch("/").equals("base,btn");
+      // A syntax error, then the fix.
+      await dev.write("button.module.css", `.btn { color: red; }}`, { errors: null });
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.write("button.module.css", `.btn { color: red; }`);
+      await dev.fetch("/").equals("btn");
+    },
+  });
+}
 devTest("css module of a server file is deleted and restored", {
   skip: [
     "win32", // unlinkSync is having weird behavior
@@ -1672,6 +1742,400 @@ devTest("css module of a server file is deleted and restored", {
     await dev.fetch("/").equals("again,title");
   },
 });
+for (const graph of ["server", "ssr"] as const) {
+  devTest(`css module in the ${graph} graph with an import of a file that is not css`, {
+    framework: {
+      ...minimalFramework,
+      serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph: graph === "ssr" },
+    },
+    files: {
+      "theme.json": `{}`,
+      "styles.module.css": `
+        @import "./theme.json";
+        .title { color: red; }
+      `,
+      "page.ts": `
+        import styles from "./styles.module.css";
+        export const render = () => new Response(Object.keys(styles).sort().join(","));
+      `,
+      "routes/index.ts": `
+        import { render } from "../page.ts"${graph === "ssr" ? ` with { bunBakeGraph: "ssr" }` : ""};
+        export default () => render();
+      `,
+    },
+    async test(dev) {
+      // Each request gets the build error until the stylesheet is fixed.
+      expect((await dev.fetch("/")).status).toBe(500);
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.write("styles.module.css", `.title { color: red; }`);
+      await dev.fetch("/").equals("title");
+      // The same error after a good build. The route keeps no class name of the failed save.
+      await dev.write("styles.module.css", `@import "./theme.json";\n.bad { color: red; }`, { errors: null });
+      expect((await dev.fetch("/")).status).toBe(500);
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.write("styles.module.css", `.title { color: red; }\n.extra { color: blue; }`);
+      await dev.fetch("/").equals("extra,title");
+    },
+  });
+}
+devTest("css module class names survive an import of a file that is not css", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "theme.json": `{}`,
+    "styles.module.css": `
+      .title {
+        color: red;
+      }
+    `,
+    "index.ts": `
+      import styles from "./styles.module.css";
+      console.log("keys:" + Object.keys(styles).sort().join(","));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("keys:title");
+    // The failed save sends no class-name module: the importer does not run with `bad`.
+    await dev.write(
+      "styles.module.css",
+      `
+        @import "./theme.json";
+        .bad { color: blue; }
+        .title {
+          color: red;
+        }
+      `,
+      {
+        errors: [`styles.module.css:1:1: error: Cannot import a ".json" file into a CSS file`],
+      },
+    );
+    await c.style(".title_-MSaAA").color.expect.toBe("red");
+    await dev.write(
+      "styles.module.css",
+      `
+        .extra { color: blue; }
+        .title {
+          color: red;
+        }
+      `,
+    );
+    await c.expectMessage("keys:extra,title");
+  },
+});
+devTest("css module with an initial import of a file that is not css, under two importers", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "theme.json": `{}`,
+    "styles.module.css": `
+      @import "./theme.json";
+      .title { color: red; }
+    `,
+    // `late.ts` is found after the stylesheet, so it adds the stylesheet to the roots a second time.
+    "index.ts": `
+      import styles from "./styles.module.css";
+      import { late } from "./mid.ts";
+      console.log("keys:" + Object.keys(styles).join(",") + ":" + late());
+    `,
+    "mid.ts": `
+      export { late } from "./late.ts";
+    `,
+    "late.ts": `
+      import styles from "./styles.module.css";
+      export const late = () => Object.keys(styles).join(",");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`styles.module.css:1:1: error: Cannot import a ".json" file into a CSS file`],
+    });
+    await c.expectReload(async () => {
+      await dev.write("styles.module.css", `.title { color: red; }`);
+    });
+    await c.expectMessage("keys:title:title");
+  },
+});
+devTest("css module with a composes of an unknown name from another file is a build error", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "base.module.css": `
+      .base { font-weight: 700; }
+    `,
+    "button.module.css": `
+      .btn {
+        composes: typo from "./base.module.css";
+        color: red;
+      }
+    `,
+    "index.ts": `
+      import styles from "./button.module.css";
+      console.log("btn:" + styles.btn.split(" ").map(name => name.replace(/_.*/, "")).sort().join(","));
+    `,
+  },
+  async test(dev) {
+    // The error of `bun build`, which the link step reports there.
+    const [response] = await Promise.all([
+      dev.fetch("/"),
+      dev.output.waitForLine(
+        /The name "typo" never appears in "base\.module\.css" as a CSS modules locally scoped class name/,
+      ),
+    ]);
+    expect(response.status).toBe(500);
+    await dev.write(
+      "button.module.css",
+      `
+        .btn {
+          composes: base from "./base.module.css";
+          color: red;
+        }
+      `,
+    );
+    await using c = await dev.client("/");
+    await c.expectMessage("btn:base,btn");
+  },
+});
+for (const graph of ["server", "ssr"] as const) {
+  devTest(`css module style edit sends no class-name module to the ${graph} graph`, {
+    framework: frameworkWithClientEntry(graph === "ssr"),
+    files: {
+      "styles.module.css": `
+        .title { color: red; }
+      `,
+      "names.ts": `
+        import styles from "./styles.module.css";
+        export const title = () => styles.title;
+      `,
+      "routes/index.ts": `
+        import { title } from "../names.ts"${graph === "ssr" ? ` with { bunBakeGraph: "ssr" }` : ""};
+        export default function (req, meta) {
+          return ${htmlPage(`"<p id='server'>" + title() + "</p>"`)};
+        }
+      `,
+      "client.ts": `
+        import styles from "./styles.module.css";
+        console.log("client:" + styles.title);
+        import.meta.hot.accept();
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      const title = (await c.getStringMessage()).slice("client:".length);
+      expect(await c.js<string>`document.querySelector("#server").textContent`).toBe(title);
+      // A module for the server would reload the page, and the client fails the test on a reload.
+      await dev.patch("styles.module.css", { find: "red", replace: "green" });
+      await c.style("." + title).color.expect.toBe("green");
+    },
+  });
+}
+devTest("css module keyframes get the exported name in the ssr graph", {
+  framework: {
+    ...minimalFramework,
+    serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph: true },
+  },
+  files: {
+    "styles.module.css": `
+      @keyframes spin { to { rotate: 360deg; } }
+      .title { animation-name: spin; }
+    `,
+    "page.ts": `
+      import styles from "./styles.module.css";
+      export const names = () => styles;
+    `,
+    "routes/index.ts": `
+      import { names } from "../page.ts" with { bunBakeGraph: "ssr" };
+      export default function (req, meta) {
+        return Response.json({ spin: names().spin, styles: meta.styles });
+      }
+    `,
+  },
+  async test(dev) {
+    const { spin, styles } = (await (await dev.fetch("/")).json()) as { spin: string; styles: string[] };
+    expect(spin).toStartWith("spin_");
+    const css = await dev.fetch(styles[0]).text();
+    expect(css).toContain("@keyframes " + spin);
+    expect(css).toContain("animation-name: " + spin);
+  },
+});
+for (const [first, second] of [
+  ["/", "/other"],
+  ["/other", "/"],
+]) {
+  devTest(`css module reaches the graph of ${second} after ${first} bundled it for its graph`, {
+    framework: {
+      ...minimalFramework,
+      serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph: true },
+    },
+    files: {
+      "styles.module.css": `
+        .title { color: red; }
+      `,
+      "ssr.ts": `
+        import styles from "./styles.module.css";
+        export const render = () => Response.json({ keys: Object.keys(styles).sort(), title: styles.title });
+      `,
+      "routes/index.ts": `
+        import styles from "../styles.module.css";
+        export default () => Response.json({ keys: Object.keys(styles).sort(), title: styles.title });
+      `,
+      "routes/other.ts": `
+        import { render } from "../ssr.ts" with { bunBakeGraph: "ssr" };
+        export default () => render();
+      `,
+    },
+    async test(dev) {
+      const one = (await (await dev.fetch(first)).json()) as { keys: string[]; title: string };
+      expect(one).toEqual({ keys: ["title"], title: expect.stringMatching(/^title_/) });
+      // The stylesheet is cached for one graph. The other graph has no class-name module for it yet.
+      await dev.fetch(second).equals(one);
+      await dev.patch("styles.module.css", { find: "red", replace: "blue" });
+      await dev.fetch(first).equals(one);
+      await dev.fetch(second).equals(one);
+      // A new class reaches both graphs.
+      await dev.write(
+        "styles.module.css",
+        `
+          .extra { color: green; }
+          .title { color: blue; }
+        `,
+      );
+      const two = { keys: ["extra", "title"], title: one.title };
+      await dev.fetch(first).equals(two);
+      await dev.fetch(second).equals(two);
+    },
+  });
+}
+// The source of a route that prints what the server-side copy of `components/Widget.ts` exports.
+const widgetRoute = (separateSSRGraph: boolean) => `
+  import * as Widget from "../components/Widget.ts";
+  import { ssrManifest } from "bun:bake/server";
+  export default async function (req, meta) {
+    ${
+      separateSSRGraph
+        ? `const uid = Object.keys(ssrManifest).find(key => key.includes("Widget"));
+    const server = (await import(ssrManifest[uid].keys.specifier)).keys();`
+        : `const server = Widget.keys.value();`
+    }
+    return ${htmlPage(`"<p id='server'>" + server + "</p>"`)};
+  }
+`;
+for (const separateSSRGraph of [false, true]) {
+  devTest(`css module of a "use client" file is saved with a page open (separateSSRGraph: ${separateSSRGraph})`, {
+    framework: frameworkWithClientEntry(separateSSRGraph),
+    files: {
+      "styles.module.css": `
+        .title { color: red; }
+      `,
+      "components/Widget.ts": `
+        "use client";
+        import styles from "../styles.module.css";
+        export const keys = () => "v1:" + Object.keys(styles).sort().join(",");
+        if (typeof window !== "undefined") console.log("widget:" + keys());
+        import.meta.hot.accept();
+      `,
+      "routes/index.ts": widgetRoute(separateSSRGraph),
+      "client.ts": `
+        import "./components/Widget.ts";
+      `,
+    },
+    async test(dev) {
+      const server = async () => (await dev.fetch("/").text()).match(/<p id='server'>([^<]*)/)?.[1];
+      await using c = await dev.client("/");
+      await c.expectMessage("widget:v1:title");
+      // A style-only save evaluates nothing. A reload fails the test.
+      await dev.patch("styles.module.css", { find: "red", replace: "green" });
+      await c.style(".title_-MSaAA").color.expect.toBe("green");
+      expect(await server()).toBe("v1:title");
+      // A new class reaches the page and the server-side copy of the component.
+      await dev.write("styles.module.css", `.extra { color: blue; }\n.title { color: green; }`);
+      await c.expectMessage("widget:v1:extra,title");
+      expect(await server()).toBe("v1:extra,title");
+      // The component is bundled again while the stylesheet is cached.
+      await dev.patch("components/Widget.ts", { find: "v1:", replace: "v2:" });
+      await c.expectMessage("widget:v2:extra,title");
+      expect(await server()).toBe("v2:extra,title");
+    },
+  });
+}
+devTest("css module that a tailwind plugin tracks is loaded once for a save of another file", {
+  framework: minimalFramework,
+  files: {
+    // The dev server bundles a stylesheet with "tailwind" in its output again on each save, if a plugin has that name.
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./tailwind-stub.ts"]
+    `,
+    "tailwind-stub.ts": `
+      export default {
+        name: "tailwind-stub",
+        setup(build) {
+          build.onLoad({ filter: /[.]module[.]css$/ }, args => {
+            (globalThis.cssLoads ??= []).push(args.side);
+            return undefined;
+          });
+        },
+      };
+    `,
+    "styles.module.css": `
+      /*! tailwindcss */
+      .title { color: red; }
+    `,
+    "other.ts": `
+      export const v = 1;
+    `,
+    "routes/index.ts": `
+      import styles from "../styles.module.css";
+      import { v } from "../other.ts";
+      export default function () {
+        const loads = (globalThis.cssLoads ?? []).sort();
+        globalThis.cssLoads = [];
+        return Response.json({ v, keys: Object.keys(styles).sort(), loads });
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ v: 1, keys: ["title"], loads: ["server"] });
+    // This bundles the browser's copy only, as for a plain stylesheet.
+    await dev.write("other.ts", `export const v = 2;`);
+    await dev.fetch("/").equals({ v: 2, keys: ["title"], loads: ["client"] });
+    // A save of the stylesheet bundles the copy of each graph.
+    await dev.write("styles.module.css", `/*! tailwindcss */\n.title { color: red; }\n.extra { color: blue; }`);
+    await dev.fetch("/").equals({ v: 2, keys: ["extra", "title"], loads: ["client", "server"] });
+  },
+});
+// A debug or ASAN build holds freed memory back, so only a release build can bound the growth.
+if (!isASAN && !isDebug) {
+  const manyClasses = (color: string) =>
+    Array.from({ length: 2000 }, (_, i) => `.c${i} { color: ${color}; }`).join("\n");
+  devTest("css module saves do not grow the memory of the dev server", {
+    framework: minimalFramework,
+    files: {
+      "big.module.css": manyClasses("red"),
+      "routes/index.ts": `
+        import styles from "../big.module.css";
+        export default function () {
+          Bun.gc(true);
+          return Response.json({ classes: Object.keys(styles).length, rss: process.memoryUsage.rss() });
+        }
+      `,
+    },
+    async test(dev) {
+      const rss = async () => ((await (await dev.fetch("/")).json()) as { rss: number }).rss;
+      const save = (i: number) => dev.write("big.module.css", manyClasses(i % 2 ? "red" : "blue"));
+      await rss();
+      for (let i = 0; i < 5; i++) await save(i);
+      const before = await rss();
+      for (let i = 0; i < 30; i++) await save(i);
+      // With no scope for its AST nodes, the class-name map of each copy stays: 35 MB here. With one: 8 MB.
+      expect((await rss()) - before).toBeLessThan(16 * 1024 * 1024);
+    },
+  });
+}
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

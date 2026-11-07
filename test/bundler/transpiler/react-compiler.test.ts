@@ -3973,6 +3973,398 @@ describe("bundler", () => {
     });
   }
 
+  // The compiler moves each default of a parameter into the body of its function:
+  // `(x, y = n) => x` is `(x, t0 = undefined) => { t0 === undefined ? n : t0; return x; }`.
+  // `length` counts the parameters ahead of the first one that has a default or is a
+  // rest parameter, so the parameter that had the first default keeps one.
+  // Each row has the `length` of an exported function and what it returns. A
+  // component returns the `length` of the function in it, and what that function
+  // returns for a default that is omitted, undefined, null or passed.
+  const defaultParameterOutput = `
+    Arrow length=1 [1,[1,7],[1,7],[1,null],[1,2]]
+    Bound length=1 [1,[1,2,7],[1,2,3]]
+    ClosureOverAParameter length=1 [1,[1,7],[1,2],1,[2,7],[2,2]]
+    Component length=1 [7,null]
+    ComponentWithDefaultProps length=0 7
+    DefaultOfUndefined length=0 [1,[1,"undefined"],[1,2]]
+    FirstParameter length=1 [0,[7,"undefined"],[1,2],0,[7,"undefined"],[1,2]]
+    Forwarded length=1 [7,null]
+    FunctionDeclaration length=1 [1,[1,7,0],[1,2,1]]
+    FunctionExpression length=1 [1,[1,7],[1,2]]
+    Memoized length=1 [7,null]
+    NoDefault length=1 [2,1,2,[1,2],[1,2,7],[1,2]]
+    ObjectMethod length=1 [1,[1,7],[1,2]]
+    OutlinedArrow length=0 [1,[1,3],[1,2]]
+    ReaderOfLength length=1 ["value","value","value"]
+    TwoDefaults length=1 [1,[1,7,7],[1,2,2],[1,2,3]]
+    default length=1 ["a",2] ["a",2] ["a","b"]
+    useArrow length=1 ["a",2] ["a",2] ["a","b"]
+    useClosureOverAParameter length=1 ["a",{}] ["a",{}] ["a","b"]
+    useDefault length=1 ["a",2] ["a",2] ["a","b"]
+    useDefaultAndRest length=1 ["a",2,0] ["a",2,0] ["a","b",1]
+  `;
+  const defaultParameterForms = {
+    "/entry.js": /* js */ `
+      import * as forms from "./forms";
+      const show = value => JSON.stringify(value, (key, it) => (it === undefined ? "undefined" : it));
+      const lines = [];
+      for (const [name, form] of Object.entries(forms)) {
+        const length = (form.render ?? form).length;
+        const isHook = name.startsWith("use") || name === "default";
+        const values = isHook ? [form("a"), form("a", undefined), form("a", "b", "c")] : [form({ n: 7 }).p.v];
+        lines.push(name + " length=" + length + " " + values.map(show).join(" "));
+      }
+      console.log(lines.join("\\n"));
+    `,
+    "/forms.jsx": /* jsx */ `
+      import { forwardRef, memo, useEffect } from "react";
+
+      // What a library does that reads the number of parameters of a callback.
+      const call = f => (f.length === 2 ? f(null, "value") : f("value"));
+
+      export function Arrow({ n }) {
+        const f = (x, y = n) => [x, y];
+        return <b v={[f.length, f(1), f(1, undefined), f(1, null), f(1, 2)]} />;
+      }
+      export function OutlinedArrow() {
+        const f = (x, y = 3) => [x, y];
+        return <b v={[f.length, f(1), f(1, 2)]} />;
+      }
+      export function FunctionExpression({ n }) {
+        const f = function (x, y = n) {
+          return [x, y];
+        };
+        return <b v={[f.length, f(1), f(1, 2)]} />;
+      }
+      export function FunctionDeclaration({ n }) {
+        function f(x, y = n, ...rest) {
+          return [x, y, rest.length];
+        }
+        return <b v={[f.length, f(1), f(1, 2, 3)]} />;
+      }
+      export function ObjectMethod({ n }) {
+        const o = {
+          f(x, y = n) {
+            return [x, y];
+          },
+        };
+        return <b v={[o.f.length, o.f(1), o.f(1, 2)]} />;
+      }
+      export function FirstParameter({ n }) {
+        const f = (x = n, y) => [x, y];
+        const g = ({ a } = { a: n }, y) => [a, y];
+        return <b v={[f.length, f(), f(1, 2), g.length, g(), g({ a: 1 }, 2)]} />;
+      }
+      export function TwoDefaults({ n }) {
+        const f = (x, y = n, z = y) => [x, y, z];
+        return <b v={[f.length, f(1), f(1, 2), f(1, 2, 3)]} />;
+      }
+      export function DefaultOfUndefined() {
+        const f = (x, y = undefined) => [x, y];
+        return <b v={[f.length, f(1), f(1, 2)]} />;
+      }
+      export function Bound({ n }) {
+        const f = ((x, y, z = n) => [x, y, z]).bind(null, 1);
+        return <b v={[f.length, f(2), f(2, 3)]} />;
+      }
+      export function ReaderOfLength({ n }) {
+        return <b v={[call((value, more = n) => value), call((error, value) => value), call((value = n) => value)]} />;
+      }
+      // A closure reads a parameter that stands beside the default.
+      export function ClosureOverAParameter({ n }) {
+        const f = (x, y = n) => () => [x, y];
+        const g = (x, y = n) => {
+          x = x + 1;
+          return () => [x, y];
+        };
+        return <b v={[f.length, f(1)(), f(1, 2)(), g.length, g(1)(), g(1, 2)()]} />;
+      }
+      export function NoDefault({ n }) {
+        const f = (x, y) => [x, y];
+        const g = (x, ...y) => [x, y.length, n];
+        const h = ({ a }, [b]) => [a, b];
+        return <b v={[f.length, g.length, h.length, f(1, 2), g(1, 2, 3), h({ a: 1 }, [2])]} />;
+      }
+      export function Component({ n }, ref = null) {
+        return <b v={[n, ref]} />;
+      }
+      export function ComponentWithDefaultProps(props = { n: 5 }) {
+        return <b v={props.n} />;
+      }
+      export const Forwarded = forwardRef((props, ref = null) => <b v={[props.n, ref]} />);
+      export const Memoized = memo(function Inner({ n }, ref = null) {
+        return <b v={[n, ref]} />;
+      });
+      export const useArrow = (a, b = 2) => {
+        useEffect(() => {});
+        return [a, b];
+      };
+      export default function useDefaultExport(a, b = 2) {
+        useEffect(() => {});
+        return [a, b];
+      }
+      export function useDefault(a, b = 2) {
+        useEffect(() => {});
+        return [a, b];
+      }
+      export function useDefaultAndRest(a, b = 2, ...rest) {
+        useEffect(() => {});
+        return [a, b, rest.length];
+      }
+      export function useClosureOverAParameter(url, options = {}) {
+        useEffect(() => {
+          fetch(url, options);
+        }, [url, options]);
+        const read = () => [url, options];
+        return read();
+      }
+    `,
+    ...stubReact,
+    "/node_modules/react/index.js": /* js */ `
+      exports.useEffect = () => {};
+      exports.forwardRef = render => Object.assign(props => render(props, props.ref), { render });
+      exports.memo = exports.forwardRef;
+    `,
+  };
+  for (const [name, reactCompiler, target, backend] of [
+    ["plain", false, "browser", "cli"],
+    ["client", true, "browser", "cli"],
+    ["ssr", true, "bun", "api"],
+  ] as const) {
+    itBundled(`react-compiler/FunctionWithADefaultParameterKeepsItsLength-${name}`, {
+      files: defaultParameterForms,
+      reactCompiler,
+      backend,
+      target,
+      run: { stdout: defaultParameterOutput },
+      onAfterBundle(api) {
+        if (name !== "client") return;
+        // Each compiled form starts with its memo cache. Upstream leaves `Component` as written:
+        // its second parameter has a default.
+        const compiled = api.readFile("/out.js").match(/let \$ = \S*c\(\d+\);/g) ?? [];
+        expect(compiled.length).toBeGreaterThanOrEqual(defaultParameterOutput.trim().split("\n").length - 1);
+      },
+    });
+  }
+  // An --aot build leaves `= undefined` out of the parameter list, so it has the `length` of the whole list.
+  itBundled("react-compiler/FunctionWithADefaultParameterKeepsItsLength-aot", {
+    todo: true,
+    files: defaultParameterForms,
+    reactCompiler: true,
+    backend: "cli",
+    target: "bun",
+    compile: { aot: true },
+    run: { stdout: defaultParameterOutput },
+  });
+
+  // `bun test --react-compiler` compiles a hook of a `.ts` file too, and keeps what it compiled in the
+  // cache of the runtime transpiler. The second run reads the hook from that cache.
+  test(
+    "react-compiler: bun test --react-compiler keeps the length of a hook with a default parameter",
+    async () => {
+      using dir = tempDir("react-compiler-test-length", {
+        "node_modules/react/package.json": JSON.stringify({
+          name: "react",
+          version: "19.0.0",
+          exports: { ".": "./index.js", "./compiler-runtime": "./compiler-runtime.js" },
+        }),
+        "node_modules/react/index.js": `export const useState = value => [value, () => {}];`,
+        "node_modules/react/compiler-runtime.js": `export const c = size => Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
+        "src/useStep.ts": `import { useState } from "react";
+export function useStep(step: number = 1, scale = 2): number[] {
+  const [value] = useState(step);
+  return [value * scale];
+}
+`,
+        "length.test.ts": `import { expect, test } from "bun:test";
+import { useStep } from "./src/useStep";
+test("length", () => {
+  const isCompiled = /\\$\\[\\d+\\]/.test(String(useStep));
+  console.log("seen: " + JSON.stringify([useStep.length, useStep(), useStep(3, 4), isCompiled]));
+  expect(useStep()).toEqual([2]);
+});
+`,
+        "cache/.keep": "",
+      });
+      const seen = async (...flags: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", ...flags, "./length.test.ts"],
+          cwd: String(dir),
+          env: {
+            ...bunEnv,
+            BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(String(dir), "cache"),
+            BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { seen: stdout.match(/seen: (.*)/)?.[1] ?? stderr, exitCode };
+      };
+      expect(await seen()).toEqual({ seen: "[0,[2],[12],false]", exitCode: 0 });
+      expect(await seen("--react-compiler")).toEqual({ seen: "[0,[2],[12],true]", exitCode: 0 });
+      expect(await seen("--react-compiler")).toEqual({ seen: "[0,[2],[12],true]", exitCode: 0 });
+    },
+    isDebug || isASAN ? 60_000 : undefined,
+  );
+
+  // `bun build --dts` writes each bundle with its types kept (`.aot.ts`): the annotation of a
+  // parameter in the source goes to the parameter that the bundle has for it. The parameter
+  // with `= undefined` takes `undefined` beside what the source says of it. Where the source
+  // says nothing of it, the default is `undefined as any`: a callback keeps its contextual type.
+  // No source has that default, which tells it from one that is written: the last two rows
+  // have no compiler.
+  const typedDefaults = [
+    "function useJs(t0 = undefined as any) {",
+    "function useUnchecked(t0 = undefined as any) {",
+    "function useStep(t0: number | undefined = undefined): number {",
+    "function useScaled(base: number, t0 = undefined as any, t1: () => void): number {",
+    "function useCalled(t0: (() => void) | undefined = undefined): number {",
+    "function useIsString(value: unknown, t0: string | undefined = undefined): value is string {",
+    'function useKind(t0: (string extends string ? "s" : "n") | undefined = undefined): string {',
+  ];
+  const writtenDefaults = [
+    "function pick(index: number = undefined as any): number {",
+    "function read({ a }: Options = undefined as any): number {",
+    "function made(value: number = (() => 1)()): number {",
+  ];
+  test.concurrent.each([
+    [
+      "--react-compiler for a server",
+      ["./src/index.tsx", "--react-compiler", "--target=bun"],
+      typedDefaults,
+      '[1,3,6,1,4]\n["s",2,2]\n0 1 0 1 0 0 0\n',
+    ],
+    [
+      "--react-compiler for a client, minified",
+      ["./src/index.tsx", "--react-compiler", "--external", "react/compiler-runtime", "--minify-syntax"],
+      typedDefaults,
+      undefined,
+    ],
+    [
+      "--react-compiler for a callback that has a contextual type",
+      ["./src/contextual.tsx", "--react-compiler", "--target=bun"],
+      ["let step: Step = (base, t0 = undefined as any) => {"],
+      "3 6\n",
+    ],
+    ["a written default", ["./src/written.ts", "--target=bun"], writtenDefaults, "1 2 1\n"],
+    [
+      "a default of undefined in --banner code",
+      ["./src/written.ts", "--target=bun", "--banner=function polyfill(x = undefined) { return x; }"],
+      [...writtenDefaults, "function polyfill(this: any, x: any = undefined) { return x; }"],
+      "1 2 1\n",
+    ],
+  ])(
+    "react-compiler: the typed file of --dts, %s",
+    async (_, flags, lines, stdout) => {
+      const compilerOptions = { strict: true, allowJs: true, jsx: "preserve" };
+      using dir = tempDir("react-compiler-dts", {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            ...compilerOptions,
+            module: "esnext",
+            moduleResolution: "bundler",
+            target: "esnext",
+            types: [],
+          },
+        }),
+        "package.json": JSON.stringify({ name: "steps", version: "1.0.0", compilerOptions }),
+        "src/state.ts": `export function useState<T>(initial: T): [T] {
+  return [initial];
+}
+`,
+        "src/plain.js": `import { useState } from "./state";
+export function useJs(step = 1) {
+  const [value] = useState(step);
+  return value;
+}
+`,
+        "src/loose.tsx": `// @ts-nocheck
+import { useState } from "./state";
+export function useUnchecked(step: number = 1) {
+  const [value] = useState(step);
+  return value;
+}
+`,
+        "src/index.tsx": `import { useUnchecked } from "./loose";
+import { useJs } from "./plain";
+import { useState } from "./state";
+const nothing = () => {};
+export function useStep(step: number = 1): number {
+  const [value] = useState(step);
+  return value;
+}
+export function useScaled(base: number, scale = 2, done: () => void = nothing): number {
+  const [value] = useState(base);
+  done();
+  return value * scale;
+}
+export function useCalled(done: () => void = nothing): number {
+  const [value] = useState(1);
+  done();
+  return value;
+}
+export function useIsString(value: unknown, fallback: string = "x"): value is string {
+  const [other] = useState(fallback);
+  const check = () => typeof value === "string" || other === value;
+  return check();
+}
+export function useKind(kind: string extends string ? "s" : "n" = "s"): string {
+  const [value] = useState(kind);
+  return value;
+}
+const read: unknown = "read";
+console.log(JSON.stringify([useStep(), useStep(3), useScaled(2, 3, nothing), useCalled(), useIsString(read) ? read.length : -1]));
+console.log(JSON.stringify([useKind(), useJs(2), useUnchecked(2)]));
+console.log(useStep.length, useScaled.length, useCalled.length, useIsString.length, useKind.length, useJs.length, useUnchecked.length);
+`,
+        // `by` is a number by the type of `step`. As `any` it takes the other overload of `pad`.
+        "src/contextual.tsx": `import { useState } from "./state";
+function pad(value: string): string;
+function pad(value: number): number;
+function pad(value: any): any {
+  return value;
+}
+type Step = (base: number, by?: number) => number;
+export function useStepper(n: number): Step {
+  const [value] = useState(n);
+  const step: Step = (base, by = value) => {
+    const next: number = pad(by);
+    return base + next;
+  };
+  return step;
+}
+console.log(useStepper(2)(1), useStepper(2)(1, 5));
+`,
+        "src/written.ts": `type Options = { a: number };
+export function pick(index: number = undefined as any): number {
+  return index;
+}
+export function read({ a }: Options = undefined as any): number {
+  return a;
+}
+export function made(value: number = (() => 1)()): number {
+  return value;
+}
+console.log(pick(1), read({ a: 2 }), made());
+`,
+      });
+      const run = async (...cmd: string[]) => {
+        await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const built = await run("build", "--outdir", "out", "--dts", ...flags);
+      expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const name = flags[0].replace(/^.*\/(\w+)\.tsx?$/, "$1");
+      const typed = (await Bun.file(join(String(dir), `out/${name}.aot.ts`)).text()).replaceAll("void 0", "undefined");
+      expect(lines.filter(line => !typed.includes(line))).toEqual([]);
+      if (stdout !== undefined) expect((await run(`out/${name}.js`)).stdout).toBe(stdout);
+    },
+    // A build with --dts checks the types of the bundle: some seconds in a debug build.
+    isDebug || isASAN ? 60_000 : undefined,
+  );
+
   itBundled("react-compiler/SourceMapOfCatch", {
     files: {
       "/entry.jsx": /* jsx */ `

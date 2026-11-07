@@ -1124,6 +1124,13 @@ fn set_flag(flags: &mut flags::FunctionSet, flag: flags::Function, on: bool) {
     }
 }
 
+/// ECMAScript's ExpectedArgumentCount: the `length` of a function with these parameters.
+fn expected_argument_count(args: &[G::Arg], has_rest_arg: bool) -> usize {
+    let positional = &args[..args.len().saturating_sub(usize::from(has_rest_arg))];
+    let initialized = positional.iter().position(|arg| arg.default.is_some());
+    initialized.unwrap_or(positional.len())
+}
+
 fn build_outlined_decl(outlined: CodegenFunction) -> Stmt {
     let mut fn_flags = flags::FUNCTION_NONE;
     if outlined.is_async {
@@ -1401,6 +1408,14 @@ fn compile_pending(
         pending.is_top_level,
     )?;
     let mut flags = pending.flags;
+    debug_assert_eq!(
+        expected_argument_count(&cf.params, cf.has_rest_arg),
+        expected_argument_count(
+            pending.args.slice(),
+            flags.contains(flags::Function::HasRestArg)
+        ),
+        "a compiled function keeps its `length`"
+    );
     set_flag(&mut flags, flags::Function::IsAsync, cf.is_async);
     set_flag(&mut flags, flags::Function::IsGenerator, cf.generator);
     set_flag(&mut flags, flags::Function::HasRestArg, cf.has_rest_arg);

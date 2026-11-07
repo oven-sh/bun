@@ -207,6 +207,33 @@ impl<'a, 's> Syntax<'a, 's> {
         }
     }
 
+    fn is_undefined(&self, expression: ExprId) -> bool {
+        let node = &self.file[expression];
+        let text = &self.text[node.pos as usize..node.end as usize];
+        matches!(text, b"undefined" | b"void 0")
+    }
+
+    fn annotations_of_defaults(&self) -> FxHashMap<u32, ((u32, u32), bool)> {
+        let file = self.file;
+        let mut annotations = FxHashMap::default();
+        for parameter in file.params.iter().filter(|it| it.default.is_some()) {
+            let (Some(key), Some(annotation)) =
+                (self.first_identifier(parameter.pat), parameter.ty.some())
+            else {
+                continue;
+            };
+            let is_parenthesized_in_a_union = matches!(
+                file[annotation].kind,
+                TypeNodeKind::Fn(_) | TypeNodeKind::Cond { .. }
+            );
+            annotations.insert(
+                key,
+                (self.type_span(annotation), is_parenthesized_in_a_union),
+            );
+        }
+        annotations
+    }
+
     fn type_span(&self, node: TypeNodeId) -> (u32, u32) {
         let (mut start, mut end) = (self.file[node].pos, self.file[node].end);
         loop {
@@ -3030,7 +3057,52 @@ impl<'a> Transfer<'_, 'a, '_> {
         anchored
     }
 
+    fn annotate_react_compiler_defaults(&mut self) -> FxHashSet<u32> {
+        let (output, mappings, written) = (self.output, self.mappings, self.modules);
+        let output_file = output.file;
+        let mut annotated: FxHashSet<u32> = FxHashSet::default();
+        let mut annotations_by_source: FxHashMap<u32, FxHashMap<u32, ((u32, u32), bool)>> =
+            FxHashMap::default();
+        for parameter in output_file.params.iter() {
+            let Some(default) = parameter.default.some().filter(|&default| {
+                output.is_undefined(default)
+                    && mappings.original(output_file[default].pos).is_none()
+            }) else {
+                continue;
+            };
+            let Some(key) = output.first_identifier(parameter.pat) else {
+                continue;
+            };
+            let Some((source, source_key)) = mappings.original(key) else {
+                continue;
+            };
+            let annotation = (written[source as usize].as_ref())
+                .filter(|module| !module.is_unchecked())
+                .and_then(|module| {
+                    let annotations = annotations_by_source
+                        .entry(source)
+                        .or_insert_with(|| module.syntax.annotations_of_defaults());
+                    let &((start, end), is_parenthesized) = annotations.get(&source_key)?;
+                    Some((module.trimmed_text(start, end), is_parenthesized))
+                });
+            let Some((annotation, is_parenthesized)) = annotation else {
+                (self.insertions).add(output_file[default].end, Order::Slot, b" as any".to_vec());
+                continue;
+            };
+            let (open, close): (&[u8], &[u8]) = if is_parenthesized {
+                (b": (", b") | undefined")
+            } else {
+                (b": ", b" | undefined")
+            };
+            let text = [open, &annotation[..], close].concat();
+            (self.insertions).add(output_file[parameter.pat].end, Order::Slot, text);
+            annotated.insert(key);
+        }
+        annotated
+    }
+
     fn copy_slots(&mut self, source_slots: &FxHashMap<(Place, u32, u32), Slot>) {
+        let annotated_defaults = self.annotate_react_compiler_defaults();
         let (output, mappings, written, linked) =
             (self.output, self.mappings, self.modules, self.linked);
         let (output_file, insertions) = (output.file, &mut self.insertions);
@@ -3040,6 +3112,9 @@ impl<'a> Transfer<'_, 'a, '_> {
             .map(|function| (Syntax::function_key(function), function.params.len()))
             .collect();
         for slot in &output.slots() {
+            if slot.place == Place::Binding && annotated_defaults.contains(&slot.key) {
+                continue;
+            }
             let Some((source, key)) = mappings.original(slot.key) else {
                 continue;
             };

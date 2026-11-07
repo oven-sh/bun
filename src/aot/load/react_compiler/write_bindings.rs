@@ -64,7 +64,8 @@ impl TreeWriter<'_, '_> {
             return Err(UnsupportedNode("TypeScript parameter"));
         }
         let pat = self.write_binding(&parameter.binding)?;
-        let default = self.write_expression_or_none(parameter.default.as_ref())?;
+        // The compiler's `= undefined` keeps `length`. It is left out: an --aot build has the `length` of the whole list.
+        let default = ExprId::NONE;
         let (start, binding_end) = self.range_of(parameter.binding.loc);
         let is_identifier = matches!(parameter.binding.data, BindingData::BIdentifier(_));
         let can_be_optional = is_identifier && !is_rest && default.is_none();

@@ -162,6 +162,12 @@ size_t uws_h2_res_get_buffered_amount(uws_h2_res_t* res) { return ((Http2Respons
 
 void uws_h2_res_reset_timeout(uws_h2_res_t* res) { ((Http2Response*)res)->resetTimeout(); }
 void uws_h2_res_timeout(uws_h2_res_t* res, uint8_t seconds) { ((Http2Response*)res)->setTimeout(seconds); }
+/* The stream takes the server's idle timeout as an explicit budget: retireStream() only recomputes the connection's for a stream that has one. */
+void uws_h2_res_start_timeout(uws_h2_res_t* res)
+{
+    auto* stream = (Http2Response*)res;
+    if (!stream->dead) stream->setTimeout((uint8_t)stream->conn->ctx->idleTimeoutS);
+}
 void uws_h2_res_end_sendfile(uws_h2_res_t* res, uint64_t, bool close)
 {
     ((Http2Response*)res)->sendTerminatingChunk(close);

@@ -340,20 +340,49 @@ describe("outer describe", () => {
 
 ## Error Handling
 
-If a `beforeAll` hook throws, the test runner skips every test in the hook's scope:
+A hook fails when it does one of these:
+
+- It throws an error.
+- It returns a promise that rejects.
+- It passes an error to its `done` callback.
+
+If a `beforeAll` hook fails, the test runner doesn't run the tests in the hook's scope:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { beforeAll, test } from "bun:test";
 
 beforeAll(() => {
-  // If this throws, all tests in this scope will be skipped
+  // If this throws, no test in this scope runs
   throw new Error("Setup failed");
 });
 
-test("this test will be skipped", () => {
+test("this test doesn't run", () => {
   // This won't run because beforeAll failed
 });
 ```
+
+A hook that takes a `done` callback fails the same way when `done` receives an error:
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { beforeAll, test } from "bun:test";
+import { mkdir } from "node:fs";
+
+beforeAll(done => {
+  // If mkdir() passes an error to done, no test in this scope runs
+  mkdir("./fixtures", done);
+});
+```
+
+What the test runner does next depends on the hook that failed:
+
+| Hook         | What the test runner does when the hook fails                                                                                                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `beforeAll`  | Reports the hook as failed. Runs no other `beforeAll` hook and no test in the hook's scope, and doesn't list those tests in the output. Still runs the `afterAll` hooks of the hook's describe block or file. |
+| `beforeEach` | Skips the later `beforeEach` hooks and the test, and reports the test as failed. Still runs the test's `afterEach` hooks.                                                                                     |
+| `afterEach`  | Reports the test as failed. Skips the later `afterEach` hooks and the `onTestFinished` callbacks of that test.                                                                                                |
+| `afterAll`   | Reports the hook as a separate failure and keeps the results of the tests. Skips the later `afterAll` hooks of the same describe block or file.                                                               |
+
+A `beforeAll` hook in a [preload script](#global-setup-and-teardown) runs before the first test file. If it fails, the test runner doesn't run the tests of that file, and the later files still run. With `--isolate` or `--parallel`, the hook runs for each file.
 
 To log a setup failure and still fail the suite:
 

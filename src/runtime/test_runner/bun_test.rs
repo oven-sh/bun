@@ -986,19 +986,15 @@ impl BunTest {
         Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, true)
     }
 
-    fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
+    fn on_done_error(global_this: &JSGlobalObject, done: &DoneCallback, error: JSValue) {
         if let Some(strong) = clone_active_strong() {
             let this = strong.get();
-            let is_running_test = this
-                .execution
-                .get_current_and_valid_execution_sequence(entry)
-                .is_some_and(|(sequence, _)| sequence.active_entry == sequence.test_entry);
-            if is_running_test {
-                this.on_uncaught_exception(global_this, Some(error), false, entry);
-                // As for any other uncaught exception: the test is over whatever its callback returns,
-                // and `on_before_exit()` doesn't drain the event loop of a file that failed.
-                this.add_result(*entry);
-                Self::run_next_tick(&Rc::downgrade(&strong), global_this, *entry);
+            if done.current_sequence(this).is_some() {
+                this.on_uncaught_exception(global_this, Some(error), false, &done.entry);
+                // Like an uncaught exception, and unlike a throw from the callback: the entry is over whatever
+                // the callback returns, and the count keeps `on_before_exit()` from draining this file's event loop.
+                this.add_result(done.entry);
+                Self::run_next_tick(&Rc::downgrade(&strong), global_this, done.entry);
                 global_this.bun_vm().as_mut().unhandled_error_counter += 1;
                 return;
             }
@@ -1028,7 +1024,7 @@ impl BunTest {
         } else {
             // error is only reported for the first done() call
             if was_error {
-                Self::on_done_error(global_this, &this.entry, value);
+                Self::on_done_error(global_this, this, value);
             }
         }
         this.called.set(true);
@@ -1039,10 +1035,7 @@ impl BunTest {
         // dupe the ref and enqueue a task to call the done callback.
         // this makes it so if you do something else after calling done(), the next test doesn't start running until the next tick.
 
-        let has_one_ref = ref_in.has_one_ref();
-        let should_run = has_one_ref || was_error;
-
-        if !should_run {
+        if !ref_in.has_one_ref() {
             return Ok(());
         }
 
@@ -1356,7 +1349,7 @@ impl BunTest {
 
         if cfg_done_parameter {
             bun_core::scoped_log!(bun_test_group, "callTestCallback -> appending done callback param: data {}", cfg_data);
-            done_callback = DoneCallback::create_unbound(global_this, cfg_data);
+            done_callback = DoneCallback::create_unbound(global_this, cfg_data, this_strong.bun_test_root.file_generation);
             done_arg = match DoneCallback::bind(done_callback, global_this) {
                 Ok(v) => v,
                 Err(e) => {

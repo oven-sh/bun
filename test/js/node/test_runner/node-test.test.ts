@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -85,6 +85,66 @@ describe("node:test", () => {
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 1,
       stderr: expect.stringContaining("10 fail"),
+    });
+  });
+
+  test.concurrent("should fail a suite whose before() or after() hook fails", async () => {
+    // No test under a failed before() runs.
+    const { exitCode, stdout, stderr } = await runTests(["31-failing-suite-hooks.js"]);
+    expect({ ...report(stdout, stderr), exitCode }).toEqual({
+      bodiesRan: [],
+      errors: [
+        "error: after() threw",
+        "error: before() threw",
+        "error: before() rejected",
+        "error: before() called done(err)",
+      ],
+      verdicts: [
+        "(pass) after() throws > passes by itself",
+        "(fail) after() throws > (unnamed)",
+        "(fail) before() throws > (unnamed)",
+        "(fail) before() rejects > (unnamed)",
+        "(fail) before() passes an error to done > (unnamed)",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("should run no test after a before() hook at the root of the file fails", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["31b-failing-root-before.js"]);
+    expect({ ...report(stdout, stderr), exitCode }).toEqual({
+      bodiesRan: [],
+      errors: ["error: root before() threw"],
+      verdicts: ["(fail) (unnamed)"],
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("run() should emit no test:pass for a test under a failed suite before()", async () => {
+    const fixture = join(import.meta.dirname, "fixtures", "31-failing-suite-hooks.js");
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { run } from "node:test";
+          const passed = [];
+          const stream = run({ files: [${JSON.stringify(fixture)}] });
+          stream.on("test:pass", event => passed.push(event.name));
+          for await (const event of stream) {
+          }
+          console.log(JSON.stringify(passed));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ passed: stdout.trim(), stderr, exitCode }).toEqual({
+      passed: JSON.stringify(["passes by itself"]),
+      stderr: "",
+      exitCode: 0,
     });
   });
 
@@ -269,6 +329,19 @@ describe("node:test", () => {
     });
   });
 
+  // A test body that an uncaught error left pending calls t.skip() while the next run of the same test is active.
+  // The mark must not reach that run. Only a build whose allocator gives the entry of the next run the address of
+  // the freed one can get this wrong, and not in every run. A debug build needs minutes for the 600 runs.
+  test.skipIf(isDebug)("should not skip a test for a t.skip() from an earlier --rerun-each run", async () => {
+    const { exitCode, stderr } = await runTests(["32-rerun-late-skip.mjs"], {}, ["--rerun-each=600"]);
+    const lines = stderr.replaceAll("\r\n", "\n").split("\n");
+    expect({
+      skipped: lines.filter(line => line.startsWith("(skip)")).length,
+      summary: lines.filter(line => /^ *\d+ (pass|skip|fail)$/.test(line)).map(line => line.trim()),
+      exitCode,
+    }).toEqual({ skipped: 0, summary: ["300 pass", "300 fail"], exitCode: 1 });
+  });
+
   test("should keep node's zero-delay mock interval semantics", async () => {
     const { exitCode, stderr } = await runTests(["18-mock-timers-interval-zero.js"]);
     expect(stderr).toContain("3 pass");
@@ -324,6 +397,17 @@ describe("node:test", () => {
     });
   });
 });
+
+// The test bodies that ran (a fixture prints "BODY RAN ..." from a body that must not run), the errors
+// that `bun test` printed, and its (pass) and (fail) lines.
+function report(stdout: string, stderr: string) {
+  const lines = stderr.replaceAll("\r\n", "\n").split("\n");
+  return {
+    bodiesRan: stdout.split("\n").filter(line => line.startsWith("BODY RAN")),
+    errors: lines.filter(line => line.startsWith("error: ")),
+    verdicts: lines.filter(line => /^\((pass|fail)\) /.test(line)).map(line => line.replace(/ \[[\d.]+m?s\]$/, "")),
+  };
+}
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {
   const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));

@@ -818,7 +818,12 @@ declare module "bun:test" {
    * Use this for setup, like initializing a global variable or
    * connecting to a database.
    *
-   * If the function throws, no tests in the file run.
+   * If the function throws, returns a promise that rejects, or passes an
+   * error to `done`, no tests in its scope run.
+   *
+   * A hook in a `--preload` file runs before the first test file. If it
+   * fails, only the tests of that file do not run. With `--isolate` or
+   * `--parallel`, the hook runs for each file.
    *
    * @example
    * ```ts
@@ -840,7 +845,8 @@ declare module "bun:test" {
    * Use this for setup, like initializing a global variable or
    * connecting to a database.
    *
-   * If the function throws, the test does not run.
+   * If the function throws, returns a promise that rejects, or passes an
+   * error to `done`, the test does not run.
    *
    * @param fn the function to run
    */

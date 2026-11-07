@@ -617,13 +617,11 @@ pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
     let Some(dcb) = wrapper.as_class_ref::<bun_test::DoneCallback>() else {
         return;
     };
-    let bound = dcb.entry;
     if dcb.called.get() {
         // done() already ran and reported — nothing left to mark.
         return;
     }
-    let Some((sequence, _)) = buntest.execution.get_current_and_valid_execution_sequence(&bound)
-    else {
+    let Some(sequence) = dcb.current_sequence(buntest) else {
         return;
     };
     if sequence.result == ExecResult::Pending {

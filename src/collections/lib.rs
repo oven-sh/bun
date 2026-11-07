@@ -21,6 +21,7 @@ pub mod vec_ext;
 // `bun_collections::bounded_array::*` paths keep resolving.
 pub use bun_core::bounded_array;
 pub mod identity_context;
+pub mod lazily_zeroed_vec;
 pub mod linear_fifo;
 
 pub mod bit_set;
@@ -34,6 +35,7 @@ pub use bounded_array::BoundedArray;
 pub use hive_array::{
     Fallback as HiveArrayFallback, HiveArray, HiveBox, HiveRef, HiveRefHandle, HiveSlot,
 };
+pub use lazily_zeroed_vec::LazilyZeroedVec;
 pub use linear_fifo::LinearFifo;
 pub use multi_array_list::MultiArrayList;
 #[doc(hidden)]

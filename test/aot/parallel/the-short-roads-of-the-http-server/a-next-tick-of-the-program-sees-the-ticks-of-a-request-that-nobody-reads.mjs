@@ -27,8 +27,8 @@ clearServerParserIncoming 2
 emitCloseNT 1
 emitEOFIncomingMessageOuter 1
 emitErrorNextTickIfErrorListener 3
-emitResponseFinished 2
 endReadableNT 2
+finishResponse 1
 markResponseEndedNT 1
 resume_ 2
 */

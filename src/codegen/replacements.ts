@@ -147,8 +147,8 @@ export function assertNoDestructuredGlobalThis(source: string, file: string) {
   }
 }
 
-// ws stands in for an npm package, whose timers are the ones script sees. node:timers/promises sets and clears with what globalThis had at its first load.
-const modulesWithTimersOfScript = ["thirdparty/ws.ts", "node/timers.promises.ts"];
+// These stand in for an npm package, whose timers are the ones script sees.
+const modulesWithTimersOfScript = ["thirdparty/ws.ts"];
 const readOfGlobalThis = "__nativeFunctionOfGlobalThis_";
 const transpilersThatMarkReads = new Map<string, Bun.Transpiler>();
 

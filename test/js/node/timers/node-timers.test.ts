@@ -1,6 +1,6 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
@@ -456,39 +456,48 @@ it("_onTimeout is the callback inside AsyncLocalStorage.run()", () => {
   }
 });
 
-it("timers/promises clears its timers with the globals that were there when it set them", async () => {
+it("timers/promises sets and clears its timers with its own functions, not the globals that were there when it loaded", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
+        const { getEventLoopStats } = require("bun:internal-for-testing");
         const live = new Set();
         const set = () => {
           const timer = { ref: () => timer, unref: () => timer, hasRef: () => true };
           live.add(timer);
           return timer;
         };
-        const clear = timer => void live.delete(timer);
+        let cleared = 0;
+        const clear = timer => void (cleared++, live.delete(timer));
         Object.assign(globalThis, { setTimeout: set, setInterval: set, setImmediate: set });
         Object.assign(globalThis, { clearTimeout: clear, clearInterval: clear, clearImmediate: clear });
 
         const promises = require("node:timers/promises");
+        // A timer that the module set for itself is one more thing that keeps the event loop alive.
+        const idle = getEventLoopStats().numPolls;
         const counts = [];
+        const held = [];
+        const look = () => {
+          counts.push(live.size);
+          held.push(getEventLoopStats().numPolls > idle);
+        };
         for (const start of [promises.setTimeout, promises.setImmediate]) {
           const controller = new AbortController();
           const options = { signal: controller.signal };
           const aborted = (start === promises.setTimeout ? start(1000, null, options) : start(null, options)).catch(() => {});
-          counts.push(live.size);
+          look();
           controller.abort();
           await aborted;
-          counts.push(live.size);
+          look();
         }
         const iterator = promises.setInterval(1000)[Symbol.asyncIterator]();
         iterator.next();
-        counts.push(live.size);
+        look();
         await iterator.return();
-        counts.push(live.size);
-        console.log(counts.join());
+        look();
+        console.log(counts.join(), cleared, held.join());
       `,
     ],
     env: bunEnv,
@@ -496,5 +505,46 @@ it("timers/promises clears its timers with the globals that were there when it s
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1,0,1,0,1,0\n", stderr: "", exitCode: 0 });
+  // The functions of the program are never called. The module holds a timer of its own until the abort or the return().
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "0,0,0,0,0,0 0 true,false,true,false,true,false\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("a spy on setTimeout that a test file restored does not stay in timers/promises for the next file", async () => {
+  using dir = tempDir("spy-on-a-timer-global", {
+    // The module is first loaded while the spy is on globalThis. A spy does nothing once it is restored.
+    "a.test.ts": `
+      import { spyOn, test } from "bun:test";
+      test("a", async () => {
+        spyOn(globalThis, "setTimeout");
+        await require("node:timers/promises").setTimeout(1);
+      });
+    `,
+    "b.test.ts": `
+      import { expect, test } from "bun:test";
+      import { promisify } from "node:util";
+      test("b", async () => {
+        const timers = require("node:timers");
+        const settled = [await timers.promises.setTimeout(1, "settled"), await promisify(setTimeout)(1, "settled")];
+        expect({ settled, isTheGlobal: timers.setTimeout === setTimeout }).toEqual({
+          settled: ["settled", "settled"],
+          isTheGlobal: true,
+        });
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    // The results are on stderr. stdout has the version line alone.
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 2 pass\n 0 fail\n");
+  expect(exitCode).toBe(0);
 });

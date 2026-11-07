@@ -485,15 +485,6 @@ extern "C" void Bun__FakeTimers__markBuiltinForCompiledCode(Zig::GlobalObject* g
     JSObject::deleteProperty(function, globalObject, clock, slot);
 }
 
-// node:timers/promises captures the globals when first loaded, so load it before installing fakes.
-extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__FakeTimers__loadNodeTimers(Zig::GlobalObject* globalObject)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeTimersPromises, "bun:test");
-    RETURN_IF_EXCEPTION(scope, );
-}
-
 extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__FakeTimers__processObject(Zig::GlobalObject* globalObject)
 {
     return JSValue::encode(globalObject->processObject());

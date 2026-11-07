@@ -75,3 +75,48 @@ test.each([
   const events = JSON.parse(readFileSync(join(String(dir), "node_trace.1.log"), "utf8")).traceEvents;
   expect(events.filter(e => e.name === "Timeout").map(e => e.ph)).toEqual(["b", "e"]);
 });
+
+// The timers of node:timers and node:timers/promises are the ones that are traced, not what script has put on globalThis.
+test.each([
+  ["--trace-event-categories", ["--trace-event-categories", "node.async_hooks", "main.cjs"]],
+  ["createTracing().enable()", ["main.cjs", "enable"]],
+])(
+  "Timeout events of node:timers and node:timers/promises after script replaced the globals, with %s",
+  async (_, args) => {
+    using dir = tempDir("trace-events-timers", {
+      "main.cjs": `
+      const fakes = [];
+      for (const name of ["setTimeout", "setInterval", "clearTimeout", "clearInterval"]) {
+        globalThis[name] = () => void fakes.push(name);
+      }
+      if (process.argv[2] === "enable") {
+        require("node:trace_events").createTracing({ categories: ["node.async_hooks"] }).enable();
+      }
+      const timers = require("node:timers");
+      const fired = [];
+      timers.setTimeout(() => fired.push("node:timers"), 1);
+      require("node:timers/promises").setTimeout(1).then(() => fired.push("node:timers/promises"));
+      require("node:util").promisify(timers.setTimeout)(1).then(() => fired.push("util.promisify"));
+      process.on("exit", () => console.log(JSON.stringify({ fired: fired.sort(), fakes })));
+    `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ fired: ["node:timers", "node:timers/promises", "util.promisify"], fakes: [] }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const events = JSON.parse(readFileSync(join(String(dir), "node_trace.1.log"), "utf8")).traceEvents;
+    const phases = events.filter(e => e.name === "Timeout").map(e => e.ph);
+    expect(phases.sort()).toEqual(["b", "b", "b", "e", "e", "e"]);
+  },
+);

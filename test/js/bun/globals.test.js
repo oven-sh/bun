@@ -499,6 +499,44 @@ describe.concurrent("builtin modules read the native classes and objects, not th
       ).toEqual({ exported: names, fired: ["immediate", "interval", "timeout"], base64: ["aGk=", "hi"], getters: 0 });
     });
 
+    it("node:timers/promises schedules with them after the globals were replaced", async () => {
+      expect(
+        await run(`
+          const fakes = [];
+          for (const name of ${JSON.stringify(timers)}) globalThis[name] = () => void fakes.push(name);
+          const timersPromises = require("node:timers/promises");
+          const settled = [];
+          const settle = value => void settled.push(value);
+          timersPromises.setTimeout(1, "setTimeout").then(settle);
+          timersPromises.setImmediate("setImmediate").then(settle);
+          timersPromises.scheduler.wait(1).then(() => settle("scheduler.wait"));
+          timersPromises.scheduler.yield().then(() => settle("scheduler.yield"));
+          (async () => {
+            for await (const value of timersPromises.setInterval(1, "setInterval")) return settle(value);
+          })();
+          require("node:util").promisify(require("node:timers").setTimeout)(1, "promisify").then(settle);
+          require("node:timers").promises.setTimeout(1, "timers.promises").then(settle);
+          // A real timer that the abort doesn't clear keeps the process alive for a day.
+          const controller = new AbortController();
+          timersPromises.setTimeout(86_400_000, null, { signal: controller.signal }).catch(error => settle(error.name));
+          controller.abort();
+          process.on("exit", () => console.log(JSON.stringify({ settled: settled.sort(), fakes })));
+        `),
+      ).toEqual({
+        settled: [
+          "AbortError",
+          "promisify",
+          "scheduler.wait",
+          "scheduler.yield",
+          "setImmediate",
+          "setInterval",
+          "setTimeout",
+          "timers.promises",
+        ],
+        fakes: [],
+      });
+    });
+
     it("each realm exports its own", async () => {
       expect(
         await run(`
@@ -559,9 +597,11 @@ describe.concurrent("builtin modules read the native classes and objects, not th
         "main.mjs": `
           import { atob, btoa } from "node:buffer";
           import * as timers from "node:timers";
+          import { setTimeout as sleep } from "node:timers/promises";
           console.log(
             JSON.stringify({
               replaced: Object.keys(natives).filter(name => ({ ...timers, atob, btoa })[name] !== natives[name]),
+              slept: await sleep(1, "slept"),
             }),
           );
         `,
@@ -574,7 +614,7 @@ describe.concurrent("builtin modules read the native classes and objects, not th
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: JSON.stringify({ replaced: [] }) + "\n",
+        stdout: JSON.stringify({ replaced: [], slept: "slept" }) + "\n",
         stderr: "",
         exitCode: 0,
       });

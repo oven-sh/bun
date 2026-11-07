@@ -651,7 +651,8 @@ describe.concurrent("a file that Bun's parser refuses fails to load with one Syn
   // A diagnostic without a line does not say where the parser refused the text. A file that is
   // nested too deeply is not refused for its syntax: JavaScriptCore and Node report a RangeError.
   test("a diagnostic without a line, and a file that is nested too deeply, stay a BuildMessage", async () => {
-    const depth = 30_000;
+    // Deep enough to overflow the parser's stack on every platform, whatever the size of a frame.
+    const depth = 2_000_000;
     const { stdout, stderr, exitCode } = await run({
       // The position of an error in a transcoded document is not a position in the file.
       "no-line.xml": Buffer.from(`<?xml version="1.0" encoding="ISO-8859-1"?>\n<a>\xE9<b></a>\n`, "latin1"),

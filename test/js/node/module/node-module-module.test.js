@@ -1122,7 +1122,7 @@ console.log("survived", require("./late.js"));`,
       nullThis: { name: "dep" },
       relative: { name: "dep" },
       builtin: true,
-      failedLoad: "threw BuildMessage",
+      failedLoad: "threw SyntaxError",
       leftInCache: false,
     });
     expect(exitCode).toBe(0);

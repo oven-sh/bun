@@ -3946,9 +3946,16 @@ impl VirtualMachine {
     }
 }
 
-/// Synthesize a JS `BuildMessage` / `ResolveMessage` / `AggregateError` from
-/// the parser `log` for a failed fetch, so the import promise rejects with a
-/// real Error instead of `undefined`.
+/// The value a failed fetch rejects with, made from the transpile `log`.
+///
+/// A log whose first error is [`BuildMessage::is_syntax_error`] gives one
+/// `SyntaxError`, which keeps the wrappers of the diagnostics for the
+/// printers. Any other log gives a `BuildMessage`, a `ResolveMessage`, or an
+/// `AggregateError` of them.
+///
+/// [`BuildMessage::is_syntax_error`]: crate::BuildMessage::is_syntax_error
+#[cold]
+#[inline(never)]
 pub fn process_fetch_log(
     global_this: &JSGlobalObject,
     specifier: &bun_core::String,
@@ -3958,6 +3965,9 @@ pub fn process_fetch_log(
 ) -> JSValue {
     use crate::{BuildMessage, ResolveMessage};
 
+    /// How many diagnostics of one log reach JS.
+    const MAX_DIAGNOSTICS: usize = 256;
+
     // Helper: on error, swap in the pending exception value.
     let take =
         |r: JsResult<JSValue>| -> JSValue { r.unwrap_or_else(|e| global_this.take_exception(e)) };
@@ -3966,16 +3976,55 @@ pub fn process_fetch_log(
     // we must convert to UTF-8 here.
     let referrer_utf8 = referrer.to_utf8();
 
-    let msg_to_js = |msg: bun_ast::Msg| -> JSValue {
-        take(match msg.metadata {
+    let wrap = |msg: bun_ast::Msg| -> JsResult<JSValue> {
+        match msg.metadata {
             bun_ast::Metadata::Build | bun_ast::Metadata::TypeScript { .. } => {
                 BuildMessage::create(global_this, msg)
             }
             bun_ast::Metadata::Resolve(_) => {
                 ResolveMessage::create(global_this, &msg, referrer_utf8.slice())
             }
-        })
+        }
     };
+    let msg_to_js = |msg: bun_ast::Msg| -> JSValue { take(wrap(msg)) };
+
+    // A warning can precede the first error.
+    let first_error = log
+        .msgs
+        .iter()
+        .position(|msg| msg.kind == bun_ast::Kind::Err);
+    if let Some(first) =
+        first_error.filter(|&first| BuildMessage::is_syntax_error(&log.msgs[first]))
+    {
+        let syntax_error = |cell: JSValue, all: JSValue| -> JsResult<JSValue> {
+            cell.as_class_ref::<BuildMessage>()
+                .expect("a Build diagnostic is wrapped in a BuildMessage")
+                .to_syntax_error(global_this, cell, all)
+        };
+        return take(if log.msgs.len() == 1 {
+            wrap(log.msgs.swap_remove(0)).and_then(|cell| syntax_error(cell, JSValue::ZERO))
+        } else {
+            crate::MarkedArgumentBuffer::new(|cells| {
+                // The first error and the entries around it, in log order.
+                let mut first_cell = JSValue::ZERO;
+                let mut others = 0;
+                for (i, msg) in log.msgs.drain(..).enumerate() {
+                    if i != first {
+                        if others == MAX_DIAGNOSTICS - 1 {
+                            continue;
+                        }
+                        others += 1;
+                    }
+                    let cell = wrap(msg)?;
+                    cells.append(cell);
+                    if i == first {
+                        first_cell = cell;
+                    }
+                }
+                syntax_error(first_cell, cells.construct_array(global_this)?)
+            })
+        });
+    }
 
     match log.msgs.len() {
         0 => {
@@ -4024,7 +4073,8 @@ pub fn process_fetch_log(
             // to that scan, so a GC triggered by a later `create` could sweep
             // the earlier cells and free their native
             // `BuildMessage`/`ResolveMessage` out from under us.
-            let mut errors_stack: [JSValue; 256] = [JSValue::default(); 256];
+            let mut errors_stack: [JSValue; MAX_DIAGNOSTICS] =
+                [JSValue::default(); MAX_DIAGNOSTICS];
             let len = log.msgs.len().min(errors_stack.len());
             for (i, msg) in log.msgs.drain(..len).enumerate() {
                 errors_stack[i] = msg_to_js(msg);
@@ -6811,6 +6861,24 @@ impl VirtualMachine {
             }
         }
 
+        // The module loader's `SyntaxError` for a file that Bun's parser refuses is reported as
+        // a `BuildMessage` is: its diagnostics, then the frames of the throw.
+        if let Some(diagnostics) = crate::BuildMessage::load_diagnostics(self.global(), value) {
+            let gap = self.had_errors;
+            self.print_load_diagnostics(
+                &diagnostics,
+                exception_list.is_some(),
+                writer,
+                allow_ansi_color,
+                gap,
+            );
+            if allow_side_effects {
+                self.had_errors = true;
+                bun_core::Output::flush();
+            }
+            return true;
+        }
+
         if let Err(err) = self.print_error_instance_js(
             value,
             exception_list,
@@ -6833,6 +6901,37 @@ impl VirtualMachine {
             }
         }
         false
+    }
+
+    /// Writes the diagnostics of the module loader's `SyntaxError`, a blank line between two.
+    /// `gap` asks for one before the first. Unlike a `BuildMessage`, the error has no `logged`
+    /// latch: the registry can hand the same object to a later importer, whose report is not a
+    /// repeat.
+    fn print_load_diagnostics(
+        &mut self,
+        diagnostics: &crate::LoadDiagnostics<'_>,
+        add_to_log: bool,
+        writer: &mut bun_core::io::Writer,
+        allow_ansi_color: bool,
+        mut gap: bool,
+    ) {
+        for msg in diagnostics.iter() {
+            if gap {
+                let _ = writer.write_all(b"\n");
+            }
+            gap = true;
+            let _ = if allow_ansi_color {
+                msg.write_format::<true>(&mut bun_io::AsFmt::new(writer))
+            } else {
+                msg.write_format::<false>(&mut bun_io::AsFmt::new(writer))
+            };
+            let _ = writer.write_all(b"\n");
+            if add_to_log {
+                if let Some(log) = self.log_mut() {
+                    let _ = log.add_msg(msg.clone());
+                }
+            }
+        }
     }
 
     /// Note: takes a runtime bool + concrete writer.
@@ -7941,6 +8040,16 @@ impl VirtualMachine {
             let over_cap = formatter.depth > formatter.error_chain_max_depth();
             let result: crate::CrateResult<()> = if over_cap {
                 pretty_write!(writer, "<r><cyan>[Error ...]<r>").map_err(Into::into)
+            } else if let Some(diagnostics) = crate::BuildMessage::load_diagnostics(global_ref, err)
+            {
+                self.print_load_diagnostics(
+                    &diagnostics,
+                    exception_list.is_some(),
+                    writer,
+                    allow_ansi_color,
+                    false,
+                );
+                Ok(())
             } else {
                 self.print_error_instance_js(
                     err,

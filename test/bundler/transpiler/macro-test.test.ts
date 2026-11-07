@@ -142,6 +142,44 @@ test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
 });
 
+// The macro runner reports the error and fails the macro. For a rejection, the rejection tracker must not report it again.
+test.concurrent.each([
+  [
+    "rejects with an Error",
+    `export async function load() {\n  await Promise.resolve();\n  throw new Error("macro rejected");\n}\n`,
+    ["error: macro rejected"],
+  ],
+  [
+    "rejects with the SyntaxError of a file that does not parse",
+    `export async function load() {\n  await import("./bad.js");\n}\n`,
+    ['error: The constant "x" must be initialized', 'error: The constant "y" must be initialized'],
+  ],
+  [
+    "returns the SyntaxError of a file that does not parse",
+    `export function load() {\n  try {\n    import.meta.require("./bad.js");\n  } catch (e) {\n    return e;\n  }\n}\n`,
+    ['error: The constant "x" must be initialized', 'error: The constant "y" must be initialized'],
+  ],
+])("a macro that %s is reported once", async (_, macro, reported) => {
+  using dir = tempDir("macro-failure-report", {
+    "bad.js": `const x;\nconst y;\n`,
+    "macro.ts": macro,
+    "main.ts": `import { load } from "./macro.ts" with { type: "macro" };\nconsole.log(load());\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr.split("\n").filter(line => line.startsWith("error: "))).toEqual([
+    ...reported,
+    "error: macro threw exception",
+  ]);
+  expect(exitCode).toBe(1);
+});
+
 // This file used `assert` for its own imports until TypeScript 7 made that a syntax error (TS2880).
 test("the `assert { type: 'macro' }` spelling works for every form of import", async () => {
   using dir = tempDir("macro-import-assertion", {

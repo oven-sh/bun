@@ -61,19 +61,19 @@ it("files in the encodings XML requires are decoded before parsing", async () =>
   expect((await import("./xml-latin1.xml")).default).toEqual({ doc: { "@lang": "français", "#text": "café" } });
 });
 
-it("a malformed file is a build error with the parser's message and location", async () => {
+it("a malformed file is a SyntaxError with the parser's message and location", async () => {
   let error;
   try {
     await import("./xml-malformed.xml");
   } catch (e) {
     error = e;
   }
-  expect(error?.name).toBe("BuildMessage");
+  expect(error?.name).toBe("SyntaxError");
   expect(error.message).toBe("Expected closing tag </port> but found </bad>");
   expect(error.position).toMatchObject({ line: 3, column: 13, lineText: "  <port>8080</bad>" });
 });
 
-it("a document nested too deeply to parse is a build error, not a crash or a missing module", async () => {
+it("a document nested too deeply to parse is a SyntaxError, not a crash or a missing module", async () => {
   // Deep enough to overflow any native stack, whatever the frame size.
   const depth = 2_000_000;
   using dir = tempDir("xml-deep", {
@@ -85,6 +85,6 @@ it("a document nested too deeply to parse is a build error, not a crash or a mis
   } catch (e) {
     error = e;
   }
-  expect(error?.name).toBe("BuildMessage");
+  expect(error?.name).toBe("SyntaxError");
   expect(error.message).toBe("Nesting is too deep");
 });

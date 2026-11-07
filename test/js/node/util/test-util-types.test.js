@@ -369,9 +369,18 @@ export default /BADD~!!!!;
   `;
   const blob = new Blob([badCode], { type: "application/javascript" });
   const url = URL.createObjectURL(blob);
-  let buildError;
+  let syntaxError;
   try {
     require(url);
+  } catch (e) {
+    syntaxError = e;
+  }
+  expect(types.isNativeError(syntaxError)).toBeTrue();
+  expect(syntaxError.constructor.name).toBe("SyntaxError");
+
+  let buildError;
+  try {
+    new Bun.Transpiler().transformSync(badCode);
   } catch (e) {
     buildError = e;
   }

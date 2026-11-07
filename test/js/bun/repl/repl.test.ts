@@ -2157,6 +2157,33 @@ describe.concurrent("--interactive", () => {
     },
     interactiveTimeout,
   );
+
+  // The REPL removes the frames of a SyntaxError, and the one frame of this error is what names
+  // the file. Node prints the location above the message.
+  test(
+    "a file that does not parse is reported with its location, the source line and a caret",
+    async () => {
+      using dir = tempDir("repl-syntax-error", {
+        "config.js": `module.exports = {\n  a: 1\n  b: 2,\n};\n`,
+        "bad.mjs": `const x;\n`,
+      });
+      const { stdout, stderr, exitCode } = await runInteractive(
+        [],
+        `require("./config.js")\nawait import("./bad.mjs")\n`,
+        { cwd: String(dir) },
+      );
+      const at = (file: string) => path.join(String(dir), file);
+      expect(stdout).toContain(
+        `> ${at("config.js")}:3\n  b: 2,\n  ^\n\nUncaught SyntaxError: Expected "}" but found "b"\n`,
+      );
+      expect(stdout).toContain(
+        `${at("bad.mjs")}:1\nconst x;\n      ^\n\nUncaught SyntaxError: The constant "x" must be initialized\n`,
+      );
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
 });
 
 // ts-node does `require("repl")` at import time but only touches

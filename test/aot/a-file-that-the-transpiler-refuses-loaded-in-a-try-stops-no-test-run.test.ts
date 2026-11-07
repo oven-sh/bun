@@ -45,7 +45,7 @@ test.each(["", "TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"])(
     const folder = String(dir);
     const plain = await runTests(folder, []);
     expect(plain).toMatchObject({ counts: [` ${Object.keys(refused).length + 1} pass`, " 0 fail"], exitCode: 0 });
-    expect(plain.printed).toContain("require mixes.cjs BuildMessage");
+    expect(plain.printed).toContain("require mixes.cjs SyntaxError");
     expect(await runTests(folder, ["--aot"], words)).toEqual(plain);
   },
   240_000,

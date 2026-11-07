@@ -111,8 +111,8 @@ describe("transpiler cache", () => {
        }
        console.log(JSON.stringify(out));`,
     );
-    const mixed = ["BuildMessage", "Cannot use import statement with CommonJS-only features"];
-    const first = ["BuildMessage", 'Invalid identifier: "0foo"'];
+    const mixed = ["SyntaxError", "Cannot use import statement with CommonJS-only features"];
+    const first = ["SyntaxError", 'Invalid identifier: "0foo"'];
     const expected = JSON.stringify({
       "import ./mixed.js": mixed,
       "require ./mixed.js": mixed,

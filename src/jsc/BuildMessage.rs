@@ -26,7 +26,149 @@ pub struct BuildMessage {
     pub(crate) logged: Cell<bool>,
 }
 
+unsafe extern "C" {
+    fn Bun__createLoaderSyntaxError(
+        global: &JSGlobalObject,
+        message: *const u8,
+        message_length: usize,
+        source_url: *const u8,
+        source_url_length: usize,
+        line: u32,
+        column: u32,
+        stack: *const u8,
+        stack_length: usize,
+        first: JSValue,
+        all: JSValue,
+    ) -> JSValue;
+    safe fn Bun__loaderSyntaxErrorDiagnostic(
+        global: &JSGlobalObject,
+        value: JSValue,
+        index: u32,
+    ) -> JSValue;
+}
+
+/// The diagnostics that the module loader keeps on the `SyntaxError` it makes for a file that
+/// Bun's parser refuses. The error owns them: a diagnostic is borrowed from this holder, which
+/// keeps the error visible to the collector.
+pub struct LoadDiagnostics<'a> {
+    global: &'a JSGlobalObject,
+    error: JSValue,
+}
+
+impl LoadDiagnostics<'_> {
+    fn get(&self, index: u32) -> Option<&bun_ast::Msg> {
+        let cell = Bun__loaderSyntaxErrorDiagnostic(self.global, self.error, index);
+        if cell.is_empty() {
+            return None;
+        }
+        // The wrappers stay reachable from the error: it holds them under a private name that
+        // script can neither read nor replace.
+        match cell.as_class_ref::<BuildMessage>() {
+            Some(build) => Some(&build.msg),
+            None => cell
+                .as_class_ref::<crate::ResolveMessage>()
+                .map(|resolve| &resolve.msg),
+        }
+    }
+
+    /// In log order.
+    pub fn iter(&self) -> impl Iterator<Item = &bun_ast::Msg> + '_ {
+        (0u32..).map_while(|index| self.get(index))
+    }
+}
+
+impl Drop for LoadDiagnostics<'_> {
+    fn drop(&mut self) {
+        self.error.ensure_still_alive();
+    }
+}
+
 impl BuildMessage {
+    /// The diagnostics of `value`, when it is the `SyntaxError` of [`Self::to_syntax_error`].
+    pub fn load_diagnostics(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> Option<LoadDiagnostics<'_>> {
+        if !value.is_cell() || value.js_type() != crate::JSType::ErrorInstance {
+            return None;
+        }
+        let diagnostics = LoadDiagnostics {
+            global,
+            error: value,
+        };
+        diagnostics.get(0)?;
+        Some(diagnostics)
+    }
+
+    /// Whether the module loader reports a log whose first error is `msg` as one `SyntaxError`:
+    /// the parser refused the source text at a line of it. A file that is nested too deeply for
+    /// the parser's stack is not refused for its syntax.
+    pub(crate) fn is_syntax_error(msg: &bun_ast::Msg) -> bool {
+        !matches!(msg.metadata, bun_ast::Metadata::Resolve(_))
+            && msg
+                .data
+                .location
+                .as_ref()
+                .is_some_and(|location| location.line > 0)
+            && &*msg.data.text != b"Maximum call stack size exceeded"
+    }
+
+    /// The `SyntaxError` that the module loader rejects with for a file whose first error is this
+    /// diagnostic, which [`Self::is_syntax_error`] accepts. `this_value` is the wrapper of `self`.
+    /// `all` is `JSValue::ZERO`, or an array of the wrappers of the diagnostics that the error
+    /// keeps.
+    ///
+    /// The position is the parser's, in the original source: own 1-based `line` and `column`.
+    pub(crate) fn to_syntax_error(
+        &self,
+        global: &JSGlobalObject,
+        this_value: JSValue,
+        all: JSValue,
+    ) -> JsResult<JSValue> {
+        let text: &[u8] = &self.msg.data.text;
+        let location = self
+            .msg
+            .data
+            .location
+            .as_ref()
+            .expect("a diagnostic that is_syntax_error accepts has a location");
+        let file: &[u8] = &location.file;
+        let line = location.line.max(0) as u32;
+        let column = location.column.max(0) as u32;
+
+        // The one frame has the form that a parse error of JavaScriptCore gets from `require()`.
+        // The error printer reads that form back from a `stack` that was copied to another error.
+        let mut stack = Vec::with_capacity(text.len() + file.len() + 56);
+        stack.extend_from_slice(b"SyntaxError: ");
+        stack.extend_from_slice(text);
+        stack.extend_from_slice(b"\n    at <parse> (");
+        stack.extend_from_slice(file);
+        write!(&mut stack, ":{line}").expect("infallible: in-memory write");
+        if column > 0 {
+            write!(&mut stack, ":{column}").expect("infallible: in-memory write");
+        }
+        stack.push(b')');
+
+        crate::host_fn::from_js_host_call(global, || {
+            // SAFETY: C++ copies the three byte ranges before it returns.
+            unsafe {
+                Bun__createLoaderSyntaxError(
+                    global,
+                    text.as_ptr(),
+                    text.len(),
+                    file.as_ptr(),
+                    file.len(),
+                    line,
+                    column,
+                    stack.as_ptr(),
+                    stack.len(),
+                    this_value,
+                    all,
+                )
+            }
+        })
+    }
+
     pub fn get_notes(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
         JSValue::create_array_from_iter(global, self.msg.notes.iter(), |note| {

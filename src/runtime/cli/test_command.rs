@@ -2405,29 +2405,38 @@ impl TestFailure {
         }
     }
 
-    /// A module that can't be found or parsed throws one of these two. They are printed as log messages, with no `ZigException`.
+    /// A module that can't be found throws a `ResolveMessage`, one that can't be read a `BuildMessage`, and one that
+    /// can't be parsed a `SyntaxError` that holds its diagnostics. They are printed as log messages, with no `ZigException`.
     #[optimize(size)]
-    pub(crate) fn record_log_message(slot: &mut Option<TestFailure>, thrown: jsc::JSValue) {
-        let (name, msg): (&[u8], _) =
-            if let Some(error) = thrown.as_class_ref::<jsc::ResolveMessage>() {
-                (b"ResolveMessage", &error.msg)
-            } else if let Some(error) = thrown.as_class_ref::<jsc::BuildMessage>() {
-                (b"BuildMessage", &error.msg)
-            } else {
-                return;
-            };
-        let failure = slot.get_or_insert_default();
-        if failure.name.is_empty() {
-            failure.name.extend_from_slice(name);
-        }
-        if failure.message.is_empty() {
-            failure.message.extend_from_slice(&msg.data.text);
-        }
-        if !failure.body.is_empty() {
+    pub(crate) fn record_log_message(
+        slot: &mut Option<TestFailure>,
+        global: &jsc::JSGlobalObject,
+        thrown: jsc::JSValue,
+    ) {
+        let mut record = |name: &[u8], msg: &bun_ast::Msg, is_the_error: bool| {
+            let failure = slot.get_or_insert_default();
+            if failure.name.is_empty() {
+                failure.name.extend_from_slice(name);
+            }
+            if is_the_error && failure.message.is_empty() {
+                failure.message.extend_from_slice(&msg.data.text);
+            }
+            if !failure.body.is_empty() {
+                failure.body.push(b'\n');
+            }
+            let _ = msg.write_format::<false>(&mut bun_io::AsFmt::new(&mut failure.body));
             failure.body.push(b'\n');
+        };
+        if let Some(error) = thrown.as_class_ref::<jsc::ResolveMessage>() {
+            record(b"ResolveMessage", &error.msg, true);
+        } else if let Some(error) = thrown.as_class_ref::<jsc::BuildMessage>() {
+            record(b"BuildMessage", &error.msg, true);
+        } else if let Some(diagnostics) = jsc::BuildMessage::load_diagnostics(global, thrown) {
+            // The error's message is its first error's. A warning can precede it.
+            for msg in diagnostics.iter() {
+                record(b"SyntaxError", msg, msg.kind == bun_ast::Kind::Err);
+            }
         }
-        let _ = msg.write_format::<false>(&mut bun_io::AsFmt::new(&mut failure.body));
-        failure.body.push(b'\n');
     }
 
     /// VirtualMachine::on_print_error_zig_exception thunk.

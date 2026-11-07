@@ -855,13 +855,25 @@ describe("junit reporter", () => {
       "a test file has a syntax error",
       [],
       `import { test } from "bun:test";\nconst half = ;\ntest("never registered", () => {});`,
-      { type: "BuildMessage", message: "Unexpected ;", at: "broken.test.js:2:14" },
+      { type: "SyntaxError", message: "Unexpected ;", at: "broken.test.js:2:14" },
     ],
     [
       "a module that a test file imports has a syntax error",
       [],
       `import { test } from "bun:test";\nimport "./half.js";\ntest("never registered", () => {});`,
-      { type: "BuildMessage", message: "Unexpected ;", at: "half.js:1:14" },
+      { type: "SyntaxError", message: "Unexpected ;", at: "half.js:1:14" },
+    ],
+    [
+      "a test file has two syntax errors",
+      [],
+      `import { test } from "bun:test";\nconst one;\nconst two;\ntest("never registered", () => {});`,
+      { type: "SyntaxError", message: 'The constant "one" must be initialized', at: "broken.test.js:3:7" },
+    ],
+    [
+      "a test file has a warning before its syntax error",
+      [],
+      `const { test } = require("bun:test");\n--> a legacy comment\nconst half;\ntest("never registered", () => {});`,
+      { type: "SyntaxError", message: 'The constant "half" must be initialized', at: "broken.test.js:3:7" },
     ],
   ])("reports a failed test case when %s", async (_, args, source, { type, message, at }) => {
     await using tmpDir = tempDir("junit-unhandled", {

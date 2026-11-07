@@ -3864,6 +3864,20 @@ pub mod formatter {
                 return Ok(());
             }
 
+            // The error of a file that Bun's parser refuses prints as a `BuildMessage` does: the
+            // text of its diagnostics.
+            if let Some(diagnostics) =
+                crate::BuildMessage::load_diagnostics(self.global_this, value)
+            {
+                for (i, msg) in diagnostics.iter().enumerate() {
+                    if i > 0 {
+                        let _ = writer_.write_all(b"\n\n");
+                    }
+                    let _ = msg.write_format::<C>(&mut bun_io::AsFmt::new(&mut *writer_));
+                }
+                return Ok(());
+            }
+
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
             // SAFETY: per-thread VM.
             let vm = VirtualMachine::get().as_mut();

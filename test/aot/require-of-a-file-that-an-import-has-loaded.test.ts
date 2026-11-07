@@ -74,7 +74,7 @@ test("require() of a file that nothing names the kind of answers what an import 
   using directory = tempDir("require-of-a-file-that-an-import-has-loaded", files);
   const plain = await seenIn(String(directory), undefined);
   expect(plain.seen).toContain(`SEEN w require behind the statement | {"default":"w1.png"}`);
-  expect(plain.seen).toContain(`SEEN w require alone | throws BuildMessage`);
+  expect(plain.seen).toContain(`SEEN w require alone | throws SyntaxError`);
   expect(plain.seen).toContain(`SEEN u require of code under an ending that nothing names | 7`);
   expect(plain.seen).toHaveLength(33);
   expect(await seenIn(String(directory), "TestRunLayers:0", "--aot")).toEqual(plain);

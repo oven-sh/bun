@@ -906,6 +906,7 @@ async function once(emitter: EmitterOrTarget, type: $Node.EventName, options: On
 Object.defineProperty(once, "name", { value: "once" });
 
 const AsyncIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype);
+// Deliberately `value` first, unlike nodejs/node#63526 (v26.4.0): `Bun::getIteratorResult` reads this shape by slot.
 function createIterResult(value: unknown, done: boolean) {
   return { value, done } as IteratorResult<unknown, undefined>;
 }

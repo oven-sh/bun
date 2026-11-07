@@ -64,13 +64,6 @@ public:
 
     DECLARE_INFO;
 
-    template<typename CellType, SubspaceAccess>
-    static GCClient::IsoSubspace* subspaceFor(VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ImportMetaEnv, Base);
-        return &vm.plainObjectSpace();
-    }
-
     static ImportMetaEnv* create(VM& vm, Zig::GlobalObject* globalObject)
     {
         auto* structure = Bun::createClassStructure(vm, globalObject, globalObject->objectPrototype(), TypeInfo(ObjectType, StructureFlags), info());
@@ -103,6 +96,7 @@ private:
     bool isProduction() const { return perCellBit(); }
     JSValue defaultValueOf(ViteVariable) const;
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ImportMetaEnv, ImportMetaEnv::Base);
 
 const ClassInfo ImportMetaEnv::s_info = { "ImportMetaEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ImportMetaEnv) };
 

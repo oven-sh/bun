@@ -178,12 +178,6 @@ struct GenericSequenceConverter {
         return WTF::move(result);
     }
 
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object, ReturnType&& result)
-    {
-        auto ctx = Bun::DefaultConversionContext {};
-        return convert(lexicalGlobalObject, object, WTF::move(result), ctx);
-    }
-
     template<typename ExceptionThrower = DefaultExceptionThrower>
         requires(!Bun::IDLConversionContext<std::decay_t<ExceptionThrower>>)
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object, ExceptionThrower&& exceptionThrower = ExceptionThrower())

@@ -259,6 +259,15 @@ new Bun.Cookie(cookieString: string);
 new Bun.Cookie(options: CookieInit);
 ```
 
+A numeric `expires` is in seconds since the Unix epoch, not in milliseconds. For a value in milliseconds, pass a `Date` or divide by 1000.
+
+```ts title="cookie-expires.ts" icon="/icons/typescript.svg"
+const tomorrow = Date.now() + 86400000; // milliseconds
+
+new Bun.Cookie("name", "value", { expires: new Date(tomorrow) });
+new Bun.Cookie("name", "value", { expires: tomorrow / 1000 }); // seconds
+```
+
 ### Properties
 
 ```ts title="cookie-properties.ts" icon="/icons/typescript.svg"
@@ -386,6 +395,7 @@ interface CookieInit {
   domain?: string;
   /** Defaults to '/'. To allow the browser to set the path, use an empty string. */
   path?: string;
+  /** A number is in seconds since the Unix epoch, not in milliseconds. */
   expires?: number | Date | string;
   secure?: boolean;
   /** Defaults to `lax`. */

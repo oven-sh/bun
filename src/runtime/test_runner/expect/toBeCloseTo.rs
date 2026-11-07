@@ -41,24 +41,14 @@ impl Expect {
             return Err(global.throw_invalid_argument_type("expect", "received", "number"));
         }
 
-        let mut expected = expected_value.as_number();
-        let mut received = received_.as_number();
+        let expected = expected_value.as_number();
+        let received = received_.as_number();
 
-        if expected == f64::NEG_INFINITY {
-            expected = -expected;
-        }
-
-        if received == f64::NEG_INFINITY {
-            received = -received;
-        }
-
-        if expected == f64::INFINITY && received == f64::INFINITY {
-            return Ok(JSValue::UNDEFINED);
-        }
-
+        // `Infinity - Infinity` is NaN, so an equal infinite pair is its own case.
+        let same_infinity = received.is_infinite() && received == expected;
         let expected_diff = 10.0_f64.powf(-precision) / 2.0;
-        let actual_diff = (received - expected).abs();
-        let mut pass = actual_diff < expected_diff;
+        let actual_diff = if same_infinity { 0.0 } else { (received - expected).abs() };
+        let mut pass = same_infinity || actual_diff < expected_diff;
 
         let not = this.flags.get().not();
         if not {

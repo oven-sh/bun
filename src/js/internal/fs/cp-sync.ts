@@ -498,6 +498,8 @@ function copyDir(src: string, dest: string, opts: CpOptions) {
     const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts);
     if (!skipped) getStats(destStat, srcItem, destItem, opts);
   }
+  // Not in a `finally` as in node's filter walk: a copy that throws keeps its times and mode, as in node's native cpSync. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/cp/cp-sync.js#L188-L197
+  if (opts.preserveTimestamps) setDestTimestamps(src, dest);
 }
 
 function onLink(destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {

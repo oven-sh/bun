@@ -533,11 +533,11 @@ Load [ESLint plugins](/lint/plugins): paths, relative to `bunfig.toml`, or packa
 
 ```toml title="bunfig.toml" icon="settings"
 [lint]
-plugins = ["./lint/plugin.js", "eslint-plugin-perfectionist"]
+plugins = ["./lint/plugin.js", "eslint-plugin-simple-import-sort"]
 
 [lint.rules]
 "local/no-todo" = "warn"
-"perfectionist/sort-imports" = "error"
+"simple-import-sort/imports" = "error"
 ```
 
 ### `lint.categories`

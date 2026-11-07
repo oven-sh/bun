@@ -10,8 +10,8 @@
 //
 // Each of the first four leaves the rest of the bundle untouched.
 //
-// The eslint-plugin-import, -react and -prettier suites are recorded with the published packages. A rule's suite is
-// added to the bundle once the rule here passes all of it. Only `--plugin` replaces them. See `RECORDED`.
+// The eslint-plugin-import, -react, -prettier and -perfectionist suites are recorded with the published packages. A
+// rule's suite is added to the bundle once the rule here passes all of it. Only `--plugin` replaces them. See `RECORDED`.
 import { $ } from "bun";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -42,7 +42,16 @@ const PACKAGES = [
 ] as const;
 
 /** The suites that are added to the bundle rule by rule, and the projects their cases are linted in. */
-const RECORDED = ["import/", "import-project/", "react/", "prettier/", "prettier-project/", "json/", "markdown/"];
+const RECORDED = [
+  "import/",
+  "import-project/",
+  "react/",
+  "prettier/",
+  "prettier-project/",
+  "json/",
+  "markdown/",
+  "perfectionist/",
+];
 
 function directoryOf(variable: string): string {
   const directory = process.env[variable];

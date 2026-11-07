@@ -382,6 +382,47 @@ extern "C" fn Bun__collateUTF16(
     panic!("this program has no ICU")
 }
 
+/// `Date.parse`, which only the linter's natural sort calls.
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn Bun__parseDateTimeString(_bytes: *const u8, _length: usize) -> f64 {
+    panic!("this program has no WTF")
+}
+
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn Bun__collatorForLanguageTag(
+    _tag: *const u8,
+    _tag_len: usize,
+    _is_well_formed: *mut bool,
+) -> *const c_void {
+    panic!("this program has no ICU")
+}
+
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn Bun__collatorCollateUTF8(
+    _collator: *const c_void,
+    _a: *const u8,
+    _a_len: usize,
+    _b: *const u8,
+    _b_len: usize,
+) -> i32 {
+    panic!("this program has no ICU")
+}
+
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn Bun__collatorCollateUTF16(
+    _collator: *const c_void,
+    _a: *const u16,
+    _a_len: usize,
+    _b: *const u16,
+    _b_len: usize,
+) -> i32 {
+    panic!("this program has no ICU")
+}
+
 // What Bun's transpiler asks of the rest of Bun. The compiler's front end runs it on the files that it lowers.
 
 /// `operationMathPow`

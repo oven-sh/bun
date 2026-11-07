@@ -81,7 +81,7 @@ let at = 0;
 while (at < bundle.length) {
   const end = bundle.indexOf(10, at);
   const [, path, length] = /^=== \/(.*) (\d+)$/.exec(bundle.toString("utf8", at, end));
-  const [, id] = /^((?:import|json|markdown|n|oxc|react|react-hooks)\/.*)\.json$/.exec(path) ?? [];
+  const [, id] = /^((?:import|json|markdown|n|oxc|perfectionist|react|react-hooks)\/.*)\.json$/.exec(path) ?? [];
   if (id !== undefined && !(id in pluginRules)) {
     const { schema, defaultOptions } = JSON.parse(bundle.toString("utf8", end + 1, end + 1 + Number(length))).meta;
     // The fixtures have `null` for a field the rule doesn't have.
@@ -89,7 +89,12 @@ while (at < bundle.length) {
   }
   at = end + 1 + Number(length) + 1;
 }
-for (const [id, meta] of Object.entries(pluginRules)) add(id, { meta });
+// eslint-plugin-perfectionist builds its rules with typescript-eslint's `RuleCreator`, so its defaults are the rule's,
+// not `meta`'s, and ESLint validates the options as written.
+for (const [id, meta] of Object.entries(pluginRules)) {
+  if (id.startsWith("perfectionist/")) add(id, { meta: { schema: meta.schema }, defaultOptions: meta.defaultOptions });
+  else add(id, { meta });
+}
 // Bun's own rules don't come from a package, so their schemas are in `own.json`. So is the schema of
 // `prettier/prettier`, which has no fixtures.
 for (const [id, schema] of Object.entries(JSON.parse(readFileSync(join(import.meta.dirname, "own.json"), "utf8"))))

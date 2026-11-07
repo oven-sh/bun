@@ -38,7 +38,7 @@ mod icu_collation;
 mod icu_normalize;
 #[path = "immutable/unicode.rs"]
 mod unicode_draft;
-pub use icu_collation::{locale_compare, locale_compare_numeric_base};
+pub use icu_collation::{Collator, NoCollator, locale_compare, locale_compare_numeric_base};
 pub use icu_normalize::{NormalizationForm, normalize};
 #[path = "immutable/utf16_offsets.rs"]
 mod utf16_offsets;

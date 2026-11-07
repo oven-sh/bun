@@ -1095,7 +1095,7 @@ describeLink("ICU's data package", () => {
       featuresOfItem.fill(table.sets[set]!, firstItem, firstItem + itemCount);
     }
     expect(featuresOfItem).toEqual(items.map(([path]) => readersOf(path.slice(path.indexOf("/") + 1))));
-    expect(readersOf("coll/de.res")).toEqual([indexOf("IntlCollation")]);
+    expect(readersOf("coll/de.res")).toEqual([indexOf("IntlCollation"), indexOf("Lint")]);
     expect(readersOf("nothing-knows-this.bin")).toEqual([]);
     expect(programResult.exitCode).toBe(0);
   });

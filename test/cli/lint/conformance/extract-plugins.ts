@@ -5,6 +5,7 @@
 //   export REACT_DIR=<facebook/react> ESLINT_PLUGIN_IMPORT_DIR=<import-js/eslint-plugin-import, installed>
 //   export ESLINT_PLUGIN_IMPORT_X_DIR=<un-ts/eslint-plugin-import-x> ESLINT_PLUGIN_N_DIR=<eslint-community/eslint-plugin-n, installed>
 //   export ESLINT_PLUGIN_REACT_DIR=<jsx-eslint/eslint-plugin-react, installed>
+//   export ESLINT_PLUGIN_PERFECTIONIST_DIR=<azat-io/eslint-plugin-perfectionist, installed>
 //   node extract-plugins.ts [--out <fixtures>] [<plugin>/<rule>..]
 //   node extract-plugins.ts --cases <cases.json> --out <dir> <plugin>/<rule>     # your own inputs, see `extra-cases.ts`
 //
@@ -56,6 +57,8 @@ interface Raw {
   foreignParser?: string;
   /** Upstream's original case, for comparing the result with its assertions. */
   upstream?: Config;
+  /** Upstream's `output` is the code after fixing until nothing changes, not after one pass. */
+  outputOfAllPasses?: boolean;
 }
 
 const ALL = [
@@ -70,6 +73,10 @@ const ALL = [
   "n/no-unsupported-features/node-builtins",
   "n/no-process-exit",
   "react/jsx-no-leaked-render",
+  "perfectionist/sort-objects",
+  "perfectionist/sort-union-types",
+  "perfectionist/sort-interfaces",
+  "perfectionist/sort-object-types",
 ];
 
 let out = join(import.meta.dirname, "fixtures");
@@ -150,13 +157,26 @@ function requireWithStubs(
   }
 }
 
-/** Bundles a module (possibly TypeScript) into one CommonJS file. Pass `directory` if it has to resolve packages. */
-function bundleFile(entry: string, name: string, directory = scratch): string {
+/**
+ * Bundles a module (possibly TypeScript) into one CommonJS file. Pass `directory` if it has to resolve packages.
+ * `externals` are patterns of imports to leave as `require()` calls, so that `requireWithStubs` can stub them.
+ */
+function bundleFile(entry: string, name: string, directory = scratch, externals: string[] = []): string {
   const file = join(directory, `${name}.cjs`);
   const packages = directory === scratch ? ["--external=eslint"] : ["--packages=external"];
-  execFileSync("bun", ["build", entry, "--target=node", "--format=cjs", `--outfile=${file}`, ...packages], {
-    stdio: ["ignore", "ignore", "inherit"],
-  });
+  execFileSync(
+    "bun",
+    [
+      "build",
+      entry,
+      "--target=node",
+      "--format=cjs",
+      `--outfile=${file}`,
+      ...packages,
+      ...externals.map(it => `--external=${it}`),
+    ],
+    { stdio: ["ignore", "ignore", "inherit"] },
+  );
   return file;
 }
 
@@ -463,6 +483,175 @@ function reactPlugin(rule: string): { rule: RuleModule; cases: Raw[] } {
 }
 
 // ---------------------------------------------------------------------------
+// perfectionist
+// ---------------------------------------------------------------------------
+
+/** `%s` and the other placeholders of a vitest `it.each` title. */
+function eachTitle(title: string, row: unknown[]): string {
+  let at = 0;
+  return title.replace(/%[sdifjo%]/g, it => {
+    if (it === "%%") return "%";
+    const value = row[at++];
+    return typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
+  });
+}
+
+/**
+ * A stand-in for vitest. `describe` runs its body at once, as vitest does; the bodies of `it` are collected, to be
+ * awaited one after the other once the file is loaded. `expect` and `vi` accept anything and check nothing: what the
+ * tests assert is compared with what ESLint reports by `compareWithUpstream`.
+ */
+function vitestStub() {
+  const titles: string[] = [];
+  const tests: { title: string; body: () => unknown }[] = [];
+  const body = (args: unknown[]) => args.findLast(it => typeof it === "function") as (...row: unknown[]) => unknown;
+  interface Row {
+    /** What the title's placeholders show. */
+    shown: unknown[];
+    /** The arguments of the body: a row is spread over them only if every row of the table is an array. */
+    args: unknown[];
+  }
+  const rows = (table: unknown[]): Row[] => {
+    const spread = table.every(Array.isArray);
+    return table.map(row => {
+      const shown = Array.isArray(row) ? row : [row];
+      return { shown, args: spread ? shown : [row] };
+    });
+  };
+  const once: Row = { shown: [], args: [] };
+  // The outermost `describe` is the rule's name.
+  const add = (title: string, fn: (...args: unknown[]) => unknown, row = once) =>
+    tests.push({ title: [...titles.slice(1), eachTitle(title, row.shown)].join(" > "), body: () => fn(...row.args) });
+  const each =
+    (table: unknown[]) =>
+    (title: string, ...rest: unknown[]) => {
+      for (const row of rows(table)) add(title, body(rest), row);
+    };
+  const it = Object.assign((title: string, ...rest: unknown[]) => add(title, body(rest)), {
+    each,
+    only: Object.assign((title: string, ...rest: unknown[]) => add(title, body(rest)), { each }),
+    skip: Object.assign(() => {}, { each: () => () => {} }),
+    todo: () => {},
+  });
+  const group = (title: string, fn: (...args: unknown[]) => unknown, row = once) => {
+    titles.push(eachTitle(title, row.shown));
+    try {
+      fn(...row.args);
+    } finally {
+      titles.pop();
+    }
+  };
+  const describe = Object.assign((title: string, ...rest: unknown[]) => group(title, body(rest)), {
+    each:
+      (table: unknown[]) =>
+      (title: string, ...rest: unknown[]) => {
+        for (const row of rows(table)) group(title, body(rest), row);
+      },
+  });
+  // `await expect(..)` must not hang: a thenable's `then` has to be absent.
+  const anything: unknown = new Proxy(() => anything, {
+    get: (_, key) => (key === "then" ? undefined : anything),
+    apply: () => anything,
+  });
+  return { stub: { describe, it, test: it, expect: anything, vi: anything }, tests };
+}
+
+/**
+ * The tests of eslint-plugin-perfectionist are vitest suites whose `it` bodies call the `valid()` and `invalid()` of
+ * eslint-vitest-rule-tester, and its `RuleTester` of oxlint. All of them are replaced by recorders. Every case is
+ * parsed by typescript-eslint's parser, as upstream's: a tester without one (the one with JSX on) is also recorded
+ * with it.
+ */
+async function perfectionist(rule: string): Promise<{ rule: RuleModule; cases: Raw[] }> {
+  const root = realpathSync(requiredEnv("ESLINT_PLUGIN_PERFECTIONIST_DIR"));
+  const built = join(root, "node_modules/.extract-plugins");
+  mkdirSync(built, { recursive: true });
+  const module: RuleModule = bundle(join(root, `rules/${rule}.ts`), rule, built).default;
+  if (casesFile) return { rule: module, cases: [] };
+  // The testers register the rule as `rule-to-test/<name>`.
+  const useRealRuleId = <T>(text: T): T =>
+    (typeof text === "string" ? text.replaceAll(`rule-to-test/${rule}`, `perfectionist/${rule}`) : text) as T;
+  const { stub: vitest, tests } = vitestStub();
+  const cases: Raw[] = [];
+  let title: string | null = null;
+  /** `filename` is set for oxlint's tester, which asserts the first pass of the fixes and whose errors are texts. */
+  const push = (valid: boolean, given: string | Config, tester: Config, filename?: string) => {
+    const item: Config = typeof given === "string" ? { code: given } : { ...given };
+    item.code = useRealRuleId(item.code);
+    item.output = useRealRuleId(item.output);
+    // eslint-vitest-rule-tester reads an error that is a string as a message id.
+    if (!filename && Array.isArray(item.errors)) {
+      item.errors = item.errors.map((it: unknown) => (typeof it === "string" ? { messageId: it } : it));
+    }
+    const { parser: _, ...languageOptions } = { ...tester.languageOptions, ...item.languageOptions };
+    languageOptions.parserOptions = {
+      ...tester.languageOptions?.parserOptions,
+      ...item.parserOptions,
+      ...item.languageOptions?.parserOptions,
+    };
+    const jsx = languageOptions.parserOptions.ecmaFeatures?.jsx === true;
+    cases.push({
+      valid,
+      name: item.name ?? title,
+      code: item.code,
+      options: item.options,
+      // `normalizeTestCase()` of eslint-vitest-rule-tester.
+      filename: item.filename ?? filename ?? (jsx ? "file.tsx" : "file.ts"),
+      settings: item.settings ?? tester.settings,
+      languageOptions: { ...languageOptions, parser: "typescript" },
+      upstream: item,
+      outputOfAllPasses: !filename && item.recursive !== false,
+    });
+  };
+  const createRuleTester = (options: Config) => {
+    const tester = {
+      languageOptions: options.languageOptions ?? { parserOptions: options.parserOptions },
+      settings: options.settings,
+    };
+    return {
+      valid: async (given: string | Config) => push(true, given, tester),
+      invalid: async (given: string | Config) => push(false, given, tester),
+    };
+  };
+  /**
+   * `buildOxlintRuleTester()` upstream gives it `parserOptions.lang`, which oxlint's makes the file's extension, and
+   * the `it` to register each case with, which is how oxlint's does it too.
+   */
+  class OxlintRuleTester {
+    static it: (title: string, body: () => void) => void;
+    config: Config;
+    constructor(config: Config = {}) {
+      this.config = config;
+    }
+    run(name: string, _: RuleModule, tests: { valid?: (string | Config)[]; invalid?: Config[] }) {
+      const lang: string = this.config.languageOptions?.parserOptions?.lang ?? "js";
+      const tester = { languageOptions: { parserOptions: { ecmaFeatures: { jsx: lang.endsWith("x") } } } };
+      for (const valid of [true, false]) {
+        (valid ? tests.valid : tests.invalid)?.forEach((given, index) => {
+          const title = `oxlint: ${name} ${valid ? "valid" : "invalid"} #${index}`;
+          OxlintRuleTester.it(title, () => push(valid, given, tester, `file.${lang}`));
+        });
+      }
+    }
+  }
+  const file = bundleFile(join(root, `test/rules/${rule}.test.ts`), `${rule}.test`, built, [
+    "*/validate-rule-json-schema",
+  ]);
+  requireWithStubs(file, {
+    vitest,
+    "eslint-vitest-rule-tester": { createRuleTester },
+    "oxlint/plugins-dev": { RuleTester: OxlintRuleTester },
+    "../utils/validate-rule-json-schema": { validateRuleJsonSchema: async () => {} },
+    "@typescript-eslint/parser": { foreignParser: "typescript" },
+  });
+  for (const test of tests) {
+    title = test.title;
+    await test.body();
+  }
+  return { rule: module, cases };
+}
+
+// ---------------------------------------------------------------------------
 // oxlint's tests
 // ---------------------------------------------------------------------------
 
@@ -530,48 +719,80 @@ function optionsToLintWith(id: string, options: unknown[]): unknown[] {
   return [others];
 }
 
-function record(id: string, rule: RuleModule, raw: Raw, cwd?: string): FixtureCase {
+/** The case's `parserOptions` with the JSX flag of `attempt`. */
+function parserOptionsOf(raw: Raw, attempt: Attempt): Config {
+  const given = raw.languageOptions?.parserOptions;
+  return { ...given, ecmaFeatures: { ...given?.ecmaFeatures, jsx: attempt.jsx } };
+}
+
+/** Lints `code` as the case `raw`, parsed as `attempt` says. Throws what the rule throws. */
+function verify(id: string, rule: RuleModule, raw: Raw, attempt: Attempt, code: string, cwd?: string): LintMessage[] {
   const slash = id.indexOf("/");
   const [prefix, name] = [id.slice(0, slash), id.slice(slash + 1)];
+  const given = raw.languageOptions ?? {};
+  const config = {
+    files: ["**"],
+    plugins: { [prefix]: { rules: { [name]: rule } } },
+    languageOptions: {
+      parser: attempt.parser === "espree" ? espree : typescriptParser,
+      ecmaVersion: given.ecmaVersion ?? "latest",
+      sourceType: given.sourceType ?? "module",
+      globals: given.globals ?? {},
+      parserOptions: parserOptionsOf(raw, attempt),
+    },
+    settings: settingsToLintWith(raw.settings ?? {}),
+    linterOptions: { reportUnusedDisableDirectives: "off" },
+    rules: { [id]: ["error", ...optionsToLintWith(id, raw.options ?? [])] },
+  };
+  const filename = cwd && !attempt.filename.startsWith("<") ? resolve(cwd, attempt.filename) : attempt.filename;
+  // import/no-restricted-paths defaults `basePath` to `process.cwd()`.
+  const before = process.cwd();
+  if (cwd) process.chdir(cwd);
+  try {
+    return linter.verify(code, [config], { filename });
+  } finally {
+    process.chdir(before);
+  }
+}
+
+/**
+ * The code after fixing until nothing changes, which is the `output` that eslint-vitest-rule-tester asserts. It gives
+ * up after 10 passes, as that does. `made` is the recorded case, whose `output` is the first pass.
+ */
+function outputOfAllPasses(id: string, rule: RuleModule, raw: Raw, made: FixtureCase, cwd?: string): string | null {
+  const attempt: Attempt = {
+    parser: made.languageOptions.parser as Attempt["parser"],
+    filename: made.filename,
+    jsx: (made.languageOptions.parserOptions as Config | null)?.ecmaFeatures?.jsx === true,
+  };
+  let output = made.output;
+  for (let pass = 1; output !== null && pass <= 10; pass++) {
+    const next = onePassOutput(output, verify(id, rule, raw, attempt, output, cwd), SourceCodeFixer);
+    if (next === null || next === output) break;
+    output = next;
+  }
+  return output;
+}
+
+function record(id: string, rule: RuleModule, raw: Raw, cwd?: string): FixtureCase {
   const options = raw.options ?? [];
   const given = raw.languageOptions ?? {};
-  let last: { attempt: Attempt; messages: LintMessage[]; parserOptions: Config } | undefined;
+  let last: { attempt: Attempt; messages: LintMessage[]; thrown?: string } | undefined;
   for (const attempt of attempts(raw)) {
-    const parserOptions = {
-      ...given.parserOptions,
-      ecmaFeatures: { ...given.parserOptions?.ecmaFeatures, jsx: attempt.jsx },
-    };
-    const config = {
-      files: ["**"],
-      plugins: { [prefix]: { rules: { [name]: rule } } },
-      languageOptions: {
-        parser: attempt.parser === "espree" ? espree : typescriptParser,
-        ecmaVersion: given.ecmaVersion ?? "latest",
-        sourceType: given.sourceType ?? "module",
-        globals: given.globals ?? {},
-        parserOptions,
-      },
-      settings: settingsToLintWith(raw.settings ?? {}),
-      linterOptions: { reportUnusedDisableDirectives: "off" },
-      rules: { [id]: ["error", ...optionsToLintWith(id, options)] },
-    };
-    const filename = cwd && !attempt.filename.startsWith("<") ? resolve(cwd, attempt.filename) : attempt.filename;
-    // import/no-restricted-paths defaults `basePath` to `process.cwd()`.
-    const before = process.cwd();
-    if (cwd) process.chdir(cwd);
-    let messages: LintMessage[];
     try {
-      messages = linter.verify(raw.code, [config], { filename });
-    } finally {
-      process.chdir(before);
+      last = { attempt, messages: verify(id, rule, raw, attempt, raw.code, cwd) };
+    } catch (error: any) {
+      // perfectionist refuses a setting with a bad value this way. A case expects that, and has no message to record.
+      last = { attempt, messages: [], thrown: String(error.message).split("\n")[0] };
     }
-    last = { attempt, messages, parserOptions };
-    if (!messages.some(it => it.fatal)) break;
+    if (!last.messages.some(it => it.fatal)) break;
   }
-  const { attempt, messages, parserOptions } = last!;
+  const { attempt, messages, thrown } = last!;
+  const parserOptions = parserOptionsOf(raw, attempt);
   const fatal = messages.find(it => it.fatal);
   let skip: string | null = null;
   if (fatal) skip = raw.foreignParser ? `parser: ${raw.foreignParser}` : `fatal: ${fatal.message}`;
+  if (thrown) skip = `the rule throws: ${thrown}`;
   const resolver = raw.settings?.["import/resolver"];
   const isNode =
     resolver === undefined ||
@@ -753,6 +974,8 @@ for (const id of wanted.length > 0 ? wanted : ALL) {
       loaded = nodePlugin(name);
     } else if (plugin === "react") {
       loaded = reactPlugin(name);
+    } else if (plugin === "perfectionist") {
+      loaded = await perfectionist(name);
     } else {
       throw new Error(`unknown: ${id}`);
     }
@@ -761,7 +984,9 @@ for (const id of wanted.length > 0 ? wanted : ALL) {
     cases = raws.map((raw, index) => {
       const made = record(id, loaded.rule, raw, loaded.cwd);
       if (raw.upstream && !made.skip) {
-        const problems = compareWithUpstream(raw.upstream as any, raw.valid, made, loaded.rule, interpolate);
+        const output = raw.outputOfAllPasses ? outputOfAllPasses(id, loaded.rule, raw, made, loaded.cwd) : made.output;
+        const result = { messages: made.messages, output };
+        const problems = compareWithUpstream(raw.upstream as any, raw.valid, result, loaded.rule, interpolate);
         // The files it imports are Flow.
         if (problems.length > 0 && raw.foreignParser) made.skip = `parser: ${raw.foreignParser}`;
         else if (problems.length > 0) disagreements.push(`#${index}: ${problems.join("; ")}`);

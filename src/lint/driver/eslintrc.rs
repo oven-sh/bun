@@ -439,7 +439,7 @@ pub(crate) fn load(
             let directory = modules.plugins_from(entry).to_vec();
             let is_built_in = matches!(
                 short,
-                b"@typescript-eslint" | b"react-hooks" | b"import" | b"n"
+                b"@typescript-eslint" | b"react-hooks" | b"import" | b"n" | b"perfectionist"
             ) && modules.registry.replaces_plugin(short);
             match modules.loaded([b"plugins", &directory, request], from, entry) {
                 // An installed package takes precedence over the built-in implementation, because it also has configs.

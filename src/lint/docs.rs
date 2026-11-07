@@ -11,6 +11,7 @@ impl Plugin {
             Plugin::ReactHooks | Plugin::React => "react",
             Plugin::Import => "import",
             Plugin::Node => "node",
+            Plugin::Perfectionist => "perfectionist",
             Plugin::Oxc => "oxc",
             Plugin::Unicorn => "unicorn",
             Plugin::ReactPerf => "react-perf",

@@ -5,18 +5,19 @@ Every test case of every ESLint core rule, of every typescript-eslint rule and o
 compressed with zstd (see `../../format/bundle.ts`). `sync.ts` writes it, `version.json` says from which versions and
 commits, and `licenses/` has the license of each (MIT, and Apache 2.0 for `@eslint/json`).
 
-|                           | version | rules | cases |
-| ------------------------- | ------- | ----- | ----- |
-| eslint                    | 10.12.0 | 218   | 22797 |
-| typescript-eslint         | 8.71.1  | 136   | 29823 |
-| eslint-plugin-react-hooks | 7.0.0   | 2     | 1325  |
-| eslint-plugin-import      | 2.32.0  | 41    | 2451  |
-| eslint-plugin-n           | 18.4.1  | 4     | 1530  |
-| eslint-plugin-react       | 7.37.5  | 102   | 11486 |
-| eslint-plugin-prettier    | 5.5.6   | 1     | 448   |
-| @eslint/json              | 2.1.1   | 6     | 332   |
-| @eslint/markdown          | 8.0.3   | 21    | 1410  |
-| oxc (oxlint)              | 1.70.0  | 1     | 83    |
+|                             | version | rules | cases |
+| --------------------------- | ------- | ----- | ----- |
+| eslint                      | 10.12.0 | 218   | 22797 |
+| typescript-eslint           | 8.71.1  | 136   | 29823 |
+| eslint-plugin-react-hooks   | 7.0.0   | 2     | 1325  |
+| eslint-plugin-import        | 2.32.0  | 41    | 2451  |
+| eslint-plugin-n             | 18.4.1  | 4     | 1530  |
+| eslint-plugin-react         | 7.37.5  | 102   | 11486 |
+| eslint-plugin-prettier      | 5.5.6   | 1     | 448   |
+| @eslint/json                | 2.1.1   | 6     | 332   |
+| @eslint/markdown            | 8.0.3   | 21    | 1410  |
+| eslint-plugin-perfectionist | 5.13.0  | 4     | 1280  |
+| oxc (oxlint)                | 1.70.0  | 1     | 83    |
 
 The rules of `react-hooks` follow eslint-plugin-react-hooks 7.1.1, which reports the same for all of these cases of 7.0.0.
 
@@ -24,8 +25,10 @@ The commits of eslint and typescript-eslint are `main`, a few commits after the 
 recorded is what the release reports: `lib` of eslint 10.12.0 and the rules of typescript-eslint 8.71.1 as they are published. The cases of a plugin's rule are those of the plugin, of eslint-plugin-import-x for `import`, and
 of oxlint's port of the rule: see `extract-plugins.ts`.
 
-The suites of eslint-plugin-import, -react and -prettier are recorded with the packages as they are published, and a
-rule's suite comes into the bundle when the rule here passes all of it. Some of their cases are files of a project:
+The suites of eslint-plugin-import, -react, -prettier and -perfectionist are recorded with the packages as they are
+published, and a rule's suite comes into the bundle when the rule here passes all of it. The cases of `perfectionist/*`
+are those of the plugin's vitest suites and of its cases for oxlint's `RuleTester` (`name` starts with `oxlint:`), all
+parsed by `@typescript-eslint/parser`, as upstream does. Some of the cases of the other three are files of a project:
 
 - `import-project/` is `tests/files` and `package.json` of eslint-plugin-import, and what of `node_modules` the rules look at.
 - `prettier-project/` has the configuration files that the cases of `prettier/prettier` are below, and a `package.json` of
@@ -102,7 +105,8 @@ if a configuration with them would end the run. Not where the recorded options h
 
 ## Layout
 
-- `eslint/<rule>.json`, `typescript-eslint/<rule>.json`, `react-hooks/`, `import/`, `n/`, `oxc/`, `json/`, `markdown/`: one file per rule.
+- `eslint/<rule>.json`, `typescript-eslint/<rule>.json`, `react-hooks/`, `import/`, `n/`, `oxc/`, `json/`, `markdown/`,
+  `perfectionist/`: one file per rule.
 - `typescript-eslint-project/`: `packages/eslint-plugin/tests/fixtures`, unchanged. The type-aware cases are linted as
   files of this project. Its tsconfigs say `"types": ["node", "react"]`.
 - `node_modules/`: the declaration files of the packages that this project finds types in. 76 of the 8208 type-aware
@@ -256,6 +260,7 @@ A case that cannot be reproduced without upstream's test code. It still has what
 | `parser: custom`           | typescript-eslint | 1     | a stub parser without parser services                     |
 | `skipped upstream`         | typescript-eslint | 1     | `skip: true` in the test; a known false negative          |
 | `half of a surrogate pair` | json              | 3     | the code has a lone surrogate, which UTF-8 can't encode   |
+| `the rule throws: <error>` | perfectionist     | 4     | a setting with a bad value; the test expects the error    |
 
 26 core cases name a "parser" of `tests/fixtures/parsers/*.js`, which returns a hard-coded AST (type annotations, old
 babel-eslint and typescript-eslint). They are not skipped: 25 are recorded with the real parser that reads the code

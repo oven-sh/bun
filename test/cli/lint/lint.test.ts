@@ -13088,7 +13088,7 @@ describe.concurrent("nativePluginRules", () => {
       "a.js": "export const a = [<b />];\ndebugger;\n",
     };
     const by = (react: string) => ({ "react/jsx-key": react, "no-debugger": "built in" });
-    const others = "@typescript-eslint,react-hooks,import,n,prettier";
+    const others = "@typescript-eslint,react-hooks,import,n,perfectionist,prettier";
 
     test.each([
       ["unset", {}, [], "built in"],
@@ -13479,7 +13479,7 @@ describe.concurrent("nativePluginRules", () => {
   test.each([
     [
       `["imprt"]`,
-      'Unknown plugin "imprt" in --native-plugin-rules\n  Available plugins: @typescript-eslint, react-hooks, import, n, react, prettier, json, markdown\n',
+      'Unknown plugin "imprt" in --native-plugin-rules\n  Available plugins: @typescript-eslint, react-hooks, import, n, perfectionist, react, prettier, json, markdown\n',
     ],
     [`["unicorn"]`, 'Unknown plugin "unicorn" in --native-plugin-rules'],
     [`["true"]`, 'Unknown plugin "true" in --native-plugin-rules'],

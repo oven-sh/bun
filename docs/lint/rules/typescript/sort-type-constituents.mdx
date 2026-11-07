@@ -18,7 +18,7 @@ Members are first put in groups, with named types first and `null`, `undefined`,
 
 `--fix` sorts the members. If there are comments between them, the fix would delete the comments, so it's a suggestion in your editor instead.
 
-typescript-eslint has deprecated this rule. It recommends `eslint-plugin-perfectionist` instead, which isn't built into `bun lint`.
+typescript-eslint has deprecated this rule in favour of two `eslint-plugin-perfectionist` rules: [`perfectionist/sort-union-types`](/lint/rules/perfectionist/sort-union-types), which is built into `bun lint`, and `perfectionist/sort-intersection-types`, which runs from the package.
 
 ## Examples
 

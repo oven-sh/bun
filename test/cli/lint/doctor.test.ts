@@ -189,6 +189,43 @@ Not checked:    other tools' configs, CI files, Git hooks
   );
 
   test(
+    "the perfectionist sorting rules run natively, and the rest of the plugin runs in JavaScript",
+    async () => {
+      const native = ["sort-interfaces", "sort-object-types", "sort-objects", "sort-union-types"];
+      const inJavaScript = ["sort-imports", "sort-named-imports"];
+      const all = [...native, ...inJavaScript];
+      const files = {
+        ...plugin("eslint-plugin-perfectionist", all, { version: "5.13.0" }),
+        "package.json": dependencies("eslint-plugin-perfectionist"),
+        "eslint.config.js": `import perfectionist from "eslint-plugin-perfectionist";
+          export default [{
+            plugins: { perfectionist },
+            rules: ${JSON.stringify(Object.fromEntries(all.map(it => [`perfectionist/${it}`, "error"])))},
+          }];`,
+        "a.ts": "export const a = { b: 1, a: 2 };\n",
+      };
+      const [text, json] = await Promise.all([doctor(files), doctor(files, ["-f", "json"])]);
+      const { rules, packages } = JSON.parse(json.stdout);
+      expect(rules).toEqual({
+        native: native.map(it => `perfectionist/${it}`),
+        javascript: { "eslint-plugin-perfectionist": inJavaScript.map(it => `perfectionist/${it}`) },
+        not_run: [],
+      });
+      expect(packages.needed).toEqual([{ name: "eslint-plugin-perfectionist", reason: "rules", by: null }]);
+      expect(text.stdout).toEndWith(`
+    4 rules run natively
+    2 rules run in JavaScript
+        eslint-plugin-perfectionist    2
+
+Still needed:   eslint-plugin-perfectionist (its rules run in JavaScript)
+`);
+      expect(text.exitCode).toBe(0);
+      expect(json.exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test(
     "prints a report for a project with an .oxlintrc.json",
     async () => {
       const { stdout, stderr, exitCode, isUntouched } = await doctor({

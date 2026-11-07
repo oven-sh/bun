@@ -2,6 +2,7 @@
 // `[lint.rules]`, with `--rule`, and in comments, under any of its names. An unknown rule name is an error.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { endChildren, spawn } from "../children";
 
@@ -67,6 +68,7 @@ const spellings: Record<string, string[]> = {
   jest: ["jest/"],
   vitest: ["vitest/"],
   prettier: ["prettier/"],
+  perfectionist: ["perfectionist/"],
   bun: ["bun/"],
   "bun:test": ["bun:test/"],
 };
@@ -551,6 +553,395 @@ describe.concurrent("core rules and their typescript-eslint versions never both 
     const { stdout } = await lint({ "b.ts": unused["b.ts"], "eslint.config.mjs": config }, ["-f", "json", "b.ts"]);
     expect(problems(stdout)).toEqual(["b.ts:1 @typescript-eslint/no-unused-vars", "b.ts:1 no-unused-vars"]);
   });
+});
+
+// The expected reports and fixed code were recorded from ESLint 10.14.0 with eslint-plugin-perfectionist 5.13.0.
+describe.concurrent("the perfectionist rules run without eslint-plugin-perfectionist installed", () => {
+  // `sizes` is in natural order, which is why "35T" is never reported, while alphabetical order puts "100T" first.
+  const code = `export const sizes = { "35T": 1, "100T": 2 };
+export const chips = { "35T": 1, "100T": 2, b: 3, a: 4 };
+export type Size = "small" | "large" | "medium";
+export type Point = { y: number; x: number };
+export interface Box {
+  z: number;
+  a: number;
+}
+`;
+  const fixed = `export const sizes = { "35T": 1, "100T": 2 };
+export const chips = { "35T": 1, "100T": 2, a: 4, b: 3 };
+export type Size = "large" | "medium" | "small";
+export type Point = { x: number; y: number; };
+export interface Box {
+  a: number;
+  z: number;
+}
+`;
+  // The plugin is named the way ESLint sees it, but no package exists in node_modules: the built-in rules run.
+  const config = (type: string) => `const perfectionist = { meta: { name: "eslint-plugin-perfectionist" }, rules: {} };
+const options = { type: ${JSON.stringify(type)}, order: "asc" };
+export default [
+  {
+    files: ["**/*.ts"],
+    plugins: { perfectionist },
+    rules: {
+      "perfectionist/sort-objects": ["error", options],
+      "perfectionist/sort-union-types": ["error", options],
+      "perfectionist/sort-object-types": ["error", options],
+      "perfectionist/sort-interfaces": ["error", options],
+    },
+  },
+];
+`;
+  type Message = {
+    line: number;
+    column: number;
+    endLine: number;
+    endColumn: number;
+    ruleId: string;
+    message: string;
+    fix?: { range: [number, number]; text: string };
+  };
+  const reported = async (type: string) => {
+    const files = { "a.ts": code, "eslint.config.js": config(type) };
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+    expect(stderr).not.toContain("error:");
+    const [{ messages }] = JSON.parse(stdout) as { messages: Message[] }[];
+    const found = messages.map(({ line, column, endLine, endColumn, ruleId, message, fix }) => ({
+      line,
+      column,
+      endLine,
+      endColumn,
+      ruleId,
+      message,
+      fix,
+    }));
+    return { found, exitCode };
+  };
+
+  test("natural order reports the same problems and fixes as ESLint", async () => {
+    const { found, exitCode } = await reported("natural");
+    expect(found).toEqual([
+      {
+        line: 2,
+        column: 51,
+        endLine: 2,
+        endColumn: 55,
+        ruleId: "perfectionist/sort-objects",
+        message: 'Expected "a" to come before "b".',
+        fix: { range: [90, 100], text: "a: 4, b: 3" },
+      },
+      {
+        line: 3,
+        column: 30,
+        endLine: 3,
+        endColumn: 37,
+        ruleId: "perfectionist/sort-union-types",
+        message: 'Expected ""large"" to come before ""small"".',
+        fix: { range: [123, 151], text: '"large" | "medium" | "small"' },
+      },
+      {
+        line: 4,
+        column: 34,
+        endLine: 4,
+        endColumn: 43,
+        ruleId: "perfectionist/sort-object-types",
+        message: 'Expected "x" to come before "y".',
+        fix: { range: [175, 195], text: "x: number; y: number;" },
+      },
+      {
+        line: 7,
+        column: 3,
+        endLine: 7,
+        endColumn: 13,
+        ruleId: "perfectionist/sort-interfaces",
+        message: 'Expected "a" to come before "z".',
+        fix: { range: [224, 247], text: "a: number;\n  z: number;" },
+      },
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test('alphabetical order, the default, puts "100T" before "35T"', async () => {
+    const { found, exitCode } = await reported("alphabetical");
+    expect(found.slice(0, 3)).toEqual([
+      {
+        line: 1,
+        column: 34,
+        endLine: 1,
+        endColumn: 43,
+        ruleId: "perfectionist/sort-objects",
+        message: 'Expected "100T" to come before "35T".',
+        fix: { range: [23, 42], text: '"100T": 2, "35T": 1' },
+      },
+      {
+        line: 2,
+        column: 34,
+        endLine: 2,
+        endColumn: 43,
+        ruleId: "perfectionist/sort-objects",
+        message: 'Expected "100T" to come before "35T".',
+        fix: { range: [69, 100], text: '"100T": 2, "35T": 1, a: 4, b: 3' },
+      },
+      {
+        line: 2,
+        column: 51,
+        endLine: 2,
+        endColumn: 55,
+        ruleId: "perfectionist/sort-objects",
+        message: 'Expected "a" to come before "b".',
+        fix: { range: [69, 100], text: '"100T": 2, "35T": 1, a: 4, b: 3' },
+      },
+    ]);
+    expect(found.length).toBe(6);
+    expect(exitCode).toBe(1);
+  });
+
+  test("--fix sorts the file the way ESLint does", async () => {
+    using dir = tempDir("bun-lint-native", { "a.ts": code, "eslint.config.js": config("natural") });
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "--fix", "-f", "json", "a.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(readFileSync(join(String(dir), "a.ts"), "utf8")).toBe(fixed);
+    expect(stderr).toContain("Fixed 4 problems in 1 file");
+    expect(problems(stdout)).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  // One rule on, with its options and the `settings` of the config. `code` has one sortable node for each rule.
+  const oneRule = (rule: string, options: unknown, settings?: unknown) => ({
+    "a.ts": `export const o = { b: 1, a: 2 };
+export type U = "b" | "a";
+export type T = { b: 1; a: 2 };
+export interface I { b: 1; a: 2 }
+`,
+    "eslint.config.js": `const perfectionist = { meta: { name: "eslint-plugin-perfectionist" }, rules: {} };
+export default [
+  {
+    files: ["**/*.ts"],
+    plugins: { perfectionist },
+    ${settings === undefined ? "" : `settings: ${JSON.stringify(settings)},`}
+    rules: { "perfectionist/${rule}": ["error", ${JSON.stringify(options)}] },
+  },
+];
+`,
+  });
+  const rules = ["sort-objects", "sort-union-types", "sort-object-types", "sort-interfaces"];
+
+  // The plugin validates the options at the first node that is sorted, not when the rule is created, so the run ends
+  // with the rule's name and the line, as ESLint prints it for a rule that throws in a listener.
+  describe.each(rules)("%s throws at the first sortable node", rule => {
+    test.each([
+      [{ type: "custom", alphabet: "" }, "`alphabet` option must not be empty"],
+      [
+        { partitionByNewLine: true, newlinesBetween: 1 },
+        "The 'partitionByNewLine' and 'newlinesBetween' options cannot be used together",
+      ],
+      [{ groups: ["nope"] }, "Invalid group(s): nope"],
+      [{ groups: ["unknown", "unknown"] }, "Duplicated group(s): unknown"],
+      // The name is kept as it is. Half of a surrogate pair is three bytes, which the text of stderr shows as U+FFFD each.
+      [{ groups: ["\uD800", "\uD800"] }, "Invalid group(s): \uFFFD\uFFFD\uFFFD, \uFFFD\uFFFD\uFFFD"],
+      [
+        { groups: [{ newlinesBetween: 1 }, { newlinesBetween: 1 }] },
+        "Consecutive `newlinesBetween` objects are not allowed",
+      ],
+    ])("with the options %j", async (options, message) => {
+      const { stdout, stderr, exitCode } = await lint(oneRule(rule, options), ["-f", "json", "a.ts"]);
+      expect(stderr).toContain(`error: ${message}\nOccurred while linting `);
+      expect(stderr).toContain(`a.ts:${rules.indexOf(rule) + 1}\nRule: "perfectionist/${rule}"\n`);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+    });
+
+    // The keys of a string are its indices, as `Object.keys("ab")` has them.
+    test("with settings that are a string", async () => {
+      const files = oneRule(rule, {}, { perfectionist: "ab" });
+      const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+      expect(stderr).toContain("error: Invalid Perfectionist setting(s): 0, 1\nOccurred while linting ");
+      expect(stderr).toContain(`a.ts:${rules.indexOf(rule) + 1}\nRule: "perfectionist/${rule}"\n`);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+    });
+
+    test("with a setting whose value is not allowed", async () => {
+      const files = oneRule(rule, {}, { perfectionist: { type: "bad" } });
+      const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+      expect(stderr).toContain("error: Invalid value(s) for Perfectionist setting(s): type\nOccurred while linting ");
+      expect(stderr).toContain(`a.ts:${rules.indexOf(rule) + 1}\nRule: "perfectionist/${rule}"\n`);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+    });
+
+    test("not in a file without one", async () => {
+      const files = { ...oneRule(rule, { groups: ["nope"] }), "a.ts": "export const one = { a: 1 };\n" };
+      const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+      expect(stderr).not.toContain("error:");
+      expect(problems(stdout)).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  /** The reports of the rules, without the unused-directive warnings. */
+  const ruleMessages = (stdout: string) =>
+    (JSON.parse(stdout) as { messages: Message[] }[]).flatMap(file =>
+      file.messages
+        .filter(it => it.ruleId !== null)
+        .map(({ line, column, endLine, endColumn, ruleId, message, fix }) => ({
+          line,
+          column,
+          endLine,
+          endColumn,
+          ruleId,
+          message,
+          fix,
+        })),
+    );
+  const located = (stdout: string) =>
+    ruleMessages(stdout).map(({ line, column, endLine, endColumn, message }) => ({
+      line,
+      column,
+      endLine,
+      endColumn,
+      message,
+    }));
+
+  // Recorded from ESLint: the member on the disabled line stays where it is, and `natural` order is not transitive
+  // here ("z" < "~" and "~" < "é", but "é" < "z"), so "é" is still reported against "~".
+  test("a member on an eslint-disable line keeps its place, and the others are still reported", async () => {
+    const files = {
+      ...oneRule("sort-objects", { type: "natural" }),
+      "a.ts": `const o = { z: 1,\n  // eslint-disable-next-line perfectionist/sort-objects\n  "~": 2,\n  "é": 3 };\n`,
+    };
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+    expect(stderr).not.toContain("error:");
+    expect(ruleMessages(stdout)).toEqual([
+      {
+        line: 4,
+        column: 3,
+        endLine: 4,
+        endColumn: 9,
+        ruleId: "perfectionist/sort-objects",
+        message: 'Expected "é" to come before "~".',
+        fix: {
+          range: [12, 93],
+          text: '"é": 3,\n  // eslint-disable-next-line perfectionist/sort-objects\n  "~": 2,\n  z: 1',
+        },
+      },
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // A legacy config names the plugin in `plugins`, and the package is not installed.
+  test("an .eslintrc.json turns the rules on without the package", async () => {
+    const legacy = {
+      root: true,
+      plugins: ["perfectionist"],
+      parserOptions: { sourceType: "module", ecmaVersion: 2022 },
+      rules: { "perfectionist/sort-objects": "error" },
+    };
+    const files = { "a.js": "export const o = { b: 1, a: 2 };\n", ".eslintrc.json": JSON.stringify(legacy) };
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.js"]);
+    expect(stderr).not.toContain("error:");
+    expect(problems(stdout)).toEqual(["a.js:1 perfectionist/sort-objects"]);
+    expect(exitCode).toBe(1);
+  });
+
+  // The schema allows any `newlinesBetween`. The report is the same as ESLint's. A fix would be longer than a string
+  // can be, so there is none, where ESLint builds the fix one newline at a time and never finishes.
+  test("a huge newlinesBetween reports the missing spacing without a fix", async () => {
+    const options = { groups: ["property", "method"], newlinesBetween: 1e300 };
+    const files = { ...oneRule("sort-objects", options), "a.ts": "const o = { a: 1, b() {} };\n" };
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+    expect(stderr).not.toContain("error:");
+    expect(ruleMessages(stdout)).toEqual([
+      {
+        line: 1,
+        column: 19,
+        endLine: 1,
+        endColumn: 25,
+        ruleId: "perfectionist/sort-objects",
+        message: 'Missed spacing between "a" and "b".',
+        fix: undefined,
+      },
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // `[...alphabet]` makes half of a surrogate pair one character, and `a[i]` indexes a name by UTF-16 unit, so the
+  // first unit of a key outside the BMP finds it. Recorded from ESLint.
+  test("a custom alphabet with half of a surrogate pair orders the keys that start with it", async () => {
+    const options = { type: "custom", alphabet: "\uD83Db" };
+    const files = { ...oneRule("sort-objects", options), "a.ts": 'export const o = { b: 1, "😀": 2 };\n' };
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+    expect(stderr).not.toContain("error:");
+    expect(located(stdout)).toEqual([
+      { line: 1, column: 26, endLine: 1, endColumn: 33, message: 'Expected "😀" to come before "b".' },
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // Recorded from ESLint: `type` comes from the settings where the options leave it out. Two files in one run, to
+  // see that the second file gets the same options as the first.
+  test("settings.perfectionist applies to every file", async () => {
+    const code = `export const o = { bb: 1, a: 22222 };\nexport const p = { a: 11111, bb: 1 };\n`;
+    const settings = { perfectionist: { type: "line-length" } };
+    const without = await lint({ ...oneRule("sort-objects", { order: "asc" }), "a.ts": code }, ["-f", "json", "a.ts"]);
+    expect(without.stderr).not.toContain("error:");
+    expect(located(without.stdout)).toEqual([
+      { line: 1, column: 27, endLine: 1, endColumn: 35, message: 'Expected "a" to come before "bb".' },
+    ]);
+    const files = { ...oneRule("sort-objects", { order: "asc" }, settings), "a.ts": code, "b.ts": code };
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts", "b.ts"]);
+    expect(stderr).not.toContain("error:");
+    expect(problems(stdout)).toEqual(["a.ts:2 perfectionist/sort-objects", "b.ts:2 perfectionist/sort-objects"]);
+    expect(located(stdout)).toEqual([
+      { line: 2, column: 30, endLine: 2, endColumn: 35, message: 'Expected "bb" to come before "a".' },
+      { line: 2, column: 30, endLine: 2, endColumn: 35, message: 'Expected "bb" to come before "a".' },
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // `locales` orders as `a.localeCompare(b, locales)` does in Node.js: Danish puts upper case first, `-u-kn` counts
+  // digits as numbers, `-u-ka` is an extension `Intl.Collator` does not read, Swedish puts `ä` after `z`.
+  const localeCode = `export const x = { a: 1, A: 2 };
+export const y = { A: 1, a: 2 };
+export const z = { a9: 1, a10: 2 };
+export const w = { aa: 1, "a-b": 2 };
+export const v = { ä: 1, z: 2 };
+`;
+  test.each([
+    ["da", ["a.ts:1", "a.ts:3", "a.ts:4", "a.ts:5"]],
+    ["en", ["a.ts:2", "a.ts:3", "a.ts:4"]],
+    ["en-u-kn", ["a.ts:2", "a.ts:4"]],
+    ["en-u-ka-shifted", ["a.ts:2", "a.ts:3", "a.ts:4"]],
+    ["sv", ["a.ts:2", "a.ts:3", "a.ts:4", "a.ts:5"]],
+    [
+      ["xx", "da"],
+      ["a.ts:1", "a.ts:3", "a.ts:4", "a.ts:5"],
+    ],
+  ])("locales %j collates as localeCompare does", async (locales, expected) => {
+    const options = { type: "alphabetical", ignoreCase: false, locales };
+    const files = { ...oneRule("sort-objects", options), "a.ts": localeCode };
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+    expect(stderr).not.toContain("error:");
+    expect(problems(stdout)).toEqual(expected.map(it => `${it} perfectionist/sort-objects`));
+    expect(exitCode).toBe(1);
+  });
+
+  // A tag that is not a `unicode_locale_id` is a `RangeError` in `localeCompare`, wherever it is in the list.
+  test.each([["zh_CN"], ["x-private"], ["abcd"], [["xx", "x-private", "sv"]]])(
+    "locales %j is rejected as localeCompare rejects it",
+    async (locales: string | string[]) => {
+      const options = { type: "alphabetical", locales };
+      const files = { ...oneRule("sort-objects", options), "a.ts": localeCode };
+      const { stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+      const tag = Array.isArray(locales) ? "x-private" : locales;
+      expect(stderr).toContain(`RangeError: Invalid language tag: ${tag}`);
+      expect(stderr).toContain('Rule: "perfectionist/sort-objects"');
+      expect(exitCode).toBe(2);
+    },
+  );
 });
 
 describe.concurrent("rules from every plugin report problems", () => {
@@ -1457,10 +1848,7 @@ export default { meta: { name: "demo" }, rules: { one: rule, two: rule } };\n`;
     [`"nextj/*" = "off"`, `Unknown plugin "nextj"\n  Did you mean "nextjs/*"?`],
     [`"jsx-ally/*" = "off"`, `Unknown plugin "jsx-ally"\n  Did you mean "jsx-a11y/*"?`],
     [`"m/*" = "off"`, `Unknown plugin "m"\n  Did you mean "n/*"?`],
-    [
-      `"perfectionist/*" = "off"`,
-      `Unknown rule "perfectionist/*"\n  To use a rule from an ESLint plugin, add the plugin`,
-    ],
+    [`"sonarjs/*" = "off"`, `Unknown rule "sonarjs/*"\n  To use a rule from an ESLint plugin, add the plugin`],
     [`"/*" = "off"`, `Unknown rule "/*"`],
     [`"nextjs/*" = "always"`, `"nextjs/*" can only be "off"\n`],
     [`"nextjs/*" = "warn"`, `"nextjs/*" can only be "off"\n  To turn rules on, name them or use [lint.categories]`],

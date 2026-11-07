@@ -209,8 +209,10 @@ function hintsFor(schema: Schema, value: Json, root: Schema) {
 function placeholder(before: string, schemas: Schema[], root: Schema) {
   const [long, short] = [false, true].map(short => [...new Set(schemas.flatMap(it => kinds(it, root, short)))]);
   if (long.length === 1 && long[0].startsWith('"')) return `${before}${long[0]},`;
-  const line = `${before}<${oneOf(long) || "value"}>,`;
-  return line.length <= WIDTH ? line : `${before}<${oneOf(short)}>,`;
+  // Shorter each time: the values of an enum, then their type, then any list as `list`.
+  const tiers = [long, short, [...new Set(short.map(it => (it.startsWith("list") ? "list" : it)))]];
+  const lines = tiers.map(it => `${before}<${oneOf(it) || "value"}>,`);
+  return lines.find(line => line.length <= WIDTH) ?? lines.at(-1)!;
 }
 
 /** `before` + `value` + `,`. A list that doesn't fit on the line gets one item per line. */
@@ -366,6 +368,13 @@ export function optionsSnippet(
   const start = `${JSON.stringify(id)} = [`;
   // One shape for each way to write the options, like `["always", { .. }]` and `["never"]`. Show the longest that works.
   const shapes = alternatives(root, root).filter(it => Array.isArray(it.items));
+  // A list of any number of objects, like `[{ .. }, { .. }]`, whose default is one object: shown as a tuple of one.
+  if (!shapes.length && defaults.length === 1 && isObject(defaults[0]))
+    shapes.push(
+      ...alternatives(root, root)
+        .filter(it => isObject(it.items) && (it.maxItems ?? 1) >= 1)
+        .map(it => ({ ...it, items: [it.items] })),
+    );
   const longest = (unset: string[]) => {
     let best: { lines: Line[]; options: Json[] } | undefined;
     for (const shape of shapes) {

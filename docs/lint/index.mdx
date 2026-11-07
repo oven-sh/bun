@@ -133,10 +133,10 @@ Need a rule that isn't built in? Load any [ESLint plugin](/lint/plugins), from n
 
 ```toml bunfig.toml icon="settings"
 [lint]
-plugins = ["eslint-plugin-perfectionist", "./lint/plugin.js"]
+plugins = ["eslint-plugin-simple-import-sort", "./lint/plugin.js"]
 
 [lint.rules]
-"perfectionist/sort-imports" = "error"
+"simple-import-sort/imports" = "error"
 "local/no-todo" = "warn"
 ```
 

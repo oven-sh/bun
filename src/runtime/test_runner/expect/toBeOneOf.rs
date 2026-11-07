@@ -68,7 +68,8 @@ impl Expect {
             )?;
         } else {
             return Err(global_this.throw(format_args!(
-                "Received value must be an array type, or both received and expected values must be strings."
+                "Expected value must be an array or an iterable object: {}",
+                list_value.to_fmt(&mut super::make_formatter(global_this)),
             )));
         }
 

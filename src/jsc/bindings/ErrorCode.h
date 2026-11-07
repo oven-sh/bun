@@ -97,6 +97,8 @@ void throwInvalidThisError(JSGlobalObject* globalObject, JSC::ThrowScope&, JSVal
 // throwInvalidThisError(callFrame->thisValue()) and returns the empty value; one call at each generated host-function's invalid-this branch.
 JSC::EncodedJSValue throwInvalidThisCallError(JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& message);
+// The error that ERR::INVALID_THIS throws, as a value: ERR_INVALID_THIS with Node's text `Value of "this" must be of type <expectedType>`.
+JSObject* createInvalidThisErrorForType(JSGlobalObject* globalObject, ASCIILiteral expectedType);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);
 

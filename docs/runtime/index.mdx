@@ -147,6 +147,8 @@ By default, Bun respects this shebang and executes the script with `node`. The `
 bun run --bun vite
 ```
 
+When `bun run` uses its Node shim, `NODE` and `npm_node_execpath` point to the shim executable. Scripts can invoke either path directly. Bun uses this shim when `--bun` is set or when no Node executable is available.
+
 ### Filtering
 
 In a monorepo, the `--filter` argument runs a script in many packages at once.

@@ -1,6 +1,19 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { isPosix, isRoot, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isPosix, isRoot, tempDir, tempDirWithFiles, unprivilegedSpawnOptions } from "harness";
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  existsSync,
+  openSync,
+  readFileSync,
+  readSync,
+  symlinkSync,
+  utimesSync,
+  writeSync,
+} from "node:fs";
+import { join } from "node:path";
 import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -472,6 +485,475 @@ describe.concurrent("bunshell ls", () => {
         .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toEqual(["./foo:", "a", "b", "broken-link", "c", "foo"]))
         .run();
+    });
+  });
+
+  // The output has one order in every run. The errors of the operands come in the order of the command line. Then
+  // come the operands that are not directories, and then each directory. Each of these two groups is sorted by byte.
+  describe("operand order", () => {
+    const two = (i: number) => String(i).padStart(2, "0");
+    const parts = Array.from({ length: 12 }, (_, i) => `part-${two(i + 1)}`);
+    const sortedParts = parts.join("\n") + "\n";
+    // The order of creation is not the sorted order, and neither is its reverse.
+    const shuffled = [7, 2, 11, 5, 1, 9, 12, 4, 8, 3, 10, 6];
+    const shuffledParts = shuffled.map(i => `part-${two(i)}`).join(" ");
+    const fixture = () =>
+      tempDir("ls-operand-order", {
+        ...Object.fromEntries(shuffled.map(i => [`part-${two(i)}`, ""])),
+        d2: { x: "" },
+        d3: { x: "" },
+        d1: { x: "" },
+        ".hidden": "",
+        ".hd": { y: "" },
+      });
+    const noSuchFile = (operand: string) => `ls: ${operand}: No such file or directory\n`;
+    const run = async (line: string, cwd: string) => {
+      const { stdout, stderr, exitCode } = await $`${{ raw: line }}`.cwd(cwd).quiet();
+      return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+    };
+
+    test.each([
+      ["files are sorted by name", `ls ${shuffledParts}`, sortedParts],
+      ["the matches of a glob are sorted by name", "ls part-*", sortedParts],
+      ["files come before directories", "ls d3 part-03 d2 part-01 d1", "part-01\npart-03\nd1:\nx\nd2:\nx\nd3:\nx\n"],
+      ["-d lists the operands as one sorted group", "ls -d d2 part-03 d1 part-01", "d1\nd2\npart-01\npart-03\n"],
+      [
+        "-r reverses the sort of each group",
+        "ls -r part-01 d1 part-03 d2 part-02 d3",
+        "part-03\npart-02\npart-01\nd3:\nx\nd2:\nx\nd1:\nx\n",
+      ],
+      [
+        "-U keeps the order of the command line in each group",
+        "ls -U d2 part-02 d3 part-03 d1 part-01",
+        "part-02\npart-03\npart-01\nd2:\nx\nd3:\nx\nd1:\nx\n",
+      ],
+      [
+        "-r does nothing with -U",
+        "ls -rU d2 part-02 d3 part-03 d1 part-01",
+        "part-02\npart-03\npart-01\nd2:\nx\nd3:\nx\nd1:\nx\n",
+      ],
+      [
+        "-f keeps the order of the command line, and lists every entry of a directory",
+        "ls -f part-03 d1 part-01 part-02",
+        "part-03\npart-01\npart-02\nd1:\n.\n..\nx\n",
+      ],
+      ["an operand named twice is listed twice", "ls d1 part-01 d1 part-01", "part-01\npart-01\nd1:\nx\nd1:\nx\n"],
+      ["-R with several operands", "ls -R d2 part-01 d1", "part-01\nd1:\nx\nd2:\nx\n"],
+      [
+        "an operand that starts with a dot is not hidden",
+        "ls part-01 .hidden d1 .hd",
+        ".hidden\npart-01\n.hd:\ny\nd1:\nx\n",
+      ],
+      ["-d with operands that start with a dot", "ls -d part-01 .hd . .hidden", ".\n.hd\n.hidden\npart-01\n"],
+    ])("%s", async (_, line, stdout) => {
+      using dir = fixture();
+      expect(await run(line, String(dir))).toEqual({ stdout, stderr: "", exitCode: 0 });
+    });
+
+    test.if(isPosix)("a symlink that does not lead to a directory is an entry", async () => {
+      using dir = fixture();
+      symlinkSync("part-01", join(String(dir), "link-to-file"));
+      symlinkSync("nowhere", join(String(dir), "dangling"));
+      symlinkSync("loop", join(String(dir), "loop"));
+      expect(await run("ls part-02 loop dangling link-to-file d1", String(dir))).toEqual({
+        stdout: "dangling\nlink-to-file\nloop\npart-02\nd1:\nx\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      // The long format lists the link, not the file it leads to.
+      const long = await run("ls -l part-02 link-to-file", String(dir));
+      expect(long.stdout.split("\n").map(line => line.slice(0, 1) + line.slice(line.lastIndexOf(" ")))).toEqual([
+        "l link-to-file",
+        "- part-02",
+        "",
+      ]);
+    });
+
+    test("-t sorts each group by time, and -S by size", async () => {
+      using dir = tempDir("ls-operand-sort-key", {
+        old: "22",
+        new: "1",
+        "same-a": "333",
+        "same-b": "333",
+        "d-old": { x: "" },
+        "d-new": { x: "" },
+      });
+      const at = (name: string, seconds: number) => utimesSync(join(String(dir), name), seconds, seconds);
+      at("old", 1_000_000_000);
+      at("same-b", 1_500_000_000);
+      at("same-a", 1_500_000_000);
+      at("new", 1_700_000_000);
+      at("d-old", 1_100_000_000);
+      at("d-new", 1_600_000_000);
+      const operands = "d-old same-b old new d-new same-a";
+      const listed = async (flags: string) => {
+        const { stdout, stderr, exitCode } = await run(`ls ${flags} ${operands}`, String(dir));
+        return { order: stdout.replaceAll("\nx\n", "\n").trimEnd().split("\n").join(" "), stderr, exitCode };
+      };
+      // The newest first, and the largest first. Names break a tie.
+      expect({
+        t: await listed("-t"),
+        rt: await listed("-rt"),
+        S: await listed("-S"),
+        rS: await listed("-rS"),
+        // The last of the sort flags wins.
+        tU: await listed("-tU"),
+        Ut: await listed("-Ut"),
+      }).toEqual({
+        t: { order: "new same-a same-b old d-new: d-old:", stderr: "", exitCode: 0 },
+        rt: { order: "old same-b same-a new d-old: d-new:", stderr: "", exitCode: 0 },
+        S: { order: "same-a same-b old new d-new: d-old:", stderr: "", exitCode: 0 },
+        rS: { order: "new old same-b same-a d-old: d-new:", stderr: "", exitCode: 0 },
+        tU: { order: "same-b old new same-a d-old: d-new:", stderr: "", exitCode: 0 },
+        Ut: { order: "new same-a same-b old d-new: d-old:", stderr: "", exitCode: 0 },
+      });
+    });
+
+    test("the sort is by byte, and the same on every platform", async () => {
+      using names = tempDir("ls-operand-bytes", { "app.js": "", "Makefile": "", "README.md": "", "_config.yml": "" });
+      expect(await run("ls *", String(names))).toEqual({
+        stdout: "Makefile\nREADME.md\n_config.yml\napp.js\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      // A path separator sorts as `/` does.
+      using paths = tempDir("ls-operand-paths", { a1: { f: "" }, a: { f: "" }, "a.d": { f: "" } });
+      const { stdout, stderr, exitCode } = await run("ls a*/f", String(paths));
+      expect({ stdout: stdout.replaceAll("\\", "/"), stderr, exitCode }).toEqual({
+        stdout: "a.d/f\na/f\na1/f\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Enough operands that several pool tasks share the `stat` calls.
+    test("many operands", async () => {
+      const files = Array.from({ length: 60 }, (_, i) => `f${two(i)}`);
+      const directories = Array.from({ length: 9 }, (_, i) => `g${i}`);
+      using dir = tempDir("ls-many-operands", {
+        ...Object.fromEntries(files.map(name => [name, ""])),
+        ...Object.fromEntries(directories.map(name => [name, { x: "" }])),
+      });
+      // A fixed order that is not sorted: every seventh name, and the two names that do not exist in between.
+      const names = [...files, "nope-b", ...directories, "nope-a"];
+      const typed = names.map((_, i) => names[(i * 7) % names.length]);
+      expect(await run(`ls ${typed.join(" ")}`, String(dir))).toEqual({
+        stdout: files.map(name => `${name}\n`).join("") + directories.map(name => `${name}:\nx\n`).join(""),
+        stderr: typed
+          .filter(name => name.startsWith("nope"))
+          .map(noSuchFile)
+          .join(""),
+        exitCode: 1,
+      });
+    });
+
+    test("errors are in the order of the command line", async () => {
+      using dir = fixture();
+      expect(await run("ls nope-b part-02 d2 nope-a part-01 d1", String(dir))).toEqual({
+        stdout: "part-01\npart-02\nd1:\nx\nd2:\nx\n",
+        stderr: noSuchFile("nope-b") + noSuchFile("nope-a"),
+        exitCode: 1,
+      });
+    });
+
+    test("a directory has a header when a second operand fails", async () => {
+      using dir = fixture();
+      expect(await run("ls nope d1", String(dir))).toEqual({
+        stdout: "d1:\nx\n",
+        stderr: noSuchFile("nope"),
+        exitCode: 1,
+      });
+    });
+
+    test("-l lists the operands in the same order", async () => {
+      using dir = fixture();
+      const { stdout, stderr, exitCode } = await run("ls -l part-03 d2 part-01 d1", String(dir));
+      const names = stdout
+        .split("\n")
+        .slice(0, -1)
+        .map(line => line.slice(line.lastIndexOf(" ") + 1));
+      expect({ names, stderr, exitCode }).toEqual({
+        names: ["part-01", "part-03", "d1:", "x", "d2:", "x"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Each sink takes the bytes in another way: a buffer, an IOWriter on a pipe or on a file, or the event loop of
+    // `bun exec`. `fromLs` says whether the exit code is that of `ls`.
+    type Sink = (
+      command: string,
+      merge: boolean,
+      cwd: string,
+    ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+    const merged = (command: string, merge: boolean) => (merge ? `${command} 2>&1` : command);
+    const shell = async (line: string, cwd: string, quiet = true) => {
+      const promise = $`${{ raw: line }}`.cwd(cwd);
+      const { stdout, stderr, exitCode } = await (quiet ? promise.quiet() : promise);
+      return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+    };
+    const spawned = async (cmd: string[], cwd: string) => {
+      await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const sinks: [name: string, sink: Sink, fromLs: boolean][] = [
+      ["captured", (command, merge, cwd) => shell(merged(command, merge), cwd), true],
+      ["written to stdout", (command, merge, cwd) => shell(merged(command, merge), cwd, false), true],
+      [
+        "text()",
+        async (command, merge, cwd) => ({
+          stdout: await $`${{ raw: merged(command, merge) }}`.cwd(cwd).text(),
+          stderr: "",
+          exitCode: 0,
+        }),
+        false,
+      ],
+      ["command substitution", (command, merge, cwd) => shell(`echo "$(${merged(command, merge)})"`, cwd), false],
+      ["pipeline", (command, merge, cwd) => shell(`${merged(command, merge)} | cat`, cwd), false],
+      [
+        "file",
+        async (command, merge, cwd) => {
+          const result = await shell(`${command} ${merge ? "&>" : ">"} out.txt`, cwd);
+          return { ...result, stdout: await Bun.file(join(cwd, "out.txt")).text() };
+        },
+        true,
+      ],
+      ["bun exec", (command, merge, cwd) => spawned([bunExe(), "exec", merged(command, merge)], cwd), true],
+    ];
+    // Stdout and stderr of `bun exec` are two descriptors of one pipe here, as they are at a terminal.
+    if (isPosix) {
+      sinks.push([
+        "bun exec with both streams on one pipe",
+        (command, merge, cwd) =>
+          spawned(["sh", "-c", merge ? 'exec "$0" exec "$1" 2>&1' : 'exec "$0" exec "$1"', bunExe(), command], cwd),
+        true,
+      ]);
+    }
+    describe.each([
+      ["files", `ls ${shuffledParts}`, false, sortedParts, 0],
+      ["files and directories", "ls d2 part-03 d1 part-01", false, "part-01\npart-03\nd1:\nx\nd2:\nx\n", 0],
+      [
+        "errors on the same stream",
+        "ls nope-b part-02 d1 nope-a part-01",
+        true,
+        noSuchFile("nope-b") + noSuchFile("nope-a") + "part-01\npart-02\nd1:\nx\n",
+        1,
+      ],
+    ])("%s", (_, command, merge, stdout, exitCode) => {
+      test.each(sinks)("%s", async (_, sink, fromLs) => {
+        using dir = fixture();
+        expect(await sink(command, merge, String(dir))).toEqual({
+          stdout,
+          stderr: "",
+          exitCode: fromLs ? exitCode : 0,
+        });
+      });
+    });
+
+    // What `ls -R top` has to print, from the listings in `output`: the section of a directory comes after the
+    // listing that names it and before the section of the entry after it (depth first). A listing is in the order
+    // of its directory, so the test reads each one from the output. `denied` prints its error and no section.
+    // `listings` is the names under each header, sorted, for a check against the fixture.
+    function depthFirst(output: string, denied?: string) {
+      const error = `ls: ${denied}: Permission denied`;
+      const listings = new Map<string, string[]>([["top", []]]);
+      let current = "top";
+      for (const line of output.split("\n").slice(0, -1)) {
+        if (line === error) continue;
+        if (line.endsWith(":")) listings.set((current = line.slice(0, -1)), []);
+        else listings.get(current)!.push(line);
+      }
+      const isDirectory = (path: string) => /^top\/s\d\d(\/t\d\d)?$/.test(path);
+      const section = (path: string, header: string): string => {
+        if (path === denied) return `${error}\n`;
+        const names = listings.get(path) ?? [];
+        const subdirectories = names.map(name => `${path}/${name}`).filter(isDirectory);
+        return (
+          header +
+          names.map(name => `${name}\n`).join("") +
+          subdirectories.map(sub => section(sub, `${sub}:\n`)).join("")
+        );
+      };
+      return {
+        listings: Object.fromEntries([...listings].map(([directory, names]) => [directory, names.toSorted()])),
+        expected: section("top", ""),
+      };
+    }
+    const recursiveFixture = () =>
+      tempDir("ls-recursive-order", {
+        top: {
+          f: "",
+          ...Object.fromEntries(shuffled.map(i => [`s${two(i)}`, { g: "", [`t${two(i)}`]: { h: "" } }])),
+        },
+      });
+    const recursiveListings = (without?: number) => ({
+      top: ["f", ...shuffled.map(i => `s${two(i)}`)].sort(),
+      ...Object.fromEntries(
+        shuffled.flatMap(i =>
+          i === without
+            ? []
+            : [
+                [`top/s${two(i)}`, ["g", `t${two(i)}`]],
+                [`top/s${two(i)}/t${two(i)}`, ["h"]],
+              ],
+        ),
+      ),
+    });
+
+    test("-R lists a directory before its subdirectories", async () => {
+      using dir = recursiveFixture();
+      const { stdout, stderr, exitCode } = await run("ls -R top", String(dir));
+      const output = stdout.replaceAll("\\", "/");
+      const { listings, expected } = depthFirst(output);
+      expect({ listings, stderr }).toEqual({ listings: recursiveListings(), stderr: "" });
+      expect(output).toBe(expected);
+      expect(exitCode).toBe(0);
+    });
+
+    // The listing is several times what a pipe holds. The reader takes one byte and then waits, so `ls` queues the
+    // rest while the pipe is full. `ls` has to stay until the reader has taken the last chunk, and the bytes have to
+    // be those of a listing that did not wait.
+    test.if(isPosix)("a listing larger than a pipe reaches a reader that stalls", async () => {
+      const suffix = Buffer.alloc(230, "x").toString();
+      const longNames = Array.from({ length: 100 }, (_, i) => `f${two(i)}${suffix}`);
+      const big = Object.fromEntries(longNames.map(name => [name, ""]));
+      using dir = tempDir("ls-stalled-reader", {
+        top: Object.fromEntries(shuffled.flatMap(i => [[`big${two(i)}`, big] as const, [`small${two(i)}`, { g: "" }]])),
+      });
+      const [first, go] = [join(String(dir), "first"), join(String(dir), "go")];
+      await $`mkfifo ${go}`.quiet().throws(true);
+      // Open for both directions: the open does not wait, and the reader finds a byte whenever it comes for it.
+      const release = openSync(go, "r+");
+      try {
+        // The reader copies one byte, makes the file `first`, waits for one byte from `go`, and then copies the rest.
+        const reader = 'dd bs=1 count=1 2>/dev/null && : > "$0" && dd bs=1 count=1 < "$1" > /dev/null 2>&1 && cat';
+        const stalled = $`ls -R top | sh -c ${reader} ${first} ${go}`.cwd(String(dir)).quiet().run();
+        // A pipeline that ends before the reader has its first byte has failed: the comparison below then says how.
+        let ended = false;
+        stalled.finally(() => (ended = true)).catch(() => {});
+        while (!existsSync(first) && !ended) await Bun.sleep(1);
+        // A second walk of the same tree is complete here, so the first one has queued its listing by now.
+        const captured = await run("ls -R top", String(dir));
+        writeSync(release, "x");
+        const { stdout, exitCode } = await stalled;
+
+        const lines = [
+          ...shuffled.flatMap(i => [`big${two(i)}`, `small${two(i)}`, `top/big${two(i)}:`, `top/small${two(i)}:`, "g"]),
+          ...shuffled.flatMap(() => longNames),
+        ];
+        expect(captured.stdout.split("\n").slice(0, -1).sort()).toEqual(lines.sort());
+        expect(captured.stdout.length).toBeGreaterThan(4 * 65536);
+        expect(stdout.toString()).toBe(captured.stdout);
+        expect(exitCode).toBe(0);
+      } finally {
+        closeSync(release);
+      }
+    });
+
+    // Stdout is a file, and stderr is a pipe that is full, so the errors cannot be written yet. The listing must not
+    // wait for them: a reader that does not drain one stream must not stop the other stream.
+    test.if(isPosix)("a stream does not wait for the other one when they go to two places", async () => {
+      using dir = fixture();
+      const [errors, out] = [join(String(dir), "errors"), join(String(dir), "out.txt")];
+      await $`mkfifo ${errors}`.quiet().throws(true);
+      const wouldBlock = (e: unknown) => {
+        if ((e as NodeJS.ErrnoException).code !== "EAGAIN") throw e;
+      };
+      // The test is the reader of the pipe, and fills it first. This descriptor does not block.
+      const pipe = openSync(errors, constants.O_RDWR | constants.O_NONBLOCK);
+      try {
+        let filled = 0;
+        for (const block of [Buffer.alloc(4096, "#"), Buffer.alloc(1, "#")]) {
+          try {
+            for (;;) filled += writeSync(pipe, block);
+          } catch (e) {
+            wouldBlock(e);
+          }
+        }
+        const stderr = openSync(errors, "w");
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "exec", `ls nope-b ${shuffledParts} nope-a > out.txt`],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "ignore",
+          stderr,
+        });
+        closeSync(stderr);
+
+        // The listing is in the file while the errors still wait for room in the pipe.
+        const listing = () => (existsSync(out) ? readFileSync(out, "utf8") : "");
+        while (listing().length < sortedParts.length && proc.exitCode === null) await Bun.sleep(1);
+        const early = listing();
+
+        const chunks: Buffer[] = [];
+        const read = () => {
+          const buffer = Buffer.alloc(65536);
+          try {
+            for (let n; (n = readSync(pipe, buffer)) > 0;) chunks.push(Buffer.from(buffer.subarray(0, n)));
+          } catch (e) {
+            wouldBlock(e);
+          }
+        };
+        read();
+        const exitCode = await proc.exited;
+        read();
+        expect({ early, errors: Buffer.concat(chunks).toString().slice(filled), exitCode }).toEqual({
+          early: sortedParts,
+          errors: noSuchFile("nope-b") + noSuchFile("nope-a"),
+          exitCode: 1,
+        });
+      } finally {
+        closeSync(pipe);
+      }
+    });
+
+    // The error of a directory that does not open is where the section of that directory would be. `ls` runs in a
+    // child that is not root, so that the mode bits apply to it.
+    // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+    describe.serial.if(isPosix)("a directory that does not open", () => {
+      const child = async (cmd: string[], dir: string, locked: string) => {
+        using options = unprivilegedSpawnOptions(dir);
+        chmodSync(join(dir, locked), 0o000);
+        try {
+          await using proc = Bun.spawn({ cmd, env: bunEnv, cwd: dir, stdout: "pipe", stderr: "pipe", ...options });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { stdout, stderr, exitCode };
+        } finally {
+          chmodSync(join(dir, locked), 0o755);
+        }
+      };
+      // With two descriptors of one pipe, `ls` has a writer for each stream, as it has at a terminal.
+      const oneDestination: [name: string, cmd: (line: string) => string[]][] = [
+        ["on one stream", line => [bunExe(), "exec", `${line} 2>&1`]],
+        ["on two descriptors of one pipe", line => ["sh", "-c", 'exec "$0" exec "$1" 2>&1', bunExe(), line]],
+      ];
+
+      test("as an operand, on two streams", async () => {
+        using dir = fixture();
+        expect(await child([bunExe(), "exec", "ls d3 d2 part-01 d1"], String(dir), "d2")).toEqual({
+          stdout: "part-01\nd1:\nx\nd3:\nx\n",
+          stderr: "ls: d2: Permission denied\n",
+          exitCode: 1,
+        });
+      });
+
+      test.each(oneDestination)("as an operand, %s", async (_, cmd) => {
+        using dir = fixture();
+        expect(await child(cmd("ls d3 d2 part-01 d1"), String(dir), "d2")).toEqual({
+          stdout: "part-01\nd1:\nx\nls: d2: Permission denied\nd3:\nx\n",
+          stderr: "",
+          exitCode: 1,
+        });
+      });
+
+      test.each(oneDestination)("under -R, %s", async (_, cmd) => {
+        using dir = recursiveFixture();
+        const { stdout, stderr, exitCode } = await child(cmd("ls -R top"), String(dir), "top/s05");
+        const { listings, expected } = depthFirst(stdout, "top/s05");
+        expect({ listings, stderr, exitCode }).toEqual({ listings: recursiveListings(5), stderr: "", exitCode: 1 });
+        expect(stdout).toBe(expected);
+      });
     });
   });
 });

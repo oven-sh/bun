@@ -1,16 +1,18 @@
-use core::ops::ControlFlow;
+use core::ops::Range;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
+use std::rc::Rc;
 
-use bun_core::ZBox;
+use bun_collections::index_sort;
+use bun_core::{ZBox, ZStr, strings};
+use bun_resolver::compiled_program::compare_source_paths;
 use bun_sys::{E, FdExt, O, S, dir_iterator};
 
 use crate::shell::ExitCode;
-use crate::shell::builtin::{Builtin, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinIO, IoKind, Kind};
 use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ShellTask,
-    shell_lstatat, shell_openat, shell_statat,
+    EventLoopHandle, Interpreter, NodeId, ShellTask, shell_lstatat, shell_openat, shell_statat,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -21,6 +23,8 @@ pub(crate) struct Ls {
     pub(crate) state: State,
 }
 
+// `Ls` is in a `Box`, and a `Box` for `ExecState` would be one more allocation for each `ls`.
+#[allow(clippy::large_enum_variant)]
 #[derive(Default)]
 pub(crate) enum State {
     #[default]
@@ -32,14 +36,78 @@ pub(crate) enum State {
 
 pub(crate) struct ExecState {
     pub(crate) err: Option<bun_sys::Error>,
+    /// Tasks that have a section. Slot 0 lists the one path or orders the operands.
     pub(crate) task_count: AtomicUsize,
+    /// Tasks whose section is written.
     pub(crate) tasks_done: usize,
+    /// Chunks queued on an `IOWriter`.
     pub(crate) output_waiting: usize,
+    /// Chunks whose `on_io_writer_chunk` ran.
     pub(crate) output_done: usize,
-    /// FIFO of in-flight `OutputTask`s awaiting an IOWriter chunk
-    /// completion. Stopgap until `WriterTag` can carry the `OutputTask`
-    /// directly — see mkdir.rs `Exec::output_queue` for rationale.
-    pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Ls>>>,
+    /// What each task that runs `stat` on a part of the operands found, until the last is done.
+    parts: Vec<Option<Classified>>,
+    parts_left: usize,
+    /// The slot whose section is written next: depth first, a task before its subtasks.
+    turn: Option<u32>,
+    /// The slots after `turn`, the next one last.
+    after: Vec<u32>,
+    /// Results that arrived before their turn, by slot.
+    parked: Vec<Option<Section>>,
+    /// The section of `turn`, while a part of it is still to write.
+    writing: Option<Section>,
+    /// Bytes ready for the `IOWriter` of `batch_stream`. Small sections are joined in it.
+    batch: Vec<u8>,
+    batch_stream: IoKind,
+    /// Whether stdout and stderr are two `IOWriter`s on one file. `None` until they first meet.
+    one_destination: Option<bool>,
+    /// The stream of the chunks that are queued and not written yet.
+    in_flight: IoKind,
+    /// [`Ls::drain`] is running: a chunk that completes inside it is only counted.
+    draining: bool,
+}
+
+/// Sections are joined into chunks of at most one page, which a writable pipe takes at once.
+const CHUNK: usize = 4096;
+
+/// A part has at least this many operands. Below that, a pool task costs more than it saves.
+const OPERANDS_PER_PART: usize = 8;
+
+/// What one task found, as the main thread writes it.
+struct Section {
+    errs: Vec<bun_sys::Error>,
+    output: Vec<u8>,
+    /// Slots of the subtasks, in the order of their sections.
+    children: Vec<u32>,
+}
+
+/// What one pass of `stat` over operands found.
+struct Classified {
+    /// The operands, each followed by a NUL.
+    operands: Vec<u8>,
+    /// The entry of each operand that is not a directory to list.
+    entries: Vec<u8>,
+    /// In the order of the command line.
+    found: Vec<Found>,
+    errs: Vec<bun_sys::Error>,
+}
+
+struct Found {
+    /// In `operands`.
+    name: Range<usize>,
+    /// In `entries`. Empty for a directory to list.
+    entry: Range<usize>,
+    /// The slot of the subtask that lists it, for a directory.
+    directory: Option<u32>,
+    /// What `-t` or `-S` sorts by.
+    key: (i64, i64),
+}
+
+impl ExecState {
+    /// Moves `turn` past a written section whose subtasks are `children`.
+    fn advance(&mut self, children: Vec<u32>) {
+        self.after.extend(children.into_iter().rev());
+        self.turn = self.after.pop();
+    }
 }
 
 enum ParseFlag {
@@ -87,63 +155,60 @@ impl Ls {
                 };
 
                 let argc = Builtin::of(interp, cmd).args_slice().len();
-                let task_count = match paths_start {
-                    Some(start) => argc - start,
-                    None => 1,
-                };
+                let operands = paths_start.unwrap_or(argc)..argc;
+                // Many operands: several tasks share the `stat` calls.
+                let parts = (operands.len() / OPERANDS_PER_PART)
+                    .clamp(1, usize::from(bun_core::get_thread_count()));
                 Self::state_mut(interp, cmd).state = State::Exec(ExecState {
                     err: None,
-                    task_count: AtomicUsize::new(task_count),
+                    task_count: AtomicUsize::new(1),
                     tasks_done: 0,
                     output_waiting: 0,
                     output_done: 0,
-                    output_queue: std::collections::VecDeque::new(),
+                    parts: Vec::new(),
+                    parts_left: 0,
+                    turn: Some(0),
+                    after: Vec::new(),
+                    parked: Vec::new(),
+                    writing: None,
+                    batch: Vec::new(),
+                    batch_stream: IoKind::Stdout,
+                    one_destination: None,
+                    in_flight: IoKind::Stdout,
+                    draining: false,
                 });
 
-                // Stable address: `Ls` lives in `Box<Ls>` (Builtin::Impl::Ls),
-                // and the `Exec` variant is held until all tasks finish.
-                let task_count_ptr: *const AtomicUsize = {
-                    let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
-                        unreachable!()
+                // One task lists `.` or the one operand.
+                if operands.len() < 2 {
+                    let path = match operands.len() {
+                        0 => b".",
+                        _ => Builtin::of(interp, cmd).arg_bytes(operands.start),
                     };
-                    &raw const exec.task_count
-                };
-
-                let cwd = Builtin::cwd(interp, cmd);
-                let opts = Self::state_mut(interp, cmd).opts;
-                let evtloop = Builtin::event_loop(interp, cmd);
-                let interp_ptr = interp.as_ctx_ptr();
-                if let Some(start) = paths_start {
-                    let print_directory = task_count > 1;
-                    for i in start..argc {
-                        let path = Builtin::of(interp, cmd).arg_bytes(i);
-                        let task = ShellLsTask::create(
-                            cmd,
-                            opts,
-                            task_count_ptr,
-                            cwd,
-                            ZBox::from_bytes(path),
-                            evtloop,
-                            interp_ptr,
-                        );
-                        // SAFETY: freshly heap-allocated.
-                        unsafe {
-                            (*task).print_directory = print_directory;
-                            ShellTask::schedule_no_ref::<ShellLsTask>(task);
-                        }
+                    Self::schedule(interp, cmd, ZBox::from_bytes(path), None);
+                    return Yield::suspended();
+                }
+                if parts > 1 {
+                    if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                        exec.parts.resize_with(parts, || None);
+                        exec.parts_left = parts;
                     }
-                } else {
-                    let task = ShellLsTask::create(
-                        cmd,
-                        opts,
-                        task_count_ptr,
-                        cwd,
-                        ZBox::from_bytes(b"."),
-                        evtloop,
-                        interp_ptr,
-                    );
-                    // SAFETY: freshly heap-allocated.
-                    unsafe { ShellTask::schedule_no_ref::<ShellLsTask>(task) };
+                }
+                for part in 0..parts {
+                    let builtin = Builtin::of(interp, cmd);
+                    let first = operands.start + part * operands.len() / parts;
+                    let end = operands.start + (part + 1) * operands.len() / parts;
+                    let len = |operand| builtin.arg_bytes(operand).len() + 1;
+                    let mut bytes = Vec::with_capacity((first..end).map(len).sum());
+                    for operand in first..end {
+                        bytes.extend_from_slice(builtin.arg_bytes(operand));
+                        bytes.push(0);
+                    }
+                    let stat = Operands::Stat {
+                        bytes,
+                        part,
+                        alone: parts == 1,
+                    };
+                    Self::schedule(interp, cmd, ZBox::default(), Some(Box::new(stat)));
                 }
                 Yield::suspended()
             }
@@ -154,6 +219,7 @@ impl Ls {
                     };
                     exec.tasks_done >= exec.task_count.load(Ordering::Relaxed)
                         && exec.output_done >= exec.output_waiting
+                        && exec.batch.is_empty()
                 };
                 if done {
                     let exit_code: ExitCode = {
@@ -177,40 +243,255 @@ impl Ls {
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
-        written: usize,
-        e: Option<bun_sys::SystemError>,
+        _: usize,
+        _: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
-            return Builtin::done(interp, cmd, 1);
+        match &mut Self::state_mut(interp, cmd).state {
+            State::WaitingWriteErr => return Builtin::done(interp, cmd, 1),
+            State::Exec(exec) => {
+                exec.output_done += 1;
+                if exec.draining {
+                    return Yield::suspended();
+                }
+            }
+            State::Idle | State::Done => {}
         }
-        let pending = if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_queue.pop_front()
-        } else {
-            None
-        };
-        if let Some(task) = pending {
-            return OutputTask::<Ls>::on_io_writer_chunk(task, interp, written, e);
-        }
+        Self::drain(interp, cmd);
         Self::next(interp, cmd)
     }
 
-    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: &mut ShellLsTask) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.tasks_done += 1;
+    /// Creates a task on the pool: it lists `path`, or it works on operands.
+    fn schedule(interp: &Interpreter, cmd: NodeId, path: ZBox, operands: Option<Box<Operands>>) {
+        // Stable address: `Ls` is in a `Box`, and `Exec` is held until all tasks finish.
+        let task_count: *const AtomicUsize = {
+            let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
+                unreachable!()
+            };
+            &raw const exec.task_count
+        };
+        let task = ShellLsTask::create(
+            cmd,
+            Self::state_mut(interp, cmd).opts,
+            task_count,
+            Builtin::cwd(interp, cmd),
+            path,
+            Builtin::event_loop(interp, cmd),
+            interp.as_ctx_ptr(),
+        );
+        // SAFETY: freshly heap-allocated.
+        unsafe {
+            (*task).operands = operands;
+            ShellTask::schedule_no_ref::<ShellLsTask>(task);
         }
-        let output = core::mem::take(&mut task.output);
-        let output_task = OutputTask::<Ls>::new(cmd, OutputSrc::Arrlist(output));
+    }
 
-        let errstr: Option<Vec<u8>> = task.err.take().map(|e| {
-            let s = Builtin::task_error_to_string(interp, cmd, Kind::Ls, &e).to_vec();
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                if exec.err.is_none() {
-                    exec.err = Some(e);
+    /// A task that ran `stat` on one part is done. After the last, one task orders the results.
+    fn on_operands_classified(
+        interp: &Interpreter,
+        cmd: NodeId,
+        part: usize,
+        classified: Classified,
+    ) {
+        let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+            return;
+        };
+        exec.parts[part] = Some(classified);
+        exec.parts_left -= 1;
+        if exec.parts_left > 0 {
+            return;
+        }
+        let parts = core::mem::take(&mut exec.parts)
+            .into_iter()
+            .flatten()
+            .collect();
+        let order = Operands::Order(parts);
+        Self::schedule(interp, cmd, ZBox::default(), Some(Box::new(order)));
+    }
+
+    /// A task with a section is done. The section is written now if its turn has come.
+    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, slot: u32, section: Section) {
+        let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+            return;
+        };
+        if exec.turn != Some(slot) {
+            let slot = slot as usize;
+            if exec.parked.len() <= slot {
+                exec.parked.resize_with(slot + 1, || None);
+            }
+            exec.parked[slot] = Some(section);
+            return;
+        }
+        exec.writing = Some(section);
+        Self::drain(interp, cmd);
+        Self::next(interp, cmd).run(interp);
+    }
+
+    /// Writes each section whose turn it is, until one is missing or a stream has to wait.
+    fn drain(interp: &Interpreter, cmd: NodeId) {
+        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.draining = true;
+        }
+        loop {
+            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+                return;
+            };
+            let mut section = match exec.writing.take() {
+                Some(section) => section,
+                None => {
+                    let parked = exec
+                        .turn
+                        .and_then(|turn| exec.parked.get_mut(turn as usize));
+                    match parked.and_then(Option::take) {
+                        Some(section) => section,
+                        None => break,
+                    }
+                }
+            };
+            let errs_fit =
+                section.errs.is_empty() || Self::make_room(interp, cmd, IoKind::Stderr, 0);
+            if errs_fit && !section.errs.is_empty() {
+                let mut errstr = Vec::new();
+                for e in core::mem::take(&mut section.errs) {
+                    errstr.extend_from_slice(Builtin::task_error_to_string(
+                        interp,
+                        cmd,
+                        Kind::Ls,
+                        &e,
+                    ));
+                    if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                        if exec.err.is_none() {
+                            exec.err = Some(e);
+                        }
+                    }
+                }
+                Self::emit(interp, cmd, IoKind::Stderr, errstr);
+            }
+            let output_fits = errs_fit
+                && (section.output.is_empty()
+                    || Self::make_room(interp, cmd, IoKind::Stdout, section.output.len()));
+            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+                return;
+            };
+            if !output_fits {
+                exec.writing = Some(section);
+                break;
+            }
+            exec.tasks_done += 1;
+            exec.advance(section.children);
+            Self::emit(interp, cmd, IoKind::Stdout, section.output);
+        }
+        Self::flush(interp, cmd);
+        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.draining = false;
+        }
+    }
+
+    fn stream(builtin: &mut Builtin, io_kind: IoKind) -> &mut BuiltinIO {
+        match io_kind {
+            IoKind::Stdout => &mut builtin.stdout,
+            IoKind::Stderr => &mut builtin.stderr,
+        }
+    }
+
+    /// Whether `len` more bytes of `stream` fit in the batch, after a flush if one is needed.
+    fn make_room(interp: &Interpreter, cmd: NodeId, stream: IoKind, len: usize) -> bool {
+        let needs_io = Self::stream(Builtin::of_mut(interp, cmd), stream)
+            .needs_io()
+            .is_some();
+        let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
+            return false;
+        };
+        if !needs_io
+            || exec.batch.is_empty()
+            || (exec.batch_stream == stream && exec.batch.len() + len <= CHUNK)
+        {
+            return true;
+        }
+        Self::flush(interp, cmd)
+    }
+
+    /// Takes the next bytes of `stream`: into the batch, or at once with no `IOWriter`.
+    fn emit(interp: &Interpreter, cmd: NodeId, stream: IoKind, bytes: Vec<u8>) {
+        if bytes.is_empty() {
+            return;
+        }
+        if Self::stream(Builtin::of_mut(interp, cmd), stream)
+            .needs_io()
+            .is_none()
+        {
+            let _ = Builtin::write_no_io(interp, cmd, stream, &bytes);
+            return;
+        }
+        let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+            return;
+        };
+        if exec.batch.is_empty() {
+            exec.batch = bytes;
+            exec.batch_stream = stream;
+        } else {
+            exec.batch.extend_from_slice(&bytes);
+        }
+    }
+
+    /// Queues the batch. False while chunks of the other stream wait on the same file.
+    fn flush(interp: &Interpreter, cmd: NodeId) -> bool {
+        let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+            return false;
+        };
+        if exec.batch.is_empty() {
+            return true;
+        }
+        let stream = exec.batch_stream;
+        if exec.output_done < exec.output_waiting
+            && exec.in_flight != stream
+            && Self::one_destination(interp, cmd)
+        {
+            return false;
+        }
+        let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+            return false;
+        };
+        let batch = core::mem::take(&mut exec.batch);
+        exec.in_flight = stream;
+        exec.output_waiting += 1;
+        let io = Self::stream(Builtin::of_mut(interp, cmd), stream);
+        let Some(safeguard) = io.needs_io() else {
+            unreachable!("only a stream with an IOWriter has a batch")
+        };
+        io.enqueue(ChildPtr::new(cmd, WriterTag::Builtin), &batch, safeguard)
+            .run(interp);
+        true
+    }
+
+    /// Two pipes, or a pipe and a terminal, are two destinations: neither waits for the other.
+    fn one_destination(interp: &Interpreter, cmd: NodeId) -> bool {
+        let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
+            return false;
+        };
+        if let Some(known) = exec.one_destination {
+            return known;
+        }
+        let builtin = Builtin::of(interp, cmd);
+        let one = match (&builtin.stdout, &builtin.stderr) {
+            (BuiltinIO::Fd(stdout), BuiltinIO::Fd(stderr))
+                if !Rc::ptr_eq(&stdout.writer, &stderr.writer) =>
+            {
+                match (
+                    bun_sys::fstat(stdout.writer.fd()),
+                    bun_sys::fstat(stderr.writer.fd()),
+                ) {
+                    (Ok(a), Ok(b)) => a.st_dev == b.st_dev && a.st_ino == b.st_ino,
+                    // Not known: keep the order.
+                    _ => true,
                 }
             }
-            s
-        });
-        OutputTask::<Ls>::start(output_task, interp, errstr.as_deref()).run(interp);
+            // One writer keeps the order of its chunks, and a buffer takes its bytes at once.
+            _ => false,
+        };
+        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.one_destination = Some(one);
+        }
+        one
     }
 
     /// Returns the index of the first non-flag arg, or `None` if there are no
@@ -248,11 +529,18 @@ impl Ls {
                 b'd' => opts.list_directories = true,
                 b'l' => opts.long_listing = true,
                 b'R' => opts.recursive = true,
+                b'r' => opts.reverse = true,
+                b'U' => opts.sort = Sort::None,
+                b'f' => {
+                    opts.sort = Sort::None;
+                    opts.dotfiles = DotfileMode::All;
+                }
+                b't' => opts.sort = Sort::Time,
+                b'S' => opts.sort = Sort::Size,
                 // The remaining short flags are recognised but currently no-op.
-                b'r' | b'1' | b'b' | b'B' | b'c' | b'C' | b'D' | b'f' | b'F' | b'g' | b'G'
-                | b'h' | b'H' | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p'
-                | b'q' | b'Q' | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x'
-                | b'X' | b'Z' => {}
+                b'1' | b'b' | b'B' | b'c' | b'C' | b'D' | b'F' | b'g' | b'G' | b'h' | b'H'
+                | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p' | b'q' | b'Q'
+                | b's' | b'T' | b'u' | b'v' | b'w' | b'x' | b'X' | b'Z' => {}
                 _ => return ParseFlag::IllegalOption(Box::from(&flag[1..2])),
             }
         }
@@ -268,75 +556,31 @@ impl Ls {
     }
 }
 
-impl OutputTaskVTable for Ls {
-    fn write_err(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-        errbuf: &[u8],
-    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            // Stash so on_io_writer_chunk can route to the OutputTask state
-            // machine and reclaim the box (stopgap for missing WriterTag).
-            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
-                unreachable!()
-            };
-            exec.output_queue.push_back(child);
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stderr
-                    .enqueue(childptr, errbuf, safeguard),
-            );
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        ControlFlow::Continue(child)
-    }
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
-    fn write_out(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            let buf = child.output.slice().to_vec();
-            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
-                unreachable!()
-            };
-            exec.output_queue.push_back(child);
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(childptr, &buf, safeguard),
-            );
-        }
-        let buf = child.output.slice().to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        ControlFlow::Continue(child)
-    }
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
-    fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
-        Self::next(interp, cmd)
-    }
+/// What an operand is.
+enum Operand {
+    /// A directory, with its `stat`.
+    Directory(bun_sys::Stat),
+    /// Not a directory. Its `lstat`, when `-l`, `-t` or `-S` needs it.
+    Entry(Option<bun_sys::Stat>),
+}
+
+/// What a task does with two or more operands. Tasks share them: one `stat` can be slow.
+enum Operands {
+    /// Run `stat` on these NUL-terminated operands. `alone`: this task also orders them.
+    Stat {
+        bytes: Vec<u8>,
+        part: usize,
+        alone: bool,
+    },
+    /// What a `Stat` task found, for the main thread.
+    Found { part: usize, classified: Classified },
+    /// Put in order what all the `Stat` tasks found.
+    Order(Vec<Classified>),
 }
 
 /// Opens the path, iterates its entries (or
 /// prints the path itself for files / `-d`), accumulating into `output`.
+/// With two or more operands, a task works on the operands instead ([`Operands`]).
 pub(crate) struct ShellLsTask {
     pub cmd: NodeId,
     pub opts: Opts,
@@ -346,16 +590,22 @@ pub(crate) struct ShellLsTask {
     pub task_count: *const AtomicUsize,
     pub cwd: bun_sys::Fd,
     pub path: ZBox,
+    /// Set when the task works on operands. `path` is then empty.
+    operands: Option<Box<Operands>>,
     pub output: Vec<u8>,
     pub is_absolute: bool,
-    pub err: Option<bun_sys::Error>,
+    pub errs: Vec<bun_sys::Error>,
     /// Cached current time (seconds since epoch) for formatting timestamps.
     /// Cached once per task to avoid repeated syscalls.
     now_secs: u64,
     pub event_loop: EventLoopHandle,
-    /// Back-ref so recursive `enqueue` can populate the subtask's
+    /// Back-ref so a subtask can populate its
     /// `task.interp` (needed by [`ShellTask::run_from_main_thread`]).
     pub interp: *mut Interpreter,
+    /// Where this task's section goes in the output (see [`ExecState::turn`]).
+    slot: u32,
+    /// Slots of the subtasks of this task, in the order of their sections.
+    children: Vec<u32>,
     pub task: ShellTask,
 }
 
@@ -376,22 +626,23 @@ impl ShellLsTask {
             task_count,
             cwd,
             path,
+            operands: None,
             output: Vec::new(),
             is_absolute: false,
-            err: None,
+            errs: Vec::new(),
             now_secs: 0,
             event_loop,
             interp,
+            slot: 0,
+            children: Vec::new(),
             task: ShellTask::new(event_loop),
         });
         task.task.interp = interp;
         bun_core::heap::into_raw(task)
     }
 
-    /// Spawns a subtask for a recursively
-    /// discovered subdirectory.
-    fn enqueue(&mut self, name: &[u8]) {
-        let new_path = self.join(name);
+    /// Schedules a subtask that lists `path` (a directory operand or a `-R` subdirectory).
+    fn schedule_subtask(&mut self, path: ZBox) -> u32 {
         // Pool thread: the subtask inherits our poster rather than deriving
         // one from the VM (`ShellTask::new` is JS-thread only).
         let mut subtask = Box::new(ShellLsTask {
@@ -400,13 +651,16 @@ impl ShellLsTask {
             print_directory: true,
             task_count: self.task_count,
             cwd: self.cwd,
-            path: new_path,
+            path,
+            operands: None,
             output: Vec::new(),
             is_absolute: false,
-            err: None,
+            errs: Vec::new(),
             now_secs: 0,
             event_loop: self.event_loop,
             interp: self.interp,
+            slot: 0,
+            children: Vec::new(),
             task: ShellTask::new_child(&self.task),
         });
         subtask.task.interp = self.interp;
@@ -416,8 +670,10 @@ impl ShellLsTask {
         // keep-alive ref) — it runs on a worker thread with no JS-VM
         // thread-local.
         unsafe {
-            (*self.task_count).fetch_add(1, Ordering::Relaxed);
+            subtask.slot = (*self.task_count).fetch_add(1, Ordering::Relaxed) as u32;
+            let slot = subtask.slot;
             ShellTask::schedule_no_ref::<ShellLsTask>(bun_core::heap::into_raw(subtask));
+            slot
         }
     }
 
@@ -447,6 +703,22 @@ impl ShellLsTask {
         // Cache current time once per task for timestamp formatting.
         if this.opts.long_listing {
             this.now_secs = bun_core::time::timestamp().max(0) as u64;
+        }
+
+        if let Some(operands) = this.operands.take() {
+            match *operands {
+                Operands::Stat { bytes, part, alone } => {
+                    let classified = this.classify(bytes);
+                    if alone {
+                        this.order(vec![classified]);
+                    } else {
+                        this.operands = Some(Box::new(Operands::Found { part, classified }));
+                    }
+                }
+                Operands::Order(parts) => this.order(parts),
+                Operands::Found { .. } => {}
+            }
+            return;
         }
 
         let fd = match shell_openat(this.cwd, this.path.as_zstr(), O::RDONLY | O::DIRECTORY, 0) {
@@ -481,7 +753,7 @@ impl ShellLsTask {
             loop {
                 match iterator.next() {
                     Err(e) => {
-                        this.err = Some(this.error_with_path(&e));
+                        this.errs.push(this.error_with_path(&e));
                         return;
                     }
                     Ok(None) => break,
@@ -491,7 +763,8 @@ impl ShellLsTask {
                         if matches!(current.kind, bun_sys::EntryKind::Directory)
                             && this.opts.recursive
                         {
-                            this.enqueue(name);
+                            let slot = this.schedule_subtask(this.join(name));
+                            this.children.push(slot);
                         }
                     }
                 }
@@ -503,32 +776,164 @@ impl ShellLsTask {
         this.output.push(b'\n');
     }
 
-    /// coreutils operand rule: `stat`, and on ENOENT or ELOOP `lstat` so a symlink is itself.
-    fn list_non_directory_operand(&mut self, open_err: &bun_sys::Error) {
-        match shell_statat(self.cwd, self.path.as_zstr()) {
-            // A directory that would not open: report the open error.
-            Ok(stat) if S::ISDIR(stat.st_mode as _) => {
-                self.err = Some(self.error_with_path(open_err));
-                return;
+    /// Runs `stat` on each NUL-terminated operand: an entry, or a subtask for a directory.
+    fn classify(&mut self, operands: Vec<u8>) -> Classified {
+        let mut found = Vec::with_capacity(strings::count_char(&operands, 0));
+        let mut rest = &operands[..];
+        while let Some(len) = strings::index_of_char_usize(rest, 0) {
+            let path = ZStr::from_buf(rest, len);
+            let start = operands.len() - rest.len();
+            rest = &rest[len + 1..];
+            let name = path.as_bytes();
+            let entry = self.output.len();
+            let (directory, stat) = match self.stat_operand(path) {
+                Err(e) => {
+                    self.errs.push(e);
+                    continue;
+                }
+                Ok(Operand::Entry(stat)) => {
+                    self.add_operand(name, stat.as_ref());
+                    (None, stat)
+                }
+                Ok(Operand::Directory(stat)) if !self.opts.list_directories => {
+                    let slot = self.schedule_subtask(ZBox::from_bytes(name));
+                    (Some(slot), Some(stat))
+                }
+                // `-d`: the name alone, and the directory has to open.
+                Ok(Operand::Directory(stat)) => {
+                    match shell_openat(self.cwd, path, O::RDONLY | O::DIRECTORY, 0) {
+                        Ok(fd) => {
+                            fd.close();
+                            self.add_entry_short(name);
+                            (None, Some(stat))
+                        }
+                        Err(e) => {
+                            self.errs.push(e.with_path(name));
+                            continue;
+                        }
+                    }
+                }
+            };
+            let key = match (self.opts.sort, &stat) {
+                (Sort::Time, Some(stat)) => {
+                    let mtime = bun_sys::stat_mtime(stat);
+                    (mtime.sec as i64, mtime.nsec as i64)
+                }
+                (Sort::Size, Some(stat)) => (stat.st_size as i64, 0),
+                _ => (0, 0),
+            };
+            found.push(Found {
+                name: start..start + len,
+                entry: entry..self.output.len(),
+                directory,
+                key,
+            });
+        }
+        Classified {
+            entries: core::mem::take(&mut self.output),
+            errs: core::mem::take(&mut self.errs),
+            operands,
+            found,
+        }
+    }
+
+    /// The coreutils order: entries first, then each directory, each group sorted by the flags.
+    fn order(&mut self, mut parts: Vec<Classified>) {
+        struct Item<'a> {
+            name: &'a [u8],
+            entry: &'a [u8],
+            directory: Option<u32>,
+            key: (i64, i64),
+        }
+        let mut items: Vec<Item<'_>> =
+            Vec::with_capacity(parts.iter().map(|part| part.found.len()).sum());
+        for part in &parts {
+            items.extend(part.found.iter().map(|found| Item {
+                name: &part.operands[found.name.clone()],
+                entry: &part.entries[found.entry.clone()],
+                directory: found.directory,
+                key: found.key,
+            }));
+        }
+
+        let opts = self.opts;
+        let order = |a: &Item<'_>, b: &Item<'_>| {
+            let group = a.directory.is_some().cmp(&b.directory.is_some());
+            if opts.sort == Sort::None {
+                return group;
             }
-            Ok(_) => {}
-            Err(e) if matches!(e.get_errno(), E::ENOENT | E::ELOOP) => {}
-            Err(e) => {
-                self.err = Some(self.error_with_path(&e));
-                return;
+            // The newest or the largest first, and then by name: the same on every platform.
+            let by_name = || compare_source_paths(a.name, b.name).then_with(|| a.name.cmp(b.name));
+            let sorted = b.key.cmp(&a.key).then_with(by_name);
+            group.then(if opts.reverse {
+                sorted.reverse()
+            } else {
+                sorted
+            })
+        };
+        if !items.is_sorted_by(|a, b| order(a, b).is_le()) {
+            index_sort::sort_slice_by(&mut items, order);
+        }
+
+        let (entries, directories) =
+            items.split_at(items.partition_point(|item| item.directory.is_none()));
+        self.children = directories
+            .iter()
+            .filter_map(|item| item.directory)
+            .collect();
+        // The entries of one pass that are in order already: its buffer is the output.
+        let in_order = parts.len() == 1 && entries.is_sorted_by_key(|item| item.entry.as_ptr());
+        if !in_order {
+            self.output
+                .reserve_exact(entries.iter().map(|item| item.entry.len()).sum());
+            for item in entries {
+                self.output.extend_from_slice(item.entry);
             }
         }
-        match shell_lstatat(self.cwd, self.path.as_zstr()) {
-            Ok(stat) => {
-                // An operand is never subject to the -a/-A filter.
-                let name = ZBox::from_bytes(self.path.as_bytes());
-                if self.opts.long_listing {
-                    self.add_entry_long_from_stat(name.as_bytes(), &stat);
-                } else {
-                    self.add_entry_short(name.as_bytes());
-                }
+        for part in &mut parts {
+            self.errs.append(&mut part.errs);
+            if in_order {
+                self.output = core::mem::take(&mut part.entries);
             }
-            Err(e) => self.err = Some(self.error_with_path(&e)),
+        }
+    }
+
+    /// An operand that did not open as a directory.
+    fn list_non_directory_operand(&mut self, open_err: &bun_sys::Error) {
+        match self.stat_operand(self.path.as_zstr()) {
+            Ok(Operand::Entry(stat)) => {
+                let name = ZBox::from_bytes(self.path.as_bytes());
+                self.add_operand(name.as_bytes(), stat.as_ref());
+            }
+            // A directory that would not open: report the open error.
+            Ok(Operand::Directory(_)) => self.errs.push(self.error_with_path(open_err)),
+            Err(e) => self.errs.push(e),
+        }
+    }
+
+    /// coreutils operand rule: `stat`, and on ENOENT or ELOOP `lstat` so a symlink is itself.
+    fn stat_operand(&self, path: &ZStr) -> bun_sys::Result<Operand> {
+        let needs_lstat =
+            self.opts.long_listing || matches!(self.opts.sort, Sort::Time | Sort::Size);
+        match shell_statat(self.cwd, path) {
+            Ok(stat) if S::ISDIR(stat.st_mode as _) => return Ok(Operand::Directory(stat)),
+            // The name alone is printed, and the sort is by name.
+            Ok(_) if !needs_lstat => return Ok(Operand::Entry(None)),
+            Ok(_) => {}
+            Err(e) if matches!(e.get_errno(), E::ENOENT | E::ELOOP) => {}
+            Err(e) => return Err(e.with_path(path.as_bytes())),
+        }
+        match shell_lstatat(self.cwd, path) {
+            Ok(stat) => Ok(Operand::Entry(needs_lstat.then_some(stat))),
+            Err(e) => Err(e.with_path(path.as_bytes())),
+        }
+    }
+
+    /// An operand is never subject to the -a/-A filter.
+    fn add_operand(&mut self, name: &[u8], stat: Option<&bun_sys::Stat>) {
+        match stat {
+            Some(stat) if self.opts.long_listing => self.add_entry_long_from_stat(name, stat),
+            _ => self.add_entry_short(name),
         }
     }
 
@@ -621,9 +1026,27 @@ impl ShellLsTask {
     /// [`ShellLsTask::create`]; ownership is reclaimed here.
     fn run_from_main_thread(this: NonNull<ShellLsTask>, interp: &Interpreter) {
         // SAFETY: precondition.
-        let mut task = unsafe { bun_core::heap::take(this.as_ptr()) };
-        let cmd = task.cmd;
-        Ls::on_shell_ls_task_done(interp, cmd, &mut task);
+        let task = unsafe { bun_core::heap::take(this.as_ptr()) };
+        let ShellLsTask {
+            cmd,
+            slot,
+            errs,
+            output,
+            children,
+            operands,
+            ..
+        } = *task;
+        if let Some(operands) = operands {
+            if let Operands::Found { part, classified } = *operands {
+                return Ls::on_operands_classified(interp, cmd, part, classified);
+            }
+        }
+        let section = Section {
+            errs,
+            output,
+            children,
+        };
+        Ls::on_shell_ls_task_done(interp, cmd, slot, section);
     }
 }
 
@@ -813,4 +1236,21 @@ pub(crate) struct Opts {
     pub(crate) long_listing: bool,
     /// `-R`, `--recursive` — list subdirectories recursively
     pub(crate) recursive: bool,
+    /// `-r` — reverse the sort of the operands
+    pub(crate) reverse: bool,
+    pub(crate) sort: Sort,
+}
+
+/// How each group of operands is sorted. The last flag wins. A directory's entries stay unsorted.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Sort {
+    /// By name.
+    #[default]
+    Name,
+    /// `-U`, `-f` — each group in the order of the command line.
+    None,
+    /// `-t` — by modification time, the newest first.
+    Time,
+    /// `-S` — by size, the largest first.
+    Size,
 }

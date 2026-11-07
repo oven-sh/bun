@@ -463,6 +463,10 @@ For cross-platform compatibility, Bun Shell implements a set of builtin commands
 
 - `cd`: change the working directory
 - `ls`: list files in a directory (supports `-l` for long listing format)
+  - With several operands, `ls` lists the operands that are not directories first, then each directory. `-d` lists all operands as one group.
+  - `ls` sorts each group by byte, so `B` comes before `a`. `-t` sorts by modification time, `-S` sorts by size, and `-r` reverses the sort. `-c`, `-u`, `-X` and `-v` are accepted and do not change the order.
+  - `-U` and `-f` turn the sort off. Each group then keeps the order of the command line, and the files still come first. `-f` also lists hidden entries, like `-a`.
+  - `ls` lists the entries of one directory in the order of the file system, with each of these flags.
 - `rm`: remove files and directories
 - `echo`: print text
 - `pwd`: print the working directory

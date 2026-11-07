@@ -38,61 +38,48 @@ process.exit(0);
 const bunfig = `preload = ["./preload.js"]`;
 
 describe("preload", () => {
-  test.todo("works", async () => {
-    const preloadDir = join(realpathSync(tmpdir()), "bun-preload-test");
-    mkdirSync(preloadDir, { recursive: true });
-    const preloadPath = join(preloadDir, "preload.js");
-    const mainPath = join(preloadDir, "main.js");
-    const bunfigPath = join(preloadDir, "bunfig.toml");
-    await Bun.write(preloadPath, preloadModule);
-    await Bun.write(mainPath, mainModule);
-    await Bun.write(bunfigPath, bunfig);
+  test.concurrent("works", async () => {
+    using dir = tempDir("preload-plugin-bunfig", {
+      "preload.js": preloadModule,
+      "main.js": mainModule,
+      "bunfig.toml": bunfig,
+    });
+    const mainPath = join(String(dir), "main.js");
 
-    const cmds = [
-      [bunExe(), "run", mainPath],
-      [bunExe(), mainPath],
-    ];
-
-    for (let cmd of cmds) {
-      const { stderr, exitCode, stdout } = spawnSync({
-        cmd,
-        cwd: preloadDir,
-        stderr: "pipe",
-        stdout: "pipe",
+    for (const args of [["run", mainPath], [mainPath]]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: String(dir),
         env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
       });
-
-      expect(stderr.toString()).toBe("");
-      expect(stdout.toString()).toContain("Test passed");
-      expect(exitCode).toBe(0);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "Test passed\n", stderr: "", exitCode: 0 });
     }
   });
 
-  test.todo("works from CLI", async () => {
-    const preloadDir = join(realpathSync(tmpdir()), "bun-preload-test4");
-    mkdirSync(preloadDir, { recursive: true });
-    const preloadPath = join(preloadDir, "preload.js");
-    const mainPath = join(preloadDir, "main.js");
-    await Bun.write(preloadPath, preloadModule);
-    await Bun.write(mainPath, mainModule);
+  test.concurrent("works from CLI", async () => {
+    using dir = tempDir("preload-plugin-cli", {
+      "preload.js": preloadModule,
+      "main.js": mainModule,
+    });
+    const preloadPath = join(String(dir), "preload.js");
+    const mainPath = join(String(dir), "main.js");
 
-    const cmds = [
-      [bunExe(), "-r=" + preloadPath, "run", mainPath],
-      [bunExe(), "-r=" + preloadPath, mainPath],
-    ];
-
-    for (let cmd of cmds) {
-      const { stderr, exitCode, stdout } = spawnSync({
-        cmd,
-        cwd: preloadDir,
-        stderr: "pipe",
-        stdout: "pipe",
+    for (const args of [
+      ["-r=" + preloadPath, "run", mainPath],
+      ["-r=" + preloadPath, mainPath],
+    ]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: String(dir),
         env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
       });
-
-      expect(stderr.toString()).toBe("");
-      expect(stdout.toString()).toContain("Test passed");
-      expect(exitCode).toBe(0);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "Test passed\n", stderr: "", exitCode: 0 });
     }
   });
 

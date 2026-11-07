@@ -1826,6 +1826,11 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+static JSValue createQueueMicrotaskFunction(VM& vm, JSObject* globalObject)
+{
+    return uncheckedDowncast<GlobalObject>(globalObject)->nativeFunction("queueMicrotask"_s, functionQueueMicrotask);
+}
+
 using MicrotaskCallback = void (*)(void*);
 
 JSC_DEFINE_HOST_FUNCTION(functionNativeMicrotaskTrampoline,
@@ -1916,6 +1921,16 @@ JSC_DEFINE_HOST_FUNCTION(functionATOB,
     }
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsString(vm, result.releaseReturnValue())));
+}
+
+JSValue createAtobFunction(VM& vm, JSObject* globalObject)
+{
+    return uncheckedDowncast<GlobalObject>(globalObject)->nativeFunction("atob"_s, JSC::removableFunction<Bun::Feature::Base64Globals, JSC::RemovedFeatureStub::Throw, functionATOB>());
+}
+
+JSValue createBtoaFunction(VM& vm, JSObject* globalObject)
+{
+    return uncheckedDowncast<GlobalObject>(globalObject)->nativeFunction("btoa"_s, JSC::removableFunction<Bun::Feature::Base64Globals, JSC::RemovedFeatureStub::Throw, functionBTOA>());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionReportError,
@@ -3530,7 +3545,7 @@ JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
     return uncheckedDowncast<Zig::GlobalObject>(globalObject)->globalThis();
 }
 
-// `@natives`. Builtins in src/js read Blob, URL, ... (nativeGlobals in src/codegen/replacements.ts) from here, since user code can patch globalThis.
+// `@natives`. Builtins in src/js read Blob, URL, setTimeout, ... (nativeGlobals and nativeFunctions in src/codegen/replacements.ts) from here, since user code can patch globalThis.
 class NativeGlobals final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -3563,6 +3578,27 @@ private:
     {
     }
 };
+
+JSC::JSFunction* GlobalObject::nativeFunction(ASCIILiteral name, JSC::NativeFunction function, bool* isNew)
+{
+    auto& vm = this->vm();
+    // `@natives` is a static global: a variable of the global scope, which getDirect() does not find.
+    PropertySlot slot(this, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    auto& nativesName = WebCore::builtinNames(vm).nativesPrivateName();
+    bool hasNatives = JSC::symbolTableGet(static_cast<JSC::JSGlobalObject*>(this), nativesName, slot);
+    RELEASE_ASSERT(hasNatives);
+    JSObject* natives = asObject(slot.getValue(this, nativesName));
+
+    auto property = Identifier::fromString(vm, name);
+    if (JSValue existing = natives->getDirect(vm, property))
+        return uncheckedDowncast<JSFunction>(existing);
+    auto* created = JSFunction::create(vm, this, 1, name, function, ImplementationVisibility::Public);
+    // Not ReadOnly: src/js/internal/trace_events.ts puts the function that traces a timer here.
+    natives->putDirect(vm, property, created, PropertyAttribute::DontDelete | 0);
+    if (isNew)
+        *isNew = true;
+    return created;
+}
 
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
@@ -5433,10 +5469,13 @@ bool NativeGlobals::getOwnPropertySlot(JSC::JSObject* object, JSC::JSGlobalObjec
         value = std::bit_cast<JSC::LazyCellProperty*>(fields + entry->lazyCellPropertyOffset())->get(globalObject);
     else if (entry->attributes() & PropertyAttribute::ClassStructure)
         value = std::bit_cast<JSC::LazyClassStructure*>(fields + entry->lazyClassStructureOffset())->constructor(globalObject);
-    else if (entry->attributes() & PropertyAttribute::PropertyCallback)
+    else if (entry->attributes() & PropertyAttribute::PropertyCallback) {
         value = entry->lazyPropertyCallback()(vm, globalObject);
-    else if (entry->attributes() & PropertyAttribute::Function)
-        value = JSC::JSFunction::create(vm, globalObject, entry->functionLength(), String(propertyName.publicName()), entry->function(), JSC::ImplementationVisibility::Public, entry->intrinsic());
+        // The callback of a function has put it here itself (GlobalObject::nativeFunction).
+        if (Base::getOwnPropertySlot(object, lexicalGlobalObject, propertyName, slot))
+            return true;
+    }
+    // A `Function` row has no arm: its function here would not be the one on globalThis.
     if (!value)
         return false;
 

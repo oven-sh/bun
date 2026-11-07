@@ -52,7 +52,13 @@ import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
 import { cap, checkAscii, low, writeIfNotChanged } from "./helpers";
 import { beginGuardedBody, endGuardedBody, removableFeatures } from "./removable-entry-points.ts";
-import { applyGlobalReplacements, assertNoDestructuredGlobalThis, define } from "./replacements";
+import {
+  applyGlobalReplacements,
+  assertNoDestructuredGlobalThis,
+  assertNoNativeFunctionOfGlobalThis,
+  define,
+  nativeFunctions,
+} from "./replacements";
 
 const PARALLEL = false;
 const KEEP_TMP = true;
@@ -362,6 +368,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     const sourceMap: SourceMap = await made.sourcemap.json();
     let output = bundled.replaceAll("// @bun\n", "");
     assertNoDestructuredGlobalThis(output, `${basename}.ts (${fn.name})`);
+    assertNoNativeFunctionOfGlobalThis(output, `${basename}.ts (${fn.name})`, "js");
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
@@ -933,6 +940,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     }
   }
 
+  dts += `\n/** The functions of nativeFunctions in src/codegen/replacements.ts, which script cannot replace. globalThis starts with the same ones. */\ndeclare const $natives: Pick<typeof globalThis, ${nativeFunctions.map(name => JSON.stringify(name)).join(" | ")}>;\n`;
   dts += getJS2NativeDTS();
 
   writeIfNotChanged(path.join(typesDir, "WebCoreJSBuiltins.d.ts"), dts);

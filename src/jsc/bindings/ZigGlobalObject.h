@@ -320,6 +320,9 @@ public:
     JSC::JSObject* processEnvObject();
     JSC::JSObject* bunObject() const { return m_bunObject.getInitializedOnMainThread(this); }
 
+    // `@natives` keeps one object per realm for a function that is a global and that builtin modules export or call: the lazy property of globalThis and node:timers get the same `setTimeout` here, whatever script puts on globalThis.
+    JSC::JSFunction* nativeFunction(ASCIILiteral name, JSC::NativeFunction, bool* isNew = nullptr);
+
     uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
@@ -743,6 +746,10 @@ public:
     static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool);
     static JSC::JSPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, const WTF::String& referrer, RefPtr<JSC::ScriptFetchParameters>, RefPtr<JSC::ScriptFetcher>);
 };
+
+// Lazy property callbacks of the global object table, for the two functions that node:buffer exports too.
+JSC::JSValue createAtobFunction(JSC::VM&, JSC::JSObject* globalObject);
+JSC::JSValue createBtoaFunction(JSC::VM&, JSC::JSObject* globalObject);
 
 } // namespace Zig
 

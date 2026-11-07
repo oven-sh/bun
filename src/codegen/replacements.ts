@@ -100,13 +100,11 @@ replacements.push({
   to: "extends __no_intrinsic__%1",
 });
 
+const globalObjectTable = readFileSync(join(import.meta.dir, "../jsc/bindings/ZigGlobalObject.lut.txt"), "utf8");
+
 // Classes and objects in ZigGlobalObject.lut.txt. `Blob` becomes `@natives.Blob` (NativeGlobals, ZigGlobalObject.cpp).
-// Its functions are left out, except nativeFunctions: the one in `@natives` is not the one on globalThis.
-export const nativeGlobals = Array.from(
-  readFileSync(join(import.meta.dir, "../jsc/bindings/ZigGlobalObject.lut.txt"), "utf8").matchAll(
-    /^ +(\w+) +(\S+) +(\S+)$/gm,
-  ),
-)
+// Its functions are left out, except nativeFunctions.
+export const nativeGlobals = Array.from(globalObjectTable.matchAll(/^ +(\w+) +(\S+) +(\S+)$/gm))
   .filter(
     ({ 2: value, 3: kind }) =>
       /\b(CellProperty|ClassStructure)\b/.test(kind) || /ConstructorCallback$|::get\w+Constructor$/.test(value),
@@ -115,7 +113,7 @@ export const nativeGlobals = Array.from(
   .filter(name => !globalsToPrefix.includes(name) && name !== "Bun" && name !== "process");
 
 // What fake timers replace. As in Node, they don't stop the timers of builtin modules.
-// Only the bare name is `@natives.setTimeout`. `globalThis.setTimeout` is what script sees, for node:timers.
+// Only the bare name is `@natives.setTimeout`, which globalThis starts with too. `globalThis.setTimeout` is what script sees.
 export const nativeFunctions = [
   "setTimeout",
   "setInterval",
@@ -124,13 +122,51 @@ export const nativeFunctions = [
   "clearInterval",
   "clearImmediate",
   "queueMicrotask",
+  // node:buffer exports these two.
+  "atob",
+  "btoa",
 ];
+
+// `@natives` and globalThis have one function object only where the callback of the row calls GlobalObject::nativeFunction.
+const rowsWithOneFunction = Array.from(
+  globalObjectTable.matchAll(/^ +(\w+) +create\w+Function +PropertyCallback$/gm),
+  ({ 1: name }) => name,
+);
+if (rowsWithOneFunction.toSorted().join() !== nativeFunctions.toSorted().join()) {
+  throw new Error(
+    `nativeFunctions in src/codegen/replacements.ts (${nativeFunctions.toSorted().join(", ")}) must be the rows of ZigGlobalObject.lut.txt that have a create...Function callback (${rowsWithOneFunction.toSorted().join(", ")})`,
+  );
+}
 
 /** The defines for globalsToPrefix and nativeGlobals don't apply to `const { Blob } = globalThis`. */
 export function assertNoDestructuredGlobalThis(source: string, file: string) {
   if (/}\s*=\s*globalThis\b/.test(source)) {
     throw new Error(
       `${file}: do not destructure globalThis, script may have replaced its properties. Write the bare name (\`Blob\`): the bundler turns it into a read that script cannot reach, see nativeGlobals in src/codegen/replacements.ts`,
+    );
+  }
+}
+
+// ws stands in for an npm package, whose timers are the ones script sees. node:timers/promises sets and clears with what globalThis had at its first load.
+const modulesWithTimersOfScript = ["thirdparty/ws.ts", "node/timers.promises.ts"];
+const readOfGlobalThis = "__nativeFunctionOfGlobalThis_";
+const transpilersThatMarkReads = new Map<string, Bun.Transpiler>();
+
+/** A builtin module that reads `globalThis.setTimeout` calls or exports what script has put there. A define finds the reads: it applies to no assignment, comment or string. */
+export function assertNoNativeFunctionOfGlobalThis(source: string, file: string, loader: "ts" | "js") {
+  if (modulesWithTimersOfScript.includes(file)) return;
+  let transpiler = transpilersThatMarkReads.get(loader);
+  if (!transpiler) {
+    const define = Object.fromEntries(nativeFunctions.map(name => ["globalThis." + name, readOfGlobalThis + name]));
+    transpilersThatMarkReads.set(
+      loader,
+      (transpiler = new Bun.Transpiler({ loader, define, deadCodeElimination: false })),
+    );
+  }
+  const read = new RegExp(readOfGlobalThis + "(\\w+)").exec(transpiler.transformSync(source));
+  if (read) {
+    throw new Error(
+      `${file}: globalThis.${read[1]} is what script has put on globalThis. Write the bare name (\`${read[1]}\`), or \`$natives.${read[1]}\` in a module that exports or declares that name: the function script cannot replace, see nativeFunctions in src/codegen/replacements.ts`,
     );
   }
 }

@@ -22,7 +22,8 @@ export async function bake({ base, ref }: BakeOptions): Promise<void> {
   await tart.configure(staging, cpu, memoryMb);
 
   log(`boot ${staging}`);
-  const vm = tart.start(staging, `/tmp/bake-${staging}.log`);
+  // every bake reuses this path, so each one starts the log over
+  const vm = tart.start(staging, `/tmp/bake-${staging}.log`, "w");
   const ip = (await tart.waitForSsh(staging, 60)) ?? fail(`${staging} never came up; see /tmp/bake-${staging}.log`);
   log(`guest up at ${ip}`);
 

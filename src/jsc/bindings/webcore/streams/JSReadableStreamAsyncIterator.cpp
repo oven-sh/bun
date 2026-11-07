@@ -64,24 +64,26 @@ private:
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStreamAsyncIteratorPrototype, JSReadableStreamAsyncIteratorPrototype::Base);
 
-// %ReadableStreamAsyncIteratorPrototype% owns only `next` and `return`;
+// %ReadableStreamAsyncIteratorPrototype% owns `next`, `return` and its class string;
 // @@asyncIterator comes from its [[Prototype]], %AsyncIteratorPrototype%.
 static const HashTableValue JSReadableStreamAsyncIteratorPrototypeTableValues[] = {
     { "next"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamAsyncIteratorPrototypeFunction_next, 0 } },
     { "return"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamAsyncIteratorPrototypeFunction_return, 1 } },
 };
 
-const ClassInfo JSReadableStreamAsyncIteratorPrototype::s_info = { "ReadableStreamAsyncIterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamAsyncIteratorPrototype) };
+// The name is the Web IDL class string ("<interface> AsyncIterator"). finishCreation installs it as @@toStringTag.
+const ClassInfo JSReadableStreamAsyncIteratorPrototype::s_info = { "ReadableStream AsyncIterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamAsyncIteratorPrototype) };
 
 void JSReadableStreamAsyncIteratorPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSReadableStreamAsyncIterator::info(), JSReadableStreamAsyncIteratorPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // JSReadableStreamAsyncIterator
 
-const ClassInfo JSReadableStreamAsyncIterator::s_info = { "ReadableStreamAsyncIterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamAsyncIterator) };
+const ClassInfo JSReadableStreamAsyncIterator::s_info = { "ReadableStream AsyncIterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamAsyncIterator) };
 
 JSReadableStreamAsyncIterator::JSReadableStreamAsyncIterator(VM& vm, Structure* structure)
     : Base(vm, structure)

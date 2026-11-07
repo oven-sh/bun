@@ -1,7 +1,28 @@
 import { expect, test } from "bun:test";
+import { statSync, utimesSync } from "fs";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+
+test("lastModified matches fs.statSync() for a file dated before 1970", async () => {
+  using dir = tempDir("bun-file-lastmodified-negative", { "old.txt": "x" });
+  const filename = join(dir, "old.txt");
+  const mtime = new Date("1960-01-01T00:00:00Z");
+  utimesSync(filename, mtime, mtime);
+
+  const expected = statSync(filename).mtime.getTime();
+  // Windows stat times are unsigned 32-bit seconds (as in Node), so only
+  // POSIX reports the date itself.
+  if (!isWindows) expect(expected).toBe(mtime.getTime());
+
+  // lazy stat path
+  expect(Bun.file(filename).lastModified).toBe(expected);
+
+  // fstat-during-read path
+  const file = Bun.file(filename);
+  expect(await file.text()).toBe("x");
+  expect(file.lastModified).toBe(expected);
+});
 
 test("delete() and stat() should work with unicode paths", async () => {
   await using dir = tempDir("delete-stat-unicode-path", {

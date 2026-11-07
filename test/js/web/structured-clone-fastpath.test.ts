@@ -1,5 +1,8 @@
+import { structuredCloneAdvanced } from "bun:internal-for-testing";
+import { deserialize, estimateShallowMemoryUsageOf, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { isASAN, rss } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, rss } from "harness";
+import { MessageChannel as NodeMessageChannel, Worker as NodeWorker, receiveMessageOnPort } from "node:worker_threads";
 
 describe("Structured Clone Fast Path", () => {
   test("structuredClone should work with empty object", () => {
@@ -25,6 +28,480 @@ describe("Structured Clone Fast Path", () => {
     const string = "";
     const cloned = structuredClone(string);
     expect(cloned).toStrictEqual("");
+  });
+
+  describe("primitive root", () => {
+    // [name, value]. The string in each pair keeps the number beside it in its own encoding, int32 or double.
+    const primitives: [string, unknown][] = [
+      ["42", 42],
+      ["0", 0],
+      ["int32 max", 2147483647],
+      ["int32 min", -2147483648],
+      ["int32 max + 1", 2147483648],
+      ["3.14", 3.14],
+      ["-0", -0],
+      ["NaN", NaN],
+      ["Infinity", Infinity],
+      ["true", true],
+      ["false", false],
+      ["null", null],
+      ["undefined", undefined],
+    ];
+    // Tells -0 from 0 and null from undefined, also in a failure message.
+    const tag = (value: unknown) => (Object.is(value, -0) ? "number -0" : `${typeof value} ${String(value)}`);
+    const tags = primitives.map(([, value]) => tag(value));
+    const wireBytes = (value: unknown) => Buffer.from(serialize(value)).toString("hex");
+    const thrownBy = (fn: () => unknown) => {
+      try {
+        fn();
+      } catch (error: any) {
+        return { name: error.name, code: error.code };
+      }
+      return "did not throw";
+    };
+    type CloneOptions = Parameters<typeof structuredClone>[1];
+    // Not folded when the file is transpiled.
+    const zero = Number("0");
+    // A Float64Array read gives a double, also for an integer.
+    const double = (value: number) => new Float64Array([value])[0];
+    // The primitives, and numbers that the deserializer returns in another encoding or with other bits.
+    const encodings: [string, unknown][] = [
+      ...primitives,
+      ["double 0", double(0)],
+      ["double 1", double(1)],
+      ["double 5", double(5)],
+      ["double -1", double(-1)],
+      ["double int32 max", double(2147483647)],
+      ["double int32 min", double(-2147483648)],
+      ["double int32 max + 1", double(2147483648)],
+      ["double int32 min - 1", double(-2147483649)],
+      ["zero / zero", zero / zero],
+      ["-(zero / zero)", -(zero / zero)],
+      ["Math.sqrt(-1)", Math.sqrt(zero - 1)],
+    ];
+
+    test("structuredClone returns the value for every form of empty options", () => {
+      const emptyOptions = [undefined, null, {}, { transfer: [] }] as CloneOptions[];
+      for (const [, value] of primitives) {
+        expect(tag(structuredClone(value))).toBe(tag(value));
+        for (const options of emptyOptions) expect(tag(structuredClone(value, options))).toBe(tag(value));
+      }
+    });
+
+    test("the record of a posted primitive holds no serialized bytes", async () => {
+      const { port1, port2 } = new MessageChannel();
+      try {
+        const costs: number[] = [];
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        port2.onmessageerror = reject;
+        port2.onmessage = event => {
+          costs.push(estimateShallowMemoryUsageOf(event));
+          if (costs.length === primitives.length + 2) resolve();
+        };
+        for (const [, value] of primitives) port1.postMessage(value);
+        port1.postMessage("");
+        port1.postMessage(new Map());
+        await promise;
+        // The estimate for an event includes the bytes that its message record holds: none for "", the wire bytes for a Map.
+        const map = costs.pop()!;
+        const emptyString = costs.pop()!;
+        expect(emptyString).toBeLessThan(map);
+        expect(costs).toEqual(primitives.map(() => emptyString));
+      } finally {
+        port1.close();
+        port2.close();
+      }
+    });
+
+    // Without ASAN, malloc is mimalloc, so heapStats() counts every allocation. A debug build takes 0.1 s for each
+    // heapStats() call.
+    test.skipIf(isASAN || isDebug)(
+      "structuredClone of a primitive allocates nothing, and a posted primitive allocates what a posted '' does",
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            const { heapStats } = require("bun:jsc");
+            const { MessageChannel, receiveMessageOnPort } = require("node:worker_threads");
+            const count = () => heapStats().mimalloc.malloc_normal_count;
+            // The fewest of 7 rounds: heapStats() and the other threads only add to a count.
+            const perCall = fn => {
+              let fewest = Infinity;
+              for (let round = 0; round < 7; round++) {
+                const before = count();
+                for (let i = 0; i < 1000; i++) fn();
+                fewest = Math.min(fewest, count() - before);
+              }
+              return Math.round(fewest / 1000);
+            };
+            const { port1, port2 } = new MessageChannel();
+            const post = value => () => {
+              port1.postMessage(value);
+              receiveMessageOnPort(port2);
+            };
+            const map = new Map();
+            const counts = { clone: {}, post: {} };
+            for (const [name, value] of [["42", 42], ["1.5", 1.5], ["true", true], ["null", null], ["undefined", undefined]]) {
+              counts.clone[name] = perCall(() => structuredClone(value));
+              counts.post[name] = perCall(post(value));
+            }
+            // Shows that the counter sees the serializer and the record of a message.
+            counts.cloneMap = perCall(() => structuredClone(map));
+            counts.postEmptyString = perCall(post(""));
+            port1.close();
+            port2.close();
+            console.log(JSON.stringify(counts));
+          `,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        const { cloneMap, postEmptyString, ...counts } = JSON.parse(stdout);
+        expect(cloneMap).toBeGreaterThan(0);
+        expect(postEmptyString).toBeGreaterThan(0);
+        const each = (count: number) => ({
+          "42": count,
+          "1.5": count,
+          "true": count,
+          "null": count,
+          "undefined": count,
+        });
+        expect(counts).toEqual({ clone: each(0), post: each(postEmptyString) });
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test("a number arrives with the encoding and the bits that the serializer gives it", () => {
+      // bun:jsc serialize writes an int32 and a double differently, and writes the bits of a double as they are.
+      expect(wireBytes(double(5))).not.toBe(wireBytes(5));
+      // One of the two is not the NaN that the deserializer returns. Which one depends on the CPU.
+      expect(wireBytes(zero / zero)).not.toBe(wireBytes(-(zero / zero)));
+
+      const { port1, port2 } = new MessageChannel();
+      try {
+        for (const [name, value] of encodings) {
+          // A transfer list sends the value through the serializer.
+          const serialized = wireBytes(structuredClone(value, { transfer: [new ArrayBuffer(1)] }));
+          port1.postMessage(value);
+          expect({
+            name,
+            structuredClone: wireBytes(structuredClone(value)),
+            port: wireBytes(receiveMessageOnPort(port2)!.message),
+          }).toEqual({ name, structuredClone: serialized, port: serialized });
+        }
+      } finally {
+        port1.close();
+        port2.close();
+      }
+    });
+
+    test("a MessageChannel delivers the value", async () => {
+      const { port1, port2 } = new MessageChannel();
+      try {
+        const received: string[] = [];
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        port2.onmessageerror = reject;
+        port2.onmessage = event => {
+          received.push(tag(event.data));
+          if (received.length === primitives.length) resolve();
+        };
+        for (const [, value] of primitives) port1.postMessage(value);
+        await promise;
+        expect(received).toEqual(tags);
+      } finally {
+        port1.close();
+        port2.close();
+      }
+    });
+
+    test("receiveMessageOnPort tells a posted undefined from an empty queue", () => {
+      const { port1, port2 } = new MessageChannel();
+      try {
+        expect(receiveMessageOnPort(port2)).toBeUndefined();
+        for (const [, value] of primitives) port1.postMessage(value);
+        const received = primitives.map(() => receiveMessageOnPort(port2));
+        expect(received.map(entry => entry && tag(entry.message))).toEqual(tags);
+        expect(receiveMessageOnPort(port2)).toBeUndefined();
+      } finally {
+        port1.close();
+        port2.close();
+      }
+    });
+
+    test("a port keeps the post order of primitives and objects", async () => {
+      const { port1, port2 } = new MessageChannel();
+      try {
+        const sent = [1, { a: 1 }, null, "s", undefined, [1], false];
+        // The messages wait in the queue until the port starts.
+        for (const value of sent) port1.postMessage(value);
+        const received: unknown[] = [];
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        port2.addEventListener("messageerror", reject);
+        port2.addEventListener("message", event => {
+          received.push(event.data);
+          if (received.length === sent.length) resolve();
+        });
+        port2.start();
+        await promise;
+        expect(received).toStrictEqual(sent);
+      } finally {
+        port1.close();
+        port2.close();
+      }
+    });
+
+    test("primitives posted before close() arrive before the 'close' event", async () => {
+      const { port1, port2 } = new NodeMessageChannel();
+      try {
+        const received: string[] = [];
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        port2.on("messageerror", reject);
+        port2.on("message", message => received.push(tag(message)));
+        port2.on("close", resolve);
+        port1.postMessage(1);
+        port1.postMessage(true);
+        port1.postMessage(null);
+        port1.close();
+        await promise;
+        expect(received).toEqual(["number 1", "boolean true", "object null"]);
+      } finally {
+        port2.close();
+      }
+    });
+
+    test("primitives queued on a port arrive after the port is transferred", async () => {
+      const inner = new NodeMessageChannel();
+      const outer = new NodeMessageChannel();
+      let transferred: typeof inner.port2 | undefined;
+      try {
+        inner.port1.postMessage(1);
+        inner.port1.postMessage(false);
+        inner.port1.postMessage(null);
+        outer.port1.postMessage(inner.port2, [inner.port2]);
+        const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+        outer.port2.on("messageerror", reject);
+        outer.port2.on("message", port => {
+          transferred = port;
+          const received: string[] = [];
+          port.on("messageerror", reject);
+          port.on("message", (message: unknown) => {
+            received.push(tag(message));
+            if (received.length === 3) resolve(received);
+          });
+        });
+        expect(await promise).toEqual(["number 1", "boolean false", "object null"]);
+      } finally {
+        transferred?.close();
+        inner.port1.close();
+        outer.port1.close();
+        outer.port2.close();
+      }
+    });
+
+    test("a BroadcastChannel delivers the value to every subscriber", async () => {
+      const name = "structured-clone-fastpath primitive root";
+      const sender = new BroadcastChannel(name);
+      const receivers = [new BroadcastChannel(name), new BroadcastChannel(name)];
+      try {
+        const received: string[][] = receivers.map(() => []);
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        receivers.forEach((receiver, i) => {
+          receiver.onmessageerror = reject;
+          receiver.onmessage = event => {
+            received[i].push(tag(event.data));
+            if (received.every(list => list.length === primitives.length)) resolve();
+          };
+        });
+        for (const [, value] of primitives) sender.postMessage(value);
+        await promise;
+        expect(received).toEqual([tags, tags]);
+      } finally {
+        sender.close();
+        for (const receiver of receivers) receiver.close();
+      }
+    });
+
+    test("performance.mark and performance.measure keep a primitive detail", () => {
+      for (const [name, value] of primitives) {
+        const entryName = `primitive root ${name}`;
+        // An undefined detail is an absent one, and an absent detail reads as null.
+        const expected = tag(value === undefined ? null : value);
+        try {
+          const mark = performance.mark(entryName, { detail: value });
+          expect([tag(mark.detail), tag(mark.detail)]).toEqual([expected, expected]);
+          const measure = performance.measure(entryName, { start: 0, end: 1, detail: value });
+          expect([tag(measure.detail), tag(measure.detail)]).toEqual([expected, expected]);
+        } finally {
+          performance.clearMarks(entryName);
+          performance.clearMeasures(entryName);
+        }
+      }
+    });
+
+    test.concurrent("a node:worker_threads worker echoes the value", async () => {
+      const worker = new NodeWorker(
+        `const { parentPort } = require("node:worker_threads"); parentPort.on("message", message => parentPort.postMessage(message));`,
+        { eval: true },
+      );
+      try {
+        const received: string[] = [];
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        worker.on("error", reject);
+        worker.on("messageerror", reject);
+        worker.on("exit", code => reject(new Error(`the worker exited with code ${code}`)));
+        worker.on("message", message => {
+          received.push(tag(message));
+          if (received.length === primitives.length) resolve();
+        });
+        for (const [, value] of primitives) worker.postMessage(value);
+        await promise;
+        expect(received).toEqual(tags);
+      } finally {
+        await worker.terminate();
+      }
+    });
+
+    test.concurrent("a web Worker echoes the value", async () => {
+      const url = URL.createObjectURL(
+        new Blob(["self.onmessage = event => self.postMessage(event.data);"], { type: "text/javascript" }),
+      );
+      const worker = new Worker(url);
+      try {
+        const received: string[] = [];
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        worker.onerror = reject;
+        worker.onmessageerror = reject;
+        worker.onmessage = event => {
+          received.push(tag(event.data));
+          if (received.length === primitives.length) resolve();
+        };
+        for (const [, value] of primitives) worker.postMessage(value);
+        await promise;
+        expect(received).toEqual(tags);
+      } finally {
+        worker.terminate();
+        URL.revokeObjectURL(url);
+      }
+    });
+
+    test.concurrent("a primitive thrown in a worker reaches the 'error' listener", async () => {
+      const errors = await Promise.all(
+        ["42", "null", "undefined", "false"].map(source => {
+          const worker = new NodeWorker(`throw ${source}`, { eval: true });
+          const { promise, resolve, reject } = Promise.withResolvers<string>();
+          worker.on("error", error => resolve(tag(error)));
+          worker.on("exit", code => reject(new Error(`the worker exited with code ${code} and no 'error' event`)));
+          return promise;
+        }),
+      );
+      expect(errors).toEqual(["number 42", "object null", "undefined undefined", "boolean false"]);
+    });
+
+    test.concurrent("advanced IPC echoes a primitive in both directions", async () => {
+      // process.send() refuses undefined before it serializes.
+      const sent = primitives.filter(([, value]) => value !== undefined);
+      const received: string[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      await using child = Bun.spawn({
+        cmd: [bunExe(), "-e", `process.on("message", message => process.send(message));`],
+        env: bunEnv,
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "advanced",
+        ipc(message) {
+          received.push(tag(message));
+          if (received.length === sent.length) resolve();
+        },
+        onExit(_child, exitCode, signalCode) {
+          reject(new Error(`the child exited (${exitCode}, ${signalCode}) after ${received.length} messages`));
+        },
+      });
+      for (const [, value] of sent) child.send(value);
+      await promise;
+      expect(received).toEqual(sent.map(([, value]) => tag(value)));
+    });
+
+    test("structuredCloneAdvanced returns what the serializer returns in every context", () => {
+      // With forStorage the value goes through the serializer.
+      const serialized = encodings.map(([, value]) =>
+        wireBytes(structuredCloneAdvanced(value, [], false, true, "default")),
+      );
+      for (const context of ["default", "worker", "window"] as const) {
+        for (const forTransfer of [false, true]) {
+          for (const forStorage of [false, true]) {
+            const cloned = encodings.map(([, value]) =>
+              wireBytes(structuredCloneAdvanced(value, [], forTransfer, forStorage, context)),
+            );
+            expect({ context, forTransfer, forStorage, cloned }).toEqual({
+              context,
+              forTransfer,
+              forStorage,
+              cloned: serialized,
+            });
+          }
+        }
+      }
+    });
+
+    test("bun:jsc serialize writes wire bytes for a primitive", () => {
+      for (const [, value] of primitives) {
+        const bytes = serialize(value);
+        expect(bytes.byteLength).toBeGreaterThan(0);
+        expect(tag(deserialize(bytes))).toBe(tag(value));
+      }
+    });
+
+    test("a transfer list is validated and detached as before", () => {
+      const buffer = new ArrayBuffer(8);
+      expect(structuredClone(42, { transfer: [buffer] })).toBe(42);
+      expect(buffer.detached).toBe(true);
+
+      const twice = new ArrayBuffer(8);
+      expect(thrownBy(() => structuredClone(42, { transfer: [twice, twice] }))).toEqual({
+        name: "DataCloneError",
+        code: 25,
+      });
+      expect(twice.detached).toBe(false);
+      expect(thrownBy(() => structuredClone(42, { transfer: [{} as ArrayBuffer] }))).toEqual({
+        name: "DataCloneError",
+        code: 25,
+      });
+      expect(() => structuredClone(42, 5 as unknown as CloneOptions)).toThrow(TypeError);
+      // @ts-expect-error structuredClone needs an argument
+      expect(() => structuredClone()).toThrow("structuredClone requires 1 argument");
+
+      let reads = 0;
+      const options = {
+        get transfer() {
+          reads++;
+          return [];
+        },
+      };
+      expect(structuredClone(7, options)).toBe(7);
+      expect(reads).toBe(1);
+
+      const { port1, port2 } = new MessageChannel();
+      try {
+        const posted = new ArrayBuffer(8);
+        port1.postMessage(1, [posted]);
+        expect(posted.detached).toBe(true);
+        expect(receiveMessageOnPort(port2)).toEqual({ message: 1 });
+      } finally {
+        port1.close();
+        port2.close();
+      }
+    });
+
+    test("a symbol throws DataCloneError and a bigint is cloned, as before", () => {
+      expect(thrownBy(() => structuredClone(Symbol("s")))).toEqual({ name: "DataCloneError", code: 25 });
+      for (const value of [0n, 1n, -1n, 2147483647n, -2147483648n, 2n ** 80n, -(2n ** 80n)]) {
+        expect(structuredClone(value)).toBe(value);
+      }
+    });
   });
 
   const deOptimizations = [

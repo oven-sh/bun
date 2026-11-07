@@ -43,7 +43,7 @@ describe("lex shell", () => {
       { "Delimit": {} },
       { "Text": "dev" },
       { "Delimit": {} },
-      { "Var": "PORT" },
+      { "DoubleQuotedVar": "PORT" },
       { "Eof": {} },
     ];
     const result = JSON.parse(lex`next dev "$PORT"`);
@@ -57,11 +57,46 @@ describe("lex shell", () => {
       { "Text": "dev" },
       { "Delimit": {} },
       { "Text": "foo" },
-      { "Var": "PORT" },
+      { "DoubleQuotedVar": "PORT" },
       { "Eof": {} },
     ];
     const result = JSON.parse(lex`next dev foo"$PORT"`);
     expect(result).toEqual(expected);
+  });
+
+  test("a variable keeps its double-quote context", () => {
+    expect(JSON.parse(lex`"$A" $A '$A' "$1" $1 "a$A b$1"`)).toEqual([
+      { "DoubleQuotedVar": "A" },
+      { "Delimit": {} },
+      { "Var": "A" },
+      { "Delimit": {} },
+      { "SingleQuotedText": "$A" },
+      { "Delimit": {} },
+      { "DoubleQuotedVarArgv": 1 },
+      { "Delimit": {} },
+      { "VarArgv": 1 },
+      { "Delimit": {} },
+      { "DoubleQuotedText": "a" },
+      { "DoubleQuotedVar": "A" },
+      { "DoubleQuotedText": " b" },
+      { "DoubleQuotedVarArgv": 1 },
+      { "Eof": {} },
+    ]);
+  });
+
+  test("the quote context starts again inside a quoted command substitution", () => {
+    expect(JSON.parse(lex`"$(echo $A "$B")"`)).toEqual([
+      { "CmdSubstBegin": {} },
+      { "CmdSubstQuoted": {} },
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Var": "A" },
+      { "Delimit": {} },
+      { "DoubleQuotedVar": "B" },
+      { "Delimit": {} },
+      { "CmdSubstEnd": {} },
+      { "Eof": {} },
+    ]);
   });
 
   test("quote_multi", () => {
@@ -69,7 +104,7 @@ describe("lex shell", () => {
       { "Text": "echo" },
       { "Delimit": {} },
       { "Text": "foo" },
-      { "Var": "NICE" },
+      { "DoubleQuotedVar": "NICE" },
       { "Text": "good" },
       { "DoubleQuotedText": "NICE" },
       { "Eof": {} },
@@ -117,7 +152,7 @@ describe("lex shell", () => {
       { "Text": "NAME=zack" },
       { "Delimit": {} },
       { "Text": "FULLNAME=" },
-      { "Var": "NAME" },
+      { "DoubleQuotedVar": "NAME" },
       { "DoubleQuotedText": " radisic" },
       { "Delimit": {} },
       { "Text": "LOL=" },

@@ -1,4 +1,4 @@
-#![doc = include_str!("README.md")]
+#![cfg_attr(doc, doc = include_str!("README.md"))]
 #![no_std]
 #![feature(transmutability)]
 

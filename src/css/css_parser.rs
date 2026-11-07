@@ -646,6 +646,10 @@ pub trait CustomAtRuleParser {
         options: &ParserOptions,
     ) -> CssResult<Self::Prelude>;
 
+    #[expect(
+        clippy::result_unit_err,
+        reason = "as in cssparser: the caller reports the `;` as an unexpected token"
+    )]
     fn rule_without_block(
         this: &mut Self,
         prelude: Self::Prelude,
@@ -697,6 +701,10 @@ pub trait AtRuleParser {
     ) -> CssResult<Self::Prelude> {
         Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name)))
     }
+    #[expect(
+        clippy::result_unit_err,
+        reason = "as in cssparser: the caller reports the `;` as an unexpected token"
+    )]
     fn rule_without_block(
         _this: &mut Self,
         _prelude: Self::Prelude,

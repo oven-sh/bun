@@ -28,6 +28,10 @@ impl MarkedArgumentBuffer {
     /// Stack-construct a `MarkedArgumentBuffer` and pass it to `f`. There is no
     /// heap-allocated owning form (the C++ type is non-movable); `new` is a
     /// scoped-borrow constructor.
+    #[expect(
+        clippy::new_ret_no_self,
+        reason = "the buffer lives on the C++ stack and only `f` sees it"
+    )]
     pub fn new<R>(f: impl FnOnce(&mut MarkedArgumentBuffer) -> R) -> R {
         struct Ctx<F, R> {
             f: Option<F>,

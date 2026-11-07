@@ -1,5 +1,4 @@
 // This is close to WHATWG URL, but we don't want the validation errors
-#![warn(unused_must_use)]
 pub mod error;
 pub use error::{Error, Result};
 

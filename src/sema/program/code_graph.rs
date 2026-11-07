@@ -170,6 +170,10 @@ pub(super) struct CodeGraph<'s> {
 }
 
 impl<'s> CodeGraph<'s> {
+    #[expect(
+        clippy::declare_interior_mutable_const,
+        reason = "each use makes a new graph, which is what its users want"
+    )]
     pub(super) const EMPTY: CodeGraph<'s> = CodeGraph {
         is_compile_build: false,
         loaded: ProgramFiles::EMPTY,

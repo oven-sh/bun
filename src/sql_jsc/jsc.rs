@@ -13,8 +13,6 @@
 //! the per-protocol `SocketGroup`s and is reached via the inherent
 //! `VirtualMachine::rare_data()`).
 
-#![warn(unused_must_use)]
-
 use core::cell::Cell;
 use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;

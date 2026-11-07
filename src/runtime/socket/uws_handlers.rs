@@ -419,12 +419,12 @@ where
     // Accepted sockets reach the remaining events as `.bun_socket_*` once
     // on_create has restamped them; if anything fires before that, route to
     // the freshly stashed NewSocket.
-    fn on_close_no_ext(s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+    fn on_close_no_ext(s: *mut us_socket_t, code: i32, _reason: Option<*mut c_void>) {
         if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<ThisPtr<api::NewSocket<SSL>>>>()
         {
             // `ns` is the live heap `NewSocket` stashed by `on_create`. The
             // `on_*` handlers may free it, so they take `ThisPtr`, never `&mut`.
-            fold(api::NewSocket::on_close(ns, wrap::<SSL>(s), code, reason));
+            fold(api::NewSocket::on_close(ns, wrap::<SSL>(s), code));
         }
     }
     fn on_data_no_ext(s: *mut us_socket_t, data: &[u8]) {

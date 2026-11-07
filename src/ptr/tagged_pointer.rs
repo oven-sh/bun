@@ -14,9 +14,6 @@ pub type TagType = u16;
 pub struct TaggedPtr(u64);
 
 impl TaggedPtr {
-    /// Logically a u15.
-    // pub type Tag = u16; → hoisted to module-level TagType (inherent assoc types are nightly-only)
-
     const ADDR_BITS: u32 = 49;
     const ADDR_MASK: u64 = (1u64 << Self::ADDR_BITS) - 1;
     const TAG_MASK: u16 = (1u16 << 15) - 1;

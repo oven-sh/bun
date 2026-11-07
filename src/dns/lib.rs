@@ -1,5 +1,3 @@
-#![warn(unused_must_use)]
-
 use core::ffi::c_int;
 use std::io::Write as _;
 

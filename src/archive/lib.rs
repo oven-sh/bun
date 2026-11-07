@@ -1,5 +1,4 @@
 //! Extracts tar archives to disk. The format itself is `bun_tar`'s.
-#![warn(unused_must_use)]
 
 use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;

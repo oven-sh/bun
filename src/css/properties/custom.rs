@@ -340,7 +340,6 @@ impl TokenList {
     pub(crate) fn parse_raw(
         input: &mut Parser,
         tokens: &mut Vec<TokenOrValue>,
-        options: &ParserOptions,
         depth: usize,
     ) -> Result<()> {
         if depth > 500 {
@@ -363,14 +362,14 @@ impl TokenList {
                     };
                     tokens.push(TokenOrValue::Token(tok));
                     input.parse_nested_block(|input2| {
-                        TokenListFns::parse_raw(input2, tokens, options, depth + 1)
+                        TokenListFns::parse_raw(input2, tokens, depth + 1)
                     })?;
                     tokens.push(TokenOrValue::Token(closing_delimiter));
                 }
                 Token::Function(_) => {
                     tokens.push(TokenOrValue::Token(*token));
                     input.parse_nested_block(|input2| {
-                        TokenListFns::parse_raw(input2, tokens, options, depth + 1)
+                        TokenListFns::parse_raw(input2, tokens, depth + 1)
                     })?;
                     tokens.push(TokenOrValue::Token(Token::CloseParen));
                 }

@@ -1,5 +1,4 @@
 #![cfg_attr(not(test), no_std)]
-#![warn(unused_must_use)]
 pub mod entry_point;
 mod feature_set;
 mod requirement;

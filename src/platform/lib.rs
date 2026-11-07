@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 //! Per-OS APIs that don't fit in `bun_sys` (the `sys_epoll_pwait2` export).
 
 // Android is listed alongside Linux so the `#[no_mangle]` C exports

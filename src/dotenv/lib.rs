@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 pub mod env_loader;
 pub mod error;
 pub mod no_proxy;

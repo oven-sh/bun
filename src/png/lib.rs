@@ -9,7 +9,6 @@
     clippy::panic,
     clippy::unreachable
 )]
-#![warn(unused_must_use)]
 // `Vec::shrink_to_fit()` aborts if it is refused memory: test/internal/source-lints/png-refusable-memory.test.ts.
 #![feature(vec_fallible_shrink)]
 

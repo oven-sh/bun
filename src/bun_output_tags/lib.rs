@@ -4,6 +4,7 @@
 //! crates can import it without a cycle.
 
 #![no_std]
+#![forbid(unsafe_code)]
 
 /// Named ANSI SGR escape sequences. One canonical literal per colour/attribute;
 /// every other crate aliases this module rather than re-declaring the bytes.

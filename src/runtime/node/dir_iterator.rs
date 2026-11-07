@@ -4,8 +4,6 @@
 // - borrows the entry name (`RawSlice<u8>`) into the iterator buffer
 // - Windows can be configured to return UTF-16 entry names
 
-#![warn(unused_must_use)]
-
 #[cfg(windows)]
 use core::mem::offset_of;
 

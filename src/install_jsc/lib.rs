@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 //! JSC bridge surface for `bun_install`. Keeps `src/install/` free of
 //! `JSValue`/`JSGlobalObject` references.
 

@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 use crate::compat::Feature;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::logical::PropertyCategory;

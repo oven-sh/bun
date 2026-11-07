@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 use core::ffi::{c_ulonglong, c_void};
 
 use bun_core::ZStr;

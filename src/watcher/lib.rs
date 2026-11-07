@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 //! Bun's cross-platform filesystem watcher.
 
 // ─── platform impls ───────────────────────────────────────────────────────

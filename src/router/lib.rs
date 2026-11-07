@@ -1,5 +1,3 @@
-#![warn(unused_must_use)]
-
 pub mod error;
 pub use error::{Error, Result};
 

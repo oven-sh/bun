@@ -1,5 +1,3 @@
-#![warn(unused_must_use)]
-
 use bun_collections::VecExt;
 use bun_core;
 

@@ -8,7 +8,6 @@
     clippy::panic,
     clippy::unreachable
 )]
-#![warn(unused_must_use)]
 
 pub mod compose;
 pub mod decoder;

@@ -283,9 +283,6 @@ impl JSPromise {
         Ok(promise)
     }
 
-    /// Fulfill an existing promise with the value.
-    /// The value can be another Promise.
-    /// If you want to create a new Promise that is already resolved, see `resolved_promise_value`.
     // ── the native → promise boundary ─────────────────────────────────────
     //
     // Every settlement native code performs funnels through `resolve` / `reject` below (the `Strong`
@@ -298,6 +295,9 @@ impl JSPromise {
     // conversion threw and left the exception pending; it becomes "reject with that exception",
     // except a pending termination, which is not an outcome to record: it stays pending and unwinds.
 
+    /// Fulfill an existing promise with the value.
+    /// The value can be another Promise.
+    /// If you want to create a new Promise that is already resolved, see `resolved_promise_value`.
     pub fn resolve(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if value.is_empty() {
             debug_assert!(

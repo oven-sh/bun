@@ -16,6 +16,8 @@
 // diff-match-patch is Copyright 2018 The diff-match-patch Authors,
 // licensed under the Apache License, Version 2.0.
 
+#![forbid(unsafe_code)]
+
 use core::ops::Range;
 
 use bun_core::strings::{

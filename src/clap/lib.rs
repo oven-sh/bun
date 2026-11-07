@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 use bun_core::{self, Output};
 
 pub mod args;

@@ -140,7 +140,7 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
                 "AOT pass of the checker | {} files | a new checker {} ms | the pass {} ms",
                 file_count,
                 renewed.as_millis(),
-                (began.elapsed() - renewed).as_millis(),
+                began.elapsed().saturating_sub(renewed).as_millis(),
             );
         }
         report = Some(match report {

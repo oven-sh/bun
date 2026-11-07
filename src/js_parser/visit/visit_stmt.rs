@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 use crate::Error;
 use crate::lexer as js_lexer;
 use crate::p::{P, ReactRefreshExportKind};

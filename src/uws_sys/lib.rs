@@ -7,7 +7,6 @@
     // wrapper is `unsafe fn` or not.
     clippy::not_unsafe_ptr_arg_deref
 )]
-#![warn(unused_must_use)]
 //! Low-level FFI bindings for uSockets / uWebSockets as used by Bun.
 //!
 //! Each `*.rs` file is mapped to a snake_case

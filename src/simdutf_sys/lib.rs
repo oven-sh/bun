@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 pub mod simdutf;
 
 // Top-level re-exports of the safe slice-taking wrappers in `simdutf::validate`.

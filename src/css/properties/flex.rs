@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 use crate as css;
 use bun_alloc::ArenaVecExt as _;
 

@@ -850,8 +850,8 @@ impl CompiledProgram {
             let path = join_public_path(public_root, folder, &target)?;
             self.find_file_or_directory(&path, how, search, lookup)
         };
-        let exact = paths().filter(|alias| alias.key == specifier);
-        if let Some(found) = exact.filter_map(|alias| find(alias, b"")).next() {
+        let mut exact = paths().filter(|alias| alias.key == specifier);
+        if let Some(found) = exact.find_map(|alias| find(alias, b"")) {
             return Some(found);
         }
         let split_matching_key = |alias: &CompiledPathAlias| {
@@ -870,8 +870,9 @@ impl CompiledProgram {
         }
         if let Some((start, end)) = longest {
             let matched = &specifier[start.len()..specifier.len() - end.len()];
-            let targets = paths().filter(|alias| split_at_star(alias.key) == Some((start, end)));
-            if let Some(found) = targets.filter_map(|alias| find(alias, matched)).next() {
+            let mut targets =
+                paths().filter(|alias| split_at_star(alias.key) == Some((start, end)));
+            if let Some(found) = targets.find_map(|alias| find(alias, matched)) {
                 return Some(found);
             }
         }

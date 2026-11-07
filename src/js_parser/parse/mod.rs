@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 pub mod parse_entry;
 pub(crate) mod parse_fn;
 pub(crate) mod parse_import_export;

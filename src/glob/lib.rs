@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 #[path = "GlobWalker.rs"]
 pub mod glob_walker;
 pub mod matcher;

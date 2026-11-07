@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 use bun_alloc::AllocError;
 use bun_ast::import_record;
 use bun_collections::StringArrayHashMap;

@@ -10,7 +10,7 @@ use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCate
 use crate::hir::environment::Environment;
 use crate::hir::visitors::{lvalues, operands, terminal_operands};
 use crate::hir::{
-    Effect, HirFunction, Identifier, IdentifierId, IdentifierName, InstructionValue, Place, Type,
+    Effect, HirFunction, Identifier, IdentifierId, IdentifierName, InstructionValue, Place,
 };
 
 /// Validates that local variables cannot be reassigned after render.
@@ -26,7 +26,6 @@ pub(crate) fn validate_locals_not_reassigned_after_render(
     let reassignment = get_context_reassignment(
         func,
         &env.identifiers,
-        &env.types,
         &env.functions,
         env,
         &mut context_variables,
@@ -90,7 +89,6 @@ enum Nesting {
 fn get_context_reassignment(
     func: &HirFunction,
     identifiers: &[Identifier],
-    types: &[Type],
     functions: &[HirFunction],
     env: &Environment,
     context_variables: &mut IdBitSet<IdentifierId>,
@@ -122,7 +120,6 @@ fn get_context_reassignment(
                     let mut reassignment = get_context_reassignment(
                         inner_function,
                         identifiers,
-                        types,
                         functions,
                         env,
                         context_variables,

@@ -269,13 +269,14 @@ private:
             JSC::JSObject* inliner = JSC::constructEmptyObject(m_globalObject, m_globalObject->objectPrototype(), 5);
             inliner->putDirect(m_vm, m_name, string(WTF::String::fromUTF8(machineLocation->second->inferredName().span())));
             inliner->putDirect(m_vm, m_location, string(descriptionForLocation(machineLocation->first, std::nullopt, JSC::BytecodeIndex())));
+            // The position is in the inlining function's source, not in the frame's.
             JSC::LineColumn inlinerLineColumn = machineLocation->first.lineColumn;
-            if (provider) {
+            if (auto* inlinerProvider = machineLocation->second->source().provider()) {
 #if USE(BUN_JSC_ADDITIONS)
                 auto& fn = m_vm.computeLineColumnWithSourcemap();
                 if (fn) {
                     WTF::String inlinerRemappedURL;
-                    fn(m_vm, provider, inlinerLineColumn, inlinerRemappedURL);
+                    fn(m_vm, inlinerProvider, inlinerLineColumn, inlinerRemappedURL);
                 }
 #endif
             }

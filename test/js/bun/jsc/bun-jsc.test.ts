@@ -581,7 +581,9 @@ describe("bun:jsc", () => {
       // The peak is read from VmHWM, reset before the measured call, because
       // the child inherits the test runner's high-water mark. The fixed cost
       // of a profile() call (a few MB) is kept small per frame by requiring
-      // at least 20,000 frames. ASAN's quarantine stays on: the transient
+      // at least 20,000 frames. A child that sampled less is run again from
+      // scratch: a second attempt in the same process would reuse the memory
+      // the first one freed. ASAN's quarantine stays on: the transient
       // garbage it holds is what the old code produced.
       const script = `
       const { profile } = require("bun:jsc");
@@ -593,35 +595,34 @@ describe("bun:jsc", () => {
       }
       // Start the sampler thread and warm up the JIT outside the measurement.
       profile(() => deep(5), 1000);
-      let frames = 0, peakDeltaBytes = 0;
-      for (let attempt = 0; attempt < 5 && frames < 20_000; attempt++) {
-        Bun.gc(true);
-        try {
-          fs.writeFileSync("/proc/self/clear_refs", "5");
-        } catch {
-          console.log(JSON.stringify({ skipped: "VmHWM cannot be reset on this kernel" }));
-          process.exit(0);
-        }
-        const before = peakRSS();
-        const result = profile(() => deep(500), 1000);
-        const after = peakRSS();
-        frames = result.stackTraces.traces.reduce((sum, trace) => sum + trace.frames.length, 0);
-        peakDeltaBytes = after - before;
+      Bun.gc(true);
+      try {
+        fs.writeFileSync("/proc/self/clear_refs", "5");
+      } catch {
+        console.log(JSON.stringify({ skipped: "VmHWM cannot be reset on this kernel" }));
+        process.exit(0);
       }
-      console.log(JSON.stringify({ frames, peakDeltaBytes }));
+      const before = peakRSS();
+      const result = profile(() => deep(500), 1000);
+      const after = peakRSS();
+      const frames = result.stackTraces.traces.reduce((sum, trace) => sum + trace.frames.length, 0);
+      console.log(JSON.stringify({ frames, peakDeltaBytes: after - before }));
     `;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script],
-        env: bunEnv,
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-      const { frames, peakDeltaBytes, skipped } = JSON.parse(stdout);
-      if (skipped) return;
-      expect(frames).toBeGreaterThanOrEqual(20_000);
-      expect(peakDeltaBytes / frames).toBeLessThan(isASAN || isDebug ? 1000 : 700);
+      let measurement: { frames: number; peakDeltaBytes: number; skipped?: string } = { frames: 0, peakDeltaBytes: 0 };
+      for (let attempt = 0; attempt < 3 && measurement.frames < 20_000; attempt++) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+        measurement = JSON.parse(stdout);
+        if (measurement.skipped) return;
+      }
+      expect(measurement.frames).toBeGreaterThanOrEqual(20_000);
+      expect(measurement.peakDeltaBytes / measurement.frames).toBeLessThan(isASAN || isDebug ? 1000 : 700);
     },
     60_000,
   );

@@ -25,6 +25,8 @@ const astConsumer = (name: string, revision: number) => `use react_compiler_ast:
 describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/sync-react-compiler.sh", () => {
   let root: ReturnType<typeof tempDir>;
   let env: Record<string, string | undefined>;
+  /** The `.gitconfig` of a run of the script. */
+  let gitConfig: string;
   /** Upstream's commits: the one before the ported commit, the ported commit, the one after it, the tip of `main`. */
   let before: string, ported: string, second: string, main: string;
 
@@ -33,22 +35,27 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
       home: {},
       upstream: {
         [crates]: {
-          // Whole-crate ports.
+          // Whole-crate ports. The second names react_compiler_ast in a comment, and does not use it.
           "react_compiler_hir/src/lib.rs": source("hir", 1),
+          "react_compiler_hir/src/environment.rs": "// Uses no type of react_compiler_ast.\n",
           "react_compiler_reactive_scopes/src/prune_unused_labels.rs": source("prune", 1),
           // In the directory of a whole-crate port, and not part of it: an AST-boundary port, and a file Bun does
           // not have.
           "react_compiler_reactive_scopes/src/codegen_reactive_function.rs": astConsumer("codegen", 1),
           "react_compiler_hir/src/print.rs": source("print", 1),
-          // An AST-boundary port.
+          // AST-boundary ports.
+          "react_compiler_lowering/src/lib.rs": astConsumer("lowering", 1),
           "react_compiler_lowering/src/build_hir.rs": astConsumer("lower", 1),
+          // Bun does not port these two, and the script says so.
+          "react_compiler/src/fixture_utils.rs": astConsumer("fixture", 1),
+          "react_compiler/src/entrypoint/validate_source_locations.rs": astConsumer("validate", 1),
           "react_compiler_ast/src/lib.rs": "pub struct File;\n",
         },
       },
     });
     const upstream = join(String(root), "upstream");
     env = {
-      // No git configuration but the one below: not the system's, not the user's, and not the caller's. In a git hook
+      // No git configuration but `gitConfig`: not the system's, not the user's, and not the caller's. In a git hook
       // the caller has GIT_DIR, and git would then work on that repository.
       ...Object.fromEntries(Object.entries(bunEnv).filter(([name]) => !name.startsWith("GIT_"))),
       HOME: join(String(root), "home"),
@@ -59,20 +66,28 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
       GIT_COMMITTER_NAME: "Test",
       GIT_COMMITTER_EMAIL: "test@example.com",
       GIT_ALLOW_PROTOCOL: "file",
-      GIT_CONFIG_COUNT: "3",
-      GIT_CONFIG_KEY_0: `url.${pathToFileURL(upstream).href}.insteadOf`,
-      GIT_CONFIG_VALUE_0: "https://github.com/facebook/react.git",
-      // A fetch starts `git maintenance` in the background. It can still run when the script removes its clone.
-      GIT_CONFIG_KEY_1: "maintenance.auto",
-      GIT_CONFIG_VALUE_1: "false",
-      // The script reads what `git grep` prints. A colour in it must not change the list of new consumers.
-      GIT_CONFIG_KEY_2: "color.grep",
-      GIT_CONFIG_VALUE_2: "always",
       // Nothing on stderr but what the script prints: `git init` warns when git has no templates directory, and bash
       // warns about a locale that is not installed.
       GIT_TEMPLATE_DIR: "",
       LC_ALL: "C",
     };
+    // - The script's URL is the local repository.
+    // - The repository gives a commit that is not the tip of a ref, as GitHub does. Without protocol version 2, git
+    //   does that only when it is allowed to.
+    // - A fetch starts `git maintenance` in the background. It can still run when the script removes its clone.
+    // - The script reads the file names that `git grep` prints. A colour in them must not change what it lists.
+    gitConfig = `
+      [url "${pathToFileURL(upstream).href}"]
+        insteadOf = https://github.com/facebook/react.git
+      [uploadpack]
+        allowAnySHA1InWant = true
+      [maintenance]
+        auto = false
+      [color]
+        grep = always
+      [color "grep"]
+        filename = red
+    `;
     const git = async (...args: string[]) => {
       await using proc = Bun.spawn({ cmd: ["git", ...args], cwd: upstream, env, stdout: "pipe", stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -89,11 +104,12 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
       return await git("rev-parse", "HEAD");
     };
 
-    await git("-c", "init.defaultBranch=main", "init", "--quiet");
-    // Here only the AST-boundary ports name react_compiler_ast: the script has no consumer to list.
+    await git("init", "--quiet");
+    await git("symbolic-ref", "HEAD", "refs/heads/main");
+    // The script has an entry for each file that uses react_compiler_ast here: it has no file to list.
     before = await commit({});
-    // Not ported, and names react_compiler_ast at the ported commit already.
-    ported = await commit({ "react_compiler/src/fixture_utils.rs": astConsumer("fixture", 1) });
+    // Uses react_compiler_ast, and the script has no entry for it.
+    ported = await commit({ "react_compiler_lowering/src/source_location.rs": astConsumer("convert_base_loc", 1) });
     // An annotated tag: the script has to resolve it to the commit, not to the tag object.
     await git("tag", "--annotate", "-m", "tag", "ported-tag", ported);
     second = await commit({ "react_compiler_hir/src/lib.rs": source("hir", 2) });
@@ -102,11 +118,11 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
       "react_compiler_reactive_scopes/src/codegen_reactive_function.rs": astConsumer("codegen", 3),
       "react_compiler_hir/src/print.rs": source("print", 3),
       "react_compiler_lowering/src/build_hir.rs": astConsumer("lower", 3),
-      // New upstream, and names react_compiler_ast. The script has the first as an AST-boundary port.
-      // Bun has to port the second.
+      // New upstream, and use react_compiler_ast. The script has the first as an AST-boundary port. It has no entry
+      // for the second, which is in the directory of a whole-crate port.
       "react_compiler_lowering/src/hir_builder.rs": astConsumer("builder", 3),
-      "react_compiler_lowering/src/source_location.rs": astConsumer("convert_base_loc", 3),
-      // New upstream, and nothing to port: a file of react_compiler_ast itself, and a file that names another crate.
+      "react_compiler_hir/src/ast_types.rs": astConsumer("ast_types", 3),
+      // New upstream, and nothing to port: a file of react_compiler_ast itself, and a file that uses another crate.
       "react_compiler_ast/src/scope.rs": astConsumer("scope", 3),
       "react_compiler/src/timing.rs": "use react_compiler_ast_extras::Timer;\n",
     });
@@ -118,14 +134,16 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
    * Runs a copy of the script that has `pin` in its UPSTREAM_PORTED. Of each diff in the output only the `---`, `+++`,
    * `-` and `+` lines are kept.
    */
-  async function sync(pin: string, args: string[] = [], gitConfig: Record<string, string> = {}) {
-    using repo = tempDir("sync-react-compiler-repo", {
-      "scripts/sync-react-compiler.sh": script,
-      "src/react_compiler/UPSTREAM_PORTED": pin + "\n",
+  async function sync(pin: string, args: string[] = [], moreGitConfig = "") {
+    using run = tempDir("sync-react-compiler-run", {
+      "home/.gitconfig": gitConfig + moreGitConfig,
+      "repo/scripts/sync-react-compiler.sh": script,
+      "repo/src/react_compiler/UPSTREAM_PORTED": pin + "\n",
     });
+    const [home, repo] = [join(String(run), "home"), join(String(run), "repo")];
     await using proc = Bun.spawn({
-      cmd: ["bash", join(String(repo), "scripts", "sync-react-compiler.sh"), ...args],
-      env: { ...env, ...gitConfig },
+      cmd: ["bash", join(repo, "scripts", "sync-react-compiler.sh"), ...args],
+      env: { ...env, HOME: home, XDG_CONFIG_HOME: home },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -136,7 +154,7 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
         .replaceAll(ported, "<ported>")
         .replaceAll(second, "<second>")
         .replaceAll(main, "<main>")
-        .replaceAll(String(repo), "<repo>")
+        .replaceAll(repo, "<repo>")
         .split("\n");
     return {
       stdout: lines(stdout).filter(
@@ -196,6 +214,7 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
           "-pub fn print() -> u32 { 1 }",
           "+pub fn print() -> u32 { 3 }",
           "### new react_compiler_ast consumers (need new Bun port) ###",
+          "compiler/crates/react_compiler_hir/src/ast_types.rs",
           "compiler/crates/react_compiler_lowering/src/source_location.rs",
           "When porting is done: echo <main> > <repo>/src/react_compiler/UPSTREAM_PORTED",
         ],
@@ -222,7 +241,7 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
           "+pub fn hir() -> u32 { 2 }",
           "### AST-boundary ports (re-port via DESIGN.md type map) ###",
           "### new react_compiler_ast consumers (need new Bun port) ###",
-          "(none)",
+          "compiler/crates/react_compiler_lowering/src/source_location.rs",
           "When porting is done: echo <second> > <repo>/src/react_compiler/UPSTREAM_PORTED",
         ],
       }
@@ -245,28 +264,8 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
     `);
   });
 
-  // In the next two tests `git grep` finds no file at one of the two commits, and exits with 1.
-  test.concurrent("lists a consumer as new when the ported commit has none", async () => {
-    expect(await sync(before, [ported])).toMatchInlineSnapshot(`
-      {
-        "exitCode": 0,
-        "stderr": [
-          "Fetching facebook/react @ {<before>, <ported>} ...",
-        ],
-        "stdout": [
-          "UPSTREAM_PORTED: <before>",
-          "UPSTREAM_HEAD:   <ported>",
-          "### whole-crate ports (apply mechanically) ###",
-          "### AST-boundary ports (re-port via DESIGN.md type map) ###",
-          "### new react_compiler_ast consumers (need new Bun port) ###",
-          "compiler/crates/react_compiler/src/fixture_utils.rs",
-          "When porting is done: echo <ported> > <repo>/src/react_compiler/UPSTREAM_PORTED",
-        ],
-      }
-    `);
-  });
-
-  test.concurrent("lists no new consumer when the commit it is given has none", async () => {
+  test.concurrent("lists no file when it has an entry for each file that uses react_compiler_ast", async () => {
+    // `git grep` finds no file, and exits with 1.
     expect(await sync(ported, [before])).toMatchInlineSnapshot(`
       {
         "exitCode": 0,
@@ -286,17 +285,20 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
     `);
   });
 
-  test.concurrent("stops when it cannot list the files that name react_compiler_ast", async () => {
+  test.concurrent("stops when it cannot list the files that use react_compiler_ast", async () => {
     // `git grep` does not run with this value.
-    const grepFails = { GIT_CONFIG_COUNT: "4", GIT_CONFIG_KEY_3: "grep.threads", GIT_CONFIG_VALUE_3: "-1" };
-    const { stdout, stderr, exitCode } = await sync(ported, [], grepFails);
-    expect({ lastLine: stdout.at(-1), stderr, exitCode }).toEqual({
-      lastLine: "### new react_compiler_ast consumers (need new Bun port) ###",
-      stderr: [
-        "Fetching facebook/react @ {<ported>, main} ...",
-        "fatal: invalid number of threads specified (-1) for grep.threads",
-      ],
-      exitCode: 1,
-    });
+    expect(await sync(ported, [], "[grep]\nthreads = -1\n")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": [
+          "Fetching facebook/react @ {<ported>, main} ...",
+          "fatal: invalid number of threads specified (-1) for grep.threads",
+        ],
+        "stdout": [
+          "UPSTREAM_PORTED: <ported>",
+          "UPSTREAM_HEAD:   <main>",
+        ],
+      }
+    `);
   });
 });

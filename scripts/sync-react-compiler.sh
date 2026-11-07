@@ -81,6 +81,7 @@ declare -a pristine=(
 # Upstream diffs here must be re-ported by hand using the type-mapping table
 # in src/react_compiler/DESIGN.md.
 declare -a boundary=(
+  react_compiler_lowering/src/lib.rs:lowering/mod.rs
   react_compiler_lowering/src/build_hir.rs:lowering/build_hir/
   react_compiler_lowering/src/hir_builder.rs:lowering/hir_builder.rs
   react_compiler_lowering/src/find_context_identifiers.rs:lowering/find_context_identifiers.rs
@@ -95,14 +96,26 @@ declare -a boundary=(
   "react_compiler_hir/src/print.rs:(not ported; debug printer, no caller in Bun)"
   "react_compiler_diagnostics/src/code_frame.rs:(not ported; no caller in Bun)"
   "react_compiler_reactive_scopes/src/print_reactive_function.rs:(not ported; debug printer, no caller in Bun)"
+  "react_compiler/src/fixture_utils.rs:(not ported; upstream test/debug helper)"
+  "react_compiler/src/entrypoint/validate_source_locations.rs:(not ported; upstream test/debug helper)"
 )
 
-# A file listed above that sits in a whole-crate directory is not part of the
-# whole-crate port.
 declare -a boundary_excludes=()
 for pair in "${boundary[@]}"; do
   boundary_excludes+=(":(exclude)compiler/crates/${pair%%:*}")
 done
+
+# An upstream file that uses react_compiler_ast and has no entry above is a new
+# boundary file: it needs a Bun port + an entry, and is listed until it has one.
+# git grep exits with 1 when no file matches. Any other failure stops the script.
+new_consumers=$(git -C "$tmp" grep --no-color -lF 'react_compiler_ast::' "$new" -- 'compiler/crates/*/src/*.rs' \
+  ':(exclude)compiler/crates/react_compiler_ast' "${boundary_excludes[@]}" | sed "s/^$new://") || [ $? -eq 1 ]
+
+# Not part of a whole-crate port: a file with an entry above, and a new consumer.
+declare -a not_whole_crate=("${boundary_excludes[@]}")
+while IFS= read -r file; do
+  [ -z "$file" ] || not_whole_crate+=(":(exclude)$file")
+done <<< "$new_consumers"
 
 # diff_one <upstream path> <port> [<pathspec>...]
 diff_one() {
@@ -122,7 +135,7 @@ diff_one() {
 echo "### whole-crate ports (apply mechanically) ###"
 echo
 for pair in "${pristine[@]}"; do
-  diff_one "${pair%%:*}/src" "${pair##*:}" "${boundary_excludes[@]}"
+  diff_one "${pair%%:*}/src" "${pair##*:}" "${not_whole_crate[@]}"
 done
 
 echo "### AST-boundary ports (re-port via DESIGN.md type map) ###"
@@ -131,18 +144,7 @@ for pair in "${boundary[@]}"; do
   diff_one "${pair%%:*}" "${pair##*:}"
 done
 
-# A file that names react_compiler_ast at $new, did not at $old, and has no
-# entry above is a new boundary file: it needs a Bun port + an entry.
-ast_consumers() {
-  git -C "$tmp" grep --no-color -lw react_compiler_ast "$1" -- 'compiler/crates/*/src/*.rs' \
-    ':(exclude)compiler/crates/react_compiler_ast' "${boundary_excludes[@]}" \
-    | sed "s/^$1://" | LC_ALL=C sort
-}
 echo "### new react_compiler_ast consumers (need new Bun port) ###"
-# git grep exits with 1 when no file matches. Any other failure stops the script.
-ast_consumers "$old" > "$tmp/consumers.old" || [ $? -eq 1 ]
-ast_consumers "$new" > "$tmp/consumers.new" || [ $? -eq 1 ]
-new_consumers=$(LC_ALL=C comm -13 "$tmp/consumers.old" "$tmp/consumers.new")
 echo "${new_consumers:-(none)}"
 echo
 

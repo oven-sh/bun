@@ -164,6 +164,77 @@ devTest("css import another css file", {
     await c.style("body").color.expect.toBe("red");
   },
 });
+devTest("css import after an unknown at-rule is not served again", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+    "styles.css": `
+      @tailwind base;
+      @import "./second.css";
+      body {
+        color: red;
+      }
+    `,
+    "second.css": `
+      h1 {
+        color: blue;
+      }
+    `,
+  },
+  async test(dev) {
+    const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+    const stylesheet = await (await dev.fetch(stylesheetHref)).text();
+    expect(stylesheet).toBe(`/* second.css */
+h1 {
+  color: #00f;
+}
+
+/* styles.css */
+@tailwind base;
+
+body {
+  color: red;
+}
+`);
+  },
+});
+devTest("css file imported twice keeps the place of its last import when its own import fails to parse", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+    "styles.css": `
+      @import "./b.css";
+      @import "./x.css";
+      @import "./b.css";
+      .e { width: 1px; }
+    `,
+    "b.css": `
+      @import "./c.css";
+      .b { width: 1px; }
+    `,
+    "x.css": `.x { width: 1px; }`,
+    "c.css": `.c { width: 1px; }`,
+  },
+  async test(dev) {
+    const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+    const stylesheet = async () => (await dev.fetch(stylesheetHref)).text();
+    const printed = (file: string, selector: string) => `/* ${file} */\n${selector} {\n  width: 1px;\n}\n`;
+    const [x, c, b, e] = [
+      printed("x.css", ".x"),
+      printed("c.css", ".c"),
+      printed("b.css", ".b"),
+      printed("styles.css", ".e"),
+    ];
+    expect(await stylesheet()).toBe([x, c, b, e].join("\n"));
+    // c.css no longer parses, so the chunk prints without it.
+    await dev.write("c.css", `.c { width: 1px; }}}`, { errors: null });
+    expect(await stylesheet()).toBe([x, b, e].join("\n"));
+  },
+});
 devTest("asset referenced in css", {
   files: {
     "index.html": emptyHtmlFile({

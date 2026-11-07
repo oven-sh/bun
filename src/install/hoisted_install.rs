@@ -14,7 +14,7 @@ use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
 use crate::lockfile::tree;
-use crate::{DependencyID, ExtractData, PackageID};
+use crate::{DependencyID, ExtractData, Lockfile, PackageID};
 // Bring the `items_<field>{,_mut}()` column accessors for
 // `MultiArrayList::Slice<Package>` into scope.
 use crate::PackageManager;
@@ -183,6 +183,8 @@ pub(crate) fn install_hoisted_packages(
     install_root_dependencies: bool,
     log_level: package_manager::Options::LogLevel,
     packages_to_install: Option<&[PackageID]>,
+    // The lockfile as it was before `clean`, if this run changes what bun.lock places.
+    before_clean: Option<&Lockfile>,
 ) -> crate::Result<package_install::Summary> {
     analytics::features::hoisted_bun_install.fetch_add(1, Ordering::Relaxed);
 
@@ -453,6 +455,7 @@ pub(crate) fn install_hoisted_packages(
                     break 'trees trees.into_boxed_slice();
                 },
                 trusted_dependencies_from_update_requests: trusted_deps,
+                before_clean,
                 seen_bin_links: StringHashMap::<()>::default(),
                 destination_dir_subpath_buf: bun_paths::PathBuffer::ZEROED,
                 folder_path_buf: bun_paths::PathBuffer::ZEROED,

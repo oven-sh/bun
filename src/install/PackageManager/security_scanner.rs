@@ -124,6 +124,7 @@ fn do_partial_install_of_security_scanner(
             true,
             log_level,
             packages_to_install,
+            None,
         )?
     };
     summary.fail += manager.report_offline_misses(

@@ -303,6 +303,51 @@ function parked() {
   return { entered: entered.promise, enter: entered.resolve, gate: gate.promise, go: gate.resolve };
 }
 
+/**
+ * Runs `body` with `sql`, a client with `options`, in a process that has nothing else to do. Inside an async
+ * function: a top-level await turns the event loop by itself, and then a timer fires whether it is ref'd or not.
+ */
+async function inAProcessOfItsOwn(options: Bun.SQL.Options | string, body: string) {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const sql = new Bun.SQL(${JSON.stringify(options)});
+        const outcome = promise => promise.then(() => "resolved", err => err.code);
+        const parked = () => {
+          const entered = Promise.withResolvers();
+          const gate = Promise.withResolvers();
+          return { entered: entered.promise, enter: entered.resolve, gate: gate.promise, go: gate.resolve };
+        };
+        (async () => {${body}})();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+/**
+ * For inAProcessOfItsOwn(): tx.close({ timeout }), which nobody awaits, waits for a savepoint that is open and idle.
+ * begin() rejects when the time runs out.
+ */
+const txCloseOverAnIdleSavepoint = `
+  sql.begin(async tx => {
+    const callback = parked();
+    tx.savepoint(async sp => {
+      await sp.unsafe("SELECT 'S1'");
+      callback.enter();
+      await callback.gate;
+    });
+    await callback.entered;
+    tx.close({ timeout: 0.25 });
+  }).then(() => console.log("resolved"), err => console.log(err.code));
+`;
+
 function firstInterleaving(received: Received[]): string | null {
   const depth = new Map<number, number>();
   for (const { conn, sql } of received) {
@@ -1096,6 +1141,150 @@ describe.each(adapters)("$adapter", entry => {
       expect(log()).toEqual([BEGIN, "SAVEPOINT s0", "SELECT 'in savepoint'", "RELEASE SAVEPOINT s0", "ROLLBACK"]);
     }));
 
+  // What each close waits for is open and idle: no connection is busy, so its timer is all that the process has left.
+  // Where nobody awaits the close, what prints is a handler of the work that the close ends.
+  test.concurrent.each([
+    {
+      close: "sql.close({ timeout })",
+      waitsFor: "a reservation, with a query queued behind it",
+      body: `
+        const reserved = await sql.reserve();
+        const queued = outcome(sql.unsafe("SELECT 'queued'"));
+        await sql.close({ timeout: 0.25 });
+        const late = outcome(reserved.unsafe("SELECT 'late'"));
+        console.log(JSON.stringify({ queued: await queued, reserved: await late }));
+      `,
+      printed: JSON.stringify({ queued: closedCode, reserved: closedCode }),
+      sent: [],
+    },
+    {
+      close: "sql.close({ timeout }) that nobody awaits",
+      waitsFor: "a transaction",
+      body: `
+        const callback = parked();
+        sql.begin(async tx => {
+          await tx.unsafe("SELECT 'T1'");
+          callback.enter();
+          await callback.gate;
+        }).then(() => console.log("resolved"), err => console.log(err.code));
+        await callback.entered;
+        sql.close({ timeout: 0.25 });
+      `,
+      printed: closedCode,
+      sent: [BEGIN, "SELECT 'T1'"],
+    },
+    {
+      close: "reserved.close({ timeout }) that nobody awaits",
+      waitsFor: "a transaction on the reservation",
+      body: `
+        const reserved = await sql.reserve();
+        const callback = parked();
+        reserved.begin(async tx => {
+          await tx.unsafe("SELECT 'T1'");
+          callback.enter();
+          await callback.gate;
+        }).then(() => console.log("resolved"), err => console.log(err.code));
+        await callback.entered;
+        reserved.close({ timeout: 0.25 });
+      `,
+      printed: closedCode,
+      sent: [BEGIN, "SELECT 'T1'"],
+    },
+    {
+      close: "tx.close({ timeout }) that nobody awaits",
+      waitsFor: "a savepoint",
+      body: txCloseOverAnIdleSavepoint,
+      printed: closedCode,
+      sent: [BEGIN, "SAVEPOINT s0", "SELECT 'S1'", "ROLLBACK"],
+    },
+  ])("$close keeps the process alive until its time runs out: it waits for $waitsFor", ({ body, printed, sent }) =>
+    scenario(async ({ options, log }) => {
+      const { stdout, stderr, exitCode } = await inAProcessOfItsOwn(options, body);
+      expect({ stdout, stderr }).toEqual({ stdout: printed + "\n", stderr: "" });
+      expect(exitCode).toBe(0);
+      expect(log()).toEqual(sent);
+    }),
+  );
+
+  // Nothing handles the rejection of the queued query when the time runs out, so it ends the process.
+  test.concurrent("sql.close({ timeout }) that nobody awaits reports the query that it leaves queued", () =>
+    scenario(async ({ options, log }) => {
+      const { stdout, stderr, exitCode } = await inAProcessOfItsOwn(
+        options,
+        `
+          globalThis.reserved = await sql.reserve();
+          sql.unsafe("SELECT 'queued'").execute();
+          sql.close({ timeout: 0.25 });
+        `,
+      );
+      expect(stdout).toBe("");
+      expect(stderr).toContain(closedCode);
+      expect(exitCode).toBe(1);
+      expect(log()).toEqual([]);
+    }),
+  );
+
+  // The last timer of the child is not ref'd: it fires only if a timer of close({ timeout }) still keeps the process.
+  test.concurrent("close({ timeout }) does not keep the process alive once its wait is over", () =>
+    scenario(async ({ options }) => {
+      const { stdout, stderr, exitCode } = await inAProcessOfItsOwn(
+        options,
+        `
+          const another = () => new Bun.SQL(${JSON.stringify(options)});
+          {
+            // The pool drains under two calls. A third call finds it closed.
+            const reserved = await sql.reserve();
+            const closing = [sql.close({ timeout: 60 }), sql.close({ timeout: 61 })];
+            await reserved.release();
+            await Promise.all(closing);
+            await sql.close({ timeout: 60 });
+          }
+          {
+            // close({ timeout: 0 }) overtakes.
+            const sql = another();
+            const reserved = await sql.reserve();
+            const closing = sql.close({ timeout: 60 });
+            await sql.close({ timeout: 0 });
+            await closing;
+          }
+          {
+            const sql = another();
+            // handle.close({ timeout }) waits for the scope that open() starts. That scope ends behind last().
+            const closeOver = async (handle, open, last = () => {}) => {
+              const callback = parked();
+              const below = outcome(open(async scope => {
+                callback.enter();
+                await callback.gate;
+                await last(scope);
+              }));
+              await callback.entered;
+              const closing = handle.close({ timeout: 60 });
+              callback.go();
+              await Promise.all([below, closing]);
+            };
+            // The transaction that a reservation waits for ends.
+            let reserved = await sql.reserve();
+            await closeOver(reserved, fn => reserved.begin(fn));
+            // The savepoint that a transaction waits for ends.
+            await outcome(sql.begin(tx => closeOver(tx, fn => tx.savepoint(fn))));
+            // The server drops the connection under the transaction that a reservation waits for.
+            reserved = await sql.reserve();
+            await closeOver(reserved, fn => reserved.begin(fn), tx => tx.unsafe("SELECT 'KILL'"));
+            // Nothing is pending.
+            await sql.close({ timeout: 60 });
+          }
+          console.log("every wait is over");
+          setTimeout(() => {
+            console.log("and the process is still alive");
+            process.exit(1);
+          }, 2000).unref();
+        `,
+      );
+      expect({ stdout, stderr }).toEqual({ stdout: "every wait is over\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    }),
+  );
+
   test.each(["COMMIT", "ROLLBACK"])("tx.close() while %s is in flight sends nothing and waits for the answer", end =>
     scenario(async ({ sql, log, hold, options }) => {
       const held = hold(end);
@@ -1681,6 +1870,13 @@ describe.concurrent("sqlite", () => {
       }),
     );
     expect({ begin, ...(await after(db)) }).toEqual({ begin: expected, ...clean });
+  });
+
+  // SQLite has nothing in flight, ever: the timer is all that the process has left.
+  test("tx.close({ timeout }) that nobody awaits keeps the process alive until its time runs out: it waits for a savepoint", async () => {
+    const { stdout, stderr, exitCode } = await inAProcessOfItsOwn("sqlite://:memory:", txCloseOverAnIdleSavepoint);
+    expect({ stdout, stderr }).toEqual({ stdout: closedCode + "\n", stderr: "" });
+    expect(exitCode).toBe(0);
   });
 
   test("close() of a savepoint handle whose savepoint is over does nothing", async () => {

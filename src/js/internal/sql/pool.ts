@@ -951,9 +951,8 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       this.closedAtOnce = true;
       this.#teardown();
     } else if (timeout !== undefined && !this.#tornDown) {
-      const timer: NodeJS.Timeout = setTimeout(BaseSQLAdapter.#closeTimerFired, timeout, this);
-      timer.unref(); // dont block the event loop
-      this.#closeTimers.push(timer);
+      // Ref'd on purpose: an idle reservation or transaction holds no loop ref, so this timer keeps the process alive.
+      this.#closeTimers.push(setTimeout(BaseSQLAdapter.#closeTimerFired, timeout, this));
     }
     return this.#closing.promise;
   }

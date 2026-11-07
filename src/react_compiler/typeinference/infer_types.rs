@@ -849,7 +849,23 @@ fn generate_instruction_types(
                                     shapes,
                                 )?;
                             }
-                            _ => {}
+                            // Not in upstream, where this key is a name: a shape names an index, and no other number.
+                            ObjectPropertyKey::Number { name } => {
+                                let index = name.value() as u32;
+                                let property = if f64::from(index) == name.value() {
+                                    index_property_literal(index as usize)
+                                } else {
+                                    PropertyLiteral::Number(*name)
+                                };
+                                unifier.unify_property(
+                                    get_type(obj_prop.place.identifier, identifiers),
+                                    &get_type(value.identifier, identifiers),
+                                    get_name(names, value.identifier),
+                                    PropertyName::Literal(&property),
+                                    shapes,
+                                )?;
+                            }
+                            ObjectPropertyKey::Computed { .. } => {}
                         }
                     }
                 }

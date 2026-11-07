@@ -1569,6 +1569,56 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
     expect(exitCode).toBe(0);
   });
 
+  // Nobody threw what an EventTarget reports here: a listener that cannot be called, and the reason
+  // a listener's thenable rejects with. The report belongs to the context it is made in, whatever
+  // another context threw and caught just before it.
+  test("a listener error that an EventTarget reports belongs to the context that reports it, whatever another context caught before", async () => {
+    const script = `
+      const told = [];
+      process.on("uncaughtException", error => told.push("host: " + error.message));
+      const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
+      const graph = new Bun.ModuleGraph({ onError: error => told.push("graph: " + error.message) });
+      const other = new Bun.ModuleGraph({ onError: error => told.push("other graph: " + error.message) });
+      const catches = thrown => { try { throw thrown; } catch {} };
+      const graphCatches = thrown => graph.run(catches, thrown);
+      const otherCatches = thrown => other.run(catches, thrown);
+      const dispatch = listener => { const target = new EventTarget(); target.addEventListener("a", listener); target.dispatchEvent(new Event("a")); };
+      const reason = new Error("the listener's reason");
+      // The thenable rejects inside dispatchEvent: the tick that reports the reason runs right after the tick queued before it.
+      const rejects = () => ({ then: (resolve, reject) => reject(reason) });
+      const cases = [
+        ["in the host: handleEvent is not callable, after the graph caught", () => { graphCatches(new Error("the graph's own")); dispatch({ handleEvent: 123 }); }],
+        ["in the host: a listener's thenable rejects, after the graph caught", () => { process.nextTick(graphCatches, new Error("the graph's own")); dispatch(rejects); }],
+        ["in the host: a listener's thenable rejects with the error the graph caught", () => { process.nextTick(graphCatches, reason); dispatch(rejects); }],
+        ["in the graph: handleEvent is not callable, after another graph caught", () => graph.run(() => { otherCatches(new Error("the other graph's own")); dispatch({ handleEvent: 123 }); })],
+        ["in the graph: a listener's thenable rejects, after the host caught", () => { process.nextTick(catches, new Error("the host's own")); graph.run(dispatch, rejects); }],
+        ["in the graph: a listener's thenable rejects with the error the host caught", () => { process.nextTick(catches, reason); graph.run(dispatch, rejects); }],
+        ["in the graph: a listener's thenable rejects, after another graph caught", () => { process.nextTick(otherCatches, new Error("the other graph's own")); graph.run(dispatch, rejects); }],
+      ];
+      const out = {};
+      for (const [name, start] of cases) {
+        told.length = 0;
+        start();
+        await until(() => told.length > 0);
+        out[name] = told.join();
+      }
+      console.log(JSON.stringify(out, null, 1));
+    `;
+    const { stdout, exitCode } = await runBun(["-e", script]);
+    expect(JSON.parse(stdout)).toEqual({
+      "in the host: handleEvent is not callable, after the graph caught":
+        "host: 'handleEvent' property of event listener should be callable",
+      "in the host: a listener's thenable rejects, after the graph caught": "host: the listener's reason",
+      "in the host: a listener's thenable rejects with the error the graph caught": "host: the listener's reason",
+      "in the graph: handleEvent is not callable, after another graph caught":
+        "graph: 'handleEvent' property of event listener should be callable",
+      "in the graph: a listener's thenable rejects, after the host caught": "graph: the listener's reason",
+      "in the graph: a listener's thenable rejects with the error the host caught": "graph: the listener's reason",
+      "in the graph: a listener's thenable rejects, after another graph caught": "graph: the listener's reason",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("onError runs in the context the graph was made in, for every kind of error, and an error it took does not change whose the next one is", async () => {
     using d = tempDir("module-graph-onerror-context", {
       "tenant.mjs": `

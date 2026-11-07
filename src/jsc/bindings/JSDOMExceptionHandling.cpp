@@ -80,11 +80,9 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue
     auto& vm = JSC::getVM(lexicalGlobalObject);
     RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
     auto* exception = dynamicDowncast<JSC::Exception>(exceptionValue);
-    if (!exception) {
-        exception = vm.lastException();
-        if (!exception)
-            exception = JSC::Exception::create(lexicalGlobalObject->vm(), exceptionValue, JSC::Exception::StackCaptureAction::DoNotCaptureStack);
-    }
+    // Upstream WebCore reports vm.lastException() here. That is the VM's latest throw, even a caught one, of any value.
+    if (!exception)
+        exception = JSC::Exception::create(lexicalGlobalObject->vm(), exceptionValue, JSC::Exception::StackCaptureAction::DoNotCaptureStack);
 
     reportException(lexicalGlobalObject, exception, cachedScript, fromModule);
 }

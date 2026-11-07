@@ -1,5 +1,15 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, isDebug, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  hideFromStackTrace,
+  integersThatNeedRounding,
+  isASAN,
+  isDebug,
+  runFixtureMaxRSS,
+  tempDir,
+} from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -463,20 +473,89 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? /*! L */ (b) : c => { return d }", "x = a ? b : (c) => {\n  /*! L */\n  return d;\n};\n");
       exp('x = a ? /*! L */ (b) : T => import("m") : c', 'x = a ? (b) => import("m") : c;\n');
 
+      // An attempt in the body of another attempt keeps the arrow function that
+      // it finds, and the outer attempt throws it away. The parse after the
+      // outer attempt declares the parameters, reports the errors and gets the
+      // legal comments.
+      exp("x = a ? (b) : c => [a ? (b) : T => d : e]", "x = a ? b : (c) => [a ? (b) => d : e];\n");
+      exp("x = a ? (b) : T => [a ? (b) : c => d] : e", "x = a ? (b) => [a ? b : (c) => d] : e;\n");
+      exp(
+        "x = a ? async (b) : c => a ? async (b) : c => await d : e : e",
+        "x = a ? async (b) => a ? async (b) => await d : e : e;\n",
+      );
+      exp(
+        "x = a ? (b) : T => a ? (c, ...d) : T => [b, c, d] : e : e",
+        "x = a ? (b) => a ? (c, ...d) => [b, c, d] : e : e;\n",
+      );
+      err(
+        "x = a ? (b) : T => a ? (c, c) : T => 1 : e : e",
+        '"c" cannot be bound multiple times in the same parameter list',
+      );
+      err("x = a ? (b) : T => a ? (b) : T => { let b } : e : e", '"b" has already been declared');
+      exp(
+        "x = a ? /*! L1 */ (b) : T => a ? /*! L2 */ (b) : T => d : e : e; y",
+        "x = a ? (b) => a ? (b) => d : e : e;\n/*! L1 */\n/*! L2 */\ny;\n",
+      );
+      exp(
+        "x = a ? /*! L1 */ (b) : c => { return a ? /*! L2 */ (b) : T => { let y = 1 } : c }",
+        "x = a ? b : (c) => {\n  /*! L1 */\n  return a ? (b) => {\n    /*! L2 */\n    let y = 1;\n  } : c;\n};\n",
+      );
+      // As an outermost attempt does, the inner attempt finds no arrow function
+      // when the lexer cannot read the token after the second ":".
+      err("x = a ? (b) : T => a ? (b) : T => d : 'abc : e", 'Expected ";" but found ":"');
+      // A failed attempt leaves no declaration of its body behind.
+      exp("x = a ? (b) : c => { let b }", "x = a ? b : (c) => {\n  let b;\n};\n");
+      exp("x = a ? (b) : c => { class b {} }", "x = a ? b : (c) => {\n  class b {\n  }\n};\n");
+      // An attempt that ended does not make the next attempt an inner one.
+      exp(
+        "x = a ? (b) : c => d; y = a ? (b) : T => b : e; z = a ? (b) : T => b : e",
+        "x = a ? b : (c) => d;\ny = a ? (b) => b : e;\nz = a ? (b) => b : e;\n",
+      );
+
       // The attempt parses the body, so an attempt nested in the body must not
       // run again when the body is parsed for real: 2^40 parses would hang.
       let kept = "d";
       let discarded = "d";
+      let keptInDiscarded = "d";
       let keptOut = "d";
       let discardedOut = "d";
+      let keptInDiscardedOut = "d";
       for (let i = 0; i < 40; i++) {
         kept = `a ? (b) : c => ${kept} : e`;
         keptOut = `a ? (b) => ${keptOut} : e`;
         discarded = `a ? (b) : c => ${discarded}`;
         discardedOut = `a ? b : (c) => ${discardedOut}`;
+        keptInDiscarded = i < 20 ? `a ? (b) : c => ${keptInDiscarded} : e` : `a ? (b) : c => ${keptInDiscarded}`;
+        keptInDiscardedOut = i < 20 ? `a ? (b) => ${keptInDiscardedOut} : e` : `a ? b : (c) => ${keptInDiscardedOut}`;
       }
       exp(`x = ${kept}`, `x = ${keptOut};\n`);
       exp(`x = ${discarded}`, `x = ${discardedOut};\n`);
+      exp(`x = ${keptInDiscarded}`, `x = ${keptInDiscardedOut};\n`);
+    });
+
+    it("nested arrow functions with return types between ? and : take linear memory", async () => {
+      // Each arrow function here has the next one in its body, and every body
+      // was parsed again for each arrow function around it. Depth n took
+      // n * n / 2 parses of a level, and what a parse allocates stays until
+      // the file is done.
+      const depth = isDebug || isASAN ? 256 : 640;
+      const fixture = returnType => /* js */ `
+        let input = "d";
+        let output = "d";
+        for (let i = 0; i < ${depth}; i++) {
+          input = "a ? (b)${returnType} => " + input + " : e";
+          output = "a ? (b) => " + output + " : e";
+        }
+        const printed = new Bun.Transpiler({ loader: "ts" }).transformSync("x = " + input);
+        console.log(JSON.stringify({ printed: printed === "x = " + output + ";\\n" }));
+      `;
+      const [withReturnTypes, without] = await Promise.all([
+        runFixtureMaxRSS(fixture(" : c"), { printed: true }),
+        runFixtureMaxRSS(fixture(""), { printed: true }),
+      ]);
+      // Peak RSS over the same input without return types. Before: 225 MB in
+      // release, 38 MB in a debug ASAN build. After: under 1 MB in both.
+      expect((withReturnTypes - without) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 10 : 32);
     });
 
     it("emitDecoratorMetadata in an arrow function with a return type in a true branch", async () => {

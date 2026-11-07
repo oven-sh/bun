@@ -11,7 +11,7 @@ import { run } from "./run";
 // `--aot`, so what the runner learns to do reaches compiled runs too, or shows up here.
 // ../runner-suites.known.txt names the tests that still fail so, `<file>: <test>` a line. A test that fails and isn't named there fails its file here, and so
 // does one that is named and passes: take its line out.
-// `~ ` before a line: that test fails in some runs and passes in others.
+// `~ ` before a line: that test fails in some runs and passes in others. `~ASAN `: so in a Bun built with a sanitizer, and it is held to pass in every other.
 // `! ` before a line: that test fails, and in a Bun built with assertions one of them stops its child run: an invariant of the engine is broken there.
 // `x64 ` or `arm64 ` before a line: that test fails on that architecture alone, and has to pass on the other.
 // `trims ` before a line: that test damages an executable and awaits that it goes on as Bun. Where the Bun under test trims, the executable has no command line left to go on with:
@@ -139,10 +139,11 @@ function hold(title: string, preloaded: string, list: string, parts: string[]) {
         const awaited = [...named(""), ...named("! "), ...named(process.arch + " "), ...withoutCommandLine];
         // The names alone do not say what went wrong: of a test that fails and is not named, what the suite printed in front of its result.
         // Not of one that is passed over for asking for a frame: whoever reads the log by its "(fail)" lines would take a green suite for a red one.
-        const unnamed = names.filter(name => ![...awaited, ...named("~ ")].includes(name));
+        const wavering = [...named("~ "), ...(isASAN ? named("~ASAN ") : [])];
+        const unnamed = names.filter(name => ![...awaited, ...wavering].includes(name));
         for (const result of failed.filter(result => unnamed.includes(nameOf(result))))
           console.error([result, ...saidBefore(result).filter(Boolean).slice(0, 60)].join("\n"));
-        expect(names.filter(name => !named("~ ").includes(name)).sort()).toEqual(awaited.sort());
+        expect(names.filter(name => !wavering.includes(name)).sort()).toEqual(awaited.sort());
         for (const result of failed.filter(result => withoutCommandLine.includes(nameOf(result)))) {
           const said = saidBefore(result).join("\n");
           expect(said).toContain("is damaged. Its embedded program can't be read.");

@@ -442,20 +442,52 @@
     "asan": 240000
   },
   "aot/engine/answers-5.test.ts": {
-    "default": 22770,
-    "asan": 121080
+    "default": 11400,
+    "asan": 60500
   },
   "aot/engine/answers-6.test.ts": {
-    "default": 30850,
-    "asan": 272060
+    "default": 15400,
+    "asan": 136000
   },
   "aot/engine/answers-7.test.ts": {
-    "default": 16320,
-    "asan": 118370
+    "default": 8200,
+    "asan": 59200
   },
   "aot/engine/answers-8.test.ts": {
-    "default": 17670,
-    "asan": 118070
+    "default": 8800,
+    "asan": 59000
+  },
+  "aot/engine/answers-9.test.ts": {
+    "default": 9300,
+    "asan": 53500
+  },
+  "aot/engine/answers-10.test.ts": {
+    "default": 10600,
+    "asan": 83500
+  },
+  "aot/engine/answers-11.test.ts": {
+    "default": 8900,
+    "asan": 99000
+  },
+  "aot/engine/answers-12.test.ts": {
+    "default": 12700,
+    "asan": 139600
+  },
+  "aot/engine/answers-13.test.ts": {
+    "default": 11400,
+    "asan": 60500
+  },
+  "aot/engine/answers-14.test.ts": {
+    "default": 15400,
+    "asan": 136000
+  },
+  "aot/engine/answers-15.test.ts": {
+    "default": 8200,
+    "asan": 59200
+  },
+  "aot/engine/answers-16.test.ts": {
+    "default": 8800,
+    "asan": 59000
   },
   "aot/a-spread-lays-null-under-a-name-that-the-literal-writes-behind-it.test.ts": {
     "default": 60000,
@@ -1907,20 +1939,52 @@
     "asan": 72000
   },
   "aot/mock-laid-over-1.test.ts": {
-    "default": 118200,
-    "asan": 135500
+    "default": 39400,
+    "asan": 55300
   },
   "aot/mock-laid-over-2.test.ts": {
-    "default": 121700,
-    "asan": 271300
+    "default": 39400,
+    "asan": 55300
   },
   "aot/mock-laid-over-3.test.ts": {
-    "default": 87500,
-    "asan": 128000
+    "default": 39400,
+    "asan": 55300
   },
   "aot/mock-laid-over-4.test.ts": {
-    "default": 52800,
-    "asan": 181200
+    "default": 40600,
+    "asan": 224300
+  },
+  "aot/mock-laid-over-5.test.ts": {
+    "default": 40600,
+    "asan": 224300
+  },
+  "aot/mock-laid-over-6.test.ts": {
+    "default": 40600,
+    "asan": 224300
+  },
+  "aot/mock-laid-over-7.test.ts": {
+    "default": 29200,
+    "asan": 61000
+  },
+  "aot/mock-laid-over-8.test.ts": {
+    "default": 29200,
+    "asan": 61000
+  },
+  "aot/mock-laid-over-9.test.ts": {
+    "default": 29200,
+    "asan": 61000
+  },
+  "aot/mock-laid-over-10.test.ts": {
+    "default": 17600,
+    "asan": 55300
+  },
+  "aot/mock-laid-over-11.test.ts": {
+    "default": 17600,
+    "asan": 55300
+  },
+  "aot/mock-laid-over-12.test.ts": {
+    "default": 17600,
+    "asan": 55300
   },
   "aot/mock-manual-folder.test.ts": {
     "default": 475,
@@ -2412,36 +2476,68 @@
     "asan": 8705
   },
   "aot/test-runs-in-folders-1.test.ts": {
-    "default": 24300,
-    "asan": 65500
+    "default": 12200,
+    "asan": 32800
   },
   "aot/test-runs-in-folders-2.test.ts": {
-    "default": 49600,
-    "asan": 60800
+    "default": 24800,
+    "asan": 30400
   },
   "aot/test-runs-in-folders-3.test.ts": {
-    "default": 43600,
-    "asan": 82000
+    "default": 21800,
+    "asan": 41000
   },
   "aot/test-runs-in-folders-4.test.ts": {
-    "default": 59900,
-    "asan": 85800
+    "default": 30000,
+    "asan": 42900
   },
   "aot/test-runs-in-folders-5.test.ts": {
-    "default": 38800,
-    "asan": 86300
+    "default": 19400,
+    "asan": 43200
   },
   "aot/test-runs-in-folders-6.test.ts": {
-    "default": 50100,
-    "asan": 86500
+    "default": 25000,
+    "asan": 43200
   },
   "aot/test-runs-in-folders-7.test.ts": {
-    "default": 63900,
-    "asan": 113700
+    "default": 32000,
+    "asan": 56800
   },
   "aot/test-runs-in-folders-8.test.ts": {
-    "default": 24000,
-    "asan": 68700
+    "default": 12000,
+    "asan": 34400
+  },
+  "aot/test-runs-in-folders-9.test.ts": {
+    "default": 12200,
+    "asan": 32800
+  },
+  "aot/test-runs-in-folders-10.test.ts": {
+    "default": 24800,
+    "asan": 30400
+  },
+  "aot/test-runs-in-folders-11.test.ts": {
+    "default": 21800,
+    "asan": 41000
+  },
+  "aot/test-runs-in-folders-12.test.ts": {
+    "default": 30000,
+    "asan": 42900
+  },
+  "aot/test-runs-in-folders-13.test.ts": {
+    "default": 19400,
+    "asan": 43200
+  },
+  "aot/test-runs-in-folders-14.test.ts": {
+    "default": 25000,
+    "asan": 43200
+  },
+  "aot/test-runs-in-folders-15.test.ts": {
+    "default": 32000,
+    "asan": 56800
+  },
+  "aot/test-runs-in-folders-16.test.ts": {
+    "default": 12000,
+    "asan": 34400
   },
   "aot/test-setup-import.test.ts": {
     "default": 835,
@@ -3557,94 +3653,168 @@
     "windows-aarch64": 400
   },
   "aot/engine/answers-1.test.ts": {
-    "default": 18560,
-    "asan": 106970
+    "default": 9300,
+    "asan": 53500
   },
   "aot/engine/answers-2.test.ts": {
-    "default": 21160,
-    "asan": 167030
+    "default": 10600,
+    "asan": 83500
   },
   "aot/engine/answers-3.test.ts": {
-    "default": 17780,
-    "asan": 198100
+    "default": 8900,
+    "asan": 99000
   },
   "aot/engine/answers-4.test.ts": {
-    "default": 25330,
-    "asan": 279200
+    "default": 12700,
+    "asan": 139600
   },
   "aot/engine/from-source-1.test.ts": {
-    "default": 30900,
-    "asan": 162200
+    "default": 55000,
+    "asan": 250000
   },
   "aot/engine/from-source-2.test.ts": {
-    "default": 31400,
-    "asan": 135800
+    "default": 55000,
+    "asan": 250000
   },
   "aot/engine/from-source-3.test.ts": {
-    "default": 37300,
-    "asan": 172300
+    "default": 55000,
+    "asan": 250000
   },
   "aot/engine/from-source-4.test.ts": {
-    "default": 35500,
-    "asan": 170700
+    "default": 55000,
+    "asan": 250000
   },
   "aot/engine/from-source-5.test.ts": {
-    "default": 30900,
-    "asan": 162200
+    "default": 55000,
+    "asan": 250000
   },
   "aot/engine/from-source-6.test.ts": {
-    "default": 31400,
-    "asan": 135800
+    "default": 55000,
+    "asan": 250000
   },
   "aot/engine/from-source-7.test.ts": {
-    "default": 37300,
-    "asan": 172300
+    "default": 55000,
+    "asan": 250000
   },
   "aot/engine/from-source-8.test.ts": {
-    "default": 35500,
-    "asan": 170700
+    "default": 55000,
+    "asan": 250000
+  },
+  "aot/engine/from-source-9.test.ts": {
+    "default": 55000,
+    "asan": 250000
+  },
+  "aot/engine/from-source-10.test.ts": {
+    "default": 55000,
+    "asan": 250000
+  },
+  "aot/engine/from-source-11.test.ts": {
+    "default": 55000,
+    "asan": 250000
+  },
+  "aot/engine/from-source-12.test.ts": {
+    "default": 55000,
+    "asan": 250000
+  },
+  "aot/engine/from-source-13.test.ts": {
+    "default": 55000,
+    "asan": 250000
+  },
+  "aot/engine/from-source-14.test.ts": {
+    "default": 55000,
+    "asan": 250000
+  },
+  "aot/engine/from-source-15.test.ts": {
+    "default": 55000,
+    "asan": 250000
+  },
+  "aot/engine/from-source-16.test.ts": {
+    "default": 55000,
+    "asan": 250000
   },
   "aot/engine/ir-1.test.ts": {
-    "default": 21900,
-    "asan": 76100,
-    "musl": 28700,
-    "windows": 55300,
-    "windows-aarch64": 20300
+    "default": 11000,
+    "asan": 38000,
+    "musl": 14400,
+    "windows": 27600,
+    "windows-aarch64": 10200
   },
   "aot/engine/ir-2.test.ts": {
-    "default": 24290,
-    "asan": 41310,
-    "musl": 29400,
-    "windows": 43500,
-    "windows-aarch64": 19320
+    "default": 12100,
+    "asan": 20700,
+    "musl": 14700,
+    "windows": 21800,
+    "windows-aarch64": 9700
   },
   "aot/engine/ir-3.test.ts": {
-    "default": 31200,
-    "asan": 73200,
-    "musl": 27200,
-    "windows": 35400,
-    "windows-aarch64": 21100
+    "default": 15600,
+    "asan": 36600,
+    "musl": 13600,
+    "windows": 17700,
+    "windows-aarch64": 10600
   },
   "aot/engine/ir-4.test.ts": {
-    "default": 24860,
-    "asan": 43540,
-    "musl": 28100,
-    "windows": 36710,
-    "windows-aarch64": 14000
+    "default": 12400,
+    "asan": 21800,
+    "musl": 14000,
+    "windows": 18400,
+    "windows-aarch64": 7000
   },
   "aot/engine/ir-5.test.ts": {
-    "default": 20600,
-    "asan": 45500,
-    "musl": 71200,
-    "windows": 27400,
-    "windows-aarch64": 27800
+    "default": 10300,
+    "asan": 22800,
+    "musl": 35600,
+    "windows": 13700,
+    "windows-aarch64": 13900
   },
   "aot/engine/ir-6.test.ts": {
-    "default": 32000,
-    "asan": 50400,
-    "musl": 41000,
-    "windows": 22800,
-    "windows-aarch64": 25800
+    "default": 16000,
+    "asan": 25200,
+    "musl": 20500,
+    "windows": 11400,
+    "windows-aarch64": 12900
+  },
+  "aot/engine/ir-7.test.ts": {
+    "default": 11000,
+    "asan": 38000,
+    "musl": 14400,
+    "windows": 27600,
+    "windows-aarch64": 10200
+  },
+  "aot/engine/ir-8.test.ts": {
+    "default": 12100,
+    "asan": 20700,
+    "musl": 14700,
+    "windows": 21800,
+    "windows-aarch64": 9700
+  },
+  "aot/engine/ir-9.test.ts": {
+    "default": 15600,
+    "asan": 36600,
+    "musl": 13600,
+    "windows": 17700,
+    "windows-aarch64": 10600
+  },
+  "aot/engine/ir-10.test.ts": {
+    "default": 12400,
+    "asan": 21800,
+    "musl": 14000,
+    "windows": 18400,
+    "windows-aarch64": 7000
+  },
+  "aot/engine/ir-11.test.ts": {
+    "default": 10300,
+    "asan": 22800,
+    "musl": 35600,
+    "windows": 13700,
+    "windows-aarch64": 13900
+  },
+  "aot/engine/ir-12.test.ts": {
+    "default": 16000,
+    "asan": 25200,
+    "musl": 20500,
+    "windows": 11400,
+    "windows-aarch64": 12900
   },
   "aot/engine/native-1.test.ts": {
     "default": 28000,

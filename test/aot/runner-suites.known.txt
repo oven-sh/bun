@@ -2,6 +2,7 @@
 # A line goes out with the fix that makes its test pass.
 # `! ` before a line: in a Bun built with assertions one of them stops that test's child run.
 # `x64 ` or `arm64 ` before a line: that test fails on that architecture alone.
+# `~ ` before a line: that test fails in some runs and passes in others. `~ASAN `: so in a Bun built with a sanitizer, and it is held to pass in every other.
 test/cli/test/bun-test.test.ts: --react-compiler > a compiled file is cached whatever its size ["--react-compiler"]
 test/cli/test/bun-test.test.ts: --react-compiler > a pattern
 test/cli/test/bun-test.test.ts: --react-compiler > exclude alone
@@ -45,6 +46,8 @@ test/cli/test/isolation.test.ts: the SourceProvider cache skips files that use i
 test/cli/test/isolation.test.ts: the SourceProvider cache skips files that use import.meta.glob() or macros > --isolate, large files, BUN_RUNTIME_TRANSPILER_CACHE_PATH=undefined
 test/cli/test/isolation.test.ts: the SourceProvider cache skips files that use import.meta.glob() or macros > --isolate, small files, BUN_RUNTIME_TRANSPILER_CACHE_PATH=undefined
 test/cli/test/isolation.test.ts: the SourceProvider cache skips files that use import.meta.glob() or macros > --parallel=1, small files, BUN_RUNTIME_TRANSPILER_CACHE_PATH=undefined
+# The next one makes two child runs one behind the other, and isolation.test.ts gives a test 120 seconds with a sanitizer. There it takes 5.0 to 5.8 s alone, and 120 s and more with four copies of its part on three processors.
+~ASAN test/cli/test/isolation.test.ts: bun test --isolate > with --isolate, the on-disk transpiler cache keeps that namespace in the stored module record
 # --aot refuses --watch and --hot, as docs/compiler/debugging.mdx says.
 test/cli/test/isolation.test.ts: the SourceProvider cache skips files that use import.meta.glob() or macros > --isolate --hot
 test/cli/test/isolation.test.ts: the SourceProvider cache skips files that use import.meta.glob() or macros > --isolate --watch

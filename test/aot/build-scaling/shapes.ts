@@ -36,6 +36,8 @@ export type Shape = {
   growsSoFarOnLinuxArm64?: string;
   /** How many times the memory twice the size may take, where the bound of all shapes lies within what one build wavers by. Instructions and counts keep the bound of all shapes. */
   mostGrowthInMemory?: number;
+  /** How many times the instructions twice the size may take, where what the program means holds a square of its own. Memory and counts keep their bounds. */
+  mostGrowthInInstructions?: number;
   write(size: number): Record<string, string>;
 };
 
@@ -1929,6 +1931,9 @@ export const shapes: Shape[] = [
     counted: "classes",
     size: 500,
     entry: "main.js",
+    // The layout of each class holds the fields of all the classes above it, so that the layouts of n classes hold n * n / 2 fields: about 300 instructions a field, a fourteenth of the build of 1,000 classes.
+    // It reads 2.10 to 2.11 times, on both sides of the bound of all shapes from one build to the next. Twice as many instructions a field would read 2.2.
+    mostGrowthInInstructions: 2.15,
     write: size => ({
       "main.js":
         `class C0 { f0 = 0; m() { return 0; } }\n` +

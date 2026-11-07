@@ -174,6 +174,7 @@ export const buildScaling = (part: number, parts: number) =>
         async () => {
           const size = shape.size * factor;
           const mostGrowthInMemory = shape.mostGrowthInMemory ?? mostGrowth;
+          const mostGrowthInInstructions = shape.mostGrowthInInstructions ?? mostGrowth;
           type Costs = [none: Built, once: Built | undefined, twice: Built];
           const grown = ([none, once, twice]: Costs, name: keyof Cost, least: number, leastDivisor: number) => {
             if (none[name] === undefined || once?.[name] === undefined || twice[name] === undefined) return undefined;
@@ -259,7 +260,7 @@ export const buildScaling = (part: number, parts: number) =>
           // Of a square that doubling too adds four times what the one before it added.
           let builtAtFourTimes: Promise<Built> | undefined;
           const buildAtFourTimes = () => (builtAtFourTimes ??= slot(() => measure(shape, 4 * size, carrier)));
-          if (growsInMemory && growth.peakBytes! > mostGrowthInMemory && (growth.instructions ?? 0) <= mostGrowth) {
+          if (growsInMemory && growth.peakBytes! > mostGrowthInMemory && (growth.instructions ?? 0) <= mostGrowthInInstructions) {
             const fourTimes = await buildAtFourTimes();
             growth.peakBytes = Math.min(
               growth.peakBytes!,
@@ -277,7 +278,7 @@ export const buildScaling = (part: number, parts: number) =>
           // Past such a limit each may also count for more than in front of it: a name adds 5 edges to Link's flow up to 4,095 names and 12 from there on. That is a straight line with a bend, and with the bend
           // between half the size and the size all three readings take it for a square: 2.66, 2.89, 2.54. Behind the bend it is straight, so it is asked at twice the size again, as memory is: 2.00.
           let growing = suspects.filter(growsAtHalfTheSizeToo);
-          if (growing.length && (growth.instructions ?? 0) <= mostGrowth) {
+          if (growing.length && (growth.instructions ?? 0) <= mostGrowthInInstructions) {
             const fourTimes = await buildAtFourTimes();
             growing = growing.filter(
               name =>
@@ -296,7 +297,7 @@ export const buildScaling = (part: number, parts: number) =>
           );
 
           const worse: string[] = [];
-          for (const [what, most] of [["instructions", mostGrowth], ["peakBytes", mostGrowthInMemory]] as const) {
+          for (const [what, most] of [["instructions", mostGrowthInInstructions], ["peakBytes", mostGrowthInMemory]] as const) {
             if (growth[what] !== undefined && growth[what] > most)
               worse.push(
                 `twice as many ${shape.counted} cost ${growth[what].toFixed(2)} times the ${what}; allowed: ${most}`,

@@ -1,3 +1,4 @@
+// Skip under ASAN: 12,000 calls deep through a getter the run that this is held against ended there with "RangeError: Maximum call stack size exceeded", and the executable printed its answer.
 const deep = +process.argv[2] || 12000;
 const base = deep % 97;
 class Chain { left: number; constructor(left: number) { this.left = left; } get deeper(): Row | null { return this.left === 0 ? null : copy(new Chain(this.left - 1)); } }

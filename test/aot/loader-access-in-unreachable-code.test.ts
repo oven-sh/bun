@@ -43,24 +43,26 @@ function builtOnceWith(lib: string) {
   return once;
 }
 
-async function expectNoGrowth(forms: Record<string, string>, goalNotMet?: string) {
+async function expectNoGrowth(forms: Record<string, string>, atMost: number, goalNotMet?: string) {
   const plain = await builtOnceWith(double);
   expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "42\n", exitCode: 0 });
   for (const [name, lib] of Object.entries(forms)) {
     const found = await builtOnceWith(lib);
-    if (goalNotMet) sayGoal(goalNotMet, found.size - plain.size, 32 * 1024);
+    if (goalNotMet) sayGoal(goalNotMet, found.size - plain.size, atMost);
     expect({
       name,
       stdout: found.stdout,
       exitCode: found.exitCode,
-      grows: found.size - plain.size > 32 * 1024,
+      grows: found.size - plain.size > atMost,
     }).toEqual({ name, stdout: "42\n", exitCode: 0, grows: false });
   }
 }
 
 test(
   "a door in a function that nothing reaches brings no built-in module along",
-  () => expectNoGrowth(notReached),
+  // With a door anywhere in the text the stubs keep fast paths that a program without one leaves out, and an image is one step larger: 16 KB on x64, 64 KB on arm64 under Linux.
+  // A built-in module brings hundreds of KB.
+  () => expectNoGrowth(notReached, 64 * 1024),
   240_000,
 );
 
@@ -71,6 +73,7 @@ test.failing(
   () =>
     expectNoGrowth(
       notReachedAndStillDear,
+      32 * 1024,
       "a load by name in a function that only a function nobody calls calls brings no built-in module along",
     ),
   240_000,

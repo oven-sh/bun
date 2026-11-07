@@ -159,9 +159,9 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
   });
 
   it("a message the serializer rejects throws from send() and leaves the channel usable", async () => {
-    // JSON.stringify rejects cycles; structured clone rejects functions. Both
-    // surface from the native serializer as a pending exception that send()
-    // must rethrow without having written anything to the channel.
+    // JSON.stringify throws for a cycle. Structured clone refuses a function, and
+    // send() throws the error of its API for it: node's Error from process.send(),
+    // a DataCloneError from Bun's subprocess.send(). Neither writes anything to the channel.
     const rejected =
       mode === "json" ? `const rejected = {}; rejected.self = rejected;` : `const rejected = { callback() {} };`;
     const childSource = [
@@ -189,8 +189,18 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
       thrown:
         mode === "json"
           ? { name: "TypeError", message: "JSON.stringify cannot serialize cyclic structures." }
-          : { name: "DataCloneError", message: "The object can not be cloned." },
+          : { name: "Error", message: "The object could not be cloned." },
     });
+
+    const rejectedByParent: Record<string, unknown> = { callback() {} };
+    if (mode === "json") rejectedByParent.self = rejectedByParent;
+    expect(() => child.send(rejectedByParent)).toThrow(
+      expect.objectContaining(
+        mode === "json"
+          ? { name: "TypeError", message: "JSON.stringify cannot serialize cyclic structures." }
+          : { name: "DataCloneError", code: 25, message: "The object can not be cloned." },
+      ),
+    );
   });
 });
 

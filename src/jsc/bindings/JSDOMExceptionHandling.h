@@ -38,6 +38,9 @@ class CachedScript;
 class DeferredPromise;
 
 void throwDataCloneError(JSC::JSGlobalObject&, JSC::ThrowScope&);
+// node's v8.Serializer throws an Error, not a DOMException, for a value that cannot be cloned:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/v8.js#L379
+void throwNodeDataCloneError(JSC::JSGlobalObject&, JSC::ThrowScope&);
 WEBCORE_EXPORT void throwNonFiniteTypeError(JSC::JSGlobalObject&, JSC::ThrowScope&);
 WEBCORE_EXPORT void throwSequenceTypeError(JSC::JSGlobalObject&, JSC::ThrowScope&, ASCIILiteral functionName = {}, ASCIILiteral argumentName = {});
 

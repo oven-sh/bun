@@ -356,12 +356,15 @@ function takeCoverage() {
 function stopCoverage() {
   notimpl("stopCoverage");
 }
+let serializeToBuffer: ((value: unknown) => Buffer) | undefined;
 function serialize(arg1) {
+  // Bound on the first call: a program that loads node:v8 for something else keeps no structured clone under --trim.
+  serializeToBuffer ??= $newCppFunction("NodeV8.cpp", "jsFunctionNodeV8_serialize", 1) as (value: unknown) => Buffer;
   const tagged = require("internal/serialization_buffers").tagBuffers(arg1);
   if (tagged === null) {
-    return jsc.serialize(arg1, { binaryType: "nodebuffer" });
+    return serializeToBuffer(arg1);
   }
-  const payload = jsc.serialize(tagged, { binaryType: "nodebuffer" });
+  const payload = serializeToBuffer(tagged);
   const framed = BufferAllocUnsafe(kBufferEnvelopeMagic.length + TypedArrayPrototypeGetByteLength.$call(payload));
   for (let i = 0; i < kBufferEnvelopeMagic.length; i++) framed[i] = kBufferEnvelopeMagic[i];
   TypedArrayPrototypeSet.$call(framed, payload, kBufferEnvelopeMagic.length);

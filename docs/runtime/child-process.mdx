@@ -305,6 +305,8 @@ The `serialization` option controls the underlying communication format between 
 - `advanced`: (default) Bun serializes messages using the JSC `serialize` API, which supports cloning [everything `structuredClone` supports](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm). This does not support transferring ownership of objects.
 - `json`: Bun serializes messages using `JSON.stringify` and `JSON.parse`, which does not support as many object types as `advanced` does.
 
+With `advanced`, Bun does not send a message that holds a value it cannot clone, such as a function. `subprocess.send()` throws a `DataCloneError`. In the child, `process.send()` throws an `Error`, as it does in Node.js.
+
 To disconnect the IPC channel from the parent process, call:
 
 ```ts

@@ -17,7 +17,8 @@ use bun_jsc::js_value::Protected;
 #[cfg(windows)]
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    JSGlobalObject, JSObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Task,
+    JSGlobalObject, JSObject, JSValue, JsError, JsResult, SerializeError, SerializedFlags,
+    StringJsc as _, Task,
 };
 use bun_sys::Fd;
 use bun_sys::FdExt;
@@ -171,6 +172,9 @@ pub(crate) enum IsInternal {
 pub(crate) enum SerializeAndSendResult {
     Success,
     Failure,
+    /// The message cannot be cloned. Nothing was sent and nothing was thrown:
+    /// the caller throws the error of its API.
+    Uncloneable,
     Backoff,
 }
 
@@ -241,6 +245,9 @@ pub enum IPCSerializationError {
     /// Value could not be serialized.
     #[error("SerializationFailed")]
     SerializationFailed,
+    /// Structured clone refused the value and threw nothing.
+    #[error("Uncloneable")]
+    Uncloneable,
     // —— bun.JSError variants ——
     #[error("JSError")]
     JSError,
@@ -253,6 +260,15 @@ impl From<JsError> for IPCSerializationError {
         match e {
             JsError::Thrown | JsError::Terminated => IPCSerializationError::JSError,
             JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
+        }
+    }
+}
+
+impl From<SerializeError> for IPCSerializationError {
+    fn from(e: SerializeError) -> Self {
+        match e {
+            SerializeError::Js(e) => e.into(),
+            SerializeError::Uncloneable => IPCSerializationError::Uncloneable,
         }
     }
 }
@@ -1652,7 +1668,12 @@ impl SendQueue {
         let mut payload = StreamBuffer::default();
         let payload_length = match serialize(mode, &mut payload, global, value, is_internal) {
             Ok(n) => n,
-            Err(_) => return SerializeAndSendResult::Failure,
+            Err(IPCSerializationError::Uncloneable) => return SerializeAndSendResult::Uncloneable,
+            Err(
+                IPCSerializationError::SerializationFailed
+                | IPCSerializationError::JSError
+                | IPCSerializationError::OutOfMemory,
+            ) => return SerializeAndSendResult::Failure,
         };
         debug_assert!(payload.list.len() == payload_length);
         if self

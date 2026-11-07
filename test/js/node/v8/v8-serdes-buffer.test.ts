@@ -1,5 +1,7 @@
+import { serialize as jscSerialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { types } from "node:util";
 import v8 from "node:v8";
 
 // Buffer identity through v8.serialize/deserialize, matching node v26.3.0's
@@ -123,5 +125,120 @@ describe("v8 serialize/deserialize Buffer identity", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("true true\n");
     expect(exitCode).toBe(0);
+  });
+});
+
+// node's DefaultSerializer throws an Error for a value that cannot be cloned, where
+// structured clone throws a DataCloneError DOMException:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/v8.js#L379
+describe("v8.serialize of a value that cannot be cloned", () => {
+  function thrownBy(fn: () => unknown): any {
+    try {
+      fn();
+    } catch (error) {
+      return error;
+    }
+    throw new Error("expected a throw");
+  }
+
+  function expectPlainError(error: any) {
+    expect(Object.getPrototypeOf(error)).toBe(Error.prototype);
+    expect({
+      name: error.name,
+      code: error.code,
+      isError: Error.isError(error),
+      isNativeError: types.isNativeError(error),
+    }).toEqual({ name: "Error", code: undefined, isError: true, isNativeError: true });
+    // node names the value: "#<Object> could not be cloned."
+    expect(error.message).toMatch(/could not be cloned\.$/);
+  }
+
+  function detachedArrayBuffer() {
+    const buffer = new ArrayBuffer(8);
+    structuredClone(buffer, { transfer: [buffer] });
+    return buffer;
+  }
+
+  test.each([
+    ["a Proxy", () => new Proxy({}, {})],
+    ["a function", () => () => {}],
+    ["a symbol", () => Symbol("s")],
+    ["a nested function", () => ({ list: [function named() {}] })],
+    ["a Map that holds a function", () => new Map([["key", () => {}]])],
+    ["a detached ArrayBuffer", detachedArrayBuffer],
+  ])("%s throws an Error", (_name, make) => {
+    expectPlainError(thrownBy(() => v8.serialize(make())));
+    // A Buffer in the value takes the envelope path.
+    expectPlainError(thrownBy(() => v8.serialize({ value: make(), buffer: Buffer.from("x") })));
+  });
+
+  test("a MessagePort throws an Error", () => {
+    const { port1, port2 } = new MessageChannel();
+    try {
+      expectPlainError(thrownBy(() => v8.serialize({ port: port1 })));
+      expectPlainError(thrownBy(() => v8.serialize({ port: port1, buffer: Buffer.from("x") })));
+    } finally {
+      port1.close();
+      port2.close();
+    }
+  });
+
+  test("what a getter throws passes through", () => {
+    // It has the look of the serializer's own error, and it is not that error.
+    const own = new DOMException("thrown by a getter", "DataCloneError");
+    const value = {
+      get throws() {
+        throw own;
+      },
+    };
+    expect(thrownBy(() => v8.serialize(value))).toBe(own);
+    expect(thrownBy(() => v8.serialize({ value, buffer: Buffer.from("x") }))).toBe(own);
+  });
+
+  test("a value that nests too deep throws a RangeError", () => {
+    const root: { next?: object } = {};
+    for (let i = 0, object = root; i < 50_000; i++) object = object.next = {};
+    expect(() => v8.serialize(root)).toThrow(RangeError);
+  });
+
+  test("structured clone still throws a DataCloneError", () => {
+    const { port1, port2 } = new MessageChannel();
+    const channel = new BroadcastChannel("v8-serialize-uncloneable");
+    try {
+      const uncloneable = () => {};
+      for (const clone of [
+        () => structuredClone(uncloneable),
+        () => jscSerialize(uncloneable),
+        () => jscSerialize(uncloneable, { binaryType: "arraybuffer" }),
+        () => jscSerialize(uncloneable, { binaryType: "nodebuffer" }),
+        () => port1.postMessage(uncloneable),
+        () => channel.postMessage(uncloneable),
+      ]) {
+        const error = thrownBy(clone);
+        expect(error).toBeInstanceOf(DOMException);
+        expect({ name: error.name, code: error.code, message: error.message }).toEqual({
+          name: "DataCloneError",
+          code: 25,
+          message: "The object can not be cloned.",
+        });
+      }
+      for (const clone of [
+        () => structuredClone({ port: port2 }),
+        () => jscSerialize({ port: port2 }),
+        () => port1.postMessage({ port: port2 }),
+      ]) {
+        const error = thrownBy(clone);
+        expect(error).toBeInstanceOf(DOMException);
+        expect({ name: error.name, code: error.code, message: error.message }).toEqual({
+          name: "DataCloneError",
+          code: 25,
+          message: "Object that needs transfer was found in message but not listed in transferList",
+        });
+      }
+    } finally {
+      port1.close();
+      port2.close();
+      channel.close();
+    }
   });
 });

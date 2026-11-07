@@ -69,7 +69,7 @@ export default b.declarations(
 
   extendAll(
     ["Ipc"],
-    ...nativeBindings("Bindgen", "ipc_host.bind.ts", "emitHandleIPCMessage"),
+    ...nativeBindings("Bindgen", "ipc_host.bind.ts", "childProcessSend", "emitHandleIPCMessage"),
     ...nativeBindings("Bindgen", "node_cluster_binding.bind.ts", "sendHelperPrimary"),
     ...nativeBindings(
       "Bindgen",

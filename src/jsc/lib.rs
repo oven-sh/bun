@@ -173,9 +173,9 @@ pub mod uuid;
 pub mod weak;
 
 pub use self::js_value::{
-    CoerceTo, ComparisonResult, ForEachCallback, FromAny, FromJsEnum, JSValue,
-    Protected as ProtectedJSValue, ProxyField, SerializedFlags, SerializedScriptValue,
-    TemporalType,
+    CloneErrorClass, CoerceTo, ComparisonResult, ForEachCallback, FromAny, FromJsEnum, JSValue,
+    Protected as ProtectedJSValue, ProxyField, SerializeError, SerializedFlags,
+    SerializedScriptValue, TemporalType,
 };
 
 // LAYERING (PORTING.md §Dispatch): the task dispatch covers every concrete

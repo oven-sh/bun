@@ -294,4 +294,10 @@ void throwDataCloneError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowSco
     throwException(&lexicalGlobalObject, scope, createDOMException(&lexicalGlobalObject, ExceptionCode::DataCloneError));
 }
 
+void throwNodeDataCloneError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope)
+{
+    scope.assertNoExceptionExceptTermination();
+    throwException(&lexicalGlobalObject, scope, createError(&lexicalGlobalObject, "The object could not be cloned."_s));
+}
+
 } // namespace WebCore

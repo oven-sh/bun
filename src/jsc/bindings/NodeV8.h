@@ -147,5 +147,6 @@ private:
 };
 
 JSC::JSValue createNodeV8Binding(JSC::JSGlobalObject* globalObject);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeV8_serialize);
 
 } // namespace Bun

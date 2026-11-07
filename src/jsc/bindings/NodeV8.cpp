@@ -3,7 +3,11 @@
 #include "root.h"
 
 #include "ErrorCode.h"
+#include "JSDOMExceptionHandling.h"
+#include "MessagePort.h"
 #include "NodeV8.h"
+#include "RemovableFeatures.h"
+#include "SerializedScriptValue.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/JSArray.h>
@@ -92,6 +96,35 @@ JSC_DEFINE_HOST_FUNCTION(functionStopGCProfiler, (JSGlobalObject * globalObject,
     }
 
     return JSValue::encode(result);
+}
+
+// v8.serialize(): the bytes of bun:jsc's serialize() in a Buffer. The two differ in what a value
+// that cannot be cloned throws: bun:jsc a DataCloneError DOMException, node:v8 the Error that
+// node's DefaultSerializer throws.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeV8_serialize, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(StructuredClone, jsFunctionNodeV8_serialize);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Vector<JSC::Strong<JSC::JSObject>> transferList;
+    Vector<RefPtr<WebCore::MessagePort>> dummyPorts;
+    auto serialized = WebCore::SerializedScriptValue::create(*lexicalGlobalObject, callFrame->argument(0), WTF::move(transferList), dummyPorts, WebCore::SerializationForStorage::Yes, WebCore::SerializationErrorMode::NonThrowing, WebCore::SerializationContext::Default, WebCore::SerializationForCrossProcessTransfer::No);
+    EXCEPTION_ASSERT(!scope.exception() || serialized.hasException());
+    if (serialized.hasException()) {
+        auto exception = serialized.releaseException();
+        if (!scope.exception() && exception.code() == WebCore::ExceptionCode::DataCloneError)
+            WebCore::throwNodeDataCloneError(*lexicalGlobalObject, scope);
+        else
+            WebCore::propagateException(*lexicalGlobalObject, scope, WTF::move(exception));
+        RELEASE_AND_RETURN(scope, {});
+    }
+
+    auto arrayBuffer = serialized.releaseReturnValue()->toArrayBuffer();
+    size_t byteLength = arrayBuffer->byteLength();
+    auto* buffer = JSC::JSUint8Array::create(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject)->JSBufferSubclassStructure(), WTF::move(arrayBuffer), 0, byteLength);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(buffer);
 }
 
 JSC::JSValue createNodeV8Binding(JSC::JSGlobalObject* globalObject)

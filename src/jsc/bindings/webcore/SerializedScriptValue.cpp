@@ -131,6 +131,7 @@ enum class SerializationReturnCode {
     ValidationError,
     ExistingExceptionError,
     DataCloneError,
+    NeedsTransferError,
     UnspecifiedError
 };
 
@@ -1280,10 +1281,7 @@ private:
                     write(index->value);
                     return true;
                 }
-                // MessagePort present in the message but not listed in the
-                // transfer list: node throws a DataCloneError with this message.
-                WebCore::propagateException(*m_lexicalGlobalObject, scope, Exception { DataCloneError, "Object that needs transfer was found in message but not listed in transferList"_s });
-                code = SerializationReturnCode::ExistingExceptionError;
+                code = SerializationReturnCode::NeedsTransferError;
                 return true;
             }
             if (auto* arrayBuffer = toPossiblySharedArrayBuffer(vm, obj)) {
@@ -4511,6 +4509,8 @@ static ExceptionOr<std::unique_ptr<ArrayBufferContentsArray>> transferArrayBuffe
     return contents;
 }
 
+static Exception exceptionForSerializationFailure(SerializationReturnCode);
+
 static void maybeThrowExceptionIfSerializationFailed(JSGlobalObject& lexicalGlobalObject, SerializationReturnCode code)
 {
     auto& vm = lexicalGlobalObject.vm();
@@ -4523,7 +4523,8 @@ static void maybeThrowExceptionIfSerializationFailed(JSGlobalObject& lexicalGlob
         throwException(&lexicalGlobalObject, scope, createStackOverflowError(&lexicalGlobalObject));
         break;
     case SerializationReturnCode::ValidationError:
-        throwTypeError(&lexicalGlobalObject, scope, "Unable to deserialize data."_s);
+    case SerializationReturnCode::NeedsTransferError:
+        propagateException(lexicalGlobalObject, scope, exceptionForSerializationFailure(code));
         break;
     case SerializationReturnCode::DataCloneError:
         throwDataCloneError(lexicalGlobalObject, scope);
@@ -4544,9 +4545,12 @@ static Exception exceptionForSerializationFailure(SerializationReturnCode code)
     case SerializationReturnCode::StackOverflowError:
         return Exception { StackOverflowError };
     case SerializationReturnCode::ValidationError:
-        return Exception { TypeError };
+        return Exception { TypeError, "Unable to deserialize data."_s };
     case SerializationReturnCode::DataCloneError:
         return Exception { DataCloneError };
+    case SerializationReturnCode::NeedsTransferError:
+        // node's text for a MessagePort in the message that the transfer list does not name
+        return Exception { DataCloneError, "Object that needs transfer was found in message but not listed in transferList"_s };
     case SerializationReturnCode::ExistingExceptionError:
         return Exception { ExistingExceptionError };
     case SerializationReturnCode::UnspecifiedError:

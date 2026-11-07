@@ -56,6 +56,10 @@ export default b.declarations(
   ),
 
   extendAll(["NodeV8"], ...nativeBindings("Cpp", "NodeV8.cpp", "Bun::createNodeV8Binding")),
+  extendAll(
+    ["StructuredClone", "Buffer"],
+    ...nativeBindings("NewCppFunction", "NodeV8.cpp", "jsFunctionNodeV8_serialize"),
+  ),
   extendAll(["ParseArgs"], ...nativeBindings("Bindgen", "parse_args.bind.ts", "parseArgs")),
 
   extendAll(

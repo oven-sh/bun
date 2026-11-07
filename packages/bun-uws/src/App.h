@@ -396,9 +396,10 @@ public:
         }
     }
 
-    /** Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket.
-     * With closeWhenIdle set, connections that are busy right now are marked to close as soon as their in-flight work completes (graceful shutdown);
-     * upgraded WebSockets and CONNECT/Upgrade tunnels never become idle, so they are left alone either way.
+    /** Closes all connections connected to this server which are idle (HttpResponse::isIdle). Does not close the listen socket.
+     * With closeWhenIdle set (graceful shutdown), a request body that still arrives behind its response does not keep a connection,
+     * and connections that are busy right now are marked to close as soon as their in-flight work completes;
+     * upgraded WebSockets and node:http CONNECT/Upgrade tunnels never become idle, so they are left alone either way.
      * Returns the number of connections closed. */
     size_t closeIdle(bool closeWhenIdle = false) {
         auto *group = httpContext->getSocketGroup();
@@ -409,7 +410,7 @@ public:
              * adopted into its own group), so the ext block is an HttpResponseData. */
             auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
             struct us_socket_t *next = s->next;
-            if (((HttpResponse<SSL> *) s)->closeIfIdle()) {
+            if (((HttpResponse<SSL> *) s)->closeIfIdle(!closeWhenIdle)) {
                 closed++;
             } else if (closeWhenIdle) {
                 data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;

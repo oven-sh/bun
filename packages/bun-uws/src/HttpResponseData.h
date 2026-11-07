@@ -151,11 +151,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * into the shared word so the shared response-end path (internalEnd) never
          * has to touch the node-only field. */
         HTTP_NODE_HAS_RESPONSE_TRAILERS = 1 << 16,
-        /* Close this connection the next time it is idle (no request being
-         * received, no response in flight or queued). Set by
-         * App::closeIdle(true) on connections that were busy during a graceful
-         * shutdown sweep; the shouldCloseConnection() gates act on it once the
-         * in-flight work completes. */
+        /* Close this connection the next time it is idle (HttpResponse::isIdle).
+         * Set by App::closeIdle(true) on connections that were busy during a
+         * graceful shutdown sweep; the HttpResponse::shouldCloseConnection()
+         * gates act on it once the in-flight work completes. */
         HTTP_CLOSE_WHEN_IDLE = 1 << 17,
         /* Bun.serve handed this request to user JavaScript. The response is sent
          * when it completes, also on the socket onData is parsing: JavaScript
@@ -250,14 +249,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * order) and socket reads stay paused (bounding memory under a pipeline
      * flood). */
     uint32_t nodeHttpQueuedPipelinedCount = 0;
-
-    /* Whether the connection should be torn down once the in-flight response (if
-     * any) has completed and all buffered outgoing data has been flushed. */
-    bool shouldCloseConnection() const {
-        return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN))
-            || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
-            || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
-    }
 
     /* The response that closes this connection (Connection: close, HTTP/1.0, a
      * close-delimited body) is complete; the socket only stays open until its

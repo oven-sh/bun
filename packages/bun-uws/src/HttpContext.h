@@ -840,7 +840,7 @@ private:
             }
 
             /* We need to check if we should close this socket here now */
-            if (httpResponseData->shouldCloseConnection()) {
+            if (((HttpResponse<SSL> *) s)->shouldCloseConnection(httpResponseData)) {
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                     if (((AsyncSocket<SSL> *) s)->hasFullyDrained()) {
                         ((AsyncSocket<SSL> *) s)->shutdown();
@@ -984,7 +984,7 @@ private:
         }
 
         /* Should we close this connection after a response - and is this response really done? */
-        if (httpResponseData->shouldCloseConnection()) {
+        if (reinterpret_cast<HttpResponse<SSL> *>(s)->shouldCloseConnection(httpResponseData)) {
             bool responseDone = (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0;
             if constexpr (IsNodeHttp) {
                 /* Node's socketOnEnd (!httpAllowHalfOpen) issues socket.end():

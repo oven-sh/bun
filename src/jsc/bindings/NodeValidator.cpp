@@ -407,8 +407,7 @@ extern "C" SYSV_ABI JSC::EncodedJSValue Bun__NodeValidator__validateObject(JSC::
     return NodeValidators::validateObject(globalObject, Bindgen::ArgumentsInRegisters<3> { encodedValue, encodedName, encodedOptions });
 }
 
-// Node's validateAbortSignal(signal, "options.signal") for a value that is no AbortSignal of Bun's.
-// A native parser of options comes here once its own test for the class has failed: validate_abort_signal in validators.rs.
+// For a native parser of options whose own test for the class has failed: validate_abort_signal in validators.rs.
 extern "C" [[ZIG_EXPORT(false_is_throw)]] bool Bun__validateNonNativeAbortSignal(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedSignal)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));

@@ -1872,9 +1872,7 @@ mod _async_tasks {
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
-        /// The arguments carry `options.signal`. `then` rejects with an `AbortError` if the signal is aborted by the
-        /// time the operation completes, whatever the operation has done. An operation can return early if
-        /// `args.aborted()`.
+        /// `then` rejects with an `AbortError` if `options.signal` is aborted by the time the operation completes.
         pub(crate) const HAVE_ABORT_SIGNAL: bool = A::HAVE_ABORT_SIGNAL;
 
         /// `callback`: the `node:fs` callback to call with the result. `None` returns a promise.
@@ -4506,9 +4504,7 @@ pub(crate) mod args {
     pub(crate) enum FileSignal {
         /// An `AbortSignal` of Bun's, with a ref and a pending activity. Any thread reads its flag.
         Native(AbortSignalRef),
-        /// Any other object that has an `aborted` property: a polyfill, the signal of happy-dom or jsdom.
-        /// Reading it runs code of the program. Only the JS thread does, at the two points where it asks a
-        /// native signal: before the task is scheduled and when it completes.
+        /// Any other object that has `aborted`. Reading it runs code of the program, so only the JS thread does.
         NonNative(bun_jsc::Protected),
     }
     impl FileSignal {
@@ -4520,8 +4516,7 @@ pub(crate) mod args {
             }
         }
 
-        /// Node's `checkAborted`: an `AbortError` whose `cause` is `signal.reason`, if the signal is aborted.
-        /// JS thread only.
+        /// Node's `checkAborted`, for the JS thread: an `AbortError` whose `cause` is `signal.reason`.
         pub(crate) fn node_abort_error_if_aborted(
             &self,
             global: &JSGlobalObject,
@@ -4548,11 +4543,7 @@ pub(crate) mod args {
         }
     }
 
-    /// `options.signal`, if it is given. Node's `validateAbortSignal` says what a signal is. Node's sync forms only
-    /// check the signal, so a sync parse keeps none:
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L340-L342
-    ///
-    /// Bun only: null and "" are not given, as undefined. Node throws `ERR_INVALID_ARG_TYPE` for both.
+    /// As Node's `getOptions` checks it, so a sync parse keeps none. Bun only: null and "" are not given.
     #[inline]
     fn signal_option(
         ctx: &JSGlobalObject,

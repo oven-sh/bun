@@ -212,10 +212,7 @@ template<typename Arguments> ALWAYS_INLINE JSC::EncodedJSValue validatePort(JSC:
     return JSValue::encode(jsNumber(static_cast<int32_t>(port_num)));
 }
 
-// Node's validateAbortSignal(signal, name) for a signal that is not undefined and no AbortSignal of Bun's.
-// A signal is a value of type "object" that is not null and has an `aborted` property, its own or inherited.
-// A function is of type "function". For any other value this throws Node's error and returns false.
-// `nameOf` is asked for the name only then. A trap of a proxy can throw too.
+// Node's validateAbortSignal for a value that is no AbortSignal of Bun's. False: it threw Node's error, or a trap of a proxy threw.
 template<typename NameOf> ALWAYS_INLINE bool validateNonNativeAbortSignal(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue signal, const NameOf& nameOf)
 {
     auto* object = signal.getObject();

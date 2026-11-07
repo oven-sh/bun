@@ -407,13 +407,11 @@ pub(crate) fn validate_function(
 pub(crate) enum AbortSignalOption<'a> {
     /// An `AbortSignal` of Bun's, borrowed from the value. Native code reads it on any thread.
     Native(&'a AbortSignal),
-    /// Any other object that has an `aborted` property: a polyfill, the signal of happy-dom or jsdom,
-    /// `{ aborted }`. Reading it runs code of the program.
+    /// Any other object that has `aborted`: a polyfill, the signal of happy-dom or jsdom.
     NonNative,
 }
 
 /// Node's `validateAbortSignal(value, "options.signal")` for a `value` that is not `undefined`.
-/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L444-L451
 #[inline]
 pub(crate) fn validate_abort_signal<'a>(
     global: &JSGlobalObject,

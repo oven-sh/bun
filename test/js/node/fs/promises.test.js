@@ -576,10 +576,13 @@ describe.concurrent("options.signal of readFile, writeFile and appendFile", () =
 
   const withCallback = start =>
     new Promise((resolve, reject) => start((error, data) => (error ? reject(error) : resolve(data))));
-  async function withHandle(file, flags, use) {
+  // `called` runs once `use` has made its call.
+  async function withHandle(file, flags, use, called) {
     const handle = await open(file, flags);
     try {
-      return await use(handle);
+      const pending = use(handle);
+      called?.();
+      return await pending;
     } finally {
       await handle.close();
     }
@@ -596,9 +599,12 @@ describe.concurrent("options.signal of readFile, writeFile and appendFile", () =
     "fs.promises.readFile": (file, options) => fsPromises.readFile(file, options),
     "fs.promises.writeFile": (file, options, data) => fsPromises.writeFile(file, data, options),
     "fs.promises.appendFile": (file, options, data) => fsPromises.appendFile(file, data, options),
-    "FileHandle#readFile": (file, options) => withHandle(file, "r", handle => handle.readFile(options)),
-    "FileHandle#writeFile": (file, options, data) => withHandle(file, "w", handle => handle.writeFile(data, options)),
-    "FileHandle#appendFile": (file, options, data) => withHandle(file, "a", handle => handle.appendFile(data, options)),
+    "FileHandle#readFile": (file, options, _, called) =>
+      withHandle(file, "r", handle => handle.readFile(options), called),
+    "FileHandle#writeFile": (file, options, data, called) =>
+      withHandle(file, "w", handle => handle.writeFile(data, options), called),
+    "FileHandle#appendFile": (file, options, data, called) =>
+      withHandle(file, "a", handle => handle.appendFile(data, options), called),
   };
   const all = Object.keys(forms);
   const sync = all.filter(name => name.endsWith("Sync"));
@@ -608,15 +614,17 @@ describe.concurrent("options.signal of readFile, writeFile and appendFile", () =
   const opensFile = name => name.startsWith("FileHandle");
 
   // What each form makes of `{ signal }`: what it answers or how it fails, and for a form that writes, what its file
-  // holds afterwards. `afterCall` gets the signal once the form has returned its promise.
+  // holds afterwards. `afterCall` gets the signal once the form has made its call of node:fs.
   async function outcomes(names, makeSignal, afterCall) {
     using dir = tempDir("fs-signal-option", { "read.txt": "hello" });
     const results = {};
     for (const name of names) {
       const file = join(dir, reads(name) ? "read.txt" : `${name.replace(/\W/g, "-")}.txt`);
       const signal = makeSignal();
-      const pending = forms[name](file, { encoding: "utf8", signal }, "data");
-      afterCall?.(signal);
+      const called = () => afterCall?.(signal);
+      // A form that opens the file first makes its call later than this line.
+      const pending = forms[name](file, { encoding: "utf8", signal }, "data", called);
+      if (!opensFile(name)) called();
       const result = await pending.then(
         value => value ?? "done",
         error => (error.code === "ABORT_ERR" ? describeAbort(error) : `${error.code}: ${error.message}`),

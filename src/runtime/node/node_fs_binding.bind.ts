@@ -41,10 +41,7 @@ const uses = {
 const takesSignal = new Set(["appendFile", "readFile", "writeFile"]);
 const looksForAborted = [...uses.args, ...table.hostOptionBag(["aborted"])];
 const usesOfSync = (name: string) => (takesSignal.has(name) ? { this: uses.this, args: looksForAborted } : uses);
-/**
- * With a promise they keep a `signal` that is no AbortSignal, and read `aborted` and `reason` of it before the
- * operation is scheduled and when it completes (`args::FileSignal` in node_fs.rs).
- */
+/** With a promise they keep a `signal` that is no AbortSignal and read it again later (`args::FileSignal` in node_fs.rs). */
 const usesOfPromise = (name: string) =>
   takesSignal.has(name)
     ? { this: uses.this, args: [...looksForAborted, table.memberStoredIn(["signal"], table.nativeMemory)] }

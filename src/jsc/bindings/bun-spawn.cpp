@@ -264,7 +264,8 @@ extern "C" ssize_t posix_spawn_bun(
     // The kernel kills the process if a seccomp trap fires while SIGSYS is blocked.
     sigdelset(&blockall, SIGSYS);
 #endif
-    sigprocmask(SIG_SETMASK, &blockall, &oldmask);
+    // Each spawning thread must save and restore its own signal mask.
+    pthread_sigmask(SIG_SETMASK, &blockall, &oldmask);
 #if !OS(ANDROID)
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
 #endif
@@ -473,7 +474,7 @@ extern "C" ssize_t posix_spawn_bun(
         closeRangeOrLoop(current_max_fd + 1, INT_MAX, true);
 
         // The caller's mask may block SIGSYS, so apply it after close_range().
-        sigprocmask(SIG_SETMASK, &childmask, 0);
+        pthread_sigmask(SIG_SETMASK, &childmask, 0);
 #if OS(LINUX)
         sigaction(SIGSYS, &sa, 0);
 #endif
@@ -620,7 +621,7 @@ extern "C" ssize_t posix_spawn_bun(
     }
 #endif
 
-    sigprocmask(SIG_SETMASK, &oldmask, 0);
+    pthread_sigmask(SIG_SETMASK, &oldmask, 0);
 #if !OS(ANDROID)
     pthread_setcancelstate(cs, 0);
 #else

@@ -2015,7 +2015,10 @@ pub(crate) fn dgram_bind_fd(fd: i32, address: &[u8], port: i32, flags: i32) -> b
                 bun_sys::Tag::bind2,
             ));
         };
-        let addr = Address::from_ip(ip, port);
+        let mut addr = Address::from_ip(ip, port);
+        if let Some((_, zone)) = bun_core::strings::split_once_char(address, b'%') {
+            addr.set_scope_id(crate::socket::socket_address::scope_index(zone));
+        }
         let socklen = addr.socklen() as libc::socklen_t;
         let storage = addr.into_storage();
 

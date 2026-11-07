@@ -1275,18 +1275,95 @@ int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd) {
 #endif
 }
 
+static socklen_t bsd_inet_addr_length(const struct sockaddr_storage *addr) {
+    return addr->ss_family == AF_INET6 ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
+}
+
+/* One address as the chain that getaddrinfo(3) answers with, in the frame of the caller. */
+struct bsd_literal_addrinfo {
+    struct addrinfo info;
+    struct sockaddr_storage addr;
+};
+
+/* getaddrinfo(3) for a bind host. A host that Node's net.isIP() takes is bound as it is written: its chain is
+ * *literal, with no resolver call. getaddrinfo(3) refuses a zone name on an address that is not link-local.
+ * bsd_bind_freeaddrinfo does not free that chain. */
+static int bsd_bind_getaddrinfo(const char *host, int port, const struct addrinfo *hints, struct bsd_literal_addrinfo *literal, struct addrinfo **result) {
+    if (host && Bun__parseBindAddress(host, (uint16_t) port, &literal->addr)) {
+        memset(&literal->info, 0, sizeof(struct addrinfo));
+        literal->info.ai_family = literal->addr.ss_family;
+        literal->info.ai_socktype = hints->ai_socktype;
+        literal->info.ai_addr = (struct sockaddr *) &literal->addr;
+        literal->info.ai_addrlen = bsd_inet_addr_length(&literal->addr);
+        *result = &literal->info;
+        return 0;
+    }
+
+    char port_string[16];
+    snprintf(port_string, 16, "%d", port);
+    return getaddrinfo(host, port_string, hints, result);
+}
+
+static void bsd_bind_freeaddrinfo(struct addrinfo *result, const struct bsd_literal_addrinfo *literal) {
+    if (result != &literal->info) {
+        freeaddrinfo(result);
+    }
+}
+
+/* bsd_bind_listen_fd for a sockaddr. */
+static LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_addr(LIBUS_SOCKET_DESCRIPTOR listenFd, const struct sockaddr_storage *addr, int options, int *error) {
+    if (bsd_set_reuse(listenFd, options) != 0) {
+        *error = LIBUS_ERR;
+        return LIBUS_SOCKET_ERROR;
+    }
+
+#if defined(SO_REUSEADDR) && !_WIN32
+    int one = 1;
+    setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+#endif
+
+#ifdef IPV6_V6ONLY
+    if (addr->ss_family == AF_INET6) {
+        int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+        if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
+            *error = LIBUS_ERR;
+            return LIBUS_SOCKET_ERROR;
+        }
+    }
+#endif
+
+    if (us_internal_bind_and_listen(listenFd, (struct sockaddr *) addr, bsd_inet_addr_length(addr), 512, error)) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    return listenFd;
+}
+
+/* bsd_create_listen_socket for the address of a host that net.isIP() takes. */
+static LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_addr(const struct sockaddr_storage *addr, int options, int *error) {
+    LIBUS_SOCKET_DESCRIPTOR listenFd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, error);
+    if (listenFd == LIBUS_SOCKET_ERROR) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    if (bsd_bind_listen_addr(listenFd, addr, options, error) == LIBUS_SOCKET_ERROR) {
+        bsd_close_socket(listenFd);
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    return listenFd;
+}
+
 LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int options, int *out_port, int *error) {
     bsd_winsock_ensure();
     struct addrinfo hints, *result;
+    struct bsd_literal_addrinfo literal;
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_flags = AI_PASSIVE;
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
-    char port_string[16];
-    snprintf(port_string, 16, "%d", port);
-
-    int gai = getaddrinfo(host, port_string, &hints, &result);
+    int gai = bsd_bind_getaddrinfo(host, port, &hints, &literal, &result);
     if (gai != 0) {
 #ifdef _WIN32
         *error = gai;
@@ -1330,7 +1407,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
             break;
         }
     }
-    freeaddrinfo(result);
+    bsd_bind_freeaddrinfo(result, &literal);
     if (fd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
     }
@@ -1359,6 +1436,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error) {
     bsd_winsock_ensure();
+    struct sockaddr_storage literal;
+    if (host && Bun__parseBindAddress(host, (uint16_t) port, &literal)) {
+        return bsd_create_listen_socket_addr(&literal, options, error);
+    }
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
@@ -1753,16 +1834,14 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 
     struct addrinfo hints, *result;
+    struct bsd_literal_addrinfo literal;
     memset(&hints, 0, sizeof(struct addrinfo));
 
     hints.ai_flags = AI_PASSIVE;
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_DGRAM;
 
-    char port_string[16];
-    snprintf(port_string, 16, "%d", port);
-
-    int gai_result = getaddrinfo(host, port_string, &hints, &result);
+    int gai_result = bsd_bind_getaddrinfo(host, port, &hints, &literal, &result);
     if (gai_result != 0) {
         if (err != NULL) {
             *err = -gai_result;
@@ -1787,7 +1866,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 
     if (listenFd == LIBUS_SOCKET_ERROR) {
-        freeaddrinfo(result);
+        bsd_bind_freeaddrinfo(result, &literal);
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1800,7 +1879,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 #endif
         }
         bsd_close_socket(listenFd);
-        freeaddrinfo(result);
+        bsd_bind_freeaddrinfo(result, &literal);
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1808,6 +1887,11 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     if (listenAddr->ai_family == AF_INET6) {
         int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
         if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
+            if (err != NULL) {
+                *err = LIBUS_ERR;
+            }
+            bsd_close_socket(listenFd);
+            bsd_bind_freeaddrinfo(result, &literal);
             return LIBUS_SOCKET_ERROR;
         }
     }
@@ -1825,11 +1909,11 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 #endif
         }
         bsd_close_socket(listenFd);
-        freeaddrinfo(result);
+        bsd_bind_freeaddrinfo(result, &literal);
         return LIBUS_SOCKET_ERROR;
     }
 
-    freeaddrinfo(result);
+    bsd_bind_freeaddrinfo(result, &literal);
     if (err != NULL) {
         *err = 0;
     }

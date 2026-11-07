@@ -573,32 +573,16 @@ pub(crate) fn cluster_raw_bind<'a>(
             }
             addr_z[..addr_bytes.len()].copy_from_slice(addr_bytes);
 
-            use bun_cares_sys::ares_inet_pton;
-            // SAFETY: `ss` is a zeroed `sockaddr_storage`, sized and aligned for every sockaddr type;
-            // `addr_z` is NUL-terminated and the address out-param is inside `ss`.
-            let parsed = unsafe {
-                if family == libc::AF_INET6 {
-                    let sin6: &mut libc::sockaddr_in6 =
-                        &mut *(&raw mut ss).cast::<libc::sockaddr_in6>();
-                    sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
-                    sin6.sin6_port = (port as u16).to_be();
-                    ares_inet_pton(
-                        libc::AF_INET6,
-                        addr_z.as_ptr().cast(),
-                        (&raw mut sin6.sin6_addr).cast(),
-                    ) == 1
-                } else {
-                    let sin: &mut libc::sockaddr_in =
-                        &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
-                    sin.sin_family = libc::AF_INET as libc::sa_family_t;
-                    sin.sin_port = (port as u16).to_be();
-                    ares_inet_pton(
-                        libc::AF_INET,
-                        addr_z.as_ptr().cast(),
-                        (&raw mut sin.sin_addr).cast(),
-                    ) == 1
-                }
-            };
+            // As the handle of Node.js (`uv_ip4_addr` / `uv_ip6_addr`): EINVAL for an address of the other family, which the resolver of macOS maps (`127.0.0.1` to `::ffff:127.0.0.1`).
+            let parsed =
+                match crate::socket::socket_address::parse_bind_address(addr_bytes, port as u16) {
+                    Some(literal) if literal.family() == family => {
+                        ss = literal.into_storage();
+                        true
+                    }
+                    Some(_) => return Ok(BindResult::Errno(-(libc::EINVAL))),
+                    None => false,
+                };
             if !parsed {
                 let mut hints: libc::addrinfo = bun_core::ffi::zeroed();
                 hints.ai_family = family;

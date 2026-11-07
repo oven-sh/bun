@@ -88,6 +88,16 @@ pub(crate) fn run_as_coordinator(
         return Ok(false);
     }
 
+    // `bun test` has `process.argv` values only from `run()` of `node:test`, for the one process that it starts. A worker does not get them.
+    // SAFETY: see vm_ptr note above.
+    if !unsafe { (*vm_ptr).argv.is_empty() } {
+        Output::err_generic(
+            "run() of node:test cannot give `argv` to the workers of --parallel. Name each test file in `files`, or remove --parallel from `execArgv`\n",
+            (),
+        );
+        Global::exit(1);
+    }
+
     // Workers' stderr is a pipe; have them format with ANSI when we will be
     // rendering to a color terminal so streamed lines match serial output.
     if Output::enable_ansi_colors_stderr() {

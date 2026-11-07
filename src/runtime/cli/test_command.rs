@@ -3046,6 +3046,41 @@ fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
 
+/// `process.argv.slice(2)` in a child of `run()` of `node:test`, whose `argv` cannot be on a command line that `bun test` parses.
+#[cold]
+fn node_test_argv(encoded: &[u8], ctx: &Command::ContextData) -> Vec<Box<[u8]>> {
+    let entries = node_test_argv_entries(encoded);
+    let Some((file, argv)) = entries.as_deref().and_then(<[_]>::split_first) else {
+        Output::err_generic(
+            "Invalid value for BUN_INTERNAL_NODE_TEST_ARGV. run() of node:test sets it for the test files that it starts\n",
+            (),
+        );
+        Global::exit(1);
+    };
+    // The variable can reach another `bun test`: through a `Worker` of the test file, or through a child of `run()` that is not `bun test`.
+    if !ctx.positionals.iter().skip(1).any(|it| **it == **file) {
+        return Vec::new();
+    }
+    argv.iter().map(|value| Box::from(*value)).collect()
+}
+
+/// The entries of `BUN_INTERNAL_NODE_TEST_ARGV`, the file and then the values: each is a length, `:` and as many bytes.
+fn node_test_argv_entries(mut encoded: &[u8]) -> Option<Vec<&[u8]>> {
+    let mut entries = Vec::new();
+    while !encoded.is_empty() {
+        let colon = strings::index_of_char_usize(encoded, b':')?;
+        let len = &encoded[..colon];
+        if !len.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        let len = bun_fmt::parse_unsigned::<usize>(len, 10).ok()?;
+        let (entry, rest) = encoded[colon + 1..].split_at_checked(len)?;
+        entries.push(entry);
+        encoded = rest;
+    }
+    Some(entries)
+}
+
 /// jest and vitest never run a test file's `process.on('exit')` listeners; node's test harness asserts from them.
 pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
     !(reporter.jest.node_test_used || should_drain_event_loop())
@@ -4171,6 +4206,15 @@ impl TestCommand {
         }
 
         vm.transpiler.configure_defines()?;
+
+        // `run()` of `node:test` sets both. Every start already reads the first, so a plain `bun test` does not look up the second.
+        if should_drain_event_loop()
+            && let Some(encoded) = env_var::BUN_INTERNAL_NODE_TEST_ARGV.get_not_empty()
+        {
+            vm.argv = node_test_argv(encoded, ctx);
+            // Out of the map of this VM: `process.env` and what the main thread starts do not have it. A `Worker` loads the process environment again.
+            env_loader.map.remove(b"BUN_INTERNAL_NODE_TEST_ARGV");
+        }
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;

@@ -4498,8 +4498,8 @@ describe("bundler", () => {
         var topLevel = this;
         var arrow = () => this;
         var obj = { value: this };
-        (class { static value = this; });
-        topLevel.sameThis = topLevel === arrow() && topLevel === obj.value;
+        var StaticThis = class { static value = this; };
+        topLevel.sameThis = topLevel === arrow() && topLevel === obj.value && StaticThis.value === StaticThis;
       `,
     },
     bundling: false,

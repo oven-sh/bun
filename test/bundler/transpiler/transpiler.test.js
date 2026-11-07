@@ -5305,15 +5305,16 @@ console.log(foo, array);
 
   // The output has no CommonJS wrapper, so `this` must not become `exports`.
   // https://github.com/oven-sh/bun/issues/48123
-  it("keeps top-level `this` in a file without ES module syntax", () => {
-    for (const target of ["browser", "bun", "node"]) {
-      const transpiler = new Bun.Transpiler({ loader: "js", target });
-      const out = transpiler.transformSync("var g = this;\nvar f = () => this;\n");
-      expect(out).toContain("var g = this");
-      expect(out).toContain("f = () => this");
-      expect(out).not.toContain("exports");
-      expect(transpiler.transformSync("var g = this;\nexport {};\n")).not.toContain("this");
-    }
+  it.each([
+    // The bun target joins the two declarations into one `var`.
+    ["browser", "var g = this;\nvar f = () => this;\n"],
+    ["bun", "var g = this, f = () => this;\n"],
+    ["node", "var g = this;\nvar f = () => this;\n"],
+  ])("keeps top-level `this` in a file without ES module syntax (target %s)", (target, expected) => {
+    const transpiler = new Bun.Transpiler({ loader: "js", target });
+    expect(transpiler.transformSync("var g = this;\nvar f = () => this;\n")).toBe(expected);
+    // A file with ES module syntax is a module, so `this` is still replaced.
+    expect(transpiler.transformSync("var g = this;\nexport {};\n")).toMatch(/^var g = (null|void 0);\n/);
   });
 
   it("scan on empty file does not segfault", () => {

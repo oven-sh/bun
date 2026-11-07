@@ -2897,6 +2897,46 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
+  // ScopeFunctions::extend and ::for make a Vitest test from either module, so the hooks of that test follow Vitest.
+  test("a hook of a test.extend() or test.for() test from bun:test follows that test", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { afterEach, beforeEach, expect, test } from "bun:test";
+        const outcome = fn => { try { fn(); return "passes"; } catch { return "fails"; } };
+        const isBun = () => [
+          outcome(() => expect(1).not.not.toBe(1)) === "passes",
+          outcome(() => expect("a1").toContain(1)) === "fails",
+          outcome(() => expect([1]).toEqual([1, undefined])) === "passes",
+          outcome(() => expect(new Error("x", { cause: 1 })).toStrictEqual(new Error("x"))) === "fails",
+        ];
+        const say = where => console.log(where + ":", [...new Set(isBun().map(bun => (bun ? "bun" : "vitest")))].join(" and "));
+        beforeEach(() => say("beforeEach"));
+        afterEach(() => say("afterEach"));
+        test("test", () => say("test()"));
+        test.each([1])("each %i", () => say("test.each()"));
+        test.for([1])("for %i", () => say("test.for()"));
+        test.extend({})("extended", () => say("test.extend()"));
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: [
+        "beforeEach: bun",
+        "test(): bun",
+        "afterEach: bun",
+        "beforeEach: bun",
+        "test.each(): bun",
+        "afterEach: bun",
+        "beforeEach: vitest",
+        "test.for(): vitest",
+        "afterEach: vitest",
+        "beforeEach: vitest",
+        "test.extend(): vitest",
+        "afterEach: vitest",
+      ],
+      exitCode: 0,
+    });
+  });
+
   // Vitest: "if there is another listener, assume that it's handled by user code". Jest's tests get a `process` of their own.
   test("an error that nobody handles goes to the file's process listeners first, if the test is vitest's", async () => {
     const body = (module: string) => `

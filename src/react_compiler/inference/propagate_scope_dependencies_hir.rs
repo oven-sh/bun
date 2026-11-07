@@ -19,7 +19,7 @@ use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::rc::Rc;
 
 use crate::diagnostics::CompilerDiagnostic;
-use crate::hir::environment::Environment;
+use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::visitors::{ScopeBlockInfo, ScopeBlockTraversal};
 use crate::hir::{
     AstAlloc, BasicBlock, BlockId, DeclarationId, DependencyPathEntry, EvaluationOrder, FunctionId,
@@ -2186,6 +2186,16 @@ fn visit_inner_function_blocks(
     env.functions[func_id.0 as usize] = func;
 }
 
+/// An update, or a store or a pattern that reassigns.
+fn reassigns(value: &InstructionValue) -> bool {
+    match value {
+        InstructionValue::PrefixUpdate { .. } | InstructionValue::PostfixUpdate { .. } => true,
+        InstructionValue::StoreLocal { lvalue, .. } => lvalue.kind == InstructionKind::Reassign,
+        InstructionValue::Destructure { lvalue, .. } => lvalue.kind == InstructionKind::Reassign,
+        _ => false,
+    }
+}
+
 /// For what is not a function: the callers visit those.
 fn handle_instruction(
     instr: &Instruction,
@@ -2201,7 +2211,14 @@ fn handle_instruction(
         for operand in visitors::operands(&instr.value, &[]) {
             ctx.visit_operand_root(operand, env);
         }
-        return;
+        // What a pattern declares is recorded by its arm below.
+        let declares = matches!(
+            &instr.value,
+            InstructionValue::Destructure { lvalue, .. } if lvalue.kind != InstructionKind::Reassign
+        );
+        if !declares || env.config.reassignments_can_throw {
+            return;
+        }
     }
 
     if ctx.is_deferred_dependency_instr(instr) {
@@ -2282,6 +2299,19 @@ fn collect_dependencies(
     processed_instrs_in_optional: &HashSet<ProcessedInstr>,
 ) -> Result<IndexMap<ScopeId, Vec<ReactiveScopeDependency>>, CompilerDiagnostic> {
     let semantic_only = find_semantic_only_caught_instructions(func, env);
+    // A memo block would give back what such an instruction assigns, also on a path that did not assign it (#42482).
+    if env.output_mode == OutputMode::Client && !env.config.reassignments_can_throw {
+        let kept = func.instructions.iter().zip(semantic_only.iter().flatten());
+        if let Some((instr, _)) = kept
+            .filter(|(_, kept)| **kept)
+            .find(|(instr, _)| reassigns(&instr.value))
+        {
+            return Err(CompilerDiagnostic::todo(
+                "[PropagateScopeDeps] Handle a reassignment that stays in a `try` only for a throw",
+                instr.loc,
+            ));
+        }
+    }
     let mut ctx = DependencyCollectionContext::new(temporaries, processed_instrs_in_optional);
 
     // Declare params

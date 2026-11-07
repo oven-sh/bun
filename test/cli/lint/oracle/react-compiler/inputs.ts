@@ -492,6 +492,19 @@ function Component(props) {
   return <div>{error}</div>;
 }
 `,
+    // A reassignment in a `try` that nothing reads stays, as able to throw. Without it nothing in the `try` can throw,
+    // and the function has the invariant for a handler that is gone: it is compiled here, and reports nothing.
+    "dead-store-in-try.jsx": `function Component() {
+  let ok = true;
+  let tries = 0;
+  try {
+    tries = 1;
+  } catch {
+    ok = false;
+  }
+  return <div>{ok ? "on" : "off"}</div>;
+}
+`,
     "own-name.jsx": `function Component(props) {
   useEffect(() => {
     let frame = requestAnimationFrame(function tick() {

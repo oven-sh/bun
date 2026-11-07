@@ -1567,6 +1567,8 @@ impl<'a> Package<'a> {
         None
     }
 
+    // The two instances of `Resolver::load_node_modules` are the callers.
+    #[inline(always)]
     pub(crate) fn parse(specifier: &'a [u8], subpath_buf: &'a mut [u8]) -> Option<Package<'a>> {
         if specifier.is_empty() {
             return None;

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 function cleanOutput(output: string) {
@@ -967,4 +967,115 @@ test("stops printing deeper once a value has printed 1,000,000 characters", () =
   expect(message).toContain(`"list": [Array],\n`);
   expect(message).toContain(`"right": [Object],\n`);
   expect(message.length).toBeWithin(1_000_000, 1_500_000);
+});
+
+// A failure message keeps each "\r", and the diff draws it as "␍". Only the text that a snapshot stores has "\n" for it.
+describe("carriage returns", () => {
+  const footer = (removed: number, inserted: number) => `\n\n- Expected  - ${removed}\n+ Received  + ${inserted}\n`;
+  const oneRow = `- "a\n+ "a␍\n  b"` + footer(1, 1);
+  // [an assertion that fails, its message after the line with the matcher's signature]
+  const failing: [source: string, message: string][] = [
+    [String.raw`expect("a\r\nb").toBe("a\nb")`, oneRow],
+    [String.raw`expect("a\r\nb").toStrictEqual("a\nb")`, oneRow],
+    [
+      String.raw`expect({ s: "a\r\nb" }).toEqual({ s: "a\nb" })`,
+      `  {\n    "s": \n- "a\n+ "a␍\n  b"\n  ,\n  }` + footer(1, 1),
+    ],
+    [
+      String.raw`expect({ s: "a\r\nb", t: 1 }).toMatchObject({ s: "a\nb" })`,
+      `  {\n    "s": \n- "a\n+ "a␍\n  b"\n  ,\n+   "t": 1,\n  }` + footer(1, 2),
+    ],
+    [String.raw`expect({ s: "a\r\nb" }).toHaveProperty("s", "a\nb")`, oneRow],
+    [
+      String.raw`const fn = mock(); fn("a\r\nb"); expect(fn).toHaveBeenCalledWith("a\nb")`,
+      `  [\n    \n- "a\n+ "a␍\n  b"\n  ,\n  ]` + footer(1, 1),
+    ],
+    [String.raw`const fn = mock(() => "a\r\nb"); fn(); expect(fn).toHaveReturnedWith("a\nb")`, oneRow],
+    [String.raw`const fn = mock(async () => "a\r\nb"); await fn(); expect(fn).toHaveResolvedWith("a\nb")`, oneRow],
+    [String.raw`await expect(Promise.resolve("a\r\nb")).resolves.toBe("a\nb")`, oneRow],
+    // A lone "\r" is not a line break.
+    [String.raw`expect("a\rb").toBe("a\nb")`, `- "a\n- b"\n+ "a␍b"` + footer(2, 1)],
+    [String.raw`expect("a\rb").toBe("a\r\nb")`, `- "a␍\n- b"\n+ "a␍b"` + footer(2, 1)],
+    [String.raw`expect("ab\r").toBe("ab")`, `Expected: "ab"\nReceived: "ab␍"\n`],
+    [String.raw`expect(["ab\r"]).toEqual(["ab"])`, `  [\n-   "ab",\n+   "ab␍",\n  ]` + footer(1, 1)],
+    [
+      String.raw`expect("x").toEqual(expect.stringContaining("a\rb"))`,
+      `Expected: StringContaining "a␍b"\nReceived: "x"\n`,
+    ],
+    // It is not the two characters "\r": the printer writes a backslash as it is.
+    [String.raw`expect("a\r").toBe("a\\r")`, `Expected: "a\\r"\nReceived: "a␍"\n`],
+    // A "␍" in a value draws like a "\r". The diff compares the bytes, so the rows are still marked.
+    [String.raw`expect("a\r\nb").toBe("a␍\nb")`, `- "a␍\n+ "a␍\n  b"` + footer(1, 1)],
+    // A string that is not Latin-1, and strings inside other values.
+    [String.raw`expect("\u{1F600}\r\nb").toBe("\u{1F600}\nb")`, `- "\u{1F600}\n+ "\u{1F600}␍\n  b"` + footer(1, 1)],
+    [
+      String.raw`expect(new Map([["k", new Set(["a\r\nb"])]])).toEqual(new Map([["k", new Set(["a\nb"])]]))`,
+      `  Map {\n    "k" =>   \n  Set {\n      \n- "a\n+ "a␍\n  b"\n  ,\n    }\n  ,\n  }` + footer(1, 1),
+    ],
+    [
+      String.raw`expect([expect.stringContaining("a\r\nb")]).toEqual([expect.stringContaining("a\nb")])`,
+      `  [\n    StringContaining \n- "a\n+ "a␍\n  b"\n  ,\n  ]` + footer(1, 1),
+    ],
+    // Values that do not print as a string.
+    [
+      String.raw`expect([new Error("a\r\nb"), Symbol("a\r\nb")]).toEqual([new Error("a\nb"), Symbol("a\nb")])`,
+      `  [\n-   [Error: a\n+   [Error: a␍\n  b],\n-   Symbol(a\n+   Symbol(a␍\n  b),\n  ]` + footer(2, 2),
+    ],
+    // `.not` prints the expected value alone.
+    [String.raw`expect(["a\r\nb"]).not.toEqual(["a\r\nb"])`, `Expected: not [\n  \n"a␍\nb"\n,\n]\n`],
+  ];
+  const expected = Object.fromEntries(failing);
+  const [crlfAgainstLf, , insideAnObject] = Object.keys(expected);
+  const againstALiteral = String.raw`expect("a\r\nb").toBe("a␍\nb")`;
+
+  // The messages come from a child process, so the colours and the agent mode of this process do not change them.
+  async function messagesOf(env: Record<string, string>) {
+    const script = `
+      import { expect, mock } from "bun:test";
+      const messages = [];
+      for (const fail of [${failing.map(([source]) => `async () => { ${source}; }`).join(", ")}]) {
+        messages.push(await fail().then(() => "did not fail", error => error.message));
+      }
+      console.log(JSON.stringify(messages));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const afterSignature = (message: string) => message.slice(message.indexOf("\n\n") + 2);
+    const messages: string[] = JSON.parse(stdout).map(afterSignature);
+    return { messages: Object.fromEntries(failing.map(([source], i) => [source, messages[i]])), exitCode };
+  }
+
+  test.concurrent("a failing matcher shows a line-ending difference", async () => {
+    const { messages, exitCode } = await messagesOf({ FORCE_COLOR: "0" });
+    expect(messages).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("colours only add escape sequences", async () => {
+    const { messages, exitCode } = await messagesOf({ FORCE_COLOR: "1" });
+    expect(Object.fromEntries(Object.entries(messages).map(([k, message]) => [k, cleanAnsiEscapes(message)]))).toEqual(
+      expected,
+    );
+    // A "\r" alone has the style of a whitespace change. A "␍" of the value has the colour of its row.
+    const unchanged = `  \x1B[0m\x1B[2mb"\x1B[0m\n\n\x1B[32m- Expected  - 1\x1B[0m\n\x1B[31m+ Received  + 1\x1B[0m\n`;
+    const received = `\x1B[31m+ \x1B[0m\x1B[31m"a\x1B[0m\x1B[31m\x1B[7m␍\x1B[0m\n`;
+    expect(messages[crlfAgainstLf]).toBe(`\x1B[32m- \x1B[0m\x1B[32m"a\x1B[0m\n` + received + unchanged);
+    expect(messages[againstALiteral]).toBe(
+      `\x1B[32m- \x1B[0m\x1B[32m"a\x1B[0m\x1B[32m␍\x1B[0m\n` + received + unchanged,
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("agent mode keeps the changed rows", async () => {
+    const { messages, exitCode } = await messagesOf({ FORCE_COLOR: "0", AGENT: "1" });
+    expect(messages[crlfAgainstLf]).toBe(expected[crlfAgainstLf]);
+    expect(messages[insideAnObject]).toBe(`@@ -2,3 +2,3 @@\n    "s": \n- "a\n+ "a␍\n  b"` + footer(1, 1));
+    expect(exitCode).toBe(0);
+  });
 });

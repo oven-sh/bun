@@ -319,6 +319,22 @@ describe("diffs", () => {
       "+ Received  + 1",
     ]);
   });
+
+  // Only the text that a snapshot stores has its line ends rewritten to \n. A diff shows a \r as ␍.
+  test("a line-ending difference is marked", () => {
+    const node = (end: string) => h("a", { title: `1${end}2` }, `3${end}4`, comment(`5${end}6`));
+    const message = messageOf(() => expect(node("\r\n")).toEqual(node("\n")));
+    expect(message.split("\n").filter(line => /^[-+]/.test(line))).toEqual([
+      '-   title="1',
+      '+   title="1␍',
+      "-   3",
+      "+   3␍",
+      "-   <!--5",
+      "+   <!--5␍",
+      "- Expected  - 3",
+      "+ Received  + 3",
+    ]);
+  });
 });
 
 describe("snapshots", () => {
@@ -401,6 +417,11 @@ describe("snapshots", () => {
       4
       </a>
     `);
+  });
+
+  // Unlike an inline snapshot, a snapshot file that Bun wrote is not also read as Jest's format, which rewrites line ends.
+  test("a snapshot file stores the same line ends", () => {
+    expect(h("a", { title: "1\r\n2\r3" }, "1\r\n2\r3", comment("1\r\n2\r3"))).toMatchSnapshot();
   });
 
   test("characters outside ASCII", () => {

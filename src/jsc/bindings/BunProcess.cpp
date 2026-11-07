@@ -501,20 +501,18 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         return {};
     }
 
-    JSValue exports = moduleObject->getIfPropertyExists(globalObject, builtinNames(vm).exportsPublicName());
+    JSValue exportsValue = moduleObject->get(globalObject, builtinNames(vm).exportsPublicName());
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (!exports) [[unlikely]] {
-        JSC::throwTypeError(globalObject, scope, "dlopen requires an object with an exports property"_s);
+    // Like Node (https://github.com/nodejs/node/blob/v26.3.0/src/node_binding.cc#L466-L473), every init function gets this one ToObject(module.exports), taken before the filename is converted and the library is loaded.
+    if (exportsValue.isUndefinedOrNull()) [[unlikely]] {
+        JSC::throwTypeError(globalObject, scope, "Cannot convert undefined or null to object"_s);
         return {};
     }
+    JSC::JSObject* exports = exportsValue.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    Strong<JSC::Unknown> strongExports;
-
-    if (exports.isCell()) {
-        strongExports = { vm, exports.asCell() };
-    }
-
+    Strong<JSC::JSObject> strongExports = { vm, exports };
     Strong<JSC::JSObject> strongModule = { vm, moduleObject };
 
     WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
@@ -699,7 +697,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
         // Run V8 init functions here instead of in node_module_register(). See https://github.com/oven-sh/bun/issues/20454
         for (auto* mod : pendingV8Modules) {
-            node::executePendingV8Module(globalObject, mod, strongModule.get());
+            node::executePendingV8Module(globalObject, mod, strongModule.get(), strongExports.get());
             RETURN_IF_EXCEPTION(scope, {});
         }
 
@@ -708,7 +706,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         // drain those too once the current batch is done.
         for (;;) {
             for (auto& mod : pendingNapiModules) {
-                Napi::executePendingNapiModule(globalObject, mod, handle, strongModule.get());
+                Napi::executePendingNapiModule(globalObject, mod, handle, strongModule.get(), strongExports.get());
                 RETURN_IF_EXCEPTION(scope, {});
             }
             if (globalObject->m_pendingNapiModules.isEmpty())
@@ -731,7 +729,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         // m_pendingNapiModules; a V8 one runs its nm_register_func right here.
         for (auto& registration : *cachedModules) {
             if (auto* v8Module = std::get_if<Bun::V8ModuleRegistration>(&registration)) {
-                node::executePendingV8Module(globalObject, v8Module->module, strongModule.get());
+                node::executePendingV8Module(globalObject, v8Module->module, strongModule.get(), strongExports.get());
                 RETURN_IF_EXCEPTION(scope, {});
             } else {
                 napi_module_register(std::get<napi_module*>(registration));
@@ -744,7 +742,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         while (!globalObject->m_pendingNapiModules.isEmpty()) {
             auto pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
             for (auto& mod : pendingNapiModules) {
-                Napi::executePendingNapiModule(globalObject, mod, handle, strongModule.get());
+                Napi::executePendingNapiModule(globalObject, mod, handle, strongModule.get(), strongExports.get());
                 RETURN_IF_EXCEPTION(scope, {});
             }
         }
@@ -783,8 +781,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     NapiHandleScope handleScope(globalObject);
 
-    EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
-
     char* filename_cstr = toFileURI(byteCast<char>(utf8.span()));
 
     napi_module nmodule {
@@ -802,10 +798,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     auto env = globalObject->makeNapiEnv(nmodule);
     env->filename = filename_cstr;
 
-    auto encoded = reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env.ptr(), reinterpret_cast<napi_value>(exportsValue)));
+    auto encoded = reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env.ptr(), reinterpret_cast<napi_value>(JSC::JSValue::encode(exports))));
     env->throwPendingException();
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue resultValue = encoded == 0 ? exports : JSValue::decode(encoded);
+    JSC::JSValue resultValue = encoded == 0 ? JSC::JSValue(exports) : JSValue::decode(encoded);
 
     if (auto resultObject = resultValue.getObject()) {
 #if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
@@ -828,13 +824,13 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
     // https://github.com/oven-sh/bun/issues/1288
-    if (!resultValue.isEmpty() && (!strongExports || resultValue != strongExports.get())) {
+    if (resultValue != exports) {
         PutPropertySlot slot(strongModule.get(), false);
         strongModule->put(strongModule.get(), globalObject, builtinNames(vm).exportsPublicName(), resultValue, slot);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    return JSValue::encode(resultValue);
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, CallFrame* callFrame))

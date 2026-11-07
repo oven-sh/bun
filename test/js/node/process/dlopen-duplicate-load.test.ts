@@ -172,6 +172,9 @@ NODE_MODULE(non_context_aware, demo::Initialize)
     // Worker first ($WORKER_LOADS_FIRST): the Worker loads and then blocks on a
     // message from main, main loads while the Worker is alive, the Worker
     // exits, main loads again.
+    //
+    // $MAIN_EXPORTS_NULL: the main thread's module.exports is null, so
+    // process.dlopen rejects its load.
     const workerFixture = `
 const { Worker, isMainThread, parentPort } = require("node:worker_threads");
 
@@ -183,7 +186,7 @@ function describeExports(exports) {
 }
 
 function load() {
-  const m = { exports: {} };
+  const m = { exports: isMainThread && process.env.MAIN_EXPORTS_NULL ? null : {} };
   try {
     process.dlopen(m, process.env.ADDON_PATH);
   } catch (e) {
@@ -515,8 +518,7 @@ if (!isMainThread) {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stderr).toBe("");
-      expect(stdout).toContain("SUCCESS:");
-      expect(stdout).toContain("null is not an object");
+      expect(stdout).toBe("SUCCESS: Cannot convert undefined or null to object\n");
       expect(exitCode).toBe(0);
     });
 
@@ -541,8 +543,7 @@ if (!isMainThread) {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stderr).toBe("");
-      expect(stdout).toContain("SUCCESS:");
-      expect(stdout).toContain("undefined is not an object");
+      expect(stdout).toBe("SUCCESS: Cannot convert undefined or null to object\n");
       expect(exitCode).toBe(0);
     });
 
@@ -568,6 +569,41 @@ if (!isMainThread) {
       expect(stderr).toBe("");
       expect(stdout).toContain("Type: string");
       expect(stdout).toContain("Value: primitive");
+      expect(exitCode).toBe(0);
+    });
+
+    test("reads module.exports one time, before it converts the filename", async () => {
+      const testScript = `
+      const addon = ${JSON.stringify(addonPath)};
+      const operations = [];
+      const record = name => (target, key, ...rest) => {
+        if (key === "exports") operations.push(name);
+        return Reflect[name](target, key, ...rest);
+      };
+      process.dlopen(new Proxy({ exports: {} }, { has: record("has"), get: record("get"), set: record("set") }), addon);
+
+      const first = {};
+      const second = {};
+      const m = { exports: first };
+      process.dlopen(m, { toString: () => ((m.exports = second), addon) });
+      console.log(JSON.stringify({ operations, first: Object.keys(first).sort(), second: Object.keys(second) }));
+    `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", testScript],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        operations: ["get"],
+        first: ["hello", "lateStaticConstructed"],
+        second: [],
+      });
       expect(exitCode).toBe(0);
     });
   });
@@ -607,6 +643,15 @@ if (!isMainThread) {
         mainWhileWorkerAlive: selfRegisterError,
         workerExitCode: 0,
         mainAfterWorkerExit: { loaded: true, hello: "world", initCount: 2, instance: "object" },
+      });
+    });
+
+    test("a non-context-aware addon loads in a Worker after process.dlopen rejected the main thread's exports", async () => {
+      const env = { ADDON_PATH: nonContextAwarePath, MAIN_EXPORTS_NULL: "1" };
+      expect(await runJsonFixture([bunExe(), workerFixturePath], env)).toEqual({
+        main: { loaded: false, message: "Cannot convert undefined or null to object" },
+        worker: { loaded: true, hello: "world", initCount: 1, instance: "object" },
+        workerExitCode: 0,
       });
     });
 

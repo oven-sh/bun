@@ -728,7 +728,7 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
 }
 
 extern "C" size_t Bun__napi_module_register_count;
-void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_module& mod, void* dlopenHandle, JSC::JSObject* object)
+void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_module& mod, void* dlopenHandle, JSC::JSObject* moduleObject, JSC::JSObject* exportsObject)
 {
     JSC::VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -742,20 +742,9 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_
     Ref<NapiEnv> env = globalObject->makeNapiEnv(mod);
     auto keyStr = WTF::String::fromUTF8(mod.nm_modname);
 
-    JSValue exportsObject = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());
-    RETURN_IF_EXCEPTION(scope, void());
-
-    // Like Node, convert exports to an object. null and undefined throw, and a primitive gets a wrapper object.
-    JSObject* exports = exportsObject.toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-
-    ASSERT(exports);
-    JSC::Strong<JSC::JSObject> strongExportsObject = { vm, exports };
-
-    JSC::Strong<JSC::JSObject> strongObject = { vm, object };
-
     Bun::NapiHandleScope handleScope(globalObject);
-    JSValue resultValue = toJS(mod.nm_register_func(env.ptr(), toNapi(object, globalObject)));
+    JSValue resultValue = toJS(mod.nm_register_func(env.ptr(), toNapi(exportsObject, globalObject)));
+    env->throwPendingException();
     RETURN_IF_EXCEPTION(scope, void());
 
     if (resultValue.isEmpty()) {
@@ -780,9 +769,9 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
     // https://github.com/oven-sh/bun/issues/1288
-    if (strongExportsObject && strongExportsObject.get() != resultValue) {
-        PutPropertySlot slot(strongObject.get(), false);
-        strongObject->put(strongObject.get(), globalObject, WebCore::builtinNames(vm).exportsPublicName(), resultValue, slot);
+    if (exportsObject != resultValue) {
+        PutPropertySlot slot(moduleObject, false);
+        moduleObject->put(moduleObject, globalObject, WebCore::builtinNames(vm).exportsPublicName(), resultValue, slot);
         RETURN_IF_EXCEPTION(scope, void());
     }
 }

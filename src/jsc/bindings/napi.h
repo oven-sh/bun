@@ -753,8 +753,8 @@ public:
 };
 
 // If a module registered itself by calling napi_module_register in a static constructor, run this
-// to run the module's entrypoint with moduleObject as `module`. Throws on failure.
-void executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_module& mod, void* dlopenHandle, JSC::JSObject* moduleObject);
+// to run the module's entrypoint with exportsObject as `exports`. The caller keeps both objects alive. Throws on failure.
+void executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_module& mod, void* dlopenHandle, JSC::JSObject* moduleObject, JSC::JSObject* exportsObject);
 
 }
 

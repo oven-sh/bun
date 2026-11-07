@@ -1847,19 +1847,17 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("runs the outer module's init function when the module.exports getter loads another addon", async () => {
-    // process.dlopen reads module.exports a second time to pass it to the init function.
+  it("keeps the modules that an init function registers for the outer load when it loads another addon", async () => {
+    // register_cb_a registers 64 more modules and then calls duringInit(), which loads an addon that also
+    // registers itself. The nested process.dlopen must leave those 64 queued for the outer call.
     const script = `
       const build = ${JSON.stringify(join(__dirname, "napi-app", "build", "Debug"))};
-      const exports = {};
-      let reads = 0;
-      const outer = {
-        get exports() {
-          if (++reads === 2) process.dlopen({ exports: {} }, build + "/reentrant_register_addon.node");
-          return exports;
-        },
-      };
-      process.dlopen(outer, build + "/constructor_order_addon.node");
+      const outerExports = {};
+      const innerExports = {};
+      globalThis.duringInit = () =>
+        process.dlopen({ exports: innerExports }, build + "/exports_module_register_addon.node");
+      process.dlopen({ exports: outerExports }, build + "/reentrant_register_addon.node");
+      console.log(JSON.stringify({ outerExports, innerExports: Object.keys(innerExports).sort() }));
     `;
     await using proc = spawn({
       cmd: [bunExe(), "-e", script],
@@ -1868,18 +1866,232 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    // On Windows each addon has its own stdout buffer, so line order is only guaranteed within one addon.
+    // The addon and the script do not share a stdout buffer, so line order is only guaranteed within each.
     const lines = stdout.split(/\r?\n/).filter(Boolean);
-    const outer = ["call_register", "init_static", "register_cb"];
     expect({
-      outer: lines.filter(line => outer.includes(line)),
-      inner: lines.filter(line => !outer.includes(line)),
+      script: lines.filter(line => line.startsWith("{")).map(line => JSON.parse(line)),
+      addon: lines.filter(line => !line.startsWith("{")),
+      stderr,
+      exitCode,
     }).toEqual({
-      outer,
-      inner: ["register_cb_a", "register_cb_b", "register_cb_reentrant x 64"],
+      // Every init function of the outer addon counts its call in the exports it receives.
+      script: [{ outerExports: { a: 1, b: 1, reentrant: 64 }, innerExports: ["greeting", "hello"] }],
+      addon: ["register_cb_a", "register_cb_b", "register_cb_reentrant x 64"],
+      stderr: "",
+      exitCode: 0,
     });
-    expect(exitCode).toBe(0);
+  });
+
+  describe("process.dlopen and module.exports", () => {
+    const build = join(__dirname, "napi-app", "build", "Debug");
+
+    // Every test here expects the same output from bun and from Node.js.
+    async function runInBunAndNode(script: string, ...args: string[]) {
+      return await Promise.all(
+        [bunExe(), await nodeExeMatchingAbi()].map(async exe => {
+          await using proc = spawn({ cmd: [exe, "-e", script, ...args], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { exe, stdout: stdout.split(/\r?\n/).filter(Boolean), stderr, exitCode };
+        }),
+      );
+    }
+
+    // Both are built from exports_addon.cpp with node-addon-api and without C++ exceptions. Their init function
+    // stores the exports it receives in globalThis.exportsSeenByInit, sets `hello` and `greeting` on it, and
+    // returns it. exports_addon exports napi_register_module_v1. The other one calls napi_module_register.
+    describe.each(["exports_addon", "exports_module_register_addon"])("%s", addon => {
+      const addonPath = join(build, `${addon}.node`);
+
+      it.each(["process.dlopen", 'require.extensions[".node"]'])(
+        "%s gives the init function an object, or throws before it converts the filename",
+        async load => {
+          const script = `
+            const addon = process.argv[1];
+            const load = ${load};
+            const modules = {
+              "null": { exports: null },
+              "undefined": { exports: undefined },
+              "absent": {},
+              "a string": { exports: "str" },
+              "a number": { exports: 42 },
+              "an object": { exports: {} },
+            };
+
+            function whatInitGot(module, exports) {
+              if (!("exportsSeenByInit" in globalThis)) return "did not run";
+              const seen = globalThis.exportsSeenByInit;
+              if (seen === module) return "got the module";
+              if (Object(seen) !== seen) return "got a value that is not an object";
+              if (seen === exports) return "got module.exports";
+              if (seen.valueOf() === exports) return "got an object that wraps module.exports";
+              return "got another object";
+            }
+
+            for (const [name, module] of Object.entries(modules)) {
+              const exports = module.exports;
+              let filenameConversions = 0;
+              let outcome;
+              delete globalThis.exportsSeenByInit;
+              try {
+                outcome = "returned " + load(module, { toString: () => (filenameConversions++, addon) });
+              } catch (e) {
+                outcome = "threw " + e.name + ": " + e.message;
+              }
+              console.log(JSON.stringify({
+                exports: name,
+                outcome,
+                init: whatInitGot(module, exports),
+                filenameConversions,
+                moduleExportsChanged: module.exports !== exports,
+              }));
+            }
+          `;
+          const rejected = {
+            outcome: "threw TypeError: Cannot convert undefined or null to object",
+            init: "did not run",
+            filenameConversions: 0,
+            moduleExportsChanged: false,
+          };
+          const loaded = { outcome: "returned undefined", filenameConversions: 1, moduleExportsChanged: false };
+          const expected = [
+            { exports: "null", ...rejected },
+            { exports: "undefined", ...rejected },
+            { exports: "absent", ...rejected },
+            { exports: "a string", ...loaded, init: "got an object that wraps module.exports" },
+            { exports: "a number", ...loaded, init: "got an object that wraps module.exports" },
+            { exports: "an object", ...loaded, init: "got module.exports" },
+          ];
+          for (const { exe, stdout, stderr, exitCode } of await runInBunAndNode(script, addonPath)) {
+            expect({ exe, rows: stdout.map(line => JSON.parse(line)), stderr, exitCode }).toEqual({
+              exe,
+              rows: expected,
+              stderr: "",
+              exitCode: 0,
+            });
+          }
+        },
+      );
+
+      it("process.dlopen reads module.exports one time, before it converts the filename", async () => {
+        const script = `
+          const addon = process.argv[1];
+          const operations = [];
+          const record = name => (target, key, ...rest) => {
+            if (key === "exports") operations.push(name);
+            return Reflect[name](target, key, ...rest);
+          };
+          const traps = { has: record("has"), get: record("get"), set: record("set") };
+          process.dlopen(new Proxy({ exports: {} }, traps), addon);
+
+          const first = {};
+          const second = {};
+          const module = { exports: first };
+          process.dlopen(module, { toString: () => ((module.exports = second), addon) });
+          console.log(JSON.stringify({ operations, first: Object.keys(first).sort(), second: Object.keys(second) }));
+        `;
+        for (const result of await runInBunAndNode(script, addonPath)) {
+          expect(result).toEqual({
+            exe: result.exe,
+            stdout: [JSON.stringify({ operations: ["get"], first: ["greeting", "hello"], second: [] })],
+            stderr: "",
+            exitCode: 0,
+          });
+        }
+      });
+
+      it("process.dlopen stores another value that the init function returns in module.exports", async () => {
+        // The second load of an addon that calls napi_module_register replays its registration.
+        const script = `
+          const addon = process.argv[1];
+          const loads = [];
+          for (let i = 0; i < 2; i++) {
+            const exports = {};
+            const module = { exports };
+            globalThis.initReturns = function replacement() {};
+            const returned = process.dlopen(module, addon);
+            loads.push({
+              returned: String(returned),
+              initGotModuleExports: globalThis.exportsSeenByInit === exports,
+              moduleExportsIsWhatInitReturned: module.exports === globalThis.initReturns,
+            });
+          }
+          console.log(JSON.stringify(loads));
+        `;
+        const load = { returned: "undefined", initGotModuleExports: true, moduleExportsIsWhatInitReturned: true };
+        for (const result of await runInBunAndNode(script, addonPath)) {
+          expect(result).toEqual({
+            exe: result.exe,
+            stdout: [JSON.stringify([load, load])],
+            stderr: "",
+            exitCode: 0,
+          });
+        }
+      });
+
+      it("process.dlopen throws the error that the init function throws", async () => {
+        // The init function cannot set `hello` on frozen exports, so its call of `hello` fails.
+        const script = `
+          try {
+            process.dlopen({ exports: Object.freeze({}) }, process.argv[1]);
+            console.log("loaded");
+          } catch (e) {
+            console.log(e.name + ": " + e.message);
+          }
+        `;
+        for (const result of await runInBunAndNode(script, addonPath)) {
+          expect(result).toEqual({
+            exe: result.exe,
+            stdout: ["Error: Invalid argument"],
+            stderr: "",
+            exitCode: 0,
+          });
+        }
+      });
+    });
+
+    it("a null module.exports throws before the addon is loaded, also when the file is missing", async () => {
+      const script = `
+        const addon = process.argv[1];
+        for (const path of [addon, addon + ".missing"]) {
+          try {
+            process.dlopen({ exports: null }, path);
+            console.log("loaded");
+          } catch (e) {
+            console.log(e.name + ": " + e.message);
+          }
+        }
+      `;
+      // The static constructors of constructor_order_addon print when the library is loaded.
+      for (const result of await runInBunAndNode(script, join(build, "constructor_order_addon.node"))) {
+        expect(result).toEqual({
+          exe: result.exe,
+          stdout: [
+            "TypeError: Cannot convert undefined or null to object",
+            "TypeError: Cannot convert undefined or null to object",
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      }
+    });
+
+    it("require() of an addon that calls napi_module_register returns its exports, not the module", async () => {
+      const script = `
+        const exports = require(process.argv[1]);
+        console.log(JSON.stringify({
+          keys: Object.keys(exports).sort(),
+          isWhatInitGot: exports === globalThis.exportsSeenByInit,
+        }));
+      `;
+      for (const result of await runInBunAndNode(script, join(build, "exports_module_register_addon.node"))) {
+        expect(result).toEqual({
+          exe: result.exe,
+          stdout: [JSON.stringify({ keys: ["greeting", "hello"], isWhatInitGot: true })],
+          stderr: "",
+          exitCode: 0,
+        });
+      }
+    });
   });
 
   it("behaves as expected when performing operations with an exception pending", async () => {

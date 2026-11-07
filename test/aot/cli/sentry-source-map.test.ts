@@ -197,7 +197,7 @@ async function resolve(map: SourceMap, frames: SentryFrame[]) {
 const inLedger = {
   file: "billing/charge-customer.ts",
   line: 3,
-  column: 39,
+  column: 35,
   name: "recordPayment",
   function: "recordPayment",
   text: 'if (paymentInCents < 0) throw new RangeError("negative amount " + paymentInCents);',

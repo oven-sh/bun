@@ -68,7 +68,11 @@ impl KnownGlobal {
     #[inline(always)]
     fn call_from_new(e: &mut E::New, loc: crate::Loc) -> js_ast::Expr {
         let call = E::Call {
-            target: e.target,
+            // JSC reports `new X()` at `new` and `X()` at `X`: the name is what is left to stand where `new` stood.
+            target: js_ast::Expr {
+                data: e.target.data,
+                loc,
+            },
             args: bun_alloc::AstAlloc::take(&mut e.args),
             close_paren_loc: e.close_parens_loc,
             can_be_unwrapped_if_unused: e.can_be_unwrapped_if_unused,

@@ -1133,10 +1133,10 @@ void kept;
 
   const gcs = ["none", "alive", "disposed, module held", "collected"] as const;
   const frames = {
-    "origin": ["TypeError: boom", "fail origin.mjs:2:13", "capture origin.mjs:6:5", "pair origin.mjs:13:19"],
+    "origin": ["TypeError: boom", "fail origin.mjs:2:9", "capture origin.mjs:6:5", "pair origin.mjs:13:19"],
     "origin+other": [
       "TypeError: boom",
-      "fail origin.mjs:2:13",
+      "fail origin.mjs:2:9",
       "capture origin.mjs:6:5",
       "pair origin.mjs:13:19",
       "call other.mjs:2:18",

@@ -507,7 +507,7 @@ describe.concurrent("a Worker started by the path of a file that is embedded wit
         using dir = tempDir("aot-worker-from-embedded-file", serverWithPages(pages, workerOptions));
         expect(await countCompiled(String(dir), "./main.ts")).toEqual({
           ...counts,
-          leftOutAt: counts.leftOut && "main.ts:7:29",
+          leftOutAt: counts.leftOut && "main.ts:7:25",
           stdout: 'document.title = "page-1";\n',
           exitCode: 0,
         });

@@ -1,6 +1,6 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Decl, ScopeId};
-use bun_sema::hir::{ClassId, ExprKind, Flags, MemberId, start_of};
+use bun_sema::hir::{ClassId, ExprKind, MemberId, start_of};
 use smallvec::SmallVec;
 
 use super::members::ClassHead;
@@ -265,23 +265,9 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // JSC records the store of a class declaration as many columns behind `class` as the name is long. The source map takes that back to `class`, or to the name,
-    // which it does not know in a default export.
+    // JSC records the store of a class declaration at its `class`.
     fn class_store_position(&self, class: ClassId) -> u32 {
-        let node = self.hir[class];
-        if self.runs_as_written() {
-            return match node.name.is_some() {
-                true => node.text_start + self.queries.atom_bytes(node.name).len() as u32,
-                false => node.text_start,
-            };
-        }
-        let has_mapped_name = node.name.is_some() && !node.flags.contains(Flags::DEFAULT);
-        let name_length =
-            || bun_core::strings::utf8_lossy_len_utf16(self.queries.atom_bytes(node.name));
-        match has_mapped_name && name_length() as usize >= "class ".len() {
-            true => node.name_pos,
-            false => node.text_start,
-        }
+        self.hir[class].text_start
     }
 
     fn find_static_name(&self, name: Option<GivenName>) -> Option<StringId> {

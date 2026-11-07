@@ -30,8 +30,8 @@ function oneWrapperLevel() {
 oneWrapperLevel();
 
 // The native line column numbers might differ a bit here.
-const stackIgnoringLineAndColumn = stack.replaceAll(":12:26", ":NN:NN").replaceAll(/native:.*$/gm, "native)");
-const stack2IgnoringLineAndColumn = stack2.replaceAll(":17:26", ":NN:NN").replaceAll(/native:.*$/gm, "native)");
+const stackIgnoringLineAndColumn = stack.replaceAll(":12:9", ":NN:NN").replaceAll(/native:.*$/gm, "native)");
+const stack2IgnoringLineAndColumn = stack2.replaceAll(":17:9", ":NN:NN").replaceAll(/native:.*$/gm, "native)");
 if (stackIgnoringLineAndColumn !== stack2IgnoringLineAndColumn) {
   console.log("\n-----\n");
   console.log(stackIgnoringLineAndColumn);

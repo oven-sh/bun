@@ -2,19 +2,21 @@ mod text_printed_in_place;
 
 use std::cell::RefCell;
 
+use bun_ast::frame_token::are_on_one_line;
+use bun_ast::{FrameToken, Loc};
 use bun_core::fmt::pow10_exp_1e4_to_1e9;
 use bun_core::strings::contains_char;
 use bun_sema::atom::{Atom, known, written_name};
 use bun_sema::bind::{Binding, FnOwner, Parent};
 use bun_sema::check::spans::skip_trivia;
-use bun_sema::fold::{Constant, Decision, TreeNode, push_children};
+use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{
-    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, FnKind, IdList, MemberKey,
-    NameKind, PropKey, PropKind, UnOp, end_of_expr, start_of,
+    BinOp, Call, CallId, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, FnKind, IdList,
+    MemberKey, NameKind, PropKey, PropKind, UnOp, end_of_expr, parentheses_around, start_of,
 };
 use bun_sema::import_sites::{ImportSiteKind, find_module_printed_as_require};
 use rustc_hash::FxHashMap;
-use smallvec::{SmallVec, smallvec};
+use smallvec::SmallVec;
 
 use super::Callee;
 use crate::builtins::Resolved;
@@ -179,6 +181,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let name = self.file.find_callee_name(access);
         if let Some(builtin) = find_locked_builtin(self.file, access) {
             let this = self.lower_expression(object);
+            // The object leaves its own record, and JSC reads the member behind it.
+            self.record_read_of_builtin_path(access);
             return Callee::without_key(self.emit_locked_builtin(builtin), Some(this), name);
         }
         if matches!(hir[object].kind, ExprKind::Super) {
@@ -402,26 +406,146 @@ impl FileLowering<'_, '_, '_, '_> {
         transpiled.is_some_and(|it| it.has_require_main_at(start))
     }
 
-    // JSC reports a call at the end of the last token in front of the arguments, which is the `?.` of `f?.()`.
+    // JSC reports a call at the name its callee ends in, and the call of any other callee behind the callee: behind the `?.` of `f?.()`.
     pub(in crate::lower) fn call_position(&self, site: Call) -> u32 {
         if let Some(start) = self.find_start_of_require_printed_alone(site) {
             return start;
         }
+        let hir = self.hir;
         let end = self.last_mapped_position(site.callee);
-        match site.chain {
-            Chain::Start if self.is_shown_without_source_map() => self.next_token_position(end) + 2,
-            Chain::Start | Chain::Continue | Chain::No => end,
+        if self.is_shown_without_source_map() {
+            return match site.chain {
+                Chain::Start => self.next_token_position(end) + 2,
+                Chain::Continue | Chain::No => self.find_name_at_end_of(site.callee).unwrap_or(end),
+            };
+        }
+        // Bun's transpiler maps what JSC reports the call at where the arguments stand on another line than the callee's last token.
+        let arguments = match hir.ids(site.args).next() {
+            Some(first) => self.first_position(first),
+            None => site.close_pos,
+        };
+        let callee = self.first_position(site.callee);
+        let name = self.skip_type_syntax(site.callee);
+        let written = hir[name].pos;
+        let is_written_elsewhere = matches!(hir[name].kind, ExprKind::Ident(_)) && callee < written;
+        let token = match site.chain {
+            Chain::Start => {
+                self.find_token_on_new_line(FrameToken::OptionalCall, arguments, callee, end)
+            }
+            Chain::Continue | Chain::No if self.is_printed_as_name(site.callee) => None,
+            // The `(` behind what is printed in place of a name stands for the call where the name is written.
+            Chain::Continue | Chain::No if is_written_elsewhere => {
+                self.find_token_on_new_line(FrameToken::Known, written, written, end)
+            }
+            Chain::Continue | Chain::No => {
+                self.find_token_on_new_line(FrameToken::EndOfCallee, arguments, callee, end)
+            }
+        };
+        token.unwrap_or(end)
+    }
+
+    // A tagged template is a call that JSC reports at the backquote.
+    pub(in crate::lower) fn tag_call_position(&self, tagged: CallId) -> u32 {
+        let hir = self.hir;
+        let template = hir[hir.template_of(tagged)].pos;
+        if self.is_shown_without_source_map() {
+            return template;
+        }
+        let end = self.last_mapped_position(hir[tagged].callee);
+        self.find_token_on_new_line(FrameToken::Known, template, template, end)
+            .unwrap_or(end)
+    }
+
+    // Where Bun's transpiler maps `token`: only where `behind` and the token stand on another line than `in_front`, the last mapping in front.
+    pub(in crate::lower) fn find_token_on_new_line(
+        &self,
+        token: FrameToken,
+        behind: u32,
+        first: u32,
+        in_front: u32,
+    ) -> Option<u32> {
+        let text = &self.hir.text[..];
+        let at = |position: u32| Loc {
+            start: position as i32,
+        };
+        if are_on_one_line(text, at(behind), at(in_front)) {
+            return None;
+        }
+        let found = token.find(text, at(behind), at(first))?;
+        (!are_on_one_line(text, found, at(in_front))).then_some(found.start as u32)
+    }
+
+    // Whether what Bun's transpiler prints for a callee is a name, a member or `super`: JSC reports the call at the name that such a callee ends in.
+    fn is_printed_as_name(&self, callee: ExprId) -> bool {
+        let hir = self.hir;
+        let mut printed = self.skip_type_syntax(callee);
+        loop {
+            if self.is_literal_operand(printed) {
+                return false;
+            }
+            if let Some(operand) = self.find_operand_printed_alone(printed) {
+                printed = self.skip_type_syntax(operand);
+                continue;
+            }
+            return match hir.written_kind(printed) {
+                ExprKind::Ident(_) => match self.find_printed_in_place(printed) {
+                    Some(Printed::Initializer(initializer)) => {
+                        printed = self.skip_type_syntax(initializer);
+                        continue;
+                    }
+                    Some(Printed::Function(_)) => false,
+                    None => true,
+                },
+                ExprKind::Dot { .. } | ExprKind::Super => true,
+                _ => false,
+            };
         }
     }
 
-    // JSC reports an access to a member at the `.`, the `?.` or the `[` behind the object, which the source map takes back to the last token of the object.
-    pub(in crate::lower) fn member_position(&self, object: ExprId) -> u32 {
+    // Where the last token of a callee starts, if that is a name or `super`: nothing in parentheses, and no member in brackets.
+    pub(in crate::lower) fn find_name_at_end_of(&self, callee: ExprId) -> Option<u32> {
+        let hir = self.hir;
+        if !parentheses_around(hir, callee).is_empty() {
+            return None;
+        }
+        let node = hir[callee];
+        match node.kind {
+            ExprKind::Ident(_) | ExprKind::Super => Some(node.pos),
+            ExprKind::Dot { .. } => {
+                let is_in_brackets = hir.text.get(node.end as usize - 1) == Some(&b']');
+                (!is_in_brackets).then(|| hir.name_pos(callee))
+            }
+            _ => None,
+        }
+    }
+
+    // JSC reports a member at its `.`, `?.` or `[`. The source map knows that token only where it starts a line, and else names the object's last token.
+    pub(in crate::lower) fn member_position(&self, access: ExprId) -> u32 {
+        let hir = self.hir;
+        let Some((object, _)) = hir.member_key(access) else {
+            return hir[access].pos;
+        };
         // JSC records no position for what an object pattern reads: the last one is that of the object behind the pattern.
-        let written = self.hir[self.skip_type_syntax(object)].pos;
+        let written = hir[self.skip_type_syntax(object)].pos;
         let transpiled = self.transpiled.as_ref();
         if let Some(joined) = transpiled.and_then(|it| it.find_joined_declarator_at(written)) {
             return joined.printed_object;
         }
+        let in_front = self.position_in_front_of_member(object);
+        if self.is_shown_without_source_map() {
+            return in_front;
+        }
+        // A name in quotes is a key that the compiler knows, and is printed in brackets unless it can stand behind a dot.
+        let behind = match hir.written_kind(access) {
+            ExprKind::Index { index, .. } => self.first_position(index),
+            _ => hir.name_pos(access),
+        };
+        let object = self.first_position(object);
+        self.find_token_on_new_line(FrameToken::Member, behind, object, in_front)
+            .unwrap_or(in_front)
+    }
+
+    fn position_in_front_of_member(&self, object: ExprId) -> u32 {
         let end = self.last_mapped_position(object);
         // The text that runs has no syntax of types: the operator stands right behind the object there.
         if !self.is_shown_without_source_map() || self.skip_type_syntax(object) != object {
@@ -442,13 +566,12 @@ impl FileLowering<'_, '_, '_, '_> {
         skip_trivia(&self.hir.text, position as usize) as u32
     }
 
-    // JSC records a name where it ends. The source map takes that to a `)` or `]` that is printed right behind the name.
+    // JSC records a name where it starts, which the source map knows.
     pub(in crate::lower) fn name_position(&self, identifier: ExprId) -> u32 {
         if self.is_shown_without_source_map() {
-            return self.hir[identifier].end;
+            return self.hir[identifier].pos;
         }
         self.find_key_printed_alone(identifier)
-            .or_else(|| self.find_closing_token_behind(identifier))
             .unwrap_or(self.hir[identifier].pos)
     }
 
@@ -472,11 +595,11 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // JSC records a name where it ends, which the source map takes back to where the name starts.
+    // The same, asked for a name of which a text that is built for one file shows the place in that file.
     pub(in crate::lower) fn recorded_name_position(&self, identifier: ExprId) -> u32 {
         let name = self.hir[identifier];
         match self.runs_as_written() {
-            true => name.end,
+            true => name.pos,
             false => self.find_key_printed_alone(identifier).unwrap_or(name.pos),
         }
     }
@@ -623,36 +746,9 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // JSC stores the value of `export default value` in a variable named `starDefault`, and reports the store as many columns behind the start of the value as that name is long. The source map takes
-    // the place back to the last token that it knows there.
+    // JSC stores the value of `export default value` in a variable of its own, and reports the store where the value starts.
     pub(in crate::lower) fn default_export_position(&self, value: ExprId) -> u32 {
-        const LENGTH_OF_VARIABLE_NAME: u32 = 11;
-        let hir = self.hir;
-        let start = self.first_position(value);
-        let reported = start + LENGTH_OF_VARIABLE_NAME;
-        if self.runs_as_written() {
-            return reported;
-        }
-        let mut last = start;
-        let mut stack = vec![TreeNode::Expr(value)];
-        while let Some(node) = stack.pop() {
-            let TreeNode::Expr(part) = node else {
-                continue;
-            };
-            let first = self.first_position(part);
-            if first > reported {
-                continue;
-            }
-            let mut tokens: SmallVec<[u32; 8]> =
-                smallvec![first, self.last_mapped_value_position(part)];
-            if let ExprKind::Object(properties) = hir[self.skip_type_syntax(part)].kind {
-                tokens.extend(properties.iter().map(|property| hir[property].pos));
-            }
-            let in_front = tokens.into_iter().filter(|&token| token <= reported);
-            last = last.max(in_front.max().unwrap_or(last));
-            push_children(hir, node, &mut stack);
-        }
-        last
+        self.first_position(value)
     }
 
     // Where the first token stands that Bun's transpiler prints for an expression.

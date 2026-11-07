@@ -56,7 +56,7 @@ describe.concurrent("--sourcemap with --aot", () => {
     async flag => {
       const { said, stdout } = await built(["--aot", flag]);
       expect(said).toContain(note);
-      expect(stdout).toBe(`Error: failed\n    at fail (${root}app.ts:3:13)\n    at ${root}app.ts:6:3\n`);
+      expect(stdout).toBe(`Error: failed\n    at fail (${root}app.ts:3:9)\n    at ${root}app.ts:6:3\n`);
     },
   );
 

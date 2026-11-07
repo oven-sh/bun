@@ -193,7 +193,7 @@ impl RuntimeTranspiler<'_> {
         }
         let parts = tree.parts.iter().map(|part| part.stmts.slice());
         let (first_recorded_positions, first_recorded_positions_of_functions) =
-            walker.find_first_recorded_positions(parts);
+            walker.find_first_recorded_positions(request.text, parts);
         let quoted_functions = std::mem::take(&mut walker.quoted_functions);
         let declarations_printed_without_name = request.parsed.map_or_else(Vec::new, |parsed| {
             walker.find_declarations_printed_without_name(parsed.hir)
@@ -202,7 +202,6 @@ impl RuntimeTranspiler<'_> {
             identifiers: walker.identifiers,
             bindings: walker.bindings,
             statements,
-            accessed_constructions: walker.accessed_constructions,
             regexp_literals: walker.regexp_literals,
             require_main_positions: walker.require_main_positions,
             joined_declarators: walker.joined_declarators,
@@ -324,8 +323,6 @@ pub(super) struct TranspiledFile {
     identifiers: PositionSet,
     bindings: PositionSet,
     statements: PositionSet,
-    // `new` expressions that are called or that a property is read from.
-    accessed_constructions: Vec<u32>,
     regexp_literals: Vec<u32>,
     require_main_positions: Vec<u32>,
     // `a = o.x, b = o.y` is printed `{ x: a, y: b } = o`: the `o` of each declarator of such a run.
@@ -370,10 +367,6 @@ impl TranspiledFile {
 
     pub(super) fn has_binding_at(&self, position: u32) -> bool {
         self.bindings.contains(position)
-    }
-
-    pub(super) fn has_accessed_construction_at(&self, position: u32) -> bool {
-        self.accessed_constructions.binary_search(&position).is_ok()
     }
 
     pub(super) fn has_regexp_literal_at(&self, position: u32) -> bool {
@@ -443,7 +436,6 @@ struct Walker<'a> {
     symbols: &'a [Symbol],
     identifiers: PositionSet,
     bindings: PositionSet,
-    accessed_constructions: Vec<u32>,
     regexp_literals: Vec<u32>,
     require_main_positions: Vec<u32>,
     joined_declarators: Vec<JoinedDeclarator>,
@@ -509,7 +501,6 @@ impl<'a> Walker<'a> {
             symbols,
             identifiers: PositionSet::new(text_length),
             bindings: PositionSet::new(text_length),
-            accessed_constructions: Vec::new(),
             regexp_literals: Vec::new(),
             require_main_positions: Vec::new(),
             joined_declarators: Vec::new(),
@@ -643,7 +634,6 @@ impl<'a> Walker<'a> {
             self.settle();
         }
         self.quoted_brackets_over_lines.sort_unstable();
-        self.accessed_constructions.sort_unstable();
         self.regexp_literals.sort_unstable();
         self.require_main_positions.sort_unstable();
         self.joined_declarators.shared_sort_unstable();
@@ -657,6 +647,7 @@ impl<'a> Walker<'a> {
     /// After `walk`. Those of the classes, then those of the functions.
     fn find_first_recorded_positions<'s>(
         &self,
+        text: &[u8],
         parts: impl Iterator<Item = &'s [Stmt]>,
     ) -> (Vec<(u32, u32)>, Vec<(u32, [Option<u32>; 2])>) {
         if self.classes_without_parent.is_empty() && self.functions.is_empty() {
@@ -665,14 +656,26 @@ impl<'a> Walker<'a> {
         let variables = &Variables::of_file(self.symbols, parts);
         let joined = &self.joined_declarators;
         let find = |class: &G::Class| {
-            let position =
-                find_first_recorded_position_of_class(self.symbols, joined, variables, class)?;
+            let position = find_first_recorded_position_of_class(
+                text,
+                self.symbols,
+                joined,
+                variables,
+                class,
+            )?;
             Some((u32::try_from(class.class_keyword.loc.start).ok()?, position))
         };
         // The tree does not say which of the two a function is.
         let find_in_function = |function: &G::Fn| {
             let positions = [true, false].map(|is_strict| {
-                find_first_recorded_position(self.symbols, joined, variables, function, is_strict)
+                find_first_recorded_position(
+                    text,
+                    self.symbols,
+                    joined,
+                    variables,
+                    function,
+                    is_strict,
+                )
             });
             let parameters = u32::try_from(function.open_parens_loc.start).ok()?;
             (positions != [None, None]).then_some((parameters, positions))
@@ -978,9 +981,6 @@ impl<'a> Walker<'a> {
     }
 
     fn walk_accessed(&mut self, object: Expr) {
-        if let ExprData::ENew(_) = object.data {
-            push_position(&mut self.accessed_constructions, object.loc);
-        }
         self.pending_expressions.push(object);
     }
 

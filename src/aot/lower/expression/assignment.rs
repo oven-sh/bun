@@ -2,7 +2,7 @@ use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Decl, PatParent};
 use bun_sema::fold::Decision;
 use bun_sema::hir::{
-    BinOp, ExprFlags, ExprId, ExprKind, Flags, IdList, MemberKey, PropId, Span, UnOp, end_of_expr,
+    BinOp, ExprFlags, ExprId, ExprKind, Flags, IdList, MemberKey, PropId, Span, UnOp,
 };
 
 use super::ResultUsage;
@@ -80,31 +80,31 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         let position = match hir[expression].kind {
             ExprKind::Assign { target, .. } => self.updating_store_position(target),
-            _ => self.updated_read_position(expression, name),
+            _ => self.updated_read_position(expression, name, false),
         };
         (position, position)
     }
 
-    // JSC records the read of `name += value` and `name++` where the name ends, and the one of `++name` where it starts. The source map takes both to the start.
-    fn updated_read_position(&self, expression: ExprId, name: ExprId) -> u32 {
-        let is_prefix = matches!(
-            self.hir[expression].kind,
+    // JSC records the read of an update where the name starts. A `name++` whose result nothing uses keeps the end of the name in text that runs as written.
+    fn updated_read_position(&self, expression: ExprId, name: ExprId, is_result_used: bool) -> u32 {
+        match self.hir[expression].kind {
             ExprKind::Unary {
                 op: UnOp::PreInc | UnOp::PreDec,
                 ..
-            }
-        );
-        match is_prefix {
-            true => self.hir[name].pos,
-            false => self.recorded_name_position(name),
+            } => self.hir[name].pos,
+            ExprKind::Unary {
+                op: UnOp::PostInc | UnOp::PostDec,
+                ..
+            } if !is_result_used && self.runs_as_written() => self.hir[name].end,
+            _ => self.recorded_name_position(name),
         }
     }
 
-    // JSC reports a plain store to a member at the end of the object, and every other store at the end of the target.
+    // JSC reports a plain store to a member at the end of the object, and every other store where the assignment starts.
     fn plain_store_position(&self, expression: ExprId, target: ExprId) -> u32 {
-        match self.hir.member_key(self.skip_type_syntax(target)) {
-            Some((object, _)) => self.member_position(object),
-            None if self.runs_as_written() => end_of_expr(self.hir, target),
+        let written = self.skip_type_syntax(target);
+        match self.hir.member_key(written) {
+            Some(_) => self.member_position(written),
             None => self.hir[expression].pos,
         }
     }
@@ -228,7 +228,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             AssignmentTarget::Identifier { identifier, .. } => {
                 let is_in_register = self.is_kept_in_register(self.file.bound.binding(identifier));
                 if !is_in_register {
-                    let position = self.file.updated_read_position(expression, identifier);
+                    let position = self
+                        .file
+                        .updated_read_position(expression, identifier, false);
                     self.builder.record_position(position);
                     if self.file.runs_as_written() {
                         self.set_position(position);
@@ -236,26 +238,29 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
                 is_in_register
             }
-            _ => match self.file.hir.member_key(self.file.skip_type_syntax(target)) {
-                // `o` was tested ahead of the conversion of a key that is an object.
-                Some((object, MemberKey::Computed(key))) if self.file.is_written_as_object(key) => {
-                    self.set_position(self.file.member_position(object));
-                    return;
-                }
-                // JSC tests `o` by an operation of its own, which the read stands for. The test is reported there. A getter or a trap that the read calls has its caller at `o`.
-                Some((object, MemberKey::Computed(key)))
-                    if !self.file.is_printed_as_number_or_text(key) =>
-                {
-                    if let Some(name) = self.file.find_position_of_printed_nan(key) {
-                        self.builder.record_position(name);
+            _ => {
+                let written = self.file.skip_type_syntax(target);
+                match self.file.hir.member_key(written) {
+                    // `o` was tested ahead of the conversion of a key that is an object.
+                    Some((_, MemberKey::Computed(key))) if self.file.is_written_as_object(key) => {
+                        self.set_position(self.file.member_position(written));
+                        return;
                     }
-                    self.set_position_to_last_recorded();
-                    let position = self.file.member_position(object);
-                    self.builder.set_position_for_callers(position);
-                    return;
+                    // JSC tests `o` by an operation of its own, which the read stands for. The test is reported there. A getter or a trap that the read calls has its caller at `o`.
+                    Some((_, MemberKey::Computed(key)))
+                        if !self.file.is_printed_as_number_or_text(key) =>
+                    {
+                        if let Some(name) = self.file.find_position_of_printed_nan(key) {
+                            self.builder.record_position(name);
+                        }
+                        self.set_position_to_last_recorded();
+                        let position = self.file.member_position(written);
+                        self.builder.set_position_for_callers(position);
+                        return;
+                    }
+                    _ => false,
                 }
-                _ => false,
-            },
+            }
         };
         if has_no_record {
             self.set_position_to_last_recorded();
@@ -374,7 +379,11 @@ pub(super) fn lower_update(
     if !has_own_position {
         lowering.set_position_of_updated_read(expression, operand);
     } else if lowering.file.runs_as_written() {
-        lowering.set_position(lowering.file.updated_read_position(expression, operand));
+        lowering.set_position(
+            lowering
+                .file
+                .updated_read_position(expression, operand, true),
+        );
     }
     let old = lowering.get_reference(&reference);
     let (is_increment, is_postfix) = match op {
@@ -389,7 +398,11 @@ pub(super) fn lower_update(
     };
     match has_own_position {
         true if lowering.file.runs_as_written() => {
-            lowering.set_position(lowering.file.updated_read_position(expression, operand));
+            lowering.set_position(
+                lowering
+                    .file
+                    .updated_read_position(expression, operand, true),
+            );
         }
         true => lowering.set_position(hir[expression].pos),
         false => lowering.set_update_position(expression, operand),

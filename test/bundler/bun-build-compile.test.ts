@@ -2009,7 +2009,8 @@ export function inOther() {
       // bytecode. A build with assertions parses all of that source too, to check what it knows about the function.
       expect(before).toEqual([true, true, bytecode || isDebug || isASAN]);
 
-      // The positions, counted in the text the executable holds. A frame is where the call's arguments start.
+      // The positions, counted in the text the executable holds. A frame is where the `new` stands, or the name of
+      // the call that a minified text has in its place.
       const file = readFileSync(outfile);
       const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined as any, "latin1");
       const offsets = trailer - 32;
@@ -2025,7 +2026,9 @@ export function inOther() {
       );
       expect(source).toContain(legal.trim());
       const counted = ["x", "y"].map(message => {
-        const lines = source.slice(0, source.indexOf(`("${message}")`)).split(/\r\n|[\n\r\u2028\u2029]/);
+        const name = source.indexOf(`Error("${message}")`);
+        const start = source.slice(0, name).endsWith("new ") ? name - "new ".length : name;
+        const lines = source.slice(0, start).split(/\r\n|[\n\r\u2028\u2029]/);
         return `${lines.length}:${lines.at(-1)!.length + 1}`;
       });
       expect(positions).toEqual(counted);

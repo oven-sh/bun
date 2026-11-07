@@ -92,7 +92,7 @@ impl LineOffsetTable {
     /// (≈90-120M cycles) doing a fresh bounds-checked binary search every
     /// call; this short-circuits to a couple of compares for the common case
     /// and falls back to the binary search otherwise.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn find_line_with_hint(offsets: &[u32], loc: Loc, hint: u32) -> i32 {
         debug_assert!(loc.start > -1);
         let loc_start = loc.start as u32;

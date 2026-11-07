@@ -333,7 +333,7 @@ describe.concurrent("import.meta.glob", () => {
         });`,
     });
     const { stdout, stderr, exitCode } = await run(String(dir), ["test", "--coverage", "./positions.test.ts"]);
-    expect(stdout.split("\n").filter(line => line.startsWith("at "))).toEqual(["at glob,4:19", "at hand,4:19"]);
+    expect(stdout.split("\n").filter(line => line.startsWith("at "))).toEqual(["at glob,4:15", "at hand,4:15"]);
     expect(
       stderr
         .split("\n")

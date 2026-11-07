@@ -32,7 +32,8 @@ const variants: Record<string, Variant> = {
   below: { above: 100 },
 };
 
-type Probe = { id: number; file: string; line: number; column: number; text: string };
+/** `above` is how many frames of the file are below the one that is asked after. */
+type Probe = { id: number; file: string; line: number; column: number; text: string; above: number };
 type Program = { file: string; source: string; functions: string; counts: string[]; texts: string[] };
 const probes: Probe[] = [];
 const programs: Program[] = [];
@@ -52,19 +53,20 @@ for (const [variantName, { before = "", above = 0, eol = "\n", bom = false, fina
       texts.push(count === " -" || /^[^/]*\*\//.test(text) ? text : before + text);
     }
 
-    const wanted: { id: number; text: string }[] = [];
+    const wanted: { id: number; text: string; above: number }[] = [];
     const source = (texts.join(eol) + (finalNewline ? eol : "")).replace(
-      /\b(at|ran)(\?\.)?\(\)|\bcaught\(e, "([^"]+)"\)/g,
-      (_, name, optional = "", thrownAt) => {
+      /\b(at|ran)(\?\.)?\(\)|\bcaught\(e, "([^"]+)"(?:, (\d))?\)/g,
+      (_, name, optional = "", thrownAt, above = "0") => {
         const id = probes.length + wanted.length;
-        wanted.push({ id, text: thrownAt ?? `${name}${optional}(${id})` });
+        wanted.push({ id, text: thrownAt ?? `${name}${optional}(${id})`, above: Number(above) });
         return thrownAt ? `caught(${id}, e)` : `${name}${optional}(${id})`;
       },
     );
-    for (const { id, text } of wanted) {
+    for (const { id, text, above } of wanted) {
       const index = source.indexOf(text);
       const lineStart = source.lastIndexOf("\n", index) + 1;
-      probes.push({ id, file, text, line: source.slice(0, index).split("\n").length, column: index - lineStart + 1 });
+      const line = source.slice(0, index).split("\n").length;
+      probes.push({ id, file, text, above, line, column: index - lineStart + 1 });
     }
     programs.push({ file, source: (bom ? "\uFEFF" : "") + source, functions, counts, texts: source.split(eol) });
   }
@@ -110,6 +112,14 @@ globalThis.at = function at(id) {
 };
 globalThis.ran = id => void (records[id] ??= { count: 0 }).count++;
 globalThis.caught = (id, error) => void record(id, error);
+globalThis.fails = {
+  self() { return this; },
+  call() { throw new Error("called"); },
+  make() { return fails.call; },
+  tag() { throw new Error("tagged"); },
+  get value() { throw new Error("read"); },
+  Made: class { constructor() { throw new Error("made"); } },
+};
 globalThis.load = specifiers =>
   specifiers.reduce(
     (previous, specifier) => previous.then(() => import(specifier)).catch(e => void (records.failed[specifier] = String(e))),
@@ -167,6 +177,10 @@ const testFile = [
   `  const text = \`a`,
   `  b\`; test("second", () => {});`,
   `});`,
+  `test(`,
+  `  "third",`,
+  `  () => {},`,
+  `);`,
   ``,
 ].join("\n");
 
@@ -262,9 +276,7 @@ function underCaret(preview: string, text: string) {
   const lines = preview.split("\n");
   const caret = lines.findIndex(line => /^\s*\^$/.test(line));
   if (caret < 1) return lines.some(line => Buffer.byteLength(line) > 1024) ? text : preview;
-  const under = lines[caret - 1].slice(lines[caret].indexOf("^"));
-  // In most lanes `new X()` is at `new`, where V8 has it, until the stack of the error is read, and at `X` after that.
-  return (under.startsWith("new " + text) ? under.slice(4) : under).slice(0, text.length);
+  return lines[caret - 1].slice(lines[caret].indexOf("^")).slice(0, text.length);
 }
 
 describe.each(["test", "run", ...bundles, "compiled"])("%s", laneName => {
@@ -279,14 +291,14 @@ describe.each(["test", "run", ...bundles, "compiled"])("%s", laneName => {
   test.each(Object.keys(variants))("%s: where a call or an error is", variantName => {
     const wrong: Record<string, unknown> = {};
     let checked = 0;
-    for (const { id, file, line, column, text } of probes) {
+    for (const { id, file, line, column, text, above } of probes) {
       if (!file.startsWith(variantName + "/")) continue;
       const said = lanes[laneName][id];
       if (!said?.stack) continue;
       checked++;
       const expected = `${file}:${line}:${column}`;
       const frames = said.stack.split("\n").slice(1).map(position);
-      const frame = frames.findIndex(frame => frame.startsWith(file + ":"));
+      const frame = frames.flatMap((frame, index) => (frame.startsWith(file + ":") ? [index] : []))[above] ?? -1;
       const got = {
         stack: frames[frame],
         ...(said.callSite && { callSite: position(said.callSite), getCallSites: position(said.getCallSites) }),
@@ -379,8 +391,9 @@ describe("bun test --coverage", () => {
   });
 
   test("the JUnit report has the line of each test", () => {
+    // The line of a test is the one its call starts on.
     const lineOf = (name: string, text: string) =>
-      `${name} ${text.slice(0, text.indexOf(`test("${name}"`)).split("\n").length}`;
+      `${name} ${text.slice(0, text.search(new RegExp(`test\\(\\s*"${name}"`))).split("\n").length}`;
     expect(
       Array.from(
         junit.matchAll(/<testcase name="(\w+)"[^>]* line="(\d+)"/g),
@@ -390,6 +403,7 @@ describe("bun test --coverage", () => {
       [
         lineOf("first", testFile),
         lineOf("second", testFile),
+        lineOf("third", testFile),
         ...inEachVariant("", v => lineOf("snapshots", moved(v, snapshots))).map(([, line]) => line),
       ].sort(),
     );
@@ -461,6 +475,8 @@ describe.each(Object.keys(builds))("the source map of %s", name => {
     for (const { code, map, mappings } of outputs[name]) {
       const generated = code.split("\n");
       const originals = (map.sourcesContent as string[]).map(content => content.split(/\r?\n/));
+      const originalFrom = (source: number, line: number, column: number) =>
+        originals[source].slice(line).join("\n").slice(column);
       let previous = "";
       for (const [generatedLine, generatedColumn, source, originalLine, originalColumn] of mappings) {
         // Each line of a token that is on several starts with the mapping before it, again.
@@ -472,7 +488,10 @@ describe.each(Object.keys(builds))("the source map of %s", name => {
         if (map.sources[source].endsWith("lowered.ts")) continue;
         checked++;
         const original = originals[source][originalLine]?.slice(originalColumn, originalColumn + word.length);
-        if (original !== word) {
+        // `new Error()` is printed `Error()` where that is shorter. A frame there is at the `new`, as it is in the source.
+        const isConstructed = () =>
+          originalFrom(source, originalLine, originalColumn).match(/^new(?:\s|\/\*.*?\*\/)+([\w$]+)/)?.[1] === word;
+        if (original !== word && !isConstructed()) {
           wrong.push(
             `${map.sources[source]}:${originalLine + 1}:${originalColumn + 1} is ${JSON.stringify(original)}, not ${word}`,
           );

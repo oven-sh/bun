@@ -6332,10 +6332,8 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
             continue;
 
         JSC::JSValue propertyValue = jsUndefined();
-        // getPureResult() is null for an accessor that is not cacheable: one of a compiled object, or with --aot one that an event inherits.
         auto pureResult = [&] {
-            bool isInheritedByEvent = isEventWithAttributes && slot.slotBase() != object;
-            return !slot.isCacheableGetter() && (isInheritedByEvent || object->structure()->isCompiledStructure()) ? JSValue(slot.getterSetter()) : slot.getPureResult();
+            return !slot.isCacheableGetter() && object->structure()->isCompiledStructure() ? JSValue(slot.getterSetter()) : slot.getPureResult();
         };
         if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
             if (callGetters) {
@@ -6343,7 +6341,9 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
                 if (scope.exception()) [[unlikely]] {
                     if (!scope.tryClearException())
                         return;
-                    propertyValue = pureResult();
+                    // getPureResult() is null for a getter that is not cacheable. With --aot that is one that an event inherits.
+                    bool isInheritedByEvent = isEventWithAttributes && slot.slotBase() != object;
+                    propertyValue = isInheritedByEvent && !slot.isCacheableGetter() ? JSValue(slot.getterSetter()) : pureResult();
                 }
             } else {
                 propertyValue = pureResult();

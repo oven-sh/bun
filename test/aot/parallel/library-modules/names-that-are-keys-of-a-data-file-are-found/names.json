@@ -1,0 +1,1 @@
+{ "node:zlib": "^1", "node:dgram": "^2", "deep": { "fs/promises": true } }

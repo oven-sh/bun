@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// Prefers use of `String.raw` to avoid escaping `\`.
 pub struct PreferStringRaw;
 
-const PREFER_STRING_RAW: Message =
-    Message::new("", "`String.raw` should be used to avoid escaping `\\`.");
+const PREFER_STRING_RAW: &Message =
+    &Message::new("", "`String.raw` should be used to avoid escaping `\\`.");
 
 impl Rule for PreferStringRaw {
     const META: Meta =

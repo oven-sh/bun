@@ -79,9 +79,9 @@ test("mock.module does not run the resolver when callback is missing", async () 
 
   using dir = tempDir("mock-module-no-callback-no-resolve", {
     "index.js": `
-      const { vi } = Bun.jest();
-      try { vi.mock("PbQ"); } catch (e) { console.error("ERR:", e.message); }
-      try { vi.mock("some-valid-pkg-name-abc123"); } catch (e) { console.error("ERR:", e.message); }
+      const { mock } = Bun.jest();
+      try { mock.module("PbQ"); } catch (e) { console.error("ERR:", e.message); }
+      try { mock.module("some-valid-pkg-name-abc123"); } catch (e) { console.error("ERR:", e.message); }
       Bun.gc(true);
       console.log("done");
     `,

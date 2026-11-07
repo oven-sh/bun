@@ -184,6 +184,10 @@ static void nq_on_path_switch(lsquic_conn_t *c, int validated, int is_preferred,
     }
 }
 
+/* lsquic is built with the same width, see lsxpackDefines in scripts/build/deps/lshpack.ts. */
+_Static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(struct lsxpack_header, chain_next_idx) == sizeof(char *) + 24,
+    "LSXPACK_MAX_STRLEN must be UINT32_MAX");
+
 #define US_NQ_HSET_MIN_BUF 256
 
 struct nq_hset {
@@ -216,10 +220,14 @@ static struct lsxpack_header *nq_hsi_prepare_decode(void *hset,
                                                     struct lsxpack_header *hdr,
                                                     size_t space) {
     struct nq_hset *h = hset;
-    if (space > LSXPACK_MAX_STRLEN)
+    /* `space` covers the bytes lsqpack has in hand (patches/lsqpack/decode-room-for-bytes-in-hand.patch).
+     * It is an estimate and can exceed what they decode to. A field over
+     * max_bytes is decoded and dropped, so it needs room as well. */
+    if (space > (h->max_bytes > UINT16_MAX / 2 ? 2 * (size_t) h->max_bytes : UINT16_MAX))
         return NULL;
     if (space > h->decode_cap) {
-        size_t want = space < US_NQ_HSET_MIN_BUF ? US_NQ_HSET_MIN_BUF : space;
+        size_t want = h->decode_cap ? h->decode_cap : US_NQ_HSET_MIN_BUF;
+        while (want < space) want *= 2;
         char *nb = realloc(h->decode_buf, want);
         if (!nb) return NULL;
         h->decode_buf = nb;
@@ -318,10 +326,11 @@ int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
         if (i >= len) break;
         i++;
         unsigned char flags = (i < len) ? (unsigned char) buf[i++] : 0;
-        if (name_len > LSXPACK_MAX_STRLEN || val_len > LSXPACK_MAX_STRLEN)
+        if (name_len >= LSXPACK_MAX_STRLEN || val_len > LSXPACK_MAX_STRLEN)
             return -1;
-        lsxpack_header_set_offset2(&hdrs[count], buf, name_off, name_len,
-                                   val_off, val_len);
+        /* lsxpack asserts that offsets fit lsxpack_strlen_t, so they count from this pair's start. */
+        lsxpack_header_set_offset2(&hdrs[count], buf + name_off, 0, name_len,
+                                   val_off - name_off, val_len);
         if (flags & 1) {
             hdrs[count].flags = LSXPACK_NEVER_INDEX;
             hdrs[count].indexed_type = 2;

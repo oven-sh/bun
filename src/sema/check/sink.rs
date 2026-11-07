@@ -6,7 +6,7 @@
 //! - One reported inside a query belongs to the query. A hit on the query's entry reports nothing,
 //!   but several tasks may each have evaluated the query. The first task that commits a diagnostic
 //!   under the query reports. Diagnostics that later tasks commit under it are dropped
-//!   (`Program::publish_reported`).
+//!   (`Program::publish_reported`). For a query about syntax that's decided for each file it reports in (`owned_part`).
 //!
 //! `add_diagnostic` pushes onto `Checker::reported`. A frame's diagnostics are the suffix from
 //! `QueryFrame::reported_from`. `Checker::leave` calls `settle_reported` for them:
@@ -30,6 +30,7 @@
 //! file's HIR can provide has been filled in. The HIR of a file that nothing imports is freed at
 //! the end of its task, and `finish_file` doesn't read any HIR.
 
+use super::aot::{DiagnosticClass, DiagnosticSubject};
 use super::explain::NOWHERE;
 use super::*;
 use crate::util::SharedSort;
@@ -88,6 +89,8 @@ pub(super) struct Reported {
     /// span at `start`.
     pub(super) end: u32,
     pub(super) code: u32,
+    pub(super) class: DiagnosticClass,
+    pub(super) subject: DiagnosticSubject,
     pub(super) args: Args,
     pub(super) message_chain: Vec<Reported>,
     pub(super) related_information: Vec<Reported>,
@@ -137,6 +140,8 @@ impl Reported {
             start: at.1,
             end: at.2,
             code,
+            class: DiagnosticClass::of_code(code),
+            subject: DiagnosticSubject::None,
             args,
             message_chain: Vec::new(),
             related_information: Vec::new(),
@@ -157,9 +162,15 @@ impl Reported {
             .iter()
             .map(|related| Reported::from_hir(file, related));
         Reported {
+            class: d.class,
             related_information: related.collect(),
             ..Reported::new((file, d.start, d.end), d.code, d.args.clone())
         }
+    }
+
+    pub(super) fn with_class(mut self, class: DiagnosticClass) -> Reported {
+        self.class = class;
+        self
     }
 
     /// Placeholder left in `Task::diagnostics` for a diagnostic that a commit took out while a file was being checked.
@@ -178,6 +189,8 @@ impl Reported {
     }
 
     /// `AddRelatedInfo`
+    #[cold]
+    #[inline(never)]
     pub(super) fn add_related_info(&mut self, related: Reported) -> &mut Self {
         self.related_information.push(related);
         self
@@ -236,9 +249,8 @@ pub(super) struct Sink<'s> {
     /// The diagnostics reported in each file. A `Reported` owns regular heap memory, which
     /// `release` frees.
     by_file: ArenaVec<'s, Guarded<Vec<Reported>>>,
-    /// The queries under which a task has reported, each with the `Task::number` of the first task that did. Any thread
-    /// can add to it, so it's on the regular heap too.
-    owners: Guarded<FxHashMap<Query, u64>>,
+    /// The queries under which a task has reported (`owned_part`), each with the `Task::number` of the first task that did.
+    owners: Guarded<FxHashMap<(Query, Option<FileId>), u64>>,
 }
 
 impl<'s> Sink<'s> {
@@ -308,12 +320,18 @@ fn is_same_in_every_task(q: Query) -> bool {
     }
 }
 
+/// What the first task to commit a diagnostic in `file` under `q` owns: everything `q` reports, or only what it reports in `file`.
+fn owned_part(q: Query, file: FileId) -> (Query, Option<FileId>) {
+    (q, q.syntax().map(|_| file))
+}
+
 impl super::Program<'_> {
     /// Moves a task's diagnostics to their files' buffers. Called in a commit. `task` is `Task::number`.
     pub(super) fn publish_reported(&self, task: u64, reported: Logged) {
         let mut owners = self.sink.owners.lock();
         for (owner, diagnostic) in reported {
-            if owner.is_some_and(|q| *owners.entry(q).or_insert(task) != task) {
+            let part = owner.map(|q| owned_part(q, diagnostic.file));
+            if part.is_some_and(|part| *owners.entry(part).or_insert(task) != task) {
                 continue;
             }
             self.push_diagnostic(diagnostic);
@@ -420,6 +438,8 @@ impl super::Program<'_> {
         reported.dedup_by(|next, first| {
             let is_same = equal_diagnostics_no_related_info(next, first);
             if is_same {
+                first.class = first.class.stricter(next.class);
+                first.subject = first.subject.or(next.subject);
                 let related = &mut first.related_information;
                 related.append(&mut next.related_information);
                 related.shared_sort_by(|a, b| self.compare_diagnostics(a, b));
@@ -465,7 +485,9 @@ impl Checker<'_, '_> {
         code: u32,
         args: &[Arg<'_>],
     ) -> Reported {
-        Reported::new(at, code, self.stringify_args(args))
+        let mut diagnostic = Reported::new(at, code, self.stringify_args(args));
+        diagnostic.subject = self.subject_of_arguments(args);
+        diagnostic
     }
 
     /// `NewDiagnosticChainForNode`
@@ -483,6 +505,7 @@ impl Checker<'_, '_> {
         // `NewDiagnosticChain`
         let mut diagnostic = self.new_diagnostic((chain.file, chain.start, chain.end), code, args);
         diagnostic.related_information = std::mem::take(&mut chain.related_information);
+        diagnostic.subject = diagnostic.subject.or(chain.subject);
         diagnostic.message_chain.push(chain);
         diagnostic
     }
@@ -523,7 +546,7 @@ impl Checker<'_, '_> {
         if has_parse_diagnostics(self.hir(at.0)) {
             return false;
         }
-        self.error_at(at, code, args);
+        self.error_at(at, code, args).class = DiagnosticClass::of_grammar_code(code);
         true
     }
 
@@ -734,9 +757,9 @@ impl Checker<'_, '_> {
     #[cold]
     pub(super) fn settle_reported(&mut self, frame: QueryFrame, q: Query) {
         let from = frame.reported_from as usize;
-        if frame.drops_reported {
+        if frame.marks.drops_reported() {
             self.reported.truncate(from);
-        } else if !frame.tainted {
+        } else if !frame.marks.tainted() {
             for diagnostic in self.reported.split_off(from) {
                 self.log_diagnostic(Some(q), diagnostic);
             }
@@ -745,7 +768,7 @@ impl Checker<'_, '_> {
         }
         let requests = &self.reported_iteration_requests;
         let since_entered = requests.partition_point(|request| request.0 < frame.serial);
-        self.settle_iteration_requests(since_entered, frame.drops_reported);
+        self.settle_iteration_requests(since_entered, frame.marks.drops_reported());
     }
 
     /// `settle_reported` for an innermost frame that stores nothing under its query, like an
@@ -754,8 +777,8 @@ impl Checker<'_, '_> {
     /// diagnostics don't move to the enclosing frame, which may drop its own.
     pub(super) fn settle_reported_without_entry(&mut self) {
         if let Some(frame) = self.frames.last()
-            && !frame.tainted
-            && !frame.drops_reported
+            && !frame.marks.tainted()
+            && !frame.marks.drops_reported()
         {
             for diagnostic in self.reported.split_off(frame.reported_from as usize) {
                 if self.task.file == Some(diagnostic.file) {
@@ -773,7 +796,8 @@ impl Checker<'_, '_> {
     ///   resolutions.
     /// - `None` means it belongs to the task. Used for a limit, after which no query in progress is
     ///   cacheable, and for a cycle that has no query.
-    pub(super) fn add_diagnostic_of(&mut self, owner: Option<Query>, diagnostic: Reported) {
+    pub(super) fn add_diagnostic_of(&mut self, owner: Option<Query>, mut diagnostic: Reported) {
+        self.locate_global_diagnostic(owner, &mut diagnostic);
         // As in `add_diagnostic`. For a diagnostic in another file, tsgo's result depends on file
         // order, and the entry is already stored, so the diagnostic stays with it.
         if self.serialization_level >= MAX_SERIALIZATION_LEVEL
@@ -991,9 +1015,10 @@ impl Checker<'_, '_> {
             if diagnostic.is_placeholder() {
                 continue;
             }
-            let Some(diagnostic) = self.settled(diagnostic, &mut directives) else {
+            let Some(mut diagnostic) = self.settled(diagnostic, &mut directives) else {
                 continue;
             };
+            self.lay_subject_by_what_error_stands_at(&mut diagnostic);
             let owner = owner.filter(|&q| is_same_in_every_task(q));
             match at < while_writing_immediately && owner.is_some_and(|q| !is_task_independent(q)) {
                 true => for_visible_entries.push((owner, diagnostic)),

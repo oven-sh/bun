@@ -5,7 +5,7 @@ use bun_lint::prelude::*;
 /// instead.
 pub struct NoDoneCallback<const RUNNER: u8 = { jest::JEST }>;
 
-const NO_DONE_CALLBACK: Message = Message::new("", "Function parameter(s) use the `done` argument");
+const NO_DONE_CALLBACK: &Message = &Message::new("", "Function parameter(s) use the `done` argument");
 
 impl<const RUNNER: u8> Rule for NoDoneCallback<RUNNER> {
     const META: Meta = jest::meta(RUNNER, "no-done-callback", Kind::Suggestion);

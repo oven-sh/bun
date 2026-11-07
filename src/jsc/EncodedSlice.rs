@@ -16,8 +16,7 @@ unsafe extern "C" fn EncodedSlice__freeGlobal(ptr: *const u8, _len: usize) {
         .cast_mut()
         .cast::<c_void>();
     if bun_alloc::USE_MIMALLOC {
-        // SAFETY: read-only heap-region probe.
-        debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(untagged) });
+        debug_assert!(bun_alloc::mimalloc::mi_is_in_heap_region(untagged));
     }
     // SAFETY: untagged ptr was allocated by the default allocator.
     unsafe { bun_alloc::default_alloc::free(untagged) };

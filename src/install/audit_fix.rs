@@ -458,9 +458,9 @@ fn pin_for(
         return None;
     }
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let name = dep.name.slice(buf);
-    let version = match rule {
-        Some(rule) => rule.version(),
+    // The name to edit under comes from what declares the version: the rule, else the dependency.
+    let holder = match rule {
+        Some(rule) => rule.dep(),
         None => {
             if parent == invalid_package_id
                 || !matches!(
@@ -470,9 +470,11 @@ fn pin_for(
             {
                 return None;
             }
-            &dep.version
+            dep
         }
     };
+    let name = holder.name.slice(buf);
+    let version = &holder.version;
     match version.tag {
         DependencyVersionTag::Catalog => {
             let catalog_name = version.catalog().slice(buf);
@@ -626,8 +628,9 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                         .slice(buf),
                 ),
                 dependent: dependent_label(lockfile, parent),
-                override_rule: rule
-                    .map(|rule| OverrideSelector::from_rule(rule, buf).key(dep.name.slice(buf))),
+                override_rule: rule.map(|rule| {
+                    OverrideSelector::from_rule(rule, buf).key(rule.dep().name.slice(buf))
+                }),
                 bundled: dep.behavior.is_bundled(),
                 peer: dep.behavior.is_peer() && !dep.behavior.is_bundled(),
                 latest_fixes,

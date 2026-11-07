@@ -14,12 +14,12 @@ pub struct StaticPropertyPlacement {
     config: [Placement; 6],
 }
 
-const NOT_STATIC_CLASS_PROP: Message =
-    Message::new("notStaticClassProp", "'{{name}}' should be declared as a static class property.");
-const NOT_GETTER_CLASS_FUNC: Message =
-    Message::new("notGetterClassFunc", "'{{name}}' should be declared as a static getter class function.");
-const DECLARE_OUTSIDE_CLASS: Message =
-    Message::new("declareOutsideClass", "'{{name}}' should be declared outside the class body.");
+const NOT_STATIC_CLASS_PROP: &Message =
+    &Message::new("notStaticClassProp", "'{{name}}' should be declared as a static class property.");
+const NOT_GETTER_CLASS_FUNC: &Message =
+    &Message::new("notGetterClassFunc", "'{{name}}' should be declared as a static getter class function.");
+const DECLARE_OUTSIDE_CLASS: &Message =
+    &Message::new("declareOutsideClass", "'{{name}}' should be declared outside the class body.");
 
 /// `POSITION_SETTINGS`
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -40,7 +40,7 @@ impl Placement {
     }
 
     /// `ERROR_MESSAGES`
-    fn error_message(self) -> Message {
+    fn error_message(self) -> &'static Message {
         match self {
             Placement::StaticPublicField => NOT_STATIC_CLASS_PROP,
             Placement::StaticGetter => NOT_GETTER_CLASS_FUNC,
@@ -85,7 +85,7 @@ const ANNOTATED_FIELDS: [&str; 4] = ["props", "context", "#props", "#context"];
 /// The data for a `reportNodeIncorrectlyPositioned` report.
 struct Misplaced {
     name: &'static str,
-    message: Message,
+    message: &'static Message,
 }
 
 pub struct State<'a> {

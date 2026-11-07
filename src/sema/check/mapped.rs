@@ -203,17 +203,25 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Substitution { base, constraint } => {
                 self.generic_object_flags_of_all(&[base, constraint])
             }
-            _ => {
-                let flags = self.flags(ty);
-                (
-                    flags & tf::INSTANTIABLE_NON_PRIMITIVE != 0
-                        || self.is_generic_mapped_type(ty)
-                        || self.is_generic_tuple_type(ty),
-                    flags & (tf::INSTANTIABLE_NON_PRIMITIVE | tf::INDEX) != 0
-                        || self.is_generic_string_like_type(ty),
-                    self.is_mapped_type(ty),
-                )
+            TypeData::Anon {
+                origin: Origin::Mapped(file, node),
+                mapper,
+            } => (
+                self.is_mapped_type_generic(ty, file, node, mapper),
+                false,
+                true,
+            ),
+            TypeData::Tuple { .. } => (self.is_generic_tuple_type(ty), false, false),
+            TypeData::Template { .. } | TypeData::StringMapping { .. } => {
+                (false, self.is_generic_string_like_type(ty), false)
             }
+            TypeData::TypeParam(..)
+            | TypeData::ThisParam(_)
+            | TypeData::Marker(_)
+            | TypeData::IndexedAccess { .. }
+            | TypeData::Cond { .. } => (true, true, false),
+            TypeData::Keyof(_) => (false, true, false),
+            _ => (false, false, false),
         }
     }
 
@@ -715,7 +723,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn key_of_assignment_declaration(&self, file: FileId, e: ExprId) -> PropKey {
         let hir = self.hir(file);
         let argument = if let ExprKind::Assign { target, .. } = hir[e].kind {
-            match hir[target].kind {
+            match hir.checked_kind(target) {
                 ExprKind::Dot { name, .. } => return PropKey::Name(name),
                 ExprKind::Index { index, .. } => Some(index),
                 _ => None,
@@ -850,7 +858,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getReducedType` removes an intersection that reduces to `never`.
         let obj = self.reduced(obj);
         let index = self.key_into_string_index_only(obj, index);
-        if self.p.files.options.no_unchecked_indexed_access
+        if self.no_unchecked_indexed_access_at(access_node)
             && access_flags.contains(AccessFlags::EXPRESSION_POSITION)
         {
             access_flags |= AccessFlags::INCLUDE_UNDEFINED;
@@ -879,6 +887,7 @@ impl<'p, 's> Checker<'p, 's> {
             });
         }
         let apparent = self.reduced_apparent_type(obj);
+        let holder = self.apparent_type_or_type_variable(obj, apparent);
         if let TypeData::Union(keys) = self.data(index)
             && !self.is_boolean(index)
         {
@@ -886,7 +895,7 @@ impl<'p, 's> Checker<'p, 's> {
             let mut was_missing_prop = false;
             for &key in keys.iter() {
                 match self.property_type_for_index(
-                    apparent,
+                    (apparent, holder),
                     (key, index),
                     access_node,
                     access_flags,
@@ -911,7 +920,12 @@ impl<'p, 's> Checker<'p, 's> {
                 self.union_with_alias(&types, alias)
             });
         }
-        self.property_type_for_index(apparent, (index, index), access_node, access_flags)
+        self.property_type_for_index(
+            (apparent, holder),
+            (index, index),
+            access_node,
+            access_flags,
+        )
     }
 
     /// The start of `getIndexedAccessTypeOrUndefined`. If the reduced `obj` has only a string index
@@ -1019,7 +1033,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getIndexNodeForAccessExpression`, as an error position.
     fn span_of_index_node(&self, access_node: AccessNode) -> Option<FileSpan> {
         match access_node {
-            AccessNode::ElementAccess(file, e) => match self.hir(file)[e].kind {
+            AccessNode::ElementAccess(file, e) => match self.hir(file).checked_kind(e) {
                 ExprKind::Index { index, .. } => Some(self.span_of_parenthesized_expr(file, index)),
                 _ => None,
             },
@@ -1068,11 +1082,25 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getPropertyTypeForIndexType`. `object` is a reduced apparent type. The index pair is
-    /// `indexType`, which isn't a union, and `fullIndexType`.
+    /// What an object literal of an untyped file, or a union of them, holds under a name that it doesn't have: anything. See
+    /// `type_of_name_that_some_literals_have`.
+    fn type_under_name_in_literals(
+        &mut self,
+        literals: TypeId,
+        name: Option<Atom>,
+        access_flags: AccessFlags,
+    ) -> TypeId {
+        let name = name.filter(|_| !access_flags.contains(AccessFlags::WRITING));
+        let held = name.and_then(|name| self.type_of_name_that_some_literals_have(literals, name));
+        held.unwrap_or(TypeId::ANY)
+    }
+
+    /// `getPropertyTypeForIndexType`. `object` is a reduced apparent type, and `holder` is what
+    /// `apparent_type_or_type_variable` returns for it. The index pair is `indexType`, which isn't a union, and
+    /// `fullIndexType`.
     fn property_type_for_index(
         &mut self,
-        object: TypeId,
+        (object, holder): (TypeId, TypeId),
         (index, full_index): (TypeId, TypeId),
         access_node: AccessNode,
         access_flags: AccessFlags,
@@ -1088,7 +1116,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let ty = self.contextual_property(object, name);
                 return Some(ty.unwrap_or(TypeId::ANY));
             }
-            if let Some((prop, mapper)) = self.get_property_of_type(object, name) {
+            if let Some((prop, mapper)) = self.get_property_of_type(holder, name) {
                 if !access_flags.contains(AccessFlags::WRITING) {
                     let prop_type = self.type_of_prop(prop, mapper);
                     return Some(match access_node {
@@ -1104,7 +1132,7 @@ impl<'p, 's> Checker<'p, 's> {
                     });
                 }
                 if let Some((file, e)) = access_expression
-                    && let ExprKind::Index { obj, .. } = self.hir(file)[e].kind
+                    && let ExprKind::Index { obj, .. } = self.hir(file).checked_kind(e)
                     && self.is_assignment_to_readonly_entity(file, e, obj, prop)
                     && let Some(index_node) = self.span_of_index_node(access_node)
                 {
@@ -1207,7 +1235,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && info.key != TypeId::NUMBER
                 {
                     if let Some((file, e)) = access_expression
-                        && let ExprKind::Index { obj, .. } = self.hir(file)[e].kind
+                        && let ExprKind::Index { obj, .. } = self.hir(file).checked_kind(e)
                     {
                         let at = self.span_of_expr(file, e);
                         // `originalObjectType`
@@ -1254,12 +1282,12 @@ impl<'p, 's> Checker<'p, 's> {
                 return Some(TypeId::NEVER);
             }
             if self.is_js_literal_type(object) {
-                return Some(TypeId::ANY);
+                return Some(self.type_under_name_in_literals(object, name, access_flags));
             }
             if let Some((file, e)) = access_expression
                 && !self.is_const_enum_object(object)
             {
-                let no_implicit_any = self.p.files.options.no_implicit_any;
+                let no_implicit_any = self.module_options(file).no_implicit_any;
                 if self.is_object_literal_type(object) {
                     if no_implicit_any
                         && self.flags(index) & (tf::STRING_LITERAL | tf::NUMBER_LITERAL) != 0
@@ -1306,12 +1334,12 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(TypeId::UNDEFINED);
         }
         if self.is_js_literal_type(object) {
-            return Some(TypeId::ANY);
+            return Some(self.type_under_name_in_literals(object, name, access_flags));
         }
         if let Some(index_node) = self.span_of_index_node(access_node) {
             let is_bigint_literal = match access_node {
                 AccessNode::ElementAccess(file, e) => {
-                    matches!(self.hir(file)[e].kind, ExprKind::Index { index, .. }
+                    matches!(self.hir(file).checked_kind(e), ExprKind::Index { index, .. }
                     if matches!(self.hir(file)[index].kind, ExprKind::BigInt(_)) && !is_parenthesized(self.hir(file), index))
                 }
                 AccessNode::PropertyName(file, prop) => match self.hir(file)[prop].key {
@@ -1331,7 +1359,9 @@ impl<'p, 's> Checker<'p, 's> {
                 && let Some(name) = name
             {
                 let printed = self.apparent_type_of_intersection(object);
-                self.error_at(index_node, 2339, &[Arg::Atom(name), Arg::Type(printed)]);
+                let subject = self.member_container_of_type(printed);
+                self.error_at(index_node, 2339, &[Arg::Atom(name), Arg::Type(printed)])
+                    .subject = subject;
             } else if index == TypeId::STRING || index == TypeId::NUMBER {
                 let printed = self.apparent_type_of_intersection(object);
                 self.error_at(index_node, 2537, &[Arg::Type(printed), Arg::Type(index)]);
@@ -1459,7 +1489,7 @@ impl<'p, 's> Checker<'p, 's> {
             && (is_repeatable || !is_member)
         {
             // The call in progress will overwrite the entry.
-            if !is_repeatable && self.may_be_in_flight(q) && self.stack.contains(&q) {
+            if !is_repeatable && self.is_in_flight(q) {
                 self.note_cycle();
             }
             return known;
@@ -1474,7 +1504,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mark = self.non_cacheable_mark();
         let ty = self.conditional_type_uncached(file, node, mapper, false, alias);
-        let is_repeatable = self.non_cacheable_mark() == mark;
+        // A call that ends at `tailCount == 1000` reports that every time.
+        let is_repeatable = self.non_cacheable_mark() == mark && !self.is_error_type(ty);
         match (self.leave(q), alias) {
             (Ok(stored), None) if is_member => {
                 if is_repeatable {
@@ -1490,7 +1521,7 @@ impl<'p, 's> Checker<'p, 's> {
             // If the query was in progress several times, the outermost one stores last.
             (Ok(stored), None) => {
                 let entry = (ty, is_repeatable);
-                let is_inner = self.may_be_in_flight(q) && self.stack.contains(&q);
+                let is_inner = self.is_in_flight(q);
                 let stored = match is_inner || !is_repeatable {
                     true => stored.held_back(),
                     false => stored,
@@ -1616,7 +1647,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `tailCount` skips roots that aren't the body of a type alias. In tsgo,
             // `instantiationCount` ends a loop of those.
             if tail_count == 1000 || tail_roots.len() == 10_000 {
-                return self.excessively_deep();
+                return self.too_many_tail_calls();
             }
             let TypeNodeKind::Cond {
                 check,
@@ -1628,7 +1659,19 @@ impl<'p, 's> Checker<'p, 's> {
                 return TypeId::UNRESOLVED;
             };
             // A cache hit skips the lookups below. A miss does them in tsgo's order and fills the cache afterwards.
-            let root = self.conditional_roots.get(&(file, node)).cloned();
+            let root = self.conditional_roots.get(&(file, node)).map(|root| {
+                let mut infer_params = SmallVec::new();
+                for &param in root.infer_params.iter() {
+                    infer_params.push(param);
+                }
+                ConditionalRoot {
+                    check_declared: root.check_declared,
+                    check_variable: root.check_variable,
+                    extends_declared: root.extends_declared,
+                    check_tuples: root.check_tuples,
+                    infer_params,
+                }
+            });
             let mark = self.non_cacheable_mark();
             let (check_declared, check_variable) = match &root {
                 Some(root) => (root.check_declared, root.check_variable),
@@ -1794,7 +1837,7 @@ impl<'p, 's> Checker<'p, 's> {
                         // The loop is deterministic, so a root that recurs under the same mapper
                         // recurs until a limit is hit.
                         if !tail_roots.insert(root) {
-                            return self.excessively_deep();
+                            return self.too_many_tail_calls();
                         }
                         // `newRoot.alias != nil`
                         let known = has_alias
@@ -2991,7 +3034,7 @@ impl<'p, 's> Checker<'p, 's> {
             (self.p.mapped_types_with_errors).insert(&self.task, of, (), stored);
             // `resolveMappedTypeMembers` resolves the constraint type of `of` and the members of a
             // reverse mapped modifiers type before the symbol exists. See `circular_mapped_property`.
-            if let Some(at) = self.stack.iter().rposition(|in_progress| *in_progress == q) {
+            if let Some(at) = self.innermost_in_flight(q) {
                 let own = self.mapped_origin(of);
                 let mut constraints = self.mapped_constraints_in_progress.iter();
                 let is_through_members = constraints.any(|it| it.1 > at && Some(it.0) == own)

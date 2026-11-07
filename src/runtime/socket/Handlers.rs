@@ -59,10 +59,7 @@ pub(crate) struct Handlers {
     /// Deliberately a nullable raw pointer and not a `BackRef`: a `BackRef`
     /// promises the pointee outlives the holder, and this one does not. Every
     /// accepted socket holds an `Rc<Handlers>` that routinely outlives the
-    /// `Listener` (uws defers the close of a force-closed socket past
-    /// `Listener::deinit`). What keeps it sound is that `deinit` clears this
-    /// field before freeing itself — so reads must go through [`listener`] and
-    /// handle `None`.
+    /// `Listener`, whose `Drop` clears this field: reads go through [`listener`] and handle `None`.
     ///
     /// [`listener`]: Self::listener
     listener: Cell<Option<NonNull<SocketListener>>>,
@@ -103,20 +100,15 @@ impl Handlers {
     }
 
     /// Records the listener that accepted these sockets (server mode only), or
-    /// clears it as that listener frees itself.
+    /// clears it when that listener is dropped.
     pub(crate) fn set_listener(&self, listener: Option<NonNull<SocketListener>>) {
         debug_assert!(self.mode == SocketMode::Server || listener.is_none());
         self.listener.set(listener);
     }
 
-    /// The accepting listener, or `None` for client-mode handlers and for a
-    /// listener already torn down by `Listener::deinit`.
+    /// The accepting listener, or `None` for client-mode handlers and for a dropped listener.
     pub(crate) fn listener(&self) -> Option<&SocketListener> {
-        // SAFETY: `Listener::listen` stores its `heap::into_raw` allocation root
-        // here, and `Listener::deinit` clears it before freeing that allocation
-        // (after force-closing every accepted socket), so a `Some` is live. The
-        // borrow cannot outlive `&self`, and nothing frees a `Listener` while a
-        // caller holds one — `deinit` runs from GC finalize, not from dispatch.
+        // SAFETY: the `Listener` is the payload of its wrapper, and its `Drop` (run by the sweeper, not from dispatch) clears this.
         self.listener.get().map(|l| unsafe { &*l.as_ptr() })
     }
 
@@ -332,7 +324,7 @@ impl Handlers {
             // VM outlives every `Handlers` (process-lifetime singleton).
             vm: global_object.bun_vm(),
             global_object: GlobalRef::from(global_object),
-            context: global_object.bun_vm().context_of_caller_no_frame().id(),
+            context: global_object.bun_vm().context_of_caller().id(),
             active_connections: Cell::new(0),
             mode,
             listener: Cell::new(None),

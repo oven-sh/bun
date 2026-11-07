@@ -384,8 +384,14 @@ static const Char* trackEscape(const Char* seq, const Char* end, std::optional<u
         } else if (next == 'P' || next == 'X' || next == '^' || next == '_') {
             // DCS / SOS / PM / APC control string
         } else if (next >= 0x20 && next <= 0x2f) {
-            // nF: ESC, intermediate byte, one more code unit (an ESC there aborts it).
-            return (end - seq >= 3 && body[0] != 0x1b) ? seq + 3 : body;
+            // nF: ESC, intermediate byte, one more code point (an ESC there aborts it).
+            if (end - seq < 3 || body[0] == 0x1b)
+                return body;
+            if constexpr (sizeof(Char) == 2) {
+                if (end - seq >= 4 && U16_IS_LEAD(body[0]) && U16_IS_TRAIL(body[1]))
+                    return seq + 4;
+            }
+            return seq + 3;
         } else if (next >= 0x30 && next <= 0x7e) {
             return body; // Fe / Fs two-byte sequence (ESC 7, ESC c)
         } else {

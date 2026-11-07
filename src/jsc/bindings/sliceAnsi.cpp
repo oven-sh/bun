@@ -418,11 +418,13 @@ enum class TokenType {
     Sgr,
     Hyperlink,
     Control,
+    // A control token that the next ESC cut short, or an ESC that starts no sequence: the text after it decides what it means.
+    Unfinished,
 };
 
 // Parse CSI sequence: returns end pointer, or nullptr if not a valid CSI
 template<typename Char>
-static const Char* parseCsi(const Char* start, const Char* end, bool& isSgr, bool& isCanonicalSgr)
+static const Char* parseCsi(const Char* start, const Char* end, bool& isSgr, bool& isCanonicalSgr, bool& unfinished)
 {
     const Char* it = start;
     isSgr = false;
@@ -472,8 +474,10 @@ static const Char* parseCsi(const Char* start, const Char* end, bool& isSgr, boo
         // ANSI::consumeANSI's inCsi state) and cannot be canonical SGR.
         if (c == 0x18 || c == 0x1a || c == 0x9c)
             return it + 1;
-        if (c == 0x1b)
+        if (c == 0x1b) {
+            unfinished = true;
             return it;
+        }
         isCanonicalSgr = false;
         it++;
     }
@@ -489,7 +493,7 @@ static const Char* parseCsi(const Char* start, const Char* end, bool& isSgr, boo
 // ANSI::consumeANSI() in ANSIHelpers.h so Bun.sliceAnsi, Bun.stringWidth and
 // Bun.stripANSI agree on which bytes are visible.
 template<typename Char>
-static const Char* parseEscapeSequence(const Char* start, const Char* end)
+static const Char* parseEscapeSequence(const Char* start, const Char* end, bool& unfinished)
 {
     const Char* it = start + 1; // past ESC
     if (it == end)
@@ -498,8 +502,10 @@ static const Char* parseEscapeSequence(const Char* start, const Char* end)
     const Char c = *it;
     // ESC aborts the sequence in progress and introduces a new one: consume
     // just this ESC and let the next token start at the one after it.
-    if (c == 0x1b)
+    if (c == 0x1b) {
+        unfinished = true;
         return it;
+    }
 
     // Introducers owned by parseCsi / parseControlString. Reaching here means
     // they rejected the input as malformed, and sliceAnsi deliberately keeps
@@ -522,15 +528,25 @@ static const Char* parseEscapeSequence(const Char* start, const Char* end)
             return end;
         // An ESC where the final byte would be aborts the nF sequence and
         // introduces the next one (VT500), so it is not consumed here.
-        if (*it == 0x1b)
+        if (*it == 0x1b) {
+            unfinished = true;
             return it;
+        }
+        // The final character is one code point.
+        if constexpr (sizeof(Char) == 2) {
+            if (U16_IS_LEAD(*it) && it + 1 != end && U16_IS_TRAIL(*(it + 1)))
+                return it + 2;
+        }
         return it + 1;
     }
     if (c >= 0x30 && c <= 0x7e) // final byte of a two-byte escape
         return it + 1;
 
-    // Not part of a sequence; only the ESC itself is a control character.
-    return nullptr;
+    // No sequence starts here: consume the ESC, with the CAN, SUB or C1 ST that aborts it (VT500).
+    if (c == 0x18 || c == 0x1a || c == 0x9c)
+        return it + 1;
+    unfinished = true;
+    return it;
 }
 
 // Parse hyperlink: ESC]8;...;url TERMINATOR. `code` is a view of the whole sequence in the input.
@@ -631,7 +647,7 @@ static const Char* parseHyperlink(const Char* start, const Char* end, bool& isOp
 
 // Parse control string (OSC, DCS, SOS, PM, APC, standalone ST)
 template<typename Char>
-static const Char* parseControlString(const Char* start, const Char* end)
+static const Char* parseControlString(const Char* start, const Char* end, bool& unfinished)
 {
     const Char* it = start;
     Char c = *it;
@@ -683,6 +699,7 @@ static const Char* parseControlString(const Char* start, const Char* end)
             if (*it == 0x1b) {
                 if (it + 1 < end && *(it + 1) == '\\')
                     return it + 2;
+                unfinished = true;
                 return it;
             }
             if (*it == 0x18 || *it == 0x1a)
@@ -708,6 +725,7 @@ template<typename Char>
 static const Char* tryParseAnsi(const Char* start, const Char* end, TokenType& type, bool& isSgr, bool& isCanonicalSgr, bool& isHyperlinkOpen, std::span<const Char>& hyperlinkCode, String& hyperlinkClosePrefix, String& hyperlinkTerminator)
 {
     Char c = *start;
+    bool unfinished = false;
 
     // Try hyperlink first (for ESC and C1 OSC)
     if (c == 0x1b || c == 0x9d) {
@@ -720,18 +738,20 @@ static const Char* tryParseAnsi(const Char* start, const Char* end, TokenType& t
 
     // Try control string (OSC, DCS, SOS, PM, APC, ST)
     if (c == 0x1b || c == 0x9d || c == 0x90 || c == 0x98 || c == 0x9e || c == 0x9f || c == 0x9c) {
-        const Char* ctrlEnd = parseControlString(start, end);
+        const Char* ctrlEnd = parseControlString(start, end, unfinished);
         if (ctrlEnd) {
-            type = TokenType::Control;
+            type = unfinished ? TokenType::Unfinished : TokenType::Control;
             return ctrlEnd;
         }
     }
 
     // Try CSI
     if (c == 0x1b || c == 0x9b) {
-        const Char* csiEnd = parseCsi(start, end, isSgr, isCanonicalSgr);
+        const Char* csiEnd = parseCsi(start, end, isSgr, isCanonicalSgr, unfinished);
         if (csiEnd) {
-            if (isSgr) {
+            if (unfinished) {
+                type = TokenType::Unfinished;
+            } else if (isSgr) {
                 type = TokenType::Sgr;
             } else {
                 type = TokenType::Control;
@@ -742,9 +762,9 @@ static const Char* tryParseAnsi(const Char* start, const Char* end, TokenType& t
 
     // Try the two-byte and nF escape sequences
     if (c == 0x1b) {
-        const Char* escEnd = parseEscapeSequence(start, end);
+        const Char* escEnd = parseEscapeSequence(start, end, unfinished);
         if (escEnd) {
-            type = TokenType::Control;
+            type = unfinished ? TokenType::Unfinished : TokenType::Control;
             return escEnd;
         }
     }
@@ -943,10 +963,8 @@ static std::optional<WTF::String> emitSliceStreaming(
                 emit = true;
                 break;
             }
-            case TokenType::Control:
+            default: // Control, Unfinished
                 if (!filterCloseOnly) emit = true;
-                break;
-            default:
                 break;
             }
             if (emit)
@@ -1003,6 +1021,18 @@ static std::optional<WTF::String> emitSliceStreaming(
         specHyperlink = activeHyperlink;
         specHyperlinkClosePrefix = activeHyperlinkClosePrefix;
         specHyperlinkTerminator = activeHyperlinkTerminator;
+    };
+    // Unfinished tokens that end `pending` go behind the zone mark: in front of the ellipsis they would take its start.
+    auto flushIntoSpecZone = [&]() {
+        unsigned unfinishedTail = 0;
+        if (!inSpecZone) {
+            for (size_t i = pending.size(); i > 0 && pending[i - 1].type == TokenType::Unfinished; --i)
+                unfinishedTail += static_cast<unsigned>(pending[i - 1].end - pending[i - 1].start);
+        }
+        flushPending(/*filterCloseOnly=*/false);
+        if (inSpecZone) return;
+        enterSpecZone();
+        specZoneMark -= unfinishedTail;
     };
     const size_t specEnd = (ellipsisEndBudget > 0) ? end + ellipsisEndBudget : end;
 
@@ -1073,9 +1103,10 @@ static std::optional<WTF::String> emitSliceStreaming(
                 if (activeHyperlink) result.append(activeHyperlinkCode);
             }
             if (include) {
-                flushPending(/*filterCloseOnly=*/false);
                 if (!endUnbounded && position >= end && ellipsisEndBudget > 0)
-                    enterSpecZone();
+                    flushIntoSpecZone();
+                else
+                    flushPending(/*filterCloseOnly=*/false);
                 result.append(std::span { p, charLen });
             } else {
                 pending.clear();

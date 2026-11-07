@@ -448,6 +448,7 @@ describe("Bun.stripANSI", () => {
     ["ab\x1bcd", "abd"], // Fs: RIS
     ["ab\x1b(Bcd", "abcd"], // nF: charset designation
     ["ab\x1b#8d", "abd"], // nF: DECALN
+    ["a\x1b(\u{1F600}b", "ab"], // nF: the final character is one code point
     ["a\x1bP+q544e\x1b\\b", "ab"], // DCS ... ST
     ["a\x1b_apc payload\x1b\\b", "ab"], // APC ... ST
     ["\x1b[31mre\x1b\x1b[0md", "red"], // ESC re-introduces a sequence

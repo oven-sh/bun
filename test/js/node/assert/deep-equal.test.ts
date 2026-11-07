@@ -2243,6 +2243,42 @@ const orderedPairs: OrderedPair[] = [
     strict: [true, true],
     loose: [true, true],
   },
+  // A hole at the end of an array has no key: only the lengths tell such an array from a Proxy of a shorter one.
+  {
+    first: "[1, <hole>]",
+    second: "a Proxy of [1]",
+    a: () => [1, ,],
+    b: () => new Proxy([1], {}),
+    strict: [false, false],
+    loose: [false, false],
+    looseBug: ["reports equal", "reports equal"],
+  },
+  {
+    first: "[<hole>]",
+    second: "a Proxy of []",
+    a: () => [,],
+    b: () => new Proxy([], {}),
+    strict: [false, false],
+    loose: [false, false],
+    looseBug: ["reports equal", "reports equal"],
+  },
+  {
+    first: "a Proxy of [1, <hole>]",
+    second: "a Proxy of [1]",
+    a: () => new Proxy([1, ,], {}),
+    b: () => new Proxy([1], {}),
+    strict: [false, false],
+    loose: [false, false],
+    looseBug: ["reports equal", "reports equal"],
+  },
+  {
+    first: "[1, <hole>]",
+    second: "a Proxy of [1, <hole>]",
+    a: () => [1, ,],
+    b: () => new Proxy([1, ,], {}),
+    strict: [true, true],
+    loose: [true, true],
+  },
   // An element that is a getter is read, whether it is enumerable or not. A hole is no element.
   {
     first: "[1, <hole>]",

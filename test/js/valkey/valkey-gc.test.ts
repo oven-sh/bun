@@ -464,7 +464,7 @@ test.concurrent("RedisClient survives GC after a command throws during argument 
 });
 
 test.concurrent(
-  "set and send write the original key bytes when a later argument's toString() detaches the key's buffer",
+  "commands write the original key bytes when converting a later argument detaches the key's buffer",
   async () => {
     const src = `
     const net = require("node:net");
@@ -517,10 +517,15 @@ test.concurrent(
       return key;
     }
 
-    for (const [name, run] of [
+    const rows = [
       ["first-key", key => client.set(key, value(key))],
       ["second-key", key => client.send("LPUSH", [key, value(key)])],
-    ]) {
+      ["third-key", key => client.send("LPUSH", Object.defineProperty([key, "v"], 1, { get: () => String(value(key)) }))],
+      ["fourth-key", key => client.append(key, value(key))],
+      ["fifth-key", key => client.mget(key, value(key))],
+      ["sixth-key", key => client.hmget(key, [value(key)])],
+    ];
+    for (const [name, run] of rows) {
       want++;
       const done = new Promise(r => (resolveFrame = r));
       run(key(name)).catch(() => {});
@@ -529,7 +534,7 @@ test.concurrent(
 
     client.close();
     server.close();
-    console.log(JSON.stringify([wire.includes("first-key"), wire.includes("second-key")]));
+    console.log(JSON.stringify(rows.filter(([name]) => !wire.includes(name)).map(([name]) => name)));
   `;
 
     await using proc = Bun.spawn({
@@ -541,7 +546,7 @@ test.concurrent(
 
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe("[true,true]");
+    expect(stdout.trim()).toBe("[]");
     expect(exitCode).toBe(0);
   },
 );

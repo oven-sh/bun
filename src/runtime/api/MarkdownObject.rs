@@ -132,15 +132,26 @@ macro_rules! parser_options {
     }};
 }
 
-/// Pins a buffer input for the render, which can re-enter JS; `None` for a string.
-fn pin(global: &JSGlobalObject, input: &StringOrBuffer) -> JsResult<Option<PinnedArrayBuffer>> {
+/// Pins a buffer input for the render, which can re-enter JS; `None` for a string. Replaces `input` with a copy if a
+/// pin doesn't keep its bytes: JS can free them, or there is no `ArrayBuffer` to pin yet and `.buffer` makes an unpinned one.
+fn pin(
+    global: &JSGlobalObject,
+    input: &mut StringOrBuffer<'static>,
+) -> JsResult<Option<PinnedArrayBuffer>> {
     let StringOrBuffer::Buffer(buffer) = input else {
         return Ok(None);
     };
-    match PinnedArrayBuffer::pin(global, buffer.buffer.value) {
-        Some(pinned) => Ok(Some(pinned)),
-        None => Err(global.throw_out_of_memory()),
+    let Some(pinned) = PinnedArrayBuffer::pin(global, buffer.buffer.value) else {
+        return Err(global.throw_out_of_memory());
+    };
+    if pinned.is_detached() || (pinned.pinned && !pinned.can_be_freed_while_pinned()) {
+        return Ok(Some(pinned));
     }
+    let Some(copy) = pinned.try_copy_bytes() else {
+        return Err(global.throw_out_of_memory());
+    };
+    *input = StringOrBuffer::owned(copy);
+    Ok(None)
 }
 
 /// `bun:internal-for-testing`'s `setMaxMarkdownBlockBytesForTesting(limit)`:
@@ -212,12 +223,12 @@ pub(crate) fn render<'a>(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
+    let Some(mut buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = pin(global_this, &buffer)?;
+    let pinned = pin(global_this, &mut buffer)?;
     let input: &[u8] = match &pinned {
         Some(p) => p.slice(),
         None => buffer.slice(),
@@ -296,12 +307,12 @@ fn render_ast(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
+    let Some(mut buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = pin(global_this, &buffer)?;
+    let pinned = pin(global_this, &mut buffer)?;
     let input: &[u8] = match &pinned {
         Some(p) => p.slice(),
         None => buffer.slice(),

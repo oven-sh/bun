@@ -598,29 +598,33 @@ parent: &ref
         expect(names).toEqual([String(YAML.parse(key))]);
       });
 
-      test("it is named once the input has been read", () => {
+      test.each([
+        ["Array.prototype.toString", Array.prototype, "toString", "replaced a,b", "[object Object]"],
+        ["Array.prototype.join", Array.prototype, "join", "replaced a,b", "[object Object]"],
+        ["Object.prototype.toString", Object.prototype, "toString", "a,b", "replaced [object Object]"],
+      ] as const)("it is named by %s once the input has been read", (_, prototype: any, method, sequence, mapping) => {
         const input = new TextEncoder().encode(
           "before: a value\n? [a, b]\n: first\nafter: another value\n? {c: d}\n: second\nlast: [x, {y: z}]\n",
         );
-        const { toString } = Array.prototype;
+        const original = prototype[method];
         let calls = 0;
         let result;
-        Array.prototype.toString = function () {
+        prototype[method] = function () {
           calls++;
           input.fill(0x21);
-          return `replaced ${toString.call(this)}`;
+          return `replaced ${original.call(this)}`;
         };
         try {
           result = YAML.parse(input);
         } finally {
-          Array.prototype.toString = toString;
+          prototype[method] = original;
         }
         expect(calls).toBe(1);
         expect(Object.entries(result as object)).toEqual([
           ["before", "a value"],
-          ["replaced a,b", "first"],
+          [sequence, "first"],
           ["after", "another value"],
-          ["[object Object]", "second"],
+          [mapping, "second"],
           ["last", ["x", { y: "z" }]],
         ]);
       });

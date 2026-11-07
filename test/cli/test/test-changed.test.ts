@@ -1,8 +1,8 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
-import { appendFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { appendFileSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, sep } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
 // headroom on slow ASAN/CI machines.
@@ -394,6 +394,16 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a test file named twice is selected twice", async () => {
+    using dir = tempDir("test-changed-twice", fixture);
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "src", "other.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir), ["./b.test.ts", "./b.test.ts"]);
+    expect(stderr).toContain("1 changed file, running 2/2 test files");
+    expect(exitCode).toBe(0);
+  });
+
   test("a node:vm timeout can interrupt a hot loop", async () => {
     using dir = tempDir("test-changed-vm-timeout", {
       "package.json": JSON.stringify({ name: "vm-timeout", type: "module" }),
@@ -411,6 +421,309 @@ test("hot", () => {
     const { stderr, exitCode } = await runTestChanged(String(dir));
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
+  });
+
+  // `bun test` finds a test file behind a symbolic link under the path of its
+  // walk. The module graph, like git, names the file by its real path. The
+  // file header names the real path too, except with --parallel.
+  describe("symbolic links", () => {
+    const limitTest = (from: string) =>
+      `import { test, expect } from "bun:test";\nimport { limit } from "${from}";\ntest("limit", () => expect(limit).toBeNumber());\n`;
+    const plainTest = `import { test, expect } from "bun:test";\ntest("plain", () => expect(1).toBe(1));\n`;
+    const limit = (n: number) => `export const limit = ${n};\n`;
+    const pkg = (name: string) => JSON.stringify({ name, type: "module" });
+    const touch = (dir: string, path: string) => appendFileSync(join(dir, path), "// touched\n");
+
+    type LinkCase = {
+      files: Record<string, string>;
+      /** `[path, target]` of each link. The target is relative to the directory of the link. */
+      links: [string, string][];
+      /** The git repository, relative to the temporary directory. */
+      repo?: string;
+      /** The change that is not committed, relative to the repository: a file to edit, or a link and its new target. */
+      change: string | [string, string];
+      /** Where `bun test` runs, relative to the repository. */
+      cwd?: string;
+      args?: (dir: string) => string[];
+      /** Basenames that can show in a file header, and the ones that must. */
+      headers: string[];
+      ran: string[];
+      /** How `ran` divides between shard 1 of 2 and shard 2 of 2. `--shard` sorts the selected paths. */
+      shards?: [string[], string[]];
+      status: string;
+    };
+
+    // shared-tests/ is linked into packages/a, and `bun test` runs in packages/a.
+    const suite = {
+      files: {
+        "package.json": pkg("root"),
+        "shared-tests/limits.ts": limit(1),
+        "shared-tests/contract.test.ts": limitTest("./limits"),
+        "packages/a/package.json": pkg("a"),
+        "packages/a/tests/plain.test.ts": plainTest,
+      },
+      links: [["packages/a/tests/shared", "../../../shared-tests"]] as [string, string][],
+      change: "shared-tests/limits.ts",
+      cwd: "packages/a",
+      headers: ["contract.test.ts", "plain.test.ts"],
+      ran: ["contract.test.ts"],
+      status: "1 changed file, running 1/2 test files",
+    };
+    const twoTests = {
+      ...suite,
+      files: { ...suite.files, "shared-tests/other.test.ts": limitTest("./limits") },
+      headers: ["contract.test.ts", "other.test.ts", "plain.test.ts"],
+      ran: ["contract.test.ts", "other.test.ts"],
+    };
+    // `l` is a link to the directory of the test, and the test is named through it.
+    const positional = {
+      files: {
+        "package.json": pkg("positional"),
+        "real/limits.ts": limit(1),
+        "real/t.test.ts": limitTest("./limits"),
+      },
+      links: [["l", "real"]] as [string, string][],
+      change: "real/limits.ts",
+      headers: ["t.test.ts"],
+      ran: ["t.test.ts"],
+      status: "1 changed file, running 1/1 test file",
+    };
+    // t.test.ts is a link to real/x.ts, which no walk finds by its own name.
+    const fileLink = {
+      files: {
+        "package.json": pkg("file-link"),
+        "real/limits.ts": limit(1),
+        "real/x.ts": limitTest("./limits"),
+        "plain.test.ts": plainTest,
+      },
+      links: [["t.test.ts", "real/x.ts"]] as [string, string][],
+      headers: ["x.ts", "plain.test.ts"],
+      ran: ["x.ts"],
+      status: "1 changed file, running 1/2 test files",
+    };
+
+    // These need only a link to a directory, which is a junction on Windows.
+    const directoryLinks: Record<string, LinkCase> = {
+      "a test in a linked directory, when a file that it imports changes": suite,
+      "a test in a linked directory, when the test file changes": {
+        ...suite,
+        change: "shared-tests/contract.test.ts",
+      },
+      "a test in a linked directory that is the root in bunfig.toml": {
+        ...suite,
+        files: { ...suite.files, "packages/a/bunfig.toml": `[test]\nroot = "./tests/shared"\n` },
+        headers: ["contract.test.ts"],
+        status: "1 changed file, running 1/1 test file",
+      },
+      "a test file named through a linked directory": { ...positional, args: () => ["--changed", "./l/t.test.ts"] },
+      "a linked directory named on the command line": { ...positional, args: () => ["--changed", "./l"] },
+      "a test file named by an absolute path through a linked directory": {
+        ...positional,
+        args: dir => ["--changed", join(dir, "l", "t.test.ts")],
+      },
+      "a test file named by an absolute path through a link above the repository": {
+        files: {
+          "repo/package.json": pkg("above"),
+          "repo/limits.ts": limit(1),
+          "repo/t.test.ts": limitTest("./limits"),
+        },
+        links: [["via", "repo"]],
+        repo: "repo",
+        change: "limits.ts",
+        args: dir => ["--changed", join(dir, "via", "t.test.ts")],
+        headers: ["t.test.ts"],
+        ran: ["t.test.ts"],
+        status: "1 changed file, running 1/1 test file",
+      },
+      // Two selected files, so that --parallel starts workers.
+      "tests in a linked directory with --parallel": {
+        ...twoTests,
+        args: () => ["--changed", "--parallel=2"],
+        status: "1 changed file, running 2/3 test files",
+      },
+      // The walk from the root finds each shared test under its real path and
+      // through packages/a. The graph selects it once, under its real path.
+      "a test found under its real path and through a link runs once": {
+        ...suite,
+        cwd: ".",
+        status: "1 changed file, running 1/3 test files",
+      },
+      "tests found under their real path and through a link run once with --parallel": {
+        ...twoTests,
+        cwd: ".",
+        args: () => ["--changed", "--parallel=2"],
+        status: "1 changed file, running 2/5 test files",
+      },
+      // The walk finds the link `aaa` before shared-tests/, and the change is to the test file.
+      "a test found through a link and then under its real path runs once when it changes": {
+        files: {
+          "package.json": pkg("link-first"),
+          "shared-tests/limits.ts": limit(1),
+          "shared-tests/contract.test.ts": limitTest("./limits"),
+          "plain.test.ts": plainTest,
+        },
+        links: [["aaa", "shared-tests"]],
+        change: "shared-tests/contract.test.ts",
+        headers: ["contract.test.ts", "plain.test.ts"],
+        ran: ["contract.test.ts"],
+        status: "1 changed file, running 1/3 test files",
+      },
+      // A walk finds a/ before deep/z/, whatever the order of a listing. The real path
+      // is the selected one, and it sorts after c.test.ts.
+      "a test found through a link and then under its real path is in the shard of its real path": {
+        files: {
+          "package.json": pkg("shard"),
+          "limits.ts": limit(1),
+          "c.test.ts": limitTest("./limits"),
+          "deep/z/limit.test.ts": limitTest("../../limits"),
+        },
+        links: [["a", "deep/z"]],
+        change: "limits.ts",
+        headers: ["c.test.ts", "limit.test.ts"],
+        ran: ["c.test.ts", "limit.test.ts"],
+        shards: [["c.test.ts"], ["limit.test.ts"]],
+        status: "1 changed file, running 2/3 test files",
+      },
+      // The real directory is outside the walk. The walk finds zz/ before aa/deep/, and
+      // the smallest path is the selected one: it sorts before m.test.ts.
+      "a test found through two links is selected once, under the smallest path": {
+        files: {
+          "package.json": pkg("two-links"),
+          "shared/limits.ts": limit(1),
+          "shared/contract.test.ts": limitTest("./limits"),
+          "packages/m.test.ts": limitTest("../shared/limits"),
+        },
+        links: [
+          ["packages/zz", "../shared"],
+          ["packages/aa/deep", "../../shared"],
+        ],
+        change: "shared/limits.ts",
+        cwd: "packages",
+        headers: ["contract.test.ts", "m.test.ts"],
+        ran: ["contract.test.ts", "m.test.ts"],
+        shards: [["contract.test.ts"], ["m.test.ts"]],
+        status: "1 changed file, running 2/3 test files",
+      },
+    };
+
+    // A link to a file needs a privilege on Windows, and git there checks a
+    // tracked link out as a plain file unless core.symlinks is on.
+    const fileLinks: Record<string, LinkCase> = {
+      "a test file that is a link, when a file that it imports changes": { ...fileLink, change: "real/limits.ts" },
+      "a test file that is a link, when its target changes": { ...fileLink, change: "real/x.ts" },
+      "an imported link, when its target changes": {
+        files: {
+          "package.json": pkg("imported-link"),
+          "a.ts": limit(1),
+          "t.test.ts": limitTest("./limits"),
+          "plain.test.ts": plainTest,
+        },
+        links: [["limits.ts", "a.ts"]],
+        change: "a.ts",
+        headers: ["t.test.ts", "plain.test.ts"],
+        ran: ["t.test.ts"],
+        status: "1 changed file, running 1/2 test files",
+      },
+      // The walk finds y.test.ts first. git names only the link, so the link is the selected one.
+      "a test file link that the change points at a test of the walk": {
+        files: {
+          "package.json": pkg("repointed"),
+          "x.test.ts": plainTest,
+          "y.test.ts": plainTest,
+        },
+        links: [["links/t.test.ts", "../x.test.ts"]],
+        change: ["links/t.test.ts", "../y.test.ts"],
+        headers: ["x.test.ts", "y.test.ts"],
+        ran: ["y.test.ts"],
+        status: "1 changed file, running 1/3 test files",
+      },
+      // package.json is a file, so the second of the four test files does not
+      // resolve and has no place in the module graph.
+      "a test file that does not resolve does not move the test files after it": {
+        files: {
+          "package.json": pkg("unresolved"),
+          "real/first.ts": limitTest("./first-limits"),
+          "real/first-limits.ts": limit(1),
+          "real/second.ts": limitTest("./second-limits"),
+          "real/second-limits.ts": limit(2),
+          "real/third.ts": limitTest("./third-limits"),
+          "real/third-limits.ts": limit(3),
+        },
+        links: [
+          ["a.test.ts", "real/first.ts"],
+          ["z1.test.ts", "real/second.ts"],
+          ["z2.test.ts", "real/third.ts"],
+        ],
+        change: "real/third-limits.ts",
+        args: () => ["--changed", "./a.test.ts", "./package.json/nope.test.ts", "./z1.test.ts", "./z2.test.ts"],
+        headers: ["first.ts", "second.ts", "third.ts", "nope.test.ts"],
+        ran: ["third.ts"],
+        status: "1 changed file, running 1/4 test files",
+      },
+    };
+
+    // `gitEnv` names the author, so the repository needs no configuration.
+    async function commitAll(repo: string) {
+      for (const args of [
+        ["init", "-q"],
+        ["add", "-A"],
+        ["commit", "-q", "-m", "initial"],
+      ]) {
+        await using proc = Bun.spawn({
+          cmd: ["git", ...args],
+          cwd: repo,
+          env: gitEnv,
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed in ${repo}:\n${stderr}`);
+      }
+    }
+
+    async function run(c: LinkCase) {
+      using dir = tempDir("test-changed-link", c.files);
+      const root = String(dir);
+      const repo = join(root, c.repo ?? ".");
+      for (const [path, target] of c.links) {
+        const at = join(root, path);
+        mkdirSync(dirname(at), { recursive: true });
+        if (!isWindows) {
+          symlinkSync(target, at);
+          continue;
+        }
+        symlinkSync(join(dirname(at), target), at, "junction");
+        // git for Windows must not walk into the junction.
+        if (at.startsWith(repo + sep))
+          appendFileSync(join(repo, ".gitignore"), `/${relative(repo, at).replaceAll(sep, "/")}\n`);
+      }
+      await commitAll(repo);
+      if (typeof c.change === "string") {
+        touch(repo, c.change);
+      } else {
+        rmSync(join(repo, c.change[0]));
+        symlinkSync(c.change[1], join(repo, c.change[0]));
+      }
+
+      const runs = await Promise.all(
+        (c.shards ? [["--shard=1/2"], ["--shard=2/2"]] : [[]]).map(async shard => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "test", ...(c.args?.(root) ?? ["--changed"]), ...shard],
+            cwd: join(repo, c.cwd ?? "."),
+            env: gitEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+            stdin: "ignore",
+          });
+          const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { status: /^--changed: (.*?)\r?$/m.exec(stderr)?.[1], ran: ranFiles(stderr, c.headers), exitCode };
+        }),
+      );
+      expect(runs).toEqual((c.shards ?? [c.ran]).map(ran => ({ status: c.status, ran: ran.toSorted(), exitCode: 0 })));
+    }
+
+    test.each(Object.entries(directoryLinks))("%s", (_, c) => run(c));
+    test.skipIf(isWindows).each(Object.entries(fileLinks))("%s", (_, c) => run(c));
   });
 });
 
@@ -479,6 +792,49 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     proc.kill();
     reader.releaseLock();
   }, 60_000);
+
+  test("editing the import of a test in a linked directory reruns that test", async () => {
+    using dir = tempDir("test-changed-watch-link", {
+      "package.json": JSON.stringify({ name: "root" }),
+      "shared-tests/limits.ts": `export const limit = 1;\n`,
+      "shared-tests/contract.test.ts": `import { test, expect } from "bun:test";\nimport { limit } from "./limits";\ntest("contract", () => expect(limit).toBe(1));\n`,
+      "packages/a/package.json": JSON.stringify({ name: "a", type: "module" }),
+      "packages/a/tests/plain.test.ts": `import { test, expect } from "bun:test";\ntest("plain", () => expect(1).toBe(1));\n`,
+    });
+    symlinkSync(join("..", "..", "..", "shared-tests"), join(String(dir), "packages", "a", "tests", "shared"));
+    initRepo(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
+      cwd: join(String(dir), "packages", "a"),
+      env: gitEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    async function waitFor(needle: string, from = 0): Promise<void> {
+      while (!buf.slice(from).includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`stream closed before seeing ${JSON.stringify(needle)}\n${buf}`);
+        buf += decoder.decode(value, { stream: true });
+      }
+    }
+
+    await waitFor("no changed files");
+    await waitFor("Ran 0 tests");
+
+    // The scan puts the real limits.ts in the watcher. Wait for the summary of
+    // the restarted run, whatever it selected, and then look at what ran.
+    const before = buf.length;
+    appendFileSync(join(String(dir), "shared-tests", "limits.ts"), "// touched\n");
+    await waitFor(" across ", before);
+    expect(ranFiles(buf.slice(before), ["contract.test.ts", "plain.test.ts"])).toEqual(["contract.test.ts"]);
+  });
 
   // Regression for: with two uncommitted test files, editing one of them
   // during --changed --watch should only re-run that one, not both.

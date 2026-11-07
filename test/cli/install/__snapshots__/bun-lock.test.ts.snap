@@ -134,7 +134,7 @@ exports[`should convert a binary lockfile with invalid optional peers 1`] = `
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "eassist",
+      "name": "pkg1",
       "dependencies": {
         "langchain": "^0.0.194",
       },

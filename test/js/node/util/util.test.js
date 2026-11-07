@@ -55,6 +55,51 @@ describe("util", () => {
       expect(util.toUSVString(strings[i])).toBe(outputs[i]);
     }
   });
+  it("toUSVString coerces objects with the string hint", () => {
+    const calls = [];
+    const input = {
+      toString() {
+        calls.push("toString");
+        return "hello\uD800";
+      },
+      valueOf() {
+        calls.push("valueOf");
+        throw new Error("valueOf must not be called");
+      },
+    };
+    expect(util.toUSVString(input)).toBe("hello\uFFFD");
+    expect(calls).toEqual(["toString"]);
+
+    const fallback = {
+      toString() {
+        return {};
+      },
+      valueOf() {
+        return "fallback";
+      },
+    };
+    expect(util.toUSVString(fallback)).toBe("fallback");
+
+    const hints = [];
+    const prim = {
+      [Symbol.toPrimitive](hint) {
+        hints.push(hint);
+        return "x";
+      },
+    };
+    expect(util.toUSVString(prim)).toBe("x");
+    expect(hints).toEqual(["string"]);
+
+    expect(() => util.toUSVString(Symbol("s"))).toThrow(TypeError);
+
+    const original = String.prototype.toWellFormed;
+    String.prototype.toWellFormed = () => "tampered";
+    try {
+      expect(util.toUSVString("ab\uD800")).toBe("ab\uFFFD");
+    } finally {
+      String.prototype.toWellFormed = original;
+    }
+  });
   it("inherits", () => {
     function Bar() {}
     Bar.prototype.bar = function () {};

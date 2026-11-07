@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_outgoing.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 7eb68379dcc85e37da343c90d1da52f21b0bd91937cea041c06b56a6db7551fc.
+// Written against that file with the SHA-256 844b8c71bb274a66021c5d1bf7478198b9f0155beb008519d5a1618352888462.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_outgoing"
@@ -2336,6 +2336,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headerNames", {
 });
 
 export default {
+  kCorked,
   kHighWaterMark,
   kUniqueHeaders,
   kOutHeaders,

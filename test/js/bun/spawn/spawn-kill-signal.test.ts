@@ -148,6 +148,24 @@ describe.concurrent.skipIf(isWindows)("signal names map to the OS's own numbers"
   });
 });
 
+// spawnSync starts to listen to its AbortSignal before it watches the child. An abort that is already there by then
+// asked for a kill that was not sent, and the call waited for the child to end by itself. Here the signal fires
+// while the options are read: `signal` is read first and is not aborted yet, so nothing throws.
+test.skipIf(isWindows)("spawnSync sends killSignal for an AbortSignal that fired before the child is watched", () => {
+  const controller = new AbortController();
+  const { exitCode, signalCode } = Bun.spawnSync({
+    cmd: ["sleep", "1"],
+    ...quiet,
+    signal: controller.signal,
+    killSignal: "SIGHUP",
+    get timeout() {
+      controller.abort();
+      return undefined;
+    },
+  });
+  expect({ exitCode, signalCode }).toEqual<unknown>({ exitCode: null, signalCode: "SIGHUP" });
+});
+
 // Before, macOS sent signal 30 for "SIGPWR", which is SIGUSR1 there.
 test.each(unsupportedSignals)("%s: a name this OS has no signal for is rejected like an unknown name", async name => {
   const rejected = (fn: () => unknown) => {

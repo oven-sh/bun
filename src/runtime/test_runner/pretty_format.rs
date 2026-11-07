@@ -1084,6 +1084,14 @@ impl<'a> Formatter<'a> {
             self.failed = true;
             return Err(self.global_this.throw_stack_overflow());
         }
+        // Only a failure message tracks `output_length`. A snapshot keeps `PlainDate {}`.
+        if matches!(FORMAT, Tag::Object)
+            && js_type == JSType::Object
+            && self.output_length.is_some()
+            && print_temporal(self, writer_, value)?
+        {
+            return Ok(());
+        }
         // reshaped for borrowck — `WrappedWriter` borrows both writer_
         // and &mut self.estimated_line_length; we use a local wrapper and sync
         // `failed` at scope exit. estimated_line_length is unused by WrappedWriter
@@ -3148,6 +3156,24 @@ fn item(global: &JSGlobalObject, value: JSValue, index: u32) -> JsResult<JSValue
         safe fn SnapshotFormat__getIndex(global: &JSGlobalObject, value: JSValue, index: u32) -> JSValue;
     }
     jsc::host_fn::from_js_host_call(global, || SnapshotFormat__getIndex(global, value, index))
+}
+
+/// Prints a Temporal value as `Temporal.PlainDate 2020-01-02`, or returns false for any other value. Its state is in internal slots, not in properties.
+#[cold]
+#[inline(never)]
+fn print_temporal(formatter: &mut Formatter<'_>, writer: &mut dyn bun_io::Write, value: JSValue) -> JsResult<bool> {
+    unsafe extern "C" {
+        safe fn SnapshotFormat__temporalText(global: &JSGlobalObject, value: JSValue, text: &mut bun_core::String) -> jsc::TemporalType;
+    }
+    let global = formatter.global_this;
+    let mut text = bun_core::String::EMPTY;
+    let class = jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__temporalText(global, value, &mut text))?;
+    if class == jsc::TemporalType::None {
+        return Ok(false);
+    }
+    formatter.add_for_new_line(class.name().len() + 1 + text.length());
+    formatter.failed |= writer.write_fmt(format_args!("{} {}", class.name(), text)).is_err();
+    Ok(true)
 }
 
 pub(crate) fn member_by_value(global: &JSGlobalObject, value: JSValue, key: JSValue) -> JsResult<JSValue> {

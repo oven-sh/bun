@@ -1264,7 +1264,7 @@ static JSValue mockExportsOfLoadedModule(Zig::GlobalObject* globalObject, const 
     RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, exports, spy));
 }
 
-// No other mock may be made from a module whose methods a spy mock has replaced: see dependencyKeyOfModuleMock(). The module stays
+// dependencyKeyOfModuleMock() doesn't pick a module whose methods a spy mock has replaced for another mock. The module stays
 // registered, because the mock's own module is linked to it. A package that Vitest externalizes is one instance for the whole run,
 // so the mocks of it share that instance.
 static void didSpyOnModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::AbstractModuleRecord* record)
@@ -3189,6 +3189,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         mock->patchOrder = previous->patchOrder;
         if (JSValue exports = previous->originalCommonJSExports.get())
             mock->originalCommonJSExports.set(vm, mock, exports);
+        // A module of `previous` that is still loading imports the instance that `previous` is made from, and doesn't wait for another one.
+        if (mock->spy)
+            mock->instanceOfOriginal = previous->instanceOfOriginal;
     } else {
         if (loaded.esmNamespace)
             mock->originalExports.set(vm, mock, JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure()));
@@ -3743,7 +3746,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
 
     for (auto& module : plugins.moduleMocksBeingLoaded.keys())
         evict.modules.append(module);
-    // A mock that was replaced in place, or dropped by Bun.plugin.clearAll(), was never unmocked, so what it spied on is still registered.
+    // Nothing unmocks a mock that another kind of mock replaces in place, or that Bun.plugin.clearAll() drops, so what it spied on is still registered.
     plugins.spiedModules.removeIf([](auto& spied) { return !spied.value; });
     for (auto& spied : plugins.spiedModules.values()) {
         String key = uncheckedDowncast<JSC::AbstractModuleRecord>(spied.get())->moduleKey().string();

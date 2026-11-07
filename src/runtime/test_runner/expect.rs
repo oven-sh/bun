@@ -987,8 +987,10 @@ impl Expect {
         };
         match format {
             SnapshotFormat::Vitest => Ok(thrown),
-            SnapshotFormat::Bun if !thrown.is_any_error() => Ok(JSValue::UNDEFINED),
-            SnapshotFormat::Bun => Ok(thrown.get_truthy(global_this, "message")?.unwrap_or(JSValue::UNDEFINED)),
+            SnapshotFormat::Bun if !thrown.is_object() => Ok(JSValue::UNDEFINED),
+            SnapshotFormat::Bun => {
+                Ok(thrown.fast_get_truthy(global_this, bun_jsc::BuiltinName::Message)?.unwrap_or(JSValue::UNDEFINED))
+            }
             SnapshotFormat::Jest => Self::message_with_causes(global_this, thrown),
         }
     }
@@ -1268,9 +1270,16 @@ impl Expect {
         property_matchers: Option<JSValue>,
         saved: &[u8],
     ) -> JsResult<bool> {
+        // An older Bun stored `undefined` for a thrown object that `is_any_error()` is false for, whatever its `message`.
+        let undefined_to_older_bun =
+            matches!(received, Received::Thrown(thrown) if thrown.is_object() && !thrown.is_any_error());
+        let or_older_bun = or_older_bun || undefined_to_older_bun;
         for format in or_older_bun.then_some(None).into_iter().chain(formats.iter().copied().map(Some)) {
             let is_it = (|| {
-                let value = Self::value_to_snapshot(global_this, received, format.unwrap_or(SnapshotFormat::Bun))?;
+                let value = match format {
+                    None if undefined_to_older_bun => JSValue::UNDEFINED,
+                    _ => Self::value_to_snapshot(global_this, received, format.unwrap_or(SnapshotFormat::Bun))?,
+                };
                 let Some(format) = format else {
                     // Older Bun wrote the matchers into the object in place, which didn't stick for getters or frozen objects.
                     return Ok((property_matchers.is_some() && JestPrettyFormat::did_older_bun_print(global_this, with_matchers, saved)?)

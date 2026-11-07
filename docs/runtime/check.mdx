@@ -130,7 +130,7 @@ See [TypeScript 6 and 7](/typescript-6) for the `tsconfig.json` that Bun recomme
 
 Install your dependencies, then run `bun check`. A type error fails the job.
 
-If your projects are connected by `references`, run [`bun check -b`](#every-project) to check all of them.
+If your projects are connected by `references`, run [`bun check -b`](#every-project) to check all of them. One `bun check -b` at the root checks every project once. See [With a task runner](#with-a-task-runner).
 
 ### GitHub Actions
 
@@ -322,6 +322,27 @@ To run the `typecheck` script of every workspace package, use [`--filter`](/pm/f
 
 ```bash terminal icon="terminal"
 bun --filter '*' typecheck
+```
+
+### With a task runner
+
+`bun check` keeps nothing between runs. Each process reads the projects that its package references from their source files again.
+
+`bun --filter`, Turborepo, and Nx start one process for each package. If two packages reference the same project, both processes read that project. With `-b` in each package, each process also checks and reports the projects that its package references.
+
+To check every project once, run one `bun check -b` from a `tsconfig.json` that references every project:
+
+```bash terminal icon="terminal"
+bun check -b
+```
+
+If the root of the repository has no `tsconfig.json`, add one with `"files": []` and a reference to each project. See [A `tsconfig.json` with nothing but `references`](#a-tsconfigjson-with-nothing-but-references).
+
+```json tsconfig.json icon="file-json"
+{
+  "files": [],
+  "references": [{ "path": "./packages/server" }, { "path": "./packages/web" }]
+}
 ```
 
 ## Check before you run, build, or test

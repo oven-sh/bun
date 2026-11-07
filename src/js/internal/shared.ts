@@ -256,7 +256,7 @@ const observerCounts = new Map<string, number>();
 const kObservers = new Set<NodeEntryObserver>();
 
 /** Entry types routed through this JS-side registry instead of the native observer. */
-const kNodeEntryTypes = new Set(["net", "dns", "http", "http2", "function", "quic"]);
+const kNodeEntryTypes = new Set(["net", "dns", "http", "http2", "function", "quic", "gc"]);
 
 function hasObserver(type: string) {
   return (observerCounts.get(type) ?? 0) > 0;

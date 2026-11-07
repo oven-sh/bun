@@ -84,6 +84,7 @@ class GlobalObject;
 class VersionSqlite3;
 
 namespace Bun {
+class GCPerformanceEntries;
 class StrongRootBlock;
 struct IsolatedInternalModule;
 
@@ -270,6 +271,9 @@ public:
     std::atomic<unsigned> idleCollectionsPending { 0 };
     // Their GCRequest::didFinishEndPhase, made once (JSC__VM__collectAsyncIdle).
     RefPtr<WTF::SharedTask<void()>> idleCollectionDidFinish;
+
+    // Null until this VM has an observer of node:perf_hooks' 'gc' entries.
+    RefPtr<Bun::GCPerformanceEntries> gcPerformanceEntries;
 
     void* bunVM;
     // Opaque box of the Rust VmHandle for this VM: what any *other* thread uses

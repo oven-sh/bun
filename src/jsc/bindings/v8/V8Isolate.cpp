@@ -81,7 +81,7 @@ bool Isolate::GetHeapObjectStatisticsAtLastGC(HeapObjectStatistics*, size_t)
 
 void Isolate::AddGCPrologueCallback(GCCallbackWithData callback, void* data, GCType)
 {
-    // Stored but not fired: JSC's GC does not expose matching phase hooks.
+    // Stored but not fired: JSC has no hook right before and right after a collection on the JS thread, and an addon that times the gap between two later calls would read zero.
     m_globalInternals->gcPrologueCallbacks().append({ callback, data });
 }
 
@@ -94,7 +94,7 @@ void Isolate::RemoveGCPrologueCallback(GCCallbackWithData callback, void* data)
 
 void Isolate::AddGCEpilogueCallback(GCCallbackWithData callback, void* data, GCType)
 {
-    // Stored but not fired: JSC's GC does not expose matching phase hooks.
+    // Stored but not fired: see AddGCPrologueCallback.
     m_globalInternals->gcEpilogueCallbacks().append({ callback, data });
 }
 

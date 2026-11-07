@@ -50,10 +50,12 @@ pub(crate) struct JSTranspiler {
     /// Empty between calls: kept for its capacity.
     pub(crate) scan_pass_result: JsCell<ScanPassResult<'static>>,
     pub(crate) buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
-    // Arena bulk-frees the config strings. Boxed so its
+    // The heap of the constructor if an object or array define is in it, else the process heap. Boxed so its
     // address is stable across the move into `Box<JSTranspiler>` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
     pub(crate) _arena: Box<Arena>,
+    /// About what the instance owns beside itself. Written once, before the wrapper exists.
+    estimated_size: usize,
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
@@ -74,6 +76,8 @@ pub(crate) struct Config {
     pub(crate) macros_buf: Box<[u8]>,
     pub(crate) log: bun_ast::Log,
     pub(crate) runtime: Runtime::Features,
+    /// The string values of `runtime.replace_exports` and of the define table.
+    pub(crate) values: bun_ast::OwnedValues,
     pub(crate) tree_shaking: bool,
     pub(crate) trim_unused_imports: Option<bool>,
 
@@ -99,6 +103,7 @@ impl Default for Config {
                 top_level_await: true,
                 ..Default::default()
             },
+            values: Default::default(),
             tree_shaking: false,
             trim_unused_imports: None,
             dead_code_elimination: true,
@@ -164,7 +169,6 @@ impl Config {
         &mut self,
         global: &JSGlobalObject,
         object: Option<&TranspilerOptions<'_>>,
-        arena: &Arena,
     ) -> JsResult<()> {
         let Some(object) = object else {
             return Ok(());
@@ -522,7 +526,9 @@ impl Config {
                         // `V: Default` upstream and `ReplaceableExport` has no Default. Compute
                         // the value first, then `put` (which upserts without needing a default
                         // slot).
-                        if let Some(expr) = export_replacement_value(value, global, arena)? {
+                        if let Some(expr) =
+                            export_replacement_value(value, global, &mut self.values)?
+                        {
                             replacements
                                 .put(&key, bun_ast::runtime::ReplaceableExport::Replace(expr))
                                 .map_err(|_| bun_jsc::JsError::OutOfMemory)?;
@@ -531,9 +537,11 @@ impl Config {
 
                         if value.is_object() && value.get_length(global)? == 2 {
                             let replacement_value = value.get_index(global, 1)?;
-                            if let Some(to_replace) =
-                                export_replacement_value(replacement_value, global, arena)?
-                            {
+                            if let Some(to_replace) = export_replacement_value(
+                                replacement_value,
+                                global,
+                                &mut self.values,
+                            )? {
                                 let replacement_key = value.get_index(global, 0)?;
                                 let slice = replacement_key.to_bun_string(global)?;
                                 let replacement_name = slice.to_owned_slice();
@@ -827,7 +835,7 @@ impl TransformTask {
 fn export_replacement_value(
     value: JSValue,
     global: &JSGlobalObject,
-    arena: &Arena,
+    values: &mut bun_ast::OwnedValues,
 ) -> JsResult<Option<bun_ast::Expr>> {
     if value.is_boolean() {
         return Ok(Some(Expr {
@@ -861,18 +869,11 @@ fn export_replacement_value(
 
     if value.is_string() {
         let str = value.to_js_string_view(global)?;
-        let utf8 = str.to_utf8();
-        // Bump-allocate so the bytes
-        // live as long as the JSTranspiler arena that owns the resulting Expr;
-        // `E::EString::init` erases the borrow to `'static` per the AST
-        // crate's `Str` convention (see ast/E.rs).
-        let data = arena.alloc_slice_copy(utf8.slice());
         // The result outlives every parse, so don't allocate it in the thread-local store.
-        return Ok(Some(Expr::allocate(
-            arena,
-            bun_ast::E::EString::init(data),
-            bun_ast::Loc::EMPTY,
-        )));
+        return Ok(Some(Expr {
+            data: values.string(str.to_utf8().slice()),
+            loc: bun_ast::Loc::EMPTY,
+        }));
     }
 
     Ok(None)
@@ -909,7 +910,7 @@ impl JSTranspiler {
         // covers config.log, config.tsconfig, arena. ref_count.clearWithoutDestructor is a
         // no-op when we never handed out refs. `bun.destroy(this)` → Box not yet created.
 
-        config.from_js(global, config_arg, arena_ref)?;
+        config.from_js(global, config_arg)?;
 
         if (config.log.warnings + config.log.errors) > 0 {
             return Err(global.throw_value(
@@ -945,6 +946,7 @@ impl JSTranspiler {
             transpiler: JsCell::new(transpiler),
             scan_pass_result: JsCell::new(ScanPassResult::init()),
             buffer_writer: JsCell::new(None),
+            estimated_size: 0,
             ref_count: bun_ptr::RefCount::init(),
         });
         // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
@@ -1000,7 +1002,35 @@ impl JSTranspiler {
         transpiler.options.react_fast_refresh = false;
         transpiler.options.repl_mode = config.repl_mode;
 
+        let heap_bytes = this._arena.allocated_bytes();
+        let keeps_heap = heap_bytes != 0
+            && !own_define_strings(&mut transpiler.options.define, &mut config.values);
+        // A define has its text in `config.transform`, in the options of the transpiler, and in the table.
+        let define_text = config.transform.define.as_ref().map_or(0, |define| {
+            let texts = define.keys.iter().chain(&define.values);
+            3 * texts.map(|text| text.len()).sum::<usize>()
+        });
+        let mut size = transpiler.options.define.memory_cost()
+            + define_text
+            + config.values.memory_cost()
+            + config.tsconfig_buf.len()
+            + config.macros_buf.len();
+        if keeps_heap {
+            size += heap_bytes;
+        } else {
+            // Not a heap for each instance: mimalloc has 64,512 for the process, and instances wait for the GC.
+            let resting = Box::new(Arena::borrowing_default());
+            // SAFETY: as for `arena_ref` above. `this` holds the box for as long as it holds `transpiler`.
+            transpiler.arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(resting.as_ref()) };
+            this._arena = resting;
+        }
+        this.estimated_size = size;
         Ok(bun_core::heap::into_raw(this))
+    }
+
+    /// The GC calls this from its marking threads.
+    pub(crate) fn estimated_size(&self) -> usize {
+        self.estimated_size
     }
 }
 
@@ -1019,6 +1049,31 @@ impl Drop for JSTranspiler {
         // config.tsconfig.deinit() → Option<Box<TSConfigJSON>>: Drop
         // arena.deinit() → Arena: Drop
     }
+}
+
+/// Copies the string values of `define` into `values`. `false`, and no copy, when a value is an object or an array.
+fn own_define_strings(
+    define: &mut bun_js_parser::defines::Define,
+    values: &mut bun_ast::OwnedValues,
+) -> bool {
+    use bun_ast::ExprData::{EArray, EObject, EString};
+    let dots = define.dots.values_mut().flatten();
+    let datas = define
+        .identifiers
+        .values_mut()
+        .chain(dots.map(|dot| &mut dot.data));
+    let mut strings = Vec::new();
+    for data in datas {
+        match data.value {
+            EObject(_) | EArray(_) => return false,
+            EString(string) => strings.push((data, string)),
+            _ => {}
+        }
+    }
+    for (data, string) in strings {
+        data.value = values.string(string.slice8());
+    }
+    true
 }
 
 /// `scan` / `transform_sync` / `scan_imports` temporarily point the long-lived

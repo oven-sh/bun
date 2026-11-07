@@ -60,6 +60,7 @@ const promiseOfText = table.instance("Promise").holding({ value: table.string, r
 export const Transpiler = b.class({
   rustPath: "crate::api::js_transpiler::JSTranspiler",
   refCounted: true,
+  estimatedSize: true,
   construct: {
     args: { options: TranspilerOptions.nullable },
     expected: { options: "Expected an object" },

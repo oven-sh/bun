@@ -17,7 +17,6 @@ use crate::ir::generated::{
 use crate::ir::{FunctionId, Id, ModuleId, StringId, StringTable, VariableId, VariableKey};
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind};
-use crate::module_keys::type_attribute_of;
 use crate::modules::{
     self, ExportBinding, ExportLookup, ImportBinding, Interop, ModuleFailureKind, ModuleKind,
     ModuleRef, compare_code_units,
@@ -254,8 +253,8 @@ impl RecordBuilder<'_, '_, '_> {
         match kind {
             ExternalKind::UncompiledCode => {
                 record.external_kind = generated::ExternalKind::UncompiledCode;
-                record.type_attribute =
-                    type_attribute.map(|it| self.strings.intern(type_attribute_of(it).as_bytes()));
+                record.type_attribute = type_attribute
+                    .map(|it| self.strings.intern(it.import_attribute_type().as_bytes()));
             }
             ExternalKind::HostValue => {
                 record.external_kind = generated::ExternalKind::HostValue;

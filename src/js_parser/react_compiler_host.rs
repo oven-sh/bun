@@ -185,7 +185,11 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         let p = &mut *self.p;
         let path = p.arena.alloc_slice_copy(path);
         let index = p.add_import_record_by_range(kind, bun_ast::Range::NONE, path);
-        let namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, path);
+        // An identifier, because `bun test` prints the namespace of an import that it lowers behind hoisted mocks.
+        let name = bun_alloc::arena_format!(in p.arena, "{}", bun_core::fmt::fmt_identifier(path))
+            .into_bump_str()
+            .as_bytes();
+        let namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name);
         VecExt::append(&mut p.module_scope_mut().generated, namespace_ref);
         (index, namespace_ref)
     }

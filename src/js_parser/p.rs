@@ -473,6 +473,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) did_apply_test_feature: bool,
     /// Also computed outside `bun test`, for `uses_test_api()`.
     pub(crate) has_hoisted_mock_stmt: bool,
+    /// The paths that the file's hoisted `mock()` and `unmock()` calls name with a string literal.
+    pub(crate) hoisted_mock_paths: List<'a, js_ast::StoreStr>,
 
     pub(crate) import_meta_glob_use: crate::lower::import_meta_glob::ImportMetaGlobUse,
     pub(crate) import_meta_glob_imports: List<'a, Stmt>,
@@ -9804,6 +9806,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             chai_imports: Default::default(),
             did_apply_test_feature: false,
             has_hoisted_mock_stmt: false,
+            hoisted_mock_paths: BumpVec::new_in(arena),
             import_meta_glob_use: Default::default(),
             import_meta_glob_imports: BumpVec::new_in(arena),
             import_meta_glob_eager_calls: BumpVec::new_in(arena),

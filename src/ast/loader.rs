@@ -168,6 +168,15 @@ impl Loader {
         }
     }
 
+    /// The `type` of the import attribute that selects this loader.
+    pub fn import_attribute_type(self) -> &'static str {
+        match self {
+            Loader::Bunsh => "sh",
+            Loader::SqliteEmbedded => "sqlite",
+            loader => loader.into(),
+        }
+    }
+
     // `from_js` lives in bundler_jsc as an extension trait.
 
     pub(crate) const NAMES: &'static __ComptimeStringMap_LOADER_NAMES = &LOADER_NAMES;

@@ -787,12 +787,9 @@ fn relative_utf8_checked<'a, const WINDOWS: bool, const CHECK_CWD: bool>(
     let (buf, rest) = scratch.slice().split_at_mut(buf_len);
     let (from_buf, tmp_buf) = rest.split_at_mut(buf_len);
     if !WINDOWS && is_absolute_posix_t(from) && is_absolute_posix_t(to) {
-        return match relative_posix_t(from, to, buf, from_buf, tmp_buf) {
-            Ok(answer) => heap
-                .create_utf8_string(answer)
-                .map(|text| Some(R::from_text(text))),
-            Err(error) => Ok(Some(R::from_error(heap, error))),
-        };
+        return heap
+            .create_utf8_string(relative_posix_t(from, to, buf, from_buf, tmp_buf))
+            .map(Some);
     }
     // SAFETY: the callback reads native state and never runs JavaScript.
     let global = unsafe { heap.global() };
@@ -1307,6 +1304,9 @@ fn relative_with_scope<'a, const WINDOWS: bool>(
     from: Text<'a>,
     to: Text<'a>,
 ) -> TextResult<'a> {
+    if from.to_js() == to.to_js() {
+        return Ok(cx.heap.create_latin1_string(b""));
+    }
     match relative_latin1::<WINDOWS, true>(&cx.heap, from, to) {
         Ok(Some(answer)) => Ok(answer),
         _ => relative_other_with_scope::<WINDOWS>(cx, from, to),

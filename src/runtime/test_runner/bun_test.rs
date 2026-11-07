@@ -65,6 +65,35 @@ pub(crate) fn clone_active_strong() -> Option<BunTestPtr> {
     runner.bun_test_root.clone_active_file()
 }
 
+/// Whether the caller is a preload that acts for the whole run: its module, or one of its `aroundAll()` (until
+/// `runSuite()`) and `beforeAll()` hooks in a file that is `first && !last`, where the hook runs once for all test
+/// files. What it sets up stays for every file.
+///
+/// Every other hook of a preload acts for the test file it runs with, and the end of that file undoes what it set up.
+pub(crate) fn is_preload_for_the_run(vm: &VirtualMachine) -> bool {
+    if vm.is_in_preload {
+        return true;
+    }
+    let Some(runner) = Jest::runner_ptr() else { return false };
+    // SAFETY: `runner_ptr` only returns it on the thread that runs the test files. A caller up the stack may hold a
+    // `&mut` to the runner or to the file, so this only reads fields through raw pointers. Each of the first
+    // `once_per_run_groups` groups has one sequence.
+    unsafe {
+        let Some(file) = &*core::ptr::addr_of!((*runner.as_ptr()).bun_test_root.active_file) else { return false };
+        let file = file.as_ptr();
+        let execution = core::ptr::addr_of!((*file).execution);
+        let group_index = (*execution).group_index;
+        if (*file).phase != Phase::Execution || group_index >= (*execution).once_per_run_groups {
+            return false;
+        }
+        let sequence = (*execution).groups[group_index].sequence_start;
+        // A fixture that the hook uses is set up by an entry of its own, and lasts for the file.
+        (*execution).sequences[sequence]
+            .active_entry
+            .is_some_and(|entry| entry.as_ref().added_in_phase == AddedInPhase::Preload)
+    }
+}
+
 pub(crate) use super::done_callback::DoneCallback;
 
 pub(crate) mod js_fns {
@@ -1276,6 +1305,8 @@ impl BunTest {
                 } else {
                     Order::AllOrderResult::EMPTY
                 };
+                // With `last`, the preload's `afterAll()` is due with this file too, so its hooks run around each file.
+                let once_per_run_groups = if self.first_last.first && !self.first_last.last { beforeall_order.end } else { 0 };
                 let describe_seq_start = order.sequences.len();
                 order.generate_order_describe(&mut self.collection.root_scope)?;
                 let describe_seq_end = order.sequences.len();
@@ -1318,6 +1349,7 @@ impl BunTest {
                     unsafe { (*reporter.as_ptr()).jest.summary.shuffled += 1 };
                 }
                 self.execution.load_from_order(&mut order);
+                self.execution.once_per_run_groups = once_per_run_groups;
                 debug::dump_order(&self.execution)?;
                 Ok(Advance::Cont)
             }

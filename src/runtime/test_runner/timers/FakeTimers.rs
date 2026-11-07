@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use crate::api::cron::CronJob;
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::jsc_hooks::timer_all;
+use crate::test_runner::bun_test;
 use crate::timer::{
     AbortSignalTimeout, Clock, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
     ImmediateObject, InHeap, TimeoutObject, TimerHeap, TimerObjectInternals,
@@ -544,7 +545,7 @@ extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
     let this = unsafe { &mut (*timer_all()).fake_timers };
     let vm = global.bun_vm().as_mut();
     if !this.active {
-        this.from_preload = vm.is_in_preload;
+        this.from_preload = bun_test::is_preload_for_the_run(vm);
         return;
     }
     if ms.is_nan() {
@@ -727,7 +728,7 @@ impl FakeTimers {
         self.active = true;
         self.faked = options.faked;
         self.fakes_abort_signal_timeout = options.fakes_abort_signal_timeout;
-        self.from_preload = global.bun_vm().is_in_preload;
+        self.from_preload = bun_test::is_preload_for_the_run(global.bun_vm());
         self.installs = self.installs.wrapping_add(1);
         self.loop_limit = options.loop_limit;
         self.now = Timespec::EPOCH;
@@ -1007,6 +1008,47 @@ impl FakeTimers {
                 api.put(global, original);
             }
         }
+    }
+
+    /// A spy or stub that the first file made before a preload's `beforeAll()` installed this clock is under a fake:
+    /// it is what the fake replaced, and undoing it takes the fake off its global. Puts each of `kept` back, over
+    /// what that left. Runs no JS.
+    #[optimize(size)]
+    fn put_back_fakes(global: &JSGlobalObject, kept: ApiSet) {
+        // SAFETY: per-thread `timer::All`; nothing below re-enters it.
+        let this = unsafe { &mut (*timer_all()).fake_timers };
+        let Some(originals) = this.originals.get() else {
+            return;
+        };
+        this.replaced.retain_mut(|replaced| {
+            let api = replaced.api;
+            let owner = api.owner(global);
+            if !kept.contains(api) || !owner.is_object() {
+                return true;
+            }
+            let name = bun_core::String::static_(api.property());
+            let left = Bun__FakeTimers__getDirect(global, owner, &name);
+            if left == replaced.fake.get() {
+                return true;
+            }
+            // The property is gone or is an accessor again, or the fake is a `performance` that wraps what is gone.
+            if !left.is_object() || api == Api::PerformanceObject {
+                return false;
+            }
+            // As in `fakes`.
+            if matches!(api, Api::Date | Api::Performance) && Bun__FakeTimers__isNativeFunction(left) {
+                replaced.fake = Strong::create(left, global);
+            } else {
+                Bun__FakeTimers__setOriginal(global, originals, replaced.fake.get(), left);
+                api.put(global, replaced.fake.get());
+            }
+            if api == Api::SetTimeout {
+                Bun__FakeTimers__markBuiltinForCompiledCode(global, replaced.original.get(), false);
+                Bun__FakeTimers__markBuiltinForCompiledCode(global, left, true);
+            }
+            replaced.original = Strong::create(left, global);
+            true
+        });
     }
 
     // Below, a returned `JSValue` is the exception a timer callback threw, or empty. A `JsError` means the VM is terminating.
@@ -1736,7 +1778,32 @@ fn advance(global: &JSGlobalObject, ms: f64) -> Result<JSValue, Stop> {
     FakeTimers::run_until(global, now.add_ms_float(ms))
 }
 
-pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
+/// The fakes of a preload's clock that the end of a test file must leave on their globals.
+#[derive(Copy, Clone, Default)]
+pub(crate) struct KeptFakes(ApiSet);
+
+/// Call before the file's spies and stubs are undone, and pass the result to `on_test_file_end` afterwards.
+pub(crate) fn kept_fakes_of_preload(global: &JSGlobalObject) -> KeptFakes {
+    // SAFETY: per-thread `timer::All`; nothing below re-enters it.
+    let this = unsafe { &(*timer_all()).fake_timers };
+    let mut kept = ApiSet::default();
+    if this.active && this.from_preload {
+        for replaced in &this.replaced {
+            let owner = replaced.api.owner(global);
+            let name = bun_core::String::static_(replaced.api.property());
+            // A fake that isn't there is left alone, unless the file has restored the spy that was under it.
+            if owner.is_object()
+                && (Bun__FakeTimers__getDirect(global, owner, &name) == replaced.fake.get()
+                    || JSMock__isRestoredSpy(replaced.original.get()))
+            {
+                kept.0 |= 1 << replaced.api as u16;
+            }
+        }
+    }
+    KeptFakes(kept)
+}
+
+pub(crate) fn on_test_file_end(global: &JSGlobalObject, kept: KeptFakes) {
     // SAFETY: per-thread `timer::All`; field reads only.
     let (active, from_preload) = unsafe {
         let this = &(*timer_all()).fake_timers;
@@ -1751,6 +1818,9 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
         drop(FakeTimers::uninstall(global, Restore::WhereStillInstalled));
     }
     FakeTimers::take_off_stale_fakes(global);
+    if kept.0.0 != 0 {
+        FakeTimers::put_back_fakes(global, kept.0);
+    }
 }
 
 pub(crate) fn is_active() -> bool {

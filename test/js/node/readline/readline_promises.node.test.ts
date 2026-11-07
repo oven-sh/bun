@@ -119,7 +119,9 @@ describe("readline/promises.Readline", () => {
     ["a Writable whose write is not a function", () => Object.defineProperty(sink(), "write", { value: null })],
   ])("the constructor throws ERR_INVALID_ARG_TYPE for %s", (_, make) => {
     const stream = make() as Writable;
-    expect(() => new readlinePromises.Readline(stream)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    const construct = () => new readlinePromises.Readline(stream);
+    expect(construct).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(construct).toThrow('The "stream" argument must be an instance of Writable. Received ');
   });
 
   it.each<[string, () => Writable]>([

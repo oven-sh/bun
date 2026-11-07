@@ -22,7 +22,8 @@ class Readline {
 
   constructor(stream: $Node.Writable, options: { autoCommit?: boolean } | undefined = undefined) {
     isWritable ??= require("internal/streams/utils").isWritable;
-    if (!isWritable(stream)) throw new ERR_INVALID_ARG_TYPE("stream", "Writable", stream);
+    // List form so the message renders "an instance of Writable" like node.
+    if (!isWritable(stream)) throw new ERR_INVALID_ARG_TYPE("stream", ["Writable"], stream);
     this.#stream = stream;
     if (options?.autoCommit != null) {
       validateBoolean(options.autoCommit, "options.autoCommit");

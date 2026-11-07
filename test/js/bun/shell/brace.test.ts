@@ -1,6 +1,8 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
+import { join } from "node:path";
 
 describe("$.braces", () => {
   test("no-op", () => {
@@ -174,6 +176,47 @@ describe("brace + glob composition", () => {
     expect(words).toContain("x.,foo");
     // ...and does not split into a spurious `]foo` branch.
     expect(words).not.toContain("x.]foo");
+  });
+
+  test("the glob part matches a dotfile that a brace alternative names", async () => {
+    using dir = tempDir("shell-brace-glob-dot", {
+      ".env": "",
+      ".npmrc": "",
+      "package.json": "",
+    });
+    const out = (await $`echo {.e,p}*`.cwd(String(dir)).text()).trim();
+    const words = out.split(" ");
+    expect(words).toContain(".env");
+    expect(words).toContain("package.json");
+    // No alternative names `.npmrc`, and `p*` does not match a dotfile.
+    expect(words).not.toContain(".npmrc");
+  });
+
+  // The glob part does not go through a symlink, unless a segment without a wildcard names it.
+  // symlinkSync to a directory needs Developer Mode or elevation on Windows.
+  test.skipIf(isWindows)("the glob part goes through a symlink that a brace alternative names", async () => {
+    using dir = tempDir("shell-brace-glob-symlink", {
+      "realdir/file.txt": "",
+      "src/file.txt": "",
+      "a/a/f.txt": "",
+    });
+    const cwd = String(dir);
+    symlinkSync("realdir", join(cwd, "linkdir"), "dir");
+    symlinkSync("realdir", join(cwd, "!linkdir"), "dir");
+    symlinkSync("f.txt", join(cwd, "a", "a", "lf"), "file");
+    const words = async (command: $.ShellPromise) => (await command.cwd(cwd).text()).trim().split(" ");
+
+    expect(await words($`echo linkdir/*`)).toEqual(["linkdir/file.txt"]);
+    expect(await words($`echo {linkdir,src}/*`)).toEqual(expect.arrayContaining(["linkdir/file.txt", "src/file.txt"]));
+    expect(await words($`echo link{dir,x}/*`)).toContain("linkdir/file.txt");
+    // An interpolated leading `!` is data: the word names the link `!linkdir`.
+    expect(await words($`echo ${"!linkdir"}/*`)).toEqual(["!linkdir/file.txt"]);
+    // A wildcard alternative matches the link and does not go through it.
+    const wildcard = await words($`echo {link*,src}/*`);
+    expect(wildcard).toContain("src/file.txt");
+    expect(wildcard).not.toContain("linkdir/file.txt");
+    // In `a/a` the group names the link `lf`, and `*` still matches it as an entry.
+    expect(await words($`echo **/a/{a,lf}/*`)).toEqual(expect.arrayContaining(["a/a/f.txt", "a/a/lf"]));
   });
 });
 

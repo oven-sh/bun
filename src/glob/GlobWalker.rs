@@ -1079,7 +1079,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                         }
                         bun_sys::FileKind::SymLink => {
                             // Follow the link when follow_symlinks is enabled, or
-                            // when the pattern names this segment literally. The
+                            // when the pattern names this segment without a wildcard. The
                             // followSymlinks option governs wildcard traversal,
                             // not explicitly-spelled path segments.
                             let follow_active: Option<ComponentSet> = if self.walker.follow_symlinks
@@ -1093,12 +1093,21 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             };
 
                             if let Some(follow_active) = follow_active {
+                                let unnamed = self.walker.match_unnamed_link(
+                                    &active,
+                                    &follow_active,
+                                    entry_name,
+                                    dir_dir_path,
+                                )?;
                                 self.walker.push_symlink_work_item(
                                     dir_dir_path,
                                     entry_name,
                                     follow_active,
                                 )?;
-                                continue;
+                                match unnamed {
+                                    Some(prepared_path) => return Ok(Ok(Some(prepared_path))),
+                                    None => continue,
+                                }
                             }
 
                             if self.walker.only_files {
@@ -1184,11 +1193,20 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                             (subset.count() != 0).then_some(subset)
                                         };
                                     if let Some(follow_active) = follow_active {
+                                        let unnamed = self.walker.match_unnamed_link(
+                                            &active,
+                                            &follow_active,
+                                            entry_name,
+                                            dir_dir_path,
+                                        )?;
                                         self.walker.push_symlink_work_item(
                                             dir_dir_path,
                                             entry_name,
                                             follow_active,
                                         )?;
+                                        if let Some(prepared_path) = unnamed {
+                                            return Ok(Ok(Some(prepared_path)));
+                                        }
                                     } else if !self.walker.only_files {
                                         if self.walker.eval_file(&active, entry_name) {
                                             match self
@@ -1340,6 +1358,9 @@ pub struct Component {
 
     pub(crate) syntax_hint: SyntaxHint,
     pub(crate) trailing_sep: bool,
+    dot_rule: DotRule,
+    /// Without `follow_symlinks`: the segment has no wildcard, so it names every link that it matches. Set once per scan.
+    names_links: bool,
 }
 
 impl Default for Component {
@@ -1350,6 +1371,8 @@ impl Default for Component {
             index: 0,
             syntax_hint: SyntaxHint::None,
             trailing_sep: false,
+            dot_rule: DotRule::Hidden,
+            names_links: false,
         }
     }
 }
@@ -1382,6 +1405,38 @@ impl SyntaxHint {
     fn is_special_syntax(self) -> bool {
         !matches!(self, SyntaxHint::Literal)
     }
+}
+
+/// What a segment does with a dotfile when `dot` is off. Set once per scan.
+#[derive(Clone, Copy)]
+enum DotRule {
+    /// Nothing in the segment spells out a leading `.`.
+    Hidden,
+    /// The segment starts with a literal `.`.
+    Leading,
+    /// An alternative of a group may spell out the `.`.
+    Branch,
+}
+
+impl DotRule {
+    fn of(syntax_hint: SyntaxHint, segment: &[u8]) -> DotRule {
+        match segment.first() {
+            Some(b'.') => DotRule::Leading,
+            Some(b'!') => DotRule::Hidden,
+            _ if syntax_hint == SyntaxHint::None && crate::matcher::may_match_hidden(segment) => {
+                DotRule::Branch
+            }
+            _ => DotRule::Hidden,
+        }
+    }
+}
+
+/// The [`DotRule::Branch`] name test, kept out of the generic walker.
+#[cold]
+#[inline(never)]
+fn matches_dotfile(pattern: &[u8], shape: &Shape, name: &[u8], is_ignored: IgnoreFilterFn) -> bool {
+    crate::matcher::match_prepared::<{ cfg!(windows) }>(pattern, shape, name, Dots::Hide).matches()
+        && !is_ignored(name)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1477,8 +1532,16 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         )?;
         for (index, component) in this.pattern_components.iter_mut().enumerate() {
             component.index = index as u32;
-            this.component_shapes
-                .push(Shape::of(component.pattern_slice(&this.pattern)));
+            let segment = component.pattern_slice(&this.pattern);
+            if !this.dot {
+                component.dot_rule = DotRule::of(component.syntax_hint, segment);
+            }
+            // An accessor that resolves links shows one only when it has no target, and its open fails the walk.
+            if !this.follow_symlinks && !A::ENTRY_KIND_FOLLOWS_SYMLINKS {
+                component.names_links = component.syntax_hint == SyntaxHint::None
+                    && crate::matcher::has_no_wildcard(segment);
+            }
+            this.component_shapes.push(Shape::of(segment));
         }
 
         // copy arena after all allocations are successful
@@ -1778,11 +1841,19 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         log!("matchPatternImpl: {}", bstr::BStr::new(filepath));
         // A pattern segment that itself starts with a literal `.` opts into
         // matching dotfiles for that segment, regardless of the `dot` flag.
-        if !self.dot
-            && Self::starts_with_dot(filepath)
-            && !Self::starts_with_dot(pattern_component.pattern_slice(&self.pattern))
-        {
-            return false;
+        if !self.dot && Self::starts_with_dot(filepath) {
+            match pattern_component.dot_rule {
+                DotRule::Hidden => return false,
+                DotRule::Leading => {}
+                DotRule::Branch => {
+                    return matches_dotfile(
+                        pattern_component.pattern_slice(&self.pattern),
+                        &self.component_shapes[pattern_component.index as usize],
+                        filepath,
+                        self.is_ignored,
+                    );
+                }
+            }
         }
         if (self.is_ignored)(filepath) {
             return false;
@@ -1907,7 +1978,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         false
     }
 
-    /// Subset of `active` whose components are non-wildcard literals that
+    /// Subset of `active` whose components have no wildcard and
     /// match `entry_name`. Used to descend into a symlinked directory that the
     /// pattern names explicitly even when `follow_symlinks` is off.
     fn eval_literal_subset(&self, active: &ComponentSet, entry_name: &[u8]) -> ComponentSet {
@@ -1918,13 +1989,35 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             let may_follow = match comp.syntax_hint {
                 SyntaxHint::Literal => true,
                 SyntaxHint::Double => false,
-                _ => self.follow_matched_symlinks,
+                _ => self.follow_matched_symlinks || comp.names_links,
             };
             if may_follow && self.match_pattern_impl(comp, entry_name) {
                 subset.set(idx);
             }
         }
         subset
+    }
+
+    /// A link that is followed for the `named` components is still an entry for the other ones of `active`.
+    fn match_unnamed_link(
+        &mut self,
+        active: &ComponentSet,
+        named: &ComponentSet,
+        entry_name: &[u8],
+        dir_path: &[u8],
+    ) -> Result<Option<MatchedPath>, AllocError> {
+        if self.follow_symlinks || self.only_files || named.count() == active.count() {
+            return Ok(None);
+        }
+        let mut unnamed = active.clone()?;
+        let mut it = named.iterator::<true, true>();
+        while let Some(idx) = it.next() {
+            unnamed.unset(idx);
+        }
+        if !self.eval_file(&unnamed, entry_name) {
+            return Ok(None);
+        }
+        self.prepare_matched_path(entry_name, dir_path)
     }
 
     /// As npm's workspaces: `packages/*` has a member that is a link, `packages/**` does not go through one.

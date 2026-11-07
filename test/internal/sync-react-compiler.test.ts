@@ -21,6 +21,15 @@ const crates = "compiler/crates";
 
 const source = (name: string, revision: number) => `pub fn ${name}() -> u32 { ${revision} }\n`;
 const astConsumer = (name: string, revision: number) => `use react_compiler_ast::File;\n${source(name, revision)}`;
+/** Names react_compiler_ast in a comment on a line of its own and in a comment after code. It is not a use. */
+const commentsOnly = (type: string) =>
+  [
+    "pub struct Environment {",
+    "    // Not from react_compiler_ast.",
+    `    pub index: ${type}, // Not react_compiler_ast.`,
+    "}",
+    "",
+  ].join("\n");
 
 describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/sync-react-compiler.sh", () => {
   let root: ReturnType<typeof tempDir>;
@@ -35,9 +44,9 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
       home: {},
       upstream: {
         [crates]: {
-          // Whole-crate ports. The second names react_compiler_ast in a comment, and does not use it.
+          // Whole-crate ports.
           "react_compiler_hir/src/lib.rs": source("hir", 1),
-          "react_compiler_hir/src/environment.rs": "pub struct Environment {\n    // Not from react_compiler_ast.\n}\n",
+          "react_compiler_hir/src/environment.rs": commentsOnly("u32"),
           "react_compiler_reactive_scopes/src/prune_unused_labels.rs": source("prune", 1),
           // In the directory of a whole-crate port, and not part of it: an AST-boundary port, and a file Bun does
           // not have.
@@ -114,6 +123,7 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
     await git("tag", "--annotate", "-m", "tag", "ported-tag", ported);
     second = await commit({ "react_compiler_hir/src/lib.rs": source("hir", 2) });
     main = await commit({
+      "react_compiler_hir/src/environment.rs": commentsOnly("u64"),
       "react_compiler_reactive_scopes/src/prune_unused_labels.rs": source("prune", 3),
       "react_compiler_reactive_scopes/src/codegen_reactive_function.rs": astConsumer("codegen", 3),
       "react_compiler_hir/src/print.rs": source("print", 3),
@@ -178,6 +188,10 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
           "### whole-crate ports (apply mechanically) ###",
           "── compiler/crates/react_compiler_hir/src",
           "   port: src/react_compiler/hir",
+          "--- a/compiler/crates/react_compiler_hir/src/environment.rs",
+          "+++ b/compiler/crates/react_compiler_hir/src/environment.rs",
+          "-    pub index: u32, // Not react_compiler_ast.",
+          "+    pub index: u64, // Not react_compiler_ast.",
           "--- a/compiler/crates/react_compiler_hir/src/lib.rs",
           "+++ b/compiler/crates/react_compiler_hir/src/lib.rs",
           "-pub fn hir() -> u32 { 1 }",

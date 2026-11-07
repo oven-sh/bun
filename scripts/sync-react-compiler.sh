@@ -105,14 +105,13 @@ for pair in "${boundary[@]}"; do
   boundary_excludes+=(":(exclude)compiler/crates/${pair%%:*}")
 done
 
-# An upstream file that names react_compiler_ast outside a // comment and has
-# no entry above is a new boundary file: it needs a Bun port + an entry, and is
-# printed until it has one.
+# An upstream file that names react_compiler_ast in code and has no entry above
+# is a new boundary file: it needs a Bun port + an entry, and is printed until
+# it has one. The name is in code when no // is before it on its line.
 # git grep exits with 1 when no file matches. Any other failure stops the script.
-new_consumers=$(git -C "$tmp" grep --no-color -lE \
-  -e '(^|[^A-Za-z0-9_])react_compiler_ast($|[^A-Za-z0-9_])' --and --not -e '^[[:space:]]*//' "$new" -- \
-  'compiler/crates/*/src/*.rs' ':(exclude)compiler/crates/react_compiler_ast' "${boundary_excludes[@]}" \
-  | sed "s/^$new://") || [ $? -eq 1 ]
+ast_in_code='^(([^/]|/[^/])*/?[^A-Za-z0-9_/])?react_compiler_ast($|[^A-Za-z0-9_])'
+new_consumers=$(git -C "$tmp" grep --no-color -lE -e "$ast_in_code" "$new" -- 'compiler/crates/*/src/*.rs' \
+  ':(exclude)compiler/crates/react_compiler_ast' "${boundary_excludes[@]}" | sed "s/^$new://") || [ $? -eq 1 ]
 
 # Not part of a whole-crate port: a file with an entry above, and a new consumer.
 declare -a not_whole_crate=("${boundary_excludes[@]}")

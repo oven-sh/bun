@@ -5496,11 +5496,6 @@ bool JSC__JSValue__getClassInfoName(JSValue value, const uint8_t** outPtr, size_
     return false;
 }
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__objectPrototypeToString(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
-{
-    return JSValue::encode(Bun::objectPrototypeToStringOutOfLine(globalObject, JSValue::decode(JSValue0)));
-}
-
 BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
     JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();

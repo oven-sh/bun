@@ -845,10 +845,6 @@ pub type ssl_renegotiate_mode_t = c_uint;
 pub const ssl_renegotiate_never: ssl_renegotiate_mode_t = 0;
 pub const ssl_renegotiate_explicit: ssl_renegotiate_mode_t = 4;
 
-/// `SSL_OP_LEGACY_SERVER_CONNECT` — BoringSSL defines this as 0 (no-op flag);
-/// kept so callers can mirror the OpenSSL clear/set dance verbatim.
-pub const SSL_OP_LEGACY_SERVER_CONNECT: u32 = 0;
-
 /// `#define RSA_PKCS1_OAEP_PADDING 4` (`openssl/rsa.h`).
 pub const RSA_PKCS1_OAEP_PADDING: c_int = 4;
 
@@ -990,8 +986,6 @@ unsafe extern "C" {
     pub fn SSL_set_tlsext_host_name(ssl: *mut SSL, name: *const c_char) -> c_int;
     pub fn SSL_set_alpn_protos(ssl: *mut SSL, protos: *const u8, protos_len: usize) -> c_int;
     pub fn SSL_get0_alpn_selected(ssl: *const SSL, out_data: *mut *const u8, out_len: *mut c_uint);
-    pub fn SSL_set_options(ssl: *mut SSL, options: u32) -> u32;
-    pub fn SSL_clear_options(ssl: *mut SSL, options: u32) -> u32;
     pub fn SSL_enable_signed_cert_timestamps(ssl: *mut SSL);
     pub fn SSL_enable_ocsp_stapling(ssl: *mut SSL);
     pub fn SSL_select_next_proto(

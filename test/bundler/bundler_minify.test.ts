@@ -62,6 +62,114 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     run: { stdout: "[]" },
   });
+  // A direct eval in a class keeps the `#private` names of that class. The
+  // names of a class next to the eval are renamed, and that class can read the
+  // kept ones: `class A { #n; m() { eval(""); return class { #x; g(o) { return
+  // o.#n } } } }` printed with `#n` for `#x` reads the inner field. `Outer`
+  // keeps all 54 one-character names and `Inner` reads each of them, so
+  // whichever name the minifier has for `#own`, it is one of those without the fix.
+  const evalPinnedPrivateNamesSource = [
+    "export function f() {",
+    "  class Outer {",
+    ...singleCharNames.map(n => `    #${n} = "${n}";`),
+    "    make() {",
+    '      eval("1");',
+    "      return class Inner {",
+    '        #own = "own";',
+    `        read(o) { return [${singleCharNames.map(n => `o.#${n}`).join(", ")}].join("") + this.#own; }`,
+    "      };",
+    "    }",
+    "  }",
+    "  const outer = new Outer();",
+    "  return new (outer.make())().read(outer);",
+    "}",
+  ].join("\n");
+  const evalPinnedPrivateNamesOutput = singleCharNames.join("") + "own";
+  // `Outer` keeps every name of one character, so `#own` gets a new `#private`
+  // name of two. As a public field, or with the name `#own`, it would print the same.
+  const renamedOwnField = /#[\w$]{2} = "own"/;
+  itBundled("minify/DirectEvalPinnedPrivateNameNotReusedByNestedClass", {
+    files: {
+      "/entry.js": evalPinnedPrivateNamesSource + "\nconsole.log(f());",
+    },
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatch(renamedOwnField);
+    },
+    run: { stdout: evalPinnedPrivateNamesOutput },
+  });
+  itBundled("minify/DirectEvalPinnedPrivateNameNotReusedByNestedClassNoBundle", {
+    files: {
+      "/entry.js": evalPinnedPrivateNamesSource + "\nconsole.log(f());",
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatch(renamedOwnField);
+    },
+    run: { stdout: evalPinnedPrivateNamesOutput },
+  });
+  // `Inner extends Outer` has the fields of both classes, so the wrong read
+  // does not throw: `this.#n` gives the value of the inner field.
+  itBundled("minify/DirectEvalPinnedPrivateNameNotReusedBySubclass", {
+    files: {
+      "/entry.js": [
+        "class Outer {",
+        ...singleCharNames.map(n => `  #${n} = "${n}";`),
+        "  static make() {",
+        '    eval("1");',
+        "    return class Inner extends Outer {",
+        '      #own = "own";',
+        `      read() { return [${singleCharNames.map(n => `this.#${n}`).join(", ")}].join("") + this.#own; }`,
+        "    };",
+        "  }",
+        "}",
+        "console.log(new (Outer.make())().read());",
+      ].join("\n"),
+    },
+    minifyIdentifiers: true,
+    run: { stdout: evalPinnedPrivateNamesOutput },
+  });
+  // The names of a chunk come from one table: a class of another file takes
+  // the same names as `Inner`.
+  itBundled("minify/DirectEvalPinnedPrivateNameNotReusedAcrossFiles", {
+    files: {
+      "/entry.js": /* js */ `
+        import { f } from "./pinned.js";
+        import { Counter } from "./counter.js";
+        console.log(f(), new Counter().bump());
+      `,
+      "/pinned.js": evalPinnedPrivateNamesSource,
+      "/counter.js": /* js */ `
+        export class Counter { #count = 1; #step = 2; bump() { return (this.#count += this.#step); } }
+      `,
+    },
+    minifyIdentifiers: true,
+    run: { stdout: evalPinnedPrivateNamesOutput + " 3" },
+  });
+  itBundled("minify/DirectEvalPinnedPrivateNameNotReusedWithSplitting", {
+    files: {
+      "/a.js": /* js */ `
+        import { f } from "./pinned.js";
+        console.log("a", f());
+      `,
+      "/b.js": /* js */ `
+        import { f } from "./pinned.js";
+        console.log("b", f());
+      `,
+      "/pinned.js": evalPinnedPrivateNamesSource,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    minifyIdentifiers: true,
+    outdir: "/out",
+    format: "esm",
+    backend: "cli",
+    run: [
+      { file: "/out/a.js", stdout: "a " + evalPinnedPrivateNamesOutput },
+      { file: "/out/b.js", stdout: "b " + evalPinnedPrivateNamesOutput },
+    ],
+  });
   // The same reserved names without --minify. The parameter "require_dep"
   // meets the wrapper of dep.cjs, which the function calls, so it is numbered.
   // It cannot take "require_dep2", the `var` that the `with` body reads.

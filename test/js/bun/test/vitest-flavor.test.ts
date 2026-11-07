@@ -1486,6 +1486,19 @@ describe.concurrent("hooks", () => {
     expect({ log, exitCode }).toEqual({ log: ["test"], exitCode: 0 });
   });
 
+  test(`beforeEach from "bun:test" ignores a returned function for a test that has a context too`, async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, aroundEach, beforeEach } from "bun:test";
+        aroundEach(async runTest => { await runTest(); });
+        beforeEach(() => () => console.log("unreachable"));
+        beforeEach(async () => () => console.log("unreachable"));
+        test("test", () => console.log("test"));
+      `,
+    });
+    expect({ log, exitCode }).toEqual({ log: ["test"], exitCode: 0 });
+  });
+
   test("in a preload script", async () => {
     const { log, exitCode } = await runTests(
       {
@@ -2996,10 +3009,18 @@ describe.concurrent("behavior depends on the module a function is imported from"
     test.each([
       [`"bun:test"`, `import { aroundAll, aroundEach, expect, test } from "bun:test";`, "Jest"],
       [`"@jest/globals"`, `import { aroundAll, aroundEach, expect, test } from "@jest/globals";`, "Jest"],
-      [`the test of "bun:test"`, `import { expect, test } from "bun:test"; const { aroundAll, aroundEach } = test;`, "Jest"],
+      [
+        `the test of "bun:test"`,
+        `import { expect, test } from "bun:test"; const { aroundAll, aroundEach } = test;`,
+        "Jest",
+      ],
       ["the globals", "", "Jest"],
       [`"vitest"`, `import { aroundAll, aroundEach, expect, test } from "vitest";`, "Vitest"],
-      [`the test of "vitest"`, `import { expect, test } from "vitest"; const { aroundAll, aroundEach } = test;`, "Vitest"],
+      [
+        `the test of "vitest"`,
+        `import { expect, test } from "vitest"; const { aroundAll, aroundEach } = test;`,
+        "Vitest",
+      ],
     ])("before and after runSuite() and runTest(), from %s", async (_, header, ofModule) => {
       const { log, results, exitCode } = await runTests({ "a.test.js": header + everyPosition });
       const each = (deferred: string[]) => ["aroundEach >", "test", ...deferred, "aroundEach <"];
@@ -3044,8 +3065,13 @@ describe.concurrent("behavior depends on the module a function is imported from"
         });
         test("the test", () => {});
       `;
-      const thrown = ["before runSuite()", "before runTest()", "in onTestFinished()", "after runTest()", "after runSuite()"]
-        .flatMap(where => [`unhandledRejection ${where}`, `uncaughtException ${where}`]);
+      const thrown = [
+        "before runSuite()",
+        "before runTest()",
+        "in onTestFinished()",
+        "after runTest()",
+        "after runSuite()",
+      ].flatMap(where => [`unhandledRejection ${where}`, `uncaughtException ${where}`]);
       const [vitest, bun] = await Promise.all([
         runTests({ "a.test.js": file("vitest") }),
         runTests({ "a.test.js": file("bun:test") }),
@@ -3065,7 +3091,8 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
 
     test("around a test of the other module, and from a preload", async () => {
-      const expected = (log: string[]) => log.map(where => `${where} | toEqual: ${where.includes("bun:test") ? "Jest" : "Vitest"}`);
+      const expected = (log: string[]) =>
+        log.map(where => `${where} | toEqual: ${where.includes("bun:test") ? "Jest" : "Vitest"}`);
       const hooks = (name: string) => `
         aroundAll(async runSuite => { show("aroundAll of ${name} >"); await runSuite(); show("aroundAll of ${name} <"); });
         aroundEach(async (runTest, context) => {
@@ -3130,6 +3157,48 @@ describe.concurrent("behavior depends on the module a function is imported from"
           ...around(["bun:test"], ["test of vitest"]),
           "aroundAll of bun:test <",
         ]),
+        exitCode: 0,
+      });
+    });
+
+    // test.extend() returns a test of Vitest's in every module.
+    test("a fixture and a function that a hook of vitest returns have Vitest's rules", async () => {
+      const file = (imports: string, hooks: string) => `
+        ${imports}
+        ${rules}
+        const show = where => console.log(where, "| toEqual:", toEqual(), "| .not.not:", notNot());
+        ${hooks}
+        const test = base.extend({
+          ofTest: async ({}, use) => { show("fixture >"); await use(1); show("fixture <"); },
+          ofFile: [async ({}, use) => { show("file fixture >"); await use(1); show("file fixture <"); }, { scope: "file" }],
+        });
+        test("test", ({ ofTest, ofFile }) => show("test"));
+      `;
+      const returned = `
+        beforeAll(() => () => show("function that beforeAll returned"));
+        beforeEach(() => () => show("function that beforeEach returned"));
+      `;
+      const [vitest, bun] = await Promise.all([
+        runTests({
+          "a.test.js": file(`import { beforeAll, beforeEach, expect, test as base } from "vitest";`, returned),
+        }),
+        runTests({ "a.test.js": file(`import { expect, test as base } from "bun:test";`, "") }),
+      ]);
+      const expected = (log: string[]) => log.map(where => `${where} | toEqual: Vitest | .not.not: Vitest`);
+      expect({ log: vitest.log, exitCode: vitest.exitCode }).toEqual({
+        log: expected([
+          "fixture >",
+          "file fixture >",
+          "test",
+          "function that beforeEach returned",
+          "fixture <",
+          "function that beforeAll returned",
+          "file fixture <",
+        ]),
+        exitCode: 0,
+      });
+      expect({ log: bun.log, exitCode: bun.exitCode }).toEqual({
+        log: expected(["fixture >", "file fixture >", "test", "fixture <", "file fixture <"]),
         exitCode: 0,
       });
     });

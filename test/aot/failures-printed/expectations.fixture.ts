@@ -47,6 +47,15 @@ describe("objects", () => {
   it("toHaveProperty", () => {
     expect({ a: { b: 1 } }).toHaveProperty("a.c", 2);
   });
+  it("toEqual of an event with a prototype of the program", () => {
+    const prototype: object = {
+      kind: 1,
+      get code(): number {
+        throw new Error("not ready");
+      },
+    };
+    expect<unknown>(Object.setPrototypeOf(new CloseEvent("close", { reason: "r" }), prototype)).toEqual(1);
+  });
   it("toContain", () => {
     expect(["a", "b"]).toContain("z");
   });

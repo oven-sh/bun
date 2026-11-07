@@ -36,6 +36,9 @@ const mockCDP = /* js */ `
       drop() {
         sock.terminate();
       },
+      // Every Input.* command received: its params.type, then "@<sessionId>"
+      // if it carried one.
+      input: [],
     };
     function commit(sessionId, url, loaderId) {
       lastUrl = url;
@@ -56,6 +59,7 @@ const mockCDP = /* js */ `
         message(ws, raw) {
           const { id, method, params = {}, sessionId } = JSON.parse(String(raw));
           const reply = result => ws.send(JSON.stringify(sessionId ? { id, result, sessionId } : { id, result }));
+          if (method.startsWith("Input.")) mock.input.push(params.type + (sessionId ? "@" + sessionId : ""));
           switch (method) {
             case "Target.createTarget":
               targets++;
@@ -292,3 +296,44 @@ const chromeInstalled =
     expect(exitCode, stderr).toBe(0);
   },
 );
+
+// click() and press() each send two commands, and only the second one
+// settles the promise. What the backend queues during the WebSocket
+// handshake goes out when the connection opens, so a view closed before
+// that must leave neither command behind: a lone mousePressed or keyDown
+// would reach the browser for a view that no longer exists.
+test.concurrent.each([
+  ["click", `click(7, 7)`],
+  ["press", `press("Enter")`],
+])("%s() on a view closed before the connection opened sends nothing", async (_, op) => {
+  const result = await runScenario(`
+    const mock = startMockCDP();
+    const settled = promise => promise.then(() => "resolved", e => "rejected: " + e.message);
+
+    // Another view shares the connection, whose handshake is in flight.
+    const keep = mock.newView();
+    const shared = mock.newView();
+    const whileShared = settled(shared.${op});
+    shared.close();
+    // Resolves after the handshake, so everything queued has gone out.
+    await keep.navigate("http://mock/keep");
+    keep.close();
+
+    // The closed view is the only one: the connection is given up before it
+    // opens, and what stayed queued would lead the next connection.
+    const alone = mock.newView();
+    const whileAlone = settled(alone.${op});
+    alone.close();
+    const next = mock.newView();
+    await next.navigate("http://mock/next");
+    next.close();
+
+    console.log(JSON.stringify({ whileShared: await whileShared, whileAlone: await whileAlone, input: mock.input }));
+    mock.stop();
+  `);
+  expect(result).toEqual({
+    whileShared: "rejected: WebView closed",
+    whileAlone: "rejected: WebView closed",
+    input: [],
+  });
+});

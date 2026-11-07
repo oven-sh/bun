@@ -3146,6 +3146,24 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  it("module.require() in a with body stays as written", () => {
+    var nodeTranspiler = new Bun.Transpiler({ platform: "node", minify: { syntax: false } });
+
+    // The object of the statement can have its own `module`.
+    expect(nodeTranspiler.transformSync("with (o) module.require('a')")).toBe('with (o)\n  module.require("a");\n');
+    expect(nodeTranspiler.transformSync("with (o) module['require']('a')")).toBe(
+      'with (o)\n  module["require"]("a");\n',
+    );
+    expect(nodeTranspiler.transformSync("with (o) f = () => module.require('a')")).toBe(
+      'with (o)\n  f = () => module.require("a");\n',
+    );
+
+    // The object expression and the code after the statement are outside the body.
+    expect(nodeTranspiler.transformSync("with (module.require('a')) f; module.require('b')")).toBe(
+      'with (require("a"))\n  f;\nrequire("b");\n',
+    );
+  });
+
   describe("regressions", () => {
     it("unexpected super", () => {
       const input = `

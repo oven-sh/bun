@@ -1100,6 +1100,96 @@ fn what_hands_out_the_global_object_exposes_it() {
 }
 
 #[test]
+fn a_method_that_hands_out_the_global_object_comes_out_without_a_mention() {
+    const COMES_OUT: &[&str] = &[
+        "const send = AbortSignal.prototype.dispatchEvent;",
+        "AbortSignal.prototype.addEventListener.call(undefined, kind, f);",
+        "const send = EventTarget.prototype[key];",
+        "const send = AbortSignal.prototype[key];",
+        "Object.getOwnPropertyDescriptor(EventTarget.prototype, key);",
+        "f(EventTarget.prototype);",
+        "const { dispatchEvent: send } = AbortSignal.prototype;",
+        "const add = signal.addEventListener;",
+        "const { dispatchEvent: send } = new EventTarget();",
+        "let send; ({ dispatchEvent: send } = target);",
+        "f(signal.dispatchEvent);",
+        "signal.dispatchEvent.call(undefined, e);",
+        "signal.addEventListener.bind(null);",
+        "(0, signal.dispatchEvent)(e);",
+        "class Own extends EventTarget { send(e) { return (0, super.dispatchEvent)(e); } }",
+        "Reflect.get(signal, \"dispatchEvent\");",
+        "Object.create(null, EventTarget.prototype);",
+        "Object.values(EventTarget.prototype);",
+        "Reflect.get.call(undefined, signal, \"dispatchEvent\");",
+        "enum Name { Send = \"dispatchEvent\" } const send = (signal as any)[Name.Send];",
+        "const names = { send: \"dispatchEvent\" } as const; const send = (signal as any)[names.send];",
+        "const names = [\"addEventListener\"]; const listen = signal[names[0]];",
+        "const name = \"dispatchEvent\"; signal[name](e);",
+        "console.log(\"dispatchEvent\");",
+        "const name = \"dispatchEvent\"; const send = signal[name];",
+        "const send = signal[\"dispatch\" + \"Event\"];",
+        "const name = \"dispatchEvent\"; const { [name]: send } = signal;",
+        "class Own extends EventTarget { send(e) { return super.dispatchEvent(e); } }",
+        "Object.getOwnPropertyDescriptor(above, \"addEventListener\");",
+        "(signal.dispatchEvent || f)(e);",
+        "(ok ? signal.dispatchEvent : f)(e);",
+    ];
+    const STAYS_IN: &[&str] = &[
+        "signal.addEventListener(\"abort\", f);",
+        "signal?.addEventListener(\"abort\", f);",
+        "target.dispatchEvent(e);",
+        "target.dispatchEvent?.(e);",
+        "class Own extends EventTarget { send(e) { return super.removeEventListener(e, f); } }",
+        "signal[\"dispatchEvent\"](e);",
+        "(signal as any)[\"dispatchEvent\" as string](e);",
+        "\"addEventListener\" in signal;",
+        "enum Name { Send = \"send\" } const send = (signal as any)[Name.Send];",
+        "Reflect.get(signal, \"aborted\");",
+        "console.log(\"dispatchEvents\");",
+        "(target.dispatchEvent as any)(e);",
+        "if (signal.addEventListener) f();",
+        "typeof signal.addEventListener === \"function\";",
+        "target.addEventListener = f;",
+        "AbortSignal.prototype.aborted;",
+        "Object.create(EventTarget.prototype) instanceof EventTarget;",
+        "Object.create(AbortSignal.prototype);",
+        "\"nothing\" in EventTarget.prototype;",
+        "const own = { addEventListener() {} };",
+        "class Own { dispatchEvent() {} }",
+    ];
+    const NOT_ASKED: Setup = Setup {
+        is_text_asked: false,
+        ..PROGRAM
+    };
+    for source in COMES_OUT {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.exposes(BuiltinId::GlobalThis), "{source}");
+            let resolved = &case.resolved;
+            assert!(
+                resolved.method_that_hands_out_global_object_may_come_out(),
+                "{source}"
+            );
+        });
+        with_case(NOT_ASKED, source, |case| {
+            assert!(case.exposes(BuiltinId::GlobalThis), "{source}");
+        });
+        with_case(RUNTIME, source, |case| {
+            assert!(!case.exposes(BuiltinId::GlobalThis), "{source}");
+        });
+    }
+    for source in STAYS_IN {
+        with_case(PROGRAM, source, |case| {
+            assert!(!case.exposes(BuiltinId::GlobalThis), "{source}");
+            let resolved = &case.resolved;
+            assert!(
+                !resolved.method_that_hands_out_global_object_may_come_out(),
+                "{source}"
+            );
+        });
+    }
+}
+
+#[test]
 fn decorator_metadata_type_is_exposed() {
     let setup = Setup {
         emits_decorator_metadata: true,

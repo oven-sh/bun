@@ -220,6 +220,7 @@ pub(super) struct ResolverOutput {
     pub(super) stores_loader_functions: bool,
     pub(super) process_reaches_code_on_its_prototypes: bool,
     pub(super) inspects_prototype_chain_of_process: bool,
+    pub(super) method_that_hands_out_global_object_may_come_out: bool,
     pub(super) tables_of_loaders_written: Vec<ExprId>,
     pub(super) keys_taken_out_of_module_cache: Vec<KeyOfModuleCache>,
     pub(super) loses_sight_of_module_cache: bool,
@@ -357,7 +358,7 @@ pub(super) fn run(
     resolver.collect_module_object_mentions();
     resolver.visit_implicit_references();
     resolver.visit_import_sites();
-    if input.is_text_asked {
+    if input.is_text_asked || resolver.spells_method_that_hands_out_global_object() {
         resolver.collect_what_is_reached_without_a_name();
     }
     resolver.note_keys_that_program_can_lay();
@@ -942,6 +943,8 @@ impl<'a, 's> Resolver<'a, 's> {
             stores_loader_functions: output.stores_loader_functions,
             process_reaches_code_on_its_prototypes: output.process_reaches_code_on_its_prototypes,
             inspects_prototype_chain_of_process: output.inspects_prototype_chain_of_process,
+            method_that_hands_out_global_object_may_come_out: output
+                .method_that_hands_out_global_object_may_come_out,
             tables_of_loaders_written: output.tables_of_loaders_written.into_boxed_slice(),
             unlocked: OnceLock::new(),
             mentioned,

@@ -87,6 +87,7 @@ pub(crate) struct ProgramContents {
     pub stores_loader_functions: bool,
     pub process_reaches_code_on_its_prototypes: bool,
     pub inspects_prototype_chain_of_process: bool,
+    pub method_that_hands_out_global_object_may_come_out: bool,
     pub any_module_loads_again: bool,
     pub loads_by_unknown_name: bool,
     pub loads_by_unknown_path: bool,
@@ -159,6 +160,7 @@ struct FoundInFiles {
     stores_loader_functions: bool,
     process_reaches_code_on_its_prototypes: bool,
     inspects_prototype_chain_of_process: bool,
+    method_that_hands_out_global_object_may_come_out: bool,
     can_come_by_hook_of_instanceof: bool,
     hand_builtins_to_hooks_of_instanceof: Vec<FileId>,
     any_module_loads_again: bool,
@@ -178,6 +180,7 @@ impl FoundInFiles {
             stores_loader_functions: true,
             process_reaches_code_on_its_prototypes: true,
             inspects_prototype_chain_of_process: true,
+            method_that_hands_out_global_object_may_come_out: true,
             can_come_by_hook_of_instanceof: true,
             hand_builtins_to_hooks_of_instanceof: take(
                 &mut self.hand_builtins_to_hooks_of_instanceof,
@@ -228,6 +231,8 @@ impl FoundInFiles {
             process_reaches_code_on_its_prototypes: builtins
                 .process_reaches_code_on_its_prototypes(),
             inspects_prototype_chain_of_process: builtins.inspects_prototype_chain_of_process(),
+            method_that_hands_out_global_object_may_come_out: builtins
+                .method_that_hands_out_global_object_may_come_out(),
             can_come_by_hook_of_instanceof: builtins.can_come_by_hook_of_instanceof(),
             hand_builtins_to_hooks_of_instanceof: match builtins
                 .hands_builtins_to_hooks_of_instanceof()
@@ -253,6 +258,8 @@ impl FoundInFiles {
         self.process_reaches_code_on_its_prototypes |=
             following.process_reaches_code_on_its_prototypes;
         self.inspects_prototype_chain_of_process |= following.inspects_prototype_chain_of_process;
+        self.method_that_hands_out_global_object_may_come_out |=
+            following.method_that_hands_out_global_object_may_come_out;
         self.can_come_by_hook_of_instanceof |= following.can_come_by_hook_of_instanceof;
         self.hand_builtins_to_hooks_of_instanceof
             .append(&mut following.hand_builtins_to_hooks_of_instanceof);
@@ -493,6 +500,8 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         stores_loader_functions: all.stores_loader_functions,
         process_reaches_code_on_its_prototypes: all.process_reaches_code_on_its_prototypes,
         inspects_prototype_chain_of_process: all.inspects_prototype_chain_of_process,
+        method_that_hands_out_global_object_may_come_out: all
+            .method_that_hands_out_global_object_may_come_out,
         any_module_loads_again: match is_test_run {
             true => run.loads.is_every_file,
             false => all.any_module_loads_again,

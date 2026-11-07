@@ -273,6 +273,9 @@ declare global {
 }
 
 function OutgoingMessage(this: $Node.OutgoingMessage, options?: $Node.OutgoingMessageOptions) {
+  // A call on a response that exists lays its fields anew. What its server keeps of the dispatch is not among them, and stays.
+  const kept = this.$exchange;
+  if (kept !== undefined) http.responseRoad.spillStateReachedThrough!(this);
   Stream.$call(this, options);
 
   // Queue that holds all currently pending data, until the response will be
@@ -327,7 +330,7 @@ function OutgoingMessage(this: $Node.OutgoingMessage, options?: $Node.OutgoingMe
   // Declared here so the memoizing _isLenientHeaderValidation never
   // shape-transitions the message when it caches.
   this[kLenientValidation] = undefined;
-  this.$exchange = undefined;
+  this.$exchange = kept;
 }
 $toClass(OutgoingMessage, "OutgoingMessage", Stream);
 

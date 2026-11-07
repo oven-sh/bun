@@ -1,7 +1,7 @@
 use super::runtime_uses::{
     ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF, is_name_of_language_member_with_code,
 };
-use super::table::{self, BuiltinName, Intrinsic, IntrinsicPosition};
+use super::table::{self, BuiltinKind, BuiltinName, Intrinsic, IntrinsicPosition};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::util::FxHashMap;
 use std::sync::OnceLock;
@@ -19,6 +19,7 @@ pub struct BuiltinNames {
     texts_of_symbols_that_host_looks_for: Box<[Atom]>,
     names_of_language_members: OnceLock<Box<[Option<BuiltinName>]>>,
     names_leading_to_hook_of_instanceof: Box<[Atom]>,
+    names_of_methods_that_hand_out_global_object: Box<[Atom]>,
     atoms: Box<[Option<Atom>]>,
 }
 
@@ -63,6 +64,15 @@ impl BuiltinNames {
                 .iter()
                 .filter_map(|&id| name_atoms[table::entry(id).name.0 as usize])
                 .collect(),
+            names_of_methods_that_hand_out_global_object:
+                table::ENTRIES_THAT_HAND_OUT_THE_GLOBAL_OBJECT
+                    .iter()
+                    .filter(|&&id| {
+                        let holder = table::entry(id).holder;
+                        holder.is_some_and(|it| table::entry(it).kind == BuiltinKind::Prototype)
+                    })
+                    .filter_map(|&id| name_atoms[table::entry(id).name.0 as usize])
+                    .collect(),
             by_atom,
             by_private_atom,
             by_symbol_key_atom,
@@ -114,6 +124,11 @@ impl BuiltinNames {
 
     pub fn is_text_of_symbol_that_host_looks_for(&self, text: Atom) -> bool {
         self.texts_of_symbols_that_host_looks_for.contains(&text)
+    }
+
+    pub fn is_name_of_method_that_hands_out_global_object(&self, text: Atom) -> bool {
+        self.names_of_methods_that_hand_out_global_object
+            .contains(&text)
     }
 
     pub fn atom_of(&self, name: BuiltinName) -> Option<Atom> {

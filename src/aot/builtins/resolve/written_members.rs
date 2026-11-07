@@ -399,7 +399,7 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn is_run_by_plain_call(&self, call: ExprId, function: BuiltinId) -> bool {
+    pub(super) fn is_run_by_plain_call(&self, call: ExprId, function: BuiltinId) -> bool {
         let hir = self.input.hir;
         matches!(hir[call].kind, ExprKind::Call(call)
             if self.find_function_run_by(hir[call].callee) == Some(function))

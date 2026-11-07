@@ -225,7 +225,7 @@ fn makes_number(op: BinOp) -> bool {
 impl Resolver<'_, '_> {
     fn collect_syntax_inside_expressions(&mut self) {
         for expr in self.evaluated_exprs() {
-            self.note_texts_under_which_evaluators_hang(expr);
+            self.note_texts_that_may_come_to_be_keys(expr);
             self.output.may_hand_values_to_natives =
                 self.output.may_hand_values_to_natives || !self.hands_natives_nothing_to_ask(expr);
             match self.state(expr) {
@@ -271,10 +271,10 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn note_texts_under_which_evaluators_hang(&mut self, expr: ExprId) {
+    fn note_texts_that_may_come_to_be_keys(&mut self, expr: ExprId) {
         if self.input.dialect == SourceDialect::Program {
             for_each_text_spelled_at(self.input, expr, |text| {
-                self.note_text_under_which_evaluator_hangs(text);
+                self.note_text_that_may_come_to_be_key(text, expr);
             });
         }
     }
@@ -308,6 +308,39 @@ impl Resolver<'_, '_> {
                 self.note_key_that_program_can_lay(name);
             }
         }
+    }
+
+    fn is_written_as_key(&self, text: ExprId) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let read = ExprId(text.0 + 1);
+        if read.idx() < hir.exprs.len() && hir.is_written_in_brackets(read) {
+            return true;
+        }
+        let Parent::Expr(user) = bound.parent_of_expr(self.outermost_assertion_of(text)) else {
+            return false;
+        };
+        let text = hir.skip_type_assertions(text);
+        match hir.written_kind(user) {
+            ExprKind::Binary {
+                op: BinOp::In,
+                left,
+                ..
+            } => hir.skip_type_assertions(left) == text,
+            ExprKind::Index { index, .. } => hir.skip_type_assertions(index) == text,
+            _ => false,
+        }
+    }
+
+    fn note_text_that_may_come_to_be_key(&mut self, text: Atom, at: ExprId) {
+        if self
+            .input
+            .names
+            .is_name_of_method_that_hands_out_global_object(text)
+            && !self.is_written_as_key(at)
+        {
+            self.note_method_taken_off_value_nobody_knows(text);
+        }
+        self.note_text_under_which_evaluator_hangs(text);
     }
 
     fn note_text_under_which_evaluator_hangs(&mut self, text: Atom) {
@@ -348,8 +381,51 @@ impl Resolver<'_, '_> {
         }
     }
 
+    fn note_method_taken_off_value_nobody_knows(&mut self, name: Atom) {
+        let names = self.input.names;
+        if self.input.dialect == SourceDialect::Program
+            && names.is_name_of_method_that_hands_out_global_object(name)
+        {
+            self.output.method_that_hands_out_global_object_may_come_out = true;
+            self.mention(BuiltinId::GlobalThis);
+            self.expose(BuiltinId::GlobalThis);
+        }
+    }
+
+    pub(super) fn spells_method_that_hands_out_global_object(&self) -> bool {
+        let (hir, names) = (self.input.hir, self.input.names);
+        let is_such = |name: Atom| names.is_name_of_method_that_hands_out_global_object(name);
+        let is_key = |key: PropKey| match key {
+            PropKey::Name(name) => is_such(name),
+            PropKey::Computed(key) => self.constant_text(key).is_some_and(is_such),
+            PropKey::None | PropKey::Private(_) => false,
+        };
+        let is_read_under_such_key = |&read: &ExprId| match hir.member_key(read) {
+            Some((_, MemberKey::Computed(key))) => self.constant_text(key).is_some_and(is_such),
+            _ => false,
+        };
+        let decisions = self.input.decisions;
+        let decided = decisions
+            .decided()
+            .iter()
+            .filter_map(|decided| match decided.1 {
+                Decision::Constant(Constant::String(made)) => Some(made),
+                _ => None,
+            });
+        self.input.dialect == SourceDialect::Program
+            && (decided.into_iter().any(is_such)
+                || self.computed.iter().any(is_read_under_such_key)
+                || hir.props.iter().any(|property| is_key(property.key))
+                || hir.pat_props.iter().any(|property| is_key(property.key))
+                || hir.exprs.iter().any(|expr| match expr.kind {
+                    ExprKind::Dot { name, .. } | ExprKind::String(name) => is_such(name),
+                    _ => false,
+                }))
+    }
+
     fn note_text_taken_by_pattern(&mut self, name: Atom) {
         self.output.may_call_evaluator |= name == known::constructor;
+        self.note_method_taken_off_value_nobody_knows(name);
         self.note_text_read(name);
     }
 
@@ -641,9 +717,21 @@ impl Resolver<'_, '_> {
                     self.output.may_call_evaluator |= !is_only_looked_at(self);
                     self.note_text_read(name);
                 }
-                Some((_, MemberKey::Name(name))) => self.note_text_read(name),
+                Some((_, MemberKey::Name(name))) => {
+                    let names = self.input.names;
+                    if names.is_name_of_method_that_hands_out_global_object(name)
+                        && self.is_taken_as_value(expr)
+                    {
+                        self.note_method_taken_off_value_nobody_knows(name);
+                    }
+                    self.note_text_read(name);
+                }
                 Some((_, MemberKey::Computed(key))) => {
                     let is_only_looked_at = is_only_looked_at(self);
+                    let text = self.constant_text(self.input.hir.skip_type_assertions(key));
+                    if let Some(name) = text.filter(|_| self.is_taken_as_value(expr)) {
+                        self.note_method_taken_off_value_nobody_knows(name);
+                    }
                     self.note_key_read(key, is_only_looked_at);
                 }
                 Some((_, MemberKey::PrivateName(_))) | None => {}

@@ -93,6 +93,7 @@ const responseRoad: {
   settleLeniency?: (exchange: $Node.HttpExchange, name: string) => void;
   spillHeaders?: (exchange: $Node.HttpExchange) => void;
   spillHeadersReachedThrough?: (receiver: $Node.OutgoingMessage) => void;
+  spillStateReachedThrough?: (receiver: $Node.OutgoingMessage) => void;
   hasHeaderUnderKey?: (
     exchange: $Node.HttpExchange,
     message: $Node.OutgoingMessage,

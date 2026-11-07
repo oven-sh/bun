@@ -156,7 +156,7 @@ export function computedLoads(part: number) {
     "test/product.test.cjs": `require("bun:test").test("the product", () => void require("../main.cjs"));`,
   };
 
-  if (part === 4)
+  if (part === 2)
     describe.skipIf(!systemCC || isWindows)("a native addon", () => {
       let directory: ReturnType<typeof tempDir> | undefined;
       beforeAll(async () => {

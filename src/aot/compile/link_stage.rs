@@ -181,6 +181,11 @@ impl Build<'_> {
                             }
                         }
                         let used_at_start = builtins_used_at_start(self.options.aot).into_iter();
+                        let comes_out = loaded
+                            .contents
+                            .method_that_hands_out_global_object_may_come_out;
+                        let used_at_start =
+                            used_at_start.chain(comes_out.then_some(BuiltinId::GlobalThis));
                         program.builtins_used_at_start = used_at_start
                             .map(|builtin| BuiltinUsedAtStart { builtin })
                             .collect();

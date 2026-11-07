@@ -3375,12 +3375,7 @@ function ServerResponse(
   if (new.target !== ServerResponse) {
     ("unlikely");
     if (!(this instanceof ServerResponse)) return new ServerResponse(req, options) as any;
-    // A call on a response that exists lays its fields anew. What the server keeps of the dispatch is not among them, and stays.
-    const kept = this.$exchange;
-    if (kept !== undefined) spillStateReachedThrough(this);
-    initializeStoreByStore(this, req, options);
-    if (kept !== undefined) this.$exchange = kept;
-    return;
+    return initializeStoreByStore(this, req, options);
   }
   const exchange = makeExchange(this, null, noResponseEvents, null);
   exchange.flags = ExchangeFlags.has_pending_callbacks;
@@ -6962,6 +6957,7 @@ function writeHeadInFull(
 // Share the pipelining machinery with internal/http1_server_fallback through
 // internal/http instead of the user-visible module exports.
 http.responseRoad.flushSocketHeldChunk = flushSocketHeldChunk;
+http.responseRoad.spillStateReachedThrough = spillStateReachedThrough as (receiver: $Node.OutgoingMessage) => void;
 http.requestRoad.readsDestroyedUnseen = readsDestroyedUnseen as (socket: $Node.HttpSocket) => boolean;
 http1ServerPipeline.queuePipelinedResponse = queuePipelinedResponse;
 http1ServerPipeline.advanceResponsePipeline = advanceResponsePipeline;

@@ -777,10 +777,6 @@
     "asan": 110400
   },
   "aot/computed-load-2.test.ts": {
-    "default": 4100,
-    "asan": 16400
-  },
-  "aot/computed-load-4.test.ts": {
     "default": 26200,
     "asan": 104800
   },

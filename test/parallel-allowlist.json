@@ -958,7 +958,6 @@
     "aot/compiled-tests-load-files-by-path.test.ts",
     "aot/computed-load-1.test.ts",
     "aot/computed-load-2.test.ts",
-    "aot/computed-load-4.test.ts",
     "aot/custom-matcher-name.test.ts",
     "aot/debug-aot.test.ts",
     "aot/declarations-of-one-entry-point-asked-from-another.test.ts",

@@ -237,6 +237,7 @@ pub struct ResolvedBuiltins {
     stores_loader_functions: bool,
     process_reaches_code_on_its_prototypes: bool,
     inspects_prototype_chain_of_process: bool,
+    method_that_hands_out_global_object_may_come_out: bool,
     tables_of_loaders_written: Box<[ExprId]>,
     unlocked: OnceLock<Arc<[u32]>>,
     mentioned: Box<[BuiltinId]>,
@@ -433,6 +434,10 @@ impl ResolvedBuiltins {
 
     pub fn inspects_prototype_chain_of_process(&self) -> bool {
         self.inspects_prototype_chain_of_process
+    }
+
+    pub fn method_that_hands_out_global_object_may_come_out(&self) -> bool {
+        self.method_that_hands_out_global_object_may_come_out
     }
 
     pub fn stores_loader_functions(&self) -> bool {

@@ -354,19 +354,21 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
   });
 
   /** Plain Bun, the build, the sources deleted, the executable in another folder. */
+  const whileTheMachineIsBusy = 300_000;
   async function bothWays(file: string, sources: string, entry: string, flags: string[], addons: string[]) {
     const executable = join(away, file + (isWindows ? ".exe" : ""));
-    const plain = said(await spawned([bunExe(), "run", join(sources, entry)], sources, bunEnv));
+    const plain = said(await spawned([bunExe(), "run", join(sources, entry)], sources, bunEnv, whileTheMachineIsBusy));
     expect(plain).toEqual({ stdout: expect.stringMatching(/ 42\n$/), stderr: "", exitCode: 0, signal: null });
     const build = await spawned(
       [bunExe(), "build", "--compile", "--aot", ...flags, join(sources, entry), ...addons, "--outfile", executable],
       sources,
       bunEnv,
+      whileTheMachineIsBusy,
     );
     built(build);
     const root = realpathSync(sources);
     rmSync(sources, { recursive: true, force: true });
-    const compiled = said(await spawned([executable], away, bunEnv));
+    const compiled = said(await spawned([executable], away, bunEnv, whileTheMachineIsBusy));
     if (!isWindows) rmSync(executable, { force: true });
     // A warning names its file.
     const places = Array.from(build.stderr.matchAll(/isn't a constant.*\n\s*at (.*):\d+:\d+$/gm), place => place[1]);

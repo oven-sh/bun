@@ -5,8 +5,8 @@ use super::resolver::{ExprState, FunctionsReadingThis, ResolvedValue, Resolver};
 use super::unnamed_uses::MOST_VARIABLES_FOLLOWED;
 use crate::builtins::runtime_uses::is_evaluator;
 use crate::builtins::table::{
-    self, BuiltinFlags, BuiltinId, BuiltinKind, CallsForTexts, Intrinsic, QuietCall, Scope,
-    WrittenOperand,
+    self, BuiltinFlags, BuiltinId, BuiltinKind, BuiltinName, CallsForTexts, Intrinsic, Prototype,
+    QuietCall, Scope, WrittenOperand,
 };
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::decorator_metadata::{MetadataReference, entity_names};
@@ -61,6 +61,29 @@ const EVENTS_THAT_NATIVE_CODE_DISPATCHES_ON_GLOBAL_OBJECT: [&[u8]; 3] =
 
 fn hands_out_global_object(id: BuiltinId) -> bool {
     table::ENTRIES_THAT_HAND_OUT_THE_GLOBAL_OBJECT.contains(&table::canonical_id(id))
+}
+
+fn is_method_that_hands_out_global_object(id: BuiltinId) -> bool {
+    let holder = table::entry(table::canonical_id(id)).holder;
+    hands_out_global_object(id)
+        && holder.is_some_and(|holder| table::entry(holder).kind == BuiltinKind::Prototype)
+}
+
+fn finds_method_that_hands_out_global_object(holder: BuiltinId, name: Option<BuiltinName>) -> bool {
+    let mut object = table::canonical_id(holder);
+    loop {
+        let mut members = table::members(object).iter();
+        if members.any(|&member| {
+            is_method_that_hands_out_global_object(member)
+                && name.is_none_or(|name| table::entry(member).name == name)
+        }) {
+            return true;
+        }
+        match table::entry(object).prototype {
+            Prototype::Builtin(parent) => object = table::canonical_id(parent),
+            Prototype::Unknown | Prototype::Null => return false,
+        }
+    }
 }
 
 fn adds_listener(id: BuiltinId) -> bool {
@@ -472,9 +495,11 @@ impl Resolver<'_, '_> {
             self.output.mentioned.push(id);
         }
         if self.input.dialect == SourceDialect::Program
-            && hands_out_global_object(id)
-            && !self.listens_for_event_that_program_alone_dispatches(expr, id)
+            && (self.takes_method_that_hands_out_global_object_off(expr, id)
+                || (hands_out_global_object(id)
+                    && !self.listens_for_event_that_program_alone_dispatches(expr, id)))
         {
+            self.output.method_that_hands_out_global_object_may_come_out = true;
             self.mention(BuiltinId::GlobalThis);
             self.expose(BuiltinId::GlobalThis);
         }
@@ -928,6 +953,64 @@ impl Resolver<'_, '_> {
             && lists
                 .iter()
                 .all(|listed| self.writes_other_text(operands, listed))
+    }
+
+    pub(super) fn is_taken_as_value(&self, read: ExprId) -> bool {
+        let hir = self.input.hir;
+        let object = hir.member_key(read).map(|(object, _)| hir[object].kind);
+        match self.classify_use(read) {
+            MentionUse::Called(_) if matches!(object, Some(ExprKind::Super)) => true,
+            MentionUse::Inspected => false,
+            MentionUse::Called(user) => match hir[user].kind {
+                ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => {
+                    hir.skip_type_assertions(hir[call].callee) != read
+                }
+                _ => true,
+            },
+            _ => true,
+        }
+    }
+
+    fn is_handed_to_nobody(&self, prototype: ExprId) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let Parent::Expr(user) = bound.parent_of_expr(self.outermost_assertion_of(prototype))
+        else {
+            return false;
+        };
+        match hir[user].kind {
+            ExprKind::Binary {
+                op: BinOp::In,
+                right,
+                ..
+            } => hir.skip_type_assertions(right) == prototype,
+            ExprKind::Call(call) => {
+                let first = hir.ids(hir[call].args).next();
+                first.map(|first| hir.skip_type_assertions(first)) == Some(prototype)
+                    && self.is_run_by_plain_call(user, BuiltinId::ObjectCreate)
+            }
+            _ => false,
+        }
+    }
+
+    fn takes_method_that_hands_out_global_object_off(&self, holder: ExprId, id: BuiltinId) -> bool {
+        match self.classify_use(holder) {
+            MentionUse::Inspected | MentionUse::Called(_) | MentionUse::Aliased => false,
+            MentionUse::Exposed if self.is_handed_to_nobody(holder) => false,
+            MentionUse::Holder => {
+                let Parent::Expr(read) = self.input.bound.parent_of_expr(holder) else {
+                    return false;
+                };
+                let Some((_, MemberKey::Name(name))) = self.input.hir.member_key(read) else {
+                    return false;
+                };
+                let name = self.input.names.get(name);
+                name.is_some_and(|name| finds_method_that_hands_out_global_object(id, Some(name)))
+                    && self.is_taken_as_value(read)
+            }
+            MentionUse::ReadByComputedKey | MentionUse::Destructured(_) | MentionUse::Exposed => {
+                finds_method_that_hands_out_global_object(id, None)
+            }
+        }
     }
 
     fn listens_for_event_that_program_alone_dispatches(

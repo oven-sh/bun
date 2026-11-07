@@ -84,16 +84,12 @@ pub(crate) enum ResultT<T> {
 pub(crate) type Result = ResultT<SpawnOptionsStdio>;
 
 pub(crate) enum ToSpawnOptsError {
-    StdinUsedAsOut,
-    OutUsedAsStdin,
     BlobUsedAsOut,
 }
 
 impl ToSpawnOptsError {
     pub(crate) fn to_str(&self) -> &'static [u8] {
         match self {
-            Self::StdinUsedAsOut => b"Stdin cannot be used for stdout or stderr",
-            Self::OutUsedAsStdin => b"Stdout and stderr cannot be used for stdin",
             Self::BlobUsedAsOut => b"Blobs are immutable, and cannot be used for stdout/stderr",
         }
     }
@@ -227,25 +223,6 @@ impl Stdio {
                                 PathOrFileDescriptor::Fd(store_fd) => {
                                     if Some(store_fd) == fd {
                                         break 'brk SpawnOptionsStdio::Inherit;
-                                    }
-
-                                    if let Some(tag) = store_fd.stdio_tag() {
-                                        match tag {
-                                            FdStdio::StdIn => {
-                                                if i == 1 || i == 2 {
-                                                    return ResultT::Err(
-                                                        ToSpawnOptsError::StdinUsedAsOut,
-                                                    );
-                                                }
-                                            }
-                                            FdStdio::StdOut | FdStdio::StdErr => {
-                                                if i == 0 {
-                                                    return ResultT::Err(
-                                                        ToSpawnOptsError::OutUsedAsStdin,
-                                                    );
-                                                }
-                                            }
-                                        }
                                     }
 
                                     break 'brk SpawnOptionsStdio::Pipe(store_fd);
@@ -449,7 +426,8 @@ impl Stdio {
                 )));
             }
 
-            if file_fd >= i32::MAX as _ {
+            // Node's spawnSync truncates instead: NaN and 0.5 are fd 0 there.
+            if !value.is_integer() || file_fd >= i32::MAX as _ {
                 let mut formatter = jsc::console_object::Formatter::new(cx.global());
                 // `defer formatter.deinit()` — handled by Drop.
                 return Err(cx.global().throw_invalid_arguments(format_args!(
@@ -458,31 +436,9 @@ impl Stdio {
                 )));
             }
 
-            if let Some(tag) = fd.stdio_tag() {
-                match tag {
-                    FdStdio::StdIn => {
-                        if i == 1 || i == 2 {
-                            return Err(cx.global().throw_invalid_arguments(format_args!(
-                                "stdin cannot be used for stdout or stderr"
-                            )));
-                        }
-
-                        *out_stdio = Stdio::Inherit;
-                        return Ok(());
-                    }
-                    FdStdio::StdOut | FdStdio::StdErr => {
-                        if i == 0 {
-                            return Err(cx.global().throw_invalid_arguments(format_args!(
-                                "stdout and stderr cannot be used for stdin"
-                            )));
-                        }
-                        if (i == 1 && tag == FdStdio::StdOut) || (i == 2 && tag == FdStdio::StdErr)
-                        {
-                            *out_stdio = Stdio::Inherit;
-                            return Ok(());
-                        }
-                    }
-                }
+            if fd.stdio_tag().is_some() && file_fd == i {
+                *out_stdio = Stdio::Inherit;
+                return Ok(());
             }
 
             *out_stdio = Stdio::Fd(fd);
@@ -575,36 +531,11 @@ impl Stdio {
                 if let StoreData::File(ref file) = store.data {
                     match file.pathlike {
                         PathOrFileDescriptor::Fd(store_fd) => {
-                            if Some(store_fd) == fd {
-                                *self = Stdio::Inherit;
+                            *self = if Some(store_fd) == fd {
+                                Stdio::Inherit
                             } else {
-                                // TODO: is this supposed to be `store.data.file.pathlike.fd`?
-                                if let Some(tag) = FdStdio::from_int(i) {
-                                    match tag {
-                                        FdStdio::StdIn => {
-                                            if i == 1 || i == 2 {
-                                                return Err(global.throw_invalid_arguments(
-                                                    format_args!(
-                                                        "stdin cannot be used for stdout or stderr"
-                                                    ),
-                                                ));
-                                            }
-                                        }
-                                        FdStdio::StdOut | FdStdio::StdErr => {
-                                            if i == 0 {
-                                                return Err(global.throw_invalid_arguments(
-                                                    format_args!(
-                                                        "stdout and stderr cannot be used for stdin"
-                                                    ),
-                                                ));
-                                            }
-                                        }
-                                    }
-                                }
-
-                                *self = Stdio::Fd(store_fd);
-                            }
-
+                                Stdio::Fd(store_fd)
+                            };
                             return Ok(());
                         }
                         PathOrFileDescriptor::Path(ref path) => {

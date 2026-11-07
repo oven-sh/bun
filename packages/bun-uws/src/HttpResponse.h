@@ -111,6 +111,19 @@ public:
         return false;
     }
 
+    /* Bun.serve: the close of this connection is what ends the body in flight (an HTTP/1.0 request, no Content-Length), the
+     * body has begun (HTTP_WRITE_CALLED), and it is not all out: the application has not ended it, or bytes of it still wait
+     * here. An orderly close (a FIN; over TLS, a close_notify first) then reads as the end of a whole body, so the server
+     * closes with a reset. node:http does not ask: Node ends such a body with a FIN. */
+    bool hasIncompleteCloseDelimitedBody(HttpResponseData<SSL> *httpResponseData) {
+        const uint32_t state = httpResponseData->state;
+        const uint32_t closeDelimitedBody = HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+        if ((state & (closeDelimitedBody | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) != closeDelimitedBody) {
+            return false;
+        }
+        return (state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || !Super::hasFullyDrained();
+    }
+
     /* Called when a response completes. Returns true when the
      * caller has to run the close gate now, false when onData runs it.
      *
@@ -171,6 +184,10 @@ public:
                 data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
                 idle = false;
             }
+        } else if (idle && !Super::hasFullyDrained()) {
+            /* Bun.serve: close() would drop the bytes of a finished response that are still in the backpressure buffer.
+             * Not idle until they are out: the graceful stop() marks the connection, and onWritable closes it. */
+            idle = false;
         }
         if (!idle) {
             return false;

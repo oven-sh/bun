@@ -226,7 +226,7 @@ int us_loop_close_all_groups(struct us_loop_t *loop) {
          * runtime's stop phase has already stopped those owners before this sweep,
          * and closing a listen socket from under one that was not would be a UAF. */
         if (g->head_sockets || g->head_connecting_sockets || g->low_prio_count) {
-            us_socket_group_close_all_ex(g, /* also_listeners */ 0);
+            us_socket_group_close_all_ex(g, /* also_listeners */ 0, /* close_code */ NULL);
             any = 1;
         }
         /* close_all → unlink may have spliced our cached `next` out too (an

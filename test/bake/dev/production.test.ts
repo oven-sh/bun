@@ -489,6 +489,53 @@ export default function () {
     expect(exitCode).toBe(0);
   });
 
+  // The SSR graph and the client each bundle the stylesheet. The two outputs must not collide.
+  test("builds a css module of a 'use client' file with a separate SSR graph", async () => {
+    using dir = tempDir("bake-production-css-module-ssr", {
+      "styles.module.css": `.title { color: red; }`,
+      "components/Widget.ts": `
+        "use client";
+        import styles from "../styles.module.css";
+        export const widget = () => styles.title;
+      `,
+      "client.ts": `console.log("client loaded");`,
+      "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          return { files: { "index.html": "<body>" + meta.pageModule.default() + "</body>" } };
+        }
+        export function registerClientReference(value, file, uid) {
+          return { value, file, uid };
+        }
+      `,
+      "routes/index.ts": `
+        import { widget } from "../components/Widget.ts";
+        export default () => "widget:" + typeof widget;
+      `,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        const serverComponents = {
+          separateSSRGraph: true,
+          serverRuntimeImportSource: "./server.ts",
+          serverRegisterClientReferenceExport: "registerClientReference",
+        };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr], serverComponents } } };
+      `,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    const html = await Bun.file(path.join(String(dir), "dist", "index.html"))
+      .text()
+      .catch(() => stderr.toString());
+    expect(html).toContain("widget:");
+    expect(exitCode).toBe(0);
+  });
+
   test("fails the build for a route file with an invalid name", async () => {
     using dir = tempDir("bake-production-invalid-route", {
       "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,

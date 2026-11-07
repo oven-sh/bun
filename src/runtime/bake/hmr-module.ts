@@ -339,6 +339,8 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.cjs.exports = {};
       throw e;
     }
+    // `getEsmExports` keeps the ES view of `module.exports`, and this evaluation can have replaced that object.
+    mod.exports = null;
     mod.state = State.Loaded;
   } else {
     // ESM
@@ -452,6 +454,8 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.cjs.exports = {};
       throw e;
     }
+    // `getEsmExports` keeps the ES view of `module.exports`, and this evaluation can have replaced that object.
+    mod.exports = null;
     mod.state = State.Loaded;
     return mod;
   } else {

@@ -41,19 +41,7 @@ bun_bundler::link_impl_DevServerHandle! {
                 .track_resolution_failure(import_source, specifier, renderer, loader)
                 .map_err(Into::into)
         },
-        is_file_cached(abs_path, side) => {
-            (*this).is_file_cached(abs_path, side).map(|e| {
-                use bun_bundler::bake_types::CacheKind;
-                bun_bundler::bake_types::CacheEntry {
-                    kind: match e.kind {
-                        FileKind::Unknown => CacheKind::Unknown,
-                        FileKind::Js => CacheKind::Js,
-                        FileKind::Asset => CacheKind::Asset,
-                        FileKind::Css => CacheKind::Css,
-                    },
-                }
-            })
-        },
+        is_file_cached(abs_path, side) => (*this).is_file_cached(abs_path, side),
         asset_hash(abs_path) => (*this).assets.get_hash(abs_path),
         current_bundle_start_data() => {
             (*this)

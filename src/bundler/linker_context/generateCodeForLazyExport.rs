@@ -13,45 +13,26 @@ use crate::{Index, IndexInt, LinkerContext};
 
 type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
-pub(crate) fn generate_code_for_lazy_export(
-    this: &mut LinkerContext,
+/// Fills a CSS file's lazy-export object with its class-name map; a bad `composes` goes to `log`.
+pub(crate) fn populate_css_module_lazy_export(
+    this: &LinkerContext,
     source_index: IndexInt,
+    log: &mut bun_ast::Log,
 ) -> Result<(), AllocError> {
-    let mut exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
-    // The dev server's module format represents lazy-export modules (JSON,
-    // TOML, CSS modules, ...) as CommonJS modules evaluated by the HMR
-    // runtime, so always generate the `module.exports = ...` form below.
-    // The ESM form would synthesize `export` parts that
-    // `print_dev_server_module` cannot represent.
-    if this.options.output_format == crate::options::OutputFormat::InternalBakeDev
-        && exports_kind != bun_ast::ExportsKind::Cjs
-    {
-        exports_kind = bun_ast::ExportsKind::Cjs;
-        this.graph.ast.items_exports_kind_mut()[source_index as usize] = exports_kind;
-    }
-    // Take `parts` as a raw pointer *before* the
-    // long-lived immutable `items_css()` borrow below; re-borrowed again later as needed.
-    let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
-    // SAFETY: parse_graph backref; raw deref because `all_sources` is held
-    // across `&mut *this.log` below (split borrow).
-    let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
+    let parts: &[Part] = this.graph.ast.items_parts()[source_index as usize].as_slice();
+    let all_sources = this.parse_graph().input_files.items_source();
     let all_css_asts: &[crate::bundled_ast::CssCol] = this.graph.ast.items_css();
     let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize].as_deref();
 
-    // SAFETY: `parts` is a stable SoA column slice valid for the link pass.
-    if unsafe { (&*parts).len() } < 1 {
-        panic!("Internal error: expected at least one part for lazy export");
+    if parts.len() < 2 {
+        panic!("Internal error: expected a lazy export part");
     }
-
-    // SAFETY: `parts.ptr[1]` — Vec raw indexing; using index 1 here.
-    let part: &mut Part = unsafe { &mut (*parts)[1] };
+    let part: &Part = &parts[1];
 
     // `Part.stmts: StoreSlice<Stmt>` — safe `Deref` to `&[Stmt]`.
     if part.stmts.is_empty() {
         panic!("Internal error: expected at least one statement in the lazy export");
     }
-
-    let module_ref = this.graph.ast.items_module_ref()[source_index as usize];
 
     // Handle css modules
     //
@@ -77,11 +58,17 @@ pub(crate) fn generate_code_for_lazy_export(
                 // `BundledAst.css` SoA column.
                 all_css_asts: &'a [crate::bundled_ast::CssCol],
                 all_sources: &'a [Source<'a>],
+                all_loaders: &'a [bun_ast::Loader],
             }
 
             impl ComposesGraph for Graph<'_> {
                 fn stylesheet(&self, idx: IndexInt) -> Option<&BundlerStyleSheet> {
                     self.all_css_asts[idx as usize].as_deref()
+                }
+
+                fn stylesheet_failed(&self, idx: IndexInt) -> bool {
+                    self.all_loaders[idx as usize].is_css()
+                        && self.all_css_asts[idx as usize].is_none()
                 }
 
                 fn source(&self, idx: IndexInt) -> &Source<'_> {
@@ -101,6 +88,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 all_import_records: this.graph.ast.items_import_records(),
                 all_css_asts,
                 all_sources,
+                all_loaders: this.parse_graph().input_files.items_loader(),
             };
             let mut visitor = ComposesVisitor::new(&graph);
             let arena = this.arena();
@@ -119,9 +107,7 @@ pub(crate) fn generate_code_for_lazy_export(
                     ),
                     ExportedName::Global(name) => Expr::init(E::String::init(name), stmt.loc),
                 };
-                // Split-borrow — see `LinkerContext::log_disjoint`.
-                let names =
-                    visitor.exported_names(css_ast, ref_, source_index, this.log_disjoint());
+                let names = visitor.exported_names(css_ast, ref_, source_index, log);
                 let value = if let [name] = names {
                     name_expr(name)
                 } else {
@@ -158,6 +144,31 @@ pub(crate) fn generate_code_for_lazy_export(
             }
         }
     }
+    Ok(())
+}
+
+pub(crate) fn generate_code_for_lazy_export(
+    this: &mut LinkerContext,
+    source_index: IndexInt,
+) -> Result<(), AllocError> {
+    let mut exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
+    // `print_dev_server_module` only has a CommonJS form (`module.exports = ...`) for lazy exports.
+    if this.options.output_format == crate::options::OutputFormat::InternalBakeDev
+        && exports_kind != bun_ast::ExportsKind::Cjs
+    {
+        exports_kind = bun_ast::ExportsKind::Cjs;
+        this.graph.ast.items_exports_kind_mut()[source_index as usize] = exports_kind;
+    }
+
+    // Split-borrow — see `LinkerContext::log_disjoint`.
+    populate_css_module_lazy_export(this, source_index, this.log_disjoint())?;
+
+    let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
+    // SAFETY: stable SoA column slice valid for the link pass; index 1 was
+    // bounds-checked by `populate_css_module_lazy_export`.
+    let part: &mut Part = unsafe { &mut (*parts)[1] };
+
+    let module_ref = this.graph.ast.items_module_ref()[source_index as usize];
 
     let stmt: Stmt = part.stmts[0];
     let StmtData::SLazyExport(lazy) = stmt.data else {

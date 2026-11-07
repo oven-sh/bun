@@ -3035,12 +3035,7 @@ impl<'a> Transpiler<'a> {
         };
 
         let mut opts = bun_css::ParserOptions::default(Some(self.log_mut()));
-        const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
-        let enable_css_modules = file_path_text.len() > CSS_MODULE_SUFFIX.len()
-            && strings::eql_comptime(
-                &file_path_text[file_path_text.len() - CSS_MODULE_SUFFIX.len()..],
-                CSS_MODULE_SUFFIX,
-            );
+        let enable_css_modules = bun_css::css_modules::is_module_path(file_path_text);
         if enable_css_modules {
             opts.filename = file_path_pretty;
             opts.css_modules = Some(bun_css::CssModuleConfig::default());

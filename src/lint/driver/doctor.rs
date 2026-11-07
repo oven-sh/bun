@@ -435,7 +435,7 @@ pub(crate) fn lint(
     let file = own.file.as_ref().map(to_relative);
     let nested = all_loaded.iter().skip(1).filter_map(|it| it.file.as_ref());
     let nested = sorted(nested.map(to_relative).collect());
-    let packages = Packages::new(cwd, &packages::is_for_linting, &|name| {
+    let need = |name: &[u8]| {
         let is_named = || sources.iter().any(|it| it.1 == name);
         if javascript.iter().any(|it| it.0 == name) {
             Some(Need::Rules)
@@ -448,7 +448,19 @@ pub(crate) fn lint(
             let decides = own.flavor == Flavor::Oxlint && matches!(name, b"oxlint" | b"vite-plus");
             decides.then_some(Need::Defaults)
         }
-    });
+    };
+    // ESLint, when a script runs it, reads the configs that this run doesn't.
+    let loads = |stays: &[u8]| {
+        if stays != b"eslint" {
+            return Vec::new();
+        }
+        let before = modules.packages();
+        let mut names = loader.load_eslint_configs_not_read(own.file.as_deref());
+        let after = modules.packages();
+        names.extend(after.into_iter().filter(|it| !before.contains(it)));
+        names
+    };
+    let packages = Packages::new(cwd, &packages::is_for_linting, &need, &loads);
     let mut notes = std::mem::take(&mut *loader.warnings.lock());
     notes.append(&mut *loader.advice.lock());
 

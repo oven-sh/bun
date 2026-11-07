@@ -6,14 +6,27 @@
 
 use bun_ast as js_ast;
 use bun_collections::VecExt;
+use bun_react_compiler::Discovery;
 
 use crate::JSXImport;
 use crate::p::P;
 
+/// Where the visit pass is, relative to the functions that the compiler's discovery claims.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum ReactCompilerSearch {
+    /// Not in a claimed function. Discovery is asked about each function entered.
+    Search,
+    /// In a claimed function that is left as written. Discovery is not asked about anything nested in it.
+    Skip,
+    /// In a claimed function that is handed to the compiler, which re-declares its locals as new symbols.
+    Replace,
+}
+
 /// What [`P::enter_react_compiler_candidate`] decided about a function.
 #[derive(Clone, Copy)]
 pub(crate) struct ReactCompilerCandidate {
-    pub(crate) prev_may_replace_body: bool,
+    pub(crate) prev_search: ReactCompilerSearch,
     /// The function is handed to the compiler once its body has been visited.
     pub(crate) is_taken: bool,
     /// The binding that names it: its own declaration, or the `A` in `const A = () => {}`.
@@ -21,6 +34,9 @@ pub(crate) struct ReactCompilerCandidate {
     pub(crate) in_react_hoc: bool,
     pub(crate) is_top_level: bool,
 }
+
+// A copy of this is in the frame of `visit_func` and of `e_arrow`, which recurse.
+const _: () = assert!(core::mem::size_of::<ReactCompilerCandidate>() == 16);
 
 pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool> {
     p: &'p mut P<'a, TS, SCAN_ONLY>,
@@ -65,9 +81,6 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         let name = symbol.original_name.slice();
         let mut all = self.p.import_items_for_namespace.iter();
         all.find_map(|(namespace, items)| (items.get(name)?.ref_ == item).then_some(*namespace))
-    }
-    fn source(&self) -> &[u8] {
-        &self.p.source.contents
     }
     fn arena(&self) -> &bun_alloc::Arena {
         self.p.arena
@@ -217,10 +230,11 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
     }
 
     /// Call this before visiting any part of a function. Upstream considers every function that isn't a method, isn't in a
-    /// class, and isn't inside a function it already compiles. The surrounding statement only gives the function its name.
+    /// class, and isn't inside a function it already claimed. The surrounding statement only gives the function its name.
     ///
     /// Consumes `react_compiler_candidate_name`, so that a function in a default argument can't pick it up, and sets
-    /// `react_compiler_may_replace_body` for the visit.
+    /// `react_compiler_search` for the visit.
+    #[inline]
     pub(crate) fn enter_react_compiler_candidate(
         &mut self,
         is_method: bool,
@@ -230,17 +244,47 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         has_rest_arg: bool,
         body: &[js_ast::Stmt],
     ) -> ReactCompilerCandidate {
-        let prev_may_replace_body = self.react_compiler_may_replace_body;
+        // Without the compiler nothing sets the name, the `memo()` flag or the search state.
+        if self.react_compiler.is_none() {
+            return ReactCompilerCandidate {
+                prev_search: ReactCompilerSearch::Search,
+                is_taken: false,
+                binding: None,
+                in_react_hoc: false,
+                is_top_level,
+            };
+        }
+        self.discover_react_compiler_candidate(
+            is_method,
+            is_top_level,
+            has_react_hooks_suppression,
+            args,
+            has_rest_arg,
+            body,
+        )
+    }
+
+    #[inline(never)]
+    fn discover_react_compiler_candidate(
+        &mut self,
+        is_method: bool,
+        is_top_level: bool,
+        has_react_hooks_suppression: bool,
+        args: &[js_ast::G::Arg],
+        has_rest_arg: bool,
+        body: &[js_ast::Stmt],
+    ) -> ReactCompilerCandidate {
+        let prev_search = self.react_compiler_search;
         let binding = (self.react_compiler_candidate_name.take()).filter(|r| r.is_valid());
         let in_react_hoc = core::mem::take(&mut self.react_compiler_in_react_hoc);
         let mut is_taken = false;
         if !is_method
-            && !prev_may_replace_body
+            && prev_search == ReactCompilerSearch::Search
             && self.enclosing_class_keyword.len == 0
             && let Some(rc) = self.react_compiler.take()
         {
             let name = binding.map(|r| self.load_name_from_ref(r));
-            is_taken = rc.may_compile(
+            match rc.discover(
                 &ReactCompilerHost::new(self),
                 name,
                 in_react_hoc,
@@ -249,12 +293,18 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
                 args,
                 has_rest_arg,
                 body,
-            );
-            self.react_compiler_may_replace_body = is_taken;
+            ) {
+                Discovery::Search => {}
+                Discovery::Skip => self.react_compiler_search = ReactCompilerSearch::Skip,
+                Discovery::Compile => {
+                    self.react_compiler_search = ReactCompilerSearch::Replace;
+                    is_taken = true;
+                }
+            }
             self.react_compiler = Some(rc);
         }
         ReactCompilerCandidate {
-            prev_may_replace_body,
+            prev_search,
             is_taken,
             binding,
             in_react_hoc,
@@ -283,21 +333,18 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
 
     fn is_react_hoc_callee(&self, target: &js_ast::Expr) -> bool {
         use js_ast::expr::Data;
-        let name: &[u8] = match &target.data {
-            Data::EIdentifier(id) => self.load_name_from_ref(id.ref_),
-            Data::EImportIdentifier(id) => self.load_name_from_ref(id.ref_),
-            Data::EDot(member) => {
-                let obj = match &member.target.data {
-                    Data::EIdentifier(o) => self.load_name_from_ref(o.ref_),
-                    Data::EImportIdentifier(o) => self.load_name_from_ref(o.ref_),
-                    _ => return false,
-                };
-                if obj != b"React" {
-                    return false;
-                }
-                member.name.slice()
+        let name_of = |expr: &js_ast::Expr| -> &[u8] {
+            match &expr.data {
+                Data::EIdentifier(id) => self.load_name_from_ref(id.ref_),
+                Data::EImportIdentifier(id) => self.load_name_from_ref(id.ref_),
+                _ => b"",
             }
-            _ => return false,
+        };
+        let name = match &target.data {
+            Data::EDot(member) if name_of(&member.target) == b"React" => member.name.slice(),
+            // Upstream does not ask if the property is computed, so `React[memo]` counts too.
+            Data::EIndex(member) if name_of(&member.target) == b"React" => name_of(&member.index),
+            _ => name_of(target),
         };
         name == b"forwardRef" || name == b"memo"
     }

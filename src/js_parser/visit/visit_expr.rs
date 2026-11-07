@@ -2753,9 +2753,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if e_.has_rest_arg {
                 flags |= bun_ast::flags::Function::HasRestArg;
             }
-            if e_.has_react_hooks_suppression {
-                flags |= bun_ast::flags::Function::HasReactHooksSuppression;
-            }
             p.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
                 args: e_.args,
                 flags,
@@ -2782,7 +2779,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.pop_scope();
         p.pop_scope();
 
-        p.react_compiler_may_replace_body = rc_candidate.prev_may_replace_body;
+        p.react_compiler_search = rc_candidate.prev_search;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
 
         // Restore before any further `p.*` call so the stack-local pointer

@@ -18,6 +18,7 @@ use crate::defines::{Define, DefineData};
 use crate::lexer as js_lexer;
 use crate::lower::hoist_test_mocks::{MockApi, is_test_module};
 use crate::parse::parse_entry::Options as ParserOptions;
+use crate::react_compiler_host::ReactCompilerSearch;
 use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
@@ -455,8 +456,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Compiled args/flags written by the `visit_stmts` hook for `visit_func` /
     /// arrow-visit to apply to the original `G::Fn` / `E::Arrow`.
     pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
-    /// Visiting a function that is handed to the React Compiler, which re-declares its locals as new symbols.
-    pub(crate) react_compiler_may_replace_body: bool,
+    /// Set by `enter_react_compiler_candidate` for the visit of each function.
+    pub(crate) react_compiler_search: ReactCompilerSearch,
     /// Functions the compiler outlined from a function that isn't at the top level. `visit_stmts` puts them after the
     /// statement it is visiting.
     pub(crate) react_compiler_outlined_from_nested: Vec<Stmt>,
@@ -1170,7 +1171,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // name leaves the pattern, and `...rest` would then collect it.
         if !self.options.bundle
             || self.options.output_format == options::Format::InternalBakeDev
-            || self.react_compiler_may_replace_body
+            || self.react_compiler_search == ReactCompilerSearch::Replace
             || properties
                 .iter()
                 .any(|p| p.flags.contains(bun_ast::flags::Property::IsSpread))
@@ -1235,7 +1236,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .insert(local, ImportItemForNamespaceMap::default());
         self.dynamic_import_namespace_locals
             .insert(local, records.to_vec());
-        if self.react_compiler_may_replace_body {
+        if self.react_compiler_search == ReactCompilerSearch::Replace {
             self.dynamic_import_copied_locals.insert(local, ());
         }
         for &import_record_id in records {
@@ -9796,7 +9797,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_in_react_hoc: false,
             react_compiler_pending: None,
             react_compiler_result: None,
-            react_compiler_may_replace_body: false,
+            react_compiler_search: ReactCompilerSearch::Search,
             react_compiler_outlined_from_nested: Vec::new(),
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),

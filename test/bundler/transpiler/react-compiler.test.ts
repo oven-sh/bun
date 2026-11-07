@@ -4297,6 +4297,456 @@ describe("bundler", () => {
     },
   });
 
+  // Upstream claims a component or a hook before it reads the directive that opts it out, and it skips every function
+  // inside a claimed one. So a function that opts out is left as written, with all that is inside it. A function
+  // inside used to be compiled on its own, with a cache that the variables of the outer function are no inputs of.
+  // babel-plugin-react-compiler 1.0.0 compiles nothing in these two files.
+  describe("react-compiler/AFunctionThatOptsOutIsLeftAsWritten", () => {
+    const files = {
+      "entry.jsx": /* jsx */ `
+        import { memo, useEffect, useState } from "react";
+        export { Banner } from "./banner.jsx";
+
+        export function Arrow({ a, b }) {
+          "use no memo";
+          const Cell = p => <i x={p.x}>{b}</i>;
+          return <b v={Cell({ x: a })} />;
+        }
+        export function Forget({ a, b }) {
+          "use no forget";
+          const Cell = p => <i x={p.x}>{b}</i>;
+          return <b v={Cell({ x: a })} />;
+        }
+        export function SingleQuotes({ a, b }) {
+          'use no memo';
+          const Cell = p => <i x={p.x}>{b}</i>;
+          return <b v={Cell({ x: a })} />;
+        }
+        export function Declared({ a, b }) {
+          "use no memo";
+          function Cell(p) {
+            return <i x={p.x}>{b}</i>;
+          }
+          return <b v={Cell({ x: a })} />;
+        }
+        export function NamedExpression({ a, b }) {
+          "use no memo";
+          const Cell = function cell(p) {
+            return <i x={p.x}>{b}</i>;
+          };
+          return <b v={Cell({ x: a })} />;
+        }
+        export function InnerHook({ a, b }) {
+          "use no memo";
+          const useCell = p => <i x={p.x}>{b}</i>;
+          return <b v={useCell({ x: a })} />;
+        }
+        export function InnerMemo({ a, b }) {
+          "use no memo";
+          const Cell = memo(p => <i x={p.x}>{b}</i>);
+          return <b v={Cell({ x: a })} />;
+        }
+        export function InnerOptsIn({ a, b }) {
+          "use no memo";
+          const cell = p => {
+            "use memo";
+            return <i x={p.x}>{b}</i>;
+          };
+          return <b v={cell({ x: a })} />;
+        }
+        export function TwoDeep({ a, b }) {
+          "use no memo";
+          const make = () => {
+            const Cell = p => <i x={p.x}>{b}</i>;
+            return Cell;
+          };
+          return <b v={make()({ x: a })} />;
+        }
+        export function InAnObjectMethod({ a, b }) {
+          "use no memo";
+          const row = {
+            render() {
+              const Cell = p => <i x={p.x}>{b}</i>;
+              return Cell({ x: a });
+            },
+          };
+          return <b v={row.render()} />;
+        }
+        export function useInAParameter(
+          a,
+          b,
+          make = () => {
+            const Cell = p => <i x={p.x}>{b}</i>;
+            return Cell;
+          },
+        ) {
+          "use no memo";
+          return <b v={make()({ x: a })} />;
+        }
+        export function useOuterHook({ a, b }) {
+          "use no memo";
+          const Cell = p => <i x={p.x}>{b}</i>;
+          return <b v={Cell({ x: a })} />;
+        }
+        export const InMemo = memo(function ({ a, b }) {
+          "use no memo";
+          const Cell = p => <i x={p.x}>{b}</i>;
+          return <b v={Cell({ x: a })} />;
+        });
+        export function optsInAndOut({ a, b }) {
+          "use memo";
+          "use no memo";
+          const Cell = p => <i x={p.x}>{b}</i>;
+          return Cell({ x: a });
+        }
+        export function Mapped({ a, b }) {
+          "use no memo";
+          const Cell = n => <i x={n}>{b}</i>;
+          return <b v={[a, a + 1].map(Cell)} />;
+        }
+        export function Suppressed({ a, b }) {
+          const Cell = p => <i x={p.x}>{b}</i>;
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          return <b v={Cell({ x: a })} />;
+        }
+        export const ArrowSuppressed = ({ a, b }) => {
+          const Cell = p => <i x={p.x}>{b}</i>;
+          // eslint-disable-next-line react-hooks/exhaustive-deps
+          return <b v={Cell({ x: a })} />;
+        };
+        export const MemoArrowSuppressed = memo(({ a, b }) => {
+          const Cell = p => <i x={p.x}>{b}</i>;
+          // eslint-disable-next-line react-hooks/exhaustive-deps
+          return <b v={Cell({ x: a })} />;
+        });
+        export function AfterAComment({ a, b }) {
+          /*! kept */
+          "use no memo";
+          const Cell = p => <i x={p.x}>{b}</i>;
+          return <b v={Cell({ x: a })} />;
+        }
+        // For the server the compiler takes the state, the effect and the handler out of a component.
+        export function List({ items }) {
+          "use no memo";
+          const Row = ({ item }) => {
+            const [open, setOpen] = useState(false);
+            useEffect(() => {});
+            return <li onClick={() => setOpen(!open)}>{open ? item : null}</li>;
+          };
+          return <ul>{items.map(item => <Row item={item} />)}</ul>;
+        }
+        // A local of a function that is left as written is bound to the export, as with no compiler.
+        export function Requires() {
+          "use no memo";
+          useEffect(() => {});
+          const { label } = require("./label.js");
+          return label();
+        }
+        export function RequiresSuppressed() {
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          useEffect(() => {});
+          const { label } = require("./label.js");
+          return label();
+        }
+        export function RequiresNamespace() {
+          "use no memo";
+          useEffect(() => {});
+          const ns = require("./label.js");
+          return ns.label();
+        }
+        export function ImportsThen() {
+          "use no memo";
+          useEffect(() => {});
+          return import("./label.js").then(ns => ns.label());
+        }
+      `,
+      // The comment does not hide the directive of the file.
+      "banner.jsx": /* jsx */ `
+        /*! kept */
+        "use no memo";
+        export function Banner({ a }) {
+          return <b v={a} />;
+        }
+      `,
+      "label.js": /* js */ `
+        export function label() {
+          return "label";
+        }
+        export const notRead = "NOT_READ";
+      `,
+      "node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "node_modules/react/index.js": `export const memo = fn => fn, useEffect = () => {}, useState = value => [value, () => {}];`,
+      "node_modules/react/compiler-runtime.js": `export const c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "node_modules/react/jsx-runtime.js": `export const jsx = (type, props) => ({ type, props }), jsxs = jsx;`,
+      "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => ({ type, props });`,
+    };
+
+    async function api(dir: string, target: "browser" | "bun", reactCompiler: boolean) {
+      const result = await Bun.build({ entrypoints: [join(dir, "entry.jsx")], target, reactCompiler });
+      return await result.outputs[0].text();
+    }
+    async function cli(dir: string, target: "browser" | "bun", reactCompiler: boolean) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./entry.jsx", `--target=${target}`, ...(reactCompiler ? ["--react-compiler"] : [])],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      return stdout;
+    }
+
+    // The browser target memoizes. The bun target compiles for the server, with no cache.
+    test.each([
+      ["Bun.build", "browser", api],
+      ["Bun.build", "bun", api],
+      ["bun build", "browser", cli],
+      ["bun build", "bun", cli],
+    ] as const)("%s, target %s", async (_, target, build) => {
+      using dir = tempDir("react-compiler-opt-out", files);
+      const [asWritten, compiled] = await Promise.all([
+        build(String(dir), target, false),
+        build(String(dir), target, true),
+      ]);
+      expect(asWritten).toContain("useCell = (p) =>");
+      expect(asWritten).not.toContain("compiler-runtime");
+      expect(compiled).toBe(asWritten);
+    });
+
+    // `bun test` compiles a file when it loads it, with no bundler.
+    test("bun test", async () => {
+      using dir = tempDir("react-compiler-opt-out", {
+        ...files,
+        "compiled.test.jsx": /* jsx */ `
+          import { test } from "bun:test";
+          import * as all from "./entry.jsx";
+          test("which functions have a memo cache", () => {
+            console.log("compiled: " + Object.keys(all).filter(name => /\\$\\[\\d+\\]/.test(String(all[name]))).join(" "));
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--react-compiler", "./compiled.test.jsx"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ compiled: stdout.match(/compiled: (.*)/)?.[1] ?? stderr, exitCode }).toEqual({
+        compiled: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // Upstream takes a function for a component or a hook when it calls a hook or creates JSX anywhere in it but in an
+  // arrow, a function expression or a function declaration nested in it. That includes its parameters, a method of an
+  // object or of a class, a pattern and a computed key. A function that was not claimed for what is in one of those
+  // places had the component inside it compiled on its own.
+  //
+  // Each function here has a component `Cell` inside it. `[2]` is the cache of `Cell` compiled on its own, and a
+  // larger cache is the function compiled as one unit. `[]` is a claimed function that is left as written, because it
+  // opts out or because the compiler gives up on it. The expected sizes of `asUpstream` are what
+  // babel-plugin-react-compiler 1.0.0 and 0.0.0-experimental-a1856f3-20260507 give for this file, but for the two rows
+  // that say otherwise.
+  {
+    const cell = `const Cell = p => <i x={p.x}>{b}</i>;`;
+    const off = `"use no memo";`;
+    const unit = `<b v={Cell({ x: a })} />`;
+    const fn = (name: string, statements = "", parameters = "{ a, b }", returned = "Cell({ x: a })") =>
+      `function ${name}(${parameters}) { ${statements} ${cell} return ${returned}; }`;
+    const wrapped = (name: string, wrapper: string, parameters: string, statements = "", returned = unit) =>
+      `const ${name} = ${wrapper}((${parameters}) => { ${statements} ${cell} return ${returned}; });`;
+    type Row = [source: string, sizes: number[]];
+    const asUpstream: Row[] = [
+      // Its own parameters.
+      [fn("ParameterDefaultJsx", "", "{ a, b, el = <u /> }"), []],
+      [fn("ParameterDefaultHook", "", "{ a, b, s = useState(0) }"), []],
+      [fn("useParameterDefault", "", "{ a, b }, s = useState(0)"), []],
+      [fn("useParameterPattern", "", "{ a, b }, [s = useState(0)] = []"), []],
+      // A method of an object or of a class, and the rest of a class.
+      [fn("ObjectMethod", "const o = { render() { return <u />; } };"), [5]],
+      [fn("ObjectGetter", "const o = { get el() { return <u />; } };"), []],
+      [fn("ObjectSetter", "const o = { set v(x) { useState(x); } };"), []],
+      [fn("useObjectMethod", "", "{ a, b }", `{ render() { return ${unit}; } }.render()`), [5]],
+      [fn("ClassMethod", "class K { m() { return <u />; } }"), []],
+      [fn("ClassExpressionMethod", "const K = class { m() { return <u />; } };"), []],
+      [fn("ClassField", "class K { el = <u />; }"), []],
+      [fn("ClassStaticBlock", "class K { static { useState(0); } }"), []],
+      [fn("ClassComputedKey", `class K { [useState("k")[0]]() {} }`), []],
+      [fn("MemberDecorator", "class K { @d(useState(0)) m() {} }"), []],
+      // Babel cannot build this one. The log of the compiler says that upstream claims the function.
+      [fn("ParameterDecorator", "class K { m(@d(useState(0)) x) {} }"), []],
+      // Places that Babel's traverse reaches and upstream's Rust port does not read.
+      [fn("LocalDefault", "const { el = <u /> } = {};"), []],
+      [fn("ArrayDefault", "const [el = <u />] = [];"), []],
+      [fn("AssignmentDefault", "let el; ({ el = <u /> } = {});"), []],
+      [fn("PatternComputedKey", `const { [useState("k")[0]]: el } = {};`), []],
+      [fn("ForOfDefault", "for (const { s = useState(0) } of [{}]) {}"), []],
+      [fn("ForInDefault", "for (const { length = useState(0) } in {}) {}"), []],
+      [fn("CatchDefault", "try { throw {}; } catch ({ el = <u /> }) {}"), []],
+      [fn("ComputedKey", `const o = { [useState("k")[0]]: 1 };`), [5]],
+      [fn("ClassExtends", "class K extends (a ? Object : <u />) {}"), []],
+      [fn("ClassDecorator", "@d(useState(0)) class K {}"), []],
+      [fn("MethodParameterDefault", "const o = { m(x = useState(0)) { return x; } };"), []],
+      // The visit pass turns the enum into a function before the compiler runs, so this one is left as written.
+      // Upstream compiles it: `[5]`.
+      [fn("EnumInitializer", "enum E { A = useState(0).length }"), []],
+      // The callback of memo() or forwardRef() has no name, so the rules for a component of a name are not for it.
+      // The last two have more parameters than a component can have, so they are left as written.
+      [wrapped("ForwardRefSecondParameter", "forwardRef", "{ a, b }, r"), [5]],
+      [wrapped("MemoReturnsAnObject", "memo", "{ a, b }", "", `{ v: ${unit} }`), [5]],
+      [wrapped("MemoThreeParameters", "memo", "{ a, b }, x, y", "", `[x, y, ${unit}]`), []],
+      [wrapped("MemoThreeParametersNotRead", "memo", "{ a, b }, x, y"), []],
+      // Upstream does not ask if the property is computed.
+      [`const ReactIndexMemo = (memo => React[memo](({ a, b }, r) => { ${cell} return ${unit}; }))("memo");`, [5]],
+      // The arguments of import() were not read either.
+      [fn("ImportArgument", `const load = a > 5 ? import(useState("./x.js")[0]) : null;`), []],
+      [fn("ImportOptions", `const load = a > 5 ? import(a, useState({})[0]) : null;`), []],
+      // Claimed for what is in one of those places, and it opts out.
+      [fn("OptOutParameterDefault", off, "{ a, b, el = <u /> }"), []],
+      [fn("useOptOutParameterDefault", off, "{ a, b }, s = useState(0)"), []],
+      [fn("OptOutObjectMethod", `${off} const o = { render() { return <u />; } };`), []],
+      [fn("OptOutClassMethod", `${off} class K { m() { return <u />; } }`), []],
+      [fn("OptOutClassField", `${off} class K { s = useState(0); }`), []],
+      [fn("OptOutClassStaticBlock", `${off} class K { static { useState(0); } }`), []],
+      [fn("OptOutClassComputedKey", `${off} class K { [useState("k")[0]]() {} }`), []],
+      [fn("OptOutLocalDefault", `${off} const { s = useState(0) } = {};`), []],
+      [fn("OptOutClassExtends", `${off} class K extends (a ? Object : <u />) {}`), []],
+      [fn("OptOutClassDecorator", `${off} @d(useState(0)) class K {}`), []],
+      [fn("OptOutEnum", `${off} enum E { A = useState(0).length }`), []],
+      [fn("OptOutMethodParameterDefault", `${off} const o = { m(x = useState(0)) { return x; } };`), []],
+      [fn("OptOutTaggedTemplate", `${off} const t = String.raw\`\${<u />}\`;`), []],
+      [fn("OptOutImportArgument", `${off} const load = a > 5 ? import(useState("./x.js")[0]) : null;`), []],
+      [wrapped("OptOutForwardRef", "forwardRef", "{ a, b }, r", off), []],
+      // A comment that the parser keeps does not end the directives.
+      [fn("OptOutAfterAComment", `/*! kept */ ${off}`, "{ a, b }", unit), []],
+      // Upstream does not read these places. So it does not claim the function, nothing reads its directive, and the
+      // component inside it is compiled: https://github.com/facebook/react/issues/35350. These rows change when
+      // upstream fixes that, or when the directive counts in every function here.
+      [fn("NestedArrowParameter", `${off} const f = (x = useState(0)) => x;`), [2]],
+      [fn("OptionalCall", `${off} const s = useState?.(0);`), [2]],
+      [fn("ClassFieldArrow", `${off} class K { el = () => <u />; }`), [2]],
+      [fn("FunctionProperty", `${off} const o = { render: function () { return <u />; } };`), [2]],
+      [fn("NewHook", `${off} const s = a > 5 ? new useState(0) : null;`), [2]],
+      [fn("NoHookOrJsx", off), [2]],
+      [fn("helper", off), [2]],
+      [fn("NoDirective", "", "{ a, b }", unit), [5]],
+    ];
+    // Upstream claims the function, and compiles it as one unit or gives up on it. Bun compiles `Cell` on its own.
+    const onlyUpstreamClaims: Row[] = [
+      // A declaration in the head of a `for` names nothing here.
+      [`let ForHead; for (const Item = ({ a, b }) => { ${cell} return ${unit}; }; !ForHead; ) ForHead = Item;`, [2]],
+      // Only the first argument of memo() is taken for its callback here.
+      [`const MemoSecondArgument = (memo => memo(0, ({ a, b }) => { ${cell} return ${unit}; }))((_, f) => f);`, [2]],
+      // The parser drops `as any`, and an object is not what a component returns.
+      [`function ReturnsAnObjectAsAny({ a, b }) { ${cell} if (a) return ${unit}; return {} as any; }`, [2]],
+      // Upstream takes the `return` of a class method for a `return` of the function. It is the last one.
+      [fn("ReturnInAClassMethod", `const v = ${unit};`, "{ a, b }", "new (class { toString() { return v; } })()"), [2]],
+    ];
+    // Bun claims the function. Upstream does not, and compiles `Cell` on its own.
+    const onlyBunClaims: Row[] = [
+      // Upstream takes a bare `return` and the `return {}` of a class method for what the function returns.
+      [`function BareLastReturn({ a, b }) { ${cell} if (a) return ${unit}; return; }`, [5]],
+      [fn("ObjectInAClassMethod", "", "{ a, b }", `[${unit}, class { m() { return {}; } }]`), []],
+      // Upstream asks that the second parameter is an identifier, and that the type of the first is no primitive.
+      // The parser keeps neither the default apart from the name nor the type.
+      [fn("SecondParameterDefault", "", "{ a, b }, ref = null", unit), [5]],
+      [fn("PrimitiveParameter", "", "{ a, b }: number", unit), [5]],
+      [fn("PrimitiveParameterAndMethod", "const o = { render() { return <u />; } };", "{ a, b }: number"), [5]],
+    ];
+    const rows = [...asUpstream, ...onlyUpstreamClaims, ...onlyBunClaims];
+    const nameOf = ([source]: Row) => source.match(/^(?:function|const|let) (\w+)/)![1];
+    const names = rows.map(nameOf);
+    const prelude = `
+      import React, { forwardRef, memo, useState } from "react";
+      const d = (..._: any[]) => (...__: any[]): any => {};
+    `;
+
+    itBundled("react-compiler/WhereAHookCallOrJsxMakesAComponent", {
+      files: {
+        "/entry.tsx": /* tsx */ `
+          ${prelude}
+          ${rows.map(([source]) => source).join("\n")}
+          const all = { ${names.join(", ")} };
+          // Prints the memo cache sizes found in each function's source text.
+          console.log(
+            JSON.stringify(
+              Object.fromEntries(
+                Object.entries(all).map(([name, fn]) => [name, [...String(fn).matchAll(/\\$\\d* = [\\w$]+\\((\\d+)\\)/g)].map(m => +m[1])]),
+              ),
+            ),
+          );
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": `
+          exports.memo = exports.forwardRef = fn => fn;
+          exports.useState = value => [value, () => {}];
+        `,
+        "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      run: {
+        stdout: JSON.stringify(Object.fromEntries(rows.map(([, sizes], i) => [names[i], sizes]))),
+      },
+    });
+
+    // `bun lint` has a port of upstream's discovery of its own, which test/cli/lint checks against the plugin. Its
+    // `react-hooks/immutability` reports the write to `p` where `Cell` is a component on its own, so it says for each
+    // row what upstream claims. A row that is in the wrong list above fails here. The plugin reports nothing for a
+    // file that has a decorator, so those rows are not in the file.
+    //
+    // The first `bun lint` of a debug build reads the code of the linter from the disk, which can take longer than the
+    // default timeout.
+    const slow = isDebug || isASAN ? 120_000 : undefined;
+    test(
+      "react-compiler/WhereAHookCallOrJsxMakesAComponent, as bun lint claims",
+      async () => {
+        const marked = `const Cell = p => {\n p.marker = 2;\n return <i x={p.x}>{b}</i>; };`;
+        const linted = rows.filter(([row]) => !row.includes("@d("));
+        const source = [prelude.trim().replaceAll("\n", " "), ...linted.map(([row]) => row.replace(cell, marked))].join(
+          "\n",
+        );
+        using dir = tempDir("react-compiler-lint-claims", {
+          "rows.tsx": source,
+          "eslint.config.js": `
+          export default [{
+            files: ["**/*.tsx"],
+            plugins: { "react-hooks": { meta: { name: "eslint-plugin-react-hooks" } } },
+            rules: { "react-hooks/immutability": "error" },
+            languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+          }];
+        `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "lint", "-f", "json", "rows.tsx"],
+          cwd: String(dir),
+          env: { ...bunEnv, AGENT: "0" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        if (!stdout.startsWith("[")) throw new Error(`No report (exit ${exitCode}): ${stderr}`);
+        const [{ messages }] = JSON.parse(stdout) as [{ messages: { ruleId: string; line: number }[] }];
+        // Each row is three lines after the one line of the prelude, and the write to `p` is on the second.
+        const alone = new Set(
+          messages.filter(it => it.ruleId === "react-hooks/immutability").map(it => (it.line - 3) / 3),
+        );
+        expect({ cellAlone: linted.filter((_, row) => alone.has(row)).map(nameOf), exitCode }).toEqual({
+          cellAlone: [...asUpstream.filter(([, sizes]) => String(sizes) === "2"), ...onlyBunClaims].map(nameOf),
+          exitCode: 1,
+        });
+      },
+      slow,
+    );
+  }
+
   // A callback that uses nothing from its component is moved out of it. It can still use variables of the function that
   // encloses the component, so it has to stay next to the component. Upstream only does that for function declarations.
   // It moves the rest to the end of the module, where calling them throws a ReferenceError.

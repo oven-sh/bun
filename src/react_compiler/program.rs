@@ -91,7 +91,6 @@ pub trait Host {
             .and_then(|sym| self.module_scope().members.get(sym.original_name.slice()))
             .is_some_and(|member| member.ref_ == ref_)
     }
-    fn source(&self) -> &[u8];
     fn arena(&self) -> &bun_alloc::Arena;
 
     /// Name bytes for any `Ref`, regardless of tag (`Symbol`,
@@ -175,6 +174,8 @@ fn collect_body_directives(stmts: &[Stmt]) -> Vec<&[u8]> {
     for s in stmts {
         match &s.data {
             StmtData::SDirective(d) => out.push(d.value.slice()),
+            // A `/*! comment */` that the parser keeps does not end the directives.
+            StmtData::SComment(_) => continue,
             _ => break,
         }
     }
@@ -772,6 +773,88 @@ fn returns_non_node_in_stmt(stmt: &Stmt, result: &mut bool) {
     }
 }
 
+/// Upstream's `callsHooksOrCreatesJsx`: a hook call or JSX anywhere in the function, except in an arrow, a function
+/// expression or a function declaration nested in it. A method of an object or of a class is none of those.
+///
+/// Babel's traverse reaches a few places that upstream's Rust port does not read. Each is marked "Babel only".
+fn calls_hooks_or_creates_jsx(host: &dyn Host, args: &[G::Arg], body: &[Stmt]) -> bool {
+    calls_hooks_or_creates_jsx_in_stmts(host, body)
+        || calls_hooks_or_creates_jsx_in_params(host, args)
+}
+
+fn calls_hooks_or_creates_jsx_in_exprs<'a>(
+    host: &dyn Host,
+    exprs: impl IntoIterator<Item = &'a Expr>,
+) -> bool {
+    exprs
+        .into_iter()
+        .any(|expr| calls_hooks_or_creates_jsx_in_expr(host, expr))
+}
+
+fn calls_hooks_or_creates_jsx_in_params(host: &dyn Host, args: &[G::Arg]) -> bool {
+    args.iter().any(|arg| {
+        calls_hooks_or_creates_jsx_in_exprs(host, &arg.default)
+            || calls_hooks_or_creates_jsx_in_pattern(host, &arg.binding)
+            || calls_hooks_or_creates_jsx_in_exprs(host, arg.ts_decorators.iter())
+    })
+}
+
+fn calls_hooks_or_creates_jsx_in_pattern(host: &dyn Host, pattern: &ast::Binding) -> bool {
+    if !crate::lowering::thread_has_stack() {
+        return false;
+    }
+
+    match &pattern.data {
+        b::B::BObject(obj) => obj.properties().iter().any(|prop| {
+            // Babel only: the computed key.
+            (prop.flags.contains(flags::Property::IsComputed)
+                && calls_hooks_or_creates_jsx_in_expr(host, &prop.key))
+                || calls_hooks_or_creates_jsx_in_exprs(host, &prop.default_value)
+                || calls_hooks_or_creates_jsx_in_pattern(host, &prop.value)
+        }),
+        b::B::BArray(arr) => arr.items().iter().any(|item| {
+            calls_hooks_or_creates_jsx_in_exprs(host, &item.default_value)
+                || calls_hooks_or_creates_jsx_in_pattern(host, &item.binding)
+        }),
+        b::B::BIdentifier(_) | b::B::BMissing(_) => false,
+    }
+}
+
+/// A property of an object literal or a member of a class. Babel only, for an object literal: the computed key, the
+/// parameters of a method, and the default in `({ a = 1 } = b)`. Upstream's Rust port reads those of a class member.
+fn calls_hooks_or_creates_jsx_in_property(host: &dyn Host, property: &G::Property) -> bool {
+    if let Some(block) = property.class_static_block_ref() {
+        return calls_hooks_or_creates_jsx_in_stmts(host, block.stmts.as_slice());
+    }
+    let is_method = property.flags.contains(flags::Property::IsMethod);
+    property
+        .value
+        .as_ref()
+        .is_some_and(|value| match &value.data {
+            ExprData::EFunction(method) if is_method => calls_hooks_or_creates_jsx(
+                host,
+                method.func.args.slice(),
+                method.func.body.stmts.slice(),
+            ),
+            _ => calls_hooks_or_creates_jsx_in_expr(host, value),
+        })
+        || calls_hooks_or_creates_jsx_in_exprs(host, &property.initializer)
+        || (property.flags.contains(flags::Property::IsComputed)
+            && calls_hooks_or_creates_jsx_in_exprs(host, &property.key))
+        || calls_hooks_or_creates_jsx_in_exprs(host, property.ts_decorators.iter())
+}
+
+fn calls_hooks_or_creates_jsx_in_class(host: &dyn Host, class: &G::Class) -> bool {
+    // Babel only: the `extends` clause and the decorators of the class.
+    calls_hooks_or_creates_jsx_in_exprs(host, &class.extends)
+        || calls_hooks_or_creates_jsx_in_exprs(host, class.ts_decorators.iter())
+        || class
+            .properties
+            .slice()
+            .iter()
+            .any(|member| calls_hooks_or_creates_jsx_in_property(host, member))
+}
+
 fn calls_hooks_or_creates_jsx_in_stmts(host: &dyn Host, stmts: &[Stmt]) -> bool {
     stmts
         .iter()
@@ -793,6 +876,8 @@ fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
             d.value
                 .as_ref()
                 .is_some_and(|e| calls_hooks_or_creates_jsx_in_expr(host, e))
+                // Babel only: the pattern of a declaration, of a for-in or for-of head and of a catch clause.
+                || calls_hooks_or_creates_jsx_in_pattern(host, &d.binding)
         }),
         StmtData::SBlock(b) => calls_hooks_or_creates_jsx_in_stmts(host, b.stmts.slice()),
         StmtData::SIf(i) => {
@@ -825,10 +910,12 @@ fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
         StmtData::SForIn(f) => {
             calls_hooks_or_creates_jsx_in_expr(host, &f.value)
                 || calls_hooks_or_creates_jsx_in_stmt(host, &f.body)
+                || calls_hooks_or_creates_jsx_in_stmt(host, &f.init)
         }
         StmtData::SForOf(f) => {
             calls_hooks_or_creates_jsx_in_expr(host, &f.value)
                 || calls_hooks_or_creates_jsx_in_stmt(host, &f.body)
+                || calls_hooks_or_creates_jsx_in_stmt(host, &f.init)
         }
         StmtData::SSwitch(s) => {
             if calls_hooks_or_creates_jsx_in_expr(host, &s.test) {
@@ -851,9 +938,12 @@ fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
         StmtData::SThrow(t) => calls_hooks_or_creates_jsx_in_expr(host, &t.value),
         StmtData::STry(t) => {
             calls_hooks_or_creates_jsx_in_stmts(host, t.body.slice())
-                || t.catch
-                    .as_ref()
-                    .is_some_and(|c| calls_hooks_or_creates_jsx_in_stmts(host, c.body.slice()))
+                || t.catch.as_ref().is_some_and(|c| {
+                    calls_hooks_or_creates_jsx_in_stmts(host, c.body.slice())
+                        || c.binding
+                            .as_ref()
+                            .is_some_and(|b| calls_hooks_or_creates_jsx_in_pattern(host, b))
+                })
                 || t.finally
                     .as_ref()
                     .is_some_and(|f| calls_hooks_or_creates_jsx_in_stmts(host, f.stmts.slice()))
@@ -863,9 +953,27 @@ fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
             calls_hooks_or_creates_jsx_in_expr(host, &w.value)
                 || calls_hooks_or_creates_jsx_in_stmt(host, &w.body)
         }
-        StmtData::SFunction(_) => false,
-        StmtData::SClass(_) => false,
-        _ => false,
+        StmtData::SClass(c) => calls_hooks_or_creates_jsx_in_class(host, &c.class),
+        // Babel only: the initializers of a TypeScript enum.
+        StmtData::SEnum(e) => (e.values.slice().iter())
+            .any(|member| calls_hooks_or_creates_jsx_in_exprs(host, &member.value)),
+        // A nested function is not searched. The rest holds no expression, or can't be in a function.
+        StmtData::SFunction(_)
+        | StmtData::SBreak(_)
+        | StmtData::SComment(_)
+        | StmtData::SContinue(_)
+        | StmtData::SDebugger(_)
+        | StmtData::SDirective(_)
+        | StmtData::SEmpty(_)
+        | StmtData::SExportClause(_)
+        | StmtData::SExportDefault(_)
+        | StmtData::SExportEquals(_)
+        | StmtData::SExportFrom(_)
+        | StmtData::SExportStar(_)
+        | StmtData::SImport(_)
+        | StmtData::SLazyExport(_)
+        | StmtData::SNamespace(_)
+        | StmtData::STypeScript(_) => false,
     }
 }
 
@@ -927,11 +1035,10 @@ fn calls_hooks_or_creates_jsx_in_expr(host: &dyn Host, expr: &Expr) -> bool {
             .items
             .iter()
             .any(|e| calls_hooks_or_creates_jsx_in_expr(host, e)),
-        ExprData::EObject(obj) => obj.properties.iter().any(|p| {
-            p.value
-                .as_ref()
-                .is_some_and(|v| calls_hooks_or_creates_jsx_in_expr(host, v))
-        }),
+        ExprData::EObject(obj) => obj
+            .properties
+            .iter()
+            .any(|p| calls_hooks_or_creates_jsx_in_property(host, p)),
         ExprData::ENew(n) => {
             calls_hooks_or_creates_jsx_in_expr(host, &n.target)
                 || n.args.iter().any(|a| {
@@ -942,8 +1049,41 @@ fn calls_hooks_or_creates_jsx_in_expr(host: &dyn Host, expr: &Expr) -> bool {
                 })
         }
         ExprData::EInlinedEnum(e) => calls_hooks_or_creates_jsx_in_expr(host, &e.value),
-        ExprData::EArrow(_) | ExprData::EFunction(_) | ExprData::EClass(_) => false,
-        _ => false,
+        ExprData::EImport(import) => {
+            calls_hooks_or_creates_jsx_in_expr(host, &import.expr)
+                || calls_hooks_or_creates_jsx_in_expr(host, &import.options)
+        }
+        ExprData::EClass(class) => calls_hooks_or_creates_jsx_in_class(host, class),
+        // A nested function is not searched. The rest holds no expression.
+        ExprData::EArrow(_)
+        | ExprData::EFunction(_)
+        | ExprData::EArrayJSON(_)
+        | ExprData::EBigInt(_)
+        | ExprData::EBoolean(_)
+        | ExprData::EBranchBoolean(_)
+        | ExprData::ECommonjsExportIdentifier(_)
+        | ExprData::EIdentifier(_)
+        | ExprData::EImportIdentifier(_)
+        | ExprData::EImportMeta(_)
+        | ExprData::EImportMetaMain(_)
+        | ExprData::EMissing(_)
+        | ExprData::ENameOfSymbol(_)
+        | ExprData::ENewTarget(_)
+        | ExprData::ENull(_)
+        | ExprData::ENumber(_)
+        | ExprData::EObjectJSON(_)
+        | ExprData::EPrivateIdentifier(_)
+        | ExprData::ERegExp(_)
+        | ExprData::ERequireCallTarget
+        | ExprData::ERequireMain
+        | ExprData::ERequireResolveCallTarget
+        | ExprData::ERequireResolveString(_)
+        | ExprData::ERequireString(_)
+        | ExprData::ESpecial(_)
+        | ExprData::EString(_)
+        | ExprData::ESuper(_)
+        | ExprData::EThis(_)
+        | ExprData::EUndefined(_) => false,
     }
 }
 
@@ -972,10 +1112,16 @@ fn is_valid_component_params(host: &dyn Host, args: &[G::Arg], has_rest_arg: boo
 // Function type detection
 // -----------------------------------------------------------------------
 
+/// Upstream's `getReactFunctionType`, with the check of `findFunctionsToCompile` that `all` mode takes top-level
+/// functions only. `discover` calls it on the function as parsed and `maybe_compile_node` on it as visited, and the
+/// two answers can differ.
+#[allow(clippy::too_many_arguments)]
 fn get_react_function_type(
     host: &dyn Host,
     name: Option<&[u8]>,
-    func: &FunctionNode<'_>,
+    args: &[G::Arg],
+    has_rest_arg: bool,
+    body: &[Stmt],
     body_directives: &[&[u8]],
     in_react_hoc: bool,
     is_top_level: bool,
@@ -985,16 +1131,8 @@ fn get_react_function_type(
     if mode == "all" && !is_top_level {
         return None;
     }
-    let component_or_hook_like = || {
-        get_component_or_hook_like(
-            host,
-            name,
-            func.args(),
-            func.has_rest_arg(),
-            func.body().stmts.slice(),
-            in_react_hoc,
-        )
-    };
+    let component_or_hook_like =
+        || get_component_or_hook_like(host, name, args, has_rest_arg, body, in_react_hoc);
     let has_dynamic_gating_directive = opts.dynamic_gating.is_some()
         && body_directives
             .iter()
@@ -1023,9 +1161,12 @@ fn get_component_or_hook_like(
     body: &[Stmt],
     in_react_hoc: bool,
 ) -> Option<ReactFunctionType> {
+    // Babel only: the callback of `memo()` / `forwardRef()` has no name, also in `const A = memo(() => {})`. Upstream's
+    // Rust port names it `A` and then holds it to the rules for a component of that name.
+    let name = name.filter(|_| !in_react_hoc);
     if let Some(fn_name) = name {
         if is_component_name(fn_name) {
-            let is_component = calls_hooks_or_creates_jsx_in_stmts(host, body)
+            let is_component = calls_hooks_or_creates_jsx(host, args, body)
                 && is_valid_component_params(host, args, has_rest_arg)
                 && !returns_non_node_in_stmts(body);
             return if is_component {
@@ -1034,7 +1175,7 @@ fn get_component_or_hook_like(
                 None
             };
         } else if is_hook_name(fn_name) {
-            return if calls_hooks_or_creates_jsx_in_stmts(host, body) {
+            return if calls_hooks_or_creates_jsx(host, args, body) {
                 Some(ReactFunctionType::Hook)
             } else {
                 None
@@ -1043,7 +1184,7 @@ fn get_component_or_hook_like(
     }
 
     if in_react_hoc {
-        return if calls_hooks_or_creates_jsx_in_stmts(host, body) {
+        return if calls_hooks_or_creates_jsx(host, args, body) {
             Some(ReactFunctionType::Component)
         } else {
             None
@@ -1177,11 +1318,14 @@ impl ReactCompilerState {
     /// (`ProgramContext::init_from_scope`, restricted-import validation) is
     /// deferred to the first `maybe_compile_*` call so the parser can set
     /// `p.react_compiler = Some(..)` without a `&mut p` borrow conflict.
+    ///
+    /// `source` is read for the fixture pragmas: [`Self::discover`] needs the compilation mode for the first function.
     #[inline(never)]
     pub fn new(
         options: ReactCompilerOptions,
         has_module_scope_opt_out: bool,
         import_bindings: IndexMap<Ref, VariableBinding>,
+        source: &[u8],
     ) -> Self {
         bun_removable_features::removable_definition!(ReactCompiler, Self::new);
         bun_core::scoped_log!(
@@ -1189,6 +1333,16 @@ impl ReactCompilerState {
             "ReactCompilerState::new opt_out={}",
             has_module_scope_opt_out
         );
+        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
+        let options = {
+            let mut options = options;
+            if options.parse_test_pragmas {
+                parse_fixture_pragmas(source, &mut options);
+            }
+            options
+        };
+        #[cfg(not(any(debug_assertions, bun_asan, feature = "fixtures")))]
+        let _ = source;
         let context = ProgramContext::new(
             options.clone(),
             options.filename.clone(),
@@ -1214,16 +1368,9 @@ impl ReactCompilerState {
         }
         self.did_lazy_init = true;
 
-        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-        if self.options.parse_test_pragmas {
-            parse_fixture_pragmas(host.source(), &mut self.options);
-            self.context.opts.compilation_mode = self.options.compilation_mode.clone();
-            self.env_config = self.options.environment.clone();
-        }
-
+        // `discover` claims nothing in lint mode, so that mode never gets here.
         self.context.output_mode = match self.options.output_mode.as_deref() {
             Some("ssr") => OutputMode::Ssr,
-            Some("lint") => OutputMode::Lint,
             _ => OutputMode::Client,
         };
 
@@ -1241,10 +1388,12 @@ impl ReactCompilerState {
         }
     }
 
-    /// Decides, before any of a function is visited, whether [`maybe_compile_pending`] will be given it.
-    /// Functions nested in one that is given are never considered, so this has to be as exact as upstream's check.
+    /// Upstream's discovery for one function, asked before any of it is visited. `args` and `body` are as parsed.
+    ///
+    /// Upstream claims a function by its type alone and skips everything nested in a claimed function. It reads the
+    /// opt-out directive and the suppressions of a claimed function afterwards, so those functions are claimed too.
     #[allow(clippy::too_many_arguments)]
-    pub fn may_compile(
+    pub fn discover(
         &self,
         host: &dyn Host,
         name: Option<&[u8]>,
@@ -1254,44 +1403,40 @@ impl ReactCompilerState {
         args: &[G::Arg],
         has_rest_arg: bool,
         body: &[Stmt],
-    ) -> bool {
+    ) -> Discovery {
+        // Nothing in this file is compiled.
         if self.fatal.is_some()
             || self.context.has_module_scope_opt_out
-            || has_react_hooks_suppression
+            || self.options.output_mode.as_deref() == Some("lint")
         {
-            return false;
+            return Discovery::Search;
         }
         let directives = collect_body_directives(body);
-        if find_directive_disabling_memoization(&directives).is_some() {
-            return false;
-        }
-        // Fixture pragmas set the mode when `lazy_init` reads them.
-        if self.options.parse_test_pragmas && !self.did_lazy_init {
-            return true;
-        }
-        if self.options.output_mode.as_deref() == Some("lint") {
-            return false;
-        }
-        let mode = self.options.compilation_mode.as_deref().unwrap_or("infer");
-        if mode == "all" && !is_top_level {
-            return false;
-        }
-        if find_directive_enabling_memoization(&directives).is_some()
-            || (self.options.dynamic_gating.is_some()
-                && directives
-                    .iter()
-                    .any(|d| d.starts_with(DYNAMIC_GATING_DIRECTIVE_PREFIX)))
+        let Some(fn_type) = get_react_function_type(
+            host,
+            name,
+            args,
+            has_rest_arg,
+            body,
+            &directives,
+            in_react_hoc,
+            is_top_level,
+            &self.options,
+        ) else {
+            return Discovery::Search;
+        };
+        // Upstream compiles these for their diagnostics and applies nothing. Nothing reports them here.
+        if has_react_hooks_suppression
+            || find_directive_disabling_memoization(&directives).is_some()
         {
-            return true;
+            return Discovery::Skip;
         }
-        match mode {
-            "all" => true,
-            "infer" => {
-                get_component_or_hook_like(host, name, args, has_rest_arg, body, in_react_hoc)
-                    .is_some()
-            }
-            _ => false,
+        // Upstream's TypeScript gives up on a component with more than two parameters, which only the callback of
+        // `memo()` / `forwardRef()` can be. Its Rust port has no such invariant, and `bun lint` reports as that does.
+        if fn_type == ReactFunctionType::Component && args.len() > 2 {
+            return Discovery::Skip;
         }
+        Discovery::Compile
     }
 
     pub fn outlined_len(&self) -> usize {
@@ -1307,6 +1452,17 @@ impl ReactCompilerState {
 // -----------------------------------------------------------------------
 // Per-function entry points
 // -----------------------------------------------------------------------
+
+/// What [`ReactCompilerState::discover`] decides about a function.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Discovery {
+    /// Not claimed. The functions nested in it are asked about in turn.
+    Search,
+    /// Claimed and left as written. Nothing nested in it is asked about.
+    Skip,
+    /// Claimed. [`maybe_compile_pending`] is given it once its body has been visited.
+    Compile,
+}
 
 /// Everything `FunctionNode` reads from a `G::Fn` / `E::Arrow`, captured by
 /// value so the compile hook inside `visit_stmts` doesn't need a pointer back
@@ -1436,11 +1592,15 @@ fn maybe_compile_node(
         return None;
     }
 
+    // `discover` claimed the function for what its body had as parsed. The visit pass can remove that: it drops a JSX
+    // element that nothing uses, and the compiler then can't see what the element froze.
     let body_directives = collect_body_directives(node.body().stmts.slice());
     let fn_type = get_react_function_type(
         &*host,
         name,
-        &node,
+        node.args(),
+        node.has_rest_arg(),
+        node.body().stmts.slice(),
         &body_directives,
         in_react_hoc,
         is_top_level,
@@ -1451,11 +1611,6 @@ fn maybe_compile_node(
 
     let fn_name: Option<String> =
         name.and_then(|n| core::str::from_utf8(n).ok().map(str::to_owned));
-
-    if node.has_react_hooks_suppression() {
-        bun_core::scoped_log!(react_compiler, "  -> bail: react-hooks eslint suppression");
-        return None;
-    }
 
     // Dynamic-gating directive validation (upstream `tryFindDirective…`).
     let dynamic_gating_ident: Option<String> = if state.options.dynamic_gating.is_some() {
@@ -1471,16 +1626,6 @@ fn maybe_compile_node(
     } else {
         None
     };
-
-    // Upstream still runs the full pipeline on opted-out functions to surface
-    // validation diagnostics; Bun skips early — the diagnostics channel is not
-    // wired yet, and skipping avoids registering a spurious runtime import.
-    if find_directive_disabling_memoization(&body_directives).is_some()
-        || state.context.has_module_scope_opt_out
-    {
-        bun_core::scoped_log!(react_compiler, "  -> bail: opt-out directive");
-        return None;
-    }
 
     // TODO(port): emit the `gate() ? compiled : original` wrapper. The
     // function-declaration path needs statement-level access; for now a valid
@@ -1509,9 +1654,6 @@ fn maybe_compile_node(
             None
         }
         Ok(mut codegen_fn) => {
-            if state.context.output_mode == OutputMode::Lint {
-                return None;
-            }
             if state.context.opts.compilation_mode.as_deref() == Some("annotation")
                 && find_directive_enabling_memoization(&body_directives).is_none()
                 && dynamic_gating_ident.is_none()

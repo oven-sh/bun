@@ -1512,6 +1512,28 @@ void perform_to_int32(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(result);
 }
 
+static void log_uint32_maybe(Maybe<uint32_t> maybe) {
+  LOG_EXPR(maybe.IsNothing());
+  if (maybe.IsJust()) {
+    LOG_EXPR(maybe.FromJust());
+  }
+}
+
+// Prints Uint32Value of the first argument. Leaves the exception pending when
+// the conversion throws, so the JS caller sees it.
+void perform_uint32_value(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  log_uint32_maybe(info[0]->Uint32Value(context));
+}
+
+// V8 does not use the context to convert a number, so an empty one is enough.
+void perform_uint32_value_with_empty_context(
+    const FunctionCallbackInfo<Value> &info) {
+  log_uint32_maybe(info[0]->Uint32Value(Local<Context>()));
+}
+
 // Returns { file, line, column } for the function passed as the first argument,
 // as @newrelic/fn-inspect does. file is undefined when the resource name is an
 // empty handle.
@@ -2276,6 +2298,9 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_value_type_checks);
   NODE_SET_METHOD(exports, "test_v8_integer", test_v8_integer);
   NODE_SET_METHOD(exports, "perform_to_int32", perform_to_int32);
+  NODE_SET_METHOD(exports, "perform_uint32_value", perform_uint32_value);
+  NODE_SET_METHOD(exports, "perform_uint32_value_with_empty_context",
+                  perform_uint32_value_with_empty_context);
   NODE_SET_METHOD(exports, "get_function_script_origin",
                   get_function_script_origin);
   NODE_SET_METHOD(exports, "test_v8_define_own_property",

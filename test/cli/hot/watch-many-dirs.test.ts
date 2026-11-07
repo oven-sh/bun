@@ -99,11 +99,13 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     30000,
   ); // 30 second timeout
 
-  // The watchlist owns one descriptor per watched file, closed only when the
-  // entry is evicted or the watcher shuts down. Re-transpiles during a reload
-  // open the file by path and must not stack additional descriptors on top of
-  // the stored one (previously the entrypoint gained one open fd per reload).
-  // /proc/<pid>/fd is Linux-only.
+  // With inotify the watcher holds a descriptor for each watched directory and
+  // none for a watched file: an open descriptor keeps the inode alive after a
+  // save by rename replaces the file, and the kernel then never reports the old
+  // inode as deleted. A transpile opens the file by path, offers the descriptor
+  // to the watcher and closes it, so no file descriptor is left after a reload.
+  // (The watchlist used to keep one per file, and this test counted them to
+  // catch one more per reload.) /proc/<pid>/fd is Linux-only.
   test.skipIf(!isLinux)(
     "keeps a stable number of file descriptors across reloads",
     async () => {
@@ -121,8 +123,8 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
         stderr: "inherit",
       });
 
-      const countFileFds = () => {
-        const counts = { entry: 0, dep: 0 };
+      const countFds = () => {
+        const counts = { entry: 0, dep: 0, libDir: 0 };
         for (const fd of readdirSync(`/proc/${proc.pid}/fd`)) {
           let target: string;
           try {
@@ -132,6 +134,7 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
           }
           if (target === join(dirReal, "entry.js")) counts.entry++;
           else if (target === join(dirReal, "lib", "dep.js")) counts.dep++;
+          else if (target === join(dirReal, "lib")) counts.libDir++;
         }
         return counts;
       };
@@ -146,39 +149,29 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
       };
 
       await waitForReload(0);
-      // Warm up so both files reach their steady state in the watchlist (the
-      // entrypoint is added fd-less before its first transpile; dep's stored
-      // fd settles on its first edited reload).
-      for (let i = 1; i <= 2; i++) {
-        writeFileSync(join(dir, "lib", "dep.js"), `export const value = ${i};`);
-        await waitForReload(i);
-      }
-      const before = countFileFds();
-      // Guard against a vacuous pass: the entrypoint's stored descriptor must
-      // be visible in the baseline. (dep's can be transiently closed by a
-      // directory-event eviction, so it gets no such guard.)
-      expect(before.entry).toBeGreaterThan(0);
+      // A transpile closes its descriptor before the module runs, so once RELOAD
+      // is printed neither file may be open. The descriptor of the watch on
+      // lib/ keeps this from passing if /proc cannot be read or the paths stop
+      // matching. (The resolver's directory cache can hold lib/ as well, so only
+      // its presence is checked.)
+      const before = countFds();
+      expect(before).toEqual({ entry: 0, dep: 0, libDir: before.libDir });
+      expect(before.libDir).toBeGreaterThan(0);
 
       const reloads = 15;
-      for (let i = 3; i <= reloads + 2; i++) {
+      for (let i = 1; i <= reloads; i++) {
         writeFileSync(join(dir, "lib", "dep.js"), `export const value = ${i};`);
         await waitForReload(i);
       }
-      const after = countFileFds();
-
-      // One handle's transient presence between samples is not a leak; a
-      // per-reload leak shows up as +reloads.
-      expect({
-        before,
-        after,
-        entryDelta: Math.min(after.entry - before.entry, 1),
-        depDelta: Math.min(after.dep - before.dep, 1),
-      }).toEqual({
-        before,
-        after,
-        entryDelta: after.entry - before.entry,
-        depDelta: after.dep - before.dep,
-      });
+      // One save can raise two batches of events, and the reload for the second
+      // one has a transpile open for an instant. A leaked descriptor stays open.
+      let after = countFds();
+      const deadline = Date.now() + 10_000;
+      while (!Bun.deepEquals(after, before) && Date.now() < deadline) {
+        await Bun.sleep(10);
+        after = countFds();
+      }
+      expect(after).toEqual(before);
     },
     60000,
   );

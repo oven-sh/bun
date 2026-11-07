@@ -1,7 +1,8 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="breaks"
 // CHECK: [[covered]]() handler=[[handler]]():
-// CHECK-NEXT: Jump -> next [[after]]()
+// CHECK: key="use"
+// CHECK: Jump -> next [[after]]()
 // CHECK: [[after]]():
 // CHECK: key="after"
 
@@ -14,6 +15,7 @@ declare function after(): void;
 export function breaks() {
   for (;;) {
     try {
+      use(0);
       break;
     } catch {
       use(1);

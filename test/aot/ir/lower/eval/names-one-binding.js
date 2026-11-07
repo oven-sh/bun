@@ -4,9 +4,7 @@
 // CHECK: [[c]] = Call
 // CHECK: [[eval]] = Builtin builtin=Eval
 // CHECK-NEXT: [[isEval]] = StrictEq [[callee]], [[eval]]
-// CHECK-NEXT: Branch [[isEval]] -> taken [[direct]](), notTaken [[ordinary]](| 0)
-// CHECK: [[direct]]():
-// CHECK-NEXT: Jump -> next [[join]]([[c]])
+// CHECK-NEXT: Branch [[isEval]] -> taken [[join]]([[c]]), notTaken [[ordinary]](| 0)
 // CHECK: [[ordinary]]([[other]]):
 // CHECK: [[returned]] = Call [[other]],
 // CHECK: Jump -> next [[join]]([[returned]])

@@ -1,0 +1,22 @@
+# -- source: main.js
+# function Message() { this.raw = 1; }
+# Object.defineProperty(Message.prototype, "headers", { __proto__: null, get: function () { return this.raw + 1; }, set: function (value) { this.raw = value; } });
+# function read(message) { let sum = 0; for (let i = 0; i < 3; i++) sum += message.headers; return sum; }
+# const one = new Message();
+# print(read(one));
+# one.headers = 5;
+# print(read(one));
+# -- end of source
+# f0 = the module, f2 = read
+# `{ __proto__: null, get, set }` is how the library writes every descriptor: nothing that somebody lays on Object.prototype can come into it. SetLiteralPrototype counted as a way out of sight, so the scan gave the descriptor up and Link knew no accessor: every read of the name went by name.
+# A literal whose prototype is set to null in its own text still holds only what its body lays: null above it can add nothing, and the operation hands the object to nobody.
+# RUN(SUMMARY): summary f0
+# SUMMARY: DefinesByDescriptor {{*}} "headers" {{*}} descriptor-in-sight getter-in-sight=Closure f{{*}} setter-in-sight=Closure f{{*}}
+# RUN(FORM): walk f2 mechanisms=all
+# FORM: AreMembersUnchanged conditions=[{layout=L0 key="headers"}]
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 6
+# ALL-NEXT: 18
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 6
+# NONE-NEXT: 18

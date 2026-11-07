@@ -1,0 +1,46 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# function fillBytes(bytes: Uint8Array): number { bytes.fill(7); return bytes[3]; }
+# function search(pattern: RegExp, text: string): number { pattern.exec(text); return pattern.lastIndex; }
+# function relink(object: object, above: object): number { Object.setPrototypeOf(object, above); return 1; }
+# function makeCounter(): () => number {
+#   let count = 0;
+#   return () => { let work = 0; for (let i = 0; i < 3; i++) work = (work + i) | 0; count += work; return count; };
+# }
+# function callTwice(next: () => number): number { return next() + next(); }
+# print(fillBytes(new Uint8Array(8)));
+# print(search(/b/g, "abc"));
+# print(relink({ held: 1 }, { above: 2 }));
+# print(callTwice(makeCounter()) + callTwice(makeCounter()));
+# print("went on");
+# -- end of source
+# testing=CheckEffectsAtRunTime (ir/AOTEffectsNet.h, SecondLaneInEffectsNet): a second word of digests of each operand, for the heaps that the first word has no lane for.
+# f6 = the arrow function in makeCounter
+# RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# NET: 7
+# NET-NEXT: 2
+# NET-NEXT: 1
+# NET-NEXT: 18
+# NET-NEXT: went on
+# The lie, testing=RowSaysLess: one row is taken not to write one heap.
+# RUN(BYTES): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Builtin/%TypedArray%.prototype.fill/TypedArrayElements mechanisms=all
+# BYTES: say that the call will not write TypedArrayElements, and of operand {{*}} these are others behind it: the bytes. This is a bug in Bun.
+# BYTES-NOT: went on
+# BYTES: crashed
+# BYTES: with
+# RUN(REGEXP): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Builtin/RegExp.prototype.exec/RegExpState mechanisms=all
+# REGEXP: say that the call will not write RegExpState, and of operand {{*}} these are others behind it: the state of the regular expression. This is a bug in Bun.
+# REGEXP-NOT: went on
+# REGEXP: crashed
+# REGEXP: with
+# RUN(PROTOTYPE): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Builtin/Object.setPrototypeOf/PrototypeLinks mechanisms=all
+# PROTOTYPE: say that the call will not write PrototypeLinks, and of operand {{*}} these are others behind it: the prototype. This is a bug in Bun.
+# PROTOTYPE-NOT: went on
+# PROTOTYPE: crashed
+# PROTOTYPE: with
+# What Link says of a callee: the variable that the closure holds in its environment.
+# RUN(ENVIRONMENT): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Callee/f6/EnvironmentFields mechanisms=all
+# ENVIRONMENT: say that the call will not write EnvironmentFields, and of operand {{*}} these are others behind it: the variables of the environment. This is a bug in Bun.
+# ENVIRONMENT-NOT: went on
+# ENVIRONMENT: crashed
+# ENVIRONMENT: with

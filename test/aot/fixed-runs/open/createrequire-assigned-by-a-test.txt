@@ -1,0 +1,24 @@
+A test assigns its own function to createRequire of node:module: what that function makes answers the call, in the test file and in a file of the project; a name imported from the module goes on making requires.
+#### a.test.js
+import { test } from "bun:test";
+import M from "node:module";
+import * as loads from "./src/loads.mjs";
+const say = (name, run) => { try { const answer = run(); console.log("| CASE", name, typeof answer === "string" ? answer : answer.name); } catch (error) { console.log("| CASE", name, "throws", error.message.slice(0, 60)); } };
+test("createRequire is assigned", () => {
+  const real = M.createRequire;
+  say("before", () => M.createRequire(import.meta.url)("./src/next.mjs"));
+  M.createRequire = () => name => "mine " + name;
+  say("assigned", () => M.createRequire(import.meta.url)("./src/next.mjs"));
+  say("assigned, in a file of the project, by the member", () => loads.byMember());
+  say("assigned, in a file of the project, by the imported name", () => loads.byName());
+  M.createRequire = real;
+  say("put back", () => M.createRequire(import.meta.url)("./src/next.mjs"));
+});
+#### src/loads.mjs
+import M, { createRequire } from "node:module";
+export const byMember = () => M.createRequire(import.meta.url)("./other.cjs");
+export const byName = () => createRequire(import.meta.url)("./other.cjs");
+#### src/next.mjs
+console.log("| CASE the next file runs"); export const name = "next";
+#### src/other.cjs
+console.log("| CASE the other file runs"); exports.name = "other";

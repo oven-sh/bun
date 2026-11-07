@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: variable {{*}}name="v" module=[[entry]] declared={type=undefined|number|absent site=[[site]]}
+// CHECK: variable {{*}}name="v" module=[[entry]] declared={type=undefined|number|absent}
 
 // RUN(PROMISES): lower
 // PROMISES-NOT: IsInt32Promise

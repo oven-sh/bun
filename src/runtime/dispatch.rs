@@ -79,7 +79,7 @@ use crate::shell::builtins::{
     cp::ShellCpTask,
     ls::ShellLsTask,
     mkdir::ShellMkdirTask,
-    mv::{ShellMvBatchedTask, ShellMvCheckTargetTask},
+    mv::{ShellMvCheckTargetTask, ShellMvTask},
     rm::ShellRmTask,
     touch::ShellTouchTask,
     yes::YesTask as ShellYesTask,
@@ -541,7 +541,7 @@ pub(crate) fn run_task(
         | task_tag::ShellTouchTask
         | task_tag::ShellMkdirTask
         | task_tag::ShellLsTask
-        | task_tag::ShellMvBatchedTask
+        | task_tag::ShellMvTask
         | task_tag::ShellMvCheckTargetTask
         | task_tag::ShellRmTask
         | task_tag::ShellRmDirTask
@@ -859,7 +859,7 @@ fn run_task_cold(task: Task) {
         task_tag::ShellTouchTask => shell_dispatch!(ShellTouchTask),
         task_tag::ShellMkdirTask => shell_dispatch!(ShellMkdirTask),
         task_tag::ShellLsTask => shell_dispatch!(ShellLsTask),
-        task_tag::ShellMvBatchedTask => shell_dispatch!(ShellMvBatchedTask),
+        task_tag::ShellMvTask => shell_dispatch!(ShellMvTask),
         task_tag::ShellMvCheckTargetTask => shell_dispatch!(ShellMvCheckTargetTask),
         task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
         task_tag::ShellRmDirTask => {
@@ -1803,7 +1803,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ShellGlobTask => release_in!([Shell], ShellGlobTask),
         task_tag::ShellLsTask => release_in!([Shell], ShellLsTask),
         task_tag::ShellMkdirTask => release_in!([Shell], ShellMkdirTask),
-        task_tag::ShellMvBatchedTask => release_in!([Shell], ShellMvBatchedTask),
+        task_tag::ShellMvTask => release_in!([Shell], ShellMvTask),
         task_tag::ShellMvCheckTargetTask => release_in!([Shell], ShellMvCheckTargetTask),
         task_tag::ShellRmDirTask => release_in!([Shell], ShellRmDirTask),
         task_tag::ShellRmTask => release_in!([Shell], ShellRmTask),

@@ -244,7 +244,7 @@ fn parse_f32(bytes: &[u8]) -> Option<f32> {
     // Zig rule: every `_` must sit between two digits of the active base.
     let mut stripped: &[u8] = rest;
     let buf: Vec<u8>;
-    if rest.contains(&b'_') {
+    if bun_core::strings::contains_char(rest, b'_') {
         for (i, &b) in rest.iter().enumerate() {
             if b == b'_'
                 && !(i > 0 && i + 1 < rest.len() && is_digit(rest[i - 1]) && is_digit(rest[i + 1]))

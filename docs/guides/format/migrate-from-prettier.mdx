@@ -116,7 +116,7 @@ Bun puts the keys where the plugin puts them and leaves every value as you wrote
 
 ---
 
-Astro and other languages that come from a plugin go to your installed Prettier. Keep `prettier` and every plugin in `plugins` installed. `--doctor` shows which files those are.
+Astro and other languages that come from a plugin go to your installed Prettier. So does a file with code in such a language inside it, as Prettier formats that code with the plugin: a Markdown file with a ` ```pug ` block or a Vue file with `<template lang="pug">` when `plugins` lists `@prettier/plugin-pug`, and every Markdown file with a ` ```sh ` block when it lists `prettier-plugin-sh` and `embeddedLanguageFormatting` is `"auto"`, its default. Keep `prettier` and every plugin in `plugins` installed. `--doctor` shows which files those are.
 
 ```txt
 Using .prettierrc (Prettier config)

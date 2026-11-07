@@ -4316,7 +4316,7 @@ exports.format = async (text, options) => {
         const paths = [JSON.parse(calls[0]).filepath, ...result.files[reads[3]]!.trim().split("\n")];
         expect(paths.map(it => basename(it))).toEqual(["a.astro", "a.astro", ".prettierrc"]);
         expect(paths).toEqual(paths.map(it => resolve(it)));
-        expect(result.stderr).toContain("Used your installed Prettier for 1 file in a language that needs a plugin");
+        expect(result.stderr).toContain("Used your installed Prettier for 1 file that needs a plugin");
         expect(result.exitCode).toBe(0);
       },
       timeout,
@@ -4633,6 +4633,306 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       },
       timeout,
     );
+  });
+
+  // Prettier looks the word after a code fence, and the `lang` of a block in Vue or HTML, up in the languages of every
+  // plugin it loaded. So a file that Bun formats can still have code that only a plugin prints.
+  describe("a plugin's language inside a file that Bun formats", () => {
+    const timeout = isDebug || isASAN ? 120_000 : 5_000;
+    // The stand-in Prettier of the tests above: it collapses runs of spaces, which is what shows who formatted a file.
+    const packages = {
+      "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
+      "node_modules/prettier/index.cjs": `const fs = require("node:fs");
+exports.resolveConfig = async (file, { config }) => (config ? JSON.parse(fs.readFileSync(config, "utf8")) : null);
+exports.format = async (text, options) => {
+  fs.appendFileSync(__dirname + "/calls.txt", JSON.stringify(options) + "\\n");
+  return text.replace(/ +/g, " ");
+};
+`,
+      "node_modules/@prettier/plugin-pug/package.json": '{ "name": "@prettier/plugin-pug", "version": "3.6.0" }',
+    };
+    const pug = "div\n      span hello\n";
+    const vue = `<template lang="pug">\n${pug}</template>\n\n<script setup>\nconst a = 1;\n</script>\n`;
+    const markdown = `# Usage\n\n\`\`\`pug\n${pug}\`\`\`\n`;
+    const byPrettier = (text: string) => text.replace(/ +/g, " ");
+    const files = {
+      ...packages,
+      ".prettierrc": '{ "plugins": ["@prettier/plugin-pug"] }\n',
+      "App.vue": vue,
+      "README.md": markdown,
+      // The case of the word matters to Prettier, and `<template lang="html">` is HTML.
+      "Other.md": markdown.replace("```pug", "```Pug"),
+      "Other.vue": vue.replace('lang="pug"', 'lang="html"').replace(pug, "  <div><span>hello</span></div>\n"),
+      "b.js": "b  ;\n",
+    };
+    const reads = ["App.vue", "README.md", "Other.md", "Other.vue", "b.js", "node_modules/prettier/calls.txt"];
+    const calls = (result: { files: Record<string, string | null> }) =>
+      (result.files["node_modules/prettier/calls.txt"] ?? "")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map(line => basename(JSON.parse(line).filepath))
+        .sort();
+
+    test(
+      "goes to the project's own Prettier, and the other files are formatted natively",
+      async () => {
+        const result = await format(files, [], { reads });
+        expect(result.files).toMatchObject({
+          "App.vue": byPrettier(vue),
+          "README.md": byPrettier(markdown),
+          "Other.md": files["Other.md"],
+          "Other.vue": files["Other.vue"],
+          "b.js": "b;\n",
+        });
+        expect(calls(result)).toEqual(["App.vue", "README.md"]);
+        expect(result.stderr).toContain("Used your installed Prettier for 2 files that need a plugin");
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    test(
+      "is covered by --check and -l",
+      async () => {
+        const checked = await format(files, ["--check"], { reads });
+        expect(checked.files["App.vue"]).toBe(vue);
+        expect(checked.stderr).toContain("[warn] App.vue");
+        expect(checked.stderr).toContain("[warn] README.md");
+        expect(checked.exitCode).toBe(1);
+        expect(await different(files, [])).toEqual(["App.vue", "b.js", "README.md"]);
+        const fine = { ...files, "App.vue": byPrettier(vue), "README.md": byPrettier(markdown), "b.js": "b;\n" };
+        const result = await format(fine, ["--check"]);
+        expect(result.stdout).toContain("All matched files use Prettier code style!");
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    test(
+      "is formatted from stdin",
+      async () => {
+        const result = await format(files, ["--stdin-filepath", "App.vue"], { stdin: vue });
+        expect(result).toMatchObject({ raw: byPrettier(vue), stderr: "", exitCode: 0 });
+        const checked = await format(files, ["--stdin-filepath", "README.md", "--check"], { stdin: markdown });
+        expect(checked).toMatchObject({ raw: "(stdin)\n", exitCode: 1 });
+        const unnamed = await format(files, ["--parser", "markdown"], { stdin: markdown });
+        expect(unnamed).toMatchObject({ raw: byPrettier(markdown), stderr: "", exitCode: 0 });
+        // The cursor is before `hello`, which the stand-in moves by the spaces it removes.
+        const at = vue.indexOf("hello");
+        const cursor = await format(files, ["--stdin-filepath", "App.vue", "--cursor-offset", String(at)], {
+          stdin: vue,
+        });
+        expect(cursor).toMatchObject({
+          raw: byPrettier(vue),
+          stderr: String(byPrettier(vue).indexOf("hello")),
+          exitCode: 0,
+        });
+      },
+      timeout,
+    );
+
+    test.each<[string, string, string]>([
+      ["a Vue custom block", "a.vue", `<docs lang="md">\n\n\`\`\`pug\n${pug}\`\`\`\n\n</docs>\n`],
+      ["a Markdown code block", "a.md", `\`\`\`\`md\n\`\`\`pug\n${pug}\`\`\`\n\`\`\`\`\n`],
+      ["a Vue code block in Markdown", "a.md", `\`\`\`vue\n<template lang="pug">\n${pug}</template>\n\`\`\`\n`],
+      ["a script in HTML", "a.html", `<script lang="pug">\n${pug}</script>\n`],
+      ["a style in HTML", "a.html", `<style lang="pug">\n${pug}</style>\n`],
+      ["an MDX code block", "a.mdx", `# Usage\n\n\`\`\`pug\n${pug}\`\`\`\n`],
+      ["a Markdown template in JavaScript", "a.js", `const d = markdown\`\n\\\`\\\`\\\`pug\n${pug}\\\`\\\`\\\`\n\`;\n`],
+      ["an HTML template in TypeScript", "a.ts", `const t = html\`<script lang="pug">\n${pug}</script>\`;\n`],
+    ])(
+      "is found in %s",
+      async (_, name, text) => {
+        const project = { ...packages, ".prettierrc": files[".prettierrc"], [name]: text };
+        const result = await format(project, [], { reads: [name, "node_modules/prettier/calls.txt"] });
+        expect(result.files[name]).toBe(byPrettier(text));
+        expect(calls(result)).toEqual([name]);
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    // Prettier looks the word up only where it would format the code: not in a block with `src`, not in a template
+    // that isn't Vue's root, and not under `prettier-ignore`.
+    test.each<[string, string, string]>([
+      ["a template at the root of HTML", "a.html", `<template lang="pug">\n${pug}</template>\n`],
+      [
+        "a template in a Vue template",
+        "a.vue",
+        `<template>\n  <template lang="pug">\n${pug}</template>\n</template>\n`,
+      ],
+      ["a script with src", "a.html", `<script src="a.js" lang="pug">\n${pug}</script>\n`],
+      ["a Vue block with src", "a.vue", `<template lang="pug" src="./a.pug">\n${pug}</template>\n`],
+      ["a Vue block without lang", "a.vue", `<docs>\n\`\`\`pug\n${pug}\`\`\`\n</docs>\n`],
+      ["an ignored code block", "a.md", `<!-- prettier-ignore -->\n\`\`\`pug\n${pug}\`\`\`\n`],
+    ])(
+      "is not looked for in %s",
+      async (_, name, text) => {
+        const project = { ...packages, ".prettierrc": files[".prettierrc"], [name]: text };
+        const result = await format(project, [], { reads: [name, "node_modules/prettier/calls.txt"] });
+        expect(calls(result)).toEqual([]);
+        expect(result.stderr).not.toContain("Used your installed Prettier");
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    // Prettier looks for the word as a language's name, then as an alias, then as an extension, each time through
+    // the listed plugins before its own languages. `inc` is an alias of PHP and an extension of HTML and of SQL.
+    // `wxs` is an extension of JavaScript and of XML. `mjml` is a name of Prettier's and an extension of XML.
+    test.each<[string, string, string | null]>([
+      ["prettier-plugin-sh", "sh", null],
+      ["@prettier/plugin-php", "inc", null],
+      ["prettier-plugin-sql", "inc", null],
+      ["@prettier/plugin-xml", "wxs", null],
+      [
+        "@prettier/plugin-xml",
+        "mjml",
+        "```mjml\n<mjml>\n  <mj-body>\n    <mj-text>div span hello</mj-text>\n  </mj-body>\n</mjml>\n```\n",
+      ],
+    ])(
+      "with %s, a ```%s block: Prettier gets the file unless Bun prints %p",
+      async (plugin, language, native) => {
+        const text =
+          language === "mjml"
+            ? "```mjml\n<mjml>\n  <mj-body>\n    <mj-text>div   span hello</mj-text>\n  </mj-body>\n</mjml>\n```\n"
+            : `\`\`\`${language}\n${pug}\`\`\`\n`;
+        const project = {
+          ...packages,
+          [`node_modules/${plugin}/package.json`]: `{ "name": "${plugin}", "version": "1.0.0" }`,
+          ".prettierrc": `{ "plugins": ["${plugin}"] }\n`,
+          "a.md": text,
+        };
+        const result = await format(project, [], { reads: ["a.md", "node_modules/prettier/calls.txt"] });
+        expect(result.files["a.md"]).toBe(native ?? byPrettier(text));
+        expect(calls(result)).toEqual(native === null ? ["a.md"] : []);
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    test("follows the plugins of an override, and of --plugin", async () => {
+      const config = (overrides: object[], plugins?: string[]) => JSON.stringify({ plugins, overrides }) + "\n";
+      const forDocs = config([{ files: "docs/**/*.md", options: { plugins: ["@prettier/plugin-pug"] } }]);
+      const project = { ...packages, "docs/a.md": markdown, "README.md": markdown, "App.vue": vue };
+      const reads = ["docs/a.md", "README.md", "App.vue", "node_modules/prettier/calls.txt"];
+      const scoped = await format({ ...project, ".prettierrc": forDocs }, [], { reads });
+      expect(calls(scoped)).toEqual(["a.md"]);
+      expect(scoped.files).toMatchObject({ "docs/a.md": byPrettier(markdown), "README.md": markdown, "App.vue": vue });
+      expect(scoped.exitCode).toBe(0);
+      // A pattern without a slash matches in every directory, as in Prettier.
+      const emptied = config([{ files: "*.md", options: { plugins: [] } }], ["@prettier/plugin-pug"]);
+      const without = await format({ ...project, ".prettierrc": emptied }, [], { reads });
+      expect(calls(without)).toEqual(["App.vue"]);
+      expect(without.exitCode).toBe(0);
+      const flagged = await format(project, ["--plugin", "@prettier/plugin-pug"], { reads });
+      expect(calls(flagged)).toEqual(["App.vue", "README.md", "a.md"]);
+      expect(flagged.exitCode).toBe(0);
+    });
+
+    test("stays native without the plugin in the config, and with embeddedLanguageFormatting off", async () => {
+      const { ".prettierrc": config, ...rest } = files;
+      const unlisted = await format(rest, [], { reads });
+      expect(unlisted.files).toMatchObject({ "App.vue": vue, "README.md": markdown, "b.js": "b;\n" });
+      expect(calls(unlisted)).toEqual([]);
+      expect(unlisted.exitCode).toBe(0);
+      const off = '{ "plugins": ["@prettier/plugin-pug"], "embeddedLanguageFormatting": "off" }\n';
+      const kept = await format({ ...files, ".prettierrc": off }, [], { reads });
+      expect(kept.files).toMatchObject({ "App.vue": vue, "README.md": markdown, "b.js": "b;\n" });
+      expect(calls(kept)).toEqual([]);
+      expect(kept.exitCode).toBe(0);
+    });
+
+    test("is skipped if Prettier or the plugin isn't installed, with a hint to install them", async () => {
+      const project = { ".prettierrc": files[".prettierrc"], "App.vue": vue, "README.md": markdown, "b.js": "b  ;\n" };
+      const result = await format(project, [], { reads: ["App.vue", "README.md", "b.js"] });
+      expect(result.files).toEqual({ "App.vue": vue, "README.md": markdown, "b.js": "b;\n" });
+      expect(result.stderr.split("\n").slice(-4)).toEqual([
+        "warn: Not installed: prettier, @prettier/plugin-pug",
+        "  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
+        "error: 2 files were not formatted because of code that only @prettier/plugin-pug can format: 1 .md, 1 .vue",
+        "  Install what is missing, or use --allow-unsupported to format them without the plugins.",
+      ]);
+      expect(result.exitCode).toBe(2);
+      const stdin = await format(project, ["--stdin-filepath", "App.vue"], { stdin: vue });
+      expect(stdin.raw).toBe("");
+      expect(stdin.stderr).toContain(
+        "error: 1 file was not formatted because of code that only @prettier/plugin-pug can format: 1 .vue",
+      );
+      expect(stdin.exitCode).toBe(2);
+      // With a file in a plugin's language too, what is not installed is said once.
+      const mixed = { ...project, ".prettierrc": '{ "plugins": ["@prettier/plugin-pug", "prettier-plugin-astro"] }\n' };
+      const both = await format({ ...mixed, "c.astro": "<p>c</p>\n" }, []);
+      expect(both.stderr.split("\n").slice(-6)).toEqual([
+        "warn: Not installed: prettier, @prettier/plugin-pug, prettier-plugin-astro",
+        "  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
+        "error: 2 files were not formatted because of code that only @prettier/plugin-pug can format: 1 .md, 1 .vue",
+        "  Install what is missing, or use --allow-unsupported to format them without the plugins.",
+        "error: 1 file was not formatted because bun fmt does not support its language yet: 1 .astro",
+        "  Use --allow-unsupported to make this a warning.",
+      ]);
+      expect(both.exitCode).toBe(2);
+      // With --allow-unsupported, the code is left as it is, as Prettier without the plugin would leave it.
+      const allowed = await format(project, ["--allow-unsupported"], { reads: ["App.vue", "README.md", "b.js"] });
+      expect(allowed.files).toEqual({ "App.vue": vue, "README.md": markdown, "b.js": "b;\n" });
+      expect(allowed.stderr.split("\n")).toEqual([
+        "Formatted 1 file, 3 unchanged",
+        "warn: Not installed: prettier, @prettier/plugin-pug",
+        "  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
+        "warn: 2 files were formatted without @prettier/plugin-pug, which formats code in them: 1 .md, 1 .vue",
+      ]);
+      expect(allowed.exitCode).toBe(0);
+      const allowedStdin = await format(project, ["--allow-unsupported", "--stdin-filepath", "App.vue"], {
+        stdin: vue,
+      });
+      expect(allowedStdin.raw).toBe(vue);
+      expect(allowedStdin.exitCode).toBe(0);
+    });
+
+    // The file is formatted again without the plugin, and that run is the one that finds the classes to ask about.
+    test("--allow-unsupported with --sort-tailwindcss asks Tailwind about the file it formats without the plugin", async () => {
+      const tailwind = {
+        "node_modules/tailwindcss/package.json": '{ "name": "tailwindcss", "version": "4.0.0", "main": "index.js" }',
+        "node_modules/tailwindcss/theme.css": "",
+        "node_modules/tailwindcss/index.js": `const order = ["m-2", "flex", "p-4"];
+exports.__unstable__loadDesignSystem = async () => ({
+  getClassOrder: classes => classes.map(name => [name, order.includes(name) ? BigInt(order.indexOf(name)) : null]),
+});
+`,
+      };
+      const classes = vue.replace(
+        "<script setup>",
+        '<template>\n  <a class="p-4 flex m-2"></a>\n</template>\n\n<script setup>',
+      );
+      const project = { ...tailwind, ".prettierrc": files[".prettierrc"], "App.vue": classes };
+      const result = await format(project, ["--allow-unsupported", "--sort-tailwindcss"], { reads: ["App.vue"] });
+      expect(result.files["App.vue"]).toBe(classes.replace("p-4 flex m-2", "m-2 flex p-4"));
+      expect(result.stderr).not.toContain("not formatted");
+      expect(result.stderr).toContain("1 file was formatted without @prettier/plugin-pug");
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("--allow-unsupported still uses the plugins that are installed", async () => {
+      const result = await format(files, ["--allow-unsupported"], { reads });
+      expect(calls(result)).toEqual(["App.vue", "README.md"]);
+      expect(result.exitCode).toBe(0);
+    });
+
+    // Prettier doesn't know them, so they're named.
+    test("says that Bun's own settings don't reach the files that Prettier formats", async () => {
+      const result = await format(files, ["--sort-imports"], { reads });
+      expect(calls(result)).toEqual(["App.vue", "README.md"]);
+      expect(result.stderr.split("\n")).toContain(
+        "warn: sortImports does not apply to 2 files with code that needs a plugin, which your Prettier formatted",
+      );
+      expect(result.exitCode).toBe(0);
+      const stdin = await format(files, ["--sort-imports", "--stdin-filepath", "App.vue"], { stdin: vue });
+      expect(stdin.raw).toBe(byPrettier(vue));
+      expect(stdin.stderr).toContain("warn: sortImports does not apply to 1 file with code that needs a plugin");
+      const plain = await format(files, [], { reads });
+      expect(plain.stderr).not.toContain("does not apply");
+    });
   });
 
   // Unless a test says otherwise, the expected output is what Prettier 3.9.9 prints on Node, with

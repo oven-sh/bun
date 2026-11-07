@@ -10,8 +10,8 @@ use super::utilities::{
 };
 use super::writer::Attempt;
 use super::{Parser, data};
-use crate::markdown::infer_parser;
 use crate::options::{HtmlRoot, InHtml, LineEnding, LineWidth};
+use crate::plugins::infer_parser_with;
 use crate::{FormatError, FormatOptions};
 use bun_core::strings;
 
@@ -334,6 +334,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     /// `inferElementParser`
     fn infer_element_parser(&self, id: Id) -> Option<&'static [u8]> {
         let (tree, node) = (self.tree, &self.tree[id]);
+        let infer_parser = |language| infer_parser_with(self.options.format, language);
         let by_attributes = || {
             let language = tree.attribute_value(id, b"lang").and_then(infer_parser);
             language.or_else(|| {

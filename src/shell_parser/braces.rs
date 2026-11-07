@@ -4,225 +4,9 @@ use bun_alloc::ArenaVecExt as _;
 use bun_alloc::{AllocError, Arena as Bump};
 // `bun.SmallList` lives in `bun_css` (higher tier). Semantically it
 // is `smallvec::SmallVec` (inline-N, heap-spill). PORTING.md §Collections.
-use self::StringEncoding as Encoding;
 use bun_alloc::ArenaVec as BumpVec;
 use bun_core::SmolStr;
 use smallvec::SmallVec;
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Moved from `bun_shell`:
-//   StringEncoding, SrcAscii, SrcUnicode, ShellCharIter, CharIter
-// These live here so `bun_shell` (higher tier) can depend on `shell_parser`
-// without a back-edge. `bun_shell` re-exports these under its old paths.
-// ═══════════════════════════════════════════════════════════════════════════
-
-use bun_core::strings::{CodepointIterator, Cursor};
-
-/// Encoding of the shell input bytes being expanded.
-#[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum StringEncoding {
-    Ascii,
-    Wtf8,
-}
-
-// ─── SrcAscii ──────────────────────────────────────────────────────────────
-
-#[derive(Copy, Clone)]
-struct SrcAscii<'a> {
-    bytes: &'a [u8],
-    i: usize,
-}
-
-// PERF: `char` is u32 so ascii/unicode share one `InputChar` shape and
-// `ShellCharIter<const E>` needs no type-level branching on `E`. Could split per
-// encoding if profiling shows it matters.
-#[derive(Copy, Clone)]
-pub struct InputChar {
-    pub(crate) char: u32,
-    pub(crate) escaped: bool,
-}
-
-#[derive(Copy, Clone)]
-struct AsciiIndexValue {
-    char: u32,
-}
-
-impl<'a> SrcAscii<'a> {
-    #[inline]
-    fn init(bytes: &'a [u8]) -> Self {
-        Self { bytes, i: 0 }
-    }
-    #[inline]
-    fn index(&self) -> Option<AsciiIndexValue> {
-        let b = self.bytes;
-        if self.i >= b.len() {
-            return None;
-        }
-        Some(AsciiIndexValue {
-            char: u32::from(b[self.i]),
-        })
-    }
-    #[inline]
-    fn index_next(&self) -> Option<AsciiIndexValue> {
-        let b = self.bytes;
-        if self.i + 1 >= b.len() {
-            return None;
-        }
-        Some(AsciiIndexValue {
-            char: u32::from(b[self.i + 1]),
-        })
-    }
-    #[inline]
-    fn eat(&mut self, escaped: bool) {
-        self.i += 1 + escaped as usize;
-    }
-}
-
-// ─── SrcUnicode ────────────────────────────────────────────────────────────
-
-struct SrcUnicode<'a> {
-    iter: CodepointIterator<'a>,
-    cursor: Cursor,
-    next_cursor: Cursor,
-}
-
-#[derive(Copy, Clone)]
-struct UnicodeIndexValue {
-    char: u32,
-}
-
-impl<'a> SrcUnicode<'a> {
-    #[inline]
-    fn next_cursor(iter: &CodepointIterator<'a>, cursor: &mut Cursor) {
-        if !CodepointIterator::next(iter, cursor) {
-            // This will make `i > sourceBytes.len` so the condition in `index` will fail
-            cursor.i = u32::try_from(iter.bytes.len() + 1).unwrap();
-            cursor.width = 1;
-            cursor.c = CodepointIterator::ZERO_VALUE;
-        }
-    }
-    fn init(bytes: &'a [u8]) -> Self {
-        let iter = CodepointIterator::init(bytes);
-        let mut cursor = Cursor::default();
-        Self::next_cursor(&iter, &mut cursor);
-        let mut next_cursor = cursor;
-        Self::next_cursor(&iter, &mut next_cursor);
-        Self {
-            iter,
-            cursor,
-            next_cursor,
-        }
-    }
-    #[inline]
-    fn index(&self) -> Option<UnicodeIndexValue> {
-        if self.cursor.width as usize + self.cursor.i as usize > self.iter.bytes.len() {
-            return None;
-        }
-        Some(UnicodeIndexValue {
-            char: self.cursor.c as u32,
-        })
-    }
-    #[inline]
-    fn index_next(&self) -> Option<UnicodeIndexValue> {
-        if self.next_cursor.width as usize + self.next_cursor.i as usize > self.iter.bytes.len() {
-            return None;
-        }
-        Some(UnicodeIndexValue {
-            char: self.next_cursor.c as u32,
-        })
-    }
-    #[inline]
-    fn eat(&mut self, escaped: bool) {
-        if escaped {
-            // eat two codepoints
-            Self::next_cursor(&self.iter, &mut self.next_cursor);
-            self.cursor = self.next_cursor;
-            Self::next_cursor(&self.iter, &mut self.next_cursor);
-        } else {
-            // eat one codepoint
-            self.cursor = self.next_cursor;
-            Self::next_cursor(&self.iter, &mut self.next_cursor);
-        }
-    }
-}
-
-// ─── ShellCharIter ─────────────────────────────────────────────────────────
-
-// PERF: Rust const
-// generics can't pick a field type from an enum value without an aux trait, so we
-// store both arms in a small enum and branch at runtime. Could split into three
-// `impl CharIter for ShellCharIter<{StringEncoding::*}>` blocks if profiling
-// shows the branch matters.
-enum ShellSrc<'a> {
-    Ascii(SrcAscii<'a>),
-    Unicode(SrcUnicode<'a>),
-}
-
-pub struct ShellCharIter<'a, const E: StringEncoding> {
-    src: ShellSrc<'a>,
-}
-
-/// Surface trait so callers can name `<ShellCharIter<E> as CharIter>::InputChar` /
-/// `::CodepointType` without inherent associated types.
-trait CharIter<'a>: Sized {
-    type CodepointType: Copy;
-    type InputChar: Copy;
-    fn init(bytes: &'a [u8]) -> Self;
-    fn eat(&mut self) -> Option<Self::InputChar>;
-    fn read_char(&mut self) -> Option<Self::InputChar>;
-}
-
-impl<'a, const E: StringEncoding> CharIter<'a> for ShellCharIter<'a, E> {
-    // PERF: unified to u32 for ascii and unicode (see InputChar note).
-    type CodepointType = u32;
-    type InputChar = InputChar;
-
-    fn init(bytes: &'a [u8]) -> Self {
-        let src = if E == StringEncoding::Ascii {
-            ShellSrc::Ascii(SrcAscii::init(bytes))
-        } else {
-            ShellSrc::Unicode(SrcUnicode::init(bytes))
-        };
-        Self { src }
-    }
-
-    fn eat(&mut self) -> Option<InputChar> {
-        if let Some(result) = self.read_char() {
-            match &mut self.src {
-                ShellSrc::Ascii(a) => a.eat(result.escaped),
-                ShellSrc::Unicode(u) => u.eat(result.escaped),
-            }
-            return Some(result);
-        }
-        None
-    }
-
-    fn read_char(&mut self) -> Option<InputChar> {
-        let mut ch = match &self.src {
-            ShellSrc::Ascii(a) => a.index()?.char,
-            ShellSrc::Unicode(u) => u.index()?.char,
-        };
-        if ch != u32::from(b'\\') {
-            return Some(InputChar {
-                char: ch,
-                escaped: false,
-            });
-        }
-
-        // Handle backslash
-        ch = match &self.src {
-            ShellSrc::Ascii(a) => a.index_next()?.char,
-            ShellSrc::Unicode(u) => u.index_next()?.char,
-        };
-
-        Some(InputChar {
-            char: ch,
-            escaped: true,
-        })
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
 
 bun_core::declare_scope!(BRACES, visible);
 
@@ -970,9 +754,11 @@ fn build_expansion_table(
     Ok(())
 }
 
-pub type Lexer<'a> = NewLexer<'a, { Encoding::Ascii }>;
-
-type Chars<'a, const E: Encoding> = ShellCharIter<'a, E>;
+/// The bytes that can be syntax in a word. Every other byte is text.
+#[inline]
+fn is_syntax(byte: u8) -> bool {
+    matches!(byte, b'\\' | b'{' | b'}' | b',')
+}
 
 pub struct LexerOutput {
     pub tokens: Vec<Token>,
@@ -981,16 +767,18 @@ pub struct LexerOutput {
 
 pub(crate) type BraceLexerError = AllocError;
 
-pub struct NewLexer<'a, const ENCODING: Encoding> {
-    chars: Chars<'a, ENCODING>,
+/// Splits a word at its unescaped `{`, `,` and `}`. Those and the backslash are ASCII, and no byte of a multi-byte
+/// UTF-8 sequence is ASCII, so the lexer reads bytes. Text comes out as the bytes it came in as, UTF-8 or not.
+pub struct Lexer<'a> {
+    src: &'a [u8],
     tokens: Vec<Token>,
     contains_nested: bool,
 }
 
-impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
+impl<'a> Lexer<'a> {
     pub fn tokenize(src: &'a [u8]) -> Result<LexerOutput, BraceLexerError> {
         let mut this = Self {
-            chars: Chars::<ENCODING>::init(src),
+            src,
             tokens: Vec::new(),
             contains_nested: false,
         };
@@ -1033,48 +821,67 @@ impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
         }
         let mut brace_stack: SmallVec<[OpenBrace; MAX_NESTED_BRACES]> = SmallVec::new();
 
-        loop {
-            let Some(input) = self.eat() else { break };
-            let char = input.char;
-            let escaped = input.escaped;
-
-            if !escaped {
-                // `char` is u32 (CodepointType unified across encodings).
-                match char {
-                    c if c == u32::from(b'{') => {
-                        brace_stack.push(OpenBrace {
-                            tok_idx: u32::try_from(self.tokens.len()).expect("int cast"),
-                            has_comma: false,
-                        });
-                        self.tokens.push(Token::Open(ExpansionVariants::default()));
+        let src = self.src;
+        let mut i = 0;
+        while i < src.len() {
+            let mut text_start = i;
+            match src[i] {
+                // A backslash is dropped and the byte after it is text. A word that ends in a backslash ends
+                // before it.
+                b'\\' => {
+                    text_start += 1;
+                    if text_start == src.len() {
+                        break;
+                    }
+                }
+                b'{' => {
+                    brace_stack.push(OpenBrace {
+                        tok_idx: u32::try_from(self.tokens.len()).expect("int cast"),
+                        has_comma: false,
+                    });
+                    self.tokens.push(Token::Open(ExpansionVariants::default()));
+                    i += 1;
+                    continue;
+                }
+                b'}' => {
+                    if let Some(top) = brace_stack.pop() {
+                        if top.has_comma {
+                            self.tokens.push(Token::Close);
+                        } else {
+                            // A `{...}` group with no top-level comma is not a
+                            // brace expansion (bash semantics): demote the Open
+                            // back to a literal `{` and emit this `}` as text.
+                            self.replace_token_with_string(top.tok_idx);
+                            self.tokens.push(Token::Text(SmolStr::from_char(b'}')));
+                        }
+                        i += 1;
                         continue;
                     }
-                    c if c == u32::from(b'}') => {
-                        if let Some(top) = brace_stack.pop() {
-                            if top.has_comma {
-                                self.tokens.push(Token::Close);
-                            } else {
-                                // A `{...}` group with no top-level comma is not a
-                                // brace expansion (bash semantics): demote the Open
-                                // back to a literal `{` and emit this `}` as text.
-                                self.replace_token_with_string(top.tok_idx);
-                                self.tokens.push(Token::Text(SmolStr::from_char(b'}')));
-                            }
-                            continue;
-                        }
-                    }
-                    c if c == u32::from(b',') => {
-                        if let Some(top) = brace_stack.last_mut() {
-                            top.has_comma = true;
-                            self.tokens.push(Token::Comma);
-                            continue;
-                        }
-                    }
-                    _ => {}
                 }
+                b',' => {
+                    if let Some(top) = brace_stack.last_mut() {
+                        top.has_comma = true;
+                        self.tokens.push(Token::Comma);
+                        i += 1;
+                        continue;
+                    }
+                }
+                _ => {}
             }
 
-            self.append_char(char)?;
+            // The byte at `text_start` is text, and so is each byte after it up to the next one that can be syntax.
+            // A run of one byte is common (`{a,b}`): its append is the inline copy of one byte. A longer run is
+            // one append of a slice, which is a call.
+            i = text_start + 1;
+            if i < src.len() && !is_syntax(src[i]) {
+                i += 1;
+                while i < src.len() && !is_syntax(src[i]) {
+                    i += 1;
+                }
+                self.append_text(&src[text_start..i])?;
+            } else {
+                self.append_byte(src[text_start])?;
+            }
         }
 
         // Unclosed braces
@@ -1166,39 +973,20 @@ impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
         *tok = Token::Text(tok_text);
     }
 
-    fn append_char(
-        &mut self,
-        char: <Chars<'a, ENCODING> as CharIter<'a>>::CodepointType,
-    ) -> Result<(), AllocError> {
-        if !self.tokens.is_empty() {
-            let last_idx = self.tokens.len() - 1;
-            if let Token::Text(last) = &mut self.tokens[last_idx] {
-                if ENCODING == Encoding::Ascii {
-                    // SAFETY: ascii codepoint is u8
-                    last.append_slice(&[char as u8])?;
-                    return Ok(());
-                }
-                let mut buf = [0u8; 4];
-                let len = bun_core::encode_wtf8_rune(&mut buf, char);
-                last.append_slice(&buf[..len])?;
-                return Ok(());
-            }
+    fn append_text(&mut self, text: &[u8]) -> Result<(), AllocError> {
+        if let Some(Token::Text(last)) = self.tokens.last_mut() {
+            return last.append_slice(text);
         }
-
-        if ENCODING == Encoding::Ascii {
-            self.tokens
-                .push(Token::Text(SmolStr::from_slice(&[char as u8])?));
-        } else {
-            let mut buf = [0u8; 4];
-            let len = bun_core::encode_wtf8_rune(&mut buf, char);
-            self.tokens
-                .push(Token::Text(SmolStr::from_slice(&buf[..len])?));
-        }
+        self.tokens.push(Token::Text(SmolStr::from_slice(text)?));
         Ok(())
     }
 
-    fn eat(&mut self) -> Option<<Chars<'a, ENCODING> as CharIter<'a>>::InputChar> {
-        self.chars.eat()
+    fn append_byte(&mut self, byte: u8) -> Result<(), AllocError> {
+        if let Some(Token::Text(last)) = self.tokens.last_mut() {
+            return last.append_slice(&[byte]);
+        }
+        self.tokens.push(Token::Text(SmolStr::from_char(byte)));
+        Ok(())
     }
 }
 
@@ -1241,6 +1029,52 @@ mod tests {
             // NOTE: don't use arena here so that we can test for memory leaks
             let result = Lexer::tokenize(src).unwrap();
             assert_eq!(result.tokens, expected);
+        }
+    }
+
+    /// Text is copied, not decoded: a multi-byte character and a byte that is not UTF-8 come out as they went in.
+    #[test]
+    fn lexer_keeps_text_bytes() {
+        fn text(bytes: &[u8]) -> Token {
+            Token::Text(SmolStr::from_slice(bytes).unwrap())
+        }
+        let open = || Token::Open(ExpansionVariants::default());
+        let test_cases: Vec<(&[u8], Vec<Token>)> = vec![
+            // 0xFF is never in UTF-8, 0xC3 needs a byte after it, 0x80 needs one before it, E2 82 stops early.
+            (
+                b"\xff{\xc3,\x80}\xe2\x82",
+                vec![
+                    text(b"\xff"),
+                    open(),
+                    text(b"\xc3"),
+                    Token::Comma,
+                    text(b"\x80"),
+                    Token::Close,
+                    text(b"\xe2\x82"),
+                    Token::Eof,
+                ],
+            ),
+            // A backslash makes the next byte text, also when that byte starts a multi-byte character.
+            (
+                "{\\é,\\😂}\\{\\,\\}\\\\".as_bytes(),
+                vec![
+                    open(),
+                    text("é".as_bytes()),
+                    Token::Comma,
+                    text("😂".as_bytes()),
+                    Token::Close,
+                    text(b"{,}\\"),
+                    Token::Eof,
+                ],
+            ),
+            // A word that ends in a backslash ends before it.
+            (b"a\\", vec![text(b"a"), Token::Eof]),
+            // `}` and `,` outside a group are text.
+            (b"a},b", vec![text(b"a},b"), Token::Eof]),
+        ];
+
+        for (src, expected) in test_cases {
+            assert_eq!(Lexer::tokenize(src).unwrap().tokens, expected);
         }
     }
 }

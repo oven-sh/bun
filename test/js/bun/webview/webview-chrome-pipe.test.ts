@@ -834,6 +834,707 @@ test.concurrent("onNavigationFailed can retry navigate() immediately", async () 
   expect(result).toBe("retry was accepted and failed too");
 });
 
+// After a load fails, Chrome commits its own error page
+// (chrome-error://chromewebdata/, with frame.unreachableUrl naming the page it
+// stands in for) and fires that page's load event. Neither is a navigation of
+// the view's: navigate() already rejected with the errorText of its reply, so
+// the error page reports nothing more. view.url and view.title stay as they
+// were when it committed, and its own title is never asked for.
+test.concurrent("a failed navigate() reports one failure and Chrome's error page changes nothing", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    const before = await view.evaluate("__fake_title_fetches()");
+    const failed = await outcome(view.navigate("http://fake/unreachable"));
+    // The fake sent the error page's commit and load event behind the reply,
+    // and it answers in order, so both are handled once this resolves.
+    await view.evaluate("1");
+    const titleFetches = (await view.evaluate("__fake_title_fetches()")) - before;
+    print({ failed, events, url: view.url, title: view.title, loading: view.loading, titleFetches });
+    view.close();
+  `);
+  expect(result).toEqual({
+    failed: { rejected: "net::ERR_CONNECTION_REFUSED" },
+    events: ["failed:net::ERR_CONNECTION_REFUSED"],
+    url: "http://fake/before",
+    title: "fake chrome",
+    loading: false,
+    titleFetches: 0,
+  });
+});
+
+// That error page can land after a retry from onNavigationFailed was answered.
+// It commits under a loader that no reply named (Chromium 139 and older), so
+// only the order says whose it is: the next error page behind a failed
+// navigate() is that failure's. It is not the retry's commit, its load event
+// does not end the retry, and it is not a second failure. The retry's page
+// never loads here, so the retry has to stay pending.
+test.concurrent("the error page of a failed navigate() ends nothing for the retry behind it", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    let retry;
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => {
+      events.push("failed:" + error.message);
+      retry ??= view.navigate("http://fake/never-load");
+    };
+    await outcome(view.navigate("http://fake/unreachable-late"));
+    // This evaluate is behind the retry's command, so the fake has answered
+    // the retry by the time it commits the error page.
+    await view.evaluate("__fake_error_page('http://fake/unreachable-late')");
+    const first = await Promise.race([
+      retry.then(() => "retry settled", () => "retry rejected"),
+      view.evaluate("'retry still pending'"),
+    ]);
+    print({ first, events, url: view.url, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    first: "retry still pending",
+    events: ["failed:net::ERR_CONNECTION_REFUSED"],
+    url: "http://fake/before",
+    loading: true,
+  });
+});
+
+// The retry can fail as well, and Chrome can answer it before the first error
+// page has committed. Then two error pages are due, one per failure that
+// navigate() reported, and neither is a third failure.
+test.concurrent("two failed navigate() calls in a row report two failures, not three", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    let retry;
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => {
+      events.push("failed:" + error.message);
+      retry ??= outcome(view.navigate("http://fake/unreachable-late-2"));
+    };
+    await outcome(view.navigate("http://fake/unreachable-late-1"));
+    const retried = await retry;
+    // Both replies are in. Now the two error pages commit and load, in order.
+    await view.evaluate("__fake_error_page('http://fake/unreachable-late-1')");
+    await view.evaluate("__fake_error_page('http://fake/unreachable-late-2')");
+    print({ retried, events, url: view.url, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    retried: { rejected: "net::ERR_CONNECTION_REFUSED" },
+    events: ["failed:net::ERR_CONNECTION_REFUSED", "failed:net::ERR_CONNECTION_REFUSED"],
+    url: "http://fake/before",
+    loading: false,
+  });
+});
+
+// A load the page starts itself can fail too. Its error page is the only sign:
+// onNavigationFailed fires once that page has loaded. reload() then loads the
+// failed URL again, fails again, and rejects instead of resolving on the error
+// page's load event.
+test.concurrent("a failed load the page started fires onNavigationFailed, and reload() of it rejects", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/start");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    const before = await view.evaluate("__fake_title_fetches()");
+    await view.evaluate("__fake_error_page('http://fake/unreachable-link')");
+    const afterLink = { events: [...events], url: view.url };
+    const reloaded = await outcome(view.reload());
+    const titleFetches = (await view.evaluate("__fake_title_fetches()")) - before;
+    print({ afterLink, reloaded, events, url: view.url, title: view.title, loading: view.loading, titleFetches });
+    view.close();
+  `);
+  expect(result).toEqual({
+    afterLink: { events: ["failed:Navigation to 'http://fake/unreachable-link' failed"], url: "http://fake/start" },
+    reloaded: { rejected: "Navigation to 'http://fake/unreachable-link' failed" },
+    events: [
+      "failed:Navigation to 'http://fake/unreachable-link' failed",
+      "failed:Navigation to 'http://fake/unreachable-link' failed",
+    ],
+    url: "http://fake/start",
+    title: "fake chrome",
+    loading: false,
+    titleFetches: 0,
+  });
+});
+
+// The failure is reported by the URL the error page names. Bytes in it that
+// aren't UTF-8 must not lose the report: the navigation that waits for it
+// would never settle.
+test.concurrent("an error page whose unreachableUrl isn't valid UTF-8 still fails the navigation", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--malformed=error-page-bad-utf8"] },
+      width: 100,
+      height: 100,
+    });
+    await view.navigate("http://fake/start");
+    const failures = [];
+    view.onNavigationFailed = error => failures.push(error.message);
+    await view.evaluate("__fake_error_page('http://fake/unreachable-link')");
+    const reloaded = await outcome(view.reload());
+    print({ reloaded, failures, url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({
+    reloaded: { rejected: "Navigation to '\uFFFDot-utf8' failed" },
+    failures: ["Navigation to '\uFFFDot-utf8' failed", "Navigation to '\uFFFDot-utf8' failed"],
+    url: "http://fake/start",
+  });
+});
+
+// The failure names the URL that Chrome gave, with its JSON escapes decoded
+// and without credentials, the way fetch() and WebSocket name a URL in an
+// error.
+test.concurrent("the failure names the URL without its credentials", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/start");
+    const failures = [];
+    view.onNavigationFailed = error => failures.push(error.message);
+    // A backslash is a character Chrome has to escape in the JSON it sends.
+    const failing = "http://user:secret@fake/unreachable?path=C:" + String.fromCharCode(92) + "dir";
+    await view.evaluate("__fake_error_page(" + JSON.stringify(failing) + ")");
+    print(failures);
+    view.close();
+  `);
+  expect(result).toEqual(["Navigation to 'http://fake/unreachable?path=C:\\dir' failed"]);
+});
+
+// Between the error page's commit and its load event Chrome is still swapping
+// the page in, and answers a command with "Not attached to an active page".
+// So the failure is reported when the error page has loaded, and a retry from
+// the callback reaches a tab that takes commands.
+test.concurrent("a failed load the page started is reported when its error page has loaded", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/start");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    // The reply to this evaluate is behind the commit in the pipe.
+    await view.evaluate("__fake_error_page_commit('http://fake/unreachable-link')");
+    const atCommit = [...events];
+    await view.evaluate("__fake_load_event()");
+    print({ atCommit, atLoad: events, url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({
+    atCommit: [],
+    atLoad: ["failed:Navigation to 'http://fake/unreachable-link' failed"],
+    url: "http://fake/start",
+  });
+});
+
+test.concurrent("reload() of a page that fails rejects when the error page has loaded", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/start");
+    // The page follows a link that fails: the entry to reload.
+    await view.evaluate("__fake_error_page('http://fake/unreachable-slow')");
+    const events = [];
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    const reloading = outcome(view.reload());
+    // The fake answered Page.reload and committed the error page, without its
+    // load event. This evaluate is behind both. A rejection fires
+    // onNavigationFailed first, so the callback says whether reload() settled.
+    await view.evaluate("1");
+    const atCommit = [...events];
+    await view.evaluate("__fake_load_event()");
+    print({ atCommit, reloaded: await reloading, events, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    atCommit: [],
+    reloaded: { rejected: "Navigation to 'http://fake/unreachable-slow' failed" },
+    events: ["failed:Navigation to 'http://fake/unreachable-slow' failed"],
+    loading: false,
+  });
+});
+
+// Chrome 143 and 153 commit the first error page before they answer a retry
+// from onNavigationFailed, and a retry that fails too replaces that page
+// before its load event. Each error page takes one reported failure as it
+// commits, so a load the page starts afterwards and that fails is reported.
+test.concurrent("an error page that never loads still takes the failure navigate() reported", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    let retry;
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => {
+      events.push("failed:" + error.message);
+      retry ??= outcome(view.navigate("http://fake/unreachable-late-2"));
+    };
+    // The first error page commits as the fake reads the retry, before it
+    // answers the retry.
+    await pageDoesOnNext(
+      view,
+      "Page.navigate",
+      "__fake_on_next('Page.navigate', \\"__fake_error_page_commit('http://fake/unreachable-late-1')\\")",
+    );
+    await outcome(view.navigate("http://fake/unreachable-late-1"));
+    const retried = await retry;
+    await view.evaluate("__fake_error_page('http://fake/unreachable-late-2')");
+    const afterRetry = [...events];
+    await view.evaluate("__fake_error_page('http://fake/unreachable-link')");
+    print({ retried, afterRetry, pageStarted: events.slice(afterRetry.length), url: view.url, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    retried: { rejected: "net::ERR_CONNECTION_REFUSED" },
+    afterRetry: ["failed:net::ERR_CONNECTION_REFUSED", "failed:net::ERR_CONNECTION_REFUSED"],
+    pageStarted: ["failed:Navigation to 'http://fake/unreachable-link' failed"],
+    url: "http://fake/before",
+    loading: false,
+  });
+});
+
+// Chrome does not always commit an error page for a failure that navigate()
+// reported, or does not announce the commit. Chrome 153: the next navigate()
+// is aborted (a 204, a download), and the first failure's error page then
+// commits with no Page.frameNavigated, only its load event. One error page
+// stays counted as due. reload() fails on an error page of its own, and no
+// reply of reload() carries an errorText: if that page were taken for the one
+// navigate() reported, the promise would never settle.
+test.concurrent("reload() rejects on its own error page when one from a failed navigate() never came", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    const failed = await outcome(view.navigate("http://fake/unreachable-late"));
+    const aborted = await outcome(view.navigate("http://fake/no-content"));
+    await view.evaluate("__fake_load_event()");
+    const reloaded = await outcome(view.reload());
+    const next = await outcome(view.navigate("http://fake/after"));
+    print({ failed, aborted, reloaded, next, events, url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({
+    failed: { rejected: "net::ERR_CONNECTION_REFUSED" },
+    aborted: { rejected: "net::ERR_ABORTED" },
+    reloaded: { rejected: "Navigation to 'http://fake/unreachable-late' failed" },
+    next: {},
+    events: [
+      "failed:net::ERR_CONNECTION_REFUSED",
+      "failed:net::ERR_ABORTED",
+      "failed:Navigation to 'http://fake/unreachable-late' failed",
+      "navigated:http://fake/after",
+    ],
+    url: "http://fake/after",
+  });
+});
+
+// Chromium 122 and older: a second navigate() that fails replaces the first
+// failure's error page before it commits, so two failures are followed by one
+// error page. reload() of the page that is still down has to settle, and a
+// failure the page starts after it is reported.
+test.concurrent("reload() rejects after two failed navigate() calls that share one error page", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    await outcome(view.navigate("http://fake/unreachable-late-1"));
+    await outcome(view.navigate("http://fake/unreachable-late-2"));
+    await view.evaluate("__fake_error_page('http://fake/unreachable-late-2')");
+    const afterBoth = [...events];
+    const reloaded = await outcome(view.reload());
+    await view.evaluate("__fake_error_page('http://fake/unreachable-link')");
+    const next = await outcome(view.navigate("http://fake/after"));
+    print({ afterBoth, reloaded, next, events: events.slice(afterBoth.length), url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({
+    afterBoth: ["failed:net::ERR_CONNECTION_REFUSED", "failed:net::ERR_CONNECTION_REFUSED"],
+    reloaded: { rejected: "Navigation to 'http://fake/unreachable-late-2' failed" },
+    next: {},
+    events: [
+      "failed:Navigation to 'http://fake/unreachable-late-2' failed",
+      "failed:Navigation to 'http://fake/unreachable-link' failed",
+      "navigated:http://fake/after",
+    ],
+    url: "http://fake/after",
+  });
+});
+
+// The same for a traversal: goBack() onto an entry that no longer loads
+// rejects on the error page it lands on, also while an error page from a
+// failed navigate() is still counted as due.
+test.concurrent("goBack() onto an entry that fails to load rejects", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/a");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    // The page follows a link that fails: the entry to go back to.
+    await view.evaluate("__fake_error_page('http://fake/unreachable-link')");
+    await outcome(view.navigate("http://fake/unreachable-late"));
+    const back = await outcome(view.goBack());
+    const next = await outcome(view.navigate("http://fake/after"));
+    print({ back, next, events, url: view.url, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    back: { rejected: "Navigation to 'http://fake/unreachable-link' failed" },
+    next: {},
+    events: [
+      "failed:Navigation to 'http://fake/unreachable-link' failed",
+      "failed:net::ERR_CONNECTION_REFUSED",
+      "failed:Navigation to 'http://fake/unreachable-link' failed",
+      "navigated:http://fake/after",
+    ],
+    url: "http://fake/after",
+    loading: false,
+  });
+});
+
+// reload() sent while Chrome swaps in the error page of a failed navigate()
+// is answered "Not attached to an active page". That error page is then
+// neither a second failure of reload() nor a failure of its own, whether it
+// commits before Chrome answers reload() or after.
+for (const order of ["before", "after"]) {
+  test.concurrent(
+    `reload() that Chrome refuses is one failure when the error page commits ${order} the refusal`,
+    async () => {
+      const result = await runScenario(`
+      const view = new Bun.WebView({
+        backend: {
+          ...backend,
+          argv: [...backend.argv, "--cdp-error-on=Page.reload", "--cdp-error-message=Not attached to an active page"],
+        },
+        width: 100,
+        height: 100,
+      });
+      await view.navigate("http://fake/before");
+      const events = [];
+      view.onNavigated = url => events.push("navigated:" + url);
+      view.onNavigationFailed = error => events.push("failed:" + error.message);
+      await outcome(view.navigate("http://fake/unreachable-late"));
+      if (${order === "before"}) {
+        // The error page commits as the fake reads Page.reload, before it
+        // answers, and loads after.
+        await pageDoesOnNext(view, "Page.reload", "__fake_error_page_commit('http://fake/unreachable-late')");
+      }
+      const reloaded = await outcome(view.reload());
+      await view.evaluate(${order === "before"} ? "__fake_load_event()" : "__fake_error_page('http://fake/unreachable-late')");
+      print({ reloaded, events, url: view.url, loading: view.loading });
+      view.close();
+    `);
+      expect(result).toEqual({
+        reloaded: { rejected: "Not attached to an active page" },
+        events: ["failed:net::ERR_CONNECTION_REFUSED", "failed:Not attached to an active page"],
+        url: "http://fake/before",
+        loading: false,
+      });
+    },
+  );
+}
+
+// An <iframe> that fails to load gets an error page of its own. It is not the
+// view's: it takes no failure that navigate() reported, and it does not stand
+// in for the main frame's document.
+test.concurrent("an iframe's error page takes no failure that navigate() reported", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    await outcome(view.navigate("http://fake/unreachable-late"));
+    await view.evaluate("__fake_subframe_error_page('http://fake/dead-iframe')");
+    await view.evaluate("__fake_error_page('http://fake/unreachable-late')");
+    print({ events, url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({ events: ["failed:net::ERR_CONNECTION_REFUSED"], url: "http://fake/before" });
+});
+
+test.concurrent("an iframe's error page does not fail the navigation of the page around it", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    const started = outcome(view.navigate("http://fake/never-load"));
+    await view.evaluate("__fake_page_commit('http://fake/own')");
+    await view.evaluate("__fake_subframe_error_page('http://fake/dead-iframe')");
+    await view.evaluate("__fake_load_event()");
+    print({ started: await started, events, url: view.url, title: view.title, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    started: {},
+    events: ["navigated:http://fake/own"],
+    url: "http://fake/own",
+    title: "page's own",
+    loading: false,
+  });
+});
+
+// The view leaves the error page the way it leaves any page. A page restored
+// from the back-forward cache commits with no load event of its own, and a
+// document that loads has its title read again.
+test.concurrent("goBack() from Chrome's error page onto a page in the back-forward cache settles", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/bfcached");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    await outcome(view.navigate("http://fake/unreachable"));
+    await view.evaluate("1");
+    const back = await outcome(view.goBack());
+    print({ back, events, url: view.url, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    back: {},
+    events: ["failed:net::ERR_CONNECTION_REFUSED", "navigated:http://fake/bfcached"],
+    url: "http://fake/bfcached",
+    loading: false,
+  });
+});
+
+test.concurrent("the view navigates on after each of Chrome's error pages", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/a");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    await outcome(view.navigate("http://fake/unreachable-1"));
+    await view.evaluate("1");
+    const back = await outcome(view.goBack());
+    await outcome(view.navigate("http://fake/unreachable-2"));
+    await view.evaluate("1");
+    // The page navigates itself, so the title that is read has to be its own.
+    await view.evaluate("__fake_page_commit('http://fake/own')");
+    await view.evaluate("__fake_load_event()");
+    // The title fetch went out behind the load event; its reply is in by now.
+    await view.evaluate("1");
+    const title = view.title;
+    const next = await outcome(view.navigate("http://fake/b"));
+    print({ back, title, next, events, url: view.url, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    back: {},
+    title: "page's own",
+    next: {},
+    events: [
+      "failed:net::ERR_CONNECTION_REFUSED",
+      "navigated:http://fake/a",
+      "failed:net::ERR_CONNECTION_REFUSED",
+      "navigated:http://fake/own",
+      "navigated:http://fake/b",
+    ],
+    url: "http://fake/b",
+    loading: false,
+  });
+});
+
+// navigate() resolves on its page's load event. A page that sends itself to a
+// URL that fails before that event (an inline redirect, an auto-submitted
+// login form) never fires it: Chrome's error page replaces the document. The
+// error page is then the navigation's last commit, and navigate() rejects.
+// view.url stays on the document that committed. Its title was never read, so
+// view.title is still the one read last, from the page before.
+test.concurrent("navigate() rejects when its page goes to a URL that fails before it has loaded", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    const started = outcome(view.navigate("http://fake/never-load"));
+    await view.evaluate("__fake_page_commit('http://fake/redirector')");
+    await view.evaluate("__fake_error_page('http://fake/unreachable-login')");
+    print({ started: await started, events, url: view.url, title: view.title, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    started: { rejected: "Navigation to 'http://fake/unreachable-login' failed" },
+    events: ["navigated:http://fake/redirector", "failed:Navigation to 'http://fake/unreachable-login' failed"],
+    url: "http://fake/redirector",
+    title: "fake chrome",
+    loading: false,
+  });
+});
+
+// A page that goes to a failing URL from its load handler has loaded, so
+// navigate() resolves. Chrome holds the title fetch that follows the load
+// event until the new navigation is over, and the error page answers it. That
+// answer is not the view's title.
+test.concurrent("a title fetch that Chrome's error page answers does not change view.title", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    // The next Runtime.evaluate the fake reads is the navigation's title fetch.
+    await pageDoesOnNext(view, "Runtime.evaluate", "__fake_error_page('http://fake/unreachable-from-onload')");
+    const navigated = await outcome(view.navigate("http://fake/redirects-on-load"));
+    await view.evaluate("1");
+    print({ navigated, events, url: view.url, title: view.title, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    navigated: {},
+    events: [
+      "navigated:http://fake/redirects-on-load",
+      "failed:Navigation to 'http://fake/unreachable-from-onload' failed",
+    ],
+    url: "http://fake/redirects-on-load",
+    title: "fake chrome",
+    loading: false,
+  });
+});
+
+// That navigate() resolves as the error page commits, not when its title
+// fetch is answered, so the slot is free when onNavigationFailed runs for the
+// failed load and a retry from the callback is accepted.
+test.concurrent("onNavigationFailed can navigate() when the failed load interrupted a title fetch", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    let retry;
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => {
+      events.push("failed:" + error.message);
+      try {
+        retry = outcome(view.navigate("http://fake/retry"));
+      } catch (e) {
+        retry = "threw " + e.code;
+      }
+    };
+    await pageDoesOnNext(view, "Runtime.evaluate", "__fake_error_page('http://fake/unreachable-from-onload')");
+    const navigated = await outcome(view.navigate("http://fake/redirects-on-load"));
+    await view.evaluate("1");
+    print({ navigated, retry: await retry, events, url: view.url, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    navigated: {},
+    retry: {},
+    events: [
+      "navigated:http://fake/redirects-on-load",
+      "failed:Navigation to 'http://fake/unreachable-from-onload' failed",
+      "navigated:http://fake/retry",
+    ],
+    url: "http://fake/retry",
+    loading: false,
+  });
+});
+
+// A load the page starts can fail while a navigation of the view's is still
+// pending. onNavigationFailed reports it at once, and the slot is still
+// taken: a navigate() from the callback throws, as it does from onNavigated
+// for a commit of the page's own. The pending navigation then ends normally.
+for (const { call, method, lands } of [
+  { call: "navigate('http://fake/c')", method: "Page.navigate", lands: "http://fake/c" },
+  { call: "goBack()", method: "Page.getNavigationHistory", lands: "http://fake/b" },
+]) {
+  test.concurrent(`a failed load the page started is reported while ${call} is pending`, async () => {
+    const result = await runScenario(`
+      const view = newView();
+      await view.navigate("http://fake/a");
+      await view.navigate("http://fake/b");
+      const events = [];
+      view.onNavigated = url => events.push("navigated:" + url);
+      view.onNavigationFailed = error => {
+        events.push("failed:" + error.message);
+        try {
+          view.navigate("http://fake/retry").catch(() => {});
+          events.push("retry accepted");
+        } catch (e) {
+          events.push("retry threw " + e.code);
+        }
+      };
+      // The error page commits and loads as the fake reads the command,
+      // before it answers.
+      await pageDoesOnNext(view, ${JSON.stringify(method)}, "__fake_error_page('http://fake/unreachable-link')");
+      const settled = await outcome(view.${call});
+      print({ settled, events, url: view.url, loading: view.loading });
+      view.close();
+    `);
+    expect(result).toEqual({
+      settled: {},
+      events: [
+        "failed:Navigation to 'http://fake/unreachable-link' failed",
+        "retry threw ERR_INVALID_STATE",
+        "navigated:" + lands,
+      ],
+      url: lands,
+      loading: false,
+    });
+  });
+}
+
+// Chrome's error page can make history entries of itself (a #fragment link
+// on it, history.pushState() through evaluate()). They are not pages of the
+// view's either: no onNavigated, and view.url stays. A listener for the raw
+// event still hears it.
+test.concurrent("a same-document navigation of Chrome's error page is not a navigation of the view's", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    const heard = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    view.addEventListener("Page.navigatedWithinDocument", event => heard.push(event.data.url));
+    await outcome(view.navigate("http://fake/unreachable"));
+    await view.evaluate("__fake_replace_state('chrome-error://chromewebdata/#details')");
+    print({ events, heard, url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({
+    events: ["failed:net::ERR_CONNECTION_REFUSED"],
+    heard: ["chrome-error://chromewebdata/#details"],
+    url: "http://fake/before",
+  });
+});
+
+// goBack() over such an entry is a same-document traversal: it settles, and
+// the title fetch that follows it is answered by the error page.
+test.concurrent("goBack() inside Chrome's error page settles and leaves view.url and view.title alone", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    await view.evaluate("__fake_error_page('http://fake/unreachable-link')");
+    await view.evaluate("__fake_hash_change('http://fake/unreachable-link#details')");
+    const back = await outcome(view.goBack());
+    print({ back, events, url: view.url, title: view.title, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    back: {},
+    events: ["failed:Navigation to 'http://fake/unreachable-link' failed"],
+    url: "http://fake/before",
+    title: "fake chrome",
+    loading: false,
+  });
+});
+
 // Commands are routed to a page by the sessionId that Target.attachToTarget returns. CDP session ids are ASCII.
 for (const kind of ["attach-no-session-id", "attach-bad-utf8", "attach-non-ascii"]) {
   test.concurrent(`an attach reply without a usable sessionId fails the navigation (${kind})`, async () => {

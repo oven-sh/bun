@@ -91,8 +91,16 @@ public:
     bool m_chromeSettleOnSameDocument = false;
     bool m_chromeSettleOnLoad = false;
     bool m_chromeNavigationCommitted = false;
+    // Chrome: reload()/goBack()/goForward() is in the slot. No reply of theirs carries an errorText: a load of theirs that fails ends on an error page.
+    bool m_chromeFailsByErrorPage = false;
+    // Chrome: the live main frame document is Chrome's error page for a load that failed. view.url and view.title stay as they were when it committed.
+    bool m_chromeOnErrorPage = false;
+    // Chrome: how many failures navigate() reported from Page.navigate's errorText whose error page has yet to commit.
+    uint16_t m_chromeErrorPagesDue = 0;
     // Chrome: the URL of the entry goBack()/goForward() asked for; a same-document commit elsewhere is the page's own.
     WTF::String m_chromeTraversalUrl;
+    // Chrome: the URL whose error page committed. Reported as a failure once that page has loaded.
+    WTF::String m_chromeUnreportedFailure;
 
     // Chrome session state. Empty until the Target.createTarget →
     // Target.attachToTarget → Page.enable chain completes (driven by the

@@ -198,6 +198,8 @@ A URL that only adds or changes the `#fragment` of the current page stays in the
 
 If the navigation fails (DNS failure, connection refused, invalid URL), the promise rejects with an `Error` describing the failure.
 
+After a load fails, Chrome shows an error page of its own. With the Chrome backend that page is not a navigation of the view: `onNavigated` does not fire for it, and `view.url` and `view.title` keep the values they had before it.
+
 Only one navigation may be in flight per view at a time. Calling `navigate()` while another is pending throws `ERR_INVALID_STATE` synchronously.
 
 ### History
@@ -209,6 +211,8 @@ await view.reload(); // reload the current page
 ```
 
 Calling `goBack()` at the beginning of history (or `goForward()` at the end) resolves `undefined` without navigating — it doesn't reject.
+
+With the Chrome backend, `reload()`, `goBack()` and `goForward()` resolve when the page has loaded. If the page fails to load and Chrome shows its error page, they reject with `Navigation to '<url>' failed`.
 
 ### Navigation callbacks
 
@@ -225,6 +229,8 @@ view.onNavigationFailed = error => {
 ```
 
 These fire **before** the corresponding `navigate()` promise settles, so by the time `await view.navigate(...)` returns, your callback has already run. A same-document navigation by the page (`history.pushState()`, a fragment change) also updates `view.url` and fires `onNavigated`. A navigation inside an `<iframe>` never does. Set to `null` to remove.
+
+With the Chrome backend, a load that the page started and that fails is reported when Chrome's error page has loaded, as `Navigation to '<url>' failed`. A callback for a navigation that the page started can run while a navigation of yours is still pending. `navigate()` from that callback throws `ERR_INVALID_STATE`, as it does anywhere else while one is pending.
 
 ---
 

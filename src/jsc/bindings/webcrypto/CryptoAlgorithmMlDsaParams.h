@@ -54,6 +54,14 @@ public:
         return m_contextVector;
     }
 
+    // The size of contextVector(), without the copy.
+    size_t contextLength() const
+    {
+        if (!context)
+            return m_contextVector.size();
+        return std::visit([](auto& buffer) -> size_t { return buffer ? buffer->byteLength() : 0; }, *context);
+    }
+
 private:
     mutable Vector<uint8_t> m_contextVector;
 };

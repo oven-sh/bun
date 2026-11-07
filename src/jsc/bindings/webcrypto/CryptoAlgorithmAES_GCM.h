@@ -40,6 +40,11 @@ public:
     static constexpr CryptoAlgorithmIdentifier s_identifier = CryptoAlgorithmIdentifier::AES_GCM;
     static Ref<CryptoAlgorithm> create();
 
+    // The step of encrypt and decrypt that needs neither the key nor the data. SubtleCrypto.supports runs it too.
+    static bool tagLengthIsValid(uint8_t);
+    // An absent tag length is the default tag length.
+    static bool tagLengthIsValid(std::optional<uint8_t>);
+
 private:
     CryptoAlgorithmAES_GCM() = default;
     CryptoAlgorithmIdentifier identifier() const final;

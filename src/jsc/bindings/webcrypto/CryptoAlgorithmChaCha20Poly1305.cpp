@@ -41,11 +41,30 @@ namespace WebCore {
 namespace CryptoAlgorithmChaCha20Poly1305Internal {
 static constexpr auto ALG = "C20P"_s;
 static constexpr uint8_t TagLength = 128;
+static constexpr size_t IvLength = 12;
 }
 
 static inline bool usagesAreInvalidForChaCha20Poly1305(CryptoKeyUsageBitmap usages)
 {
     return usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageKemMask);
+}
+
+bool CryptoAlgorithmChaCha20Poly1305::tagLengthIsValid(uint8_t tagLength)
+{
+    using namespace CryptoAlgorithmChaCha20Poly1305Internal;
+    return tagLength == TagLength;
+}
+
+bool CryptoAlgorithmChaCha20Poly1305::tagLengthIsValid(std::optional<uint8_t> tagLength)
+{
+    using namespace CryptoAlgorithmChaCha20Poly1305Internal;
+    return tagLengthIsValid(tagLength.value_or(TagLength));
+}
+
+bool CryptoAlgorithmChaCha20Poly1305::ivLengthIsValid(size_t ivLength)
+{
+    using namespace CryptoAlgorithmChaCha20Poly1305Internal;
+    return ivLength == IvLength;
 }
 
 // The only tag length ChaCha20-Poly1305 defines is 128 bits; anything else is an
@@ -54,7 +73,7 @@ static bool validateTagLength(std::optional<uint8_t>& tagLength, const CryptoAlg
 {
     using namespace CryptoAlgorithmChaCha20Poly1305Internal;
     tagLength = tagLength.value_or(TagLength);
-    if (*tagLength != TagLength) {
+    if (!CryptoAlgorithmChaCha20Poly1305::tagLengthIsValid(*tagLength)) {
         exceptionCallback(OperationError, makeString(tagLength.value(), " is not a valid ChaCha20-Poly1305 tag length"_s));
         return false;
     }
@@ -65,7 +84,7 @@ static bool validateTagLength(std::optional<uint8_t>& tagLength, const CryptoAlg
 // length up front instead of surfacing BoringSSL's generic AEAD failure.
 static bool validateIvLength(const CryptoAlgorithmAeadParams& parameters, const CryptoAlgorithm::ExceptionCallback& exceptionCallback)
 {
-    if (parameters.ivVector().size() != 12) {
+    if (!CryptoAlgorithmChaCha20Poly1305::ivLengthIsValid(parameters.ivVector().size())) {
         exceptionCallback(OperationError, "algorithm.iv must contain exactly 12 bytes"_s);
         return false;
     }

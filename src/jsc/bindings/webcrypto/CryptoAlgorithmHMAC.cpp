@@ -114,7 +114,7 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
         exceptionCallback(DataError, "HmacImportParams.length cannot be 0"_s);
         return;
     }
-    if (hmacParameters.length && *hmacParameters.length % 8) {
+    if (hmacParameters.length && !CryptoKeyHMAC::lengthIsValid(*hmacParameters.length)) {
         exceptionCallback(NotSupportedError, "Unsupported HmacImportParams.length"_s);
         return;
     }

@@ -1,0 +1,59 @@
+# let name; name = "readline"; name = "sys"; name = "bun:nope"; name = "left-pad"; import(name); require(name)
+# "sys" is another name of node:util, which only the library imports here: the record of a library module lists its other names. "bun:nope" and "left-pad" find no module
+# on the list of the program and can name no file of it. So the loads evaluate node:readline and node:util: not node:os, which another written text stands for,
+# and not plugin.mjs, which a written path finds.
+# The build excludes code outside the image, as an executable does by default.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+# CHECK-NEXT: unreached f3
+# CHECK-NOT: unreached f4
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen LoadsModuleByName f0:v9
+# UNSEEN-NEXT: unseen LoadsModuleByName f0:v10
+# UNSEEN-NEXT: unseen-code no
+# UNSEEN-NEXT: modules-by-name yes
+
+variable g0 name="name" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.mjs" displayPath="main.mjs" body=f0
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+module m2 path="node:os" displayPath="node:os" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeOs body=f2
+module m3 path="/app/plugin.mjs" displayPath="plugin.mjs" flags=[IsFoundByName] body=f3
+module m4 path="node:util" displayPath="node:util" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeUtil body=f4 otherNames=["sys", "node:sys"]
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="readline"
+    PutModuleVariable v0 variable=g0
+    v2 = String string="sys"
+    PutModuleVariable v2 variable=g0
+    v4 = String string="bun:nope"
+    PutModuleVariable v4 variable=g0
+    v6 = String string="left-pad"
+    PutModuleVariable v6 variable=g0
+    v8 = GetModuleVariable variable=g0
+    v9 = ImportDynamic v8 referrer=m0
+    v10 = RequireDynamic v8 referrer=m0
+    v11 = PropGet v10 key="readline"
+    v12 = PropGet v10 key="sys"
+    v13 = PropGet v10 key="bun:nope"
+    v14 = PropGet v10 key="left-pad"
+    Return
+}
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="os" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="plugin" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="util" module=m4 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    Return
+}

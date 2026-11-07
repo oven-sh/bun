@@ -59,6 +59,8 @@ struct HostClient {
     void onData(const char* data, int length);
     void onWritable();
     void onClose();
+    // `bun test --isolate` is retiring `global`. See CDP::Transport::retireGlobal.
+    void retireGlobal(Zig::GlobalObject* global);
 };
 
 HostClient& client();

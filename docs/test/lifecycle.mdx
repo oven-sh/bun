@@ -1,6 +1,6 @@
 ---
 title: "Lifecycle hooks"
-description: "Learn how to use beforeAll, beforeEach, afterEach, and afterAll lifecycle hooks in Bun tests"
+description: "Learn how to use beforeAll, beforeEach, afterEach, afterAll, aroundEach, and aroundAll lifecycle hooks in Bun tests"
 ---
 
 The test runner supports the following lifecycle hooks. Use them to load test fixtures, mock data, and configure the test environment.
@@ -11,6 +11,8 @@ The test runner supports the following lifecycle hooks. Use them to load test fi
 | `beforeEach`     | Runs before each test.                                     |
 | `afterEach`      | Runs after each test.                                      |
 | `afterAll`       | Runs once after all tests.                                 |
+| `aroundEach`     | Wraps each test in a function.                             |
+| `aroundAll`      | Wraps all tests in a function.                             |
 | `onTestFinished` | Runs after a single test finishes (after all `afterEach`). |
 
 ## Per-Test Setup and Teardown
@@ -108,6 +110,59 @@ test("cleanup after test", () => {
 
 Not supported in concurrent tests; use `test.serial` instead.
 
+## Wrapping Tests
+
+Some setup only works as a function call around the test: a database transaction, a tracing span, an `AsyncLocalStorage` store. Use `aroundEach` for that. The hook receives a `runTest` function. It does its setup, awaits `runTest()`, then does its teardown.
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { aroundEach, test } from "bun:test";
+import { db } from "./db";
+
+aroundEach(async runTest => {
+  await db.transaction(runTest);
+});
+
+test("inserts a user", async () => {
+  await db.insert({ name: "Alice" });
+});
+```
+
+`runTest()` runs the `beforeEach` hooks, the test, the `afterEach` hooks and the `onTestFinished` callbacks. The promise it returns resolves when they're done, even if the test fails.
+
+`aroundAll` does the same for a whole file or `describe` block. Its `runSuite()` runs the block's `beforeAll` hooks, its tests and nested blocks, and its `afterAll` hooks.
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { aroundAll } from "bun:test";
+import { tracer } from "./tracer";
+
+aroundAll(async runSuite => {
+  await tracer.trace("my suite", runSuite);
+});
+```
+
+- **Order.** Hooks nest. The first hook you register is the outermost one. The hooks of an outer `describe` block go around the hooks of an inner one.
+- **Arguments.** `aroundEach` calls the hook with `(runTest, context, suite)`. `context` is the [test context](/test/writing-tests#test-context). `aroundAll` calls it with `(runSuite, {}, suite)`.
+- **Retries.** `aroundEach` runs again for each retry and each repeat. It doesn't run for a skipped or todo test. `aroundAll` doesn't run if every test in its block is skipped.
+- **Failures.** The test fails if the hook throws, or if it finishes without calling `runTest()`. If the hook fails before it calls `runTest()`, Bun skips everything inside, and the hooks around it still finish. A second `runTest()` call returns a rejected promise.
+- **Timeout.** The second argument is a timeout in milliseconds: `aroundEach(fn, 1000)`. It applies to the time before `runTest()` is called, and again to the time after its promise resolves. Bun doesn't count the time in between.
+
+### Async context
+
+Everything that `runTest()` runs sees the async context `runTest()` is called in. The same goes for `runSuite()`. So a test can read an `AsyncLocalStorage` store that a hook sets:
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { AsyncLocalStorage } from "node:async_hooks";
+import { aroundEach, expect, test } from "bun:test";
+
+const requestId = new AsyncLocalStorage<string>();
+
+aroundEach(runTest => requestId.run("request-1", runTest));
+
+test("sees the store", () => {
+  expect(requestId.getStore()).toBe("request-1");
+});
+```
+
 ## Global Setup and Teardown
 
 To scope the hooks to an entire multi-file test run, define the hooks in a separate file.
@@ -140,6 +195,8 @@ To avoid typing `--preload` every time you run tests, add it to your `bunfig.tom
 [test]
 preload = ["./setup.ts"]
 ```
+
+In a preload script, `aroundEach` wraps every test of every file, and `aroundAll` wraps the whole run.
 
 ## Practical Examples
 
@@ -214,7 +271,7 @@ afterEach(() => {
 
 ## Async Lifecycle Hooks
 
-All lifecycle hooks support async functions:
+All lifecycle hooks support async functions. Bun waits for the promise a hook or a test returns. It also waits for any other object with a `then()` method, such as the one React's `act()` returns.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { beforeAll, afterAll, test, expect } from "bun:test";

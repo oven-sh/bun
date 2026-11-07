@@ -30,6 +30,10 @@ bun add <package> <@version>
   Add dependency to <code>peerDependencies</code>
 </ParamField>
 
+<ParamField path="--save-prod" type="boolean">
+  Add dependency to <code>dependencies</code>, also when another group lists it
+</ParamField>
+
 <ParamField path="--exact" type="boolean">
   Add the exact version instead of the <code>^</code> range. Alias: <code>-E</code>
 </ParamField>
@@ -80,7 +84,8 @@ bun add <package> <@version>
 ### Installation Control
 
 <ParamField path="--dry-run" type="boolean">
-  Perform a dry run without making changes
+  Resolve the packages but don't install them, update an existing <code>package.json</code>, save a lockfile, or run the
+  project's lifecycle scripts
 </ParamField>
 
 <ParamField path="--force" type="boolean">
@@ -110,12 +115,24 @@ bun add <package> <@version>
   Same as <code>--ca</code>, but as a file path to the certificate
 </ParamField>
 
+<ParamField path="--use-system-ca" type="boolean">
+  Use the system's trusted certificate authorities
+</ParamField>
+
+<ParamField path="--use-openssl-ca" type="boolean">
+  Use OpenSSL's default CA store instead of the bundled one
+</ParamField>
+
+<ParamField path="--use-bundled-ca" type="boolean">
+  Use bundled CA store
+</ParamField>
+
 <ParamField path="--registry" type="string">
   Use a specific registry by default, overriding <code>.npmrc</code>, <code>bunfig.toml</code>, and environment
   variables
 </ParamField>
 
-<ParamField path="--network-concurrency" type="number" default="48">
+<ParamField path="--network-concurrency" type="number" default="64">
   Maximum number of concurrent network requests
 </ParamField>
 
@@ -166,6 +183,14 @@ bun add <package> <@version>
 
 <ParamField path="--cwd" type="string">
   Set a specific current working directory
+</ParamField>
+
+<ParamField path="--env-file" type="string">
+  Load environment variables from the specified file(s)
+</ParamField>
+
+<ParamField path="--no-env-file" type="boolean">
+  Disable automatic loading of .env files
 </ParamField>
 
 ### Help

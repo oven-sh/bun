@@ -29,7 +29,7 @@ const server = serve({
       },
       async POST(req) {
         const { name, email } = await req.json();
-        const [user] = await sql`INSERT INTO users (name, email) VALUES (${name}, ${email})`;
+        const [user] = await sql`INSERT INTO users (name, email) VALUES (${name}, ${email}) RETURNING *`;
         return Response.json(user);
       },
     },
@@ -575,7 +575,7 @@ import dashboard from "./public/dashboard.html";
 
 // Initialize database
 const db = new Database("app.db");
-db.exec(`
+db.run(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

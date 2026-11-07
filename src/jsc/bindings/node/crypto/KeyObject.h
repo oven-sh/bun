@@ -29,7 +29,6 @@ public:
     static KeyObject create(WTF::Vector<uint8_t>&& symmetricKey);
     static KeyObject create(WebCore::CryptoKeyType type, ncrypto::EVPKeyPointer&& asymmetricKey);
     static KeyObject create(WebCore::CryptoKeyType type, RefPtr<KeyObjectData>&& data);
-    // static KeyObject createJwk(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, WebCore::CryptoKeyType type);
 
     enum class KeyEncodingContext {
         Input,
@@ -84,9 +83,9 @@ public:
         std::optional<ncrypto::DataPointer> passphrase = { std::nullopt };
     };
 
-    static PrepareAsymmetricKeyResult prepareAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode);
-    static PrepareAsymmetricKeyResult preparePrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue);
-    static PrepareAsymmetricKeyResult preparePublicOrPrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue);
+    static PrepareAsymmetricKeyResult prepareAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode, WTF::ASCIILiteral name = "key"_s);
+    static PrepareAsymmetricKeyResult preparePrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, WTF::ASCIILiteral name = "key"_s);
+    static PrepareAsymmetricKeyResult preparePublicOrPrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, WTF::ASCIILiteral name = "key"_s);
     static KeyObject prepareSecretKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, JSC::JSValue encodingValue, bool bufferOnly = false);
 
     JSC::JSValue exportJwkEdKey(JSC::JSGlobalObject*, JSC::ThrowScope&, WebCore::CryptoKeyType exportType);
@@ -111,6 +110,7 @@ public:
     JSC::JSObject* asymmetricKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&);
 
     std::optional<bool> equals(const KeyObject& other) const;
+    static bool cryptoKeysEqual(WebCore::CryptoKey&, WebCore::CryptoKey&);
     JSC::JSValue toCryptoKey(JSC::JSGlobalObject*, JSC::ThrowScope&,
         JSC::JSValue algorithmValue, JSC::JSValue extractableValue, JSC::JSValue keyUsagesValue);
 

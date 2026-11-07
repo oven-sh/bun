@@ -14,7 +14,7 @@ await using httpServer = http.createServer(function (req, res) {
   res.write(chunk);
   res.write(bchunk);
 
-  expect(res.connection.bytesWritten).toBe(1024 * 2);
+  expect(res.connection!.bytesWritten).toBe(1024 * 2);
   res.end("bunbunbun");
 });
 

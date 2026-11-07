@@ -1,6 +1,6 @@
+use core::ffi::{CStr, c_void};
 #[cfg(target_os = "macos")]
-use core::ffi::c_uint;
-use core::ffi::{c_char, c_void};
+use core::ffi::{c_char, c_uint};
 
 #[cfg(target_os = "macos")]
 #[allow(non_camel_case_types)]
@@ -25,29 +25,22 @@ bun_opaque::opaque_ffi! {
 // SAFETY: `malloc_zone_t` is internally synchronized by libmalloc; sharing
 // `&Zone` across threads is the documented usage.
 unsafe impl Sync for Zone {}
-// SAFETY: `Zone` is an opaque libmalloc handle with no thread-affine state; the
-// zone API is callable from any thread, so transferring the handle is sound.
-unsafe impl Send for Zone {}
 
 impl Zone {
-    /// # Safety
-    /// `name` must point to a NUL-terminated C string that remains valid for
-    /// the entire process lifetime — `malloc_set_zone_name` stores the pointer
-    /// (does not copy).
+    /// `'static`: `malloc_set_zone_name` may keep the pointer instead of copying.
     #[cfg(target_os = "macos")]
-    pub unsafe fn init(name: *const c_char) -> &'static Zone {
-        // SAFETY: malloc_create_zone is safe to call with (0, 0); returns a
-        // process-lifetime zone pointer. Caller guarantees `name` outlives the
-        // process.
+    pub fn init(name: &'static CStr) -> &'static Zone {
+        let zone = malloc_create_zone(0, 0);
+        assert!(!zone.is_null(), "malloc_create_zone failed");
+        // SAFETY: the zone is not null and nothing destroys it. `name` is NUL-terminated and
+        // outlives the process.
         unsafe {
-            let zone = malloc_create_zone(0, 0);
-            malloc_set_zone_name(zone, name);
+            malloc_set_zone_name(zone, name.as_ptr());
             &*zone
         }
     }
     #[cfg(not(target_os = "macos"))]
-    #[allow(clippy::missing_safety_doc)]
-    pub unsafe fn init(_name: *const c_char) -> &'static Zone {
+    pub fn init(_name: &'static CStr) -> &'static Zone {
         unreachable!("heap_breakdown is macOS-only; guard call sites on ENABLED")
     }
 
@@ -57,15 +50,9 @@ impl Zone {
         if p.is_null() { None } else { Some(p) }
     }
 
-    #[inline]
-    pub fn malloc_zone_calloc(&self, num_items: usize, size: usize) -> Option<*mut c_void> {
-        let p = malloc_zone_calloc(self, num_items, size);
-        if p.is_null() { None } else { Some(p) }
-    }
-
     /// # Safety
-    /// `ptr` must have been allocated by this zone (via `malloc_zone_malloc`
-    /// / `malloc_zone_calloc`) and not already freed.
+    /// `ptr` must have been allocated by this zone (via `malloc_zone_malloc`)
+    /// and not already freed.
     #[inline]
     pub unsafe fn malloc_zone_free(&self, ptr: *mut c_void) {
         // SAFETY: caller contract above; `self` is a live `malloc_zone_t`.
@@ -85,11 +72,6 @@ unsafe extern "C" {
     // so `safe fn` discharges the link-time proof for the pure-allocation entry
     // points (alloc/calloc/valloc/memalign return null on failure).
     pub(crate) safe fn malloc_zone_malloc(zone: &Zone, size: usize) -> *mut c_void;
-    pub(crate) safe fn malloc_zone_calloc(
-        zone: &Zone,
-        num_items: usize,
-        size: usize,
-    ) -> *mut c_void;
     pub fn malloc_zone_free(zone: *mut Zone, ptr: *mut c_void);
     pub(crate) fn malloc_set_zone_name(zone: *mut Zone, name: *const c_char);
 }
@@ -103,12 +85,9 @@ mod stubs {
     pub fn malloc_zone_malloc(_: &Zone, _: usize) -> *mut c_void {
         unreachable!()
     }
-    pub fn malloc_zone_calloc(_: &Zone, _: usize, _: usize) -> *mut c_void {
-        unreachable!()
-    }
     pub unsafe fn malloc_zone_free(_: *mut Zone, _: *mut c_void) {
         unreachable!()
     }
 }
 #[cfg(not(target_os = "macos"))]
-pub use stubs::{malloc_zone_calloc, malloc_zone_free, malloc_zone_malloc};
+pub use stubs::{malloc_zone_free, malloc_zone_malloc};

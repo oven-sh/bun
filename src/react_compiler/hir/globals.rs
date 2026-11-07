@@ -8,8 +8,8 @@
 //! Provides `DEFAULT_SHAPES` (built-in object shapes) and `DEFAULT_GLOBALS`
 //! (global variable types including React hooks and JS built-ins).
 
+use crate::collections::FxHashMap as HashMap;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use crate::hir::Effect;
@@ -109,7 +109,7 @@ bun_core::comptime_string_map! {
 ///   `build_default_globals` to construct the static base.
 /// - **Overlay mode** (`base=true`): lookups check the extras HashMap first,
 ///   then fall back to the static `BASE_GLOBAL_INDEX` / `BASE.globals` table.
-///   Inserts go into extras. Cloning only copies the extras map.
+///   Inserts go into extras.
 pub struct GlobalRegistry {
     base: bool,
     entries: HashMap<Cow<'static, str>, Global>,
@@ -120,7 +120,7 @@ impl GlobalRegistry {
     pub fn new() -> Self {
         Self {
             base: false,
-            entries: HashMap::new(),
+            entries: HashMap::default(),
         }
     }
 
@@ -128,7 +128,7 @@ impl GlobalRegistry {
     pub fn with_base() -> Self {
         Self {
             base: true,
-            entries: HashMap::new(),
+            entries: HashMap::default(),
         }
     }
 
@@ -151,21 +151,6 @@ impl GlobalRegistry {
             || (self.base && BASE_GLOBAL_INDEX.contains_key(key.as_bytes()))
     }
 
-    /// Iterate over all keys in the registry (base + extras).
-    /// Keys in extras that shadow base keys appear only once.
-    pub fn keys(&self) -> impl Iterator<Item = &str> {
-        let entries = &self.entries;
-        let base_keys = self
-            .base
-            .then(|| BASE_GLOBAL_INDEX.keys())
-            .into_iter()
-            .flatten()
-            // SAFETY: comptime_string_map! keys are ASCII byte-string literals.
-            .map(|k| unsafe { core::str::from_utf8_unchecked(k) })
-            .filter(move |k| !entries.contains_key(*k));
-        entries.keys().map(|k| &**k).chain(base_keys)
-    }
-
     /// Consume the registry and return the inner HashMap.
     /// Only valid in builder mode (no base).
     pub fn into_inner(self) -> HashMap<Cow<'static, str>, Global> {
@@ -174,15 +159,6 @@ impl GlobalRegistry {
             "into_inner() called on overlay-mode GlobalRegistry"
         );
         self.entries
-    }
-}
-
-impl Clone for GlobalRegistry {
-    fn clone(&self) -> Self {
-        Self {
-            base: self.base,
-            entries: self.entries.clone(),
-        }
     }
 }
 
@@ -1411,7 +1387,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
         None,
         false,
     );
-    let mut mixed_props: HashMap<&'static str, Type> = HashMap::new();
+    let mut mixed_props: HashMap<&'static str, Type> = HashMap::default();
     mixed_props.insert("toString", mixed_to_string);
     mixed_props.insert("indexOf", mixed_index_of);
     mixed_props.insert("includes", mixed_includes);

@@ -1,0 +1,6 @@
+{
+  "name": "application",
+  "version": "3.2.1",
+  "limits": { "retries": 4 },
+  "sideEffects": ["./by-name.ts", "./by-star.ts", "./whole.ts", "./behind-two.ts", "./in-a-function.ts", "./main.ts"]
+}

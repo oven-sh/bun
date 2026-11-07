@@ -1,7 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, bunEnv as harnessEnv, tempDir } from "harness";
 import { join } from "path";
+import { startNpmjs } from "./migration-harness";
+
+const npmjs = await startNpmjs();
+afterAll(() => npmjs.stop());
+const bunEnv = { ...harnessEnv, ...npmjs.env };
 
 describe("PNPM Migration Complete Test Suite", () => {
   test("comprehensive PNPM migration with all edge cases", async () => {
@@ -714,9 +719,9 @@ snapshots:
     expect(catalogsExitCode).toBe(0);
     const catalogsLockfile = fs.readFileSync(join(catalogsTest, "bun.lock"), "utf8");
 
-    // Catalogs are resolved to actual versions during migration
-    expect(catalogsLockfile).toContain('"react": "18.2.0"');
-    expect(catalogsLockfile).toContain('"lodash": "4.17.21"');
+    // Importer rows keep their catalog references, as package.json spells them
+    expect(catalogsLockfile).toContain('"react": "catalog:"');
+    expect(catalogsLockfile).toContain('"lodash": "catalog:tools"');
     // The actual packages should be in the lockfile
     expect(catalogsLockfile).toContain('"react@18.2.0"');
     expect(catalogsLockfile).toContain('"lodash@4.17.21"');

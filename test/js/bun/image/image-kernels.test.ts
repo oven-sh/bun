@@ -98,12 +98,7 @@ function decodePng(png: Uint8Array): { w: number; h: number; data: Uint8Array } 
   }
   return { w, h, data: out };
 }
-async function resizePixels(
-  src: Uint8Array,
-  w: number,
-  h: number,
-  filter: "box" | "bilinear" | "lanczos3" | "mitchell",
-): Promise<Uint8Array> {
+async function resizePixels(src: Uint8Array, w: number, h: number, filter: Bun.Image.Filter): Promise<Uint8Array> {
   return decodePng(await new Bun.Image(src).resize(w, h, { filter }).png().bytes()).data;
 }
 

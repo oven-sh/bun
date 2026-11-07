@@ -282,7 +282,7 @@ void AbortSignal::cleanNativeBindings(void* ref)
         return ctx == ref;
     });
 
-    std::exchange(m_native_callbacks, WTF::move(callbacks));
+    m_native_callbacks = WTF::move(callbacks);
     this->eventListenersDidChange();
 }
 
@@ -344,7 +344,9 @@ void AbortSignal::throwIfAborted(JSC::JSGlobalObject& lexicalGlobalObject)
 
     Ref vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    throwException(&lexicalGlobalObject, scope, jsReason(lexicalGlobalObject));
+    JSValue reason = jsReason(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    throwException(&lexicalGlobalObject, scope, reason);
 }
 
 WebCoreOpaqueRoot root(AbortSignal* signal)

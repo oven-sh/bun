@@ -6,7 +6,6 @@ pub mod visit_binary;
 pub(crate) mod visit_expr;
 pub(crate) mod visit_stmt;
 
-use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
     ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
@@ -105,7 +104,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if is_eval_or_arguments(symbol_name) {
                     self.mark_strict_mode_feature(
                         StrictModeFeature::EvalOrArguments,
-                        js_lexer::range_of_identifier(self.source, name.loc),
+                        self.source.range_of_identifier(name.loc),
                         symbol_name,
                     )
                     .expect("unreachable");
@@ -820,7 +819,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if is_eval_or_arguments(name) {
                     self.mark_strict_mode_feature(
                         StrictModeFeature::EvalOrArguments,
-                        js_lexer::range_of_identifier(self.source, binding.loc),
+                        self.source.range_of_identifier(binding.loc),
                         name,
                     )
                     .expect("unreachable");
@@ -829,7 +828,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if dup.get_or_put_contains(name) {
                         self.log().add_range_error_fmt(
                             Some(self.source),
-                            js_lexer::range_of_identifier(self.source, binding.loc),
+                            self.source.range_of_identifier(binding.loc),
                             format_args!(
                                 "\"{}\" cannot be bound multiple times in the same parameter list",
                                 bstr::BStr::new(name)

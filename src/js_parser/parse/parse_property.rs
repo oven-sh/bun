@@ -136,7 +136,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match kind {
             PropertyKind::Get => {
                 if args.len() > 0 {
-                    let r = js_lexer::range_of_identifier(p.source, args[0].binding.loc);
+                    let r = p.source.range_of_identifier(args[0].binding.loc);
                     let key_name = p.key_name_for_error(key);
                     p.log().add_range_error_fmt(
                         Some(p.source),
@@ -150,16 +150,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             PropertyKind::Set => {
                 if args.len() != 1 {
-                    let mut r = js_lexer::range_of_identifier(
-                        p.source,
-                        if args.len() > 0 {
-                            args[0].binding.loc
-                        } else {
-                            loc
-                        },
-                    );
+                    let mut r = p.source.range_of_identifier(if args.len() > 0 {
+                        args[0].binding.loc
+                    } else {
+                        loc
+                    });
                     if args.len() > 1 {
-                        r = js_lexer::range_of_identifier(p.source, args[1].binding.loc);
+                        r = p.source.range_of_identifier(args[1].binding.loc);
                     }
                     let key_name = p.key_name_for_error(key);
                     p.log().add_range_error_fmt(

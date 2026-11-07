@@ -1092,7 +1092,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // building an S.ExportDefault that the visit and print
                             // passes don't support.
                             _ => {
-                                let r = js_lexer::range_of_identifier(p.source, stmt.loc);
+                                let r = p.source.range_of_identifier(stmt.loc);
                                 p.log().add_range_error_fmt(
                                     Some(p.source),
                                     r,
@@ -1182,7 +1182,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && p.lexer.has_newline_before
                         && matches!(expr.data, js_ast::ExprData::EIdentifier(_))
                     {
-                        let r = js_lexer::range_of_identifier(p.source, expr.loc);
+                        let r = p.source.range_of_identifier(expr.loc);
                         p.log()
                             .add_range_error(Some(p.source), r, b"Unexpected \"abstract\"");
                         return Err(crate::Error::SyntaxError);
@@ -1835,7 +1835,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "interface \n Foo {}"
                 // "export interface \n Foo {}"
                 if opts.is_export {
-                    let r = js_lexer::range_of_identifier(p.source, loc);
+                    let r = p.source.range_of_identifier(loc);
                     p.log()
                         .add_range_error(Some(p.source), r, b"Unexpected \"interface\"");
                     return Err(crate::Error::SyntaxError);
@@ -1848,7 +1848,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Ok(Some(p.parse_class_stmt(p.lexer.loc(), opts)?));
                 }
                 if opts.ts_decorators.is_some() {
-                    let r = js_lexer::range_of_identifier(p.source, loc);
+                    let r = p.source.range_of_identifier(loc);
                     p.log()
                         .add_range_error(Some(p.source), r, b"Unexpected \"abstract\"");
                     return Err(crate::Error::SyntaxError);
@@ -1870,7 +1870,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_lexer::TypescriptStmtKeyword::TsStmtDeclare => {
                 if p.lexer.has_newline_before {
                     if opts.ts_decorators.is_some() {
-                        let r = js_lexer::range_of_identifier(p.source, loc);
+                        let r = p.source.range_of_identifier(loc);
                         p.log()
                             .add_range_error(Some(p.source), r, b"Unexpected \"declare\"");
                         return Err(crate::Error::SyntaxError);

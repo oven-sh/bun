@@ -26,7 +26,6 @@ use bun_ast::{
 // re-export, so use that here.
 use crate::Index;
 use bun_ast::{E, G, S};
-use bun_js_parser::lexer as lex;
 use bun_js_parser::parse::parse_entry::{ModuleSyntax, parse_only_text};
 use bun_js_printer::{self as js_printer, renamer};
 
@@ -4465,7 +4464,7 @@ impl<'a> LinkerContext<'a> {
                 }
                 MatchImportKind::Cycle => {
                     let source = self.get_source(source_index);
-                    let r = lex::range_of_identifier(source, named_import.alias_loc);
+                    let r = source.range_of_identifier(named_import.alias_loc);
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import
                         .alias
@@ -4489,7 +4488,7 @@ impl<'a> LinkerContext<'a> {
                 }
                 MatchImportKind::Ambiguous => {
                     let source = self.get_source(source_index);
-                    let r = lex::range_of_identifier(source, named_import.alias_loc);
+                    let r = source.range_of_identifier(named_import.alias_loc);
 
                     // TODO: log locations of the ambiguous exports
 

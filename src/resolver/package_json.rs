@@ -3,7 +3,6 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
 use bun_core::StackCheck;
 use bun_core::strings;
-use bun_js_parser::lexer as js_lexer;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, SEP_STR};
 use bun_semver as Semver;
 use bun_semver::String as SemverString;
@@ -1179,7 +1178,7 @@ impl<'a> Visitor<'a> {
             js_ast::E::JsonValue::Array(e_array) => self.visit_array(e_array.get(), &vloc),
             js_ast::E::JsonValue::Boolean(_) => {
                 let loc = vloc.resolve(&self.source.contents);
-                self.invalid(js_lexer::range_of_identifier(self.source, loc))
+                self.invalid(self.source.range_of_identifier(loc))
             }
             js_ast::E::JsonValue::Number(_) => {
                 let loc = vloc.resolve(&self.source.contents);
@@ -1283,9 +1282,9 @@ impl<'a> Visitor<'a> {
         vloc: json_parser::ValueLocation<'_>,
     ) -> Entry {
         let first_token = match data {
-            js_ast::ExprData::EBoolean(_) => {
-                js_lexer::range_of_identifier(self.source, vloc.resolve(&self.source.contents))
-            }
+            js_ast::ExprData::EBoolean(_) => self
+                .source
+                .range_of_identifier(vloc.resolve(&self.source.contents)),
             // TODO: range of number
             js_ast::ExprData::ENumber(_) => bun_ast::Range {
                 loc: vloc.resolve(&self.source.contents),

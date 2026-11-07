@@ -188,7 +188,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.is_strict_mode() && js_lexer::is_strict_mode_reserved_word(name) {
             p.mark_strict_mode_feature(
                 StrictModeFeature::ReservedWord,
-                js_lexer::range_of_identifier(p.source, expr.loc),
+                p.source.range_of_identifier(expr.loc),
                 name,
             )
             .expect("unreachable");
@@ -219,7 +219,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant
             {
                 // TODO: silence this for runtime transpiler
-                let r = js_lexer::range_of_identifier(p.source, expr.loc);
+                let r = p.source.range_of_identifier(expr.loc);
                 let notes: Box<[bun_ast::Data]> = Box::new([bun_ast::Data {
                     text: {
                         let mut v = Vec::new();
@@ -233,7 +233,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     location: bun_ast::Location::init_or_null(
                         Some(p.source),
-                        js_lexer::range_of_identifier(p.source, result.declare_loc.unwrap()),
+                        p.source.range_of_identifier(result.declare_loc.unwrap()),
                     ),
                     ..Default::default()
                 }]);
@@ -1210,7 +1210,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .kind
                 == js_ast::symbol::Kind::Import
         {
-            let r = js_lexer::range_of_identifier(p.source, e_.target.loc);
+            let r = p.source.range_of_identifier(e_.target.loc);
             p.log().add_range_error_fmt(
                 Some(p.source),
                 r,
@@ -1785,7 +1785,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .eql_comptime(b"__proto__")
                 {
                     if has_proto {
-                        let r = js_lexer::range_of_identifier(p.source, key.loc);
+                        let r = p.source.range_of_identifier(key.loc);
                         p.log().add_range_error(
                             Some(p.source),
                             r,
@@ -2319,7 +2319,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if p.options.warn_about_unbundled_modules {
-                let r = js_lexer::range_of_identifier(p.source, e_.target.loc);
+                let r = p.source.range_of_identifier(e_.target.loc);
                 p.log()
                     .add_range_debug(
                         Some(p.source),

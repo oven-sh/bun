@@ -225,7 +225,7 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
             entry_point_bits.set(ch.entry_point.entry_point_id() as usize);
             chunks_to_visit.push(chunk_index as u32);
 
-            if matches!(ch.content, Content::Html) {
+            if matches!(ch.content, Content::Html { .. }) {
                 writer.write_all(b"\"index\":")?;
                 if inject_compiler_filesystem_prefix {
                     temp_buffer.clear();

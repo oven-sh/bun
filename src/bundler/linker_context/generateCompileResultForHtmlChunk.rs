@@ -292,7 +292,7 @@ impl<'a> HTMLLoader<'a> {
                     BStr::new(css_chunk.unique_key)
                 ));
             }
-            if let Some(js_chunk_index) = self.chunk.get_js_chunk_index_for_html(self.chunks) {
+            if let Some(js_chunk_index) = self.chunk.get_js_chunk_index_for_html() {
                 // type="module" scripts do not block rendering, so it is okay to put them in head
                 array.push(format!(
                     "<script type=\"module\" crossorigin src=\"{}\"></script>",

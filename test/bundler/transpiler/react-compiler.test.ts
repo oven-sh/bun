@@ -4174,6 +4174,73 @@ describe("bundler", () => {
     });
   });
 
+  // `bun build --dts` writes each bundle with its types kept (`.aot.ts`): the annotation of a
+  // parameter in the source goes to the parameter that the bundle has for it. The parameter
+  // with `= undefined` takes `undefined` beside what the source says of it. A parameter that
+  // a closure reads is declared in the body: only the parameter has a place in the source, so
+  // only it gets the `?` of the source, also where a minifier merges the declarations.
+  test.concurrent.each([
+    ["for a server", ["--target=bun"], "t1"],
+    ["for a client, with merged declarations", ["--external", "react/compiler-runtime", "--minify-syntax"], "t2"],
+  ])(
+    "react-compiler: --dts %s keeps the types of a parameter with a default",
+    async (_, flags, renamed) => {
+      using dir = tempDir("react-compiler-dts", {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [] },
+        }),
+        "package.json": JSON.stringify({ name: "steps", version: "1.0.0", compilerOptions: { strict: true } }),
+        "src/state.ts": `export function useState<T>(initial: T): [T] {
+  return [initial];
+}
+`,
+        "src/index.tsx": `import { useState } from "./state";
+const nothing = () => {};
+export function useStep(step: number = 1): number {
+  const [value] = useState(step);
+  return value;
+}
+export function useScaled(base: number, scale = 2, done: () => void = nothing): number {
+  const [value] = useState(base);
+  done();
+  return value * scale;
+}
+export function useCalled(done: () => void = nothing): number {
+  const [value] = useState(1);
+  done();
+  return value;
+}
+export function useRead(url?: string, retries: number = 1): () => string {
+  const [value] = useState(retries);
+  return () => url + ":" + value;
+}
+console.log(JSON.stringify([useStep(), useStep(3), useScaled(2, 3, nothing), useCalled(), useRead("u")()]));
+console.log(useStep.length, useScaled.length, useCalled.length, useRead.length);
+`,
+      });
+      const run = async (...cmd: string[]) => {
+        await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const built = await run("build", "./src/index.tsx", "--outdir", "out", "--dts", "--react-compiler", ...flags);
+      expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const typed = (await Bun.file(join(String(dir), "out/index.aot.ts")).text()).replaceAll("void 0", "undefined");
+      expect(typed).toContain("function useStep(t0: number | undefined = undefined): number {");
+      expect(typed).toContain("function useScaled(base: number, t0: any = undefined, t1: () => void): number {");
+      expect(typed).toContain("function useCalled(t0: (() => void) | undefined = undefined): number {");
+      expect(typed).toContain(
+        `function useRead(${renamed}?: string, t0: number | undefined = undefined): () => string {`,
+      );
+      expect(typed).toContain(`url = ${renamed}`);
+      if (flags.includes("--target=bun")) {
+        expect((await run("out/index.js")).stdout).toBe('[1,3,6,1,"u:1"]\n0 1 0 1\n');
+      }
+    },
+    // A build with --dts checks the types of the bundle: some seconds in a debug build.
+    isDebug || isASAN ? 60_000 : undefined,
+  );
+
   itBundled("react-compiler/SourceMapOfCatch", {
     files: {
       "/entry.jsx": /* jsx */ `

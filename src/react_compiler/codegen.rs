@@ -611,20 +611,24 @@ fn declare_captured_parameters_in_body(
         if !captured.contains(&identifier.declaration_id) {
             continue;
         }
-        let (name, loc) = (arg.binding, arg.binding.loc);
+        let name = arg.binding;
         let temporary = cx.new_temporary();
-        arg.binding = Binding::alloc(cx.cg.arena, b::Identifier { r#ref: temporary }, loc);
+        arg.binding = Binding::alloc(cx.cg.arena, b::Identifier { r#ref: temporary }, name.loc);
         cx.cg.host.record_usage(temporary);
+        // The parameter keeps the place in the source. The declaration is generated and has none.
         declarations.push(Stmt::alloc(
             S::Local {
                 kind: S::Kind::KLet,
                 decls: decl_list([G::Decl {
-                    binding: name,
-                    value: Some(Expr::init_identifier(temporary, loc)),
+                    binding: Binding {
+                        loc: Loc::EMPTY,
+                        ..name
+                    },
+                    value: Some(Expr::init_identifier(temporary, Loc::EMPTY)),
                 }]),
                 ..Default::default()
             },
-            loc,
+            Loc::EMPTY,
         ));
     }
     declarations

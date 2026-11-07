@@ -207,6 +207,15 @@ impl<'a, 's> Syntax<'a, 's> {
         }
     }
 
+    /// Whether a default is `undefined`, which a minifier prints as `void 0`.
+    fn is_undefined(&self, default: ExprId) -> bool {
+        default.some().is_some_and(|default| {
+            let node = &self.file[default];
+            let text = &self.text[node.pos as usize..node.end as usize];
+            matches!(text, b"undefined" | b"void 0")
+        })
+    }
+
     fn type_span(&self, node: TypeNodeId) -> (u32, u32) {
         let (mut start, mut end) = (self.file[node].pos, self.file[node].end);
         loop {
@@ -2892,6 +2901,8 @@ fn add_types(
     let mut source_slots: FxHashMap<(Place, u32, u32), Slot> = FxHashMap::default();
     let mut optional_parameter_properties: FxHashMap<(u32, u32), (u32, bool)> =
         FxHashMap::default();
+    let mut parameters_with_default: FxHashMap<(u32, u32), ParameterWithDefault> =
+        FxHashMap::default();
     for (index, (file, &(_, text, types))) in files.iter().zip(&texts).enumerate() {
         let Some(file) = file else {
             written.push(None);
@@ -2905,6 +2916,25 @@ fn add_types(
             type_ranges.push((slot.start, slot.end));
         }
         type_ranges.extend(syntax.cast_type_spans());
+        for parameter in file.params.iter().filter(|it| it.default.is_some()) {
+            let Some(key) = syntax.first_identifier(parameter.pat) else {
+                continue;
+            };
+            let annotation = parameter.ty.some().map(|annotation| {
+                let is_parenthesized_in_a_union = matches!(
+                    file[annotation].kind,
+                    TypeNodeKind::Fn(_) | TypeNodeKind::Cond { .. }
+                );
+                (syntax.type_span(annotation), is_parenthesized_in_a_union)
+            });
+            parameters_with_default.insert(
+                (index as u32, key),
+                ParameterWithDefault {
+                    is_undefined: syntax.is_undefined(parameter.default),
+                    annotation,
+                },
+            );
+        }
         for (parameter, id) in file
             .params
             .iter()
@@ -2994,6 +3024,7 @@ fn add_types(
         dropped_casts: 0,
         hoisted: Vec::new(),
         optional_parameter_properties,
+        parameters_with_default,
     };
     transfer.copy_slots(&source_slots);
     transfer.annotate_generated_code();
@@ -3016,6 +3047,14 @@ struct Transfer<'t, 'a, 's> {
     dropped_casts: usize,
     hoisted: Vec<u8>,
     optional_parameter_properties: FxHashMap<(u32, u32), (u32, bool)>,
+    parameters_with_default: FxHashMap<(u32, u32), ParameterWithDefault>,
+}
+
+/// A parameter of a source file that has a default: whether that default is `undefined`, and the span of its
+/// annotation with whether a union has to put it in parentheses.
+struct ParameterWithDefault {
+    is_undefined: bool,
+    annotation: Option<((u32, u32), bool)>,
 }
 
 impl<'a> Transfer<'_, 'a, '_> {
@@ -3030,7 +3069,62 @@ impl<'a> Transfer<'_, 'a, '_> {
         anchored
     }
 
+    /// The React Compiler moves the default of a parameter into the body of its function, and prints `= undefined`
+    /// where the first default of the list was. That parameter takes `undefined` too, whatever the source says of it.
+    /// Returns the parameters that this has annotated.
+    fn annotate_moved_defaults(&mut self) -> FxHashSet<u32> {
+        let (output, mappings, written) = (self.output, self.mappings, self.modules);
+        let output_file = output.file;
+        let mut annotated: FxHashSet<u32> = FxHashSet::default();
+        for function in output_file.fns.iter() {
+            if !Syntax::has_javascript(function) || Self::is_generated(output, mappings, function) {
+                continue;
+            }
+            for parameter in function.params.iter().map(|id| &output_file[id]) {
+                let Some(key) = (output.first_identifier(parameter.pat))
+                    .filter(|_| output.is_undefined(parameter.default))
+                else {
+                    continue;
+                };
+                let original = mappings.original(key);
+                let in_source =
+                    original.and_then(|at| Some((at.0, self.parameters_with_default.get(&at)?)));
+                let module = in_source
+                    .and_then(|(source, _)| written[source as usize].as_ref())
+                    .filter(|module| !module.is_unchecked());
+                let annotation = match (in_source, module) {
+                    (Some((_, parameter)), _) if parameter.is_undefined => continue,
+                    (Some((_, parameter)), Some(module)) => (parameter.annotation)
+                        .map(|((start, end), parens)| (module.trimmed_text(start, end), parens)),
+                    _ => None,
+                };
+                let text = match annotation {
+                    Some((annotation, true)) => {
+                        [b": (", &annotation[..], b") | undefined"].concat()
+                    }
+                    Some((annotation, false)) => [b": ", &annotation[..], b" | undefined"].concat(),
+                    None => b": any".to_vec(),
+                };
+                (self.insertions).add(output_file[parameter.pat].end, Order::Slot, text);
+                annotated.insert(key);
+            }
+        }
+        annotated
+    }
+
+    /// Whether no source file has this function: the bundler or a compiler made it.
+    fn is_generated(output: &Syntax<'_, '_>, mappings: &Mappings, function: &Func) -> bool {
+        let is_mapped = |parameter: ParamId| {
+            output
+                .first_identifier(output.file[parameter].pat)
+                .is_some_and(|name| mappings.original(name).is_some())
+        };
+        mappings.original(Syntax::function_key(function)).is_none()
+            && !function.params.iter().any(is_mapped)
+    }
+
     fn copy_slots(&mut self, source_slots: &FxHashMap<(Place, u32, u32), Slot>) {
+        let moved_defaults = self.annotate_moved_defaults();
         let (output, mappings, written, linked) =
             (self.output, self.mappings, self.modules, self.linked);
         let (output_file, insertions) = (output.file, &mut self.insertions);
@@ -3040,6 +3134,9 @@ impl<'a> Transfer<'_, 'a, '_> {
             .map(|function| (Syntax::function_key(function), function.params.len()))
             .collect();
         for slot in &output.slots() {
+            if slot.place == Place::Binding && moved_defaults.contains(&slot.key) {
+                continue;
+            }
             let Some((source, key)) = mappings.original(slot.key) else {
                 continue;
             };
@@ -3146,14 +3243,7 @@ impl<'a> Transfer<'_, 'a, '_> {
             else {
                 continue;
             };
-            let is_mapped = |parameter: ParamId| {
-                output
-                    .first_identifier(output_file[parameter].pat)
-                    .is_some_and(|name| mappings.original(name).is_some())
-            };
-            if mappings.original(Syntax::function_key(function)).is_some()
-                || function.params.iter().any(is_mapped)
-            {
+            if !Self::is_generated(output, mappings, function) {
                 continue;
             }
             if matches!(function.kind, FnKind::Decl | FnKind::Expr) {

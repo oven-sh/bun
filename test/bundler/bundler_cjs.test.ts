@@ -836,6 +836,60 @@ describe("bundler", () => {
     },
   });
 
+  // A `bun:` module never gets `isNodeMode`, whatever the importer's type.
+  // Bun's loader makes an own `default` of a builtin's exports the ES default
+  // export (`import Database from "bun:sqlite"` is the class), and
+  // `require("bun:sqlite")` carries `__esModule` so that `__toESM` agrees.
+  const bunBuiltinDefaultImport = /* js */ `
+    import Database from "bun:sqlite";
+    import * as ns from "bun:sqlite";
+    import fs from "node:fs";
+    const db = new Database(":memory:");
+    console.log(typeof Database, ns.default === Database, db instanceof ns.Database, typeof fs.readFileSync);
+    db.close();
+  `;
+
+  itBundled("cjs/__toESM_bun_builtin_mjs_importer_format_cjs", {
+    files: {
+      "/entry.mjs": bunBuiltinDefaultImport,
+    },
+    target: "bun",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__toESM(require("bun:sqlite"))');
+    },
+    run: {
+      stdout: "function true true function",
+    },
+  });
+
+  itBundled("cjs/__toESM_bun_builtin_type_module_importer_format_iife", {
+    files: {
+      "/entry.ts": bunBuiltinDefaultImport,
+      "/package.json": `{ "name": "app", "type": "module" }`,
+    },
+    target: "bun",
+    format: "iife",
+    run: {
+      stdout: "function true true function",
+    },
+  });
+
+  itBundled("cjs/__toESM_bun_builtin_mts_importer_target_node", {
+    files: {
+      "/entry.mts": bunBuiltinDefaultImport,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__toESM(require("bun:sqlite"))');
+      api.expectFile("/out.js").toContain('__toESM(require("node:fs"), 1)');
+    },
+    run: {
+      stdout: "function true true function",
+    },
+  });
+
   // ============================================================================
   // Files reached through a package.json "exports" map. The matched "import" or
   // "require" condition is not a module type. Only the extension and the

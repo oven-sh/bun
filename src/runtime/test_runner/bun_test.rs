@@ -1389,7 +1389,8 @@ impl BunTest {
                 args_slice,
                 move || drop(on_stack),
             )
-            .and_then(|returned| Self::promise_of_thenable(global_this, returned))
+            // A callback that takes `done` ends through it: `then()` of what it also returns is not called.
+            .and_then(|returned| if cfg_done_parameter { Ok(returned) } else { Self::promise_of_thenable(global_this, returned) })
         {
             Ok(v) => v,
             Err(_) => {

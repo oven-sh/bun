@@ -817,8 +817,15 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         GlobalCache::disable
     };
 
-    // SAFETY: per fn contract.
-    let n = unsafe { &*vm }.preload.len();
+    let (n, require_start, require_count) = {
+        let vm = VirtualMachine::get();
+        (
+            vm.preload.len(),
+            vm.preload_require_start,
+            vm.preload_require_count,
+        )
+    };
+    let require_end = require_start.saturating_add(require_count);
     for i in 0..n {
         // SAFETY: `i < n`; nothing touches `vm.preload` until the `clear()` after
         // this loop: the resolver does not, and `reload()` defers while `is_in_preload`.
@@ -834,13 +841,18 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             bun_core::StringView::from_bytes(normalized)
         } else {
             // ── resolve ─────────────────────────────────────────────────────
+            let import_kind = if i >= require_start && i < require_end {
+                ImportKind::Require
+            } else {
+                ImportKind::Stmt
+            };
             // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
             // singleton field.
             let mut result = match unsafe {
                 (*vm).transpiler.resolver.resolve_and_auto_install(
                     &*top_level_dir,
                     normalized,
-                    ImportKind::Stmt,
+                    import_kind,
                     global_cache,
                 )
             } {
@@ -1664,7 +1676,7 @@ unsafe fn parse_worker_exec_argv_flags(
         let words: Vec<&[u8]> = words.iter().map(|word| word.as_bytes()).collect();
         crate::cli::startup_options::warn_of_ignored_options(&words);
     }
-    for (index, &arg) in exec_argv.iter().enumerate() {
+    for &arg in exec_argv {
         if arg.is_null() {
             continue;
         }
@@ -1685,7 +1697,7 @@ unsafe fn parse_worker_exec_argv_flags(
             bytes.strip_prefix(b"--disallow-code-generation-from-strings".as_slice()),
             Some([] | [b'=', ..])
         ) {
-            flags.invalid.get_or_insert(index);
+            flags.invalid.get_or_insert(owned);
         }
     }
     Some(flags)

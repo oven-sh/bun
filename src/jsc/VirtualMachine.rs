@@ -222,6 +222,17 @@ pub struct VirtualMachine {
     /// counter stays at zero).
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
+    pub preload_require_start: usize,
+    pub preload_require_count: usize,
+    /// Effective execArgv preloads retained after this VM runs them, so child
+    /// workers can inherit the same startup contract.
+    pub worker_preloads: Vec<Box<[u8]>>,
+    /// The require-style subset of `worker_preloads` that Node also applies
+    /// before eval Worker source.
+    pub worker_eval_preloads: Vec<Box<[u8]>>,
+    pub worker_preload_require_start: usize,
+    pub worker_preload_require_count: usize,
+    pub worker_eval_mode: bun_options_types::context::WorkerEvalMode,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     /// LAYERING: the real type is `bun_runtime`'s
     /// `html_rewriter::RewriterPipe` (a forward dep), stored type-erased.
@@ -2945,15 +2956,14 @@ extern crate alloc;
 pub type RuntimeState = *mut c_void;
 
 /// Runtime flags a Worker's `execArgv` can set. `true` means allowed.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone)]
 pub struct WorkerExecArgvFlags {
     /// `!--no-addons`
     pub allow_addons: bool,
     /// `!--no-ffi-cc`
     pub allow_ffi_cc: bool,
-    /// Where a flag is that is the process's, which a Worker cannot be given
-    /// (`ERR_WORKER_INVALID_EXEC_ARGV`): `--disallow-code-generation-from-strings`.
-    pub invalid: Option<usize>,
+    /// First process-only flag a Worker cannot accept (`ERR_WORKER_INVALID_EXEC_ARGV`).
+    pub invalid: Option<bun_core::ZBox>,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -6065,6 +6075,8 @@ impl VirtualMachine {
         // time and `load_preloads` clears the boxes but keeps the Vec buffer,
         // so reclaim it here or every Worker leaks it.
         drop(core::mem::take(&mut self.preload));
+        drop(core::mem::take(&mut self.worker_preloads));
+        drop(core::mem::take(&mut self.worker_eval_preloads));
 
         // SAFETY: this VM is raw-`dealloc`'d (no field `Drop` runs), so
         // `transpiler` is never auto-dropped after `deinit` clears its fields.

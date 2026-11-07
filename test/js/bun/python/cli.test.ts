@@ -1057,7 +1057,8 @@ for line in sys.stdin:
           ["second", "b\r"],
           ["third", "c\r"],
           ["fourth", "d\r"],
-          ["fifth", "e\r"],
+          // This one is on the terminal, where what is typed is echoed.
+          ["on the terminal? ", "e\r"],
           ["sixth", "f\r"],
           ["seventh", "g\r"],
           ["eighth", "\x04"],

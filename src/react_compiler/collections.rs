@@ -160,7 +160,7 @@ impl<K: Copy + Into<u32>, V> Entries<K, V> for IdMap<K, V, AstAlloc> {
         self.entry(key).or_insert_with(make)
     }
     fn shift_remove(&mut self, key: &K) -> Option<V> {
-        self.remove(*key)
+        self.shift_remove(*key)
     }
     fn retain(&mut self, mut keep: impl FnMut(&K, &mut V) -> bool) {
         self.retain(|key, value| keep(&key, value));

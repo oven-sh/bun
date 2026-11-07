@@ -345,6 +345,25 @@ describe("bun test", () => {
       expect(stderr).toContain("expects a number");
     });
 
+    // `--bail` prints the error kind of `bun_core::fmt::parse_int::<u32>`. These rows hold what main prints
+    // since the Rust port (#30412): an invalid byte wins until the value leaves a u128. They are not a
+    // specification. Bun 1.3.x decided in the u32 and printed `Overflow` for the second row.
+    test.each([
+      // One past u32::MAX: the digits are valid, the range check fails.
+      ["4294967296", "Overflow"],
+      // 2^64, then an invalid byte: the value no longer fits a u64, and the parser still reads on to the byte.
+      ["18446744073709551616x", "InvalidCharacter"],
+      // 2^128, then an invalid byte: the value leaves a u128 before the byte.
+      ["340282366920938463463374607431768211456x", "Overflow"],
+      // 2^64, then a separator and a digit: the separator is skipped past u64::MAX too.
+      ["18446744073709551616_0", "Overflow"],
+      // A trailing separator is rejected before the digits, though they overflow.
+      [`${Buffer.alloc(50, "9")}_`, "InvalidCharacter"],
+    ])("--bail=%s is rejected with %s", (value, kind) => {
+      const stderr = runTest({ args: [`--bail=${value}`], expectExitCode: 1 });
+      expect(stderr).toContain(`error: --bail expects a number: ${kind}\n`);
+    });
+
     test("bail should be 1 by default", () => {
       const stderr = runTest({
         args: ["--bail"],

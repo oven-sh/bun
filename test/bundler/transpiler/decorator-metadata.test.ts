@@ -427,6 +427,134 @@ describe("decorator metadata", () => {
     expect(Reflect.getMetadata("design:returntype", A.prototype, "prop3")).toBeUndefined();
   });
 
+  // tsc reads an accessor pair as one member: design:type is the setter's
+  // parameter type (else the getter's return type) and design:paramtypes is
+  // the setter's parameter list, whichever half carries the decorator.
+  test("accessor pairs", () => {
+    function d1(target: any, key: string) {}
+    class Foo {}
+
+    class A {
+      @d1
+      get getterFirst(): number {
+        return 1;
+      }
+      set getterFirst(v: number) {}
+
+      @d1
+      get getterOnly(): number {
+        return 1;
+      }
+
+      @d1
+      get typeFromSetter() {
+        return "";
+      }
+      set typeFromSetter(v: string) {}
+
+      @d1
+      set setterFirst(v: string) {}
+      get setterFirst() {
+        return "";
+      }
+
+      @d1
+      // @ts-ignore
+      set untypedSetter(v) {}
+      get untypedSetter(): Foo {
+        return new Foo();
+      }
+
+      get setterDecorated(): string {
+        return "";
+      }
+      @d1
+      set setterDecorated(v: string) {}
+
+      @d1
+      static get staticPair(): boolean {
+        return true;
+      }
+      static set staticPair(v: boolean) {}
+
+      get mixedStatic(): number {
+        return 1;
+      }
+      @d1
+      // @ts-ignore
+      set mixedStatic(v) {}
+      static set mixedStatic(v: string) {}
+
+      @d1
+      get ["computed"](): number {
+        return 1;
+      }
+      set ["computed"](v: Foo) {}
+
+      @d1
+      get 7(): number {
+        return 1;
+      }
+      set 7(v: string) {}
+
+      @d1
+      // @ts-ignore
+      set setterOnly(v) {}
+
+      @d1
+      get untypedGetter() {
+        return 1;
+      }
+
+      @d1
+      // @ts-ignore
+      set bothUntyped(v) {}
+      get bothUntyped() {
+        return 1;
+      }
+
+      @d1
+      get voidGetter(): void {}
+    }
+
+    const metadata = (target: any, key: string) => ({
+      type: Reflect.getMetadata("design:type", target, key),
+      paramtypes: Reflect.getMetadata("design:paramtypes", target, key),
+    });
+
+    expect({
+      getterFirst: metadata(A.prototype, "getterFirst"),
+      getterOnly: metadata(A.prototype, "getterOnly"),
+      typeFromSetter: metadata(A.prototype, "typeFromSetter"),
+      setterFirst: metadata(A.prototype, "setterFirst"),
+      untypedSetter: metadata(A.prototype, "untypedSetter"),
+      setterDecorated: metadata(A.prototype, "setterDecorated"),
+      staticPair: metadata(A, "staticPair"),
+      mixedStatic: metadata(A.prototype, "mixedStatic"),
+      computed: metadata(A.prototype, "computed"),
+      7: metadata(A.prototype, "7"),
+      setterOnly: metadata(A.prototype, "setterOnly"),
+      untypedGetter: metadata(A.prototype, "untypedGetter"),
+      bothUntyped: metadata(A.prototype, "bothUntyped"),
+      voidGetter: metadata(A.prototype, "voidGetter"),
+    }).toEqual({
+      getterFirst: { type: Number, paramtypes: [Number] },
+      getterOnly: { type: Number, paramtypes: [] },
+      typeFromSetter: { type: String, paramtypes: [String] },
+      setterFirst: { type: String, paramtypes: [String] },
+      untypedSetter: { type: Foo, paramtypes: [Object] },
+      setterDecorated: { type: String, paramtypes: [String] },
+      staticPair: { type: Boolean, paramtypes: [Boolean] },
+      mixedStatic: { type: Number, paramtypes: [Object] },
+      computed: { type: Foo, paramtypes: [Foo] },
+      7: { type: String, paramtypes: [String] },
+      setterOnly: { type: Object, paramtypes: [Object] },
+      untypedGetter: { type: Object, paramtypes: [] },
+      bothUntyped: { type: Object, paramtypes: [Object] },
+      voidGetter: { type: undefined, paramtypes: [] },
+    });
+  });
+
   test("class with only constructor argument decorators", () => {
     function d1() {}
     class A {

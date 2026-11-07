@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { binaryExpectations } from "../../scripts/build/binary-expectations.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { mimalloc } from "../../scripts/build/deps/mimalloc.ts";
 import { webkit } from "../../scripts/build/deps/webkit.ts";
@@ -272,6 +273,55 @@ test("_FORTIFY_SOURCE is left out where nothing is optimized or ASan checks the 
     expect(computeHardeningFlags(cfg)).toEqual(others);
     expect(everyFlagOf(cfg).c).not.toContain("-D_FORTIFY_SOURCE=2");
   }
+});
+
+test.skipIf(isWindows).each([
+  ["accepts inlined fortified copies", ["__stack_chk_fail", "__snprintf_chk"], undefined],
+  ["requires checked formatting", ["__stack_chk_fail", "__fprintf_chk", "__sprintf_chk"], "__snprintf_chk"],
+  ["requires stack protection", ["__snprintf_chk"], "__stack_chk_fail"],
+] as const)("a hardened GNU link %s", async (_name, imports, missing) => {
+  using dir = tempDir("build-hardened-imports", {});
+  const root = String(dir);
+  const tool = join(root, "llvm fixture");
+  writeFileSync(
+    tool,
+    `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "--undefined-only" ]; then
+    printf '%s\\n' "$FIXTURE_IMPORTS"
+  fi
+done
+`,
+  );
+  chmodSync(tool, 0o755);
+  const { requiredImports } = binaryExpectations(linuxConfig({ hardened: true }, root));
+  const spec = join(root, "binary.verify.json");
+  writeFileSync(
+    spec,
+    JSON.stringify({
+      name: "fixture",
+      exe: join(root, "fixture"),
+      tools: { nm: tool, readobj: tool, objdump: tool, cxxfilt: tool },
+      expect: {
+        format: "elf",
+        exports: { exact: [], patterns: [] },
+        neededLibs: { names: [], exact: true },
+        forbiddenImports: [],
+        requiredImports,
+      },
+    }),
+  );
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dirname, "../../scripts/build/verify-binary.ts"), "binary", spec],
+    env: { ...bunEnv, FIXTURE_IMPORTS: imports.join("\n") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  if (missing) expect(stdout).toContain(`- ${missing} (required import)`);
+  else expect(stdout).toContain("2 imported symbols");
+  expect(exitCode).toBe(missing ? 1 : 0);
 });
 
 test("--hardened=on is refused where nothing can be hardened", () => {

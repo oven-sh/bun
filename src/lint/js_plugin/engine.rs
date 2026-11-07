@@ -63,6 +63,9 @@ pub trait Engine: Sync {
     /// How many threads are busy with [`Engine::work_off`].
     fn busy(&self) -> usize;
 
+    /// Adds environment variables for the code in every realm. Only the first call counts, before a realm starts.
+    fn set_variables(&self, _variables: &'static [(&'static [u8], &'static [u8])]) {}
+
     /// Announces how many files will need a realm, their total size, and the maximum number of realms. It isn't called
     /// if finding that out takes a realm.
     fn expect(&self, _files: usize, _size: u64, _most: usize) {}

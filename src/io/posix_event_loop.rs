@@ -198,6 +198,8 @@ pub enum PollTag {
     ParentDeathWatchdog,
     LifecycleScriptSubprocessOutputReader,
     MemoryPressure,
+    /// A native addon's `uv_udp_t` (`bun_runtime::napi::uv_posix`).
+    UvUdp,
 }
 
 /// Compatibility module — call sites in `bun_runtime`/`bun_install` still spell
@@ -221,6 +223,7 @@ pub mod poll_tag {
     pub const LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER: PollTag =
         PollTag::LifecycleScriptSubprocessOutputReader;
     pub const MEMORY_PRESSURE: PollTag = PollTag::MemoryPressure;
+    pub const UV_UDP: PollTag = PollTag::UvUdp;
 }
 
 #[derive(Copy, Clone)]

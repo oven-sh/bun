@@ -258,6 +258,34 @@ fn fail_with_build_error(vm: &mut VirtualMachine) -> ! {
     Global::exit(1);
 }
 
+/// The directory the build writes into. Counts the files it could not write so the build can fail.
+struct OutputDir {
+    dir: bun_sys::Dir,
+    failed_writes: usize,
+    /// The loop over the output files and the step after it can both reach the runtime chunk.
+    runtime_chunk_attempted: bool,
+}
+
+impl OutputDir {
+    fn write(&mut self, file: &OutputFile) {
+        if file.bake_extra.bake_is_runtime {
+            if self.runtime_chunk_attempted {
+                return;
+            }
+            self.runtime_chunk_attempted = true;
+        }
+        if let Err(err) = file.write_to_disk(self.dir.fd()) {
+            bun_core::handle_error_return_trace(err);
+            Output::err(
+                err,
+                "Failed to write {} to output directory",
+                (bun_core::fmt::quote(&file.dest_path),),
+            );
+            self.failed_writes += 1;
+        }
+    }
+}
+
 fn write_sourcemap_to_disk(
     file: &OutputFile,
     bundled_outputs: &[OutputFile],
@@ -645,7 +673,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     Output::flush();
 
     // mkdir -p + open.
-    let root_dir = bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?;
+    let mut output_dir = OutputDir {
+        dir: bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?,
+        failed_writes: 0,
+        runtime_chunk_attempted: false,
+    };
 
     let mut maybe_runtime_file_index: Option<u32> = None;
 
@@ -702,25 +734,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             match side {
                 bun_bundler::options::Side::Client => {
                     // Client-side resources will be written to disk for usage on the client side
-                    if let Err(err) = file.write_to_disk(root_dir.fd()) {
-                        bun_core::handle_error_return_trace(err);
-                        Output::err(
-                            err,
-                            "Failed to write {} to output directory",
-                            (bun_core::fmt::quote(&file.dest_path),),
-                        );
-                    }
+                    output_dir.write(file);
                 }
                 bun_bundler::options::Side::Server => {
                     if ctx.bundler_options.bake_debug_dump_server {
-                        if let Err(err) = file.write_to_disk(root_dir.fd()) {
-                            bun_core::handle_error_return_trace(err);
-                            Output::err(
-                                err,
-                                "Failed to write {} to output directory",
-                                (bun_core::fmt::quote(&file.dest_path),),
-                            );
-                        }
+                        output_dir.write(file);
                     }
 
                     // If the file has a sourcemap, store it so we can put it on
@@ -793,16 +811,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 && file.src_path.text != b"bun-framework-react/client.tsx"
         });
         if any_client_chunks {
-            let runtime_file: &OutputFile = &bundled_outputs_list[runtime_file_index as usize];
-            if let Err(err) = runtime_file.write_to_disk(root_dir.fd()) {
-                bun_core::handle_error_return_trace(err);
-                Output::err(
-                    err,
-                    "Failed to write {} to output directory",
-                    (bun_core::fmt::quote(&runtime_file.dest_path),),
-                );
-            }
+            output_dir.write(&bundled_outputs_list[runtime_file_index as usize]);
         }
+    }
+    // Every failed write is reported by now. Do not prerender into an incomplete `dist`.
+    if output_dir.failed_writes > 0 {
+        Global::crash();
     }
 
     *pt = PerThread::init(

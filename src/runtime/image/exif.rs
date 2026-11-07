@@ -117,7 +117,8 @@ pub(crate) fn read_jpeg(bytes: &[u8]) -> Orientation {
                 continue;
             }
             // 0xFF00 is a stuffed zero, which next_marker() skips the same way.
-            0x00 | 0xD0..=0xD8 => {
+            // TEM (0x01) has no length field either: read_markers() goes on to the next marker.
+            0x00 | 0x01 | 0xD0..=0xD8 => {
                 i += 2;
                 continue;
             }
@@ -126,7 +127,12 @@ pub(crate) fn read_jpeg(bytes: &[u8]) -> Orientation {
             _ => {}
         }
         let seglen = ((bytes[i + 2] as usize) << 8) | (bytes[i + 3] as usize);
-        if seglen < 2 || i + 2 + seglen > bytes.len() {
+        if seglen < 2 {
+            // libjpeg reads a length below 2 as an empty APPn/COM/DNL segment, and rejects the file on any other marker.
+            i += 4;
+            continue;
+        }
+        if i + 2 + seglen > bytes.len() {
             return Orientation::Normal;
         }
         if marker == 0xE1 && seglen >= 8 {

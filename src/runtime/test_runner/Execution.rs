@@ -332,40 +332,29 @@ impl ExecutionSequence {
         if (is_last && self.is_called_as_in_vitest()) || self.count_is_final() {
             return;
         }
-        let failure = match self.expect_assertions {
-            ExpectAssertions::NotSet => None,
-            ExpectAssertions::AtLeastOne if self.expect_call_count == 0 => Some(Result::FailBecauseExpectedHasAssertions),
-            ExpectAssertions::Exact(expected) if self.expect_call_count != expected => {
-                Some(Result::FailBecauseExpectedAssertionCount)
-            }
-            ExpectAssertions::AtLeastOne | ExpectAssertions::Exact(_) => {
-                // A count that is met when the callback of a "vitest" test ends stays met, whatever its hooks assert.
-                if !is_last {
-                    self.expect_assertions = ExpectAssertions::NotSet;
-                }
-                None
-            }
-        };
-        let failure = failure.filter(|_| self.result.is_pass(PendingIs::PendingIsPass) && self.result != Result::Skip);
+        let failure = self.unmet_count().filter(|_| self.result.is_pass(PendingIs::PendingIsPass) && self.result != Result::Skip);
         if let Some(context) = self.test_context() {
-            let compared = failure.map(|_| (self.expect_assertions, self.expect_call_count));
-            context.count_checked(self.attempt, is_last, compared);
+            context.count_checked(self.attempt, is_last, (self.expect_assertions, self.expect_call_count), failure.is_some());
         }
         if let Some(failure) = failure {
             self.result = failure;
         }
     }
 
-    /// For a test that passed. Its callback met the count that it had then, and the check erased it. So a count that it
-    /// has now was set later, where Vitest does not check it. `test.fails` passes with the count that its callback broke.
-    pub(crate) fn has_unmet_late_count(&self) -> bool {
-        self.is_called_as_in_vitest()
-            && self.entry_mode() != ScopeMode::Fails
-            && match self.expect_assertions {
-                ExpectAssertions::NotSet => false,
-                ExpectAssertions::AtLeastOne => self.expect_call_count == 0,
-                ExpectAssertions::Exact(expected) => self.expect_call_count != expected,
+    fn unmet_count(&self) -> Option<Result> {
+        match self.expect_assertions {
+            ExpectAssertions::AtLeastOne if self.expect_call_count == 0 => Some(Result::FailBecauseExpectedHasAssertions),
+            ExpectAssertions::Exact(expected) if self.expect_call_count != expected => {
+                Some(Result::FailBecauseExpectedAssertionCount)
             }
+            ExpectAssertions::NotSet | ExpectAssertions::AtLeastOne | ExpectAssertions::Exact(_) => None,
+        }
+    }
+
+    /// Whether a test that is called as in Vitest does not meet a count that was set after its callback, where it is not checked.
+    pub(crate) fn has_unmet_late_count(&self) -> bool {
+        let at_callback_end = self.test_context().and_then(|context| context.count_at_callback_end(self.attempt));
+        at_callback_end.is_some_and(|checked| checked != self.expect_assertions) && self.unmet_count().is_some()
     }
 
     /// The expectation and the number of `expect()` calls that the check which failed this attempt compared.

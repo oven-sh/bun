@@ -845,15 +845,20 @@ describe.concurrent("test context", () => {
             afterEach(() => { expect.hasAssertions(); });
             test("not checked", ({ onTestFailed }) => { onTestFailed(() => console.log("failed, after the hooks")); });
           });
+          describe("afterEach reads the count", () => {
+            afterEach(() => { console.log("expected:", expect.getState().expectedAssertionsNumber); });
+            test("met", () => { expect.assertions(1); expect(1).toBe(1); });
+          });
         `,
       });
       expect({ log, results, errors, exitCode }).toEqual({
-        log: ["failed"],
+        log: ["failed", "expected: 1"],
         results: [
           "(fail) afterEach asserts > too few",
           "(pass) afterEach asserts > met",
           "(fail) afterEach removes the count > too late",
           "(pass) afterEach sets a count > not checked",
+          "(pass) afterEach reads the count > met",
         ],
         errors: [tooFew, tooFew],
         exitCode: 1,

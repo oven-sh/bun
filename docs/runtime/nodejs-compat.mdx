@@ -173,6 +173,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:sqlite`](https://nodejs.org/api/sqlite.html)
 
+`sqlite.db.query` diagnostics publish synchronously when a query completes or resets. Each event includes expanded SQL (or the original SQL if expansion is unavailable), the database object, and duration in nanoseconds. Nested queries publish nested events. Tracing is disabled when the channel has neither subscribers nor bound stores. Custom SQLite libraries built with `SQLITE_OMIT_TRACE` support queries without publishing diagnostics. Statements support `close()` and `Symbol.dispose`. `Database` and `Statement` alias `DatabaseSync` and `StatementSync`.
+
 🟢 Fully implemented. `backup()` runs synchronously and blocks the event loop for the duration of the copy (Node runs it on a worker thread). A `Buffer`/`Uint8Array` database path must be valid UTF-8 (Node passes the raw bytes through; Bun rejects non-UTF-8 with `ERR_INVALID_ARG_VALUE`). On macOS, Bun uses the system `libsqlite3.dylib`. `loadExtension()` requires a full SQLite build, and so do `createSession()`/`applyChangeset()` on older macOS releases. To use a full SQLite build, call `require("bun:sqlite").Database.setCustomSQLite(path)` before opening a database.
 
 ### [`node:test`](https://nodejs.org/api/test.html)

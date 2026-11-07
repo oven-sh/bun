@@ -507,6 +507,48 @@ describe("a failing custom matcher's message is thrown unchanged", () => {
   });
 });
 
+// The hint names the parameters of the matcher, read from its text. A parameter list that holds a comment is printed as it is written.
+describe("a custom matcher whose parameter list holds comments", () => {
+  const matchers = {
+    _toHaveCommentedParameters(received, /* what it should be */ expected, other /* optional */) {
+      return { pass: true };
+    },
+    _toHaveCommentedLines(
+      received,
+      // what it should be
+      expected,
+      ...rest // the others
+    ) {
+      return { pass: true };
+    },
+    _toHaveOneCommentedParameter(received /* alone */) {
+      return { pass: true };
+    },
+  };
+  expect.extend(matchers);
+
+  test.skipIf(!isBun)("has a hint of the names alone", () => {
+    const listOf = matcher => String(matcher).slice(String(matcher).indexOf("("), String(matcher).indexOf(")") + 1);
+    expect(Object.values(matchers).map(listOf)).toEqual([
+      "(received, /* what it should be */ expected, other /* optional */)",
+      "(\n      received,\n      // what it should be\n      expected,\n      ...rest // the others\n    )",
+      "(received /* alone */)",
+    ]);
+    const hintOf = name => {
+      try {
+        /** @type {any} */ (expect(1).resolves)[name](2);
+      } catch (error) {
+        return Bun.stripANSI(error.message).split("\n")[0];
+      }
+    };
+    expect(Object.keys(matchers).map(hintOf)).toEqual([
+      "expect(received).resolves._toHaveCommentedParameters(expected, other)",
+      "expect(received).resolves._toHaveCommentedLines(expected, ...rest)",
+      "expect(received).resolves._toHaveOneCommentedParameter()",
+    ]);
+  });
+});
+
 describe("MatcherContext", () => {
   describe("utils", () => {
     test("RECEIVED_COLOR is a function", () => {

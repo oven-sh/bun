@@ -840,6 +840,29 @@ describe.concurrent("Bun REPL", () => {
     });
   });
 
+  // As in a module: a dependency injector reads `/* token */ name` out of `fn.toString()`.
+  describe("a parameter list that holds a comment", () => {
+    test("is printed as it is written", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "function declared(/* one */ a, /* two */ b) {}",
+        "String(declared)",
+        "String((/* arrow */ a) => a)",
+        "class Klass { method(/* m */ a) {} }",
+        "String(Klass.prototype.method)",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "undefined",
+        '"function declared(/* one */ a, /* two */ b) {}"',
+        '"(/* arrow */ a) => a"',
+        "[class Klass]",
+        '"method(/* m */ a) {}"',
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("-e / --eval and -p / --print", () => {
     async function runReplWith(args: string[]) {
       await using proc = Bun.spawn({
@@ -876,6 +899,13 @@ describe.concurrent("Bun REPL", () => {
     test("-p prints the result and exits", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-p", "1 + 1"]);
       expect(stdout).toBe("2\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-p prints a parameter list that holds a comment as it is written", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith(["-p", "String(function (/* token */ a) {})"]);
+      expect(stdout).toBe('"function(/* token */ a) {}"\n');
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });

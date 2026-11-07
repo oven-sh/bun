@@ -2623,6 +2623,7 @@ pub mod runtime;
 pub mod ast_result;
 pub mod import_record;
 pub mod loader;
+pub mod parameter_list_as_written;
 pub mod target;
 
 pub use ast_result::{
@@ -2631,6 +2632,7 @@ pub use ast_result::{
 };
 pub use import_record::{Flags as ImportRecordFlags, ImportRecord, Tag as ImportRecordTag};
 pub use loader::{Loader, LoaderHashTable, SideEffects};
+pub use parameter_list_as_written::ParameterListsAsWritten;
 pub use target::Target;
 pub mod transpiler_cache;
 // Glob re-export: `link_interface!` emits `#[doc(hidden)]` type aliases that

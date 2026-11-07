@@ -419,10 +419,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// This assumes that the open parenthesis has already been parsed by the caller
+    /// This assumes that the open parenthesis, which is at `open_paren_loc`, has already been parsed by the caller
     pub(crate) fn parse_paren_expr(
         &mut self,
         loc: bun_ast::Loc,
+        open_paren_loc: bun_ast::Loc,
         level: Level,
         opts: ParenExprOpts,
     ) -> Result<Expr, Error> {
@@ -603,6 +604,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
+                if p.lexer.has_comment_after(open_paren_loc) {
+                    p.record_parameter_list_as_written(loc, open_paren_loc);
+                }
                 let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
                 arrow.is_async = opts.is_async;
                 arrow.has_rest_arg = spread_range.len > 0;
@@ -1717,9 +1721,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "async()"
                 // "async () => {}"
                 T::TOpenParen => {
+                    let open_paren_loc = p.lexer.loc();
                     p.lexer.next()?;
                     return p.parse_paren_expr(
                         async_range.loc,
+                        open_paren_loc,
                         level,
                         ParenExprOpts {
                             is_async: true,
@@ -1741,9 +1747,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             )? {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
+                                let open_paren_loc = p.lexer.loc();
                                 p.lexer.next()?;
                                 return p.parse_paren_expr(
                                     async_range.loc,
+                                    open_paren_loc,
                                     level,
                                     ParenExprOpts {
                                         is_async: true,

@@ -305,6 +305,33 @@ describe("transpiler cache", () => {
     );
     expect(newCacheCount()).toBe(0);
   });
+  test("a parameter list that holds a comment is the same from the cache", async () => {
+    // Above MINIMUM_CACHE_SIZE, so the second run prints what the first one stored.
+    const padding = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+    writeFileSync(
+      join(temp_dir, "a.js"),
+      `const text = String(function (/* token */ a) {});\nconsole.log(text.slice(text.indexOf("("), text.indexOf(")") + 1));` +
+        padding,
+    );
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("(/* token */ a)");
+    expect(newCacheCount()).toBe(1);
+
+    // A run that does not take the entry writes it again. A cache hit reads the window stream of the source map only
+    // to map a position (see "cached sourcemap with a corrupted body"), so other bytes there stay if the run took the entry.
+    const entry = join(cache_dir, readdirSync(cache_dir)[0]);
+    const marked = readFileSync(entry);
+    const sourceMapAt = Number(marked.readBigUInt64LE(54));
+    const sourceMapEnd = sourceMapAt + Number(marked.readBigUInt64LE(62));
+    const streamAt = sourceMapAt + marked.readUInt32LE(sourceMapAt + 28);
+    expect(streamAt).toBeLessThan(sourceMapEnd);
+    expect(sourceMapEnd).toBeLessThanOrEqual(marked.length);
+    marked.fill(0xff, streamAt, sourceMapEnd);
+    writeFileSync(entry, marked);
+
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("(/* token */ a)");
+    expect(readFileSync(entry).equals(marked)).toBeTrue();
+    expect(newCacheCount()).toBe(0);
+  });
   test("--feature flag invalidates cache", () => {
     // feature() can only appear in an if/ternary, so wrap it
     const code = `import { feature } from "bun:bundle";\nif (feature("SUPER_SECRET")) console.log("enabled"); else console.log("disabled");`;

@@ -1086,6 +1086,45 @@ describe.concurrent("the original of a mocked module", () => {
       ["--preload", "./preload.ts", ...args],
     );
   });
+
+  // The factory's text is searched for a mention of the original. A parameter list that holds a comment is printed as it is written, unless the list would be such a mention.
+  test("a comment in a parameter list is no mention of the original", async () => {
+    const names = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+    const original = (name: string) => `globalThis.loaded_${name} = true; export const value = "real";`;
+    await expectFixturesToPass(
+      {
+        ...Object.fromEntries(names.map(name => [`${name}.ts`, original(name)])),
+        "comment.test.ts": `
+          import { expect, test, vi } from "vitest";
+          ${names.map(name => `import { value as ${name} } from "./${name}";`).join("\n")}
+
+          vi.mock("./a", (/* importOriginal */) => ({ value: "mocked" }));
+          vi.mock("./b", async (/* importOriginal */) => ({ value: "mocked" }));
+          vi.mock("./c", function (/* importOriginal */) { return { value: "mocked" }; });
+          vi.mock("./d", async function (/* importOriginal */) { return { value: "mocked" }; });
+          vi.mock("./e", (
+            // importOriginal
+          ) => ({ value: "mocked" }));
+          vi.mock("./f", () => ({ value: "mocked", helper: (/* importOriginal */ x) => x }));
+          vi.mock("./g", () => ({ value: "mocked", helper(x /* see vi.importActual("./g") */) {} }));
+          vi.mock("./h", () => ({ value: "mocked", helper: function (/* not jest.requireActual("./h") */ x) {} }));
+          vi.mock("./i", (/* all of them */ ...importOriginal) => ({ value: "mocked" }));
+          vi.mock("./j", (/* nothing */) => ({ value: "mocked", importOriginal: 1 }));
+
+          test("a parameter or a property of that name is one", () => {
+            expect([String((/* importOriginal */) => 1), String((/* another comment */) => 1)]).toEqual([
+              "() => 1",
+              "(/* another comment */) => 1",
+            ]);
+            expect([${names.join(", ")}]).toEqual(Array(${names.length}).fill("mocked"));
+            const loaded = Object.keys(globalThis).filter(key => key.startsWith("loaded_"));
+            expect(loaded.sort()).toEqual(["loaded_i", "loaded_j"]);
+          });
+        `,
+      },
+      1,
+    );
+  });
 });
 
 describe.concurrent("a module mocked without a factory", () => {

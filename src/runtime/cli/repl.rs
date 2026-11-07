@@ -2147,6 +2147,7 @@ impl<'a> Repl<'a> {
             bun_ast::Loader::Tsx,
         );
         opts.repl_mode = true;
+        opts.keep_parameter_lists_as_written = true;
         opts.features.dead_code_elimination = false; // REPL needs all code
         opts.features.top_level_await = true; // Enable top-level await in REPL
         // Keep `lower_using` at its default (true) here even though JavaScriptCore
@@ -2222,6 +2223,7 @@ impl<'a> Repl<'a> {
             &source,
             bun_js_printer::Options {
                 mangled_props: None,
+                parameter_lists_as_written: ast.kept_parameter_lists(),
                 ..Default::default()
             },
         )

@@ -4348,15 +4348,17 @@ if (isBun) {
         });
 
         test("mockReset(), mockRestore() and vi.resetAllMocks() go back to that name", () => {
-          const nameAfter = (original, reset) => {
-            const spy = vi.spyOn(holding(original), "key").mockName("given");
-            expect(both(spy)).toEqual([spy.name, "given"]);
-            reset(spy);
-            return both(spy);
-          };
-          for (const reset of [spy => spy.mockReset(), spy => spy.mockRestore(), () => vi.resetAllMocks()]) {
-            expect(nameAfter(nameless(), reset)).toEqual(["Mock", "Mock"]);
-            expect(nameAfter(declared.bind(null), reset)).toEqual(["bound declared", "bound declared"]);
+          const resets = [spy => spy.mockReset(), spy => spy.mockRestore(), () => vi.resetAllMocks()];
+          for (const [original, name] of [
+            [nameless, "Mock"],
+            [() => declared.bind(null), "bound declared"],
+          ]) {
+            for (const reset of resets) {
+              const spy = vi.spyOn(holding(original()), "key").mockName("given");
+              expect(both(spy)).toEqual([name, "given"]);
+              reset(spy);
+              expect(both(spy)).toEqual([name, name]);
+            }
           }
           expect(both(vi.spyOn(holding(nameless()), "key").mockName(""))).toEqual(["Mock", "vi.fn()"]);
         });

@@ -123,7 +123,7 @@ pub(crate) fn random_uuid_v7<'a>(
         return Err(heap.invalid_arguments(format_args!("timestamp must be a number or Date")));
     };
 
-    let (timestamp, timestamp_source): (u64, uuid::TimestampSource) = match timestamp {
+    let timestamp: Option<u64> = match timestamp {
         UUIDTimestamp::Time(time) => {
             // UUIDv7's unix_ts_ms field is 48 bits (RFC 9562 §5.7).
             const MAX_TIMESTAMP: i64 = (1i64 << 48) - 1;
@@ -149,21 +149,18 @@ pub(crate) fn random_uuid_v7<'a>(
                     "The \"timestamp\" property must be of type integer. Received number"
                 )));
             }
-            (time as u64, uuid::TimestampSource::Explicit)
+            Some(time as u64)
         }
-        UUIDTimestamp::Clock => (
-            u64::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast"),
-            uuid::TimestampSource::Clock,
-        ),
+        UUIDTimestamp::Clock => None,
     };
 
     let entropy = VirtualMachine::get().as_mut().rare_data().entropy_slice(10);
+    let entropy = <[u8; 10]>::try_from(&entropy[0..10]).unwrap();
 
-    let uuid = UUID7::init(
-        timestamp,
-        <[u8; 10]>::try_from(&entropy[0..10]).unwrap(),
-        timestamp_source,
-    );
+    let uuid = match timestamp {
+        Some(timestamp) => UUID7::at(timestamp, entropy),
+        None => UUID7::now(entropy),
+    };
 
     match encoding {
         Encoding::Hex => {

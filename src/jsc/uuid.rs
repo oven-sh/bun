@@ -100,24 +100,23 @@ pub struct UUID7 {
 // PORTING.md §Concurrency: `bun_threading::Guarded` has a `const fn new()` so
 // it can back a `static` directly (no lazy init).
 static UUID_V7_LOCK: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
-// State for the default (Date.now()) path, where the RFC 9562 §6.2 monotonic
-// clamp applies.
+// State for `UUID7::now`, where the RFC 9562 §6.2 monotonic clamp applies.
+// Every VM in the process shares it and nothing resets it.
 static UUID_V7_LAST_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
 static UUID_V7_COUNTER: AtomicU32 = AtomicU32::new(0);
-// Separate state for caller-supplied timestamps so an explicit call neither
-// observes nor rebases the default path's monotonic state.
+// Separate state for `UUID7::at`, so a caller-supplied timestamp neither
+// observes nor rebases the monotonic state of `UUID7::now`.
 static UUID_V7_EXPLICIT_REQUESTED: AtomicU64 = AtomicU64::new(u64::MAX);
 static UUID_V7_EXPLICIT_EMITTED: AtomicU64 = AtomicU64::new(0);
 static UUID_V7_EXPLICIT_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-/// Where the `timestamp` passed to [`UUID7::init`] came from.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum TimestampSource {
-    /// Read from the generator's own clock. The RFC 9562 §6.2 monotonic clamp
-    /// applies: the emitted timestamp never moves backward.
+enum TimestampSource {
+    /// [`UUID7::now`]. The RFC 9562 §6.2 monotonic clamp applies: the emitted
+    /// timestamp never moves backward.
     Clock,
-    /// Supplied by the caller. The value is encoded verbatim and does not
-    /// touch the clock-path state.
+    /// [`UUID7::at`]. The value is encoded verbatim and does not touch the
+    /// clock-path state.
     Explicit,
 }
 
@@ -173,12 +172,40 @@ impl UUID7 {
         (ts, count)
     }
 
-    pub fn init(timestamp: u64, random: [u8; 10], source: TimestampSource) -> UUID7 {
+    /// The current time, ordered after every earlier `now()` in the process
+    /// (RFC 9562 §6.2).
+    ///
+    /// It takes no timestamp on purpose. The timestamp it emits stays in
+    /// process-wide state, so it has to come from the system clock and never
+    /// from a clock that one VM has mocked (bun:test `setSystemTime()`).
+    pub fn now(random: [u8; 10]) -> UUID7 {
+        let timestamp = bun_core::time::milli_timestamp().max(0) as u64;
+        Self::init(timestamp, random, TimestampSource::Clock)
+    }
+
+    /// A caller-supplied timestamp, encoded verbatim. Calls that repeat a
+    /// timestamp increment a counter, so they stay sortable.
+    pub fn at(timestamp: u64, random: [u8; 10]) -> UUID7 {
+        Self::init(timestamp, random, TimestampSource::Explicit)
+    }
+
+    /// A timestamp and 74 random bits, which is what Node's
+    /// `crypto.randomUUIDv7()` returns. No counter and no last timestamp, so
+    /// no order within one millisecond or across a backward step of the clock.
+    pub fn stateless(timestamp: u64, random: [u8; 10]) -> UUID7 {
+        let rand_a = u16::from_le_bytes([random[8], random[9]]) & 0x0FFF;
+        Self::encode(timestamp, u32::from(rand_a), random)
+    }
+
+    fn init(timestamp: u64, random: [u8; 10], source: TimestampSource) -> UUID7 {
         // random[0..8] supplies rand_b; random[8..10] seeds the rand_a counter
         // so the seeded counter value is independent of the visible random bits.
         let seed = u16::from_le_bytes([random[8], random[9]]);
         let (timestamp, count) = Self::next(timestamp, seed, source);
+        Self::encode(timestamp, count, random)
+    }
 
+    fn encode(timestamp: u64, rand_a: u32, random: [u8; 10]) -> UUID7 {
         let mut bytes = [0u8; 16];
 
         // First 6 bytes: timestamp in big-endian
@@ -189,11 +216,11 @@ impl UUID7 {
         bytes[4] = (timestamp >> 8) as u8;
         bytes[5] = timestamp as u8;
 
-        // Byte 6: Version 7 in high nibble, top 4 bits of counter in low nibble
-        bytes[6] = (7u8 << 4) | (((count >> 8) & 0x0F) as u8);
+        // Byte 6: Version 7 in high nibble, top 4 bits of rand_a in low nibble
+        bytes[6] = (7u8 << 4) | (((rand_a >> 8) & 0x0F) as u8);
 
-        // Byte 7: Lower 8 bits of counter
-        bytes[7] = count as u8;
+        // Byte 7: Lower 8 bits of rand_a
+        bytes[7] = rand_a as u8;
 
         // Byte 8: Variant in top 2 bits, 6 bits of random
         bytes[8] = 0x80 | (random[0] & 0x3F);

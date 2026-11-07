@@ -1623,7 +1623,7 @@ pub(crate) fn vitest_use_fake_timers(
 /// What Vitest starts its clock from: `setSystemTime()`, else `Date.now()`, which can be the previous fake clock's or a test's own spy.
 #[optimize(size)]
 fn date_now_of_script(global: &JSGlobalObject) -> JsResult<f64> {
-    let builtin = || bun_jsc::cpp::JSC__JSGlobalObject__jsDateNow(global);
+    let builtin = || global.js_date_now();
     let date = Api::Date.owner(global);
     if !date.is_object()
         || (!is_active() && !bun_jsc::cpp::Bun__FakeTimers__overriddenDateNow(global).is_nan())

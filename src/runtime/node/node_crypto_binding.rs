@@ -438,19 +438,21 @@ pub(crate) fn random_uuid(heap: &JsHeap<'_>, options: &RandomUUIDOptions) -> Bun
 }
 
 pub(crate) fn random_uuid_v7(heap: &JsHeap<'_>, options: &RandomUUIDOptions) -> BunString {
-    // SAFETY: it only reads the clock and leads to the VM's entropy cache.
-    let global = unsafe { heap.global() };
-
-    // jsDateNow() is exactly what JS Date.now() returns, so the embedded
-    // timestamp is never behind a Date.now() sample taken by the caller.
-    let now_ms = global.js_date_now().max(0.0) as u64;
+    // Node reads the primordial DateNow(), which no mock of the time reaches,
+    // and keeps no counter and no last timestamp:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/random.js#L418-L448
+    // The floor of this clock is what an unmocked Date.now() returns, so the
+    // timestamp is never behind a Date.now() that the caller sampled first.
+    let now_ms = bun_jsc::cpp::JSMock__getCurrentUnixTimeMs().floor() as u64;
     let mut entropy = [0u8; 10];
     if options.disable_entropy_cache {
         boringssl::rand_bytes(&mut entropy);
     } else {
+        // SAFETY: it only leads to the VM's entropy cache.
+        let global = unsafe { heap.global() };
         entropy.copy_from_slice(&global.bun_vm().as_mut().rare_data().entropy_slice(10)[..10]);
     }
-    let uuid = UUID7::init(now_ms, entropy, bun_jsc::uuid::TimestampSource::Clock);
+    let uuid = UUID7::stateless(now_ms, entropy);
 
     let (str, bytes) = BunString::create_uninitialized_latin1(36);
     uuid.print(

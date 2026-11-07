@@ -126,22 +126,27 @@ const id = randomUUIDv7();
 
 A UUID v7 is a 128-bit value that encodes the current timestamp, a random value, and a counter. The timestamp is encoded using the most significant 48 bits, and the random value and counter are encoded using the remaining bits.
 
-The `timestamp` parameter defaults to the current time in milliseconds. When the clock moves forward, Bun reseeds the counter to a new pseudo-random integer. Bun leaves the high bit of the 12-bit counter clear when reseeding, so at least 2048 values remain before rollover. If the clock has not advanced past the last emitted timestamp, Bun reuses the last emitted timestamp and increments the counter. If that counter rolls over, Bun bumps the emitted timestamp forward instead of wrapping the counter, so the returned UUIDs stay strictly increasing (RFC 9562 §6.2). The counter is atomic and threadsafe, so calls to `Bun.randomUUIDv7()` from many Workers in the same process at the same timestamp don't produce colliding counter values.
+The `timestamp` parameter defaults to the current time of the system clock in milliseconds. When the clock moves forward, Bun reseeds the counter to a new pseudo-random integer. Bun leaves the high bit of the 12-bit counter clear when reseeding, so at least 2048 values remain before rollover. If the clock has not advanced past the last emitted timestamp, Bun reuses the last emitted timestamp and increments the counter. If that counter rolls over, Bun bumps the emitted timestamp forward instead of wrapping the counter, so the returned UUIDs stay strictly increasing (RFC 9562 §6.2). The counter is atomic and threadsafe, so calls to `Bun.randomUUIDv7()` from many Workers in the same process at the same timestamp don't produce colliding counter values.
 
-When you pass an explicit `timestamp`, Bun encodes that value verbatim and tracks a separate counter for it, so explicit-timestamp calls do not observe or alter the monotonic state used by the default path. Repeated calls with the same explicit timestamp increment that separate counter, and bump the emitted timestamp on rollover, so they stay sortable. A call with a different explicit timestamp reseeds that counter.
+An explicit `timestamp` is a `Date` or a whole number of milliseconds, from 0 to 2<sup>48</sup> - 1. When you pass an explicit `timestamp`, Bun encodes that value verbatim and tracks a separate counter for it, so explicit-timestamp calls do not observe or alter the monotonic state used by the default path. Repeated calls with the same explicit timestamp increment that separate counter, and bump the emitted timestamp on rollover, so they stay sortable. A call with a different explicit timestamp reseeds that counter.
+
+The default timestamp comes from the system clock. In `bun:test`, `setSystemTime()` and fake timers don't change it. The whole process shares the last emitted timestamp, so a mocked time would stay in the UUIDs of other Workers and of later test files. To get a UUID at the mocked time, pass a timestamp: `Bun.randomUUIDv7("hex", new Date())`. A mocked clock that doesn't move gives every such call the same timestamp, so the counter for explicit timestamps applies. That counter belongs to the process too: a later test file that passes the same timestamp continues it.
+
+`randomUUIDv7()` from `node:crypto` works as it does in Node.js. It reads the system clock too, but it keeps no counter and no last timestamp. Its other 74 bits are random. UUIDs from the same millisecond have no order, and a backward step of the system clock moves the UUIDs back with it. A `node:crypto` UUID can also sort before an older UUID from `Bun.randomUUIDv7()`. For UUIDs that sort in call order, use `Bun.randomUUIDv7()`.
 
 The final 8 bytes of the UUID, apart from the two variant bits, are a cryptographically secure random value. `Bun.randomUUIDv7()` uses the same random number generator as `crypto.randomUUID()`. That generator comes from BoringSSL. BoringSSL's randomness in turn comes from the platform-specific system random number generator, which the underlying hardware usually provides.
 
 ```ts
 namespace Bun {
-  function randomUUIDv7(encoding?: "hex" | "base64" | "base64url" = "hex", timestamp?: number = Date.now()): string;
+  // `timestamp` defaults to the current time of the system clock
+  function randomUUIDv7(encoding?: "hex" | "base64" | "base64url" = "hex", timestamp?: number | Date): string;
   /**
    * If you pass "buffer", you get a 16-byte buffer instead of a string.
    */
-  function randomUUIDv7(encoding: "buffer", timestamp?: number = Date.now()): Buffer;
+  function randomUUIDv7(encoding: "buffer", timestamp?: number | Date): Buffer;
 
   // If you only pass a timestamp, you get a hex string
-  function randomUUIDv7(timestamp?: number = Date.now()): string;
+  function randomUUIDv7(timestamp?: number | Date): string;
 }
 ```
 

@@ -1513,6 +1513,36 @@ describe("s3-server", () => {
       }
     }
   });
+
+  // An S3 file has a type only when the `type` option gives it one.
+  it("fetch() sends the type of an S3 file body, and no Content-Type when it has none", async () => {
+    const client = S3(localCredentials);
+    const key = randomUUIDv7() + ".txt";
+    await client.write(key, "Hello Bun!");
+    try {
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          return Response.json({ contentType: req.headers.get("content-type"), body: await req.text() });
+        },
+      });
+      const send = async (body: Blob) => (await fetch(server.url, { method: "POST", body })).json();
+
+      expect({
+        "no type": await send(client.file(key)),
+        "slice of no type": await send(client.file(key).slice(0, 5)),
+        "type option": await send(client.file(key, { type: "text/x" })),
+        "slice of type option": await send(client.file(key, { type: "text/x" }).slice(0, 5)),
+      }).toEqual({
+        "no type": { contentType: null, body: "Hello Bun!" },
+        "slice of no type": { contentType: null, body: "Hello" },
+        "type option": { contentType: "text/x", body: "Hello Bun!" },
+        "slice of type option": { contentType: null, body: "Hello" },
+      });
+    } finally {
+      await client.unlink(key);
+    }
+  });
 });
 
 describe.concurrent("s3 missing credentials", () => {

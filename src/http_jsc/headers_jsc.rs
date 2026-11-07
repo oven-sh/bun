@@ -28,6 +28,7 @@ pub fn from_fetch_headers(
     fetch_headers: Option<&FetchHeaders>,
     body_content_type: Option<&[u8]>,
 ) -> JsResult<Headers> {
+    debug_assert!(body_content_type.is_none_or(|ct| !ct.is_empty()));
     let (fetch_header_count, buf_len_before_content_type) =
         match fetch_headers.map(FetchHeaders::count) {
             None => (0, 0),

@@ -92,13 +92,6 @@ unsafe impl<'a> bun_threading::Linked for Task<'a> {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Id(u64);
 
-impl core::fmt::Display for Id {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Printed as its raw integer in `{}` debug logs.
-        self.0.fmt(f)
-    }
-}
-
 impl Id {
     #[inline]
     pub(crate) fn get(self) -> u64 {

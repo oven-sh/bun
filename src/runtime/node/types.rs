@@ -16,7 +16,7 @@ use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
 use crate::node::util::validators;
-use crate::webcore::{Blob, Request, Response};
+use crate::webcore::{Blob, BlobExt as _, Request, Response};
 
 pub(crate) use jsc::MarkedArrayBuffer as Buffer;
 use jsc::PinnedArrayBuffer;
@@ -87,17 +87,6 @@ pub(crate) enum StringObjects {
     Reject,
 }
 
-/// What [`BlobOrStringOrBuffer`] parsing does with a file-backed `Blob`
-/// (`Bun.file(..)`). Nothing here reads the file: an allowed one is returned
-/// as [`BlobOrStringOrBuffer::Blob`] like an in-memory blob, and its `slice()`
-/// is empty.
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum FileBlobs {
-    Allow,
-    /// Throws "File blob cannot be used here".
-    Reject,
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) enum BlobOrStringOrBuffer {
@@ -130,10 +119,10 @@ impl BlobOrStringOrBuffer {
         self.slice().len()
     }
 
-    pub(crate) fn from_js_maybe_file(
+    /// Throws for a file- or S3-backed `Blob`: nothing here reads it, and its `slice()` is empty.
+    pub(crate) fn from_js(
         global: &JSGlobalObject,
         value: JSValue,
-        file_blobs: FileBlobs,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
         // Check StringOrBuffer first because it's more common and cheaper.
         if let Some(str) = StringOrBuffer::from_js(global, value)? {
@@ -142,19 +131,12 @@ impl BlobOrStringOrBuffer {
         let Some(blob) = value.as_class_ref::<Blob>() else {
             return Ok(None);
         };
-        if file_blobs == FileBlobs::Reject && blob.needs_to_read_file() {
+        if blob.in_memory_view().is_none() {
             return Err(
                 global.throw_invalid_arguments(format_args!("File blob cannot be used here"))
             );
         }
         Ok(Some(Self::Blob(Box::new(blob.dupe()))))
-    }
-
-    pub(crate) fn from_js(
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file(global, value, FileBlobs::Reject)
     }
 
     pub(crate) fn from_js_with_encoding_value_allow_request_response(

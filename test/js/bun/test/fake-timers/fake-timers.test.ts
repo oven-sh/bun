@@ -310,6 +310,283 @@ describe("clearAllTimers", () => {
     expect(() => vi.clearAllTimers()).toThrow("Fake timers are not active");
   });
 });
+
+// A timer is in no heap while its callback runs. clearAllTimers() drops it all the same, as in Jest and Vitest.
+describe("clearAllTimers() from the callback of a timer", () => {
+  type Api = typeof vi | typeof jest;
+  const drives: Record<string, (api: Api) => unknown> = {
+    advanceTimersByTime: api => api.advanceTimersByTime(50),
+    advanceTimersToNextTimer: api => api.advanceTimersToNextTimer(3),
+    advanceTimersToNextFrame: api => api.advanceTimersToNextFrame(),
+    runOnlyPendingTimers: api => api.runOnlyPendingTimers(),
+    runAllTimers: api => api.runAllTimers(),
+    advanceTimersByTimeAsync: api => api.advanceTimersByTimeAsync(50),
+    advanceTimersToNextTimerAsync: api => api.advanceTimersToNextTimerAsync(3),
+    runOnlyPendingTimersAsync: api => api.runOnlyPendingTimersAsync(),
+    runAllTimersAsync: api => api.runAllTimersAsync(),
+  };
+  // Node.js turns a timeout whose `_repeat` is set into an interval once its callback has returned, and stops an interval whose `_repeat` is null.
+  const withRepeat = (timer: Timer, ms: number | null) =>
+    Object.assign(timer, { _repeat: ms }) as Timer & { _destroyed: boolean };
+
+  describe.each(["vi", "jest"] as const)("%s", name => {
+    const api: Api = { vi, jest }[name];
+
+    test.each(Object.keys(drives))("%s() runs the interval that calls it once", async drive => {
+      api.useFakeTimers();
+      let runs = 0;
+      const interval = setInterval(() => {
+        // Ends runAllTimers() in a build that arms the interval again.
+        if (++runs === 5) clearInterval(interval);
+        api.clearAllTimers();
+      }, 10);
+      await drives[drive](api);
+      expect({ runs, pending: api.getTimerCount() }).toEqual({ runs: 1, pending: 0 });
+    });
+  });
+
+  test.each(["next timer mode", "interval mode", "vi.waitFor()"] as const)(
+    "%s runs the interval that calls it once",
+    async advance => {
+      vi.useFakeTimers();
+      let runs = 0;
+      const ran = Promise.withResolvers<void>();
+      setInterval(() => (runs++, vi.clearAllTimers(), ran.resolve()), 10);
+      if (advance === "next timer mode") vi.setTimerTickMode("nextTimerAsync");
+      else if (advance === "interval mode") vi.setTimerTickMode("interval", 1);
+      else await vi.waitFor(() => expect(runs).toBe(1), { interval: 10 });
+      await ran.promise;
+      expect({ runs, pending: vi.getTimerCount() }).toEqual({ runs: 1, pending: 0 });
+    },
+  );
+
+  test("drops the timers beside the interval, and keeps what its callback sets afterwards", () => {
+    vi.useFakeTimers();
+    const ran: string[] = [];
+    setInterval(() => ran.push("same deadline, set earlier"), 10);
+    setInterval(() => {
+      ran.push("clears");
+      vi.clearAllTimers();
+      setTimeout(() => ran.push("set after the clear"), 5);
+    }, 10);
+    setInterval(() => ran.push("same deadline, set later"), 10);
+    setInterval(() => ran.push("later deadline"), 15);
+    vi.advanceTimersByTime(50);
+    expect({ ran, pending: vi.getTimerCount() }).toEqual({
+      ran: ["same deadline, set earlier", "clears", "set after the clear"],
+      pending: 0,
+    });
+  });
+
+  test("an interval that calls it on its third run has run three times", () => {
+    vi.useFakeTimers();
+    let runs = 0;
+    setInterval(() => ++runs === 3 && vi.clearAllTimers(), 10);
+    vi.advanceTimersByTime(100);
+    expect({ runs, pending: vi.getTimerCount() }).toEqual({ runs: 3, pending: 0 });
+  });
+
+  test("drops an interval whose callback calls it twice and then throws", () => {
+    vi.useFakeTimers();
+    let runs = 0;
+    setInterval(() => {
+      runs++;
+      vi.clearAllTimers();
+      vi.clearAllTimers();
+      throw new Error("after the clear");
+    }, 10);
+    expect(() => vi.advanceTimersByTime(50)).toThrow("after the clear");
+    expect({ runs, pending: vi.getTimerCount() }).toEqual({ runs: 1, pending: 0 });
+  });
+
+  test("drops an interval that is running further up the stack", () => {
+    vi.useFakeTimers();
+    const ran: string[] = [];
+    setInterval(() => {
+      ran.push("outer");
+      setTimeout(() => (ran.push("inner"), vi.clearAllTimers()), 5);
+      vi.advanceTimersByTime(5);
+    }, 10);
+    vi.advanceTimersByTime(50);
+    expect({ ran, pending: vi.getTimerCount() }).toEqual({ ran: ["outer", "inner"], pending: 0 });
+  });
+
+  // What the callback sets after the clear is a new timer. Each later run of it is a run that nothing dropped.
+  describe.each([
+    ["advanceTimersByTime(50)", () => vi.advanceTimersByTime(50), 4],
+    // Runs up to the timeout of 45 ms that is pending when it is called.
+    ["runOnlyPendingTimers()", () => vi.runOnlyPendingTimers(), 3],
+  ] as const)("%s", (_, drive, runsOfLater) => {
+    test.each(["setInterval", "setTimeout with _repeat"] as const)(
+      "keeps on running a %s that the callback sets afterwards",
+      schedule => {
+        vi.useFakeTimers();
+        let clears = 0;
+        let later = 0;
+        setTimeout(() => {}, 45);
+        setInterval(() => {
+          clears++;
+          vi.clearAllTimers();
+          if (schedule === "setInterval") setInterval(() => later++, 10);
+          else
+            withRepeat(
+              setTimeout(() => later++, 10),
+              10,
+            );
+        }, 10);
+        drive();
+        expect({ clears, later, pending: vi.getTimerCount() }).toEqual({ clears: 1, later: runsOfLater, pending: 1 });
+      },
+    );
+  });
+
+  // A timer that its callback arms again after the clear is a new pending timer, as in Jest and Vitest.
+  test.each(["setInterval", "setTimeout"] as const)("keeps a %s() that calls refresh() after it", schedule => {
+    vi.useFakeTimers();
+    let runs = 0;
+    const timer = globalThis[schedule](() => {
+      vi.clearAllTimers();
+      if (++runs < 3) timer.refresh();
+    }, 10);
+    vi.advanceTimersByTime(50);
+    expect({ runs, pending: vi.getTimerCount() }).toEqual({ runs: 3, pending: 0 });
+  });
+
+  // The other way round for a callback that swaps the clock: its timer goes with the old clock.
+  test.each(["setInterval", "setTimeout"] as const)(
+    "drops a %s() that calls refresh() after useFakeTimers()",
+    schedule => {
+      vi.useFakeTimers();
+      let runs = 0;
+      const timer = globalThis[schedule](() => {
+        runs++;
+        vi.useFakeTimers();
+        timer.refresh();
+      }, 10) as Timer & { _destroyed: boolean };
+      vi.advanceTimersByTime(50);
+      const pending = vi.getTimerCount();
+      vi.advanceTimersByTime(50);
+      expect({ runs, pending, destroyed: timer._destroyed }).toEqual({ runs: 1, pending: 0, destroyed: true });
+    },
+  );
+
+  test("a timeout whose callback called useFakeTimers() can't be armed again on the new clock", () => {
+    vi.useFakeTimers();
+    let runs = 0;
+    const timeout = setTimeout(() => (runs++, vi.useFakeTimers()), 10);
+    vi.advanceTimersByTime(10);
+    timeout.refresh();
+    const pending = vi.getTimerCount();
+    vi.advanceTimersByTime(50);
+    expect({ runs, pending }).toEqual({ runs: 1, pending: 0 });
+  });
+
+  test.each(["clearAllTimers", "useRealTimers", "useFakeTimers"] as const)(
+    "a timeout with _repeat is not armed again after %s()",
+    drop => {
+      vi.useFakeTimers();
+      let runs = 0;
+      const timeout = withRepeat(
+        setTimeout(() => (runs++, vi[drop]()), 10),
+        10,
+      );
+      vi.advanceTimersByTime(50);
+      expect({ runs, destroyed: timeout._destroyed, hasRef: timeout.hasRef() }).toEqual({
+        runs: 1,
+        destroyed: true,
+        hasRef: false,
+      });
+    },
+  );
+
+  test("stops a Bun.cron() job whose tick calls it", () => {
+    vi.useFakeTimers();
+    let ticks = 0;
+    Bun.cron("* * * * *", () => (ticks++, void vi.clearAllTimers()));
+    vi.advanceTimersByTime(5 * 60_000);
+    expect({ ticks, pending: vi.getTimerCount() }).toEqual({ ticks: 1, pending: 0 });
+  });
+
+  test("keeps a Bun.cron() job that the tick sets afterwards", () => {
+    vi.useFakeTimers();
+    let clears = 0;
+    let later = 0;
+    Bun.cron("* * * * *", () => {
+      clears++;
+      vi.clearAllTimers();
+      Bun.cron("* * * * *", () => void later++);
+    });
+    vi.advanceTimersByTime(3 * 60_000);
+    expect({ clears, later, pending: vi.getTimerCount() }).toEqual({ clears: 1, later: 2, pending: 1 });
+  });
+
+  test("stops a Bun.cron() job whose tick has not settled yet", async () => {
+    vi.useFakeTimers();
+    let ticks = 0;
+    const tick = Promise.withResolvers<void>();
+    Bun.cron("* * * * *", () => (ticks++, tick.promise));
+    vi.advanceTimersByTime(60_000);
+    vi.clearAllTimers();
+    tick.resolve();
+    // The job's own reaction to the tick runs before this one.
+    await tick.promise;
+    vi.advanceTimersByTime(5 * 60_000);
+    expect({ ticks, pending: vi.getTimerCount() }).toEqual({ ticks: 1, pending: 0 });
+  });
+
+  test.each(["setInterval", "setTimeout with _repeat"] as const)(
+    "a %s on the real clock goes on after it",
+    async schedule => {
+      vi.useFakeTimers();
+      let runs = 0;
+      const third = Promise.withResolvers<void>();
+      const callback = () => (vi.clearAllTimers(), ++runs === 3 && third.resolve());
+      const timer =
+        schedule === "setInterval" ? saved.setInterval(callback, 1) : withRepeat(saved.setTimeout(callback, 1), 1);
+      try {
+        await third.promise;
+      } finally {
+        saved.clearInterval(timer);
+      }
+    },
+  );
+
+  test("releases the timers it drops", () => {
+    const rounds = 30;
+    const arms: (() => unknown)[] = [
+      () => setInterval(() => vi.clearAllTimers(), 10),
+      () =>
+        withRepeat(
+          setTimeout(() => vi.clearAllTimers(), 10),
+          10,
+        ),
+      () => setInterval(() => (setTimeout(() => vi.clearAllTimers(), 5), vi.advanceTimersByTime(5)), 10),
+      () => setInterval(() => vi.useRealTimers(), 10),
+      () => {
+        const interval = setInterval(() => (vi.clearAllTimers(), withRepeat(interval, null)), 10);
+      },
+      () => {
+        const interval = setInterval(() => (withRepeat(interval, null), vi.useFakeTimers()), 10);
+      },
+    ];
+    const liveTimeouts = () => {
+      Bun.gc(true);
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.Timeout ?? 0;
+    };
+    const before = liveTimeouts();
+    for (const arm of arms) {
+      for (let round = 0; round < rounds; round++) {
+        vi.useFakeTimers();
+        arm();
+        vi.advanceTimersByTime(10);
+      }
+    }
+    vi.useRealTimers();
+    // An arm that leaks leaves `rounds` of them.
+    expect(liveTimeouts() - before).toBeLessThan(rounds / 2);
+  });
+});
 describe("AbortSignal.timeout", () => {
   const N = 500;
 
@@ -807,6 +1084,96 @@ describe("Bun.cron() job dropped from the fake heap", () => {
       });
     },
   );
+
+  // The job is in no heap while its tick runs, or while the promise that its tick returned is pending.
+  const drops = ["jest.clearAllTimers()", "jest.useRealTimers()", "jest.useFakeTimers()"];
+  const reported = `process.on("uncaughtException", () => {}); process.on("unhandledRejection", () => {});`;
+  test.concurrent.each([
+    ...drops.map(drop => [
+      `its own tick calls ${drop}`,
+      `Bun.cron("* * * * *", () => { ticks++; ${drop}; });
+       jest.advanceTimersByTime(3 * 60_000);`,
+    ]),
+    ...drops.map(drop => [
+      `${drop} while its tick is pending`,
+      `const tick = Promise.withResolvers();
+       Bun.cron("* * * * *", () => (ticks++, tick.promise));
+       jest.advanceTimersByTime(60_000);
+       ${drop};
+       tick.resolve();
+       await tick.promise;`,
+    ]),
+    ...drops.map(drop => [
+      `${drop} while its tick never settles`,
+      `Bun.cron("* * * * *", () => (ticks++, new Promise(() => {})));
+       jest.advanceTimersByTime(60_000);
+       ${drop};`,
+    ]),
+    ...drops.map(drop => [
+      `${drop} that drops the Bun.sleep() its tick awaits`,
+      `Bun.cron("* * * * *", async () => { ticks++; await Bun.sleep(1000); });
+       jest.advanceTimersToNextTimer();
+       ${drop};`,
+    ]),
+    [
+      "its own tick calls jest.clearAllTimers() and throws",
+      `${reported}
+       Bun.cron("* * * * *", () => { ticks++; jest.clearAllTimers(); throw new Error("from the tick"); });
+       jest.advanceTimersByTime(3 * 60_000);`,
+    ],
+    [
+      "its own async tick calls jest.clearAllTimers() and throws",
+      `${reported}
+       Bun.cron("* * * * *", async () => { ticks++; jest.clearAllTimers(); throw new Error("from the tick"); });
+       jest.advanceTimersByTime(3 * 60_000);`,
+    ],
+    [
+      "jest.clearAllTimers() while its tick is pending, and the tick then rejects",
+      `${reported}
+       const tick = Promise.withResolvers();
+       Bun.cron("* * * * *", () => (ticks++, tick.promise));
+       jest.advanceTimersByTime(60_000);
+       jest.clearAllTimers();
+       tick.reject(new Error("from the tick"));
+       await tick.promise.catch(() => {});`,
+    ],
+    [
+      "the uncaughtException handler of its tick calls jest.clearAllTimers()",
+      `process.on("uncaughtException", () => jest.clearAllTimers());
+       Bun.cron("* * * * *", () => { ticks++; throw new Error("from the tick"); });
+       jest.advanceTimersByTime(3 * 60_000);`,
+    ],
+    [
+      "the unhandledRejection handler of its tick calls jest.clearAllTimers()",
+      `process.on("unhandledRejection", () => jest.clearAllTimers());
+       Bun.cron("* * * * *", () => { ticks++; return Promise.reject(new Error("from the tick")); });
+       jest.advanceTimersByTime(3 * 60_000);`,
+    ],
+  ])("does not keep the process alive after %s", async (_, schedule) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { jest } = Bun.jest();
+         jest.useFakeTimers();
+         let ticks = 0;
+         ${schedule}
+         console.log("ticks", ticks);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      // A child that hangs (the bug) is killed rather than left behind.
+      timeout: 10_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "ticks 1\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });
 describe("isFakeTimers", () => {
   test("returns true when fake timers are active", () => {

@@ -21,7 +21,7 @@ const ArrayPrototypeSortFn = Array.prototype.sort;
 const ArrayPrototypeSpliceFn = Array.prototype.splice;
 const ArrayPrototypeToSortedFn = Array.prototype.toSorted;
 const ArrayPrototypeUnshiftFn = Array.prototype.unshift;
-const DateNowFn: () => number = $cpp("DatePrimordials.cpp", "Bun::createDateNow");
+const DateNowFn = $DateNow;
 const FunctionPrototypeBindFn = Function.prototype.bind;
 const JSONStringifyFn: (this: JSON, value: unknown, replacer?: null, space?: string | number) => string =
   JSON.stringify;

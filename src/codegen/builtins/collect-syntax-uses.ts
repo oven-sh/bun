@@ -25,9 +25,10 @@ function hostSourceFiles(bunRoot: string): string[] {
 }
 
 export function collectSyntaxUses(bunRoot: string, engineFiles: readonly ModelEngineFile[]): SyntaxUses {
+  // A define that reads `@natives` is for `bun run` alone (builtins-manifest.ts): the compiler sees the name.
   const definedNames = new Set(
     Object.keys(define)
-      .filter(key => key.startsWith(intrinsicDefinePrefix))
+      .filter(key => key.startsWith(intrinsicDefinePrefix) && !define[key].startsWith("__intrinsic__natives."))
       .map(key => key.slice(intrinsicDefinePrefix.length)),
   );
   const names = new Map<string, Set<IntrinsicPosition>>();

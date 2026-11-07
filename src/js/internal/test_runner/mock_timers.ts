@@ -24,7 +24,7 @@ interface MockableTimers {
 const nodeTimersPromises = require("node:timers/promises");
 const EventEmitter = require("node:events");
 
-const DatePrototypeGetTime: () => number = $cpp("DatePrimordials.cpp", "Bun::createDatePrototypeGetTime");
+const DatePrototypeGetTime = $DatePrototypeGetTime;
 const FunctionPrototypeToString = Function.prototype.toString;
 
 // require('internal/timers').TIMEOUT_MAX in Node

@@ -120,7 +120,7 @@ const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
 const MathMin = Math.min;
 const MathFloor = Math.floor;
-const DateNow = Date.now;
+const DateNow = $DateNow;
 
 let cluster;
 

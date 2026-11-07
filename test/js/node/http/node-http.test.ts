@@ -5,7 +5,19 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, isASAN, isCI, isDebug, isWindows, randomPort, tls as tlsCert } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  exampleSite,
+  isASAN,
+  isCI,
+  isDebug,
+  isWindows,
+  randomPort,
+  runInBunAndNode,
+  tempDir,
+  tls as tlsCert,
+} from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
@@ -7921,4 +7933,48 @@ it("a listener can cancel Readable.toWeb(req) and end the response in the same t
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr }).toEqual({ stdout: "keep-alive timeout 4000\n200 ok\n", stderr: "" });
   expect(exitCode).toBe(0);
+});
+
+// Node.js stamps the idle time of a keep-alive socket with a primordial. The fixture also runs under Node.js when it is installed.
+it("a keep-alive server answers with the engine's clock when Date is mocked at the first load of node:http", async () => {
+  using dir = tempDir("http-keep-alive-mocked-date", {
+    "fixture.cjs": `
+      const RealDate = Date;
+      const now = Date.now;
+      let calls = 0;
+      let reads = 0;
+      if (process.argv[2] === "Date.now") Date.now = () => (calls++, 1700000000000);
+      else Object.defineProperty(globalThis, "Date", { configurable: true, get: () => (reads++, () => calls++) });
+
+      const http = require("node:http");
+      const server = http.createServer((request, response) => {
+        // The Date header reads the clock anew for each response, so it is not a read at the first load.
+        response.sendDate = false;
+        response.end("ok");
+      });
+      server.listen(0, "127.0.0.1", async () => {
+        const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+        const get = () =>
+          new Promise((resolve, reject) => {
+            http
+              .get({ host: "127.0.0.1", port: server.address().port, agent }, response => {
+                response.resume();
+                response.on("end", () => resolve(response.statusCode));
+              })
+              .on("error", reject);
+          });
+        const whileMocked = [await get(), await get(), await get()];
+        RealDate.now = now;
+        Object.defineProperty(globalThis, "Date", { configurable: true, writable: true, value: RealDate });
+        const afterRestore = [await get(), await get(), await get()];
+        console.log(JSON.stringify({ whileMocked, afterRestore, calls, reads }));
+        agent.destroy();
+        server.close();
+      });
+    `,
+  });
+  // Date.now replaced, and the global Date replaced (a getter counts the reads). Three responses over one connection in each phase.
+  const runs = await runInBunAndNode(String(dir), "fixture.cjs", ["Date.now", "Date"], "26.3.0");
+  const stdout = `{"whileMocked":[200,200,200],"afterRestore":[200,200,200],"calls":0,"reads":0}`;
+  expect(runs).toEqual(runs.map(({ exe, arg }) => ({ exe, arg, stdout, stderr: "", exitCode: 0 })));
 });

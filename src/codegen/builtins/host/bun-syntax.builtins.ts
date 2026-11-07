@@ -100,6 +100,10 @@ export default b.declarations(
 
   b.intrinsic("Array", "Value", builtin("Array")),
   b.intrinsic("Buffer", "Value", builtin("Buffer")),
+  b.intrinsic("DateNow", "Value", builtin("Date.now")),
+  b.intrinsic("DatePrototypeGetTime", "Value", builtin("Date.prototype.getTime")),
+  b.intrinsic("DatePrototypeToISOString", "Value", builtin("Date.prototype.toISOString")),
+  b.intrinsic("DatePrototypeToString", "Value", builtin("Date.prototype.toString")),
   b.intrinsic("getPrototypeOf", "Call", builtin("Object.getPrototypeOf")),
   b.intrinsic("isArray", "Call", builtin("Array.isArray")),
   b.intrinsic("isArray", "Value", builtin(b.linkTimeConstantPath("isArray"))),

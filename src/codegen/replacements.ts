@@ -126,11 +126,24 @@ export const nativeFunctions = [
   "queueMicrotask",
 ];
 
+// `$DateNow` becomes `@natives.DateNow`: a copy of the engine's `Date.now`, whatever script has stored on `Date` or `Date.prototype`.
+export const dateFunctions = ["DateNow", "DatePrototypeGetTime", "DatePrototypeToISOString", "DatePrototypeToString"];
+
 /** The defines for globalsToPrefix and nativeGlobals don't apply to `const { Blob } = globalThis`. */
 export function assertNoDestructuredGlobalThis(source: string, file: string) {
   if (/}\s*=\s*globalThis\b/.test(source)) {
     throw new Error(
       `${file}: do not destructure globalThis, script may have replaced its properties. Write the bare name (\`Blob\`): the bundler turns it into a read that script cannot reach, see nativeGlobals in src/codegen/replacements.ts`,
+    );
+  }
+}
+
+/** A built-in module first runs after script, so `const now = Date.now` keeps a mock that is on at that moment. `code` has no comments. */
+export function assertNoCapturedDateFunction(code: string, file: string) {
+  const capture = /\bDate\.now\b(?!\s*\()|\bDate\.prototype\b/.exec(code);
+  if (capture) {
+    throw new Error(
+      `${file}: \`${capture[0]}\` is whatever script has stored there when this module first runs. Write ${dateFunctions.map(name => `\`$${name}\``).join(", ")}, or add the member to dateFunctions in src/codegen/replacements.ts`,
     );
   }
 }
@@ -214,6 +227,10 @@ for (const name of nativeGlobals) {
 
 for (const name of nativeFunctions) {
   define[name] = "__intrinsic__natives." + name;
+}
+
+for (const name of dateFunctions) {
+  define["$" + name] = "__intrinsic__natives." + name;
 }
 
 for (const key in define) {

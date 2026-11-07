@@ -57,11 +57,11 @@ show("Array", Array, "length,name,prototype,of,isArray,fromAsync,from,Symbol(Sym
 show("BigInt", BigInt, "length,name,prototype,asUintN,asIntN");
 show("BigInt.prototype", BigInt.prototype, "constructor,valueOf,toString,toLocaleString,Symbol(Symbol.toStringTag)");
 show("Boolean.prototype", Boolean.prototype, "constructor,valueOf,toString");
-show("Date", Date, "length,name,prototype,now,parse,UTC");
+show("Date", Date, "length,name,prototype,parse,UTC,now");
 show(
   "Date.prototype",
   Date.prototype,
-  "toUTCString,toGMTString,toTemporalInstant,constructor,getTime,toISOString,toString,toDateString,toTimeString,toLocaleString,toLocaleDateString,toLocaleTimeString,valueOf,getFullYear,getUTCFullYear,getMonth,getUTCMonth,getDate,getUTCDate,getDay,getUTCDay,getHours,getUTCHours,getMinutes,getUTCMinutes,getSeconds,getUTCSeconds,getMilliseconds,getUTCMilliseconds,getTimezoneOffset,getYear,setTime,setMilliseconds,setUTCMilliseconds,setSeconds,setUTCSeconds,setMinutes,setUTCMinutes,setHours,setUTCHours,setDate,setUTCDate,setMonth,setUTCMonth,setFullYear,setUTCFullYear,setYear,toJSON,Symbol(Symbol.toPrimitive)",
+  "toUTCString,toGMTString,toTemporalInstant,constructor,toString,toISOString,toDateString,toTimeString,toLocaleString,toLocaleDateString,toLocaleTimeString,valueOf,getTime,getFullYear,getUTCFullYear,getMonth,getUTCMonth,getDate,getUTCDate,getDay,getUTCDay,getHours,getUTCHours,getMinutes,getUTCMinutes,getSeconds,getUTCSeconds,getMilliseconds,getUTCMilliseconds,getTimezoneOffset,getYear,setTime,setMilliseconds,setUTCMilliseconds,setSeconds,setUTCSeconds,setMinutes,setUTCMinutes,setHours,setUTCHours,setDate,setUTCDate,setMonth,setUTCMonth,setFullYear,setUTCFullYear,setYear,toJSON,Symbol(Symbol.toPrimitive)",
 );
 show("Error.prototype", Error.prototype, "name,message,constructor,toString");
 show("JSON", JSON, "isRawJSON,rawJSON,stringify,parse,Symbol(Symbol.toStringTag)");

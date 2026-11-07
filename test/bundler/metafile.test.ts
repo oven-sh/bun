@@ -520,6 +520,198 @@ describe("bundler metafile", () => {
     expect({ a: split("a.js"), b: split("b.js") }).toEqual({ a: [input("lazy.js")], b: [input("lazy.js")] });
   });
 
+  // "inputs" reports a split import() or require() by the output that it loads.
+  // That output has one name in the metafile: its key in "outputs".
+  describe("metafile names the output a split import loads by its key in outputs", () => {
+    const lazyPage = {
+      "lazy/page.js": `export const value = 1;`,
+      "pages/admin/index.js": `import("../../lazy/page.js").then(m => console.log(m.value));`,
+      "a/one.js": `import("../lazy/page.js").then(m => console.log("one", m.value));`,
+      "b/c/two.js": `import("../../lazy/page.js").then(m => console.log("two", m.value));`,
+    };
+    const nestedEntryPoint = {
+      "entry.js": `import("./pages/b.js").then(m => console.log(m.value));`,
+      "pages/b.js": `export const value = "pages/b";`,
+      "b.js": `export const value = "b";`,
+    };
+    const lazyAtRoot = {
+      "entry.js": `import("./lazy.js").then(m => console.log(m.value));`,
+      "lazy.js": `export const value = 3;`,
+    };
+
+    type Layout = {
+      layout: string;
+      files: Record<string, string>;
+      entrypoints: string[];
+      options?: Partial<Bun.BuildConfig>;
+      /**
+       * `from` loads `to`, written as `original`. `output` is the key of the output that `to` is built into,
+       * when the row names it. `after` lists the imports that `from` has after this one.
+       */
+      edges: { from: string; to: string; original: string; kind?: string; output?: string; after?: MetafileImport[] }[];
+    };
+
+    const fromTwoDirectories = [
+      { from: "a/one.js", to: "lazy/page.js", original: "../lazy/page.js", output: "./chunk-[hash].js" },
+      { from: "b/c/two.js", to: "lazy/page.js", original: "../../lazy/page.js", output: "./chunk-[hash].js" },
+    ];
+
+    const layouts: Layout[] = [
+      {
+        layout: "an entry point in a nested directory",
+        files: lazyPage,
+        entrypoints: ["pages/admin/index.js"],
+        edges: [
+          {
+            from: "pages/admin/index.js",
+            to: "lazy/page.js",
+            original: "../../lazy/page.js",
+            output: "./chunk-[hash].js",
+          },
+        ],
+      },
+      {
+        layout: "two entry points in different directories",
+        files: lazyPage,
+        entrypoints: ["a/one.js", "b/c/two.js"],
+        edges: fromTwoDirectories,
+      },
+      {
+        layout: "the same two entry points in the other order",
+        files: lazyPage,
+        entrypoints: ["b/c/two.js", "a/one.js"],
+        edges: fromTwoDirectories,
+      },
+      {
+        layout: "an import() of an entry point in a nested directory",
+        files: nestedEntryPoint,
+        entrypoints: ["entry.js", "pages/b.js"],
+        edges: [{ from: "entry.js", to: "pages/b.js", original: "./pages/b.js", output: "pages/b.js" }],
+      },
+      {
+        // From the directory of the first output, pages/b.js is "./b.js": the key of another output.
+        layout: "an import() of a nested entry point that is also the first entry point",
+        files: nestedEntryPoint,
+        entrypoints: ["pages/b.js", "entry.js", "b.js"],
+        edges: [{ from: "entry.js", to: "pages/b.js", original: "./pages/b.js", output: "pages/b.js" }],
+      },
+      {
+        // "original" stays: the path names an output, not what the specifier resolved to.
+        layout: "a specifier that is the same string as the key",
+        files: { ...lazyAtRoot, "nested/first.js": `console.log("first");` },
+        entrypoints: ["nested/first.js", "entry.js", "lazy.js"],
+        edges: [{ from: "entry.js", to: "lazy.js", original: "./lazy.js", output: "./lazy.js" }],
+      },
+      {
+        layout: "an import() of a stylesheet",
+        files: {
+          "lazy/style.css": `body { color: red; }`,
+          "pages/admin/index.js": `import("../../lazy/style.css");`,
+        },
+        entrypoints: ["pages/admin/index.js"],
+        edges: [{ from: "pages/admin/index.js", to: "lazy/style.css", original: "../../lazy/style.css" }],
+      },
+      {
+        layout: "a require() for target bun",
+        files: {
+          "lazy/page.js": `export const value = 1;`,
+          "pages/admin/index.js": `export const load = () => require("../../lazy/page.js").value;`,
+        },
+        entrypoints: ["pages/admin/index.js"],
+        options: { target: "bun" },
+        edges: [
+          {
+            from: "pages/admin/index.js",
+            to: "lazy/page.js",
+            original: "../../lazy/page.js",
+            kind: "require-call",
+            output: "./chunk-[hash].js",
+          },
+        ],
+      },
+      {
+        layout: "an entry naming template with a directory",
+        files: lazyAtRoot,
+        entrypoints: ["entry.js"],
+        options: { naming: { entry: "entries/[name].[ext]" } },
+        edges: [{ from: "entry.js", to: "lazy.js", original: "./lazy.js", output: "./chunk-[hash].js" }],
+      },
+      {
+        // Only the linker makes a split import. A specifier with the form of a chunk's unique key is an external.
+        layout: "external specifiers with the form of a unique key",
+        files: {
+          ...lazyAtRoot,
+          "nested/first.js": `console.log("first");`,
+          "entry.js": [
+            `import("./lazy.js").then(m => console.log(m.value));`,
+            `import("0123456789abcdefC00000000");`,
+            `require("0123456789abcdefC00000001");`,
+          ].join("\n"),
+        },
+        entrypoints: ["nested/first.js", "entry.js"],
+        options: { target: "bun", external: ["0123456789abcdef*"] },
+        edges: [
+          {
+            from: "entry.js",
+            to: "lazy.js",
+            original: "./lazy.js",
+            output: "./chunk-[hash].js",
+            after: [
+              { path: "0123456789abcdefC00000000", kind: "dynamic-import", external: true },
+              { path: "0123456789abcdefC00000001", kind: "require-call", external: true },
+            ],
+          },
+        ],
+      },
+      {
+        layout: "a chunk name with a quote",
+        files: lazyAtRoot,
+        entrypoints: ["entry.js"],
+        options: { naming: { chunk: `a"b-[name].[ext]` } },
+        edges: [{ from: "entry.js", to: "lazy.js", original: "./lazy.js", output: `./a"b-lazy.js` }],
+      },
+      // A backslash is a path separator on Windows.
+      ...(isWindows
+        ? []
+        : [
+            {
+              layout: "a chunk name with a backslash",
+              files: lazyAtRoot,
+              entrypoints: ["entry.js"],
+              options: { naming: { chunk: String.raw`a\tb-[name].[ext]` } },
+              edges: [{ from: "entry.js", to: "lazy.js", original: "./lazy.js", output: String.raw`./a\tb-lazy.js` }],
+            },
+          ]),
+    ];
+
+    // No outdir: a file name on Windows cannot contain a quote.
+    test.each(layouts)("$layout", async ({ files, entrypoints, options, edges }) => {
+      using dir = tempDir("metafile-split-import-output-key", files);
+
+      const result = await Bun.build({
+        entrypoints: entrypoints.map(entry => `${dir}/${entry}`),
+        root: String(dir),
+        splitting: true,
+        metafile: true,
+        ...options,
+      });
+      expect(result.success).toBe(true);
+
+      const { inputs, outputs } = result.metafile as Metafile;
+      const input = (name: string) => Object.keys(inputs).find(key => key.endsWith(`/${name}`))!;
+      const output = (name: string) => Object.keys(outputs).find(key => outputs[key].entryPoint === input(name))!;
+      const withoutHash = (key: string) => key.replace(/-[a-z0-9]{8}\./, "-[hash].");
+
+      expect(edges.map(edge => edge.output && withoutHash(output(edge.to)))).toEqual(edges.map(edge => edge.output));
+      expect(edges.map(edge => inputs[input(edge.from)].imports)).toEqual(
+        edges.map(({ to, original, kind = "dynamic-import", after = [] }) => [
+          { path: output(to), kind, original, entryPoint: input(to), external: true },
+          ...after,
+        ]),
+      );
+    });
+  });
+
   test("metafile includes cssBundle for CSS outputs", async () => {
     using dir = tempDir("metafile-css-bundle-test", {
       "entry.js": `import "./styles.css"; console.log("styled");`,
@@ -1416,6 +1608,126 @@ describe("bun build --metafile-md", () => {
 });
 
 describe("bun build --metafile", () => {
+  // `bun build` and `Bun.build` call the metafile writer from two places.
+  test.concurrent("names the output a split import() loads by its key in outputs", async () => {
+    using dir = tempDir("metafile-split-import-cli", {
+      "lazy/page.js": `export const value = 1;`,
+      "pages/admin/index.js": `import("../../lazy/page.js").then(m => console.log(m.value));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "./pages/admin/index.js",
+        "--root=.",
+        "--splitting",
+        "--outdir=out",
+        "--metafile=meta.json",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const { inputs, outputs } = (await Bun.file(`${dir}/meta.json`).json()) as Metafile;
+    const [entryOutput, lazyOutput] = Object.keys(outputs);
+    expect([entryOutput, lazyOutput.replace(/-[a-z0-9]{8}\./, "-[hash].")]).toEqual([
+      "pages/admin/index.js",
+      "./page-[hash].js",
+    ]);
+    expect(inputs["pages/admin/index.js"].imports).toEqual([
+      {
+        path: lazyOutput,
+        kind: "dynamic-import",
+        original: "../../lazy/page.js",
+        entryPoint: "lazy/page.js",
+        external: true,
+      },
+    ]);
+  });
+
+  // With `--css-chunking` the linker gives x.css no chunk of its own, and the code of a.js loads the chunk of
+  // shared.js for this import(). The record names what the code loads. That chunk has no entry point to name.
+  test.concurrent("an import() that loads a chunk with no entry point", async () => {
+    using dir = tempDir("metafile-split-import-shared-chunk", {
+      "first.css": `body { color: red; }`,
+      "x.css": `.x { color: blue; }`,
+      "shared.js": `export const shared = 1;`,
+      "a.js": `import { shared } from "./shared.js";\nimport "./x.css";\nimport("./x.css");\nconsole.log("a", shared);`,
+      "b.js": `import { shared } from "./shared.js";\nconsole.log("b", shared);`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "./first.css",
+        "./a.js",
+        "./b.js",
+        "--splitting",
+        "--css-chunking",
+        "--chunk-naming=chunks/[name]-[hash].[ext]",
+        "--outdir=out",
+        "--metafile=meta.json",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const { inputs, outputs } = (await Bun.file(`${dir}/meta.json`).json()) as Metafile;
+    const loaded = (await Bun.file(`${dir}/out/a.js`).text()).match(/import\("(\.\/chunks\/[^"]+)"\)/)?.[1]!;
+    expect({ entryPoint: outputs[loaded]?.entryPoint, inputs: Object.keys(outputs[loaded]?.inputs ?? {}) }).toEqual({
+      entryPoint: undefined,
+      inputs: ["shared.js"],
+    });
+    expect(inputs["a.js"].imports.filter(imp => imp.kind === "dynamic-import")).toEqual([
+      { path: loaded, kind: "dynamic-import", original: "./x.css", external: true },
+    ]);
+  });
+
+  // `--metafile-md` builds its report from the JSON, so the JSON has to parse.
+  // Not on Windows: a file name there cannot contain a quote.
+  test.concurrent.skipIf(isWindows)("a chunk name with a quote", async () => {
+    using dir = tempDir("metafile-quoted-chunk-cli", {
+      "entry.js": `import("./lazy.js").then(m => console.log(m.value));`,
+      "lazy.js": `export const value = 3;`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "./entry.js",
+        "--splitting",
+        "--outdir=out",
+        `--chunk-naming=a"b-[name].[ext]`,
+        "--metafile=meta.json",
+        "--metafile-md=meta.md",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const metafile = (await Bun.file(`${dir}/meta.json`).json()) as Metafile;
+    expect(Object.keys(metafile.outputs)).toEqual(["./entry.js", `./a"b-lazy.js`]);
+    expect(metafile.inputs["entry.js"].imports).toEqual([
+      { path: `./a"b-lazy.js`, kind: "dynamic-import", original: "./lazy.js", entryPoint: "lazy.js", external: true },
+    ]);
+    expect(await Bun.file(`${dir}/meta.md`).text()).toContain("[IMPORT: entry.js -> lazy.js]");
+  });
+
   // Bun.spawn replaces a lone surrogate in a JS string with U+FFFD before it reaches argv,
   // so the raw bytes have to come from the shell. Windows argv is UTF-16 and cannot carry them.
   test.skipIf(isWindows)("escapes a lone surrogate and an invalid byte in an output path", async () => {

@@ -44,7 +44,7 @@ use bun_ast::ExportsKind;
 use bun_ast::ImportKind;
 use bun_ast::ImportRecordFlags;
 
-use crate::chunk::{Content as ChunkContent, ReferencePathStyle, SourceMapShiftTracking};
+use crate::chunk::{Content as ChunkContent, UniqueKey};
 use crate::options::Loader;
 use crate::{Chunk, Index, LinkerContext};
 
@@ -198,10 +198,8 @@ fn generate_chunk_json(
 
 /// Assembles the final metafile JSON.
 /// Called after `generate_chunks_in_parallel` has emitted every chunk's output.
-/// Chunk references (unique_keys) are resolved to their final output paths.
 /// The caller is responsible for freeing the returned slice.
 pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Result<Box<[u8]>> {
-    // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
     let mut j = StringJoiner::default();
     // errdefer j.deinit() — handled by Drop
 
@@ -231,15 +229,6 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         let i = source_index.get() as usize;
         if i < sources.len() && i != 0 && c.graph.files_live.is_set(i) {
             seen_sources.set(i);
-        }
-    }
-
-    // A split `import()` / `require()` record names its target's chunk
-    // (`compute_cross_chunk_dependencies`); "entryPoint" adds the input.
-    let mut entry_of_chunk: StringHashMap<u32> = StringHashMap::default();
-    for chunk in chunks.iter() {
-        if chunk.entry_point.is_entry_point() && !chunk.unique_key.is_empty() {
-            entry_of_chunk.put(chunk.unique_key, chunk.entry_point.source_index())?;
         }
     }
 
@@ -306,11 +295,24 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                 }
                 first_import = false;
 
+                // A split import's path is its chunk's unique key (`compute_cross_chunk_dependencies`).
+                let split_chunk: Option<&Chunk> =
+                    if record.flags.contains(ImportRecordFlags::IMPORTS_CHUNK) {
+                        UniqueKey::chunk_index(record.path.text)
+                            .and_then(|index| chunks.get(index as usize))
+                    } else {
+                        None
+                    };
+
                 j.push_static(b"\n        {\n          \"path\": ");
                 // Bundled imports use the target source's pretty path (same string as the
                 // "inputs" key). `record.path.text` is unreliable here: dedup can set
-                // `source_index` without rewriting the path. Externals/chunk refs fall through.
+                // `source_index` without rewriting the path. Externals fall through.
                 let import_path: &[u8] = 'path: {
+                    if let Some(chunk) = split_chunk {
+                        // Same string as the chunk's "outputs" key.
+                        break 'path &chunk.final_rel_path;
+                    }
                     if record.source_index.is_valid()
                         && record.source_index.get() != Index::RUNTIME.get()
                     {
@@ -337,8 +339,10 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                 j.push_static(record.kind.label());
                 j.push_static(b"\"");
 
-                // Add "original" field if different from path
-                if !record.original_path.is_empty() && record.original_path != import_path {
+                // Add "original" field if different from path. A split import always has it.
+                if !record.original_path.is_empty()
+                    && (split_chunk.is_some() || record.original_path != import_path)
+                {
                     j.push_static(b",\n          \"original\": ");
                     let mut buf: Vec<u8> = Vec::new();
                     write!(
@@ -349,9 +353,10 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                     j.push_owned(buf.into_boxed_slice());
                 }
 
-                if record.flags.contains(ImportRecordFlags::IMPORTS_CHUNK)
-                    && let Some(&entry_point) = entry_of_chunk.get(record.path.text)
-                    && let Some(entry_source) = sources.get(entry_point as usize)
+                if let Some(chunk) = split_chunk
+                    && chunk.entry_point.is_entry_point()
+                    && let Some(entry_source) =
+                        sources.get(chunk.entry_point.source_index() as usize)
                     && !entry_source.path.pretty.is_empty()
                 {
                     j.push_static(b",\n          \"entryPoint\": ");
@@ -440,35 +445,12 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
 
     j.push_static(b"\n  }\n}\n");
 
-    // If no chunks, there are no chunk references to resolve, so just return the joined string
-    if chunks.is_empty() {
-        return Ok(j.done()?);
-    }
+    debug_assert!(
+        c.unique_key_prefix.is_empty() || !j.contains(&c.unique_key_prefix),
+        "the metafile still contains a chunk placeholder",
+    );
 
-    // Break output into pieces and resolve chunk references to final paths
-    let alloc = c.arena();
-    let mut intermediate = c.break_output_into_pieces(
-        alloc,
-        &mut j,
-        u32::try_from(chunks.len()).expect("int cast"),
-    )?;
-
-    // Get final output with all chunk references resolved.
-    // `code()` takes the dummy chunk and the full slice as `&`, so pass
-    // `&chunks[0]` directly — overlapping shared borrows are fine.
-    let code_result = intermediate.code(
-        None,
-        parse_graph,
-        &c.graph,
-        b"", // no import prefix for metafile
-        &chunks[0],
-        chunks,
-        None, // no display size
-        ReferencePathStyle::ImporterRelative,
-        SourceMapShiftTracking::Disabled,
-    )?;
-
-    Ok(code_result.buffer)
+    Ok(j.done()?)
 }
 
 fn write_json_string(writer: &mut impl Write, str: &[u8]) -> std::io::Result<()> {

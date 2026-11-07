@@ -121,6 +121,7 @@ describe("bun test", () => {
     ["JSX props", `{ $$typeof: Symbol.for("react.element"), type: "div", props: { a: value } }`],
     ["the data of events", `new MessageEvent("message", { data: value })`],
     ["asymmetric matchers", "expect.objectContaining({ a: value })"],
+    ["asymmetric matchers of arrays", "expect.arrayContaining([value])"],
   ])("%s nested too deeply to print are a RangeError", (_, wrap) => {
     const stderr = runTest({
       input: `

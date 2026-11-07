@@ -2758,6 +2758,8 @@ pub(crate) trait AsymmetricMatcherFormatter {
     fn amf_add_for_new_line(&mut self, n: usize);
     fn amf_global_this(&self) -> &JSGlobalObject;
     fn amf_quote_strings(&mut self) -> &mut bool;
+    /// Tells the formatter whether an older Bun printed this matcher differently. True if it is to print that text.
+    fn amf_like_older_bun(&mut self, differs: bool) -> bool;
     /// `printAs(tag, …)` routed through the formatter's own runtime
     /// dispatcher. Only `Object` / `String` / `Array` are reached.
     fn amf_print_as<W: bun_io::Write, const C: bool>(
@@ -2776,6 +2778,14 @@ impl AsymmetricMatcherFormatter for Formatter<'_> {
     fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
     #[inline]
     fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
+    #[inline]
+    fn amf_like_older_bun(&mut self, differs: bool) -> bool {
+        if differs && self.like_older_bun.is_some() {
+            return true;
+        }
+        self.same_as_older_bun &= !differs;
+        false
+    }
     fn amf_print_as<W: bun_io::Write, const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
@@ -2797,6 +2807,8 @@ impl AsymmetricMatcherFormatter for bun_jsc::console_object::Formatter<'_> {
     fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
     #[inline]
     fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
+    #[inline]
+    fn amf_like_older_bun(&mut self, _differs: bool) -> bool { false }
     fn amf_print_as<W: bun_io::Write, const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
@@ -3011,6 +3023,29 @@ impl JestPrettyFormat {
                     bun_jsc::FormatTag::Array, &mut *writer.ctx, args_value, JSType::Array,
                 )?;
             }
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectArrayContaining>() {
+            // Older versions had no arm for this class, so the caller printed `ExpectArrayContaining {}`.
+            if this.amf_like_older_bun(true) {
+                return Ok(false);
+            }
+            let Some(array_value) =
+                js_ExpectArrayContaining::array_value_get_cached(value)
+            else {
+                return Ok(true);
+            };
+
+            let flags = matcher.flags;
+            Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
+            if flags.not() {
+                this.amf_add_for_new_line(b"ArrayNotContaining ".len());
+                writer.write_all(b"ArrayNotContaining ");
+            } else {
+                this.amf_add_for_new_line(b"ArrayContaining ".len());
+                writer.write_all(b"ArrayContaining ");
+            }
+            this.amf_print_as::<W, ENABLE_ANSI_COLORS>(
+                bun_jsc::FormatTag::Array, &mut *writer.ctx, array_value, array_value.js_type(),
+            )?;
         } else {
             return Ok(false);
         }
@@ -3526,6 +3561,7 @@ impl bun_io::Write for ExpectedText<'_> {
 impl JestPrettyFormat {
     /// True if `saved` is what older versions of Bun wrote for `value`, so their snapshots still pass.
     /// They printed DOM nodes as plain objects, accessors as `[native code]`, and non-enumerable properties.
+    /// They printed `expect.arrayContaining()` as `ExpectArrayContaining {}`.
     #[cold]
     pub(crate) fn did_older_bun_print(global: &JSGlobalObject, value: JSValue, saved: &[u8]) -> JsResult<bool> {
         let differs = core::cell::Cell::new(false);

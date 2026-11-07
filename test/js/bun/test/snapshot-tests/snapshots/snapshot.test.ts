@@ -2546,6 +2546,190 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     });
   });
 
+  const resultsOf = (stderr: string) =>
+    stderr
+      .split("\n")
+      .filter(line => /^\((pass|fail)\) /.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+
+  // Bun 1.4.4 and older stored `ExpectArrayContaining {}` for every one of these matchers, so no second run failed.
+  test.each(["bun:test", "@jest/globals"])(
+    "expect.arrayContaining() is stored with its sample, and a run with another matcher fails, in a test of %j",
+    async module => {
+      // The name of a test, its body, the matcher of the first run, the matcher of the second run, and what the first run stores.
+      const rows = [
+        [
+          "a property matcher, another sample",
+          `expect({ tags: ["a", "b", "c"] }).toMatchSnapshot({ tags: MATCHER })`,
+          `expect.arrayContaining(["a", "b"])`,
+          `expect.arrayContaining(["c"])`,
+          `\n{\n  "tags": ArrayContaining [\n    "a",\n    "b",\n  ],\n}\n`,
+        ],
+        [
+          "a property matcher, not",
+          `expect({ tags: ["a"] }).toMatchSnapshot({ tags: MATCHER })`,
+          `expect.arrayContaining(["a"])`,
+          `expect.not.arrayContaining(["z"])`,
+          `\n{\n  "tags": ArrayContaining [\n    "a",\n  ],\n}\n`,
+        ],
+        [
+          "in the value, another sample",
+          `expect({ m: MATCHER }).toMatchSnapshot()`,
+          `expect.arrayContaining([1, { a: ["b"] }])`,
+          `expect.arrayContaining([1, { a: ["c"] }])`,
+          `\n{\n  "m": ArrayContaining [\n    1,\n    {\n      "a": [\n        "b",\n      ],\n    },\n  ],\n}\n`,
+        ],
+        [
+          "in the value, not",
+          `expect({ m: MATCHER }).toMatchSnapshot()`,
+          `expect.arrayContaining([1])`,
+          `expect.not.arrayContaining([1])`,
+          `\n{\n  "m": ArrayContaining [\n    1,\n  ],\n}\n`,
+        ],
+        [
+          "in the value, resolvesTo",
+          `expect({ m: MATCHER }).toMatchSnapshot()`,
+          `expect.arrayContaining([1])`,
+          `expect.resolvesTo.arrayContaining([1])`,
+          `\n{\n  "m": ArrayContaining [\n    1,\n  ],\n}\n`,
+        ],
+        [
+          "in the value, no sample",
+          `expect([MATCHER]).toMatchSnapshot()`,
+          `expect.arrayContaining([])`,
+          `expect.not.arrayContaining([])`,
+          `\n[\n  ArrayContaining [],\n]\n`,
+        ],
+        [
+          // The line break after the name is where expect.objectContaining() has one too, when it is the whole value.
+          "the value, another sample",
+          `expect(MATCHER).toMatchSnapshot()`,
+          `expect.arrayContaining([1])`,
+          `expect.arrayContaining([2])`,
+          `ArrayContaining \n[\n  1,\n]\n`,
+        ],
+        [
+          "the same matcher",
+          `expect({ m: MATCHER }).toMatchSnapshot()`,
+          `expect.rejectsTo.not.arrayContaining([1, "a"])`,
+          `expect.rejectsTo.not.arrayContaining([1, "a"])`,
+          `\n{\n  "m": promise rejected to ArrayNotContaining [\n    1,\n    "a",\n  ],\n}\n`,
+        ],
+      ];
+      const file = (run: 2 | 3) =>
+        `import { test, expect } from ${JSON.stringify(module)};\n` +
+        rows
+          .map(row => `test(${JSON.stringify(row[0])}, () => { ${row[1].replace("MATCHER", row[run])}; });\n`)
+          .join("");
+      using dir = tempDir("snapshot-array-containing", { "a.test.js": file(2) });
+      const snap = () => readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8");
+
+      const first = await runTests(String(dir), { CI: "false" });
+      const stored = snap();
+      expect(stored).toBe(headers.bun + rows.map(row => `\nexports[\`${row[0]} 1\`] = \`${row[4]}\`;\n`).join(""));
+
+      writeFileSync(join(String(dir), "a.test.js"), file(3));
+      const second = await runTests(String(dir), { CI: "true" });
+      expect(resultsOf(second.stderr)).toEqual(rows.map(row => `(${row[2] === row[3] ? "pass" : "fail"}) ${row[0]}`));
+      expect(second.stderr).toContain(`-   "m": ArrayContaining [\n+   "m": ArrayNotContaining [\n      1,\n`);
+      expect(snap()).toBe(stored);
+      expect([first.exitCode, second.exitCode]).toEqual([0, 1]);
+    },
+  );
+
+  test("an inline snapshot of expect.arrayContaining() is written with its sample, and fails for another sample or a negated matcher", async () => {
+    using dir = tempDir("snapshot-array-containing-inline", {
+      "a.test.js": [
+        `test("a property matcher", () => { expect({ tags: ["x", "y"] }).toMatchInlineSnapshot({ tags: expect.arrayContaining(["x"]) }); });`,
+        `test("in the value", () => { expect({ m: expect.arrayContaining([1]) }).toMatchInlineSnapshot(); });`,
+        `test("the value", () => { expect(expect.not.arrayContaining([])).toMatchInlineSnapshot(); });`,
+      ].join("\n"),
+    });
+    const path = join(String(dir), "a.test.js");
+
+    const first = await runTests(String(dir), { CI: "false" });
+    const written = readFileSync(path, "utf8");
+    expect(written.match(/`[^`]*`/g)).toEqual([
+      '`\n  {\n    "tags": ArrayContaining [\n      "x",\n    ],\n  }\n`',
+      '`\n  {\n    "m": ArrayContaining [\n      1,\n    ],\n  }\n`',
+      "`ArrayNotContaining []`",
+    ]);
+
+    const same = await runTests(String(dir), { CI: "true" });
+    expect(resultsOf(same.stderr)).toEqual(["(pass) a property matcher", "(pass) in the value", "(pass) the value"]);
+
+    const other = written
+      .replace(`expect.arrayContaining(["x"])`, `expect.arrayContaining(["y"])`)
+      .replace(`expect.arrayContaining([1])`, `expect.not.arrayContaining([1])`)
+      .replace(`expect.not.arrayContaining([])`, `expect.arrayContaining([])`);
+    writeFileSync(path, other);
+    const second = await runTests(String(dir), { CI: "true" });
+    expect(resultsOf(second.stderr)).toEqual(["(fail) a property matcher", "(fail) in the value", "(fail) the value"]);
+    expect(readFileSync(path, "utf8")).toBe(other);
+    expect([first.exitCode, same.exitCode, second.exitCode]).toEqual([0, 0, 1]);
+  });
+
+  // As for an accessor, which older versions printed as `[native code]`: the stored text passes until it is rewritten.
+  test("what an older Bun wrote for expect.arrayContaining() still passes, and --update-snapshots rewrites it once", async () => {
+    const entry = (name: string, text: string) => `\nexports[\`${name} 1\`] = \`${text}\`;\n`;
+    const older =
+      headers.bun +
+      entry("a property matcher", `\n{\n  "tags": ExpectArrayContaining {},\n}\n`) +
+      entry("in the value", `\n{\n  "m": ExpectArrayContaining {},\n}\n`) +
+      entry("the value", "ExpectArrayContaining {}") +
+      entry("beside an accessor", `\n{\n  "computed": [native code],\n  "m": ExpectArrayContaining {},\n}\n`);
+    const olderInline = `\n  {\n    "m": ExpectArrayContaining {},\n  }\n`;
+    using dir = tempDir("snapshot-older-array-containing", {
+      "a.test.js": [
+        `test("a property matcher", () => { expect({ tags: ["a"] }).toMatchSnapshot({ tags: expect.arrayContaining(["a"]) }); });`,
+        `test("in the value", () => { expect({ m: expect.arrayContaining([1]) }).toMatchSnapshot(); });`,
+        `test("the value", () => { expect(expect.arrayContaining([])).toMatchSnapshot(); });`,
+        `test("beside an accessor", () => { expect({ get computed() { return 2; }, m: expect.arrayContaining([1]) }).toMatchSnapshot(); });`,
+        `test("inline", () => { expect({ m: expect.arrayContaining([1]) }).toMatchInlineSnapshot(\`${olderInline}\`); });`,
+      ].join("\n"),
+      "__snapshots__/a.test.js.snap": older,
+    });
+    const snap = () => readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8");
+    const inline = () => readFileSync(join(String(dir), "a.test.js"), "utf8").match(/`[^`]*`/g);
+    const names = ["a property matcher", "in the value", "the value", "beside an accessor", "inline"];
+
+    // The older text is taken for the matcher alone: not with another value beside it, and not for a plain array.
+    const [before, elsewhere] = await Promise.all([
+      runTests(String(dir), { CI: "true" }),
+      logOf({
+        "a.test.js": `
+          ${firstLine}
+          test("t", () => {
+            console.log(firstLine(() => expect({ m: expect.arrayContaining([1]), n: 2 }).toMatchInlineSnapshot(\`\n{\n  "m": ExpectArrayContaining {},\n  "n": 1,\n}\n\`)));
+            console.log(firstLine(() => expect({ m: [1] }).toMatchInlineSnapshot(\`\n{\n  "m": ExpectArrayContaining {},\n}\n\`)));
+          });
+        `,
+      }),
+    ]);
+    expect(resultsOf(before.stderr)).toEqual(names.map(name => `(pass) ${name}`));
+    expect(snap()).toBe(older);
+    expect(inline()).toEqual(["`" + olderInline + "`"]);
+    const message = "expect(received).toMatchInlineSnapshot(expected)";
+    expect(elsewhere.log).toEqual([message, message]);
+
+    const first = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+    const updated = snap();
+    expect(updated).toBe(
+      headers.bun +
+        entry("a property matcher", `\n{\n  "tags": ArrayContaining [\n    "a",\n  ],\n}\n`) +
+        entry("in the value", `\n{\n  "m": ArrayContaining [\n    1,\n  ],\n}\n`) +
+        entry("the value", "ArrayContaining []") +
+        entry("beside an accessor", `\n{\n  "computed": 2,\n  "m": ArrayContaining [\n    1,\n  ],\n}\n`),
+    );
+    expect(inline()).toEqual(['`\n  {\n    "m": ArrayContaining [\n      1,\n    ],\n  }\n`']);
+
+    const second = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+    const after = await runTests(String(dir), { CI: "true" });
+    expect(resultsOf(after.stderr)).toEqual(names.map(name => `(pass) ${name}`));
+    expect(snap()).toBe(updated);
+    expect([before.exitCode, first.exitCode, second.exitCode, after.exitCode]).toEqual([0, 0, 0, 0]);
+  });
+
   test("of import.meta.env fails when a variable has another value", async () => {
     using dir = tempDir("snapshot-import-meta-env", {
       "a.test.js": `

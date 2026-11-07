@@ -2,6 +2,9 @@
 
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArrayConstructor.h>
+#include <JavaScriptCore/CalendarICUBridge.h>
+#include <JavaScriptCore/ISO8601.h>
+#include <JavaScriptCore/InstantCore.h>
 #include <JavaScriptCore/JSFunctionInlines.h>
 #include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -9,6 +12,15 @@
 #include <JavaScriptCore/Operations.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/RegExpObject.h>
+#include <JavaScriptCore/TemporalDuration.h>
+#include <JavaScriptCore/TemporalInstant.h>
+#include <JavaScriptCore/TemporalObject.h>
+#include <JavaScriptCore/TemporalPlainDate.h>
+#include <JavaScriptCore/TemporalPlainDateTime.h>
+#include <JavaScriptCore/TemporalPlainMonthDay.h>
+#include <JavaScriptCore/TemporalPlainTime.h>
+#include <JavaScriptCore/TemporalPlainYearMonth.h>
+#include <JavaScriptCore/TemporalZonedDateTime.h>
 
 using namespace JSC;
 
@@ -315,6 +327,97 @@ extern "C" EncodedJSValue SnapshotFormat__toRegExp(JSGlobalObject* globalObject,
     if (!regExp->isValid())
         return encodedPattern;
     return JSValue::encode(RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
+}
+
+static String withCalendarAnnotation(String&& text, CalendarID calendar)
+{
+    if (TemporalCore::calendarIsISO(calendar))
+        return WTF::move(text);
+    return makeString(text, "[u-ca="_s, TemporalCore::calendarIDToString(calendar), ']');
+}
+
+// The text of a Temporal value from its internal slots, or None for any other value. Runs no JS and reads no time zone data.
+// Two values get the same text only if temporalObjectsDequal (bindings.cpp) calls them equal, which toString() does not promise.
+extern "C" TemporalType SnapshotFormat__temporalText(JSGlobalObject* globalObject, EncodedJSValue encodedValue, BunString* text)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSValue value = JSValue::decode(encodedValue);
+    TemporalType type = temporalType(value);
+    if (type == TemporalType::None)
+        return type;
+    JSCell* cell = value.asCell();
+    constexpr std::tuple<Precision, unsigned> autoPrecision { Precision::Auto, 0 };
+    constexpr PrecisionData autoPrecisionData { autoPrecision, TemporalUnit::Nanosecond, 1 };
+
+    String string;
+    switch (type) {
+    case TemporalType::Instant:
+        string = TemporalCore::instantToString(uncheckedDowncast<TemporalInstant>(cell)->exactTime(), std::nullopt, autoPrecisionData);
+        break;
+    case TemporalType::PlainDateTime: {
+        auto* dateTime = uncheckedDowncast<TemporalPlainDateTime>(cell);
+        string = withCalendarAnnotation(ISO8601::temporalDateTimeToString(dateTime->plainDate(), dateTime->plainTime(), autoPrecision), dateTime->calendarID());
+        break;
+    }
+    case TemporalType::PlainDate: {
+        auto* date = uncheckedDowncast<TemporalPlainDate>(cell);
+        string = withCalendarAnnotation(ISO8601::temporalDateToString(date->plainDate()), date->calendarID());
+        break;
+    }
+    case TemporalType::PlainTime:
+        string = ISO8601::temporalTimeToString(uncheckedDowncast<TemporalPlainTime>(cell)->plainTime(), autoPrecision);
+        break;
+    case TemporalType::ZonedDateTime: {
+        auto* zoned = uncheckedDowncast<TemporalZonedDateTime>(cell);
+        // Not toString(): its local time and offset come from the time zone data of the machine, and an ICU update changes them.
+        string = withCalendarAnnotation(makeString(TemporalCore::instantToString(zoned->exactTime(), std::nullopt, autoPrecisionData), '[', zoned->timeZoneId(), ']'), zoned->calendarID());
+        break;
+    }
+    case TemporalType::PlainYearMonth: {
+        auto* yearMonth = uncheckedDowncast<TemporalPlainYearMonth>(cell);
+        // toString() leaves out the reference day of an ISO year-month. `new Temporal.PlainYearMonth(2020, 1, "iso8601", 15)` has one that is not 1.
+        bool hasDefaultDay = yearMonth->plainYearMonth().isoPlainDate().day() == 1;
+        string = ISO8601::temporalYearMonthToString(yearMonth->plainYearMonth(), hasDefaultDay ? "auto"_s : "always"_s, yearMonth->calendarID());
+        break;
+    }
+    case TemporalType::PlainMonthDay: {
+        auto* monthDay = uncheckedDowncast<TemporalPlainMonthDay>(cell);
+        // toString() leaves out the reference year of an ISO month-day. `new Temporal.PlainMonthDay(1, 15, "iso8601", 2000)` has one that is not 1972.
+        bool hasDefaultYear = monthDay->plainMonthDay().isoPlainDate().year() == 1972;
+        string = ISO8601::temporalMonthDayToString(monthDay->plainMonthDay(), hasDefaultYear ? "auto"_s : "always"_s, monthDay->calendarID());
+        break;
+    }
+    case TemporalType::Duration: {
+        auto* duration = uncheckedDowncast<TemporalDuration>(cell);
+        string = duration->toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, TemporalType::None);
+        // toString() adds these three fields to the seconds: { milliseconds: 1500 } and { seconds: 1, milliseconds: 500 } are both PT1.5S.
+        const std::pair<ASCIILiteral, double> addedToSeconds[] = {
+            { "milliseconds"_s, duration->milliseconds() },
+            { "microseconds"_s, duration->microseconds() },
+            { "nanoseconds"_s, duration->nanoseconds() },
+        };
+        bool isBalanced = std::ranges::all_of(addedToSeconds, [](const auto& field) { return std::abs(field.second) < 1000; });
+        if (!isBalanced) {
+            StringBuilder builder;
+            builder.append(string);
+            ASCIILiteral separator = " ("_s;
+            for (const auto& [name, amount] : addedToSeconds) {
+                if (!amount)
+                    continue;
+                builder.append(separator, name, ": "_s, String::number(amount));
+                separator = ", "_s;
+            }
+            builder.append(')');
+            string = builder.toString();
+        }
+        break;
+    }
+    case TemporalType::None:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    *text = Bun::toStringRef(string);
+    return type;
 }
 
 extern "C" bool SnapshotFormat__forEachOfCollection(JSGlobalObject* globalObject, EncodedJSValue encodedCollection, EncodedJSValue encodedMethod, uint32_t maxWidth, void* context, bool (*each)(void* context, EncodedJSValue first, EncodedJSValue second))

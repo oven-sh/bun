@@ -2119,6 +2119,23 @@ pub enum TemporalType {
     Duration = 8,
 }
 
+impl TemporalType {
+    /// The class as script names it: `Temporal.PlainDate`.
+    pub fn name(self) -> &'static str {
+        match self {
+            TemporalType::Instant => "Temporal.Instant",
+            TemporalType::PlainDateTime => "Temporal.PlainDateTime",
+            TemporalType::PlainDate => "Temporal.PlainDate",
+            TemporalType::PlainTime => "Temporal.PlainTime",
+            TemporalType::ZonedDateTime => "Temporal.ZonedDateTime",
+            TemporalType::PlainYearMonth => "Temporal.PlainYearMonth",
+            TemporalType::PlainMonthDay => "Temporal.PlainMonthDay",
+            TemporalType::Duration => "Temporal.Duration",
+            TemporalType::None => unreachable!("not a Temporal object"),
+        }
+    }
+}
+
 /// `JSValue.SerializedFlags`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SerializedFlags {

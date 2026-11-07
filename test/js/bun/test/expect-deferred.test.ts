@@ -1339,6 +1339,27 @@ describe.concurrent("a matcher of a test that the runner's timer has timed out",
     );
   });
 
+  // The timer fires inside Bun.build() for the limit that `first` left behind, and runs the promise job of an earlier
+  // timer. That job waits in Bun.spawnSync() until the limit of `t` has passed. The promise settles after the fire.
+  test("does not end it when Bun.spawnSync() reported the limit from a promise job that a fire ran", async () => {
+    await timesOut(
+      ["(pass) first", "(fail) t", "(pass) next"],
+      `
+      test("first", () => {}, 100);
+      test("t", done => {
+        expect(settles).resolves.toBe(1);
+        done();
+        setTimeout(() => {
+          Promise.resolve().then(() => Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(${limit + 500})"] }));
+        }, 10);
+        setTimeout(() => resolve(1), 120);
+        hold(150);
+        Bun.build({ entrypoints: ["./entry.ts"], plugins: [{ name: "slow", setup: () => later(0, 50) }] });
+      }, ${limit});
+      test("next", () => {});`,
+    );
+  });
+
   test("does not end it when its promise settles while another test waits inside Bun.build()", async () => {
     await timesOut(
       ["(fail) a", "(pass) c"],

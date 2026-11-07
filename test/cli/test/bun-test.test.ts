@@ -3661,6 +3661,18 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
             test.concurrent("y", () => sleep(${short}), 0);`,
           results: ["(pass) b", "(pass) y"],
         },
+        // The timer fires in that pass for the limit that `first` left behind, and runs the promise job. It has read the clock before that.
+        "a promise job of an earlier timer, in a timer pass inside Bun.build()": {
+          source: `${first}
+            test.concurrent("b", done => {
+              start = performance.now();
+              setTimeout(() => void Promise.resolve().then(() => holdUntil(start + ${over})), 100);
+              setTimeout(done, ${due1});
+              hold(${body});
+            }, ${limit});
+            test.concurrent("c", () => build(${5 * short}), 0);`,
+          results: ["(pass) first", "(pass) b", "(pass) c"],
+        },
         // Controls: the slow callback comes after the one that ends the test, or nothing is slow.
         "control: nothing is slow": {
           source: `${first} test("t", ${endsAt(due1)}, ${limit});`,

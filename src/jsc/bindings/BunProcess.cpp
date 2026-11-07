@@ -2489,7 +2489,7 @@ JSValue Process::emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObje
     RETURN_IF_EXCEPTION(scope, {});
     return jsUndefined();
 }
-__attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor)
+__attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor, WarningStack warningStack)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     VM& vm = getVM(globalObject);
@@ -2505,7 +2505,7 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
             return jsUndefined();
     }
 
-    if (!type.isNull() && type.isObject() && !isJSArray(type)) {
+    if (!type.isNull() && type.isObject() && !type.isCallable() && !isJSArray(type)) {
         ctor = type.get(globalObject, Identifier::fromString(vm, "ctor"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -2545,7 +2545,15 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
     if (warning.isString()) {
         auto s = warning.getString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        errorInstance = createError(globalObject, !s.isEmpty() ? s : "Warning"_s);
+        String message = !s.isEmpty() ? s : "Warning"_s;
+        // Error.captureStackTrace takes a limit of 0, and one that is no number, for a limit of 10. createError makes no frames under such a limit.
+        if (warningStack == WarningStack::StartsBelowTopFrame && globalObject->stackTraceLimit().value_or(0)) {
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L187-L201. Not as node: the default cut is the host frame on top and not the value of process.emitWarning, and where the stack cannot be cut at ctor it is whole, because a tail call removes the frame of a ctor that ran.
+            errorInstance = ErrorInstance::create(globalObject, WTF::move(message), ErrorType::Error, {}, {}, {});
+            Bun::captureStackTrace(globalObject, errorInstance, ctor.isCallable() ? ctor : jsUndefined(), Zig::StackWithoutCut::IsWhole);
+            RETURN_IF_EXCEPTION(scope, {});
+        } else
+            errorInstance = createError(globalObject, message);
         errorInstance->putDirect(vm, vm.propertyNames->name, type, JSC::PropertyAttribute::DontEnum | 0);
     } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {
         errorInstance = warning.getObject();
@@ -2566,7 +2574,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
     auto type = callFrame->argument(1);
     auto code = callFrame->argument(2);
     auto ctor = callFrame->argument(3);
-    return JSValue::encode(Process::emitWarning(globalObject, warning, type, code, ctor));
+    return JSValue::encode(Process::emitWarning(globalObject, warning, type, code, ctor, Process::WarningStack::StartsBelowTopFrame));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(processExitCode, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
@@ -4803,7 +4811,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
                 jsString(vm, String("process.binding() is deprecated. Please use public APIs instead."_s)),
                 jsString(vm, String("DeprecationWarning"_s)),
                 jsString(vm, String("DEP0111"_s)),
-                jsUndefined());
+                jsUndefined(),
+                Process::WarningStack::StartsBelowTopFrame);
             RETURN_IF_EXCEPTION(throwScope, {});
         }
     }

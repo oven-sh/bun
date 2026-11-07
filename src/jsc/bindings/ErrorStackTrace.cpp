@@ -140,7 +140,7 @@ static bool severalEntriesResumedAsyncFunctions(JSC::VM& vm)
     return false;
 }
 
-void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
+void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit, StackWithoutCut stackWithoutCut)
 {
     UNUSED_PARAM(callFrame);
 
@@ -211,6 +211,12 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     };
     JSC::Interpreter::StackFrameFilter filter = isWanted;
 
+    auto withoutCut = [&] {
+        if (stackWithoutCut == StackWithoutCut::IsWhole)
+            return getFramesForCaller(vm, callFrame, owner, JSC::jsUndefined(), stackTrace, stackTraceLimit);
+        stackTrace.shrink(0);
+    };
+
     constexpr size_t everyFrame = std::numeric_limits<size_t>::max();
     size_t framesToCollect = stackTraceLimit == everyFrame || !callerObject ? stackTraceLimit : stackTraceLimit + 1;
     for (;; framesToCollect = everyFrame) {
@@ -218,7 +224,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         // (from the await chain via getAsyncStackTrace). The previous hand-rolled
         // StackVisitor::visit walk only collected synchronous frames.
         //
-        // We always collect with framesToSkip=1 (to drop Error.captureStackTrace
+        // We always collect with framesToSkip=1 (to drop the capturing host function
         // itself) and without the caller argument, because Interpreter::getStackTrace's
         // built-in caller filtering skips entry-frame tracking during the skip phase,
         // which loses async frames when the caller is the innermost sync frame.
@@ -226,12 +232,8 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         stackTrace.shrink(0);
         vm.interpreter.getStackTrace(owner, stackTrace, 1, framesToCollect, nullptr, nullptr, nullptr, &filter);
 
-        // Match V8: if the caller is not found anywhere in the sync portion of the
-        // stack, remove everything.
-        if (!hasFoundCaller) {
-            stackTrace.shrink(0);
-            return;
-        }
+        if (!hasFoundCaller)
+            return withoutCut();
 
         bool hasEveryFrame = stackTrace.size() < framesToCollect;
         if (hasEveryFrame)
@@ -255,10 +257,8 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
 
     // Match V8: remove all frames up to and including the caller.
     if (callerObject) {
-        if (stackTrace.first().isAsyncFrame()) {
-            stackTrace.shrink(0);
-            return;
-        }
+        if (stackTrace.first().isAsyncFrame())
+            return withoutCut();
         stackTrace.removeAt(0);
     }
 

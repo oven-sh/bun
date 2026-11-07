@@ -30,6 +30,7 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 
 #include "BunClientData.h"
+#include "BunProcess.h"
 #include "EventNames.h"
 #include "GlobalEventScope.h"
 #include "JSMessagePort.h"
@@ -39,8 +40,6 @@
 #include "StructuredSerializeOptions.h"
 #include "WebCoreOpaqueRoot.h"
 #include <wtf/TZoneMallocInlines.h>
-
-extern "C" void Bun__Process__emitWarning(Zig::GlobalObject*, JSC::EncodedJSValue warning, JSC::EncodedJSValue type, JSC::EncodedJSValue code, JSC::EncodedJSValue ctor);
 
 namespace WebCore {
 
@@ -128,11 +127,12 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
 
     if (targetsEntangledPeer) {
         // Node warns and loses the channel instead of throwing; close() stops the dead channel from reffing the loop.
-        Bun__Process__emitWarning(defaultGlobalObject(&state),
-            JSC::JSValue::encode(JSC::jsString(vm, String("The target port was posted to itself, and the communication channel was lost"_s))),
-            JSC::JSValue::encode(JSC::jsString(vm, String("Warning"_s))),
-            JSC::JSValue::encode(JSC::jsUndefined()),
-            JSC::JSValue::encode(JSC::jsUndefined()));
+        Bun::Process::emitWarning(&state,
+            JSC::jsString(vm, String("The target port was posted to itself, and the communication channel was lost"_s)),
+            JSC::jsString(vm, String("Warning"_s)),
+            JSC::jsUndefined(),
+            JSC::jsUndefined(),
+            Bun::Process::WarningStack::StartsBelowTopFrame);
         CLEAR_IF_EXCEPTION(warnScope);
         close();
         RETURN_IF_EXCEPTION(warnScope, Exception { ExistingExceptionError });

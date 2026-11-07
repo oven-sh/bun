@@ -159,6 +159,12 @@ private:
     bool calculateSourcePositions();
 };
 
+// The stack where it cannot be cut at `caller`: `caller` is on no frame, or frames of suspended async functions lie in front of it. V8 has no frames for a `caller` that is on no frame.
+enum class StackWithoutCut : bool {
+    IsEmpty,
+    IsWhole,
+};
+
 class JSCStackTrace {
 private:
     WTF::Vector<JSCStackFrame> m_frames;
@@ -182,7 +188,7 @@ public:
     // Drops private-visibility frames (present when Options::showPrivateScriptsInStackTraces() is on), so the result does not index like existingFrames.
     static JSCStackTrace fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames);
 
-    static void getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit);
+    static void getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit, StackWithoutCut = StackWithoutCut::IsEmpty);
 
 private:
     JSCStackTrace(WTF::Vector<JSCStackFrame>& frames)

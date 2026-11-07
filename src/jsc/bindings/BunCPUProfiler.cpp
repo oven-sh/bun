@@ -59,7 +59,7 @@ void startCPUProfiler(JSC::VM& vm)
     stopwatch->start();
 
     JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
-    samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(s_samplingInterval));
+    setSamplingProfilerTimingInterval(samplingProfiler, WTF::Seconds::fromMicroseconds(s_samplingInterval));
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
     s_isProfilerRunning = true;

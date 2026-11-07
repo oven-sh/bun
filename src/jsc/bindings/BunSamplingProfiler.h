@@ -11,6 +11,14 @@ class JSGlobalObject;
 
 namespace Bun {
 
+// Sets the sampling interval. Every Bun caller sets the interval through this
+// function, because JSC::SamplingProfiler has no getter and the result of
+// samplingProfilerStackTraces() reports the interval.
+void setSamplingProfilerTimingInterval(JSC::SamplingProfiler&, WTF::Seconds);
+// The interval that was last set on this thread's profiler. Before any call to
+// setSamplingProfilerTimingInterval() it is JSC's default (Options::sampleInterval).
+WTF::Seconds samplingProfilerTimingInterval();
+
 // Takes every sample the profiler has collected so far and clears them from
 // the profiler. When `pause` is set the profiler stops sampling first.
 //

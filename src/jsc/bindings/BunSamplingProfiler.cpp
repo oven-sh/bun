@@ -10,6 +10,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/WasmCompilationMode.h>
@@ -21,6 +22,24 @@
 namespace Bun {
 
 using JSC::SamplingProfiler;
+
+// One profiler per VM, one VM per thread.
+static WTF::Seconds& samplingProfilerTimingIntervalSlot()
+{
+    static thread_local WTF::Seconds interval = WTF::Seconds::fromMicroseconds(JSC::Options::sampleInterval());
+    return interval;
+}
+
+void setSamplingProfilerTimingInterval(SamplingProfiler& profiler, WTF::Seconds interval)
+{
+    profiler.setTimingInterval(interval);
+    samplingProfilerTimingIntervalSlot() = interval;
+}
+
+WTF::Seconds samplingProfilerTimingInterval()
+{
+    return samplingProfilerTimingIntervalSlot();
+}
 
 WTF::Vector<SamplingProfiler::StackTrace> takeSamplingProfilerStackTraces(SamplingProfiler& profiler, bool pause)
 {
@@ -34,8 +53,10 @@ WTF::Vector<SamplingProfiler::StackTrace> takeSamplingProfilerStackTraces(Sampli
 
 // The two formatters below produce the same strings as the file-static
 // descriptionForLocation() and tierName() in JavaScriptCore's
-// SamplingProfiler.cpp, which stackTracesAsJSON() uses. They are not exported
-// from JavaScriptCore.
+// SamplingProfiler.cpp (oven-sh/WebKit 4d45755fed4aeef19e95beb90d3d0c884a2812bd,
+// Source/JavaScriptCore/runtime/SamplingProfiler.cpp:1327 and :1383), which
+// stackTracesAsJSON() uses. JavaScriptCore does not export them. Diff them
+// against the fork on a WebKit upgrade.
 
 static WTF::String descriptionForLocation(const SamplingProfiler::StackFrame::CodeLocation& location, std::optional<JSC::Wasm::CompilationMode> wasmCompilationMode, JSC::BytecodeIndex wasmOffset)
 {
@@ -164,8 +185,9 @@ public:
             RETURN_IF_EXCEPTION(scope, {});
             traces->putDirectIndex(m_globalObject, i, trace);
             RETURN_IF_EXCEPTION(scope, {});
+            // The frames are no longer needed once they are JS objects.
+            stackTraces[i].frames.clear();
         }
-        // The frames are no longer needed once they are JS objects.
         stackTraces.clear();
 
         JSC::JSArray* sources = JSC::constructEmptyArray(m_globalObject, nullptr, m_sources.size());

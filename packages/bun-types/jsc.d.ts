@@ -811,11 +811,13 @@ declare module "bun:jsc" {
   function startSamplingProfiler(optionalDirectory?: string, sampleInterval?: number): void;
 
   /**
-   * Returns the samples that the profiler started by {@link startSamplingProfiler}
-   * took since the previous call, and removes them from the profiler. The
-   * profiler keeps sampling.
+   * Returns the samples that the sampling profiler took since the previous
+   * call, and removes them from the profiler. The profiler keeps sampling:
+   * there is no function that stops what {@link startSamplingProfiler}
+   * started.
    *
-   * @throws {Error} If {@link startSamplingProfiler} was never called
+   * @throws {Error} If no sampling profiler exists yet, that is, neither
+   * {@link startSamplingProfiler} nor {@link profile} has been called
    */
   function samplingProfilerStackTraces(): SamplingProfileStackTraces;
 

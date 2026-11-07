@@ -43,7 +43,7 @@ uint32_t CpuProfilerImpl::start(WTF::String&& title, bool recordSamples)
         auto stopwatch = WTF::Stopwatch::create();
         stopwatch->start();
         JSC::SamplingProfiler& sampler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
-        sampler.setTimingInterval(WTF::Seconds::fromMicroseconds(m_samplingIntervalUs));
+        Bun::setSamplingProfilerTimingInterval(sampler, WTF::Seconds::fromMicroseconds(m_samplingIntervalUs));
         sampler.noticeCurrentThreadAsJSCExecutionThread();
         sampler.start();
     }

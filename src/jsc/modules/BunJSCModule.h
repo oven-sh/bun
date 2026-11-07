@@ -31,7 +31,6 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JavaScript.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/SamplingProfiler.h>
 #include <JavaScriptCore/TestRunnerUtils.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -468,15 +467,6 @@ JSC_DEFINE_HOST_FUNCTION(functionNeverInlineFunction,
 extern "C" bool Bun__mkdirp(JSC::JSGlobalObject*, const char*);
 extern "C" void Bun__VirtualMachine__setSamplingProfilerDirectory(void* bunVM, const BunString* directory);
 
-// The interval that bun:jsc last gave the sampling profiler. JSC::SamplingProfiler
-// has a setter for its interval but no getter, and the result of
-// samplingProfilerStackTraces() reports it.
-static Seconds& samplingProfilerIntervalForBunJSC()
-{
-    static thread_local Seconds interval = Seconds::fromMicroseconds(JSC::Options::sampleInterval());
-    return interval;
-}
-
 JSC_DECLARE_HOST_FUNCTION(functionStartSamplingProfiler);
 JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
     (JSC::JSGlobalObject * globalObject,
@@ -514,9 +504,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
     }
     if (sampleValue.isNumber()) {
         unsigned sampleInterval = JSC::toUInt32(sampleValue.asNumber());
-        Seconds interval = Seconds::fromMicroseconds(sampleInterval);
-        samplingProfiler.setTimingInterval(interval);
-        samplingProfilerIntervalForBunJSC() = interval;
+        Bun::setSamplingProfilerTimingInterval(samplingProfiler, Seconds::fromMicroseconds(sampleInterval));
     }
 
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
@@ -541,7 +529,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSamplingProfilerStackTraces,
     // The frames hold raw cell pointers until they become JS objects.
     JSC::DeferGC deferGC(vm);
     auto stackTraces = Bun::takeSamplingProfilerStackTraces(*vm.samplingProfiler(), /* pause */ false);
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(Bun::samplingProfilerStackTracesToJS(globalObject, WTF::move(stackTraces), samplingProfilerIntervalForBunJSC())));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(Bun::samplingProfilerStackTracesToJS(globalObject, WTF::move(stackTraces), Bun::samplingProfilerTimingInterval())));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGetRandomSeed);
@@ -755,10 +743,9 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
     Seconds interval = Seconds::fromMicroseconds(1000);
     if (sampleValue.isNumber())
         interval = Seconds::fromMicroseconds(JSC::toUInt32(sampleValue.asNumber()));
-    samplingProfiler.setTimingInterval(interval);
-    samplingProfilerIntervalForBunJSC() = interval;
+    Bun::setSamplingProfilerTimingInterval(samplingProfiler, interval);
 
-    const auto report = [interval](JSC::VM& vm,
+    const auto report = [](JSC::VM& vm,
                             JSC::JSGlobalObject* globalObject) -> JSC::JSValue {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -774,7 +761,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         // Pause instead of shutdown(): shutdown() sets m_isShutDown, which is
         // never reset, and profile() must be able to run again.
         auto traces = Bun::takeSamplingProfilerStackTraces(samplingProfiler, /* pause */ true);
-        JSValue stackTraces = Bun::samplingProfilerStackTracesToJS(globalObject, WTF::move(traces), interval);
+        JSValue stackTraces = Bun::samplingProfilerStackTracesToJS(globalObject, WTF::move(traces), Bun::samplingProfilerTimingInterval());
         RETURN_IF_EXCEPTION(throwScope, {});
 
         JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);

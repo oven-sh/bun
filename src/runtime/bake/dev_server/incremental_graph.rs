@@ -1743,6 +1743,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         }
                     }
                     Content::Asset(_) => {
+                        let (mut pages, mut stylesheets, mut scripts) = (false, false, false);
                         let mut it = self.edge_lists[index].first_dep;
                         while let Some(edge_index) = it {
                             let entry = self.edges[edge_index.get() as usize];
@@ -1752,17 +1753,30 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                 &*self.bundled_files.keys()[dep.get() as usize],
                             );
                             let k = k.slice();
-                            if matches!(
-                                self.bundled_files.values()[dep.get() as usize].content,
-                                Content::CssRoot(_),
-                            ) {
+                            let importer = &self.bundled_files.values()[dep.get() as usize];
+                            if matches!(importer.content, Content::CssRoot(_)) {
+                                stylesheets = true;
                                 entry_points.append_css(k)?;
                             } else {
+                                if importer.html_route_bundle_index.is_some() {
+                                    pages = true;
+                                } else {
+                                    scripts = true;
+                                }
                                 self.append_client_entry_point(entry_points, dep.get() as usize)?;
                             }
                             it = entry.next_dependency;
                         }
-                        self.append_client_entry_point(entry_points, index)?;
+                        // One kind of importer bundles this file again, with the loader that its imports ask for. A page, a stylesheet and a script can ask for different loaders.
+                        let importer_kinds =
+                            u8::from(pages) + u8::from(stylesheets) + u8::from(scripts);
+                        if importer_kinds != 1
+                            || self.bundled_files.values()[index]
+                                .html_route_bundle_index
+                                .is_some()
+                        {
+                            self.append_client_entry_point(entry_points, index)?;
+                        }
                     }
                     // When re-bundling SCBs, only bundle the server.
                     Content::Js(_) | Content::Unknown => {

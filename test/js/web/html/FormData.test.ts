@@ -289,13 +289,15 @@ describe("FormData", () => {
     // "RIFF" + 4-byte size + "WEBPVP8 ": no entry in the magic-byte sniff table.
     const webp = Buffer.concat([Buffer.from("RIFF"), Buffer.from([0, 0, 0, 0]), Buffer.from("WEBPVP8 ")]);
 
-    function buildBody(contentType: string | null, filename: string, content: Uint8Array): Uint8Array {
-      const head =
-        `--${boundary}\r\n` +
-        `Content-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
-        (contentType === null ? "" : `Content-Type: ${contentType}\r\n`) +
-        `\r\n`;
+    function buildPart(headerLines: string[], content: Uint8Array): Uint8Array {
+      const head = `--${boundary}\r\n${headerLines.join("\r\n")}\r\n\r\n`;
       return Buffer.concat([Buffer.from(head, "latin1"), content, Buffer.from(`\r\n--${boundary}--\r\n`, "latin1")]);
+    }
+
+    const disposition = (filename: string) => `Content-Disposition: form-data; name="file"; filename="${filename}"`;
+
+    function buildBody(contentType: string, filename: string, content: Uint8Array): Uint8Array {
+      return buildPart([disposition(filename), `Content-Type: ${contentType}`], content);
     }
 
     function parse(C: typeof Response | typeof Request, body: Uint8Array) {
@@ -316,6 +318,41 @@ describe("FormData", () => {
       it(`prefers the declared type over the filename extension (${C.name})`, async () => {
         const form = await parse(C, buildBody("image/webp", "banner.txt", webp));
         expect((form.get("file") as File).type).toBe("image/webp");
+      });
+
+      it.each([
+        // https://github.com/oven-sh/bun/issues/45707
+        ["noext", "image/png"],
+        ["a.txt", "application/octet-stream"],
+        ["a.png", "image/jpeg"],
+        ["a.bmp", "image/bmp"],
+        // https://github.com/oven-sh/bun/issues/34717
+        ["example.txt", "text/plain"],
+        // https://github.com/oven-sh/bun/issues/39884
+        ["a.bin", "image/png"],
+        ["x.png", "text/plain"],
+        ["x.html", "application/octet-stream"],
+        ["x.txt", "text/x-a"],
+        ["x.txt", "text/plain; charset=latin1"],
+      ])(`${C.name}: %s sent as %s has that type`, async (filename, declared) => {
+        const form = await parse(C, buildBody(declared, filename, webp));
+        expect((form.get("file") as File).type).toBe(declared);
+      });
+
+      it(`reads a Content-Type that other headers surround (${C.name})`, async () => {
+        const body = buildPart(
+          [disposition("banner.txt"), "Content-Transfer-Encoding: binary", "Content-Type: image/webp", "X-Last: 1"],
+          webp,
+        );
+        expect(((await parse(C, body)).get("file") as File).type).toBe("image/webp");
+      });
+
+      it(`rejects a header line with no colon in a file part, as in a field part (${C.name})`, async () => {
+        const message = "FormData parse error is missing header colon separator";
+        const field = buildPart([`Content-Disposition: form-data; name="file"`, "no colon"], webp);
+        const file = buildPart([disposition("banner.txt"), "no colon"], webp);
+        await expect(parse(C, field)).rejects.toThrow(message);
+        await expect(parse(C, file)).rejects.toThrow(message);
       });
     }
   });

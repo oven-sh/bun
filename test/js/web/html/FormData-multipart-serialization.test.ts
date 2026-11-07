@@ -142,6 +142,20 @@ describe("multipart serialization (new Response(formData))", () => {
     ]);
   });
 
+  test("parses back the Content-Type it writes for each file part", async () => {
+    const formData = new FormData();
+    formData.append("typed blob", new Blob(["x"], { type: "image/webp" }));
+    formData.append("named blob", new Blob(["x"]), "x.png");
+    formData.append("typed file", new File(["x"], "x.txt", { type: "image/png" }));
+
+    const parsed = await new Response(formData).formData();
+    expect([...parsed].map(([name, value]) => [name, (value as File).type])).toEqual([
+      ["typed blob", "image/webp"],
+      ["named blob", "application/octet-stream"],
+      ["typed file", "image/png"],
+    ]);
+  });
+
   test("round-trips large binary blob contents intact", async () => {
     const bytes = new Uint8Array(64 * 1024);
     for (let i = 0; i < bytes.length; i++) {

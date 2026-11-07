@@ -587,11 +587,6 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
             return {};
         }
 
-        if (view->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
-        }
-
         return view;
     }
 
@@ -683,19 +678,13 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
             return {};
         }
 
-        if (view->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
-        }
-
         return view;
     }
 
     if (auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
         RefPtr<JSC::ArrayBuffer> impl = arrayBuffer->impl();
         if (impl->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
+            RELEASE_AND_RETURN(scope, WebCore::createEmptyBuffer(globalObject));
         }
 
         auto* structure = globalObject->typedArrayStructure(JSC::TypeUint8, impl->isResizableOrGrowableShared());
@@ -709,31 +698,17 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         return {};
     }
 
-    if (view->isDetached()) {
-        throwTypeError(globalObject, scope, "Buffer is detached"_s);
-        return {};
-    }
-
     return view;
 }
 
 std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer)
 {
     if (auto* view = dynamicDowncast<JSArrayBufferView>(maybeBuffer)) {
-        if (view->isDetached()) {
-            return std::nullopt;
-        }
-
         return view->span();
     }
 
     if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(maybeBuffer)) {
-        auto* buffer = arrayBuffer->impl();
-        if (buffer->isDetached()) {
-            return std::nullopt;
-        }
-
-        return buffer->span();
+        return arrayBuffer->impl()->span();
     }
 
     return std::nullopt;

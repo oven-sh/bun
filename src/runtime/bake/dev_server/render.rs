@@ -477,7 +477,7 @@ impl DevServer {
                     }
                 };
                 let payload = self
-                    .generate_client_bundle(root, source_map_id)
+                    .generate_client_bundle(bundle_index, root, source_map_id)
                     .expect("oom");
                 let bundle = StaticRoute::init_from_any_blob(
                     crate::webcore::AnyBlob::from_owned_slice(payload),
@@ -502,6 +502,7 @@ impl DevServer {
     /// contains all needed files for a route.
     fn generate_client_bundle(
         &mut self,
+        route_bundle_index: route_bundle::Index,
         root: route_bundle::TraceRoot,
         script_id: source_map_store::Key,
     ) -> crate::Result<Vec<u8>> {
@@ -568,6 +569,8 @@ impl DevServer {
             }
             route_bundle::TraceRoot::Html(bundled_file) => Some(bundled_file),
         };
+        let html_route_index =
+            matches!(root, route_bundle::TraceRoot::Html(_)).then_some(route_bundle_index);
 
         // Insert the source map
         map_log!("inc {:x}, 1 for generateClientBundle", script_id.get());
@@ -599,6 +602,7 @@ impl DevServer {
                     script_id,
                     console_log: this.should_receive_console_log_from_browser(),
                     route_page_files: route_page_files.as_ref(),
+                    html_route_index,
                 })?;
         Ok(client_bundle)
     }

@@ -1101,7 +1101,7 @@ impl BunTest {
             (*this).timer.next = ElTimespec::EPOCH;
             (*this).timer.state = EventLoopTimerState::PENDING;
         }
-        if in_timer_pass && global.vm().is_entered() && !vm.is_inside_deferred_task_queue.get() {
+        if in_timer_pass && global.vm().is_entered() {
             // A timer pass under JS runs the promise jobs of its timers last. Those of the timers before this one run now, so that a fire is the same cut as at the top level.
             let _ = global.bun_vm().event_loop_mut().drain_microtasks();
         }

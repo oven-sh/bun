@@ -3791,17 +3791,6 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
           results: ["(pass) t"],
           timedOut: 0,
         },
-        // Bun.spawnSync() reports the limit when it returns, before the callback goes on.
-        "inside Bun.spawnSync(), and the test ends when that returns": {
-          source: `
-            test("t", done => {
-              setTimeout(() => {
-                Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(${limit + 500})"] });
-                done();
-              }, 50);
-            }, ${limit});`,
-          results: ["(fail) t"],
-        },
         // No step of the runner runs under Bun.build(). The timer fires in there for the limit that `a` left behind, and then for the limit of `b`.
         "inside Bun.build(), after a fire in there for another limit": {
           source: `
@@ -3853,6 +3842,26 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
         },
       }),
     )("%s", (_, row) => run(row));
+
+    // Bun.spawnSync() reports the limit when it returns. That is a fire with no timer pass: no promise job runs under it.
+    test("inside Bun.spawnSync(), and the test ends when that returns", async () => {
+      const { stdout } = await run({
+        source: `
+          test("t", done => {
+            setTimeout(() => {
+              Promise.resolve().then(() => console.log("a promise job"));
+              Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(${limit + 500})"] });
+              console.log("Bun.spawnSync() returned");
+              done();
+            }, 50);
+          }, ${limit});`,
+        results: ["(fail) t"],
+      });
+      expect(stdout.split(/\r?\n/).filter(line => /promise job|returned/.test(line))).toEqual([
+        "Bun.spawnSync() returned",
+        "a promise job",
+      ]);
+    });
 
     test("when its callback returns", async () => {
       await run({

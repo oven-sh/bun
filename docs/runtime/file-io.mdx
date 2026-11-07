@@ -103,13 +103,14 @@ Bun handles each combination with the fastest available system call on the curre
 | Output               | Input          | System call                   | Platform |
 | -------------------- | -------------- | ----------------------------- | -------- |
 | file                 | file           | copy_file_range               | Linux    |
-| file                 | pipe           | sendfile                      | Linux    |
+| file                 | pipe           | read, write                   | Linux    |
 | pipe                 | pipe           | splice                        | Linux    |
 | terminal             | file           | sendfile                      | Linux    |
 | terminal             | terminal       | sendfile                      | Linux    |
-| socket               | file or pipe   | sendfile (if http, not https) | Linux    |
+| socket               | file           | sendfile (if http, not https) | Linux    |
 | file (doesn't exist) | file (path)    | clonefile                     | macOS    |
 | file (exists)        | file           | fcopyfile                     | macOS    |
+| file                 | pipe           | read, write                   | macOS    |
 | file                 | Blob or string | write                         | macOS    |
 | file                 | Blob or string | write                         | Linux    |
 

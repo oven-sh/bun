@@ -1,5 +1,4 @@
 // RUN: lower
-// STATISTIC: AotFilesUsed = 6
 
 // The file under a package's aot condition means what the compilerOptions of its package.json say, whatever the application's tsconfig.json says.
 

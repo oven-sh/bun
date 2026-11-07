@@ -1,0 +1,38 @@
+# a text that a built-in has made of a number only to be appended to a text in a builder is never made: the builder writes the digits
+# no part of a builder takes another radix than ten, so in the third function the text is made and appended as a string
+# in the fourth somebody has read the text in front of the append, so it is made
+# each function is handed to code that nobody has seen, and tests what it is handed
+# f1 = digits, f2 = halves, f3 = hex, f4 = kept
+# -- source: text-of-a-number-is-appended-as-the-number.ts
+# declare function sink(...values: unknown[]): void;
+# function digits(n: unknown) { if (typeof n !== "number") return ""; let s = ""; for (let i = 0; i < n; i++) s += i.toString(); return s; }
+# function halves(n: unknown) { if (typeof n !== "number") return ""; let s = ""; for (let i = 0; i < n; i++) s += String(i * 0.5) + ","; return s; }
+# function hex(n: unknown) { if (typeof n !== "number") return ""; let s = ""; for (let i = 0; i < n; i++) s += i.toString(16); return s; }
+# function kept(n: unknown) { if (typeof n !== "number") return ""; let s = ""; for (let i = 0; i < n; i++) { const text = i.toString(); sink(text); s += text; } return s; }
+# sink(digits, halves, hex, kept);
+# -- end of source
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: StringBuilderAppend
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+DirectCalls+BuiltinCalls
+# NEVER-NOT: StringBuilderAppendString
+# NEVER-NOT: = CallInline
+# NEVER-NOT: = CallBuiltin
+# NEVER-NOT: = ToString
+# RUN(HALVES): walk f2 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+DirectCalls+BuiltinCalls
+# HALVES-LABEL: code f2:Body
+# HALVES: StringBuilderAppendNumber
+# RUN(ONLY): walk f2 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+DirectCalls+BuiltinCalls
+# ONLY-NOT: StringBuilderAppendString
+# RUN(HEX): walk f3 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+DirectCalls+BuiltinCalls
+# HEX-LABEL: code f3:Body
+# HEX: StringBuilderAppendString
+# RUN(KEPT): walk f4 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+DirectCalls+BuiltinCalls
+# KEPT-LABEL: code f4:Body
+# KEPT: StringBuilderAppendString
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: StringBuilderAppend
+# RUN(ALLONLY): walk f1 mechanisms=all
+# ALLONLY-NOT: StringBuilderAppendString

@@ -76,19 +76,12 @@ new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIM
 // Seconds the `new WebSocket()` client waits for the server's TCP close after its close event. 0 disables.
 new!(pub BUN_CONFIG_WS_CLOSE_TIMEOUT: unsigned, "BUN_CONFIG_WS_CLOSE_TIMEOUT", { default: 30 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
-// Canary builds only: an executable built with `--aot` starts with this entry point, given as its path below the root of the
-// build, in place of the first.
-#[cfg(not(bun_locked_environment))]
-new!(pub BUN_AOT_START_AT: string, "BUN_AOT_START_AT", {});
-#[cfg(not(bun_locked_environment))]
-new!(pub BUN_AOT_TYPE_MISMATCH_LOG: string, "BUN_AOT_TYPE_MISMATCH_LOG", {});
-#[cfg(not(bun_locked_environment))]
-new!(pub BUN_AOT_TYPE_MISMATCH_LOG_FORMAT: string, "BUN_AOT_TYPE_MISMATCH_LOG_FORMAT", {});
 #[cfg(not(bun_locked_environment))]
 new!(pub BUN_AOT_VERBOSE: boolean, "BUN_AOT_VERBOSE", { default: false });
-// A trial: `bun test --aot` compiles what the test files import and runs the test files themselves from disk.
-new!(pub BUN_AOT_TEST_FILES_FROM_DISK: boolean, "BUN_AOT_TEST_FILES_FROM_DISK", { default: false });
-new!(pub BUN_AOT_TESTS_NAME_WHAT_THEY_USE: boolean, "BUN_AOT_TESTS_NAME_WHAT_THEY_USE", { default: false });
+// Bun's own tests, behind BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: `bun build --compile --aot` writes the program alone where it would write an
+// executable.
+#[cfg(not(bun_locked_environment))]
+new!(pub BUN_AOT_WRITES_PROGRAM_ALONE: boolean, "BUN_AOT_WRITES_PROGRAM_ALONE", { default: false });
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});
 new!(pub BUN_DEBUG_CSS_ORDER: boolean, "BUN_DEBUG_CSS_ORDER", { default: false });

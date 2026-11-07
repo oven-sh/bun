@@ -202,6 +202,10 @@ extern "C" bool Bun__throwIfModuleIsRemoved(JSC::JSGlobalObject* globalObject, u
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto message = Bun::moduleNotCompiledInMessage(WTF::String::fromUTF8(std::span { specifier, length }));
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        message = JSC::withAOTErrorNote(message);
+#endif
     JSC::throwException(globalObject, scope, Bun::createError(globalObject, code, message));
     return true;
 }
@@ -289,6 +293,10 @@ extern "C" JSC::EncodedJSValue Bun__createModuleNotCompiledInError(JSC::JSGlobal
     // Neither a file nor a text is a module that --trim could have kept.
     if (isPath || Bun::isDataOrBlobURL(name))
         return JSC::JSValue::encode(Bun::createNotInExecutableError(globalObject, code, name));
+#if ENABLE(AOT)
+    if (JSC::getVM(globalObject).hasCompiledCode())
+        return JSC::JSValue::encode(Bun::createError(globalObject, code, JSC::withAOTErrorNote(Bun::moduleNotCompiledInMessage(name))));
+#endif
     return JSC::JSValue::encode(Bun::createError(globalObject, code, Bun::moduleNotCompiledInMessage(name)));
 }
 

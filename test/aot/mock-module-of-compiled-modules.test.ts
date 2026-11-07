@@ -400,8 +400,9 @@ test("what never runs goes by the mocks of each file, whatever the file before i
     {
       "only.cjs": `console.log("only.cjs runs");\nexports.only = "only";`,
       "deep.cjs": `console.log("deep.cjs runs");\nexports.deep = "deep";`,
-      "left.cjs": `console.log("left.cjs runs");\nexports.left = "left";`,
-      "right.cjs": `console.log("right.cjs runs");\nexports.right = "right";`,
+      // Plain runs two CommonJS files that one ES module imports in either order. So the second asks for the first.
+      "left.cjs": `require("./deep.cjs");\nconsole.log("left.cjs runs");\nexports.left = "left";`,
+      "right.cjs": `require("./deep.cjs");\nconsole.log("right.cjs runs");\nexports.right = "right";`,
       "always.ts": `import { only } from "./only.cjs";\nconsole.log("always.ts runs");\nexport const always = only;`,
       "one.ts": `import { deep } from "./deep.cjs";\nimport { left } from "./left.cjs";\nconsole.log("one.ts runs");\nexport const one = deep + left;`,
       "two.ts": `import { deep } from "./deep.cjs";\nimport { right } from "./right.cjs";\nconsole.log("two.ts runs");\nexport const two = deep + right;`,

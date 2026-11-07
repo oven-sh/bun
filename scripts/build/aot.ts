@@ -271,7 +271,6 @@ export function emitBuiltinSources({ n, cfg, sources, o, dirStamp, engine }: Ctx
       resolve(cfg.cwd, "src", "js", "tsconfig.json"),
       resolve(cfg.cwd, "tsconfig.base.json"),
       resolve(cfg.cwd, "src", "runtime.main.js"),
-      o.bundledNamesOfModules,
       o.bundledHelpers,
       o.internalModulesBin,
       ...readdirSync(bunTypes, { recursive: true, encoding: "utf8" })
@@ -293,7 +292,6 @@ export function emitBuiltinSources({ n, cfg, sources, o, dirStamp, engine }: Ctx
         archive,
         `--engine-functions=${engineFunctionsJson(cfg)}`,
         `--engine-directory=${engine.directory}`,
-        `--bundled-names-of-modules=${o.bundledNamesOfModules}`,
         `--bundled-helpers=${o.bundledHelpers}`,
         `--evaluated-modules=${o.internalModulesBin}`,
       ]),

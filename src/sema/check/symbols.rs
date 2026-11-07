@@ -2282,9 +2282,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getUndefinedProperty`: `name?: undefined` with the declarations and the `readonly` of `prop`,
-    /// the sibling it stands in for. TypeScript 7.1 caches it per source symbol. Before that, it was
-    /// created once per name and per checker, from the first property it was requested for, so the
-    /// result depended on which files shared a checker.
+    /// the sibling it stands in for (TypeScript 7.1, microsoft/TypeScript#64728).
     fn get_undefined_property(&mut self, prop: &Prop) -> Prop<'s> {
         // `undefinedOrMissingType`, which isn't widened again wherever it's copied to.
         let missing = if self.p.files.options.exact_optional_property_types {

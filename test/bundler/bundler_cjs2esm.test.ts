@@ -686,6 +686,259 @@ describe("bundler", () => {
       stdout: "side effect\n42 42 object",
     },
   });
+  // A require() of a `.json` specifier is never unwrapped. `import * as ns`
+  // of a JSON file is a module namespace where the parsed value is owed, and
+  // Node rejects the import when the package is external: it has no
+  // `with { type: "json" }`. Bun accepts that import, so the cases that read
+  // one key assert the printed call.
+  const reactPackageJson = {
+    "/node_modules/react/package.json": fakeReactNodeModules["/node_modules/react/package.json"],
+  };
+  const requireJsonOfExternalReact = {
+    files: {
+      "/entry.js": /* js */ `
+        const pkg = require("react/package.json");
+        console.log(pkg.name, pkg.version);
+      `,
+    },
+    target: "node",
+    outfile: "/out.mjs",
+    runtimeFiles: reactPackageJson,
+    onAfterBundle(api: BundlerTestBundleAPI) {
+      const code = api.readFile("/out.mjs");
+      expect(code).toContain('__require("react/package.json")');
+      expect(code).not.toContain('from "react/package.json"');
+    },
+    run: { stdout: "react 2.0.0" },
+  } as const;
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`cjs2esm/RequireJsonOfUnwrappedPackageExternal/${backend}`, {
+      ...requireJsonOfExternalReact,
+      external: ["react"],
+      backend,
+    });
+  }
+  itBundled("cjs2esm/RequireJsonOfUnwrappedPackagePackagesExternal", {
+    ...requireJsonOfExternalReact,
+    packages: "external",
+  });
+  // With `target: "browser"` the call reaches the `__require` shim, as for a
+  // package that is not on the list. The shim throws where no require() exists.
+  itBundled("cjs2esm/RequireJsonOfUnwrappedPackageExternalTargetBrowser", {
+    ...requireJsonOfExternalReact,
+    external: ["react"],
+    target: "browser",
+    run: false,
+  });
+  // Bun accepts the import and gives the keys as named exports, so only a
+  // use of the whole value shows the namespace there.
+  itBundled("cjs2esm/RequireJsonOfUnwrappedPackageExternalTargetBun", {
+    files: {
+      "/entry.js": /* js */ `
+        const pkg = require("react/package.json");
+        console.log(Object.keys(pkg).join(","));
+      `,
+    },
+    external: ["react"],
+    target: "bun",
+    runtimeFiles: reactPackageJson,
+    run: { stdout: "name,version,main" },
+  });
+  // The load happens at the call: a require() that does not run loads nothing.
+  itBundled("cjs2esm/RequireJsonOfUnwrappedPackageExternalLoadsAtTheCall", {
+    files: {
+      "/entry.js": /* js */ `
+        function neverCalled() {
+          return require("react/missing.json");
+        }
+        const missing = process.argv.length > 100;
+        const pkg = require(missing ? "react/missing-too.json" : "react/package.json");
+        console.log(pkg.name, typeof neverCalled);
+      `,
+    },
+    external: ["react"],
+    target: "node",
+    outfile: "/out.mjs",
+    runtimeFiles: reactPackageJson,
+    run: { stdout: "react function" },
+  });
+  // `format: "cjs"` never unwraps: it is the reference for the bundled value.
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`cjs2esm/RequireJsonOfUnwrappedPackageBundled/${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const pkg = require("react/package.json");
+          const list = require("react/list.json");
+          const def = require("react/default.json");
+          const key = "version";
+          console.log(Object.keys(pkg).join(","), pkg[key], Array.isArray(list), list.length, list[0], def.default);
+          console.log(require("react/package.json") === pkg, pkg.hasOwnProperty("name"));
+        `,
+        ...fakeReactNodeModules,
+        "/node_modules/react/list.json": /* json */ `["a", "b"]`,
+        "/node_modules/react/default.json": /* json */ `{ "default": "d" }`,
+      },
+      format,
+      run: { stdout: "name,version,main 2.0.0 true 2 a d\ntrue true" },
+    });
+  }
+  // The requiring file stays an ES module: only the JSON file gets a wrapper.
+  itBundled("cjs2esm/RequireJsonOfUnwrappedPackageFromEsModule", {
+    files: {
+      "/entry.js": /* js */ `
+        export const marker = "esm";
+        const pkg = require("react/package.json");
+        console.log(marker, Object.keys(pkg).join(","));
+      `,
+      ...fakeReactNodeModules,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("var pkg = require_package();");
+      expect(code).not.toContain("require_entry");
+    },
+    run: { stdout: "esm name,version,main" },
+  });
+  // A write through the import namespace was a build error.
+  itBundled("cjs2esm/RequireJsonOfUnwrappedPackageBundledWrite", {
+    files: {
+      "/entry.js": /* js */ `
+        const pkg = require("react/package.json");
+        pkg.extra = 1;
+        delete pkg.version;
+        const again = require("react/package.json");
+        console.log(again.extra, again.version, again.name);
+      `,
+      ...fakeReactNodeModules,
+    },
+    run: { stdout: "1 undefined react" },
+  });
+  const requireJsonSourceForms = /* js */ `
+    const { name } = require("react/package.json");
+    const first = name === "react";
+    const picked = require(first ? "react/a.json" : "react/b.json");
+    const viaModule = module.require("react/package.json");
+    const viaTemplate = require(\`react/package.json\`);
+    let assigned;
+    assigned = require("react/package.json");
+    function inFunction() {
+      return require("react/package.json");
+    }
+    console.log(
+      name,
+      require("react/package.json").version,
+      picked.id,
+      Object.keys(viaModule).length,
+      Object.keys(viaTemplate).length,
+      Object.keys(assigned).length,
+      Object.keys(inFunction()).length,
+    );
+  `;
+  const reactJsonFiles = {
+    ...reactPackageJson,
+    "/node_modules/react/a.json": /* json */ `{ "id": "a" }`,
+    "/node_modules/react/b.json": /* json */ `{ "id": "b" }`,
+  };
+  itBundled("cjs2esm/RequireJsonOfUnwrappedPackageSourceFormsBundled", {
+    files: { "/entry.js": requireJsonSourceForms, ...reactJsonFiles },
+    run: { stdout: "react 2.0.0 a 3 3 3 3" },
+  });
+  itBundled("cjs2esm/RequireJsonOfUnwrappedPackageSourceFormsExternal", {
+    files: { "/entry.js": requireJsonSourceForms },
+    external: ["react"],
+    target: "node",
+    outfile: "/out.mjs",
+    runtimeFiles: reactJsonFiles,
+    run: { stdout: "react 2.0.0 a 3 3 3 3" },
+  });
+  itBundled("cjs2esm/RequireJsonOfUnwrappedPackageImportEquals", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import pkg = require("react/package.json");
+        console.log(Object.keys(pkg).join(","));
+      `,
+      ...fakeReactNodeModules,
+    },
+    run: { stdout: "name,version,main" },
+  });
+  // The same for a require() written inside an unwrapped package.
+  itBundled("cjs2esm/RequireJsonInsideUnwrappedPackage", {
+    files: {
+      "/entry.js": /* js */ `
+        import { own, foreign } from "react";
+        console.log(Array.isArray(own), own.length, Array.isArray(foreign), foreign[0]);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        exports.own = require("./list.json");
+        exports.foreign = require("foo/list.json");
+      `,
+      "/node_modules/react/list.json": /* json */ `["a", "b"]`,
+      "/node_modules/foo/list.json": /* json */ `["c"]`,
+    },
+    run: { stdout: "true 2 true c" },
+  });
+  // A require() resolves with the "require" condition.
+  itBundled("cjs2esm/RequireJsonOfUnwrappedPackageUsesRequireCondition", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("react/data.json").kind);
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        {
+          "name": "react",
+          "exports": {
+            "./data.json": { "import": "./esm.json", "require": "./cjs.json" }
+          }
+        }
+      `,
+      "/node_modules/react/esm.json": /* json */ `{ "kind": "esm" }`,
+      "/node_modules/react/cjs.json": /* json */ `{ "kind": "cjs" }`,
+    },
+    run: { stdout: "cjs" },
+  });
+  // The unwrap list matches the text of the specifier, so an alias with the
+  // name of a listed package is unwrapped too.
+  itBundled("cjs2esm/RequireJsonThroughAliasNamedLikeUnwrappedPackage", {
+    files: {
+      "/entry.js": /* js */ `
+        const config = require("scheduler/config.json");
+        console.log(Array.isArray(config), config[0]);
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": { "scheduler/*": ["./src/scheduler/*"] }
+          }
+        }
+      `,
+      "/src/scheduler/config.json": /* json */ `["x"]`,
+    },
+    run: { stdout: "true x" },
+  });
+  // Only `.json` names a data file: `react-dom/server.node` is the JavaScript
+  // file `server.node.js` and is still unwrapped.
+  itBundled("cjs2esm/RequireDotNodeSubpathOfUnwrappedPackageIsUnwrapped", {
+    files: {
+      "/entry.js": /* js */ `
+        const server = require("react-dom/server.node");
+        console.log(server.render());
+      `,
+      "/node_modules/react-dom/server.node.js": /* js */ `
+        exports.render = function () {
+          return "rendered";
+        };
+      `,
+      "/node_modules/react-dom/package.json": /* json */ `
+        {
+          "name": "react-dom",
+          "version": "2.0.0"
+        }
+      `,
+    },
+    cjs2esm: true,
+    run: { stdout: "rendered" },
+  });
   // Other `exports` uses next to `module.exports = require()` keep the file
   // CommonJS: the export star would hide the `exports.foo` assignment.
   itBundled("cjs2esm/ReactSpecificUnwrappingMixedExportsStaysCJS", {

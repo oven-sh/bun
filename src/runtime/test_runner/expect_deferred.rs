@@ -46,6 +46,13 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn ExpectDeferred__takeThrown(global: &JSGlobalObject) -> JSValue;
     safe fn ExpectDeferred__isHandled(promise: JSValue) -> bool;
+    safe fn ExpectDeferred__onlyPassesRejectionOn(promise: JSValue) -> bool;
+    safe fn ExpectDeferred__watchCopies(
+        global: &JSGlobalObject,
+        promise: JSValue,
+        on_copy: JSValue,
+    );
+    safe fn ExpectDeferred__markHandled(promise: JSValue);
     safe fn ExpectDeferred__captureCallSite(global: &JSGlobalObject) -> JSValue;
     safe fn ExpectDeferred__continueStackAt(
         global: &JSGlobalObject,
@@ -67,6 +74,28 @@ pub(crate) struct RunningEntry {
     /// `Execution` with `entry_data: None` is a whole concurrent group. Any other variant is the file.
     entry: RefDataValue,
     unclaimed: Option<usize>,
+}
+
+/// What a rejection of a call's promise reaches.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Reaction {
+    None,
+    /// Only reactions that reject the promise they returned with the same error, such as `.finally(f)` and `.then(f)`.
+    PassesOn,
+    /// Something that can handle it, such as `.catch(f)` or an `await`.
+    MayHandle,
+}
+
+impl Reaction {
+    fn of(promise: JSValue) -> Reaction {
+        if !ExpectDeferred__isHandled(promise) {
+            Reaction::None
+        } else if ExpectDeferred__onlyPassesRejectionOn(promise) {
+            Reaction::PassesOn
+        } else {
+            Reaction::MayHandle
+        }
+    }
 }
 
 /// A test file's deferred matcher calls.
@@ -219,8 +248,8 @@ impl RunningEntry {
         self
     }
 
-    /// `failure` is the matcher's error when nothing handles its promise, so it has to be reported here.
-    fn release(self, global: &JSGlobalObject, failure: Option<JSValue>) {
+    /// `failure` is the matcher's error when nothing can handle the rejection of its promise, so it has to be reported here.
+    fn release(self, global: &JSGlobalObject, failure: Option<JSValue>, ends_running_test: bool) {
         let Some(buntest) = self.buntest.upgrade() else {
             return;
         };
@@ -248,9 +277,10 @@ impl RunningEntry {
                 // SAFETY: as in `pending_matchers`.
                 let sequence = unsafe { &mut *sequence.as_ptr() };
                 // take(), so the entry ends only once even if several matchers release before the runner's next step.
-                ((none_left || sequence.maybe_skip)
-                    && core::mem::take(&mut sequence.callback_done))
-                .then_some(self.entry)
+                let ends = (none_left || sequence.maybe_skip)
+                    && core::mem::take(&mut sequence.callback_done);
+                (ends || (ends_running_test && sequence.active_entry == sequence.test_entry))
+                    .then_some(self.entry)
             }
             // During collection the runner isn't waiting on these yet, so there's nothing to wake.
             None => (none_left && buntest.phase == Phase::Execution).then_some(RefDataValue::Start),
@@ -697,7 +727,7 @@ impl ExpectDeferred {
             }
             Ok(_) => {
                 if let Some(held) = held {
-                    held.release(global, None);
+                    held.release(global, None, false);
                 }
                 return settle.resolve(global, JSValue::UNDEFINED);
             }
@@ -713,14 +743,28 @@ impl ExpectDeferred {
         if let Some(call_site) = js::call_site_get_cached(deferred) {
             ExpectDeferred__continueStackAt(global, error, call_site);
         }
+        let reaction = Reaction::of(promise);
         match held {
-            Some(held) if !ExpectDeferred__isHandled(promise) => {
-                held.release(global, Some(error));
+            Some(held) if reaction != Reaction::MayHandle => {
+                if reaction == Reaction::PassesOn {
+                    // The entry reports the failure, so the rejections that the reactions pass on are not errors of their own.
+                    let on_copy = private_function(global, generated::Bun__ExpectDeferred__onCopy)
+                        .bind(
+                            global,
+                            JSValue::UNDEFINED,
+                            &bun_core::String::EMPTY,
+                            0.0,
+                            &[error],
+                        )?;
+                    ExpectDeferred__watchCopies(global, promise, on_copy);
+                }
+                // This report replaces an unhandled rejection, and one of those ends the test that runs.
+                held.release(global, Some(error), reaction == Reaction::PassesOn);
                 settle.reject_as_handled(global, error)
             }
             held => {
                 if let Some(held) = held {
-                    held.release(global, None);
+                    held.release(global, None, false);
                 }
                 settle.reject(global, Ok(error))
             }
@@ -762,7 +806,7 @@ impl ExpectDeferred {
                 continue;
             }
             let is_handled = js::promise_get_cached(deferred)
-                .is_some_and(|promise| ExpectDeferred__isHandled(promise));
+                .is_some_and(|promise| Reaction::of(promise) == Reaction::MayHandle);
             // SAFETY: as above; `deferred` is on the stack.
             crate::dispatch::fold(unsafe { &*this }.abandon(global, deferred, Some(buntest)));
             if is_handled {
@@ -889,6 +933,19 @@ fn private_function(global: &JSGlobalObject, function: JSHostFn) -> JSValue {
 
 pub(crate) fn on_settled(cx: &mut JsScope<'_>, _value: JsLocal<'_>, deferred: JsLocal<'_>) -> JsResult<()> {
     ExpectDeferred::run_again(cx.global(), deferred.to_js())?;
+    Ok(())
+}
+
+/// `error` is bound: what the call failed with. Its entry has reported it, so only a rejection with it is handled here.
+pub(crate) fn on_copy(
+    _cx: &mut JsScope<'_>,
+    error: JsLocal<'_>,
+    reason: JsLocal<'_>,
+    promise: JsLocal<'_>,
+) -> JsResult<()> {
+    if reason.to_js() == error.to_js() {
+        ExpectDeferred__markHandled(promise.to_js());
+    }
     Ok(())
 }
 

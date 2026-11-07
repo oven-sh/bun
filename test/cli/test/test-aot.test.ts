@@ -103,6 +103,27 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain(" 2 pass");
   });
 
+  test.concurrent("a failed matcher that wasn't awaited, with reactions that only pass the rejection on", async () => {
+    const { stderr, exitCode } = await expectSameAsBunTest({
+      "a.test.js": `
+        import { expect, test } from "bun:test";
+        const later = value => new Promise(resolve => setTimeout(resolve, 1, value));
+        const fail = message => expect(later(1)).resolves.toSatisfy(() => { throw new Error(message); });
+        test("finally", () => { fail("finally").finally(() => {}); });
+        test("then", () => { fail("then").then(() => {}); });
+        test("an async function that returns it", () => { (async () => fail("returned"))(); });
+        test("awaited and caught", async () => { try { await fail("caught"); } catch {} });
+        test("next", () => {});
+      `,
+    });
+    expect(stderr).toContain("(fail) finally");
+    expect(stderr).toContain("(fail) then");
+    expect(stderr).toContain("(fail) an async function that returns it");
+    expect(stderr).toContain("(pass) awaited and caught");
+    expect(stderr).toContain("(pass) next");
+    expect(exitCode).toBe(1);
+  });
+
   test.concurrent("a test file sees the path of its source file", async () => {
     const { stderr } = await expectSameAsBunTest({
       "sub/paths.test.ts": `

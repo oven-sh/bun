@@ -16,6 +16,12 @@ export const onSettled = b.fn({
   args: { value: b.any, deferred: b.any },
   ...js,
 });
+/** Called with what a promise that a failed matcher's rejection ends up at settled with, and that promise. `error` is bound. */
+export const onCopy = b.fn({
+  export: "Bun__ExpectDeferred__onCopy",
+  args: { error: b.any, reason: b.any, promise: b.any },
+  ...js,
+});
 /** One attempt of `expect.poll()`. Both arguments are bound. */
 export const pollOnce = b.fn({
   export: "Bun__ExpectDeferred__pollOnce",

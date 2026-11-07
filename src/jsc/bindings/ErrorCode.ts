@@ -209,6 +209,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_SCRIPT_EXECUTION_INTERRUPTED", Error],
   ["ERR_SCRIPT_EXECUTION_TIMEOUT", Error],
   ["ERR_SERVER_ALREADY_LISTEN", Error],
+  ["ERR_SHELL_PARSE", SyntaxError],
   ["ERR_SERVER_NOT_RUNNING", Error],
   ["ERR_SOCKET_ALREADY_BOUND", Error],
   ["ERR_SOCKET_BAD_BUFFER_SIZE", TypeError],

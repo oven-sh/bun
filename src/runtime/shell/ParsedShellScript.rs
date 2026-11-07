@@ -189,44 +189,15 @@ fn create_parsed_shell_script_impl(
     )?;
     let jsobjs_len = u32::try_from(marked_argument_buffer.size()).expect("int cast");
 
-    // Reshaped for borrowck — `out_parser`/`out_lex_result` borrow
-    // `shargs.__arena`, so they're scoped to a block that ends before
-    // `shargs.script_ast = script` below. The arena reference is taken via raw
-    // pointer so the `&shargs` borrow doesn't outlive the call (the returned
-    // `ast::Script` is lifetime-erased).
+    // The parse result borrows `shargs.__arena` until `set_script_ast` takes it.
     let arena_ptr: *const bun_alloc::Arena = shargs.arena();
     let script_ast = {
         // SAFETY: `shargs` lives on this stack frame for the whole block; arena
-        // is not moved/dropped while `out_parser`/`out_lex_result` borrow it.
+        // is not moved/dropped while the parse result borrows it.
         let arena = unsafe { &*arena_ptr };
-        let mut out_parser: Option<bun_shell_parser::Parser<'_>> = None;
-        let mut out_lex_result: Option<bun_shell_parser::LexResult<'_>> = None;
-        match Interpreter::parse(
-            arena,
-            &script[..],
-            jsobjs_len,
-            &jsstrings[..],
-            &mut out_parser,
-            &mut out_lex_result,
-        ) {
+        match Interpreter::parse(arena, &script[..], jsobjs_len, &jsstrings[..]) {
             Ok(ast) => ast,
-            Err(err) => {
-                // `out_lex_result.is_some()` ⇔ `err == ParseError::Lex` — `Interpreter::parse`
-                // only populates `out_lex_result` on the Lex error path.
-                if let Some(lex) = out_lex_result.as_ref() {
-                    debug_assert!(!lex.errors.is_empty());
-                    let str = lex.combine_errors(arena);
-                    return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
-                }
-
-                if let Some(p) = out_parser.as_mut() {
-                    debug_assert!(!p.errors.is_empty());
-                    let errstr = p.combine_errors();
-                    return Err(global.throw(format_args!("{}", bstr::BStr::new(errstr))));
-                }
-
-                return Err(global.throw_error(err, "failed to lex/parse shell"));
-            }
+            Err(failure) => return Err(failure.throw(global)),
         }
     };
 

@@ -34,8 +34,33 @@ describe.concurrent("run-shell", () => {
       stderr: "pipe",
       stdout: "pipe",
     });
-    const stderr = await proc.stderr.text();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
     expect(stderr).toBe("error: Failed to run script.sh due to error Unexpected ')'\n");
+    // 2 is what sh and bash report for a syntax error. A command that ran and
+    // failed reports 1.
+    expect(exitCode).toBe(2);
+  });
+
+  test("a package.json script that does not parse exits 2 under the bun shell, like the system shell", async () => {
+    using dir = tempDir("run-shell-parse-error", {
+      "package.json": JSON.stringify({
+        name: "parse-error-fixture",
+        version: "1.0.0",
+        scripts: { bad: "echo (" },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--shell=bun", "bad"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toBe("$ echo (\nerror: Failed to run script bad due to error Unclosed subshell\n");
+    expect(exitCode).toBe(2);
   });
 });
 

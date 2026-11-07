@@ -3254,6 +3254,42 @@ describe("when a command fails", () => {
   it("is named ShellError", () => expect(e.name).toBe("ShellError"));
 });
 
+describe("when a script does not parse", () => {
+  // The tag call throws before a ShellPromise exists, so `.nothrow()` and
+  // `.catch()` never see the error. `e.code` tells a parse failure apart from a
+  // command that ran and failed.
+  function parseError(fn: () => unknown): any {
+    let e: any;
+    try {
+      fn();
+    } catch (err) {
+      e = err;
+    }
+    return e;
+  }
+
+  test("throws a SyntaxError with code ERR_SHELL_PARSE", () => {
+    const e = parseError(() => $`echo (`);
+    expect(e).toBeInstanceOf(SyntaxError);
+    expect(e).not.toBeInstanceOf(Bun.$.ShellError);
+    expect({ name: e.name, code: e.code, message: e.message, exitCode: e.exitCode }).toEqual({
+      name: "SyntaxError",
+      code: "ERR_SHELL_PARSE",
+      message: "Unclosed subshell",
+      exitCode: undefined,
+    });
+  });
+
+  test("a parser error carries the same code as a lexer error", () => {
+    const e = parseError(() => $`| echo hi`);
+    expect(e).toBeInstanceOf(SyntaxError);
+    expect({ code: e.code, message: e.message }).toEqual({
+      code: "ERR_SHELL_PARSE",
+      message: 'expected a command or assignment but got: "Pipe"',
+    });
+  });
+});
+
 describe("ShellError constructor", () => {
   test.failing("new $.ShellError()", () => {
     const e = new Bun.$.ShellError();

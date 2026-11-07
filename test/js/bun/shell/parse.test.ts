@@ -5,6 +5,34 @@ const { parse } = shellInternals;
 const TestBuilder = createTestBuilder(import.meta.path);
 
 describe("parse shell", () => {
+  test("a parse failure throws a SyntaxError with code ERR_SHELL_PARSE", () => {
+    let e: any;
+    try {
+      parse`echo (`;
+    } catch (err) {
+      e = err;
+    }
+    expect(e).toBeInstanceOf(SyntaxError);
+    expect({ code: e.code, message: e.message }).toEqual({ code: "ERR_SHELL_PARSE", message: "Unclosed subshell" });
+  });
+
+  test("a fatal lexer error keeps the diagnostics recorded before it", () => {
+    // A stray `)` is recorded and lexing goes on. The 129th nested `$(` stops
+    // the lexer. Both lines must reach the caller.
+    const deep = Buffer.alloc(2 * 129, "$(").toString() + "x" + Buffer.alloc(129, ")").toString();
+    let e: any;
+    try {
+      parse({ raw: [") " + deep] } as any);
+    } catch (err) {
+      e = err;
+    }
+    expect(e).toBeInstanceOf(SyntaxError);
+    expect({ code: e.code, message: e.message }).toEqual({
+      code: "ERR_SHELL_PARSE",
+      message: "Unexpected ')'\nSubshell nesting depth exceeded",
+    });
+  });
+
   test("basic", () => {
     const expected = {
       stmts: [

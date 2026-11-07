@@ -16,6 +16,19 @@ describe("bun exec", () => {
     .stderr("bun: command not found: sldkfjslkdjflksdjflj\n")
     .runAsTest("it works on command fail");
 
+  TestBuilder.command`${BUN} exec ${"echo ("}`
+    .env(bunEnv)
+    .exitCode(2)
+    .stderr(s => expect(s).toEndWith("due to error Unclosed subshell\n"))
+    .runAsTest("a script that does not parse exits 2");
+
+  // 129 nested `$(` stop the lexer itself, the other failure path in the parser.
+  TestBuilder.command`${BUN} exec ${"echo " + Buffer.alloc(2 * 129, "$(").toString() + "x" + Buffer.alloc(129, ")").toString()}`
+    .env(bunEnv)
+    .exitCode(2)
+    .stderr(s => expect(s).toEndWith("due to error Subshell nesting depth exceeded\n"))
+    .runAsTest("a script that nests too deep exits 2");
+
   TestBuilder.command`${BUN} exec`
     .env(bunEnv)
     .stdout(

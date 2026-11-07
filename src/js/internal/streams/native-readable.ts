@@ -100,6 +100,26 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
   return stream;
 }
 
+// For tty.ReadStream. Not shared with constructNativeReadable: that costs every Readable of a compiled program.
+function attachNativeSource(stream: NativeReadable, readableStream: ReadableStream, highWaterMark: number) {
+  $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
+  const bunNativePtr = readableStream.$bunNativePtr;
+  $assert(bunNativePtr === undefined || typeof bunNativePtr === "object", "Invalid native ptr");
+
+  stream._read = read;
+  if (!!$debug) {
+    stream.debugId = ++debugId;
+  }
+  $putByIdDirectPrivate(stream, "bunNativePtr", bunNativePtr);
+  stream[kRefCount] = 0;
+  stream[kConstructed] = false;
+  stream[kPendingRead] = false;
+  stream[kHasResized] = !dynamicallyAdjustChunkSize();
+  stream[kCloseState] = [false];
+  stream[kHighWaterMark] = highWaterMark;
+  transferToNativeReadable(readableStream);
+}
+
 function ensureConstructed(this: NativeReadable, cb: null | (() => void)) {
   $debug(`[${this.debugId}] ensureConstructed`);
   if (this[kConstructed]) return;
@@ -116,7 +136,8 @@ function ensureConstructed(this: NativeReadable, cb: null | (() => void)) {
 // how many bytes they want to read (ie. when reading only part of a file)
 // ObjectDefinePrivateProperty(NativeReadable.prototype, "_getRemainingChunk", );
 function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
-  maxToRead ??= stream[kHighWaterMark] as number;
+  // A Readable with highWaterMark 0 calls _read(0): no limit from the Readable.
+  if (!maxToRead) maxToRead = stream[kHighWaterMark] as number;
   var chunk = stream[kRemainingChunk];
   if ((chunk?.byteLength ?? 0) < MIN_BUFFER_SIZE) {
     var size = maxToRead > MIN_BUFFER_SIZE ? maxToRead : MIN_BUFFER_SIZE;
@@ -212,8 +233,9 @@ function pushEof(stream: NativeReadable) {
 // `push()` returning false means the Readable's buffer is at/above hwm (or
 // the consumer paused); stop the native reader so kernel backpressure reaches
 // the writer (readStop, like net.Socket). The next `_read()` re-enables it.
+// With highWaterMark 0 a pause() inside 'data' stops it too: no read-ahead.
 function pushAndCheck(stream: NativeReadable, chunk: Buffer | ArrayBufferView) {
-  if (!stream.push(chunk)) {
+  if (!stream.push(chunk) || (stream.readableFlowing === false && stream.readableHighWaterMark === 0)) {
     const ptr = stream.$bunNativePtr;
     if (ptr) ptr.setFlowing?.(false);
   }
@@ -257,7 +279,7 @@ function adjustHighWaterMark(stream: NativeReadable) {
   stream[kHasResized] = true;
 }
 
-function destroy(this: NativeReadable, error: any, cb: () => void) {
+function destroy(this: NativeReadable, error: any, cb: ((error?: any) => void) | null) {
   const ptr = this.$bunNativePtr;
   if (ptr) {
     ptr.cancel(error);
@@ -299,4 +321,4 @@ function unref(this: NativeReadable) {
   }
 }
 
-export default { constructNativeReadable };
+export default { constructNativeReadable, attachNativeSource, cancelNativeSource: destroy };

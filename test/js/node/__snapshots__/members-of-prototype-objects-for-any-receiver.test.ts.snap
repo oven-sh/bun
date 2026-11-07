@@ -5929,13 +5929,15 @@ node:tty.ReadStream.prototype unref("a", 1)
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:tty.ReadStream.prototype setRawMode()
-  throws TypeError: fd must be a number, stores [rawModeState] <- every object
+  the receiver, stores isRaw <- every object
   throws TypeError: Attempted to assign to readonly property. <- a number, a string
-  throws TypeError: Cannot access property of undefined or null <- undefined, null
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
 node:tty.ReadStream.prototype setRawMode("a", 1)
-  throws TypeError: fd must be a number, stores [rawModeState] <- every object
+  the receiver, stores isRaw <- every object
   throws TypeError: Attempted to assign to readonly property. <- a number, a string
-  throws TypeError: Cannot access property of undefined or null <- undefined, null
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
 node:tty.ReadStream.prototype _destroy()
   throws TypeError: what is called is not a function <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined

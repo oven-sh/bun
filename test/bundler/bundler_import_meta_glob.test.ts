@@ -383,9 +383,13 @@ describe("bundler", () => {
     treeShaking: false,
     run: {
       // Where the file is one part (no tree shaking, or a lowered `using`), "react" is evaluated ahead of the file's
-      // own imports, with or without a glob. Only the files of the glob are pinned.
+      // own imports, with or without a glob. Only the place of the glob's files is pinned.
       validate({ stdout }) {
-        expect(stdout.split("\n").slice(0, 2)).toEqual(loadedBy("app").slice(0, 2));
+        const loaded = stdout.trim().split("\n");
+        expect({ first: loaded.slice(0, 2), all: loaded.toSorted() }).toEqual({
+          first: loadedBy("app").slice(0, 2),
+          all: requireThatBecomesAnImportLoaded.split("\n").toSorted(),
+        });
       },
     },
   });

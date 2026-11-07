@@ -169,7 +169,8 @@ devAndProductionTest("import.meta.glob evaluates eager entries before the file's
       css += await dev.fetch(href).text();
     }
     const rules = css.match(/\.(own|a|b)\b/g) ?? [];
-    // The dev server links the stylesheets in reverse (#28117), so the two of the glob are compared in any order.
+    // Production takes the order of the stylesheets from the parts, so the sheets of the glob are ahead of own.css.
+    // The dev server walks the import records in reverse (#28117), which gives the same two groups today.
     expect({ glob: rules.slice(0, 2).sort(), own: rules.slice(2) }).toEqual({ glob: [".a", ".b"], own: [".own"] });
   },
 });

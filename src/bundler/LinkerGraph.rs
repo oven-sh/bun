@@ -142,6 +142,61 @@ pub mod js_meta {
     }
     pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
+    /// How a file that has or reaches a top-level await prints. See `linker_context/tlaPlan.rs`.
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    pub enum TlaShape {
+        /// The file reaches no top-level await, or `tlaPlan.rs` leaves the bundle alone.
+        #[default]
+        None,
+        /// `wrap` is `Esm`, but nothing calls the wrapper: it prints as `__tlaNode(...)` where the file would have run,
+        /// and its dependencies stay unwrapped.
+        Node,
+        /// `wrap` is `Esm` because `import()` reaches the file: the wrapper is a `__tlaModule(...)` record, not a
+        /// function.
+        Module,
+        /// An entry point that waits for `__tlaNode`s and stays unwrapped: `await __tlaMain([...])` is printed between
+        /// what its `import` statements turn into and its body.
+        Main,
+        /// Nobody can tell when the file runs. It stays unwrapped, and its importers wait for what it would have
+        /// waited for.
+        Transparent,
+    }
+
+    impl TlaShape {
+        /// The chunk's `TlaPlan` says what the file waits for.
+        pub(crate) fn is_planned(self) -> bool {
+            match self {
+                TlaShape::Node | TlaShape::Main | TlaShape::Transparent => true,
+                TlaShape::None | TlaShape::Module => false,
+            }
+        }
+
+        /// What is behind the `import` statements of the file prints as one range.
+        pub(crate) fn body_is_one_range(self) -> bool {
+            match self {
+                TlaShape::Node | TlaShape::Main => true,
+                TlaShape::None | TlaShape::Module | TlaShape::Transparent => false,
+            }
+        }
+
+        /// The chunk of an entry point of this shape has an `await` that the entry point's own code does not have.
+        pub(crate) fn entry_point_awaits(self) -> bool {
+            match self {
+                TlaShape::Node | TlaShape::Module | TlaShape::Main => true,
+                TlaShape::None | TlaShape::Transparent => false,
+            }
+        }
+
+        /// `wrap` is `None`, and still `create_wrapper_for_file` gave the file a part, for the statement that
+        /// `tlaPlan.rs` adds to it.
+        pub(crate) fn is_unwrapped_with_a_part(self) -> bool {
+            match self {
+                TlaShape::Main | TlaShape::Transparent => true,
+                TlaShape::None | TlaShape::Node | TlaShape::Module => false,
+            }
+        }
+    }
+
     #[derive(Clone, Copy, Default)]
     pub struct Flags {
         pub(crate) is_async_or_has_async_dependency: bool,
@@ -150,6 +205,7 @@ pub mod js_meta {
         pub(crate) needs_export_symbol_from_runtime: bool,
         pub(crate) did_wrap_dependencies: bool,
         pub(crate) needs_synthetic_default_export: bool,
+        pub(crate) tla: TlaShape,
         pub(crate) wrap: WrapKind,
     }
     pub use crate::WrapKind as Wrap;

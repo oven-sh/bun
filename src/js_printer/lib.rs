@@ -1318,6 +1318,8 @@ pub struct Options<'a> {
     pub bundling: bool,
     pub to_commonjs_ref: Ref,
     pub to_esm_ref: Ref,
+    /// The `__tlaModule` record of the file that is printed, if it has one.
+    pub tla_referrer_ref: Ref,
     /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkId), import(path))`.
     pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
@@ -1401,6 +1403,7 @@ impl<'a> Default for Options<'a> {
             bundling: false,
             to_commonjs_ref: Ref::NONE,
             to_esm_ref: Ref::NONE,
+            tla_referrer_ref: Ref::NONE,
             module_preload_ref: Ref::NONE,
             require_ref: None,
             import_meta_ref: Ref::NONE,
@@ -1468,6 +1471,8 @@ pub struct RequireOrImportMeta {
     pub wrapper_ref: Ref,
     pub exports_ref: Ref,
     pub is_wrapper_async: bool,
+    /// `__tlaImport`, when the wrapper is a `__tlaModule` record.
+    pub tla_import_ref: Ref,
     pub was_unwrapped_require: bool,
 }
 
@@ -2750,10 +2755,35 @@ pub(crate) mod __gated_printer {
                 // Internal "import()" of async ESM
                 if record.kind == ImportKind::Dynamic && meta.is_wrapper_async {
                     self.print_space_before_identifier();
-                    self.print_symbol(meta.wrapper_ref);
-                    self.print(b"()");
+                    // "__tlaImport(init_foo, init_referrer, () => exports_foo)"
+                    if meta.tla_import_ref.is_valid() {
+                        self.print_symbol(meta.tla_import_ref);
+                        self.print(b"(");
+                        self.print_symbol(meta.wrapper_ref);
+                        if self.options.tla_referrer_ref.is_valid() {
+                            self.print(b",");
+                            self.print_space();
+                            self.print_symbol(self.options.tla_referrer_ref);
+                        } else if meta.exports_ref.is_valid() {
+                            self.print(b",");
+                            self.print_space();
+                            self.print(b"0");
+                        }
+                        if !meta.exports_ref.is_valid() {
+                            self.print(b")");
+                        }
+                    } else {
+                        self.print_symbol(meta.wrapper_ref);
+                        self.print(b"()");
+                    }
                     if meta.exports_ref.is_valid() {
-                        let _ = self.print_dot_then_prefix();
+                        if meta.tla_import_ref.is_valid() {
+                            self.print(b",");
+                            self.print_space();
+                            self.print(b"() => ");
+                        } else {
+                            let _ = self.print_dot_then_prefix();
+                        }
                         self.print_space_before_identifier();
                         if namespace_unused {
                             self.print(b"({})");

@@ -30,6 +30,7 @@ export const jscNames = {
   constant: ["Infinity", "proxyFieldHandler", "proxyFieldTarget", "undefined"],
   // JSC_FOREACH_LINK_TIME_CONSTANTS in bytecode/LinkTimeConstant.h
   link_time: [
+    "AggregateError",
     "Array",
     "Promise",
     "RegExp",

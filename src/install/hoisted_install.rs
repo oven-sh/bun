@@ -2,7 +2,7 @@ use crate::lockfile::package::PackageColumns as _;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap};
+use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_paths::SEP;
@@ -453,7 +453,7 @@ pub(crate) fn install_hoisted_packages(
                     break 'trees trees.into_boxed_slice();
                 },
                 trusted_dependencies_from_update_requests: trusted_deps,
-                seen_bin_links: StringHashMap::<()>::default(),
+                seen_bin_links: bin::SeenBins::default(),
                 destination_dir_subpath_buf: bun_paths::PathBuffer::ZEROED,
                 folder_path_buf: bun_paths::PathBuffer::ZEROED,
                 current_tree_id: tree::INVALID_ID,

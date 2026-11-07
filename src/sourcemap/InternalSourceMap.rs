@@ -1121,8 +1121,8 @@ impl Builder {
             let total: usize = object_braces_offset + object_braces_bytes + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
-            // Every byte in [0..total) is written below: [0..16] zero-filled,
-            // [16..32] header u32s, [32..32+sync_bytes] sync table memcpy,
+            // Every byte in [0..total) is written below: [0..20] zero-filled,
+            // [20..32] header u32s, [32..32+sync_bytes] sync table memcpy,
             // [stream_offset..stream_offset+win_stream.len()] stream memcpy,
             // [invented_functions_offset..object_braces_offset] invented functions memcpy,
             // [object_braces_offset..total-STREAM_TAIL_PAD] object braces memcpy,
@@ -1132,7 +1132,7 @@ impl Builder {
             // SAFETY: every byte in [0..total) is written below (see comment above).
             let blob = unsafe { out.list.writable_slice_exact(total) };
 
-            blob[0..16].fill(0);
+            blob[0..20].fill(0);
             blob[16..20].copy_from_slice(
                 &u32::try_from(self.invented_functions.len())
                     .expect("int cast")

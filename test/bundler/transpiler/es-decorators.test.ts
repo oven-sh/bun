@@ -2048,12 +2048,20 @@ describe("ES Decorators", () => {
             accessor #q = function () {};
             names() { return [this.#p.name, C.#s.name, this.#q.name]; }
           }
-          console.log(JSON.stringify(new C().names()));
+          // Beside a decorated member the class takes the other path through the lowering.
+          const dec = () => {};
+          class D {
+            @dec m() {}
+            accessor #p = () => {};
+            static accessor #s = class {};
+            names() { return [this.#p.name, D.#s.name]; }
+          }
+          console.log(JSON.stringify([...new C().names(), ...new D().names()]));
         `,
       });
       const plain = await runIn(String(dir), ["names.js"]);
       expect(filterStderr(plain.stderr)).toBe("");
-      expect(plain.stdout).toBe('["#p","#s","#q"]\n');
+      expect(plain.stdout).toBe('["#p","#s","#q","#p","#s"]\n');
       expect(plain.exitCode).toBe(0);
 
       // Bun does not parse a "--target=bun" bundle again when it runs it.
@@ -2061,7 +2069,7 @@ describe("ES Decorators", () => {
       expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
       const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
       expect(filterStderr(stderr)).toBe("");
-      expect(stdout).toBe('["#p","#s","#q"]\n');
+      expect(stdout).toBe('["#p","#s","#q","#p","#s"]\n');
       expect(exitCode).toBe(0);
     });
 

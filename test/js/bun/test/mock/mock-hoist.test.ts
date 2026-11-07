@@ -483,6 +483,7 @@ describe.concurrent("hoisting", () => {
     [``, `vi.mock("react/jsx-dev-runtime"`],
     [`import { test, jest } from "bun:test";`, `jest.mock("react/jsx-dev-runtime"`],
     [`import { test, vi } from "vitest";`, `await vi.mock(import("react/jsx-dev-runtime")`],
+    [`import { test, vi } from "vitest";`, "vi.mock(`react/jsx-dev-runtime`"],
     [`import { test, vi } from "vitest"; const runtime = "react/jsx-dev-runtime";`, `vi.mock(runtime`],
   ])("%s %s, factory) reaches the JSX of the file", async (header, call) => {
     expect(
@@ -632,25 +633,28 @@ describe.concurrent("hoisting", () => {
   });
 
   // No hoisted call names the JSX runtime, so it is loaded when the factory runs where vi.mock() is written.
-  test("a hoisted factory with JSX updates a module that is already linked", async () => {
-    expect(
-      await events({
-        ...react,
-        "reader.ts": `import { value } from "./mod"; export const read = () => value;`,
-        "mocks.tsx": `
-          import { vi } from "bun:test";
-          vi.mock("./mod", () => ({ value: <i /> }));
-        `,
-        "hoist.test.ts": `
-          import { test } from "bun:test";
-          import "./mocks";
-          import { read } from "./reader";
-          (globalThis.events ??= []).push(read());
-          ${print}
-        `,
-      }),
-    ).toEqual([["load runtime", "load mod", "i"]]);
-  });
+  test.each([`"./mod"`, `require.resolve("./mod")`])(
+    "a hoisted factory with JSX updates a module that is already linked: vi.mock(%s)",
+    async path => {
+      expect(
+        await events({
+          ...react,
+          "reader.ts": `import { value } from "./mod"; export const read = () => value;`,
+          "mocks.tsx": `
+            import { vi } from "bun:test";
+            vi.mock(${path}, () => ({ value: <i /> }));
+          `,
+          "hoist.test.ts": `
+            import { test } from "bun:test";
+            import "./mocks";
+            import { read } from "./reader";
+            (globalThis.events ??= []).push(read());
+            ${print}
+          `,
+        }),
+      ).toEqual([["load runtime", "load mod", "i"]]);
+    },
+  );
 
   test("a mock of a package reaches an import of it with attributes", async () => {
     expect(
@@ -669,6 +673,20 @@ describe.concurrent("hoisting", () => {
         `,
       }),
     ).toEqual([["mocked", "mocked"]]);
+  });
+
+  test("a hoisted call names an import with attributes by a path that is not ASCII", async () => {
+    expect(
+      await events({
+        "hoist.test.ts": `
+          import { test, vi } from "vitest";
+          import data from "caf\u00e9/data.json" with { type: "json" };
+          vi.mock("caf\u00e9/data.json", () => ({ default: { v: "mocked" } }));
+          (globalThis.events ??= []).push(data.v);
+          ${print}
+        `,
+      }),
+    ).toEqual([["mocked"]]);
   });
 
   test("an import with attributes that a hoisted call names keeps its loader", async () => {
@@ -807,8 +825,11 @@ describe.concurrent.each([
     );
   }
 
-  test("gets a hoisted mock of its path, and the real module is not evaluated", async () => {
-    expect(await eventsOf(`vi.mock("${path}", () => (${mock}));`)).toEqual([["mocked"]]);
+  test.each([
+    ["a string literal", `vi.mock("${path}", () => (${mock}));`],
+    ["a const that holds the string", `const byConst = "${path}"; vi.mock(byConst, () => (${mock}));`],
+  ])("gets a hoisted mock that names its path with %s, and the real module is not evaluated", async (_, hoisted) => {
+    expect(await eventsOf(hoisted)).toEqual([["mocked"]]);
   });
 
   test("needs no real module once it is mocked", async () => {
@@ -821,10 +842,19 @@ describe.concurrent.each([
     expect(await eventsOf(`vi.unmock("${path}");`, body)).toEqual([[...real, "mocked"]]);
   });
 
-  test("stays static while no hoisted call names its path", async () => {
-    const hoisted = `vi.mock("./mod", () => ({})); vi.hoisted(() => (globalThis.events ??= []).push("hoisted"));`;
-    expect(await eventsOf(hoisted)).toEqual([[real[0], "hoisted", real[1]]]);
-  });
+  // A value that only the run knows names no path, even one that holds the path of this import.
+  test.each([`"./mod"`, `"./mod\u00e8le"`, `require.resolve("./mod")`, `byLet`, `fromHoisted`])(
+    "stays static while no hoisted call names its path: vi.mock(%s)",
+    async named => {
+      const hoisted = `
+        let byLet = "${path}";
+        const fromHoisted = vi.hoisted(() => "${path}");
+        vi.mock(${named}, () => ({}));
+        vi.hoisted(() => (globalThis.events ??= []).push("hoisted"));
+      `;
+      expect(await eventsOf(hoisted)).toEqual([[real[0], "hoisted", real[1]]]);
+    },
+  );
 });
 
 describe.concurrent("imports that stay static", () => {

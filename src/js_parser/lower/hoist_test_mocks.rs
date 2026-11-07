@@ -249,7 +249,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             if let StmtData::SExpr(expr) = stmt.data
                 && self.is_hoisted_mock_stmt(stmt)
             {
-                self.note_hoisted_mock_paths(expr.value);
+                self.note_hoisted_mock_paths(stmts, expr.value);
             }
         }
 
@@ -281,7 +281,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
     /// Records the paths that the `mock()` and `unmock()` calls of a hoisted statement name.
     #[optimize(size)]
-    fn note_hoisted_mock_paths(&mut self, expr: Expr) {
+    fn note_hoisted_mock_paths(&mut self, stmts: &[Stmt], expr: Expr) {
         let mut callee = match expr.data {
             ExprData::EAwait(awaited) => awaited.value,
             _ => expr,
@@ -292,18 +292,16 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             };
             if matches!(dot.name.slice(), b"mock" | b"unmock")
                 && let Some(&path) = call.args.slice().first()
+                && let Some(path) = self.unvisited_mock_path(stmts, path)
             {
-                match Self::unvisited_mock_path(path) {
-                    Some(path) => self.hoisted_mock_paths.push(path),
-                    None => self.hoists_mock_of_unknown_path = true,
-                }
+                self.hoisted_mock_paths.push(js_ast::StoreStr::new(path));
             }
             callee = dot.target;
         }
     }
 
-    /// `"./a"`, `import("./a")` or `await import("./a")`.
-    fn unvisited_mock_path(path: Expr) -> Option<js_ast::StoreStr> {
+    /// `"./a"`, `import("./a")`, `await import("./a")`, or a `const` with that string that is hoisted with the mocks.
+    fn unvisited_mock_path(&self, stmts: &[Stmt], path: Expr) -> Option<&'a [u8]> {
         let path = match path.data {
             ExprData::EAwait(awaited) => awaited.value,
             _ => path,
@@ -312,20 +310,39 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             ExprData::EImport(import) => import.expr,
             _ => path,
         };
-        match path.data {
-            ExprData::EString(string) if string.is_utf8() && string.next.is_none() => {
-                Some(string.data)
-            }
-            _ => None,
-        }
+        let ExprData::EIdentifier(id) = path.data else {
+            return path.as_string(self.arena);
+        };
+        let symbol = self.unvisited_top_level_symbol(id.ref_)?;
+        stmts
+            .iter()
+            .filter(|stmt| self.is_primitive_literal_declaration(stmt))
+            .find_map(|stmt| {
+                let StmtData::SLocal(local) = stmt.data else {
+                    return None;
+                };
+                if local.kind != S::Kind::KConst {
+                    return None;
+                }
+                local
+                    .decls
+                    .slice()
+                    .iter()
+                    .find_map(|decl| match decl.binding.data {
+                        js_ast::binding::Data::BIdentifier(binding)
+                            if binding.r#ref.eql(symbol) =>
+                        {
+                            decl.value?.as_string(self.arena)
+                        }
+                        _ => None,
+                    })
+            })
     }
 
     fn is_named_by_hoisted_mock(&self, path: &[u8]) -> bool {
-        self.hoists_mock_of_unknown_path
-            || self
-                .hoisted_mock_paths
-                .iter()
-                .any(|named| named.slice() == path)
+        self.hoisted_mock_paths
+            .iter()
+            .any(|named| named.slice() == path)
     }
 
     fn import_bindings(import: &S::Import) -> impl Iterator<Item = (Ref, js_ast::StoreStr)> + '_ {
@@ -447,7 +464,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         exports_kind: js_ast::ExportsKind,
     ) {
         if exports_kind != js_ast::ExportsKind::Cjs {
-            if self.hoists_mock_of_unknown_path || !self.hoisted_mock_paths.is_empty() {
+            if !self.hoisted_mock_paths.is_empty() {
                 self.lower_mocked_generated_imports(before, imports);
             }
             for stmt in imports.iter().flat_map(|part| part.stmts.iter()) {

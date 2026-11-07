@@ -613,6 +613,103 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
   });
 
+  // A FIFO or a device at the destination is shared with other processes. The copy still
+  // writes to it, and `mode` changes a regular file only.
+  // Not on Windows: the fixture needs mkfifo(1) and POSIX modes.
+  describe.skipIf(isWindows)("Bun.write(dest, Bun.file(src), { mode }) does not chmod a FIFO or a device", () => {
+    const modeOf = p => fs.statSync(p).mode.toString(8);
+
+    const files = { "src.txt": "hello\n", "existing.txt": "old contents" };
+
+    // In `dir`: the source, an existing regular file and a FIFO with a reader. Both destinations start at 0644.
+    async function fixture(dir) {
+      const src = join(dir, "src.txt");
+      const existing = join(dir, "existing.txt");
+      const fifo = join(dir, "dest.fifo");
+      fs.chmodSync(existing, 0o644);
+      await using mkfifo = Bun.spawn({ cmd: ["mkfifo", "-m", "644", fifo] });
+      expect(await mkfifo.exited).toBe(0);
+      // Without a reader, open(O_WRONLY) on a FIFO blocks.
+      const reader = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      return {
+        src,
+        existing,
+        fifo,
+        after() {
+          const chunk = Buffer.alloc(16);
+          const fifoData = chunk.toString("utf8", 0, fs.readSync(reader, chunk, 0, chunk.length, null));
+          return { fifoData, fifoMode: modeOf(fifo), fileMode: modeOf(existing) };
+        },
+        [Symbol.dispose]() {
+          fs.closeSync(reader);
+        },
+      };
+    }
+    const expected = { fifoData: "hello\n", fifoMode: "10644", fileMode: "100600" };
+
+    it.each([
+      ["a path", async path => path],
+      // Linux copies to a BunFile that knows it is a FIFO with sendfile, not copy_file_range.
+      [
+        "a BunFile that was stat'ed",
+        async path => {
+          const file = Bun.file(path);
+          expect(await file.exists()).toBe(true);
+          return file;
+        },
+      ],
+    ])("%s", async (_, destination) => {
+      using dir = tempDir("bun-write-mode-fifo", files);
+      using f = await fixture(String(dir));
+      const written = [
+        await Bun.write(await destination(f.fifo), Bun.file(f.src), { mode: 0o600 }),
+        await Bun.write(await destination(f.existing), Bun.file(f.src), { mode: 0o600 }),
+      ];
+      expect({ written, ...f.after() }).toEqual({ written: [6, 6], ...expected });
+    });
+
+    it("a file descriptor", async () => {
+      using dir = tempDir("bun-write-mode-fifo", files);
+      using f = await fixture(String(dir));
+      const fd = fs.openSync(f.fifo, fs.constants.O_WRONLY);
+      const written = [];
+      try {
+        written.push(await Bun.write(Bun.file(fd), Bun.file(f.src), { mode: 0o600 }));
+      } finally {
+        fs.closeSync(fd);
+      }
+      written.push(await Bun.write(f.existing, Bun.file(f.src), { mode: 0o600 }));
+      expect({ written, ...f.after() }).toEqual({ written: [6, 6], ...expected });
+    });
+
+    // The user owns the terminal, so this chmod needs no root. Linux only: it opens the
+    // terminal again for /dev/stdout, and macOS hands back a dup of fd 1.
+    it.skipIf(process.platform !== "linux")("a terminal, written as /dev/stdout", async () => {
+      using dir = tempDir("bun-write-mode-tty", { "src.txt": "hello\n" });
+      const result = join(String(dir), "result.json");
+      const script = `
+        const fs = require("fs");
+        const before = fs.fstatSync(1).mode;
+        const written = await Bun.write("/dev/stdout", Bun.file("src.txt"), { mode: (before ^ 0o040) & 0o777 });
+        const report = { isTTY: process.stdout.isTTY, written, modeChanged: fs.fstatSync(1).mode !== before };
+        fs.writeFileSync(${JSON.stringify(result)}, JSON.stringify(report));
+      `;
+      let output = "";
+      await using terminal = new Bun.Terminal({
+        data(_, chunk) {
+          output += Buffer.from(chunk).toString();
+        },
+      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, cwd: String(dir), terminal });
+      const exitCode = await proc.exited;
+
+      // Without a report the child failed, and the terminal has its error.
+      const report = fs.existsSync(result) ? JSON.parse(fs.readFileSync(result, "utf8")) : output;
+      expect(report).toEqual({ isTTY: true, written: 6, modeChanged: false });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   // FLAKY TEST
   // Since Bun.file is resolved lazily, this needs to specifically be checked
   it("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async done => {

@@ -175,6 +175,18 @@ impl CopyFile {
         let close_output = !matches!(self.source_file_store.pathlike, PathOrFileDescriptor::Fd(_))
             && self.source_fd != Fd::INVALID;
 
+        // A FIFO or a device is shared with other processes: `mode` is for a regular file only.
+        if self.destination_mode.is_some()
+            && self.destination_fd != Fd::INVALID
+            && self.system_error.is_none()
+        {
+            match bun_sys::fstat(self.destination_fd) {
+                Ok(stat) if bun_sys::S::ISREG(stat.st_mode as _) => {}
+                Ok(_) => self.destination_mode = None,
+                Err(err) => self.system_error = Some(err.to_system_error()),
+            }
+        }
+
         // Apply destination mode using fchmod before closing.
         // This ensures mode is applied even when overwriting existing files, since
         // open()'s mode argument only affects newly created files.

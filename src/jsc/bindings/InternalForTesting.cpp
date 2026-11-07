@@ -23,6 +23,12 @@
 #include <sched.h>
 #include <unistd.h>
 #endif
+#if OS(LINUX)
+#include "libusockets.h"
+#include "_libusockets.h"
+#include <sys/mman.h>
+#include <sys/uio.h>
+#endif
 #include <JavaScriptCore/HeapProfiler.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #if ENABLE(AOT)
@@ -336,6 +342,58 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitMemoryPressure, (JSC::JSGlobalObject * g
 JSC_DEFINE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(jsBoolean(Bun__MemoryPressure__isInstalled(defaultGlobalObject(globalObject))));
+}
+
+extern "C" struct us_loop_t* Bun__HTTPThread__uwsLoopForTesting();
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_recvBufferTails, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+#if OS(LINUX)
+    struct us_loop_t* loop = callFrame->argument(0).toBoolean(globalObject) ? Bun__HTTPThread__uwsLoopForTesting() : uws_get_loop();
+    if (!loop)
+        return encodedJSUndefined();
+    struct iovec tails[2];
+    us_loop_recv_buffer_tails(loop, tails);
+    auto& vm = JSC::getVM(globalObject);
+    auto toJS = [&](const struct iovec& tail) {
+        JSObject* object = constructEmptyObject(globalObject);
+        object->putDirect(vm, Identifier::fromString(vm, "address"_s), jsNumber(reinterpret_cast<uintptr_t>(tail.iov_base)));
+        object->putDirect(vm, Identifier::fromString(vm, "length"_s), jsNumber(tail.iov_len));
+        return object;
+    };
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "recv"_s), toJS(tails[0]));
+    result->putDirect(vm, Identifier::fromString(vm, "tls"_s), toJS(tails[1]));
+    return JSValue::encode(result);
+#else
+    return encodedJSUndefined();
+#endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_residentBytes, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+#if OS(LINUX)
+    // test/aot/builtins/native-contract.test.ts calls every native function with operands of every kind.
+    constexpr double maxLength = 16 * 1024 * 1024;
+    JSValue addressValue = callFrame->argument(0);
+    JSValue lengthValue = callFrame->argument(1);
+    if (!addressValue.isNumber() || !lengthValue.isNumber())
+        return encodedJSUndefined();
+    if (!(addressValue.asNumber() >= 0 && addressValue.asNumber() <= JSC::maxSafeInteger()) || !(lengthValue.asNumber() >= 0 && lengthValue.asNumber() <= maxLength))
+        return JSValue::encode(jsNumber(-EINVAL));
+    auto* address = reinterpret_cast<void*>(static_cast<uintptr_t>(addressValue.asNumber()));
+    size_t length = static_cast<size_t>(lengthValue.asNumber());
+    size_t pageSize = static_cast<size_t>(sysconf(_SC_PAGESIZE));
+    Vector<unsigned char> pages(WTF::FillWith {}, (length + pageSize - 1) / pageSize, 0);
+    if (length && mincore(address, length, pages.mutableSpan().data()) != 0)
+        return JSValue::encode(jsNumber(-errno));
+    size_t resident = 0;
+    for (unsigned char page : pages)
+        resident += page & 1;
+    return JSValue::encode(jsNumber(resident * pageSize));
+#else
+    return encodedJSUndefined();
+#endif
 }
 
 #if !OS(WINDOWS)

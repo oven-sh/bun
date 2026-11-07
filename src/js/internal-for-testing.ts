@@ -942,6 +942,23 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
   0,
 );
 
+// Linux: the part of the socket receive buffer and of the TLS plaintext buffer that an event loop gives back to
+// the system. This thread's loop, or the HTTP client thread's once it has served a request.
+export const recvBufferTails: (
+  ofHTTPThread?: boolean,
+) => Record<"recv" | "tls", { address: number; length: number }> | undefined = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_recvBufferTails",
+  1,
+);
+
+// Linux: mincore() over a page-aligned range of this process, any thread's. Negative errno on failure.
+export const residentBytes: (address: number, length: number) => number | undefined = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_residentBytes",
+  2,
+);
+
 // `parallelism` threads each spawn `iterations` no-op threads through bun's own pthread_create,
 // writing every failure to `fd`. Returns the first failing errno, or with `detach` 0 as soon as
 // every loop runs; a detached loop also writes to `fd` when it runs out of iterations.

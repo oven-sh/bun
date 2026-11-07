@@ -428,20 +428,20 @@ static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
     }
 }
 
-/* Bound `timeout` by the socket-timeout sweep deadline (NULL == forever). */
-static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage) {
-    long long ns = us_internal_sweep_timeout_ns(loop);
+/* Bound `timeout` by the loop's own deadlines (NULL == forever). */
+static const struct timespec *us_internal_clamp_to_loop_timeout(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage) {
+    long long ns = us_internal_loop_timeout_ns(loop);
     if (ns < 0) {
         return timeout;
     }
-    long long sweep_sec = ns / 1000000000LL;
-    long long sweep_nsec = ns % 1000000000LL;
-    if (timeout && (timeout->tv_sec < sweep_sec ||
-                    (timeout->tv_sec == sweep_sec && timeout->tv_nsec <= sweep_nsec))) {
+    long long sec = ns / 1000000000LL;
+    long long nsec = ns % 1000000000LL;
+    if (timeout && (timeout->tv_sec < sec ||
+                    (timeout->tv_sec == sec && timeout->tv_nsec <= nsec))) {
         return timeout;
     }
-    storage->tv_sec = (time_t) sweep_sec;
-    storage->tv_nsec = (long) sweep_nsec;
+    storage->tv_sec = (time_t) sec;
+    storage->tv_nsec = (long) nsec;
     return storage;
 }
 
@@ -452,8 +452,8 @@ void us_loop_run(struct us_loop_t *loop) {
         /* Emit pre callback */
         us_internal_loop_pre(loop);
 
-        struct timespec sweep_ts;
-        const struct timespec *timeout = us_internal_clamp_to_sweep(loop, NULL, &sweep_ts);
+        struct timespec loop_ts;
+        const struct timespec *timeout = us_internal_clamp_to_loop_timeout(loop, NULL, &loop_ts);
 
         /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
@@ -465,6 +465,7 @@ void us_loop_run(struct us_loop_t *loop) {
         us_internal_dispatch_ready_polls(loop);
         us_internal_drain_ready_polls(loop);
         us_internal_sweep_if_due(loop);
+        us_internal_release_recv_buffers_if_due(loop);
 
         /* Emit post callback */
         us_internal_loop_post(loop);
@@ -499,8 +500,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         }
     }
 
-    struct timespec sweep_ts;
-    timeout = us_internal_clamp_to_sweep(loop, timeout, &sweep_ts);
+    struct timespec loop_ts;
+    timeout = us_internal_clamp_to_loop_timeout(loop, timeout, &loop_ts);
 
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
     const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
@@ -558,6 +559,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     us_internal_dispatch_ready_polls(loop);
     us_internal_drain_ready_polls(loop);
     us_internal_sweep_if_due(loop);
+    us_internal_release_recv_buffers_if_due(loop);
 
     /* Emit post callback */
     us_internal_loop_post(loop);

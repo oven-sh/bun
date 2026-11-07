@@ -209,8 +209,19 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop);
 /* CLOCK_MONOTONIC in ns. The clock every deadline on the loop is measured
  * against, so anything comparing against one must read it and not another. */
 uint64_t us_internal_monotonic_ns(void);
-long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
+/* ns until the loop's next deadline of its own (sweep, receive buffer release), or -1. */
+long long us_internal_loop_timeout_ns(struct us_loop_t *loop);
 void us_internal_sweep_if_due(struct us_loop_t *loop);
+#endif
+#ifdef __linux__
+/* Call after writing past LIBUS_RECV_BUFFER_RESIDENT_LENGTH in either receive buffer.
+ * Linux only: its MADV_DONTNEED frees anonymous pages at once and leaves nothing to undo before
+ * the next write. No other platform's madvise promises both. */
+void us_internal_schedule_recv_buffer_release(struct us_loop_t *loop);
+void us_internal_release_recv_buffers_if_due(struct us_loop_t *loop);
+#else
+#define us_internal_schedule_recv_buffer_release(loop) ((void) 0)
+#define us_internal_release_recv_buffers_if_due(loop) ((void) 0)
 #endif
 void us_internal_free_closed_sockets(us_loop_r loop);
 /* Defers closing `s` with `code` to us_internal_loop_post. */
@@ -263,6 +274,8 @@ void us_internal_poll_close_fd(struct us_poll_t *p);
 /* SSL loop data */
 void us_internal_init_loop_ssl_data(us_loop_r loop);
 void us_internal_free_loop_ssl_data(us_loop_r loop);
+/* The loop's TLS plaintext buffer, sized like recv_buf. NULL before the loop's first TLS socket. */
+char *us_internal_loop_ssl_read_output(us_loop_r loop);
 
 /* Socket context related */
 void us_internal_socket_group_link_socket(us_socket_group_r group, us_socket_r s);

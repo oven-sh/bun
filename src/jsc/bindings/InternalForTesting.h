@@ -22,6 +22,8 @@ JSC_DECLARE_HOST_FUNCTION(jsFunction_BunString_makeThreadShareableRefCountDelta)
 JSC_DECLARE_HOST_FUNCTION(jsFunction_lowercaseHeaderNameSIMD);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_emitMemoryPressure);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_recvBufferTails);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_residentBytes);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_spawnThreadsForTesting);
 
 }

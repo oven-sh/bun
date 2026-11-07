@@ -749,6 +749,7 @@ void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
     if (!loop_ssl_data) Bun__outOfMemory();
     loop_ssl_data->ssl_read_output = ssl_alloc_read_output();
     if (!loop_ssl_data->ssl_read_output) Bun__outOfMemory();
+    us_internal_schedule_recv_buffer_release(loop);
 
     OPENSSL_init_ssl(0, NULL);
 
@@ -783,6 +784,11 @@ void us_internal_free_loop_ssl_data(struct us_loop_t *loop) {
      * would hand a freed loop_ssl_data back to the next TLS socket. */
     loop->data.ssl_data = NULL;
   }
+}
+
+char *us_internal_loop_ssl_read_output(struct us_loop_t *loop) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
+  return loop_ssl_data ? loop_ssl_data->ssl_read_output : NULL;
 }
 
 /* ── SSL_CTX construction ────────────────────────────────────────────────── */
@@ -2854,6 +2860,10 @@ restart:
       if (!s) return NULL;
     }
 
+    /* Not the ciphertext's length: a record that the previous read began adds to this one's plaintext. */
+    if (read <= LIBUS_RECV_BUFFER_RESIDENT_LENGTH && read + just_read > LIBUS_RECV_BUFFER_RESIDENT_LENGTH) {
+      us_internal_schedule_recv_buffer_release(s->group->loop);
+    }
     read += just_read;
 
     if (read == LIBUS_RECV_BUFFER_LENGTH) {

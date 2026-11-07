@@ -1399,6 +1399,24 @@ pub fn is_initialized() -> bool {
     crate::HTTP_THREAD_INIT.load(Ordering::Acquire)
 }
 
+/// For `bun:internal-for-testing`, on any thread. Null until the HTTP thread runs.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__HTTPThread__uwsLoopForTesting() -> *mut uws::Loop {
+    if !is_initialized() {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: same shape as `shutdown_for_exit()` below.
+    let thread = unsafe {
+        bun_ptr::ParentRef::<HttpThread>::from_raw(
+            (*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr(),
+        )
+    };
+    if !thread.has_awoken.load(Ordering::Acquire) {
+        return core::ptr::null_mut();
+    }
+    thread.uws_loop
+}
+
 /// Called from `bun_jsc::VirtualMachine::global_exit()` on the JS thread,
 /// before `~VM`. Asks the HTTP daemon thread to reclaim every in-flight
 /// `ThreadlocalAsyncHTTP` box and waits (with a short timeout) for it to ack.

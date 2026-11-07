@@ -2541,4 +2541,277 @@ describe("bundler", () => {
       `,
     },
   });
+  // A TypeScript enum that is the whole body of `if`, `else`, a loop, `with`
+  // or a label prints as `{ let E; ... }` below module scope, as in tsc, but
+  // its name is declared in the scope around the statement, as in esbuild.
+  // Behind that block the printed name is free. Since #41286 a nested name
+  // may keep a spelling that an outer scope holds, so the free name read (or
+  // wrote) a top-level binding of another file. `abstract class` is accepted
+  // in that position and prints as `{ class K {} }`. A file with one of these
+  // two forms numbers its nested names that meet an outer name, as bun 1.4.0
+  // and esbuild do for every file.
+  {
+    // One file per position, because one such declaration is enough for a
+    // whole file. Each uses its own name, and other.ts has a top-level
+    // binding of every name.
+    const positions: Record<string, string> = {
+      a: `function f(c: boolean) { if (c) enum a { X = 1 } return typeof a; } export const seen = f(true);`,
+      b: `function f(c: boolean) { if (!c) {} else enum b { X = 1 } return typeof b; } export const seen = f(true);`,
+      d: `function f() { let n = 1; while (n-- > 0) enum d { X = 1 } return typeof d; } export const seen = f();`,
+      e: `function f() { do enum e { X = 1 } while (false); return typeof e; } export const seen = f();`,
+      g: `function f() { let read = ""; for (let n = 0; n < 1; n++, read = typeof g) enum g { X = 1 } return read; } export const seen = f();`,
+      h: `function f() { let read = ""; for (const key in (read = typeof h, { key: 1 })) enum h { X = 1 } return read; } export const seen = f();`,
+      i: `function f(c: boolean) { const read = () => typeof i; if (c) enum i { X = 1 } return read(); } export const seen = f(true);`,
+      j: `const f = (c: boolean) => { if (c) enum j { X = 1 } return typeof j; }; export const seen = f(true);`,
+      k: `export let seen = ""; for (let n = 0; n < 1; n++, seen = typeof k) enum k { X = 1 }`,
+      l: `const object = { f(c: boolean) { if (c) enum l { X = 1 } return typeof l; } }; export const seen = object.f(true);`,
+      m: `function f(c: boolean) { { if (c) enum m { X = 1 } return typeof m; } } export const seen = f(true);`,
+      o: `class K { static read: string; static { if (true) enum o { X = 1 } K.read = typeof o; } } export const seen = K.read;`,
+      p: `namespace N { if (true) enum p { X = 1 } export const read = typeof p; } export const seen = N.read;`,
+      q: `function f(c: number) { switch (c) { case 1: if (c) enum q { X = 1 } return typeof q; } } export const seen = f(1);`,
+      s: `function f() { if (false) enum s { X = 1 } return typeof s; } export const seen = f();`,
+      t: `function f(c: boolean) { if (c) enum t { X = (() => 1)() } return typeof t; } export const seen = f(true);`,
+      u: `function f(c: boolean) { L: if (c) enum u { X = 1 } else return typeof u; } export const seen = f(false);`,
+      // The label has a scope, but the enum is the body of the loop: the loop head is outside the printed block.
+      n: `function f() { let read = ""; let count = 1; L: while (((read = typeof n), count-- > 0)) enum n { X = 1 } return read; } export const seen = f();`,
+      v: `function f(c: boolean) { if (c) abstract class v {} return typeof v; } export const seen = f(true);`,
+      w: `const dec = (value: unknown, context?: unknown) => {}; function f(c: boolean) { if (c) @dec abstract class w {} return typeof w; } export const seen = f(true);`,
+      // The parser reads this arrow body twice: once to learn that ": string" is a return type.
+      y: `const f = globalThis ? (c: boolean): string => { if (c) enum y { X = 1 } return typeof y; } : null; enum Later { Q = 1 } export const seen = f(true) + Later.Q;`,
+      // The linker gives the namespace object of other.ts this name.
+      exports_other: `import * as ns from "./other.ts"; function f(c: boolean) { if (c) enum exports_other { X = 1 } return typeof exports_other; } export const seen = f(true) + Object.keys(ns).length;`,
+      // The file has a binding of the name itself. It is read behind the block under `bun run`, not in a bundle.
+      z: `const z = "own z"; globalThis.keepZ = z; function f(c: boolean) { if (c) enum z { X = 1 } return typeof z === "undefined" ? "undefined" : String(z); } export const seen = f(true);`,
+      r: `const r = "own r"; globalThis.keepR = r; function f(c: boolean) { if (c) abstract class r {} return typeof r === "undefined" ? "undefined" : String(r); } export const seen = f(true);`,
+      // The file holds the numbered spellings itself, outside f and not referenced beneath it:
+      // to refuse only the spellings of other files is not enough.
+      x: `const x2 = "own x2"; function outer() { const x3 = "own x3"; function f(c: boolean) { if (c) enum x { X = 1 } return typeof x; } return [f(true), x2, x3].join(); } export const seen = outer();`,
+    };
+    const names = Object.keys(positions).filter(name => name.length === 1);
+    const seen = Object.keys(positions).map(name => `seen_${name}`);
+    const files = {
+      "/entry.ts": [
+        `import "./other.ts";`,
+        `import { factory } from "./plain.ts";`,
+        ...Object.keys(positions).map(name => `import { seen as seen_${name} } from "./position_${name}.ts";`),
+        `console.log(JSON.stringify([${seen.join(", ")}, typeof factory()]));`,
+      ].join("\n"),
+      "/other.ts": [
+        ...names.map(name => `export const ${name} = "other ${name}";`),
+        `export class Model {}`,
+        `globalThis.keep = [${[...names, "Model"].join(", ")}];`,
+      ].join("\n"),
+      // Declarations in a statement list are not such a body: the nested name of this file keeps the
+      // spelling of other.ts's class.
+      "/plain.ts": /* ts */ `
+        export abstract class Base {}
+        export function make() { abstract class Inner {} return Inner; }
+        export function read() { enum E { A = 1 } return E.A; }
+        export namespace N { export enum E { A = 1 } }
+        export const factory = () => { class Model {} return Model; };
+      `,
+      ...Object.fromEntries(Object.entries(positions).map(([name, source]) => [`/position_${name}.ts`, source])),
+    };
+    const expected = Object.keys(positions).map(
+      name =>
+        ({ y: "undefined1", exports_other: `undefined${names.length + 1}`, x: "undefined,own x2,own x3" })[name] ??
+        "undefined",
+    );
+    for (const [suffix, options] of [
+      ["", {}],
+      ["Cjs", { format: "cjs", backend: "cli" }],
+      ["Iife", { format: "iife" }],
+      ["MinifyIdentifiers", { minifyIdentifiers: true }],
+    ] as const) {
+      itBundled(`ts/SingleStatementBodyDeclarationIsFreeBehindItsBlock${suffix}`, {
+        files,
+        minifyIdentifiers: false,
+        ...options,
+        onAfterBundle(api) {
+          if ("minifyIdentifiers" in options) return;
+          const out = api.readFile("/out.js");
+          // Only the files with such a declaration number their nested names.
+          expect(out).not.toMatch(/\bModel[0-9]\b/);
+          expect(names.filter(name => !out.includes(`${name} = "other ${name}"`))).toEqual([]);
+        },
+        run: { stdout: JSON.stringify([...expected, "function"]) },
+      });
+    }
+    // The other file's binding comes through a cross-chunk import.
+    itBundled("ts/SingleStatementBodyEnumIsFreeBehindItsBlockWithSplitting", {
+      files: {
+        "/entry.ts": /* ts */ `
+          import { E } from "./shared.ts";
+          import { f } from "./form.ts";
+          console.log(JSON.stringify([[f(true), f(false)], E]));
+        `,
+        "/entry2.ts": /* ts */ `
+          import { E } from "./shared.ts";
+          console.log(E);
+        `,
+        "/shared.ts": /* ts */ `export const E = "shared E";`,
+        "/form.ts": /* ts */ `export function f(c: boolean) { if (c) enum E { A = 1 } return typeof E; }`,
+      },
+      entryPoints: ["/entry.ts", "/entry2.ts"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      minifyIdentifiers: false,
+      onAfterBundle(api) {
+        api.expectFile("/out/entry.js").toMatch(/import\s*\{\s*E\s*\}\s*from/);
+      },
+      run: { file: "/out/entry.js", stdout: `[["undefined","undefined"],"shared E"]` },
+    });
+    // The same for a write. Only the first enum of a name gets a `let` (tsc
+    // prints one `let` too), so the closure of a later one ran on the other
+    // file's binding.
+    itBundled("ts/SingleStatementBodyEnumDoesNotWriteAnotherFile", {
+      files: {
+        "/entry.ts": /* ts */ `
+          import "./other.ts";
+          function twoArms(c: boolean) { if (c) enum W { A = 1 } else enum W { B = 2 } return typeof W; }
+          function twoIfs(c: boolean) { if (c) enum V { A = 1 } if (!c) enum V { B = 2 } return typeof V; }
+          function assigned() { if (true) enum U { A = 1 } U = 5; return "assigned"; }
+          function deadThenLive(c: boolean) { if (false) enum T { A = 1 } if (c) enum T { B = 2 } return typeof T; }
+          function laterCase(x: number, c: boolean) {
+            let seen = "";
+            switch (x) {
+              case 1:
+                if (c) enum S { A = 1 }
+                seen = typeof S;
+                break;
+              case 2:
+                enum S { B = 2 }
+                seen = typeof S;
+            }
+            return seen;
+          }
+          const attempt = (fn: () => unknown) => { try { return fn(); } catch (e: any) { return e.name; } };
+          console.log(JSON.stringify([
+            attempt(() => twoArms(true)), attempt(() => twoArms(false)),
+            attempt(() => twoIfs(true)), attempt(() => twoIfs(false)),
+            attempt(assigned),
+            attempt(() => deadThenLive(true)), attempt(() => deadThenLive(false)),
+            attempt(() => laterCase(1, true)), attempt(() => laterCase(1, false)), attempt(() => laterCase(2, true)),
+            globalThis.others(),
+          ]));
+        `,
+        "/other.ts": /* ts */ `
+          export const W = { w: 1 };
+          export const V = { v: 1 };
+          export let U = "u";
+          export const T = { t: 1 };
+          export const S = ["s"];
+          globalThis.others = () => [W, V, U, T, S];
+        `,
+      },
+      minifyIdentifiers: false,
+      run: {
+        stdout: `["undefined","ReferenceError","undefined","ReferenceError","ReferenceError","ReferenceError","undefined","undefined","undefined","ReferenceError",[{"w":1},{"v":1},"u",{"t":1},["s"]]]`,
+      },
+    });
+    // In a bundle the name behind the block is free, also where the file has
+    // an outer binding of that name, which `bun run` and tsc + node read.
+    // esbuild and bun 1.4.0 give the same.
+    itBundled("ts/SingleStatementBodyEnumDoesNotReadOuterBindingOfItsFile", {
+      files: {
+        "/entry.ts": /* ts */ `
+          const E = "own E";
+          globalThis.keep = E;
+          function f(c: boolean) { if (c) enum E { A = 1 } return String(E); }
+          const attempt = (fn: () => unknown) => { try { return fn(); } catch (e: any) { return e.name; } };
+          console.log(JSON.stringify([attempt(() => f(true)), attempt(() => f(false))]));
+        `,
+      },
+      minifyIdentifiers: false,
+      run: { stdout: `["ReferenceError","ReferenceError"]` },
+    });
+    // A module scope that is the closure of a CommonJS file: the class is
+    // scoped to its block there too, and the enum is a `var`, which hoists.
+    itBundled("ts/SingleStatementBodyDeclarationInCommonJsFile", {
+      files: {
+        "/entry.ts": /* ts */ `
+          import "./other.ts";
+          const wrapped = require("./wrapped.ts");
+          console.log(JSON.stringify([wrapped.seenClass, wrapped.seenEnum]));
+        `,
+        "/wrapped.ts": /* ts */ `
+          if (globalThis) abstract class w {}
+          if (globalThis) enum x { A = 1 }
+          exports.seenClass = typeof w;
+          exports.seenEnum = typeof x;
+        `,
+        "/other.ts": /* ts */ `
+          export const w = "other w";
+          export const x = "other x";
+          globalThis.keep = [w, x];
+        `,
+      },
+      minifyIdentifiers: false,
+      run: { stdout: `["undefined","object"]` },
+    });
+    // At module scope such an enum is a `var`, which hoists out of the block,
+    // so the file still keeps the names of its nested bindings.
+    itBundled("ts/SingleStatementBodyEnumAtModuleScopeKeepsNestedNames", {
+      files: {
+        "/entry.ts": /* ts */ `
+          import { count } from "./other.ts";
+          if (globalThis) enum E { A = 1 }
+          const factory = () => { class Model {} return Model; };
+          console.log(JSON.stringify([Object.keys(E), count, factory().name]));
+        `,
+        "/other.ts": /* ts */ `
+          if (globalThis) enum E { B = 2, C = 3 }
+          export const count = Object.keys(E).length;
+          export class Model {}
+          globalThis.keep = Model;
+        `,
+      },
+      minifyIdentifiers: false,
+      run: { stdout: `[["1","A"],4,"Model"]` },
+    });
+    // A label in a statement list has a scope of its own, which holds a
+    // declaration that is its whole body. Nothing behind the block can name
+    // it, so this file keeps the names of its nested bindings too.
+    itBundled("ts/SingleStatementBodyOfLabelKeepsNestedNames", {
+      files: {
+        "/entry.ts": /* ts */ `
+          import "./other.ts";
+          function f() { L: enum E { A = 1 } return typeof E; }
+          function g() { L: abstract class K {} return typeof K; }
+          const factory = () => { class Model {} return Model; };
+          console.log(JSON.stringify([f(), g(), factory().name]));
+        `,
+        "/other.ts": /* ts */ `
+          export const E = "other E";
+          export class K {}
+          export class Model {}
+          globalThis.keep = [E, K, Model];
+        `,
+      },
+      minifyIdentifiers: false,
+      run: { stdout: `["undefined","undefined","Model"]` },
+    });
+    // The dev server prints each file as a function of its own, so no other
+    // file's binding is in scope there and the names stay as they are.
+    itBundled("ts/SingleStatementBodyEnumInDevServerFormat", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* ts */ `
+          import "./other.ts";
+          function f(c: boolean) { if (c) enum E { A = 1 } return typeof E; }
+          console.log(f(true));
+        `,
+        "/other.ts": /* ts */ `
+          export const E = "other E";
+          globalThis.keep = E;
+        `,
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("let E;");
+        expect(out).toContain("return typeof E;");
+      },
+    });
+  }
 });

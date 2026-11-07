@@ -1,1 +1,0 @@
-globalThis.log.push("imports-itself"); exports.first = 1; const loaded = import("./imports-itself.cjs"); loaded.catch(() => globalThis.log.push("own import failed")); throw new Error("from imports-itself");

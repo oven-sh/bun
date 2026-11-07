@@ -1,0 +1,8 @@
+# the same program in a build that did not ask: one record, at the first call
+# -- source: calls-of-an-evaluator-are-one-record-where-no-report-is-asked-for.ts
+# declare const input: any;
+# new Function(input);
+# Function(input);
+# -- end of source
+# RUN: causes
+# CHECK-COUNT-1: cause EvaluatesText Function at f0 v

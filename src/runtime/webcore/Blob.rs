@@ -19,7 +19,7 @@ use bun_core as bun;
 use bun_core::Output;
 use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, WTFStringImplExt as _, strings};
 use bun_http_types::MimeType::MimeType;
-use bun_jsc::{CompiledJsonParser, EncodedSliceJsc as _, StringJsc as _, bun_string_jsc};
+use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, bun_string_jsc};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd};
 
@@ -212,8 +212,6 @@ pub(crate) trait BlobExt {
     fn json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn bytes(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
-    /// A promise for [`BlobExt::to_json_source`].
-    fn json_source(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
     fn form_data(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn get_exists_sync(&self) -> JSValue;
     fn write(
@@ -308,8 +306,6 @@ pub(crate) trait BlobExt {
     fn to_string_transfer(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
     fn to_string(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue>;
     fn to_json(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue>;
-    /// What `to_json` parses: the bytes, or the text behind a UTF-16 mark.
-    fn to_json_source(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue>;
     /// # Safety
     /// `raw_bytes` must be valid for reads for the duration of the call; when
     /// `LIFETIME == Temporary` it must be a leaked default-allocator `Box<[u8]>`.
@@ -1105,11 +1101,6 @@ impl BlobExt for Blob {
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_uint8_array(&cx, Lifetime::Clone))
-    }
-
-    fn json_source(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
-        let _store = self.store.get().clone();
-        JSPromise::wrap(cx.global(), |_| self.to_json_source(cx, Lifetime::Clone))
     }
 
     fn form_data(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -2446,19 +2437,6 @@ impl BlobExt for Blob {
         }
     }
 
-    fn to_json_source(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue> {
-        if self.needs_to_read_file() {
-            return Ok(self.do_read_file::<ToJsonSourceWithBytesFn>(cx));
-        }
-        if self.is_s3() {
-            return self.do_read_from_s3::<ToJsonSourceWithBytesFn>(cx);
-        }
-        match json_text_behind_mark(cx.global(), self.shared_view()) {
-            Some(text) => text,
-            None => self.to_uint8_array(cx, lifetime),
-        }
-    }
-
     /// See [`to_string_with_bytes`] for why `raw_bytes` is `*mut [u8]`.
     ///
     /// # Safety
@@ -2477,7 +2455,9 @@ impl BlobExt for Blob {
                 // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
                 unsafe { drop(bun_core::heap::take(raw_bytes)) };
             }
-            return Err(global.throw_value(Blob__createEmptyJSONBodyError(global)));
+            return Err(global.throw_value(
+                global.create_syntax_error_instance(format_args!("Unexpected end of JSON input")),
+            ));
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
@@ -2504,14 +2484,10 @@ impl BlobExt for Blob {
         // free the original allocation, not the offset pointer.
         let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
 
-        if let Some(parsed) = EncodedSlice::latin1(buf).try_parse_json_from_utf8(global) {
-            return Ok(parsed);
-        }
-
         if could_be_all_ascii == Some(true) {
-            return EncodedSlice::latin1(buf).to_json_object(global, CompiledJsonParser::Skip);
+            return EncodedSlice::latin1(buf).to_json_object(global);
         }
-        EncodedSlice::utf8(buf).to_json_object(global, CompiledJsonParser::Skip)
+        EncodedSlice::utf8(buf).to_json_object(global)
     }
 
     fn to_form_data_with_bytes(&self, global: &JSGlobalObject, buf: &[u8]) -> JSValue {
@@ -3729,25 +3705,6 @@ impl URLSearchParamsConverter {
 // ──────────────────────────────────────────────────────────────────────────
 // C-exported helpers
 // ──────────────────────────────────────────────────────────────────────────
-
-/// Where `to_json_with_bytes` does not parse the bytes as UTF-8: the text that it parses behind a
-/// UTF-16 mark, and the error that it throws for a mark alone.
-fn json_text_behind_mark(global: &JSGlobalObject, bytes: &[u8]) -> Option<JsResult<JSValue>> {
-    match strings::BOM::detect_and_split(bytes) {
-        (Some(_), []) => Some(Err(
-            global.throw_value(Blob__createEmptyJSONBodyError(global))
-        )),
-        (Some(strings::BOM::Utf16Le), text) => {
-            Some(BunString::clone_utf16_bytes(text).into_js(global))
-        }
-        _ => None,
-    }
-}
-
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__createEmptyJSONBodyError(global: &JSGlobalObject) -> JSValue {
-    global.create_syntax_error_instance(format_args!("Unexpected end of JSON input"))
-}
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
@@ -5683,7 +5640,6 @@ impl Drop for TemporaryBytes {
 // Each implements `ReadFileToJs` so a plain fn-pointer monomorphizes per `*WithBytes` body.
 pub(crate) struct ToStringWithBytesFn;
 pub(crate) struct ToJsonWithBytesFn;
-pub(crate) struct ToJsonSourceWithBytesFn;
 pub(crate) struct ToArrayBufferWithBytesFn;
 pub(crate) struct ToUint8ArrayWithBytesFn;
 pub(crate) struct ToFormDataWithBytesFn;
@@ -5713,19 +5669,6 @@ impl read_file::ReadFileToJs for ToJsonWithBytesFn {
                 Lifetime::Transfer => b.to_json_with_bytes::<{ Lifetime::Transfer }>(g, by),
             }
         }
-    }
-}
-impl read_file::ReadFileToJs for ToJsonSourceWithBytesFn {
-    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
-        // SAFETY: see `ToStringWithBytesFn::call`.
-        let Some(text) = json_text_behind_mark(g, unsafe { &*by }) else {
-            return ToUint8ArrayWithBytesFn::call(b, g, by, l);
-        };
-        if l == Lifetime::Temporary {
-            // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
-            unsafe { drop(bun_core::heap::take(by)) };
-        }
-        text
     }
 }
 impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
@@ -5930,12 +5873,6 @@ impl Any {
                 self.to_array_buffer_transfer(cx)
             }
             streams::BufferActionTag::Json => self.to_json(cx, Lifetime::Share),
-            streams::BufferActionTag::JsonSource => {
-                if matches!(self, Any::Blob(_)) {
-                    return self.to_json_source(cx, Lifetime::Clone);
-                }
-                self.to_json_source(cx, Lifetime::Transfer)
-            }
         }
     }
 
@@ -5995,24 +5932,6 @@ impl Any {
                 str
             }
             Any::WTFStringImpl(_) => self.take_string().to_js_by_parse_json(cx.global()),
-        }
-    }
-
-    /// What `to_json` parses, for the JSON parser of a compiled program: the string that holds the
-    /// body, the text behind the UTF-16 mark of a Blob, otherwise the bytes. A UTF-8 mark stays in the bytes.
-    /// Where `to_json` answers null without parsing, the text is "null".
-    pub(crate) fn to_json_source(
-        &mut self,
-        cx: &bun_jsc::JsThread<'_>,
-        lifetime: Lifetime,
-    ) -> JsResult<JSValue> {
-        if self.is_null_without_parsing() {
-            return bun_string_jsc::create_utf8_for_js(cx.global(), b"null");
-        }
-        match self {
-            Any::Blob(b) => b.to_json_source(cx, lifetime),
-            Any::InternalBlob(_) => self.to_uint8_array(cx, lifetime),
-            Any::WTFStringImpl(_) => self.take_string().into_js(cx.global()),
         }
     }
 
@@ -6240,7 +6159,7 @@ impl Internal {
 
     pub(crate) fn to_json(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let str_bytes = EncodedSlice::utf8(strings::without_utf8_bom(&self.bytes));
-        let json = str_bytes.to_json_object(global_this, CompiledJsonParser::Try);
+        let json = str_bytes.to_json_object(global_this);
         self.bytes = Vec::new();
         json
     }

@@ -20,6 +20,8 @@
 // builds only. Declaring the feature where neither is compiled (Windows
 // release) trips `unused_features`.
 #![cfg_attr(any(not(windows), debug_assertions), feature(core_intrinsics))]
+// `stopped_builds::end_build_where_allocation_fails`.
+#![feature(alloc_error_hook)]
 #![allow(internal_features)]
 #![warn(unused_must_use)]
 #[path = "CPUFeatures.rs"]
@@ -801,9 +803,26 @@ mod draft {
         None,
     }
 
-    /// Too little memory for a build is an error of the build: a message and exit code 1.
+    /// A thread that has used up its stack faults on the guard page below it: at the stack pointer, or inside the frame
+    /// that was just laid there. Wherever else the stack pointer stands, the memory around it is mapped.
+    fn has_run_out_of_stack(reason: &CrashReason<'_>, seed: &TraceSeed) -> bool {
+        match (reason, seed) {
+            (CrashReason::StackOverflow, _) => true,
+            #[cfg(unix)]
+            (
+                &(CrashReason::SegmentationFault(address) | CrashReason::BusError(address)),
+                &TraceSeed::FaultOnStack { sp, .. },
+            ) => {
+                const LARGEST_FRAME: usize = 64 << 10;
+                address.wrapping_sub(sp.wrapping_sub(LARGEST_FRAME)) < 2 * LARGEST_FRAME
+            }
+            _ => false,
+        }
+    }
+
+    /// Too little memory or stack for a build is an error of the build: a message and exit code 1.
     #[cold]
-    fn end_build_out_of_memory(place: &crate::stopped_builds::PlaceInBuild) -> ! {
+    fn end_build_out_of(lacked: &[u8], place: &crate::stopped_builds::PlaceInBuild) -> ! {
         // Held until the process ends: of the threads that stop together, the first one speaks.
         let _speaker = PANIC_MUTEX.lock();
         Output::flush();
@@ -814,7 +833,9 @@ mod draft {
         } else {
             b"error".as_slice()
         });
-        let _ = writer.write_all(b": Out of memory while compiling\n");
+        let _ = writer.write_all(b": Out of ");
+        let _ = writer.write_all(lacked);
+        let _ = writer.write_all(b" while compiling\n");
         let _ = writer.write_all(place.lines());
         #[cfg(windows)]
         bun_sys::windows::kernel32::ExitProcess(1);
@@ -839,7 +860,12 @@ mod draft {
                 if matches!(reason, CrashReason::OutOfMemory)
                     && let Some(place) = crate::stopped_builds::place_of_this_thread()
                 {
-                    end_build_out_of_memory(&place);
+                    end_build_out_of(b"memory", &place);
+                }
+                if has_run_out_of_stack(&reason, &seed)
+                    && let Some(place) = crate::stopped_builds::place_of_this_thread()
+                {
+                    end_build_out_of(b"stack", &place);
                 }
                 let _ = PANICKING.fetch_add(1, Ordering::SeqCst);
                 let addresses_in_trace: [usize; 20];
@@ -1663,6 +1689,8 @@ mod draft {
 
         // Removed code was filled with traps, or cut out of the file, which leaves its pages unmapped.
         const SEGV_MAPERR: c_int = 1;
+        // What Linux says of an instruction that may not be run at all: on x86-64 removed code is filled with `hlt`.
+        const SI_KERNEL: c_int = 0x80;
         let pc = context.map(|(pc, _, _)| pc);
         // macOS raises SIGSEGV only where nothing is mapped, on ARM64 with SEGV_ACCERR.
         // SAFETY: kernel provides a valid siginfo_t.
@@ -1671,6 +1699,8 @@ mod draft {
             libc::SIGTRAP if cfg!(target_arch = "x86_64") => pc.map(|pc| pc.wrapping_sub(1)),
             libc::SIGTRAP | libc::SIGILL => pc,
             libc::SIGSEGV if is_unmapped => pc.filter(|&pc| pc == addr),
+            // SAFETY: kernel provides a valid siginfo_t.
+            libc::SIGSEGV if unsafe { (*info).si_code } == SI_KERNEL => pc,
             // macOS raises SIGBUS where something that cannot be run is mapped in their place.
             libc::SIGBUS if cfg!(target_os = "macos") => pc.filter(|&pc| pc == addr),
             _ => None,
@@ -1953,6 +1983,8 @@ mod draft {
         let reason = CrashReason::Panic(msg_buf.const_slice());
 
         let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let addresses_in_trace: [usize; 20];
+        let trace_address_count: usize;
         {
             let _panic_guard = PANIC_MUTEX.lock();
             let writer = &mut stderr_writer();
@@ -1971,6 +2003,9 @@ mod draft {
                 };
 
             Output::flush();
+            if crate::build_id::build_id().is_some() {
+                Output::source::stdio::restore();
+            }
             let _ =
                 writer.write_all(b"============================================================\n");
             let _ = print_metadata(writer);
@@ -1995,6 +2030,8 @@ mod draft {
                 index: idx,
                 instruction_addresses: &addr_buf,
             };
+            addresses_in_trace = addr_buf;
+            trace_address_count = idx.min(addr_buf.len());
 
             if debug_trace {
                 dump_stack_trace(&trace, WriteStackTraceLimits::default());
@@ -2042,6 +2079,13 @@ mod draft {
         }
 
         report(trace_str_buf.const_slice());
+
+        crate::compiled_frames::write_frames_on_stack(
+            &addresses_in_trace[..trace_address_count],
+            &mut |text| {
+                let _ = stderr_writer().write_all(text);
+            },
+        );
 
         // A Rust `panic!` is a bug. The process must not continue — with
         // `panic = "abort"` no unwind starts, so `catch_unwind` boundaries are

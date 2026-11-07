@@ -1,0 +1,12 @@
+# f1 = makeRows, f2 = countHits
+# -- source: the-run-of-a-copied-list-method-asks-kind-storage-and-bounds-in-front-of-its-loop.ts
+# declare function sink(...values: unknown[]): void;
+# type Row = { id: number };
+# function makeRows(): Row[] { const rows: Row[] = []; for (let i = 0; i < 12; i++) rows.push({ id: i }); return rows; }
+# function countHits(times: number) { const list = makeRows(); let n = 0; for (let t = 0; t < times; t++) if (list.some(row => row.id === 11)) n++; return n; }
+# sink(makeRows, countHits);
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Contiguous
+# CHECK: [[storage]]: opaque(ArrayStoragePointer) {{*}}= GetArrayStorage
+# CHECK: = HasContiguousIndex {{*}}storage=[[storage]] [isInBounds]

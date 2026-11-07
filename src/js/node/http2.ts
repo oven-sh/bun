@@ -6836,6 +6836,11 @@ Http2Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, even
   }
 };
 
+// Compiled ahead of time, a store that names the property makes it a field of the class, and every read of the name on another object first takes that object for one of this class.
+function storeUnderName(server: object, name: string, value: unknown) {
+  (server as any)[name] = value;
+}
+
 function onErrorSecureServerSession(this: Http2SecureServer, err: Error, socket: TLSSocket) {
   if (!this.emit("clientError", err, socket)) {
     // The handshake-failed socket has no 'error' listener yet; destroying it with the error
@@ -6885,8 +6890,10 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
       // connectionListenerHTTP1 reads these off the server when initializing
       // the per-connection parser, matching Node's storeHTTPOptions.
       this.maxHeaderSize = http1Options.maxHeaderSize;
-      this.insecureHTTPParser = http1Options.insecureHTTPParser;
-      this.httpValidation = http1Options.httpValidation;
+      if (!IS_COMPILED_AHEAD_OF_TIME) this.insecureHTTPParser = http1Options.insecureHTTPParser;
+      else storeUnderName(this, "insecureHTTPParser", http1Options.insecureHTTPParser);
+      if (!IS_COMPILED_AHEAD_OF_TIME) this.httpValidation = http1Options.httpValidation;
+      else storeUnderName(this, "httpValidation", http1Options.httpValidation);
     }
     if (typeof onRequestHandler === "function") {
       this.on("request", onRequestHandler);

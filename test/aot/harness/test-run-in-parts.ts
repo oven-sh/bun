@@ -22,14 +22,11 @@ export const files: Record<string, string> = {
   "g.test.ts": `import { nothing } from "./no-such-file";\nconsole.log(nothing);\n${passing("g")}`,
 };
 
-export const twoFiles = "TestRunLayers:2,TestRunPartFiles:2";
-export const envOf = (words?: string) => (words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv);
-
-export async function runTests(directory: string, words: string | undefined, ...flags: string[]) {
+export async function runTests(directory: string, ...flags: string[]) {
   const { stdout, stderr, exitCode } = await run(
     [bunExe(), "test", "--preload", "./preload.ts", ...flags],
     directory,
-    envOf(words),
+    bunEnv,
   );
   const results = [...stderr.matchAll(/^\((pass|fail|skip)\) (.*?)(?: \[.*\])?$/gm)].map(
     match => `${match[1]} ${match[2]}`,

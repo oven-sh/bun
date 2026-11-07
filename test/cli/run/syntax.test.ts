@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 
 const exitCode0 = [
   " ",
@@ -180,6 +180,12 @@ const exitCode0 = [
   "for(const x of function*(){yield 1}()){}",
   "for(const {[key]: x} of []){}",
   "for(let [{a = 1} = {}] of []){}",
+  "for(var {a} of []){}",
+  "for(var [a] in {}){}",
+  "for(let {a} in {}){}",
+  "for await(var [a] of []){}",
+  "for(var {a} = {}; false;){}",
+  "var using; for(using of [1, 2]);",
   "do{continue}while(false);",
   "label:do{break label}while(false);",
   "outer:for(;;)inner:break outer;",
@@ -411,5 +417,50 @@ describe("exit code 0", () => {
     expect(data.stderr).toBe("");
     expect(data.stdout.trimEnd().split("\n").at(-1)).toBe(`DONE ${exitCode0.length}`);
     expect(data.exitCode).toBe(0);
+  });
+});
+
+// The parser reports a `var` or `let` pattern with no initializer. The first eight of these ran
+// before it did: a later pass removed the declaration.
+const missingInitializer: [file: string, source: string, position: string][] = [
+  ["entry.js", "{ var { a }; }", "1:7"],
+  ["entry.js", "if (1) { var { a }; }", "1:14"],
+  ["entry.js", "try { var [a]; } catch {}", "1:11"],
+  ["entry.js", "label: var { a };", "1:12"],
+  ["entry.js", "for (var x = 1, { a }; false; ) {}", "1:17"],
+  ["entry.js", "var of = 1;\n{ var [a]\nof }", "2:7"],
+  ["entry.js", "function f() { if (false) { var { a }; } }\nf();", "1:33"],
+  ["entry.js", "function f() { return; var { a }; }\nf();", "1:28"],
+  ["entry.js", "for (let [a]; false; ) {}", "1:10"],
+  ["entry.js", "for (var { a }; false; ) {}", "1:10"],
+  ["entry.cjs", "for (var { a }; false; ) {}", "1:10"],
+  ["entry.mjs", "for (var { a }; false; ) {}", "1:10"],
+];
+
+describe("exit code 1", () => {
+  test.concurrent.each(missingInitializer)("%s: %s", async (file, source, position) => {
+    using dir = tempDir("syntax-missing-initializer", { [file]: `${source}\nconsole.log("ran");\n` });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), file],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stderr.split(/\r?\n/).map(line => line.trim());
+    expect({
+      stdout,
+      error: lines.find(line => line.startsWith("error: ")),
+      // The text behind the last separator of the path: the file, the line and the column.
+      at: lines.find(line => line.startsWith("at "))?.replace(/^at .*[\\/]/, ""),
+      exitCode,
+    }).toEqual({
+      stdout: "",
+      error: "error: Missing initializer in destructuring declaration",
+      at: `${file}:${position}`,
+      exitCode: 1,
+    });
   });
 });

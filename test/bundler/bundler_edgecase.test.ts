@@ -4172,6 +4172,24 @@ describe("bundler", () => {
     },
     run: { stdout: "try:false" },
   });
+  // A `var` or `let` pattern with no initializer is a syntax error. Each of these builds
+  // exited 0: a pass after the parser removed the declaration, or the function around it.
+  for (const [name, files, file, count] of [
+    ["ForHead", { "/entry.js": `for (var { a }; false; ) {}\nconsole.log("ran");` }, "/entry.js", 1],
+    ["Block", { "/entry.js": `{ var { a }; }\nconsole.log("ran");` }, "/entry.js", 1],
+    ["UnusedFunction", { "/entry.js": `function unused() { let [a]; }\nconsole.log("ran");` }, "/entry.js", 1],
+    [
+      "RequiredModule",
+      { "/entry.cjs": `require("./lib.js");`, "/lib.js": `export {};\nvar { a };\nlet [b];\nconsole.log("ran");` },
+      "/lib.js",
+      2,
+    ],
+  ] as const) {
+    itBundled(`edgecase/PatternWithoutInitializerIsAnError${name}`, {
+      files,
+      bundleErrors: { [file]: Array(count).fill("Missing initializer in destructuring declaration") },
+    });
+  }
   // A sloppy-mode file may declare `arguments`/`eval`. ESM output is always
   // strict, so bundling such a file to ESM is an error in the file, while the
   // non-strict output formats keep the declaration as written.

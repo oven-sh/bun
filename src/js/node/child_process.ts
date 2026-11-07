@@ -46,7 +46,7 @@ const MAX_BUFFER = 1024 * 1024;
 // `list.slice(start)` behind `lead` empty slots. By index, because script can replace slice(), unshift() and the array iterator.
 function copyArray(list, start: number, lead: number) {
   const count = list.length - start;
-  const copy = $newArrayWithSize(count > 0 ? lead + count : lead);
+  const copy = $newArrayWithSize<any>(count > 0 ? lead + count : lead);
   for (let i = 0; i < count; i++) {
     const from = start + i;
     // slice() leaves a hole where the list has one.
@@ -56,9 +56,9 @@ function copyArray(list, start: number, lead: number) {
 }
 
 // spawnargs is `[argv0, ...args]`. Bun.spawn() takes argv0 apart and wants the program in cmd[0].
-function spawnCommand(file, spawnargs) {
+function spawnCommand(file: string, spawnargs: string[]) {
   const length = spawnargs.length;
-  const cmd = $newArrayWithSize(length > 1 ? length : 1);
+  const cmd = $newArrayWithSize<string>(length > 1 ? length : 1);
   $putByValDirect(cmd, 0, file);
   for (let i = 1; i < length; i++) $putByValDirect(cmd, i, spawnargs[i]);
   return cmd;
@@ -1929,7 +1929,7 @@ function getBunStdioFromOptions(stdio) {
   // ignore -> null
   // inherit -> inherit (stdin/stdout/stderr)
   // Stream -> throw err for now
-  const bunStdio = $newArrayWithSize(length);
+  const bunStdio = $newArrayWithSize<Bun.Spawn.NodeStdio[number]>(length);
   for (let i = 0; i < length; i++) {
     // map() leaves a hole where the list has one.
     if (i in normalizedStdio) $putByValDirect(bunStdio, i, nodeToBun(normalizedStdio[i], i));

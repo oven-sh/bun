@@ -1390,6 +1390,66 @@ describe.concurrent("the fixtures and snapshot files that another runner wrote",
   });
 });
 
+// Bun 1.4.4 wrote formats/bun-1.4.4/older-forms.fixture.js, both its .snap file and its inline snapshots.
+// To add a case, run it under that version. Never update the folder with a later Bun.
+describe.concurrent(
+  "the snapshots that Bun 1.4.4 wrote for a Response, expect.any() of a class and a node:vm global",
+  () => {
+    const fixture = "older-forms.fixture.js";
+    const snap = join("__snapshots__", fixture + ".snap");
+    const tests = 13;
+
+    function copy() {
+      const dir = tempDir("snapshot-formats-bun-1.4.4", {});
+      cpSync(join(import.meta.dir, "..", "formats", "bun-1.4.4"), String(dir), { recursive: true });
+      return dir;
+    }
+    const contentsOf = (dir: string) =>
+      Object.fromEntries([fixture, snap].map(name => [name, readFileSync(join(dir, name), "utf8")]));
+    const run = (dir: string, CI: string, ...args: string[]) => runTests(dir, { CI }, ...args, "./" + fixture);
+
+    test("pass, and are left alone", async () => {
+      using dir = copy();
+      const before = contentsOf(String(dir));
+      for (const CI of ["true", "false"]) {
+        const { stderr, exitCode, pass, fail } = await run(String(dir), CI);
+        expect({ fail, pass, stderr: fail ? stderr : "" }).toEqual({ fail: 0, pass: tests, stderr: "" });
+        expect(contentsOf(String(dir))).toEqual(before);
+        expect(exitCode).toBe(0);
+      }
+    });
+
+    test("--update-snapshots rewrites them once", async () => {
+      using dir = copy();
+      const before = contentsOf(String(dir));
+      const first = await run(String(dir), "true", "--update-snapshots");
+      const updated = contentsOf(String(dir));
+      const second = await run(String(dir), "true", "--update-snapshots");
+      const read = await run(String(dir), "true");
+      expect(contentsOf(String(dir))).toEqual(updated);
+      expect([first, second, read].map(({ pass, fail, exitCode }) => ({ pass, fail, exitCode }))).toEqual(
+        Array.from({ length: 3 }, () => ({ pass: tests, fail: 0, exitCode: 0 })),
+      );
+
+      const olderForms = [
+        "}Response ",
+        "}Sub ",
+        "NodeVMGlobalProxy",
+        "NotAny<Function>",
+        "[class Function]",
+        "[native code]",
+      ];
+      const has = (text: string) => olderForms.filter(form => text.includes(form));
+      expect([has(before[fixture]), has(before[snap]), has(updated[fixture]), has(updated[snap])]).toEqual([
+        olderForms,
+        olderForms,
+        [],
+        [],
+      ]);
+    });
+  },
+);
+
 describe.concurrent("the first line of a snapshot file says whose format it has", () => {
   const snap = (dir: unknown, name = "a.test.js") =>
     readFileSync(join(String(dir), "__snapshots__", name + ".snap"), "utf8");
@@ -2438,6 +2498,161 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
   });
 
+  // formats/bun-1.4.4 has what Bun 1.4.4 wrote for these values. The tests here are for a test of "vitest" and for what no version wrote.
+  test.each(["bun:test", "vitest"])(
+    "passes when it is what Bun 1.4.4 wrote for expect.any() of a class that native code makes, in a test of %j",
+    async module => {
+      // Bun 1.4.4 named most of these classes Function, and a few, like Bun.Cookie, by their own name.
+      const printed = `{\n  "buffer": NotAny<Function>,\n  "cookie": Any<Cookie>,\n  "number": Any<Number>,\n  "response": Any<Response>,\n  "url": Any<Function>,\n}`;
+      const { log, stderr, exitCode } = await logOf({
+        "a.test.js": `
+          import { test, expect } from ${JSON.stringify(module)};
+          const matchers = () => ({
+            url: expect.any(URL),
+            buffer: expect.not.any(Buffer),
+            cookie: expect.any(Bun.Cookie),
+            number: expect.any(Number),
+            response: expect.any(Response),
+          });
+          test("in a file", () => { expect(matchers()).toMatchSnapshot(); });
+          test("inline", () => {
+            expect(matchers()).toMatchInlineSnapshot(\`\n${printed}\n\`);
+            // No version wrote these.
+            expect(() => expect(expect.any(Number)).toMatchInlineSnapshot(\`Any<Function>\`)).toThrow();
+            expect(() => expect(expect.any(Response)).toMatchInlineSnapshot(\`Any<Function>\`)).toThrow();
+            expect(() => expect(expect.any(URL)).toMatchInlineSnapshot(\`Any<Buffer>\`)).toThrow();
+          });
+        `,
+        "__snapshots__/a.test.js.snap": headers.bun + `\nexports[\`in a file 1\`] = \`\n${printed}\n\`;\n`,
+      });
+      expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
+    },
+  );
+
+  // Bun 1.1.43 to 1.4.4 printed a Response and a BuildArtifact, and then printed the same value again as an object.
+  test.each(["bun:test", "vitest"])(
+    "passes when it is what Bun 1.4.4 wrote for a Response, in a test of %j",
+    async module => {
+      const response = (again: string, indent = "") =>
+        [
+          "Response (1 bytes) {",
+          "  ok: true,",
+          '  url: "",',
+          "  status: 201,",
+          '  statusText: "",',
+          "  headers: Headers {},",
+          "  redirected: false,",
+          "  bodyUsed: false,",
+          "  Blob (1 bytes)",
+          "}" + again,
+        ].join("\n" + indent);
+      const written = {
+        alone: response("Response {}"),
+        held: `\n{\n  "id": 1,\n  "list": [\n    ${response("Response {},", "    ")}\n  ],\n  "response": ${response("Response {},", "  ")}\n}\n`,
+      };
+      const notAccepted: Record<string, [string, string]> = {
+        // No version wrote these for the value.
+        "the object after the first of two only": [
+          "two",
+          `\n[\n  ${response("Response {},", "  ")}\n  ${response(",", "  ")}\n]\n`,
+        ],
+        "the name of a subclass": ["alone", response("Sub {}")],
+        "the object twice": ["alone", response("Response {}Response {}")],
+        "another status": ["alone", response("Response {}").replace("status: 201", "status: 202")],
+        "the name of the class it extends": ["subclass", response("Response {}")],
+        "a Request": [
+          "request",
+          `Request (0 KB) {\n  method: "GET",\n  url: "http://localhost/",\n  headers: Headers {}\n}Request {}`,
+        ],
+        // Bun 1.1.42 and older did not print it again. Bun 1.1.43 to 1.4.4 do not accept their text either.
+        "no object after it": [
+          "nextToAnAccessor",
+          `\n{\n  "accessor": [native code],\n  "response": ${response(",", "  ")}\n}\n`,
+        ],
+        // Bun 1.4.4 wrote this, but the type of the Blob is another value now.
+        "the type that the Blob had": [
+          "ofATypedBlob",
+          response("Response {}").replace(
+            "Blob (1 bytes)",
+            `Blob (1 bytes) {\n    type: "text/plain;charset=utf-8"\n  }`,
+          ),
+        ],
+      };
+      const snapshot =
+        headers.bun +
+        Object.entries(written)
+          .map(([name, text]) => `\nexports[\`in a file: ${name} 1\`] = \`${text}\`;\n`)
+          .join("");
+      using dir = tempDir("snapshot-older-response", {
+        "a.test.js": `
+          import { test, expect } from ${JSON.stringify(module)};
+          ${firstLine}
+          class Sub extends Response {}
+          const response = () => new Response("a", { status: 201 });
+          const values = {
+            alone: response,
+            held: () => ({ id: 1, response: response(), list: [response()] }),
+            subclass: () => new Sub("a", { status: 201 }),
+            two: () => [response(), response()],
+            request: () => new Request("http://localhost/"),
+            nextToAnAccessor: () => ({ get accessor() { return 1; }, response: response() }),
+            ofATypedBlob: () => new Response(new Blob(["a"], { type: "text/plain" }), { status: 201 }),
+          };
+          const written = ${JSON.stringify(written)};
+          test("in a file", () => {
+            for (const name of Object.keys(written)) expect(values[name]()).toMatchSnapshot(name);
+          });
+          test("inline", () => {
+            for (const [name, text] of Object.entries(written)) {
+              console.log(name, firstLine(() => expect(values[name]()).toMatchInlineSnapshot(text)));
+            }
+            for (const [what, [name, text]] of Object.entries(${JSON.stringify(notAccepted)})) {
+              console.log(what, firstLine(() => expect(values[name]()).toMatchInlineSnapshot(text)));
+            }
+          });
+        `,
+        "__snapshots__/a.test.js.snap": snapshot,
+      });
+      const { log, stderr, exitCode } = await logIn(String(dir));
+      const mismatch = "expect(received).toMatchInlineSnapshot(expected)";
+      expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({
+        log: [
+          ...Object.keys(written).map(name => `${name} passes`),
+          ...Object.keys(notAccepted).map(what => `${what} ${mismatch}`),
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8")).toBe(snapshot);
+    },
+  );
+
+  test("passes when it is what Bun 1.4.4 wrote for a BuildArtifact", async () => {
+    using dir = tempDir("snapshot-older-build-artifact", {
+      "in.js": `export const a = 1;`,
+      "a.test.js": `
+          test("in a file", async () => {
+            const { outputs } = await Bun.build({ entrypoints: [import.meta.dir + "/in.js"] });
+            expect(outputs[0]).toMatchSnapshot();
+            expect({ held: outputs[0] }).toMatchSnapshot();
+          });
+        `,
+    });
+    const path = join(String(dir), "__snapshots__", "a.test.js.snap");
+    const written = await runTests(String(dir), { CI: "false" });
+    const now = readFileSync(path, "utf8");
+    // The hash and the size in the text belong to this build of Bun, so make the older text from the text of this one.
+    const older = now
+      .replace("\n}`;", "\n}BuildArtifact {}`;")
+      .replace("\n  },\n}\n`;", "\n  }BuildArtifact {},\n}\n`;");
+    expect(older.match(/\}BuildArtifact \{\}/g)).toHaveLength(2);
+    writeFileSync(path, older);
+    const read = await runTests(String(dir), { CI: "true" });
+    expect(read.stderr).toContain(" 2 snapshots, ");
+    expect(readFileSync(path, "utf8")).toBe(older);
+    expect([written.exitCode, read.exitCode]).toEqual([0, 0]);
+  });
+
   test("passes when it is what an older Bun wrote where the object did not keep the property matchers it was given", async () => {
     const throughAGetter = `{\n  "o": [native code],\n}`;
     const frozen = `{\n  "a": [\n    1,\n    2,\n  ],\n}`;
@@ -2556,22 +2771,20 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     });
   });
 
-  // No older version listed the properties of the global of a node:vm context. 1.4.4 had the class NodeVMGlobalProxy for it.
-  // 1.4.0 to 1.4.3 named it JSGlobalProxy whatever prototype a script gave it, which is what jsdom does to its window.
+  // No older version listed the properties of the global of a node:vm context. Bun 1.4.4 had the class NodeVMGlobalProxy for it.
   test.each(["bun:test", "vitest"])(
-    "passes when it is what Bun 1.4.3 or Bun 1.4.4 wrote for the global of a node:vm context, in a test of %j",
+    "passes when it is what Bun 1.4.4 wrote for the global of a node:vm context, in a test of %j",
     async module => {
-      const written: Record<string, Record<string, string>> = {
-        sandbox: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "NodeVMGlobalProxy {}" },
-        window: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "Window {}" },
-        tagged: { "1.4.3": "Tagged {}", "1.4.4": "Tagged {}" },
-        taggedAsTheClass: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "JSGlobalProxy {}" },
-        taggedWithNoText: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "NodeVMGlobalProxy {}" },
-        thisOfNotContextified: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "NodeVMGlobalProxy {}" },
-        notContextified: { "1.4.4": "NodeVMGlobalProxy {}" },
-        classPrototype: { "1.4.3": "JSGlobalProxy {}" },
-        // The global of the main realm had the same class in both.
-        mainGlobal: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "JSGlobalProxy {}" },
+      const written: Record<string, string> = {
+        sandbox: "NodeVMGlobalProxy {}",
+        // The name is a Symbol.toStringTag if the global or its prototype has one, then and now.
+        window: "Window {}",
+        tagged: "Tagged {}",
+        taggedWithNoText: "NodeVMGlobalProxy {}",
+        thisOfNotContextified: "NodeVMGlobalProxy {}",
+        notContextified: "NodeVMGlobalProxy {}",
+        // The global of the main realm is not the global of a node:vm context.
+        mainGlobal: "JSGlobalProxy {}",
       };
       const notAccepted: [string, string][] = [
         // No version wrote these for the value.
@@ -2579,9 +2792,9 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
         ["sandbox", `\nNodeVMGlobalProxy {\n  "a": 1,\n  "b": 2,\n}\n`],
         ["window", "NodeVMGlobalProxy {}"],
         ["tagged", "NodeVMGlobalProxy {}"],
-        ["tagged", "JSGlobalProxy {}"],
-        ["taggedAsTheClass", "NodeVMGlobalProxy {}"],
         ["mainGlobal", "NodeVMGlobalProxy {}"],
+        // Bun 1.4.0 to 1.4.3 wrote this for a global whose prototype has a tag. Bun 1.4.4 does not accept it either.
+        ["window", "JSGlobalProxy {}"],
         // Up to 1.4.3 vm.createContext(vm.constants.DONT_CONTEXTIFY) returned another object than the global. It no longer exists.
         ["notContextified", `\nNodeVMSpecialSandbox {\n  "a": 1,\n}\n`],
         // 1.4.4 named the global after the class of a prototype that a script gave it.
@@ -2589,19 +2802,10 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
       ];
       // An older Bun put a property matcher on the global itself, and then listed that property.
       const withPropertyMatchers = `\nNodeVMGlobalProxy {\n  "a": 1,\n}\n`;
-      const versions = ["1.4.3", "1.4.4"];
-      const inFile = (version: string) =>
-        Object.keys(written)
-          .filter(name => written[name][version])
-          .sort();
-      const snapshot =
-        headers.bun +
-        versions
-          .map(version => {
-            const lines = inFile(version).map(name => `  "${name}": ${written[name][version]},\n`);
-            return `\nexports[\`in a file that Bun ${version} wrote 1\`] = \`\n{\n${lines.join("")}}\n\`;\n`;
-          })
-          .join("");
+      const lines = Object.keys(written)
+        .sort()
+        .map(name => `  "${name}": ${written[name]},\n`);
+      const snapshot = headers.bun + `\nexports[\`in a file 1\`] = \`\n{\n${lines.join("")}}\n\`;\n`;
       using dir = tempDir("snapshot-context-global", {
         "a.test.js": `
           import { test, expect } from ${JSON.stringify(module)};
@@ -2616,7 +2820,6 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
             // jsdom gives the prototype of its Window class to the global of its context.
             window: () => Object.setPrototypeOf(context({ document: {} }), Window.prototype),
             tagged: () => context({ [Symbol.toStringTag]: "Tagged" }),
-            taggedAsTheClass: () => context({ [Symbol.toStringTag]: "JSGlobalProxy" }),
             taggedWithNoText: () => context({ [Symbol.toStringTag]: "" }),
             notContextified: () => Object.assign(vm.createContext(vm.constants.DONT_CONTEXTIFY), { a: 1 }),
             thisOfNotContextified: () => vm.runInContext("this", values.notContextified()),
@@ -2624,19 +2827,14 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
             mainGlobal: () => globalThis,
           };
           const written = ${JSON.stringify(written)};
-          for (const version of ${JSON.stringify(versions)}) {
-            test("in a file that Bun " + version + " wrote", () => {
-              const names = Object.keys(written).filter(name => written[name][version]);
-              expect(Object.fromEntries(names.map(name => [name, values[name]()]))).toMatchSnapshot();
-            });
-          }
+          test("in a file", () => {
+            expect(Object.fromEntries(Object.keys(written).map(name => [name, values[name]()]))).toMatchSnapshot();
+          });
           test("inline", () => {
-            for (const [name, texts] of Object.entries(written)) {
-              for (const [version, text] of Object.entries(texts)) {
-                const alone = firstLine(() => expect(values[name]()).toMatchInlineSnapshot(text));
-                const inside = firstLine(() => expect([values[name]()]).toMatchInlineSnapshot("\\n[\\n  " + text + ",\\n]\\n"));
-                console.log(name, version, alone, inside);
-              }
+            for (const [name, text] of Object.entries(written)) {
+              const alone = firstLine(() => expect(values[name]()).toMatchInlineSnapshot(text));
+              const inside = firstLine(() => expect([values[name]()]).toMatchInlineSnapshot("\\n[\\n  " + text + ",\\n]\\n"));
+              console.log(name, alone, inside);
             }
             for (const [name, text] of ${JSON.stringify(notAccepted)}) {
               console.log(name, JSON.stringify(text), firstLine(() => expect(values[name]()).toMatchInlineSnapshot(text)));
@@ -2651,9 +2849,7 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
       const mismatch = "expect(received).toMatchInlineSnapshot(expected)";
       expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({
         log: [
-          ...Object.entries(written).flatMap(([name, texts]) =>
-            Object.keys(texts).map(version => `${name} ${version} passes passes`),
-          ),
+          ...Object.keys(written).map(name => `${name} passes passes`),
           ...notAccepted.map(([name, text]) => `${name} ${JSON.stringify(text)} ${mismatch}`),
           `with property matchers ${mismatch}`,
         ],

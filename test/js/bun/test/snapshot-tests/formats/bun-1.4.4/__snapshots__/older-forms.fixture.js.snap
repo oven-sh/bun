@@ -1,0 +1,212 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`a Response 1`] = `Response (1 bytes) {
+  ok: true,
+  url: "",
+  status: 201,
+  statusText: "",
+  headers: Headers {},
+  redirected: false,
+  bodyUsed: false,
+  Blob (1 bytes)
+}Response {}`;
+
+exports[`a Response in an object, an array and a Map 1`] = `
+{
+  "id": 1,
+  "list": [
+    Response (1 bytes) {
+      ok: true,
+      url: "",
+      status: 201,
+      statusText: "",
+      headers: Headers {},
+      redirected: false,
+      bodyUsed: false,
+      Blob (1 bytes)
+    }Response {},
+  ],
+  "map": 
+Map {
+    "key" => Response (1 bytes) {
+      ok: true,
+      url: "",
+      status: 201,
+      statusText: "",
+      headers: Headers {},
+      redirected: false,
+      bodyUsed: false,
+      Blob (1 bytes)
+    }Response {},
+  }
+,
+  "response": Response (1 bytes) {
+    ok: true,
+    url: "",
+    status: 201,
+    statusText: "",
+    headers: Headers {},
+    redirected: false,
+    bodyUsed: false,
+    Blob (1 bytes)
+  }Response {},
+}
+`;
+
+exports[`an instance of a class that extends Response 1`] = `Response (1 bytes) {
+  ok: true,
+  url: "",
+  status: 201,
+  statusText: "",
+  headers: Headers {},
+  redirected: false,
+  bodyUsed: false,
+  Blob (1 bytes)
+}Sub {}`;
+
+exports[`a Response with a property of its own 1`] = `Response (1 bytes) {
+  ok: true,
+  url: "",
+  status: 201,
+  statusText: "",
+  headers: Headers {},
+  redirected: false,
+  bodyUsed: false,
+  Blob (1 bytes)
+}Response 
+Response {
+  "extra": 1,
+}
+`;
+
+exports[`a Response with a property of its own 3`] = `
+[
+  Response (1 bytes) {
+    ok: true,
+    url: "",
+    status: 201,
+    statusText: "",
+    headers: Headers {},
+    redirected: false,
+    bodyUsed: false,
+    Blob (1 bytes)
+  }Response Response {
+    "extra": 1,
+  },
+]
+`;
+
+exports[`a Response next to an accessor 1`] = `
+{
+  "accessor": [native code],
+  "response": Response (1 bytes) {
+    ok: true,
+    url: "",
+    status: 201,
+    statusText: "",
+    headers: Headers {},
+    redirected: false,
+    bodyUsed: false,
+    Blob (1 bytes)
+  }Response {},
+}
+`;
+
+exports[`a Response in an object that has property matchers 1`] = `
+{
+  "id": Any<Number>,
+  "response": Response (1 bytes) {
+    ok: true,
+    url: "",
+    status: 201,
+    statusText: "",
+    headers: Headers {},
+    redirected: false,
+    bodyUsed: false,
+    Blob (1 bytes)
+  }Response {},
+}
+`;
+
+exports[`a Response that a promise resolves to 1`] = `Response (1 bytes) {
+  ok: true,
+  url: "",
+  status: 201,
+  statusText: "",
+  headers: Headers {},
+  redirected: false,
+  bodyUsed: false,
+  Blob (1 bytes)
+}Response {}`;
+
+exports[`expect.any() of a class 1`] = `
+{
+  "buffer": NotAny<Function>,
+  "cookie": Any<Cookie>,
+  "fn": Any<Function>,
+  "inside": ObjectContaining {
+    "url": Any<Function>,
+  },
+  "list": [
+    Any<Function>,
+    Any<Function>,
+  ],
+  "mock": Any<Function>,
+  "number": Any<Number>,
+  "response": Any<Response>,
+  "stats": Any<Function>,
+  "url": Any<Function>,
+}
+`;
+
+exports[`expect.any() of a class 3`] = `Any<Function>`;
+
+exports[`expect.any() of a class as a property matcher 1`] = `
+{
+  "id": 1,
+  "url": Any<Function>,
+}
+`;
+
+exports[`a class 1`] = `
+{
+  "Buffer": [class Function],
+  "Cookie": [class Cookie],
+  "Map": [class Map],
+  "Response": [class Response],
+  "Stats": [class Function],
+  "URL": [class Function],
+  "mock": [class Function],
+}
+`;
+
+exports[`the global of a node:vm context 1`] = `NodeVMGlobalProxy {}`;
+
+exports[`the global of a node:vm context 3`] = `
+{
+  "held": NodeVMGlobalProxy {},
+  "list": [
+    NodeVMGlobalProxy {},
+  ],
+}
+`;
+
+exports[`the global of a node:vm context that is not contextified 1`] = `NodeVMGlobalProxy {}`;
+
+exports[`each of them in one value 1`] = `
+{
+  "URL": [class Function],
+  "any": Any<Function>,
+  "global": NodeVMGlobalProxy {},
+  "response": Response (1 bytes) {
+    ok: true,
+    url: "",
+    status: 201,
+    statusText: "",
+    headers: Headers {},
+    redirected: false,
+    bodyUsed: false,
+    Blob (1 bytes)
+  }Response {},
+}
+`;

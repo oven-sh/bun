@@ -1071,6 +1071,34 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 }
 
 impl<'a> Formatter<'a> {
+    /// The name in `[class Name]` and in `Any<Name>`. `as_function` is the text that follows if the name is `Function`.
+    fn class_name(&mut self, class: JSValue, as_function: &[u8]) -> JsResult<bun_core::String> {
+        if class.js_type() == JSType::InternalFunction {
+            match self.like_older_bun {
+                Some(saved) if saved.names_it_function(class, as_function) => {
+                    return Ok(bun_core::String::static_("Function"));
+                }
+                Some(_) => {}
+                None => self.same_as_older_bun = false,
+            }
+        }
+        class.get_class_name(self.global_this)
+    }
+
+    /// Bun 1.1.43 to 1.4.4 printed a `Response` and a `BuildArtifact`, and then the same value again as an object.
+    #[inline]
+    fn print_again_as_object<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut W,
+        value: JSValue,
+    ) -> JsResult<()> {
+        if self.like_older_bun.is_none() {
+            self.same_as_older_bun = false;
+            return Ok(());
+        }
+        self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(writer, value, JSType::Event)
+    }
+
     pub(crate) fn print_as<W: bun_io::Write, const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer_: &mut W,
@@ -1397,15 +1425,7 @@ impl<'a> Formatter<'a> {
                     return Ok(());
                 }
                 Tag::Class => {
-                    // Older versions printed a mock function, `URL` and the like as `[class Function]`.
-                    let was_function = value.js_type() == JSType::InternalFunction
-                        && value.get_class_info_name().is_some_and(|name| name != b"Function");
-                    let printable = if was_function && self.like_older_bun.is_some() {
-                        bun_core::String::static_(b"Function")
-                    } else {
-                        self.same_as_older_bun &= !was_function;
-                        value.get_class_name(self.global_this)?
-                    };
+                    let printable = self.class_name(value, b"[class Function]")?;
                     self.add_for_new_line(printable.length());
 
                     if printable.is_empty() {
@@ -1567,7 +1587,7 @@ impl<'a> Formatter<'a> {
                             }
                             return Err(JsError::Thrown);
                         }
-                        return Ok(());
+                        return self.print_again_as_object::<W, ENABLE_ANSI_COLORS>(writer.ctx, value);
                     } else if let Some(request) = value.as_class_ref::<crate::webcore::Request>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if request
@@ -1601,7 +1621,7 @@ impl<'a> Formatter<'a> {
                             }
                             return Err(JsError::Thrown);
                         }
-                        return Ok(());
+                        return self.print_again_as_object::<W, ENABLE_ANSI_COLORS>(writer.ctx, value);
                     } else if let Some(blob) = value.as_class_ref::<crate::webcore::Blob>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if blob
@@ -2391,9 +2411,9 @@ impl<'a> Formatter<'a> {
                     if iter_i == 0 {
                         let mut object_name = value.get_class_name(self.global_this)?;
                         if let Some(saved) = self.like_older_bun
-                            && let Some(older_name) = saved.name_of_context_global(self.global_this, value, &object_name)?
+                            && saved.names_it_node_vm_global_proxy(value, &object_name)
                         {
-                            object_name = older_name;
+                            object_name = bun_core::String::static_("NodeVMGlobalProxy");
                         }
 
                         if !object_name.eq_ascii(b"Object") {
@@ -2763,6 +2783,8 @@ pub(crate) trait AsymmetricMatcherFormatter {
     fn amf_add_for_new_line(&mut self, n: usize);
     fn amf_global_this(&self) -> &JSGlobalObject;
     fn amf_quote_strings(&mut self) -> &mut bool;
+    /// The name in `Any<Name>`.
+    fn amf_class_name(&mut self, class: JSValue) -> JsResult<bun_core::String>;
     /// `printAs(tag, …)` routed through the formatter's own runtime
     /// dispatcher. Only `Object` / `String` / `Array` are reached.
     fn amf_print_as<W: bun_io::Write, const C: bool>(
@@ -2781,6 +2803,8 @@ impl AsymmetricMatcherFormatter for Formatter<'_> {
     fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
     #[inline]
     fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
+    #[inline]
+    fn amf_class_name(&mut self, class: JSValue) -> JsResult<bun_core::String> { self.class_name(class, b"Function>") }
     fn amf_print_as<W: bun_io::Write, const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
@@ -2802,6 +2826,8 @@ impl AsymmetricMatcherFormatter for bun_jsc::console_object::Formatter<'_> {
     fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
     #[inline]
     fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
+    #[inline]
+    fn amf_class_name(&mut self, class: JSValue) -> JsResult<bun_core::String> { class.get_class_name(self.global_this) }
     fn amf_print_as<W: bun_io::Write, const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
@@ -2884,7 +2910,7 @@ impl JestPrettyFormat {
                 writer.write_all(b"Any<");
             }
 
-            let class_name = constructor_value.get_class_name(this.amf_global_this())?;
+            let class_name = this.amf_class_name(constructor_value)?;
             this.amf_add_for_new_line(class_name.length());
             writer.print(format_args!(
                 "{}{}{}",
@@ -3531,42 +3557,25 @@ impl bun_io::Write for &ExpectedText<'_> {
 }
 
 impl ExpectedText<'_> {
-    /// What Bun 1.4.0 to 1.4.4 named the global of a `node:vm` context where that is not `name`, if the saved text continues with it.
+    /// Bun 1.4.4 named a class that native code makes `Function` (`URL`, a mock function), but a few by their own name (`Bun.Cookie`).
     #[cold]
-    fn name_of_context_global(
-        &self,
-        global: &JSGlobalObject,
-        value: JSValue,
-        name: &bun_core::String,
-    ) -> JsResult<Option<bun_core::String>> {
-        unsafe extern "C" {
-            safe fn SnapshotFormat__hasOwnStringTag(global: &JSGlobalObject, object: JSValue) -> bool;
-        }
-        let is_context_global = value.js_type() == JSType::GlobalProxy
-            && value.get_proxy_target().get_class_info_name().is_some_and(|class| class == b"NodeVMGlobalObject");
-        if !is_context_global {
-            return Ok(None);
-        }
-        let (older_name, printed): (&'static str, &[u8]) = if name.eq_ascii(b"JSGlobalProxy") {
-            // 1.4.4 had the class `NodeVMGlobalProxy` for it.
-            ("NodeVMGlobalProxy", b"NodeVMGlobalProxy {}")
-        } else {
-            // `name` is a `Symbol.toStringTag`. 1.4.0 to 1.4.3 did not read one from a prototype that a script set.
-            ("JSGlobalProxy", b"JSGlobalProxy {}")
-        };
-        // Every version printed the `Symbol.toStringTag` of the global itself.
-        if !self.rest.get().starts_with(printed)
-            || jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__hasOwnStringTag(global, value))?
-        {
-            return Ok(None);
-        }
-        Ok(Some(bun_core::String::static_(older_name)))
+    fn names_it_function(&self, class: JSValue, as_function: &[u8]) -> bool {
+        self.rest.get().starts_with(as_function) && class.get_class_info_name().is_some_and(|name| name != b"Function")
+    }
+
+    /// Bun 1.4.4 had the class `NodeVMGlobalProxy` for the global of a `node:vm` context, whose `name` is `JSGlobalProxy` now.
+    #[cold]
+    fn names_it_node_vm_global_proxy(&self, value: JSValue, name: &bun_core::String) -> bool {
+        name.eq_ascii(b"JSGlobalProxy")
+            && self.rest.get().starts_with(b"NodeVMGlobalProxy {}")
+            && value.js_type() == JSType::GlobalProxy
+            && value.get_proxy_target().get_class_info_name().is_some_and(|class| class == b"NodeVMGlobalObject")
     }
 }
 
 impl JestPrettyFormat {
     /// True if `saved` is what older versions of Bun wrote for `value`, so their snapshots still pass.
-    /// They printed DOM nodes as plain objects, accessors as `[native code]`, and non-enumerable properties.
+    /// The older forms are those of the last release before each print changed: DOM nodes as plain objects, accessors as `[native code]`.
     #[cold]
     pub(crate) fn did_older_bun_print(global: &JSGlobalObject, value: JSValue, saved: &[u8]) -> JsResult<bool> {
         let expected = ExpectedText { rest: core::cell::Cell::new(saved), differs: core::cell::Cell::new(false) };

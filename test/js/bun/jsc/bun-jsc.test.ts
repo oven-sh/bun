@@ -19,12 +19,10 @@ import {
   optimizeNextInvocation,
   profile,
   releaseWeakRefs,
-  samplingProfilerStackTraces,
   reoptimizationRetryCount,
   serialize,
   setRandomSeed,
   setTimeZone,
-  startSamplingProfiler,
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";

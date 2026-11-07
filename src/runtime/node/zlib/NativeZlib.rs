@@ -269,6 +269,11 @@ impl Context {
             None => Vec::new(),
         };
 
+        // `init` is JS-reachable twice on one handle, and zlib does not free the state it finds.
+        if self.state.has_state() {
+            let _ = self.deinit_state();
+        }
+
         match self.mode {
             NONE => unreachable!(),
             DEFLATE | GZIP | DEFLATERAW => {
@@ -544,21 +549,7 @@ impl Context {
     }
 
     pub(crate) fn close(&mut self) {
-        use c::NodeMode::*;
-        let mut status = c::ReturnCode::Ok;
-        match self.mode {
-            // SAFETY: FFI — state was initialized as a deflate stream by deflateInit2_.
-            DEFLATE | DEFLATERAW | GZIP => unsafe {
-                status = c::deflateEnd(self.state.as_ptr());
-            },
-            // SAFETY: FFI — state was initialized as an inflate stream by inflateInit2_.
-            INFLATE | INFLATERAW | GUNZIP | UNZIP => unsafe {
-                status = c::inflateEnd(self.state.as_ptr());
-            },
-            NONE => {}
-            BROTLI_ENCODE | BROTLI_DECODE => {}
-            ZSTD_COMPRESS | ZSTD_DECOMPRESS => {}
-        }
+        let status = self.deinit_state();
         // Ok: normal. DataError: pending output discarded by inflateEnd.
         // StreamError: a handle whose init() threw before deflateInit2_/
         // inflateInit2_ ran, so the zeroed z_stream has nothing to free.
@@ -567,6 +558,20 @@ impl Context {
                 || status == c::ReturnCode::DataError
                 || status == c::ReturnCode::StreamError
         );
-        self.mode = NONE;
+        self.mode = c::NodeMode::NONE;
+    }
+
+    /// Frees the zlib state. `mode` stays, because it selects the function that frees the state.
+    fn deinit_state(&mut self) -> c::ReturnCode {
+        use c::NodeMode::*;
+        match self.mode {
+            // SAFETY: FFI — state was initialized as a deflate stream by deflateInit2_.
+            DEFLATE | DEFLATERAW | GZIP => unsafe { c::deflateEnd(self.state.as_ptr()) },
+            // SAFETY: FFI — state was initialized as an inflate stream by inflateInit2_.
+            INFLATE | INFLATERAW | GUNZIP | UNZIP => unsafe { c::inflateEnd(self.state.as_ptr()) },
+            NONE => c::ReturnCode::Ok,
+            BROTLI_ENCODE | BROTLI_DECODE => c::ReturnCode::Ok,
+            ZSTD_COMPRESS | ZSTD_DECOMPRESS => c::ReturnCode::Ok,
+        }
     }
 }

@@ -1769,7 +1769,10 @@ fn print_eval_result(vm: &mut VirtualMachine) {
                 took_turn = true;
                 loop {
                     vm.tick();
-                    vm.auto_tick_active();
+                    // A task can settle it in the tick. The poll would then block on other ref'd work.
+                    if promise.status() == PromiseStatus::Pending {
+                        vm.auto_tick_active();
+                    }
                     if promise.status() != PromiseStatus::Pending || !vm.is_event_loop_alive() {
                         break;
                     }
@@ -1795,7 +1798,7 @@ fn print_eval_result(vm: &mut VirtualMachine) {
         )
     }));
     // The result is printed as soon as it settles. What settled it can have started work that runs before `beforeExit`.
-    while took_turn && vm.is_event_loop_alive() {
+    while took_turn && vm.unhandled_error_counter == 0 && vm.is_event_loop_alive() {
         vm.tick();
         vm.auto_tick_active();
     }

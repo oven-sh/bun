@@ -239,6 +239,11 @@ describe.concurrent("--print of a result that throws while it is formatted", () 
     expect(await print(script)).toEqual({ ...reported, stdout: "exit 1\n" });
   });
 
+  test("an immediate from the callback that settled the result does not run after the throw", async () => {
+    const result = settlesLate("resolve", `(setImmediate(() => process.exit(0)), ${thrower})`);
+    expect(await print(result)).toEqual(reported);
+  });
+
   test.each([
     ["a value", thrower],
     ["a promise fulfilled late", settlesLate("resolve", thrower)],
@@ -287,6 +292,22 @@ describe.concurrent("--print of a promise that is pending when the event loop dr
       ${exitListener}
       new Promise(resolve => {
         setTimeout(() => { setTimeout(() => console.log("second timer ran"), 20); resolve("RESULT"); }, 1).unref();
+        Bun.sleepSync(10);
+      })`;
+    expect(await print(script)).toEqual({
+      stdout: "RESULT\nsecond timer ran\nexit listener ran\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The fs task settles the result inside a tick. The poll after that tick waits for the timer.
+  test("fulfilled late by a task that starts a ref'd timer: the value is printed before the poll", async () => {
+    const script = `
+      ${exitListener}
+      new Promise(resolve => {
+        const later = () => { setTimeout(() => console.log("second timer ran"), 1); return "RESULT"; };
+        setTimeout(() => resolve(require("fs").promises.stat(".").then(later)), 1).unref();
         Bun.sleepSync(10);
       })`;
     expect(await print(script)).toEqual({

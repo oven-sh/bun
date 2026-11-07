@@ -852,14 +852,22 @@ fn paths_to_check(
 /// The pages `bun` serves for the argument `page`. If `page` may be a glob, src/js/internal/html.ts
 /// expands it with `new Bun.Glob(page).scanSync(cwd)`. Pages in `node_modules` are excluded.
 fn pages_of(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
-    use bun_glob::{BunGlobWalker, walk};
+    use bun_glob::{BunGlobWalker, SegmentBang, walk};
     let mut pages = Vec::new();
     if !bun_core::strings::contains_any(page, b"*{") {
         pages.push(page.to_vec());
     } else if let Ok(Ok(mut walker)) =
         // `scanSync`'s defaults: files only.
         BunGlobWalker::init_with_cwd(
-            page, cwd, false, false, false, false, true, None,
+            page,
+            SegmentBang::Negates,
+            cwd,
+            false,
+            false,
+            false,
+            false,
+            true,
+            None,
         )
     {
         let mut matches = walk::Iterator::new(&mut walker);

@@ -24223,6 +24223,8 @@ describe.concurrent("--check", () => {
     // A glob can't come first, because `bun` looks for a file with that name.
     [["index.html", "{about,none}.html"]],
     [["index.html", "./pages/*.html"]],
+    // As in `Bun.Glob.scan`, which expands these: a `!` that starts a path segment negates it. Not decided whether it stays.
+    [["index.html", "./pages/!a*.html"]],
   ])("bun --check %j checks the scripts of every page", async pages => {
     const page = (script: string) => `<!doctype html>\n<script type="module" src="${script}"></script>\n`;
     using dir = project({
@@ -24244,7 +24246,7 @@ describe.concurrent("--check", () => {
       exitCode,
     }).toEqual({
       about: served("about") || pages.includes("./*.html"),
-      contact: served("contact") || pages.includes("./pages/*.html"),
+      contact: served("contact") || pages.some(it => it.startsWith("./pages/")),
       installed: false,
       exitCode: 1,
     });

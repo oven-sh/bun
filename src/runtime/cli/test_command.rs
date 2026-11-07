@@ -3001,9 +3001,13 @@ fn react_compiler_filter(
                 let absolute =
                     resolve_path::join_abs_string::<bun_path::platform::Auto>(root, &[written]);
                 let absolute = with_forward_slashes(absolute);
-                let written = written.strip_prefix(b"./").unwrap_or(written);
+                // Without its `./`, a `!` that came after it would start the pattern and negate it.
+                let written = match written.strip_prefix(b"./") {
+                    Some(rest) => bun_glob::literal_head(rest),
+                    None => std::borrow::Cow::Borrowed(written),
+                };
                 ReactCompilerEntry {
-                    written: Box::from(written),
+                    written: Box::from(&*written),
                     absolute: Box::from(absolute.strip_suffix(b"/").unwrap_or(&absolute)),
                 }
             })

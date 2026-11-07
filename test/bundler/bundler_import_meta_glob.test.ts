@@ -184,6 +184,21 @@ describe("bundler", () => {
     run: { stdout: `{"/modules/a.ts":"a","/modules/b.ts":"b"}\n{"/modules/b.ts":"b"}` },
   });
 
+  // The `!` comes first in what the alias leaves of the pattern, and is still a character.
+  itBundled("import-meta-glob/BangAfterAnAliasIsACharacter", {
+    entryPoints: ["/entry.ts"],
+    files: {
+      "/bang/!c.ts": `export const used = "!c";`,
+      "/bang/d.ts": `export const used = "d";`,
+      "/tsconfig.json": `{ "compilerOptions": { "paths": { "@/*": ["./bang/*"] } } }`,
+      "/package.json": `{ "imports": { "#bang/*": "./bang/*" } }`,
+      "/entry.ts": `
+        console.log(JSON.stringify(import.meta.glob("@/!c.ts", { eager: true, import: "used" })));
+        console.log(JSON.stringify(import.meta.glob("#bang/!*.ts", { eager: true, import: "used" })));`,
+    },
+    run: { stdout: `{"/bang/!c.ts":"!c"}\n{"/bang/!c.ts":"!c"}` },
+  });
+
   itBundled("import-meta-glob/PluginsSeeTheImports", {
     entryPoints: ["/entry.ts"],
     files: {

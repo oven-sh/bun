@@ -9,7 +9,7 @@ use bun_aot::options::{
 };
 use bun_ast::{Loader, Loc, Log};
 use bun_core::strings;
-use bun_glob::{BunGlobWalker, detect_glob_syntax, walk};
+use bun_glob::{BunGlobWalker, SegmentBang, detect_glob_syntax, walk};
 use bun_options_types::aot_options::AotOptions;
 use bun_paths::MAX_PATH_BYTES;
 use bun_paths::resolve_path;
@@ -752,7 +752,7 @@ pub fn expand_entry_points<T: AsRef<[u8]>>(
 }
 
 fn is_entry_pattern(file_map: Option<&FileMap>, entry: &[u8], absolute_entry: &[u8]) -> bool {
-    detect_glob_syntax(entry)
+    detect_glob_syntax(entry, SegmentBang::Literal)
         && !file_map.is_some_and(|file_map| file_map.contains(entry))
         && !bun_sys::exists(absolute_entry)
 }
@@ -760,6 +760,7 @@ fn is_entry_pattern(file_map: Option<&FileMap>, entry: &[u8], absolute_entry: &[
 fn glob_matches(pattern: &[u8], working_directory: &[u8]) -> Option<Vec<Vec<u8>>> {
     let Ok(Ok(mut walker)) = BunGlobWalker::init_with_cwd(
         pattern,
+        SegmentBang::Literal,
         working_directory,
         false,
         false,

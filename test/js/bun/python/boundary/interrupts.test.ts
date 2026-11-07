@@ -1,6 +1,6 @@
 // What Python is in the middle of is cut short, and then the program goes on.
 import { expect, setDefaultTimeout, test } from "bun:test";
-import { isASAN, isDebug, isWindows } from "harness";
+import { isASAN, isDebug, isWindows, tempDir } from "harness";
 import { runFixture } from "./helpers";
 
 // These builds take seconds to start Python.
@@ -225,3 +225,51 @@ test.skipIf(isWindows)(
     expect(exitCode).toBe(0);
   },
 );
+
+// Code of JS's looks for none of what Python's traps stand for.
+test.skipIf(isWindows).concurrent.each([
+  ["a thread", undefined],
+  ["a handler", undefined],
+  ["a finalizer", undefined],
+  ["a handler that raises", "Stop: from the handler"],
+])("%s has its turn in a loop of C++ that calls only code of JavaScript's", async (what, raised) => {
+  using directory = tempDir("turns-in-loops-of-c", {});
+  const { stdout, stderr, exitCode } = await runFixture("turns-in-loops-of-c-fixture.ts", String(directory), what);
+  const results = {
+    "sum()": "0",
+    "list()": "true",
+    "tuple()": "true",
+    "min()": "0",
+    "any()": "false",
+    "all()": "true",
+    "in": "false",
+    "set()": "true",
+    "str.join()": "true",
+    "dict.fromkeys()": "true",
+    "sorted()": "true",
+  };
+  const callers = [
+    "any_map",
+    "next_filter",
+    "next_filterfalse",
+    "next_dropwhile",
+    "all_takewhile",
+    "any_starmap",
+    "any_accumulate",
+    "all_iter",
+  ];
+  expect({ stdout, stderr }).toEqual({
+    stdout: Object.entries(results)
+      .flatMap(([loop, result]) =>
+        ["a generator", "an iterable"].map(source => `${loop} over ${source}: ${raised ?? result}\n`),
+      )
+      .concat(callers.map(name => `${name}: ${raised ?? "true"}\n`))
+      .concat(
+        ["construct", "construct_by_new", "construct_subclass"].map(name => `${name}: ${raised ?? "Error: over"}\n`),
+      )
+      .concat(`send: ${raised ?? "true"}\n`)
+      .join(""),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});

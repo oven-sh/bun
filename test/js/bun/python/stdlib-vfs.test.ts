@@ -482,6 +482,47 @@ print(sys._stdlib_dir, sys.path[1:], os.__file__, only_here.__file__)
       exitCode: 0,
     });
   });
+
+  // It is importlib that gives a module written in C++ its __spec__. Once a thread has been started, an import asks for that of a module that is in sys.modules.
+  test("without a library the modules in the executable are imported, and have no __spec__", async () => {
+    using dir = tempDir("python-stdlib", {
+      "main.js": `
+const { dict, exec } = require("python:builtins");
+exec(\`
+import _thread, sys
+lock = _thread.allocate_lock()
+lock.acquire()
+_thread.start_new_thread(lock.release, ())
+lock.acquire()
+import _imp, math
+print(_imp.__spec__, math.__spec__, math.__loader__, "_frozen_importlib" in sys.modules, flush=True)
+\`, dict());
+`,
+      "library/empty": "",
+    });
+    expect(await runIn(String(dir), "main.js", { BUN_PYTHON_STDLIB: `${dir}/library` })).toEqual({
+      stdout: "None None None False\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("what a program puts into sys.modules in the place of importlib._bootstrap is not asked for a __spec__", async () => {
+    const result = await run({
+      "main.py": `
+import sys, types
+class Importer:
+    @staticmethod
+    def find_spec(*arguments): raise ValueError("find_spec of the fake")
+fake = types.ModuleType("_frozen_importlib")
+fake._imp, fake.BuiltinImporter = 1, Importer
+sys.modules["_frozen_importlib"] = fake
+import _heapq, _bisect
+print(_heapq.__spec__.name, _heapq.__spec__.origin, _bisect.__loader__.__name__)
+`,
+    });
+    expect(result).toEqual({ stdout: "_heapq built-in BuiltinImporter\n", stderr: "", exitCode: 0 });
+  });
 });
 
 test.concurrent("a file with nothing in it is a program, and a module", async () => {

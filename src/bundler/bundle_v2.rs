@@ -5787,6 +5787,7 @@ pub mod bv2_impl {
                 let input_files = self.graph.input_files.slice();
                 let loaders = input_files.items_loader();
                 let sources = input_files.items_source();
+                let mut invalid_css_module_imports: Vec<(Index, bun_ast::Log)> = Vec::new();
                 for index in 1..self.graph.ast.len() {
                     // SAFETY: `index < ast.len()`; see note above for column aliasing.
                     let part_list = unsafe { &mut *parts_col.add(index) };
@@ -5818,6 +5819,15 @@ pub mod bv2_impl {
                                 // TODO: it could be possible for a plugin to change
                                 // the type of loader from whatever it was into a
                                 // css-compatible loader.
+                                if bun_css::css_modules::is_module_path(sources[index].path.pretty)
+                                {
+                                    // Reported below, once every root is known.
+                                    invalid_css_module_imports.push((
+                                        Index::init(u32::try_from(index).expect("int cast")),
+                                        log,
+                                    ));
+                                    continue;
+                                }
                                 dev_server
                                     .handle_parse_task_failure(
                                         crate::Error::InvalidCssImport,
@@ -5919,6 +5929,25 @@ pub mod bv2_impl {
                             },
                         )?;
                     }
+                }
+
+                // The root of a chunk gets no chunk and no class-name module. It fails in the graph of its copy, like
+                // a parse error, so a fix bundles that copy. Any other stylesheet has its record in the client graph.
+                for (index, log) in &invalid_css_module_imports {
+                    let graph = if start.css_entry_points.swap_remove(index) {
+                        asts.items_target()[index.get() as usize].bake_graph()
+                    } else {
+                        bake::Graph::Client
+                    };
+                    dev_server
+                        .handle_parse_task_failure(
+                            crate::Error::InvalidCssImport,
+                            graph,
+                            sources[index.get() as usize].path.text,
+                            std::ptr::from_ref(log),
+                            self,
+                        )
+                        .map_err(|_| AllocError)?;
                 }
 
                 // A CSS module also ships a module with its class-name map, in the JS chunk of its graph.
@@ -6053,11 +6082,18 @@ pub mod bv2_impl {
                 let sources = self.graph.input_files.items_source();
                 let mut log = bun_ast::Log::init();
                 too_deep.add_to_log(sources, &mut log);
+                let root = entry_point.get() as usize;
+                // A CSS module fails in the graph of its copy, as for an invalid import.
+                let graph = if bun_css::css_modules::is_module_path(sources[root].path.pretty) {
+                    self.graph.ast.items_target()[root].bake_graph()
+                } else {
+                    bake::Graph::Client
+                };
                 dev_server
                     .handle_parse_task_failure(
                         crate::Error::InvalidCssImport,
-                        bake::Graph::Client,
-                        sources[entry_point.get() as usize].path.text,
+                        graph,
+                        sources[root].path.text,
                         &raw const log,
                         self,
                     )

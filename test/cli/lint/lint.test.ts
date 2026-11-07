@@ -100,10 +100,22 @@ async function lint(files: Record<string, string>, args: string[], options: Opti
     console.error(`bun lint ${args.join(" ")}: exit code ${exitCode}\n${stderr}`);
   const read = (name: string) =>
     existsSync(join(String(dir), name)) ? readFileSync(join(String(dir), name), "utf8") : null;
+  // stdout and stderr are normalized when a test first reads them. The tests that print megabytes of JSON only read
+  // `raw`, and normalizing that much text takes seconds in a debug build. This does what
+  // `normalizeBunSnapshot(text, dir)` does, but that needs the directory's real path, and the directory is already
+  // removed when a getter runs.
+  const [root, real] = [String(dir), realpathSync.native(String(dir)).replaceAll("\\", "/")];
+  const normalize = (text: string) => normalizeBunSnapshot(text.replaceAll(real, "<dir>").replaceAll(root, "<dir>"));
+  let normalizedStdout: string | undefined;
+  let normalizedStderr: string | undefined;
   return {
     raw: stdout,
-    stdout: normalizeBunSnapshot(stdout, String(dir)),
-    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    get stdout() {
+      return (normalizedStdout ??= normalize(stdout));
+    },
+    get stderr() {
+      return (normalizedStderr ??= normalize(stderr));
+    },
     exitCode,
     files: Object.fromEntries((options.reads ?? []).map(name => [name, read(name)])),
   };
@@ -325,6 +337,14 @@ describe.concurrent("bun lint", () => {
         "sub/a.js": "debugger;\n",
       };
       const [fromSub, fromRoot] = await Promise.all([lint(files, ["a.js"], { cwd: "sub" }), lint(files, ["sub/a.js"])]);
+      // ESLint prints the number of files on stderr, oxlint on stdout.
+      const printed = (it: { stdout: string; stderr: string }) => `${it.stdout}\n${it.stderr}`.trim().split("\n");
+      expect(printed(fromSub).filter(line => line.includes("no-debugger"))).toEqual([
+        name.startsWith("eslint")
+          ? "  1:1  error  Unexpected 'debugger' statement  no-debugger"
+          : "error: `debugger` statement is not allowed  no-debugger",
+      ]);
+      expect(printed(fromRoot)).toEqual(["✓ No problems in 1 file"]);
       expect([fromSub.exitCode, fromRoot.exitCode]).toEqual([1, 0]);
     },
   );
@@ -951,17 +971,17 @@ describe.concurrent("bun lint", () => {
       "f5.js": "class A { static { await g(); } }\n",
     };
     const names = Object.keys(files).slice(1);
+    const formats = ["unix", "github", "junit", "json", "gitlab", "stylish", "checkstyle"];
+    const exitCodes: Record<string, number | null> = {};
     const print = async (format: string) => {
       const { raw, stdout, exitCode } = await lint(files, ["--threads", "1", "-f", format, ...names]);
-      expect(exitCode).toBe(1);
-      // Only stylish prints absolute paths.
+      exitCodes[format] = exitCode;
+      // Only stylish prints absolute paths. A run that takes a second or more prints its time in seconds.
       return (format === "stylish" ? stdout : raw)
         .replace(/\x1b\[[0-9;]*m/g, "")
-        .replace(/Finished in [\d.]+ms/, "Finished in Nms");
+        .replace(/Finished in [\d.]+m?s/, "Finished in Nms");
     };
-    const [unix, github, junit, json, gitlab, stylish, checkstyle] = await Promise.all(
-      ["unix", "github", "junit", "json", "gitlab", "stylish", "checkstyle"].map(print),
-    );
+    const [unix, github, junit, json, gitlab, stylish, checkstyle] = await Promise.all(formats.map(print));
     expect(unix.split("\n")).toEqual([
       "f1.ts:1:11: Constructor implementation is missing. [Error/TS(2390)]",
       "f2.ts:1:16: `await` is only allowed within async functions and at the top levels of modules [Error]",
@@ -1127,6 +1147,7 @@ describe.concurrent("bun lint", () => {
       '<file name="f4.ts"><error line="1" column="1" severity="error" message="`debugger` statement is not allowed" source="eslint(no-debugger)" /></file>',
       '<file name="f5.js"><error line="1" column="20" severity="error" message="Cannot use await in class static initialization block" source="" /></file>',
     ]);
+    expect(exitCodes).toEqual(Object.fromEntries(formats.map(format => [format, 1])));
   });
 
   // Each row is what oxlint 1.87 does.
@@ -1253,8 +1274,8 @@ describe.concurrent("bun lint", () => {
     });
 
     test("two `var`s in a `catch` block, and a function-level variable with the same name as the catch parameter", async () => {
-      expect(
-        await positions([
+      const [twoVars, functionLevel] = await Promise.all([
+        positions([
           `try {`,
           `\tthrow new Error();`,
           `} catch (e) {`,
@@ -1266,13 +1287,12 @@ describe.concurrent("bun lint", () => {
           `}`,
           `assert.equal(e, undefined);`,
         ]),
-      ).toEqual(["4:6"]);
-      expect(
-        await positions([
+        positions([
           `var e = 0; try { throw x.e; } catch (e) { var e = 7; } assertEquals(0, e);`,
           `let c = 1; c = 2; assertEquals(c);`,
         ]),
-      ).toEqual(["2:5"]);
+      ]);
+      expect([twoVars, functionLevel]).toEqual([["4:6"], ["2:5"]]);
     });
   });
 
@@ -1544,14 +1564,25 @@ describe.concurrent("bun lint", () => {
 
     // git stores a link to `/dev/zero` as is, so a repository can contain one.
     test.skipIf(isWindows).each([
-      ["eslint.config.js", basic],
-      [".oxlintrc.json", "{}"],
-    ])("a link to a device whose name ends in .js is skipped: %s", async (name, text) => {
-      const { raw } = await lint({ [name]: text, "a.js": bad }, ["-f", "json", "."], {
+      ["eslint.config.js", basic, { results: ["a.js", "eslint.config.js"] }, 1],
+      // With this config the problems in a.js are warnings.
+      [".oxlintrc.json", "{}", { number_of_files: 1, withProblems: ["a.js"] }, 0],
+    ])("a link to a device whose name ends in .js is skipped: %s", async (name, text, linted, exit) => {
+      const { raw, exitCode } = await lint({ [name]: text, "a.js": bad }, ["-f", "json", "."], {
         before: dir => symlinkSync("/dev/null", join(dir, "device.js")),
       });
-      expect(raw).toContain("a.js");
-      expect(raw).not.toContain("device.js");
+      // ESLint's results list every linted file. oxlint's report has the number of linted files and names the ones with problems.
+      const printed = JSON.parse(raw);
+      const names = (paths: string[]) => [...new Set(paths.map(it => basename(it)))].sort();
+      expect(
+        Array.isArray(printed)
+          ? { results: names(printed.map((it: { filePath: string }) => it.filePath)) }
+          : {
+              number_of_files: printed.number_of_files,
+              withProblems: names(printed.diagnostics.map((it: { filename: string }) => it.filename)),
+            },
+      ).toEqual(linted);
+      expect(exitCode).toBe(exit);
     });
 
     // The file is sparse, so it takes no disk space. Node says "Cannot create a string longer than 0x1fffffe8
@@ -1691,10 +1722,12 @@ describe.concurrent("bun lint", () => {
           ],
         },
       };
-      for (const [style, path] of [
-        ["windows", win32],
-        ["posix", posix],
-      ] as const) {
+      const styles = (
+        [
+          ["windows", win32],
+          ["posix", posix],
+        ] as const
+      ).map(([style, path]) => {
         const all = Object.entries(cases[style]).flatMap(([name, list]) => list.map(([a, b = "."]) => [name, a, b]));
         const expected = all.map(([name, a, b]) => {
           if (name === "namespaced") return path.toNamespacedPath(a);
@@ -1702,25 +1735,45 @@ describe.concurrent("bun lint", () => {
           const answer = name === "dirname" ? path.dirname(a) : path[name as "resolve" | "relative" | "join"](a, b);
           return answer.replaceAll("\\", "/");
         });
-        const { stdout, exitCode } = await run(String(dir), ["--run-path-tests", style, ...all.flat()]);
-        const answers = stdout.split("\n").slice(0, -1);
-        expect(all.map((it, i) => [...it, answers[i]])).toEqual(all.map((it, i) => [...it, expected[i]]));
-        expect(exitCode).toBe(0);
-      }
+        return { style, all, expected };
+      });
       // A path on another drive that isn't absolute (`D:a`) is resolved against the process's working directory.
       const script = `console.log(require("node:path").win32.resolve("C:/proj", "D:a").replaceAll("\\\\", "/"))`;
-      const fromNode = Bun.spawnSync({ cmd: [bunExe(), "-e", script], cwd: String(dir), env });
-      const onOtherDrive = await run(String(dir), ["--run-path-tests", "windows", "resolve", "C:/proj", "D:a"]);
-      expect(onOtherDrive.stdout).toBe(fromNode.stdout.toString());
+      const nodePath = async () => {
+        await using proc = spawn({ cmd: [bunExe(), "-e", script], env, cwd: String(dir), stdout: "pipe" });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        return { stdout, exitCode };
+      };
       const inside = ["c:/proj", "C:/PROJ/a.js", "C:/proj", "C:/project/a.js", "C:/", "c:/a.js"].flatMap((it, i) =>
         i % 2 ? [it] : ["inside", it],
       );
-      const [onWindows, onPosix] = await Promise.all([
+      // None of these runs depends on another, so they all start together.
+      const [answered, fromNode, onOtherDrive, onWindows, onPosix] = await Promise.all([
+        Promise.all(styles.map(({ style, all }) => run(String(dir), ["--run-path-tests", style, ...all.flat()]))),
+        nodePath(),
+        run(String(dir), ["--run-path-tests", "windows", "resolve", "C:/proj", "D:a"]),
         run(String(dir), ["--run-path-tests", "windows", ...inside]),
         run(String(dir), ["--run-path-tests", "posix", "inside", "/proj", "/PROJ/a.js", "inside", "/", "/a.js"]),
       ]);
-      expect(onWindows.lines).toEqual(["inside: a.js", "outside", "inside: a.js"]);
-      expect(onPosix.lines).toEqual(["outside", "inside: a.js"]);
+      styles.forEach(({ all, expected }, index) => {
+        const { stdout, exitCode } = answered[index];
+        const answers = stdout.split("\n").slice(0, -1);
+        expect(all.map((it, i) => [...it, answers[i]])).toEqual(all.map((it, i) => [...it, expected[i]]));
+        expect(exitCode).toBe(0);
+      });
+      expect(fromNode).toEqual({ stdout: expect.stringMatching(/^D:\/.*\n$/), exitCode: 0 });
+      expect({ stdout: onOtherDrive.stdout, exitCode: onOtherDrive.exitCode }).toEqual({
+        stdout: fromNode.stdout,
+        exitCode: 0,
+      });
+      expect({ lines: onWindows.lines, exitCode: onWindows.exitCode }).toEqual({
+        lines: ["inside: a.js", "outside", "inside: a.js"],
+        exitCode: 0,
+      });
+      expect({ lines: onPosix.lines, exitCode: onPosix.exitCode }).toEqual({
+        lines: ["outside", "inside: a.js"],
+        exitCode: 0,
+      });
     });
 
     test("an argument that matches nothing fails with 2", async () => {
@@ -1734,7 +1787,13 @@ describe.concurrent("bun lint", () => {
     });
 
     test("--no-error-on-unmatched-pattern exits with 0 if an argument matches nothing", async () => {
-      const { exitCode } = await lint(files, ["--no-error-on-unmatched-pattern", "nothing.js", "nothing/**"]);
+      const { raw, stderr, exitCode } = await lint(files, [
+        "--no-error-on-unmatched-pattern",
+        "nothing.js",
+        "nothing/**",
+      ]);
+      expect(raw).toBe("");
+      expect(stderr).toBe("✓ No problems in 0 files");
       expect(exitCode).toBe(0);
     });
 
@@ -3606,8 +3665,9 @@ describe.concurrent("bun lint", () => {
         ["a.ts", "for (const a in b);"],
         ["a.js", "for (const a of b);"],
       ])("code that OXC accepts is linted: %s: %j", async (name, code) => {
-        const { stdout, exitCode } = await lint({ ".oxlintrc.json": quiet, [name]: code + "\n" }, ["-f", "unix"]);
-        expect(stdout).not.toContain("[Error]");
+        const { raw, stderr, exitCode } = await lint({ ".oxlintrc.json": quiet, [name]: code + "\n" }, ["-f", "unix"]);
+        // No rule is on, so only a parsing error could be printed.
+        expect({ raw, stderr }).toEqual({ raw: "", stderr: "" });
         expect(exitCode).toBe(0);
       });
 
@@ -3693,12 +3753,16 @@ describe.concurrent("bun lint", () => {
           };
           const after = async (...flags: string[]) =>
             (await lint(files, [...flags, "a.js"], { reads: ["a.js"] })).files["a.js"];
-          expect(await after("--fix")).toBe("done; suggested;\n");
-          expect(await after("--fix", "--quiet")).toBe("done; suggested;\n");
-          // oxlint 1.87 applies a JS plugin's fixes under any of the three flags.
-          expect(await after("--fix-suggestions")).toBe("done; done;\n");
-          expect(await after("--fix", "--fix-suggestions")).toBe("done; done;\n");
-          expect(await after("--fix-dangerously")).toBe("done; done;\n");
+          const rows: [flags: string[], written: string][] = [
+            [["--fix"], "done; suggested;\n"],
+            [["--fix", "--quiet"], "done; suggested;\n"],
+            // oxlint 1.87 applies a JS plugin's fixes under any of the three flags.
+            [["--fix-suggestions"], "done; done;\n"],
+            [["--fix", "--fix-suggestions"], "done; done;\n"],
+            [["--fix-dangerously"], "done; done;\n"],
+          ];
+          const written = await Promise.all(rows.map(([flags]) => after(...flags)));
+          expect(rows.map(([flags], index) => [flags, written[index]])).toEqual(rows);
         },
         isDebug || isASAN ? 120_000 : 30_000,
       );
@@ -3707,16 +3771,21 @@ describe.concurrent("bun lint", () => {
       test("only --fix-dangerously removes an await that unicorn/no-unnecessary-await reports", async () => {
         const code = "async function worker() {\n  await null;\n  const retries = await 3;\n  return retries;\n}\n";
         const files = { ".oxlintrc.json": "{}", "a.js": code };
-        for (const flags of [["--fix"], ["--fix-suggestions"], ["--fix", "--fix-suggestions"]]) {
-          const result = await lint(files, [...flags, "a.js"], { reads: ["a.js"] });
+        const fix = (...flags: string[]) => lint(files, [...flags, "a.js"], { reads: ["a.js"] });
+        const [dangerously, ...others] = await Promise.all([
+          fix("--fix-dangerously"),
+          fix("--fix"),
+          fix("--fix-suggestions"),
+          fix("--fix", "--fix-suggestions"),
+        ]);
+        for (const result of others) {
           expect(result.files["a.js"]).toBe(code);
           expect(result.stdout).toContain("no-unnecessary-await");
         }
-        const result = await lint(files, ["--fix-dangerously", "a.js"], { reads: ["a.js"] });
-        expect(result.files["a.js"]).toBe(
+        expect(dangerously.files["a.js"]).toBe(
           "async function worker() {\n  null;\n  const retries = 3;\n  return retries;\n}\n",
         );
-        expect(result.stdout).not.toContain("no-unnecessary-await");
+        expect(dangerously.stdout).not.toContain("no-unnecessary-await");
       });
 
       // This is what oxlint 1.87 writes.
@@ -3804,11 +3873,13 @@ describe.concurrent("bun lint", () => {
           "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] } }),
           "a.ts": text,
         };
-        for (const flags of [["--fix"], ["--fix-suggestions"], ["--fix", "--fix-suggestions"], ["--fix-dangerously"]]) {
-          const result = await lint(files, ["--type-aware", ...flags, "a.ts"], { reads: ["a.ts"] });
-          expect(result.files).toEqual({ "a.ts": text });
-          expect(result.exitCode).toBe(1);
-        }
+        const all = [["--fix"], ["--fix-suggestions"], ["--fix", "--fix-suggestions"], ["--fix-dangerously"]];
+        const results = await Promise.all(
+          all.map(flags => lint(files, ["--type-aware", ...flags, "a.ts"], { reads: ["a.ts"] })),
+        );
+        expect(results.map((it, index) => ({ flags: all[index], files: it.files, exitCode: it.exitCode }))).toEqual(
+          all.map(flags => ({ flags, files: { "a.ts": text }, exitCode: 1 })),
+        );
       });
 
       // This is what oxlint 1.87 writes.
@@ -3819,10 +3890,14 @@ describe.concurrent("bun lint", () => {
           const files = { ".oxlintrc.json": oxlintrc, "a.js": "x += y;\nx = x + y;\n" };
           return (await lint(files, [...flags, "a.js"], { reads: ["a.js"] })).files["a.js"];
         };
-        expect(await after("never", "--fix")).toBe("x += y;\nx = x + y;\n");
-        expect(await after("never", "--fix", "--fix-suggestions")).toBe("x += y;\nx = x + y;\n");
-        expect(await after("never", "--fix-dangerously")).toBe("x = x + y;\nx = x + y;\n");
-        expect(await after("always", "--fix")).toBe("x += y;\nx += y;\n");
+        const rows: [mode: string, flags: string[], written: string][] = [
+          ["never", ["--fix"], "x += y;\nx = x + y;\n"],
+          ["never", ["--fix", "--fix-suggestions"], "x += y;\nx = x + y;\n"],
+          ["never", ["--fix-dangerously"], "x = x + y;\nx = x + y;\n"],
+          ["always", ["--fix"], "x += y;\nx += y;\n"],
+        ];
+        const written = await Promise.all(rows.map(([mode, flags]) => after(mode, ...flags)));
+        expect(rows.map(([mode, flags], index) => [mode, flags, written[index]])).toEqual(rows);
       });
 
       const rc = (more: object = {}) =>
@@ -3942,13 +4017,12 @@ describe.concurrent("bun lint", () => {
         const stale = { "oxlint-suppressions.json": JSON.stringify({ "a.js": { "no-debugger": { count: 2 } } }) };
         const text = "There are suppressions that do not occur anymore.";
         const print = async (format: string) => (await lint({ ...files, ...stale }, ["--quiet", "-f", format])).raw;
-        expect(await print("unix")).toBe(`:0:0: ${text} [Error]\n\n1 problem\n`);
-        expect(await print("checkstyle")).toContain(
-          `<error line="0" column="0" severity="error" message="${text}" source="" />`,
-        );
-        expect(await print("junit")).toContain(`<error message="${text}">line 0, column 0, ${text}</error>`);
+        const [unix, checkstyle, junit, json] = await Promise.all(["unix", "checkstyle", "junit", "json"].map(print));
+        expect(unix).toBe(`:0:0: ${text} [Error]\n\n1 problem\n`);
+        expect(checkstyle).toContain(`<error line="0" column="0" severity="error" message="${text}" source="" />`);
+        expect(junit).toContain(`<error message="${text}">line 0, column 0, ${text}</error>`);
         // Same as oxlint 1.87: the filename is empty.
-        expect(await print("json")).toContain(
+        expect(json).toContain(
           `{"message": "${text}","severity": "error","help": "Run \`oxlint --prune-suppressions\` to remove unused suppressions.","filename": "","labels": []}`,
         );
       });
@@ -3988,12 +4062,18 @@ describe.concurrent("bun lint", () => {
           { files: ["*.nothing"], rules: { "no-empty": "error", "no-eval": "off" } },
         ];
         const typed = { rules: { "no-debugger": "error", "typescript/no-floating-promises": "error" } };
-        expect({
-          overrides: await count({ ".oxlintrc.json": rc({ overrides }) }),
-          typed: await count({ ".oxlintrc.json": rc(typed) }),
-          nested: await count({ "src/.oxlintrc.json": rc() }),
-          notNested: await count({ "src/.oxlintrc.json": rc() }, "--disable-nested-config"),
-        }).toEqual({ overrides: 4, typed: 1, nested: null, notNested: 2 });
+        const [ofOverrides, ofTyped, nested, notNested] = await Promise.all([
+          count({ ".oxlintrc.json": rc({ overrides }) }),
+          count({ ".oxlintrc.json": rc(typed) }),
+          count({ "src/.oxlintrc.json": rc() }),
+          count({ "src/.oxlintrc.json": rc() }, "--disable-nested-config"),
+        ]);
+        expect({ overrides: ofOverrides, typed: ofTyped, nested, notNested }).toEqual({
+          overrides: 4,
+          typed: 1,
+          nested: null,
+          notNested: 2,
+        });
       });
 
       test("prints everything to stdout and nothing to stderr", async () => {
@@ -4086,22 +4166,14 @@ describe.concurrent("bun lint", () => {
         // This is what oxlint 1.87 writes with --suppress-all.
         const names = ["next/no-img-element", "no-console", "node/no-new-require", "typescript/no-explicit-any"];
         const written = Object.fromEntries(names.map(name => [name, { count: 1 }]));
-        const suppressed = await lint(
-          { ...project, "oxlint-suppressions.json": JSON.stringify({ "a.tsx": written }) },
-          ["-f", "json"],
-        );
+        const [suppressed, all] = await Promise.all([
+          lint({ ...project, "oxlint-suppressions.json": JSON.stringify({ "a.tsx": written }) }, ["-f", "json"]),
+          lint(project, ["--suppress-all", "-f", "json"], { reads: ["oxlint-suppressions.json"] }),
+        ]);
         expect(JSON.parse(suppressed.raw).diagnostics).toEqual([]);
         expect(suppressed.exitCode).toBe(0);
-        using dir = tempDir("bun-lint-suppressions", project);
-        await using proc = spawn({
-          cmd: [...command, "--suppress-all", "-f", "json"],
-          env,
-          cwd: String(dir),
-          stdout: "ignore",
-          stderr: "ignore",
-        });
-        expect(await proc.exited).toBe(0);
-        expect(await Bun.file(join(String(dir), "oxlint-suppressions.json")).json()).toEqual({ "a.tsx": written });
+        expect(JSON.parse(all.files["oxlint-suppressions.json"]!)).toEqual({ "a.tsx": written });
+        expect(all.exitCode).toBe(0);
       });
 
       test("with --silent, or with no file to lint, each format prints what oxlint's prints", async () => {
@@ -4227,12 +4299,16 @@ describe.concurrent("bun lint", () => {
           lint(files, ["nothing.js"]),
           lint(files, ["--no-error-on-unmatched-pattern", "nothing.js"]),
         ]);
+        expect({ some: some.stdout, none: none.stdout, tolerated: tolerated.stdout }).toEqual({
+          some: "",
+          none: "error: No files found to lint. Please check your paths and ignore patterns.",
+          tolerated: "✓ No problems in 0 files",
+        });
         expect({ some: some.exitCode, none: none.exitCode, tolerated: tolerated.exitCode }).toEqual({
           some: 0,
           none: 1,
           tolerated: 0,
         });
-        expect(none.stdout).toContain("No files found to lint. Please check your paths and ignore patterns.");
       });
 
       test("the config's `options` can set denyWarnings and maxWarnings", async () => {
@@ -4242,6 +4318,14 @@ describe.concurrent("bun lint", () => {
           lint({ ...warns, ".oxlintrc.json": rc({ options: { denyWarnings: true } }) }, []),
           lint({ ...warns, ".oxlintrc.json": rc({ options: { maxWarnings: 0 } }) }, []),
         ]);
+        // All three runs print the warning. Only the run that exceeds its limit also prints an error about it.
+        expect(plain.stdout).toContain("warn: Expected === and instead saw ==  eqeqeq\n");
+        expect(plain.stdout).toEndWith("\n\nLinted 1 file");
+        expect(denied.stdout).toBe(plain.stdout);
+        expect(limited.stdout).toBe(
+          plain.stdout.replace(/Linted 1 file$/, "error: Found too many warnings (maximum: 0).\nLinted 1 file"),
+        );
+        expect([plain.stderr, denied.stderr, limited.stderr]).toEqual(["", "", ""]);
         expect({ plain: plain.exitCode, denied: denied.exitCode, limited: limited.exitCode }).toEqual({
           plain: 0,
           denied: 1,
@@ -4902,7 +4986,40 @@ maybe(() => { return f; });
           const untypedOnly = pairs
             .slice(0, 4)
             .map(([untyped, , lines]): [string, string] => [on([untyped]), text(lines)]);
-          expect(await lintRows(rows, [])).toEqual(await lintRows(untypedOnly, []));
+          const [both, untyped] = await Promise.all([lintRows(rows, []), lintRows(untypedOnly, [])]);
+          expect(both).toEqual(untyped);
+          // Two runs that report nothing would also be equal, so check what the untyped rules report.
+          expect(untyped).toMatchInlineSnapshot(`
+            [
+              [
+                "a.ts:2 eslint(require-await) error",
+                "a.ts:3 eslint(require-await) error",
+                "a.ts:4 eslint(require-await) error",
+                "a.ts:5 eslint(require-await) error",
+                "a.ts:6 eslint(require-await) error",
+              ],
+              [
+                "a.ts:1 eslint(no-implied-eval) error",
+                "a.ts:2 eslint(no-implied-eval) error",
+                "a.ts:3 eslint(no-implied-eval) error",
+                "a.ts:4 eslint(no-implied-eval) error",
+                "a.ts:5 eslint(no-implied-eval) error",
+              ],
+              [
+                "a.ts:3 eslint(no-throw-literal) error",
+                "a.ts:4 eslint(no-throw-literal) error",
+                "a.ts:5 eslint(no-throw-literal) error",
+                "a.ts:6 eslint(no-throw-literal) error",
+                "a.ts:7 eslint(no-throw-literal) error",
+              ],
+              [
+                "a.ts:2 eslint(prefer-promise-reject-errors) error",
+                "a.ts:3 eslint(prefer-promise-reject-errors) error",
+                "a.ts:4 eslint(prefer-promise-reject-errors) error",
+                "a.ts:5 eslint(prefer-promise-reject-errors) error",
+              ],
+            ]
+          `);
         });
 
         test("both report if the untyped rule has the higher severity", async () => {
@@ -5253,12 +5370,22 @@ maybe(() => { return f; });
 
       // The next tests lint the projects in oracle/plugins/oxlint. expected.json is what oxlint 1.87.0 with tsgolint
       // 7.0.2003 reports for them.
+      /**
+       * Returns the project in `names` that contains `filename`. No project is inside another. There are hundreds of
+       * projects and thousands of reports, so this looks up each parent directory instead of comparing every name.
+       */
+      const projectOf = (names: Set<string>, filename: string) => {
+        for (let at = filename.indexOf("/"); at !== -1; at = filename.indexOf("/", at + 1)) {
+          if (names.has(filename.slice(0, at))) return filename.slice(0, at);
+        }
+      };
       const found = (raw: string, names: string[]) => {
         const byProject = Object.fromEntries(names.map((it): [string, Set<string>] => [it, new Set()]));
+        const all = new Set(names);
         for (const it of JSON.parse(raw).diagnostics) {
           // A syntax error has no code.
           if (!it.code) continue;
-          const name = names.find(name => it.filename.startsWith(name + "/"))!;
+          const name = projectOf(all, it.filename)!;
           const { line, column } = it.labels[0].span;
           byProject[name].add(`${it.filename.slice(name.length + 1)}:${line}:${column} ${it.code}`);
         }
@@ -5268,10 +5395,11 @@ maybe(() => { return f; });
       // position.
       const foundExactly = (raw: string, names: string[]) => {
         const byProject = Object.fromEntries(names.map((it): [string, string[]] => [it, []]));
+        const all = new Set(names);
         for (const it of JSON.parse(raw).diagnostics) {
           // A syntax error has no code.
           if (!it.code) continue;
-          const name = names.find(name => it.filename.startsWith(name + "/"))!;
+          const name = projectOf(all, it.filename)!;
           const { line, column, length } = it.labels[0].span;
           byProject[name].push(`${it.filename.slice(name.length + 1)}:${line}:${column}+${length} ${it.code}`);
         }
@@ -5283,8 +5411,9 @@ maybe(() => { return f; });
       // labels.json has only the projects with such a report.
       const marked = (raw: string, names: string[]) => {
         const byProject = Object.fromEntries(names.map((it): [string, string[]] => [it, []]));
+        const all = new Set(names);
         for (const it of JSON.parse(raw).diagnostics) {
-          const name = names.find(name => it.filename.startsWith(name + "/"))!;
+          const name = projectOf(all, it.filename)!;
           const labels = it.code && labelsOf(it);
           if (labels) byProject[name].push(`${it.filename.slice(name.length + 1)} ${it.code} ${labels}`);
         }
@@ -5293,8 +5422,9 @@ maybe(() => { return f; });
       const expectedMarks = (names: string[]) =>
         Object.fromEntries(names.map(it => [it, (whatOxlintMarks as Record<string, string[]>)[it] ?? []]));
 
-      // The tests that lint hundreds of directories are serial. If they ran concurrently, the other tests wouldn't get
-      // enough CPU time and would time out.
+      // The tests that lint hundreds of directories don't run at the same time as the rest of the file. If they did,
+      // the other tests wouldn't get enough CPU time and would time out. The first of these tests and the last ones
+      // are serial, so the concurrent ones between them only overlap each other.
 
       test.serial(
         "the rules report the same problems as oxlint's, at the same positions",
@@ -5323,7 +5453,7 @@ maybe(() => { return f; });
 
       // Each project is its own program. They're split into twelve runs because one program takes seconds in a debug
       // build.
-      test.serial.each([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])(
+      test.each([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])(
         "type-aware rules report the same problems as tsgolint's: part %d",
         async part => {
           const some = projects.filter(it => it.typed).filter((_, index) => index % 12 === part);
@@ -5342,6 +5472,34 @@ maybe(() => { return f; });
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
+      // fixes.expected.json has the files as fixed by oxlint 1.87.0 with tsgolint 7.0.2003.
+      const checkFixes = async (flags: keyof typeof flagSets, typed: boolean) => {
+        const some = fixCases
+          .map((it, index) => ({ it, directory: directoryOf(index) }))
+          .filter(({ it }) => !!it.typed === typed);
+        expect(some.length).toBeGreaterThan(5);
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        for (const { it, directory } of some) {
+          for (const [path, text] of Object.entries(filesOf(it))) files[`${directory}/${path}`] = text;
+        }
+        const reads = some.map(({ it, directory }) => `${directory}/${it.file}`);
+        const result = await lint(files, [...flagSets[flags], ...(typed ? ["--type-aware"] : [])], { reads });
+        expect(result.files).toEqual(
+          Object.fromEntries(
+            some.map(({ it, directory }) => [
+              `${directory}/${it.file}`,
+              whatOxlintFixes[directory as keyof typeof whatOxlintFixes][flags],
+            ]),
+          ),
+        );
+      };
+      const fixKinds = (typed: boolean) =>
+        (Object.keys(flagSets) as (keyof typeof flagSets)[]).map(flags => [flags, typed] as const);
+      const fixTitle = "the `%s` flags make the same changes as oxlint (type-aware rules: %p)";
+      test.each(fixKinds(true))(fixTitle, checkFixes, isDebug || isASAN ? 120_000 : 30_000);
+      // The runs without types are quick. They're serial so that no later test starts before the tests above end.
+      test.serial.each(fixKinds(false))(fixTitle, checkFixes, isDebug || isASAN ? 120_000 : 30_000);
+
       // parentheses.json has code in parentheses that aren't needed, for the type-aware rules that used to treat it
       // differently from the same code without them. parentheses.expected.json is what `bun lint` reports for it.
       test("type-aware rules see through redundant parentheses", async () => {
@@ -5359,9 +5517,11 @@ maybe(() => { return f; });
       // messages.json has the messages of oxlint 1.87.0 with tsgolint 7.0.2003.
       test("rules that oxlint shares with ESLint and typescript-eslint print oxlint's messages", async () => {
         const { raw } = await lint(filesOfMessages(messages), ["-f", "json", "--type-aware"]);
-        const printed = messagesOf(raw, messages).map((it, index) => `${messages[index].rule} ${it.join(" | ")}`);
+        // `messagesOf` parses the whole output, so it's called once, not once per entry.
+        const reported = messagesOf(raw, messages);
+        const printed = reported.map((it, index) => `${messages[index].rule} ${it.join(" | ")}`);
         // If the code gets several reports, the entry is about the last one.
-        const before = (index: number) => messagesOf(raw, messages)[index].slice(0, messages[index].index ?? 0);
+        const before = (index: number) => reported[index].slice(0, messages[index].index ?? 0);
         expect(printed).toEqual(
           messages.map((it, index) => `${it.rule} ${[...before(index), it.message].join(" | ")}`),
         );
@@ -5369,7 +5529,8 @@ maybe(() => { return f; });
         const helps = helpsOf(raw, messages).map((it, index) => ({ ...messages[index], printed: it }));
         const wrong = helps.filter(it => it.printed !== undefined && it.printed !== it.help);
         expect(wrong.map(it => [it.rule, it.id])).toEqual([]);
-        expect(helps.filter(it => it.printed === undefined && it.help !== undefined).length).toBeLessThanOrEqual(0);
+        const missing = helps.filter(it => it.printed === undefined && it.help !== undefined);
+        expect(missing.map(it => [it.rule, it.id])).toEqual([]);
       });
 
       // The table has hashes of the messages, not their text, so a reworded message would lose its help.
@@ -5387,16 +5548,25 @@ maybe(() => { return f; });
             byId.get(id)!.add(raw ?? unescaped(plain));
           }
         }
-        const key = (rule: string, id: string, text: string) => {
-          const low = (hash: number | bigint) => Number(BigInt.asUintN(32, BigInt(hash)));
-          const message = low(Bun.hash.wyhash(text, BigInt(Bun.hash.wyhash(id, 0n))));
-          return (low(Bun.hash.wyhash(rule, 0n)) ^ ((message << 16) | (message >>> 16))) >>> 0;
-        };
+        // A key is the rule's hash xor a value computed from the id and the text. That value is computed once per text
+        // here. An id like `unexpected` has hundreds of texts, and hashing all of them for every entry takes seconds
+        // in a debug build.
+        const low = (hash: number | bigint) => Number(BigInt.asUintN(32, BigInt(hash)));
+        const messageHashes = new Map<string, Set<number>>();
+        for (const [id, texts] of byId) {
+          const seed = BigInt(Bun.hash.wyhash(id, 0n));
+          const hashes = [...texts].map(text => {
+            const message = low(Bun.hash.wyhash(text, seed));
+            return ((message << 16) | (message >>> 16)) >>> 0;
+          });
+          messageHashes.set(id, new Set(hashes));
+        }
         const table = readFileSync(join(root, "oxlint_help.rs"), "utf8");
         const entries = [...table.matchAll(/^ {4}\(0x([0-9A-F]{8}), .*\), \/\/ (\S+) ?([\w-]*)$/gm)];
         expect(entries.length).toBeGreaterThan(700);
         const lost = entries.filter(
-          ([, hash, rule, id]) => ![...(byId.get(id) ?? [])].some(text => key(rule, id, text) === parseInt(hash, 16)),
+          ([, hash, rule, id]) =>
+            !messageHashes.get(id)?.has((low(Bun.hash.wyhash(rule, 0n)) ^ parseInt(hash, 16)) >>> 0),
         );
         expect(lost.map(it => it[0].trim())).toEqual([]);
       });
@@ -5495,7 +5665,12 @@ maybe(() => { return f; });
           `unknown/tsconfig.json 1 52 6 ${invalid} Unknown compiler option 'nope'.`,
         ]);
         // Rules that don't need types run everywhere.
-        expect(found.filter((it: string) => it.includes("no-debugger")).length).toBe(5);
+        expect(
+          found
+            .filter((it: string) => it.includes("no-debugger"))
+            .map((it: string) => it.split(" ")[0])
+            .sort(),
+        ).toEqual(["good/a.ts", "in-no-project.ts", "inherited/a.ts", "removed/a.ts", "unknown/a.ts"]);
         const fixed = code.replace(" as string", "");
         expect(files).toEqual({ "good/a.ts": fixed, "removed/a.ts": code, "in-no-project.ts": fixed });
         expect(exitCode).toBe(1);
@@ -6154,35 +6329,6 @@ maybe(() => { return f; });
         },
       );
 
-      const fixKinds = (Object.keys(flagSets) as (keyof typeof flagSets)[]).flatMap(flags =>
-        [false, true].map((typed): [keyof typeof flagSets, boolean] => [flags, typed]),
-      );
-      test.serial.each(fixKinds)(
-        "the `%s` flags make the same changes as oxlint (type-aware rules: %p)",
-        async (flags, typed) => {
-          // fixes.expected.json has the files as fixed by oxlint 1.87.0 with tsgolint 7.0.2003.
-          const some = fixCases
-            .map((it, index) => ({ it, directory: directoryOf(index) }))
-            .filter(({ it }) => !!it.typed === typed);
-          expect(some.length).toBeGreaterThan(5);
-          const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
-          for (const { it, directory } of some) {
-            for (const [path, text] of Object.entries(filesOf(it))) files[`${directory}/${path}`] = text;
-          }
-          const reads = some.map(({ it, directory }) => `${directory}/${it.file}`);
-          const result = await lint(files, [...flagSets[flags], ...(typed ? ["--type-aware"] : [])], { reads });
-          expect(result.files).toEqual(
-            Object.fromEntries(
-              some.map(({ it, directory }) => [
-                `${directory}/${it.file}`,
-                whatOxlintFixes[directory as keyof typeof whatOxlintFixes][flags],
-              ]),
-            ),
-          );
-        },
-        isDebug || isASAN ? 120_000 : 30_000,
-      );
-
       // tsgolint's fix writes code that doesn't parse or that behaves differently. `bun lint` reports the same problem,
       // and either doesn't fix it or writes code that behaves the same.
       test("doesn't copy tsgolint's fixes that change what the code does", async () => {
@@ -6232,15 +6378,18 @@ maybe(() => { return f; });
           };
           for (const [path, text] of Object.entries(filesOf(it))) files[`${index}/${path}`] = text;
         });
-        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        const reads = shapes.map(([, file], index) => `${index}/${file}`);
+        const [{ raw }, result] = await Promise.all([
+          lint(files, ["-f", "json", "--type-aware"]),
+          lint(files, ["--fix-dangerously", "--type-aware"], { reads }),
+        ]);
+        const { diagnostics } = JSON.parse(raw);
         const reported = shapes.map((_, index) =>
-          JSON.parse(raw)
-            .diagnostics.filter((it: { filename: string }) => it.filename.startsWith(`${index}/`))
+          diagnostics
+            .filter((it: { filename: string }) => it.filename.startsWith(`${index}/`))
             .map((it: { code: string }) => it.code),
         );
         expect(reported).toEqual(shapes.map(([rule]) => [`typescript(${rule})`]));
-        const reads = shapes.map(([, file], index) => `${index}/${file}`);
-        const result = await lint(files, ["--fix-dangerously", "--type-aware"], { reads });
         expect(result.files).toEqual(
           Object.fromEntries(shapes.map(([, file, text, fixed], index) => [`${index}/${file}`, fixed ?? text])),
         );
@@ -6452,8 +6601,15 @@ maybe(() => { return f; });
         lint(files, ["--report-unused-disable-directives-severity", "off"]),
         lint(files, ["--report-unused-disable-directives-severity", "error"]),
       ]);
-      expect({ off: off.exitCode, error: error.exitCode }).toEqual({ off: 0, error: 1 });
       expect(off.raw).toBe("");
+      expect(error.stdout).toMatchInlineSnapshot(`
+        "<dir>/a.js
+          3:1  error  Unused eslint-disable directive (no problems were reported from 'no-debugger')
+
+        ✖ 1 problem (1 error, 0 warnings)
+          1 error and 0 warnings potentially fixable with the \`--fix\` option."
+      `);
+      expect({ off: off.exitCode, error: error.exitCode }).toEqual({ off: 0, error: 1 });
     });
 
     // The parser for the comment stops when the stack runs out, and how deep that is depends on the build and the OS,
@@ -7626,11 +7782,14 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         ...Object.fromEntries(rows.map(([, code], at) => [names[at], code])),
       };
       type Result = { filePath: string; messages: { line: number; column: number; ruleId: string }[] };
-      const results: Result[] = JSON.parse((await lint(files, ["-f", "json", ...names])).raw);
+      const [found, fixed] = await Promise.all([
+        lint(files, ["-f", "json", ...names]),
+        lint(files, ["--fix", ...names], { reads: names }),
+      ]);
+      const results: Result[] = JSON.parse(found.raw);
       const reports = (name: string) => results.find(it => basename(it.filePath) === name)?.messages;
       const positions = names.map(name => reports(name)?.map(it => `${it.line}:${it.column} ${it.ruleId}`));
       expect(positions).toEqual(rows.map(row => row[2]));
-      const fixed = await lint(files, ["--fix", ...names], { reads: names });
       expect(names.map(name => fixed.files[name])).toEqual(rows.map(row => row[3]));
     });
 
@@ -7774,13 +7933,15 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
 
       test("a JavaScript plugin's bad fix discards every fix of that pass", async () => {
         const all = { "eslint.config.mjs": plugin, "a.js": "var a = 1;\nexport { a };\ntwo;\n" };
-        const result = await lint(all, ["--fix", "-f", "unix", "a.js"], { reads: ["a.js"] });
+        const [result, dry] = await Promise.all([
+          lint(all, ["--fix", "-f", "unix", "a.js"], { reads: ["a.js"] }),
+          lint(all, ["--fix-dry-run", "-f", "json", "a.js"]),
+        ]);
         expect(result.files).toEqual({ "a.js": all["a.js"] });
         expect(result.stderr).toContain(warning("no-var, p/breaks", "a.js"));
         expect(result.stdout).toContain("[Error/no-var]");
         expect(result.stdout).toContain("[Error/p/breaks]");
         expect(result.exitCode).toBe(1);
-        const dry = await lint(all, ["--fix-dry-run", "-f", "json", "a.js"]);
         expect(JSON.parse(dry.raw)[0].output).toBeUndefined();
         expect(JSON.parse(dry.raw)[0].messages.map((it: { ruleId: string }) => it.ruleId)).toEqual([
           "no-var",
@@ -7795,17 +7956,22 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         };
         const result = await lint(all, ["--fix", "a.js"], { reads: ["a.js"] });
         expect(result.files).toEqual({ "a.js": "/* eslint no-var: [ */\nfoo();  \n" });
-        expect(result.stderr).not.toContain("syntax error");
+        // No fix is discarded, so stderr has no warning about one. The unreadable comment is still reported.
+        expect(result.stderr).toBe("Fixed 1 problem in 1 file\nLinted 1 file");
+        expect(result.stdout).toEndWith("\n\n✖ 1 problem (1 error, 0 warnings)");
+        expect(result.exitCode).toBe(1);
       });
 
       test("keeps the fixes of earlier passes", async () => {
         const all = { "eslint.config.mjs": plugin, "a.js": "var a = one;\nexport { a };\n" };
-        const result = await lint(all, ["--fix", "-f", "unix", "a.js"], { reads: ["a.js"] });
+        const [result, dry] = await Promise.all([
+          lint(all, ["--fix", "-f", "unix", "a.js"], { reads: ["a.js"] }),
+          lint(all, ["--fix-dry-run", "-f", "json", "a.js"]),
+        ]);
         expect(result.files).toEqual({ "a.js": "let a = two;\nexport { a };\n" });
         expect(result.stderr).toContain(warning("p/breaks", "a.js"));
         expect(result.stdout).toContain("[Error/p/breaks]");
         expect(result.exitCode).toBe(1);
-        const dry = await lint(all, ["--fix-dry-run", "-f", "json", "a.js"]);
         expect(JSON.parse(dry.raw)[0].output).toBe("let a = two;\nexport { a };\n");
       });
 
@@ -7830,13 +7996,15 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           "a.ts": "var a: number;\nexport { a };\n",
           "b.ts": "var b = 1;\nexport { b };\n",
         };
-        const result = await lint(all, ["--fix", "-f", "unix", "a.ts", "b.ts"], { reads: ["a.ts", "b.ts"] });
+        const [result, dry] = await Promise.all([
+          lint(all, ["--fix", "-f", "unix", "a.ts", "b.ts"], { reads: ["a.ts", "b.ts"] }),
+          lint(all, ["--fix-dry-run", "-f", "json", "a.ts"]),
+        ]);
         expect(result.files).toEqual({ "a.ts": all["a.ts"], "b.ts": "let b = 1;\nexport { b };\n" });
         expect(result.stderr).toContain(warning("p/comma", "a.ts"));
         expect(result.stderr).toContain("Fixed 1 problem in 1 file");
         expect(result.stdout).toContain("[Error/p/comma]");
         expect(result.exitCode).toBe(1);
-        const dry = await lint(all, ["--fix-dry-run", "-f", "json", "a.ts"]);
         expect(JSON.parse(dry.raw)[0].output).toBeUndefined();
       });
 
@@ -8135,8 +8303,12 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         lint({ ...files, [name]: bad }, ["--fix", name], { reads: [name] }),
         lint({ ...files, [name]: bad }, ["--fix", "."], { reads: [name] }),
       ]);
-      expect([explicit.stderr, found.stderr].join("\n")).not.toContain("error: ");
+      expect([explicit.stderr, found.stderr]).toEqual([
+        "Fixed 2 problems in 1 file\nLinted 1 file",
+        "Fixed 4 problems in 2 files\nLinted 4 files",
+      ]);
       expect([explicit.files, found.files]).toEqual([{ [name]: fixed }, { [name]: fixed }]);
+      expect([explicit.exitCode, found.exitCode]).toEqual([1, 1]);
     });
 
     test("conflicting flags exit with code 2", async () => {
@@ -8378,17 +8550,21 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
 
     test("the name works in a config object with `files`, --rule, --print-config, rulesMeta and suppressions", async () => {
       const off = `, { files: ["a.js"], rules: { "no-restricted-syntax/no-env": "off" } }`;
-      expect((await json({ "eslint.config.js": flat(off), "a.js": code })).map((it: any) => it.ruleId)).toEqual([
-        "no-restricted-syntax/no-moment",
-      ]);
       const files = { "eslint.config.js": flat(), "a.js": code };
-      const changed = await json(files, "--rule", 'no-restricted-syntax/no-env: ["error", "ImportDeclaration"]');
+      const [turnedOff, changed, config, withMetadata, suppressed] = await Promise.all([
+        json({ "eslint.config.js": flat(off), "a.js": code }),
+        json(files, "--rule", 'no-restricted-syntax/no-env: ["error", "ImportDeclaration"]'),
+        lint(files, ["--print-config", "a.js"]),
+        lint(files, ["-f", "json-with-metadata", "a.js"]),
+        lint(files, ["--suppress-all", "a.js"], { reads: ["eslint-suppressions.json"] }),
+      ]);
+      expect(turnedOff.map((it: any) => it.ruleId)).toEqual(["no-restricted-syntax/no-moment"]);
       // Both are at 1:1, so their order isn't checked.
       expect(changed.map((it: any) => `${it.line} ${it.severity} ${it.ruleId} ${it.message}`).sort()).toEqual([
         "1 2 no-restricted-syntax/no-env Using 'ImportDeclaration' is not allowed.",
         "1 2 no-restricted-syntax/no-moment Use date-fns.",
       ]);
-      const printed = JSON.parse((await lint(files, ["--print-config", "a.js"])).raw).rules;
+      const printed = JSON.parse(config.raw).rules;
       expect(
         Object.fromEntries(Object.entries(printed).filter(it => it[0].startsWith("no-restricted-syntax"))),
       ).toEqual({
@@ -8405,13 +8581,12 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           },
         ],
       });
-      const { metadata } = JSON.parse((await lint(files, ["-f", "json-with-metadata", "a.js"])).raw);
+      const { metadata } = JSON.parse(withMetadata.raw);
       expect(Object.keys(metadata.rulesMeta)).toEqual([
         "no-restricted-syntax/no-moment",
         "no-restricted-syntax/no-env",
       ]);
       expect(metadata.rulesMeta["no-restricted-syntax/no-moment"].type).toBe("suggestion");
-      const suppressed = await lint(files, ["--suppress-all", "a.js"], { reads: ["eslint-suppressions.json"] });
       expect(JSON.parse(suppressed.files["eslint-suppressions.json"])).toEqual({
         "a.js": { "no-restricted-syntax/no-moment": { "count": 1 } },
       });
@@ -8438,8 +8613,9 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
     ] as const)("accepts the options of %s with an .oxlintrc.json", async (rule, options) => {
       const config = { plugins: ["import"], categories: { correctness: "off" }, rules: { [rule]: ["error", options] } };
       const files = { ".oxlintrc.json": JSON.stringify(config), "a.js": "export const a = 1;\n" };
-      const { stderr, exitCode } = await lint(files, ["a.js"]);
-      expect(stderr).not.toContain("should NOT have");
+      const { stdout, stderr, exitCode } = await lint(files, ["a.js"]);
+      // Rejected options would be reported on stderr, with "should NOT have additional properties".
+      expect({ stdout, stderr }).toEqual({ stdout: "✓ No problems in 1 file", stderr: "" });
       expect(exitCode).toBe(0);
     });
 
@@ -8457,13 +8633,15 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           'import moment from "moment";\nconst e = process.env.X; // oxlint-disable-line no-restricted-syntax/no-env\n' +
           "const f = process.env.Y;\nexport { moment, e, f };\n",
       };
-      const { stdout, exitCode } = await lint(files, ["-f", "unix", "a.js"]);
+      const [{ stdout, exitCode }, suppressed] = await Promise.all([
+        lint(files, ["-f", "unix", "a.js"]),
+        lint(files, ["--suppress-all", "a.js"], { reads: ["oxlint-suppressions.json"] }),
+      ]);
       expect(stdout.split("\n").filter(it => it.startsWith("a.js:"))).toEqual([
         "a.js:1:1: Use date-fns. [Error/no-restricted-syntax(no-moment)]",
         "a.js:3:11: Read the environment in config.js. [Warning/no-restricted-syntax(no-env)]",
       ]);
       expect(exitCode).toBe(1);
-      const suppressed = await lint(files, ["--suppress-all", "a.js"], { reads: ["oxlint-suppressions.json"] });
       expect(JSON.parse(suppressed.files["oxlint-suppressions.json"])).toEqual({
         "a.js": { "no-restricted-syntax/no-moment": { count: 1 } },
       });
@@ -9264,14 +9442,16 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       stdout
         .split("\n")
         .flatMap(it => /^a\.ts:(\d+:\d+): .* \[Error(\/.*)?\]$/.exec(it)?.slice(1, 3).join(" ").trim() ?? []);
-    const { stdout, exitCode } = await lint(files, flags);
+    const [{ stdout, exitCode }, fixed] = await Promise.all([
+      lint(files, flags),
+      lint(files, ["--fix", ...flags], { reads: ["a.ts"] }),
+    ]);
     expect(reportsIn(stdout).sort()).toEqual([
       "2:12",
       "2:43 /typescript(no-unnecessary-type-assertion)",
       "4:1 /typescript(no-floating-promises)",
     ]);
     expect(exitCode).toBe(1);
-    const fixed = await lint(files, ["--fix", ...flags], { reads: ["a.ts"] });
     expect(fixed.files["a.ts"]).toBe(files["a.ts"].replace("a as number", "a"));
   });
 
@@ -9304,17 +9484,24 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         const { stderr } = await lint({ ...files, ...installed, ...more }, ["-f", "stylish", ...flags]);
         return stderr.split("\n").filter(it => it.startsWith("note: "));
       };
-      expect(await notes("5.8.3")).toEqual([
-        "note: typescript 5.8.3 is installed, but bun lint checks types like TypeScript 7",
-      ]);
-      expect(await notes("7.0.2")).toEqual([]);
-      expect(await notes("5.8.3", {}, "--quiet")).toEqual([]);
       // The run passes, because there are only warnings.
       const warns = files["eslint.config.js"].replaceAll(`"error"`, `"warn"`);
-      expect(await notes("5.8.3", { "eslint.config.js": warns })).toEqual([]);
       // No rule needs types.
       const untyped = files["eslint.config.js"].replace(/rules: \{.*\}/, `rules: { "no-debugger": "error" }`);
-      expect(await notes("5.8.3", { "eslint.config.js": untyped, "a.ts": "debugger;\n" })).toEqual([]);
+      const [older, current, quiet, passes, withoutTypes] = await Promise.all([
+        notes("5.8.3"),
+        notes("7.0.2"),
+        notes("5.8.3", {}, "--quiet"),
+        notes("5.8.3", { "eslint.config.js": warns }),
+        notes("5.8.3", { "eslint.config.js": untyped, "a.ts": "debugger;\n" }),
+      ]);
+      expect({ older, current, quiet, passes, withoutTypes }).toEqual({
+        older: ["note: typescript 5.8.3 is installed, but bun lint checks types like TypeScript 7"],
+        current: [],
+        quiet: [],
+        passes: [],
+        withoutTypes: [],
+      });
     });
 
     // `Element.textContent` is `string | null` up to TypeScript 5.8 and `string` after that. Removing a `!` that's
@@ -9518,10 +9705,13 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
             ".gitignore": "sub/web/tsconfig.json\n",
           };
           const expected = ["sub/deep/a.js document", "sub/deep/a.js typo", "sub/web/src/b.js typo"];
-          for (const paths of [["."], ["sub"], ["sub/deep", "sub/web/src"], ["sub/deep/a.js", "sub/web/src/b.js"]]) {
-            const { stdout } = await lint(all, ["-f", "unix", "--infer-globals=fast", ...paths]);
-            expect(reported(stdout, "no-undef").sort()).toEqual(expected);
-          }
+          const ways = [["."], ["sub"], ["sub/deep", "sub/web/src"], ["sub/deep/a.js", "sub/web/src/b.js"]];
+          const results = await Promise.all(
+            ways.map(paths => lint(all, ["-f", "unix", "--infer-globals=fast", ...paths])),
+          );
+          expect(results.map((it, index) => [ways[index], reported(it.stdout, "no-undef").sort()])).toEqual(
+            ways.map(paths => [paths, expected]),
+          );
         });
 
         test("`files`, `include`, `exclude` and `references` decide which project a file belongs to", async () => {
@@ -10188,11 +10378,13 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           );
         }
         if (isWindows) rows.push([withLowercaseDrive(root), []], [root, ["src\\a.ts"]]);
-        const results = [];
-        for (const [cwd, args] of rows) {
-          const { found, exitCode } = await problems(cwd, args);
-          results.push({ cwd, args, found, exitCode });
-        }
+        // None of these runs writes a file, so they all start together.
+        const results = await Promise.all(
+          rows.map(async ([cwd, args]) => {
+            const { found, exitCode } = await problems(cwd, args);
+            return { cwd, args, found, exitCode };
+          }),
+        );
         expect(results).toEqual(rows.map(([cwd, args]) => ({ cwd, args, found: both, exitCode: 1 })));
       },
       slow,
@@ -10222,20 +10414,22 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       "multi-pass --fix and --stdin work no matter how the path is spelled",
       async () => {
         const names = foldsCase ? ["src/a.ts", "SRC/A.ts"] : ["src/a.ts"];
-        const results = [];
-        for (const name of names) {
-          using dir = tempDir("bun-lint", respelled("declare const text: string;\nexport const a = text!!;\n"));
-          const fixed = await problems(String(dir), ["--fix", name]);
-          const text = readFileSync(join(String(dir), "src/a.ts"), "utf8");
-          const piped = await problems(String(dir), ["--stdin", "--stdin-filename", name], files["a.ts"]);
-          results.push({
-            name,
-            left: fixed.found,
-            text,
-            piped: piped.found,
-            exitCodes: [fixed.exitCode, piped.exitCode],
-          });
-        }
+        // Each name gets its own directory, where the second run reads what the first one wrote.
+        const results = await Promise.all(
+          names.map(async name => {
+            using dir = tempDir("bun-lint", respelled("declare const text: string;\nexport const a = text!!;\n"));
+            const fixed = await problems(String(dir), ["--fix", name]);
+            const text = readFileSync(join(String(dir), "src/a.ts"), "utf8");
+            const piped = await problems(String(dir), ["--stdin", "--stdin-filename", name], files["a.ts"]);
+            return {
+              name,
+              left: fixed.found,
+              text,
+              piped: piped.found,
+              exitCodes: [fixed.exitCode, piped.exitCode],
+            };
+          }),
+        );
         expect(results).toEqual(
           names.map(name => ({
             name,
@@ -10263,12 +10457,13 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         const root = String(dir);
         const args = ["-c", join(root, ".oxlintrc.json"), "--type-aware", "-f", "unix", join(root, "a.ts")];
         const from = [root, parse(root).root, ...(isWindows ? [inUpperCase(root), withLowercaseDrive(root)] : [])];
-        const results = [];
-        for (const cwd of from) {
-          await using proc = spawn({ cmd: [...command, ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
-          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-          results.push({ cwd, stdout, exitCode });
-        }
+        const results = await Promise.all(
+          from.map(async cwd => {
+            await using proc = spawn({ cmd: [...command, ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
+            const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+            return { cwd, stdout, exitCode };
+          }),
+        );
         const stdout = expect.stringContaining("a.ts:2:1: Promises must be awaited");
         expect(results).toEqual(from.map(cwd => ({ cwd, stdout, exitCode: 1 })));
       },
@@ -10285,8 +10480,9 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         );
         const short = join(String(dir), "LONG-D~1");
         if (!existsSync(short)) return;
-        expect(await problems(short, [])).toMatchObject({ found: both, exitCode: 1 });
-        expect(await problems(String(dir), ["LONG-D~1/src/a.ts"])).toMatchObject({ found: both, exitCode: 1 });
+        const [inIt, named] = await Promise.all([problems(short, []), problems(String(dir), ["LONG-D~1/src/a.ts"])]);
+        expect(inIt).toMatchObject({ found: both, exitCode: 1 });
+        expect(named).toMatchObject({ found: both, exitCode: 1 });
       },
       slow,
     );
@@ -10313,20 +10509,32 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           ["always", "\uFEFF" + text, [], "\uFEFF" + text],
           ["always", text, ["a.ts:1 unicode-bom"], "\uFEFF" + text],
         ];
-        for (const [option, text, found, fixed] of rows) {
-          using dir = tempDir("bun-lint", { ...files, "eslint.config.js": config(option), "a.ts": text });
-          expect({ option, text, found: (await problems(String(dir), ["a.ts"])).found }).toEqual({
+        // Each row gets its own directory, which is linted before it's fixed.
+        const results = await Promise.all(
+          rows.map(async ([option, text]) => {
+            using dir = tempDir("bun-lint", { ...files, "eslint.config.js": config(option), "a.ts": text });
+            const linted = await problems(String(dir), ["a.ts"]);
+            const written = await problems(String(dir), ["--fix", "a.ts"]);
+            return {
+              option,
+              text,
+              found: linted.found,
+              fixed: readFileSync(join(String(dir), "a.ts"), "utf8"),
+              left: written.found,
+              exitCodes: [linted.exitCode, written.exitCode],
+            };
+          }),
+        );
+        expect(results).toEqual(
+          rows.map(([option, text, found, fixed]) => ({
             option,
             text,
             found,
-          });
-          await problems(String(dir), ["--fix", "a.ts"]);
-          expect({ option, text, fixed: readFileSync(join(String(dir), "a.ts"), "utf8") }).toEqual({
-            option,
-            text,
             fixed,
-          });
-        }
+            left: [],
+            exitCodes: [found.length ? 1 : 0, 0],
+          })),
+        );
       },
       slow,
     );
@@ -10341,8 +10549,10 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         "a.ts": `\uFEFFexport const a: number = "";\n`,
       };
       const args = ["--type-aware", "--type-check", "-f", "unix"];
-      const read = await lint(project, args);
-      const piped = await lint(project, [...args, "--stdin", "--stdin-filename", "a.ts"], { stdin: project["a.ts"] });
+      const [read, piped] = await Promise.all([
+        lint(project, args),
+        lint(project, [...args, "--stdin", "--stdin-filename", "a.ts"], { stdin: project["a.ts"] }),
+      ]);
       const where = (text: string) => /a\.ts:\d+:\d+: Type 'string'/.exec(text)?.[0];
       expect([where(read.raw), where(piped.raw)]).toEqual(["a.ts:1:17: Type 'string'", "a.ts:1:17: Type 'string'"]);
     });
@@ -11680,7 +11890,6 @@ describe.concurrent("rule behavior that matches oxlint", () => {
     const rules = { "no-script-url": "error", "no-template-curly-in-string": "error" };
     const code = Object.fromEntries(rows.map(([code], at) => [names[at], code]));
     const oxlintrc = JSON.stringify({ categories: { correctness: "off" }, rules });
-    expect(await reports({ ".oxlintrc.json": oxlintrc, ...code }, names)).toEqual(rows.map(row => row[1]));
     const config = `export default [{
       files: ["**/*.jsx"],
       languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
@@ -11688,7 +11897,12 @@ describe.concurrent("rule behavior that matches oxlint", () => {
     }];`;
     type Result = { filePath: string; messages: { line: number; column: number; ruleId: string }[] };
     const files = { "eslint.config.mjs": config, ...code };
-    const results: Result[] = JSON.parse((await lint(files, ["-f", "json", ...names])).raw);
+    const [asOxlint, asEslint] = await Promise.all([
+      reports({ ".oxlintrc.json": oxlintrc, ...code }, names),
+      lint(files, ["-f", "json", ...names]),
+    ]);
+    expect(asOxlint).toEqual(rows.map(row => row[1]));
+    const results: Result[] = JSON.parse(asEslint.raw);
     const of = (name: string) => results.find(it => basename(it.filePath) === name)?.messages;
     const found = names.map(name => of(name)?.map(it => `${it.line}:${it.column} ${it.ruleId}`));
     expect(found).toEqual(rows.map(row => row[2]));
@@ -11764,7 +11978,11 @@ describe.concurrent("regular expressions in a config", () => {
     // Without a config file, eslint:recommended is on.
     const inComments = "no-irregular-whitespace: [error, { skipComments: false }]";
     const rules = ["--rule", "no-warning-comments: error", "--rule", inComments];
-    const { stdout, stderr, exitCode } = await lint(files, ["-f", "stylish", ...rules], { env });
+    const pattern = 'no-fallthrough: [error, { commentPattern: "fall +through" }]';
+    const [{ stdout, stderr, exitCode }, own] = await Promise.all([
+      lint(files, ["-f", "stylish", ...rules], { env }),
+      lint(files, ["-f", "stylish", "--rule", pattern], { env }),
+    ]);
     expect(stdout).toMatchInlineSnapshot(`
       "<dir>/a.js
          4:11  error  Irregular whitespace not allowed            no-irregular-whitespace
@@ -11780,10 +11998,9 @@ describe.concurrent("regular expressions in a config", () => {
     expect(stderr).not.toContain("JSC options");
     expect(exitCode).toBe(1);
 
-    const pattern = 'no-fallthrough: [error, { commentPattern: "fall +through" }]';
-    const own = await lint(files, ["-f", "stylish", "--rule", pattern], { env });
     expect(own.stdout).toMatch(/ 5:3 +error +Expected a 'break' statement before 'case' +no-fallthrough\n/);
     expect(own.stderr).toContain("JSC options");
+    expect(own.exitCode).toBe(1);
   });
 
   test("a compiled pattern is shared by all threads", async () => {
@@ -11912,7 +12129,7 @@ describe.concurrent("a script, file or executable named lint", () => {
   test("a lint directory without an index file doesn't win over the linter", async () => {
     const { "package.json": __, ...rest } = files;
     const { stdout, exitCode } = await lint({ ...rest, "lint/notes.txt": "x" }, ["-f", "unix", "a.js"]);
-    expect(stdout).toContain("[Error/no-debugger]");
+    expect(stdout).toBe("<dir>/a.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]\n\n1 problem");
     expect(exitCode).toBe(1);
   });
 
@@ -11923,16 +12140,17 @@ describe.concurrent("a script, file or executable named lint", () => {
       lint(all, ["-f", "unix", "a.js"]),
       lint(all, ["-f", "unix", "b.js"], { cwd: "sub" }),
     ]);
-    expect(here.stdout).toContain("[Error/no-debugger]");
-    expect(here.exitCode).toBe(1);
-    expect(below.stdout).toContain("[Error/no-debugger]");
-    expect(below.exitCode).toBe(1);
+    expect([here.stdout, below.stdout]).toEqual([
+      "<dir>/a.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]\n\n1 problem",
+      "<dir>/sub/b.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]\n\n1 problem",
+    ]);
+    expect([here.exitCode, below.exitCode]).toEqual([1, 1]);
   });
 
   test.each(["lint.json", "lint/index.json"])("%s can't be run, so it doesn't win over the linter", async name => {
     const { "package.json": __, ...rest } = files;
     const { stdout, exitCode } = await lint({ ...rest, [name]: "[]" }, ["-f", "unix", "a.js"]);
-    expect(stdout).toContain("[Error/no-debugger]");
+    expect(stdout).toBe("<dir>/a.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]\n\n1 problem");
     expect(exitCode).toBe(1);
   });
 });
@@ -12032,7 +12250,10 @@ describe.concurrent("what bun lint gets from the Bun process", () => {
   test("prints more output than fits in a pipe, and still exits with 1 if the reader closes the pipe early", async () => {
     const many = { "eslint.config.js": basic, "a.js": "debugger;\n".repeat(20_000) };
     const full = await lint(many, ["-f", "unix", "a.js"]);
-    expect(full.raw.split("\n").filter(it => it.endsWith("[Error/no-debugger]")).length).toBe(20_000);
+    const reported = full.raw.split("\n").filter(it => it.endsWith("[Error/no-debugger]"));
+    expect(reported.length).toBe(20_000);
+    expect(reported[0]).toEndWith("a.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]");
+    expect(reported.at(-1)).toEndWith("a.js:20000:1: Unexpected 'debugger' statement. [Error/no-debugger]");
     expect(full.exitCode).toBe(1);
 
     using dir = tempDir("bun-lint-process", many);
@@ -12047,7 +12268,12 @@ describe.concurrent("what bun lint gets from the Bun process", () => {
     const reader = proc.stdout.getReader();
     expect((await reader.read()).done).toBe(false);
     await reader.cancel();
-    expect(await proc.exited).toBe(1);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // If writing the rest of the report fails with anything but EPIPE, stderr has the error and the exit code is 2.
+    expect({ stderr: stderr.replace(/\[[\d.]+m?s\]/, "[time]"), exitCode }).toEqual({
+      stderr: "Linted 1 file [time]\n",
+      exitCode: 1,
+    });
   });
 
   test.skipIf(!isLinux)("lints a file with a non-UTF-8 name, found by the walk or passed as an argument", async () => {
@@ -12069,8 +12295,7 @@ describe.concurrent("what bun lint gets from the Bun process", () => {
       return { line: Buffer.from(stdout).toString("latin1").split("\n")[0].slice(String(dir).length), exitCode };
     };
     const expected = { line: "/n\xff.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]", exitCode: 1 };
-    expect(await run(".")).toEqual(expected);
-    expect(await run(`"$(printf 'n\\377.js')"`)).toEqual(expected);
+    expect(await Promise.all([run("."), run(`"$(printf 'n\\377.js')"`)])).toEqual([expected, expected]);
   });
 
   // Sorted the way JavaScript compares strings: U+40000, a lone surrogate, and an invalid byte, which becomes U+FFFD.
@@ -12402,16 +12627,16 @@ describe("bun lint on Windows, macOS and Linux", () => {
         join(String(dir), "configs", "mine.json"),
         `.${sep}configs${sep}mine.json`,
       ];
-      const results = await Promise.all(
-        forms.map(config =>
-          lint(dir, ["-c", config, "--ignore-path", join("configs", "ignored"), "-f", "json", "src", "configs"]),
+      const [results, before, after] = await Promise.all([
+        Promise.all(
+          forms.map(config =>
+            lint(dir, ["-c", config, "--ignore-path", join("configs", "ignored"), "-f", "json", "src", "configs"]),
+          ),
         ),
-      );
-      expect(results.map(it => reportedInOxlintJson(it.stdout))).toEqual(forms.map(() => ["src/a.js"]));
-      const [before, after] = await Promise.all([
         bun(dir, [`--cwd=${join(String(dir), "src")}`, "lint", ...eslint, "-f", "json"]),
         lint(dir, ["--cwd", join("src") + sep, ...eslint, "-f", "json"]),
       ]);
+      expect(results.map(it => reportedInOxlintJson(it.stdout))).toEqual(forms.map(() => ["src/a.js"]));
       expect([reported(before.stdout, dir), reported(after.stdout, dir)]).toEqual([
         ["src/a.js", "src/skipped.js"],
         ["src/a.js", "src/skipped.js"],
@@ -12424,18 +12649,20 @@ describe("bun lint on Windows, macOS and Linux", () => {
         "src/.oxlintrc.json": oxlintrc(),
       });
       const path = join(String(dir), "src", "new.js");
-      const asEslint = await Promise.all(
-        [join("src", "new.js"), path].map(name =>
-          lint(dir, [...eslint, "--stdin", "--stdin-filename", name, "-f", "json"], { stdin: "debugger;\n" }),
+      const [asEslint, asOxlint] = await Promise.all([
+        Promise.all(
+          [join("src", "new.js"), path].map(name =>
+            lint(dir, [...eslint, "--stdin", "--stdin-filename", name, "-f", "json"], { stdin: "debugger;\n" }),
+          ),
         ),
-      );
+        Promise.all(
+          [join("src", "new.js"), path, "new.js"].map(name =>
+            lint(dir, ["--stdin", "--stdin-filename", name, "-f", "json"], { stdin: "debugger;\n" }),
+          ),
+        ),
+      ]);
       expect(asEslint.map(it => JSON.parse(it.stdout)[0].filePath)).toEqual([path, path]);
       // The file name determines which config file applies.
-      const asOxlint = await Promise.all(
-        [join("src", "new.js"), path, "new.js"].map(name =>
-          lint(dir, ["--stdin", "--stdin-filename", name, "-f", "json"], { stdin: "debugger;\n" }),
-        ),
-      );
       expect(asOxlint.map(it => reportedInOxlintJson(it.stdout))).toEqual([["src/new.js"], ["src/new.js"], []]);
     });
 
@@ -12474,11 +12701,13 @@ describe("bun lint on Windows, macOS and Linux", () => {
           "my plugins/p#1.mjs": `export default { rules: { r: { create: context => ({ Identifier: node => context.report({ node, message: "found" }) }) } } };`,
           "sources é/ü 100%.js": "debugger; a;\n",
         });
-        const { stdout, stderr } = await lint(dir, ["-f", "json", "sources é"]);
-        expect(stderr).not.toContain("error");
+        const { stdout, stderr, exitCode } = await lint(dir, ["-f", "json", "sources é"]);
         expect(JSON.parse(stdout).map((it: any) => [it.filePath, it.messages.map((it: any) => it.ruleId)])).toEqual([
           [join(String(dir), "sources é", "ü 100%.js"), ["no-debugger", "p/r"]],
         ]);
+        // stderr only has the number of linted files.
+        expect(stderr).toMatch(/^Linted 1 file \[[\d.]+m?s\]\n$/);
+        expect(exitCode).toBe(1);
       },
       slow ? 120_000 : undefined,
     );
@@ -12691,22 +12920,27 @@ foo(b)
       expect(rangesIn(found.stdout)).toEqual(
         ["1:1-1:10 no-var", "2:7-2:9 eqeqeq", "2:13-4:2 curly", "3:3-3:11 no-debugger", "14:1-15:1 max-lines"].sort(),
       );
-      expect(JSON.parse(found.stdout)[0].suppressedMessages.length).toBe(2);
+      expect(
+        JSON.parse(found.stdout)[0].suppressedMessages.map((it: any) => `${it.line}:${it.column} ${it.ruleId}`),
+      ).toEqual(["6:1 no-debugger", "9:1 no-var"]);
       expect(readFileSync(join(String(dir), "b.js"), "utf8")).toBe(
         crlf(source.replace("var a = 1", "let a = 1").replace("{\n  debugger\n}", "\n  debugger\n")),
       );
-      expect(fixed.exitCode).toBe(1);
+      expect([found.exitCode, fixed.exitCode]).toEqual([1, 1]);
     });
 
     test("a byte order mark doesn't shift columns, and --fix keeps it unless unicode-bom removes it", async () => {
       using dir = tempDir("bun-lint-platform", { "a.js": `${BOM}debugger\r\nvar a\r\n`, "b.js": `${BOM}debugger\n` });
       const some = ["no-debugger: error", "no-var: error"].flatMap(rule => ["--rule", rule]);
-      const { stdout } = await lint(dir, ["--no-config-lookup", ...some, "--fix", "-f", "json", "a.js"]);
-      expect(rangesIn(stdout)).toEqual(["1:1-1:9 no-debugger"]);
+      // Each run fixes its own file, so the two start together.
+      const [kept, removed] = await Promise.all([
+        lint(dir, ["--no-config-lookup", ...some, "--fix", "-f", "json", "a.js"]),
+        lint(dir, ["--no-config-lookup", "--rule", "unicode-bom: error", "--fix", "b.js"]),
+      ]);
+      expect(rangesIn(kept.stdout)).toEqual(["1:1-1:9 no-debugger"]);
       expect(readFileSync(join(String(dir), "a.js"), "utf8")).toBe(`${BOM}debugger\r\nlet a\r\n`);
-      const removed = await lint(dir, ["--no-config-lookup", "--rule", "unicode-bom: error", "--fix", "b.js"]);
       expect(readFileSync(join(String(dir), "b.js"), "utf8")).toBe("debugger\n");
-      expect(removed.exitCode).toBe(0);
+      expect([kept.exitCode, removed.exitCode]).toEqual([1, 0]);
     });
 
     // Matches oxlint 1.87.0. Its columns are byte offsets from the start of the line, and the mark is three bytes.
@@ -12770,14 +13004,17 @@ foo(b)
         lint(forOxlint, ["--threads", "8", "--fix", "-f", "json"]),
         lint(forEslint, [...eslint, "-f", "json"]),
       ]);
-      // Like oxlint, it prints errors on stdout.
-      expect(asOxlint.stdout).not.toContain("Cannot write");
-      expect(reportedInOxlintJson(asOxlint.stdout).length).toBe(32);
-      expect(reported(asEslint.stdout, forEslint).length).toBe(16);
-      expect(everythingIn(join(String(forOxlint), "real")).length).toBe(16);
-      for (let i = 0; i < 16; i++) {
-        expect(readFileSync(join(String(forOxlint), "real", `${i}.js`), "utf8")).not.toStartWith("var ");
-      }
+      const names = Array.from({ length: 16 }, (_, i) => `${i}.js`).sort();
+      // Like oxlint, it prints errors on stdout, so a file that couldn't be written would be in this list.
+      expect(reportedInOxlintJson(asOxlint.stdout)).toEqual(
+        ["linked", "real"].flatMap(directory => names.map(name => `${directory}/${name}`)),
+      );
+      expect(reported(asEslint.stdout, forEslint)).toEqual(names.map(name => `real/${name}`));
+      expect(everythingIn(join(String(forOxlint), "real"))).toEqual(names);
+      expect(names.map(name => readFileSync(join(String(forOxlint), "real", name), "utf8"))).toEqual(
+        names.map(() => "const a = 1;\nexport { a };\ndebugger;\n"),
+      );
+      expect([asOxlint.exitCode, asEslint.exitCode]).toEqual([1, 1]);
     });
 
     test("skips a dangling link", async () => {
@@ -12857,33 +13094,47 @@ foo(b)
   describe.concurrent("a JavaScript config file", () => {
     const timeout = slow ? 240_000 : 30_000;
     const rules = `export default [{ rules: { "no-debugger": "error", "no-var": "warn" } }];`;
+    /** Returns each problem in the stylish report on stdout as its line, severity and rule. */
+    const problems = (stdout: string) =>
+      stdout
+        .split("\n")
+        .flatMap(line => /^ +(\d+):\d+ +(error|warning) .* (\S+)$/.exec(line)?.slice(1).join(" ") ?? []);
+    const both = ["1 error no-debugger", "2 warning no-var"];
     test.each([
-      ["exports a config", rules, true, 1],
+      ["exports a config", rules, true, both, 1],
       [
         "prints to stdout and stderr",
         `console.log("out"); console.error("err"); process.emitWarning("old"); ${rules}`,
         true,
+        both,
         1,
       ],
-      ["leaves a timer running", `setInterval(() => {}, 1000); ${rules}`, true, 1],
+      ["leaves a timer running", `setInterval(() => {}, 1000); ${rules}`, true, both, 1],
       // ESLint keeps going too.
-      ["sets process.exitCode", `process.exitCode = 5; ${rules}`, true, 1],
-      ["exports an unknown config key", `export default [{ nonsense: 1 }];`, true, 2],
-      ["exports options that a rule rejects", `export default [{ rules: { "no-debugger": ["error", 1] } }];`, true, 2],
+      ["sets process.exitCode", `process.exitCode = 5; ${rules}`, true, both, 1],
+      ["exports an unknown config key", `export default [{ nonsense: 1 }];`, true, [], 2],
+      [
+        "exports options that a rule rejects",
+        `export default [{ rules: { "no-debugger": ["error", 1] } }];`,
+        true,
+        [],
+        2,
+      ],
       [
         "enables a rule that isn't built in",
         `export default [{ rules: { "no-var": 2, "not-built-in": 2 } }];`,
         true,
+        ["2 error no-var"],
         2,
       ],
-      ["exports an empty array", `export default [];`, true, 0],
-      ["throws", `console.error("before"); throw new Error("boom");`, false, 2],
-      ["exports a rejected promise", `export default Promise.reject(new Error("rejected"));`, false, 2],
-      ["calls process.exit(0)", `process.exit(0);`, false, 2],
-      ["calls process.exit(3) without printing anything", `process.exit(3);`, false, 2],
+      ["exports an empty array", `export default [];`, true, [], 0],
+      ["throws", `console.error("before"); throw new Error("boom");`, false, [], 2],
+      ["exports a rejected promise", `export default Promise.reject(new Error("rejected"));`, false, [], 2],
+      ["calls process.exit(0)", `process.exit(0);`, false, [], 2],
+      ["calls process.exit(3) without printing anything", `process.exit(3);`, false, [], 2],
     ])(
       "one that %s",
-      async (_, config, isLoaded, exitCode) => {
+      async (_, config, isLoaded, reported, exitCode) => {
         using dir = tempDir("bun-lint-platform", {
           "node_modules/.keep": "",
           "eslint.config.mjs": config,
@@ -12893,6 +13144,7 @@ foo(b)
         // The config file's output is shown only if the file fails to load.
         expect(result.stdout + result.stderr).not.toMatch(/\bout\b|\berr\b|\bold\b/);
         if (!isLoaded) expect(result.stderr).toMatch(/eslint\.config\.mjs:\r?\n./);
+        expect(problems(result.stdout)).toEqual(reported);
         expect(everythingIn(dir)).toEqual(["a.js", "eslint.config.mjs", "node_modules", "node_modules/.keep"]);
         expect(result.exitCode).toBe(exitCode);
       },
@@ -13112,8 +13364,12 @@ describe.concurrent("nativePluginRules", () => {
       async () => {
         const disabled = { "a.js": `/* eslint-disable react/jsx-key */\n${files["a.js"]}` };
         const expected = { "no-debugger": "built in" };
-        expect(await whichRan({ ...files, ...disabled })).toEqual(expected);
-        expect(await whichRan({ ...files, ...disabled }, ["--no-native-plugin-rules"])).toEqual(expected);
+        expect(
+          await Promise.all([
+            whichRan({ ...files, ...disabled }),
+            whichRan({ ...files, ...disabled }, ["--no-native-plugin-rules"]),
+          ]),
+        ).toEqual([expected, expected]);
       },
       timeout,
     );
@@ -13208,12 +13464,21 @@ describe.concurrent("nativePluginRules", () => {
       const json = async (...flags: string[]) =>
         JSON.parse((await lint(files, [...flags, "a.js"], { mayFail: true })).raw);
       const fixed = async (...flags: string[]) => (await json("--fix-dry-run", ...flags, "-f", "json"))[0].output;
-      expect(await fixed()).toBe("let a = [<b />];\nexport { a };\n");
       const withoutIt = "let a = [<b></b>];\nexport { a };\n";
-      expect(await fixed("--fix-type", "suggestion")).toBe(withoutIt);
-      expect(await fixed("--fix-type", "problem,suggestion,layout,directive")).toBe(withoutIt);
-      expect(await fixed("--fix-type", "layout")).toBeUndefined();
-      const { rulesMeta } = (await json("-f", "json-with-metadata")).metadata;
+      const [all, suggestions, everyType, layout, withMetadata] = await Promise.all([
+        fixed(),
+        fixed("--fix-type", "suggestion"),
+        fixed("--fix-type", "problem,suggestion,layout,directive"),
+        fixed("--fix-type", "layout"),
+        json("-f", "json-with-metadata"),
+      ]);
+      expect({ all, suggestions, everyType, layout }).toEqual({
+        all: "let a = [<b />];\nexport { a };\n",
+        suggestions: withoutIt,
+        everyType: withoutIt,
+        layout: undefined,
+      });
+      const { rulesMeta } = withMetadata.metadata;
       expect(rulesMeta["no-var"].type).toBe("suggestion");
       expect(rulesMeta["react/self-closing-comp"]).toEqual({ fixable: "code" });
       expect(rulesMeta["react/jsx-key"]).toEqual({});
@@ -13468,10 +13733,13 @@ describe.concurrent("nativePluginRules", () => {
     async () => {
       const files = { ...legacy, ...standIn("eslint-plugin-import", ["order"]) };
       const without = Object.fromEntries(Object.entries(files).filter(([name]) => !name.includes("react-hooks/")));
-      expect(await whichRan(without)).toEqual(all("built in", "built in"));
-      const missingPackage = await whichRan({ ...without, ...bunfig("false") });
-      expect(missingPackage.exitCode).toBe(2);
+      const [builtIn, missingPackage] = await Promise.all([
+        whichRan(without),
+        whichRan({ ...without, ...bunfig("false") }),
+      ]);
+      expect(builtIn).toEqual(all("built in", "built in"));
       expect(missingPackage.stderr).toContain(`ESLint couldn't find the plugin "eslint-plugin-react-hooks".`);
+      expect(missingPackage.exitCode).toBe(2);
     },
     timeout,
   );

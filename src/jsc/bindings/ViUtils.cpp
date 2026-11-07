@@ -12,7 +12,11 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 
 extern "C" bool JSMock__isInPreload(Zig::GlobalObject*);
+extern "C" JSC::EncodedJSValue JSMock__replacedBySpy(JSC::EncodedJSValue);
 extern "C" bool ViUtils__isLoadingPreload(Zig::GlobalObject*);
+extern "C" JSC::EncodedJSValue Bun__FakeTimers__handOver(JSC::JSGlobalObject*, JSC::EncodedJSValue dying, JSC::EncodedJSValue under);
+extern "C" JSC::EncodedJSValue Bun__FakeTimers__takeFromOverStub(JSC::JSGlobalObject*, const BunString* name, JSC::EncodedJSValue* replaced);
+extern "C" JSC::EncodedJSValue Bun__FakeTimers__putStubUnder(JSC::JSGlobalObject*, const BunString* name, JSC::EncodedJSValue stub);
 
 namespace Bun {
 
@@ -79,6 +83,65 @@ static void didStub(Zig::GlobalObject* globalObject, WriteBarrier<Unknown>& stub
         JSC__JSMap__set(ensureMap(getVM(globalObject), globalObject, stubsOfPreload), globalObject, JSValue::encode(key), JSValue::encode(stub));
 }
 
+bool stubReplacesWhatSpyReplaced(Zig::GlobalObject* globalObject, const Identifier& name, JSValue spy, JSValue replacedBySpy)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* originals = uncheckedDowncast<JSMap>(globalObject->mockModule.stubbedGlobals.get());
+    JSValue key = identifierToJSValue(vm, name);
+    JSValue original = originals->get(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, false);
+    // The stub replaced the spy if the spy is what unstubAllGlobals() would put back.
+    auto* descriptor = original.getObject();
+    if (!descriptor || descriptor->getDirect(vm, vm.propertyNames->value) != spy)
+        return false;
+    if (replacedBySpy) {
+        descriptor->putDirect(vm, vm.propertyNames->value, replacedBySpy);
+        return true;
+    }
+    JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
+// A spy or a fake timer function that was put on `globalThis[name]` after its first stub replaces what that stub replaced from
+// now on. `replacedByStub` is null if the stub made the global. Returns true if the global then stays as it is. Otherwise
+// `*replacedByStub` may have the fake timer function as its value, to put that back and not what it replaces.
+static bool handOverFromStub(Zig::GlobalObject* globalObject, const Identifier& name, PropertyDescriptor* replacedByStub)
+{
+    auto& mocks = globalObject->mockModule;
+    // Nothing else is known to be over a stub.
+    if (!mocks.fakeTimersAreInstalled && !mocks.mockFunctionStructure.isInitialized()) [[likely]]
+        return false;
+    if (name.isSymbol() || parseIndex(name))
+        return false;
+
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue onGlobal = globalObject->getDirect(vm, name);
+    JSValue fake;
+    if (mocks.fakeTimersAreInstalled) {
+        auto nameString = Bun::toString(name.impl());
+        EncodedJSValue replacedByFake {};
+        fake = JSValue::decode(Bun__FakeTimers__takeFromOverStub(globalObject, &nameString, &replacedByFake));
+        // The stub is what the fake replaced, or is under a spy that the fake replaced.
+        if (fake && !spyReplacesWhatStubReplaced(JSValue::decode(replacedByFake), globalObject, name, replacedByStub)) {
+            JSValue replaced = replacedByStub && replacedByStub->isDataDescriptor() ? replacedByStub->value() : JSValue();
+            fake = JSValue::decode(Bun__FakeTimers__handOver(globalObject, replacedByFake, JSValue::encode(replaced)));
+            RETURN_IF_EXCEPTION(scope, true);
+        }
+    }
+    if (!fake)
+        return spyReplacesWhatStubReplaced(onGlobal, globalObject, name, replacedByStub);
+    // The fake is there, or a spy that was made over it is.
+    if (onGlobal == fake || JSValue::decode(JSMock__replacedBySpy(JSValue::encode(onGlobal))) == fake)
+        return true;
+    if (replacedByStub)
+        replacedByStub->setValue(fake);
+    return false;
+}
+
 static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValue key, JSValue original)
 {
     auto& vm = getVM(globalObject);
@@ -86,16 +149,21 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
 
     auto name = propertyKeyOf(globalObject, key);
     RETURN_IF_EXCEPTION(scope, );
-    if (original.isUndefined()) {
-        scope.release();
-        JSCell::deleteProperty(target, globalObject, name);
-        return;
-    }
     PropertyDescriptor descriptor;
-    toPropertyDescriptor(globalObject, original, descriptor);
+    bool existed = !original.isUndefined();
+    if (existed) {
+        toPropertyDescriptor(globalObject, original, descriptor);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    bool staysAsItIs = handOverFromStub(defaultGlobalObject(globalObject), name, existed ? &descriptor : nullptr);
     RETURN_IF_EXCEPTION(scope, );
+    if (staysAsItIs)
+        return;
     scope.release();
-    target->methodTable()->defineOwnProperty(target, globalObject, name, descriptor, true);
+    if (existed)
+        target->methodTable()->defineOwnProperty(target, globalObject, name, descriptor, true);
+    else
+        JSCell::deleteProperty(target, globalObject, name);
 }
 
 static void unstubAllGlobals(Zig::GlobalObject* globalObject)
@@ -136,6 +204,37 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
     target->methodTable()->defineOwnProperty(target, globalObject, name, PropertyDescriptor(value, 0), true);
     RETURN_IF_EXCEPTION(scope, );
     RELEASE_AND_RETURN(scope, didStub(globalObject, globalObject->mockModule.globalsOfPreload, key, value));
+}
+
+// The end of a test file stubs again what the preload stubbed. A stub that unstubAllGlobals() took from under a fake timer
+// function goes back under it.
+static void stubAgainForPreload(Zig::GlobalObject* globalObject, JSValue key, JSValue stub)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (globalObject->mockModule.fakeTimersAreInstalled) [[unlikely]] {
+        auto name = propertyKeyOf(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, );
+        JSObject* target = globalObject->globalThis();
+        JSMap* originals = ensureMap(vm, globalObject, globalObject->mockModule.stubbedGlobals);
+        bool isRemembered = hasOriginal(globalObject, originals, key);
+        RETURN_IF_EXCEPTION(scope, );
+        PropertyDescriptor descriptor;
+        bool exists = !isRemembered && !name.isSymbol() && target->getOwnPropertyDescriptor(globalObject, name, descriptor);
+        RETURN_IF_EXCEPTION(scope, );
+        if (exists) {
+            auto nameString = Bun::toString(name.impl());
+            if (JSValue under = JSValue::decode(Bun__FakeTimers__putStubUnder(globalObject, &nameString, JSValue::encode(stub)))) {
+                descriptor.setValue(under);
+                JSObject* original = constructObjectFromPropertyDescriptor(globalObject, descriptor);
+                RETURN_IF_EXCEPTION(scope, );
+                original->setPrototypeDirect(vm, jsNull());
+                RELEASE_AND_RETURN(scope, JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(original)));
+            }
+        }
+    }
+    RELEASE_AND_RETURN(scope, stubGlobal(globalObject, key, stub));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsViStubGlobal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -370,6 +469,31 @@ extern "C" void ViUtils__unstubAllGlobals(Zig::GlobalObject* globalObject)
     Bun::unstubAllGlobals(globalObject);
 }
 
+extern "C" bool ViUtils__hasStubbedGlobals(Zig::GlobalObject* globalObject)
+{
+    return !!globalObject->mockModule.stubbedGlobals;
+}
+
+extern "C" JSC::EncodedJSValue ViUtils__replacedByStub(Zig::GlobalObject* globalObject, const BunString* name)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSValue stubbedGlobals = globalObject->mockModule.stubbedGlobals.get();
+    if (!stubbedGlobals)
+        return {};
+    auto* originals = uncheckedDowncast<JSC::JSMap>(stubbedGlobals);
+    // The map's keys are what vi.stubGlobal() made of its names, so a lookup of this one runs no script.
+    JSC::JSValue key = JSC::identifierToJSValue(vm, JSC::Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy)));
+    bool isStubbed = originals->has(globalObject, key);
+    JSC::JSValue original = isStubbed ? originals->get(globalObject, key) : JSC::JSValue();
+    scope.assertNoException();
+    if (!isStubbed)
+        return {};
+    auto* descriptor = original.getObject();
+    JSC::JSValue replaced = descriptor ? descriptor->getDirect(vm, vm.propertyNames->value) : JSC::JSValue();
+    return JSC::JSValue::encode(replaced ? replaced : JSC::jsUndefined());
+}
+
 // Call after the two above. A test file may have undone or replaced the preload's stubs.
 extern "C" void ViUtils__stubWhatPreloadStubbed(Zig::GlobalObject* globalObject)
 {
@@ -380,7 +504,7 @@ extern "C" void ViUtils__stubWhatPreloadStubbed(Zig::GlobalObject* globalObject)
     }
     if (JSC::JSValue globals = globalObject->mockModule.globalsOfPreload.get()) {
         scope.release();
-        Bun::forEachEntry(globalObject, uncheckedDowncast<JSC::JSMap>(globals), [&](JSC::JSValue name, JSC::JSValue stub) { Bun::stubGlobal(globalObject, name, stub); });
+        Bun::forEachEntry(globalObject, uncheckedDowncast<JSC::JSMap>(globals), [&](JSC::JSValue name, JSC::JSValue stub) { Bun::stubAgainForPreload(globalObject, name, stub); });
     }
 }
 

@@ -21,6 +21,13 @@ unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
     safe fn JSMock__isRestoredSpy(value: JSValue) -> bool;
+    safe fn JSMock__setFakeTimersInstalled(global: &JSGlobalObject, installed: bool);
+    /// What `value` replaced, if it is a spy that is installed. Empty otherwise.
+    safe fn JSMock__replacedBySpy(value: JSValue) -> JSValue;
+    safe fn ViUtils__hasStubbedGlobals(global: &JSGlobalObject) -> bool;
+    /// What the first `vi.stubGlobal()` of `globalThis[name]` replaced: `undefined` for nothing or an accessor. Empty if
+    /// it isn't stubbed.
+    safe fn ViUtils__replacedByStub(global: &JSGlobalObject, name: &bun_core::String) -> JSValue;
 }
 
 unsafe extern "C" {
@@ -140,6 +147,11 @@ impl Api {
             Api::Performance => bun_jsc::cpp::Bun__FakeTimers__performanceObject(global),
             _ => global.to_js_value(),
         }
+    }
+
+    /// Whether `owner()` is the global object, where `vi.stubGlobal()` replaces the same property.
+    fn is_global(self) -> bool {
+        !matches!(self, Api::NextTick | Api::Date | Api::Performance)
     }
 }
 
@@ -360,6 +372,24 @@ struct Replaced {
     api: Api,
     original: Strong,
     fake: Strong,
+    /// `vi.stubGlobal()` had replaced this global before the fake was put there. `vi.unstubAllGlobals()` then gives what
+    /// the stub replaced to what replaced the stub: the fake, or a spy under it.
+    over_stub: bool,
+    /// What `vi.unstubAllGlobals()` took from under the fake, until the end of the test file. A preload's stub goes back
+    /// there.
+    stub_under: StrongOptional,
+}
+
+impl Replaced {
+    /// The spy or stub that the fake replaced is undone, and `under` is what that one had replaced.
+    fn sit_on(&mut self, global: &JSGlobalObject, originals: JSValue, under: JSValue) {
+        if self.api == Api::SetTimeout {
+            Bun__FakeTimers__markBuiltinForCompiledCode(global, self.original.get(), false);
+            Bun__FakeTimers__markBuiltinForCompiledCode(global, under, true);
+        }
+        Bun__FakeTimers__setOriginal(global, originals, self.fake.get(), under);
+        self.original.set(global, under);
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -478,6 +508,9 @@ pub(crate) struct FakeTimers {
     fakes_abort_signal_timeout: bool,
     /// A preload script set up the current mock, so `on_test_file_end` keeps it.
     from_preload: bool,
+    /// A hook of the preload installed the fakes, after the first test file loaded. `on_test_file_end` keeps them only
+    /// while each one is where it was put.
+    from_hook: bool,
     /// Bumped by `activate` and `forget_installation`. If it changes mid-run, that run's clock is gone.
     installs: u32,
     firing: u32,
@@ -509,6 +542,7 @@ impl Default for FakeTimers {
             faked: ApiSet::default(),
             fakes_abort_signal_timeout: false,
             from_preload: false,
+            from_hook: false,
             installs: 0,
             firing: 0,
             timers: TimerHeap::default(),
@@ -558,6 +592,129 @@ extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
     if !this.faked.contains(Api::Date) {
         JSMock__setOverridenDateNow(global, f64::NAN);
     }
+}
+
+/// A spy or a stub that a fake replaced is being undone. `dying` is what the fake replaced, and `under` is what `dying`
+/// had replaced: empty for nothing, or for an accessor. The fake replaces `under` from now on, so `useRealTimers()`
+/// puts `under` back and not `dying`.
+///
+/// Returns the fake if it is to stay on the property. Returns empty if no fake replaced `dying`, if `under` is a
+/// builtin that is its own fake, or if nothing is left to fake, which an exception can be the reason for.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__FakeTimers__handOver(
+    global: &JSGlobalObject,
+    dying: JSValue,
+    under: JSValue,
+) -> JSValue {
+    // SAFETY: per-thread `timer::All`; the borrow ends before `createPerformance` runs JS.
+    let this = unsafe { &mut (*timer_all()).fake_timers };
+    let Some(index) = this
+        .replaced
+        .iter()
+        .position(|replaced| replaced.original.get() == dying)
+    else {
+        return JSValue::ZERO;
+    };
+    let Some(originals) = this.originals.get() else {
+        return JSValue::ZERO;
+    };
+    let api = this.replaced[index].api;
+    // As in `fakes`.
+    let under = original_of(originals, under).unwrap_or(under);
+    let is_left = !under.is_empty()
+        && match api {
+            Api::RequestAnimationFrame | Api::CancelAnimationFrame => under.is_callable(),
+            Api::PerformanceObject => under.is_object(),
+            _ => true,
+        };
+    if !is_left {
+        this.forget_replaced(global, api);
+        return JSValue::ZERO;
+    }
+    if matches!(api, Api::Date | Api::Performance) && Bun__FakeTimers__isNativeFunction(under) {
+        let replaced = &mut this.replaced[index];
+        replaced.sit_on(global, originals, under);
+        replaced.fake.set(global, under);
+        return JSValue::ZERO;
+    }
+    if api == Api::PerformanceObject {
+        // The fake wraps what it replaces.
+        let time_origin = this.date_now_offset;
+        let fake = {
+            let _reading = ReadingGlobals::begin();
+            bun_jsc::cpp::Bun__FakeTimers__createPerformance(global, under, time_origin)
+        };
+        // SAFETY: as above; nothing below re-enters it.
+        let this = unsafe { &mut (*timer_all()).fake_timers };
+        let index = this
+            .replaced
+            .iter()
+            .position(|replaced| replaced.api == api);
+        let (Ok(fake), Some(index)) = (fake, index) else {
+            this.forget_replaced(global, api);
+            return JSValue::ZERO;
+        };
+        let replaced = &mut this.replaced[index];
+        replaced.fake.set(global, fake);
+        replaced.sit_on(global, originals, under);
+        return fake;
+    }
+    let replaced = &mut this.replaced[index];
+    replaced.sit_on(global, originals, under);
+    replaced.fake.get()
+}
+
+/// `vi.unstubAllGlobals()` is about to put back what the first stub of `globalThis[name]` replaced. If a fake was put
+/// on that global after the stub, returns the fake, and sets `replaced` to what the fake replaced: the stub, or a spy
+/// over the stub.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__FakeTimers__takeFromOverStub(
+    global: &JSGlobalObject,
+    name: &bun_core::String,
+    replaced: &mut JSValue,
+) -> JSValue {
+    // SAFETY: per-thread `timer::All`; nothing below re-enters it.
+    let this = unsafe { &mut (*timer_all()).fake_timers };
+    let Some(over) = this
+        .replaced
+        .iter_mut()
+        .find(|over| over.over_stub && name.eq_ascii(over.api.property().as_bytes()))
+    else {
+        return JSValue::ZERO;
+    };
+    over.over_stub = false;
+    over.stub_under.set(global, over.original.get());
+    *replaced = over.original.get();
+    over.fake.get()
+}
+
+/// The end of a test file stubs `globalThis[name]` with `stub` again, for the preload. If `vi.unstubAllGlobals()` took
+/// `stub` from under a fake, it goes back there: the fake replaces `stub`, and this returns what `stub` then replaces.
+/// Returns empty for every other stub.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__FakeTimers__putStubUnder(
+    global: &JSGlobalObject,
+    name: &bun_core::String,
+    stub: JSValue,
+) -> JSValue {
+    // SAFETY: per-thread `timer::All`; nothing below re-enters it.
+    let this = unsafe { &mut (*timer_all()).fake_timers };
+    let Some(originals) = this.originals.get() else {
+        return JSValue::ZERO;
+    };
+    let Some(over) = this.replaced.iter_mut().find(|over| {
+        // A fake `performance` would have to wrap `stub`.
+        over.stub_under.get() == Some(stub)
+            && over.api != Api::PerformanceObject
+            && name.eq_ascii(over.api.property().as_bytes())
+    }) else {
+        return JSValue::ZERO;
+    };
+    let under = over.original.get();
+    over.sit_on(global, originals, stub);
+    over.over_stub = true;
+    over.stub_under.deinit();
+    under
 }
 
 /// Returns NaN unless `performance` is replaced.
@@ -728,12 +885,15 @@ impl FakeTimers {
         self.active = true;
         self.faked = options.faked;
         self.fakes_abort_signal_timeout = options.fakes_abort_signal_timeout;
-        self.from_preload = bun_test::is_preload_for_the_run(global.bun_vm());
+        let vm = global.bun_vm();
+        self.from_preload = bun_test::is_preload_for_the_run(vm);
+        self.from_hook = self.from_preload && !vm.is_in_preload;
         self.installs = self.installs.wrapping_add(1);
         self.loop_limit = options.loop_limit;
         self.now = Timespec::EPOCH;
         self.date_now_offset = date_now.floor();
         self.publish_clock(global);
+        JSMock__setFakeTimersInstalled(global, true);
     }
 
     fn deactivate(&mut self, global: &JSGlobalObject) -> Deactivated {
@@ -748,9 +908,11 @@ impl FakeTimers {
 
     fn forget_installation(&mut self, global: &JSGlobalObject) {
         Self::hide_clock(global);
+        JSMock__setFakeTimersInstalled(global, false);
         self.active = false;
         self.faked = ApiSet::default();
         self.from_preload = false;
+        self.from_hook = false;
         self.installs = self.installs.wrapping_add(1);
         self.tick_mode = TickMode::Manual;
         if self.tick_timer.state == EventLoopTimerState::ACTIVE {
@@ -908,6 +1070,7 @@ impl FakeTimers {
             api,
             fake,
             original,
+            ..
         } in &replaced
         {
             api.put(global, fake.get());
@@ -935,6 +1098,7 @@ impl FakeTimers {
         let _reading = ReadingGlobals::begin();
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         let originals = unsafe { (*timer_all()).fake_timers.originals(global) };
+        let has_stubs = ViUtils__hasStubbedGlobals(global);
         let mut fakes = Vec::new();
         for api in Api::FUNCTIONS {
             // A test can take `Date.prototype.constructor` away.
@@ -968,6 +1132,8 @@ impl FakeTimers {
                     api,
                     original: Strong::create(original, global),
                     fake: Strong::create(original, global),
+                    over_stub: false,
+                    stub_under: StrongOptional::empty(),
                 });
                 continue;
             }
@@ -979,10 +1145,13 @@ impl FakeTimers {
                 _ => bun_jsc::cpp::Bun__FakeTimers__createFunction(global, api as u8)?,
             };
             Bun__FakeTimers__setOriginal(global, originals, fake, original);
+            let name = bun_core::String::static_(api.property());
             fakes.push(Replaced {
                 api,
                 original: Strong::create(original, global),
                 fake: Strong::create(fake, global),
+                over_stub: has_stubs && api.is_global() && !ViUtils__replacedByStub(global, &name).is_empty(),
+                stub_under: StrongOptional::empty(),
             });
         }
         Ok(fakes)
@@ -1010,45 +1179,38 @@ impl FakeTimers {
         }
     }
 
-    /// A spy or stub that the first file made before a preload's `beforeAll()` installed this clock is under a fake:
-    /// it is what the fake replaced, and undoing it takes the fake off its global. Puts each of `kept` back, over
-    /// what that left. Runs no JS.
-    #[optimize(size)]
-    fn put_back_fakes(global: &JSGlobalObject, kept: ApiSet) {
-        // SAFETY: per-thread `timer::All`; nothing below re-enters it.
-        let this = unsafe { &mut (*timer_all()).fake_timers };
-        let Some(originals) = this.originals.get() else {
+    /// Nothing is left for the fake of `api` to replace.
+    fn forget_replaced(&mut self, global: &JSGlobalObject, api: Api) {
+        let Some(index) = self.replaced.iter().position(|replaced| replaced.api == api) else {
             return;
         };
-        this.replaced.retain_mut(|replaced| {
+        let replaced = self.replaced.remove(index);
+        if api == Api::SetTimeout {
+            Bun__FakeTimers__markBuiltinForCompiledCode(global, replaced.original.get(), false);
+        }
+    }
+
+    /// Whether each fake is where `install` put it. A spy or a stub that is undone leaves it there, but a test file can
+    /// also write over it.
+    fn is_whole(&self, global: &JSGlobalObject) -> bool {
+        self.replaced.iter().all(|replaced| {
             let api = replaced.api;
             let owner = api.owner(global);
-            if !kept.contains(api) || !owner.is_object() {
+            if !owner.is_object() {
                 return true;
             }
             let name = bun_core::String::static_(api.property());
-            let left = Bun__FakeTimers__getDirect(global, owner, &name);
-            if left == replaced.fake.get() {
-                return true;
-            }
-            // The property is gone or is an accessor again, or the fake is a `performance` that wraps what is gone.
-            if !left.is_object() || api == Api::PerformanceObject {
-                return false;
-            }
-            // As in `fakes`.
-            if matches!(api, Api::Date | Api::Performance) && Bun__FakeTimers__isNativeFunction(left) {
-                replaced.fake = Strong::create(left, global);
-            } else {
-                Bun__FakeTimers__setOriginal(global, originals, replaced.fake.get(), left);
-                api.put(global, replaced.fake.get());
-            }
-            if api == Api::SetTimeout {
-                Bun__FakeTimers__markBuiltinForCompiledCode(global, replaced.original.get(), false);
-                Bun__FakeTimers__markBuiltinForCompiledCode(global, left, true);
-            }
-            replaced.original = Strong::create(left, global);
-            true
-        });
+            let fake = replaced.fake.get();
+            let on_global = Bun__FakeTimers__getDirect(global, owner, &name);
+            on_global == fake
+                // Compiled code keeps its builtins.
+                || on_global == replaced.original.get()
+                || JSMock__replacedBySpy(on_global) == fake
+                || (api.is_global() && ViUtils__replacedByStub(global, &name) == fake)
+                // The environment of a DOM library took its globals along.
+                || (on_global.is_empty()
+                    && matches!(api, Api::RequestAnimationFrame | Api::CancelAnimationFrame))
+        })
     }
 
     // Below, a returned `JSValue` is the exception a timer callback threw, or empty. A `JsError` means the VM is terminating.
@@ -1778,39 +1940,19 @@ fn advance(global: &JSGlobalObject, ms: f64) -> Result<JSValue, Stop> {
     FakeTimers::run_until(global, now.add_ms_float(ms))
 }
 
-/// The fakes of a preload's clock that the end of a test file must leave on their globals.
-#[derive(Copy, Clone, Default)]
-pub(crate) struct KeptFakes(ApiSet);
-
-/// Call before the file's spies and stubs are undone, and pass the result to `on_test_file_end` afterwards.
-pub(crate) fn kept_fakes_of_preload(global: &JSGlobalObject) -> KeptFakes {
+pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
     // SAFETY: per-thread `timer::All`; nothing below re-enters it.
-    let this = unsafe { &(*timer_all()).fake_timers };
-    let mut kept = ApiSet::default();
-    if this.active && this.from_preload {
-        for replaced in &this.replaced {
-            let owner = replaced.api.owner(global);
-            let name = bun_core::String::static_(replaced.api.property());
-            // A fake that isn't there is left alone, unless the file has restored the spy that was under it.
-            if owner.is_object()
-                && (Bun__FakeTimers__getDirect(global, owner, &name) == replaced.fake.get()
-                    || JSMock__isRestoredSpy(replaced.original.get()))
-            {
-                kept.0 |= 1 << replaced.api as u16;
-            }
+    let (active, kept) = unsafe {
+        let this = &mut (*timer_all()).fake_timers;
+        for replaced in &mut this.replaced {
+            replaced.stub_under.deinit();
         }
-    }
-    KeptFakes(kept)
-}
-
-pub(crate) fn on_test_file_end(global: &JSGlobalObject, kept: KeptFakes) {
-    // SAFETY: per-thread `timer::All`; field reads only.
-    let (active, from_preload) = unsafe {
-        let this = &(*timer_all()).fake_timers;
-        (this.active, this.from_preload)
+        // A clock of a preload's hook ends here once a test file has written over one of its fakes.
+        let kept = this.from_preload && (!this.from_hook || this.is_whole(global));
+        (this.active, kept)
     };
     let mocked = active || !bun_jsc::cpp::Bun__FakeTimers__overriddenDateNow(global).is_nan();
-    if mocked && !from_preload {
+    if mocked && !kept {
         // SAFETY: the live event loop of the per-thread VM.
         let _entered =
             unsafe { bun_jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
@@ -1818,9 +1960,6 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, kept: KeptFakes) {
         drop(FakeTimers::uninstall(global, Restore::WhereStillInstalled));
     }
     FakeTimers::take_off_stale_fakes(global);
-    if kept.0.0 != 0 {
-        FakeTimers::put_back_fakes(global, kept.0);
-    }
 }
 
 pub(crate) fn is_active() -> bool {

@@ -48,6 +48,7 @@ BUN_DECLARE_HOST_FUNCTION(JSMock__jsResetAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSpyOn);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsMockFn);
 extern "C" bool JSMock__isInPreload(Zig::GlobalObject*);
+extern "C" JSC::EncodedJSValue Bun__FakeTimers__handOver(JSC::JSGlobalObject*, JSC::EncodedJSValue dying, JSC::EncodedJSValue under);
 
 #define CHECK_IS_MOCK_FUNCTION(thisValue)                                \
     if (!thisObject) [[unlikely]] {                                      \
@@ -864,6 +865,15 @@ public:
 
     bool isRestoredSpy() const { return isSpy && !m_spyTarget; }
 
+    // What the spy replaced as the value of its property, while it is installed. Empty if it replaced nothing.
+    JSValue replacedValue() const { return m_spyTarget ? m_spyOriginal.get() : JSValue(); }
+
+    // Whether the spy is installed as the value of `target[key]`, and not as an accessor of it.
+    bool isValueOf(JSObject* target, const Identifier& key) const
+    {
+        return m_spyTarget.get() == target && m_spyIdentifier == key && !(m_spyAttributes & (SpyAttributeESModuleNamespace | SpyAttributeAccessor | SpyAttributeOpaque));
+    }
+
     // Puts the spied-on property back as it was; that can throw (a module namespace export, an indexed slot).
     void clearSpy(JSGlobalObject* globalObject, bool shouldReset = true)
     {
@@ -874,7 +884,8 @@ public:
         }
 
         if (auto* target = m_spyTarget.get()) {
-            this->putBackOriginal(globalObject, target);
+            if (!this->handsOverOriginal(target))
+                this->putBackOriginal(globalObject, target);
             if (scope.exception()) [[unlikely]] {
                 // It's still installed, so keep it where restoreAllMocks() finds it.
                 enter(List::Spies);
@@ -882,6 +893,16 @@ public:
             }
         }
         didUninstall();
+    }
+
+    // A fake timer function or a `vi.stubGlobal()` that replaced this spy replaces what the spy replaced from now on.
+    // Returns true if the property then stays as it is: the spy is no longer on it, or an exception is pending.
+    bool handsOverOriginal(JSObject* target)
+    {
+        auto& mocks = mockModule();
+        if (!mocks.fakeTimersAreInstalled && !mocks.stubbedGlobals) [[likely]]
+            return false;
+        return handsOverOriginalSlow(target);
     }
 
     static void clearAll(Zig::GlobalObject*);
@@ -954,6 +975,28 @@ private:
         m_spyAttributes = 0;
         leave(List::Spies);
     }
+
+    NEVER_INLINE bool handsOverOriginalSlow(JSObject* target)
+    {
+        if (!isValueOf(target, m_spyIdentifier))
+            return false;
+        auto& vm = this->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(this->globalObject());
+        JSValue original = m_spyOriginal.get();
+        bool isHandedOver = false;
+        if (globalObject->mockModule.fakeTimersAreInstalled) {
+            isHandedOver = !!Bun__FakeTimers__handOver(globalObject, JSValue::encode(this), JSValue::encode(original));
+            RETURN_IF_EXCEPTION(scope, true);
+        }
+        if (globalObject->mockModule.stubbedGlobals && target == globalObject && !parseIndex(m_spyIdentifier)) {
+            isHandedOver |= stubReplacesWhatSpyReplaced(globalObject, m_spyIdentifier, this, original);
+            RETURN_IF_EXCEPTION(scope, true);
+        }
+        return isHandedOver && target->getDirect(vm, m_spyIdentifier) != this;
+    }
+
+    friend bool spyReplacesWhatStubReplaced(JSValue, JSObject*, const Identifier&, const PropertyDescriptor*);
 
     void setFallbackImplementation(JSMockImplementation::Kind kind, JSValue value)
     {
@@ -1488,6 +1531,44 @@ static JSMockFunction* createMockFunction(JSC::VM& vm, Zig::GlobalObject* global
 extern "C" void JSMock__willRunTest(Zig::GlobalObject* globalObject)
 {
     globalObject->mockModule.preloadMayBeRunning = false;
+}
+
+extern "C" void JSMock__setFakeTimersInstalled(Zig::GlobalObject* globalObject, bool installed)
+{
+    globalObject->mockModule.fakeTimersAreInstalled = installed;
+}
+
+extern "C" JSC::EncodedJSValue JSMock__replacedBySpy(JSC::EncodedJSValue value)
+{
+    JSValue spy = JSValue::decode(value);
+    auto* mock = spy ? dynamicDowncast<JSMockFunction>(spy) : nullptr;
+    return JSValue::encode(mock ? mock->replacedValue() : JSValue());
+}
+
+bool spyReplacesWhatStubReplaced(JSValue top, JSObject* global, const Identifier& key, const PropertyDescriptor* replacedByStub)
+{
+    // A spy restores an accessor only where it is the accessor.
+    if (replacedByStub && !replacedByStub->isDataDescriptor())
+        return false;
+    JSValue replaced = replacedByStub ? replacedByStub->value() : JSValue();
+    // The stub is under the lowest spy that was made after it. A spy that the stub replaced is no such spy.
+    JSMockFunction* lowest = nullptr;
+    for (JSValue value = top; value && value != replaced;) {
+        auto* spy = dynamicDowncast<JSMockFunction>(value);
+        if (!spy || !spy->isValueOf(global, key))
+            break;
+        lowest = spy;
+        value = spy->m_spyOriginal.get();
+    }
+    if (!lowest)
+        return false;
+    if (replacedByStub) {
+        lowest->m_spyOriginal.set(lowest->vm(), lowest, replaced);
+        lowest->m_spyAttributes = replacedByStub->attributes();
+    } else {
+        lowest->m_spyOriginal.clear();
+    }
+    return true;
 }
 
 static ALWAYS_INLINE JSC::JSArray* createArgumentsArray(JSC::VM& vm, Zig::GlobalObject* globalObject, const JSC::ArgList& args)

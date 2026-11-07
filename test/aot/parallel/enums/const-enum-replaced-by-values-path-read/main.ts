@@ -1,4 +1,4 @@
-// A `const enum` that is read through a namespace of another file, through an `import =` alias or from another part of its namespace. An executable puts the value in place of every read, as TypeScript's compiler does when it compiles the files together. `bun run` reads the object in these places, so it sees what the program stores there.
+// A `const enum` that is read through a namespace of another file, through an `import =` alias or from another part of its namespace. An executable puts the value in place of every read, as TypeScript's compiler does when it compiles the files together. Of these three, `bun run` does so only from another part of the namespace. In the other two it reads the object, so it sees what the program stores there.
 import * as all from "./other";
 import { Outer, store } from "./other";
 import Alias = Outer.Fixed;

@@ -1779,7 +1779,8 @@ pub(crate) mod __gated_printer {
                 }
                 // "**" can't contain certain unary expressions
                 Op::Code::BinPow => {
-                    match &e.left.data {
+                    // An inlined enum member prints as its value, which can be a negative number.
+                    match e.left.unwrap_inlined().data {
                         ExprData::EUnary(left) => {
                             if Op::Code::unary_assign_target(left.op) == js_ast::AssignTarget::None
                             {

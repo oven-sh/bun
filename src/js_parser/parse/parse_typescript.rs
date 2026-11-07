@@ -215,7 +215,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Generate the namespace object
         // Arena-owned `StoreRef<TSNamespaceScope>`.
-        let mut ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope> =
+        let ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope> =
             p.get_or_create_exported_namespace_members(name_text, opts.is_export, false);
         let mut exported_members: js_ast::StoreRef<TSNamespaceMemberMap> =
             ts_namespace.exported_members;
@@ -456,7 +456,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             // Named in this scope so that no binding inside shadows it.
             VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
-            ts_namespace.arg_ref = arg_ref;
+            p.set_ts_namespace_arg(ts_namespace, arg_ref);
         }
         p.pop_scope();
 
@@ -590,7 +590,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Generate the namespace object
         let mut arg_ref: Ref = Ref::NONE;
-        let mut ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope> =
+        let ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope> =
             p.get_or_create_exported_namespace_members(name_text, opts.is_export, true);
         let mut exported_members: js_ast::StoreRef<TSNamespaceMemberMap> =
             ts_namespace.exported_members;
@@ -725,9 +725,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .declare_symbol(SymbolKind::Hoisted, name_loc, name_text)
                     .expect("unreachable");
             }
-            p.ref_to_ts_namespace_member
-                .insert(arg_ref, TSNamespaceMemberData::Namespace(exported_members));
-            ts_namespace.arg_ref = arg_ref;
+            p.set_ts_namespace_arg(ts_namespace, arg_ref);
 
             p.pop_scope();
         }

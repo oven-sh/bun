@@ -2529,6 +2529,178 @@ export {};
 //// written-type/enum-access-again.ts
 // Passes on what enum-access-other.ts exports.
 export * from "./enum-access-other";
+//// written-type/enum-access-behind-block-function.cts
+// In sloppy code a function of a block leaves a variable of its name in the function around the block. A read behind the block names that variable, not the enum.
+enum E { A = 1 }
+function read() {
+  {
+    function E() {}
+  }
+  return E.A;
+}
+namespace Parts {
+  export enum Once { A = 3 }
+}
+namespace Parts {
+  export function read() {
+    {
+      function Once() {}
+    }
+    return Once.A;
+  }
+}
+E.A;
+//// written-type/enum-access-behind-block-function.queries.txt
+# In sloppy code a function of a block leaves a variable of its name in the function around the block. A read behind the block names that variable, not the enum.
+enum-access-behind-block-function.cts:20 enum `E.A` = 1
+
+absent: enum-access-behind-block-function.cts:7 enum `E.A` = 1
+absent: enum-access-behind-block-function.cts:17 enum `Once.A` = 3
+//// written-type/enum-access-namespace-beside-function.queries.txt
+# A block of a namespace that exports a function or a class beside a namespace of the same name: Bun's transpiler keeps no record of the members of that namespace (#47001), so a read through it stays a read. A part in a later block is followed again, and so is a part ahead of the block for a name that its own block declares.
+enum-access-namespace-beside-function.ts:11 enum member `P = F.E.A` = 1 reads other file or variable rests on inexact power
+enum-access-namespace-beside-function.ts:11 enum member `R` = 2 reads other file or variable rests on inexact power
+enum-access-namespace-beside-function.ts:21 enum member `A = 2` = 2
+enum-access-namespace-beside-function.ts:22 enum `F.E.A` = 2
+enum-access-namespace-beside-function.ts:25 enum member `P = F.E.A` = 2
+enum-access-namespace-beside-function.ts:25 enum member `R` = 3
+enum-access-namespace-beside-function.ts:26 enum `F.E.A` = 2
+enum-access-namespace-beside-function.ts:28 enum `Apart.F.E.A` = 2
+enum-access-namespace-beside-function.ts:36 enum `F.G.B` = 4
+enum-access-namespace-beside-function.ts:40 enum `F.G.B` = 4
+enum-access-namespace-beside-function.ts:43 enum `Again.F.G.B` = 4
+enum-access-namespace-beside-function.ts:58 enum `F.E.A` = 7
+enum-access-namespace-beside-function.ts:63 enum `F.E.A` = 8
+enum-access-namespace-beside-function.ts:67 enum `F.E.A` = 10
+enum-access-namespace-beside-function.ts:78 enum `F.E.A` = 9
+
+absent: enum-access-namespace-beside-function.ts:7 enum `F.E.A` = 1
+absent: enum-access-namespace-beside-function.ts:8 enum `C.E.A` = 5
+absent: enum-access-namespace-beside-function.ts:12 enum `F.E.A` = 1
+absent: enum-access-namespace-beside-function.ts:13 enum `C.E.A` = 5
+absent: enum-access-namespace-beside-function.ts:15 enum `Beside.F.E.A` = 1
+absent: enum-access-namespace-beside-function.ts:16 enum `Beside.C.E.A` = 5
+absent: enum-access-namespace-beside-function.ts:35 enum `F.E.A` = 3
+absent: enum-access-namespace-beside-function.ts:39 enum `F.E.A` = 3
+absent: enum-access-namespace-beside-function.ts:42 enum `Again.F.E.A` = 3
+absent: enum-access-namespace-beside-function.ts:51 enum `N.F.E.A` = 6
+absent: enum-access-namespace-beside-function.ts:70 enum `F.E.A` = 10
+absent: enum-access-namespace-beside-function.ts:75 enum `Before.F.E.A` = 10
+//// written-type/enum-access-namespace-beside-function.ts
+// A block of a namespace that exports a function or a class beside a namespace of the same name: Bun's transpiler keeps no record of the members of that namespace (#47001), so a read through it stays a read. A part in a later block is followed again, and so is a part ahead of the block for a name that its own block declares.
+namespace Beside {
+  export function F() {}
+  export namespace F { export enum E { A = 1 } }
+  export class C {}
+  export namespace C { export enum E { A = 5 } }
+  F.E.A;
+  C.E.A;
+}
+namespace Beside {
+  export enum Counts { P = F.E.A, R }
+  F.E.A;
+  C.E.A;
+}
+Beside.F.E.A;
+Beside.C.E.A;
+namespace Apart {
+  export function F() {}
+}
+namespace Apart {
+  export namespace F { export enum E { A = 2 } }
+  F.E.A;
+}
+namespace Apart {
+  export enum Counts { P = F.E.A, R }
+  F.E.A;
+}
+Apart.F.E.A;
+namespace Again {
+  export function F() {}
+  export namespace F { export enum E { A = 3 } }
+}
+namespace Again {
+  export namespace F { export enum G { B = 4 } }
+  F.E.A;
+  F.G.B;
+}
+namespace Again {
+  F.E.A;
+  F.G.B;
+}
+Again.F.E.A;
+Again.F.G.B;
+namespace Below {
+  export namespace N {
+    export function F() {}
+    export namespace F { export enum E { A = 6 } }
+  }
+}
+namespace Below {
+  N.F.E.A;
+}
+namespace Unwritten {
+  export declare function F(): void;
+  export namespace F { export enum E { A = 7 } }
+}
+namespace Unwritten {
+  F.E.A;
+}
+namespace Local {
+  function F() {}
+  namespace F { export enum E { A = 8 } }
+  F.E.A;
+}
+namespace Before {
+  export namespace F { export enum E { A = 10 } }
+  F.E.A;
+}
+namespace Before {
+  F.E.A;
+}
+namespace Before {
+  export function F() {}
+}
+Before.F.E.A;
+function F() {}
+namespace F { export enum E { A = 9 } }
+F.E.A;
+export {};
+//// written-type/enum-access-namespace-parts.queries.txt
+# A name that another part of a namespace exports is followed like a name that is declared around the read. It is not followed ahead of its enum, through `export import`, or behind `?.`.
+enum-access-namespace-parts.ts:8 enum member `FromOtherPart = Once.A + 30` = 33
+enum-access-namespace-parts.ts:8 enum member `Next` = 34
+enum-access-namespace-parts.ts:9 enum `Once.A` = 3
+enum-access-namespace-parts.ts:10 enum `Once["A"]` = 3
+enum-access-namespace-parts.ts:11 enum `Below.Two.A` = 2
+enum-access-namespace-parts.ts:20 enum `Later.A` = 9
+
+absent: enum-access-namespace-parts.ts:5 enum `Later.A` = 9
+absent: enum-access-namespace-parts.ts:12 enum `Once?.A` = 3
+absent: enum-access-namespace-parts.ts:19 enum `Linked.A` = 3
+//// written-type/enum-access-namespace-parts.ts
+// A name that another part of a namespace exports is followed like a name that is declared around the read. It is not followed ahead of its enum, through `export import`, or behind `?.`.
+namespace Parts {
+  export enum Once { A = 3 }
+  export namespace Below { export enum Two { A = 2 } }
+  export function early() { return Later.A; }
+}
+namespace Parts {
+  export enum Second { FromOtherPart = Once.A + 30, Next }
+  Once.A;
+  Once["A"];
+  Below.Two.A;
+  Once?.A;
+}
+namespace Parts {
+  export enum Later { A = 9 }
+  export import Linked = Parts.Once;
+}
+namespace Parts {
+  Linked.A;
+  Later.A;
+}
+export {};
 //// written-type/enum-access-other.ts
 // An enum in another checked file, imported by enum-access.ts.
 export enum F { X = 7 }
@@ -2536,6 +2708,25 @@ export const enum K { X = 9 }
 //// written-type/enum-access-script.ts
 // An enum in a script: global to TypeScript, local to this file under `bun run`. Imported by enum-access.ts.
 enum S { T = 8 }
+//// written-type/enum-access-switch-clauses.queries.txt
+# An enum of one clause of a switch is in scope in the other clauses. A later clause reads its members as values, and an earlier clause reads the object.
+enum-access-switch-clauses.ts:8 enum `E.A` = 5
+enum-access-switch-clauses.ts:10 enum `E.A` = 5
+
+absent: enum-access-switch-clauses.ts:5 enum `E.A` = 5
+//// written-type/enum-access-switch-clauses.ts
+// An enum of one clause of a switch is in scope in the other clauses. A later clause reads its members as values, and an earlier clause reads the object.
+export function pick(n: number) {
+  switch (n) {
+    case 0:
+      return () => E.A;
+    case 1:
+      enum E { A = 5 }
+      return E.A;
+    case 2:
+      return E.A;
+  }
+}
 //// written-type/enum-access.d.ts
 // An ambient enum, referenced by enum-access.ts.
 declare enum G { Y = 3 }

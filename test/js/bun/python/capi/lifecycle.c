@@ -69,10 +69,16 @@ static int node_traverse(PyObject *self, visitproc visit, void *arg)
     return 0;
 }
 
+/* Code of the program's that a tp_clear calls. */
+static void (*at_clear)(long id);
+void call_at_clear(void (*function)(long id)) { at_clear = function; }
+
 static int node_clear(PyObject *self)
 {
     Node *node = PyObject_GetTypeData(self, node_type);
     note(CLEAR, node->id);
+    if (at_clear)
+        at_clear(node->id);
     Py_CLEAR(node->first);
     Py_CLEAR(node->second);
     return 0;

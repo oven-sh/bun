@@ -1,2 +1,4 @@
 [(0, 'MainThread'), (1, 'MainThread'), (2, 'MainThread')]
 [1000000, 1000001, 1000002]
+[(11, 'MainThread', "when nothing of C's runs for it"), (12, 'MainThread', "when nothing of C's runs for it")]
+[1000011, 1000012]

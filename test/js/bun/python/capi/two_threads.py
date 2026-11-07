@@ -67,3 +67,49 @@ gc.collect()
 call_at_dealloc(None)
 print(ended_by)
 print([event for event in take_events() if event % 1000000 < 3])
+
+# A collection that nobody has asked for finds a ring of two that C has made and dropped. The thread that made them begins the tp_clear of the one, which runs code of the program's; that lets the
+# other thread call gc.collect(), which makes the calls that any thread owes: the tp_clear of the second, which gives back a reference to the first. The first is not destroyed under its own tp_clear.
+count_events = declare("count_events", ctypes.c_int)
+drop_ring = declare("drop_ring", c_long, c_long, c_long)
+call_at_clear = declare("call_at_clear", None, c_void_p)
+is_in_clear, has_collected = threading.Event(), threading.Event()
+being_cleared, ended_by = set(), []
+
+
+@ctypes.CFUNCTYPE(None, c_long)
+def at_clear(id):
+    if not is_in_clear.is_set():
+        being_cleared.add(id)
+        is_in_clear.set()
+        has_collected.wait()
+        being_cleared.discard(id)
+
+
+@ctypes.CFUNCTYPE(None, c_long)
+def at_dealloc(id):
+    ended_by.append((id, threading.current_thread().name, "under its own tp_clear" if id in being_cleared else "when nothing of C's runs for it"))
+
+
+def other():
+    is_in_clear.wait()
+    for _ in range(3):
+        gc.collect()
+    has_collected.set()
+
+
+thread = threading.Thread(target=other, name="the other")
+thread.start()
+call_at_clear(ctypes.cast(at_clear, c_void_p))
+call_at_dealloc(ctypes.cast(at_dealloc, c_void_p))
+drop_ring(11, 2)
+kept = []
+while not count_events() and len(kept) < 2000:
+    kept.append([[] for _ in range(5000)])
+del kept
+thread.join()
+gc.collect()
+call_at_clear(None)
+call_at_dealloc(None)
+print(ended_by)
+print([event for event in take_events() if event // 1000000 == 1])

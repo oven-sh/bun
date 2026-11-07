@@ -191,13 +191,13 @@ static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStre
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CodecStepResult step;
-    CodecStepEnd end = CodecStepEnd::Done;
+    EncodedJSValue error {};
     if (auto* sinkController = stream->m_nativeSinkController.get()) {
-        JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, sinkController->payload(), &end));
+        JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, sinkController->payload(), &step.more, &error));
         RETURN_IF_EXCEPTION(scope, step);
         step.sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
     } else {
-        JSValue out = JSValue::decode(CompressionStreamCoder__transform(coder, globalObject, input, inputLen, finish, &end));
+        JSValue out = JSValue::decode(CompressionStreamCoder__transform(coder, globalObject, input, inputLen, finish, &step.more, &error));
         RETURN_IF_EXCEPTION(scope, step);
         auto* view = dynamicDowncast<JSArrayBufferView>(out);
         if (view && view->length()) {
@@ -205,13 +205,9 @@ static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStre
             RETURN_IF_EXCEPTION(scope, step);
         }
     }
-    step.more = end == CodecStepEnd::More;
-    // The spec order for trailing junk: enqueue what was decoded, then throw.
-    if (end == CodecStepEnd::TrailingJunk) [[unlikely]] {
-        JSValue junkError = JSValue::decode(CompressionStreamCoder__trailingJunkError(globalObject));
-        transformStreamKeepQueuedOutputReadable(vm, stream, junkError);
-        throwException(globalObject, scope, junkError);
-    }
+    // A failed step has handed over what it produced: the consumer gets that output ahead of the error.
+    if (error) [[unlikely]]
+        throwException(globalObject, scope, JSValue::decode(error));
     return step;
 }
 
@@ -463,7 +459,7 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
     CodecStepResult step;
     step.more = more;
     JSValue thrown;
-    // A failed step still carries the output it decoded ahead of trailing junk (see runStepHere).
+    // A failed step still carries what it produced before it failed (see runStepHere).
     if (outLen && stream->m_codecPromise) {
         atStreamsBoundary(globalObject, [&] { step = deliverAsyncOutput(globalObject, stream, out, outLen, more); }, [&](JSValue deliveryError) { thrown = deliveryError; });
         if (scope.exception()) [[unlikely]] {
@@ -473,11 +469,8 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
             return;
         }
     }
-    if (error && !thrown) {
+    if (error && !thrown)
         thrown = JSValue::decode(error);
-        if (outLen && stream->m_codecPromise)
-            transformStreamKeepQueuedOutputReadable(vm, stream, thrown);
-    }
 
     stream->m_asyncCodecInFlight = false;
     // A terminal abandoned the chunk while this step ran (the delivery above may have been it).

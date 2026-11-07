@@ -40,13 +40,6 @@ static JSReadableStreamDefaultController* transformReadableController(JSTransfor
     return uncheckedDowncast<JSReadableStreamDefaultController>(readable->m_controller.get());
 }
 
-// The readable to error with the stream: not one that waits for its reader to take the queued output first.
-static JSReadableStreamDefaultController* transformReadableControllerToError(JSTransformStream* stream)
-{
-    auto* controller = transformReadableController(stream);
-    return controller && controller->m_algorithms.kind != SourceKind::TransformErrorWhenDrained ? controller : nullptr;
-}
-
 // [[flushAlgorithm]] dispatch (needed only by the default sink close algorithm below).
 static JSPromise* performFlushAlgorithm(JSC::VM& vm, JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller)
 {
@@ -100,6 +93,7 @@ void setUpNativeTransformStream(JSGlobalObject* globalObject, JSTransformStream*
     // reader attached, matching Node.js and Chromium.
     initializeTransformStream(globalObject, stream, startPromise, 1, nullptr, 1, nullptr);
     RETURN_IF_EXCEPTION(scope, void());
+    stream->m_readsAhead = true;
 
     auto* controller = JSTransformStreamDefaultController::create(vm, WebCore::getDOMStructure<JSTransformStreamDefaultController>(vm, *domGlobalObject));
     controller->m_transformerKind = kind;
@@ -131,25 +125,30 @@ void initializeTransformStream(JSGlobalObject* globalObject, JSTransformStream* 
     stream->m_controller.clear();
 }
 
+// Errors the readable side of a failed transform or flush. A stream that reads ahead keeps the chunks it queued: the pull after them rejects.
+static void transformStreamErrorReadable(JSGlobalObject* globalObject, JSTransformStream* stream, JSValue error)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* readableController = transformReadableController(stream);
+    if (!readableController || readableController->m_algorithms.kind == SourceKind::TransformErrorWhenDrained)
+        return;
+    if (stream->m_readsAhead && !readableController->m_queue.isEmpty() && !readableController->m_closeRequested) {
+        ASSERT(readableController->m_algorithms.kind == SourceKind::Transform);
+        readableController->m_algorithms.kind = SourceKind::TransformErrorWhenDrained;
+        readableController->m_algorithms.underlyingObject.set(vm, readableController, error);
+        return;
+    }
+    RELEASE_AND_RETURN(scope, readableStreamDefaultControllerError(globalObject, readableController, error));
+}
+
 void transformStreamError(JSGlobalObject* globalObject, JSTransformStream* stream, JSValue error)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (auto* readableController = transformReadableControllerToError(stream)) {
-        readableStreamDefaultControllerError(globalObject, readableController, error);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
+    transformStreamErrorReadable(globalObject, stream, error);
+    RETURN_IF_EXCEPTION(scope, void());
     RELEASE_AND_RETURN(scope, transformStreamErrorWritableAndUnblockWrite(globalObject, stream, error));
-}
-
-void transformStreamKeepQueuedOutputReadable(VM& vm, JSTransformStream* stream, JSValue error)
-{
-    auto* readableController = transformReadableController(stream);
-    if (!readableController || readableController->m_queue.isEmpty())
-        return;
-    ASSERT(readableController->m_algorithms.kind == SourceKind::Transform);
-    readableController->m_algorithms.kind = SourceKind::TransformErrorWhenDrained;
-    readableController->m_algorithms.underlyingObject.set(vm, readableController, error);
 }
 
 void transformStreamErrorWritableAndUnblockWrite(JSGlobalObject* globalObject, JSTransformStream* stream, JSValue error)
@@ -413,10 +412,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkCloseFlushRejected, (JSGlob
     auto* stream = uncheckedDowncast<JSTransformStream>(callFrame->argument(1));
     auto* finishPromise = stream->m_controller->m_finishPromise.get();
 
-    if (auto* readableController = transformReadableControllerToError(stream)) {
-        readableStreamDefaultControllerError(globalObject, readableController, rejection);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+    transformStreamErrorReadable(globalObject, stream, rejection);
+    RETURN_IF_EXCEPTION(scope, {});
     rejectPromise(globalObject, finishPromise, rejection);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());

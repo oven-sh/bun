@@ -293,7 +293,19 @@ test("utf-8 fatal: truncated sequence rejects at flush", async () => {
   await expect(Bun.readableStreamToArray(out)).rejects.toBeInstanceOf(TypeError);
 });
 
-// The transform/flush arm runs the native decoder directly, so monkeypatching
+// The stream decodes one chunk ahead of its reader, so that text is still queued
+// when the flush fails. An error must not discard it: the reader gets the text first.
+test("utf-8 fatal: text decoded before a failed flush is read first", async () => {
+  const stream = new TextDecoderStream("utf-8", { fatal: true });
+  const writer = stream.writable.getWriter();
+  await writer.write(new Uint8Array([0x68, 0x69, 0xf0, 0x9f, 0x92]));
+  await expect(writer.close()).rejects.toBeInstanceOf(TypeError);
+
+  const reader = stream.readable.getReader();
+  expect(await reader.read()).toEqual({ value: "hi", done: false });
+  await expect(reader.read()).rejects.toBeInstanceOf(TypeError);
+});
+
 // TextDecoder.prototype.decode no longer reaches it.
 test("TextDecoderStream does not call a patched TextDecoder.prototype.decode", async () => {
   const original = TextDecoder.prototype.decode;

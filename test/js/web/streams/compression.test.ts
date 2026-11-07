@@ -1239,16 +1239,19 @@ describe("bounded output per input chunk", () => {
     },
   );
 
-  // A chunk can hold the end of the compressed stream and then trailing junk.
-  // The output decoded ahead of the junk is delivered, and then the TypeError is
-  // thrown, in the same transform call: the spec's "decompress and enqueue a
+  // A step of the coder can decode output and then fail: its chunk holds the end
+  // of the stream and then trailing junk, or a checksum that does not match, or
+  // corrupt data. The output is delivered, and then the TypeError is thrown, in
+  // the same transform call. For junk, the spec's "decompress and enqueue a
   // chunk" enqueues before it throws, and WPT
   // compression/decompression-extra-input.any.js reads the output first, then
-  // expects the rejection. The write fails at once. The readable fails once the
-  // reader has taken that output: an error discards whatever a readable still
-  // has queued, and the output is queued whenever no read() is pending. For
-  // gzip, bytes after a member are junk unless they start another member (0x1f).
-  describe("output decoded ahead of trailing junk in the same chunk is delivered first", () => {
+  // expects the rejection. For a data error, Node.js and Chromium hand out what
+  // they decoded before it. The write fails at once. The readable fails once the
+  // reader has taken that output: a native transform decodes one chunk ahead of
+  // its reader, so the output is queued whenever no read() is pending, and an
+  // error on a readable discards its queue. For gzip, bytes after a member are
+  // junk unless they start another member (0x1f).
+  describe("output decoded before an error is delivered ahead of the error", () => {
     const junk = Buffer.alloc(8);
     const trailingJunk = { name: "TypeError", code: "ERR_TRAILING_JUNK_AFTER_STREAM_END" };
 
@@ -1529,35 +1532,123 @@ describe("bounded output per input chunk", () => {
       );
     });
 
-    // Only trailing junk delivers first. A data error throws without the step's
-    // output, which has not passed the format's check. The checksum is the last
-    // field of each format, except for gzip, whose length field follows it.
-    test.each([
-      ["deflate", "adler32", 1, "inflate failed", zlib.deflateSync],
-      ["gzip", "crc32", 8, "inflate failed", zlib.gzipSync],
+    // A data error is reported like junk. zlib has written all of the data when it
+    // meets a wrong checksum or a bad block. libzstd checks the checksum before it
+    // writes the last block of the frame, so the blocks before that one arrive.
+    const text = Buffer.from("a made-up line of text\n".repeat(1600));
+    const flipped = (bytes: Uint8Array, fromEnd: number) => {
+      const copy = Buffer.from(bytes);
+      copy[copy.byteLength - fromEnd] ^= 0xff;
+      return copy;
+    };
+    const inflateFailed = { name: "TypeError", message: "inflate failed" };
+    // format, what is wrong, the input, the plain data, how much of it must arrive, the error
+    const dataErrors = [
+      ["deflate", "a wrong adler32", () => flipped(zlib.deflateSync(text), 1), text, text.byteLength, inflateFailed],
+      ["gzip", "a wrong crc32", () => flipped(zlib.gzipSync(text), 8), text, text.byteLength, inflateFailed],
+      // The length is the last field of a gzip member.
+      ["gzip", "a wrong length", () => flipped(zlib.gzipSync(text), 3), text, text.byteLength, inflateFailed],
+      [
+        "deflate-raw",
+        "a block of a reserved type behind the data",
+        () =>
+          Buffer.concat([
+            zlib.deflateRawSync(text, { finishFlush: zlib.constants.Z_SYNC_FLUSH }),
+            Buffer.from([0x07]),
+          ]),
+        text,
+        text.byteLength,
+        inflateFailed,
+      ],
+      // The expansion takes several steps, and the last one fails.
+      [
+        "gzip",
+        "a wrong crc32 behind an expansion of several steps",
+        () => flipped(bombs.gzip(expanded.subarray(0, 300_000)), 8),
+        expanded.subarray(0, 300_000),
+        300_000,
+        inflateFailed,
+      ],
       [
         "zstd",
-        "xxh64",
-        1,
-        "zstd decode failed",
-        (plain: Buffer) => zlib.zstdCompressSync(plain, { params: { [zlib.constants.ZSTD_c_checksumFlag]: 1 } }),
+        "a wrong checksum behind more than one block",
+        () =>
+          flipped(
+            zlib.zstdCompressSync(expanded.subarray(0, 300_000), {
+              params: { [zlib.constants.ZSTD_c_checksumFlag]: 1 },
+            }),
+            1,
+          ),
+        expanded.subarray(0, 300_000),
+        128 * 1024,
+        { name: "TypeError", message: "zstd decode failed" },
       ],
-    ] as const)(
-      "DecompressionStream(%s): a chunk that fails its %s delivers none of its output",
-      async (format, _, fromEnd, message, compress) => {
-        const corrupt = Buffer.from(compress(Buffer.alloc(40 * 1024, "abcdefghij")));
-        corrupt[corrupt.byteLength - fromEnd] ^= 0xff;
+    ] as const;
+
+    function expectDecoded(output: Buffer, plain: Buffer, atLeast: number) {
+      expect(output.byteLength).toBeGreaterThanOrEqual(atLeast);
+      expect(output.equals(plain.subarray(0, output.byteLength))).toBe(true);
+    }
+
+    test.each(dataErrors)("DecompressionStream(%s): %s", async (format, _, makeInput, plain, atLeast, failure) => {
+      const ds = new DecompressionStream(format);
+      const writer = ds.writable.getWriter();
+      writer.write(makeInput()).catch(() => {});
+      writer.close().catch(() => {});
+
+      const { output, error } = await consumers["for await"](ds.readable);
+      expectDecoded(output, plain, atLeast);
+      expect(error).toMatchObject(failure);
+    });
+
+    test.each(dataErrors)(
+      "DecompressionStream(%s): %s, with nobody reading until the write has failed",
+      async (format, _, makeInput, plain, atLeast, failure) => {
         const ds = new DecompressionStream(format);
         const writer = ds.writable.getWriter();
-        writer.write(corrupt).catch(() => {});
-        writer.close().catch(() => {});
+        const written = rejection(writer.write(makeInput()));
+        // A chunk of one step fails its write with nobody reading. A longer one waits for the reader.
+        if (plain.byteLength <= kDefaultHighWaterMark) expect(await written).toMatchObject(failure);
 
         const { output, error } = await readUntilError(ds.readable);
-        expect(output.byteLength).toBe(0);
-        expect(error).toMatchObject({ name: "TypeError", message });
-        expect(error).not.toHaveProperty("code");
+        expectDecoded(output, plain, atLeast);
+        expect(error).toMatchObject(failure);
+        expect(await written).toBe(error);
       },
     );
+
+    test("DecompressionStream(gzip): a wrong crc32 at the end of a >128 KiB chunk (thread-pool path)", async () => {
+      const plain = randomBytes(200 * 1024);
+      const corrupt = flipped(zlib.gzipSync(plain), 8);
+      expect(corrupt.byteLength).toBeGreaterThan(128 * 1024);
+      const ds = new DecompressionStream("gzip");
+      const writer = ds.writable.getWriter();
+      expect(await rejection(writer.write(corrupt))).toMatchObject(inflateFailed);
+
+      const { output, error } = await readUntilError(ds.readable);
+      expect(output.equals(plain)).toBe(true);
+      expect(error).toMatchObject(inflateFailed);
+    });
+
+    // Input that ends early fails at close(). The close algorithm does not wait for
+    // the reader, so what the last write decoded is still queued then. gzip and
+    // deflate lose only a part of their trailer here, so all of the data was decoded.
+    test.each([
+      ["gzip", text.byteLength],
+      ["deflate", text.byteLength],
+      ["deflate-raw", 1],
+      ["brotli", 1],
+    ] as const)("DecompressionStream(%s): input that ends early, read after close() has failed", async (format, atLeast) => {
+      const ds = new DecompressionStream(format);
+      const writer = ds.writable.getWriter();
+      await writer.write(bombs[format](text).subarray(0, -4));
+      const endedEarly = { name: "TypeError", message: "unexpected end of file" };
+      expect(await rejection(writer.close())).toMatchObject(endedEarly);
+
+      const { output, error } = await readUntilError(ds.readable);
+      expectDecoded(output, text, atLeast);
+      expect(error).toMatchObject(endedEarly);
+    });
 
     // The junk rule must not catch a real next gzip member.
     test.each(["the same chunk", "the next chunk"])("gzip: a second member in %s still decodes", async where => {
@@ -1590,6 +1681,20 @@ describe("bounded output per input chunk", () => {
 
       expect(await rejection(written)).toMatchObject(trailingJunk);
       expect(Buffer.from(await Bun.file(file).bytes()).equals(plain)).toBe(true);
+    });
+
+    test("native sink: the file gets what was decoded before a wrong checksum, then the write rejects", async () => {
+      using dir = tempDir("decompression-checksum-sink", {});
+      const file = path.join(String(dir), "out.txt");
+      const ds = new DecompressionStream("deflate");
+      const writer = ds.writable.getWriter();
+      const written = Bun.write(file, new Response(ds.readable));
+      expect(ds.readable.locked).toBe(true);
+      writer.write(flipped(zlib.deflateSync(text), 1)).catch(() => {});
+      writer.close().catch(() => {});
+
+      expect(await rejection(written)).toMatchObject(inflateFailed);
+      expect(Buffer.from(await Bun.file(file).bytes()).equals(text)).toBe(true);
     });
   });
 });

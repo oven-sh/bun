@@ -62,6 +62,8 @@ public:
     bool m_asyncCodecInFlight : 1 { false };
     // The chunk behind m_codecPromise runs its steps on the thread pool.
     bool m_codecChunkOffThread : 1 { false };
+    // Native transforms: the readable highWaterMark is 1, so a chunk is transformed before a read asks for it (transformStreamErrorReadable).
+    bool m_readsAhead : 1 { false };
 
     // Native byte-producing subclasses only: when `readStreamIntoSink` attaches a
     // native sink's controller to this transform, the transform arms write coder

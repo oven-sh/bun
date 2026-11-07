@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot } from "harness";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
@@ -1098,8 +1098,9 @@ test("removes decorated declare and abstract fields from a class expression", as
 });
 
 test("lowering many decorated instance fields into a large constructor body stays linear", async () => {
-  // Hold N fixed; compare M=100 vs M=50000. If the splice-after-super() were O(M*N)
-  // instead of O(M+N), tLarge/tSmall would be ~5x (debug) / ~90x (release) here, not ~2x.
+  // Hold N fixed; compare M=100 vs M=50000. tLarge/tSmall is about 1.6 on every build.
+  // If the splice-after-super() were O(M*N) instead of O(M+N), it would be 3.3 to 3.9
+  // on a debug build, 17 to 29 on a release ASAN build and 29 to 74 on a release build.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1144,5 +1145,7 @@ test("lowering many decorated instance fields into a large constructor body stay
     exitCode: 0,
   });
   const { tSmall, tLarge } = JSON.parse(stdout);
-  expect(tLarge).toBeLessThan(tSmall * 3);
+  // One wall-clock sample of each, beside the other test files of a CI batch. With nothing
+  // wrong, the ratio has reached 6.7 there on a release build and 3.2 on the ASAN build.
+  expect(tLarge).toBeLessThan(tSmall * (isDebug ? 3 : isASAN ? 6 : 10));
 }, 90_000);

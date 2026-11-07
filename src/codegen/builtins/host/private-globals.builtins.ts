@@ -29,12 +29,17 @@ const asksCellForItsClass = {
 } satisfies b.FunctionField;
 
 // ErrorCode.cpp: an error with a code is an instance of the kind of error the code stands for, with an object of its own for each code in front of the prototype of that kind.
-// The error has `code` itself. That object has `name`, and `toString` unless ErrorCode.ts makes the row with plain(). An error whose name is not the name of its kind has `name` itself too.
+// The error has `code` itself. That object has `name`, and the `name [code]: message` toString unless ErrorCode.ts makes the row with plain(): then the error inherits Error.prototype.toString.
+// An error whose name is not the name of its kind has `name` itself too.
 const kindsOfErrorsWithCode = ["Error", "TypeError", "RangeError", "SyntaxError", "URIError"];
 const [firstKind, ...otherKinds] = kindsOfErrorsWithCode.map(kind => b.instance(kind));
 const newErrorWithCode = b.union(firstKind, ...otherKinds).unaliased;
 const printsErrorWithCode = b.builtin("%NativeFunctions%.ErrorCodeCppNodeError_proto_toString");
-const membersOfErrorWithCode = { name: b.string, code: b.string, toString: printsErrorWithCode };
+const membersOfErrorWithCode = {
+  name: b.string,
+  code: b.string,
+  toString: b.union(printsErrorWithCode, b.builtin("Error.prototype.toString")),
+};
 
 // The message reads constructor.name of a value, converts it to a string, or prints it the way console.log does.
 const formattedInMessage = [b.printedByFormatter("constructor")];

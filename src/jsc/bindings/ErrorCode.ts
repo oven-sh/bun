@@ -15,7 +15,8 @@ type ErrorCodeMapping = Array<
 /** The codes of the rows made with `plain()`. */
 export const plainErrorCodes = new Set<string>();
 
-// A row whose error inherits Error.prototype.toString when Node throws it. test/js/node/errors/error-code-toString-fixture.cjs has a producer for each marked row, and runs in Node and in Bun.
+// A row whose error inherits Error.prototype.toString when Node throws it: Node makes it in native code only, with no class of its own.
+// test/js/node/errors/error-code-toString-fixture.cjs has a producer for each marked row, and runs in Node and in Bun.
 function plain(...row: ErrorCodeMapping[number]): ErrorCodeMapping[number] {
   plainErrorCodes.add(row[0]);
   return row;
@@ -64,13 +65,13 @@ const errors: ErrorCodeMapping = [
   plain("ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE", Error),
   ["ERR_CRYPTO_OPERATION_FAILED", Error],
   ["ERR_CRYPTO_SIGN_KEY_REQUIRED", Error],
-  ["ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH", RangeError],
+  plain("ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH", RangeError),
   plain("ERR_CRYPTO_UNKNOWN_CIPHER", Error),
   plain("ERR_CRYPTO_UNKNOWN_DH_GROUP", Error),
   plain("ERR_CRYPTO_UNSUPPORTED_OPERATION", Error),
   ["ERR_DIR_CLOSED", Error],
   plain("ERR_DLOPEN_DISABLED", Error),
-  ["ERR_DLOPEN_FAILED", Error],
+  plain("ERR_DLOPEN_FAILED", Error),
   ["ERR_DNS_SET_SERVERS_FAILED", Error],
   ["ERR_ENCODING_INVALID_ENCODED_DATA", TypeError],
   ["ERR_ENCODING_NOT_SUPPORTED", RangeError],
@@ -241,7 +242,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_STREAM_UNSHIFT_AFTER_END_EVENT", Error],
   ["ERR_STREAM_WRAP", Error],
   ["ERR_STREAM_WRITE_AFTER_END", Error],
-  ["ERR_STRING_TOO_LONG", Error],
+  // Its producer needs a buffer of 2 GiB (WTF::String::MaxLength): the fixture has none for it.
+  plain("ERR_STRING_TOO_LONG", Error),
   ["ERR_TLS_CERT_ALTNAME_FORMAT", SyntaxError],
   ["ERR_TLS_CERT_ALTNAME_INVALID", Error],
   ["ERR_TLS_HANDSHAKE_TIMEOUT", Error],

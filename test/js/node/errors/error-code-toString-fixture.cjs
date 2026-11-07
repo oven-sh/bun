@@ -2,6 +2,7 @@
 // toString() that every error inherits, not with the `name [code]: message` one of its NodeError classes.
 // Prints one line for what each producer throws. Node prints the same lines as Bun:
 //   node --no-addons --unhandled-rejections=throw --experimental-vm-modules --no-warnings error-code-toString-fixture.cjs
+const { spawnSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
 const tls = require("node:tls");
@@ -62,12 +63,15 @@ const producers = {
   ERR_CRYPTO_JWK_UNSUPPORTED_CURVE: () =>
     crypto.generateKeyPairSync("ec", { namedCurve: "secp224r1" }).publicKey.export({ format: "jwk" }),
   ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE: () => crypto.createPublicKey(dsaPublicKey).export({ format: "jwk" }),
+  ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH: () => crypto.timingSafeEqual(Buffer.alloc(1), Buffer.alloc(2)),
   ERR_CRYPTO_UNKNOWN_CIPHER: () => crypto.createCipheriv("nope", Buffer.alloc(32), Buffer.alloc(16)),
   ERR_CRYPTO_UNKNOWN_DH_GROUP: () => crypto.getDiffieHellman("nope"),
   // An Ed25519 key signs in one call only.
   ERR_CRYPTO_UNSUPPORTED_OPERATION: () =>
     crypto.createSign("sha256").update("data").sign(crypto.generateKeyPairSync("ed25519").privateKey),
   ERR_DLOPEN_DISABLED: () => process.dlopen({ exports: {} }, "/nonexistent/addon.node"),
+  // This process runs with --no-addons. A child without the flag gets to the load.
+  ERR_DLOPEN_FAILED: () => lineOfChild(`process.dlopen({ exports: {} }, "/nonexistent/addon.node")`),
   ERR_INVALID_OBJECT_DEFINE_PROPERTY: () => Object.defineProperty(process.env, "ACCESSOR", { get() {} }),
   ERR_LOAD_SQLITE_EXTENSION: () =>
     new DatabaseSync(":memory:", { allowExtension: true }).loadExtension("/nonexistent/extension"),
@@ -94,22 +98,33 @@ const producers = {
     zlib.createBrotliCompress({ params: { [zlib.constants.BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING]: 42 } }),
 };
 
+function lineOf(err) {
+  const string = String(err);
+  return JSON.stringify({
+    code: err.code,
+    name: err.name,
+    string: string === `${err.name}: ${err.message}` ? "name: message" : string,
+    inheritsToString: err.toString === Error.prototype.toString,
+    hasOwnToString: Object.hasOwn(err, "toString"),
+  });
+}
+
+// The line for what `source` throws in a child of this runtime that runs with no flags.
+function lineOfChild(source) {
+  const script = `${lineOf}\ntry { ${source} } catch (err) { process.stdout.write(lineOf(err)); }`;
+  const { stdout, stderr, status } = spawnSync(process.execPath, ["-e", script], { encoding: "utf8" });
+  if (status !== 0 || stdout === "") throw new Error(`the child exited with ${status}: ${stderr}`);
+  return stdout;
+}
+
 (async () => {
   for (const [row, produce] of Object.entries(producers)) {
+    let line;
     try {
-      await produce();
-      console.log(`${row}: nothing thrown`);
+      line = await produce();
     } catch (err) {
-      const string = String(err);
-      console.log(
-        JSON.stringify({
-          code: err.code,
-          name: err.name,
-          string: string === `${err.name}: ${err.message}` ? "name: message" : string,
-          inheritsToString: err.toString === Error.prototype.toString,
-          hasOwnToString: Object.hasOwn(err, "toString"),
-        }),
-      );
+      line = lineOf(err);
     }
+    console.log(typeof line === "string" ? line : `${row}: nothing thrown`);
   }
 })();

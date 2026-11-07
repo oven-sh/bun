@@ -1,3 +1,4 @@
+use core::num::NonZeroU32;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
@@ -152,6 +153,9 @@ pub(crate) struct TestRunner<'a> {
 
     /// Without `--isolate`: the last file's DOM is still on `globalThis`. See `left` in environment.ts.
     pub(crate) environment_is_left: bool,
+
+    /// Every `test()` and `describe()` call finds its line, for a reader after the call: JUnit, or a late `TestReporter.enable`.
+    pub(crate) finds_call_sites: bool,
 
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
@@ -1119,11 +1123,28 @@ pub(crate) fn format_vitest_title(global: &JSGlobalObject, template: &[u8], item
     Ok(title)
 }
 
-pub(crate) fn capture_test_line_number(global_this: &JSGlobalObject) -> u32 {
-    if let Some(runner) = Jest::runner() {
-        if runner.test_options.reporters.junit {
-            return bun_jsc::cpp::JSC__JSGlobalObject__getCallerLineNumber(global_this);
+/// The line of the running `test()` or `describe()` call in the test file, looked up at most once and only for a reader.
+pub(crate) struct CallSiteLine(Option<Option<NonZeroU32>>);
+
+impl CallSiteLine {
+    pub(crate) fn of_running_call(global: &JSGlobalObject, file: &bun_test::BunTest) -> Self {
+        match Jest::runner() {
+            Some(runner) if runner.finds_call_sites => Self(Some(Self::look(global, file))),
+            _ => Self(None),
         }
     }
-    0
+
+    pub(crate) fn find(&mut self, global: &JSGlobalObject, file: &bun_test::BunTest) -> Option<NonZeroU32> {
+        *self.0.get_or_insert_with(|| Self::look(global, file))
+    }
+
+    /// `None` if nothing looked for the line, or if nothing in the test file leads to the call.
+    pub(crate) fn get(&self) -> Option<NonZeroU32> {
+        self.0.flatten()
+    }
+
+    /// A `describe` callback of another module, or one that ends in a tail call, has no frame of the test file: use its block's line.
+    fn look(global: &JSGlobalObject, file: &bun_test::BunTest) -> Option<NonZeroU32> {
+        global.get_caller_line_in_file(file.file_url()).or_else(|| file.collection.active_scope().base.line_no)
+    }
 }

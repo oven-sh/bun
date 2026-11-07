@@ -912,6 +912,135 @@ describe("junit reporter", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("reports the line of the call in the test file", async () => {
+    await using tmpDir = tempDir("junit-line", {
+      "package.json": "{}",
+      "helper.js": `import { test } from "bun:test";
+
+export function defineTest(name) {
+  test(name, () => {});
+}
+`,
+      "a.test.js": `import { describe, test } from "bun:test";
+import { defineTest } from "./helper.js";
+
+describe("block", () => {
+  const named = "named by a constant";
+
+  test(named, () => {});
+  test( // on several lines
+    "call on several lines",
+    () => {},
+  );
+  test.each\`
+    n
+    \${1}
+  \`("tagged $n", () => {});
+  defineTest("from helper");
+});
+`,
+      "required.cjs": `const { test } = require("bun:test");
+
+test("in a required module", () => {});
+`,
+      "b.test.cjs": `const { test } = require("bun:test");
+
+test("in the test file", () => {});
+require("./required.cjs");
+`,
+      "imported.js": `import { test } from "bun:test";
+
+test("in an imported module", () => {});
+`,
+      "c.test.js": `import "./imported.js";
+`,
+    });
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const testcases = (await file(junitPath).text()).matchAll(
+      /<testcase name="([^"]*)"[^>]* file="([^"]*)"(?: line="(\d+)")?/g,
+    );
+    const places = Array.from(testcases, ([, name, path, line]) => [name, line ? `${path}:${line}` : path]);
+    expect(Object.fromEntries(places)).toEqual({
+      // Not the line of the constant.
+      "named by a constant": "a.test.js:7",
+      "call on several lines": "a.test.js:8",
+      // Not a row of the table.
+      "tagged 1": "a.test.js:15",
+      // The file is a.test.js, so the line is not that of test() in helper.js.
+      "from helper": "a.test.js:16",
+      "in the test file": "b.test.cjs:3",
+      "in a required module": "b.test.cjs:4",
+      // No call in c.test.js leads to it, and it is in no describe block. The line of imported.js is not written.
+      "in an imported module": "c.test.js",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("reports a line of the test file when it is a bundle with a source map", async () => {
+    await using tmpDir = tempDir("junit-line-bundle", {
+      "package.json": "{}",
+      "src/a.test.ts": `import { test } from "bun:test";
+
+type NotInTheBundle = {
+  a: number;
+  b: string;
+};
+
+test("first", () => {});
+
+interface AlsoNotInTheBundle {
+  c: boolean;
+}
+
+test("second", () => {});
+`,
+    });
+    await using build = spawn(
+      [bunExe(), "build", "--target=bun", "--sourcemap=linked", "--outdir=dist", "src/a.test.ts"],
+      {
+        cwd: tmpDir,
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [buildStdout, buildStderr, buildExitCode] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
+    expect(buildStdout + buildStderr).toContain("a.test.js.map");
+    expect(buildExitCode).toBe(0);
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn(
+      [bunExe(), "test", "./dist/a.test.js", "--reporter=junit", "--reporter-outfile", junitPath],
+      {
+        cwd: tmpDir,
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const bundle = (await file(join(tmpDir, "dist", "a.test.js")).text()).split("\n");
+    const testcases = (await file(junitPath).text()).matchAll(/<testcase name="([^"]*)"[^>]* line="(\d+)"/g);
+    expect(Object.fromEntries(Array.from(testcases, ([, name, line]) => [name, Number(line)]))).toEqual({
+      first: bundle.findIndex(line => line.includes(`test("first"`)) + 1,
+      second: bundle.findIndex(line => line.includes(`test("second"`)) + 1,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("prints a stack frame whose source is not a file path as-is in <failure>", async () => {
     // Longer than a path buffer on every platform (98302 bytes on Windows).
     const padding = 100_000;

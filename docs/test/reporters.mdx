@@ -105,6 +105,15 @@ The report then has one `<testsuite>` per file. Each test's name is prefixed wit
 </testsuite>
 ```
 
+#### Line Numbers in JUnit Reports
+
+The `line` of a `<testcase>`, and of the `<testsuite>` of a `describe` block, is the line of the call in the test file that registered it:
+
+- A test that a helper in another module registers has the line of the call to the helper.
+- A test that no call in the test file leads to has the line of the `describe` block it is in. An example is a test in a `describe` callback that another module defines.
+
+The attribute is absent when the test is in no `describe` block and no call in the test file leads to it, such as a test that an imported module registers while it loads.
+
 #### Retried tests
 
 A test with [`retry`](/test/writing-tests#retries-and-repeats) is one `<testcase>`, with its final result. The attempts before the last one are in the elements that Maven Surefire uses, which CI tools read to find flaky tests:
@@ -168,3 +177,7 @@ Custom reporters can listen for these events:
 - `TestReporter.end`: Emitted when a test completes
 - `Console.messageAdded`: Emitted when console output occurs during a test
 - `LifecycleReporter.error`: Emitted when an error or exception occurs
+
+A client gets every event of a run if it starts `bun test` with `--inspect-wait` and sends `TestReporter.enable` before `Inspector.initialized`. A client that enables the domain later gets `found` for the tests of the file that is running, and nothing for the files that have ended.
+
+`TestReporter.found` has the `url` of the test file and a `line`. They are the `file` and `line` of the [JUnit report](#line-numbers-in-junit-reports), not the place of the test's callback. `line` is `0` where the report has no `line`. It is also `0` for a test that was registered before `TestReporter.enable` arrived, if the process wasn't started with `--inspect`, `--inspect-wait`, `--inspect-brk`, `BUN_INSPECT` or `--reporter=junit`. An example is a client that connects through `BUN_INSPECT_CONNECT_TO`.

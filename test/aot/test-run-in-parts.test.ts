@@ -59,12 +59,19 @@ test("a JavaScript test file runs beside a tsconfig.json that does not allow Jav
   expect(exitCode).toBe(0);
 }, 120_000);
 
-test("the junit report of a run in parts has every test", async () => {
-  using dir = tempDir("aot-test-run-in-parts-junit", files);
+test("the junit report of a run in parts has every test, at its line in the test file", async () => {
+  using dir = tempDir("aot-test-run-in-parts-junit", {
+    ...files,
+    "register.ts": `import { test } from "bun:test";\n\nexport function register(name: string) {\n  test(name, () => {});\n}\n`,
+    "h.test.ts": `import { register } from "./register";\nregister("h");\n`,
+  });
   const junit = ["--reporter=junit", "--reporter-outfile=out.xml"];
   await runTests(String(dir), twoFiles, "--aot", ...junit);
   const report = readFileSync(join(String(dir), "out.xml"), "utf8");
   for (const name of ["a", "b", "c", "d", "e", "f", "e fails", "d skipped"]) {
     expect(report).toContain(`name="${name}"`);
   }
+  // `passing()` calls test() on its third line. Another module calls it for "h", from the second line of h.test.ts.
+  const line = (name: string) => report.match(new RegExp(`<testcase name="${name}"[^>]* line="(\\d+)"`))?.[1];
+  expect({ a: line("a"), h: line("h") }).toEqual({ a: "3", h: "2" });
 }, 120_000);

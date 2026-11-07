@@ -4,6 +4,7 @@
 //! from stdin, runs each file under isolation, and streams results to fd 3).
 
 use core::ffi::c_char;
+use core::num::NonZeroU32;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
@@ -1201,12 +1202,12 @@ fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {
     wf.u32(t.status as u32);
     wf.u32(t.assertions);
     wf.u64(t.elapsed_ns);
-    wf.u32(t.line_number);
+    wf.u32(t.line_number.map_or(0, NonZeroU32::get));
     wf.str(t.name);
     wf.u32(u32::try_from(t.scopes.len()).expect("int cast"));
     for &(name, line) in &t.scopes {
         wf.str(name);
-        wf.u32(line);
+        wf.u32(line.map_or(0, NonZeroU32::get));
     }
     // Earlier attempts' failures first, then the last attempt's if it failed.
     wf.u32(u32::from(t.failure.is_some()));
@@ -1230,7 +1231,7 @@ pub(crate) fn decode_test_case<'a>(
         Result::from_repr(u8::try_from(rd.u32()).ok()?).filter(|s| *s != Result::Pending)?;
     let assertions = rd.u32();
     let elapsed_ns = rd.u64();
-    let line_number = rd.u32();
+    let line_number = NonZeroU32::new(rd.u32());
     let name = rd.str();
     let n = rd.u32() as usize;
     if n > 64 {
@@ -1238,7 +1239,7 @@ pub(crate) fn decode_test_case<'a>(
     }
     let mut scopes = Vec::with_capacity(n);
     for _ in 0..n {
-        scopes.push((rd.str(), rd.u32()));
+        scopes.push((rd.str(), NonZeroU32::new(rd.u32())));
     }
     let has_failure = rd.u32() != 0;
     let earlier = rd.u32() as usize;

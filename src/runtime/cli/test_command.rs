@@ -1,3 +1,5 @@
+use core::num::NonZeroU32;
+
 use bun_io::Write as _;
 
 use crate::cli::Command;
@@ -2138,12 +2140,12 @@ pub(crate) struct TestCaseReport<'a> {
     /// Relative to the project root.
     pub file: &'a [u8],
     /// Enclosing named `describe` blocks, outermost first: (name, line).
-    pub scopes: Vec<(&'a [u8], u32)>,
+    pub scopes: Vec<(&'a [u8], Option<NonZeroU32>)>,
     pub name: &'a [u8],
     pub status: bun_test::Execution::Result,
     pub assertions: u32,
     pub elapsed_ns: u64,
-    pub line_number: u32,
+    pub line_number: Option<NonZeroU32>,
     pub failure: Option<TestFailure>,
     /// Failures from earlier attempts of a retried test, oldest first.
     pub earlier_failures: Vec<TestFailure>,
@@ -2553,14 +2555,14 @@ impl JunitReporter {
     }
 
     pub(crate) fn begin_test_suite(&mut self, name: &[u8]) -> crate::Result<()> {
-        self.begin_test_suite_with_line(name, 0, true)
+        self.begin_test_suite_with_line(name, None, true)
     }
 
     #[optimize(size)]
     pub(crate) fn begin_test_suite_with_line(
         &mut self,
         name: &[u8],
-        line_number: u32,
+        line_number: Option<NonZeroU32>,
         is_file_suite: bool,
     ) -> crate::Result<()> {
         self.start_document();
@@ -2583,7 +2585,7 @@ impl JunitReporter {
             self.contents.extend_from_slice(b"\"");
         }
 
-        if line_number > 0 {
+        if let Some(line_number) = line_number {
             // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
             let _ = write!(&mut self.contents, " line=\"{}\"", line_number);
         }
@@ -2851,7 +2853,7 @@ impl JunitReporter {
         escape_xml(file, &mut self.contents)?;
         self.contents.extend_from_slice(b"\"");
 
-        if line_number > 0 {
+        if let Some(line_number) = line_number {
             let _ = write!(&mut self.contents, " line=\"{}\"", line_number);
         }
 
@@ -3332,7 +3334,7 @@ impl CommandLineReporter {
         let file = junit_file_name(file);
 
         // Innermost first while walking up; reversed below.
-        let mut scopes: Vec<(&'a [u8], u32)> = Vec::new();
+        let mut scopes: Vec<(&'a [u8], Option<NonZeroU32>)> = Vec::new();
         let mut parent = test_entry.base.parent.map(|p| p.cast_const());
         while let Some(scope) = parent {
             if scopes.len() == 64 {
@@ -3372,7 +3374,7 @@ impl CommandLineReporter {
             status: bun_test::Execution::Result::Fail,
             assertions: 0,
             elapsed_ns: 0,
-            line_number: 0,
+            line_number: None,
             failure: Some(failure),
             earlier_failures: Vec::new(),
         };
@@ -4073,6 +4075,7 @@ impl TestCommand {
                 summary: Summary::default(),
                 node_test_used: false,
                 environment_is_left: false,
+                finds_call_sites: false,
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
@@ -4138,6 +4141,12 @@ impl TestCommand {
                 ..Default::default()
             })?
         };
+        // An editor sets `BUN_INSPECT_CONNECT_TO` for every process that it starts, test client or not.
+        reporter.jest.finds_call_sites = ctx.test_options.reporters.junit
+            || vm
+                .debugger
+                .as_ref()
+                .is_some_and(|debugger| debugger.mode != jsc::debugger::Mode::Connect);
         vm.argv = core::mem::take(&mut ctx.passthrough);
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
         vm.preload.clone_from(&ctx.preloads);

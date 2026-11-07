@@ -1921,12 +1921,7 @@ fn retroactively_report_discovered_tests(
         Phase::Done => return next_test_id,
     }
 
-    // Get the file path for source location info.
-    use crate::test_runner::jest::FileColumns as _;
-    let file_path = runner.files.items_source()[active_file.file_id as usize]
-        .path
-        .text();
-    let source_url = bun_core::StringView::from_bytes(file_path);
+    let source_url = active_file.file_url().clone();
 
     let mut max_id: i32 = next_test_id;
 
@@ -1954,7 +1949,7 @@ fn retroactively_report_discovered_tests(
                         TestType::Describe,
                         parent_id,
                         &source_url,
-                        describe.base.line_no as i32,
+                        describe.base.line_no,
                     );
                 }
                 let describe_id = describe.base.test_id_for_debugger;
@@ -1973,7 +1968,7 @@ fn retroactively_report_discovered_tests(
                         TestType::Test,
                         parent_id,
                         &source_url,
-                        test_entry.base.line_no as i32,
+                        test_entry.base.line_no,
                     );
                 }
             }

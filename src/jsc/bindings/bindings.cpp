@@ -7379,41 +7379,56 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] void Bun__JSValue__setPrototypeDirect(JSC::E
     return;
 }
 
-CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int JSC__JSGlobalObject__getCallerLineNumber(JSC::JSGlobalObject* globalObject)
+// The line of the innermost call that `file` makes on the stack, or 0 if no frame of `file` is on it.
+CPP_DECL unsigned int JSC__JSGlobalObject__getCallerLineInFile(JSC::JSGlobalObject* globalObject, const BunString* file)
 {
     auto& vm = JSC::getVM(globalObject);
+    String sourceURL = file->toWTFString(BunString::ZeroCopy);
     JSC::LineColumn lineColumn;
-    String sourceURL;
+    bool calleeEndsInTemplate = false;
 
     JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        if (Zig::isImplementationVisibilityPrivate(visitor))
+        if (Zig::isImplementationVisibilityPrivate(visitor) || !visitor->hasLineAndColumnInfo())
             return WTF::IterationStatus::Continue;
 
-        if (visitor->hasLineAndColumnInfo()) {
-            String currentSourceURL = Zig::sourceURL(visitor);
+        // Not Zig::sourceURL(): it prefers the `//# sourceURL=` comment of the debugger, which is not the path if the path is not ASCII.
+        auto* codeBlock = visitor->codeBlock();
+        auto* provider = codeBlock && codeBlock->ownerExecutable() ? codeBlock->source().provider() : nullptr;
+        if ((provider ? provider->sourceURL() : Zig::sourceURL(visitor)) != sourceURL)
+            return WTF::IterationStatus::Continue;
 
-            if (!currentSourceURL.startsWith("builtin://"_s) && !currentSourceURL.startsWith("node:"_s)) {
-                lineColumn = visitor->computeLineAndColumn();
-                sourceURL = currentSourceURL;
-                return WTF::IterationStatus::Done;
-            }
+        lineColumn = visitor->computeLineAndColumn();
+        if (provider && lineColumn.line) {
+            StringView text = provider->source();
+            unsigned parenthesis = provider->offsetForPosition(OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt(), OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt());
+            calleeEndsInTemplate = parenthesis && parenthesis <= text.length() && text[parenthesis - 1] == '`';
         }
-        return WTF::IterationStatus::Continue;
+        return WTF::IterationStatus::Done;
     });
 
-    if (!sourceURL.isEmpty() && lineColumn.line > 0) {
+    if (!lineColumn.line)
+        return 0;
+
+    auto lineOfColumn = [&](int column) -> unsigned {
         Bun::OwnedZigStackFrames remappedFrames(1);
         ZigStackFrame& remappedFrame = remappedFrames[0];
-        remappedFrame.position.line_zero_based = lineColumn.line - 1;
-        remappedFrame.position.column_zero_based = lineColumn.column;
+        remappedFrame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
+        remappedFrame.position.column_zero_based = column;
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
         remappedFrames.remap(Bun::vm(globalObject));
 
-        return remappedFrame.position.line_zero_based + 1;
-    }
+        // The source map of a bundle names the files that the bundle was made from. The caller pairs the line with `file`.
+        if (remappedFrame.source_url.toWTFString(BunString::ZeroCopy) != sourceURL)
+            return lineColumn.line;
 
-    return lineColumn.line;
+        return OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
+    };
+
+    // After the tagged template of a `test.each`, the mapping before the `(` is a row of the table and the next one is the first argument.
+    int parenthesis = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
+    unsigned line = lineOfColumn(parenthesis);
+    return calleeEndsInTemplate ? std::max(line, lineOfColumn(parenthesis + 1)) : line;
 }
 
 // REPL evaluation function - evaluates JavaScript code in the global scope

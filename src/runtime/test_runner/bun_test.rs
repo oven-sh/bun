@@ -1,4 +1,5 @@
 use core::fmt;
+use core::num::NonZeroU32;
 use core::ptr::NonNull;
 use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
@@ -553,7 +554,7 @@ impl BunTestRoot {
             only: Only::No,
             has_callback: false,
             test_id_for_debugger: 0,
-            line_no: 0,
+            line_no: None,
         });
         BunTestRoot {
             active_file: None,
@@ -576,7 +577,7 @@ impl BunTestRoot {
             only: Only::No,
             has_callback: false,
             test_id_for_debugger: 0,
-            line_no: 0,
+            line_no: None,
         });
     }
 
@@ -783,6 +784,8 @@ pub(crate) struct BunTest {
     /// Callback-less entry that runs last in the file. `defer_to_file_end` links its entries after it.
     file_end: Option<Box<ExecutionEntry>>,
     pub(crate) unclaimed: super::expect::expect_deferred::Unclaimed,
+    /// See `file_url`.
+    file_url: core::cell::OnceCell<bun_core::String>,
 
     pub(crate) phase: Phase,
     pub(crate) collection: Collection,
@@ -826,7 +829,16 @@ impl BunTest {
             is_loading: true,
             file_end: None,
             unclaimed: Default::default(),
+            file_url: core::cell::OnceCell::new(),
         }
+    }
+
+    /// The path of this file, as the one string that every lookup of a call site in it and every `TestReporter.found` of it shares.
+    pub(crate) fn file_url(&self) -> &bun_core::String {
+        self.file_url.get_or_init(|| {
+            let path = Jest::runner().map_or(&b""[..], |runner| runner.files.items_source()[self.file_id as usize].path.text);
+            bun_core::String::clone_utf8(path)
+        })
     }
 
     /// Must be called before the order is generated, or `file_end` never runs.
@@ -1993,7 +2005,7 @@ pub(crate) struct BaseScopeCfg {
     pub(crate) self_only: bool,
     pub(crate) self_shuffle: bool,
     pub(crate) test_id_for_debugger: i32,
-    pub(crate) line_no: u32,
+    pub(crate) line_no: Option<NonZeroU32>,
 }
 impl BaseScopeCfg {
     /// returns None if the other already has the value
@@ -2076,8 +2088,8 @@ pub(crate) struct BaseScope {
     pub(crate) has_callback: bool,
     /// this value is 0 unless the debugger is active and the scope has a debugger id
     pub(crate) test_id_for_debugger: i32,
-    /// only available if using junit reporter, otherwise 0
-    pub(crate) line_no: u32,
+    /// The line of the `test()` or `describe()` call in the test file. See `jest::CallSiteLine` for when it is known.
+    pub(crate) line_no: Option<NonZeroU32>,
 }
 impl BaseScope {
     pub(crate) fn init(

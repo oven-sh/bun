@@ -1514,7 +1514,7 @@ static JSArray* layersOfFake(Zig::GlobalObject* globalObject, JSObject* object, 
     SlotContent content = contentOf(globalObject, object, key);
     RETURN_IF_EXCEPTION(scope, nullptr);
     // Anything else is what useFakeTimers() read, or what an uninstalled fake that was left on the property stands for.
-    if (!PropertyLayers::spyOf(content) && !content.storage.inherits<GetterSetter>())
+    if (!PropertyLayers::spyOf(content) && !(content.storage && content.storage.inherits<GetterSetter>()))
         content.storage = original;
 
     JSValue stub;
@@ -1547,6 +1547,9 @@ static JSArray* layersOfFake(Zig::GlobalObject* globalObject, JSObject* object, 
 // A fake timer function is about to replace `owner[name]`. Returns the record it shares with a spy or stub there, or nothing.
 extern "C" JSC::EncodedJSValue JSMock__layersOfFake(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue fake, JSC::EncodedJSValue original, bool wasLayered, JSC::EncodedJSValue* encodedBase)
 {
+    // Only a spy that useFakeTimers() read from the property, or a stubbed global, can share it.
+    if (!wasLayered && !globalObject->mockModule.stubbedGlobals && !tryJSDynamicCast<JSMockFunction*>(JSValue::decode(original)))
+        return {};
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue base;

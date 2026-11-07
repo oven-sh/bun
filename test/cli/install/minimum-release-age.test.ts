@@ -873,6 +873,70 @@ describe("minimum-release-age", () => {
           return Response.json(packageData);
         }
 
+        // TEST PACKAGES: dependent-package and sibling-package. One release
+        // script publishes both, sibling-package a little after dependent-package.
+        // dependent-package@1.1.0 (6 days old) requires sibling-package@^1.1.0,
+        // whose only match is 1 day old.
+        if (url.pathname === "/dependent-package") {
+          return Response.json({
+            name: "dependent-package",
+            "dist-tags": { latest: "1.1.0" },
+            versions: {
+              "1.0.0": {
+                name: "dependent-package",
+                version: "1.0.0",
+                dependencies: { "sibling-package": "^1.0.0" },
+                dist: {
+                  tarball: `${mockRegistryUrl}/dependent-package/-/dependent-package-1.0.0.tgz`,
+                  integrity: "sha512-dependent1==",
+                },
+              },
+              "1.1.0": {
+                name: "dependent-package",
+                version: "1.1.0",
+                dependencies: { "sibling-package": "^1.1.0" },
+                dist: {
+                  tarball: `${mockRegistryUrl}/dependent-package/-/dependent-package-1.1.0.tgz`,
+                  integrity: "sha512-dependent2==",
+                },
+              },
+            },
+            time: {
+              "1.0.0": daysAgo(30),
+              "1.1.0": daysAgo(6),
+            },
+          });
+        }
+
+        if (url.pathname === "/sibling-package") {
+          return Response.json({
+            name: "sibling-package",
+            "dist-tags": { latest: "1.1.0" },
+            versions: {
+              "1.0.0": {
+                name: "sibling-package",
+                version: "1.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/sibling-package/-/sibling-package-1.0.0.tgz`,
+                  integrity: "sha512-sibling1==",
+                },
+              },
+              "1.1.0": {
+                name: "sibling-package",
+                version: "1.1.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/sibling-package/-/sibling-package-1.1.0.tgz`,
+                  integrity: "sha512-sibling2==",
+                },
+              },
+            },
+            time: {
+              "1.0.0": daysAgo(30),
+              "1.1.0": daysAgo(1),
+            },
+          });
+        }
+
         // TEST PACKAGE: many-versions-package (large version count, time entries
         // in reverse order relative to versions). Exercises the publish-time
         // index built during manifest parse.
@@ -2659,35 +2723,59 @@ describe("minimum-release-age", () => {
   });
 
   describe("transitive dependencies", () => {
-    test("transitive dependencies are not filtered by minimum-release-age", async () => {
-      // Only direct dependencies should be filtered, not transitive ones
-      // This ensures we don't break the dependency tree
+    test.concurrent("a transitive dependency is filtered by minimum-release-age", async () => {
       using dir = tempDir("transitive-deps", {
         "package.json": JSON.stringify({
-          dependencies: {
-            "regular-package": "*", // This will be filtered
-            // In a real scenario, regular-package might have its own dependencies
-            // that are newer than minimum-release-age, but they shouldn't be filtered
-          },
+          dependencies: { "dependent-package": "1.0.0" },
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
       });
 
-      const proc = Bun.spawn({
+      await using proc = Bun.spawn({
         cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
-
-      const exitCode = await proc.exited;
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("+ dependent-package@1.0.0");
       expect(exitCode).toBe(0);
 
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
-      // Direct dependency should be filtered
-      expect(lockfile).toContain("regular-package@2.1.0");
+      // dependent-package@1.0.0 requires sibling-package@^1.0.0. 1.1.0 is the
+      // newest match, but it is 1 day old, so the gate selects 1.0.0.
+      expect(lockfile).toContain('"sibling-package": ["sibling-package@1.0.0"');
     });
+
+    test.concurrent(
+      "a transitive dependency blocked by minimum-release-age names the package that requires it",
+      async () => {
+        using dir = tempDir("transitive-deps-blocked", {
+          "package.json": JSON.stringify({
+            dependencies: { "dependent-package": "^1.0.0" },
+          }),
+          ".npmrc": `registry=${mockRegistryUrl}`,
+        });
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // dependent-package@1.1.0 passes the gate on its own, but it requires
+        // sibling-package@^1.1.0, and every match is too recent.
+        expect(stderr.split("\n").filter(line => line.startsWith("error:"))).toEqual([
+          'error: No version matching "^1.1.0" found for specifier "sibling-package" (blocked by minimum-release-age: 432000 seconds)',
+          "error: sibling-package@^1.1.0 failed to resolve (declared by dependent-package@1.1.0)",
+        ]);
+        expect(exitCode).toBe(1);
+      },
+    );
   });
 
   describe("special dependencies", () => {

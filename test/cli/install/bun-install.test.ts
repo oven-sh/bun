@@ -12441,7 +12441,10 @@ describe.concurrent.each(namesTheInstallerOwns)("a dependency named %p", key => 
         installed: out.includes("installed"),
         exitCode,
       }).toEqual({
-        errors: [`error: invalid dependency name "${key}"`, `error: ${key}@npm:baz@0.0.3 failed to resolve`],
+        errors: [
+          `error: invalid dependency name "${key}"`,
+          `error: ${key}@npm:baz@0.0.3 failed to resolve${fromRegistry ? " (declared by bar@0.0.2)" : ""}`,
+        ],
         unpacked: false,
         otherInstalled: false,
         postinstall: false,
@@ -13891,7 +13894,7 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     const rejected = Object.entries(declaredTarballs(root));
     const expected = [
       ...rejected.flatMap(([name, spec]) => refusal(name, spec, declarer)),
-      ...rejected.map(([name, spec]) => `error: ${name}@${spec} failed to resolve`),
+      ...rejected.map(([name, spec]) => `error: ${name}@${spec} failed to resolve (declared by ${declarer})`),
     ];
     // The dependencies are reported in the declaring package's dependency order,
     // which differs between a registry manifest and a package.json.
@@ -14040,7 +14043,7 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
         const { err, exitCode } = await install(root);
         expect(diagnostics(err)).toEqual([
           ...refusal("inside", "file:./inside.tgz", "bar@0.0.2"),
-          "error: inside@file:./inside.tgz failed to resolve",
+          "error: inside@file:./inside.tgz failed to resolve (declared by bar@0.0.2)",
         ]);
         expect(await exists(join(root, "project", "node_modules"))).toBe(false);
         expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
@@ -14064,7 +14067,7 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
       const { err, exitCode } = await install(root);
       expect(diagnostics(err)).toEqual([
         refusal("inside", "file:./inside.tgz", "bar@0.0.2")[0],
-        "error: inside@file:./inside.tgz failed to resolve",
+        "error: inside@file:./inside.tgz failed to resolve (declared by bar@0.0.2)",
       ]);
       expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
       expect(exitCode).toBe(1);
@@ -14177,7 +14180,7 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     const { err, exitCode } = await install(root, "--lockfile-only");
     expect(diagnostics(err)).toEqual([
       ...refusal("inside", "file:./inside.tgz", "inner@inner"),
-      "error: inside@file:./inside.tgz failed to resolve",
+      "error: inside@file:./inside.tgz failed to resolve (declared by inner@inner)",
     ]);
     expect(await file(join(root, "project", "bun.lock")).text()).toBe(lockfile);
     expect(exitCode).toBe(1);
@@ -14526,7 +14529,7 @@ registry = "${ctx.registry_url}"
         // stderr also carries the progress lines of the registry fetch of `baz`.
         expect(err.split(/\r?\n/).filter(line => line.startsWith("error:"))).toEqual([
           'error: package.json not found for "file:../shared" dependency "shared"',
-          "error: shared@1.0.0 failed to resolve",
+          "error: shared@1.0.0 failed to resolve (declared by baz@0.0.3)",
         ]);
         expect(out).not.toContain("packages installed");
         expect(await exists(join(projectDir, "node_modules", "shared"))).toBe(false);
@@ -14974,7 +14977,7 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
     const refused = Object.entries(declaredLinks(root));
     const expected = [
       ...refused.map(([name, spec]) => refusal(name, spec, declarer)),
-      ...refused.map(([name, spec]) => `error: ${name}@${spec} failed to resolve`),
+      ...refused.map(([name, spec]) => `error: ${name}@${spec} failed to resolve (declared by ${declarer})`),
     ];
     // Reported in the declaring package's dependency order, which differs between
     // a registry manifest and a package.json.
@@ -15225,7 +15228,7 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
         const { err, exitCode } = await install(root, "--lockfile-only");
         expect(errorLines(err)).toEqual([
           refusal("outside", "link:../outside", "bar@0.0.2"),
-          "error: outside@0.0.1 failed to resolve",
+          "error: outside@0.0.1 failed to resolve (declared by bar@0.0.2)",
         ]);
         expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
         expect(exitCode).toBe(1);
@@ -15290,7 +15293,7 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
     const { err, exitCode } = await install(root, "--lockfile-only");
     expect(errorLines(err)).toEqual([
       refusal("outside", "link:../outside", "inner@inner"),
-      "error: outside@link:../outside failed to resolve",
+      "error: outside@link:../outside failed to resolve (declared by inner@inner)",
     ]);
     expect(await file(join(root, "project", "bun.lock")).text()).toBe(lockfile);
     expect(exitCode).toBe(1);
@@ -17640,7 +17643,7 @@ describe.concurrent.each(["hoisted", "isolated"])(
       const { stderr, exitCode } = await bunIn(cwd, ["install"]);
       expect(errors(stderr)).toEqual([
         `error: package.json not found for "file:../inner" dependency "inner"`,
-        "error: inner@file:../inner failed to resolve",
+        "error: inner@file:../inner failed to resolve (declared by outer@1.0.0)",
       ]);
       expect(outside(cwd)).toEqual([]);
       expect(await exists(join(cwd, "bun.lock"))).toBe(false);

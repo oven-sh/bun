@@ -1213,8 +1213,25 @@ void JSMockFunction::forEachIn(Zig::GlobalObject* globalObject, const Functor& a
 
 void JSMockFunction::restoreAll(Zig::GlobalObject* globalObject)
 {
-    // vi.restoreAllMocks() keeps a spy's calls and implementation.
-    forEachIn<List::Spies>(globalObject, [globalObject](JSMockFunction* spy) { spy->clearSpy(globalObject, !spy->isVitest); });
+    auto& vm = globalObject->vm();
+    // The properties whose newest spy is still installed, because restoring it threw. The buffer keeps their targets alive.
+    HashSet<std::pair<JSObject*, UniquedStringImpl*>> stillSpied;
+    MarkedArgumentBuffer stillSpiedTargets;
+    forEachIn<List::Spies>(globalObject, [&](JSMockFunction* spy) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        std::pair<JSObject*, UniquedStringImpl*> property { spy->m_spyTarget.get(), spy->m_spyIdentifier.impl() };
+        // An older spy of such a property waits too. The next restoreAllMocks() starts with the newest one again.
+        if (!stillSpied.isEmpty() && stillSpied.contains(property)) [[unlikely]] {
+            spy->enter(List::Spies);
+            return;
+        }
+        // vi.restoreAllMocks() keeps a spy's calls and implementation.
+        spy->clearSpy(globalObject, !spy->isVitest);
+        if (scope.exception() && (spy->m_lists & static_cast<uint8_t>(List::Spies))) [[unlikely]] {
+            stillSpiedTargets.append(property.first);
+            stillSpied.add(property);
+        }
+    });
 }
 
 void JSMockFunction::clearAll(Zig::GlobalObject* globalObject)

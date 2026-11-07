@@ -376,8 +376,6 @@ impl<'a> Stringifier<'a> {
                 self.builder.append_latin1(b".nan");
             } else if num == 0.0 && num.is_sign_negative() {
                 self.builder.append_latin1(b"-0");
-            } else if num == 0.0 && num.is_sign_positive() {
-                self.builder.append_latin1(b"+0");
             } else {
                 self.builder.append_double(num);
             }

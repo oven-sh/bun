@@ -451,6 +451,68 @@ describe("util", () => {
       invalidArgType("The \"foo\" argument must be of type object. Received type string ('string')"),
     );
   });
+  // Ported from the validateInteger block of node's test/parallel/test-validators.js (v26.3.0).
+  it("validateInteger, validateInt32 and validateUint32 accept and reject like Node", () => {
+    const { validateInteger, validateInt32, validateUint32 } = exposedInternals["internal/validators"];
+    const { MAX_SAFE_INTEGER, MIN_SAFE_INTEGER } = Number;
+    const outOfRange = expect.objectContaining({ code: "ERR_OUT_OF_RANGE", name: "RangeError" });
+    const invalidType = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" });
+
+    // validateInteger() defaults to validating safe integers.
+    validateInteger(MAX_SAFE_INTEGER, "foo");
+    validateInteger(MIN_SAFE_INTEGER, "foo");
+    expect(() => validateInteger(MAX_SAFE_INTEGER + 1, "foo")).toThrow(outOfRange);
+    expect(() => validateInteger(MIN_SAFE_INTEGER - 1, "foo")).toThrow(outOfRange);
+
+    // validateInteger() works with unsafe integers.
+    validateInteger(MAX_SAFE_INTEGER + 1, "foo", 0, MAX_SAFE_INTEGER + 1);
+    validateInteger(MIN_SAFE_INTEGER - 1, "foo", MIN_SAFE_INTEGER - 1);
+
+    // validateInt32() and validateUint32()
+    for (const val of [Symbol(), 1n, {}, [], false, true, undefined, null, () => {}, "", "1"]) {
+      expect(() => validateInt32(val, "name")).toThrow(invalidType);
+      expect(() => validateUint32(val, "name")).toThrow(invalidType);
+    }
+    for (const val of [2147483647 + 1, -2147483648 - 1, NaN]) {
+      expect(() => validateInt32(val, "name")).toThrow(outOfRange);
+    }
+    for (const val of [0, 1, -1]) validateInt32(val, "name");
+    for (const val of [4294967296, -1, NaN]) {
+      expect(() => validateUint32(val, "name")).toThrow(outOfRange);
+    }
+    for (const val of [0, 1]) validateUint32(val, "name");
+
+    // Node's file stops here. A non-integer gets the "an integer" message before any range check.
+    const notAnInteger = val =>
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "name" is out of range. It must be an integer. Received ${val}`,
+      });
+    for (const validate of [validateInteger, validateInt32, validateUint32]) {
+      for (const val of [1.5, -1.5, NaN, Infinity, -Infinity]) {
+        expect(() => validate(val, "name")).toThrow(notAnInteger(val));
+      }
+      // -0 and integral doubles are integers.
+      validate(-0, "name");
+      validate(10 / 2, "name");
+    }
+    expect(() => validateInteger(1.5, "name", 0, 10)).toThrow(notAnInteger(1.5));
+    expect(() => validateInt32(1.5, "name", 0, 10)).toThrow(notAnInteger(1.5));
+    expect(() => validateUint32(1.5, "name", true)).toThrow(notAnInteger(1.5));
+    validateInteger(5, "name", 0, 10);
+    validateInt32(5, "name", 0, 10);
+    validateUint32(5, "name", true);
+
+    // An integral double out of range gets the range message.
+    const range = expected =>
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "name" is out of range. It must be ${expected}. Received 9_007_199_254_740_992`,
+      });
+    expect(() => validateInteger(2 ** 53, "name")).toThrow(range(">= -9007199254740991 && <= 9007199254740991"));
+    expect(() => validateInt32(2 ** 53, "name")).toThrow(range(">= -2147483648 && <= 2147483647"));
+    expect(() => validateUint32(2 ** 53, "name")).toThrow(range(">= 0 && <= 4294967295"));
+  });
 
   it("formatWithOptions", () => {
     expect(util.formatWithOptions({ colors: true }, "%s:%s", "foo")).toBe("foo:%s");

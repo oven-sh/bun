@@ -367,7 +367,7 @@ size_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject,
     if (!value.isNumber()) [[unlikely]]
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
     auto value_num = value.asNumber();
-    if (std::fmod(value_num, 1.0) != 0) [[unlikely]]
+    if (!JSC::isInteger(value_num)) [[unlikely]]
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (value_num < min || value_num > max) [[unlikely]]
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, makeString(">= "_s, min, " && <= "_s, max), value);

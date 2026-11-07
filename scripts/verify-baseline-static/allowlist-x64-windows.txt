@@ -1281,3 +1281,12 @@ bun::N_AVX3_SPR::OddBlocksImpl         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, 
 bun::N_AVX3_ZEN4::ScannerRunStopsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_ZEN4::LineStartsImpl       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_ZEN4::OddBlocksImpl        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+
+# ----------------------------------------------------------------------------
+# Bun's Highway kernel for HPACK's Huffman code (highway_hpack.cpp). Gate: hwy::SupportedTargets via CPUID.
+# (4 symbols)
+# ----------------------------------------------------------------------------
+bun::N_AVX10_2::HpackHuffmanDecodeShortImpl   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_DL::HpackHuffmanDecodeShortImpl   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_SPR::HpackHuffmanDecodeShortImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_ZEN4::HpackHuffmanDecodeShortImpl [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]

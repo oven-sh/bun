@@ -777,7 +777,6 @@ it("process.versions", async () => {
     ares: "cares",
     libdeflate: "libdeflate",
     zstd: "zstd",
-    lshpack: "lshpack",
   };
 
   const expectedVersions = {};

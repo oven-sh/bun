@@ -34,7 +34,7 @@ extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl
 
 extern size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 
-/* lsquic is built with the same width, see lsxpackDefines in scripts/build/deps/lshpack.ts. */
+/* lsquic is built with the same width, see lsxpackDefines in scripts/build/deps/lsqpack.ts. */
 _Static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(struct lsxpack_header, chain_next_idx) == sizeof(char *) + 24,
     "LSXPACK_MAX_STRLEN must be UINT32_MAX");
 

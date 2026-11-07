@@ -1,13 +1,12 @@
 //! HTTP/2 connection engine core (RFC 9113). Generic over a `Sink` (no JSC) so the protocol logic
 //! is pure and the JSC binding implements the Sink. Part of the from-scratch rewrite — composes
-//! wire/settings/flow_control/hpack/stream with a SINGLE inbound dispatch and centralized
+//! wire/settings/flow_control/stream with a SINGLE inbound dispatch and centralized
 //! §4.2/§6 validation. Connection-level framing lives here; stream-level (HEADERS/DATA/RST) and the
 //! outbound request/respond paths build on top of this.
 
 #![allow(dead_code)]
 
 use super::flow_control::{RecvWindow, SendWindow};
-use super::hpack;
 use super::settings::{self, Settings};
 use super::stream::{self, State};
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
@@ -156,6 +155,8 @@ enum BlockDisposition {
     /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory):
     /// answered with RST_STREAM(ENHANCE_YOUR_CALM).
     Refused,
+    /// HEADERS arrived on a stream that is closed and has no entry any more: dropped, as nghttp2 does.
+    Ignored,
 }
 
 pub(crate) struct Feed {
@@ -170,6 +171,10 @@ const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 /// nghttp2's NGHTTP2_DEFAULT_STREAM_RESET_BURST / _RATE (node's streamResetBurst / streamResetRate).
 pub(crate) const DEFAULT_STREAM_RESET_BURST: u32 = 1000;
 pub(crate) const DEFAULT_STREAM_RESET_RATE: u32 = 33;
+
+/// nghttp2's NGHTTP2_DEFAULT_GLITCH_BURST / _RATE.
+const GLITCH_BURST: u32 = 10000;
+const GLITCH_RATE: u32 = 330;
 
 #[derive(Clone, Copy)]
 enum ResetBy {
@@ -252,9 +257,13 @@ pub(crate) trait Sink {
     fn goaway_sent(&self) -> bool {
         false
     }
+    /// A SETTINGS_HEADER_TABLE_SIZE entry, for the embedder's HPACK encoder.
+    fn on_remote_header_table_size(&self, _value: u32) {}
+    /// node's `state.inflateDynamicTableSize`. The embedder must only store it, as with `on_frame_counters`.
+    fn on_inflate_table_size(&self, _size: usize) {}
     /// A SETTINGS entry with an id outside the standard registry (node's remoteCustomSettings).
     fn on_remote_custom_setting(&self, _id: u16, _value: u32) {}
-    /// One decoded header field. `name`/`value` alias a shared buffer — copy before returning.
+    /// One decoded header field. `name`/`value` are the decoder's — copy before returning.
     fn on_header(&self, _stream_id: u32, _name: &[u8], _value: &[u8], _never_index: bool) {}
     /// The header block for `stream_id` is complete. `end_stream` = the HEADERS carried END_STREAM.
     fn on_headers_complete(&self, _stream_id: u32, _end_stream: bool, _flags: u8) {}
@@ -290,7 +299,7 @@ pub(crate) trait Sink {
         false
     }
     /// Highest stream id the embedder has ever registered, in either direction. Monotonic across
-    /// stream eviction: ids at or below it have existed (closed at worst, never idle), which the
+    /// stream eviction: the embedder's own ids at or below it count as used (never idle), which the
     /// engine cannot tell on its own for locally-initiated streams whose HEADERS it never sent
     /// (nghttp2's session_detect_idle_stream uses the same allocation high-water marks).
     fn highest_started_stream_id(&self) -> u32 {
@@ -351,7 +360,7 @@ pub(crate) struct Connection {
     pub send_window: SendWindow,
     pub recv_window: RecvWindow,
 
-    pub hpack: hpack::Coder,
+    hpack_decoder: bun_hpack::Decoder,
 
     pub streams: HashMap<u32, Stream>,
 
@@ -374,6 +383,8 @@ pub(crate) struct Connection {
     stream_reset_limit: RateLimit,
     /// RST_STREAM this engine sends that cancels a delivered request (cf. nghttp2's glitch_ratelim).
     sent_reset_limit: RateLimit,
+    /// HEADERS on closed streams (nghttp2's glitch_ratelim).
+    ignored_block_limit: RateLimit,
     /// A bucket ran dry mid-frame; receive() tears the session down between frames.
     reset_flood: bool,
 
@@ -386,11 +397,17 @@ pub(crate) struct Connection {
 
     preface_received: usize,
     pub last_stream_id: u32,
+    /// The highest id the peer has used for a stream of its own.
+    last_peer_stream_id: u32,
     pub going_away: bool,
 }
 
 impl Connection {
     pub(crate) fn new(is_server: bool, local: Settings) -> Self {
+        let mut hpack_decoder = bun_hpack::Decoder::new();
+        // A smaller table waits for the peer's ACK. A larger one does no harm before it, and Bun up to 1.4.4 fills it at once.
+        let default_table_size = Settings::default().header_table_size;
+        hpack_decoder.set_max_capacity(local.header_table_size.max(default_table_size));
         Connection {
             is_server,
             local_settings: local,
@@ -408,7 +425,7 @@ impl Connection {
             max_settings: 32,
             send_window: SendWindow::new(wire::DEFAULT_WINDOW_SIZE),
             recv_window: RecvWindow::new(wire::DEFAULT_WINDOW_SIZE),
-            hpack: hpack::Coder::new(local.header_table_size),
+            hpack_decoder,
             streams: HashMap::new(),
             header_block_in_flight: None,
             header_block: Vec::new(),
@@ -420,12 +437,14 @@ impl Connection {
                 DEFAULT_STREAM_RESET_RATE,
             ),
             sent_reset_limit: RateLimit::new(DEFAULT_STREAM_RESET_BURST, DEFAULT_STREAM_RESET_RATE),
+            ignored_block_limit: RateLimit::new(GLITCH_BURST, GLITCH_RATE),
             reset_flood: false,
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
             preface_received: 0,
             last_stream_id: 0,
+            last_peer_stream_id: 0,
             going_away: false,
         }
     }
@@ -675,7 +694,7 @@ impl Connection {
         let mut buf = std::mem::take(&mut self.replenish_buf);
         buf.clear();
         for (id, s) in self.streams.iter_mut() {
-            if s.state != State::Closed
+            if stream::can_receive_data(s.state)
                 && s.recv_window.needs_update()
                 && sink.is_stream_reading(*id)
             {
@@ -690,13 +709,12 @@ impl Connection {
         }
         self.replenish_buf = buf;
         // Evict closed streams so the map (and this scan) stay bounded on long-lived connections.
-        // Late DATA for an evicted id is dropped (is_closed_stream). A late HEADERS for an
-        // evicted id re-opens a fresh entry (the parity check still applies); that matches how
-        // trailers-after-close are treated as a new block by the legacy parser as well.
+        // Late DATA and HEADERS for an evicted id are dropped (is_closed_stream).
         let mut evict = std::mem::take(&mut self.evict_buf);
         evict.clear();
+        let in_flight = self.header_block_in_flight.as_ref().map(|b| b.meta.target);
         for (id, s) in self.streams.iter() {
-            if s.state == State::Closed {
+            if s.state == State::Closed && Some(*id) != in_flight {
                 evict.push(*id);
             }
         }
@@ -793,6 +811,9 @@ impl Connection {
             // The peer has acknowledged this submission: header-list enforcement may now use the
             // limit it carried.
             self.enforced_max_header_list_size = acked.settings.max_header_list_size;
+            self.hpack_decoder
+                .set_max_capacity(acked.settings.header_table_size);
+            sink.on_inflate_table_size(self.hpack_decoder.table_size());
             sink.on_local_settings(&acked.settings);
             return false;
         }
@@ -811,7 +832,6 @@ impl Connection {
             self.send_go_away(sink, code, b"SETTINGS value out of range");
             return true;
         }
-        let old_table = self.remote_settings.header_table_size;
         let old_initial_window = self.remote_settings.initial_window_size;
         let mut i = 0;
         while i + 6 <= payload.len() {
@@ -837,15 +857,14 @@ impl Connection {
                     return true;
                 }
                 self.remote_settings.apply(sid, value);
+                // Each one, not just the last: the peer's decoder waits to hear of a dip (RFC 7541 §4.2).
+                if sid == SettingId::HeaderTableSize {
+                    sink.on_remote_header_table_size(value);
+                }
             } else {
                 sink.on_remote_custom_setting(id, value);
             }
             i += 6;
-        }
-        // The peer's HEADER_TABLE_SIZE governs OUR encoder; queue a 6.3 size update.
-        if self.remote_settings.header_table_size != old_table {
-            self.hpack
-                .queue_encoder_capacity(self.remote_settings.header_table_size);
         }
         // 6.9.2: a change to SETTINGS_INITIAL_WINDOW_SIZE adjusts every non-closed stream's send
         // window by the delta (the connection window is not affected).
@@ -1070,9 +1089,7 @@ impl Connection {
         let recv_init = self.local_settings.initial_window_size;
         let is_new = !self.streams.contains_key(&hdr.stream_id);
         // RFC 9113 5.1.1: client-initiated streams use odd ids - a server receiving HEADERS that
-        // would open an even-id stream is a connection PROTOCOL_ERROR. (Monotonicity is not
-        // checked here: a client legitimately receives HEADERS on even promised ids that are
-        // numerically below its own latest odd id.)
+        // would open an even-id stream is a connection PROTOCOL_ERROR.
         if is_new && self.is_server && hdr.stream_id.is_multiple_of(2) {
             self.send_go_away(
                 sink,
@@ -1081,13 +1098,25 @@ impl Connection {
             );
             return true;
         }
-        let refused = is_new && self.is_server && !sink.can_open_stream();
-        let mut disposition = if refused {
+        let closed = self.is_closed_stream(sink, hdr.stream_id);
+        if closed && !self.ignored_block_limit.drain() {
+            self.send_go_away(
+                sink,
+                ErrorCode::EnhanceYourCalm,
+                b"too many HEADERS on closed streams",
+            );
+            return true;
+        }
+        let mut disposition = if !is_new {
+            BlockDisposition::Deliver
+        } else if closed {
+            BlockDisposition::Ignored
+        } else if self.is_server && !sink.can_open_stream() {
             BlockDisposition::Refused
         } else {
             BlockDisposition::Deliver
         };
-        if !refused {
+        if disposition == BlockDisposition::Deliver {
             let s = self
                 .streams
                 .entry(hdr.stream_id)
@@ -1120,7 +1149,7 @@ impl Connection {
                     // half already ended (half-closed (remote)) is escalated to a CONNECTION error
                     // of type STREAM_CLOSED — node surfaces it as NghttpError "Stream was already
                     // closed or invalid" and tears the session down. A stream that closed for any
-                    // other reason (e.g. we reset it and the peer's trailers were already in
+                    // other reason (e.g. we reset it earlier in this read, with trailers already in
                     // flight) keeps the conservative stream-level handling: the block is still
                     // decoded for HPACK sync (§4.3), then refused with RST_STREAM(STREAM_CLOSED)
                     // by finish_header_block.
@@ -1141,10 +1170,8 @@ impl Connection {
             // Must advance even for refused streams: §5.1 treats anything at or below the
             // high-water mark as having existed, so frames a client pipelined behind the
             // refused HEADERS (RST_STREAM especially) are tolerated instead of GOAWAY'd.
-            if hdr.stream_id > self.last_stream_id {
-                self.last_stream_id = hdr.stream_id;
-            }
-            if !refused {
+            self.note_inbound_stream_id(hdr.stream_id);
+            if disposition == BlockDisposition::Deliver {
                 sink.on_stream_open(hdr.stream_id);
             }
         }
@@ -1215,7 +1242,15 @@ impl Connection {
             self.header_block_in_flight = Some(inflight);
             return false;
         }
-        self.finish_header_block(sink, &inflight.meta)
+        let mut meta = inflight.meta;
+        // The embedder closed the stream between the frames of the block.
+        if meta.disposition == BlockDisposition::Deliver
+            && meta.push_parent.is_none()
+            && !self.streams.contains_key(&meta.target)
+        {
+            meta.disposition = BlockDisposition::Ignored;
+        }
+        self.finish_header_block(sink, &meta)
     }
 
     /// Decode the assembled header block (HPACK) and dispatch each field, then finalize. The whole
@@ -1236,7 +1271,7 @@ impl Connection {
             sink.on_push_promise(parent.get(), target);
         }
         let block = std::mem::take(&mut self.header_block);
-        let mut off = 0usize;
+        let mut block_pos = 0;
         let mut fatal = false;
         // RFC 9113 §10.5.1: enforce SETTINGS_MAX_HEADER_LIST_SIZE (uncompressed size: name + value
         // + 32 per field). The whole block is still decoded so the HPACK table stays in sync; the
@@ -1269,10 +1304,9 @@ impl Connection {
         let mut asterisk_form = false;
         let mut informational = false;
         let mut content_length: Option<u64> = None;
-        while off < block.len() {
-            match self.hpack.decode(&block[off..]) {
+        while let Some(field) = self.hpack_decoder.next(&block, &mut block_pos) {
+            match field {
                 Ok(h) => {
-                    off += h.next;
                     list_size += h.name.len() + h.value.len() + 32;
                     field_count += 1;
                     if rejected || list_size > max_list_size || field_count > max_pairs {
@@ -1412,6 +1446,7 @@ impl Connection {
                 }
             }
         }
+        sink.on_inflate_table_size(self.hpack_decoder.table_size());
         // restore the buffer's capacity for reuse
         self.header_block = block;
         self.header_block.clear();
@@ -1437,6 +1472,7 @@ impl Connection {
                 sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
                 return false;
             }
+            BlockDisposition::Ignored => return false,
             BlockDisposition::Deliver => {}
         }
         // RFC 9113 §8.3.1 (nghttp2_http_on_request_headers): a request block needs exactly one
@@ -1456,6 +1492,10 @@ impl Connection {
                     || (extended_connect && (!saw_connect || (seen_pseudo & AUTHORITY) == 0))
                     || (http_scheme && !origin_form && !(asterisk_form && saw_options))
             };
+        }
+        // §8.3.2 (nghttp2_http_on_response_headers): a response has a :status.
+        if !self.is_server && push_parent.is_none() && !is_trailer {
+            malformed |= (seen_pseudo & pseudo::STATUS) == 0;
         }
         if push_parent.is_none() && self.is_server && !malformed && !rejected {
             if let Some(s) = self.streams.get_mut(&target) {
@@ -1654,16 +1694,31 @@ impl Connection {
         }
     }
 
+    fn is_peer_initiated(&self, stream_id: u32) -> bool {
+        stream_id.is_multiple_of(2) != self.is_server
+    }
+
+    fn note_inbound_stream_id(&mut self, stream_id: u32) {
+        self.last_stream_id = self.last_stream_id.max(stream_id);
+        if self.is_peer_initiated(stream_id) {
+            self.last_peer_stream_id = self.last_peer_stream_id.max(stream_id);
+        }
+    }
+
     fn has_existed(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        // §5.1.1: each side numbers its own streams, and the other two marks count those of both.
+        if self.is_peer_initiated(stream_id) {
+            return stream_id <= self.last_peer_stream_id;
+        }
         stream_id <= self.last_stream_id || stream_id <= sink.highest_started_stream_id()
     }
 
-    /// RFC 9113 §5.1 closed state. DATA on such a stream is dropped, as nghttp2 does.
+    /// RFC 9113 §5.1 closed state. DATA on such a stream is dropped, and HEADERS once it has no entry any more, as nghttp2 does.
     fn is_closed_stream(&self, sink: &impl Sink, stream_id: u32) -> bool {
         match self.streams.get(&stream_id) {
             Some(s) => s.state == State::Closed,
             // A stream the embedder opened has no entry here until its first inbound frame.
-            None => !sink.is_local_stream(stream_id) && self.has_existed(sink, stream_id),
+            None => self.has_existed(sink, stream_id) && !sink.is_local_stream(stream_id),
         }
     }
 
@@ -1856,9 +1911,7 @@ impl Connection {
             on_idle = false;
         }
         // §5.1: a stream evicted after full close (per-request memory release) is
-        // closed, not idle — a late RST_STREAM on it MUST be tolerated. Anything at or
-        // below the highest stream id either layer has started has existed; the embedder's
-        // mark covers locally-initiated streams this engine never saw HEADERS for.
+        // closed, not idle — a late RST_STREAM on it MUST be tolerated.
         if on_idle && self.has_existed(sink, hdr.stream_id) {
             return false;
         }
@@ -1952,9 +2005,7 @@ impl Connection {
             .entry(promised)
             .or_insert_with(|| Stream::new(send_init, recv_init));
         entry.state = State::ReservedRemote;
-        if promised > self.last_stream_id {
-            self.last_stream_id = promised;
-        }
+        self.note_inbound_stream_id(promised);
 
         self.header_block.clear();
         self.header_block.extend_from_slice(&payload[off..end]);
@@ -2007,31 +2058,21 @@ impl Connection {
 
     // ---- Outbound stream API (called by the embedder) ------------------
 
-    /// Begin a new outbound header block. Emits any pending §6.3 dynamic-table size update first.
+    /// Begin a new outbound header block.
     pub(crate) fn begin_header_block(&mut self) {
         self.enc_buf.clear();
-        let mut tmp = [0u8; hpack::MAX_SIZE_UPDATE_BYTES];
-        let n = self.hpack.take_pending_size_update(&mut tmp, 0);
-        self.enc_buf.extend_from_slice(&tmp[..n]);
     }
 
     /// HPACK-encode one header field into the current block. Returns false on encode failure.
-    pub(crate) fn encode_header(&mut self, name: &[u8], value: &[u8], never_index: bool) -> bool {
-        let old = self.enc_buf.len();
-        self.enc_buf.resize(old + name.len() + value.len() + 16, 0);
-        match self
-            .hpack
-            .encode(name, value, never_index, &mut self.enc_buf, old)
-        {
-            Ok(n) => {
-                self.enc_buf.truncate(old + n);
-                true
-            }
-            Err(_) => {
-                self.enc_buf.truncate(old);
-                false
-            }
-        }
+    pub(crate) fn encode_header(
+        &mut self,
+        encoder: &mut bun_hpack::Encoder,
+        name: &[u8],
+        value: &[u8],
+    ) -> bool {
+        encoder
+            .encode(&mut self.enc_buf, name, value, bun_hpack::Indexing::Add)
+            .is_ok()
     }
 
     /// Emit the accumulated header block as a HEADERS frame, splitting into CONTINUATION frames when
@@ -2143,7 +2184,7 @@ impl Connection {
     /// The outbound half does not run through this engine yet, so without this hook a
     /// completed request's entry would linger as HalfClosedRemote forever — the map (and
     /// the per-batch replenish/evict scans) would grow by one entry per request. Removal
-    /// has the same observable behavior as scan-eviction of a Closed stream.
+    /// has the same observable behavior as scan-eviction of a Closed stream. `handle_continuation` sees to a block in flight.
     pub(crate) fn close_stream(&mut self, stream_id: u32) {
         self.streams.remove(&stream_id);
     }
@@ -2153,7 +2194,7 @@ impl Connection {
     /// next inbound batch — which may never come, since the peer is the one waiting.
     pub(crate) fn replenish_stream(&mut self, sink: &impl Sink, stream_id: u32) {
         let inc = match self.streams.get_mut(&stream_id) {
-            Some(s) if s.state != State::Closed && s.recv_window.needs_update() => {
+            Some(s) if stream::can_receive_data(s.state) && s.recv_window.needs_update() => {
                 s.recv_window.take_update()
             }
             _ => return,
@@ -2293,15 +2334,15 @@ mod tests {
         }
     }
 
-    /// Encode a header block with a standalone coder (mirrors a real peer's encoder).
+    /// Encode a header block with a standalone encoder (mirrors a real peer's encoder).
     fn encode_block(pairs: &[(&[u8], &[u8])]) -> Vec<u8> {
-        let mut coder = hpack::Coder::new(4096);
-        let mut buf = vec![0u8; 4096];
-        let mut off = 0usize;
+        let mut encoder = bun_hpack::Encoder::new();
+        let mut buf = Vec::new();
         for (name, value) in pairs {
-            off += coder.encode(name, value, false, &mut buf, off).unwrap();
+            encoder
+                .encode(&mut buf, name, value, bun_hpack::Indexing::Add)
+                .unwrap();
         }
-        buf.truncate(off);
         buf
     }
 
@@ -2449,11 +2490,12 @@ mod tests {
         // Client engine encodes + emits a HEADERS frame...
         let csink = CaptureSink::default();
         let mut client = Connection::new(false, Settings::default());
+        let mut encoder = bun_hpack::Encoder::new();
         client.begin_header_block();
-        assert!(client.encode_header(b":method", b"GET", false));
-        assert!(client.encode_header(b":scheme", b"http", false));
-        assert!(client.encode_header(b":path", b"/x", false));
-        assert!(client.encode_header(b":authority", b"localhost", false));
+        assert!(client.encode_header(&mut encoder, b":method", b"GET"));
+        assert!(client.encode_header(&mut encoder, b":scheme", b"http"));
+        assert!(client.encode_header(&mut encoder, b":path", b"/x"));
+        assert!(client.encode_header(&mut encoder, b":authority", b"localhost"));
         client.send_header_block(&csink, 1, true);
         let wire_bytes = csink.out.borrow().clone();
         assert_eq!(
@@ -2490,11 +2532,12 @@ mod tests {
         // Server stages the promised request headers and emits PUSH_PROMISE on parent stream 1.
         let ssink = CaptureSink::default();
         let mut server = Connection::new(true, Settings::default());
+        let mut encoder = bun_hpack::Encoder::new();
         server.begin_header_block();
-        assert!(server.encode_header(b":method", b"GET", false));
-        assert!(server.encode_header(b":scheme", b"http", false));
-        assert!(server.encode_header(b":path", b"/pushed", false));
-        assert!(server.encode_header(b":authority", b"localhost", false));
+        assert!(server.encode_header(&mut encoder, b":method", b"GET"));
+        assert!(server.encode_header(&mut encoder, b":scheme", b"http"));
+        assert!(server.encode_header(&mut encoder, b":path", b"/pushed"));
+        assert!(server.encode_header(&mut encoder, b":authority", b"localhost"));
         server.send_push_promise(&ssink, 1, 2);
         let bytes = ssink.out.borrow().clone();
         assert_eq!(
@@ -2545,8 +2588,9 @@ mod tests {
         let sink = CaptureSink::default();
         let mut c = Connection::new(false, Settings::default());
         // Open a stream (send side) with a tiny peer window.
+        let mut encoder = bun_hpack::Encoder::new();
         c.begin_header_block();
-        assert!(c.encode_header(b":method", b"POST", false));
+        assert!(c.encode_header(&mut encoder, b":method", b"POST"));
         c.send_header_block(&sink, 1, false);
         sink.out.borrow_mut().clear();
         if let Some(s) = c.streams.get_mut(&1) {

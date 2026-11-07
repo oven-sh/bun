@@ -5,6 +5,7 @@
 
 import { highwayStringsForTesting as hw } from "bun:internal-for-testing";
 import { afterEach, describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
 
 // Lengths that straddle 16/32/64-byte lanes and the scalar tails on either side.
 const LENGTHS = [0, 1, 2, 3, 8, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 127, 128, 129, 255, 256, 257, 1024, 1029];
@@ -645,5 +646,161 @@ describe("oddBlocks", () => {
 
   it("rejects a buffer that is too small", () => {
     expect(() => hw("oddBlocks", new Uint8Array(4097), new Uint8Array(8))).toThrow(RangeError);
+  });
+});
+
+// src/jsc/bindings/highway_hpack.cpp
+describe("hpackHuffmanDecodeShort", () => {
+  // Only an x64 CPU with AVX-512 VBMI has the kernel. CI's x64 Linux and Windows machines do.
+  const hasKernel = hw("hpackHuffmanDecodeShort", new Uint8Array(0), new Uint8Array(1)) !== -1;
+
+  it.skipIf(process.platform !== "linux" || process.arch !== "x64")("is there on every CPU that can run it", () => {
+    const flags = /^flags\s*:(.*)$/m.exec(readFileSync("/proc/cpuinfo", "utf8"))![1].split(" ");
+    // What Highway's AVX3_DL target takes.
+    const needed =
+      "avx512f avx512vl avx512dq avx512bw avx512cd avx512_vnni vpclmulqdq avx512vbmi avx512_vbmi2 vaes avx512_vpopcntdq avx512_bitalg gfni";
+    expect(hasKernel).toBe(needed.split(" ").every(flag => flags.includes(flag)));
+  });
+
+  it.skipIf(!hasKernel)("rejects a buffer without the bit to start at", () => {
+    expect(() => hw("hpackHuffmanDecodeShort", new Uint8Array(1), new Uint8Array(0))).toThrow(RangeError);
+  });
+
+  // The codes of 5, 6, 7 and 8 bits in RFC 7541 Appendix B, which count up in this order.
+  const SYMBOLS = "012aceiost| %-./3456789=A_bdfghlmnpru|:BCDEFGHIJKLMNOPQRSTUVWYjkqvwxyz|&*,;XZ".split("|");
+  const codes = new Map<string, string>();
+  let next = 0;
+  SYMBOLS.forEach((symbols, i) => {
+    for (const symbol of symbols) {
+      codes.set(
+        symbol,
+        next
+          .toString(2)
+          .padStart(8, "0")
+          .slice(0, 5 + i),
+      );
+      next += 1 << (3 - i);
+    }
+  });
+  const all = SYMBOLS.join("");
+  const textOf = (length: number, seed: number) =>
+    Array.from({ length }, (_, i) => all[(i * 31 + seed * 7) % all.length]).join("");
+  const repeat = (bit: string, count: number) => Buffer.alloc(count, bit).toString();
+  /** The bit it stopped at, and how many symbols it says it decoded. */
+  function run(src: Uint8Array, out: Uint8Array) {
+    const result = hw("hpackHuffmanDecodeShort", src, out);
+    return [Math.floor(result / 65536), result % 65536];
+  }
+
+  /** Bytes from a string of "0" and "1", filled up with ones. */
+  function pack(bits: string, off = 0) {
+    const bytes = bits.padEnd(Math.ceil(bits.length / 8) * 8, "1").match(/.{8}/g) ?? [];
+    const backing = new Uint8Array(off + bytes.length);
+    backing.set(
+      bytes.map(byte => parseInt(byte, 2)),
+      off,
+    );
+    return backing.subarray(off);
+  }
+
+  /**
+   * Decodes `skipped + code of text + rest` from after `skipped`. Returns how many symbols came out,
+   * having checked that they are the start of `text` and that nothing is written past `room`.
+   */
+  function decode(skipped: string, text: string, rest: string, at: string, room = text.length + 16, off = 0) {
+    const out = new Uint8Array(room + 1).fill(0xaa);
+    out[0] = skipped.length;
+    const src = pack(skipped + Array.from(text, symbol => codes.get(symbol)).join("") + rest, off);
+    const [stopped, decoded] = run(src, out.subarray(0, room));
+    let count = 0;
+    let bit = skipped.length;
+    while (bit < stopped && count < text.length) bit += codes.get(text[count++])!.length;
+    compare("stopped", bit, stopped, at);
+    compare("decoded", decoded, count, at);
+    compare("text", Buffer.from(out.subarray(0, count)).toString(), text.slice(0, count), at);
+    compare("after the room", out[room], 0xaa, at);
+    return count;
+  }
+
+  it.skipIf(!hasKernel)("every symbol, from every bit of three bytes", () => {
+    for (const symbol of all) {
+      for (let skipped = 0; skipped < 24; skipped++) {
+        const at = `symbol=${symbol} skipped=${skipped}`;
+        compare("count", decode(repeat("0", skipped), symbol, "", at), 1, at);
+        // With zeros after it instead of the padding.
+        compare("count", decode(repeat("0", skipped), symbol + "0", "", at), 2, at);
+      }
+    }
+  });
+
+  it.skipIf(!hasKernel)("text of every length, up to the padding or a longer code", () => {
+    for (let length = 0; length <= 130; length++) {
+      // "!" and the longest there is, then something that would decode.
+      for (const rest of ["", "1111111000" + "00000", "111111111111111111111111111100" + "00000"]) {
+        const at = `length=${length} rest=${rest}`;
+        const off = OFFSETS[length % OFFSETS.length];
+        compare("count", decode(repeat("1", length % 8), textOf(length, length), rest, at, undefined, off), length, at);
+      }
+    }
+  });
+
+  it.skipIf(!hasKernel)("blocks of twelve symbols, which is the most", () => {
+    for (let length = 0; length <= 40; length++) {
+      const text = Array.from({ length }, (_, i) => SYMBOLS[0][(i * 3 + length) % SYMBOLS[0].length]).join("");
+      for (let skipped = 0; skipped < 8; skipped++) {
+        const at = `length=${length} skipped=${skipped}`;
+        compare("count", decode(repeat("1", skipped), text, "", at), length, at);
+      }
+    }
+  });
+
+  it.skipIf(!hasKernel)("leaves out a code that the input ends in the middle of", () => {
+    for (let length = 0; length <= 40; length++) {
+      const text = textOf(length, 3);
+      const lengths = Array.from(text, symbol => codes.get(symbol)!.length);
+      const bits = lengths.reduce((a, b) => a + b, 0);
+      // With ones after it, this would be "9", "o", "a" or "1".
+      const rest = repeat("0", 8 - (bits % 8));
+      if (rest.length > 4) continue;
+      // It gives up on the block that this is in, the last 7 bytes at most.
+      let sure = 0;
+      for (let bit = 0; bit < bits + rest.length - 56; bit += lengths[sure++]);
+      const count = decode("", text, rest, `length=${length}`);
+      expect(count, `length=${length}`).toBeWithin(sure, length + 1);
+    }
+  });
+
+  it.skipIf(!hasKernel)("stops when there is no room for the 16 bytes it stores at a time", () => {
+    const text = textOf(200, 1);
+    for (let room = 1; room <= 60; room++) {
+      const count = decode("", text, "", `room=${room}`, room);
+      expect(count, `room=${room}`).toBeLessThanOrEqual(Math.max(0, room - 4));
+      if (room < 16) expect(count, `room=${room}`).toBe(0);
+      else expect(count, `room=${room}`).toBeGreaterThan(room - 16);
+    }
+  });
+
+  // The pages of a resizable ArrayBuffer after its length are not accessible: going past a view that ends there crashes.
+  const atEnd = (length: number) =>
+    new Uint8Array(new ArrayBuffer(65536, { maxByteLength: 131072 }), 65536 - length, length);
+
+  it.skipIf(!hasKernel)("reads nothing after the input", () => {
+    for (let length = 0; length <= 40; length++) {
+      // All zeros, which is "0" every 5 bits.
+      const src = atEnd(length);
+      for (let skipped = 0; skipped < 8; skipped++) {
+        const out = new Uint8Array(((length * 8) / 5 + 17) | 0);
+        out[0] = skipped;
+        const [stopped] = run(src, out);
+        expect(stopped, `length=${length} skipped=${skipped}`).toBeWithin(skipped, Math.max(skipped, length * 8) + 1);
+      }
+    }
+  });
+
+  it.skipIf(!hasKernel)("writes nothing after the output", () => {
+    const src = new Uint8Array(100);
+    for (let room = 1; room <= 80; room++) {
+      expect(run(src, atEnd(room))[0], `room=${room}`).toBeWithin(0, src.length * 8 + 1);
+    }
   });
 });

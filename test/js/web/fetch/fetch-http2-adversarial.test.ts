@@ -38,7 +38,7 @@ const hpackLit = (name: string, value: string) =>
 // ─── raw server with full preface control ────────────────────────────────────
 
 type RawSock = nodetls.TLSSocket;
-type StreamCb = (socket: RawSock, streamId: number, connIndex: number) => void;
+type StreamCb = (socket: RawSock, streamId: number, connIndex: number, headerBlock: Buffer) => void;
 type PrefaceCb = (socket: RawSock, connIndex: number) => void;
 
 async function withAdversarialServer(
@@ -74,7 +74,7 @@ async function withAdversarialServer(
         const payload = buf.subarray(9, 9 + len);
         buf = buf.subarray(9 + len);
         if (type === 4 && !(flags & 1) && opts.settingsPayload !== null) socket.write(frame(4, 1, 0));
-        if (type === 1) opts.onStream?.(socket, id, connIndex);
+        if (type === 1) opts.onStream?.(socket, id, connIndex, payload);
         if (type === 3) state.rst.push({ id, code: payload.readUInt32BE(0) });
       }
     });
@@ -812,6 +812,37 @@ function hpackInt(prefixBits: number, flags: number, n: number) {
   return Buffer.from(bytes);
 }
 
+// What a literal may not say, a reference to the dynamic table may not say either.
+test.each([
+  ["a value with LF", "x-a", "a\nb"],
+  ["a value with NUL", "x-a", "a\0b"],
+  ["a name with trailing SP", "x-a ", "1"],
+])("%s in an HTTP/2 response is refused again when it comes from the dynamic table", async (_, name, value) => {
+  const string = (s: string) => Buffer.concat([Buffer.from([s.length]), Buffer.from(s, "latin1")]);
+  const blocks = [
+    // Literal with incremental indexing: index 62 from here on.
+    Buffer.concat([hpackStatus200, Buffer.from([0x40]), string(name), string(value)]),
+    Buffer.concat([hpackStatus200, Buffer.from([0x80 | 62])]),
+    hpackStatus200,
+  ];
+  await withAdversarialServer(
+    { onStream: (socket, id) => socket.write(frame(1, 5, id, blocks[(id - 1) / 2])) },
+    async (url, state) => {
+      const results: unknown[] = [];
+      for (const _ of blocks) {
+        results.push(
+          await fetch(url, { protocol: "http2", tls: { rejectUnauthorized: false } }).then(
+            res => res.status,
+            e => e.code,
+          ),
+        );
+      }
+      expect(results).toEqual(["HTTP2ProtocolError", "HTTP2ProtocolError", 200]);
+      expect(state.connections).toBe(1);
+    },
+  );
+});
+
 // A value that trims to nothing still counts toward the decoded header list
 // cap (256 KiB), because the decoder produced it. One dynamic table entry of
 // 4000 SP and 70 one-byte references to it decode to 284 KB from a 4 KB block.
@@ -826,5 +857,408 @@ test("whitespace-only HTTP/2 response values count toward the header list cap", 
       e => ({ error: e.code }),
     );
     expect(result).toEqual({ error: "HTTP2HeaderListTooLarge" });
+  });
+});
+
+describe.concurrent("an HTTP/2 response header block is refused when it has", () => {
+  test.each([
+    ["a literal that ends after its name", Buffer.concat([Buffer.from([0x00, 3]), Buffer.from("x-a")])],
+    ["a literal that ends after its name index", Buffer.from([0x0f, 0x27])], // server
+    ["a table size update between two fields", Buffer.concat([Buffer.from([0x21]), hpackLit("x-a", "1")])],
+    [
+      // "31623933471" takes 63 bits, so the string is over after eight bytes.
+      "Huffman padding longer than 7 bits in a ninth byte",
+      Buffer.concat([
+        Buffer.from([0x00, 3]),
+        Buffer.from("x-a"),
+        Buffer.from([0x89, 0x64, 0x2e, 0x09, 0x97, 0xd9, 0x65, 0xa7, 0x43, 0xff]),
+      ]),
+    ],
+  ])("%s", async (_, tail) => {
+    const block = Buffer.concat([hpackStatus200, tail]);
+    await withAdversarialServer({ onStream: (socket, id) => socket.write(frame(1, 5, id, block)) }, async url => {
+      const result = await fetch(url, { protocol: "http2", tls: { rejectUnauthorized: false } }).then(
+        res => ({ status: res.status }),
+        e => ({ error: e.code }),
+      );
+      expect(result).toEqual({ error: "HTTP2CompressionError" });
+    });
+  });
+});
+
+test("a header block of nothing but HPACK table size updates counts as an empty one", async () => {
+  // x-a: 1 enters the dynamic table, as index 62 (0xbe).
+  const insert = Buffer.concat([Buffer.from([0x40, 3]), Buffer.from("x-a"), Buffer.from([1]), Buffer.from("1")]);
+  const fromTheTable = Buffer.concat([hpackStatus200, Buffer.from([0xbe])]);
+  const responses = [
+    (id: number) => [frame(1, 0x5, id, Buffer.concat([hpackStatus200, insert]))],
+    (id: number) => [
+      frame(1, 0x4, id, fromTheTable),
+      frame(0, 0, id, Buffer.from("body")),
+      // As trailers it ends the response. To 0, which empties the table, and back to 4096.
+      frame(1, 0x5, id, Buffer.from("203fe11f", "hex")),
+    ],
+    // As a response it lacks the :status, which is the stream's problem. To 4096, which changes nothing.
+    (id: number) => [frame(1, 0x5, id, Buffer.from("3fe11f", "hex"))],
+    (id: number) => [frame(1, 0x5, id, hpackStatus200)],
+    (id: number) => [frame(1, 0x5, id, fromTheTable)],
+  ];
+  await withAdversarialServer(
+    { onStream: (socket, id) => socket.write(Buffer.concat(responses[(id - 1) / 2](id))) },
+    async (url, state) => {
+      const results: unknown[] = [];
+      for (const _ of responses) {
+        results.push(
+          await fetch(url, { protocol: "http2", tls: { rejectUnauthorized: false } }).then(
+            async res => [res.status, res.headers.get("x-a"), await res.text()],
+            e => e.code,
+          ),
+        );
+      }
+      expect(results).toEqual([
+        [200, "1", ""],
+        [200, "1", "body"],
+        "HTTP2ProtocolError",
+        [200, null, ""],
+        "HTTP2CompressionError",
+      ]);
+      expect(state.connections).toBe(1);
+    },
+  );
+});
+
+describe.concurrent("SETTINGS_HEADER_TABLE_SIZE from an HTTP/2 server", () => {
+  test.each([
+    ["is not followed above 4096", setting(1, 65536), ""],
+    ["is not answered when it repeats the current size", setting(1, 4096), ""],
+    ["is followed below 4096", setting(1, 100), "3f45"],
+    ["is answered with the low point too", Buffer.concat([setting(1, 0), setting(1, 4096)]), "203fe11f"],
+  ])("%s", async (_, settingsPayload, sizeUpdates) => {
+    const blocks: Buffer[] = [];
+    await withAdversarialServer(
+      {
+        settingsPayload,
+        onStream: (socket, id, _, block) => {
+          blocks.push(Buffer.from(block));
+          socket.write(frame(1, 5, id, hpackStatus200));
+        },
+      },
+      async (url, state) => {
+        for (let i = 0; i < 3; i++) {
+          expect((await fetch(url, { protocol: "http2", tls: { rejectUnauthorized: false } })).status).toBe(200);
+        }
+        expect(state.connections).toBe(1);
+        // Whichever request was the first to be sent after the SETTINGS frame was read.
+        const updates = blocks.map(block => {
+          let end = 0;
+          while ((block[end] & 0xe0) === 0x20) {
+            const continues = (block[end++] & 0x1f) === 0x1f;
+            if (continues) while (block[end++] & 0x80);
+          }
+          return block.subarray(0, end).toString("hex");
+        });
+        expect(updates.filter(Boolean)).toEqual(sizeUpdates ? [sizeUpdates] : []);
+      },
+    );
+  });
+});
+
+test("fetch() over HTTP/2 sends authorization and cookie as never indexed, every time", async () => {
+  const blocks: string[] = [];
+  await withAdversarialServer(
+    {
+      onStream: (socket, id, _, block) => {
+        blocks.push(block.toString("hex"));
+        socket.write(frame(1, 5, id, hpackStatus200));
+      },
+    },
+    async (url, state) => {
+      // Huffman coding would make these values longer, so they are on the wire as they are.
+      const headers = { authorization: "#@~$a", cookie: "#@~$c", "x-plain": "#@~$p" };
+      for (let i = 0; i < 2; i++) {
+        expect((await fetch(url, { protocol: "http2", tls: { rejectUnauthorized: false }, headers })).status).toBe(200);
+      }
+      expect(state.connections).toBe(1);
+      const raw = (value: string) => "05" + Buffer.from(value).toString("hex");
+      for (const block of blocks) {
+        // 0001 and a 4-bit prefix (RFC 7541 §6.2.3): static names 23 and 32 are 15 + 8 and 15 + 17.
+        expect(block).toContain("1f08" + raw("#@~$a"));
+        expect(block).toContain("1f11" + raw("#@~$c"));
+      }
+      // Any other header enters the table and is a reference from then on.
+      expect(blocks[0]).toContain(raw("#@~$p"));
+      expect(blocks[1]).not.toContain(raw("#@~$p"));
+    },
+  );
+});
+
+test("a header that HPACK cannot carry fails the fetch() and retires the HTTP/2 connection", async () => {
+  const blocks: Array<[connection: number, block: string]> = [];
+  await withAdversarialServer(
+    {
+      onStream: (socket, id, connection, block) => {
+        blocks.push([connection, block.toString("hex")]);
+        socket.write(frame(1, 5, id, hpackStatus200));
+      },
+    },
+    async url => {
+      const get = (headers: Record<string, string>) =>
+        fetch(url, { protocol: "http2", tls: { rejectUnauthorized: false }, headers }).then(
+          res => res.status,
+          e => e.code,
+        );
+      expect(await get({ "x-a": "first" })).toBe(200);
+      // x-b is in the encoder's table by the time x-c is refused, and the server never hears of it.
+      expect(await get({ "x-a": "first", "x-b": "second", "x-c": Buffer.alloc(65536, "c").toString() })).toBe(
+        "UnableToEncode",
+      );
+      expect(await get({ "x-a": "first" })).toBe(200);
+      // A new connection, so the same bytes as from the first one's empty table.
+      expect(blocks).toEqual([
+        [0, blocks[0][1]],
+        [1, blocks[0][1]],
+      ]);
+    },
+  );
+});
+
+test("a header block for a finished stream that does not decode is fatal to the HTTP/2 connection", async () => {
+  await withAdversarialServer(
+    {
+      onStream: (socket, id) => {
+        // Index 70 of an empty dynamic table, on the stream that the first response has ended.
+        if (id === 3) socket.write(frame(1, 4, 1, Buffer.from([0x80 | 70])));
+        socket.write(frame(1, 5, id, hpackStatus200));
+      },
+    },
+    async (url, state) => {
+      const results: unknown[] = [];
+      for (let i = 0; i < 3; i++) {
+        results.push(
+          await fetch(url, { protocol: "http2", tls: { rejectUnauthorized: false } }).then(
+            res => res.status,
+            e => e.code,
+          ),
+        );
+      }
+      expect(results).toEqual([200, "HTTP2CompressionError", 200]);
+      expect(state.connections).toBe(2);
+    },
+  );
+});
+
+describe.concurrent("HPACK in fetch() over HTTP/2", () => {
+  const h2 = { protocol: "http2" as const, tls: { rejectUnauthorized: false } };
+  const string = (bytes: string) => Buffer.concat([hpackInt(7, 0, bytes.length), Buffer.from(bytes)]);
+  /** Entry 62 from then on. */
+  const insert = (name: string, value: string) => Buffer.concat([Buffer.from([0x40]), string(name), string(value)]);
+  const plain = (name: string, value: string) => Buffer.concat([Buffer.from([0x00]), string(name), string(value)]);
+  const seen = (res: Response) => [res.status, ...res.headers];
+
+  test.each([
+    [65536, 200],
+    [65537, "HTTP2CompressionError"],
+  ])("a response field of %d bytes", async (total, expected) => {
+    const block = Buffer.concat([
+      hpackStatus200,
+      Buffer.from([0x00]),
+      string("x-a"),
+      string(Buffer.alloc(total - 3, "v").toString()),
+    ]);
+    const frames: Buffer[] = [];
+    for (let at = 0; at < block.length; at += 16384) {
+      const flags = (at ? 0 : 1) | (at + 16384 < block.length ? 0 : 4);
+      frames.push(frame(at ? 9 : 1, flags, 1, block.subarray(at, at + 16384)));
+    }
+    await withAdversarialServer({ onStream: socket => socket.write(Buffer.concat(frames)) }, async url => {
+      const result = await fetch(url, h2).then(
+        res => [res.status, res.headers.get("x-a")?.length],
+        e => [e.code],
+      );
+      expect(result).toEqual(expected === 200 ? [200, total - 3] : [expected]);
+    });
+  });
+
+  test("the response to an aborted request still reaches the decoder", async () => {
+    const streams: [RawSock, number][] = [];
+    let onStream = Promise.withResolvers<void>();
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          streams.push([socket, id]);
+          onStream.resolve();
+        },
+      },
+      async (url, state) => {
+        const sibling = fetch(url, h2).then(seen);
+        await onStream.promise;
+        onStream = Promise.withResolvers();
+        const controller = new AbortController();
+        const aborted = fetch(url, { ...h2, signal: controller.signal });
+        await onStream.promise;
+        controller.abort();
+        expect(await aborted.catch(e => e.name)).toBe("AbortError");
+        const [[socket, first], [, second]] = streams;
+        const block = Buffer.concat([hpackStatus200, insert("x-first", "1"), insert("x-second", "2")]);
+        // Cut inside the first literal.
+        socket.write(frame(1, 0, second, block.subarray(0, 5)));
+        socket.write(frame(9, 4, second, block.subarray(5)));
+        socket.write(frame(1, 5, first, Buffer.concat([hpackStatus200, Buffer.from([0x80 | 63, 0x80 | 62])])));
+        expect(await sibling).toEqual([200, ["x-first", "1"], ["x-second", "2"]]);
+        expect(state.connections).toBe(1);
+      },
+    );
+  });
+
+  test("a block that is cut off by an abort between HEADERS and CONTINUATION still reaches the decoder whole", async () => {
+    const streams: [RawSock, number][] = [];
+    let onStream = Promise.withResolvers<void>();
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          streams.push([socket, id]);
+          onStream.resolve();
+        },
+      },
+      async (url, state) => {
+        const sibling = fetch(url, h2).then(seen);
+        await onStream.promise;
+        onStream = Promise.withResolvers();
+        const controller = new AbortController();
+        const aborted = fetch(url, { ...h2, signal: controller.signal });
+        await onStream.promise;
+        const [[socket, first], [, second]] = streams;
+        const trailers = Buffer.concat([insert("x-first", "1"), insert("x-second", "2")]);
+        // One write, so one read: once the body is here, so is the first half of the trailers. Cut inside the first literal.
+        socket.write(
+          Buffer.concat([
+            frame(1, 4, second, hpackStatus200),
+            frame(0, 0, second, Buffer.from("body")),
+            frame(1, 1, second, trailers.subarray(0, 5)),
+          ]),
+        );
+        const reader = (await aborted).body!.getReader();
+        expect(new TextDecoder().decode((await reader.read()).value)).toBe("body");
+        controller.abort();
+        expect(await reader.read().catch(e => e.name)).toBe("AbortError");
+        while (!state.rst.length) await new Promise(resolve => setImmediate(resolve));
+        expect(state.rst).toEqual([{ id: second, code: 8 }]);
+        socket.write(frame(9, 4, second, trailers.subarray(5)));
+        socket.write(frame(1, 5, first, Buffer.concat([hpackStatus200, Buffer.from([0x80 | 63, 0x80 | 62])])));
+        expect(await sibling).toEqual([200, ["x-first", "1"], ["x-second", "2"]]);
+        expect(state.connections).toBe(1);
+      },
+    );
+  });
+
+  // The table belongs to the connection. What a block adds after the point where it is refused counts all the same.
+  test.each([
+    ["an upper-case name", plain("X-Bad", "1")],
+    ["a value with LF", plain("x-bad", "a\nb")],
+    ["connection: close", plain("connection", "close")],
+    ["a second :status", hpackStatus200],
+    ["a pseudo-header that does not exist", plain(":bad", "1")],
+  ])("entries that a response adds after %s are in the table", async (_, refused) => {
+    const after = [insert("x-after", "1"), insert("x-last", "1")];
+    const responses = [
+      Buffer.concat([hpackStatus200, insert("x-before", "1"), refused, ...after]),
+      Buffer.concat([hpackStatus200, Buffer.from([0x80 | 64, 0x80 | 63, 0x80 | 62])]),
+    ];
+    await withAdversarialServer(
+      { onStream: (socket, id) => socket.write(frame(1, 5, id, responses[(id - 1) / 2])) },
+      async (url, state) => {
+        expect(await fetch(url, h2).catch(e => e.code)).toBe("HTTP2ProtocolError");
+        expect(seen(await fetch(url, h2))).toEqual([200, ["x-after", "1"], ["x-before", "1"], ["x-last", "1"]]);
+        expect(state.connections).toBe(1);
+      },
+    );
+  });
+
+  test("every field of the trailers reaches the decoder", async () => {
+    const responses = [
+      [
+        frame(1, 4, 1, hpackStatus200),
+        frame(1, 5, 1, Buffer.concat([insert("x-first", "1"), insert("x-second", "2")])),
+      ],
+      [frame(1, 5, 3, Buffer.concat([hpackStatus200, Buffer.from([0x80 | 63, 0x80 | 62])]))],
+    ];
+    await withAdversarialServer(
+      { onStream: (socket, id) => socket.write(Buffer.concat(responses[(id - 1) / 2])) },
+      async (url, state) => {
+        expect(seen(await fetch(url, h2))).toEqual([200]);
+        expect(seen(await fetch(url, h2))).toEqual([200, ["x-first", "1"], ["x-second", "2"]]);
+        expect(state.connections).toBe(1);
+      },
+    );
+  });
+
+  test("a request that is sent again is nothing but references", async () => {
+    const blocks: Buffer[] = [];
+    await withAdversarialServer(
+      {
+        onStream: (socket, id, _, block) => {
+          blocks.push(block);
+          socket.write(frame(1, 5, id, hpackStatus200));
+        },
+      },
+      async (url, state) => {
+        for (let i = 0; i < 2; i++)
+          expect((await fetch(url + "/some/path", { ...h2, method: "DELETE" })).status).toBe(200);
+        expect(state.connections).toBe(1);
+        expect(blocks[0].some(byte => byte < 0x80)).toBe(true);
+        expect(blocks[1].toString("hex")).toMatch(/^([89a-f].)+$/);
+      },
+    );
+  });
+
+  test("1xx blocks and trailers still reach the decoder", async () => {
+    const responses = [
+      [
+        frame(1, 4, 1, Buffer.concat([hpackStatus("103"), insert("x-early", "1")])),
+        frame(1, 4, 1, Buffer.concat([hpackStatus200, Buffer.from([0x80 | 62])])),
+        frame(0, 0, 1, Buffer.from("body")),
+        frame(1, 5, 1, insert("x-trailer", "2")),
+      ],
+      [frame(1, 5, 3, Buffer.concat([hpackStatus200, Buffer.from([0x80 | 63, 0x80 | 62])]))],
+    ];
+    await withAdversarialServer(
+      { onStream: (socket, id) => socket.write(Buffer.concat(responses[(id - 1) / 2])) },
+      async (url, state) => {
+        const first = await fetch(url, h2);
+        expect([...seen(first), await first.text()]).toEqual([200, ["x-early", "1"], "body"]);
+        expect(seen(await fetch(url, h2))).toEqual([200, ["x-early", "1"], ["x-trailer", "2"]]);
+        expect(state.connections).toBe(1);
+      },
+    );
+  });
+
+  test("what the static table has is no reference if it is never indexed, and too large a field leaves the table alone", async () => {
+    const blocks: string[] = [];
+    await withAdversarialServer(
+      {
+        onStream: (socket, id, _, block) => {
+          blocks.push(block.toString("hex"));
+          socket.write(frame(1, 5, id, hpackStatus200));
+        },
+      },
+      async (url, state) => {
+        for (const headers of [
+          {},
+          {},
+          // The static table has both with this value, as entries 23 and 32.
+          { authorization: "", cookie: "" },
+          // One byte more than the table holds.
+          { "x-l": Buffer.alloc(4096 - 32 - "x-l".length + 1, "~").toString() },
+          {},
+        ]) {
+          expect((await fetch(url, { ...h2, headers })).status).toBe(200);
+        }
+        expect(state.connections).toBe(1);
+        expect(blocks[2]).toContain("1f0800");
+        expect(blocks[2]).toContain("1f1100");
+        // Nothing but references, as before.
+        expect(blocks[4]).toBe(blocks[1]);
+      },
+    );
   });
 });

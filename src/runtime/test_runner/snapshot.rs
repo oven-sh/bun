@@ -277,8 +277,15 @@ impl Snapshots {
 
     #[optimize(size)]
     pub(crate) fn add_count(&mut self, expect: &Expect, format: Format, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
+        let snapshot_name = Self::name_of(expect, format, hint);
+        self.count(expect, snapshot_name)
+    }
+
+    /// Counts the call of a snapshot matcher, also when the call has no name to be counted under.
+    #[optimize(size)]
+    fn count(&mut self, expect: &Expect, snapshot_name: Result<Vec<u8>, Error>) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
-        let snapshot_name = Self::name_of(expect, format, hint)?;
+        let snapshot_name = snapshot_name?;
         // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
         // owned `snapshot_name` (same bytes as the interned key) instead.
         let gop = self
@@ -402,12 +409,13 @@ impl Snapshots {
         hint: &[u8],
     ) -> Result<Outcome, Error> {
         let format = self.format_of(files, expect)?;
-        // Names the snapshot first: a call that is refused must not create the file.
-        let (mut key, counter) = self.add_count(expect, format, hint)?;
-        if format == Format::Bun {
+        // A call that is refused must not create the file, and a call that cannot open the file must not use up a number.
+        let snapshot_name = Self::name_of(expect, format, hint);
+        if format == Format::Bun && snapshot_name.is_ok() {
             self.open_to_append(files)?;
         }
 
+        let (mut key, counter) = self.count(expect, snapshot_name)?;
         let mut counter_string_buf = [0u8; 32];
         let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
         key.push(b' ');
@@ -629,6 +637,13 @@ impl Snapshots {
         received: &[u8],
         hint: &[u8],
     ) -> FileOutcome {
+        // `format_of` refuses a test that has ended only when it loads the file's snapshots, and the file is read before the count.
+        if let Some(parent) = expect.parent.as_ref()
+            && let Some(buntest) = parent.bun_test()
+            && parent.phase.sequence_has_ended(buntest.get())
+        {
+            return FileOutcome::NoTest(Error::TestNotActive);
+        }
         let format = match self.format_of(files, expect) {
             Ok(format) => format,
             Err(err) => return FileOutcome::NoTest(err),

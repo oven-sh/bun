@@ -690,6 +690,13 @@ describe.concurrent("test context", () => {
           console.log("toMatchFileSnapshot:", message(() => expect("late").toMatchFileSnapshot("./late.txt")));
           console.log("toMatchInlineSnapshot:", message(() => expect("late").toMatchInlineSnapshot(\`"late"\`)));
         });
+        // The inline snapshot of "next" loads the snapshots of the file. The late call is refused before it reads its file.
+        block(
+          "file snapshot",
+          expect => console.log("file snapshot:", message(() => expect("late").toMatchFileSnapshot("."))),
+          test,
+          () => globalExpect("loaded").toMatchInlineSnapshot(\`"loaded"\`),
+        );
         // An Expect that "t" made while it ran is bound to "t" in the same way.
         describe("made by t", () => {
           let whileNextRuns;
@@ -747,6 +754,7 @@ describe.concurrent("test context", () => {
         "toThrowErrorMatchingSnapshot: " + refused,
         "toMatchFileSnapshot: " + refused,
         "toMatchInlineSnapshot: no error",
+        "file snapshot: " + refused,
         "made by t: " + refused,
         "timed out: timed out > t",
         "timed out: goes on",
@@ -777,6 +785,8 @@ describe.concurrent("test context", () => {
         "(pass) custom matcher > next",
         "(pass) snapshot > t",
         "(pass) snapshot > next",
+        "(pass) file snapshot > t",
+        "(pass) file snapshot > next",
         "(pass) made by t > t",
         "(pass) made by t > next",
         "(fail) timed out > t",
@@ -860,7 +870,9 @@ describe.concurrent("test context", () => {
       snapshots: (await Bun.file(join(String(dir), "__snapshots__", "b.test.js.snap")).text())
         .split("\n")
         .filter(Boolean),
-      written: readdirSync(String(dir), { recursive: true }).sort(),
+      written: readdirSync(String(dir), { recursive: true, encoding: "utf8" })
+        .map(path => path.replaceAll("\\", "/"))
+        .sort(),
       exitCode,
     }).toEqual({
       log: [

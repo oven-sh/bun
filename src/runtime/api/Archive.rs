@@ -57,7 +57,7 @@ impl Archive {
         let data = self.store.shared_view();
         let fmt_err = |_: core::fmt::Error| crate::Error::FormatError;
 
-        writeln!(
+        write!(
             writer,
             "Archive ({}) {{",
             bun_core::fmt::size(data.len(), bun_core::fmt::SizeFormatterOptions::default()),
@@ -66,7 +66,7 @@ impl Archive {
 
         {
             let mut formatter = formatter.indented();
-            formatter.write_indent(writer).map_err(fmt_err)?;
+            formatter.write_break(writer).map_err(fmt_err)?;
             write!(
                 writer,
                 "{}",
@@ -87,8 +87,7 @@ impl Archive {
                 )
                 .map_err(|_| crate::Error::JSError)?;
         }
-        writer.write_str("\n").map_err(fmt_err)?;
-        formatter.write_indent(writer).map_err(fmt_err)?;
+        formatter.write_break(writer).map_err(fmt_err)?;
         writer.write_str("}").map_err(fmt_err)?;
         formatter.reset_line();
         Ok(())

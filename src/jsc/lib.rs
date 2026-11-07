@@ -236,6 +236,20 @@ pub trait ConsoleFormatter {
     }
     /// `Formatter.writeIndent(Writer, writer)` — emit `2 * indent` spaces.
     fn write_indent<W: core::fmt::Write>(&self, writer: &mut W) -> core::fmt::Result;
+    /// Whether the value prints on one line: a table cell, `Bun.inspect(value, { compact: true })`.
+    #[inline]
+    fn single_line(&self) -> bool {
+        false
+    }
+    /// The break before a line of a `{ … }` block: a line feed and the indent, or a space on one line.
+    #[inline(never)]
+    fn write_break<W: core::fmt::Write>(&self, writer: &mut W) -> core::fmt::Result {
+        if self.single_line() {
+            return writer.write_str(" ");
+        }
+        writer.write_str("\n")?;
+        self.write_indent(writer)
+    }
     /// `Formatter.resetLine()` — reset `estimated_line_length` to current
     /// indent so wrap heuristics start fresh on the next line.
     fn reset_line(&mut self);
@@ -255,7 +269,7 @@ pub trait ConsoleFormatter {
 /// ```ignore
 /// {
 ///     let mut formatter = IndentScope::new(&mut *formatter);
-///     formatter.write_indent(writer)?;   // auto-derefs to &mut F
+///     formatter.write_break(writer)?;    // auto-derefs to &mut F
 ///     // …
 /// } // indent restored here, even on `?` early-return
 /// ```
@@ -304,6 +318,10 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
     #[inline]
     fn reset_line(&mut self) {
         self::console_object::Formatter::reset_line(self)
+    }
+    #[inline]
+    fn single_line(&self) -> bool {
+        self.single_line
     }
     fn write_indent<W: core::fmt::Write>(&self, writer: &mut W) -> core::fmt::Result {
         // Inherent `Formatter::write_indent` takes `&mut dyn bun_io::Write`;

@@ -959,12 +959,12 @@ impl BlobExt for Blob {
                 || show_name
                 || self.last_modified.get() != 0.0)
         {
-            writer.write_str(" {\n")?;
+            writer.write_str(" {")?;
             {
                 formatter.indent_inc();
 
                 if show_name {
-                    formatter.write_indent(writer)?;
+                    formatter.write_break(writer)?;
                     bun_core::write_pretty!(
                         writer,
                         ENABLE_ANSI_COLORS,
@@ -977,11 +977,10 @@ impl BlobExt for Blob {
                     {
                         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
                     }
-                    writer.write_str("\n")?;
                 }
 
                 if !self.content_type_slice().is_empty() {
-                    formatter.write_indent(writer)?;
+                    formatter.write_break(writer)?;
                     bun_core::write_pretty!(
                         writer,
                         ENABLE_ANSI_COLORS,
@@ -991,36 +990,38 @@ impl BlobExt for Blob {
                     if self.offset.get() > 0 || self.last_modified.get() != 0.0 {
                         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
                     }
-                    writer.write_str("\n")?;
                 }
 
                 if self.offset.get() > 0 {
-                    formatter.write_indent(writer)?;
+                    formatter.write_break(writer)?;
                     bun_core::write_pretty!(
                         writer,
                         ENABLE_ANSI_COLORS,
-                        "offset<d>:<r> <yellow>{d}<r>\n",
+                        "offset<d>:<r> <yellow>{d}<r>",
                         self.offset.get(),
                     )?;
+                    // The default text has a second line feed after `offset`.
+                    if !formatter.single_line() {
+                        writer.write_str("\n")?;
+                    }
                     if self.last_modified.get() != 0.0 {
                         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
                     }
-                    writer.write_str("\n")?;
                 }
 
                 if self.last_modified.get() != 0.0 {
-                    formatter.write_indent(writer)?;
+                    formatter.write_break(writer)?;
                     bun_core::write_pretty!(
                         writer,
                         ENABLE_ANSI_COLORS,
-                        "lastModified<d>:<r> <yellow>{d}<r>\n",
+                        "lastModified<d>:<r> <yellow>{d}<r>",
                         self.last_modified.get(),
                     )?;
                 }
 
                 formatter.indent_dec();
             }
-            formatter.write_indent(writer)?;
+            formatter.write_break(writer)?;
             writer.write_str("}")?;
         }
         Ok(())

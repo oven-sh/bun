@@ -474,7 +474,11 @@ pub(crate) fn inspect<'a>(
 }
 
 // HOST_EXPORT(Bun__inspect_singleline, c)
-pub(crate) fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> BunString {
+pub(crate) fn bun_inspect_singleline(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    hooks: bun_jsc::ConsoleObject::SingleLineHooks,
+) -> BunString {
     let mut array: Vec<u8> = Vec::new();
     if ConsoleObject::format2(
         ConsoleObject::MessageLevel::Debug,
@@ -489,6 +493,7 @@ pub(crate) fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValu
             quote_strings: true,
             ordered_properties: false,
             single_line: true,
+            single_line_hooks: hooks,
             ..Default::default()
         },
     )

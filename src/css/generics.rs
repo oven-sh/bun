@@ -760,6 +760,8 @@ mod inherent_bridge {
     // (properties/masking.rs).
 
     // ── properties/ui ──
+    use crate::properties::ui::CaretShape;
+    bridge_clone_partialeq!(CaretShape);
     use crate::properties::ui::ColorScheme;
     bridge_deep_clone_copy!(ColorScheme);
     bridge_eql_partialeq!(ColorScheme);

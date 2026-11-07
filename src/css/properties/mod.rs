@@ -124,6 +124,7 @@ pub mod position;
 pub mod prefix_handler;
 pub mod shape;
 pub mod size;
+pub mod svg;
 pub mod text;
 pub mod transform;
 pub mod transition;
@@ -268,6 +269,8 @@ mod generic_registrations {
         size::BoxSizing,
         size::MaxSize,
         size::Size,
+        // svg
+        svg::SVGPaint,
         // text
         text::TextShadow,
         // transform
@@ -281,6 +284,8 @@ mod generic_registrations {
         animation::Animation,
         animation::AnimationName,
         // ui
+        ui::Caret,
+        ui::ColorOrAuto,
         ui::ColorScheme,
         // PropertyId (used as `SmallList<PropertyId, 1>` for `transition-property`)
         properties_generated::PropertyId,

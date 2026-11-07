@@ -24,13 +24,17 @@
 
 #include "DOMException.h"
 #include "JSDOMWrapper.h"
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/ErrorPrototype.h>
 
 namespace WebCore {
 
-class JSDOMException : public JSDOMWrapper<DOMException> {
+// An ErrorInstance so DOMException has [[ErrorData]] and a stack, as WebIDL requires.
+class JSDOMException : public JSC::ErrorInstance {
 public:
-    using Base = JSDOMWrapper<DOMException>;
+    using Base = JSC::ErrorInstance;
+    using DOMWrapped = DOMException;
+
     static JSDOMException* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<DOMException>&& impl)
     {
         JSDOMException* ptr = new (NotNull, JSC::allocateCell<JSDOMException>(globalObject->vm())) JSDOMException(structure, *globalObject, WTF::move(impl));
@@ -47,7 +51,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ErrorInstanceType, StructureFlags), info(), JSC::NonArray);
     }
 
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
@@ -60,10 +64,40 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
+    DOMException& wrapped() const { return m_wrapped; }
+    Ref<DOMException> protectedWrapped() const { return m_wrapped; }
+    static constexpr ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSDOMException, m_wrapped); }
+
+    JSDOMGlobalObject* globalObject() const { return uncheckedDowncast<JSDOMGlobalObject>(JSC::JSNonFinalObject::globalObject()); }
+
+    // Installs `stack` as an own property in place of the captured frames.
+    void setStackValue(JSC::VM&, JSC::JSValue);
+
+    // ErrorInstance::stackWithHeader() reads name/message as data properties, and ours are prototype
+    // accessors. Call before anything that may make ErrorInstance materialize the stack.
+    static void willMaterializeErrorInfo(JSC::JSGlobalObject*, JSC::ErrorInstance*);
+
+    // What the header of a plain Error's stack would read. Runs no JS. Leaves no exception pending but a termination.
+    WTF::String displayName(JSC::JSGlobalObject*);
+    WTF::String displayMessage(JSC::JSGlobalObject*);
+    WTF::String displayHeader(JSC::JSGlobalObject*);
+
+    static bool getOwnPropertySlot(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
+    static void getOwnSpecialPropertyNames(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
+    static bool defineOwnProperty(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
+    static bool put(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+    static bool deleteProperty(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
+
 protected:
     JSDOMException(JSC::Structure*, JSDOMGlobalObject&, Ref<DOMException>&&);
 
     void finishCreation(JSC::VM&);
+
+private:
+    WTF::String headerPart(JSC::JSGlobalObject*, JSC::PropertyName, const WTF::String& implValue, ASCIILiteral absent);
+    void prependStackHeaderIfFramesOnly(JSC::JSGlobalObject*);
+
+    const Ref<DOMException> m_wrapped;
 };
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, DOMException&);

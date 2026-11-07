@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import net from "net";
 
 /**
@@ -399,6 +399,158 @@ describe("Valkey: RESP push frame routing", () => {
       await withMockClient([ack("punsubscribe", "news.*", 0), ok], async client => {
         expect(await client.punsubscribe("news.*")).toEqual({ type: "punsubscribe", data: ["news.*", 0] });
         expect(await client.set("key", "value")).toBe("OK");
+      });
+    });
+  });
+});
+
+// A reply whose handler fails is one reply's failure. The client reports it, or rejects the
+// request that it answers, and goes on to the replies behind it.
+describe("Valkey: a reply that cannot become a JS value", () => {
+  const MiB = 1024 * 1024;
+  const bulk = (text: string | Buffer) =>
+    Buffer.concat([Buffer.from(`$${Buffer.byteLength(text)}\r\n`), Buffer.from(text), Buffer.from("\r\n")]);
+  const push = (...parts: Buffer[]) => Buffer.concat([Buffer.from(`>${parts.length}\r\n`), ...parts]);
+  const message = (payload: Buffer, channel = bulk("ch")) => push(bulk("message"), channel, payload);
+  const confirmation = (kind: string, name: Buffer, count: number) =>
+    push(bulk(kind), name, Buffer.from(`:${count}\r\n`));
+  // A map whose one key is an empty map. The client makes a null-prototype object of a map and
+  // uses each converted key as a property key. A null-prototype object has no primitive value.
+  const unconvertible = Buffer.from("%1\r\n%0\r\n:1\r\n");
+  const conversionError = "TypeError: No default value";
+
+  // Answers the handshake, waits for `commands` more commands, answers them with ONE write
+  // and ends the connection. One write puts the replies in the same read of the client.
+  function serveInOneWrite(commands: number, replies: Buffer): Promise<{ server: net.Server; port: number }> {
+    return new Promise((resolve, reject) => {
+      const server = net.createServer(socket => {
+        let seen = -1;
+        socket.on("data", (data: Buffer) => {
+          for (let left = countRespCommands(data); left > 0; left--) {
+            if (seen === -1) socket.write("+OK\r\n");
+            if (++seen === commands) socket.end(replies);
+          }
+        });
+        socket.on("error", () => {});
+      });
+      server.listen(0, "127.0.0.1", () => resolve({ server, port: (server.address() as net.AddressInfo).port }));
+      server.on("error", reject);
+    });
+  }
+
+  // A subscriber in a child: a message has no promise to reject, so its failure goes to the
+  // process. One line per event. With `redial`, the first report closes the client and
+  // connects it again.
+  async function subscriberEvents(pushes: Buffer[], { redial = false, env = bunEnv } = {}) {
+    const subscribed = confirmation("subscribe", bulk("ch"), 1);
+    const { server, port } = await serveInOneWrite(1, Buffer.concat([subscribed, ...pushes]));
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const client = new Bun.RedisClient("redis://127.0.0.1:${port}", { autoReconnect: false });
+          let redial = ${redial};
+          process.on("uncaughtException", e => {
+            console.log("uncaughtException " + e.name + ": " + e.message + (e.code ? " [" + e.code + "]" : ""));
+            if (!redial) return;
+            redial = false;
+            client.close();
+            client.connect().then(() => {
+              console.log("reconnected");
+              client.close();
+            });
+          });
+          client.onclose = () => console.log("closed");
+          await client.connect();
+          await client.subscribe("ch", message =>
+            console.log(
+              typeof message !== "string"
+                ? "message that is a " + typeof message
+                : message.length > 64
+                  ? "message of length " + message.length
+                  : "message " + message,
+            ),
+          );
+          `,
+        ],
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const events = stdout.trim().split("\n");
+      return exitCode === 0 ? { events, exitCode } : { events, exitCode, stderr };
+    } finally {
+      server.close();
+    }
+  }
+
+  const followers = [message(bulk("next")), message(bulk("last"))];
+  const reported = `uncaughtException ${conversionError}`;
+
+  const undeliverable: [name: string, pushes: Buffer[], before: string[]][] = [
+    ["a message", [message(unconvertible)], []],
+    ["a channel name", [message(bulk("payload"), unconvertible)], []],
+    // The first message does not fit in one read, so what follows it is parsed from the read buffer.
+    [
+      "a message behind one that is larger than a read",
+      [message(bulk(Buffer.alloc(MiB, "x"))), message(unconvertible)],
+      [`message of length ${MiB}`],
+    ],
+  ];
+  test.concurrent.each(undeliverable)("%s: reported, and the messages behind it arrive", async (_, pushes, before) => {
+    expect(await subscriberEvents([...pushes, ...followers])).toEqual({
+      events: [...before, reported, "message next", "message last", "closed"],
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a handler that closes the client and connects it again: the old read stops there", async () => {
+    expect(await subscriberEvents([message(unconvertible), ...followers], { redial: true })).toEqual({
+      events: [reported, "closed", "reconnected", "closed"],
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent.each(["psubscribe", "punsubscribe"] as const)(
+    "a %s confirmation: its request rejects, and the reply behind it keeps its own",
+    async kind => {
+      const { server, port } = await serveInOneWrite(
+        2,
+        Buffer.concat([confirmation(kind, unconvertible, 0), Buffer.from("+PONG\r\n")]),
+      );
+      try {
+        const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+        try {
+          const closed = new Promise<string>(resolve => (client.onclose = () => resolve("closed")));
+          const outcome = (request: Promise<unknown>) => request.catch((e: Error) => `${e.name}: ${e.message}`);
+          const requests = [outcome((client as any)[kind]("news.*")), outcome(client.send("PING", []))];
+          // A request that never settles lets the close win the race.
+          expect(await Promise.race([Promise.all(requests), closed])).toEqual([conversionError, "PONG"]);
+        } finally {
+          client.close();
+        }
+      } finally {
+        server.close();
+      }
+    },
+  );
+
+  // `BUN_JSC_maxSingleAllocationSize` makes every WTF `try*` allocation above the cap return
+  // null, the way a refused allocation does. It exists in debug WTF only, and it does not
+  // reach the client's read buffer. Each message is over the 4 MiB cap as a JS string:
+  // 5 MiB of 8-bit characters, and 3 MiB that one non-Latin-1 character makes 16-bit.
+  describe.skipIf(!isDebug)("because its string cannot be allocated", () => {
+    test.concurrent.each([
+      ["an ASCII", Buffer.alloc(5 * MiB, "a")],
+      ["a non-ASCII", Buffer.concat([Buffer.alloc(3 * MiB, "a"), Buffer.from("\u4e2d")])],
+    ])("%s message: reported, and the messages behind it arrive", async (_, text) => {
+      const env = { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(4 * MiB) };
+      expect(await subscriberEvents([message(bulk(text)), ...followers], { env })).toEqual({
+        events: ["uncaughtException RangeError: Out of memory", "message next", "message last", "closed"],
+        exitCode: 0,
       });
     });
   });

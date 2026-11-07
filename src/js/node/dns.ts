@@ -405,7 +405,7 @@ function lookupService(
   if (isIP(address) === 0) {
     throw $ERR_INVALID_ARG_VALUE("address", address);
   }
-  validatePort(port, "port");
+  validatePort(port);
   if (typeof callback !== "function") {
     throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
   }
@@ -860,7 +860,7 @@ const promises = {
     if (isIP(address) === 0) {
       throw $ERR_INVALID_ARG_VALUE("address", address);
     }
-    validatePort(port, "port");
+    validatePort(port);
 
     try {
       return translateErrorCode(dns.lookupService(address, +port)).then(([hostname, service]) => ({

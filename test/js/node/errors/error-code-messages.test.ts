@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import child_process from "node:child_process";
+import dgram from "node:dgram";
+import dns from "node:dns";
 import { EventEmitter, once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
@@ -308,4 +310,145 @@ test("ERR_IPC_CHANNEL_CLOSED message from process.send() in the child", async ()
   expect(stderr).toBe("");
   expect(stdout).toBe("ERR_IPC_CHANNEL_CLOSED | Error | Channel closed\n");
   expect(exitCode).toBe(0);
+});
+
+// ERR_SOCKET_BAD_PORT. Node builds its message in one place, from the name, the bound and the rejected value:
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/errors.js#L1807-L1812
+// Every expected message below is the text node v26.12.1 gives for the same call.
+
+function withUdpSocket<T>(fn: (socket: dgram.Socket) => T): T {
+  const socket = dgram.createSocket("udp4");
+  try {
+    return fn(socket);
+  } finally {
+    socket.close();
+  }
+}
+
+test("ERR_SOCKET_BAD_PORT has node's message at every call that rejects a port", () => {
+  const badPort = (name: string, bound: string, received: string) =>
+    `ERR_SOCKET_BAD_PORT | RangeError | ${name} should be ${bound} 0 and < 65536. Received ${received}.`;
+
+  expect({
+    "dns.lookupService": capture(() => dns.lookupService("127.0.0.1", 99999, () => {})),
+    "dns.lookupService, string": capture(() => dns.lookupService("127.0.0.1", "99999" as any, () => {})),
+    "dns.promises.lookupService": capture(() => dns.promises.lookupService("127.0.0.1", 99999)),
+    "net.connect": capture(() => net.connect({ host: "127.0.0.1", port: 99999 })),
+    "net.connect, string": capture(() => net.connect({ host: "127.0.0.1", port: "99999" as any })),
+    "Socket#connect": capture(() => new net.Socket().connect(99999, "127.0.0.1")),
+    "tls.connect": capture(() => tls.connect({ host: "127.0.0.1", port: 99999 })),
+    "http.request": capture(() => http.request({ host: "127.0.0.1", port: 99999 })),
+    "net.Server#listen": capture(() => net.createServer().listen(99999)),
+    "net.Server#listen, options": capture(() => net.createServer().listen({ port: 99999 })),
+    "net.Server#listen, options, string": capture(() => net.createServer().listen({ port: "99999" as any })),
+    "tls.Server#listen": capture(() => tls.createServer().listen(99999)),
+    "tls.Server#listen, options": capture(() => tls.createServer().listen({ port: 99999 })),
+    "dgram connect": capture(() => withUdpSocket(socket => socket.connect(99999))),
+    "dgram connect, zero": capture(() => withUdpSocket(socket => socket.connect(0))),
+    "dgram send": capture(() => withUdpSocket(socket => socket.send("x", 99999, "127.0.0.1"))),
+    "dgram send, string": capture(() => withUdpSocket(socket => socket.send("x", "0" as any, "127.0.0.1"))),
+  }).toEqual({
+    "dns.lookupService": badPort("Port", ">=", "type number (99999)"),
+    "dns.lookupService, string": badPort("Port", ">=", "type string ('99999')"),
+    "dns.promises.lookupService": badPort("Port", ">=", "type number (99999)"),
+    "net.connect": badPort("Port", ">=", "type number (99999)"),
+    "net.connect, string": badPort("Port", ">=", "type string ('99999')"),
+    "Socket#connect": badPort("Port", ">=", "type number (99999)"),
+    "tls.connect": badPort("Port", ">=", "type number (99999)"),
+    "http.request": badPort("Port", ">=", "type number (99999)"),
+    "net.Server#listen": badPort("options.port", ">=", "type number (99999)"),
+    "net.Server#listen, options": badPort("options.port", ">=", "type number (99999)"),
+    "net.Server#listen, options, string": badPort("options.port", ">=", "type string ('99999')"),
+    "tls.Server#listen": badPort("options.port", ">=", "type number (99999)"),
+    "tls.Server#listen, options": badPort("options.port", ">=", "type number (99999)"),
+    "dgram connect": badPort("Port", ">", "type number (99999)"),
+    "dgram connect, zero": badPort("Port", ">", "type number (0)"),
+    "dgram send": badPort("Port", ">", "type number (99999)"),
+    "dgram send, string": badPort("Port", ">", "type string ('0')"),
+  });
+});
+
+test("ERR_SOCKET_BAD_PORT describes the rejected port by its type", () => {
+  class Foo {}
+  const received = (port: unknown) =>
+    capture(() => dns.lookupService("127.0.0.1", port as any, () => {})).replace(
+      "ERR_SOCKET_BAD_PORT | RangeError | Port should be >= 0 and < 65536. Received ",
+      "",
+    );
+  expect(
+    [
+      NaN,
+      Infinity,
+      1.5,
+      "",
+      "it's",
+      "longer than twenty-eight characters",
+      undefined,
+      null,
+      true,
+      10n,
+      Symbol("sym"),
+      [],
+      new Foo(),
+      function named() {},
+    ].map(received),
+  ).toEqual([
+    "type number (NaN).",
+    "type number (Infinity).",
+    "type number (1.5).",
+    "type string ('').",
+    `type string ("it's").`,
+    "type string ('longer than twenty-eight ...').",
+    "undefined.",
+    "null.",
+    "type boolean (true).",
+    "type bigint (10n).",
+    "type symbol (Symbol(sym)).",
+    "an instance of Array.",
+    "an instance of Foo.",
+    "function named.",
+  ]);
+});
+
+test("an error thrown while ERR_SOCKET_BAD_PORT describes the port is the error of the call", () => {
+  // The message names the constructor of an object. Node reads `port.constructor.name` for it.
+  const port: any = {
+    get constructor() {
+      throw new Error("from the getter");
+    },
+  };
+  expect({
+    "dns.lookupService": capture(() => dns.lookupService("127.0.0.1", port, () => {})),
+    "dgram connect": capture(() => withUdpSocket(socket => socket.connect(port))),
+  }).toEqual({
+    "dns.lookupService": "undefined | Error | from the getter",
+    "dgram connect": "undefined | Error | from the getter",
+  });
+});
+
+test("a port whose constructor name is not a string keeps ERR_SOCKET_BAD_PORT", () => {
+  // Node does not convert such a name to a string: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/errors.js#L1042-L1045
+  const ports: any[] = [
+    JSON.parse('{"constructor":{"name":{"toString":null}}}'),
+    { constructor: { name: Symbol("name") } },
+    { constructor: { name: 5 } },
+    { constructor: {} },
+  ];
+  const codeAndClass = (fn: () => unknown) => capture(fn).split(" | ").slice(0, 2).join(" | ");
+  const kept = "ERR_SOCKET_BAD_PORT | RangeError";
+  expect(
+    ports.map(port => ({
+      "dns.lookupService": codeAndClass(() => dns.lookupService("127.0.0.1", port, () => {})),
+      "dns.promises.lookupService": codeAndClass(() => dns.promises.lookupService("127.0.0.1", port)),
+      "dgram connect": codeAndClass(() => withUdpSocket(socket => socket.connect(port))),
+      "dgram send": codeAndClass(() => withUdpSocket(socket => socket.send("x", port, "127.0.0.1"))),
+    })),
+  ).toEqual(
+    ports.map(() => ({
+      "dns.lookupService": kept,
+      "dns.promises.lookupService": kept,
+      "dgram connect": kept,
+      "dgram send": kept,
+    })),
+  );
 });

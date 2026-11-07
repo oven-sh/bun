@@ -10,7 +10,7 @@ const title = "the table of built-ins lists the own names of a new instance of e
 const table = findBuiltinTable(bunExe());
 
 // What a function has besides `length` and `name` follows from its kind, which the compiler knows for a function of the program; it follows no function made from text.
-const classesOfFunctions = ["Function", "WebAssembly.Suspending"];
+const classesOfFunctions = ["Function"];
 
 const script = `
 const table = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));

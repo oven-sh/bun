@@ -1,4 +1,4 @@
-// Elements are stored into objects whose prototype is a typed array, at indexes that the typed array has and does not have: first into sealed objects that have an element, then after a proxy was put above the prototype object of a function that nothing constructs. Plain Bun prints another output.
+// Elements are stored into objects whose prototype is a typed array, at indexes that the typed array has and does not have: first into sealed objects that have an element, then after a proxy was put above the prototype object of a function that nothing constructs. Plain Bun prints the same since WebKit fd64f10cbda1: before that, a store past the end of the typed array defined the element on the object below it, or threw.
 function show(label, run) {
   try {
     console.log(label, run());
@@ -85,9 +85,9 @@ show("sealed, without elements", () => {
   sealed[100] = 1.5;
   return listKeys(sealed);
 });
-// Before WebKit 1d4bed41aca8 the first line of the output was ["9","a"]: the answer of the specification, where the typed array
-// ignores the store. Now the store throws there, as in plain Bun. An object that is made the same one definition at a time, and a
-// frozen one, still get the answer of the specification.
+// The first line of the output is the answer of the specification, where the typed array ignores the store. An executable built
+// with WebKit 1d4bed41aca8 threw there, as plain Bun did then. The two objects below come to the same state in other ways, and had
+// the answer of the specification there too.
 show("each property made not configurable, an index past the end", () => {
   const object = below({ a: 1, 9: 1.5 }, new Uint8Array(0));
   for (const key of Reflect.ownKeys(object)) Object.defineProperty(object, key, { configurable: false });
@@ -101,7 +101,7 @@ show("frozen, an index past the end", () => {
   return listKeys(frozen);
 });
 /* Output:
-sealed, an index past the end throws TypeError
+sealed, an index past the end ["9","a"]
 sealed, its own index ["9","a"]2.5
 sealed, a name throws TypeError
 store number 0 ["0"]

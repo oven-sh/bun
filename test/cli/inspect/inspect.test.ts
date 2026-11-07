@@ -671,3 +671,112 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
   expect(child.exitCode).toBe(null);
   webSocket.close();
 });
+
+test("a frontend that turned the control flow profiler on can leave while an async function waits", async () => {
+  // WebKit 325507@main releases the control flow profiler when a frontend disconnects. The body of a suspended async
+  // function gets its code again in the mode of its first code, and linking that code needs the profiler: the
+  // process read address 0 when the function went on. Bun's WebKit leaves the profiler to the VM at a disconnect.
+  const source = `
+      const lines = console[Symbol.asyncIterator]();
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      async function work() {
+        await gate;
+        return 42;
+      }
+      // "start": a frontend has turned the profiler on. The first code of work() is made now, and work() waits.
+      await lines.next();
+      const pending = work();
+      console.log("suspended");
+      // "resume": that frontend has left.
+      await lines.next();
+      openGate();
+      console.log("resumed", await pending);
+      process.exit(0);
+    `;
+  await using child = spawn({
+    cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/", "-e", source],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  const foundUrl = Promise.withResolvers<string>();
+  const stderrDone = (async () => {
+    const decoder = new TextDecoder();
+    for await (const chunk of child.stderr as ReadableStream) {
+      stderr += decoder.decode(chunk, { stream: true });
+      const url = stderr.match(/(ws:\/\/[^\s]+)/)?.[1];
+      if (url) foundUrl.resolve(url);
+    }
+    foundUrl.reject(new Error(`Unable to find the inspector URL in:\n${stderr}`));
+  })();
+  let stdout = "";
+  const sawSuspended = Promise.withResolvers<void>();
+  const stdoutDone = (async () => {
+    const decoder = new TextDecoder();
+    for await (const chunk of child.stdout as ReadableStream) {
+      stdout += decoder.decode(chunk, { stream: true });
+      if (stdout.includes("suspended\n")) sawSuspended.resolve();
+    }
+    sawSuspended.reject(new Error(`The inspectee ended before it printed "suspended":\n${stdout}\n${stderr}`));
+  })();
+  stdoutDone.catch(() => {});
+  stderrDone.catch(() => {});
+
+  type Reply = { result?: any; error?: { message: string } };
+  async function connectFrontend(url: string) {
+    const pending = new Map<number, (reply: Reply) => void>();
+    const opened = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const webSocket = new WebSocket(url);
+    webSocket.addEventListener("open", () => opened.resolve());
+    webSocket.addEventListener("error", () => opened.reject(new Error(`the inspector socket failed\n${stderr}`)));
+    webSocket.addEventListener("close", () => {
+      closed.resolve();
+      for (const resolve of pending.values()) resolve({ error: { message: "the inspector closed the socket" } });
+    });
+    webSocket.addEventListener("message", ({ data }) => {
+      const reply: Reply & { id?: number } = JSON.parse(data.toString());
+      if (typeof reply.id !== "number") return;
+      pending.get(reply.id)?.(reply);
+      pending.delete(reply.id);
+    });
+    await opened.promise;
+    let nextId = 1;
+    return {
+      send(method: string, params: object = {}): Promise<Reply> {
+        const id = nextId++;
+        const { promise, resolve } = Promise.withResolvers<Reply>();
+        pending.set(id, resolve);
+        webSocket.send(JSON.stringify({ id, method, params }));
+        return promise;
+      },
+      async close() {
+        webSocket.close();
+        await closed.promise;
+      },
+    };
+  }
+
+  const url = await foundUrl.promise;
+  const first = await connectFrontend(url);
+  expect(await first.send("Runtime.enableControlFlowProfiler")).toEqual({ result: {}, id: 1 });
+  child.stdin.write("start\n");
+  await child.stdin.flush();
+  await sawSuspended.promise;
+
+  await first.close();
+  // The inspector handles its frontends in order. So when a second frontend has its answer, the disconnect of the
+  // first one has run on the JavaScript thread.
+  const second = await connectFrontend(url);
+  expect((await second.send("Runtime.evaluate", { expression: "1 + 1" })).result?.result?.value).toBe(2);
+
+  child.stdin.write("resume\n");
+  await child.stdin.flush();
+  const exitCode = await child.exited;
+  await Promise.allSettled([stdoutDone, stderrDone]);
+  expect(stdout).toBe("suspended\nresumed 42\n");
+  expect(exitCode).toBe(0);
+});

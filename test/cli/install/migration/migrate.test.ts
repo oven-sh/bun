@@ -619,8 +619,8 @@ test.concurrent(
     expect(exitCode).toBe(0);
 
     const bunLock = await Bun.file(join(testDir, "bun.lock")).text();
-    expect(bunLock).toContain(`"a": ["a@file:vendor/a", { "dependencies": { "b": "file:../b" } }]`);
-    expect(bunLock).toContain(`"a/b": ["b@file:vendor/b", {}]`);
+    expect(bunLock).toContain(`"a": ["a@file:vendor/a", { "version": "1.0.0", "dependencies": { "b": "file:../b" } }]`);
+    expect(bunLock).toContain(`"a/b": ["b@file:vendor/b", { "version": "1.0.0" }]`);
     expect(await Bun.file(join(testDir, "node_modules", "a", "node_modules", "b", "package.json")).json()).toEqual({
       name: "b",
       version: "1.0.0",
@@ -1028,7 +1028,9 @@ test.concurrent("package-lock.json migration does not platform-skip a regular fi
 
   // The migrated bun.lock matches what a fresh resolve of the same package.json writes:
   // the folder package keeps its real name and carries no os/cpu constraint.
-  expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(`"a": ["a@file:vendor/a", {}]`);
+  expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(
+    `"a": ["a@file:vendor/a", { "version": "1.0.0" }]`,
+  );
 });
 
 test.concurrent.each([
@@ -1046,7 +1048,9 @@ test.concurrent.each([
     const first = await install(testDir);
     expect(first.stderr).toContain("migrated lockfile from package-lock.json");
     expect(first.exitCode).toBe(0);
-    expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(`"${name}": ["${name}@file:${folder}", {}]`);
+    expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(
+      `"${name}": ["${name}@file:${folder}", { "version": "1.0.0" }]`,
+    );
 
     // The second install consumes the bun.lock the migration just wrote. It must parse,
     // otherwise --frozen-lockfile is permanently broken after an npm migration.
@@ -1178,7 +1182,7 @@ test.concurrent.each<[string, Record<string, string>, string[]]>([
   [
     "and another link target depend on each other",
     folderLockfile({ a: "file:a", b: "file:b" }, { a: { b: "^1.0.0" }, b: { a: "^1.0.0" } }),
-    ["a", "a/b", "b", "b/a"],
+    ["a", "b"],
   ],
 ])("package-lock.json migration terminates when a file: link target %s", async (_desc, files, lockPackages) => {
   using testDir = synthetic("migrate-folder-cycle", files);
@@ -1348,7 +1352,7 @@ describe.each([
 
     const lines = (await Bun.file(join(testDir, "bun.lock")).text()).split("\n").map(line => line.trim());
     expect(lines.find(line => line.startsWith('"native-musl": ['))).toContain(`{ "os": "linux", "libc": "musl" }`);
-    expect(lines.find(line => line.startsWith('"a": ['))).toBe('"a": ["a@file:vendor/a", {}],');
+    expect(lines.find(line => line.startsWith('"a": ['))).toBe('"a": ["a@file:vendor/a", { "version": "1.0.0" }],');
   });
 });
 
@@ -1763,10 +1767,10 @@ describe("package-lock.json migration fixes", () => {
     expect(
       Object.fromEntries(Object.entries<any[]>(lock.packages).map(([key, v]) => [key, [v[0], v[1]]])),
     ).toStrictEqual({
-      j: ["j@file:../i/j", { dependencies: { k: "" } }],
+      j: ["j@file:../i/j", { version: "1.0.0", dependencies: { k: "" } }],
       k: ["k@1.0.0", registry("k")],
-      o: ["o@file:../m/node_modules/n/o", {}],
-      o2: ["o2@file:../m/node_modules/n/o2", {}],
+      o: ["o@file:../m/node_modules/n/o", { version: "1.0.0" }],
+      o2: ["o2@file:../m/node_modules/n/o2", { version: "1.0.0" }],
       x: ["x@1.0.0", registry("x")],
     });
     expect(lock.packages.x[2]).toStrictEqual({});
@@ -2383,8 +2387,8 @@ describe("package-lock.json migration fixes", () => {
       );
       expect(exitCode).toBe(0);
       expect(lock.packages).toStrictEqual({
-        o: [project.o, {}],
-        p: [project.p, {}],
+        o: [project.o, { version: "1.0.0" }],
+        p: [project.p, { version: "1.0.0" }],
       });
       await frozen(project.dir);
     },
@@ -2394,8 +2398,8 @@ describe("package-lock.json migration fixes", () => {
     using project = folderLinkProject(`npm-migrate-folder-link-in-tree-${linker}`, { outOfTree: false });
     const { lock } = await migrate(project.dir);
     expect(lock.packages).toStrictEqual({
-      o: [project.o, { dependencies: { p: "" } }],
-      "o/p": [project.p, {}],
+      o: [project.o, { version: "1.0.0", dependencies: { p: "" } }],
+      "o/p": [project.p, { version: "1.0.0" }],
     });
     await frozen(project.dir);
     await expectFolderLinkInstalled(project, linker);
@@ -2458,8 +2462,11 @@ describe("package-lock.json migration fixes", () => {
     expect(stderr).not.toContain("outside the project");
     expect(exitCode).toBe(0);
     expect(lock.packages).toStrictEqual({
-      plugin: ["plugin@file:../packages/plugin", { dependencies: { "shared-lib": "file:../shared-lib" } }],
-      "plugin/shared-lib": ["shared-lib@file:../packages/shared-lib", {}],
+      plugin: [
+        "plugin@file:../packages/plugin",
+        { version: "1.0.0", dependencies: { "shared-lib": "file:../shared-lib" } },
+      ],
+      "plugin/shared-lib": ["shared-lib@file:../packages/shared-lib", { version: "1.0.0" }],
     });
     await frozen(dir);
 
@@ -2656,8 +2663,8 @@ describe("package-lock.json migration fixes", () => {
 
       const { lock } = await migrate(dir);
       expect(lock.packages).toStrictEqual({
-        a: ["a@file:vendor/a", { dependencies: { b: "file:./b" } }],
-        "a/b": ["b@file:vendor/a/b", {}],
+        a: ["a@file:vendor/a", { version: "1.0.0", dependencies: { b: "file:./b" } }],
+        "a/b": ["b@file:vendor/a/b", { version: "1.0.0" }],
       });
       await frozen(dir);
 
@@ -2746,8 +2753,8 @@ describe("package-lock.json migration fixes", () => {
         );
 
         const { lock } = await migrate(dir);
-        expect(lock.packages["file-dep"]).toStrictEqual(["file-dep@file:vendor/file-dep", {}]);
-        expect(lock.packages["dep-file-dep/file-dep"]).toStrictEqual(["file-dep@file:vendor/file-dep", {}]);
+        expect(lock.packages["file-dep"]).toStrictEqual(["file-dep@file:vendor/file-dep", { version: "1.0.0" }]);
+        expect(lock.packages["dep-file-dep/file-dep"]).toBeUndefined();
         await frozen(dir);
 
         const install = await run(dir, "install", "--linker", "hoisted");

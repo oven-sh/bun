@@ -880,7 +880,9 @@ snapshots:
       expect(exitCode).toBe(0);
 
       const bunLock = await bunLockOf(packageDir);
-      expect(bunLock).toContain(`["app@file:vendor/app", { "dependencies": { "nd": "npm:no-deps@1.0.1" } }]`);
+      expect(bunLock).toContain(
+        `["app@file:vendor/app", { "version": "1.0.0", "dependencies": { "nd": "npm:no-deps@1.0.1" } }]`,
+      );
       expect(bunLock).toContain(`"nd": ["no-deps@1.0.1", `);
       expect(bunLock).not.toContain("work:");
 
@@ -1588,8 +1590,10 @@ snapshots:
     expect(bunLock).toContain(`"sub-dep": "file:./sub-dep"`);
     // pnpm-lock.yaml has `nested-child: file:sub-dep/child`; bun.lock stores the path relative to
     // sub-dep, the way sub-dep/package.json declares it, and resolves it from there when loaded.
-    expect(bunLock).toContain(`["sub-dep@file:sub-dep", { "dependencies": { "nested-child": "file:child" } }]`);
-    expect(bunLock).toContain(`["nested-child@file:sub-dep/child", {}]`);
+    expect(bunLock).toContain(
+      `["sub-dep@file:sub-dep", { "version": "1.0.0", "dependencies": { "nested-child": "file:child" } }]`,
+    );
+    expect(bunLock).toContain(`["nested-child@file:sub-dep/child", { "version": "1.0.0" }]`);
 
     const update = await run(String(dir), "update", "nested-child");
     expect(update.stderr).not.toContain("error:");
@@ -1684,7 +1688,9 @@ snapshots:
 
       const bunLock = await bunLockOf(packageDir);
       expect(bunLock).toContain(`"dir": ["dir@workspace:packages/dir"]`);
-      expect(bunLock).toContain(`["local@file:vendor/local", { "dependencies": { "no-deps": "1.0.0" } }]`);
+      expect(bunLock).toContain(
+        `["local@file:vendor/local", { "version": "1.0.0", "dependencies": { "no-deps": "1.0.0" } }]`,
+      );
       expect(bunLock).not.toContain("dir@file:");
       expect(bunLock).not.toContain("tb@");
     });
@@ -1716,7 +1722,7 @@ snapshots:
       expect(exitCode).toBe(0);
 
       const bunLock = await bunLockOf(String(dir));
-      expect(bunLock).toContain(`["local@file:vendor/local", {}]`);
+      expect(bunLock).toContain(`["local@file:vendor/local", { "version": "1.0.0" }]`);
     });
 
     // guard: only directories are rebuilt; a tarball needs the integrity its packages: entry carried
@@ -2416,10 +2422,10 @@ snapshots:
 
       const migrated = await bunLockOf(packageDir);
       expect(migrated).toContain(
-        `"has-peer": ["has-peer@file:vendor/has-peer", { "peerDependencies": { "peer": "*" } }]`,
+        `"has-peer": ["has-peer@file:vendor/has-peer", { "version": "1.0.0", "peerDependencies": { "peer": "*" } }]`,
       );
-      expect(migrated).toContain(`"has-peer/peer": ["peer@file:vendor/peer", {}]`);
-      expect(migrated).toContain(`"with/peer": ["peer@file:vendor/peer", {}]`);
+      expect(migrated).toContain(`"has-peer/peer": ["peer@file:vendor/peer", { "version": "1.0.0" }]`);
+      expect(migrated).toContain(`"with/peer": ["peer@file:vendor/peer", { "version": "1.0.0" }]`);
       // the peer of with/has-peer dedupes against the sibling copy at with/peer
       expect(migrated).not.toContain(`"with/has-peer/peer"`);
       expect(migrated).not.toContain(`"optionalPeers"`);
@@ -2692,7 +2698,7 @@ ${snapshots}`;
 
       const migrated = await bunLockOf(String(dir));
       expect(migrated).toContain(
-        `"has-peer": ["has-peer@file:vendor/has-peer", { "dependencies": { "peer": "link:packages/peer" } }]`,
+        `"has-peer": ["has-peer@file:vendor/has-peer", { "version": "1.0.0", "dependencies": { "peer": "link:packages/peer" } }]`,
       );
       expect(migrated).toContain(`"peer": ["peer@workspace:packages/peer"]`);
       expect(migrated).not.toContain(`"peerDependencies"`);
@@ -2724,7 +2730,7 @@ ${snapshots}`;
 
       const migrated = await bunLockOf(String(dir));
       expect(migrated).toContain(
-        `"has-peer": ["has-peer@file:vendor/has-peer", { "peerDependencies": { "peer": "*" } }]`,
+        `"has-peer": ["has-peer@file:vendor/has-peer", { "version": "1.0.0", "peerDependencies": { "peer": "*" } }]`,
       );
       expect(migrated).toContain(`"peer": ["peer@workspace:packages/peer"]`);
       expect(migrated).not.toContain("link:");

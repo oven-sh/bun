@@ -2178,8 +2178,8 @@ catalogs:
     expect(stderr).not.toContain("error:");
     // not `packages/a/../shared` and `packages/b/../shared`
     const bunLock = await bunLockOf(dir);
-    expect(bunLock).toContain(`"a/shared": ["shared@file:packages/shared", {}],`);
-    expect(bunLock).toContain(`"b/shared": ["shared@file:packages/shared", {}],`);
+    expect(bunLock).toContain(`"a/shared": ["shared@file:packages/shared", { "version": "1.0.0" }],`);
+    expect(bunLock).toContain(`"b/shared": ["shared@file:packages/shared", { "version": "1.0.0" }],`);
     expect(exitCode).toBe(0);
   });
 

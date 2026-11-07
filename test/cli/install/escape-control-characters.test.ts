@@ -64,7 +64,8 @@ function packumentFor(name: string) {
     name,
     "dist-tags": { latest: "2.0.0", [`tag-${C1}`]: "1.0.0" },
     versions: {
-      "1.0.0": manifest("1.0.0", name === "needs-dep" ? { dep: "1.0.0" } : {}),
+      "1.0.0": manifest("1.0.0", name === "needs-dep" ? { dep: "1.5.0" } : {}),
+      "1.5.0": manifest("1.5.0", {}),
       "2.0.0": manifest("2.0.0", { sub: BAD_TAG }),
     },
   };
@@ -189,8 +190,8 @@ test.concurrent("resolution errors escape a file: path", async () => {
 });
 
 test.concurrent("bun patch lists the candidate resolutions escaped", async () => {
-  // Two lockfile entries named `dep`: the root's tarball and the registry's
-  // 1.0.0 that `needs-dep` depends on, so `bun patch dep` has to ask which one.
+  // Two lockfile entries named `dep`: the root's tarball (version 1.0.0) and the registry's
+  // 1.5.0 that `needs-dep` depends on, so `bun patch dep` has to ask which one.
   using dir = project("patch", { dependencies: { dep: tarballSpec, "needs-dep": "1.0.0" } });
   await installOk(String(dir));
   const { stdout, stderr, exitCode } = await run(String(dir), "patch", "dep");

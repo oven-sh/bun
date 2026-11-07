@@ -269,6 +269,10 @@ fn finish_migration(
     {
         return Err(migrating_error(err, lockfile_name));
     }
+    // Nor the version of a `file:` folder, which bun.lock records.
+    if let Err(err) = lockfile.read_folder_versions() {
+        return Err(migrating_error(err.into(), lockfile_name));
+    }
     // The root's `patchedDependencies` aren't recorded either. Its package.json was read just
     // above.
     if let Some(path) = crate::lockfile_real::join_top_level_dir(&[b"package.json"])

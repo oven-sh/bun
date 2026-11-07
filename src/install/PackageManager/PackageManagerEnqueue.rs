@@ -1314,6 +1314,7 @@ fn request_row_ahead(this: &mut PackageManager, id: DependencyID, item: Lockfile
         resolution,
         install_peer,
         latest_for_target,
+        false,
     );
     if settled.is_some() || this.look_ahead.seen.insert(asked.name_hash, ()).is_some() {
         return;
@@ -1624,6 +1625,7 @@ impl Follow<'_> {
         // dependency, because those rules depend on which package the dependency belongs to.
         if self.known_npm_aliases.contains_key(&alias_hash)
             || lockfile.workspace_paths.contains(&alias_hash)
+            || lockfile.local_source(alias_hash).is_some()
             || lockfile.overrides.contains_name(alias_hash, alias, buf)
             // The running runtime is the `bun` that a package asks for.
             || (is_peer && (alias == b"bun" || !lockfile.packages_named(alias_hash).is_empty()))
@@ -3467,6 +3469,100 @@ enum Settled {
     ProvidedLocally,
     /// It is a peer, and the peer pass has not started.
     Deferred,
+    /// The root or a workspace provides the name from a tarball that this task still fetches.
+    WaitsFor(Task::Id),
+}
+
+/// As in npm, a range shares the package of `Lockfile::local_sources` when its version satisfies.
+/// With `binds`, a provider that no row has resolved yet is resolved, or its download started,
+/// here. The look-ahead passes false and only learns that no manifest is needed.
+fn local_source_of_range(
+    this: &mut PackageManager,
+    name_hash: PackageNameHash,
+    range: &Semver::query::Group,
+    install_peer: bool,
+    binds: bool,
+) -> Option<Settled> {
+    let source = this.lockfile.local_source(name_hash)?;
+    let dependency = this.lockfile.buffers.dependencies[source as usize].clone();
+    let tarball_task = || -> Option<Task::Id> {
+        if dependency.version.tag != dependency::version::Tag::Tarball {
+            return None;
+        }
+        let buf = this.lockfile.buffers.string_bytes.as_slice();
+        Some(Task::Id::for_tarball(
+            match &dependency.version.tarball().uri {
+                dependency::tarball::Uri::Local(path) => path.slice(buf),
+                dependency::tarball::Uri::Remote(url) => url.slice(buf),
+            },
+        ))
+    };
+    let shares = |this: &PackageManager, package_id: PackageID| -> Option<Settled> {
+        let lockfile: &Lockfile::Lockfile = &this.lockfile;
+        // The alias can differ from the package.json name, and an override can pick the registry.
+        if lockfile.packages.items_name_hash()[package_id as usize] != name_hash
+            || !lockfile.packages.items_resolution()[package_id as usize]
+                .tag
+                .records_package_json_version()
+        {
+            return None;
+        }
+        // As with a workspace, `*` takes the package whatever its version.
+        if range.is_star() {
+            return Some(Settled::Package(package_id));
+        }
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let version = lockfile.recorded_version(package_id)?;
+        range
+            .satisfies(version, buf, buf)
+            .then_some(Settled::Package(package_id))
+    };
+
+    let mut package_id = this.lockfile.buffers.resolutions[source as usize];
+    if package_id != invalid_package_id && !this.lockfile.is_refreshing(source) {
+        return shares(this, package_id);
+    }
+    let task_id = tarball_task();
+    // The package arrived and is in the lockfile, and the row waits for its turn on the list.
+    if let Some(task_id) = task_id
+        && let Some(&appended) = this.appended_task_packages.get(&task_id)
+    {
+        return shares(this, appended);
+    }
+    let has_task = |this: &PackageManager| {
+        task_id.is_some_and(|task_id| {
+            this.network_dedupe_map.contains_key(&task_id) && !this.network_task_has_failed(task_id)
+        })
+    };
+    if !has_task(this) {
+        if !binds {
+            return Some(Settled::Deferred);
+        }
+        // Its turn comes later in the queue. Resolving a folder, or starting a download, early
+        // gives the same result as in turn: `request_remote_package_ahead` does the same.
+        if let Err(err) = bind_row(
+            this,
+            source,
+            &dependency,
+            package_id,
+            install_peer,
+            PackageManager::assign_resolution,
+            false,
+        ) {
+            add_dependency_error(this, &dependency, err);
+            return None;
+        }
+        package_id = this.lockfile.buffers.resolutions[source as usize];
+        if package_id != invalid_package_id && !this.lockfile.is_refreshing(source) {
+            return shares(this, package_id);
+        }
+        if !has_task(this) {
+            // The dependency was skipped, and the range goes to the registry as before.
+            return None;
+        }
+    }
+    // A folder resolves in turn. A tarball's package is added in the order of its waiters.
+    task_id.map(Settled::WaitsFor)
 }
 
 /// Returns `None` if the dependency can only be resolved from its manifest. `request_ahead` calls
@@ -3482,6 +3578,8 @@ fn settle_without_manifest(
     resolution: PackageID,
     install_peer: bool,
     latest_for_target: bool,
+    // False for the look-ahead, which must not resolve a row.
+    binds: bool,
 ) -> Option<Settled> {
     let is_peer = dependency.behavior.is_peer();
     if install_peer && is_peer && !latest_for_target {
@@ -3527,6 +3625,14 @@ fn settle_without_manifest(
     };
     if links && let Some(workspace_id) = root_workspace_package_id(&this.lockfile, name_hash) {
         return Some(Settled::Package(workspace_id));
+    }
+    // A peer that the project provides is bound by `is_peer_provided_locally`, by name.
+    if !is_peer
+        && version.tag == dependency::version::Tag::Npm
+        && let Some(settled) =
+            local_source_of_range(this, name_hash, &version.npm().version, install_peer, binds)
+    {
+        return Some(settled);
     }
 
     if !is_peer {
@@ -3576,6 +3682,7 @@ fn get_or_put_resolved_package(
         resolution,
         install_peer,
         latest_for_target,
+        true,
     ) {
         // make sure verifyResolutions sees this resolution as a valid package id
         Some(Settled::Package(id)) => return bind_existing(this, dependency_id, id, success_fn),
@@ -3587,6 +3694,14 @@ fn get_or_put_resolved_package(
         }
         Some(Settled::ProvidedLocally) => return Ok(Some(ResolvedPackageResult::default())),
         Some(Settled::Deferred) => return Ok(None),
+        Some(Settled::WaitsFor(task_id)) => {
+            wait_for_remote_task(
+                this,
+                task_id,
+                TaskCallbackContext::Dependency(dependency_id),
+            );
+            return Ok(Some(ResolvedPackageResult::default()));
+        }
         None => {}
     }
 

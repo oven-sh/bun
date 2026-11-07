@@ -180,6 +180,11 @@ impl PackageManager {
                 _ => false,
             };
             if !(from_lockfile && moved) {
+                // bun.lock from before the version was recorded has none for this row.
+                if existing.meta.package_json_version.is_empty() {
+                    existing.meta.package_json_version = package.meta.package_json_version;
+                    self.lockfile.packages.set(existing_id as usize, existing);
+                }
                 return existing;
             }
             if existing.resolution.tag.is_tarball() && existing.meta.integrity.tag.is_supported() {
@@ -204,6 +209,7 @@ impl PackageManager {
             existing.dependencies = package.dependencies;
             existing.resolutions = package.resolutions;
             existing.bin = package.bin;
+            existing.meta.package_json_version = package.meta.package_json_version;
             if data.integrity.tag.is_supported() {
                 existing.meta.integrity = data.integrity;
             }

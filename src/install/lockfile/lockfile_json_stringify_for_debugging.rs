@@ -399,8 +399,11 @@ where
                 w.write_null()?;
             }
 
-            w.object_field(b"man_dir")?;
-            w.write(pkg.meta.man_dir.slice(sb))?;
+            w.object_field(b"package_json_version")?;
+            match pkg.meta.recorded_version(sb) {
+                Some(version) => w.write(version)?,
+                None => w.write_null()?,
+            }
 
             w.object_field(b"origin")?;
             w.write(origin_name(pkg.meta.origin).as_bytes())?;

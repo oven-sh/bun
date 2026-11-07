@@ -4348,7 +4348,7 @@ it("should replace a registry dependency when adding a local folder with the sam
   expect(lockfileText.match(/"bar":/g)).toHaveLength(2);
   const lockfile = Bun.JSONC.parse(lockfileText) as BunLockFile;
   expect(lockfile.workspaces[""].dependencies).toEqual({ bar: "./bar-fork" });
-  expect(lockfile.packages).toEqual({ bar: ["bar@file:bar-fork", {}] });
+  expect(lockfile.packages).toEqual({ bar: ["bar@file:bar-fork", { version: "0.0.2-fork" }] });
 });
 
 // https://github.com/oven-sh/bun/issues/13244

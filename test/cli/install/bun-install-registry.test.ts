@@ -3402,6 +3402,470 @@ test.concurrent("dependency from root satisfies range from dependency", async ()
   assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 });
 
+// A range on a name that the root provides from a tarball or a `file:` folder shares that package
+// when its version satisfies the range, as npm does. The project is installed without the registry
+// when every package is local.
+describe.concurrent("a root file: dependency satisfies a range on its name", () => {
+  // One per test, so that a test counts its own requests.
+  async function recordingRegistry() {
+    const recording = new TestRegistry({ recordRequests: true });
+    await recording.start();
+    return {
+      url: recording.registryUrl(),
+      requestsFor: (name: string) => recording.requests.filter(r => r.path === `/${name}`).length,
+      [Symbol.dispose]: () => recording.stop(),
+    };
+  }
+
+  // A server that fails every request, for the projects that must not ask the registry for anything.
+  let deadRegistry: ReturnType<typeof Bun.serve>;
+  beforeAll(() => {
+    deadRegistry = Bun.serve({
+      port: 0,
+      fetch: () => new Response("the registry must not be contacted", { status: 500 }),
+    });
+  });
+  afterAll(() => deadRegistry.stop(true));
+
+  type Manifest = { name: string; version: string; dependencies?: Record<string, string> };
+
+  async function tarball(dir: string, fileName: string, manifest: Manifest, index = "module.exports = 'LOCAL'") {
+    const path = join(dir, fileName);
+    await Bun.Archive.write(
+      path,
+      { "package/package.json": JSON.stringify(manifest), "package/index.js": index },
+      { compress: "gzip" },
+    );
+    return path;
+  }
+
+  async function project(deps: Record<string, string>, options: { registryUrl: string; workspaces?: string[] }) {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await write(
+      join(packageDir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: { cache: join(packageDir, ".bun-cache"), registry: options.registryUrl, linker: "hoisted" },
+      }),
+    );
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: deps, workspaces: options.workspaces }));
+    return packageDir;
+  }
+
+  async function install(packageDir: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function requireResult(packageDir: string, name: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", `console.log(require(${JSON.stringify(name)}))`],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    return (await proc.stdout.text()).trim();
+  }
+
+  const lock = (packageDir: string) => file(join(packageDir, "bun.lock")).text();
+  const lockPackages = async (packageDir: string) =>
+    Object.keys(JSON.parse((await lock(packageDir)).replace(/,(\s*[}\]])/g, "$1")).packages).sort();
+
+  // The tarball's row is added to the lockfile in the order of the root dependencies, so the
+  // dependent's range is settled before or after the tarball is read.
+  test.each([
+    ["sorts before its dependent", "no-deps", "wrapper"],
+    ["sorts after its dependent", "zz-local-dep", "@a/wrapper"],
+  ])("a tarball that %s is shared (issue #47983)", async (_, dep, wrapper) => {
+    const packageDir = await project({}, { registryUrl: `http://localhost:${deadRegistry.port}/` });
+    await tarball(packageDir, "dep.tgz", { name: dep, version: "7.0.0" });
+    await tarball(
+      packageDir,
+      "wrapper.tgz",
+      { name: wrapper, version: "1.0.0", dependencies: { [dep]: "7.0.0" } },
+      `module.exports = require(${JSON.stringify(dep)})`,
+    );
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "foo", dependencies: { [dep]: "file:./dep.tgz", [wrapper]: "file:./wrapper.tgz" } }),
+    );
+
+    const { stderr, exitCode } = await install(packageDir);
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("Saved lockfile");
+    expect(exitCode).toBe(0);
+
+    expect(await requireResult(packageDir, wrapper)).toBe("LOCAL");
+    expect(await exists(join(packageDir, "node_modules", wrapper, "node_modules"))).toBeFalse();
+    expect(await lockPackages(packageDir)).toStrictEqual([dep, wrapper].sort());
+    const lockfile = await lock(packageDir);
+    expect(lockfile).toContain(`["${dep}@./dep.tgz", { "version": "7.0.0" }, `);
+    expect(lockfile).toContain(
+      `["${wrapper}@./wrapper.tgz", { "version": "1.0.0", "dependencies": { "${dep}": "7.0.0" } }, `,
+    );
+
+    // The binding is in bun.lock, so a frozen install reads nothing.
+    const frozen = await install(packageDir, "--frozen-lockfile");
+    expect(frozen.stderr).not.toContain("error:");
+    expect(frozen.exitCode).toBe(0);
+    expect(await lock(packageDir)).toBe(lockfile);
+  });
+
+  test("a registry package shares the root's tarball", async () => {
+    using recording = await recordingRegistry();
+    const packageDir = await project(
+      { "no-deps": "file:./no-deps-1.5.0.tgz", "one-range-dep": "1.0.0" },
+      { registryUrl: recording.url },
+    );
+    await tarball(packageDir, "no-deps-1.5.0.tgz", { name: "no-deps", version: "1.5.0" });
+
+    const { stderr, exitCode } = await install(packageDir);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect(await lockPackages(packageDir)).toStrictEqual(["no-deps", "one-range-dep"]);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "1.5.0",
+    });
+    expect(await exists(join(packageDir, "node_modules", "one-range-dep", "node_modules"))).toBeFalse();
+    expect(recording.requestsFor("no-deps")).toBe(0);
+  });
+
+  // npm nests a registry copy too.
+  test("a tarball out of range is not shared", async () => {
+    using recording = await recordingRegistry();
+    const packageDir = await project(
+      { "no-deps": "file:./no-deps-2.5.0.tgz", "one-range-dep": "1.0.0" },
+      { registryUrl: recording.url },
+    );
+    await tarball(packageDir, "no-deps-2.5.0.tgz", { name: "no-deps", version: "2.5.0" });
+
+    const { stderr, exitCode } = await install(packageDir);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect(await lockPackages(packageDir)).toStrictEqual(["no-deps", "one-range-dep", "one-range-dep/no-deps"]);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "2.5.0",
+    });
+    expect(
+      await file(join(packageDir, "node_modules", "one-range-dep", "node_modules", "no-deps", "package.json")).json(),
+    ).toMatchObject({ version: "1.1.0" });
+    expect(recording.requestsFor("no-deps")).toBe(1);
+  });
+
+  test("a file: folder is shared", async () => {
+    using recording = await recordingRegistry();
+    const packageDir = await project(
+      { "no-deps": "file:./vendored", "one-range-dep": "1.0.0" },
+      { registryUrl: recording.url },
+    );
+    await write(join(packageDir, "vendored", "package.json"), JSON.stringify({ name: "no-deps", version: "1.5.0" }));
+
+    const { stderr, exitCode } = await install(packageDir);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect(await lockPackages(packageDir)).toStrictEqual(["no-deps", "one-range-dep"]);
+    expect(await lock(packageDir)).toContain(`["no-deps@file:vendored", { "version": "1.5.0" }]`);
+    expect(await exists(join(packageDir, "node_modules", "one-range-dep", "node_modules"))).toBeFalse();
+    expect(recording.requestsFor("no-deps")).toBe(0);
+  });
+
+  test("a workspace's tarball is shared", async () => {
+    using recording = await recordingRegistry();
+    const packageDir = await project({}, { registryUrl: recording.url, workspaces: ["packages/*"] });
+    await tarball(packageDir, "no-deps-1.5.0.tgz", { name: "no-deps", version: "1.5.0" });
+    await write(
+      join(packageDir, "packages", "app", "package.json"),
+      JSON.stringify({
+        name: "app",
+        dependencies: { "no-deps": "file:../../no-deps-1.5.0.tgz", "one-range-dep": "1.0.0" },
+      }),
+    );
+
+    const { stderr, exitCode } = await install(packageDir);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect(await lockPackages(packageDir)).toStrictEqual(["app", "no-deps", "one-range-dep"]);
+    expect(await exists(join(packageDir, "node_modules", "one-range-dep", "node_modules"))).toBeFalse();
+    expect(recording.requestsFor("no-deps")).toBe(0);
+  });
+
+  // A manifest in the cache lets a registry dependent settle its ranges before the root's other
+  // rows are read. The provider is read when the range needs it, so the result is the same.
+  test("a folder is shared when the dependent's manifest is in the cache", async () => {
+    using recording = await recordingRegistry();
+    const packageDir = await project(
+      { "one-range-dep": "1.0.0", "no-deps": "file:./vendored" },
+      { registryUrl: recording.url },
+    );
+    await write(join(packageDir, "vendored", "package.json"), JSON.stringify({ name: "no-deps", version: "1.5.0" }));
+    for (const run of ["cold cache", "warm cache"]) {
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await rm(join(packageDir, "bun.lock"), { force: true });
+      const { stderr, exitCode } = await install(packageDir);
+      expect(stderr, run).not.toContain("error:");
+      expect(exitCode, run).toBe(0);
+      expect(await lockPackages(packageDir), run).toStrictEqual(["no-deps", "one-range-dep"]);
+    }
+    expect(recording.requestsFor("no-deps")).toBe(0);
+  });
+
+  test("a tarball of a folder the root declares is shared", async () => {
+    const packageDir = await project({ app: "file:./app" }, { registryUrl: `http://localhost:${deadRegistry.port}/` });
+    await tarball(packageDir, "dep.tgz", { name: "no-deps", version: "7.0.0" });
+    await tarball(packageDir, "wrapper.tgz", {
+      name: "wrapper",
+      version: "1.0.0",
+      dependencies: { "no-deps": "7.0.0" },
+    });
+    await write(
+      join(packageDir, "app", "package.json"),
+      JSON.stringify({ name: "app", dependencies: { "no-deps": "file:../dep.tgz", wrapper: "file:../wrapper.tgz" } }),
+    );
+
+    const { stderr, exitCode } = await install(packageDir);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(await lockPackages(packageDir)).toStrictEqual(["app", "no-deps", "wrapper"]);
+  });
+
+  // npm binds `*` to a prerelease too.
+  test("* shares a prerelease tarball", async () => {
+    const packageDir = await project({}, { registryUrl: `http://localhost:${deadRegistry.port}/` });
+    await tarball(packageDir, "dep.tgz", { name: "no-deps", version: "0.0.0-dev.abc" });
+    await tarball(packageDir, "wrapper.tgz", { name: "wrapper", version: "1.0.0", dependencies: { "no-deps": "*" } });
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "foo", dependencies: { "no-deps": "file:./dep.tgz", wrapper: "file:./wrapper.tgz" } }),
+    );
+
+    const { stderr, exitCode } = await install(packageDir);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(await lockPackages(packageDir)).toStrictEqual(["no-deps", "wrapper"]);
+  });
+
+  // A tarball that a registry package declares is not the project's, so it satisfies no range.
+  test("a tarball that a registry package declares is not shared", async () => {
+    const tarballOf = (manifest: Manifest) =>
+      new Bun.Archive({ "package/package.json": JSON.stringify(manifest) }, { compress: "gzip" }).bytes();
+    const requests: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        requests.push(pathname);
+        const origin = new URL(req.url).origin;
+        const packument = (name: string, versions: Record<string, Record<string, string>>) =>
+          Response.json({
+            name,
+            "dist-tags": { latest: Object.keys(versions).at(-1) },
+            versions: Object.fromEntries(
+              Object.entries(versions).map(([version, dependencies]) => [
+                version,
+                { name, version, dependencies, dist: { tarball: `${origin}/${name}-${version}.tgz` } },
+              ]),
+            ),
+          });
+        if (pathname === "/holder") return packument("holder", { "1.0.0": { "no-deps": `${origin}/local-1.5.0.tgz` } });
+        if (pathname === "/one-range-dep") return packument("one-range-dep", { "1.0.0": { "no-deps": "^1.0.0" } });
+        if (pathname === "/no-deps") return packument("no-deps", { "1.0.0": {}, "1.1.0": {} });
+        if (pathname === "/holder-1.0.0.tgz")
+          return new Response(
+            await tarballOf({
+              name: "holder",
+              version: "1.0.0",
+              dependencies: { "no-deps": `${origin}/local-1.5.0.tgz` },
+            }),
+          );
+        if (pathname === "/one-range-dep-1.0.0.tgz")
+          return new Response(
+            await tarballOf({ name: "one-range-dep", version: "1.0.0", dependencies: { "no-deps": "^1.0.0" } }),
+          );
+        if (pathname === "/local-1.5.0.tgz")
+          return new Response(await tarballOf({ name: "no-deps", version: "1.5.0" }));
+        if (pathname === "/no-deps-1.0.0.tgz")
+          return new Response(await tarballOf({ name: "no-deps", version: "1.0.0" }));
+        if (pathname === "/no-deps-1.1.0.tgz")
+          return new Response(await tarballOf({ name: "no-deps", version: "1.1.0" }));
+        return new Response("not found", { status: 404 });
+      },
+    });
+    const packageDir = await project({ holder: "1.0.0", "one-range-dep": "1.0.0" }, { registryUrl: `${server.url}` });
+
+    const { stderr, exitCode } = await install(packageDir);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    // The tarball hoists to the top as holder's dependency. The range gets its own registry copy.
+    expect(await lockPackages(packageDir)).toStrictEqual([
+      "holder",
+      "no-deps",
+      "one-range-dep",
+      "one-range-dep/no-deps",
+    ]);
+    expect(await lock(packageDir)).toContain(`"one-range-dep/no-deps": ["no-deps@1.1.0", `);
+    expect(requests.filter(path => path === "/no-deps")).toHaveLength(1);
+  });
+
+  describe("a tarball URL of the root", () => {
+    async function serveTarballs(paths: Record<string, Manifest | null>) {
+      const bytes = new Map<string, Uint8Array>();
+      for (const [path, manifest] of Object.entries(paths)) {
+        if (manifest)
+          bytes.set(
+            path,
+            await new Bun.Archive({ "package/package.json": JSON.stringify(manifest) }, { compress: "gzip" }).bytes(),
+          );
+      }
+      return Bun.serve({
+        port: 0,
+        fetch: req => {
+          const tarball = bytes.get(new URL(req.url).pathname);
+          return tarball ? new Response(tarball) : new Response("not found", { status: 404 });
+        },
+      });
+    }
+
+    test("is shared", async () => {
+      using recording = await recordingRegistry();
+      await using server = await serveTarballs({ "/no-deps.tgz": { name: "no-deps", version: "1.5.0" } });
+      const packageDir = await project(
+        { "no-deps": `${server.url}no-deps.tgz`, "one-range-dep": "1.0.0" },
+        { registryUrl: recording.url },
+      );
+
+      const { stderr, exitCode } = await install(packageDir);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await lockPackages(packageDir)).toStrictEqual(["no-deps", "one-range-dep"]);
+      expect(recording.requestsFor("no-deps")).toBe(0);
+    });
+
+    // The range waited for the tarball. Without it, the registry resolves the range as before.
+    test("that cannot be downloaded leaves the range to the registry", async () => {
+      using recording = await recordingRegistry();
+      await using server = await serveTarballs({ "/no-deps.tgz": null });
+      const packageDir = await project({ "one-range-dep": "1.0.0" }, { registryUrl: recording.url });
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: { "one-range-dep": "1.0.0" },
+          optionalDependencies: { "no-deps": `${server.url}no-deps.tgz` },
+        }),
+      );
+
+      const { stderr, exitCode } = await install(packageDir);
+      expect(stderr).toContain("warn:");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await lockPackages(packageDir)).toStrictEqual(["no-deps", "one-range-dep"]);
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+        version: "1.1.0",
+      });
+    });
+  });
+
+  describe("with an existing bun.lock", () => {
+    test("a dependent added later shares the tarball without reading it again", async () => {
+      const packageDir = await project({}, { registryUrl: `http://localhost:${deadRegistry.port}/` });
+      await tarball(packageDir, "dep.tgz", { name: "no-deps", version: "7.0.0" });
+      await tarball(
+        packageDir,
+        "wrapper.tgz",
+        { name: "wrapper", version: "1.0.0", dependencies: { "no-deps": "^7.0.0" } },
+        `module.exports = require("no-deps")`,
+      );
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({ name: "foo", dependencies: { "no-deps": "file:./dep.tgz" } }),
+      );
+      expect((await install(packageDir)).exitCode).toBe(0);
+      // The tarball is not read again: its row in bun.lock has the version.
+      await rm(join(packageDir, "dep.tgz"));
+
+      const { stderr, exitCode } = await install(packageDir, "./wrapper.tgz");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await lockPackages(packageDir)).toStrictEqual(["no-deps", "wrapper"]);
+      expect(await requireResult(packageDir, "wrapper")).toBe("LOCAL");
+    });
+
+    test("a workspace's tarball stays shared", async () => {
+      using recording = await recordingRegistry();
+      const packageDir = await project({}, { registryUrl: recording.url, workspaces: ["packages/*"] });
+      await tarball(packageDir, "no-deps-1.5.0.tgz", { name: "no-deps", version: "1.5.0" });
+      const member = (dependencies: Record<string, string>) =>
+        write(join(packageDir, "packages", "app", "package.json"), JSON.stringify({ name: "app", dependencies }));
+      await member({ "no-deps": "file:../../no-deps-1.5.0.tgz" });
+      expect((await install(packageDir)).exitCode).toBe(0);
+
+      await member({ "no-deps": "file:../../no-deps-1.5.0.tgz", "one-range-dep": "1.0.0" });
+      const { stderr, exitCode } = await install(packageDir);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await lockPackages(packageDir)).toStrictEqual(["app", "no-deps", "one-range-dep"]);
+      expect(recording.requestsFor("no-deps")).toBe(0);
+    });
+
+    test("a folder's new version is recorded", async () => {
+      const packageDir = await project(
+        { "no-deps": "file:./vendored" },
+        { registryUrl: `http://localhost:${deadRegistry.port}/` },
+      );
+      const vendored = (version: string) =>
+        write(join(packageDir, "vendored", "package.json"), JSON.stringify({ name: "no-deps", version }));
+      await vendored("1.5.0");
+      expect((await install(packageDir)).exitCode).toBe(0);
+      expect(await lock(packageDir)).toContain(`["no-deps@file:vendored", { "version": "1.5.0" }]`);
+
+      await vendored("1.6.0");
+      const { stderr, exitCode } = await install(packageDir);
+      expect(stderr).toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+      expect(await lock(packageDir)).toContain(`["no-deps@file:vendored", { "version": "1.6.0" }]`);
+    });
+  });
+
+  // The `version` key is new. A lockfile without it is complete as it is.
+  test("a bun.lock from before the version was recorded is frozen as it is", async () => {
+    const packageDir = await project({}, { registryUrl: `http://localhost:${deadRegistry.port}/` });
+    await tarball(packageDir, "dep.tgz", { name: "no-deps", version: "7.0.0" });
+    await tarball(packageDir, "wrapper.tgz", {
+      name: "wrapper",
+      version: "1.0.0",
+      dependencies: { "no-deps": "7.0.0" },
+    });
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "foo", dependencies: { "no-deps": "file:./dep.tgz", "wrapper": "file:./wrapper.tgz" } }),
+    );
+    const { exitCode } = await install(packageDir);
+    expect(exitCode).toBe(0);
+    const written = await lock(packageDir);
+    const older = written.replace(/"version": "[^"]+", /g, "").replace(/ \{ "version": "[^"]+" \}/g, " {}");
+    expect(older).not.toContain('"version"');
+    await write(join(packageDir, "bun.lock"), older);
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    const { stderr, exitCode: frozenExitCode } = await install(packageDir, "--frozen-lockfile");
+    expect(stderr).not.toContain("error:");
+    expect(frozenExitCode).toBe(0);
+    expect(await lock(packageDir)).toBe(older);
+    expect(await requireResult(packageDir, "wrapper")).toBe("LOCAL");
+  });
+});
+
 test.concurrent("duplicate names and versions in a manifest do not install incorrect packages", async () => {
   const { packageDir, packageJson, env } = await setupTest();
   /**
@@ -4815,7 +5279,7 @@ describe.concurrent("binaries", () => {
     expect(firstLockfile).not.toBe(secondLockfile);
 
     expect(secondLockfile).toContain(
-      `"change-bin": ["change-bin@file:change-bin", { "bin": { "change-bin-1": "./change-bin-1.js", "change-bin-2": "./change-bin-2.js" } }],`,
+      `"change-bin": ["change-bin@file:change-bin", { "version": "1.0.0", "bin": { "change-bin-1": "./change-bin-1.js", "change-bin-2": "./change-bin-2.js" } }],`,
     );
 
     expect(join(packageDir, "node_modules", ".bin", "change-bin-1")).toBeValidBin(
@@ -4956,12 +5420,12 @@ describe.concurrent("binaries", () => {
 
     const lockfile = await file(join(packageDir, "bun.lock")).text();
     expect(lockfile).toContain(
-      `"one-valid": ["one-valid@file:one-valid", { "bin": { "one-valid-1": "one-valid-1.js" } }]`,
+      `"one-valid": ["one-valid@file:one-valid", { "version": "1.0.0", "bin": { "one-valid-1": "one-valid-1.js" } }]`,
     );
     expect(lockfile).toContain(
-      `"two-valid": ["two-valid@file:two-valid", { "bin": { "two-valid-1": "two-valid-1.js", "two-valid-3": "two-valid-3.js" } }]`,
+      `"two-valid": ["two-valid@file:two-valid", { "version": "1.0.0", "bin": { "two-valid-1": "two-valid-1.js", "two-valid-3": "two-valid-3.js" } }]`,
     );
-    expect(lockfile).toContain(`"none-valid": ["none-valid@file:none-valid", {}]`);
+    expect(lockfile).toContain(`"none-valid": ["none-valid@file:none-valid", { "version": "1.0.0" }]`);
 
     // From the lockfile.
     await rm(join(packageDir, "node_modules", ".bin"), { recursive: true, force: true });
@@ -5649,7 +6113,7 @@ describe.concurrent("binaries", () => {
       ]);
 
       expect(await install(packageDir, env, "1 package installed")).toEqual({
-        "dir-bin": ["dir-bin@file:dir-bin", { binDir }],
+        "dir-bin": ["dir-bin@file:dir-bin", { version: "1.1.1", binDir }],
       });
       expect(join(packageDir, "node_modules", ".bin", "dir-bin-1.js")).toBeValidBin(
         join("..", "dir-bin", "executables", "dir-bin-1.js"),
@@ -8741,7 +9205,7 @@ describe.concurrent("transitive file dependencies", () => {
         ]);
         const check = async () => {
           expect(await file(join(packageDir, "bun.lock")).text()).toContain(
-            `"${overridden}@file:vendor", { "dependencies": { "a-dep": "1.0.1" } }`,
+            `"${overridden}@file:vendor", { "version": "9.9.9", "dependencies": { "a-dep": "1.0.1" } }`,
           );
           expect(await versionSeenThrough(packageDir, declarer, overridden)).toBe("9.9.9");
           expect(await versionSeenThrough(packageDir, declarer, overridden, "a-dep")).toBe("1.0.1");
@@ -8782,7 +9246,7 @@ describe.concurrent("transitive file dependencies", () => {
       expect(await install(packageDir, env)).toContain("3 packages installed");
       const lockfile = (await file(join(packageDir, "bun.lock")).text()).replaceAll("\\\\", "/");
       expect(lockfile).toContain(`"one-dep/no-deps": ["no-deps@file:`);
-      expect(lockfile).toContain(`{ "dependencies": { "sub": "file:./sub" } }`);
+      expect(lockfile).toContain(`{ "version": "9.9.9", "dependencies": { "sub": "file:./sub" } }`);
       expect(lockfile).toContain(`"one-dep/no-deps/sub": ["sub@file:`);
       expect(await versionSeenThrough(packageDir, "one-dep", "no-deps", "sub")).toBe("1.2.3");
     });

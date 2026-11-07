@@ -1955,7 +1955,7 @@ test.concurrent("a local path replaces the entry a target already declares for t
   const { workspaces, packages } = await lockfileJson(dir);
   expect(workspaces[""].dependencies).toStrictEqual({ foo: "./vendor/foo" });
   expect(workspaces["packages/api"].dependencies).toStrictEqual({ foo: "../../vendor/foo" });
-  expect(packages.foo).toStrictEqual(["foo@file:vendor/foo", {}]);
+  expect(packages.foo).toStrictEqual(["foo@file:vendor/foo", { version: "1.0.0" }]);
   expect(await file(join(dir, "node_modules", "foo", "package.json")).json()).toStrictEqual(VENDOR_FOO);
 
   const frozen = await run(["install", "--frozen-lockfile"], dir, { linker: "hoisted" });

@@ -194,7 +194,7 @@ describe("--lockfile-only and lockfile migration under --frozen-lockfile, --dry-
     const { stdout, stderr, exitCode } = await run(dir, "--lockfile-only");
     expect(stderr).toContain(`migrated lockfile from ${name}`);
     expect(stdout).toContain("Saved bun.lock (2 packages)");
-    expect(readFileSync(lock(dir), "utf8")).toContain('"foo": ["foo@file:foo", {}]');
+    expect(readFileSync(lock(dir), "utf8")).toContain('"foo": ["foo@file:foo", { "version": "1.0.0" }]');
     expect(existsSync(join(dir, "node_modules"))).toBe(false);
     expect(exitCode).toBe(0);
   });
@@ -272,7 +272,7 @@ describe("--lockfile-only and lockfile migration under --frozen-lockfile, --dry-
       const { stderr, exitCode } = await run(dir);
       expect(stderr).toContain(`migrated lockfile from ${name}`);
       expect(stderr).toContain("Saved lockfile");
-      expect(readFileSync(lock(dir), "utf8")).toContain('"foo": ["foo@file:foo", {}]');
+      expect(readFileSync(lock(dir), "utf8")).toContain('"foo": ["foo@file:foo", { "version": "1.0.0" }]');
       expect(existsSync(join(dir, "node_modules", "foo", "package.json"))).toBe(true);
       expect(exitCode).toBe(0);
     },

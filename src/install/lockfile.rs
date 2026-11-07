@@ -120,6 +120,9 @@ pub(crate) type TrustedDependenciesSet =
     ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>, ArrayIdentityContext>;
 pub(crate) type VersionHashMap =
     ArrayHashMap<PackageNameHash, Semver::Version, ArrayIdentityContextU64>;
+/// See `Lockfile::local_sources`.
+pub(crate) type LocalSourceMap =
+    ArrayHashMap<PackageNameHash, DependencyID, ArrayIdentityContextU64>;
 pub(crate) type PatchedDependenciesMap =
     ArrayHashMap<PackageNameAndVersionHash, PatchedDep, ArrayIdentityContextU64>;
 
@@ -159,6 +162,9 @@ pub struct Lockfile {
     pub workspace_versions: VersionHashMap,
     /// Name hashes of the self-contained workspaces, from the manifests. Not saved.
     pub self_contained_workspaces: ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
+    /// The tarball and `file:` folder dependencies of the root and of the workspaces, by name. A
+    /// range binds to such a package when its version satisfies it (`local_source`). Not saved.
+    pub(crate) local_sources: LocalSourceMap,
     /// The workspaces that are reached through a symlink. They are found on disk while the
     /// workspaces' package.json files are parsed, and are not saved in the lockfile.
     pub(crate) linked_members: LinkedMembers,
@@ -697,6 +703,7 @@ impl Lockfile {
         self.workspace_paths = NameHashMap::default();
         self.workspace_versions = VersionHashMap::default();
         self.self_contained_workspaces = ArrayHashMap::default();
+        self.local_sources = LocalSourceMap::default();
         self.overrides = OverrideMap::default();
         self.catalogs = CatalogMap::default();
         self.package_extensions = Default::default();
@@ -808,6 +815,116 @@ impl Lockfile {
     /// Is this a direct dependency of the workspace root package.json?
     pub(crate) fn is_workspace_root_dependency(&self, id: DependencyID) -> bool {
         self.packages.items_dependencies()[0].contains(id)
+    }
+
+    /// The package.json version of a tarball or `file:` folder row. `None` when none was recorded.
+    pub(crate) fn recorded_version(&self, id: PackageID) -> Option<Semver::Version> {
+        let meta = &self.packages.items_meta()[id as usize];
+        let buf = self.buffers.string_bytes.as_slice();
+        if meta.package_json_version.is_empty() {
+            return None;
+        }
+        let parsed = Semver::Version::parse(meta.package_json_version.sliced(buf));
+        (parsed.valid && parsed.wildcard == Semver::semver_query::Wildcard::None)
+            .then(|| parsed.version.min())
+    }
+
+    /// Adds the tarball rows of `rows`, and its `file:` folder rows when `folders`, to
+    /// `local_sources`. `rows` belongs to the root, a workspace, or a folder that one of them
+    /// declares. The first declaration of a name stays.
+    pub(crate) fn index_local_sources(
+        &mut self,
+        rows: DependencySlice,
+        folders: bool,
+    ) -> Result<(), AllocError> {
+        for id in rows.begin()..rows.end() {
+            let dependency = &self.buffers.dependencies[id as usize];
+            let indexed = match dependency.version.tag {
+                dependency::Tag::Tarball => true,
+                dependency::Tag::Folder => folders,
+                _ => false,
+            };
+            if !indexed || dependency.behavior.is_peer() {
+                continue;
+            }
+            let entry = self.local_sources.get_or_put(dependency.name_hash)?;
+            if !entry.found_existing {
+                *entry.value_ptr = id;
+            }
+        }
+        Ok(())
+    }
+
+    /// A migrated lockfile has no version for its `file:` folder rows. Reads each from the
+    /// folder's package.json, as an install does when it reads the folder.
+    pub(crate) fn read_folder_versions(&mut self) -> Result<(), AllocError> {
+        for id in 0..self.packages.len() {
+            let resolution = self.packages.items_resolution()[id];
+            if resolution.tag != ResolutionTag::Folder
+                || !self.packages.items_meta()[id]
+                    .package_json_version
+                    .is_empty()
+            {
+                continue;
+            }
+            let Some(path) = join_top_level_dir(&[
+                resolution
+                    .folder()
+                    .slice(self.buffers.string_bytes.as_slice()),
+                b"package.json",
+            ]) else {
+                continue;
+            };
+            let version = package::package_json_version_on_disk(path.slice());
+            if version.is_empty() {
+                continue;
+            }
+            let version = self.string_buf().append(&version)?;
+            self.packages.items_meta_mut()[id].package_json_version = version;
+        }
+        Ok(())
+    }
+
+    /// Fills `local_sources` from the rows of the lockfile: the root, every workspace, and the
+    /// folders they declare. For a lockfile that was loaded or cleaned, whose rows did not go
+    /// through `Package::parse` in this run.
+    pub(crate) fn index_all_local_sources(&mut self) -> Result<(), AllocError> {
+        self.local_sources.clear_retaining_capacity();
+        let packages = self.packages.len();
+        let mut declared_folders: Vec<PackageID> = Vec::new();
+        for id in 0..packages {
+            if !matches!(
+                self.packages.items_resolution()[id].tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            ) {
+                continue;
+            }
+            let rows = self.packages.items_dependencies()[id];
+            self.index_local_sources(rows, true)?;
+            for row in rows.begin()..rows.end() {
+                let target = self.buffers.resolutions[row as usize] as usize;
+                if self.buffers.dependencies[row as usize].version.tag == dependency::Tag::Folder
+                    && target < packages
+                    && self.packages.items_resolution()[target].tag == ResolutionTag::Folder
+                {
+                    declared_folders.push(target as PackageID);
+                }
+            }
+        }
+        for id in declared_folders {
+            let rows = self.packages.items_dependencies()[id as usize];
+            self.index_local_sources(rows, false)?;
+        }
+        Ok(())
+    }
+
+    /// The dependency whose package a range on `name_hash` can share. See `local_sources`.
+    #[inline]
+    pub(crate) fn local_source(&self, name_hash: PackageNameHash) -> Option<DependencyID> {
+        if self.local_sources.count() == 0 {
+            return None;
+        }
+        self.local_sources.get(&name_hash).copied()
     }
 
     /// Returns `None` for git, tarball and unversioned workspace packages, which have no version to
@@ -2283,6 +2400,7 @@ impl Lockfile {
             workspace_paths: NameHashMap::default(),
             workspace_versions: VersionHashMap::default(),
             self_contained_workspaces: ArrayHashMap::default(),
+            local_sources: LocalSourceMap::default(),
             linked_members: LinkedMembers::default(),
             overrides: OverrideMap::default(),
             catalogs: CatalogMap::default(),

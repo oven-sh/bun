@@ -947,8 +947,8 @@ describe.concurrent.each(
     await box.ok("app", "update");
     expect(await box.state("app")).toEqual(stateOf("v2", v2));
     expect((Bun.JSONC.parse(await box.lockfile("app")) as any).packages).toEqual({
-      dep: [`dep@${box.server.url}dep.tgz`, {}, dep.integrity],
-      pkg: [`pkg@${box.resolution}`, info, v2.integrity],
+      dep: [`dep@${box.server.url}dep.tgz`, { version: "1.0.0" }, dep.integrity],
+      pkg: [`pkg@${box.resolution}`, { version: "1.0.0", ...info }, v2.integrity],
     });
     // Next to `pkg`, wherever the linker put that.
     const siblings = dirname(await realpath(join(box.root, "app", "node_modules", "pkg")));

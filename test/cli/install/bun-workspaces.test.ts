@@ -1551,7 +1551,9 @@ describe("relative tarballs", async () => {
         });
       }
 
-      expect(await file(join(packageDir, "bun.lock")).text()).toContain('"bar": ["bar@./bar.tgz", {}, "sha512-');
+      expect(await file(join(packageDir, "bun.lock")).text()).toContain(
+        '"bar": ["bar@./bar.tgz", { "version": "0.0.2" }, "sha512-',
+      );
     });
   }
 

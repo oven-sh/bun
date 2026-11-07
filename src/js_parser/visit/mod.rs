@@ -1884,7 +1884,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         if p.const_values.contains(&id_ref) {
                                             any_decl_in_const_values = true;
                                             let symbol = &p.symbols[id_ref.inner_index() as usize];
-                                            if symbol.use_count_estimate == 0 {
+                                            if symbol.use_count_estimate == 0
+                                                // A later case can still read the name through a `with`.
+                                                && !(kind == StmtsKind::SwitchStmt
+                                                    && p.current_scope().contains_with)
+                                            {
                                                 // Skip declarations that are constants with zero usage
                                                 continue;
                                             }

@@ -239,6 +239,120 @@ describe("bundler", () => {
     minifySyntax: true,
     run: { stdout: "Controller Model" },
   });
+  // The `with` object can have a property with the name of a `const` from an
+  // enclosing scope. That property shadows the const, so a read inside the
+  // `with` body is not inlined. The `.cjs` names keep the code sloppy.
+  const constReadInsideWith = /* js */ `
+    const top = "const";
+    function f(o) { const x = "const"; with (o) { return x; } }
+    // The cases of a switch share one scope, and the read is in a later case.
+    function g(k, o) { switch (k) { case 1: const y = "const"; case 2: with (o) { return y; } } }
+    function h(o) { with (o) { return top; } }
+    console.log(f({ x: "with" }), f({}), g(1, { y: "with" }), g(1, {}), h({ top: "with" }), h({}));
+  `;
+  for (const minify of [false, true]) {
+    itBundled(`minify/ConstReadInsideWithIsNotInlined${minify ? "Minified" : ""}`, {
+      files: {
+        "/entry.cjs": constReadInsideWith,
+      },
+      minifySyntax: true,
+      minifyIdentifiers: minify,
+      minifyWhitespace: minify,
+      format: "cjs",
+      outfile: "/out.cjs",
+      onAfterBundle(api) {
+        if (minify) return;
+        // The bundler prints the declarations as `let`.
+        api.expectFile("/out.cjs").toContain('x = "const"');
+        api.expectFile("/out.cjs").toContain("return x");
+        api.expectFile("/out.cjs").toContain('y = "const"');
+        api.expectFile("/out.cjs").toContain("return y");
+        api.expectFile("/out.cjs").toContain("return top");
+      },
+      run: { stdout: "with const with const with const" },
+    });
+  }
+  // `--target=bun` turns const inlining on without the bundler. Bun inlines
+  // again when it loads the output, so this checks the text and does not run it.
+  itBundled("minify/ConstReadInsideWithIsNotInlinedNoBundle", {
+    files: {
+      "/entry.cjs": constReadInsideWith,
+    },
+    bundling: false,
+    target: "bun",
+    format: "cjs",
+    outfile: "/out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.cjs").toContain('const x = "const"');
+      api.expectFile("/out.cjs").toContain("return x");
+      api.expectFile("/out.cjs").toContain('const y = "const"');
+      api.expectFile("/out.cjs").toContain("return y");
+      api.expectFile("/out.cjs").toContain("return top");
+    },
+  });
+  // The bundler joins both files into one scope: the first directly, the second
+  // inside a wrapper that runs when it is required.
+  itBundled("minify/ConstReadInsideWithInJoinedFiles", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./imported.js";
+        require("./required.js");
+      `,
+      "/imported.js": /* js */ `
+        const imported = "const";
+        function read(o) { with (o) { return imported; } }
+        console.log(read({ imported: "with" }), read({}));
+      `,
+      "/required.js": /* js */ `
+        const required = "const";
+        function read(o) { with (o) { return required; } }
+        console.log(read({ required: "with" }), read({}));
+      `,
+    },
+    minifySyntax: true,
+    format: "cjs",
+    outfile: "/out.cjs",
+    run: { stdout: "with const\nwith const" },
+  });
+  // A `const` with a macro result is a const value too, also after other statements.
+  itBundled("minify/MacroConstReadInsideWithIsNotInlined", {
+    files: {
+      "/entry.js": /* js */ `
+        import { seven } from "./macro.ts" with { type: "macro" };
+        function f(o) { o.seen = true; const y = seven(); with (o) { return y; } }
+        function g(k, o) { switch (k) { case 1: const y = seven(); case 2: with (o) { return y; } } }
+        console.log(JSON.stringify([f({ y: "with" }), f({}), g(1, { y: "with" }), g(1, {})]));
+      `,
+      "/macro.ts": /* js */ `
+        export function seven() { return 7; }
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    format: "cjs",
+    outfile: "/out.cjs",
+    run: { stdout: '["with",7,"with",7]' },
+  });
+  // A `var` with a macro result is not a `const`: nothing rejects a write to it,
+  // and a read kept as a name would see that write while the other reads do not.
+  // So a read in a `with` body is replaced as before, also when the object has the name.
+  itBundled("minify/MacroVarInsideWithIsStillReplaced", {
+    files: {
+      "/entry.js": /* js */ `
+        import { seven } from "./macro.ts" with { type: "macro" };
+        function f(o) { var y = seven(); with (o) { return y; } }
+        console.log(f({ y: "with" }), f({}));
+      `,
+      "/macro.ts": /* js */ `
+        export function seven() { return 7; }
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    format: "cjs",
+    outfile: "/out.cjs",
+    run: { stdout: "7 7" },
+  });
   itBundled("minify/TemplateStringFolding", {
     files: {
       "/entry.js": /* js */ `

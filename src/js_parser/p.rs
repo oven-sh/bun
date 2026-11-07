@@ -2169,6 +2169,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Can a `with` object shadow this read of a `const`? Not in an enum initializer: tsc folds those.
+    fn with_object_can_shadow(&self, ident: E::Identifier) -> bool {
+        if !ident.must_keep_due_to_with_stmt() {
+            return false;
+        }
+        let ts_namespace = self.current_scope().ts_namespace;
+        let in_enum_initializer =
+            Self::IS_TYPESCRIPT_ENABLED && ts_namespace.is_some_and(|ns| ns.is_enum_scope);
+        let symbol = &self.symbols[ident.ref_.inner_index() as usize];
+        symbol.kind == js_ast::symbol::Kind::Constant && !in_enum_initializer
+    }
+
     /// This function is very very hot.
     pub(crate) fn handle_identifier(
         &mut self,
@@ -2181,9 +2193,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if self.options.features.inlining {
             if let Some(replacement) = self.const_values.get(&ref_) {
-                let replacement = *replacement;
-                self.ignore_usage(ref_);
-                return replacement;
+                // Cold: otherwise LLVM computes the flag test below on every lookup miss too.
+                core::hint::cold_path();
+                if !self.with_object_can_shadow(ident) {
+                    let replacement = *replacement;
+                    self.ignore_usage(ref_);
+                    return replacement;
+                }
             }
         }
 

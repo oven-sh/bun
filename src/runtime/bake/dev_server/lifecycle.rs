@@ -787,9 +787,6 @@ impl DevServer {
                 route_lookup: &mut self.route_lookup,
             }),
         )?;
-
-        self.server_graph.ensure_stale_bit_capacity(true)?;
-        self.client_graph.ensure_stale_bit_capacity(true)?;
         Ok(())
     }
 

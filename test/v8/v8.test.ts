@@ -7,8 +7,6 @@ import {
   canBuildNodeAddons,
   expectRssDeltaBelow,
   isASAN,
-  isBroken,
-  isMusl,
   isWindows,
   nodeExeMatchingAbi,
   tempDir,
@@ -118,7 +116,7 @@ async function build(srcDir: string, tmpDir: string, runtime: Runtime, buildMode
   console.log(err);
 }
 
-describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () => {
+describe.skipIf(!canBuildNodeAddons())("node:v8", () => {
   beforeAll(async () => {
     // set up clean directories for our 4 builds
     directories.bunRelease = tmpdirSync();
@@ -685,7 +683,7 @@ async function runStandaloneAddon(cwd: string) {
   return { lines, err, exitCode };
 }
 
-describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("String::Utf8Length surrogates", () => {
+describe.skipIf(!canBuildNodeAddons())("String::Utf8Length surrogates", () => {
   it(
     "counts each unpaired surrogate as three bytes",
     async () => {
@@ -766,7 +764,7 @@ addon.string_utf8_length("a\\udfffb");
   );
 });
 
-describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("Number::New", () => {
+describe.skipIf(!canBuildNodeAddons())("Number::New", () => {
   it(
     "returns a numeric NaN for every NaN bit pattern",
     async () => {
@@ -844,7 +842,7 @@ for (const [hi, lo] of [
 // Node runs every Node-API callback inside a v8::HandleScope, so an addon that calls the V8 API
 // from one doesn't need to open its own scope. With the Node 26 headers, an addon's
 // v8::HandleScope is inlined and never calls into Bun either.
-describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("V8 API from Node-API callbacks", () => {
+describe.skipIf(!canBuildNodeAddons())("V8 API from Node-API callbacks", () => {
   it(
     "creates handles in the Node-API scope, keeps them alive, and releases them when it closes",
     async () => {
@@ -1086,7 +1084,7 @@ console.log("global handle:", addon.readStashedArray());`,
   );
 });
 
-describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("String::Utf8Length bounds", () => {
+describe.skipIf(!canBuildNodeAddons())("String::Utf8Length bounds", () => {
   it(
     "reports sizes beyond INT32_MAX without wrapping",
     async () => {

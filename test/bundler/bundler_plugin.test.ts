@@ -2092,4 +2092,81 @@ describe("bundler", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // A plugin does not change who picks the loader of an `import(specifier, options)`
+  // whose options the bundler cannot read (see bundler_loader.test.ts). The file
+  // extension picks it, with a warning, unless an `onLoad` plugin returns the module.
+  describe("plugin/import() options the bundler cannot read", () => {
+    const warning =
+      "The bundler cannot read the attributes of this import() because the second argument is not an object literal";
+    const cases: {
+      name: string;
+      target: "q.sql" | "d.json";
+      setup: (build: Bun.PluginBuilder) => void;
+      expected: { logs: string[]; stdout: string };
+    }[] = [
+      {
+        name: "onResolve returns the path",
+        target: "q.sql",
+        setup: build =>
+          build.onResolve({ filter: /\.sql$/ }, args => ({ path: join(dirname(args.importer), args.path) })),
+        expected: { logs: [warning], stdout: "file" },
+      },
+      {
+        name: "onResolve declines",
+        target: "q.sql",
+        setup: build => build.onResolve({ filter: /\.sql$/ }, () => undefined),
+        expected: { logs: [warning], stdout: "file" },
+      },
+      {
+        name: "onLoad returns the module",
+        target: "d.json",
+        setup: build =>
+          build.onLoad({ filter: /d\.json$/ }, () => ({ contents: `export default "from plugin";`, loader: "js" })),
+        expected: { logs: [], stdout: `"from plugin"` },
+      },
+      {
+        name: "onLoad declines",
+        target: "d.json",
+        setup: build => build.onLoad({ filter: /d\.json$/ }, () => undefined),
+        expected: { logs: [warning], stdout: `{"from":"disk"}` },
+      },
+    ];
+
+    for (const { name, target, setup, expected } of cases) {
+      test.concurrent(name, async () => {
+        using dir = tempDir("plugin-import-options", {
+          // The static import makes the call the second import record of the file.
+          "entry.js": `
+            import "./first.js";
+            const o = { with: { type: "text" } };
+            const { default: value } = await import("./${target}", o);
+            console.log(typeof value === "string" && value.endsWith(".sql") ? "file" : JSON.stringify(value));
+          `,
+          "first.js": `globalThis.first = true;`,
+          "q.sql": "select 1;\n",
+          "d.json": `{"from":"disk"}`,
+        });
+        const result = await Bun.build({
+          entrypoints: [join(String(dir), "entry.js")],
+          outdir: join(String(dir), "out"),
+          target: "bun",
+          throw: false,
+          plugins: [{ name: "plugin", setup }],
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), join(String(dir), "out", "entry.js")],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ logs: result.logs.map(log => log.message), stdout: stdout.trim(), stderr }).toEqual({
+          ...expected,
+          stderr: "",
+        });
+        expect(exitCode).toBe(0);
+      });
+    }
+  });
 });

@@ -1,4 +1,5 @@
 import { fileURLToPath, Loader } from "bun";
+import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
@@ -590,6 +591,286 @@ describe("bundler", async () => {
         },
       });
     }
+  });
+
+  // The runtime reads the `with` attributes of `import(specifier, options)` when the
+  // call runs. A build that cannot read them picks the loader from the file extension.
+  describe("import() options the bundler cannot read", () => {
+    const cannotRead = (reason: string) => `The bundler cannot read the attributes of this import() because ${reason}`;
+    const secondArgument = cannotRead("the second argument is not an object literal");
+    const withValue = cannotRead('the value of "with" is not an object literal');
+    const typeValue = cannotRead('the value of "type" is not a string literal');
+    const property = cannotRead('this property can change "with" or "type" when the call runs');
+    // `.dat` has no loader, so a loader picked from the extension is `file`.
+    const show = /* js */ `
+      function show({ status, value, reason }) {
+        if (status === "rejected") return reason.name;
+        if (typeof value.default !== "string") return "json " + JSON.stringify(value.default);
+        return value.default.endsWith(".dat") ? "file" : "text " + value.default;
+      }
+    `;
+    // Every form imports its own file: a second import of a file gets the module of the first.
+    const dat = (count: number) =>
+      Object.fromEntries(Array.from({ length: count }, (_, i) => [`/${i}.dat`, `{"n":${i}}`]));
+
+    // The bundle is the same as before. The build now says that it did not use the attributes.
+    itBundled("bun/import-options-unreadable", {
+      target: "bun",
+      outdir: "/out",
+      files: {
+        "/entry.js": /* js */ `
+          ${show}
+          const o = { with: { type: "text" } };
+          let l = { with: { type: "text" } };
+          const w = { type: "text" };
+          const t = "text";
+          const type = "text";
+          const load = options => import("./0.dat", options);
+          const results = await Promise.allSettled([
+            load({ with: { type: "text" } }),
+            import("./1.dat", o),
+            import("./2.dat", l),
+            import(process.argv.length > 99 ? "./3.dat" : "./4.dat", o),
+            import("./5.dat", (0, { with: { type: "text" } })),
+            import("./6.dat", null),
+            import("./7.dat", { with: w }),
+            import("./8.dat", { with: { type: t } }),
+            import("./9.dat", { with: { type } }),
+            import("./10.dat", { with: { type: 1 } }),
+            import("./11.dat", { get with() { return { type: "text" }; } }),
+            import("./12.dat", { with: { get type() { return "text"; } } }),
+            import("./13.dat", { __proto__: { with: { type: "text" } } }),
+            import("./14.dat", { with: {}, get with() { return { type: "text" }; } }),
+            import("./15.dat", { with: { type: "json", get type() { return "text"; } } }),
+          ]);
+          console.log(results.map(show).join("\\n"));
+        `,
+        ...dat(16),
+      },
+      // The ternary specifier is two import records and one call.
+      bundleWarnings: {
+        "/entry.js": [
+          ...Array(6).fill(secondArgument),
+          withValue,
+          ...Array(3).fill(typeValue),
+          ...Array(5).fill(property),
+        ],
+      },
+      run: { stdout: Array(15).fill("file").join("\n") },
+    });
+
+    // These options are known at build time, so the bundle gets what the runtime gets.
+    itBundled("bun/import-options-read-at-build-time", {
+      target: "bun",
+      outdir: "/out",
+      backend: "cli",
+      files: {
+        "/entry.js": /* js */ `
+          ${show}
+          const a = { type: "text" };
+          const results = await Promise.allSettled([
+            import("./0.dat"),
+            import("./1.dat", undefined),
+            import("./2.dat", void 0),
+            import("./3.dat", {}),
+            import("./4.dat", { with: {} }),
+            import("./5.dat", { with: undefined }),
+            import("./6.dat", { with: { __proto__: { type: "text" } } }),
+            import("./7.dat", { with: { type: "javascript" } }),
+            import("./8.dat", { __proto__: null }),
+            import("./9.dat", { with: { type: "text" } }),
+            import("./10.dat", { "with": { "type": "text" } }),
+            import("./11.dat", { ["with"]: { ["type"]: "text" } }),
+            import("./12.dat", { with: { type: \`text\` } }),
+            import("./13.dat", { with: { type: "text", other: "x" }, other: 1 }),
+            import("./14.dat", { __proto__: null, with: { type: "text" } }),
+            import("./15.dat", { with: { type: "te" + "xt" } }),
+            import("./16.dat", { with: { type: "text" + "" } }),
+            import("./17.dat", { with: { type: "json" }, with: { type: "text" } }),
+            import("./18.dat", { with: { type: "json", type: "text" } }),
+            import("./19.dat", { get with() { return {}; }, with: { type: "text" } }),
+            // The runtime ignores \`assert\`. The bundler reads a literal one, as before.
+            import("./20.dat", { assert: { type: "text" } }),
+            import("./21.dat", { assert: a }),
+          ]);
+          console.log(results.map(show).join("\\n"));
+        `,
+        ...dat(22),
+      },
+      run: {
+        stdout: [...Array(9).fill("file"), ...Array.from({ length: 12 }, (_, i) => `text {"n":${i + 9}}`), "file"].join(
+          "\n",
+        ),
+      },
+    });
+
+    // A member of an enum in the same file is a constant, as a value and as a key.
+    itBundled("bun/import-options-enum-member", {
+      target: "bun",
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* ts */ `
+          ${show}
+          const enum Inlined { Text = "text", With = "with", Type = "type", One = 1 }
+          enum Declared { Text = "text" }
+          const results = await Promise.allSettled([
+            import("./0.dat", { with: { type: Inlined.Text } }),
+            import("./1.dat", { with: { type: Declared.Text } }),
+            import("./2.dat", { [Inlined.With]: { type: "text" } }),
+            import("./3.dat", { with: { [Inlined.Type]: "text" } }),
+            import("./4.dat", { [Inlined.One]: 1, with: { [Inlined.One]: "one", type: "text" } }),
+          ]);
+          console.log(results.map(show).join("\\n"));
+        `,
+        ...dat(5),
+      },
+      run: { stdout: [0, 1, 2, 3, 4].map(i => `text {"n":${i}}`).join("\n") },
+    });
+
+    // Every attribute is read with the same rule: the last definition wins.
+    itBundled("bun/import-options-sqlite-embed", {
+      target: "bun",
+      outfile: "",
+      outdir: "/out",
+      files: {
+        "/entry.js": /* js */ `
+          const { default: db } = await import("./db.sqlite", {
+            with: { type: "sqlite", embed: "false", embed: "true" },
+          });
+          console.log(db.query("select message from messages LIMIT 1").get().message);
+        `,
+        "/db.sqlite": (() => {
+          const db = new Database(":memory:");
+          db.exec("create table messages (message text)");
+          db.exec("insert into messages values ('Hello, world!')");
+          return db.serialize();
+        })(),
+      },
+      run: { stdout: "Hello, world!" },
+    });
+
+    // Minification inlines a constant declared at the start of its scope and removes the
+    // comma operator before the options are read.
+    itBundled("bun/import-options-read-after-minify-syntax", {
+      target: "bun",
+      outdir: "/out",
+      backend: "cli",
+      minifySyntax: true,
+      files: {
+        "/entry.js": /* js */ `
+          const t = "text";
+          const type = "text";
+          ${show}
+          const results = await Promise.allSettled([
+            import("./0.dat", { with: { type: t } }),
+            import("./1.dat", { with: { type } }),
+            import("./2.dat", (0, { with: { type: "text" } })),
+          ]);
+          console.log(results.map(show).join("\\n"));
+        `,
+        ...dat(3),
+      },
+      run: { stdout: [0, 1, 2].map(i => `text {"n":${i}}`).join("\n") },
+    });
+
+    // One file that is in the server graph and in the client graph is one call.
+    itBundled("bun/import-options-unreadable-in-two-graphs", {
+      target: "bun",
+      outdir: "/out",
+      files: {
+        "/entry.js": /* js */ `
+          import page from "./page.html";
+          import { load } from "./shared.js";
+          console.log(typeof page.index, typeof (await load()).default);
+        `,
+        "/page.html": `<!DOCTYPE html><script type="module" src="./client.js"></script>`,
+        "/client.js": `import { load } from "./shared.js"; load();`,
+        "/shared.js": /* js */ `
+          const o = { with: { type: "text" } };
+          export const load = () => import("./data.json", o);
+        `,
+        "/data.json": `{"n":0}`,
+      },
+      bundleWarnings: { "/shared.js": [secondArgument] },
+      run: { stdout: "string object" },
+    });
+
+    // An import that is not bundled has no loader to pick.
+    itBundled("bun/import-options-external", {
+      target: "bun",
+      backend: "cli",
+      external: ["ext"],
+      files: {
+        "/entry.js": /* js */ `
+          const o = { with: { type: "text" } };
+          export const imports = () => [import("ext", o), import("node:fs", o)];
+        `,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain(`import("ext", o)`);
+        expect(output).toContain(`import("fs", o)`);
+      },
+    });
+    itBundled("bun/import-options-packages-external", {
+      target: "bun",
+      backend: "cli",
+      packages: "external",
+      files: {
+        "/entry.js": /* js */ `
+          const o = { with: { type: "text" } };
+          export const imported = () => import("pkg", o);
+        `,
+      },
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).toContain(`import("pkg", o)`);
+      },
+    });
+    itBundled("bun/import-options-no-bundle", {
+      target: "bun",
+      backend: "cli",
+      bundling: false,
+      files: {
+        "/entry.js": /* js */ `
+          const o = { with: { type: "text" } };
+          import("./d.dat", o);
+        `,
+        "/d.dat": "text",
+      },
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).toContain(`import("./d.dat", o)`);
+      },
+    });
+
+    // Neither has a loader that attributes can change.
+    itBundled("browser/import-options-node-polyfill", {
+      target: "browser",
+      backend: "cli",
+      files: {
+        "/entry.js": /* js */ `
+          const o = {};
+          export const imported = () => import("path", o);
+        `,
+      },
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).not.toContain(`import("path"`);
+      },
+    });
+    itBundled("bake-dev/import-options", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.js": /* js */ `
+          const o = { with: { type: "text" } };
+          import("./data.json", o).then(m => console.log(m.default));
+        `,
+        "/data.json": `{"value": 1}`,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"data.json"(hmr, module, exports) {');
+        expect(output).toContain('hmr.require("data.json")');
+      },
+    });
   });
 
   // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the

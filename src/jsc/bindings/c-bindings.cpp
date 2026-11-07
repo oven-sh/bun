@@ -16,7 +16,6 @@
 #include <cstring>
 #include <csignal>
 #include <cstdint>
-#include <cstdlib>
 #include <pthread.h>
 #include <termios.h>
 #include <sys/ioctl.h>
@@ -29,9 +28,6 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
-#if ENABLE(AOT_GUARDED_PAGES)
-#include <wtf/WTFConfig.h>
-#endif
 #endif
 #else
 #include <uv.h>
@@ -304,7 +300,6 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 }
 
 #if CPU(X86_64) || CPU(ARM64)
-#include <atomic>
 #include <ucontext.h>
 
 #ifndef SYS_SECCOMP
@@ -1344,8 +1339,6 @@ extern "C" int ffi_fileno(FILE* file)
 // Handle signals in bun.spawnSync.
 // If we receive a signal, we want to forward the signal to the child process.
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
-#include <signal.h>
-#include <pthread.h>
 #include <wtf/Lock.h>
 
 // The handler below can run on any thread while the spawning thread stores the pid.

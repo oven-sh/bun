@@ -9,7 +9,6 @@ const {
   getTid,
   isCategoryGroupEnabled,
   emitEvent,
-  emitEventWithArgs,
 } = require("internal/trace_event_recorder");
 // Live one-byte views handed out by getCategoryEnabledBuffer(); byte 0 is 1
 // while the category is enabled.
@@ -819,7 +818,6 @@ export default {
   isTraceCategoryEnabled,
   isCategoryGroupEnabled,
   emitEvent,
-  emitEventWithArgs,
   trace,
   initFromCli,
   setFilePattern,

@@ -9,7 +9,6 @@
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <openssl/evp.h>
-#include <JavaScriptCore/Error.h>
 #include "NodeValidator.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "KeyObject.h"

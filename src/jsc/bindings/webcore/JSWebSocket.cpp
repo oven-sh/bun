@@ -44,9 +44,6 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMIterator.h"
 #include "JSDOMOperation.h"
-#include "JSDOMExceptionHandling.h"
-#include "JSDOMGlobalObjectInlines.h"
-#include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 #include "JSEventListener.h"
 #include "ScriptExecutionContext.h"
@@ -61,7 +58,6 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
-#include "IDLTypes.h"
 #include "FetchHeaders.h"
 #include "HTTPParsers.h"
 #include "JSFetchHeaders.h"

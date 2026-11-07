@@ -38,7 +38,6 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-#include "JSDOMURL.h"
 #include "JSDOMWrapperCache.h"
 #include "JSURLSearchParams.h"
 #include "ScriptExecutionContext.h"

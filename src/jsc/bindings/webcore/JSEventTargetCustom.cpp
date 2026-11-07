@@ -47,10 +47,6 @@ JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<E
 
 EventTarget* JSEventTarget::toWrapped(VM& vm, JSValue value)
 {
-    // if (value.inherits<JSWindowProxy>())
-    //     return &uncheckedDowncast<JSWindowProxy>(asObject(value))->wrapped();
-    // if (value.inherits<JSDOMWindow>())
-    //     return &uncheckedDowncast<JSDOMWindow>(asObject(value))->wrapped();
     if (value.inherits<JSDOMGlobalObject>())
         return uncheckedDowncast<JSDOMGlobalObject>(asObject(value))->globalEventScope.ptr();
     if (value.inherits<JSEventTarget>())

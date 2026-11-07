@@ -105,7 +105,8 @@ function open(port?: number, host?: string, wait?: boolean) {
   try {
     process.debugPort = Number(new URL(resolvedUrl).port);
   } catch {}
-  process.stderr.write(`Debugger listening on ${resolvedUrl}\n`);
+  // Elsewhere openNodeInspector() has printed this line from native code.
+  if (process.platform === "win32") process.stderr.write(`Debugger listening on ${resolvedUrl}\n`);
 
   if (wait) {
     waitForNodeInspectorConnection();

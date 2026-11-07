@@ -686,11 +686,20 @@ impl Execution {
         if sequence.active_entry.is_none() {
             // just completed the sequence
             sequence.flip_fails();
+            sequence.check_expect_assertions();
+            if sequence.result == Result::Pending {
+                sequence.result = match sequence.entry_mode() {
+                    ScopeMode::Failing => Result::FailBecauseFailingTestPassed,
+                    ScopeMode::Todo => Result::FailBecauseTodoPassed,
+                    _ => Result::Pass,
+                };
+            }
             let test_failed = sequence.result.is_fail();
             let test_passed = sequence.result.is_pass(PendingIs::PendingIsPass);
 
             // Handle retry logic: if test failed and we have retries remaining, retry it
-            if test_failed && sequence.remaining_retry_count > 0 {
+            // Under `--todo`, a todo attempt that passes is the answer that the flag asks for, so it is final.
+            if test_failed && sequence.result != Result::FailBecauseTodoPassed && sequence.remaining_retry_count > 0 {
                 sequence.remaining_retry_count -= 1;
                 Execution::save_attempt_failure(buntest, sequence);
                 Execution::reset_sequence(sequence);
@@ -791,14 +800,6 @@ impl Execution {
         } else {
             sequence.started_at.since_now_force_real_time()
         };
-        sequence.check_expect_assertions();
-        if sequence.result == Result::Pending {
-            sequence.result = match sequence.entry_mode() {
-                ScopeMode::Failing => Result::FailBecauseFailingTestPassed,
-                ScopeMode::Todo => Result::FailBecauseTodoPassed,
-                _ => Result::Pass,
-            };
-        }
         if let Some(first_entry) = sequence.first_entry {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
                 // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases

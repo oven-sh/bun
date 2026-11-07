@@ -57,39 +57,37 @@ fn get_candidate_package_patterns<'a>(
     bun_ast::stmt::data::Store::create();
     let _store_guard = bun_ast::StoreResetGuard::new();
 
-    let mut workdir = workdir_;
-
+    // The walk of `bun install`, so that both commands pass over the same directories.
     // Labeled loop with an inner labeled block; `continue` → `break 'body`,
     // `break` → `break 'walk`.
-    'walk: loop {
+    'walk: for (workdir, opened) in bun_install::package_manager::package_json_walk(workdir_) {
         'body: {
-            let mut name_buf = bun_paths::path_buffer_pool::get();
-            // Treat a path that's too long like a missing package.json and try the parent.
-            let Some(json_path) = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-                workdir,
-                &mut name_buf[..],
-                &[b"package.json".as_slice()],
-            ) else {
-                break 'body;
-            };
-
             log.msgs.clear();
             log.errors = 0;
             log.warnings = 0;
 
-            // Note: `bun.sys.File.toSource` was MOVE_DOWN'd to `bun_ast::to_source`
-            // (T1 cannot name T2 — see src/sys/File.rs:446).
-            let json_source = match bun_ast::to_source(json_path, Default::default()) {
+            let contents = match opened.and_then(|file| file.read_to_end()) {
                 Err(err) => match err.get_errno() {
-                    bun_sys::Errno::ENOENT | bun_sys::Errno::EACCES | bun_sys::Errno::EPERM => {
+                    // Treat a path that's too long like a missing package.json and try the parent.
+                    bun_sys::Errno::ENOENT
+                    | bun_sys::Errno::EACCES
+                    | bun_sys::Errno::EPERM
+                    | bun_sys::Errno::ENAMETOOLONG => {
                         break 'body;
                     }
                     _ => return Err(err.into()),
                 },
-                Ok(source) => source,
+                Ok(contents) => contents,
             };
-            // `defer allocator.free(json_source.contents)` — deleted; `json_source` owns its
-            // contents and drops at end of scope.
+            // A path that was opened fits the buffer.
+            let mut name_buf = bun_paths::path_buffer_pool::get();
+            let json_path = resolve_path::join_abs_string_buf_z::<platform::Auto>(
+                workdir,
+                &mut name_buf[..],
+                &[b"package.json".as_slice()],
+            );
+            let json_source =
+                bun_ast::Source::init_path_string_owned(json_path.as_bytes(), contents);
 
             let parsed = json::ParsedJson::parse_package_json(&json_source, log)?;
             let json = parsed.root;
@@ -134,11 +132,6 @@ fn get_candidate_package_patterns<'a>(
             root_buf[0..parent_trimmed.len()].copy_from_slice(parent_trimmed);
             return Ok(&root_buf[0..parent_trimmed.len()]);
         }
-
-        workdir = match bun_core::dirname(workdir) {
-            Some(d) => d,
-            None => break 'walk,
-        };
     }
 
     // if we were not able to find a workspace root, we simply glob for all package.json files

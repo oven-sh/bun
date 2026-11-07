@@ -80,7 +80,10 @@ protected:
 
     NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper);
 
-    void evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint);
+    // Returns the error of a dependency that has failed when the walk reaches it, and evaluates nothing after it.
+    JSC::Exception* evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint);
+    // Out of line: it is the cold end of reconcileEvaluationState(), which the status getters inline.
+    NEVER_INLINE void setEvaluationException(JSC::VM&, JSC::Exception*);
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;

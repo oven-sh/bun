@@ -21,12 +21,14 @@ import {
   namesInTheSource,
   needRemovedFeatures,
   needTheBunCommandLine,
+  neverEnd,
   obeyed,
   obeyedWhereTheFeatureIsAllowed,
   obeyedWhereTheProgramUsesTheFeature,
   printsTheIdOf,
   runsOnlyCompiledCode,
   started,
+  type Side,
 } from "./compile-trim-options";
 
 test("every option that a compiled executable reads is in one of the lists: it works like in the untrimmed executable, it is ignored with a warning, or it fails at startup", () => {
@@ -51,15 +53,40 @@ test("every option that a compiled executable reads is in one of the lists: it w
     const dir = tempDir("compile-trim-runtime-options", {});
     afterAll(() => dir[Symbol.dispose]());
     const root = realpathSync(String(dir));
-    const whole = laidOut(root, "whole");
-    const trimmed = laidOut(root, "trimmed");
-    const withoutFunctionSource = {
-      whole: laidOut(join(root, "without-function-source"), "whole"),
-      trimmed: laidOut(join(root, "without-function-source"), "trimmed"),
-    };
-    let folders = 0;
-    let finished: Awaited<ReturnType<typeof built>>[] = [];
+    const bothSides = (folder: string) => ({ whole: laidOut(folder, "whole"), trimmed: laidOut(folder, "trimmed") });
+    const { whole, trimmed } = bothSides(root);
+    const withoutFunctionSource = bothSides(join(root, "without-function-source"));
+    type Build = Awaited<ReturnType<typeof built>>;
+    // The forms of an option start the same executables: a pair for each program that uses a client, and one for each feature that compile.trim.allow lists.
+    const thatUse = new Map<string, { whole: string; trimmed: string; builds: PromiseSettledResult<Build>[] }>();
+    for (const [, , program] of formsByUse)
+      thatUse.getOrInsertComputed(program, () => ({
+        ...bothSides(join(root, `uses-a-client-${thatUse.size}`)),
+        builds: [],
+      }));
+    const thatAllow = new Map<
+      Bun.Build.TrimFeature,
+      { folder: string; build?: PromiseSettledResult<Bun.BuildOutput> }
+    >();
+    for (const [, , allow] of formsByAllowing)
+      thatAllow.getOrInsertComputed(allow, () => ({ folder: laidOut(join(root, `allows-${allow}`), "trimmed") }));
+    let finished: Build[] = [];
 
+    /**
+     * What a build that wrote its executable has printed. Only one with --trim says what it left out.
+     * For toEqual: toMatchObject puts a matcher that matched into the object it checked, and tests read these builds later.
+     */
+    const wrote = (side: Side) => ({
+      stdout:
+        side === "trimmed"
+          ? expect.stringContaining("of unused Bun APIs removed")
+          : expect.not.stringContaining("of unused Bun APIs removed"),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+
+    // Every executable of this file is built here, once, and all of them at the same time: a test only starts them.
+    // A new executable costs its build and a slow first start (see `started`), so no two of them are alike.
     beforeAll(async () => {
       const builds = [
         built(whole, "whole"),
@@ -67,18 +94,40 @@ test("every option that a compiled executable reads is in one of the lists: it w
         built(withoutFunctionSource.whole, "whole", ["--no-compile-function-source"]),
         built(withoutFunctionSource.trimmed, "trimmed", ["--no-compile-function-source"]),
       ];
-      finished = await Promise.all(builds);
-      expect(finished).toMatchObject(builds.map(() => ({ exitCode: 0 })));
+      // These are only waited for, whatever becomes of them. A test that starts one says so, and the other tests run without it.
+      const ofFewTests = [
+        ...Array.from(thatUse, async ([program, pair]) => {
+          pair.builds = await Promise.allSettled([
+            built(pair.whole, "whole", [], program),
+            built(pair.trimmed, "trimmed", [], program),
+          ]);
+        }),
+        ...Array.from(thatAllow, async ([allow, one]) => {
+          [one.build] = await Promise.allSettled([builtAllowing(one.folder, allow)]);
+        }),
+      ];
+      [finished] = await Promise.all([Promise.all(builds), Promise.all(ofFewTests)]);
+      expect(finished).toEqual([wrote("whole"), wrote("trimmed"), wrote("whole"), wrote("trimmed")]);
     });
 
+    /**
+     * What the executable in each folder does with an option. They start at the same time: CI lets only a few tests of this
+     * file run side by side (`--max-concurrency` in scripts/runner.node.ts), and a test keeps its place while it waits.
+     */
+    const startedIn = (folders: string[], name: string, form: string) =>
+      Promise.all(folders.map(folder => started(folder, name, form)));
+
     test.each(formsOf(obeyed))("%s works like in the untrimmed executable: %s", async (name, form) => {
-      expect(await started(trimmed, name, form)).toEqual(await started(whole, name, form));
+      const [inTrimmed, inWhole] = await startedIn([trimmed, whole], name, form);
+      expect(inTrimmed).toEqual(inWhole);
+      // Two that a signal ended are alike too: at the time limit of a start, or in a crash.
+      expect(inWhole).toEqual({ ...inWhole, exitCode: expect.any(Number) });
     });
 
     test.each(formsOf(nameTheExecutable))(
       "%s prints what the build of that executable printed, which isn't what the untrimmed one prints: %s",
       async (name, form) => {
-        const printed = [await started(whole, name, form), await started(trimmed, name, form)];
+        const printed = await startedIn([whole, trimmed], name, form);
         expect(printed).toEqual([printsTheIdOf(finished[0]), printsTheIdOf(finished[1])]);
         expect(printed[1].stdout).not.toBe(printed[0].stdout);
       },
@@ -96,8 +145,7 @@ test("every option that a compiled executable reads is in one of the lists: it w
       "%s fails at startup, with and without --trim, because no executable built with --aot includes the Bun command line: %s",
       async (name, form) => {
         const failure = { stdout: "", stderr: `error: ${longNames[name] ?? name} ${hasNoCommandLine}\n`, exitCode: 1 };
-        expect(await started(trimmed, name, form)).toEqual(failure);
-        expect(await started(whole, name, form)).toEqual(failure);
+        expect(await startedIn([trimmed, whole], name, form)).toEqual([failure, failure]);
       },
     );
 
@@ -112,13 +160,12 @@ test("every option that a compiled executable reads is in one of the lists: it w
         const ofDefaultBuild = ran(
           "it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code",
         );
-        expect(await started(trimmed, name, form)).toEqual(ofDefaultBuild);
-        expect(await started(whole, name, form)).toEqual(ofDefaultBuild);
         const withoutSource = ran(
           "it was built with --no-compile-function-source, so it only runs code that was compiled into it. Rebuild without that flag",
         );
-        expect(await started(withoutFunctionSource.trimmed, name, form)).toEqual(withoutSource);
-        expect(await started(withoutFunctionSource.whole, name, form)).toEqual(withoutSource);
+        expect(
+          await startedIn([trimmed, whole, withoutFunctionSource.trimmed, withoutFunctionSource.whole], name, form),
+        ).toEqual([ofDefaultBuild, ofDefaultBuild, withoutSource, withoutSource]);
       },
     );
 
@@ -130,8 +177,7 @@ test("every option that a compiled executable reads is in one of the lists: it w
           stderr: `error: ${longNames[name] ?? name} ${runsOnlyCompiledCode}\n`,
           exitCode: 1,
         };
-        expect(await started(trimmed, name, form)).toEqual(failure);
-        expect(await started(whole, name, form)).toEqual(failure);
+        expect(await startedIn([trimmed, whole], name, form)).toEqual([failure, failure]);
       },
     );
 
@@ -143,8 +189,10 @@ test("every option that a compiled executable reads is in one of the lists: it w
           stderr: `error: ${longNames[name] ?? name} ${hasNoFunctionSource}\n`,
           exitCode: 1,
         };
-        expect(await started(withoutFunctionSource.trimmed, name, form)).toEqual(failure);
-        expect(await started(withoutFunctionSource.whole, name, form)).toEqual(failure);
+        expect(await startedIn([withoutFunctionSource.trimmed, withoutFunctionSource.whole], name, form)).toEqual([
+          failure,
+          failure,
+        ]);
       },
     );
 
@@ -160,33 +208,37 @@ test("every option that a compiled executable reads is in one of the lists: it w
     );
 
     test.each(formsByUse)("%s works where the program uses that client: %s, %s", async (name, form, program) => {
-      const folder = join(root, String(folders++));
-      const sides = [laidOut(folder, "whole"), laidOut(folder, "trimmed")];
-      expect(
-        await Promise.all([built(sides[0], "whole", [], program), built(sides[1], "trimmed", [], program)]),
-      ).toMatchObject([{ exitCode: 0 }, { exitCode: 0 }]);
-      expect(await started(sides[1], name, form)).toEqual(await started(sides[0], name, form));
+      const pair = thatUse.get(program)!;
+      expect(pair.builds).toEqual([
+        { status: "fulfilled", value: wrote("whole") },
+        { status: "fulfilled", value: wrote("trimmed") },
+      ]);
+      const [inTrimmed, inWhole] = await startedIn([pair.trimmed, pair.whole], name, form);
+      expect(inTrimmed).toEqual(inWhole);
+      const ran = { stdout: "hello world function\n", stderr: "", exitCode: 0 };
+      // One that waits for a server never ends where there is none. `started` ends it with SIGKILL, and only its first words count.
+      const waited = neverEnd.includes(name) && inWhole.exitCode === "SIGKILL";
+      expect(inWhole).toEqual(waited ? { ...inWhole, stdout: ran.stdout } : ran);
     });
 
     test.each(formsByAllowing)(
       "%s fails at startup, with and without --trim, because the feature that it needs is part of the Bun command line: %s",
       async (name, form) => {
         const failure = { stdout: "", stderr: `error: ${name} ${hasNoCommandLine}\n`, exitCode: 1 };
-        expect(await started(trimmed, name, form)).toEqual(failure);
-        expect(await started(whole, name, form)).toEqual(failure);
+        expect(await startedIn([trimmed, whole], name, form)).toEqual([failure, failure]);
       },
     );
 
     test.each(formsByAllowing)(
       "%s is read where compile.trim.allow lists that feature: %s, %s",
       async (name, form, allow) => {
-        const folder = laidOut(join(root, String(folders++)), "trimmed");
-        await builtAllowing(folder, allow);
+        const { folder, build } = thatAllow.get(allow)!;
+        expect(build).toMatchObject({ status: "fulfilled", value: { success: true } });
         const ran = await started(folder, name, form);
         if (form.endsWith("=nonsense"))
-          expect(ran).toMatchObject({
+          expect(ran).toEqual({
             stdout: "",
-            stderr: expect.stringContaining(`error: Invalid value for ${name}: "nonsense".`),
+            stderr: `error: Invalid value for ${name}: "nonsense". Must be either "auto", "fallback", "force", or "disable"\n`,
             exitCode: 1,
           });
         else expect(ran).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });

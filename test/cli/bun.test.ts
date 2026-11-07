@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isMacOS, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -256,13 +256,22 @@ describe("bun", () => {
         "home-local": { ".local": { bin: {} } },
       });
       // Run a private copy of the executable so that the first candidate location, the executable's
-      // own directory, is inside the temporary directory. A hardlink avoids copying the binary; fall
-      // back to a copy when the temporary directory is on another filesystem.
+      // own directory, is inside the temporary directory.
       const exe = join(String(dir), "bin", "bun");
-      try {
-        fs.linkSync(fs.realpathSync(bunExe()), exe);
-      } catch {
-        fs.copyFileSync(bunExe(), exe);
+      if (isMacOS) {
+        // Not a hardlink: macOS resolves a path through fcntl(F_GETPATH), which names a file with
+        // several links by whichever name was looked up last. Other tests run bunExe() all the time,
+        // so the realpath of a link to it (below, and in the child) sometimes is bunExe() itself.
+        // A clone is a file of its own and costs nothing on APFS.
+        fs.copyFileSync(bunExe(), exe, fs.constants.COPYFILE_FICLONE);
+      } else {
+        // A hardlink avoids copying the binary; fall back to a copy when the temporary directory is
+        // on another filesystem.
+        try {
+          fs.linkSync(fs.realpathSync(bunExe()), exe);
+        } catch {
+          fs.copyFileSync(bunExe(), exe);
+        }
       }
       // The link is created against the resolved executable path.
       const exeRealpath = fs.realpathSync(exe);

@@ -140,6 +140,7 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 // Routes its argument onto the uncaught-exception path. Used, via $newCppFunction, by the
 // node-style callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionShutdownStdio);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsStandardOutputStream);
 

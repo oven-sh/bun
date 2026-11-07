@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (8.0 KB) {
+    "Response (9.63 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -129,6 +129,44 @@ test("Response.redirect keeps a non-absolute url as-is in Location", () => {
   expect(Response.redirect("/login?next=1#a").headers.get("location")).toBe("/login?next=1#a");
   // non-ASCII must round-trip, not come back as a latin-1 view of the UTF-8 bytes
   expect(Response.redirect("/café").headers.get("location")).toBe("/café");
+});
+
+// An empty url used to reach the header map as a null string: `has()` said the
+// header was there, but `get()` returned null and iteration skipped it.
+test.each([
+  ["Response.redirect('')", () => Response.redirect("")],
+  // @ts-expect-error the types require a url; the runtime treats a missing one as ""
+  ["Response.redirect()", () => Response.redirect()],
+  ["Response.redirect('', 307)", () => Response.redirect("", 307)],
+  ["Response.redirect('', { status: 308 })", () => Response.redirect("", { status: 308 })],
+  ["Response.redirect('', { headers })", () => Response.redirect("", { headers: { "x-extra": "1" } })],
+  ["Response.redirect('').clone()", () => Response.redirect("").clone()],
+])("%s stores an empty Location header value", (_, makeResponse) => {
+  const { headers } = makeResponse();
+  const entries = [...headers].filter(([name]) => name === "location");
+  const visited: [string, string][] = [];
+  headers.forEach((value, name) => {
+    if (name === "location") visited.push([name, value]);
+  });
+
+  expect({
+    has: headers.has("location"),
+    get: headers.get("location"),
+    entries,
+    visited,
+    copied: new Headers(headers).get("location"),
+  }).toEqual({
+    has: true,
+    get: "",
+    entries: [["location", ""]],
+    visited: [["location", ""]],
+    copied: "",
+  });
+});
+
+test("Response.redirect('') produces the same Headers as an explicit empty Location", () => {
+  expect(Response.redirect("").headers).toEqual(new Headers({ location: "" }));
+  expect(Response.redirect("").headers).toEqual(new Response(null, { status: 302, headers: { location: "" } }).headers);
 });
 
 test("Response.redirect rejects a non-absolute url that is not a valid header value", () => {

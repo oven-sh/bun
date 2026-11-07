@@ -3657,7 +3657,15 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
 
     Bun::DeepMatchState state;
     state.records = !!replaced;
-    bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
+    // A matcher that is the whole expected value is applied. The received value is not read as one, so the key walk keeps its records.
+    AsymmetricMatcherResult root = AsymmetricMatcherResult::NOT_MATCHER;
+    if (mayBeAsymmetricMatcher(subset)) [[unlikely]] {
+        if (obj != subset) {
+            root = matchAsymmetricMatcher(globalObject, subset, obj, scope);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+    }
+    bool matched = root == AsymmetricMatcherResult::NOT_MATCHER ? Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false) : root == AsymmetricMatcherResult::PASS;
     RETURN_IF_EXCEPTION(scope, false);
     if (replaced) {
         JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj, subset) : obj;

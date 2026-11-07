@@ -2720,7 +2720,7 @@ describe("a faked process.nextTick and queueMicrotask", () => {
       runOnlyPendingTimersAsync: () => api.runOnlyPendingTimersAsync(),
     };
 
-    test.each(Object.entries(ways))("%s() runs them", async (_, advance) => {
+    test.each(Object.entries(ways))("%s() runs them", async (way, advance) => {
       const programs = {
         "a process.nextTick": (order: string[]) => process.nextTick(() => order.push("tick")),
         "a queueMicrotask": (order: string[]) => queueMicrotask(() => order.push("microtask")),
@@ -2732,8 +2732,10 @@ describe("a faked process.nextTick and queueMicrotask", () => {
         api.useFakeTimers({ toFake: [...toFake] });
         const order: string[] = [];
         program(order);
-        await advance();
-        ran[name] = { order, pending: api.getTimerCount() };
+        const advanced = advance();
+        // A sync function has run them when it returns.
+        if (way.endsWith("Async")) await advanced;
+        ran[name] = { order: [...order], pending: api.getTimerCount() };
       }
       expect(ran).toEqual({
         "a process.nextTick": { order: ["tick"], pending: 0 },
@@ -2851,6 +2853,28 @@ describe("a faked process.nextTick and queueMicrotask", () => {
         pending: 0,
       });
     });
+
+    test.each([
+      ["a timer", true],
+      ["no timer", false],
+    ])(
+      "with %s pending, ends when one of them calls useFakeTimers(), before a timer of the new clock",
+      async (_, timer) => {
+        api.useFakeTimers({ toFake: [...toFake] });
+        const order: string[] = [];
+        if (timer) setTimeout(() => order.push("timeout"), 10);
+        process.nextTick(() => {
+          order.push("tick");
+          api.useFakeTimers({ toFake: [...toFake] });
+          setTimeout(() => order.push("timeout of the new clock"), 0);
+        });
+        await api.advanceTimersToNextTimerAsync();
+        expect({ order, pending: api.getTimerCount() }).toEqual({
+          order: timer ? ["timeout", "tick"] : ["tick"],
+          pending: 1,
+        });
+      },
+    );
 
     // With `nextTick` faked, node:stream, node:net and node:http queue theirs here too.
     test("runs the ones that a stream queues", async () => {

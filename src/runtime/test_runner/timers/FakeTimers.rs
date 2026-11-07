@@ -1341,6 +1341,11 @@ impl FakeTimers {
                 // SAFETY: as above.
                 let ran_ticks = !unsafe { (*all).fake_timers.ticks.is_empty() };
                 Self::run_ticks(global)?;
+                // A tick can call `useFakeTimers()`, which settles this drive. A timer that is due now is then one of the new clock.
+                // SAFETY: as above.
+                if unsafe { (*all).fake_timers.drive_mut(id) }.is_none() {
+                    return Ok(None);
+                }
                 // SAFETY: as above.
                 let now = unsafe { (*all).fake_timers.now };
                 // SAFETY: as above.

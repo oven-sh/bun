@@ -3808,6 +3808,50 @@ describe.concurrent("files", () => {
     ]);
   });
 
+  // `\xe9` and `\xc3` are single bytes of a file in Latin-1: each announces a character that is not there. What follows
+  // such a byte in a pattern is still syntax. `npm pack` 11.16.0 packs the same files for these three lines.
+  test.each(["{x,y\xe9}{a,*.js}", "{x,y\xc3}{a,*.js}", "{x,\\\xe9}{a,*.js}"])(
+    ".npmignore: %j keeps its braces after a byte that is not UTF-8",
+    async line => {
+      using dir = tempDir("pack-npmignore-byte", {
+        "package.json": JSON.stringify({ name: "pack-npmignore-byte", version: "1.0.0" }),
+        ".npmignore": Buffer.from(line + "\n", "latin1"),
+        "a.js": indexJs,
+        "index.js": indexJs,
+        "x1.js": indexJs,
+        "xa": indexJs,
+      });
+
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(tarballEntries(join(dir, "pack-npmignore-byte-1.0.0.tgz")).sort()).toEqual([
+        "package/a.js",
+        "package/index.js",
+        "package/package.json",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Unlike npm, which packs `y\u9000.js`: npm reads the byte as U+FFFD, which no name has. Here it is a literal byte, as
+  // it is for git, and U+9000 is the bytes e9 80 80.
+  test(".npmignore: a byte that is not UTF-8 matches the first byte of a character", async () => {
+    using dir = tempDir("pack-npmignore-lead-byte", {
+      "package.json": JSON.stringify({ name: "pack-npmignore-lead-byte", version: "1.0.0" }),
+      ".npmignore": Buffer.from("y\xe9*.js\n", "latin1"),
+      "index.js": indexJs,
+      "y\u9000.js": indexJs,
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-npmignore-lead-byte-1.0.0.tgz")).sort()).toEqual([
+      "package/index.js",
+      "package/package.json",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("'files' field cannot exclude LICENSE", async () => {
     using dir = tempDir("pack-files-license", {
       "package.json": JSON.stringify({ name: "pack-files-license", version: "1.1.1", files: ["lib", "!LICENSE"] }),
@@ -5524,6 +5568,32 @@ test.concurrent.skipIf(!isLinux)("filenames that are not valid UTF-8 are stored 
     { names: new Set(["package/package.json"]), contents: expect.stringContaining(`"pack-invalid-utf8"`) },
   ]);
 });
+
+// An ignore file in Latin-1 that lists names in Latin-1. git 2.47 ignores the same three names for these lines. Unlike
+// npm, which leaves out the other three too: it reads `caf\xe9` and `caf\xea` as one name.
+test.concurrent.skipIf(!isLinux)(
+  ".npmignore lines that are not valid UTF-8 exclude the names with those bytes",
+  async () => {
+    using dir = tempDir("pack-npmignore-raw-names", {
+      "package.json": JSON.stringify({ name: "pack-npmignore-raw-names", version: "1.0.0" }),
+      ".npmignore": Buffer.from("caf\xe9\n\xe9*.log\ny\xe9.js\n", "latin1"),
+    });
+    const names = ["caf\xe9", "caf\xea", "\xe91.log", "\xea1.log", "y\xe9.js", "y\xea.js"];
+    await Promise.all(
+      names.map(name => writeFile(Buffer.concat([Buffer.from(`${dir}/`), Buffer.from(name, "latin1")]), name)),
+    );
+
+    await pack(dir, bunEnv);
+
+    const members = rawTarballMembers(await file(join(dir, "pack-npmignore-raw-names-1.0.0.tgz")).bytes());
+    expect(members.flatMap(member => [...member.names]).sort()).toEqual([
+      "package/caf\xea",
+      "package/package.json",
+      "package/y\xea.js",
+      "package/\xea1.log",
+    ]);
+  },
+);
 
 test.concurrent("$npm_command is accurate", async () => {
   using dir = tempDir("pack-command", {

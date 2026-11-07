@@ -521,6 +521,31 @@ test.concurrent.each(["#*", "!*"])("the command line pattern %s matches no files
   expect(exitCode).toBe(2);
 });
 
+// `\351` is one byte, which `printf` writes: it announces a character of three bytes that is not there. The `*` after
+// it is still a wildcard. U+9000 is the bytes e9 80 80. An argument of `spawn` is a string, which has no such byte.
+test.concurrent.skipIf(isWindows)(
+  "a command line pattern with an escaped byte that is not UTF-8 keeps its wildcard",
+  async () => {
+    using dir = tempDir("bun-lint-glob", {
+      "\u9000a.js": "debugger;\n",
+      "b.js": "debugger;\n",
+      "eslint.config.mjs": 'export default [{ rules: { "no-debugger": "error" } }];\n',
+    });
+    await using proc = spawn({
+      cmd: ["sh", "-c", `exec "$0" lint -f json -- "$(printf '\\\\\\351*.js')"`, bunExe()],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (!stdout.startsWith("[")) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
+    const results: { filePath: string }[] = JSON.parse(stdout);
+    expect(results.map(it => relative(String(dir), it.filePath))).toEqual(["\u9000a.js"]);
+    expect(exitCode).toBe(1);
+  },
+);
+
 // The expected results come from oxlint 1.87, whose glob matcher never matches a pattern with an unclosed `{` or `[`.
 test.concurrent.each(["{a,", "a{,", "*{a,", "[*", "{*", "a\\"])(
   "the oxlint no-restricted-imports pattern %j restricts nothing",

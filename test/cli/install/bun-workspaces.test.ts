@@ -505,6 +505,36 @@ test.concurrent("extglob and brace sequence workspace patterns", async () => {
   expect(Object.keys(lockfile.workspaces).sort()).toEqual(["", ...good].sort());
 });
 
+// `\xe9` is one byte of a package.json in Latin-1: it announces a character that is not there. What follows it in the
+// pattern is still syntax. `npm install` 11.16.0 links `pk/x1b` and `pk/xa`. Unlike npm, the third folder is linked too:
+// U+9000 is the bytes e9 80 80, and the byte is a literal byte here. npm reads it as U+FFFD.
+test.concurrent("a workspace pattern keeps its braces after a byte that is not UTF-8", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const good = ["pk/x1b", "pk/xa", "pk/y\u9000b"];
+  // Installing any of these would fail.
+  const excluded = ["pk/zb", "pk/keepb"];
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      Buffer.from('{ "name": "root", "workspaces": ["pk/{x,y\xe9}{a,*b}"] }', "latin1"),
+    ),
+    ...good.map((dir, index) => write(join(packageDir, dir, "package.json"), JSON.stringify({ name: `good${index}` }))),
+    ...excluded.map(dir =>
+      write(
+        join(packageDir, dir, "package.json"),
+        JSON.stringify({ name: dir.split("/")[1], dependencies: { "doesnt-exist-oops": "1.2.3" } }),
+      ),
+    ),
+  ]);
+
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+
+  const lockfile = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as { workspaces: object };
+  expect(Object.keys(lockfile.workspaces).sort()).toEqual(["", ...good].sort());
+});
+
 test("dependency on same name as workspace and dist-tag", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

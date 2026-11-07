@@ -175,6 +175,39 @@ describe("brace + glob composition", () => {
     // ...and does not split into a spurious `]foo` branch.
     expect(words).not.toContain("x.]foo");
   });
+
+  // `\xe9` is one raw byte, which the builtin `echo -e` writes. A byte like that is not UTF-8 by itself. The glob
+  // matcher takes it as that one byte: it must not take the `}`, the `{` or the `,` after it along with it.
+  describe("a byte that is not UTF-8 in a group, beside a group with a glob", () => {
+    // U+9000 is the bytes e9 80 80, so only an alternative that starts with `y` and the byte e9, or with `y` alone, can name
+    // the last file.
+    const files = ["x1.bak", "z.bak", "keep.bak", "xa", "y\u9000.bak"];
+
+    // Each row is the word and the files of the folder that it names. bash 5.2 names the same ones.
+    test.concurrent.each([
+      ["{x,$(echo -e 'y\\xe9')}{a,*.bak}", ["x1.bak", "xa", "y\u9000.bak"]],
+      ["{x,$(echo -e 'y\\xc3')}{a,*.bak}", ["x1.bak", "xa"]],
+      ["{x,$(echo -e 'y\\xf0')}{a,*.bak}", ["x1.bak", "xa"]],
+      ["{x,$(echo -e '\\xe9y')}{a,*.bak}", ["x1.bak", "xa"]],
+      ["{$(echo -e 'y\\xe9'),x}{a,*.bak}", ["x1.bak", "xa", "y\u9000.bak"]],
+      ["{x,$(echo -e 'y\\xe9')}{*.bak,a}", ["x1.bak", "xa", "y\u9000.bak"]],
+      // The same words with no such byte, with a whole character, and with a byte that announces no character.
+      ["{x,y}{a,*.bak}", ["x1.bak", "xa", "y\u9000.bak"]],
+      ["{x,$(echo -e 'y\\xc3\\xa9')}{a,*.bak}", ["x1.bak", "xa"]],
+      ["{x,$(echo -e 'y\\x80')}{a,*.bak}", ["x1.bak", "xa"]],
+      ["{x,$(echo -e 'y\\xe9')}{a,b}", ["xa"]],
+    ])("echo %s", async (word, named) => {
+      using dir = tempDir("shell-brace-glob-bytes", Object.fromEntries(files.map(it => [it, ""])));
+      const { stdout, stderr, exitCode } = await $`echo ${{ raw: word }}`.cwd(String(dir)).nothrow().quiet();
+      const words = new Set(stdout.toString("latin1").trim().split(" "));
+      const isNamed = (file: string) => words.has(Buffer.from(file, "utf8").toString("latin1"));
+      expect({ named: files.filter(isNamed).sort(), stderr: stderr.toString(), exitCode }).toEqual({
+        named,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 // $.braces() recursed once per `{` group (parse_atom <-> parse_expansion /

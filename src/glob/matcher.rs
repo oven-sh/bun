@@ -180,7 +180,7 @@ struct Wildcard {
 ///     Used to escape any of the special characters above.
 ///
 /// Parentheses without a "?*+@!" prefix are literal, and so is an unclosed "[",
-/// "{" or "(".
+/// "{" or "(". So is each byte that isn't ASCII outside of "[...]", in valid UTF-8 or not.
 ///
 /// Groups can nest to any depth. Matching takes `O(glob.len() * path.len())` time and
 /// a constant amount of stack. See [`Program`].
@@ -859,18 +859,6 @@ fn match_escapes_from<const IS_AT_START: bool>(
             found == Some(wanted)
         } else if wanted == b'/' {
             found.is_some_and(|it| is_separator(it, is_windows))
-        } else if wanted >= 128 {
-            // The loop compares as many bytes as the first one announces. That's the same unless they go on into something else.
-            let len = usize::from(strings::wtf8_byte_sequence_length(wanted));
-            let Some(bytes) = glob
-                .get(index..index + len)
-                .filter(|it| !it.iter().any(u8::is_ascii))
-            else {
-                break;
-            };
-            index += len - 1;
-            path_index += len - 1;
-            path.get(path_index + 1 - len..=path_index) == Some(bytes)
         } else if wanted == b'\\'
             && glob
                 .get(index + 1)
@@ -883,6 +871,8 @@ fn match_escapes_from<const IS_AT_START: bool>(
                 seen = Seen::Odd;
             }
             found == Some(escaped)
+        } else if wanted >= 128 {
+            found == Some(wanted)
         } else if dots != Dots::Match || found.is_some_and(|it| it >= 128) {
             break;
         } else if wanted == b'?' && glob.get(index + 1) != Some(&b'(') {
@@ -1115,7 +1105,7 @@ fn match_more(
     };
     // The loop and a walk have to agree wherever the loop finds every match.
     #[cfg(debug_assertions)]
-    if path.len() < Program::IS_LONG && std::str::from_utf8(glob).is_ok() {
+    if path.len() < Program::IS_LONG {
         let mut parsed = Parsed::new();
         parsed.read(glob);
         debug_assert!(
@@ -1197,6 +1187,14 @@ fn match_slowly(
             }
             Outcome::Unclosed => {
                 state.no_class_from = state.glob_index;
+                true
+            }
+            // A walk finds every match. So does the loop if the pattern has only one way to match.
+            Outcome::CutOff => {
+                let parsed = groups.parsed(glob);
+                if !(parsed.is_fixed || parsed.is_decided_at_once) {
+                    break;
+                }
                 true
             }
             Outcome::Group => {
@@ -1351,7 +1349,7 @@ fn is_closed_segment_at(path: &[u8], index: u32, dots: Dots, is_windows: bool) -
         && path.get(start + dots).is_none_or(|it| is_separator(*it))
 }
 
-/// Bytes that are always literal in a pattern.
+/// ASCII bytes that are always literal in a pattern. A byte that isn't ASCII is a literal byte too, outside a class.
 static IS_PLAIN: [bool; 256] = {
     let mut table = [false; 256];
     let mut byte = 0;
@@ -1436,6 +1434,8 @@ enum Outcome {
     Odd,
     /// It's at a `[` that isn't closed.
     Unclosed,
+    /// It has taken literal bytes that are cut off before a token that isn't a literal. See [`is_cut_off`].
+    CutOff,
 }
 
 /// The loop for patterns without groups, and for groups that are a [`Choice`]. It keeps one `*` and one `**` to go back to.
@@ -1897,24 +1897,39 @@ fn run<const STRICT: bool>(
                     }
                     let mut cc: u8 = ch;
                     unescape(&mut cc, glob, &mut state.glob_index);
-                    let cc_len = strings::wtf8_byte_sequence_length(cc);
 
                     let is_match = if cc == b'/' {
                         is_separator(path[state.path_index as usize])
-                    } else if cc_len > 1 {
-                        let pi = state.path_index as usize;
-                        let gi = state.glob_index as usize;
-                        let n = cc_len as usize;
-                        pi + n <= path.len()
-                            && gi + n <= glob.len()
-                            && path[pi..pi + n] == glob[gi..gi + n]
+                    } else if cc >= 128 {
+                        std::hint::cold_path();
+                        // The bytes after it that aren't ASCII either, in a loop of their own.
+                        let (mut index, mut path_index) =
+                            (state.glob_index as usize + 1, state.path_index as usize + 1);
+                        let mut is_same = path[state.path_index as usize] == cc;
+                        while is_same
+                            && let Some(&wanted) = glob.get(index)
+                            && wanted >= 128
+                        {
+                            is_same = path.get(path_index) == Some(&wanted);
+                            index += 1;
+                            path_index += 1;
+                        }
+                        if is_same {
+                            state.glob_index = index as u32;
+                            state.path_index = path_index as u32;
+                            if is_cut_off(glob, state.glob_index as usize) {
+                                stop!(Outcome::CutOff);
+                            }
+                            continue 'main_loop;
+                        }
+                        false
                     } else {
                         path[state.path_index as usize] == cc
                     };
 
                     if is_match {
-                        state.glob_index += u32::from(cc_len);
-                        state.path_index += u32::from(cc_len);
+                        state.glob_index += 1;
+                        state.path_index += 1;
 
                         if cc == b'/' {
                             state.wildcard = state.globstar;
@@ -1934,6 +1949,21 @@ fn run<const STRICT: bool>(
     }
 
     Outcome::Yes
+}
+
+/// Whether the literal before `end` can end inside a character, before a token: a later place for it can match more.
+#[inline(always)]
+fn is_cut_off(glob: &[u8], end: usize) -> bool {
+    if glob
+        .get(end)
+        .is_none_or(|next| IS_TEXT[*next as usize] || *next == b'/')
+    {
+        return false;
+    }
+    matches!(
+        glob[..end],
+        [.., 0xC0..=0xFF] | [.., 0xE0..=0xFF, _] | [.., 0xF0..=0xFF, _, _]
+    )
 }
 
 /// Matches `c` against the class that starts at `open`. Returns the result and the index after the `]`,
@@ -2348,14 +2378,7 @@ impl Layout {
         while let Some(&ch) = glob.get(end) {
             match ch {
                 _ if IS_TEXT[ch as usize] => {}
-                // The loop compares as many bytes as the first one announces. They must not go on into something else.
-                0x80.. => {
-                    let len = usize::from(strings::wtf8_byte_sequence_length(ch));
-                    if glob.get(end..end + len)?.iter().any(u8::is_ascii) {
-                        return None;
-                    }
-                    end += len - 1;
-                }
+                0x80.. => {}
                 b'/' if depth == 0 => break,
                 b'/' => return None,
                 b',' if depth > 0 => {
@@ -2525,8 +2548,7 @@ fn may_end_with(pattern: &[u8], text: &[u8]) -> bool {
     if before.last() == Some(&b'\\') && !literal.is_empty() {
         literal = &literal[1..];
     }
-    // A byte that isn't ASCII may stand for a character together with the bytes that follow it.
-    text.ends_with(literal) || before.iter().rev().take(3).any(|it| *it >= 128)
+    text.ends_with(literal)
 }
 
 /// What tells where a group of literals can start. The loop keeps this for the last group that it has asked about.
@@ -3684,7 +3706,7 @@ impl Parsed {
 
     fn text_of(&self, glob: &[u8]) -> Option<Box<[u8]>> {
         let is_literal = self.is_regular && self.wildcards == 0 && self.alternatives.is_empty();
-        if !is_literal || self.is_plain_text || std::str::from_utf8(glob).is_err() {
+        if !is_literal || self.is_plain_text {
             return None;
         }
         let mut text = Vec::with_capacity(glob.len());
@@ -3865,12 +3887,15 @@ impl Parsed {
                     // On Windows an escaped `\` matches a separator. At the end of the pattern it escapes nothing.
                     is_regular &= glob.get(i).is_some_and(|it| *it != b'\\');
                     is_one_segment &= glob.get(i) != Some(&b'/');
-                    if let Some(it) = glob.get(i) {
-                        i += usize::from(strings::wtf8_byte_sequence_length(*it)) - 1;
-                    }
                 }
-                // The matcher compares as many bytes as the first one announces, whatever they are.
-                0x80.. => i += usize::from(strings::wtf8_byte_sequence_length(ch)) - 1,
+                // Literal bytes, as many as follow.
+                0x80.. => {
+                    i += 1;
+                    while glob.get(i).is_some_and(|it| *it >= 128) {
+                        i += 1;
+                    }
+                    continue;
+                }
                 b'[' if i < no_class_from => match class_shape(glob, i) {
                     Some((end, may_be_separator)) => {
                         // The rules for dot segments overlook `[(`, so it can match where a `**` can't go on.
@@ -4719,35 +4744,25 @@ impl Program {
                     i += 1;
                 }
                 b'\\' if i + 1 < glob.len() => {
-                    let len = usize::from(strings::wtf8_byte_sequence_length(glob[i + 1]));
-                    if i + 1 + len > glob.len() {
-                        to.at(i - start);
-                        to.leave_out(i - start, glob.len() - start);
-                    } else {
-                        match glob[i + 1] == b'/' {
-                            true => node!(i, separators),
-                            false => node!(i, escapes),
-                        };
-                        // The node after it matches wherever the node after the escaped byte does.
-                        to.leave_out(i + 1 - start, i + 2 - start);
-                        to.imply_node((i + 1 - start) as u32);
-                        if len > 1 {
-                            to.at(i + 2 - start);
-                        }
-                    }
-                    i += 1 + len;
+                    match glob[i + 1] == b'/' {
+                        true => node!(i, separators),
+                        false => node!(i, escapes),
+                    };
+                    // The node after it matches wherever the node after the escaped byte does.
+                    to.leave_out(i + 1 - start, i + 2 - start);
+                    to.imply_node((i + 1 - start) as u32);
+                    i += 2;
                 }
                 _ => {
                     if ch == b'[' {
                         no_class_from = no_class_from.min(i);
                     }
-                    // The matcher compares as many bytes as the first one announces, whatever they are.
                     to.at(i - start);
-                    let end = i + usize::from(strings::wtf8_byte_sequence_length(ch));
-                    if end > glob.len() {
-                        to.leave_out(i - start, glob.len() - start);
+                    i += 1;
+                    // Bytes after it that aren't ASCII are literal, which a node is unless something says otherwise.
+                    while glob.get(i).is_some_and(|it| *it >= 128) {
+                        i += 1;
                     }
-                    i = end;
                 }
             }
         }
@@ -5641,5 +5656,174 @@ impl Cache {
             self.add_character(state, character, found.0);
         }
         Ok(found)
+    }
+}
+
+// A JavaScript string has no byte that isn't UTF-8, so these rows can't be in test/js/bun/glob.
+#[cfg(test)]
+mod tests {
+    use bstr::BStr;
+    use bun_sema_standalone as _;
+
+    use super::*;
+
+    /// The answer with no shape. 40 calls on one shape have to give the same one, for each way to treat dots.
+    fn matches<const WINDOWS: bool>(glob: &[u8], path: &[u8]) -> bool {
+        let separators: &[u8] = if WINDOWS { b"/\\" } else { b"/" };
+        let has_dot_segment = strings::split_any(path, separators).any(|it| it.starts_with(b"."));
+        assert!(
+            !has_dot_segment,
+            "the ways to treat dots differ on {:?}",
+            BStr::new(path)
+        );
+        let answer = match_on::<WINDOWS>(glob, path).matches();
+        for dots in [Dots::Match, Dots::Hide, Dots::SkipTraversal] {
+            let shape = Shape::of(glob);
+            for call in 0..40 {
+                let again = match_prepared::<WINDOWS>(glob, &shape, path, dots).matches();
+                let (glob, path) = (BStr::new(glob), BStr::new(path));
+                assert_eq!(
+                    again, answer,
+                    "{glob:?} on {path:?}, call {call} on a shape"
+                );
+            }
+        }
+        answer
+    }
+
+    /// Each row is a pattern, the paths that it matches and the paths that it doesn't, with a space between two paths.
+    fn check(rows: &[(&[u8], &[u8], &[u8])]) {
+        for (glob, matched, others) in rows {
+            for (paths, is_wanted) in [(matched, true), (others, false)] {
+                for path in strings::split(paths, b" ") {
+                    let is_match = matches::<false>(glob, path);
+                    assert_eq!(
+                        is_match,
+                        is_wanted,
+                        "{:?} on {:?}",
+                        BStr::new(glob),
+                        BStr::new(path)
+                    );
+                }
+            }
+        }
+    }
+
+    // U+00E9 is c3 a9, U+00E8 is c3 a8, U+9000 is e9 80 80, U+9001 is e9 80 81 and U+1F600 is f0 9f 98 80.
+
+    #[test]
+    fn what_follows_a_byte_that_is_not_utf8_is_still_syntax() {
+        let others = b"z.bak keep.bak x a";
+        check(&[
+            (b"{x,y\xe9}{a,*.bak}", b"xa x1.bak y\xe9a y\xe9.bak", others),
+            (b"{x,y\xc3}{a,*.bak}", b"xa x1.bak y\xc3a", others),
+            (b"{x,y\xf0}{a,*.bak}", b"xa x1.bak y\xf0z.bak", others),
+            (b"{x,\xe9y}{a,*.bak}", b"xa x1.bak \xe9ya", others),
+            (b"{y\xe9,x}{a,*.bak}", b"xa x1.bak y\xe9a", others),
+            (b"{x,y\xe9}{*.bak,a}", b"xa x1.bak y\xe9a", others),
+            (b"{x,y\xe9\x80}{a,*.bak}", b"xa x1.bak y\xe9\x80a", others),
+            // After a `\` as well.
+            (b"{x,\\\xe9}{a,*.bak}", b"xa x1.bak \xe9a", others),
+            (b"@(x|\\\xe9)*.bak", b"x1.bak \xe91.bak", others),
+            (b"y\\\xe9*z", b"y\xe9z y\xe9abz", b"y\xe9 yz"),
+            // The shell writes a `*` that is data as the class `[*]`.
+            (b"a\xc3[*]*.bak", b"a\xc3*q.bak", b"a\xc3[zz]q.bak"),
+            (b"y\xe9*.bak", b"y\xe9z.bak y\xe9\x80\x80.bak", b"yz.bak"),
+            (b"\xc3*.bak", b"\xc31.bak \xc3\xa91.bak", b"1.bak"),
+        ]);
+    }
+
+    #[test]
+    fn a_literal_that_stops_inside_a_character_is_found_at_each_place() {
+        check(&[
+            (
+                b"*\xc3*\xa9",
+                b"\xc3\xa9\xc3\xa9 \xc3\xa8\xc3\xa9",
+                b"\xc3\xa9\xc3\xa8",
+            ),
+            (
+                b"*\xe9\x80*\x81",
+                b"\xe9\x80\x80\xe9\x80\x81 \xe9\x80\x81",
+                b"\xe9\x80\x80",
+            ),
+            (
+                b"*\xf0\x9f\x98*\x81",
+                b"\xf0\x9f\x98\x80\xf0\x9f\x98\x81",
+                b"\xf0\x9f\x98\x80",
+            ),
+            (
+                b"*\xf0\x9f*\x98\x81",
+                b"\xf0\x9f\x98\x80\xf0\x9f\x98\x81",
+                b"\xf0\x9f\x98\x80",
+            ),
+            (
+                b"*\xe9*\x81[\xc3\xa9]",
+                b"\xe9\x80\x80\xe9\x80\x81\xc3\xa9",
+                b"\xe9\x80\x80\xe9\x80\x81x",
+            ),
+            // A pattern that isn't regular gets there too.
+            (
+                b"*\xc3*\xa9[!a]",
+                b"\xc3\xa9\xc3\xa9b",
+                b"\xc3\xa9\xc3\xa9a",
+            ),
+            (
+                b"**\xc3*\xa9x",
+                b"\xc3\xa9\xc3\xa9x \xc3\xa9x",
+                b"\xc3\xa9\xc3\xa9",
+            ),
+            (
+                b"*\xc3*\xa9[\\\\]",
+                b"\xc3\xa9\xc3\xa9\\",
+                b"\xc3\xa9\xc3\xa9",
+            ),
+            // So does one with only one way to match, which the loop takes by itself.
+            (b"a+\xc3*", b"a+\xc3\xa9 a+\xc3", b"a+"),
+            (b"?\xe9??", b"\xc3\xa9\xe9\x80\x80", b"\xe9\x80\x80"),
+        ]);
+    }
+
+    #[test]
+    fn a_wildcard_takes_whole_characters_from_where_it_stands() {
+        check(&[
+            (b"*\x80", b"a\x80 \x80", b"\xe9\x80\x80"),
+            (b"*\xa9", b"y\xa9", b"\xc3\xa9"),
+            (b"\xc3*\xa9", b"\xc3\xa9", b"\xc3\xa9\xc3\xa9"),
+            (b"\xe9*\x80", b"\xe9\x80\x80 \xe9\x80", b"\xe9"),
+        ]);
+    }
+
+    #[test]
+    fn a_path_of_512_bytes_gets_the_same_answers() {
+        let below = |name: &[u8]| [&b"folder/".repeat(80)[..], name].concat();
+        for (glob, name, is_wanted) in [
+            (&b"**/{x,y\xe9}{a,*.bak}"[..], &b"x1.bak"[..], true),
+            (b"**/{x,y\xe9}{a,*.bak}", b"y\xe9a", true),
+            (b"**/{x,y\xe9}{a,*.bak}", b"z.bak", false),
+            (b"**/*\xc3*\xa9", b"\xc3\xa9\xc3\xa9", true),
+            (b"**/*\xc3*\xa9", b"\xc3\xa9\xc3\xa8", false),
+        ] {
+            assert_eq!(
+                matches::<false>(glob, &below(name)),
+                is_wanted,
+                "{:?} on {:?}",
+                BStr::new(glob),
+                BStr::new(name)
+            );
+        }
+    }
+
+    #[cfg(any(windows, debug_assertions))]
+    #[test]
+    fn a_match_for_windows_gets_the_same_answers() {
+        let matches = matches::<true>;
+        assert!(matches(b"folder/{x,y\xe9}{a,*.bak}", b"folder\\x1.bak"));
+        assert!(matches(
+            b"folder/{x,y\xe9}{a,*.bak}",
+            b"folder\\y\xe9\x80\x80.bak"
+        ));
+        assert!(!matches(b"folder/{x,y\xe9}{a,*.bak}", b"folder\\z.bak"));
+        assert!(matches(b"folder/*\xc3*\xa9", b"folder\\\xc3\xa9\xc3\xa9"));
+        assert!(!matches(b"folder/*\xc3*\xa9", b"folder\\\xc3\xa9\xc3\xa8"));
     }
 }

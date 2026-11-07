@@ -68,6 +68,8 @@ $assert(condition, "message");          // Assertions (stripped in release)
 
 **Platform detection**: `process.platform` and `process.arch` are inlined and dead-code eliminated
 
+**Promises**: a program can replace `Promise.resolve`, `Promise.reject` and `promise.then`, and the public `Promise.all` and `Promise.race` call them. Node's `PromiseResolve(x)`, `PromiseReject(e)` and `PromisePrototypeThen(p, f, g)` are `Promise.$resolve(x)`, `Promise.$reject(e)` and `p.$then(f, g)`. `Promise.all` and `Promise.race` have no private form: `Promise.$all` fails the build. To wait for a fixed set of promises that always settle (native operations), `await` them one by one and call `$pokePromiseAsHandled` on each one that is awaited later, as `checkPaths` in `internal/fs/cp.ts` does. A later rejection then arrives only after every earlier promise has settled.
+
 ## Validation and Errors
 
 ```typescript

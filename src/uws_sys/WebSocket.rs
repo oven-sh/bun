@@ -187,7 +187,7 @@ impl AnyWebSocket {
         // `app` is the matching `uws_app_t*`; the `ssl` flag selects the
         // const-generic instantiation).
         if ssl {
-            uws::NewApp::<true>::publish_with_options(
+            uws::NewApp::<true>::publish(
                 bun_opaque::opaque_deref_mut(app.cast::<uws::NewApp<true>>()),
                 topic,
                 message,
@@ -195,7 +195,7 @@ impl AnyWebSocket {
                 compress,
             )
         } else {
-            uws::NewApp::<false>::publish_with_options(
+            uws::NewApp::<false>::publish(
                 bun_opaque::opaque_deref_mut(app.cast::<uws::NewApp<false>>()),
                 topic,
                 message,
@@ -250,8 +250,8 @@ pub(crate) type uws_websocket_upgrade_handler = Option<
     unsafe extern "C" fn(
         *mut c_void,
         *mut uws_res,
-        *mut Request,
-        *mut WebSocketUpgradeContext,
+        &mut Request,
+        &mut WebSocketUpgradeContext,
         usize,
     ),
 >;
@@ -356,7 +356,7 @@ pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
     /// `id != 0`.
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
-        res: *mut uws::NewAppResponse<SSL>,
+        res: &mut uws::NewAppResponse<SSL>,
         req: &mut Request,
         context: &mut WebSocketUpgradeContext,
         id: usize,
@@ -500,25 +500,26 @@ where
     extern "C" fn on_upgrade(
         ptr: *mut c_void,
         res: *mut uws_res,
-        req: *mut Request,
-        context: *mut WebSocketUpgradeContext,
+        req: &mut Request,
+        context: &mut WebSocketUpgradeContext,
         id: usize,
     ) {
         if ptr.is_null() {
             return;
         }
         // SAFETY: `ptr` is the user-data passed to `uws_ws()` at registration
-        // time; uWS passes non-null req/context valid for the duration of the
-        // upgrade callback. We forward `ptr` as a *raw* `*mut Server` without
+        // time. uWS passes a non-null `res`, and `Response<SSL>` is zero-sized, so
+        // the reference stays valid when `upgrade` moves the socket.
+        // We forward `ptr` as a *raw* `*mut Server` without
         // creating a `&mut Server` — the actual pointee type is discriminated
         // by `id` inside the implementer (see trait docs), and materializing a
         // typed reference here would be UB when `id` selects a different type.
         unsafe {
             Server::on_websocket_upgrade(
                 ptr.cast::<Server>(),
-                res.cast::<uws::NewAppResponse<SSL>>(),
-                thunk::handle_mut(req),
-                thunk::handle_mut(context),
+                &mut *res.cast::<uws::NewAppResponse<SSL>>(),
+                req,
+                context,
                 id,
             );
         }

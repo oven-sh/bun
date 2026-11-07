@@ -372,7 +372,7 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
         // pointer is an opaque sentinel (any non-null value satisfies uWS).
         uws_sys::NewAppResponse::<SSL>::on_timeout(
             self,
-            |_: *mut c_void, _: &mut uws_sys::NewAppResponse<SSL>| on_timeout_for_idle_warn(),
+            |_: *mut c_void, _: uws::AnyResponse| on_timeout_for_idle_warn(),
             ud,
         );
     }
@@ -415,7 +415,7 @@ impl RespLike for uws_sys::h3::Response {
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
         uws_sys::h3::Response::on_timeout(
             self,
-            |_: &mut c_void, _: &mut uws_sys::h3::Response| on_timeout_for_idle_warn(),
+            |_: *mut c_void, _: uws::AnyResponse| on_timeout_for_idle_warn(),
             ud,
         );
     }
@@ -446,7 +446,7 @@ impl RespLike for uws_sys::h2::Response {
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
         uws_sys::h2::Response::on_timeout(
             self,
-            |_: &mut c_void, _: &mut uws_sys::h2::Response| on_timeout_for_idle_warn(),
+            |_: *mut c_void, _: uws::AnyResponse| on_timeout_for_idle_warn(),
             ud,
         );
     }
@@ -638,16 +638,7 @@ impl AnyRoute {
             return Ok(None);
         };
         let fetch_headers = FetchHeaders::create_from_js(init_ctx.global, headers_js)?;
-        let _fh_guard = scopeguard::guard(fetch_headers, |fh| {
-            // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-            if let Some(h) = fh {
-                bun_opaque::opaque_deref_mut(h.as_ptr()).deref();
-            }
-        });
-
-        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-        let headers_ref = fetch_headers.map(|p| bun_opaque::opaque_deref(p.as_ptr().cast_const()));
-        let route = Self::from_options(init_ctx.global, headers_ref, &mut path)?;
+        let route = Self::from_options(init_ctx.global, fetch_headers.as_deref(), &mut path)?;
 
         if is_index_route {
             return Ok(Some(route));
@@ -1254,7 +1245,7 @@ impl UpgradeOptions {
             this._headers_object = jsc::EnsureStillAlive(headers_value);
         } else if headers_value.is_object() {
             // `None` for an empty HeadersInit.
-            this._headers_converted = HeadersRef::create_from_js(global, headers_value)?;
+            this._headers_converted = FetchHeaders::create_from_js(global, headers_value)?;
             this.headers = this
                 ._headers_converted
                 .as_ref()
@@ -1343,17 +1334,14 @@ where
 {
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
-        res: *mut uws_sys::NewAppResponse<SSL>,
+        res: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws_sys::Request,
         context: &mut WebSocketUpgradeContext,
         id: usize,
     ) {
-        // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         // SAFETY: forwarded raw — `this` is only dereferenced after the `id`
         // dispatch inside `on_web_socket_upgrade`.
-        unsafe {
-            Self::on_web_socket_upgrade(this, bun_opaque::opaque_deref_mut(res), req, context, id)
-        };
+        unsafe { Self::on_web_socket_upgrade(this, res, req, context, id) };
     }
 }
 
@@ -2054,12 +2042,10 @@ where
                     if let Some(headers__) = FetchHeaders::cast_(headers_, global.vm()) {
                         // Copy the headers like `new Request(url, { headers })` does.
                         // S008: `FetchHeaders` is an opaque ZST FFI handle — safe deref.
-                        headers = bun_opaque::opaque_deref_mut(headers__.as_ptr())
-                            .clone_this(global)?
-                            // SAFETY: `clone_this` returns a +1 ref.
-                            .map(|p| unsafe { HeadersRef::adopt(p) });
+                        headers =
+                            Some(bun_opaque::opaque_deref(headers__.as_ptr()).clone_this(global)?);
                     } else {
-                        headers = HeadersRef::create_from_js(global, headers_)?;
+                        headers = FetchHeaders::create_from_js(global, headers_)?;
                     }
                 }
 
@@ -2231,7 +2217,7 @@ where
             let listener = bun_opaque::opaque_deref_mut(listener);
             port = listener.get_local_port().unwrap_or(port);
 
-            let mut buf = [0u8; 64];
+            let mut buf = [0u8; 16];
             let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
                 return Ok(JSValue::NULL);
             };
@@ -2249,7 +2235,7 @@ where
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 let h3l = bun_opaque::opaque_deref_mut(h3l);
                 port = h3l.get_local_port().unwrap_or(port);
-                let mut buf = [0u8; 64];
+                let mut buf = [0u8; 16];
                 let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
                     return Ok(JSValue::NULL);
                 };
@@ -2281,11 +2267,11 @@ where
             server_config::Address::Tcp { hostname, .. } => hostname,
         };
         if let Some(listener) = self.listener.get() {
-            let mut buf = [0u8; 1024];
+            let mut buf = [0u8; 16];
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             if let Some(addr) = bun_opaque::opaque_deref_mut(listener)
                 .socket()
-                .remote_address(&mut buf[..1024])
+                .remote_address(&mut buf)
             {
                 if !addr.is_empty() {
                     return bun_string_jsc::create_utf8_for_js(global, addr);
@@ -2699,12 +2685,9 @@ where
         // eagerly so the rest of the pipeline never needs to know which
         // transport delivered the bytes.
         if Ctx::IS_MUX {
-            // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
-            request_object.set_fetch_headers(Some(unsafe {
-                crate::webcore::response::HeadersRef::adopt(FetchHeaders::create_from_h3(
-                    std::ptr::from_mut(req).cast::<c_void>(),
-                ))
-            }));
+            request_object.set_fetch_headers(Some(FetchHeaders::create_from_h3(
+                std::ptr::from_mut(req).cast::<c_void>(),
+            )));
             // NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
             // returned slices alias the same uWS-owned header buffer. Format
             // the `https://{host}` prefix while `host` is borrowed so the

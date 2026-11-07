@@ -72,8 +72,6 @@ pub(crate) struct WindowsNamedPipe {
     pub(crate) flags: Cell<Flags>,
 }
 
-bun_event_loop::impl_timer_owner!(WindowsNamedPipe; from_timer_ptr => event_loop_timer);
-
 bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Default)]
@@ -808,12 +806,10 @@ impl WindowsNamedPipe {
         self.update_flags(|f| f.insert(Flags::PIPE_ADOPTED));
         let start_pipe_result = self.writer.with_mut(|w| {
             w.set_parent(this);
-            // SAFETY: `start_with_pipe`'s contract is "Box-allocated pointer;
-            // ownership transfers to `self.source`". `pipe_nn` is the
-            // `NonNull` recorded from the `Box<uv::Pipe>` leaked in `from()`
-            // and not yet adopted (asserted by `start_with_pipe`'s
-            // `debug_assert!(source.is_none())`).
-            unsafe { w.start_with_pipe(pipe_nn.as_ptr()) }
+            // SAFETY: `pipe_nn` is the `NonNull` recorded from the
+            // `Box<uv::Pipe>` leaked in `from()` and not yet adopted (asserted
+            // by `start_with_pipe`'s `debug_assert!(source.is_none())`).
+            w.start_with_pipe(unsafe { bun_core::heap::take(pipe_nn.as_ptr()) })
         });
         if let bun_sys::Result::Err(err) = start_pipe_result {
             self.on_error(err);
@@ -1055,33 +1051,26 @@ impl Drop for WindowsNamedPipe {
 
 // Hand-written `ssl` shim for the `bun_uws` cycle-break extern — the safe
 // method returns `Option<*mut SSL>` while the C ABI flattens to a nullable
-// raw pointer. All other `WindowsNamedPipe__*` symbols are emitted by
+// raw pointer. All `WindowsNamedPipe__*` symbols but the three below are emitted by
 // `#[uws_callback(export = …)]` on the inherent methods above.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn WindowsNamedPipe__set_inline_reject(this: *const c_void) {
-    // SAFETY: `this` is a live `*const WindowsNamedPipe` from the bun_uws opaque handle.
-    if let Some(wrapper) = unsafe { (*this.cast::<WindowsNamedPipe>()).wrapper_ref() } {
+pub(crate) extern "C" fn WindowsNamedPipe__set_inline_reject(this: &WindowsNamedPipe) {
+    if let Some(wrapper) = this.wrapper_ref() {
         wrapper.set_inline_reject();
     }
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn WindowsNamedPipe__latest_session(
-    this: *const c_void,
+    this: &WindowsNamedPipe,
 ) -> *mut bun_boringssl_sys::SSL_SESSION {
-    // SAFETY: `this` is a live `*const WindowsNamedPipe` from the bun_uws opaque handle.
-    unsafe { (*this.cast::<WindowsNamedPipe>()).wrapper_ref() }
+    this.wrapper_ref()
         .map_or(core::ptr::null_mut(), |wrapper| wrapper.latest_session())
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn WindowsNamedPipe__ssl(this: *const c_void) -> *mut boringssl::SSL {
-    // SAFETY: `this` is a live `*const WindowsNamedPipe` from the bun_uws opaque handle.
-    unsafe {
-        (*this.cast::<WindowsNamedPipe>())
-            .ssl()
-            .unwrap_or(core::ptr::null_mut())
-    }
+pub(crate) extern "C" fn WindowsNamedPipe__ssl(this: &WindowsNamedPipe) -> *mut boringssl::SSL {
+    this.ssl().unwrap_or(core::ptr::null_mut())
 }
 
 impl bun_io::pipe_writer::WriterParent for WindowsNamedPipe {

@@ -4,7 +4,6 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
-use bun_core::Global::SyncCStr;
 use bun_core::MutableString;
 use bun_core::{self, Environment, Global, Output, Progress, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
@@ -151,23 +150,19 @@ impl Version {
     }
 }
 
+const GITHUB_URL_Z: &[u8] = const_format::concatcp!(
+    "https://github.com/oven-sh/bun/releases/download/bun-v",
+    Global::package_json_version,
+    "/",
+    Version::ZIP_FILENAME,
+    "\0"
+)
+.as_bytes();
 // Exported C symbol — null-terminated
 // Moved out of `impl Version` — Rust impl blocks cannot hold `static` items.
-// `*const c_char` is `!Sync`, so wrap in the `#[repr(transparent)]` `SyncCStr` newtype
-// (same pattern as `Bun__userAgent` in bun_core::Global) so the C++ side still sees a
-// single `const char*`-sized symbol.
+// `&[u8; N]` is a thin pointer, so the C++ side sees a single `const char*`-sized symbol.
 #[unsafe(no_mangle)]
-static Bun__githubURL: SyncCStr = SyncCStr(
-    const_format::concatcp!(
-        "https://github.com/oven-sh/bun/releases/download/bun-v",
-        Global::package_json_version,
-        "/",
-        Version::ZIP_FILENAME,
-        "\0"
-    )
-    .as_ptr()
-    .cast::<c_char>(),
-);
+static Bun__githubURL: &[u8; GITHUB_URL_Z.len()] = GITHUB_URL_Z.first_chunk().unwrap();
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1324,13 +1319,14 @@ impl UpgradeCommand {
 pub(crate) mod upgrade_js_bindings {
     #[cfg(windows)]
     use super::*;
+    #[cfg(windows)]
+    use core::sync::atomic::{AtomicPtr, Ordering};
 
     // Process-global, not threadlocal: if open/close are invoked from different
     // threads (main vs worker VM) a `thread_local!` would make the close see
-    // `None` and leak the HANDLE. Use a `RacyCell`; access is test-only and
-    // effectively single-threaded.
+    // null and leak the HANDLE. `Relaxed` is enough: no memory is published through it.
     #[cfg(windows)]
-    static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
+    static TEMPDIR_HANDLE: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(core::ptr::null_mut());
 
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
@@ -1394,11 +1390,7 @@ pub(crate) mod upgrade_js_bindings {
 
             match sys::windows::Win32Error::from_nt_status(rc) {
                 sys::windows::Win32Error::SUCCESS => {
-                    // System-kind handle on Windows.
-                    // SAFETY: test-only helper; access is single-threaded (JS thread).
-                    unsafe {
-                        TEMPDIR_FD.write(Some(sys::Fd::from_system(fd)));
-                    }
+                    TEMPDIR_HANDLE.store(fd, Ordering::Relaxed);
                 }
                 _ => {}
             }
@@ -1409,11 +1401,11 @@ pub(crate) mod upgrade_js_bindings {
         #[cfg(windows)]
         {
             use bun_sys::FdExt as _;
-            // SAFETY: test-only helper; access is single-threaded (JS thread).
-            // Consume (`take`) the stored fd so a repeat call cannot
+            // Consume (`swap`) the stored handle so a repeat call cannot
             // `CloseHandle` a stale, possibly-reissued HANDLE value.
-            if let Some(fd) = unsafe { core::mem::take(&mut *TEMPDIR_FD.get()) } {
-                fd.close();
+            let handle = TEMPDIR_HANDLE.swap(core::ptr::null_mut(), Ordering::Relaxed);
+            if !handle.is_null() {
+                sys::Fd::from_system(handle).close();
             }
         }
     }

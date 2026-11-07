@@ -1008,10 +1008,9 @@ mod holder {
 
     // Process-lifetime env storage for `init()`. Owned by the singleton, never
     // freed. Avoids `Box::leak` per PORTING.md §Forbidden. Write-once during
-    // single-threaded init. `AtomicCell<*mut T>` — payload is `Copy` and
-    // pointer-sized, so `.store()` is a safe Release write.
-    pub(super) static ENV_LOADER: bun_core::AtomicCell<*mut dot_env::Loader> =
-        bun_core::AtomicCell::new(core::ptr::null_mut());
+    // single-threaded init.
+    pub(super) static ENV_LOADER: core::sync::atomic::AtomicPtr<dot_env::Loader> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.abs_ca_file_name`.
     /// `OnceLock` per PORTING.md §Forbidden — never `Box::leak` to mint `&'static`.
@@ -2356,12 +2355,12 @@ pub fn init(
     // loader. Allocate into a process-lifetime static (same pattern as
     // `holder::RAW_PTR`) instead of `Box::leak`.
     let env: &mut dot_env::Loader = unsafe {
-        let mut loader_ptr = holder::ENV_LOADER.load();
+        let mut loader_ptr = holder::ENV_LOADER.load(Ordering::Acquire);
         // A second `init()` runs with a different cwd, so it keeps what the first one read from the
         // `--env-file` paths.
         if loader_ptr.is_null() {
             loader_ptr = bun_core::heap::alloc(dot_env::Loader::init());
-            holder::ENV_LOADER.store(loader_ptr);
+            holder::ENV_LOADER.store(loader_ptr, Ordering::Release);
         }
         &mut *loader_ptr
     };
@@ -2722,8 +2721,7 @@ pub fn init(
     // `&mut PackageManager` validity invariant now holds.
     // We do NOT bind a long-lived `&'static mut` here: `http::HTTPThread::init`
     // below spawns workers that deref `get()` concurrently, which would alias such a
-    // borrow under Stacked Borrows. Instead each statement forms its own narrowly-scoped
-    // reborrow via `unsafe { &mut *manager_ptr }`, dropped before the next raw-ptr use.
+    // borrow under Stacked Borrows. The reborrow in this block ends before that call.
     {
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         let manager = unsafe { &mut *manager_ptr };
@@ -2736,8 +2734,7 @@ pub fn init(
         // the handle's backref is `manager.event_loop`, owned by the singleton.
         let uws_loop = unsafe { &*uws_loop };
         EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
-    }
-    {
+
         // make sure folder packages can find the root package without creating a new one
         // Posix-normalize the
         // separators: the folder resolver's `Key` has `/` only; on Windows this path has `\`, so
@@ -2748,23 +2745,17 @@ pub fn init(
         buf[..raw.len()].copy_from_slice(raw);
         let normalized = &mut buf[..raw.len()];
         resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(normalized);
-        // SAFETY: singleton fully initialized; main thread, no workers yet.
-        unsafe { &mut *manager_ptr }.folders.put(
+        manager.folders.put(
             FolderResolutionKey::new(FolderResolutionKind::Folder, normalized),
             FolderResolutionEntry {
                 abs_path: Box::<[u8]>::from(&*normalized),
                 resolution: FolderResolution::PackageId(0),
             },
         )?;
-        // normalized.deinit() → Drop (stack buffer)
-    }
+        drop(buf);
 
-    // Set the thread-local global to point at the embedded mini loop
-    // (`bun_event_loop::mini_event_loop::GLOBAL`).
-    {
-        // SAFETY: singleton fully initialized; main thread, no workers yet.
-        let evl = unsafe { &mut (*manager_ptr).event_loop };
-        if let AnyEventLoop::Mini(mini) = evl {
+        // Point the thread-local `mini_event_loop::GLOBAL` at the embedded mini loop.
+        if let AnyEventLoop::Mini(mini) = &mut manager.event_loop {
             let mini_ptr: *mut MiniEventLoop = &raw mut **mini;
             // Set ONLY `MiniEventLoop.global`,
             // NOT `globalInitialized`. The distinction is load-bearing: a later
@@ -2779,10 +2770,7 @@ pub fn init(
             // stdout/stderr against an under-initialised loop → EBADF (exit 9).
             mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
         }
-    }
-    {
-        // SAFETY: as above; scoped reborrow for the options/manifest-cache block.
-        let manager = unsafe { &mut *manager_ptr };
+
         // `options.load` applies BUN_CONFIG_MAX_HTTP_REQUESTS on top of this default.
         http::async_http::MAX_SIMULTANEOUS_REQUESTS.store(
             if env.has_http_proxy() {

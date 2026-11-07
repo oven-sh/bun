@@ -24,7 +24,7 @@ pub mod result;
 pub mod thread_id;
 pub mod tty;
 pub mod util;
-pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
+pub use atomic_cell::{AtomicCell, ThreadCell};
 
 /// Shared state-machine tag for the streaming (de)compressors in
 /// `bun_brotli` / `bun_zlib` / `bun_zstd`.
@@ -210,18 +210,9 @@ pub mod os {
     use core::ffi::c_char;
 
     // Stored as raw (ptr, len) — NOT `&'static mut [_]` — so `environ()` (which
-    // hands out a shared `&[_]`) never aliases a live `&mut`. A `&'static mut`
-    // global would be UB the moment a reader
-    // borrows while a writer holds the swapped-out `&mut`.
+    // hands out a shared `&[_]`) never aliases a live `&mut`.
     static mut ENVIRON: (*mut *mut c_char, usize) = (core::ptr::null_mut(), 0);
 
-    /// Swap in a new envp slice; returns the previous (ptr, len) pair.
-    /// SAFETY: single-threaded startup only.
-    pub unsafe fn take_environ() -> (*mut *mut c_char, usize) {
-        // `&raw mut` (no intermediate `&mut`) — `static_mut_refs` is hard-denied
-        // under rust_2024_compatibility, and we never need a borrow here.
-        unsafe { core::ptr::replace(&raw mut ENVIRON, (core::ptr::null_mut(), 0)) }
-    }
     /// SAFETY: single-threaded startup only; `ptr` must be valid for `len`
     /// elements for the process lifetime (leaked allocation).
     pub unsafe fn set_environ(ptr: *mut *mut c_char, len: usize) {
@@ -574,7 +565,6 @@ bun_dispatch::link_interface! {
         fn quiet_writer_from_fd(fd: Fd) -> output::QuietWriter;
         fn quiet_writer_adapt(qw: output::QuietWriter, buf: *mut u8, len: usize) -> output::QuietWriterAdapter;
         fn quiet_writer_write_all(qw: &mut output::QuietWriter, bytes: &[u8]) -> bool;
-        fn quiet_writer_fd(qw: &output::QuietWriter) -> Fd;
         fn tty_winsize(fd: Fd) -> Option<Winsize>;
         fn is_terminal(fd: Fd) -> bool;
         fn read(fd: Fd, buf: &mut [u8]) -> core::result::Result<usize, Error>;
@@ -900,15 +890,6 @@ pub unsafe trait IntrusiveField<F>: Sized {
     /// `offset_of!(Self, <field>)`.
     const OFFSET: usize;
 
-    /// Project `&mut self` → `&mut self.<field>`.
-    #[inline(always)]
-    fn field_mut(&mut self) -> &mut F {
-        // SAFETY: `OFFSET` is `offset_of!(Self, <field>)` per impl contract;
-        // `&mut self` covers the whole `Self`, so the field reborrow is in-bounds
-        // and uniquely borrowed for the returned lifetime.
-        unsafe { &mut *core::ptr::from_mut(self).byte_add(Self::OFFSET).cast::<F>() }
-    }
-
     /// `*mut Self` → `*mut self.<field>`.
     ///
     /// # Safety
@@ -945,14 +926,19 @@ macro_rules! intrusive_field {
     // otherwise try to parse `['a]` as a slice type and hard-error on the
     // lifetime before backtracking to this arm.
     ([$($gen:tt)*] $T:ty, $field:ident : $F:ty) => {
+        // SAFETY: `OFFSET` is the offset of `$field`, and `_check` compiles only if `$field` is a
+        // `$F`. `&mut X` coerces to `*mut $F` only if `X` is `$F`: no deref coercion ends in a raw
+        // pointer, `F: Sized` rules out unsizing, and `*mut` is invariant. `_check` is an item so
+        // that `$F` reads as in the impl header: in a body, `Box<dyn Tr>` is `Box<dyn Tr + '_>`.
         unsafe impl<$($gen)*> $crate::IntrusiveField<$F> for $T {
-            const OFFSET: usize = ::core::mem::offset_of!($T, $field);
+            const OFFSET: usize = {
+                fn _check<$($gen)*>(t: &mut $T) -> *mut $F { &mut t.$field }
+                ::core::mem::offset_of!($T, $field)
+            };
         }
     };
     ($T:ty, $field:ident : $F:ty) => {
-        unsafe impl $crate::IntrusiveField<$F> for $T {
-            const OFFSET: usize = ::core::mem::offset_of!($T, $field);
-        }
+        $crate::intrusive_field!([] $T, $field: $F);
     };
 }
 
@@ -2643,27 +2629,19 @@ pub mod ffi {
         unsafe { core::mem::zeroed() }
     }
 
-    /// Pointer to the calling thread's libc `errno`.
+    /// Lends the calling thread's libc `errno` to `f`.
     ///
     /// Single audited cfg-ladder over the per-libc TLS accessor symbol so the
     /// tree has ONE place that knows glibc/musl spell it `__errno_location()`,
     /// bionic spells it `__errno()`, Darwin/BSD spell it `__error()`, and the
-    /// Windows CRT spells it `_errno()`. Every higher-tier crate routes through
-    /// this — `bun_errno::posix::errno`, `bun_sys::last_errno`,
-    /// `bun_sys::c::errno_location`, `bun_platform::linux` — instead of each
-    /// re-deriving the same target_os→symbol mapping.
-    ///
-    /// Obtaining the pointer has no preconditions (the per-libc TLS accessor
-    /// takes no args and never returns null); the deref obligation lives at
-    /// the call site. The returned pointer is valid for the calling thread's
-    /// lifetime — `*mut c_int` is `!Send`, so the cross-thread hazard is
-    /// already type-enforced.
+    /// Windows CRT spells it `_errno()`.
     #[inline(always)]
-    pub fn errno_ptr() -> *mut core::ffi::c_int {
-        // Per-libc TLS errno accessor: no args, never null, no preconditions.
-        // `safe fn` discharges the link-time proof so the body is a plain
-        // call; only the per-platform symbol *name* varies, expressed via
-        // `#[cfg_attr(.., link_name = ..)]` on a single declaration.
+    pub fn with_errno<R>(f: impl FnOnce(&core::cell::Cell<core::ffi::c_int>) -> R) -> R {
+        // SAFETY: each of the four symbols takes no argument and returns the address that its
+        // libc's `errno` macro dereferences: never null, aligned for `int`. libc does not free that
+        // `int` until its thread exits, and the reference ends sooner: `&Cell` is `!Send`, so it
+        // stays on that thread, and `f` only borrows it, so it ends with this call. What libc
+        // writes to `errno` meanwhile is interior mutation, which `Cell` allows.
         unsafe extern "C" {
             #[cfg_attr(
                 any(
@@ -2689,18 +2667,16 @@ pub mod ffi {
                 ),
                 link_name = "__errno_location"
             )]
-            safe fn errno_location() -> *mut core::ffi::c_int;
+            safe fn errno_location() -> &'static core::cell::Cell<core::ffi::c_int>;
         }
-        errno_location()
+        // Lent, not returned: a TLS destructor could use a kept copy after libc freed the slot.
+        f(errno_location())
     }
 
     /// Read the calling thread's libc `errno`.
-    /// Safe wrapper over `*errno_ptr()`.
     #[inline(always)]
     pub fn errno() -> core::ffi::c_int {
-        // SAFETY: `errno_ptr()` returns a valid thread-local int* for the
-        // calling thread's lifetime on every supported target.
-        unsafe { *errno_ptr() }
+        with_errno(core::cell::Cell::get)
     }
 }
 

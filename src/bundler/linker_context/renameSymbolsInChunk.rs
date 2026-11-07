@@ -13,7 +13,7 @@ use crate::bun_renamer::{
 };
 use crate::chunk::Content;
 use crate::js_meta;
-use crate::{BundleV2, Chunk, LinkerContext, StableRef, ThreadPool, WrapKind};
+use crate::{Chunk, LinkerContext, StableRef, ThreadPool, WrapKind};
 
 /// TODO: investigate if we need to parallelize this function
 /// esbuild does parallelize it.
@@ -444,10 +444,9 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             // `part.scopes` lists every scope visited for the part; the walk
             // below recurses, so only the module scope's children go in.
             for &scope in part.scopes.iter() {
-                // SAFETY: live arena-allocated scope (see below).
-                let parent = unsafe { (*scope).parent };
+                let parent = scope.parent;
                 if parent.is_some_and(|parent| parent.parent.is_none()) {
-                    nested_scopes.push((source_index, scope.cast_const()));
+                    nested_scopes.push((source_index, scope.as_ptr().cast_const()));
                 }
             }
         }
@@ -561,15 +560,14 @@ pub(crate) fn run_nested_rename_task(
         &c.graph.parts_live[source_index as usize],
         &c.graph.symbols,
     );
-    // SAFETY: `c` is `BundleV2.linker`; `Worker::get` only needs `&BundleV2`.
-    let bundle_v2: &BundleV2<'_> = unsafe { &*LinkerContext::bundle_v2_ptr(ctx.c.as_mut_ptr()) };
-    let worker = scopeguard::guard(ThreadPool::Worker::get(bundle_v2), |w| w.unget());
+    let worker = scopeguard::guard(ThreadPool::Worker::get(&c.pool), |w| w.unget());
     // Made-up names go in this thread's worker arena, which lives until the
     // bundle is done.
     let mut nested = NestedRenamer::new(root, &uses, source_index, &worker.arena);
     let mut sorted: Vec<u32> = Vec::new();
     for &(_, scope) in scopes {
-        // SAFETY: live arena-allocated scope (see `rename_symbols_in_chunk`).
+        // SAFETY: `rename_symbols_in_chunk` took it from `Part.scopes` or from the file's row of
+        // the `module_scope` column; nothing writes a scope while these tasks run.
         nested.assign_names_recursive(unsafe { &*scope }, &mut sorted);
     }
     let names = nested.into_names();

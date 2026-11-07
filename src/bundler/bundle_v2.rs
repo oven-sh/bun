@@ -1824,17 +1824,6 @@ pub mod bv2_impl {
             pub owner: core::ptr::NonNull<super::JSBundleCompletionTask>,
             pub vtable: &'static CompletionDispatch,
         }
-        // SAFETY: erased `*mut JSBundleCompletionTask` backref — set by the JS
-        // thread, read by the bundle thread; `enqueue_task_concurrent` is the only
-        // cross-thread call and it goes through `jsc::EventLoop`'s lock-free queue.
-        unsafe impl Send for CompletionHandle {}
-        // Intentionally not `Sync`: the opaque owner (`JSBundleCompletionTask`)
-        // is modeled as `!Sync`, and this wrapper exposes `is_cancelled(&self)`
-        // in addition to the lock-free enqueue path, so blanket `&CompletionHandle`
-        // sharing across threads is not justified. The handle only needs to *move*
-        // to the bundle thread (`Send`), not be shared. If a cross-thread `&` ever
-        // becomes necessary, split out an enqueue-only wrapper and make only that
-        // type `Sync`.
         impl CompletionHandle {
             #[inline]
             pub(crate) fn is_cancelled(&self) -> bool {
@@ -3409,6 +3398,7 @@ pub mod bv2_impl {
             let tp = ThreadPool::init(&*this, thread_pool)?;
             // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
             this.graph.pool = bun_ptr::BackRef::new_mut(this.arena().alloc(tp));
+            this.linker.pool = bun_ptr::BackRef::new(this.graph.pool());
             // Install the watcher only after `ThreadPool::init()` has succeeded —
             // the `?` above is the last early-return in this fn, so the watcher's
             // raw `*mut BundleV2` can't outlive the box it points at (the caller
@@ -7388,16 +7378,16 @@ pub mod bv2_impl {
             // `transpiler_for_target` doesn't overlap `self.arena()` below.
             // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler /
             // BACKREF set in `BundleV2::init`).
-            let (define_ptr, log_ptr): (*mut bun_js_parser::Define, *mut bun_ast::Log) = {
+            let (define_ptr, log_ptr): (*const bun_js_parser::Define, *mut bun_ast::Log) = {
                 let transpiler = self.transpiler_for_target(target);
-                (&raw mut *transpiler.options.define, transpiler.log)
+                (&raw const *transpiler.options.define, transpiler.log)
             };
 
             let ast_for_html_entrypoint = JSAst::init(
                 bun_js_parser::new_lazy_export_ast(
                     heap,
                     // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
-                    unsafe { &mut *define_ptr },
+                    unsafe { &*define_ptr },
                     js_parser_options,
                     // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
                     unsafe { &mut *log_ptr },

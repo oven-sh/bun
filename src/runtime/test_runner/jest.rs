@@ -1,4 +1,5 @@
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicPtr, Ordering};
 use std::io::Write as _;
 
 use crate::cli::command::TestOptions;
@@ -307,9 +308,8 @@ pub(crate) type FileMap = ArrayHashMap<&'static [u8], FileId>;
 pub(crate) mod Jest {
     use super::*;
 
-    // JS-VM-thread-only singleton.
-    pub(crate) static RUNNER: bun_core::RacyCell<Option<NonNull<TestRunner<'static>>>> =
-        bun_core::RacyCell::new(None);
+    // JS-VM-thread-only singleton: one thread stores and loads it, so `Relaxed` is enough.
+    pub(crate) static RUNNER: AtomicPtr<TestRunner<'static>> = AtomicPtr::new(core::ptr::null_mut());
 
     /// `None` outside `bun test` and in a Worker, because the runner belongs to the thread that runs the test files.
     pub(crate) fn runner() -> Option<&'static mut TestRunner<'static>> {
@@ -326,8 +326,7 @@ pub(crate) mod Jest {
         if VirtualMachine::get_or_null().is_some_and(|vm| unsafe { (*vm).worker_ref().is_some() }) {
             return None;
         }
-        // SAFETY: only written and read on the thread that runs the test files.
-        unsafe { RUNNER.read() }
+        NonNull::new(RUNNER.load(Ordering::Relaxed))
     }
 
     /// Computes `RuntimeFeatures::own_test_globals`. Call before the test file is loaded.

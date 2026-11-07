@@ -738,7 +738,7 @@ unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeSta
     // (via `Store::create()`). They live in TLS without a Drop, so each worker
     // thread strands a `Box<Store>` plus its lazily-allocated block chain when
     // the thread exits. `deinit()` is a no-op if a bundler arena currently owns
-    // the allocator (`memory_allocator()` non-null) or the store was never
+    // the allocator (`has_memory_allocator()`) or the store was never
     // created. After the `RuntimeState` drop above nothing on this thread
     // touches the stores again.
     bun_ast::expr::data::Store::deinit();
@@ -1400,25 +1400,6 @@ fn timers_left() -> TimersLeft {
     }
 }
 
-/// `Node.fs.NodeFS{ .vm = … }` lazy creation.
-/// The low tier stores the result in `vm.node_fs: Option<*mut c_void>`.
-/// The returned box is reclaimed (if at all) only by VM teardown.
-fn create_node_fs(vm: &mut VirtualMachine) -> *mut c_void {
-    use crate::node::fs::NodeFS;
-    // `.vm` is set only when standalone-module-graph is active
-    // (it gates the embedded-file `Bun.file()` lookups inside `node:fs`).
-    let vm_field = if vm.standalone_module_graph.is_some() {
-        Some(core::ptr::NonNull::from(vm))
-    } else {
-        None
-    };
-    bun_core::heap::into_raw(Box::new(NodeFS {
-        sync_error_buf: bun_paths::path_buffer_pool::get(),
-        vm: vm_field,
-    }))
-    .cast::<c_void>()
-}
-
 /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])`.
 fn has_blob_url(blob_id: &[u8]) -> bool {
     crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(blob_id)
@@ -1460,28 +1441,11 @@ fn process_exit(global: &JSGlobalObject, code: u8) {
 }
 
 /// `graph.find(path).?.sourcemap.load()`.
-/// Reaches the concrete `bun_standalone_graph::Graph` via its `UnsafeCell`
-/// singleton accessor (proper write provenance) and lazily decodes the
-/// embedded source map for `path`. The returned `Arc` is the caller's strong
-/// ref.
-///
-/// Note: do **not** thread the `&'static dyn StandaloneModuleGraph` from
-/// `vm.standalone_module_graph` here and cast it to `&mut Graph` — that
-/// shared-ref provenance has no write permission, so the resulting `&mut` is
-/// instant UB under Stacked Borrows regardless of `INIT_LOCK`. `Graph::get()`
-/// hands out the `*mut` directly from the backing `UnsafeCell`.
-///
-/// `LazySourceMap::load` is the graph's only post-init mutation and is
-/// serialized by `INIT_LOCK`.
 fn load_standalone_sourcemap(
     path: &[u8],
 ) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>> {
-    let graph = bun_standalone_graph::Graph::get()?;
-    // SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
-    // process-lifetime singleton. `find`/`load` mutate only per-file lazy
-    // state; this hook runs on the JS thread and `LazySourceMap::load` is
-    // additionally guarded by its own `INIT_LOCK`.
-    unsafe { (*graph).find(path)?.sourcemap.load() }
+    let graph = bun_standalone_graph::Graph::get_ref()?;
+    graph.find(path)?.sourcemap.load()
 }
 
 /// `node_cluster_binding.child_singleton.deinit()` —
@@ -1592,7 +1556,6 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     timers_left,
     default_client_ssl_ctx: default_client_ssl_ctx_for_websocket,
     ssl_ctx_cache_get_or_create,
-    create_node_fs,
     has_blob_url,
     name_text_of_blob_url,
     body_mixin_get_blob,
@@ -1608,7 +1571,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     cancel_timers,
     end_hot_run_timers,
     stop_dns_for_vm_teardown,
-    stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
+    stop_active_handles_for_vm_teardown,
     disarm_all_timers_for_vm_teardown,
     close_timer_loop_handles_after_vm_destroyed,
 };
@@ -1642,34 +1605,27 @@ unsafe fn apply_standalone_runtime_flags(
 
 /// Scan a Worker's `execArgv` for the flags that mean something there. Like the
 /// CLI parser, the scan stops at the first positional.
-///
-/// # Safety
-/// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
-/// `Worker::create` array, kept alive for the worker's lifetime).
-unsafe fn parse_worker_exec_argv_flags(
-    exec_argv: &[bun_core::WTFStringImpl],
-) -> Option<WorkerExecArgvFlags> {
+fn parse_worker_exec_argv_flags<'a>(
+    exec_argv: &'a [Option<&'a bun_core::WTFStringImplStruct>],
+) -> Option<WorkerExecArgvFlags<'a>> {
     let mut flags = WorkerExecArgvFlags {
         allow_addons: true,
         allow_ffi_cc: true,
         invalid: None,
     };
     if crate::cli::startup_options::may_refuse_options() {
-        // SAFETY: per fn contract: each entry that is not null is a live `WTFStringImpl*`.
         let words = exec_argv
             .iter()
-            .filter(|arg| !arg.is_null())
-            .map(|&arg| unsafe { &*arg }.to_owned_slice_z());
+            .filter_map(|arg| arg.map(|arg| arg.to_owned_slice_z()));
         let words: Vec<_> = words.collect();
         let words: Vec<&[u8]> = words.iter().map(|word| word.as_bytes()).collect();
         crate::cli::startup_options::warn_of_ignored_options(&words);
     }
-    for (index, &arg) in exec_argv.iter().enumerate() {
-        if arg.is_null() {
+    for &arg in exec_argv {
+        let Some(arg) = arg else {
             continue;
-        }
-        // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
-        let owned = unsafe { &*arg }.to_owned_slice_z();
+        };
+        let owned = arg.to_owned_slice_z();
         let bytes = owned.as_bytes();
         if bytes.first() != Some(&b'-') {
             break;
@@ -1685,7 +1641,7 @@ unsafe fn parse_worker_exec_argv_flags(
             bytes.strip_prefix(b"--disallow-code-generation-from-strings".as_slice()),
             Some([] | [b'=', ..])
         ) {
-            flags.invalid.get_or_insert(index);
+            flags.invalid.get_or_insert(arg);
         }
     }
     Some(flags)
@@ -1819,22 +1775,13 @@ unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) 
     }
 }
 
-/// `RuntimeHooks::stop_active_handles_for_vm_teardown` — see [`stop_active_handles_for_vm_teardown`].
-///
-/// # Safety
-/// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine) -> SweepResult {
-    // SAFETY: per the contract above.
-    stop_active_handles_for_vm_teardown(unsafe { &mut *vm })
-}
-
 /// `RuntimeHooks::disarm_all_timers_for_vm_teardown`.
-unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
+fn disarm_all_timers_for_vm_teardown() {
     let all = timer_all();
     if all.is_null() {
         return;
     }
-    // SAFETY: live per-thread `All`; JS thread; teardown has forbidden script.
+    // SAFETY: live per-thread `All`; JS thread.
     unsafe { crate::timer::All::disarm_all_for_vm_teardown(all) };
 }
 
@@ -1874,7 +1821,8 @@ pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
     let _ = stop_active_handles(vm, bun_jsc::StopReason::Disposed);
 }
 
-pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
+/// `RuntimeHooks::stop_active_handles_for_vm_teardown`.
+fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
     stop_active_handles(vm, bun_jsc::StopReason::VmTeardown)
 }
 
@@ -2443,14 +2391,13 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             // ── Watcher package_json lookup ─────────────────────────────────
             let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
             {
-                // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
-                // set during VM init (BACKREF); cast recovers the concrete type.
-                let import_watcher: *mut bun_jsc::ImportWatcher =
-                    unsafe { &*jsc_vm }.bun_watcher.cast();
+                // SAFETY: `bun_watcher` is the `*mut Watcher`
+                // set during VM init (BACKREF).
+                let import_watcher = unsafe { &*jsc_vm }.bun_watcher;
                 if !import_watcher.is_null() {
                     // SAFETY: non-null per check above. Never read through the
                     // watchlist's stored fd; see
-                    // `ImportWatcher::snapshot_package_json`.
+                    // `Watcher::snapshot_package_json`.
                     let iw = unsafe { &*import_watcher };
                     package_json = iw.snapshot_package_json(hash);
                 }
@@ -3047,11 +2994,10 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
                 // Pending imports → AsyncModule queue.
                 if parse_result.pending_imports.len() > 0 {
-                    let promise_ptr = extra.promise_ptr;
                     // The queue outlives this call, and a virtual source's bytes do not.
-                    if promise_ptr.is_null() || virtual_source.is_some() {
+                    let (Some(promise_ptr), None) = (extra.promise_ptr, virtual_source) else {
                         return Err(crate::Error::UnexpectedPendingResolution);
-                    }
+                    };
 
                     if parse_result.source.contents_is_recycled {
                         // this shared buffer is about to become owned by the AsyncModule struct
@@ -3089,7 +3035,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             bun_jsc::async_module::InitOpts {
                                 parse_result,
                                 path: *path,
-                                promise_ptr: Some(promise_ptr),
+                                promise_ptr,
                                 specifier,
                                 referrer,
                                 arena,
@@ -3557,9 +3503,9 @@ fn maybe_watch_file(
     {
         return;
     }
-    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
-    // `is_watcher_enabled()`; cast recovers the concrete type.
-    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+    // SAFETY: `bun_watcher` is the `*mut Watcher` set when
+    // `is_watcher_enabled()`.
+    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher };
     if matches!(
         watcher.add_file::<true>(
             input_file_fd,
@@ -3599,9 +3545,8 @@ fn auto_watch_file(jsc_vm: *mut VirtualMachine, path_text: &[u8]) {
         bun_sys::Fd::INVALID
     };
     let hash = bun_watcher::Watcher::get_hash(path_text);
-    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
-    // `is_watcher_enabled()`; cast recovers the concrete type.
-    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+    // SAFETY: `bun_watcher` is the `*mut Watcher` set when `is_watcher_enabled()`.
+    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher };
     let added = watcher.add_file::<true>(input_fd, path_text, hash, bun_sys::Fd::INVALID, None);
     if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
         // Not adopted (already watched, or add failed); close the fd opened above.
@@ -4158,8 +4103,7 @@ export default db;
             });
         }
 
-        // SAFETY: `file.module_info` is a live subrange of the embedded section (set in `Graph::from_bytes`).
-        let module_info = unsafe { &*file.module_info };
+        let module_info = file.module_info;
         let module_info_strings: &'static [u8] = bun_standalone_graph::Graph::get_ref()
             .map_or(&[], |graph| graph.module_info_string_table);
         return Some(ResolvedSource {
@@ -5021,7 +4965,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
     });
 
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
-    let mut promise: *mut JSInternalPromise = ptr::null_mut();
+    let promise: Cell<*mut JSInternalPromise> = Cell::new(ptr::null_mut());
     let extra = TranspileExtra {
         path: lr.path,
         loader: Cell::new(synchronous_loader),
@@ -5029,9 +4973,9 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
         source_code_printer: printer_ptr,
         // Resolving a package asynchronously is the global object's loader's only.
         promise_ptr: if allow_promise && module_loader.is_empty() {
-            &raw mut promise
+            Some(&promise)
         } else {
-            ptr::null_mut()
+            None
         },
     };
     let args = TranspileArgs {
@@ -5048,11 +4992,11 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
     match transpile_source_code_inner::<DATA_ONLY>(jsc_vm, &args) {
         Ok(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
-            promise.cast::<c_void>()
+            promise.get().cast::<c_void>()
         }
         Err(crate::Error::AsyncModule) => {
-            debug_assert!(!promise.is_null());
-            promise.cast::<c_void>()
+            debug_assert!(!promise.get().is_null());
+            promise.get().cast::<c_void>()
         }
         Err(err) => {
             if let Some(value) = transpile_error_value(global, specifier, referrer, &mut log, err) {
@@ -5126,7 +5070,7 @@ pub(crate) fn transpile_as_loaded(
         loader: Cell::new(loader),
         module_type: Cell::new(ModuleType::Unknown),
         source_code_printer: printer_ptr,
-        promise_ptr: ptr::null_mut(),
+        promise_ptr: None,
     };
     let specifier = bun_core::StringView::from_bytes(path);
     let args = TranspileArgs {
@@ -5231,7 +5175,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         loader: Cell::new(loader),
         module_type: Cell::new(module_type),
         source_code_printer: printer_ptr,
-        promise_ptr: ptr::null_mut(), // null forbids async resolution
+        promise_ptr: None, // forbids async resolution
     };
     let args = TranspileArgs {
         specifier,
@@ -5362,8 +5306,7 @@ fn write_absolute(out_buf: &mut [u8], tmpdir: &[u8], name: &[u8]) -> Option<usiz
 /// `getuid()` check would never match in a setuid binary.
 #[cfg(unix)]
 fn extract_owner_uid() -> u32 {
-    // SAFETY: `geteuid` takes no arguments and cannot fail.
-    unsafe { libc::geteuid() as u32 }
+    bun_sys::c::geteuid() as u32
 }
 
 #[cfg(windows)]

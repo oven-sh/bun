@@ -73,6 +73,8 @@ pub(crate) use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in
 
 pub struct LinkerContext<'a> {
     pub(crate) parse_graph: *mut Graph<'a>,
+    /// `Graph.pool` again, so that a pool task reaches it in one load.
+    pub(crate) pool: bun_ptr::BackRef<crate::ThreadPool>,
     pub graph: LinkerGraph<'a>,
     /// Backref into `Transpiler.log`, assigned in [`Self::load`]. Stored as a
     /// raw pointer (like `parse_graph` / `resolver`) so [`Self::new`] can use
@@ -146,17 +148,25 @@ pub struct LinkerContext<'a> {
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
 // `SourceMapDataTask`. The raw-pointer fields (`parse_graph`, `resolver`,
-// `r#loop`, `framework`) are backrefs into `BundleV2`/`Transpiler` whose
+// `framework`) are backrefs into `BundleV2`/`Transpiler` whose
 // lifetimes strictly outlive every parallel section, and per-thread writes go
 // to disjoint SoA slots (see `compute_line_offsets`).
+// No bound asks for `Send`. The `SAFETY` note of `Send for ParentRef` does, of a caller of
+// `assume_mut` on another thread: that is `GenerateChunkCtx::c()`, on pool threads.
 unsafe impl<'a> Send for LinkerContext<'a> {}
-// SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
+// SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants. And:
+// - `r#loop` is the caller's event loop. Tasks reach it only through `any_loop_mut`: see there.
+// - `dev_server` is set before the bundle schedules its first task. Tasks only test it for `Some`.
+// - `log`: of the tasks, only `prepare_css_asts_for_chunk_impl` dereferences it, to add an error
+//   when an `@import` fails to print. The bundle thread waits meanwhile.
+//   FIXME: two such tasks are not ordered.
 unsafe impl<'a> Sync for LinkerContext<'a> {}
 
 impl<'a> LinkerContext<'a> {
     pub(crate) fn new(bump: &'a Bump) -> Self {
         Self {
             parse_graph: core::ptr::null_mut(),
+            pool: bun_ptr::BackRef::dangling(),
             graph: LinkerGraph::new(bump),
             log: core::ptr::null_mut(),
             resolver: None,
@@ -187,24 +197,13 @@ impl<'a> LinkerContext<'a> {
 
     /// container_of: `*LinkerContext` → `*BundleV2` via the embedded `.linker`
     /// field. Returns raw; caller
-    /// decides `&*` vs `&mut *` per local aliasing rules (several callers run
-    /// on worker-pool threads and MUST NOT materialize `&mut BundleV2`).
+    /// decides `&*` vs `&mut *` per local aliasing rules.
     ///
     /// SAFETY: `linker` must point to the `.linker` field of a live `BundleV2`
     /// and carry provenance over the full `BundleV2` allocation.
     #[inline(always)]
     pub(crate) unsafe fn bundle_v2_ptr(linker: *mut Self) -> *mut BundleV2<'a> {
         bun_core::from_field_ptr!(BundleV2, linker, linker)
-    }
-
-    /// Read-only container-of for callers holding a `*const Self`.
-    ///
-    /// # Safety
-    /// Same contract as [`Self::bundle_v2_ptr`].
-    #[inline]
-    pub(crate) unsafe fn bundle_v2_const_ptr(linker: *const Self) -> *const BundleV2<'a> {
-        // SAFETY: address computation only; constness restored on return.
-        unsafe { Self::bundle_v2_ptr(linker.cast_mut()).cast_const() }
     }
 
     /// Shared-read accessor for the parse-side graph.
@@ -336,12 +335,10 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Safe accessor for the underlying `bun_threading::ThreadPool` driving
-    /// link-phase parallel work. Chains [`Self::parse_graph`] →
-    /// [`Graph::pool`] → [`ThreadPool::worker_pool`](crate::ThreadPool::worker_pool),
-    /// keeping the `unsafe` deref centralized in those accessors.
+    /// link-phase parallel work.
     #[inline]
     pub(crate) fn worker_pool(&self) -> &bun_threading::ThreadPool {
-        self.parse_graph().pool().worker_pool()
+        self.pool.worker_pool()
     }
 
     pub(crate) fn mark_pending_task_done(&self) {
@@ -694,7 +691,7 @@ impl<'a> LinkerContext<'a> {
     fn process_html_import_files(&mut self) {
         // SAFETY: `parse_graph` points to `BundleV2.graph`, a sibling of `BundleV2.linker` (= `*self`), so these four
         // fields are disjoint from `*self` and from each other. The source map workers that may be running hold
-        // `&Graph` and `&BundleV2`; of the graph they read only `input_files` and `pool`.
+        // `&Graph` and `&BundleV2`; of the graph they read only `input_files`.
         let (html_source_indices, server_source_indices, input_files, build_graphs) = unsafe {
             let parse_graph: *mut Graph<'a> = self.parse_graph;
             (
@@ -1047,7 +1044,7 @@ impl<'a> LinkerContext<'a> {
     // `ctx.chunks` shared. The `post_process_*` callees take `GenerateChunkCtx`
     // by value and get `&mut LinkerContext` from `ctx.c()`.
     pub(crate) fn generate_chunk(ctx: &GenerateChunkCtx, chunk: &mut Chunk, chunk_index: usize) {
-        let worker = crate::thread_pool::Worker::get(ctx.bundle());
+        let worker = crate::thread_pool::Worker::get(&ctx.c.pool);
         let mut worker = scopeguard::guard(worker, |w| w.unget());
         let worker: &mut crate::thread_pool::Worker = &mut **worker;
         // Note: dispatch on a discriminant copy so `chunk` isn't borrowed
@@ -1075,7 +1072,7 @@ impl<'a> LinkerContext<'a> {
         chunk: &mut Chunk,
         chunk_index: usize,
     ) {
-        let worker = crate::thread_pool::Worker::get(ctx.bundle());
+        let worker = crate::thread_pool::Worker::get(&ctx.c.pool);
         let mut worker = scopeguard::guard(worker, |w| w.unget());
         if let crate::chunk::Content::Javascript(_) = chunk.content {
             Self::generate_js_renamer_(*ctx, &mut **worker, chunk, chunk_index);
@@ -1505,17 +1502,7 @@ impl SourceMapDataTask<'_> {
             };
         }
 
-        // SAFETY: ctx is BundleV2.linker; container_of recovers the parent. We
-        // deliberately do NOT materialize `&mut BundleV2` here — these tasks
-        // run concurrently across the worker pool (one per source_index), so
-        // any `&mut` to the shared `BundleV2`/`LinkerContext` would be aliased
-        // UB. `Worker::get` only needs `&BundleV2` (reads `graph.pool`), and
-        // that shared borrow ends before any per-slot write below.
-        let bundle: *const BundleV2 =
-            unsafe { LinkerContext::bundle_v2_const_ptr(ctx.as_const_ptr()) };
-        // SAFETY: `bundle` is a valid backref into the owning `BundleV2` (see above);
-        // only a shared borrow is formed and it ends before any per-slot write.
-        let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
+        let worker = crate::thread_pool::Worker::get(&ctx.pool);
         // SAFETY: `worker.arena` points at `worker.heap` (init by `Worker::create`).
         SourceMapData::compute_line_offsets(ctx, worker.arena(), task.source_index);
         worker.unget();
@@ -1546,13 +1533,7 @@ impl SourceMapDataTask<'_> {
             };
         }
 
-        // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
-        // materialized over the shared `BundleV2` while peer tasks are live.
-        let bundle: *const BundleV2 =
-            unsafe { LinkerContext::bundle_v2_const_ptr(ctx.as_const_ptr()) };
-        // SAFETY: `bundle` is a valid backref (see `run_line_offset`); only a shared
-        // borrow is formed for `Worker::get`, which reads `graph.pool` under a mutex.
-        let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
+        let worker = crate::thread_pool::Worker::get(&ctx.pool);
 
         // Use the default arena when using DevServer and the file
         // was generated. This will be preserved so that remapping
@@ -1758,20 +1739,6 @@ pub struct GenerateChunkCtx<'a> {
 }
 
 impl<'a> GenerateChunkCtx<'a> {
-    /// Recover a shared borrow of the owning `BundleV2` via container_of from
-    /// the embedded `LinkerContext` pointer (`BundleV2.linker == *self.c`).
-    /// Used solely to call `Worker::get`, which only reads `bundle.graph.pool`
-    /// (shared) and serializes via mutex — so a `&BundleV2` is sufficient and
-    /// no `&mut` is ever materialized over the shared bundle while peer
-    /// per-chunk tasks run concurrently.
-    #[inline]
-    pub(crate) fn bundle(&self) -> &BundleV2<'a> {
-        // SAFETY: `self.c` is `&raw mut bundle.linker` set in
-        // `generate_chunks_in_parallel`; container_of recovers the parent.
-        // The bundle is valid for the link step.
-        unsafe { &*LinkerContext::bundle_v2_ptr(self.c.as_mut_ptr()) }
-    }
-
     /// Mutable view of the owning `LinkerContext`. Centralizes the `unsafe`
     /// deref of the `c: *mut LinkerContext` backref (set in
     /// `generate_chunks_in_parallel`); callers previously open-coded
@@ -1831,7 +1798,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'c, 'a>(
         unsafe { &*bun_core::from_field_ptr!(PendingPartRange, task, task) };
     let ctx = part_range.ctx;
     let chunk_ptr: *mut Chunk = ctx.chunk.as_ptr();
-    let worker = crate::thread_pool::Worker::get(ctx.bundle());
+    let worker = crate::thread_pool::Worker::get(&ctx.c.pool);
     let worker = scopeguard::guard(worker, |w| w.unget());
     (part_range, chunk_ptr, worker)
 }
@@ -3620,7 +3587,7 @@ impl<'a> LinkerContext<'a> {
                 .graph
                 .symbols
                 .get_const(tracker.import_ref)
-                .is_some_and(|s| s.import_item_status == ImportItemStatus::Generated)
+                .is_some_and(|s| s.import_item_status.get() == ImportItemStatus::Generated)
                 && self.graph.meta.items_resolved_exports()[other_id as usize]
                     .get(b"default")
                     .is_some())
@@ -3884,10 +3851,8 @@ impl<'a> LinkerContext<'a> {
                         .unwrap();
 
                     if named_import.namespace_ref.is_valid() {
-                        // SAFETY: `named_import` borrows `graph.ast`; the symbol slot is a
-                        // disjoint allocation, so no aliasing with this `&mut`.
-                        let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
-                        symbol.import_item_status = ImportItemStatus::Missing;
+                        let symbol = self.graph.symbol(tracker.import_ref);
+                        symbol.import_item_status.set(ImportItemStatus::Missing);
                         result.kind = MatchImportKind::NormalAndNamespace;
                         result.namespace_ref = tracker.import_ref;
                         result.alias = named_import.alias.expect("infallible: alias present");
@@ -3918,10 +3883,7 @@ impl<'a> LinkerContext<'a> {
                 }
                 ImportTrackerStatus::NoMatch => {
                     // Report mismatched imports and exports
-                    // SAFETY: the mutated symbol slot is disjoint from the later borrows
-                    // (`named_import` from graph.ast, `get_source` from parse_graph,
-                    // `log_disjoint`) — all separate allocations.
-                    let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
+                    let symbol = self.graph.symbol(tracker.import_ref);
                     let named_import: &NamedImport = self.graph.ast.items_named_imports()
                         [prev_source_index as usize]
                         .get(&tracker.import_ref)
@@ -3937,7 +3899,7 @@ impl<'a> LinkerContext<'a> {
                         .slice();
 
                     // Report mismatched imports and exports
-                    if symbol.import_item_status == ImportItemStatus::Generated {
+                    if symbol.import_item_status.get() == ImportItemStatus::Generated {
                         // This is a debug message instead of an error because although it
                         // appears to be a named import, it's actually an automatically-
                         // generated named import that was originally a property access on an
@@ -3945,7 +3907,7 @@ impl<'a> LinkerContext<'a> {
                         // just resolve to undefined at run-time instead of failing at binding-
                         // time, so we emit a debug message and rewrite the value to the literal
                         // "undefined" instead of emitting an error.
-                        symbol.import_item_status = ImportItemStatus::Missing;
+                        symbol.import_item_status.set(ImportItemStatus::Missing);
 
                         // A name read off `import()` / `require()` is `undefined`
                         // at run time too, so there is nothing to say.
@@ -4493,17 +4455,14 @@ impl<'a> LinkerContext<'a> {
 
                     // TODO: log locations of the ambiguous exports
 
-                    // SAFETY: the mutated symbol slot is disjoint from `source`/`r`
-                    // (parse_graph), `named_import`/`alias` (arena slices), and
-                    // `log_disjoint` — all separate allocations.
-                    let symbol = unsafe { self.graph.symbol_mut(import_ref) };
+                    let symbol = self.graph.symbol(import_ref);
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import
                         .alias
                         .expect("infallible: alias present")
                         .slice();
-                    if symbol.import_item_status == ImportItemStatus::Generated {
-                        symbol.import_item_status = ImportItemStatus::Missing;
+                    if symbol.import_item_status.get() == ImportItemStatus::Generated {
+                        symbol.import_item_status.set(ImportItemStatus::Missing);
                         self.log_disjoint().add_range_warning_fmt(
                             Some(source), r,
                             format_args!(

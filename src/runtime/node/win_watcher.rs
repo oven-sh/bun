@@ -5,6 +5,7 @@
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{String as BunString, ZStr};
@@ -35,23 +36,18 @@ pub(crate) static fs_watch: bun_output::ScopedLogger =
 
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORTING.md §Global mutable state: singleton ptr → `AtomicCell`, guarded by
+// PORTING.md §Global mutable state: singleton ptr → `AtomicPtr`, guarded by
 // `DEFAULT_MANAGER_MUTEX`. `fs.watch()` is reachable from Worker JS threads
 // (each Worker is its own OS thread + VM), so an unguarded read+write
 // would be a data race. Mirror the posix
 // `path_watcher.rs` pattern: every `DEFAULT_MANAGER` access holds the mutex.
-// `AtomicCell<*mut _>` (Acquire/Release on the pointer word) means even an
-// unsynchronized racing reader observes either null or a fully-published
-// pointer — and lets every load/store be safe code (`RacyCell` required an
-// `unsafe` block per access for the same single-word op).
 //
 // NOTE: the manager binds to one VM's `uv_loop`, so it is a per-VM resource —
 // `watch()` allocates a fresh manager whenever the caller's `vm` differs from
 // the one stored here (last caller wins the slot), so a Worker never mutates
 // another VM's manager or drives its uv_loop cross-thread. Promoting this to
 // true per-VM storage (e.g. `RareData`) is the longer-term fix.
-static DEFAULT_MANAGER: bun_core::AtomicCell<*mut PathWatcherManager> =
-    bun_core::AtomicCell::new(ptr::null_mut());
+static DEFAULT_MANAGER: AtomicPtr<PathWatcherManager> = AtomicPtr::new(ptr::null_mut());
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 
 // TODO: make this a generic so we can reuse code with path_watcher
@@ -117,8 +113,8 @@ impl PathWatcherManager {
         // enable to create a new manager
         {
             let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
-            if DEFAULT_MANAGER.load() == this {
-                DEFAULT_MANAGER.store(ptr::null_mut());
+            if DEFAULT_MANAGER.load(Ordering::Acquire) == this {
+                DEFAULT_MANAGER.store(ptr::null_mut(), Ordering::Release);
             }
         }
 
@@ -270,67 +266,62 @@ impl PathWatcher {
         // Intentional wrap to bun_watcher::HashType
         let hash = me.handle.hash(path.as_bytes(), events, status) as bun_watcher::HashType;
         let is_file = !me.handle.is_dir();
-        Self::emit(this, path.as_bytes(), hash, timestamp, is_file, event_type);
+        me.emit(path.as_bytes(), hash, timestamp, is_file, event_type);
+        Self::maybe_deinit(this);
     }
 
     fn emit(
-        this: *mut PathWatcher,
+        &self,
         path: &[u8],
         hash: bun_watcher::HashType,
         timestamp: u64,
         is_file: bool,
         event_type: WatchEventKind,
     ) {
-        {
-            // SAFETY: `this` is the live heap pointer from `init`; the borrow ends
-            // before `maybe_deinit` may free it.
-            let me = unsafe { &*this };
-            me.emit_in_progress.set(true);
-            #[cfg(debug_assertions)]
-            let mut debug_count: usize = 0;
+        self.emit_in_progress.set(true);
+        #[cfg(debug_assertions)]
+        let mut debug_count: usize = 0;
 
-            let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
-            for key in keys {
-                let Some(fire) = me
-                    .handlers
-                    .with_mut(|h| h.get_mut(&key).map(|v| v.emit(hash, timestamp, event_type)))
-                else {
-                    continue;
-                };
-                if fire {
-                    let ctx: *mut FSWatcher = key.cast::<FSWatcher>();
-                    // SAFETY: handlers keys are `*mut FSWatcher` erased to `*mut c_void` in `watch()`.
-                    let encoding = unsafe { (*ctx).encoding };
-                    // `EventPathString` on Windows is `StringOrBytesToDecode`.
-                    let payload = match encoding {
-                        crate::node::Encoding::Utf8 => {
-                            StringOrBytesToDecode::String(BunString::clone_utf8(path))
-                        }
-                        _ => StringOrBytesToDecode::BytesToFree(Box::<[u8]>::from(path)),
-                    };
-                    on_path_update_fn(Some(ctx.cast()), event_type.to_event(payload), is_file);
-                    #[cfg(debug_assertions)]
-                    {
-                        debug_count += 1;
+        let keys: Vec<_> = self.handlers.get().keys().iter().copied().collect();
+        for key in keys {
+            let Some(fire) = self
+                .handlers
+                .with_mut(|h| h.get_mut(&key).map(|v| v.emit(hash, timestamp, event_type)))
+            else {
+                continue;
+            };
+            if fire {
+                let ctx: *mut FSWatcher = key.cast::<FSWatcher>();
+                // SAFETY: handlers keys are `*mut FSWatcher` erased to `*mut c_void` in `watch()`.
+                let encoding = unsafe { (*ctx).encoding };
+                // `EventPathString` on Windows is `StringOrBytesToDecode`.
+                let payload = match encoding {
+                    crate::node::Encoding::Utf8 => {
+                        StringOrBytesToDecode::String(BunString::clone_utf8(path))
                     }
-                    on_update_end_fn(Some(ctx.cast()));
+                    _ => StringOrBytesToDecode::BytesToFree(Box::<[u8]>::from(path)),
+                };
+                on_path_update_fn(Some(ctx.cast()), event_type.to_event(payload), is_file);
+                #[cfg(debug_assertions)]
+                {
+                    debug_count += 1;
                 }
+                on_update_end_fn(Some(ctx.cast()));
             }
-
-            #[cfg(debug_assertions)]
-            bun_output::scoped_log!(
-                fs_watch,
-                "emit({}, {}, {}, at {}) x {}",
-                bstr::BStr::new(path),
-                if is_file { "file" } else { "dir" },
-                <&'static str>::from(event_type),
-                timestamp,
-                debug_count,
-            );
-
-            me.emit_in_progress.set(false);
         }
-        Self::maybe_deinit(this);
+
+        #[cfg(debug_assertions)]
+        bun_output::scoped_log!(
+            fs_watch,
+            "emit({}, {}, {}, at {}) x {}",
+            bstr::BStr::new(path),
+            if is_file { "file" } else { "dir" },
+            <&'static str>::from(event_type),
+            timestamp,
+            debug_count,
+        );
+
+        self.emit_in_progress.set(false);
     }
 
     fn init(
@@ -517,7 +508,7 @@ pub(crate) fn watch(
     // slot load — because `PathWatcher::init` below mutates the manager's
     // `watchers` map, and `fs.watch()` is reachable from Worker threads.
     let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
-    let existing = DEFAULT_MANAGER.load();
+    let existing = DEFAULT_MANAGER.load(Ordering::Acquire);
     // The manager is bound to one VM's uv_loop; reusing it from a different VM
     // (Worker) would mutate its watcher map and drive libuv cross-thread.
     // Allocate a fresh manager for this VM instead; the displaced one frees
@@ -529,7 +520,7 @@ pub(crate) fn watch(
     // cannot race with the owning VM's thread.
     let manager = if existing.is_null() || !core::ptr::eq(unsafe { (*existing).vm }, vm) {
         let m = PathWatcherManager::init(vm);
-        DEFAULT_MANAGER.store(m);
+        DEFAULT_MANAGER.store(m, Ordering::Release);
         m
     } else {
         existing

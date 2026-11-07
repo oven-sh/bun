@@ -1,6 +1,7 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_core::Fd;
 
 use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, us_bun_verify_error_t};
@@ -150,12 +151,12 @@ impl us_socket_t {
     }
 
     /// Returned slice is a view into `buf`.
-    pub(crate) fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
-        let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
-        unsafe {
-            // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
-            c::us_socket_local_address(self, buf.as_mut_ptr(), &raw mut length);
-        }
+    pub(crate) fn local_address<'a>(
+        &self,
+        buf: &'a mut [u8; 16],
+    ) -> Result<&'a [u8], crate::Error> {
+        let mut length: i32 = buf.len() as i32;
+        c::us_socket_local_address(self, buf, &mut length);
         if length < 0 {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::from_raw(
                 bun_errno::last_error() as u16,
@@ -166,12 +167,12 @@ impl us_socket_t {
     }
 
     /// Returned slice is a view into `buf`. On error, `errno` should be set.
-    pub(crate) fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
-        let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
-        unsafe {
-            // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
-            c::us_socket_remote_address(self, buf.as_mut_ptr(), &raw mut length);
-        }
+    pub(crate) fn remote_address<'a>(
+        &self,
+        buf: &'a mut [u8; 16],
+    ) -> Result<&'a [u8], crate::Error> {
+        let mut length: i32 = buf.len() as i32;
+        c::us_socket_remote_address(self, buf, &mut length);
         if length < 0 {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::from_raw(
                 bun_errno::last_error() as u16,
@@ -210,8 +211,8 @@ impl us_socket_t {
 
     /// Resume a handshake suspended by an asynchronous SNICallback. `ctx`
     /// carries an owned SSL_CTX reference that the call consumes (may be
-    /// null = fall through to the default context); `error` aborts instead.
-    pub(crate) fn sni_resolve(&mut self, ctx: *mut SslCtx, error: bool) {
+    /// `None` = fall through to the default context); `error` aborts instead.
+    pub(crate) fn sni_resolve(&mut self, ctx: Option<OwnedSslCtx>, error: bool) {
         c::us_socket_sni_resolve(self, ctx, error as c_int);
     }
 
@@ -508,21 +509,22 @@ mod c {
     // socket itself (plus value types) are declared `safe fn` so the validity
     // proof lives in the type signature instead of per-call-site `unsafe { }`.
     // Shims that take a (ptr,len) pair, nullable raw, or transfer ownership
-    // stay unsafe.
+    // through a raw pointer stay unsafe.
     unsafe extern "C" {
         pub(super) safe fn us_socket_get_native_handle(s: &mut us_socket_t) -> *mut c_void;
 
         pub(super) safe fn us_socket_local_port(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_remote_port(s: &us_socket_t) -> i32;
-        pub(super) fn us_socket_remote_address(
-            s: *const us_socket_t,
-            buf: *mut u8,
-            length: *mut i32,
+        // Both write 0, 4 or 16 bytes to `buf`, whatever `*length` holds.
+        pub(super) safe fn us_socket_remote_address(
+            s: &us_socket_t,
+            buf: &mut [u8; 16],
+            length: &mut i32,
         );
-        pub(super) fn us_socket_local_address(
-            s: *const us_socket_t,
-            buf: *mut u8,
-            length: *mut i32,
+        pub(super) safe fn us_socket_local_address(
+            s: &us_socket_t,
+            buf: &mut [u8; 16],
+            length: &mut i32,
         );
         pub(super) safe fn us_socket_timeout(s: &mut us_socket_t, seconds: c_uint);
         pub(super) safe fn us_socket_long_timeout(s: &mut us_socket_t, minutes: c_uint);
@@ -531,7 +533,7 @@ mod c {
         pub(super) safe fn us_socket_get_tos(s: &mut us_socket_t) -> c_int;
         pub(super) safe fn us_socket_sni_resolve(
             s: &mut us_socket_t,
-            ctx: *mut SslCtx,
+            ctx: Option<OwnedSslCtx>,
             error: c_int,
         );
         pub(super) safe fn us_socket_on_server_name(s: &mut us_socket_t);

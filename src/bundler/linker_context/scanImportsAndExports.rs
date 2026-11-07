@@ -200,7 +200,7 @@ pub(crate) fn scan_imports_and_exports(
                         .get_const(*import_ref)
                         .is_some_and(|symbol| {
                             // `ns.default` can be the module's own `default` export, which only step 3 resolves.
-                            symbol.import_item_status != bun_ast::ImportItemStatus::Generated
+                            symbol.import_item_status.get() != bun_ast::ImportItemStatus::Generated
                                 && (ni.is_exported || symbol.import_used_as_value())
                         })
                 {
@@ -661,9 +661,6 @@ pub(crate) fn scan_imports_and_exports(
         // forms `&mut LinkerContext`).
         {
             let ctx: &LinkerContext<'_> = this;
-            // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
-            // the link step); `pool` is the arena-allocated bundler ThreadPool
-            // set in `BundleV2::init`.
             let worker_pool = this.worker_pool();
             // `each` requires `&mut [V]`; `reachable` is a private snapshot Vec
             // so reborrow it mutably (not actually mutated by the by-value
@@ -713,7 +710,7 @@ pub(crate) fn scan_imports_and_exports(
                         .symbols
                         .get_const(item.local)
                         .is_some_and(|symbol| {
-                            symbol.import_item_status == bun_ast::ImportItemStatus::Missing
+                            symbol.import_item_status.get() == bun_ast::ImportItemStatus::Missing
                                 && symbol.namespace_alias.is_some()
                         })
             };

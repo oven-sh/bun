@@ -32,7 +32,6 @@ use bun_watcher::Watcher;
 
 use crate::async_module::AsyncModule;
 use crate::event_loop::{ConcurrentTask, EventLoop};
-use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source::PrintedAst;
 use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::runtime_transpiler_cache::{
@@ -262,18 +261,14 @@ impl RuntimeTranspilerStore {
     /// folded here and the drain goes on; the VM's termination ends it, with
     /// the rest of the batch back on the queue (each still has its own posted
     /// task, or the teardown release, to pick it up).
-    // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
-    // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
-    // a field of `VirtualMachine`). Field-level derefs only.
+    // `event_loop` is not a `&mut`: the microtasks drained below reach that loop through the VM.
     pub fn run_from_js_thread(
         &mut self,
         event_loop: NonNull<EventLoop>,
         global: &JSGlobalObject,
-        vm: NonNull<VirtualMachine>,
+        jsc_vm: &crate::VM,
     ) {
         let batch = self.queue.pop_batch();
-        // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
-        let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
         let mut iter = batch.iterator();
         let mut job = iter.next();
         let mut first = true;
@@ -443,14 +438,7 @@ pub struct TranspilerJob {
     pub(crate) next: unbounded_queue::Link<TranspilerJob>,
 }
 
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TranspilerJob>`.
-unsafe impl unbounded_queue::Linked for TranspilerJob {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const unbounded_queue::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(TranspilerJob, next: unbounded_queue::Link<TranspilerJob>);
 
 /// Per-worker output buffer. The printer is the **only** state
 /// retained across `run()` calls — its backing `Vec<u8>` is genuinely worth
@@ -743,16 +731,16 @@ impl TranspilerJob {
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
 
-        // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set during VM init
+        // SAFETY: `bun_watcher` is the `*mut Watcher` set during VM init
         // (BACKREF — when non-null it points at the process-lifetime watcher
         // leaked in `enable_hot_module_reloading`, so the `ParentRef` invariant
         // holds for this transpile job's duration). Raw `(*vm)` field
         // projection avoids forming `&VirtualMachine` per the `vm` note.
-        let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher, bun_ptr::Mut>> =
-            unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.cast()) };
+        let import_watcher: Option<bun_ptr::ParentRef<Watcher, bun_ptr::Mut>> =
+            unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher) };
         if let Some(iw) = import_watcher {
             // Never read through the watchlist's stored fd; see
-            // `ImportWatcher::snapshot_package_json`.
+            // `Watcher::snapshot_package_json`.
             package_json = iw.snapshot_package_json(hash);
         }
 
@@ -869,9 +857,9 @@ impl TranspilerJob {
                     && bun_paths::is_absolute(path.text)
                     && !strings::contains(path.text, b"node_modules")
                 {
-                    // SAFETY: BACKREF — process-lifetime watcher; no other
-                    // `&ImportWatcher` is live here, and `add_file` is
-                    // thread-safe via watcher mutex.
+                    // SAFETY: BACKREF — see `import_watcher` above. The watcher thread, other jobs
+                    // and the JS thread make a `&mut Watcher` of their own (see `bun_watcher_ptr`);
+                    // `add_file` works under the watcher's mutex.
                     let added = unsafe { iw.assume_mut() }.add_file::<true>(
                         *input_file_fd,
                         path.text,
@@ -896,9 +884,7 @@ impl TranspilerJob {
                 && bun_paths::is_absolute(path.text)
                 && !strings::contains(path.text, b"node_modules")
             {
-                // SAFETY: BACKREF — process-lifetime watcher; no other
-                // `&ImportWatcher` is live here, and `add_file` is
-                // thread-safe via watcher mutex.
+                // SAFETY: as for the `add_file` above.
                 let added = unsafe { iw.assume_mut() }.add_file::<true>(
                     *input_file_fd,
                     path.text,

@@ -4,14 +4,14 @@
 
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_uws::Loop as UwsLoop;
 use bun_uws::quic;
 use bun_uws::quic::context::ConnectResult;
 
 use super::callbacks;
-use super::client_session::{ClientSession, quic_socket_mut, session_mut};
+use super::client_session::{ClientSession, session_mut};
 use super::pending_connect::PendingConnect;
 use super::stream::Stream;
 use crate::HTTPClient;
@@ -32,30 +32,24 @@ pub(crate) struct ClientContext {
 /// `quic.Context.createClient` (it lives on `loop->data.quic_head` and is
 /// driven by that loop's pre/post hooks), so a second loop would get its
 /// own engine; this var would just need to become per-loop storage.
-// PORTING.md §Global mutable state: HTTP-thread-only singleton. AtomicCell
-// over RacyCell because the payload is a pointer-sized `Copy` value
-// (`Option<NonNull<_>>` has an `Atom` impl) so load/store are safe; the
-// uncontended atomic op is free on the single HTTP client thread.
-static INSTANCE: bun_core::AtomicCell<Option<NonNull<ClientContext>>> =
-    bun_core::AtomicCell::new(None);
+static INSTANCE: AtomicPtr<ClientContext> = AtomicPtr::new(core::ptr::null_mut());
 static LSQUIC_INIT_ONCE: std::sync::Once = std::sync::Once::new();
 
 impl ClientContext {
     /// Mutable access to the lsquic client engine.
     ///
-    /// INVARIANT: `qctx` is set once in `get_or_create` to a fresh
+    /// `qctx` is set once in `get_or_create` to a fresh
     /// `us_quic_socket_context_t` and is never freed (process-lifetime, same as
-    /// this singleton). HTTP-thread only, so the `&mut` is the sole live borrow.
+    /// this singleton).
     #[inline]
     fn qctx_mut(&mut self) -> &mut quic::Context {
-        // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.qctx.as_ptr() }
+        quic::Context::opaque_mut(self.qctx.as_ptr())
     }
 
     /// Non-null pointer to the leaked process-lifetime singleton, if created.
     /// Callers reborrow per-access — PORTING.md §Global mutable state.
     pub(crate) fn get() -> Option<NonNull<ClientContext>> {
-        INSTANCE.load()
+        NonNull::new(INSTANCE.load(Ordering::Acquire))
     }
 
     /// Upgrade the [`get`]/[`get_or_create`] handle to `&mut Self`.
@@ -72,7 +66,7 @@ impl ClientContext {
     }
 
     pub(crate) fn get_or_create() -> Option<NonNull<ClientContext>> {
-        if let Some(i) = INSTANCE.load() {
+        if let Some(i) = Self::get() {
             return Some(i);
         }
         LSQUIC_INIT_ONCE.call_once(quic::global_init);
@@ -96,12 +90,10 @@ impl ClientContext {
             qctx,
             sessions: Vec::new(),
         });
-        // Route through the existing [`qctx_mut`] / [`as_mut`] accessors (one
-        // centralised unsafe each) instead of an open-coded `qctx.as_mut()`.
         // `self_` is the freshly-boxed sole owner; callbacks don't fire until
         // the loop runs, so registering after construction is order-neutral.
         callbacks::register(Self::as_mut(self_).qctx_mut());
-        INSTANCE.store(Some(self_));
+        INSTANCE.store(self_.as_ptr(), Ordering::Release);
         Some(self_)
     }
 
@@ -148,12 +140,9 @@ impl ClientContext {
                 .connect(host_z, port, host_z, reject, session.cast::<c_void>());
         match result {
             ConnectResult::Socket(qs) => {
-                session_mut(session).qsocket = NonNull::new(qs);
-                // `qs` is a fresh lsquic-owned socket — route the backref deref
-                // through the centralised [`quic_socket_mut`] accessor and use
-                // the safe `&mut` ext-slot accessor it exposes (sized for
-                // `*mut ClientSession` in `get_or_create`).
-                *quic_socket_mut(qs).ext::<ClientSession>() = NonNull::new(session);
+                session_mut(session).qsocket = Some(NonNull::from(&mut *qs));
+                // The ext slot is sized for `*mut ClientSession` in `get_or_create`.
+                *qs.ext::<ClientSession>() = NonNull::new(session);
                 bun_core::scoped_log!(
                     h3_client,
                     "connect {}:{} (sync)",

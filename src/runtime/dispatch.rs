@@ -234,7 +234,8 @@ pub(crate) fn run_task(
         task_tag::SendQueueDeferred => feature_arm!([Ipc], |queue: crate::ipc::SendQueue| {
             // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
             // the task owns a ref for its duration; `run_deferred` releases it.
-            unsafe { crate::ipc::SendQueue::run_deferred(queue) };
+            let queue = unsafe { bun_ptr::RefPtr::from_raw(queue) };
+            crate::ipc::SendQueue::run_deferred(queue);
         }),
         task_tag::AsyncModule => feature_arm!(
             [Install],
@@ -358,8 +359,9 @@ pub(crate) fn run_task(
         task_tag::StatWatcherHop => feature_arm!(
             [NodeFs],
             |watcher: crate::node::node_fs_stat_watcher::StatWatcher| -> JsResult<()> {
-                // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
-                unsafe { crate::node::node_fs_stat_watcher::StatWatcher::run_hop(watcher) }?;
+                // SAFETY: posted by `StatWatcher::post_to_js_thread`; the task owns that ref.
+                let watcher = unsafe { bun_ptr::RefPtr::from_raw(watcher) };
+                crate::node::node_fs_stat_watcher::StatWatcher::run_hop(watcher)?;
                 Ok(())
             }
         )?,
@@ -647,30 +649,25 @@ pub(crate) fn run_task(
                 store: *mut RuntimeTranspilerStore = cast_ptr!(RuntimeTranspilerStore),
                 el: &mut EventLoop = el,
                 global: &JSGlobalObject = global,
-                vm: &mut VirtualMachine = vm,
+                jsc_vm: &bun_jsc::VM = vm.jsc_vm(),
             ) {
                 // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-                unsafe { &mut *store }.run_from_js_thread(el.into(), global, vm.into());
+                unsafe { &mut *store }.run_from_js_thread(el.into(), global, jsc_vm);
             }
         ),
 
         // ── hot-reload (early-returns from the drain loop) ───────────────
         task_tag::HotReloadTask => {
             feature_arm!([HotReload], |reload: hot_reloader::HotReloadTask| {
-                // The task was heap-allocated in `Task::enqueue`; `deinit` frees it.
-                // SAFETY: tag identifies pointee; live Box'd HotReloadTask.
-                unsafe { (*reload).run() };
-                // SAFETY: paired with heap::alloc in `Task::enqueue`.
-                unsafe { hot_reloader::HotReloadTask::deinit(reload) };
+                // SAFETY: boxed in `Task::enqueue`; the arm consumes it.
+                unsafe { bun_core::heap::take(reload) }.run();
             });
             return Ok(RunTaskResult::EarlyReturn);
         }
         task_tag::WatchReloadTask => {
             feature_arm!([HotReload], |reload: hot_reloader::WatchReloadTask| {
-                // SAFETY: tag identifies pointee; live Box'd WatchReloadTask.
-                unsafe { (*reload).run() };
-                // SAFETY: paired with heap::alloc in `Task::enqueue`.
-                unsafe { hot_reloader::WatchReloadTask::deinit(reload) };
+                // SAFETY: boxed in `Task::enqueue`; the arm consumes it.
+                unsafe { bun_core::heap::take(reload) }.run();
             });
             return Ok(RunTaskResult::EarlyReturn);
         }
@@ -703,8 +700,9 @@ pub(crate) fn run_task(
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
                     $(task_tag::$tag => feature_arm!([NodeFs], |request: fs_async::$ty| -> JsResult<()> {
-                        // SAFETY: §Dispatch — tag identifies pointee. The task frees itself, so it takes the raw pointer.
-                        unsafe { fs_async::$ty::run_from_js_thread(request) }?;
+                        // SAFETY: §Dispatch — tag identifies pointee, `Box::leak`'d in
+                        // `UVFSRequest::create`; the arm consumes it.
+                        unsafe { bun_core::heap::take(request) }.run_from_js_thread()?;
                         Ok(())
                     })?,)*
                     // SAFETY: outer arm guard proves one of the table tags matched.
@@ -756,7 +754,8 @@ pub(crate) fn run_task(
         task_tag::ServerAllConnectionsClosedTask => feature_arm!(
             [Serve],
             |closed: ServerAllConnectionsClosedTask| -> JsResult<()> {
-                ServerAllConnectionsClosedTask::run_from_js_thread(closed)?;
+                // SAFETY: boxed in `schedule`; the arm consumes it.
+                unsafe { bun_core::heap::take(closed) }.run_from_js_thread()?;
                 Ok(())
             }
         )?,

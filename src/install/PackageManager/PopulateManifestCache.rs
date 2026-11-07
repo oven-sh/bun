@@ -65,19 +65,13 @@ fn start_manifest_task(
     // that needs `&manager` *before* taking that borrow, then populate the pool
     // slot through a raw pointer (matches `runTasks::generate_network_task_for_tarball`).
     let scope = bun_ptr::BackRef::new(manager.scope_for_package_name(pkg_name));
-    // Backref address only — stored, not dereffed in this function.
-    let manager_backref: *mut PackageManager = manager;
 
     // Take the pool slot as a raw pointer so borrowck releases `manager` for the
     // `enqueue_network_task` tail.
-    let net_ptr: *mut NetworkTask = run_tasks::get_network_task(manager);
-    // `write_init` is a full struct overwrite that resets every other field to
-    // its struct default. The slot may be uninitialized (heap fallback) or
-    // stale (reused hive slot).
+    let net_ptr: *mut NetworkTask = run_tasks::get_network_task(manager, task_id);
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we hand it to `enqueue_network_task`.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, manager_backref) };
-    // SAFETY: `write_init` populated every field with a drop-safe value;
+    // `write_init` populated every field with a drop-safe value;
     // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_manifest`.
     let task = unsafe { &mut *net_ptr };
     // `scope` points into `manager.options` which is not mutated by
@@ -126,8 +120,7 @@ pub fn populate_manifest_cache(
     // heavy borrowck overlap — slices into
     // `manager.lockfile` are held while the loop body calls `&mut`-taking methods on
     // `manager`. The lockfile lives in `Box<Lockfile>` (stable address) and is
-    // not resized by anything below, so derive the slices through a raw
-    // provenance root and reborrow `manager` per-call.
+    // not resized by anything below, so reborrow `manager` per-call through a raw pointer.
     let cache_ctx = manager.manifest_disk_cache_ctx();
     let manager_ptr: *mut PackageManager = manager;
     // BACKREF wrapper over the same provenance root for the read-only
@@ -139,10 +132,7 @@ pub fn populate_manifest_cache(
     let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
         core::ptr::NonNull::new(manager_ptr).expect("derived from &mut, non-null"),
     );
-    // SAFETY: `manager_ptr` is the live exclusive borrow's address; we only
-    // take *shared* projections of `lockfile` here, and the loop body never
-    // mutates `lockfile.buffers` / `lockfile.packages`.
-    let lockfile = unsafe { &*core::ptr::addr_of!((*manager_ptr).lockfile) };
+    let lockfile = &*manager.lockfile;
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let string_buf = lockfile.buffers.string_bytes.as_slice();

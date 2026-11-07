@@ -4281,7 +4281,7 @@ pub(crate) mod __gated_printer {
                     // outlives the print pass (BackRef invariant).
                     let symbol = BackRef::<Symbol>::new(self.symbols().get_const(ref_).unwrap());
 
-                    if symbol.import_item_status == js_ast::ImportItemStatus::Missing {
+                    if symbol.import_item_status.get() == js_ast::ImportItemStatus::Missing {
                         self.print_undefined(expr.loc, level);
                         did_print = true;
                     } else if let Some(namespace) = &symbol.namespace_alias {
@@ -4632,10 +4632,7 @@ pub(crate) mod __gated_printer {
             else {
                 return;
             };
-            // `commonjs_named_exports` keys borrow `'a` (Options<'a>); capture
-            // as `BackRef<[u8]>` so the `&self` borrow is dropped before the
-            // `&mut self` print calls below.
-            let key = BackRef::<[u8]>::new(&exports.keys()[idx][..]);
+            let key: &[u8] = &exports.keys()[idx][..];
             let value = &exports.values()[idx];
             let (binding, needs_decl) = (value.loc_ref.ref_, value.needs_decl);
             let call_needs_this = is_call_target
@@ -4658,7 +4655,6 @@ pub(crate) mod __gated_printer {
                 self.print_symbol(self.options.commonjs_named_exports_ref);
             }
 
-            let key: &[u8] = key.get();
             if lexer::is_identifier(key) {
                 self.print(b".");
                 self.print(key);

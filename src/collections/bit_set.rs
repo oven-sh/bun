@@ -491,9 +491,7 @@ static EMPTY_MASKS_DATA: bun_core::RacyCell<[usize; 2]> = bun_core::RacyCell::ne
 
 #[inline(always)]
 fn empty_masks_ptr() -> *mut usize {
-    // SAFETY: pointer arithmetic into a static array; index 1 is in-bounds.
-    // The `*mut` is never written through while pointing at this static.
-    unsafe { EMPTY_MASKS_DATA.get().cast::<usize>().add(1) }
+    EMPTY_MASKS_DATA.get().cast::<usize>().wrapping_add(1)
 }
 
 impl Default for DynamicBitSetUnmanaged {
@@ -1003,10 +1001,6 @@ impl Drop for DynamicBitSetList {
         unsafe { std::alloc::dealloc(self.buf.as_ptr().cast(), layout) };
     }
 }
-
-// SAFETY: `buf` is a uniquely-owned heap allocation of plain `usize`s; moving
-// the owning struct between threads is as safe as moving a `Box<[usize]>`.
-unsafe impl Send for DynamicBitSetList {}
 
 // Raw allocation helpers for DynamicBitSetUnmanaged, using the size-at-[-1]
 // header convention.

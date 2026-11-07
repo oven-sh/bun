@@ -168,7 +168,7 @@ pub struct VirtualMachine {
     /// Hot-reload import watcher (heap `Box`, installed by
     /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`]); null when
     /// hot reload is disabled. Read via [`Self::bun_watcher_ptr`].
-    pub bun_watcher: *mut crate::hot_reloader::ImportWatcher,
+    pub bun_watcher: *mut bun_watcher::Watcher,
     pub(crate) console: *mut crate::console_object::ConsoleObject,
     // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
     // used because VM is self-referential and cannot carry `<'a>`.
@@ -201,10 +201,6 @@ pub struct VirtualMachine {
     pub bake_framework: crate::strong::Optional,
     pub(crate) entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
-    // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but
-    // `bun_runtime` is a forward dep of this crate; stored type-erased and
-    // cast back by the `bun_runtime` consumers.
-    pub node_fs: Option<*mut c_void>,
     /// Opaque per-VM `bun_runtime` state (boxed `timer::All` +
     /// `Body::Value::HiveAllocator` + …). Set by
     /// `RuntimeHooks::init_runtime_state` in [`init`]; reclaimed by
@@ -1562,12 +1558,12 @@ impl VirtualMachine {
     }
 
     /// Raw accessor for the hot-reload import watcher. `bun_watcher` is the
-    /// `*mut ImportWatcher` installed by
+    /// `*mut Watcher` installed by
     /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`] (separate
     /// `Box` heap allocation), or null when hot reload is disabled.
     ///
     /// NOTE: unlike `event_loop_mut`, the pointee is **not** JS-thread-only —
-    /// the inner `Box<Watcher>` is held as `&mut Watcher` for the lifetime of
+    /// it is held as `&mut Watcher` for the lifetime of
     /// the spawned file-watcher thread (`Watcher::thread_main`), and
     /// `RuntimeTranspilerStore` reads it from transpiler workers. The pointee
     /// guards itself with an internal mutex, so we
@@ -1575,29 +1571,23 @@ impl VirtualMachine {
     /// keep the cross-thread hazard visible. Callers must scope any reborrow to
     /// a single mutex-guarded `Watcher` operation.
     #[inline]
-    pub(crate) fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
+    pub(crate) fn bun_watcher_ptr(&self) -> *mut bun_watcher::Watcher {
         self.bun_watcher
     }
 
     /// Shuts down the file watcher. Its thread reads this VM while handling a change, so this waits
     /// for the current change to finish and prevents new ones.
     fn stop_import_watcher(&mut self) {
-        use crate::hot_reloader::ImportWatcher;
         if self.bun_watcher.is_null() {
             return;
         }
         // SAFETY: `install_bun_watcher` leaked this box, and the other threads that read it have finished.
         // Keep it installed until `shutdown` returns because the in-progress change still reads it.
-        let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) = unsafe { &mut *self.bun_watcher };
-        // SAFETY: the box is the one `Watcher::init` returned.
-        unsafe { bun_watcher::Watcher::shutdown(&raw mut **w, false) };
+        // The box is the one `Watcher::init` returned.
+        unsafe { bun_watcher::Watcher::shutdown(self.bun_watcher, false) };
         self.transpiler.resolver.watcher = None;
-        let watcher = core::mem::replace(&mut self.bun_watcher, core::ptr::null_mut());
-        // SAFETY: as above.
-        let watcher = unsafe { bun_core::heap::take(watcher) };
-        let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) = *watcher;
         // `shutdown` transferred ownership to the watcher thread.
-        let _ = Box::into_raw(w);
+        self.bun_watcher = core::ptr::null_mut();
     }
 
     /// `event_loop().enter()` now, `.exit()` on drop. Safe wrapper over
@@ -1620,9 +1610,8 @@ impl VirtualMachine {
         unsafe { EventLoop::enter_scope_without_checkpoint(self.event_loop) }
     }
 
-    /// Safe shared-reference accessor for the process-lifetime dotenv loader
-    /// (`vm.transpiler.env`). The loader is allocated once during VM init and
-    /// never freed; callers previously open-coded `unsafe { &*vm.transpiler.env }`.
+    /// Safe shared-reference accessor for the dotenv loader (`vm.transpiler.env`).
+    /// It lives as long as the VM: a Worker's VM frees its own in `destroy()`.
     #[inline]
     pub fn env_loader(&self) -> &'static bun_dotenv::Loader {
         self.env_loader_opt()
@@ -1635,7 +1624,7 @@ impl VirtualMachine {
     #[inline]
     pub(crate) fn env_loader_opt(&self) -> Option<&'static bun_dotenv::Loader> {
         // SAFETY: when non-null, `transpiler.env` is set during `Transpiler::init`
-        // to a process-lifetime allocation; never freed while a VM is installed.
+        // to a loader that outlives the VM, or that the last step of `destroy()` frees.
         unsafe { self.transpiler.env.as_ref() }
     }
 
@@ -2657,8 +2646,7 @@ impl VirtualMachine {
             // reconnect/lifetime timers, schedulers): their owners stay valid
             // and find them CANCELLED, but nothing fires again even where the
             // loop still turns (JSC's timers).
-            // SAFETY: fn contract.
-            unsafe { (hooks.disarm_all_timers_for_vm_teardown)(this) };
+            (hooks.disarm_all_timers_for_vm_teardown)();
         }
         // SAFETY: fn contract (statement-scoped exclusive access).
         unsafe {
@@ -2779,7 +2767,7 @@ impl VirtualMachine {
         // SAFETY: fn contract.
         result = result.and(unsafe {
             match hooks {
-                Some(hooks) => (hooks.stop_active_handles_for_vm_teardown)(this),
+                Some(hooks) => (hooks.stop_active_handles_for_vm_teardown)(&mut *this),
                 None => (*this).stop_context_handles(crate::StopReason::VmTeardown),
             }
         });
@@ -2945,15 +2933,15 @@ extern crate alloc;
 pub type RuntimeState = *mut c_void;
 
 /// Runtime flags a Worker's `execArgv` can set. `true` means allowed.
-#[derive(Copy, Clone, Debug)]
-pub struct WorkerExecArgvFlags {
+#[derive(Copy, Clone)]
+pub struct WorkerExecArgvFlags<'a> {
     /// `!--no-addons`
     pub allow_addons: bool,
     /// `!--no-ffi-cc`
     pub allow_ffi_cc: bool,
-    /// Where a flag is that is the process's, which a Worker cannot be given
+    /// A flag that is the process's, which a Worker cannot be given
     /// (`ERR_WORKER_INVALID_EXEC_ARGV`): `--disallow-code-generation-from-strings`.
-    pub invalid: Option<usize>,
+    pub invalid: Option<&'a bun_core::WTFStringImplStruct>,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -3054,10 +3042,6 @@ pub struct RuntimeHooks {
         opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut uws::create_bun_socket_error_t,
     ) -> Option<bun_boringssl::c::OwnedSslCtx>,
-    /// Lazy `NodeFS` creation.
-    /// `NodeFS` lives in `bun_runtime`; the high tier boxes one and returns
-    /// the type-erased pointer. Stored back into `vm.node_fs`.
-    pub create_node_fs: fn(vm: &mut VirtualMachine) -> *mut c_void,
     /// `ObjectURLRegistry` lookup. Registry lives in `bun_runtime::webcore`.
     pub has_blob_url: fn(blob_id: &[u8]) -> bool,
     /// `bun_aot::module_keys::name_of_text` of the text behind an object URL.
@@ -3105,8 +3089,9 @@ pub struct RuntimeHooks {
     ),
     /// Parse a Worker's `execArgv` for the flags in [`WorkerExecArgvFlags`].
     /// `None` if parsing failed.
-    pub parse_worker_exec_argv_flags:
-        unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<WorkerExecArgvFlags>,
+    pub parse_worker_exec_argv_flags: for<'a> fn(
+        exec_argv: &'a [Option<&'a bun_core::WTFStringImplStruct>],
+    ) -> Option<WorkerExecArgvFlags<'a>>,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
     pub stop_cron_for_vm_teardown: fn(vm: &mut VirtualMachine),
@@ -3118,9 +3103,7 @@ pub struct RuntimeHooks {
     /// Standalone-graph sourcemap load.
     /// The concrete `bun_standalone_graph::Graph` / `File` / `LazySourceMap`
     /// live above `bun_jsc`; the high tier reaches them via the graph's own
-    /// `UnsafeCell` singleton accessor (NOT by downcasting the resolver trait
-    /// object — that shared-ref provenance is read-only and forming `&mut`
-    /// from it would be UB) and returns the lazily-decoded map (already
+    /// singleton accessor and returns the lazily-decoded map (already
     /// strong-ref'd via the returned `Arc`). [`resolve_source_mapping`]
     /// caches it into `source_mappings` so subsequent lookups hit the fast
     /// path. The caller gates the call on `vm.standalone_module_graph`.
@@ -3165,12 +3148,9 @@ pub struct RuntimeHooks {
     /// Stop every registered native handle behind a JS object (servers,
     /// listeners, fs watchers) — the stop phase for Rust-side JS classes, run
     /// with the VM alive right after the WebCore stop phase.
-    ///
-    /// # Safety
-    /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-    pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine) -> SweepResult,
+    pub stop_active_handles_for_vm_teardown: fn(vm: &mut VirtualMachine) -> SweepResult,
     /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
-    pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
+    pub disarm_all_timers_for_vm_teardown: fn(),
     /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):
     /// close the loop handles the timer heap embeds (Windows uv_timer/uv_idle)
     /// so the loop close unlinks them before the runtime state is freed.
@@ -3746,12 +3726,8 @@ impl VirtualMachine {
                 .and_then(crate::web_worker::WebWorker::exec_argv)
                 .is_some_and(|exec_argv| {
                     use bun_core::WTFStringImplExt as _;
-                    exec_argv.iter().any(|&arg| {
-                        // SAFETY: each entry borrows the C++ `WorkerOptions`
-                        // array, kept alive by the owning `WebCore::Worker`
-                        // for the worker's lifetime (see `WebWorker::argv`).
-                        !arg.is_null()
-                            && is_bootstrap_flag(unsafe { &*arg }.to_owned_slice_z().as_bytes())
+                    exec_argv.iter().any(|arg| {
+                        arg.is_some_and(|arg| is_bootstrap_flag(arg.to_owned_slice_z().as_bytes()))
                     })
                 });
         if needs_pre_execution && crate::compiled_program::can_load_unused_library_modules() {
@@ -4231,9 +4207,8 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 pub struct Options {
     pub args: bun_options_types::schema::api::TransformOptions,
     pub log: Option<NonNull<bun_ast::Log>>,
-    // BORROW_PARAM (`&'a mut bun_dotenv::Loader`) — caller-owned; the loader
-    // outlives the VM, so the inner lifetime is erased to `'static`.
-    pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
+    /// See [`InitOptions::owned_env_loader`].
+    pub owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     pub smol: bool,
     // LAYERING: real type is `bun_runtime::dns_jsc::Order` (forward
     // dep); stored as its `u8` repr.
@@ -4892,11 +4867,10 @@ impl VirtualMachine {
         }
         let watcher = self.bun_watcher_ptr();
         if !watcher.is_null() {
-            // SAFETY: `bun_watcher` is a live `Box<ImportWatcher>` leaked in
+            // SAFETY: `bun_watcher` is a live `Box<Watcher>` leaked in
             // `enable_hot_module_reloading`. The pointee is shared with the
-            // file-watcher thread (see `bun_watcher_ptr` doc) — the enum
-            // discriminant is write-once at install and read-only thereafter,
-            // and `add_file_by_path_slow` serializes the inner watchlist write
+            // file-watcher thread (see `bun_watcher_ptr` doc),
+            // and `add_file_by_path_slow` serializes the watchlist write
             // via `Watcher.mutex`. Borrow is scoped to this single
             // mutex-guarded call.
             let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
@@ -4907,7 +4881,7 @@ impl VirtualMachine {
     /// enabled.
     pub fn watcher_for_threads(&self) -> Option<impl Fn(&[u8]) + Send + Sync + 'static> {
         struct Shared {
-            watcher: *mut crate::hot_reloader::ImportWatcher,
+            watcher: *mut bun_watcher::Watcher,
             _ticket: crate::Ticket,
         }
         // SAFETY: it carries a `Ticket` for the VM that has the watcher. The pointee is made to be
@@ -5089,21 +5063,6 @@ impl VirtualMachine {
         }
     }
 
-    /// `NodeFS` lives in `bun_runtime` (forward-dep on `bun_jsc`), so the
-    /// field is stored type-erased and the lazy boxed allocation goes through
-    /// [`RuntimeHooks::create_node_fs`]. Callers in `bun_runtime` cast the
-    /// returned pointer back to `*mut node::fs::NodeFS`.
-    #[inline]
-    pub fn node_fs(&mut self) -> *mut c_void {
-        if let Some(existing) = self.node_fs {
-            return existing;
-        }
-        let hooks = runtime_hooks().expect("runtime hooks not installed");
-        let new = (hooks.create_node_fs)(self);
-        self.node_fs = Some(new);
-        new
-    }
-
     /// Returns the next debugger async-task id, or 0 when no debugger is attached.
     pub(crate) fn next_async_task_id(&mut self) -> u64 {
         let Some(debugger) = self.debugger.as_deref_mut() else {
@@ -5143,7 +5102,7 @@ impl VirtualMachine {
             transform_options: opts.args,
             graph: Some(graph),
             log: opts.log,
-            env_loader: opts.env_loader,
+            owned_env_loader: opts.owned_env_loader,
             smol: opts.smol,
             mini_mode: opts.smol,
             eval_mode: false,
@@ -5173,7 +5132,7 @@ impl VirtualMachine {
             transform_options: opts.args,
             graph: opts.graph,
             log: opts.log,
-            env_loader: opts.env_loader,
+            owned_env_loader: opts.owned_env_loader,
             smol: opts.smol,
             eval_mode: opts.eval,
             is_main_thread: false,
@@ -5214,7 +5173,7 @@ impl VirtualMachine {
         let init_opts = InitOptions {
             transform_options: opts.args,
             log: opts.log,
-            env_loader: opts.env_loader,
+            owned_env_loader: opts.owned_env_loader,
             smol: opts.smol,
             mini_mode: opts.smol,
             eval_mode: false,
@@ -5246,18 +5205,6 @@ impl VirtualMachine {
             IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         Ok(vm)
-    }
-
-    /// Stored as [`RefString::on_before_deinit`] (an unsafe-fn-ptr slot) in
-    /// [`Self::ref_counted_string`]; only ever invoked from
-    /// `RefString::destroy` with the live `*mut RefString` being torn down.
-    fn clear_ref_string(_: *mut c_void, ref_string: *mut crate::ref_string::RefString) {
-        // SAFETY: only reachable via `RefString::destroy`, which passes the
-        // live heap `RefString` allocated in `ref_counted_string`;
-        // safe-fn coerces to the unsafe-fn-ptr `Callback` slot type.
-        let hash = unsafe { &*ref_string }.hash;
-        // SAFETY: `get()` is the live per-thread VM.
-        VirtualMachine::get().as_mut().ref_strings.remove(&hash);
     }
 
     /// Whether what is made of a file on disk is static code (`ResolvedSource::is_static`). A standalone executable is
@@ -5309,9 +5256,6 @@ impl VirtualMachine {
         debug_assert!(!input_.is_empty());
         let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_));
         let _unlock = self.ref_strings_mutex.lock_guard();
-        // Note: reshaped for borrowck — capture the back-pointer before
-        // `ref_strings.entry()` takes its unique borrow on `self`.
-        let self_ctx = NonNull::new(std::ptr::from_mut::<VirtualMachine>(self).cast::<c_void>());
 
         match self.ref_strings.entry(hash) {
             Entry::Occupied(o) => Ok(*o.get()),
@@ -5319,28 +5263,23 @@ impl VirtualMachine {
                 if input_.len() > bun_core::String::max_length() {
                     return Err(StringTooLong);
                 }
-                let buf = Box::<[u8]>::from(input_);
-                let len = buf.len();
-                let ptr = bun_core::heap::into_raw(buf).cast::<u8>().cast_const();
                 let ref_ = bun_core::heap::into_raw_nn(Box::new(RefString {
-                    ptr,
-                    len,
+                    bytes: Box::from(input_),
                     hash,
                     // Filled in just below — `create_external` needs the
                     // `*mut RefString` ctx pointer first.
                     impl_: core::ptr::null_mut(),
-                    ctx: self_ctx,
                     // Set after `create_external` succeeds. If it fails, it runs `free_ref_string` while `v` still borrows the map.
-                    on_before_deinit: None,
+                    interned: false,
                 }));
                 // SAFETY: `ref_` is the unique live `*mut RefString` (just
-                // boxed); `(ptr, len)` is its owned latin-1 buffer. The
+                // boxed); `bytes` is its owned latin-1 buffer. The
                 // external-string finalizer (`free_ref_string`) is called by
                 // WTF on the JS thread when the impl refcount hits zero, with
                 // `ref_` as ctx.
                 let s = unsafe {
                     bun_core::String::create_external::<*mut RefString>(
-                        bun_core::ffi::slice(ptr, len),
+                        &(*ref_.as_ptr()).bytes,
                         ref_.as_ptr(),
                         free_ref_string,
                     )
@@ -5353,7 +5292,7 @@ impl VirtualMachine {
                 // and `ref_` is still the unique live `RefString`.
                 unsafe {
                     (*ref_.as_ptr()).impl_ = s.leak_wtf_impl();
-                    (*ref_.as_ptr()).on_before_deinit = Some(VirtualMachine::clear_ref_string);
+                    (*ref_.as_ptr()).interned = true;
                 }
                 v.insert(ref_);
                 Ok(ref_)
@@ -5453,7 +5392,7 @@ impl VirtualMachine {
             module_type: Cell::new(module_type),
             source_code_printer: printer.as_ptr(),
             // `fetchWithoutOnLoadPlugins` forbids the async path.
-            promise_ptr: core::ptr::null_mut(),
+            promise_ptr: None,
         };
         let args = ModuleLoader::TranspileArgs {
             specifier: lr.specifier,
@@ -8200,12 +8139,9 @@ impl VirtualMachine {
         // dispatch through [`RuntimeHooks::load_standalone_sourcemap`] per
         // §Dispatch (cold path — one-time decode then cached below).
         // Gate only — the hook reaches the concrete graph via its own
-        // `UnsafeCell` singleton (write-provenance), not via this read-only
-        // trait object.
+        // singleton, not via this trait object.
         let _ = self.standalone_module_graph?;
         let hooks = runtime_hooks()?;
-        // JS-thread call; hook mutates only per-`File` lazy caches under the
-        // standalone graph's internal `INIT_LOCK`.
         let map = (hooks.load_standalone_sourcemap)(path)?;
 
         // The `Arc::clone` is the ref-bump; `into_raw` transfers that strong

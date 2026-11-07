@@ -1909,6 +1909,53 @@ devTest("css module of two graphs keeps the browser's stylesheet when the client
     expect(sheets.find(css => css.includes("." + title))).toContain("color(display-p3");
   },
 });
+devTest("a save of a file that a plain stylesheet imports keeps the server's copy of the stylesheet cached", {
+  framework: minimalFramework,
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./count-loads.ts"]
+    `,
+    "count-loads.ts": `
+      import { basename } from "node:path";
+      export default {
+        name: "count-loads",
+        setup(build) {
+          build.onLoad({ filter: /[.]css$/ }, args => {
+            (globalThis.cssLoads ??= []).push(args.side + ":" + basename(args.path));
+            return undefined;
+          });
+        },
+      };
+    `,
+    ...Object.fromEntries(Array.from({ length: 520 }, (_, i) => [`m/${i}.ts`, `export const v${i} = ${i};`])),
+    "child.css": `.child { color: red; }`,
+    "root.css": `
+      @import "./child.css";
+      .root { color: red; }
+    `,
+    "routes/index.ts": [
+      ...Array.from({ length: 520 }, (_, i) => `import "../m/${i}.ts";`),
+      `import "../root.css";`,
+      `export default function () {`,
+      `  const loads = (globalThis.cssLoads ?? []).sort();`,
+      `  globalThis.cssLoads = [];`,
+      `  return Response.json({ n: 1, loads });`,
+      `}`,
+    ].join("\n"),
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ n: 1, loads: ["server:child.css", "server:root.css"] });
+    // Past the first 512 files of the server graph, the record of a stylesheet starts as not stale.
+    await dev.patch("routes/index.ts", { find: "n: 1", replace: "n: 2" });
+    await dev.fetch("/").equals({ n: 2, loads: [] });
+    // The save bundles the browser's copy. No server graph bundles the stylesheet again, so its record stays as it is.
+    await dev.write("child.css", `.child { color: blue; }`);
+    await dev.fetch("/").equals({ n: 2, loads: ["client:child.css", "client:root.css"] });
+    await dev.patch("routes/index.ts", { find: "n: 2", replace: "n: 3" });
+    await dev.fetch("/").equals({ n: 3, loads: [] });
+  },
+});
 devTest("css file that imports a file that is not css does not kill old styles", {
   files: {
     "theme.json": `{}`,

@@ -1883,9 +1883,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                 if let Some(server_index) =
                                     server_graph.bundled_files.get_index(k.slice())
                                 {
-                                    server_graph.stale_files.set(server_index);
-                                    server_graph
-                                        .append_server_entry_points(server_index, entry_points)?;
+                                    // A record that no server graph bundles again stays as it is.
+                                    if server_graph
+                                        .append_server_entry_points(server_index, entry_points)?
+                                    {
+                                        server_graph.stale_files.set(server_index);
+                                    }
                                 }
                             }
                             it = entry.next_dependency;
@@ -1921,28 +1924,32 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         }
                     }
                 },
-                Side::Server => self.append_server_entry_points(index, entry_points)?,
+                Side::Server => {
+                    self.append_server_entry_points(index, entry_points)?;
+                }
             }
         }
         Ok(())
     }
 
     /// Server side: queues the file for each graph that bundles it. For a CSS module, that is each graph that holds its class names.
+    /// Returns false if no graph bundles it.
     fn append_server_entry_points(
         &self,
         index: usize,
         entry_points: &mut EntryPointList,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<bool, crate::Error> {
         debug_assert!(matches!(SIDE, Side::Server));
         let f = &self.bundled_files.values()[index];
         let path = &*self.bundled_files.keys()[index];
+        let for_ssr = f.rebundles_for_ssr_graph();
         if f.is_rsc {
             entry_points.append_js(path, bake::Graph::Server)?;
         }
-        if f.rebundles_for_ssr_graph() {
+        if for_ssr {
             entry_points.append_js(path, bake::Graph::Ssr)?;
         }
-        Ok(())
+        Ok(f.is_rsc || for_ssr)
     }
 
     // ────────────────────────────────────────────────────────────────────────

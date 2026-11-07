@@ -1,0 +1,18 @@
+# `pos < text.length - 2`: below a bound that lies below the length
+# f1 = codes
+# -- source: position-below-the-length-less-two-is-read-without-a-test.ts
+# function codes(text: string): number { let sum = 0; for (let pos = 0; pos < text.length - 2; pos++) sum = (sum + text.charCodeAt(pos)) | 0; return sum; }
+# console.log(codes("abcd"), codes(""));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = Less v
+# CHECK: : int[0, 65535] {{*}}= GetStringCodeUnit
+# RUN(ONCE): walk f1 mechanisms=all
+# REQUIRES(ONCE): entries-of-bun
+# ONCE-COUNT-1: = Less v
+# RUN(NEVER): walk f1 mechanisms=all
+# REQUIRES(NEVER): entries-of-bun
+# NEVER-NOT: |whole

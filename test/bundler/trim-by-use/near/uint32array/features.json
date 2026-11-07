@@ -1,1 +1,1 @@
-{ "features": ["Uint32Array"], "keptToday": true }
+{ "features": ["Uint32Array"], "keptToday": ["Uint32Array"] }

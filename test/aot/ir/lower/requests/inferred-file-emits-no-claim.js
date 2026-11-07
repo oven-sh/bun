@@ -1,10 +1,11 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="f"
 // CHECK: ([[v]]: anything):
-// CHECK: [[stored]] = Convert [[v]] declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PropSet {{*}}, [[stored]] key="count"
+// CHECK-NOT: Convert
+// CHECK: PropSet {{*}}, [[v]] key="count"
+// CHECK-NOT: Convert
 // CHECK: [[read]] = PropGet {{*}}key="count"
-// CHECK-NEXT: = Convert [[read]] declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: Return [[read]]
 
 // RUN(REQUESTS): lower
 // REQUESTS-NOT: IsChecked

@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: layout [[row]] name="Row"
+// CHECK: layout [[row]] {{*}}fields=[{key="id"
 // CHECK: data {{*}}root=Array{contents=undefined|null|[[row]] elements=[Object{layout=[[row]] members=[{key="id" value=Number{value=1}}, {key="tag" value=String{value="a"}}]}, Object{layout=[[row]]
 
 // RUN(FRESH): lower

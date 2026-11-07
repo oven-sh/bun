@@ -1,0 +1,20 @@
+# by itself the callee calls whatever arrives. At a call that hands it closures of one function it does what that function does, and runs no code that nobody knows
+# where the value that is handed over is not proven to be such a closure, Link's effects of the callee stand
+# f1 = each, f2 = mark, f3 = run, f4 = runs
+# -- source: callee-that-calls-its-parameter-does-what-the-one-closure-does.ts
+# declare function sink(...values: unknown[]): void;
+# let marks = 0;
+# function each(f: () => void) { f(); f(); }
+# function mark() { marks = (marks + 1) | 0; }
+# function run() { each(mark); return marks; }
+# function runs(f: () => void) { each(f); return marks; }
+# sink(run, runs);
+# -- end of source
+# RUN: walk f3 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f3:Body
+# CHECK: = CallDirect {{*}}function=f1
+# RUN(NEVER): walk f3 mechanisms=none+TypedOperations+DirectCalls
+# NEVER-NOT: mayCallUnknownCode
+# RUN(OTHER): walk f4 mechanisms=none+TypedOperations+DirectCalls
+# OTHER-LABEL: code f4:Body
+# OTHER: = CallDirect {{*}}function=f1{{*}}mayCallUnknownCode

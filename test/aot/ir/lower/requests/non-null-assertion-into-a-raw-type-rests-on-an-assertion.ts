@@ -1,16 +1,19 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="clear"
+// CHECK-NOT: Convert
 // CHECK: [[nothing]] = Undefined
-// CHECK: [[flag]] = Convert [[nothing]] declared={type=boolean site=w{{*}}} illTypedCause=Assertion
+// CHECK-NEXT: ElemSet {{*}}, [[nothing]]
+// CHECK-NOT: Convert
 // CHECK-LABEL: function {{*}}name="count"
-// CHECK: [[counted]] = Convert {{*}}declared={type=number site=w{{*}}} illTypedCause=Assertion
+// CHECK: [[counted]] = Convert {{*}}declared={type=number} illTypedCause=Assertion
 // CHECK-NEXT: Return [[counted]]
 // CHECK-LABEL: function {{*}}name="shown"
-// CHECK: [[plain]] = Convert {{*}}declared={type=number site=w{{*}}} @
+// CHECK: [[plain]] = Convert {{*}}declared={type=number} @
 // CHECK-NEXT: Return [[plain]]
 
-// `undefined!` has the type `never`, which the checker lets into everything, and `n!` loses its `undefined`. A boolean and a number are held raw, so whoever
-// believed such a flow would take `undefined` for one.
+// `undefined!` has the type `never`, which the checker lets into everything, and `n!` loses its `undefined`. A number is held raw, so whoever believed such a flow
+// would take `undefined` for one: the conversion to the written result says that it rests on an assertion. A store into an element is converted to nothing, and
+// the list takes the `undefined` as it is.
 const flags: boolean[] = [];
 
 export function clear(index: number): void {

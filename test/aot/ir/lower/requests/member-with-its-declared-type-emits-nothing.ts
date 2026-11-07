@@ -73,3 +73,6 @@ export function single(outer: Outer) {
 export function underConstantKey(outer: Outer) {
   return outer["inner"].count;
 }
+
+// A method has its body once reached code reads its name.
+export function readsTheNames(o: any) { return [o.ofThis]; }

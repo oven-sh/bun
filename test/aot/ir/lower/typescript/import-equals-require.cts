@@ -3,8 +3,7 @@
 // CHECK: PutModuleVariable {{*}}variable=[[exports]]
 // CHECK-NEXT: EvaluateModule module=m{{*}} [isBare, isCallOfRequire]
 // CHECK-NEXT: [[required]] = GetModuleVariable variable=
-// CHECK-NEXT: [[m]] = Convert [[required]] declared={type=number}
-// CHECK-NEXT: PutModuleVariable [[m]] variable=[[exports]]
+// CHECK-NEXT: PutModuleVariable [[required]] variable=[[exports]]
 
 // RUN(CALLS): lower
 // CALLS-NOT: = Call

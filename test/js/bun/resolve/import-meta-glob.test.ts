@@ -745,22 +745,6 @@ describe.concurrent("import.meta.glob", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("eager entries with a query are imported after hoisted mocks", async () => {
-    using dir = tempDir("import-meta-glob", {
-      "node_modules/pkg/package.json": `{ "name": "pkg" }`,
-      "node_modules/pkg/note.txt": `real`,
-      "glob.test.ts": `
-        const notes = import.meta.glob("./node_modules/pkg/*.txt", { eager: true, query: "?raw", import: "default" });
-        vi.mock("./node_modules/pkg/note.txt?raw", () => ({ default: "mocked" }));
-        test("notes", () => console.log(JSON.stringify([notes])));`,
-    });
-    const { stdout, exitCode } = await run(String(dir), ["test", "./glob.test.ts"]);
-    expect(stdout.split("\n").filter(line => line.startsWith("["))).toEqual([
-      `[{"./node_modules/pkg/note.txt":"mocked"}]`,
-    ]);
-    expect(exitCode).toBe(0);
-  });
-
   test("the factory of a hoisted mock can use eager entries", async () => {
     using dir = tempDir("import-meta-glob", {
       "modules/a.ts": `export const name = "a";`,

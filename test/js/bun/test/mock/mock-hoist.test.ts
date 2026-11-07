@@ -690,6 +690,22 @@ describe.concurrent("hoisting", () => {
     ]);
   });
 
+  test("an eager import.meta.glob entry with a query follows a hoisted mock that names it", async () => {
+    expect(
+      await events({
+        "node_modules/pkg/package.json": `{ "name": "pkg" }`,
+        "node_modules/pkg/note.txt": `real`,
+        "hoist.test.ts": `
+          import { test, vi } from "vitest";
+          const notes = import.meta.glob("./node_modules/pkg/*.txt", { eager: true, query: "?raw", import: "default" });
+          vi.mock("./node_modules/pkg/note.txt?raw", () => ({ default: "mocked" }));
+          (globalThis.events ??= []).push(notes);
+          ${print}
+        `,
+      }),
+    ).toEqual([[{ "./node_modules/pkg/note.txt": "mocked" }]]);
+  });
+
   // The visit pass can't drop the namespace of these callees: the parser and the React Compiler write the calls later.
   test.each([
     ["a classic JSX factory", [], `/** @jsxRuntime classic @jsx h */`, `<b />`, ["b"]],

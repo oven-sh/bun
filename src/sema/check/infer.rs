@@ -788,7 +788,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.note_inferred_by_variances(generic_symbol, sources.len().min(targets.len()));
             return self.infer_from_type_arguments(n, sources, targets, known);
         }
-        let variances = self.variances_of(generic_symbol);
+        let variances = self.variances_of(generic_symbol, [&n.source_stack, &n.target_stack]);
         self.note_inferred_by_variances(generic_symbol, sources.len().min(targets.len()));
         self.infer_from_type_arguments(n, sources, targets, variances);
     }

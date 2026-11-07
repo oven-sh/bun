@@ -2621,12 +2621,13 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getVariances`, `getAliasVariances`: how instantiations of `sym` relate, given how their
-    /// type arguments relate. Empty while the computation is in progress.
-    pub(super) fn variances_of(&mut self, sym: Sym) -> &'s [u8] {
+    /// type arguments relate. Empty while the computation is in progress. `stacks` are the source
+    /// stack and the target stack of the comparison that asks.
+    pub(super) fn variances_of(&mut self, sym: Sym, stacks: [&[(TypeId, u32)]; 2]) -> &'s [u8] {
         if let Some(known) = self.p.variances.get(&self.task, &sym) {
             return known;
         }
-        self.variances_worker(sym)
+        self.variances_worker(sym, stacks)
     }
 
     /// Called when a symbol's variances are requested while they're being measured.
@@ -2640,7 +2641,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getVariancesWorker`. The caller's cache lookup of `sym` missed.
-    fn variances_worker(&mut self, sym: Sym) -> &'s [u8] {
+    fn variances_worker(&mut self, sym: Sym, stacks: [&[(TypeId, u32)]; 2]) -> &'s [u8] {
         if Some(sym) == self.global_type_of_arity(known::Array, 1)
             || Some(sym) == self.global_type_of_arity(known::ReadonlyArray, 1)
         {
@@ -2672,7 +2673,9 @@ impl<'p, 's> Checker<'p, 's> {
                     std::mem::replace(&mut self.resolution_start, self.stack.len());
                 let suspended = self.suspended_variances.len();
                 self.suspended_variances.extend_from_slice(&in_progress);
-                self.variances_of(first);
+                // The comparison that found the cycle is inside the measurement of `first`, so
+                // nothing on its stacks is older than the markers of `first`.
+                self.variances_of(first, [&[], &[]]);
                 self.suspended_variances.truncate(suspended);
                 self.resolution_start = resolution_start;
                 self.variances_in_progress = in_progress;
@@ -2716,6 +2719,21 @@ impl<'p, 's> Checker<'p, 's> {
         let before = self.sharing_blockers();
         self.variances_in_progress.push(sym);
         let was_computing = std::mem::replace(&mut self.in_variance_computation, true);
+        // tsgo creates the marker types of `sym` now, so every type on the stacks of the comparison
+        // that asked is older than them. Only a measurement in progress puts a type with a marker
+        // on a stack.
+        let older_than_markers = self.older_than_markers.len();
+        if was_computing {
+            for &(on_stack, _) in stacks.into_iter().flatten() {
+                if self
+                    .types()
+                    .object_flags(on_stack)
+                    .contains(ObjectFlags::HAS_MARKER)
+                {
+                    self.older_than_markers.push(on_stack);
+                }
+            }
+        }
         // `resolutionStart`: resolutions in progress when the outermost variance computation began
         // are restarted if needed, and the computation in progress stops them from recursing
         // forever.
@@ -2782,6 +2800,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.in_variance_computation = was_computing;
         self.resolution_start = resolution_start;
+        self.older_than_markers.truncate(older_than_markers);
         self.variances_in_progress.pop();
         self.variances_marked_empty.retain(|&it| it != sym);
         // It stays allocated until the check ends, published or not. It's only a few bytes.
@@ -4541,7 +4560,10 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
-    /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`. Height doesn't order two instantiations with the
+    /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`. A marker type is created when the measurement of
+    /// its generic type begins, after every type on the stacks of the comparison that began it, and what the
+    /// measurement compares is created after the marker type. So of two types with a marker, one that was on those
+    /// stacks (`older_than_markers`) is the older one. Height doesn't order two instantiations with the
     /// same height. Counting each as newer than the other would cut off a comparison that only swaps the same two
     /// types between the source stack and the target stack. tsgo creates an instantiation when a comparison first
     /// reaches it, and the target's before the source's, so the type that was pushed first is the older one. Push
@@ -4556,17 +4578,39 @@ impl<'p, 's> Checker<'p, 's> {
             let first = |stack: &[(TypeId, u32)]| Some(stack.iter().find(|it| it.0 == t)?.1);
             stacks.into_iter().filter_map(first).min()
         };
-        t == last
-            || match self.types().nesting_order(t, last) {
-                std::cmp::Ordering::Greater => true,
-                std::cmp::Ordering::Equal => pushed(t) >= pushed(last),
-                std::cmp::Ordering::Less => {
-                    matches!(self.data(t), TypeData::Cond { .. })
-                        && matches!(self.data(last), TypeData::Cond { .. })
-                        && pushed(t) > pushed(last)
-                        && !self.types().is_built_from(last, t)
+        if t == last {
+            return true;
+        }
+        if !self.older_than_markers.is_empty()
+            && self
+                .types()
+                .object_flags(t)
+                .contains(ObjectFlags::HAS_MARKER)
+            && self
+                .types()
+                .object_flags(last)
+                .contains(ObjectFlags::HAS_MARKER)
+        {
+            let t_is_older = self.older_than_markers.contains(&t);
+            if t_is_older != self.older_than_markers.contains(&last) {
+                // A type is created after the types it's built from, so a listed type is older than
+                // the other one unless it's built from it.
+                let (listed, other) = if t_is_older { (t, last) } else { (last, t) };
+                if !self.types().is_built_from(listed, other) {
+                    return !t_is_older;
                 }
             }
+        }
+        match self.types().nesting_order(t, last) {
+            std::cmp::Ordering::Greater => true,
+            std::cmp::Ordering::Equal => pushed(t) >= pushed(last),
+            std::cmp::Ordering::Less => {
+                matches!(self.data(t), TypeData::Cond { .. })
+                    && matches!(self.data(last), TypeData::Cond { .. })
+                    && pushed(t) > pushed(last)
+                    && !self.types().is_built_from(last, t)
+            }
+        }
     }
 
     /// `is_deeply_nested_type` of the last entry of the stack, at depth 3. `identities` has an `OnStack` for
@@ -5234,7 +5278,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && !self.are_marker_arguments(alias, &params, &target_args)
             }
         {
-            let variances = self.variances_of(alias);
+            let variances = self.variances_of(alias, [&r.source_stack, &r.target_stack]);
             // The variances are being measured.
             if variances.is_empty() {
                 return Ternary::UNKNOWN;
@@ -5837,7 +5881,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return Ternary::TRUE;
                 }
                 // For two instantiations of the same generic type, relate the type arguments by variance.
-                let variances = self.variances_of(*st);
+                let variances = self.variances_of(*st, [&r.source_stack, &r.target_stack]);
                 // The variance computation is in progress. So only occurrences that aren't inside
                 // instantiations of the type itself count.
                 if variances.is_empty() {

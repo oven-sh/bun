@@ -339,13 +339,14 @@ describe("Bun.Cookie expires validation", () => {
                 return error.message;
               }
             };
-            for (const expires of ["2021-01-01", "2021-01-01T00:00:00Z", "2021-01-01T00:00:00", "2021-02-30", "-000000-01-01"]) {
+            for (const expires of ["2021-01-01", "2021-01-01T00:00:00Z", "2021-01-01T00:00:00", "2021-02-30"]) {
               console.log(expires, "|", read(expires), "|", read(expires) === text(Date.parse(expires)));
             }
             const refused = {
               "a newline after the date": "2021-01-01\\n",
               "a space before the time": "2021-01-01 00:00:00",
               "a no-break space before the time": "2021-01-01\\u00a000:00:00",
+              "the year -000000": "-000000-01-01",
             };
             for (const [label, expires] of Object.entries(refused)) {
               console.log(label, "|", read(expires), "|", text(Date.parse(expires)));
@@ -363,11 +364,11 @@ describe("Bun.Cookie expires validation", () => {
         "2021-01-01T00:00:00Z | 2021-01-01T00:00:00.000Z | true",
         "2021-01-01T00:00:00 | 2021-01-01T05:00:00.000Z | true",
         "2021-02-30 | 2021-03-02T00:00:00.000Z | true",
-        "-000000-01-01 | 2001-01-01T05:00:00.000Z | true",
-        // A date with other text after it | what the cookie does | what new Date(string) reads.
+        // A string outside the shape | what the cookie does | what new Date(string) reads.
         "a newline after the date | Invalid cookie expiration date | 2021-01-01T05:00:00.000Z",
         "a space before the time | Invalid cookie expiration date | 2021-01-01T05:00:00.000Z",
         "a no-break space before the time | Invalid cookie expiration date | 2021-01-01T05:00:00.000Z",
+        "the year -000000 | Invalid cookie expiration date | 2001-01-01T05:00:00.000Z",
       ]);
       expect(exitCode).toBe(0);
     });

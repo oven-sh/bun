@@ -48,6 +48,9 @@ static bool isISODateShaped(StringView string)
 {
     auto shape = "0000-00-00"_s;
     if (string.startsWith('+') || string.startsWith('-')) {
+        // The format has no year -000000. `new Date(string)` reads such a string as a date in 2001.
+        if (string.startsWith("-000000"_s))
+            return false;
         string = string.substring(1);
         shape = "000000-00-00"_s;
     }

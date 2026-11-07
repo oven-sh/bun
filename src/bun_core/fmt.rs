@@ -1173,12 +1173,6 @@ pub fn js_array_index(name: &[u8]) -> Option<u32> {
     u32::try_from(value).ok().filter(|index| *index != u32::MAX)
 }
 
-/// `parse_f64` truncated to `f32`.
-#[inline]
-pub fn parse_f32(s: &[u8]) -> Option<f32> {
-    parse_f64(s).map(|v| v as f32)
-}
-
 /// Parse `s` as `T` for grammars whose alphabet is pure ASCII (IP addresses,
 /// booleans). Any non-ASCII byte short-circuits to `None`, so the `&str` view
 /// is always valid without a UTF-8 walk. **Do not** use for integers/floats —

@@ -26,21 +26,10 @@ pub fn script_execution_status(this: &VirtualMachine) -> i32 {
     this.script_execution_status() as i32
 }
 
-// HOST_EXPORT(Bun__VM__isEventLoopKeptAlive, c)
-pub fn is_event_loop_kept_alive(this: &VirtualMachine) -> bool {
-    this.is_event_loop_kept_alive()
-}
-
-// HOST_EXPORT(Bun__VM__isEventLoopKeptAliveBehindItsTasks, c)
-pub fn is_event_loop_kept_alive_behind_its_tasks(this: &VirtualMachine) -> bool {
-    // A task that has run gives its ref back through this delta, which the next tick would take.
-    this.event_loop_shared().apply_concurrent_ref_delta();
-    this.is_event_loop_kept_alive()
-}
-
-// HOST_EXPORT(Bun__VM__hasPendingTasks, c)
-pub fn has_pending_tasks(this: &VirtualMachine) -> bool {
-    this.event_loop_shared().has_pending_tasks()
+// HOST_EXPORT(Bun__VM__setGCPerformanceEntriesWait, c)
+pub fn set_gc_performance_entries_wait(this: &VirtualMachine, wait: bool) {
+    this.gc_performance_entries_wait
+        .store(wait, core::sync::atomic::Ordering::Relaxed);
 }
 
 // HOST_EXPORT(Bun__getVM, c)

@@ -221,6 +221,8 @@ pub struct VirtualMachine {
     /// (POSIX only; on Windows that path calls `loop_dec()` instead and the
     /// counter stays at zero).
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
+    /// Records of collections wait for `EventLoop::tick_immediate_tasks` to give them to `node:perf_hooks`. `GCPerformanceEntries` (C++) keeps it, from whichever thread ends a collection.
+    pub gc_performance_entries_wait: core::sync::atomic::AtomicBool,
     pub preload: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     /// LAYERING: the real type is `bun_runtime`'s
@@ -1888,7 +1890,9 @@ impl VirtualMachine {
             || self.has_handles(timers.holds_loop_ref)
             || self.has_handles_off_the_loop()
             || crate::cpp::Bun__hasDeferredWorkNotKeepingEventLoopAlive(self.global())
-            || crate::cpp::Bun__hasGCPerformanceEntriesToDeliver(self.global())
+            || self
+                .gc_performance_entries_wait
+                .load(core::sync::atomic::Ordering::Relaxed)
     }
 
     /// Handles that wake the loop from their own thread: a `Worker`, `fs.watch()`, a napi threadsafe function.
@@ -1986,12 +1990,6 @@ impl VirtualMachine {
             bun_core::Global::mimalloc_cleanup(true);
         }
         size
-    }
-
-    /// For `Bun.gc(true)` and `gc()`, after `garbage_collect_from_js(true)`: a `gc` entry of `node:perf_hooks` has the flag of a forced collection for the one that just ended. It takes the VM of this thread, so that its caller keeps nothing more across the collection than before.
-    #[inline(never)]
-    pub fn did_force_collection() {
-        crate::cpp::Bun__GCPerformanceEntries__didForceCollection(Self::get().global());
     }
 
     #[inline]

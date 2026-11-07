@@ -3,7 +3,6 @@
 #include "GCPerformanceEntries.h"
 
 #include "BunClientData.h"
-#include "EventLoopTask.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/CallData.h>
@@ -12,18 +11,15 @@
 #include <JavaScriptCore/WeakInlines.h>
 
 extern "C" uint64_t Bun__readOriginTimerWithoutFakeTimers(void* bunVM);
-extern "C" bool Bun__VM__isEventLoopKeptAlive(void* bunVM);
-extern "C" bool Bun__VM__isEventLoopKeptAliveBehindItsTasks(void* bunVM);
-extern "C" bool Bun__VM__hasPendingTasks(void* bunVM);
-extern "C" void Bun__VM__queueTask(void* bunVM, WebCore::EventLoopTask*);
+extern "C" void Bun__VM__setGCPerformanceEntriesWait(void* bunVM, bool);
 
 namespace Bun {
 
 using namespace JSC;
 
 GCPerformanceEntries::GCPerformanceEntries(VM& vm)
-    : JSRunLoopTimer(vm)
-    , m_vm(vm)
+    : m_vm(vm)
+    , m_bunVM(WebCore::clientData(vm)->bunVM)
 {
 }
 
@@ -44,60 +40,37 @@ void GCPerformanceEntries::didGarbageCollect(CollectionScope scope)
     auto start = std::exchange(m_collectionStart, std::nullopt);
     if (!start)
         return;
-    bool armsTimer;
+    Locker locker { m_lock };
+    m_records.append({ *start, MonotonicTime::now() - *start, scope == CollectionScope::Full, false });
+    // No wake: as in Node, the entry waits for the next turn that the loop makes.
+    Bun__VM__setGCPerformanceEntriesWait(m_bunVM, true);
+}
+
+RefPtr<SharedTask<void()>> GCPerformanceEntries::willCollectSynchronously()
+{
     {
         Locker locker { m_lock };
-        m_records.append({ *start, MonotonicTime::now() - *start, scope == CollectionScope::Full, false });
-        armsTimer = !std::exchange(m_timerIsArmed, true);
-        if (armsTimer)
-            m_hasWokenLoopForTimer = false;
+        m_synchronousRecordEnd = 0;
     }
-    // With a delay the timer is in the heap of timers, which bounds the next wait of the loop. With none it is not (WTFTimer::update).
-    if (armsTimer)
-        setTimeUntilFire(1_ms);
-}
-
-bool GCPerformanceEntries::hasRecords()
-{
-    Locker locker { m_lock };
-    return !m_records.isEmpty();
-}
-
-void GCPerformanceEntries::eventLoopWillWait()
-{
-    if (!hasRecords())
-        return;
-    auto* clientData = WebCore::clientData(m_vm);
-    if (Bun__VM__isEventLoopKeptAlive(clientData->bunVM)) {
-        // This wait can be chosen before the timer was armed: a collection can end in the safepoint right before it. The waits after it are not, so the loop is woken once for each time the timer is armed.
-        bool hasWokenLoop;
-        {
+    if (!m_synchronousCollectionDidEnd) {
+        // A request runs it in the end phase of its own collection, right after didGarbageCollect().
+        m_synchronousCollectionDidEnd = createSharedTask<void()>([this] {
             Locker locker { m_lock };
-            hasWokenLoop = std::exchange(m_hasWokenLoopForTimer, true);
-        }
-        if (auto* vmHandle = clientData->vmHandle; vmHandle && !hasWokenLoop)
-            Bun__VmHandle__wake(vmHandle);
-        return;
+            m_synchronousRecordEnd = m_records.size();
+        });
     }
-    // Nothing else holds the loop, so these reach no observer: a process that exits here has delivered none either.
-    cancelTimer();
-    Locker locker { m_lock };
-    m_records.clear();
-    m_timerIsArmed = false;
+    return m_synchronousCollectionDidEnd;
 }
 
 void GCPerformanceEntries::didForceCollection()
 {
-    // A synchronous collection ends inside its call. So while the heap is observed, its record is the last one.
-    if (!m_observesHeap)
-        return;
     Locker locker { m_lock };
-    if (m_records.isEmpty())
-        return;
-    auto& record = m_records.last();
-    record.forced = true;
-    // As in Node, the entry lasts nearly as long as the call: the sweep after the collection is part of it.
-    record.duration = MonotonicTime::now() - record.start;
+    if (auto end = std::exchange(m_synchronousRecordEnd, 0)) {
+        auto& record = m_records[end - 1];
+        record.forced = true;
+        // As in Node, the entry lasts nearly as long as the call: the sweep after the collection is part of it.
+        record.duration = MonotonicTime::now() - record.start;
+    }
 }
 
 void GCPerformanceEntries::setObservesHeap(bool observesHeap)
@@ -124,10 +97,10 @@ void GCPerformanceEntries::setListener(JSGlobalObject* realm, JSObject* listener
 
 void GCPerformanceEntries::discardRecords()
 {
-    cancelTimer();
     Locker locker { m_lock };
     m_records.clear();
-    m_timerIsArmed = false;
+    m_synchronousRecordEnd = 0;
+    Bun__VM__setGCPerformanceEntriesWait(m_bunVM, false);
 }
 
 void GCPerformanceEntries::stop()
@@ -138,71 +111,14 @@ void GCPerformanceEntries::stop()
 }
 
 // https://github.com/nodejs/node/blob/v26.12.1/src/node_perf.cc#L208-L241
-void GCPerformanceEntries::doWork(VM& vm)
-{
-    cancelTimer();
-    [[maybe_unused]] bool ranWithDelay;
-    {
-        Locker locker { m_lock };
-        ranWithDelay = std::exchange(m_timerIsArmed, false);
-        m_hasWokenLoopForTimer = false;
-    }
-#if OS(WINDOWS)
-    // A timer with a delay runs inside uv_run(). There a loop that only pumps its handles counts as alive (us_loop_pump), so the loop is asked from the tick, which runs the timer with no delay.
-    if (ranWithDelay) {
-        setTimeUntilFire(0_s);
-        return;
-    }
-#endif
-    auto* bunVM = WebCore::clientData(vm)->bunVM;
-    // An entry reaches its observers from a ref'd immediate, and a collection must not keep the loop alive: the hand-off waits for a turn that something else asks for.
-    if (Bun__VM__hasPendingTasks(bunVM))
-        queueHandOff(HandOff::GoBehindQueuedTasks);
-    else if (Bun__VM__isEventLoopKeptAliveBehindItsTasks(bunVM))
-        queueHandOff(HandOff::CallListeners);
-    else
-        setTimeUntilFire(0_s);
-}
-
-void GCPerformanceEntries::queueHandOff(HandOff step)
-{
-    auto* clientData = WebCore::clientData(m_vm);
-    Bun__VM__queueTask(clientData->bunVM, new WebCore::EventLoopTask([protectedThis = Ref { *this }, step](WebCore::ScriptExecutionContext&) {
-        protectedThis->handOff(step);
-    }));
-    // The timer can run after the loop has read its tasks and chosen how long it waits.
-    if (auto* vmHandle = clientData->vmHandle)
-        Bun__VmHandle__wake(vmHandle);
-}
-
-void GCPerformanceEntries::handOff(HandOff step)
-{
-    auto* bunVM = WebCore::clientData(m_vm)->bunVM;
-    switch (step) {
-    case HandOff::GoBehindQueuedTasks:
-        // A queued task can be the doing of the collection itself (the cleanup of a FinalizationRegistry), and it holds the loop until it has run. The tick takes the tasks of other threads after this one was queued, so this task is ahead of those, and goes behind them here.
-        if (Bun__VM__hasPendingTasks(bunVM)) {
-            queueHandOff(HandOff::AskBehindQueuedTasks);
-            return;
-        }
-        [[fallthrough]];
-    case HandOff::AskBehindQueuedTasks:
-        if (!Bun__VM__isEventLoopKeptAliveBehindItsTasks(bunVM)) {
-            setTimeUntilFire(0_s);
-            return;
-        }
-        [[fallthrough]];
-    case HandOff::CallListeners:
-        callListeners();
-    }
-}
-
 void GCPerformanceEntries::callListeners()
 {
     Records records;
     {
         Locker locker { m_lock };
         records.swap(m_records);
+        m_synchronousRecordEnd = 0;
+        Bun__VM__setGCPerformanceEntriesWait(m_bunVM, false);
     }
     if (records.isEmpty())
         return;
@@ -239,7 +155,7 @@ void GCPerformanceEntries::callListeners()
             arguments.append(jsBoolean(record.forced));
             JSC::profiledCall(realm, ProfilingReason::API, listener, callData, jsUndefined(), arguments);
             if (auto* exception = scope.exception()) [[unlikely]] {
-                // The tick that runs this task takes a termination, and the report of an error can end with one.
+                // The event loop takes a termination, and the report of an error can end with one.
                 if (!scope.tryClearException())
                     return;
                 Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(realm, exception);
@@ -267,18 +183,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetGCPerformanceEntryListener, (JSGlobalObjec
     return JSValue::encode(jsUndefined());
 }
 
-// Bun.gc(true) and gc() call this after the collection that they force.
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__GCPerformanceEntries__didForceCollection(Zig::GlobalObject* globalObject)
+// From EventLoop::tick_immediate_tasks (event_loop.rs), in a turn in which an unref'd setImmediate runs.
+extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__GCPerformanceEntries__handOff(Zig::GlobalObject* globalObject)
 {
-    if (auto* entries = WebCore::clientData(globalObject->vm())->gcPerformanceEntries.get()) [[unlikely]]
-        entries->didForceCollection();
-}
-
-// A 'gc' performance entry that waits for its turn can still settle a promise, and it does not keep the event loop alive.
-extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__hasGCPerformanceEntriesToDeliver(Zig::GlobalObject* globalObject)
-{
-    auto* entries = WebCore::clientData(globalObject->vm())->gcPerformanceEntries.get();
-    return entries && entries->hasRecords();
+    if (auto* entries = WebCore::clientData(globalObject->vm())->gcPerformanceEntries.get())
+        entries->callListeners();
 }
 
 } // namespace Bun

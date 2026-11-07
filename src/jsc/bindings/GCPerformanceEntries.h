@@ -3,16 +3,17 @@
 #include "root.h"
 
 #include <JavaScriptCore/HeapObserver.h>
-#include <JavaScriptCore/JSRunLoopTimer.h>
 #include <JavaScriptCore/Weak.h>
 #include <wtf/Lock.h>
 #include <wtf/MonotonicTime.h>
+#include <wtf/RefCounted.h>
+#include <wtf/SharedTask.h>
 #include <wtf/Vector.h>
 
 namespace Bun {
 
-// The 'gc' entries of node:perf_hooks. JSC calls a heap observer inside the collection, on either thread, so a timer takes the records to the JS thread.
-class GCPerformanceEntries final : public JSC::JSRunLoopTimer, public JSC::HeapObserver {
+// The 'gc' entries of node:perf_hooks. JSC calls a heap observer inside the collection, on either thread, so the records wait for the event loop of the JS thread: EventLoop::tick_immediate_tasks (event_loop.rs) hands them over.
+class GCPerformanceEntries final : public RefCounted<GCPerformanceEntries>, public JSC::HeapObserver {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(GCPerformanceEntries);
 
 public:
@@ -26,29 +27,20 @@ public:
     void discardRecords();
     void stop();
 
+    bool observesHeap() const { return m_observesHeap; }
+    // For the request of a synchronous collection: what tells which record is its own.
+    RefPtr<WTF::SharedTask<void()>> willCollectSynchronously();
     // After a synchronous collection that the program asked for, and the sweep that follows it.
     void didForceCollection();
-    // Right before this thread waits in the event loop, with or without access to the heap.
-    void eventLoopWillWait();
-    // The records of some collections have not reached the listeners yet.
-    bool hasRecords();
+    // Gives the records that wait to the listeners.
+    void callListeners();
 
 private:
     explicit GCPerformanceEntries(JSC::VM&);
 
     void willGarbageCollect() final;
     void didGarbageCollect(JSC::CollectionScope) final;
-    void doWork(JSC::VM&) final;
     void setObservesHeap(bool);
-    // What the task of a hand-off does first: see doWork().
-    enum class HandOff : uint8_t {
-        GoBehindQueuedTasks,
-        AskBehindQueuedTasks,
-        CallListeners,
-    };
-    void queueHandOff(HandOff);
-    void handOff(HandOff);
-    void callListeners();
 
     struct Record {
         WTF::MonotonicTime start;
@@ -60,15 +52,15 @@ private:
     using Records = WTF::Vector<Record, 4>;
 
     JSC::VM& m_vm;
+    void* m_bunVM;
     WTF::Vector<JSC::Weak<JSC::JSObject>, 1> m_listeners;
     bool m_observesHeap { false };
     std::optional<WTF::MonotonicTime> m_collectionStart;
+    RefPtr<WTF::SharedTask<void()>> m_synchronousCollectionDidEnd;
     WTF::Lock m_lock;
     Records m_records WTF_GUARDED_BY_LOCK(m_lock);
-    // The timer is due 1 ms after the first record that waits. A later collection does not move it.
-    bool m_timerIsArmed WTF_GUARDED_BY_LOCK(m_lock) { false };
-    // eventLoopWillWait() has woken the loop since the timer was last armed.
-    bool m_hasWokenLoopForTimer WTF_GUARDED_BY_LOCK(m_lock) { false };
+    // One past the record of the last synchronous collection, or 0.
+    unsigned m_synchronousRecordEnd WTF_GUARDED_BY_LOCK(m_lock) { 0 };
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetGCPerformanceEntryListener);

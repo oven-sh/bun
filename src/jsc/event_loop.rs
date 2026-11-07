@@ -1149,6 +1149,8 @@ impl EventLoop {
         // recursion check and the trailing `= to_run_now` store, dropping any
         // immediates JS queued during this tick. ASM-verified PROVEN_CACHED.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: per the caller contract. Before the batch is taken: the hand-off queues the immediate that calls the observers.
+        unsafe { Self::hand_off_gc_performance_entries(this, virtual_machine) };
         // SAFETY: `this` is the unique live `EventLoop`; each access below is a
         // short-lived `&mut` that does not overlap re-entry.
         let mut to_run_now = core::mem::take(unsafe { &mut (*this).immediate_tasks });
@@ -1192,6 +1194,30 @@ impl EventLoop {
 
         // SAFETY: as above.
         unsafe { (*this).next_immediate_tasks = to_run_now };
+    }
+
+    /// Gives the records of collections to `node:perf_hooks` in a turn in which an unref'd `setImmediate` runs. The entry of a collection reaches its observers from an immediate, and a collection keeps no loop alive.
+    #[inline]
+    unsafe fn hand_off_gc_performance_entries(
+        this: *mut Self,
+        virtual_machine: *mut VirtualMachine,
+    ) {
+        // SAFETY: `virtual_machine` is the live VM that owns `this`, as for `tick_immediate_tasks`.
+        let vm = unsafe { &*virtual_machine };
+        if !vm.gc_performance_entries_wait.load(Ordering::Relaxed) {
+            return;
+        }
+        bun_core::hint::cold();
+        // A macro runs on a loop of its own, which ends with the macro: what the hand-off queues there would never run.
+        if vm.macro_mode || !vm.is_event_loop_kept_alive() {
+            return;
+        }
+        let global = vm.global();
+        // SAFETY: `this` is the live loop of that VM.
+        unsafe { (*this).enter() };
+        let _ = crate::cpp::Bun__GCPerformanceEntries__handOff(global);
+        // SAFETY: as above.
+        let _ = unsafe { (*this).exit_maybe_drain_microtasks(true) };
     }
 
     pub fn ensure_waker(&mut self) {

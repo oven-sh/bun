@@ -5379,6 +5379,9 @@ extern "C" void Zig__GlobalObject__retireDerivedRealmsForTestIsolation(Zig::Glob
     Bun::retireWebViewsForTestIsolation(globalObject);
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
     retireDerivedRealms(globalObject);
+    // The global object stays, and so does its listener. What the finished file collected is not for the observers of the next file.
+    if (auto* gcPerformanceEntries = WebCore::clientData(globalObject->vm())->gcPerformanceEntries.get())
+        gcPerformanceEntries->discardRecords();
 }
 
 extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)

@@ -1,6 +1,5 @@
 #include "root.h"
 #include "BunClientData.h"
-#include "GCPerformanceEntries.h"
 
 #include <atomic>
 
@@ -140,7 +139,5 @@ extern "C" unsigned int Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t now
         vm->heap.releaseAccess();
         *releasedHeapAccess = 1;
     }
-    if (auto* gcPerformanceEntries = WebCore::clientData(*vm)->gcPerformanceEntries.get()) [[unlikely]]
-        gcPerformanceEntries->eventLoopWillWait();
     return runAgainInMs;
 }

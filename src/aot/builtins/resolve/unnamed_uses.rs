@@ -485,6 +485,7 @@ impl Resolver<'_, '_> {
         let mut redeclared = bound.runtime.redeclared_commonjs_variables().iter();
         let is_plain = is_variable
             && is_stored_under_its_name_alone
+            && !bound.runtime.is_stored_by_function_of_block(variable)
             && !bound.is_appended_symbol(variable)
             && !redeclared.any(|it| {
                 it.0 == variable && reads_what_wrapper_hands_in(self.input.hir, bound, variable)

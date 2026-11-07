@@ -1,5 +1,7 @@
 use bun_ast::Loader;
 use bun_paths::fs::PathName;
+use bun_paths::platform::Posix;
+use bun_paths::resolve_path::normalize_string_buf;
 use core::cmp::Ordering;
 use std::hash::{DefaultHasher, Hasher};
 
@@ -150,9 +152,26 @@ pub struct PlacesOfForm {
     pub is_form_without_attributes: bool,
 }
 
+pub const DATABASE_NAMESPACE: &[u8] = b"database";
+
+pub fn name_of_database(specifier: &[u8]) -> Vec<u8> {
+    let mut buffer = vec![0; specifier.len() + 2];
+    let normalized = normalize_string_buf::<true, Posix, false>(specifier, &mut buffer);
+    match normalized.starts_with(b"../") {
+        true => normalized.to_vec(),
+        false => [b"./", &*normalized].concat(),
+    }
+}
+
 pub fn places_of_form(path: &[u8], type_attribute: &[u8]) -> Option<PlacesOfForm> {
     let has_form = |&it: &Loader| parses_text_as_data(it) || it == Loader::Sqlite;
     let loader = Loader::from_string(type_attribute).filter(has_form)?;
+    if path.starts_with(b"./") || path.starts_with(b"../") {
+        return (loader == Loader::Sqlite).then(|| PlacesOfForm {
+            path_of_form: [DATABASE_NAMESPACE, b":", &name_of_database(path)].concat(),
+            is_form_without_attributes: false,
+        });
+    }
     Some(PlacesOfForm {
         path_of_form: path_of_form(path, loader),
         is_form_without_attributes: !is_url_with_text(path) && loader == loader_by_name(path),
@@ -199,6 +218,24 @@ mod tests {
     fn places(path: &[u8], type_attribute: &[u8]) -> Option<(Vec<u8>, bool)> {
         let places = places_of_form(path, type_attribute)?;
         Some((places.path_of_form, places.is_form_without_attributes))
+    }
+
+    #[test]
+    fn database_under_a_name_as_the_program_writes_it_has_the_module_made_for_that_name() {
+        let made = |path: &[u8]| Some((path.to_vec(), false));
+        assert_eq!(
+            places(b"./data.sqlite", b"sqlite"),
+            made(b"database:./data.sqlite")
+        );
+        assert_eq!(
+            places(b"./sub/../data.sqlite", b"sqlite"),
+            made(b"database:./data.sqlite")
+        );
+        assert_eq!(
+            places(b"../data.sqlite", b"sqlite"),
+            made(b"database:../data.sqlite")
+        );
+        assert_eq!(places(b"./data.json", b"json"), None);
     }
 
     #[test]

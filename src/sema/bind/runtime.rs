@@ -39,6 +39,7 @@ define_id!(PrivateNameId);
 pub struct RuntimeBindOptions {
     pub jsx_factory_root: Option<Atom>,
     pub jsx_fragment_root: Option<Atom>,
+    pub jsx_paths: [Option<Atom>; 2],
     pub emits_decorator_metadata: bool,
     pub hoists_top_level_variables: bool,
     pub object_prototype_takes_names: bool,
@@ -318,6 +319,7 @@ pub(in crate::bind) fn compute(
 ) {
     input.bound.runtime.tables = Some(Box::default());
     input.bound.runtime.hoists_top_level_variables = input.options.hoists_top_level_variables;
+    input.bound.runtime.jsx_paths = input.options.jsx_paths;
     input.bound.runtime.first_appended_symbol = input.bound.symbols.len() as u32;
     let scopes = declarations::compute_declarations(&mut input);
     references::compute_references(&mut input, &scopes);

@@ -138,6 +138,7 @@ pub(super) fn analyze<R>(
         runtime: Some(RuntimeBindOptions {
             jsx_factory_root: None,
             jsx_fragment_root: None,
+            jsx_paths: [None; 2],
             emits_decorator_metadata: false,
             hoists_top_level_variables: false,
             object_prototype_takes_names: false,

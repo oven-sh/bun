@@ -1187,6 +1187,40 @@ fn whoever_has_the_object_may_change_the_marker() {
         assert_eq!(*markers, [None, Some(true), Some(true)], "{taken}");
     }
     let known = [Some(false), Some(true), Some(true)];
+    let off_answers = [
+        "function N(e) { return e && e.__esModule ? e : { default: e }; } const { default: oN } = N(require('K')); globalThis.held = oN;",
+        "function N(e) { return e && e.__esModule ? e : { default: e }; } const { ...oN } = N(require('K')); globalThis.held = oN;",
+        "function N(e) { return e && e.__esModule ? e : { default: e }; } const hN = N(require('K')); const { default: oN } = hN; globalThis.held = oN;",
+        "function N(e) { return e && e.__esModule ? e : { default: e }; } const hN = N(require('K')); const { [process.argv[2]]: oN } = hN; globalThis.held = oN;",
+        "function N(e) { return e && e.__esModule ? e : { default: e }; } const oN = (N(require('K')).default ||= 1); globalThis.held = oN;",
+    ];
+    for (markers, taken) in markers_with("main.cjs", &off_answers)
+        .iter()
+        .zip(off_answers)
+    {
+        assert_eq!(*markers, [None, Some(true), Some(true)], "{taken}");
+    }
+    let off_holders = [
+        "function N(e) { return e && e.__esModule ? e : { default: e }; } const mN = require('K'); const { default: oN } = N(mN); globalThis.held = oN;",
+    ];
+    for (markers, taken) in markers_with("main.cjs", &off_holders)
+        .iter()
+        .zip(off_holders)
+    {
+        assert_eq!(markers[0], None, "{taken}");
+    }
+    let off_namespaces =
+        ["import * as N from 'K'; const { default: oN } = N; globalThis.held = oN;"];
+    for (markers, taken) in markers_with("main.mjs", &off_namespaces)
+        .iter()
+        .zip(off_namespaces)
+    {
+        assert_eq!(*markers, [None, Some(true), Some(true)], "{taken}");
+    }
+    let reads = [
+        "function N(e) { return e && e.__esModule ? e : { default: e }; } const { a: oN } = N(require('K')); globalThis.held = oN;",
+    ];
+    assert_eq!(markers_with("main.cjs", &reads), [known]);
     let leaves = [
         "require('K');",
         "{ const m = require('K'); if (m && typeof m.a === 'number') m.a = 2; }",

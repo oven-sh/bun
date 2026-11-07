@@ -198,6 +198,7 @@ struct Follower<'i, 'a, 's> {
     open_parameters: Vec<ExprId>,
     stand_in: Option<SymbolId>,
     calls_of_resolvers: RefCell<FxHashMap<Vec<u8>, CallsUnderName>>,
+    objects_asked_whether_their_functions_see_them: FxHashMap<ExprId, bool>,
 }
 
 #[derive(Default)]
@@ -248,6 +249,7 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             open_parameters: Vec::new(),
             stand_in: None,
             calls_of_resolvers: RefCell::default(),
+            objects_asked_whether_their_functions_see_them: FxHashMap::default(),
         }
     }
 }
@@ -1115,11 +1117,13 @@ impl Follower<'_, '_, '_> {
                         is_await: false,
                         ..
                     } if left == statement => return self.values_of_elements(expr),
-                    StmtKind::ForOf { left, .. } | StmtKind::ForIn { left, .. }
-                        if left == statement =>
-                    {
-                        return None;
+                    StmtKind::ForIn { left, expr, .. } if left == statement => {
+                        return match self.values_of_listing(expr, true)?.pop() {
+                            Some(Held::ListOf(keys)) => Some(keys),
+                            _ => None,
+                        };
                     }
+                    StmtKind::ForOf { left, .. } if left == statement => return None,
                     _ => {}
                 }
             }
@@ -1534,7 +1538,10 @@ impl Follower<'_, '_, '_> {
                     return false;
                 }
                 match self.find_call_of_member(above) {
-                    Some(_) => self.asks_list_without_changing_it(above),
+                    Some(_) => {
+                        self.asks_list_without_changing_it(above)
+                            || self.calls_function_that_cannot_see_its_holder(above)
+                    }
                     None => {
                         self.holds_what_cannot_be_changed(above) || self.keeps_as_written(above)
                     }
@@ -1593,6 +1600,42 @@ impl Follower<'_, '_, '_> {
         elements.is_some_and(|elements| {
             asks || hands_elements_on && !elements.iter().any(Held::can_be_changed)
         })
+    }
+
+    fn calls_function_that_cannot_see_its_holder(&mut self, member: ExprId) -> bool {
+        let Some((object, _)) = self.inputs.hir.member_key(member) else {
+            return false;
+        };
+        let Some(holders) = self.values_of(object) else {
+            return false;
+        };
+        holders.into_iter().all(|holder| match holder {
+            Held::Object(literal) => self.is_out_of_sight_of_its_functions(literal),
+            _ => false,
+        })
+    }
+
+    fn is_out_of_sight_of_its_functions(&mut self, literal: ExprId) -> bool {
+        if let Some(&known) = self
+            .objects_asked_whether_their_functions_see_them
+            .get(&literal)
+        {
+            return known;
+        }
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let text = hir[literal].pos..hir[literal].end;
+        let mut expressions = hir.exprs.iter();
+        let is_out_of_sight = !expressions
+            .any(|it| matches!(it.kind, ExprKind::Super) && text.contains(&it.pos))
+            && self.properties_of(literal).is_some_and(|written| {
+                written.iter().all(|it| {
+                    matches!(hir[hir.skip_type_assertions(it.1)].kind, ExprKind::Fn(function)
+                        if !bound.fns[function.idx()].contains_this)
+                })
+            });
+        self.objects_asked_whether_their_functions_see_them
+            .insert(literal, is_out_of_sight);
+        is_out_of_sight
     }
 
     fn keys_of(&mut self, key: MemberKey) -> Option<Option<Vec<Vec<u8>>>> {

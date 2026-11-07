@@ -1589,6 +1589,22 @@ const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
         &["./a.node", "./b.node"],
     ),
     (
+        "const table = { a: 1, b: 2 }; for (const name in table) require(name);",
+        &["a", "b"],
+    ),
+    (
+        "const table = { a: 1, b: 2 }; for (const name in table) require(`./${name}.node`);",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) { return found; }, b: found => found }; for (const name in uses) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: function (found) {} }; for (const name of Object.keys(uses)) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
         "const name = a || './a'; require(name ?? './b');",
         &[],
     ),
@@ -1599,6 +1615,16 @@ const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
 ];
 
 const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
+    "const uses = { a() { this.b = 1; } }; for (const name in uses) uses[name](require(name));",
+    "const uses = { a() { (() => this)().b = 1; } }; for (const name in uses) uses[name](require(name));",
+    "const uses = { a() { super.b = 1; } }; for (const name in uses) uses[name](require(name));",
+    "const uses = { a: other }; for (const name in uses) uses[name](require(name));",
+    "const uses = { a() { uses.b = 1; } }; for (const name in uses) uses[name](require(name));",
+    "const uses = { a() { eval(x); } }; for (const name in uses) uses[name](require(name));",
+    "const table = { __proto__: more, a: 1 }; for (const name in table) require(name);",
+    "const table = { a: 1, ...more }; for (const name in table) require(name);",
+    "const list = ['a']; for (const name in list) require(name);",
+    "const table = { a: 1 }; change(table); for (const name in table) require(name);",
     "const names = { linux: './a' }; names.linux = x; require(names[process.platform]);",
     "const names = { linux: './a' }; change(names); require(names[process.platform]);",
     "const names = { linux: './a' }; const other = names; other[k] = x; require(names[process.platform]);",

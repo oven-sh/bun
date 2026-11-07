@@ -125,6 +125,7 @@ define_tables! {
             may_name_own_path: bool,
             may_require_get_members: std::sync::OnceLock<bool>,
             hoists_top_level_variables: bool,
+            jsx_paths: [Option<crate::atom::Atom>; 2],
             first_appended_symbol: u32,
             appended_symbol_end: u32,
         }
@@ -142,6 +143,7 @@ define_tables! {
         }
         lists {
             strict_scopes: S::List<u64>,
+            variables_stored_by_functions_of_blocks: S::List<u64>,
             function_flags: S::List<FunctionFlags>,
         }
     }

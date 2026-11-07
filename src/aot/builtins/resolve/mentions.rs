@@ -150,8 +150,29 @@ impl Resolver<'_, '_> {
         }
     }
 
+    fn note_names_of_jsx_paths(&mut self) {
+        let input = self.input;
+        let [factory, fragment] = input.bound.runtime.jsx_paths();
+        for (kind, written) in [
+            (ImplicitReferenceKind::JsxFactory, factory),
+            (ImplicitReferenceKind::JsxFragment, fragment),
+        ] {
+            let mut references = input.bound.runtime.implicit_references().iter();
+            let Some(written) = written else {
+                continue;
+            };
+            if !references.any(|reference| reference.kind == kind) {
+                continue;
+            }
+            let names = bun_core::strings::split(input.atoms.bytes(written), b".");
+            let path: SmallVec<[Atom; 4]> = names.map(|name| input.atoms.intern(name)).collect();
+            self.note_names_of_path(&path);
+        }
+    }
+
     pub(super) fn visit_implicit_references(&mut self) {
         let input = self.input;
+        self.note_names_of_jsx_paths();
         for reference in input.bound.runtime.implicit_references() {
             match reference.binding {
                 Binding::Free => {

@@ -735,6 +735,8 @@ cd /home/me/Desktop
 ./hello
 ```
 
+With `--aot`, a path is resolved the first time it is imported. After `process.chdir()`, `await import("./my.db", { with: { type: "sqlite" } })` returns the database that was opened first, not the one in the new directory.
+
 ---
 
 ## Embed assets & files

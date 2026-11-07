@@ -509,3 +509,44 @@ fn a_program_that_may_evaluate_text_or_lay_a_method_for_the_printer_says_so() {
         assert!(!lets_in(PROGRAM, source), "{source}");
     }
 }
+
+#[test]
+fn a_variable_that_the_function_of_a_block_is_stored_into_is_a_key_that_nobody_knows() {
+    for source in [
+        "var i = 0; { function i() {} } f[i];",
+        "var i = 0; if (g) function i() {} f[i];",
+        "function h() { var i = 0; { function i() {} } return f[i]; }",
+        "var i = 0; { function i() {} } const j = i; f[j];",
+    ] {
+        with_case(SCRIPT, source, |case| {
+            assert!(case.resolved.uses().lets_in_what_nobody_names, "{source}");
+        });
+    }
+}
+
+#[test]
+fn the_names_behind_the_first_of_a_path_written_for_jsx_are_names_that_the_text_reads() {
+    const ELEMENTS: Setup = Setup {
+        path: "/project/a.tsx",
+        ..PROGRAM
+    };
+    for (source, is_read) in [
+        (
+            "/** @jsxRuntime classic */\n/** @jsx list.at */\nconst list = [1]; <a />;",
+            true,
+        ),
+        (
+            "/** @jsxRuntime classic */\n/** @jsx make */\n/** @jsxFrag list.at */\nconst list = [1]; <></>;",
+            true,
+        ),
+        (
+            "/** @jsxRuntime classic */\n/** @jsx list.at */\nconst list = [1];",
+            false,
+        ),
+    ] {
+        with_case(ELEMENTS, source, |case| {
+            let members_read = &case.resolved.uses().asks.members_read;
+            assert_eq!(!members_read.is_empty(), is_read, "{source}");
+        });
+    }
+}

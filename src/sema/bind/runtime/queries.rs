@@ -304,6 +304,17 @@ impl RuntimeBindings<'_> {
         &self.references.unbound_name_stores
     }
 
+    pub fn jsx_paths(&self) -> [Option<Atom>; 2] {
+        self.jsx_paths
+    }
+
+    pub fn is_stored_by_function_of_block(&self, variable: SymbolId) -> bool {
+        has_bit(
+            &self.variables_stored_by_functions_of_blocks,
+            variable.idx(),
+        )
+    }
+
     pub fn annex_b_functions(&self) -> &[AnnexBFunction] {
         &self.declarations.annex_b_functions
     }

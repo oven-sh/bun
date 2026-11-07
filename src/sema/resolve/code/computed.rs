@@ -78,9 +78,15 @@ impl<'h> Resolver<'h> {
         let outcome = alternatives.iter().try_for_each(|&(start, end)| {
             search.request.prefix = start;
             search.request.suffix = end.unwrap_or_default();
-            match end {
+            let tried = match end {
                 Some(_) => search.find_candidates(),
                 None => search.try_specifier(start),
+            };
+            match tried {
+                Err(ComputedUnknown::ExternalCandidate) if end.is_none() && !is_path(start) => {
+                    Ok(())
+                }
+                Ok(()) | Err(_) => tried,
             }
         });
         search.finish(outcome)
@@ -628,6 +634,14 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         {
             return Ok(());
         }
+        if request.site.opens_database && (text.starts_with(b"./") || text.starts_with(b"../")) {
+            if let Some(path) = self.resolver.code_host().create_file_of_database(text) {
+                let candidate = ComputedCandidate::File(self.resolver.code_file(&path, None));
+                self.candidates.push(candidate);
+                self.spellings.push((text.to_vec(), candidate));
+                return Ok(());
+            }
+        }
         let request = CodeRequest {
             specifier: text,
             importer: request.importer,
@@ -635,8 +649,12 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             kind: request.kind,
             form: request.form,
         };
+        let is_written_out = self.request.suffix.is_empty() && text == self.request.prefix;
         let candidate = match self.resolver.resolve_code(&request) {
-            CodeResolution::File(file) if !has_extension(split_after_last_slash(file.path).1) => {
+            CodeResolution::File(file)
+                if !has_extension(split_after_last_slash(file.path).1)
+                    && !(is_written_out && self.request.site.type_attribute.is_some()) =>
+            {
                 return Ok(());
             }
             CodeResolution::File(file)

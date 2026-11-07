@@ -227,6 +227,29 @@ fn name_that_is_handed_on_is_asked_of_each_file_under_the_name_it_has_there() {
 }
 
 #[test]
+fn name_that_comes_back_to_a_file_under_another_name_goes_on_to_the_mock() {
+    let files = [
+        (
+            "index.js",
+            "export * from './legacy.js';\nexport { make } from './api.js';\n",
+        ),
+        (
+            "legacy.js",
+            "export { make as create } from './index.js';\n",
+        ),
+        ("api.js", "export { make } from './impl.js';\n"),
+        ("impl.js", "export const make = () => 'real';\n"),
+    ];
+    assert_eq!(
+        find_way(&["api.js"], &files, ("index.js", "create")),
+        [
+            "api.js make by its name from index.js behind 2",
+            "declaration"
+        ]
+    );
+}
+
+#[test]
 fn name_that_is_handed_on_twice_has_a_station_for_the_third_file() {
     let files = [
         ("outer.js", "export { b as c } from './inner.js';\n"),

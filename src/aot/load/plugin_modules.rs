@@ -4,12 +4,13 @@ use crate::load::source_provider::{
     Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest, SourceProvider,
 };
 use crate::load::{HOST_ROOT, is_host_path, read_file_bytes};
+use crate::module_keys::{DATABASE_NAMESPACE, name_of_database};
 use crate::options::EntryText;
 use bun_ast::{ImportKind, Loader};
 use bun_core::fmt::hex_byte_lower;
 use bun_core::strings::BOM;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{dirname, normalize_string_buf};
+use bun_paths::resolve_path::dirname;
 use bun_sema::resolve::{CodeImportForm, CodeImportKind, CodeRequest, Host, to_path};
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, ShardedMap};
@@ -20,7 +21,6 @@ use std::cmp::Ordering;
 use std::sync::OnceLock;
 
 const FILE_NAMESPACE: &[u8] = b"file";
-const DATABASE_NAMESPACE: &[u8] = b"database";
 pub(super) const ENTRY_TEXT_NAMESPACE: &[u8] = b"entrytext";
 const VIRTUAL_DIRECTORY: &[u8] = b"plugin/";
 const ENCODED_EMPTY_SEGMENT: &[u8] = b"%2f";
@@ -171,12 +171,7 @@ impl<'a> PluginModules<'a> {
     }
 
     pub(crate) fn add_database(&self, specifier: &[u8]) -> Vec<u8> {
-        let mut buffer = vec![0; specifier.len() + 2];
-        let normalized = normalize_string_buf::<true, Posix, false>(specifier, &mut buffer);
-        let name = match normalized.starts_with(b"../") {
-            true => normalized.to_vec(),
-            false => [b"./", &*normalized].concat(),
-        };
+        let name = name_of_database(specifier);
         let virtual_path = create_virtual_path(DATABASE_NAMESPACE, &name);
         let module = StoredModule {
             loader: Loader::Sqlite,

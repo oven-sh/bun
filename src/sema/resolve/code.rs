@@ -88,6 +88,7 @@ pub struct ComputedCodeRequest<'a> {
 pub struct SiteOfComputedLoad<'a> {
     pub folder: &'a [u8],
     pub type_attribute: Option<&'a [u8]>,
+    pub opens_database: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

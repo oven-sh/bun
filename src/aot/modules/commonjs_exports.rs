@@ -756,6 +756,30 @@ struct TakenObjects {
     names_way_to_module_objects: bool,
 }
 
+impl Held {
+    fn shown_as_default(self) -> Option<Held> {
+        match self {
+            Held::Namespace | Held::Answer => Some(Held::Default),
+            Held::AnswerPastMarker => Some(Held::Object),
+            Held::Object | Held::Default => None,
+        }
+    }
+}
+
+fn is_default_taken_by_pattern(text: &Text<'_, '_>, value: ExprId) -> bool {
+    let hir = text.hir;
+    let Parent::VarInit(declaration) = text.parent(value).1 else {
+        return false;
+    };
+    let PatKind::Object(properties) = hir[hir[declaration].pat].kind else {
+        return false;
+    };
+    properties.iter().any(|property| {
+        let property = &hir[property];
+        property.is_rest || !matches!(property.key, PropKey::Name(name) if name != known::default)
+    })
+}
+
 impl TakenObjects {
     fn take(&mut self, held: Held, module: ModuleRef) {
         match held {
@@ -766,17 +790,18 @@ impl TakenObjects {
     }
 
     fn look_at_use(&mut self, text: &Text<'_, '_>, used: ExprId, held: Held, module: ModuleRef) {
+        if let Some(shown) = held.shown_as_default()
+            && is_default_taken_by_pattern(text, used)
+        {
+            return self.take(shown, module);
+        }
         let Some(access) = text.find_access(used) else {
             if !text.only_reads_or_tests(used) {
                 self.take(held, module);
             }
             return;
         };
-        let shown_as_default = match held {
-            Held::Namespace | Held::Answer => Some(Held::Default),
-            Held::AnswerPastMarker => Some(Held::Object),
-            Held::Object | Held::Default => None,
-        };
+        let shown_as_default = held.shown_as_default();
         match (
             access.kind,
             shown_as_default.filter(|_| access.name == known::default),
@@ -785,6 +810,12 @@ impl TakenObjects {
             (AccessKind::Read, None) => {}
             _ if access.name == known::__esModule => self.take(held, module),
             (AccessKind::Call, _) => self.called.push((module, access.name)),
+            (
+                AccessKind::Choice(StoredValue::Undefined | StoredValue::IgnoresThis),
+                Some(shown),
+            ) => {
+                self.take(shown, module);
+            }
             (AccessKind::Store(stored) | AccessKind::Choice(stored), _) => {
                 if stored == StoredValue::Unknown {
                     self.take(held, module);

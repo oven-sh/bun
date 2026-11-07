@@ -313,6 +313,14 @@ fn annex_b_blocked() {
     analyzed("a.cjs", "{ let f; { function f() {} } }", |s| {
         assert_eq!(s.bound.runtime.annex_b_functions(), []);
     });
+    for text in [
+        "import f = require('x'); { function f() {} } f;",
+        "namespace N { export const b = 1; } import f = N.b; { function f() {} } f;",
+    ] {
+        analyzed("a.cts", text, |s| {
+            assert_eq!(s.bound.runtime.annex_b_functions(), [], "{text}");
+        });
+    }
     analyzed(
         "a.cjs",
         "function g(f) { { function f() {} } return f; }",

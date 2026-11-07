@@ -890,8 +890,9 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
         RELEASE_AND_RETURN(throwScope, {});
     }
 
-    auto serializedValue = serialized.releaseReturnValue();
-    auto arrayBuffer = serializedValue->toArrayBuffer();
+    auto bytes = serialized.releaseReturnValue()->takeWireBytes();
+    ASSERT(!bytes.isEmpty());
+    auto arrayBuffer = ArrayBuffer::createFromBytes(bytes.releaseBuffer().leakSpan(), createSharedTask<void(void*)>([](void* p) { fastFree(p); }));
 
     if (asNodeBuffer) {
         size_t byteLength = arrayBuffer->byteLength();
@@ -901,11 +902,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
         return JSValue::encode(uint8Array);
     }
 
-    if (arrayBuffer->isShared()) {
-        return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructureWithSharingMode<ArrayBufferSharingMode::Shared>(), WTF::move(arrayBuffer)));
-    }
-
-    return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTF::move(arrayBuffer)));
+    arrayBuffer->makeShared();
+    return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructureWithSharingMode<ArrayBufferSharingMode::Shared>(), WTF::move(arrayBuffer)));
 }
 JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {

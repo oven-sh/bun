@@ -1,8 +1,8 @@
 // RUN(ONE): link
 // ENTRY: app/main.ts
 // CWD: app
-// DIAGNOSTIC: TS2552 app/main.ts:7
 // OPTIONS(ONE): threads=1
+// ONE: function [[declared]] name="declared" {{*}}parameters=[{type=number{{*}}}, {type=anything}, {type=anything}]
 // RUN(T2A): link
 // OPTIONS(T2A): threads=2
 // SAME: ONE T2A
@@ -22,7 +22,7 @@
 // OPTIONS(T16B): threads=16
 // SAME: ONE T16B
 
-// `types` names what the folder of the project holds, and not what lies beside a package. Threads read the packages of both folders in an order that differs from run to run.
+// `types` names what the folder of the project holds, and not what lies beside a package: of the three names that `declared` takes its types from, only the one of the project's own folder is declared, and the other two say nothing. Threads read the packages of both folders in an order that differs from run to run.
 
 // FILE: app/main.ts
 import { far } from "./far";
@@ -30,8 +30,9 @@ import { near } from "./near";
 import type { Listed } from "listed";
 declare const console: { log(...values: unknown[]): void };
 const listed: Listed = { each: visit => visit(1), last: pick => pick("last") };
-const own = { twice: (change: (value: number) => number) => change(change(1)) };
-console.log(far(listed, own) + near(listed, own), listed.last(text => text + "!"), declaredIn_app, declaredIn_far, declaredIn_near);
+const own = { twice: (change: (value: number) => number) => change(change(1)) }; // @ts-expect-error
+console.log(far(listed, own) + near(listed, own), listed.last(text => text + "!"), declaredIn_app, declaredIn_far, declaredIn_near); // @ts-expect-error
+export function declared(inApp: typeof declaredIn_app, inFar: typeof declaredIn_far, inNear: typeof declaredIn_near) {}
 
 // FILE: app/tsconfig.json
 {"compilerOptions":{"strict":true,"target":"esnext","module":"esnext","moduleResolution":"bundler","allowJs":true,"noEmit":true,"skipLibCheck":true,"types":["listed"]},"include":["*.ts"]}

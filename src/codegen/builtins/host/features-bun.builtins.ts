@@ -142,7 +142,10 @@ export default b.declarations(
     "bun:test/vitest",
     "%Expect%",
   ),
-  extendAll(["Test"], ...nativeBindings("Bindgen", "jest.bind.ts", "fileGeneration", "nodeTestMarkResult")),
+  extendAll(
+    ["Test"],
+    ...nativeBindings("Bindgen", "jest.bind.ts", "askedByCompiledTestFile", "fileGeneration", "nodeTestMarkResult"),
+  ),
   extendAll(
     bundlerFeatures,
     ...nativeBindings(
@@ -199,7 +202,7 @@ export default b.declarations(
       "printSource",
     ),
   ),
-  extendAll(["Ffi"], "bun:ffi", "%FFI%"),
+  extendAll(["Ffi"], "bun:ffi", "%FFI%", "%FFICallback%"),
 
   extendAll(["Plugin", ...runtimeTranspilerFeatures], "Bun.plugin"),
 
@@ -380,7 +383,7 @@ export default b.declarations(
   extendAll(
     ["Sockets"],
     "%Listener%",
-    ...nativeBindings("Bindgen", "socket_body.bind.ts", "getBufferedAmount", "isNamedPipeSocket"),
+    ...nativeBindings("Bindgen", "socket_body.bind.ts", "getBufferedAmount", "hasPendingRead", "isNamedPipeSocket"),
   ),
 
   extendAll(
@@ -500,7 +503,7 @@ export default b.declarations(
       capability: "js",
       throws: true,
       runsOnlyOperandCode: true,
-      uses: { path: pathOfAnyKind, options: b.hostOptionBag(["lastModified", ...s3Options]) },
+      uses: { path: pathOfAnyKind, options: b.optionBag(["lastModified", ...s3Options]) },
       reads: [...viewHeaps, ...externalState],
       // A view that is kept as the path gets an ArrayBuffer, and its bytes move there.
       writes: ["TypedArrayStorage"],
@@ -517,7 +520,7 @@ export default b.declarations(
       returns: newPromiseOf(byteCountOrCopy),
       capability: "heap",
       throws: true,
-      uses: { destination: b.inspected, input: [b.readAsCharacters, b.readsContents()] },
+      uses: { destination: b.inspected, input: [b.readsContents()] },
       reads: externalState,
       writes: externalState,
       usesFeature: ["BunFile", ...s3PathUses("destination")],
@@ -535,7 +538,7 @@ export default b.declarations(
           b.readsContents(),
           b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length")),
         ],
-        options: b.hostOptionBag(["createPath", "mode", ...s3Options]),
+        options: b.optionBag(["createPath", "mode", ...s3Options]),
       },
       reads: [...viewHeaps, ...externalState],
       writes: externalState,

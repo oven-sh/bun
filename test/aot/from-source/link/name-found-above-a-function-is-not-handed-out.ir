@@ -1,0 +1,10 @@
+# -- source: name-found-above-a-function-is-not-handed-out.js
+# function f() { }
+# f.tag = 1;
+# sink(f.constructor, f.tag, f.absent);
+# -- end of source
+# If a read of a name off a closure handed out what stands under the name on Function.prototype, `f.constructor` would give the built-in Function as a value, and whoever is seen to hold that is taken to run text:
+# a one-line program that reaches such a read in the library lost its closed world. What is laid on the function is given; undefined where the lookup above finds nothing; of the rest nothing is said, as ever.
+# RUN: link lookups mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-NOT: lookup read FunctionPrototypeConstructor

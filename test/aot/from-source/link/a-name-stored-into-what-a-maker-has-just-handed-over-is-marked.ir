@@ -1,0 +1,37 @@
+# A maker hands back an object that was made in it or in a call of its own: make, makeMarked, first, second. `find` hands back what it finds or what it makes: no maker. `memo` is stored into objects that arrive; `left` is only given undefined.
+# The plume was made for the heron by one of the heron's makers: `root` and `tip` are stored through that field of a fresh heron.
+# -- source: a-name-stored-into-what-a-maker-has-just-handed-over-is-marked.ts
+# interface Plume { kind: number; root?: number; tip?: number; memo?: number }
+# interface Heron { flags: number; id?: number; mark?: number; plume?: Plume; shared?: number; own?: number; left?: number; guess?: number; memo?: number }
+# function Plume(this: Plume) { this.kind = 0; }
+# function Heron(this: Heron, flags: number) { this.flags = flags; }
+# let count = 0;
+# function make(flags: number): Heron { const made: Heron = new (Heron as any)(flags); made.id = ++count; return made; }
+# function makeMarked(flags: number, mark: number) { const made = make(flags); made.mark = mark; made.plume = new (Plume as any)(); made.plume!.root = mark; return made; }
+# function first(mark: number) { const made = makeMarked(1, mark); made.shared = mark; made.own = mark; made.left = undefined; made.plume!.tip = mark; return made; }
+# function second(mark: number) { const made = make(2); made.shared = mark; return made; }
+# const kept: Heron[] = [];
+# function find(flags: number): Heron { return kept[flags] || (kept[flags] = make(flags)); }
+# function third(flags: number) { const found = find(flags); found.guess = flags; return found; }
+# function remember(heron: Heron, value: number) { heron.memo = value; if (heron.plume) heron.plume.memo = value; }
+# function plumeOf(heron: Heron) { return heron.plume!; }
+# function rememberInPlume(heron: Heron, value: number) { const plume = plumeOf(heron); plume.memo = value; }
+# const one = first(3), two = second(4), three = third(5); remember(one, 6); remember(two, 7); rememberInPlume(one, 8);
+# declare function print(text: string): void;
+# print(Object.keys(one).join() + " " + Object.keys(two).join() + " " + Object.keys(three).join() + " " + Object.keys(one.plume!).join());
+# -- end of source
+# REQUIRES: entries-of-bun
+# RUN: link fields mechanisms=all
+# CHECK: "root" appended {{*}}stored-by-follower-of-maker
+# CHECK: "tip" appended {{*}}stored-by-follower-of-maker
+# CHECK: "id" appended {{*}}stored-by-follower-of-maker
+# CHECK: "mark" appended {{*}}stored-by-follower-of-maker
+# CHECK: "plume" appended {{*}}stored-by-follower-of-maker
+# CHECK: "shared" appended {{*}}stored-by-follower-of-maker
+# CHECK: "own" appended {{*}}stored-by-follower-of-maker
+# RUN(NONE): link fields mechanisms=all
+# NONE-NOT: "memo" appended {{*}}stored-by-follower-of-maker
+# NONE-NOT: "left" appended {{*}}stored-by-follower-of-maker
+# NONE-NOT: "guess" appended {{*}}stored-by-follower-of-maker
+# RUN(HELD): link held fields mechanisms=all
+# HELD: "shared" appended {{*}}stored-by-follower-of-maker

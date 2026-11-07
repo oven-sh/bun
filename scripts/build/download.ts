@@ -337,6 +337,12 @@ export async function downloadWithRetry(
   });
 }
 
+/** Throws unless `file`'s sha256 is `expected` (lowercase hex). */
+export function checkSha256(file: string, expected: string): void {
+  const actual = createHash("sha256").update(readFileSync(file)).digest("hex");
+  if (actual !== expected) throw new BuildError(`${basename(file)}: sha256 is ${actual}, expected ${expected}`);
+}
+
 /**
  * Extract a .tar.gz archive with mtime normalization.
  *

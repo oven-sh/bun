@@ -21,7 +21,6 @@ pub(super) fn collect_edges(
             );
         }
         ShapeKind::TypeVariable {
-            parameter: None,
             constraint: Some(constraint),
         } => edges.push(edge(EdgeKind::Transparent, constraint)),
         ShapeKind::Array { element, .. } => edges.push(edge(EdgeKind::Contents, element)),
@@ -44,15 +43,8 @@ pub(super) fn collect_edges(
                 }
             }
         }
-        // A type parameter is a layout of its own, whatever its constraint is.
         ShapeKind::Anything(_)
-        | ShapeKind::TypeVariable {
-            parameter: Some(_), ..
-        }
-        | ShapeKind::TypeVariable {
-            parameter: None,
-            constraint: None,
-        }
+        | ShapeKind::TypeVariable { constraint: None }
         | ShapeKind::Never
         | ShapeKind::Undefined
         | ShapeKind::Null
@@ -91,7 +83,6 @@ mod tests {
         type int32 = number & { readonly \"bun.int32\"?: true };\n\
         }\n";
 
-    /// The type of each parameter, and whether the build has to prove that it is an `int32`.
     #[track_caller]
     fn lower_parameters(types: [&str; 2]) -> Vec<(Type, bool)> {
         let [first, second] = types;
@@ -110,15 +101,16 @@ export function probe(first: {first}, second: {second}): void {{}}
             panic!("only the entry point has code");
         };
         let fragment = &lowered.fragment;
+        let tables = fragment.tables.take();
         let mut functions = fragment.functions.iter().map(|(_, function)| function);
         let probe = functions.find(|function| {
-            let text = function.name.map(|name| fragment.strings.get(name));
+            let text = function.name.map(|name| tables.strings.get(name));
             text == Some(&b"probe"[..])
         });
         let parameters = &probe.expect("the fragment defines the function").parameters;
         let describe = |parameter: &DeclaredType| {
             let is_promise = parameter.flags.contains(PositionFlags::IS_INT32_PROMISE);
-            (fragment.types.get(parameter.ty).clone(), is_promise)
+            (tables.types.get(parameter.ty).to_type(), is_promise)
         };
         parameters.iter().map(describe).collect()
     }

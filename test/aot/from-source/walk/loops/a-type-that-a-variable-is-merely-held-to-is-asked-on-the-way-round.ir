@@ -1,0 +1,20 @@
+# -- source: a-type-that-a-variable-is-merely-held-to-is-asked-on-the-way-round.ts
+# declare function sink(value: unknown): void;
+# function make(target: any) {
+#   let pos = 0;
+#   const jump = () => { pos = target; };
+#   return { run(limit: number, at: number): string { let turns = 0; while (pos < limit) { pos++; turns++; if (pos === at) jump(); if (turns > 40) break; } return turns + " " + typeof pos + " " + pos; } };
+# }
+# sink(make(JSON.parse("0.5")).run(Number(JSON.parse("6")), 3) + make(JSON.parse('"7"')).run(Number(JSON.parse("6")), 3));
+# -- end of source
+# `pos` is stepped by one in the text of the loop, so it is asked for an int32 in front and comes round as one. The copy of `jump` in line stores what is anything. The door at that store holds the slot's type alone,
+# so nothing is assumed of the value on the way round: it is asked for an int32 there, and the failing side is the other copy of the loop. It was assumed: the loop took 0.5 and "7" for int32s and did not end.
+# f3 = run
+# OPTIONS: check=Validate
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: = AssumeType
+# CHECK: i32 @Int32) isInLoop=true isLoopHead=true
+# CHECK-NOT: = AssumeType
+# CHECK: TypeTest {{*}}testedType=i32
+# CHECK-NOT: = AssumeType

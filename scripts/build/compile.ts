@@ -218,22 +218,12 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   const linkCommand = cfg.windows
     ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp $lazy /Fe$out /link $ldflags`
     : `${cxx} @$out.rsp $lazy $ldflags -o $out${machoPostlinkCommand(cfg)}`;
-  // The shell runs it when the link, trimmable or not, has ended well.
-  const embedLibrary = ` && ${cfg.jsRuntime} ${q(embedCompiledLibraryPath)} $out`;
   n.rule("link", {
     command: linkCommand,
     description: "link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
   });
-  if (cfg.compiledLibrary) {
-    n.rule("link_with_library", {
-      command: linkCommand + embedLibrary,
-      description: "link $out, which compiles its own code",
-      rspfile: "$out.rsp",
-      rspfile_content: "$in_newline",
-    });
-  }
   if (cfg.trimmable) {
     assert(cfg.cxxfilt !== undefined, "a trimmable link needs llvm-cxxfilt");
     const trimmableLinkCommand = `${cfg.jsRuntime} ${q(trimScript(cfg, "link.ts"))} $out.trim-work ${q(removableFeaturesJson(cfg))} ${q(builtinUsesJson(cfg))} ${q(`--demangler=${cfg.cxxfilt}`)} -- ${linkCommand}`;
@@ -243,14 +233,6 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
       rspfile: "$out.rsp",
       rspfile_content: "$in_newline",
     });
-    if (cfg.compiledLibrary) {
-      n.rule("link_trimmable_with_library", {
-        command: trimmableLinkCommand + embedLibrary,
-        description: "link $out (trimmable), which compiles its own code",
-        rspfile: "$out.rsp",
-        rspfile_content: "$in_newline",
-      });
-    }
   }
 
   // ─── Static library archive ───
@@ -578,11 +560,7 @@ export interface LinkOpts {
    * copy of this executable. Has an effect only with cfg.trimmable.
    */
   trimmable?: boolean;
-  /** With cfg.compiledLibrary: the executable is Bun, and compiles its own JavaScript into itself behind the link. */
-  embedsCompiledLibrary?: boolean;
 }
-
-export const embedCompiledLibraryPath = resolve(import.meta.dirname, "embed-compiled-library.ts");
 
 /** Every script whose code the trimmable link can run: a change to one relinks. */
 const trimScripts = (cfg: Config) => [
@@ -608,7 +586,6 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
 
   const lazy = opts.lazyObjects ?? [];
   const lazyInputs: string[] = [];
-  const embedsLibrary = opts.embedsCompiledLibrary === true && cfg.compiledLibrary;
   const vars = { ldflags: opts.flags.join(" "), lazy: "" };
   let inputs = [...objects, ...lazy, ...opts.libs];
   if (lazy.length > 0 && linksWithLld(cfg)) {
@@ -628,13 +605,7 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
 
   const node: BuildNode = {
     outputs: [absOut],
-    rule: embedsLibrary
-      ? trimmable
-        ? "link_trimmable_with_library"
-        : "link_with_library"
-      : trimmable
-        ? "link_trimmable"
-        : "link",
+    rule: trimmable ? "link_trimmable" : "link",
     inputs,
     vars,
   };
@@ -647,7 +618,6 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
     ...machoPostlinkImplicitInputs(cfg),
     ...(opts.implicitInputs ?? []),
     ...(trimmable ? [...trimScripts(cfg), removableFeaturesJson(cfg), builtinUsesJson(cfg)] : []),
-    ...(embedsLibrary ? [embedCompiledLibraryPath] : []),
     ...lazyInputs,
   ];
   // lld-link writes the exe's import library under obj/ (flags.ts /IMPLIB)

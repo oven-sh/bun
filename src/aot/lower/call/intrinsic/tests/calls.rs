@@ -93,50 +93,16 @@ fn builtin_function_is_called_on_holder() {
     assert_eq!(probe.count(Opcode::PropGet), 0, "{probe}");
 }
 
-fn is_done_in_place(call: &Operation<'_>) -> bool {
-    contains(call.text().as_bytes(), b"isDoneInPlace")
-}
-
 #[test]
-fn array_is_made_in_the_caller() {
-    let module = lower_runtime_module(
-        "export function probeIntrinsic(n: any) { return $newArrayWithSize(n); }
-export function probeCall(n: any) { return Array(n); }
-export function probeNew(n: any) { return new Array<unknown>(n as number); }
-",
-    );
-    for name in ["probeIntrinsic", "probeCall", "probeNew"] {
-        let probe = module.function(name);
-        let made = probe.only(Opcode::Call);
-        let builtins = probe.all(Opcode::Builtin);
-        let callee = builtins
-            .iter()
-            .find(|builtin| builtin.id() == made.operands()[0]);
-        let Some(callee) = callee else {
-            panic!("the callee is a built-in function:\n{probe}");
-        };
-        let expected = [Reference::Builtin(BuiltinId::Array)];
-        assert_eq!(callee.references(), expected, "{probe}");
-        assert!(is_done_in_place(&made), "{probe}");
-        assert_eq!(probe.count(Opcode::Construct), 0, "{probe}");
-        assert!(
-            probe.terminators(TerminatorKind::ReturnCall).is_empty(),
-            "{probe}"
-        );
-    }
-}
-
-#[test]
-fn array_is_called_where_the_text_calls_it() {
-    let module = lower_runtime_module(
-        "export function probeCall(n: any) { return $call(Array, undefined, n); }
-export function probeTwo(n: any) { return Array(n, n); }
-",
-    );
-    for name in ["probeCall", "probeTwo"] {
-        let probe = module.function(name);
-        assert!(!is_done_in_place(&probe.only(Opcode::Call)), "{probe}");
-    }
+fn new_array_with_size_constructs_original_array() {
+    let module =
+        lower_runtime_module("export function probe(n: any) { return $newArrayWithSize(n); }");
+    let probe = module.function("probe");
+    let array = probe.only_builtin(BuiltinId::Array);
+    let made = probe.only(Opcode::Construct);
+    assert_eq!(made.operands(), [array.id(), probe.parameter(0)], "{probe}");
+    assert_eq!(probe.count(Opcode::Call), 0, "{probe}");
+    assert_eq!(probe.count(Opcode::PropGet), 0, "{probe}");
 }
 
 #[test]

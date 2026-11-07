@@ -22,17 +22,6 @@
 #include "dh-primes.h"
 #endif // OPENSSL_IS_BORINGSSL
 
-// EVP_PKEY_CTX_set_dsa_paramgen_q_bits was added in OpenSSL 1.1.1e.
-#if OPENSSL_VERSION_NUMBER < 0x1010105fL
-#define EVP_PKEY_CTX_set_dsa_paramgen_q_bits(ctx, qbits) \
-    EVP_PKEY_CTX_ctrl((ctx),                             \
-        EVP_PKEY_DSA,                                    \
-        EVP_PKEY_OP_PARAMGEN,                            \
-        EVP_PKEY_CTRL_DSA_PARAMGEN_Q_BITS,               \
-        (qbits),                                         \
-        nullptr)
-#endif
-
 namespace ncrypto {
 namespace {
 using BignumCtxPointer = DeleteFnPtr<BN_CTX, BN_CTX_free>;

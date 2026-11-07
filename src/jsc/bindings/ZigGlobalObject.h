@@ -779,12 +779,9 @@ ALWAYS_INLINE bool isFromRetiredTestIsolationRealm(JSC::JSValue value)
 
 }
 
-#ifndef RENAMED_JSDOM_GLOBAL_OBJECT
-#define RENAMED_JSDOM_GLOBAL_OBJECT
 namespace WebCore {
 using JSDOMGlobalObject = Zig::GlobalObject;
 }
-#endif
 
 // Do not use this directly.
 namespace ___private___ {

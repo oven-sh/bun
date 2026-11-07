@@ -5,6 +5,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { connect, type AddressInfo } from "node:net";
+import { totalmem } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleepWithSignal } from "node:timers/promises";
 
@@ -277,9 +278,13 @@ describe("an error that is no NodeError in Node inherits Error.prototype.toStrin
       ["ERR_VM_MODULE_CACHED_DATA_REJECTED", "Error"],
       ["ERR_ZLIB_INITIALIZATION_FAILED", "Error"],
     ];
-    const expected = rows.map(([code, name]) =>
-      JSON.stringify({ code, name, string: "name: message", inheritsToString: true, hasOwnToString: false }),
-    );
+    // The fixture drops ERR_STRING_TOO_LONG on a host that can refuse to reserve its 2 GiB.
+    const smallHost = totalmem() < 4 * 1024 ** 3;
+    const expected = rows
+      .filter(([code]) => code !== "ERR_STRING_TOO_LONG" || !smallHost)
+      .map(([code, name]) =>
+        JSON.stringify({ code, name, string: "name: message", inheritsToString: true, hasOwnToString: false }),
+      );
 
     // A mark without a producer has nothing that holds it against Node.
     test("each has a producer in the fixture", async () => {

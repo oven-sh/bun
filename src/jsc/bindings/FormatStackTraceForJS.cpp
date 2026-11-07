@@ -856,7 +856,8 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
 {
     auto& vm = JSC::getVM(globalObject);
     JSValue decodedValue = JSValue::decode(thisValue);
-    if (auto* object = decodedValue.getObject()) {
+    // A WebAssembly GC object can't get a property. V8 ignores this receiver too.
+    if (auto* object = decodedValue.getObject(); object && object->type() != JSC::JSType::WebAssemblyGCObjectType) {
         object->putDirect(vm, vm.propertyNames->stack, JSValue::decode(value), JSC::PropertyAttribute::DontEnum | 0);
     }
 

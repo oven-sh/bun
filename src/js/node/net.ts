@@ -2692,8 +2692,10 @@ Socket.prototype[kCloseRawConnection] = function (this: $Node.Socket) {
 Socket.prototype.connect = function connect(this: $Node.Socket, ...args) {
   $debug("Socket.prototype.connect");
   {
-    const [options, connectListener] =
-      $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
+    // By index: a pattern reads the array iterator, which script can replace.
+    const normalized = $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
+    const options = normalized[0];
+    const connectListener = normalized[1];
     let connection = this[ksocket];
     let upgradeDuplex = false;
     let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session, fd, pauseOnConnect } = options;

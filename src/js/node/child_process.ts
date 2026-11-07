@@ -25,7 +25,6 @@ function getSignals() {
 var ArrayPrototypeJoin = Array.prototype.join;
 var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
-var ArrayPrototypeUnshift = Array.prototype.unshift;
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeSort = Array.prototype.sort;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
@@ -43,6 +42,27 @@ var StringPrototypeStartsWith = String.prototype.startsWith;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
+
+// `list.slice(start)` behind `lead` empty slots. By index, because script can replace slice(), unshift() and the array iterator.
+function copyArray(list, start: number, lead: number) {
+  const count = list.length - start;
+  const copy = $newArrayWithSize(count > 0 ? lead + count : lead);
+  for (let i = 0; i < count; i++) {
+    const from = start + i;
+    // slice() leaves a hole where the list has one.
+    if (from in list) $putByValDirect(copy, lead + i, list[from]);
+  }
+  return copy;
+}
+
+// spawnargs is `[argv0, ...args]`. Bun.spawn() takes argv0 apart and wants the program in cmd[0].
+function spawnCommand(file, spawnargs) {
+  const length = spawnargs.length;
+  const cmd = $newArrayWithSize(length > 1 ? length : 1);
+  $putByValDirect(cmd, 0, file);
+  for (let i = 1; i < length; i++) $putByValDirect(cmd, i, spawnargs[i]);
+  return cmd;
+}
 
 interface ExecException extends Error {
   cmd?: string;
@@ -535,7 +555,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
       -4071,
       "EINVAL",
     );
-    error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
+    error.spawnargs = copyArray(options.args, 1, 0);
     return {
       signal: null,
       status: null,
@@ -575,6 +595,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
     }
   }
 
+  const cmd = spawnCommand(options.file, options.args);
+
   var error;
   try {
     var {
@@ -590,10 +612,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
       stdout?: Buffer | number | null;
       stderr?: Buffer | number | null;
     } = Bun.spawnSync({
-      // normalizeSpawnargs has already prepended argv0 to the spawnargs array
-      // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
-      // so we have to set argv0 to spawnargs[0] and cmd[0] to file
-      cmd: [options.file, ...Array.prototype.slice.$call(options.args, 1)],
+      cmd,
       // The normalized env (kBunEnv) is built from the live process.env when
       // options.env is not given, so runtime mutations of process.env reach
       // the child like in Node.js.
@@ -678,7 +697,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
   const resultError = result.error;
   if (resultError) {
     resultError.syscall = "spawnSync " + options.file;
-    resultError.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
+    resultError.spawnargs = copyArray(options.args, 1, 0);
   }
 
   return result;
@@ -889,7 +908,7 @@ function getSignalsToNamesMapping() {
 
 function normalizeExecFileArgs(file, args, options, callback?) {
   if ($isJSArray(args)) {
-    args = ArrayPrototypeSlice.$call(args);
+    args = copyArray(args, 0, 0);
   } else if (args != null && typeof args === "object") {
     callback = options;
     options = args;
@@ -955,18 +974,19 @@ function normalizeSpawnArguments(file, args, options?) {
 
   if (file.length === 0) throw $ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
 
+  // `args` becomes the child's argv, `[argv0, ...args]`, in one copy. Slot 0 is set at the end.
   if ($isJSArray(args)) {
-    args = ArrayPrototypeSlice.$call(args);
+    args = copyArray(args, 0, 1);
   } else if (args == null) {
-    args = [];
+    args = $newArrayWithSize(1);
   } else if (typeof args !== "object") {
     throw $ERR_INVALID_ARG_TYPE("args", "object", args);
   } else {
     options = args;
-    args = [];
+    args = $newArrayWithSize(1);
   }
 
-  validateArgumentsNullCheck(args, "args");
+  validateArgumentsNullCheck(args, "args", 1);
 
   if (options === undefined) options = {};
   else validateObject(options, "options");
@@ -1025,23 +1045,28 @@ function normalizeSpawnArguments(file, args, options?) {
   // Handle shell
   if (shell) {
     validateArgumentNullCheck(shell, "options.shell");
-    const command = ArrayPrototypeJoin.$call([file, ...args], " ");
+    // `[file, ...args].join(" ")`
+    let command = file;
+    for (let i = 1; i < args.length; i++) {
+      const arg = args[i];
+      command += arg == null ? " " : ` ${arg}`;
+    }
     // Set the shell, switches, and commands.
     if (process.platform === "win32") {
       if (typeof shell === "string") file = shell;
       else file = process.env.comspec || "cmd.exe";
       // '/d /s /c' is used only for cmd.exe.
       if (/^(?:.*\\)?cmd(?:\.exe)?$/i.exec(file) !== null) {
-        args = ["/d", "/s", "/c", `"${command}"`];
+        args = [file, "/d", "/s", "/c", `"${command}"`];
         windowsVerbatimArguments = true;
       } else {
-        args = ["-c", command];
+        args = [file, "-c", command];
       }
     } else {
       if (typeof shell === "string") file = shell;
       else if (process.platform === "android") file = "sh";
       else file = "/bin/sh";
-      args = ["-c", command];
+      args = [file, "-c", command];
     }
   } else if (process.platform === "win32" && /\.(?:cmd|bat)[\s.]*$/i.exec(file) !== null) {
     // CreateProcess routes .bat/.cmd through cmd.exe, which re-parses argv
@@ -1053,11 +1078,7 @@ function normalizeSpawnArguments(file, args, options?) {
   }
 
   // Handle argv0
-  if (typeof argv0 === "string") {
-    ArrayPrototypeUnshift.$call(args, argv0);
-  } else {
-    ArrayPrototypeUnshift.$call(args, file);
-  }
+  $putByValDirect(args, 0, typeof argv0 === "string" ? argv0 : file);
 
   const env = options.env || process.env;
   const bunEnv = {};
@@ -1208,7 +1229,7 @@ class ChildProcess extends EventEmitter {
     const spawnfile = this.spawnfile;
     if (err) {
       if (spawnfile) err.path = spawnfile;
-      err.spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);
+      err.spawnargs = copyArray(this.spawnargs, 1, 0);
       err.pid = this.pid;
       this.emit("error", err);
     } else if (exitCode < 0) {
@@ -1223,7 +1244,7 @@ class ChildProcess extends EventEmitter {
 
       if (spawnfile) err.path = spawnfile;
 
-      err.spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);
+      err.spawnargs = copyArray(this.spawnargs, 1, 0);
       this.emit("error", err);
     }
 
@@ -1428,7 +1449,7 @@ class ChildProcess extends EventEmitter {
       }
     }
 
-    const has_ipc = $isJSArray(stdio) && stdio.includes("ipc");
+    const has_ipc = $isJSArray(stdio) && includesIpc(stdio);
 
     const envPairs = options.envPairs;
     // validate options.envPairs but only if has_ipc. for some reason.
@@ -1469,13 +1490,12 @@ class ChildProcess extends EventEmitter {
       return;
     }
 
-    // normalizeSpawnargs has already prepended argv0 to the spawnargs array
-    // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
-    // so we have to set argv0 to spawnargs[0] and cmd[0] to file
+    const cmd = spawnCommand(file, spawnargs);
+    if (hasSocketsToEagerlyLoad) loadStdioModules(bunStdio);
 
     try {
       this.#handle = Bun.spawn({
-        cmd: [file, ...Array.prototype.slice.$call(spawnargs, 1)],
+        cmd,
         stdio: bunStdio,
         cwd: options.cwd || undefined,
         env: env,
@@ -1534,9 +1554,8 @@ class ChildProcess extends EventEmitter {
       }
 
       if (hasSocketsToEagerlyLoad) {
-        for (let item of this.stdio!) {
-          item?.ref?.();
-        }
+        const streams = this.stdio!;
+        for (let i = 0; i < streams.length; i++) streams[i]?.ref?.();
       }
     } catch (ex) {
       const exCode =
@@ -1551,7 +1570,7 @@ class ChildProcess extends EventEmitter {
       ) {
         this.#handle = null;
         (ex as SystemError).syscall = "spawn " + this.spawnfile;
-        (ex as SystemError).spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
+        (ex as SystemError).spawnargs = copyArray(this.spawnargs, 1, 0);
         process.nextTick(() => {
           this.emit("error", ex);
           this.emit("close", (ex as SystemError).errno ?? -1);
@@ -1861,9 +1880,33 @@ function fdToStdioName(fd: number) {
   }
 }
 
+// `child.stdio` makes its streams right after the native spawn. Their modules first run before it: one that throws while it loads
+// must not leave a running child behind.
+function loadStdioModules(bunStdio) {
+  for (let i = 0; i < bunStdio.length; i++) {
+    const io = bunStdio[i];
+    if (io !== "pipe" && io !== "socket-fd") continue;
+    if (i === 0) require("internal/fs/streams");
+    else if (i <= 2) require("internal/streams/native-readable");
+    else require("node:net");
+  }
+}
+
+function includesIpc(stdio): boolean {
+  for (let i = 0; i < stdio.length; i++) {
+    if (stdio[i] === "ipc") return true;
+  }
+  return false;
+}
+
 function getBunStdioFromOptions(stdio) {
+  // May be the caller's array: read it by index, because script can replace filter() and map().
   const normalizedStdio = normalizeStdio(stdio);
-  if (normalizedStdio.filter(v => v === "ipc").length > 1) throw $ERR_IPC_ONE_PIPE();
+  const length = normalizedStdio.length;
+  let ipcCount = 0;
+  for (let i = 0; i < length; i++) {
+    if (normalizedStdio[i] === "ipc" && ++ipcCount > 1) throw $ERR_IPC_ONE_PIPE();
+  }
   // Node options:
   // pipe: just a pipe
   // ipc = can only be one in array
@@ -1886,7 +1929,11 @@ function getBunStdioFromOptions(stdio) {
   // ignore -> null
   // inherit -> inherit (stdin/stdout/stderr)
   // Stream -> throw err for now
-  const bunStdio = normalizedStdio.map(nodeToBun);
+  const bunStdio = $newArrayWithSize(length);
+  for (let i = 0; i < length; i++) {
+    // map() leaves a hole where the list has one.
+    if (i in normalizedStdio) $putByValDirect(bunStdio, i, nodeToBun(normalizedStdio[i], i));
+  }
   return bunStdio;
 }
 
@@ -1953,11 +2000,11 @@ function validateArgumentNullCheck(arg, propName) {
   }
 }
 
-function validateArgumentsNullCheck(args, propName) {
-  for (let i = 0; i < args.length; ++i) {
+function validateArgumentsNullCheck(args, propName, first = 0) {
+  for (let i = first; i < args.length; ++i) {
     const arg = args[i];
     if (typeof arg === "string" && StringPrototypeIndexOf.$call(arg, "\u0000") !== -1) {
-      validateArgumentNullCheck(arg, `${propName}[${i}]`);
+      validateArgumentNullCheck(arg, `${propName}[${i - first}]`);
     }
   }
 }

@@ -295,8 +295,7 @@ pub(crate) fn for_each_multipart_entry<C>(
                 b""
             };
             if strings::eql_case_insensitive_ascii(key, b"content-disposition", true) {
-                // A later Content-Disposition replaces the earlier one whole
-                // (fetch spec: "set name and filename to null").
+                // Fetch spec: each Content-Disposition line first sets name and filename to null.
                 name = bun_semver::String::default();
                 filename = None;
                 is_file = false;

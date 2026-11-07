@@ -1326,7 +1326,7 @@ fn print_install_summary(
             }
             Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
             printed_timestamp = true;
-            print_blocked_packages_info(install_summary, this.options.global);
+            print_blocked_packages_info(install_summary, this);
         }
 
         if install_summary.fail > 0 {
@@ -1404,7 +1404,7 @@ fn print_summary_installed(
         if pkgs_installed == 1 { "" } else { "s" },
     );
     Output::print_start_end_stdout(start_time, nano_timestamp());
-    print_blocked_packages_info(install_summary, this.options.global);
+    print_blocked_packages_info(install_summary, this);
 
     if this.summary.remove > 0 {
         bun_core::pretty!("Removed: <cyan>{}<r>\n", this.summary.remove);
@@ -1447,7 +1447,7 @@ fn print_summary_removed(
         if this.summary.remove == 1 { "" } else { "s" },
     );
     Output::print_start_end_stdout(start_time, nano_timestamp());
-    print_blocked_packages_info(install_summary, this.options.global);
+    print_blocked_packages_info(install_summary, this);
 }
 
 #[cold]
@@ -1470,7 +1470,7 @@ fn print_summary_timing_fallback(start_time: i128) {
 
 #[cold]
 #[inline(never)]
-fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
+fn print_blocked_packages_info(summary: &PackageInstallSummary, this: &PackageManager) {
     let packages_count = summary.packages_with_blocked_scripts.len();
     let mut scripts_count: usize = 0;
     for count in summary.packages_with_blocked_scripts.values() {
@@ -1487,11 +1487,74 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
             "\n\n<d>Blocked {} postinstall{}. Run `bun pm {}untrusted` for details.<r>\n",
             scripts_count,
             if scripts_count > 1 { "s" } else { "" },
-            if global { "-g " } else { "" },
+            if this.options.global { "-g " } else { "" },
         );
+        note_blocked_update_requests(summary, this);
     } else {
         bun_core::pretty!("<r>\n");
     }
+}
+
+/// Names the packages that the command line asked for and whose lifecycle scripts this install blocked.
+#[cold]
+#[inline(never)]
+fn note_blocked_update_requests(summary: &PackageInstallSummary, this: &PackageManager) {
+    // With scripts off, a name in `trustedDependencies` would not run them either.
+    if !this.options.do_.run_scripts() {
+        return;
+    }
+    let lockfile = &*this.lockfile;
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let pkgs = lockfile.packages.slice();
+
+    let mut names: Vec<&[u8]> = Vec::new();
+    for request in this.update_requests.iter() {
+        let id = request.package_id;
+        // Two dependencies on one package can differ in trust: a package that is not from npm is trusted by the name of the dependency.
+        let is_blocked = summary.blocked_dependencies.iter().any(|&dep_id| {
+            resolutions[dep_id as usize] == id
+                && request.matches(&dependencies[dep_id as usize], string_buf)
+        });
+        if !is_blocked {
+            continue;
+        }
+        let resolution = &pkgs.items_resolution()[id as usize];
+        // The optimizer skips these scripts for a trusted package too.
+        let is_optimized = this.postinstall_optimizer.should_ignore_lifecycle_scripts(
+            &crate::postinstall_optimizer::PkgInfo {
+                name_hash: pkgs.items_name_hash()[id as usize],
+                version: (resolution.tag == ResolutionTag::Npm).then(|| resolution.npm().version),
+                version_buf: string_buf,
+            },
+            pkgs.items_resolutions()[id as usize].get(resolutions),
+            pkgs.items_meta(),
+            this.options.cpu,
+            this.options.os,
+            this.options.libc,
+        );
+        if !is_optimized {
+            names.push(request.get_resolved_name(lockfile));
+        }
+    }
+    if names.is_empty() {
+        return;
+    }
+    index_sort::sort_slice_unstable_by(&mut names, |a, b| a.cmp(b));
+
+    let mut list: Vec<u8> = Vec::new();
+    for (i, name) in names.iter().enumerate() {
+        use std::io::Write as _;
+        let separator = if i > 0 { ", " } else { "" };
+        let _ = write!(list, "{}{}", separator, bun_core::fmt::quote(name));
+    }
+    bun_core::note!(
+        "skipping lifecycle scripts of {}: not in trustedDependencies",
+        bstr::BStr::new(&list),
+    );
+    // `flush` writes stdout first, so the note lands below the count line and above the rest of the summary.
+    Output::flush();
 }
 
 /// Both linkers skip packages that can't run on the target platform. This warns about the ones that

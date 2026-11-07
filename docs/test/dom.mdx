@@ -59,7 +59,7 @@ By default, test files share one global object and one module registry. Files wi
 
 With [`--isolate` or `--parallel`](/test/parallel), every file gets its own window and its own copy of every module. Use them when files in different environments import the same DOM library, because a shared module stays bound to the first window it saw.
 
-The DOM package itself is the exception: each process loads it once, outside the files' globals, so its code stays compiled from file to file. As in Vitest's `vmThreads` and `vmForks` pools, the plain arrays, promises and functions that jsdom's own code creates belong to another realm:
+The DOM package itself is the exception: each process loads it once, outside the files' globals, so its code stays compiled from file to file. Every window has the package's classes, so Bun puts them back after each file: a method that one file patches on `HTMLElement.prototype` is the original again in the next file. As in Vitest's `vmThreads` and `vmForks` pools, the plain arrays, promises and functions that jsdom's own code creates belong to another realm:
 
 ```ts
 event.composedPath() instanceof Array; // false with --isolate

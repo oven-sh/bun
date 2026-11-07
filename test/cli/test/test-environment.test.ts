@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { mkdirSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -1303,6 +1303,9 @@ describe.concurrent("test environment", () => {
 });
 
 describe.concurrent("test environment with the real", () => {
+  // A debug build takes seconds to load the real jsdom and happy-dom. This applies to the tests registered after it.
+  setDefaultTimeout(isASAN || isDebug ? 120_000 : 30_000);
+
   function project(files: Record<string, string>) {
     const dir = tempDir("test-environment", files);
     mkdirSync(join(String(dir), "node_modules"));
@@ -1357,8 +1360,7 @@ describe.concurrent("test environment with the real", () => {
             left: false,
             innerWidth: 1024,
             matchMedia: false,
-            // happy-dom's classes belong to the package, which a process loads once. jsdom makes them for each window.
-            prototype: ${name === "happy-dom"},
+            prototype: false,
             documentOfA: false,
             sameDocument: false,
             window: true,
@@ -1373,6 +1375,113 @@ describe.concurrent("test environment with the real", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // happy-dom's windows share the package's classes. jsdom makes them for each window, but `jsdom.constructor` is the
+  // package's. The second window tells the runner which objects are the package's, so file b patches them again.
+  test.each([
+    ["jsdom", "--isolate"],
+    ["jsdom", "--isolate=modules"],
+    ["happy-dom", "--isolate"],
+    ["happy-dom", "--isolate=modules"],
+  ])(
+    "%s: with %s a file's changes to the package's classes are undone for the next file, #47658",
+    async (name, flag) => {
+      const patch = (file: string) => `
+        // Like @testing-library/user-event's setup(), which leaves the patch in place.
+        HTMLElement.prototype.focus = function patchedFocus() {
+          throw new Error("Could not determine window of node");
+        };
+        HTMLElement.prototype.left = "${file}";
+        Object.getPrototypeOf(Node.prototype).left = "${file}";
+        Object.getPrototypeOf(EventTarget.prototype).left = "${file}";
+        Object.defineProperty(Event.prototype, "type", { get: () => "patched", configurable: true });
+        Object.defineProperty(HTMLElement.prototype, "blur", { ...Object.getOwnPropertyDescriptor(HTMLElement.prototype, "blur"), writable: false });
+        delete Element.prototype.remove;
+        // happy-dom makes a Text class for each window, whose parent is the package's.
+        Text.prototype.left = "${file}";
+        Object.getPrototypeOf(Text.prototype).left = "${file}";
+        if (typeof happyDOM === "object") {
+          NodeFilter.SHOW_ELEMENT = 0;
+          Object.getPrototypeOf(happyDOM).left = "${file}";
+        }
+        if (typeof jsdom === "object") jsdom.constructor.prototype.left = "${file}";
+        expect(HTMLElement.prototype.fromPreload).toBe("preload");
+        expect(new Event("ping").type).toBe("patched");
+      `;
+      // After the file's tests, while the window closes. jsdom's window closes before a timer can fire.
+      const late = (file: string) => `
+        const prototype = HTMLElement.prototype;
+        afterAll(() => void setImmediate(() => {
+          prototype.focus = function patchedLate() {};
+          console.log("late ${file}");
+        }));
+      `;
+      const check = `
+        expect(HTMLElement.prototype.focus.name).toBe("focus");
+        expect(Object.getOwnPropertyDescriptor(HTMLElement.prototype, "blur").writable).toBe(true);
+        expect("left" in HTMLElement.prototype).toBe(false);
+        expect("left" in Object.getPrototypeOf(EventTarget.prototype)).toBe(false);
+        expect("left" in Text.prototype).toBe(false);
+        expect(new Event("ping").type).toBe("ping");
+        expect(typeof Element.prototype.remove).toBe("function");
+        expect(NodeFilter.SHOW_ELEMENT).toBe(1);
+        if (typeof happyDOM === "object") expect("left" in Object.getPrototypeOf(happyDOM)).toBe(false);
+        if (typeof jsdom === "object") expect("left" in jsdom.constructor.prototype).toBe(false);
+        expect(HTMLElement.prototype.fromPreload).toBe("preload");
+        const popup = document.implementation.createHTMLDocument("popup");
+        const field = popup.createElement("textarea");
+        popup.body.append(field);
+        expect(() => field.focus()).not.toThrow();
+      `;
+      using dir = project({
+        "preload.js": `HTMLElement.prototype.fromPreload = "preload";`,
+        "a.test.js": `// ${VITEST} ${name}\ntest("a", () => { ${patch("a")} });\n${late("a")}`,
+        "b.test.js": `// ${VITEST} ${name}\ntest("b", () => { ${check} ${patch("b")} });\n${late("b")}`,
+        "c.test.js": `// ${VITEST} ${name}\ntest("c", () => { ${check} });`,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(
+        String(dir),
+        flag,
+        "--preload=./preload.js",
+        "./a.test.js",
+        "./b.test.js",
+        "./c.test.js",
+      );
+      expect(stdout).toEqual(["late a", "late b"]);
+      expect(stderr).not.toContain("Unhandled error");
+      expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Both packages are loaded into the one global that outlives the files, so their classes share its Object.prototype.
+  test("with --isolate a file's change to the builtins behind the packages' classes is undone for both packages", async () => {
+    const happyDom = (body: string) => `// ${VITEST} happy-dom\ntest("happy-dom", () => {
+      const builtin = Object.getPrototypeOf(EventTarget.prototype);
+      ${body}
+    });`;
+    const jsdom = (body: string) => `// ${VITEST} jsdom\ntest("jsdom", () => {
+      const builtin = Object.getPrototypeOf(jsdom.constructor.prototype);
+      ${body}
+    });`;
+    using dir = project({
+      "a.test.js": happyDom(`builtin.left = "a";`),
+      "b.test.js": jsdom(`expect("left" in builtin).toBe(false); builtin.left = "b";`),
+      "c.test.js": happyDom(`expect("left" in builtin).toBe(false); builtin.left = "c";`),
+      "d.test.js": jsdom(`expect("left" in builtin).toBe(false);`),
+    });
+    const { stdout, stderr, exitCode } = await bunTest(
+      String(dir),
+      "--isolate",
+      "./a.test.js",
+      "./b.test.js",
+      "./c.test.js",
+      "./d.test.js",
+    );
+    expect(stdout).toEqual([]);
+    expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
+  });
 
   test.each(["jsdom", "happy-dom"])(
     "%s: with --isolate=modules every file has all the names of its window",

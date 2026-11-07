@@ -6,6 +6,11 @@ import path from "node:path";
 import defaultMacro, {
   addStrings,
   addStringsUTF16,
+  boxedBoolean,
+  boxedNumber,
+  boxedNumberPromise,
+  boxedNumberWithValueOf,
+  boxedPrimitives,
   default as defaultMacroAlias,
   escape,
   identity,
@@ -37,6 +42,21 @@ test("type coercion", () => {
   expect(identity(1.5)).toBe(1.5);
   expect(identity(1)).toBe(1);
   expect(identity(true)).toBe(true);
+});
+
+// A Number, Boolean or String object is inlined as its primitive value.
+test("boxed primitives", async () => {
+  expect(boxedNumber()).toBe(5);
+  expect(boxedBoolean()).toBe(false);
+  expect(boxedPrimitives()).toEqual({
+    numbers: [5, 1.5, NaN, Infinity, 9],
+    negativeZero: -0,
+    booleans: [true, false, false],
+    string: "a",
+  });
+  expect(await boxedNumberPromise()).toBe(1.5);
+  // A Number object is converted with ToNumber, as in JSON.stringify, so its valueOf is called.
+  expect(boxedNumberWithValueOf()).toBe(42);
 });
 
 // A Symbol key has no source form. The inlined object keeps the string keys
@@ -741,6 +761,72 @@ test("bun build reports a macro result that is nested too deeply", async () => {
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("error: The value returned by this macro is nested too deeply");
   expect(exitCode).toBe(1);
+});
+
+test.concurrent("bun build inlines a Number, Boolean or String object as its primitive value", async () => {
+  using dir = tempDir("bundler-macro-boxed-primitives", {
+    "macro.ts": [
+      `export function bf() {\n  return new Boolean(false);\n}`,
+      `export function n5() {\n  return new Number(5);\n}`,
+      `export function s() {\n  return new String("a");\n}`,
+      ``,
+    ].join("\n"),
+    "entry.ts": `import { bf, n5, s } from "./macro.ts" with { type: "macro" };\nconsole.log(bf(), n5(), s());\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds print "[macro] call <name>" to stdout before the bundle.
+  expect({ bundle: stdout.slice(stdout.indexOf("// entry.ts")), stderr, exitCode }).toEqual({
+    bundle: `// entry.ts\nconsole.log(false, 5, "a");\n`,
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The conversion is ToNumber, so a valueOf can throw. The build reports it at that call. The exception must not
+// stay pending on the macro VM, where it fails the next macro load: ok() has no error of its own.
+test.concurrent("bun build fails at the call when the conversion of a Number object throws", async () => {
+  using dir = tempDir("bundler-macro-boxed-number-throws", {
+    "macro.ts": [
+      `export function m() {`,
+      `  const number = new Number(5);`,
+      `  number.valueOf = () => {`,
+      `    throw new Error("valueOf threw");`,
+      `  };`,
+      `  return number;`,
+      `}`,
+      `export function ok() {`,
+      `  return 1;`,
+      `}`,
+      ``,
+    ].join("\n"),
+    "entry.ts": `import { m, ok } from "./macro.ts" with { type: "macro" };\nconsole.log(m());\nconsole.log(ok());\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    bundled: stdout.includes("console.log("),
+    errors: stderr.split(/\r?\n/).filter(line => line.startsWith("error: ")),
+    locations: Array.from(stderr.matchAll(/entry\.ts:\d+:\d+/g), match => match[0]),
+    exitCode,
+  }).toEqual({
+    bundled: false,
+    errors: ["error: A Number object in this macro's result threw while it was converted to a number"],
+    locations: ["entry.ts:2:13"],
+    exitCode: 1,
+  });
 });
 
 // Each parse thread creates a macro VM on its first macro call, and that VM loads the cwd's `.env` files.

@@ -1213,6 +1213,68 @@ describe("expect.addEqualityTesters", () => {
     expect(results).toEqual([true, false]);
   });
 
+  // Jest and Vitest test the list with Array.isArray(), which is true for a Proxy of an array.
+  test("a Proxy of an array is a list of testers", () => {
+    const P = <T extends object>(target: T) => new Proxy(target, {});
+    class Labelled {
+      constructor(public label: number) {}
+    }
+    const areBothLabelled = (a: unknown, b: unknown) =>
+      a instanceof Labelled && b instanceof Labelled ? true : undefined;
+    const revoked = () => {
+      const { proxy, revoke } = Proxy.revocable([areBothLabelled], {});
+      revoke();
+      return proxy;
+    };
+    const isRevoked = "Array.isArray cannot be called on a Proxy that has been revoked";
+    let results: unknown[] = [];
+    expect.extend({
+      toPassProxiedTesters() {
+        const [a, b] = [new Labelled(1), new Labelled(2)];
+        results = [
+          this.equals(a, b),
+          this.equals(a, b, [areBothLabelled]),
+          this.equals(a, b, P([areBothLabelled])),
+          this.equals(a, b, P(P([areBothLabelled]))),
+          this.equals({ in: [a] }, { in: [b] }, P([areBothLabelled]), true),
+          this.equals(a, b, P([])),
+          this.equals(a, b, P({ 0: areBothLabelled, length: 1 }) as any),
+        ];
+        for (const testers of [P([1 as any]), revoked()]) {
+          try {
+            results.push(this.equals(a, b, testers));
+          } catch (error) {
+            results.push((error as Error).message);
+          }
+        }
+        return { pass: true, message: () => "" };
+      },
+    });
+    (expect(1) as any).toPassProxiedTesters();
+    expect(results).toEqual([
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      'The "customTesters[0]" argument must be of type function. Received type number (1)',
+      isRevoked,
+    ]);
+
+    expect(messageOf(() => expect.addEqualityTesters(P({ 0: areBothLabelled, length: 1 }) as any))).toBe(
+      'The "testers" argument must be of type array. Received an instance of Object',
+    );
+    expect(messageOf(() => expect.addEqualityTesters(P([areBothLabelled, 1 as any])))).toBe(
+      'The "testers[1]" argument must be of type function. Received type number (1)',
+    );
+    expect(messageOf(() => expect.addEqualityTesters(revoked()))).toBe(isRevoked);
+    expect(new Labelled(1)).not.toEqual(new Labelled(2));
+    expect(expect.addEqualityTesters(P([areBothLabelled]))).toBeUndefined();
+    expect(new Labelled(1)).toEqual(new Labelled(2));
+  });
+
   test("testers still run when the two values are identical", () => {
     const unequal = 918273645;
     expect.addEqualityTesters([(a, b) => (a === unequal || b === unequal ? false : undefined)]);
@@ -1446,6 +1508,50 @@ describe("expect.addEqualityTesters", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// pretty-format reads `config.plugins` with for...of and `refs` with includes(), which a Proxy of an array serves.
+test.concurrent.each(["bun:test", "vitest"])(
+  "the printer of a snapshot serializer takes a Proxy of an array as config.plugins and as refs: %s",
+  async module => {
+    const { results, stderr, exitCode } = await runTests({
+      "a.test.js": `
+        import { expect, test } from "${module}";
+        class Money {
+          constructor(amount) {
+            this.amount = amount;
+          }
+        }
+        class Box {
+          constructor(content, ancestors) {
+            this.content = content;
+            this.ancestors = ancestors;
+          }
+        }
+        const P = target => new Proxy(target, {});
+        expect.addSnapshotSerializer({ test: value => value instanceof Money, serialize: value => "$" + value.amount });
+        expect.addSnapshotSerializer({
+          test: value => value instanceof Box,
+          serialize: (value, config, indentation, depth, refs, printer) =>
+            "Box(" + printer(value.content, { ...config, plugins: P(config.plugins) }, indentation, depth, P(value.ancestors)) + ")",
+        });
+        test("printer", () => {
+          const ancestor = { name: "ancestor" };
+          expect(new Box({ ancestor, money: new Money(5) }, [ancestor])).toMatchInlineSnapshot(\`
+            Box({
+              "ancestor": [Circular],
+              "money": $5,
+            })
+          \`);
+        });
+      `,
+    });
+    expect({ results, stderr: exitCode ? stderr : "", exitCode }).toEqual({
+      results: ["(pass) printer"],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 describe("toHaveBeenCalledExactlyOnceWith", () => {
   test("passes for one call with equal arguments", () => {

@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use crate::api::cron::CronJob;
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::jsc_hooks::timer_all;
+use crate::test_runner::pretty_format;
 use crate::timer::{
     AbortSignalTimeout, Clock, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
     ImmediateObject, InHeap, TimeoutObject, TimerHeap, TimerObjectInternals,
@@ -166,7 +167,7 @@ impl ApiSet {
 
     #[optimize(size)]
     fn from_js(global: &JSGlobalObject, option: &str, value: JSValue) -> JsResult<Option<ApiSet>> {
-        if !value.is_array() {
+        if !pretty_format::is_array(global, value)? {
             return Err(global
                 .throw_invalid_arguments(format_args!("'{option}' must be an array of strings")));
         }

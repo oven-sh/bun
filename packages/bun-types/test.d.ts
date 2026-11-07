@@ -318,7 +318,7 @@ declare module "bun:test" {
       config: { mode: "manual" | "nextAsync" } | { mode: "interval"; delta?: number | undefined },
     ): typeof jest;
     function getTimerCount(): number;
-    function clearAllTimers(): void;
+    function clearAllTimers(): typeof jest;
     function isFakeTimers(): boolean;
     /**
      * Returns the real time in milliseconds since the epoch, no matter what's faked.

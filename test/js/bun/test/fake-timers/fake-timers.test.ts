@@ -306,8 +306,19 @@ describe("clearAllTimers", () => {
     vi.advanceTimersByTime(100);
     expect(order.takeOrderMessages()).toEqual([]);
   });
-  test("throws error if fake timers not active", () => {
-    expect(() => vi.clearAllTimers()).toThrow("Fake timers are not active");
+  test("is a no-op when fake timers are not active", async () => {
+    // Jest and Vitest skip the reset instead of throwing. Real timers stay live.
+    const order = new Order();
+    const fired = Promise.withResolvers<void>();
+    const timeout = setTimeout(() => {
+      order.add("real");
+      fired.resolve();
+    }, 1);
+    onTestFinished(() => clearTimeout(timeout));
+    expect(vi.clearAllTimers()).toBe(vi);
+    expect(jest.clearAllTimers()).toBe(jest);
+    await fired.promise;
+    expect(order.takeOrderMessages()).toEqual(["real"]);
   });
 });
 describe("AbortSignal.timeout", () => {

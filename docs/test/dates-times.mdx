@@ -129,7 +129,7 @@ test("fires after a minute", () => {
 | `runAllTimers()`                  | Runs timers until none are left                                         |
 | `runAllTicks()`                   | Runs faked `process.nextTick` and `queueMicrotask` callbacks            |
 | `getTimerCount()`                 | Returns the number of pending fake timers                               |
-| `clearAllTimers()`                | Removes all pending fake timers                                         |
+| `clearAllTimers()`                | Removes all pending fake timers. Does nothing when fake timers are off  |
 | `isFakeTimers()`                  | Returns whether fake timers are on                                      |
 | `useRealTimers()`                 | Restores the real functions and clocks, and removes pending fake timers |
 

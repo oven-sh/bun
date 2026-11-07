@@ -85,8 +85,8 @@ pub(crate) struct Unclaimed {
     of_file: u32,
     /// When the file stops waiting after its tests have run. `EPOCH` means never.
     deadline: Option<Timespec>,
-    /// `expect.poll()` waits that the file holds in place of a test. They end once the file's tests have run.
-    polls: Vec<Strong>,
+    /// Pending `expect.poll()` waits that the file holds in place of a test. They end once the file's tests have run.
+    polls: Vec<Option<Strong>>,
 }
 
 impl Unclaimed {
@@ -183,27 +183,51 @@ impl RunningEntry {
         }
     }
 
-    /// Has the file end `poll`, an `expect.poll()` wait, after its tests if it holds the wait in place of a test.
-    /// Until then the wait only finds out at its next attempt that the test has ended.
-    pub(crate) fn keep_poll(&self, global: &JSGlobalObject, poll: JSValue) {
-        if self.bystander.is_some()
-            && let Some(buntest) = self.buntest.upgrade()
-        {
-            buntest.get().unclaimed.polls.push(Strong::create(poll, global));
+    /// Has the file end `poll`, a pending `expect.poll()` wait, after its tests if it holds the wait in place of a test.
+    /// Until then the wait only finds out at its next attempt that the test has ended. `forget_poll` takes the result.
+    pub(crate) fn keep_poll(&self, global: &JSGlobalObject, poll: JSValue) -> Option<usize> {
+        self.bystander?;
+        let buntest = self.buntest.upgrade()?;
+        let polls = &mut buntest.get().unclaimed.polls;
+        polls.push(Some(Strong::create(poll, global)));
+        Some(polls.len() - 1)
+    }
+
+    /// The wait that `keep_poll` was given has ended.
+    pub(crate) fn forget_poll(&self, index: usize) {
+        let Some(buntest) = self.buntest.upgrade() else {
+            return;
+        };
+        let polls = &mut buntest.get().unclaimed.polls;
+        if let Some(poll) = polls.get_mut(index) {
+            *poll = None;
+        }
+        while let Some(None) = polls.last() {
+            polls.pop();
         }
     }
 
-    /// Whether the call was made beside a test that has ended since. `expect.poll()` stops with that test, as it does with a test that called it.
+    /// Whether the call was made beside an attempt of a test that has ended since, hooks included.
+    /// `expect.poll()` stops with it, as it does with a test that called it.
     pub(crate) fn outlived_bystander(&self) -> bool {
-        let (Some(bystander), Some(buntest)) = (self.bystander, self.buntest.upgrade()) else {
+        let (
+            Some(
+                bystander @ RefDataValue::Execution {
+                    group_index,
+                    entry_data: Some(entry),
+                },
+            ),
+            Some(buntest),
+        ) = (self.bystander, self.buntest.upgrade())
+        else {
             return false;
         };
         let buntest = buntest.get();
         buntest.phase != Phase::Execution
-            || buntest
-                .execution
-                .get_current_and_valid_execution_sequence(&bystander)
-                .is_none()
+            || buntest.execution.group_index != group_index
+            || bystander
+                .sequence(buntest)
+                .is_none_or(|sequence| sequence.attempt != entry.attempt)
     }
 
     fn sequence(&self, buntest: &BunTestPtr) -> Option<NonNull<ExecutionSequence>> {
@@ -687,14 +711,10 @@ impl ExpectDeferred {
         js::call_site_set_cached(thrown, global, ExpectDeferred__captureCallSite(global));
         ExpectDeferred__callWhenSettled(global, awaited, when_settled, thrown);
         if let Some(this) = Self::from_js(thrown) {
-            let held = RunningEntry::of(expect, global).map(|entry| entry.hold(global, thrown));
-            // A call is counted when its replay ends, and the test beside it doesn't wait for that.
-            // Count it now, like any other `expect()` call made while that test runs.
-            if held.as_ref().is_some_and(|held| held.bystander.is_some()) {
-                expect.add_to_expect_call_counter(1);
-            }
             // SAFETY: `thrown` is on the stack and owns the payload.
-            unsafe { &*this }.held.set(held);
+            unsafe { &*this }
+                .held
+                .set(RunningEntry::of(expect, global).map(|entry| entry.hold(global, thrown)));
         }
         Ok(promise)
     }
@@ -742,8 +762,13 @@ impl ExpectDeferred {
                 Some(journal) => journal.get_length(global)? / u64::from(Pass::STRIDE),
                 None => 0,
             };
-            let counted_when_called = this.held.get().as_ref().is_some_and(|held| held.bystander.is_some());
-            let expect = counted_when_called
+            // The test that ran beside a call which the file holds doesn't wait for the call. A replay after that
+            // attempt of the test counts for nobody, not for a later attempt either.
+            let expect = this
+                .held
+                .get()
+                .as_ref()
+                .is_some_and(RunningEntry::outlived_bystander)
                 .then(|| js::expect_get_cached(deferred))
                 .flatten()
                 .and_then(|expect| expect.as_class_ref::<Expect>());
@@ -751,13 +776,10 @@ impl ExpectDeferred {
             let pass = Pass::replaying(deferred);
             let _entered = pass.enter();
             let result = call.call(global, JSValue::UNDEFINED, &[]);
-            // The call was counted when it was made. A replay that ends counts it again, unless the matcher throws first.
-            // While the attempt that got the first count goes on, one count goes: the matcher's own stays, if there is one.
-            // Afterwards only the count of the replay goes.
+            // A replay that waits again has taken its count back itself.
             if !matches!(result, Ok(returned) if returned == promise)
-                && let Some(expect) = expect
-                && let Some((counted, goes_on)) = expect.counted_calls()
-                && (goes_on || count.is_some_and(|(count, _)| counted > count))
+                && let (Some(expect), Some(count)) = (expect, count)
+                && expect.counted_calls().is_some_and(|counted| counted > count)
             {
                 expect.add_to_expect_call_counter(-1);
             }
@@ -932,8 +954,12 @@ impl ExpectDeferred {
         if buntest.get().unclaimed.of_file == 0 {
             return StepResult::Complete;
         }
-        for poll in core::mem::take(&mut buntest.get().unclaimed.polls) {
-            crate::dispatch::fold(ViWait::end_with_test(global, poll.get()));
+        let mut index = 0;
+        while let Some(poll) = buntest.get().unclaimed.polls.get(index) {
+            index += 1;
+            if let Some(poll) = poll.as_ref().map(Strong::get) {
+                crate::dispatch::fold(ViWait::end_with_test(global, poll));
+            }
         }
         let this = buntest.get();
         let timeout_ms = this.reporter.map_or(0, |reporter| {
@@ -1253,22 +1279,12 @@ impl Expect {
         result
     }
 
-    /// The count that `add_to_expect_call_counter()` adds to, if it's a test's, and whether that test
-    /// is still on the attempt that called `expect()`.
-    fn counted_calls(&self) -> Option<(u32, bool)> {
+    /// The count that `add_to_expect_call_counter()` adds to, if it's a test's.
+    fn counted_calls(&self) -> Option<u32> {
         let parent = self.parent.as_ref()?;
-        let RefDataValue::Execution {
-            group_index,
-            entry_data: Some(entry),
-        } = parent.phase
-        else {
-            return None;
-        };
         let buntest = parent.bun_test()?;
-        let buntest = buntest.get();
-        let is_running = buntest.phase == Phase::Execution && buntest.execution.group_index == group_index;
-        let sequence = parent.phase.sequence(buntest)?;
-        Some((sequence.expect_call_count, is_running && sequence.attempt == entry.attempt))
+        let sequence = parent.phase.sequence(buntest.get())?;
+        Some(sequence.expect_call_count)
     }
 
     #[cold]

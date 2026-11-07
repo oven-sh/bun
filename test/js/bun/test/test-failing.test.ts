@@ -761,6 +761,26 @@ describe.concurrent("test.failing and test.fails", () => {
           console.log("polls during a later test:", polls - before);
         });
       });
+      describe("not before the hooks of that test have run", () => {
+        const called = Promise.withResolvers(), polled = Promise.withResolvers();
+        let inHook = false;
+        test("leaves a timer behind", () => {
+          setTimeout(() => {
+            expect.poll(() => (inHook && polled.resolve(), inHook), { timeout: 60_000, interval: 1 }).toBe(true);
+            called.resolve();
+          }, 0);
+        });
+        describe("the test", () => {
+          afterEach(() => {
+            inHook = true;
+            return polled.promise;
+          });
+          test.failing("runs when the timer fires", async () => {
+            await called.promise;
+            throw new Error("expected");
+          });
+        });
+      });
       describe("or after the tests of the file, if that comes first", () => {
         const called = Promise.withResolvers();
         const slowly = { timeout: 120_000, interval: 60_000 };
@@ -783,6 +803,8 @@ describe.concurrent("test.failing and test.fails", () => {
         "(pass) at its next attempt > leaves a timer behind",
         "(pass) at its next attempt > runs when the timer fires",
         "(pass) at its next attempt > a later test",
+        "(pass) not before the hooks of that test have run > leaves a timer behind",
+        "(pass) not before the hooks of that test have run > the test > runs when the timer fires",
         "(pass) or after the tests of the file, if that comes first > leaves a timer behind",
         "(pass) or after the tests of the file, if that comes first > runs when the timer fires",
       ],
@@ -798,7 +820,7 @@ describe.concurrent("test.failing and test.fails", () => {
     });
   });
 
-  test("a leftover matcher counts once for expect.assertions() of the test that runs", async () => {
+  test("a leftover matcher counts for expect.assertions() of the test that runs if it ends before that test", async () => {
     const result = await runTests(`
       expect.extend({
         async toBeANumberLater(received) {
@@ -822,6 +844,7 @@ describe.concurrent("test.failing and test.fails", () => {
           await later();
         });
       });
+      // The test doesn't wait for the matcher, so these two count for nobody.
       describe("that settles after the test", () => {
         const called = Promise.withResolvers();
         test("leaves a timer behind", () => {
@@ -830,8 +853,21 @@ describe.concurrent("test.failing and test.fails", () => {
             called.resolve();
           }, 0);
         });
-        test.fails("has one assertion", async () => {
-          expect.assertions(1);
+        test.fails("has no assertion", async () => {
+          expect.assertions(0);
+          await called.promise;
+        });
+      });
+      describe("that rejects after the test", () => {
+        const called = Promise.withResolvers();
+        test("leaves a timer behind", () => {
+          setTimeout(() => {
+            expect(later(1, 5).then(() => Promise.reject(1))).resolves.toBe(1).catch(() => {});
+            called.resolve();
+          }, 0);
+        });
+        test.fails("has no assertion", async () => {
+          expect.assertions(0);
           await called.promise;
         });
       });
@@ -862,7 +898,9 @@ describe.concurrent("test.failing and test.fails", () => {
         "(pass) that settles while the test runs > leaves a timer behind",
         "(fail) that settles while the test runs > has one assertion",
         "(pass) that settles after the test > leaves a timer behind",
-        "(fail) that settles after the test > has one assertion",
+        "(fail) that settles after the test > has no assertion",
+        "(pass) that rejects after the test > leaves a timer behind",
+        "(fail) that rejects after the test > has no assertion",
         "(pass) that waits twice and calls expect() in between > leaves a timer behind",
         "(fail) that waits twice and calls expect() in between > has two assertions",
         "(pass) that doesn't get as far as its count > leaves a timer behind",
@@ -872,7 +910,7 @@ describe.concurrent("test.failing and test.fails", () => {
       betweenTests: 0,
       exitCode: 1,
     });
-    expect(result.stderr).toContain(" 4 expect() calls\n");
+    expect(result.stderr).toContain(" 3 expect() calls\n");
   });
 
   test("only their callbacks run in an async context of their own", async () => {

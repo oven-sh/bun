@@ -43,6 +43,8 @@ pub(crate) struct ViWait {
     test_file: Option<u32>,
     /// For `Kind::Poll`, the wait is also dropped once this test ends. If the test only ran beside the call, the wait fails then.
     test: Option<RunningEntry>,
+    /// What `RunningEntry::keep_poll` returned.
+    kept: Cell<Option<usize>>,
     pub(crate) timer: JsCell<EventLoopTimer>,
     abort_handle: AbortHandle,
     keep_alive: JsCell<KeepAlive>,
@@ -188,6 +190,7 @@ impl ViWait {
             callback_pending: Cell::new(false),
             test_file: running_test_file(cx.vm()),
             test,
+            kept: Cell::new(None),
             timer: JsCell::new(EventLoopTimer::init_paused(EventLoopTimerTag::ViWait)),
             abort_handle: AbortHandle::for_owner::<ViWait>(),
             keep_alive: JsCell::new(KeepAlive::default()),
@@ -229,7 +232,7 @@ impl ViWait {
             this.deadline.set(now.add_ms(i64::from(timeout_ms)));
             this.arm(&now);
             if let Some(test) = &this.test {
-                test.keep_poll(global, this_value);
+                this.kept.set(test.keep_poll(global, this_value));
             }
         }
         this_value.ensure_still_alive();
@@ -272,6 +275,9 @@ impl ViWait {
         self.abort_handle.leave();
         self.keep_alive
             .with_mut(|keep_alive| keep_alive.unref(bun_io::js_vm_ctx()));
+        if let (Some(test), Some(kept)) = (&self.test, self.kept.take()) {
+            test.forget_poll(kept);
+        }
         self.root.set(None);
     }
 

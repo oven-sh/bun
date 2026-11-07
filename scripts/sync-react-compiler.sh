@@ -113,10 +113,12 @@ ast_in_code='^(([^/]|/[^/])*/?[^A-Za-z0-9_/])?react_compiler_ast($|[^A-Za-z0-9_]
 new_consumers=$(git -C "$tmp" grep --no-color -lE -e "$ast_in_code" "$new" -- 'compiler/crates/*/src/*.rs' \
   ':(exclude)compiler/crates/react_compiler_ast' "${boundary_excludes[@]}" | sed "s/^$new://") || [ $? -eq 1 ]
 
-# Not part of a whole-crate port: a file with an entry above, and a new consumer.
+# Not part of a whole-crate port: a file with an entry above, and a new consumer
+# that $old does not have. A new consumer that $old has keeps its diff.
 declare -a not_whole_crate=("${boundary_excludes[@]}")
 while IFS= read -r file; do
-  [ -z "$file" ] || not_whole_crate+=(":(exclude)$file")
+  [ -n "$file" ] || continue
+  git -C "$tmp" cat-file -e "$old:$file" 2> /dev/null || not_whole_crate+=(":(exclude)$file")
 done <<< "$new_consumers"
 
 # diff_one <upstream path> <port> [<pathspec>...]
@@ -152,7 +154,7 @@ echo
 while IFS= read -r file; do
   [ -n "$file" ] || continue
   echo "── $file"
-  git -C "$tmp" show "$new:$file"
+  git -C "$tmp" cat-file blob "$new:$file"
   echo
 done <<< "$new_consumers"
 

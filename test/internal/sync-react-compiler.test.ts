@@ -48,6 +48,7 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
           "react_compiler_hir/src/lib.rs": source("hir", 1),
           "react_compiler_hir/src/environment.rs": commentsOnly("u32"),
           "react_compiler_reactive_scopes/src/prune_unused_labels.rs": source("prune", 1),
+          "react_compiler_reactive_scopes/src/rename_variables.rs": source("rename", 1),
           // In the directory of a whole-crate port, and not part of it: an AST-boundary port, and a file Bun does
           // not have.
           "react_compiler_reactive_scopes/src/codegen_reactive_function.rs": astConsumer("codegen", 1),
@@ -125,6 +126,8 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
     main = await commit({
       "react_compiler_hir/src/environment.rs": commentsOnly("u64"),
       "react_compiler_reactive_scopes/src/prune_unused_labels.rs": source("prune", 3),
+      // A whole-crate port that starts to use react_compiler_ast. The script has no entry for it.
+      "react_compiler_reactive_scopes/src/rename_variables.rs": astConsumer("rename", 3),
       "react_compiler_reactive_scopes/src/codegen_reactive_function.rs": astConsumer("codegen", 3),
       "react_compiler_hir/src/print.rs": source("print", 3),
       "react_compiler_lowering/src/build_hir.rs": astConsumer("lower", 3),
@@ -202,6 +205,11 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
           "+++ b/compiler/crates/react_compiler_reactive_scopes/src/prune_unused_labels.rs",
           "-pub fn prune() -> u32 { 1 }",
           "+pub fn prune() -> u32 { 3 }",
+          "--- a/compiler/crates/react_compiler_reactive_scopes/src/rename_variables.rs",
+          "+++ b/compiler/crates/react_compiler_reactive_scopes/src/rename_variables.rs",
+          "-pub fn rename() -> u32 { 1 }",
+          "+use react_compiler_ast::File;",
+          "+pub fn rename() -> u32 { 3 }",
           "### AST-boundary ports (re-port via DESIGN.md type map) ###",
           "── compiler/crates/react_compiler_lowering/src/build_hir.rs",
           "   port: src/react_compiler/lowering/build_hir/",
@@ -234,6 +242,9 @@ describe.skipIf(isWindows || !Bun.which("git") || !Bun.which("bash"))("scripts/s
           "── compiler/crates/react_compiler_lowering/src/source_location.rs",
           "use react_compiler_ast::File;",
           "pub fn convert_base_loc() -> u32 { 1 }",
+          "── compiler/crates/react_compiler_reactive_scopes/src/rename_variables.rs",
+          "use react_compiler_ast::File;",
+          "pub fn rename() -> u32 { 3 }",
           "When porting is done: echo <main> > <repo>/src/react_compiler/UPSTREAM_PORTED",
         ],
       }

@@ -21,6 +21,7 @@ import {
   isASAN,
   isDebug,
   isLinux,
+  isMacOS,
   isRoot,
   isWindows,
   MAX_PATH_BYTES,
@@ -5168,6 +5169,10 @@ describe.concurrent("bins", () => {
     { bin: { a: "sub/.git/hooks/pre-commit", b: "index.js" } },
     { directories: { bin: ".git/hooks" } },
     { directories: { bin: "sub/.git" } },
+    { bin: ".NPMRC" },
+    { bin: { a: "conf/.Npmrc" } },
+    { bin: ".GIT/config" },
+    { directories: { bin: ".Git/hooks" } },
   ])("%j does not pack .git or .npmrc", async fields => {
     using dir = tempDir("pack-bins-never-packed", {
       "package.json": JSON.stringify({ name: "pack-bins-never-packed", version: "1.0.0", ...fields }),
@@ -5189,6 +5194,75 @@ describe.concurrent("bins", () => {
       "package/package.json",
       "package/index.js",
     ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    {},
+    { files: ["**"] },
+    { files: [".NPMRC", ".Git", "conf"] },
+    { bin: ".NPMRC" },
+    { directories: { bin: ".Git" } },
+  ])("letter case is ignored in the names that are never packed: %j", async fields => {
+    using dir = tempDir("pack-never-packed-case", {
+      "package.json": JSON.stringify({ name: "pack-never-packed-case", version: "1.0.0", ...fields }),
+      "conf/a.js": indexJs,
+      ".NPMRC": "registry=https://registry.example/",
+      "conf/.Npmrc": "registry=https://registry.example/",
+      ".Git/config": "[remote]",
+      "YARN.lock": "",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-never-packed-case-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/conf/a.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // A file system can fold the Kelvin sign to k and the long s to s.
+  test.each([
+    { bin: "PACKAGE.JSON" },
+    { bin: "pac\u212aage.json" },
+    { bin: "package.j\u017fon" },
+    { bin: ".bun-pac\u212a.x.tmp" },
+    { directories: { bin: ".bun-pac\u212a.y.tmp" } },
+  ])("a bin that the file system finds under a name that is never packed is left out: %j", async fields => {
+    using dir = tempDir("pack-bins-found-never-packed", {
+      "package.json": JSON.stringify({ name: "pack-bins-found-never-packed", version: "1.0.0", ...fields }),
+      "index.js": indexJs,
+      ".bun-pack.x.tmp": indexJs,
+      ".bun-pack.y.tmp/a.js": indexJs,
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-bins-found-never-packed-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/index.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    { onDisk: "bins/cli.js", bin: "bins/CLI.js", isFound: isMacOS || isWindows },
+    { onDisk: "bins/cli.js", bin: "BINS/cli.js", isFound: isMacOS || isWindows },
+    { onDisk: "caf\u00e9.js", bin: "cafe\u0301.js", isFound: isMacOS },
+    { onDisk: "cafe\u0301.js", bin: "caf\u00e9.js", isFound: isMacOS },
+  ])("a bin that the file system finds under another name is packed: %j", async ({ onDisk, bin, isFound }) => {
+    using dir = tempDir("pack-bins-found-name", {
+      "package.json": JSON.stringify({ name: "pack-bins-found-name", version: "1.0.0", files: ["index.js"], bin }),
+      "index.js": indexJs,
+      [onDisk]: indexJs,
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-bins-found-name-1.0.0.tgz")).sort()).toEqual(
+      ["package/package.json", "package/index.js", ...(isFound ? [`package/${bin}`] : [])].sort(),
+    );
     expect(exitCode).toBe(0);
   });
 

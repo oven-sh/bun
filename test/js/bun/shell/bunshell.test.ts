@@ -1210,6 +1210,49 @@ booga"
         chmodSync(noaccess, 0o755);
       }
     });
+
+    // The last component of these words has no glob syntax. The glob walker does not find it
+    // in a listing, it looks the name up in each directory that `*` matches.
+    describe.skipIf(isWindows)("a name after a wildcard that is a symlink", () => {
+      const echo = async (cwd: string, word: string) => {
+        const { stdout, stderr, exitCode } = await $`echo ${{ raw: word }}`.cwd(cwd).nothrow().quiet();
+        return { words: stdout.toString().trim().split(" ").sort(), stderr: stderr.toString(), exitCode };
+      };
+
+      test("expands to a link that does not resolve", async () => {
+        using dir = tempDir("bunshell-glob-name-unresolved-link", { "d/x/real": "" });
+        const x = join(String(dir), "d", "x");
+        symlinkSync("nothing", join(x, "dangling"));
+        symlinkSync("loop", join(x, "loop"));
+        // Through a regular file: the target fails with ENOTDIR.
+        symlinkSync(join("real", "below"), join(x, "viafile"));
+
+        expect({
+          dangling: await echo(String(dir), "d/*/dangling"),
+          loop: await echo(String(dir), "d/*/loop"),
+          viafile: await echo(String(dir), "d/*/viafile"),
+        }).toEqual({
+          dangling: { words: ["d/x/dangling"], stderr: "", exitCode: 0 },
+          loop: { words: ["d/x/loop"], stderr: "", exitCode: 0 },
+          viafile: { words: ["d/x/viafile"], stderr: "", exitCode: 0 },
+        });
+      });
+
+      test("expands to every match when one is a link that does not resolve", async () => {
+        const names = ["p0", "p1", "p2", "p3", "p4", "p5"];
+        using dir = tempDir("bunshell-glob-name-every-match", {
+          "real": "",
+          ...Object.fromEntries(names.map(name => [`d/${name}/${name === "p2" ? "other" : "t"}`, ""])),
+        });
+        symlinkSync(join("..", "..", "real", "below"), join(String(dir), "d", "p2", "t"));
+
+        expect(await echo(String(dir), "d/*/t")).toEqual({
+          words: names.map(name => `d/${name}/t`),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
   });
 
   describe("brace expansion", () => {

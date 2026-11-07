@@ -12,7 +12,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
-import { existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { constants } from "os";
 import { join } from "path";
@@ -1670,5 +1670,96 @@ describe.concurrent.skipIf(isWindows)("workspace paths longer than the path buff
     const { stdout, exitCode } = await runFilter(cwd);
     expect(stdout).toContain("ok present: ok-ran");
     expect(exitCode).toBe(0);
+  });
+});
+
+// For an entry without glob syntax the walk looks `<entry>/package.json` up by name. It does
+// the same in each directory that a glob entry matches.
+describe.concurrent("package.json that the walk of a workspaces entry looks up by name", () => {
+  async function run(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...args],
+      cwd,
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const errors = stderr.split("\n").filter(line => /^error:/i.test(line));
+    return { stdout: stdout.split("\n").filter(Boolean).sort(), errors, exitCode };
+  }
+
+  const packageJson = (name: string) => JSON.stringify({ name, scripts: { build: `echo BUILD-${name}` } });
+
+  // https://github.com/oven-sh/bun/issues/16709
+  test("an absolute entry without glob syntax is a member, and a missing one is passed over", async () => {
+    using dir = tempDir("filter-absolute-ws", {
+      "packages/app/package.json": packageJson("app"),
+      "packages/legacy/package.json": packageJson("legacy"),
+    });
+    const root = String(dir);
+    // The absolute path is only known once the directory exists.
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/app", join(root, "packages", "legacy"), join(root, "packages", "missing")],
+      }),
+    );
+
+    expect(await run(root, "--workspaces", "build")).toEqual({
+      stdout: [
+        "app build: BUILD-app",
+        "app build: Exited with code 0",
+        "legacy build: BUILD-legacy",
+        "legacy build: Exited with code 0",
+      ],
+      errors: [],
+      exitCode: 0,
+    });
+  });
+
+  // Not on Windows, where making a symlink needs a privilege.
+  describe.skipIf(isWindows)("that is a symlink", () => {
+    function projectWithLinkedPackageJson(target: string, workspaces: (root: string) => string[]) {
+      const dir = tempDir("filter-pkgjson-link", { "packages/app/package.json": packageJson("app") });
+      const root = String(dir);
+      const link = join(root, "packages", "linked", "package.json");
+      mkdirSync(join(root, "packages", "linked"));
+      symlinkSync(target, link);
+      writeFileSync(join(root, "package.json"), JSON.stringify({ name: "ws", workspaces: workspaces(root) }));
+      return { root, link, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+    }
+    const appRan = ["app build: BUILD-app", "app build: Exited with code 0"];
+
+    test.each([
+      ["to nothing", "nothing", []],
+      ["to itself", "package.json", ["Error: ELOOP: <link>: Too many levels of symbolic links (stat())"]],
+      [
+        "through a file",
+        join("..", "app", "package.json", "below"),
+        ["Error: ENOTDIR: <link>: Not a directory (stat())"],
+      ],
+    ])("linked %s in a directory that a glob entry matches: the other packages run", async (_, target, errors) => {
+      using project = projectWithLinkedPackageJson(target, () => ["packages/*"]);
+
+      const result = await run(project.root, "--filter", "*", "build");
+
+      expect({ ...result, errors: result.errors.map(line => line.replace(project.link, "<link>")) }).toEqual({
+        stdout: appRan,
+        errors,
+        exitCode: 0,
+      });
+    });
+
+    // An error of the first lookup of an absolute entry ends the run. A missing target is not an error.
+    test.each([
+      ["to nothing", "nothing", { stdout: appRan, errors: [], exitCode: 0 }],
+      ["to itself", "package.json", { stdout: [], errors: ["error: ELOOP"], exitCode: 1 }],
+    ])("linked %s under an absolute entry without glob syntax", async (_, target, expected) => {
+      using project = projectWithLinkedPackageJson(target, root => ["packages/app", join(root, "packages", "linked")]);
+
+      expect(await run(project.root, "--workspaces", "build")).toEqual(expected);
+    });
   });
 });

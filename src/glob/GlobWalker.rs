@@ -42,8 +42,17 @@ fn dummy_filter_false(_val: &[u8]) -> bool {
 }
 
 #[cfg(windows)]
-pub(crate) fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
+pub(crate) fn statat_windows(fd: Fd, path: &ZStr, follow: bool) -> Maybe<Stat> {
     use bun_paths::resolve_path::{self, platform};
+    let stat: fn(&ZStr) -> Maybe<Stat> = if follow {
+        Syscall::stat
+    } else {
+        Syscall::lstat
+    };
+    // `AccessorHandle::EMPTY`: an absolute path, with no directory to join.
+    if !fd.is_valid() {
+        return stat(path);
+    }
     // Rust's `&mut`/`&` aliasing rules forbid
     // passing the same buffer as both `join_z_buf`'s output and an input part,
     // so we need two buffers — but on Windows `PathBuffer` is ~96 KB,
@@ -55,7 +64,7 @@ pub(crate) fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
     let parts: &[&[u8]] = &[&dir[..], path.as_bytes()];
     let mut join_buf = bun_paths::path_buffer_pool::get();
     let statpath = resolve_path::join_z_buf::<platform::Auto>(&mut join_buf[..], parts);
-    Syscall::stat(statpath)
+    stat(statpath)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,6 +88,7 @@ pub trait Accessor {
 
     fn open(path: &ZStr) -> Result<Maybe<Self::Handle>, Error>;
     fn openat(handle: Self::Handle, path: &ZStr) -> Result<Maybe<Self::Handle>, Error>;
+    /// `handle` may be `EMPTY` when `path` is absolute.
     fn statat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
     /// Like statat but does not follow symlinks.
     fn lstatat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
@@ -173,7 +183,7 @@ impl Accessor for SyscallAccessor {
     fn statat(handle: SyscallHandle, path: &ZStr) -> Maybe<Stat> {
         #[cfg(windows)]
         {
-            return statat_windows(handle.value, path);
+            return statat_windows(handle.value, path, true);
         }
         #[cfg(not(windows))]
         Syscall::fstatat(handle.value, path)
@@ -183,7 +193,7 @@ impl Accessor for SyscallAccessor {
     fn lstatat(handle: SyscallHandle, path: &ZStr) -> Maybe<Stat> {
         #[cfg(windows)]
         {
-            return statat_windows(handle.value, path);
+            return statat_windows(handle.value, path, false);
         }
         #[cfg(not(windows))]
         Syscall::lstatat(handle.value, path)
@@ -256,7 +266,7 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub(crate) follow_symlinks: bool,
     /// Without `follow_symlinks`: a link that a component other than `**` matches is followed, not only one that is named.
     follow_matched_symlinks: bool,
-    pub(crate) error_on_broken_symlinks: bool,
+    broken_symlinks: BrokenSymlinks,
     pub(crate) only_files: bool,
 
     pub(crate) path_buf: bun_paths::path_buffer_pool::Guard,
@@ -268,6 +278,17 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     is_ignored: IgnoreFilterFn,
 
     _accessor: core::marker::PhantomData<A>,
+}
+
+/// What a symlink that the walk follows and that does not resolve is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BrokenSymlinks {
+    /// An entry that is neither a file nor a directory.
+    Skip,
+    /// The error that ends the walk.
+    Throw,
+    /// As `Skip`, but a last component without glob syntax ends the walk with any error of its target except ENOENT.
+    TargetErrorIsFatal,
 }
 
 /// Array hashmap used as a set (values are the keys)
@@ -351,6 +372,8 @@ pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
     pub(crate) walker: &'a mut GlobWalker<A, SENTINEL>,
     pub(crate) iter_state: IterState<A>,
     pub(crate) cwd_fd: A::Handle,
+    /// The last component as the name that the literal tail looks up, made by the first lookup.
+    literal_tail: Option<bun_core::ZBox>,
     /// This is to make sure in debug/tests that we are closing file descriptors
     /// We should only have max 2 open at a time. One for the cwd, and one for the
     /// directory being iterated on.
@@ -372,6 +395,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             walker,
             iter_state: IterState::GetNext,
             cwd_fd: A::Handle::EMPTY,
+            literal_tail: None,
             #[cfg(debug_assertions)]
             fds_open: 0,
             #[cfg(windows)]
@@ -421,33 +445,33 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 // This means we got a pattern without any special glob syntax, for example:
                 // `/Users/zackradisic/foo/bar`
                 //
-                // In that case we don't need to do any walking and can just open up the FS entry
+                // In that case we don't need to do any walking and can just look the path up
                 if starting_component_idx as usize >= self.walker.pattern_components.len() {
-                    // Matched-path payload must respect SENTINEL. The open()
-                    // probe always needs a NUL — use a separate dupeZ for it so
-                    // SENTINEL=false matched paths don't carry a spurious 0x00.
-                    let path = dupe_matched::<SENTINEL>(path_without_special_syntax);
-                    let pathz_owned = dupe_z(path_without_special_syntax);
-                    // SAFETY: dupe_z appends NUL at len()-1; ZStr len excludes it.
-                    let pathz = ZStr::from_slice_with_nul(&pathz_owned[..]);
-                    let fd = match A::open(pathz)? {
-                        Err(e) => {
-                            if e.get_errno() == E::ENOTDIR {
-                                self.iter_state = IterState::Matched(path);
-                                return Ok(Ok(()));
-                            }
-                            // Doesn't exist
-                            if e.get_errno() == E::ENOENT {
-                                self.iter_state = IterState::GetNext;
-                                return Ok(Ok(()));
-                            }
-                            return Ok(Err(e.with_path(matched_as_slice::<SENTINEL>(&path))));
-                        }
-                        Ok(fd) => fd,
+                    // A trailing separator is not part of the name. The root keeps its own.
+                    let path = path_without_special_syntax;
+                    let root = if IS_WINDOWS {
+                        resolve_path::windows_filesystem_root(path).len().max(1)
+                    } else {
+                        1
                     };
-                    let _ = A::close(fd);
-                    self.iter_state = IterState::Matched(path);
-                    return Ok(Ok(()));
+                    let mut end = path.len();
+                    while end > root && bun_core::path_sep::is_sep_native(path[end - 1]) {
+                        end -= 1;
+                    }
+                    let name = bun_core::ZBox::from_bytes(&path[..end]);
+                    let dir_only = self
+                        .walker
+                        .pattern_components
+                        .last()
+                        .is_some_and(|last| last.trailing_sep);
+                    let matched =
+                        self.walker
+                            .match_literal(A::Handle::EMPTY, b"", &name, dir_only)?;
+                    return Ok(matched.map(|path| {
+                        if let Some(path) = path {
+                            self.iter_state = IterState::Matched(path);
+                        }
+                    }));
                 }
 
                 // In the above branch, if `starting_component_idx >= pattern_components.len` then
@@ -654,53 +678,32 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         };
 
         // Literal-tail optimization: if the only active index is the last
-        // component and it is a Literal, statat() instead of iterating.
+        // component and it is a Literal, look the name up instead of iterating.
         // Skip for multi-index masks since each index has different needs.
         if active.count() == 1 {
             let idx: u32 = u32::try_from(active.find_first_set().unwrap()).expect("int cast");
+            let component = self.walker.pattern_components[idx as usize];
             if idx as usize == self.walker.pattern_components.len().saturating_sub(1)
-                && self.walker.pattern_components[idx as usize].syntax_hint == SyntaxHint::Literal
+                && component.syntax_hint == SyntaxHint::Literal
             {
-                // `close_disallowing_cwd(fd)` is covered explicitly on
-                // both exit paths below (Err arm and post-Ok); no `?` between here
-                // and those calls, so a scopeguard is unnecessary.
-                let pat_slice = self.walker.pattern_components[idx as usize]
-                    .pattern_slice(&self.walker.pattern)
-                    .to_vec();
-                let pathz = dupe_z(&pat_slice);
-                // SAFETY: dupe_z NUL-terminates
-                let pathz_ref = ZStr::from_slice_with_nul(&pathz[..]);
-                let stat_result: Stat = match A::statat(fd, pathz_ref) {
-                    Err(e_) => {
-                        let e: SysError = e_;
-                        self.close_disallowing_cwd(fd);
-                        if e.get_errno() == E::ENOENT {
-                            self.iter_state = IterState::GetNext;
-                            return Ok(Ok(()));
-                        }
-                        let full_path = self.walker.join(&[dir_path.as_bytes(), &pat_slice])?;
-                        return Ok(Err(e.with_path(matched_as_slice::<SENTINEL>(&full_path))));
-                    }
-                    Ok(stat) => stat,
-                };
+                let pattern = &self.walker.pattern;
+                let name = self.literal_tail.get_or_insert_with(|| {
+                    bun_core::ZBox::from_bytes(component.pattern_slice(pattern))
+                });
+                let matched = self.walker.match_literal(
+                    fd,
+                    dir_path.as_bytes(),
+                    name,
+                    component.trailing_sep,
+                );
+                // Before the `?`, so that no exit leaves `fd` open.
                 self.close_disallowing_cwd(fd);
-                let mode = stat_result.st_mode as u32;
-                let matches = (S::ISDIR(mode) && !self.walker.only_files)
-                    || S::ISREG(mode)
-                    || !self.walker.only_files;
-                if matches {
-                    if let Some(path) = self
-                        .walker
-                        .prepare_matched_path(&pathz[..pathz.len() - 1], dir_path.as_bytes())?
-                    {
-                        self.iter_state = IterState::Matched(path);
-                    } else {
-                        self.iter_state = IterState::GetNext;
-                    }
-                } else {
-                    self.iter_state = IterState::GetNext;
-                }
-                return Ok(Ok(()));
+                return Ok(matched?.map(|path| {
+                    self.iter_state = match path {
+                        Some(path) => IterState::Matched(path),
+                        None => IterState::GetNext,
+                    };
+                }));
             }
         }
 
@@ -896,7 +899,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         if err.get_errno() == E::ENOTDIR {
                                             break 'brk None;
                                         }
-                                        if self.walker.error_on_broken_symlinks {
+                                        if self.walker.broken_symlinks == BrokenSymlinks::Throw {
                                             return Ok(Err(self.walker.handle_sys_err_with_path(
                                                 &err,
                                                 symlink_full_path_z,
@@ -1454,7 +1457,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             dot,
             absolute,
             follow_symlinks,
-            error_on_broken_symlinks,
+            broken_symlinks: if error_on_broken_symlinks {
+                BrokenSymlinks::Throw
+            } else {
+                BrokenSymlinks::Skip
+            },
             only_files,
             basename_excluding_special_syntax_component_idx: 0,
             end_byte_of_basename_excluding_special_syntax: 0,
@@ -1525,8 +1532,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             };
             let Some(path) = path else { break };
             log!("walker: matched path: {}", bstr::BStr::new(&path));
-            // The paths are already put into self.matched_paths, which we use for the output,
-            // so we don't need to do anything here
+            // `matched_paths` is the output.
+            debug_assert!(iter.walker.matched_paths.contains_key(&path));
         }
 
         Ok(Ok(()))
@@ -1932,6 +1939,83 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         self.follow_matched_symlinks = true;
     }
 
+    /// For a walk that reads the file its pattern ends with (`bun install`: `<member>/package.json`).
+    pub fn literal_target_error_is_fatal(&mut self) {
+        debug_assert!(self.only_files && self.broken_symlinks == BrokenSymlinks::Skip);
+        self.broken_symlinks = BrokenSymlinks::TargetErrorIsFatal;
+    }
+
+    /// The path to yield for `name`: a last component without glob syntax in the directory `base`, or a whole absolute pattern without any and `EMPTY`.
+    fn match_literal(
+        &mut self,
+        base: A::Handle,
+        dir_path: &[u8],
+        name: &ZStr,
+        dir_only: bool,
+    ) -> Result<Maybe<Option<MatchedPath>>, Error> {
+        let looked_up =
+            Self::literal_matches(self.broken_symlinks, self.only_files, dir_only, base, name);
+        match looked_up {
+            Ok(true) => Ok(Ok(self.prepare_matched_path(name.as_bytes(), dir_path)?)),
+            Ok(false) => Ok(Ok(None)),
+            Err(err) => {
+                let full_path = self.join(&[dir_path, name.as_bytes()])?;
+                Ok(Err(err.with_path(matched_as_slice::<SENTINEL>(&full_path))))
+            }
+        }
+    }
+
+    /// Looks `name` up for `match_literal`: one lookup unless the first one fails, or the walk throws for a broken link.
+    fn literal_matches(
+        policy: BrokenSymlinks,
+        only_files: bool,
+        dir_only: bool,
+        base: A::Handle,
+        name: &ZStr,
+    ) -> Maybe<bool> {
+        let kind_matches = |stat: &Stat| {
+            let mode = stat.st_mode as u32;
+            if dir_only {
+                S::ISDIR(mode) && !only_files
+            } else {
+                S::ISREG(mode) || !only_files
+            }
+        };
+        let is_link = |stat: &Stat| S::ISLNK(stat.st_mode as u32);
+        // ENOTDIR: a component of `name` before its last one is not a directory.
+        let no_entry = |err: &SysError| matches!(err.get_errno(), E::ENOENT | E::ENOTDIR);
+        match policy {
+            // The entry first, so that a link to nothing is an error and a missing entry is not.
+            BrokenSymlinks::Throw => match A::lstatat(base, name) {
+                Ok(entry) if is_link(&entry) => {
+                    A::statat(base, name).map(|target| kind_matches(&target))
+                }
+                Ok(entry) => Ok(kind_matches(&entry)),
+                Err(err) if no_entry(&err) => Ok(false),
+                Err(err) => Err(err),
+            },
+            // Every kind of entry matches, so the target of a link is not looked at.
+            BrokenSymlinks::Skip if !only_files && !dir_only => match A::lstatat(base, name) {
+                Ok(_) => Ok(true),
+                Err(err) if no_entry(&err) => Ok(false),
+                Err(err) => Err(err),
+            },
+            // The kind of the target decides. A link to nothing has no kind, so ENOENT is no match.
+            policy => match A::statat(base, name) {
+                Ok(target) => Ok(kind_matches(&target)),
+                Err(err) if err.get_errno() == E::ENOENT => Ok(false),
+                Err(err) if policy == BrokenSymlinks::TargetErrorIsFatal => Err(err),
+                // Whose error it is: of the target of a link, or of the lookup of the entry itself.
+                Err(err) => match A::lstatat(base, name) {
+                    Ok(entry) if is_link(&entry) => Ok(false),
+                    Ok(entry) => Ok(kind_matches(&entry)),
+                    Err(entry_err) if no_entry(&entry_err) => Ok(false),
+                    Err(_) => Err(err),
+                },
+            },
+        }
+    }
+
     #[inline]
     fn normalize_idx(&self, idx: u32) -> u32 {
         if (idx as usize) < self.pattern_components.len()
@@ -2279,26 +2363,13 @@ pub(crate) fn match_wildcard_literal(literal: &[u8], path: &[u8]) -> bool {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// `allocator.dupeZ(u8, s)` — returns owned bytes with trailing NUL included
-/// at index `len()-1`. Kept as `Box<[u8]>` (not `ZBox`) so `dupe_matched` can
-/// store sentinel and non-sentinel payloads in the same `MatchedPath` shape.
+/// `s` with a trailing NUL at `len() - 1`, as a `Box<[u8]>` so that it can be a `MatchedPath`.
 #[inline]
 fn dupe_z(s: &[u8]) -> Box<[u8]> {
     bun_core::ZBox::from_bytes(s).into_boxed_slice_with_nul()
 }
 
-/// Allocate a matched-path payload: when `SENTINEL` is true the box has a
-/// trailing NUL at `len()-1`; when false it does not.
-#[inline]
-fn dupe_matched<const SENTINEL: bool>(s: &[u8]) -> Box<[u8]> {
-    if SENTINEL {
-        dupe_z(s)
-    } else {
-        Box::<[u8]>::from(s)
-    }
-}
-
-/// Slice of a `dupe_matched` payload that excludes the trailing NUL (when
+/// Slice of a matched-path payload that excludes the trailing NUL (when
 /// `SENTINEL`), suitable for `e.with_path` and other `[]const u8` consumers.
 #[inline]
 fn matched_as_slice<const SENTINEL: bool>(p: &[u8]) -> &[u8] {
@@ -2359,5 +2430,152 @@ impl AccessorDirEntry for DirIterator::IteratorResult {
     }
     fn kind(&self) -> bun_sys::FileKind {
         self.kind
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::cell::{Cell, RefCell};
+
+    /// What a lookup of the name answers.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Look {
+        File,
+        Dir,
+        Link,
+        Fails(E),
+    }
+    use Look::{Dir, Fails, File, Link};
+
+    thread_local! {
+        static FOLLOWING: Cell<Look> = const { Cell::new(File) };
+        static NOT_FOLLOWING: Cell<Look> = const { Cell::new(File) };
+        static LOOKS: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn look(name: &'static str, answer: Look) -> Maybe<Stat> {
+        LOOKS.with_borrow_mut(|looks| looks.push(name));
+        let mut stat: Stat = bun_core::ffi::zeroed();
+        stat.st_mode = match answer {
+            File => S::IFREG,
+            Dir => S::IFDIR,
+            Link => S::IFLNK,
+            Fails(errno) => return Err(SysError::from_code(errno, Syscall::Tag::fstatat)),
+        } as _;
+        Ok(stat)
+    }
+
+    /// Answers `statat` and `lstatat` from the two cells, and records each call.
+    struct Scripted;
+
+    #[derive(Clone, Copy)]
+    struct Handle;
+
+    impl AccessorHandle for Handle {
+        const EMPTY: Self = Handle;
+        fn is_empty(self) -> bool {
+            true
+        }
+        fn eql(self, _: Self) -> bool {
+            true
+        }
+    }
+
+    struct NoEntries;
+
+    impl AccessorDirIter for NoEntries {
+        type Handle = Handle;
+        type Entry = DirIterator::IteratorResult;
+        fn next(&mut self) -> Maybe<Option<Self::Entry>> {
+            Ok(None)
+        }
+        fn iterate(_: Handle) -> Self {
+            NoEntries
+        }
+    }
+
+    impl Accessor for Scripted {
+        const COUNT_FDS: bool = false;
+        type Handle = Handle;
+        type DirIter = NoEntries;
+
+        fn open(_: &ZStr) -> Result<Maybe<Handle>, Error> {
+            Ok(Ok(Handle))
+        }
+        fn openat(_: Handle, _: &ZStr) -> Result<Maybe<Handle>, Error> {
+            Ok(Ok(Handle))
+        }
+        fn statat(_: Handle, _: &ZStr) -> Maybe<Stat> {
+            look("stat", FOLLOWING.get())
+        }
+        fn lstatat(_: Handle, _: &ZStr) -> Maybe<Stat> {
+            look("lstat", NOT_FOLLOWING.get())
+        }
+        fn close(_: Handle) -> Option<SysError> {
+            None
+        }
+    }
+
+    #[test]
+    fn literal_matches_by_policy() {
+        use BrokenSymlinks::{Skip, TargetErrorIsFatal, Throw};
+        const NAME: bool = false;
+        const NAME_SEP: bool = true;
+        // only_files, policy, trailing separator, what `statat` answers, what `lstatat` answers: result, lookups.
+        #[rustfmt::skip]
+        let rows: &[(bool, BrokenSymlinks, bool, Look, Look, Result<bool, E>, &[&str])] = &[
+            (true, Skip, NAME, File, File, Ok(true), &["stat"]),
+            (true, Skip, NAME, Dir, Dir, Ok(false), &["stat"]),
+            (true, Skip, NAME, Fails(E::ENOENT), Fails(E::ENOENT), Ok(false), &["stat"]),
+            (true, Skip, NAME, Fails(E::ENOENT), Link, Ok(false), &["stat"]),
+            (true, Skip, NAME, Fails(E::ELOOP), Link, Ok(false), &["stat", "lstat"]),
+            (true, Skip, NAME, Fails(E::EACCES), Link, Ok(false), &["stat", "lstat"]),
+            (true, Skip, NAME, Fails(E::EACCES), Fails(E::EACCES), Err(E::EACCES), &["stat", "lstat"]),
+            (true, Skip, NAME, Fails(E::ENOTDIR), Fails(E::ENOTDIR), Ok(false), &["stat", "lstat"]),
+            (true, Skip, NAME, Fails(E::EIO), File, Ok(true), &["stat", "lstat"]),
+            (true, Skip, NAME, Fails(E::EIO), Dir, Ok(false), &["stat", "lstat"]),
+            (false, Skip, NAME, File, Link, Ok(true), &["lstat"]),
+            (false, Skip, NAME, Fails(E::ENOENT), Link, Ok(true), &["lstat"]),
+            (false, Skip, NAME, Fails(E::ELOOP), Link, Ok(true), &["lstat"]),
+            (false, Skip, NAME, Fails(E::ENOENT), Fails(E::ENOENT), Ok(false), &["lstat"]),
+            (false, Skip, NAME, Fails(E::ENOTDIR), Fails(E::ENOTDIR), Ok(false), &["lstat"]),
+            (false, Skip, NAME, Fails(E::EACCES), Fails(E::EACCES), Err(E::EACCES), &["lstat"]),
+            (false, Skip, NAME_SEP, Dir, Link, Ok(true), &["stat"]),
+            (false, Skip, NAME_SEP, File, File, Ok(false), &["stat"]),
+            (false, Skip, NAME_SEP, Fails(E::ENOENT), Link, Ok(false), &["stat"]),
+            (false, Skip, NAME_SEP, Fails(E::ELOOP), Link, Ok(false), &["stat", "lstat"]),
+            (false, Skip, NAME_SEP, Fails(E::EIO), Dir, Ok(true), &["stat", "lstat"]),
+            (true, Skip, NAME_SEP, Dir, Dir, Ok(false), &["stat"]),
+            (true, Throw, NAME, File, File, Ok(true), &["lstat"]),
+            (true, Throw, NAME, Fails(E::ENOENT), Fails(E::ENOENT), Ok(false), &["lstat"]),
+            (true, Throw, NAME, File, Link, Ok(true), &["lstat", "stat"]),
+            (true, Throw, NAME, Dir, Link, Ok(false), &["lstat", "stat"]),
+            (true, Throw, NAME, Fails(E::ENOENT), Link, Err(E::ENOENT), &["lstat", "stat"]),
+            (false, Throw, NAME, Fails(E::ELOOP), Link, Err(E::ELOOP), &["lstat", "stat"]),
+            (false, Throw, NAME_SEP, File, Link, Ok(false), &["lstat", "stat"]),
+            (true, TargetErrorIsFatal, NAME, File, File, Ok(true), &["stat"]),
+            (true, TargetErrorIsFatal, NAME, Fails(E::ENOENT), Link, Ok(false), &["stat"]),
+            (true, TargetErrorIsFatal, NAME, Fails(E::ELOOP), Link, Err(E::ELOOP), &["stat"]),
+        ];
+        let mut differ = Vec::new();
+        for &(only_files, policy, dir_only, following, not_following, result, looks) in rows {
+            FOLLOWING.set(following);
+            NOT_FOLLOWING.set(not_following);
+            LOOKS.take();
+            let name = ZStr::from_slice_with_nul(b"name\0");
+            let got = GlobWalker::<Scripted, false>::literal_matches(
+                policy, only_files, dir_only, Handle, name,
+            )
+            .map_err(|err| err.get_errno());
+            let got = (got, LOOKS.take());
+            if got != (result, looks.to_vec()) {
+                differ.push(format!(
+                    "only_files={only_files} {policy:?} dir_only={dir_only} stat={following:?} lstat={not_following:?}: {got:?}, expected {:?}",
+                    (result, looks)
+                ));
+            }
+        }
+        assert!(differ.is_empty(), "{differ:#?}");
     }
 }

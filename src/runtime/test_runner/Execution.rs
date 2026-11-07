@@ -45,7 +45,7 @@ use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
+    group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, CallbackEnd, Calling, EntryData, ExecutionEntry,
     HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
 use super::expect::expect_deferred::ExpectDeferred;
@@ -97,6 +97,8 @@ pub(crate) struct Execution {
     /// The entry whose callback is on the stack, which `get_current_state_data()` can't name in a concurrent group.
     /// Cleared before the call's microtasks drain, because those can resume other tests in the group.
     pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
+    /// When bun last killed a process or ended a `Bun.spawnSync` wait for a timeout that had passed. `EPOCH` = never.
+    pub(crate) killed_on_timeout_at: Timespec,
 }
 
 pub(crate) struct ConcurrentGroup {
@@ -284,6 +286,16 @@ impl ExecutionSequence {
         false
     }
 
+    /// Whether `handle_uncaught_exception` prints the error of a hook and leaves `result`, so the test doesn't fail.
+    fn result_survives_hook_error(&self) -> bool {
+        match self.result {
+            Result::Pass | Result::Todo => true,
+            // `skip()` of a test context hides later errors on purpose.
+            Result::Skip => self.context.is_none(),
+            _ => false,
+        }
+    }
+
     /// For `test.failing`, `Result::Pass` means the callback threw, which is a failed attempt here.
     fn attempt_failed(&self) -> bool {
         match self.entry_mode() {
@@ -425,6 +437,7 @@ impl Execution {
             sequences: Box::default(),
             group_index: 0,
             on_stack: core::cell::Cell::new(None),
+            killed_on_timeout_at: Timespec::EPOCH,
         }
     }
 
@@ -457,6 +470,7 @@ impl Execution {
                         // SAFETY: bun_vm() returns the live per-thread VM.
                         let kill_count = global_this.bun_vm().as_mut().auto_killer.kill();
                         if kill_count.processes > 0 {
+                            self.killed_on_timeout_at = now;
                             bun_core::pretty_errorln!(
                                 "<d>killed {} dangling process{}<r>",
                                 kill_count.processes,
@@ -1330,7 +1344,7 @@ fn step_sequence_one(
         // The callback re-enters and reaches the sequence on its own, so no `&mut` is held across it.
         let sequence_ptr = NonNull::from(sequence);
         global_this.bun_vm().as_mut().is_running_vitest_entry = next_item.calling.is_vitest();
-        if BunTest::run_test_callback(
+        let end = BunTest::run_test_callback(
             buntest_strong,
             global_this,
             callback,
@@ -1338,14 +1352,17 @@ fn step_sequence_one(
             next_item.calling == Calling::Jest { done: true },
             callback_data,
             &next_item.timespec,
-        )
-        .is_some()
-        {
+        );
+        if end != CallbackEnd::Running {
             *now = Timespec::now_force_real_time();
             // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
             // Box<[ExecutionSequence]>, never reallocated during execution).
             let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
-            if next_item.evaluate_timeout(sequence, now) {
+            // A failed callback keeps its result, unless bun killed a process for it or it is a hook whose error can't fail the test.
+            let checks_deadline = end == CallbackEnd::Returned
+                || buntest_strong.get().execution.killed_on_timeout_at.order(&next_item.timespec) != core::cmp::Ordering::Less
+                || (Some(next_item_ptr) != sequence.test_entry && sequence.result_survives_hook_error());
+            if checks_deadline && next_item.evaluate_timeout(sequence, now) {
                 if let Some(context) = context {
                     TestContext::abort_signal(context, global_this);
                 }

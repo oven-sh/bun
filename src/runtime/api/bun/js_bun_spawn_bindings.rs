@@ -293,7 +293,7 @@ pub(crate) fn spawn_sync(
         options.to_js(),
         &mut bun_test_deadline,
     );
-    // A bun:test deadline that passed while the isolated loop was blocking is reported only now: the loop is torn down and the child reaped, so the runner's callback re-enters nothing that is mid-flight. With an exception pending (spawn failure, termination) the file timer is left armed and reports it from the main loop instead.
+    // A bun:test deadline that passed while the isolated loop was blocking is reported only now: the loop is torn down and the child reaped, so the runner's callback re-enters nothing that is mid-flight. With an exception pending (spawn failure, termination) the file timer is left armed: the runner reports the deadline when the callback ends, or when that timer fires.
     if let Some(deadline) = bun_test_deadline
         && result.is_ok()
         && !cx.global().has_exception()
@@ -1912,10 +1912,10 @@ fn spawn_maybe_sync(
                             .active_file
                             .clone()
                         {
-                            active_file
-                                .get()
-                                .execution
-                                .kill_dangling_processes_on_timeout(cx.global());
+                            let execution = &mut active_file.get().execution;
+                            // `kill_dangling_processes_on_timeout` skips a concurrent group. The wait of this call ends below in any group.
+                            execution.killed_on_timeout_at = now;
+                            execution.kill_dangling_processes_on_timeout(cx.global());
                         }
                         let _ = subprocess.try_kill(subprocess.kill_signal);
                     }

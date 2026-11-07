@@ -6,7 +6,7 @@ use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
 use bun_core::Timespec;
 
 use crate::test_runner::bun_test::{
-    self, BunTest, BunTestPtr, DescribeScope, HandleUncaughtExceptionResult,
+    self, BunTest, BunTestPtr, CallbackEnd, DescribeScope, HandleUncaughtExceptionResult,
     RefDataValue, StepResult,
 };
 use crate::test_runner::bun_test::debug::group;
@@ -220,18 +220,20 @@ impl Collection {
                 bstr::BStr::new(this.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
             ));
 
-            if let Some(cfg_data) = BunTest::run_test_callback(
+            let callback_data = RefDataValue::Collection { active_scope: previous_scope };
+            let end = BunTest::run_test_callback(
                 buntest_strong,
                 global_this,
                 callback.get(),
                 &[],
                 false,
-                RefDataValue::Collection { active_scope: previous_scope },
+                callback_data,
                 &Timespec::EPOCH,
-            ) {
+            );
+            if end != CallbackEnd::Running {
                 // the result is available immediately; queue
                 // Re-derive after re-entrant call per BunTestCell::get aliasing contract.
-                buntest_strong.get().add_result(cfg_data);
+                buntest_strong.get().add_result(callback_data);
             }
 
             return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });

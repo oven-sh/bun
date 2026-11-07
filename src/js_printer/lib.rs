@@ -4289,8 +4289,7 @@ pub(crate) mod __gated_printer {
                         if (namespace.import_record_index as usize) < self.import_records.len() {
                             let import_record =
                                 self.import_record(namespace.import_record_index as usize);
-                            // Only `bun test` gives the record of an import statement this kind, when it lowers the
-                            // statement to `await import()` behind hoisted mocks.
+                            // Only an import that `bun test` lowers behind hoisted mocks has a record of this kind.
                             is_lowered_import = import_record.kind == ImportKind::Dynamic;
                             if namespace.was_originally_property_access {
                                 let mut wrap = false;
@@ -4333,8 +4332,7 @@ pub(crate) mod __gated_printer {
                         if !did_print {
                             did_print = true;
 
-                            // The visit pass rewrites the callee of a call that the file wrote. A JSX call is built
-                            // later, so its callee is still the import here. `(0, ns.jsx)()` doesn't pass `ns` as `this`.
+                            // A call built after the visit pass, such as a JSX call, still has the import as its callee.
                             let is_lowered_callee = is_lowered_import
                                 && e.was_originally_identifier()
                                 && matches!(&self.call_target, Some(ExprData::EImportIdentifier(id)) if id.ref_.eql(e.ref_));

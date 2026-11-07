@@ -393,8 +393,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         order
     }
 
-    /// An import that the parser adds after the visit pass, like that of the JSX runtime, stays static and runs first.
-    /// If a hoisted mock names it, it runs behind the hoisted statements instead, ahead of the imports the file wrote.
+    /// An import that the parser added after the visit pass goes behind a hoisted mock that names it.
     #[optimize(size)]
     fn lower_mocked_generated_imports(
         &mut self,

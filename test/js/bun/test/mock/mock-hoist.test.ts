@@ -631,8 +631,7 @@ describe.concurrent("hoisting", () => {
     ).toEqual([["factory", "mocked i"]]);
   });
 
-  // The factory runs where vi.mock() is written, to update the module that "reader" is linked to. The JSX runtime is
-  // loaded by then, because no hoisted call names it.
+  // No hoisted call names the JSX runtime, so it is loaded when the factory runs where vi.mock() is written.
   test("a hoisted factory with JSX updates a module that is already linked", async () => {
     expect(
       await events({
@@ -743,8 +742,7 @@ describe.concurrent("hoisting", () => {
   });
 });
 
-// An import that stays static in a file that hoists: the ones that Bun adds for JSX and for the React Compiler, and one
-// with attributes. It runs behind the hoisted statements once one of them names its path.
+// An import that stays static in a file that hoists runs behind the hoisted statements once one of them names its path.
 describe.concurrent.each([
   {
     kind: "the JSX runtime",

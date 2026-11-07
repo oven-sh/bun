@@ -21,6 +21,7 @@ struct async_context {
     ::node::async_id trigger_async_id;
 };
 
+// The overloads of Node that take or return an `AsyncCleanupHookHandle`, and `node::AtExit`, are not implemented.
 BUN_EXPORT void AddEnvironmentCleanupHook(v8::Isolate* isolate,
     void (*fun)(void* arg),
     void* arg);

@@ -240,6 +240,19 @@ For `ObjectTemplate` or `FunctionTemplate` implementations, see existing pattern
 - Objects use pointer tagging with map pointers
 - Doubles are stored in object layouts with special maps
 
+### Environment Cleanup Hooks
+
+- `node::AddEnvironmentCleanupHook` and `node::RemoveEnvironmentCleanupHook` (`node.cpp`) keep the hooks in `RareData::environment_cleanup_hooks` (`src/jsc/rare_data.rs`): a map of the VM from the pair of a function and its argument to the ordinal of its `Add`. A hook belongs to the VM of the thread that adds it. Neither function reads its isolate, which can be the one of a collected realm.
+- `VirtualMachine::run_cleanup_hooks` runs the hooks in rounds, newest first, before the cleanup of each Node-API env of the round. It runs when a Worker exits in any way, and when the main thread ends without a requested exit (`exit_frees_environment`). Each hook gets a handle scope of the VM's current realm.
+- `bun test --isolate` drops the hooks of a file when it replaces the global object.
+- With the headers of Node 26.4 and later, each `node::ObjectWrap` adds one hook in its constructor and removes it in its destructor. `SetWeak()` callbacks never run here, so that hook is what deletes a wrap, when its environment ends.
+- Differences from Node 26.12.1 that are left:
+  - Node has one queue for these hooks and for `napi_add_env_cleanup_hook`.
+  - Node aborts when a pair is added twice. Bun keeps the first one, because `bun --hot` and a second `process.dlopen` run an initializer again.
+  - Node allows no JavaScript in a hook and seals its handle scope. Bun does neither for the V8 API.
+  - Node stops the Workers of an environment before its hooks. Bun runs the hooks of a Worker first.
+  - The overloads with an `AsyncCleanupHookHandle` and `node::AtExit` are not implemented.
+
 ## Testing Strategy
 
 ### Comprehensive Testing

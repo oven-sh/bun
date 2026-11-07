@@ -665,8 +665,9 @@ mod pe {
     /// collapsing to `&[u8]` here would freeze it to read-only and make the
     /// later `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
-        // SAFETY: `from_executable` is the only caller. It runs once, on the main thread at
-        // startup, so nothing races the first call.
+        // SAFETY: the first call fills statics without a lock. `from_executable` calls on the main
+        // thread at startup, before another thread exists. `image_has_program` calls behind a
+        // `OnceLock`. So nothing races the first call.
         let length = unsafe { Bun__getStandaloneModuleGraphPELength() };
         if length == 0 {
             return None;
@@ -687,6 +688,12 @@ mod elf {
     // the symbol's only consumer.
     unsafe extern "C" {
         pub(super) safe fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
+    }
+
+    /// Whether `bun build --compile` appended data. It reads none of it: `get_data` exits if the end is cut off.
+    pub(super) fn has_data() -> bool {
+        // SAFETY: it returns the address of a static.
+        unsafe { core::ptr::read_unaligned(Bun__getStandaloneModuleGraphELFVaddr()) != 0 }
     }
 
     /// Returns `(base, len)` for the embedded ELF segment data. Kept as a raw
@@ -3424,6 +3431,13 @@ impl StandaloneModuleGraph {
     /// Loads the standalone module graph from the executable, allocates it on the heap,
     /// sets it globally, and returns the pointer.
     pub fn from_executable() -> crate::Result<Option<*mut StandaloneModuleGraph>> {
+        let Some((base, len)) = Self::payload_of_executable() else {
+            return Ok(None);
+        };
+        Self::from_payload(base, len, None)
+    }
+
+    fn payload_of_executable() -> Option<(*mut u8, usize)> {
         #[cfg(target_os = "macos")]
         let data = macho::get_data();
         #[cfg(windows)]
@@ -3438,10 +3452,20 @@ impl StandaloneModuleGraph {
             target_os = "freebsd"
         )))]
         let data: Option<(*mut u8, usize)> = None;
-        let Some((base, len)) = data else {
-            return Ok(None);
-        };
-        Self::from_payload(base, len, None)
+        data
+    }
+
+    /// Whether this executable file has a program, also a truncated one. `get()` is `None` after a start with `BUN_BE_BUN`.
+    pub fn image_has_program() -> bool {
+        static HAS_PROGRAM: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *HAS_PROGRAM.get_or_init(|| {
+            // ELF: the header alone, because `elf::get_data` exits if the end of the program is cut off.
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+            let has_program = elf::has_data();
+            #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+            let has_program = Self::payload_of_executable().is_some();
+            has_program
+        })
     }
 
     /// For an executable that can run nothing but its embedded program, and found none.

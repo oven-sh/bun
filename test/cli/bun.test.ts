@@ -415,6 +415,138 @@ describe("bun", () => {
       });
     });
   });
+  // `bun build --compile` output starts as the `bun` CLI when BUN_BE_BUN=1. It still is not a Bun
+  // install: started as `bunx` by a process without the variable, it runs its own program.
+  describe("completions in an executable with an embedded program", () => {
+    const bunxName = isDebug ? "bunx-debug" : "bunx";
+    // `bun build --compile` copies the executable, and a debug build is more than 1 GB.
+    const timeout = isDebug ? 60_000 : undefined;
+
+    async function compileApp(cwd: string, outfile: string) {
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "app.ts", "--outfile", outfile],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    // Plain bun to compare with: a private copy, so that what it installs is in the temporary directory.
+    function copyPlainBun(exe: string) {
+      if (process.platform === "darwin") {
+        // Not a hardlink: macOS can report a file that has several links under another of its
+        // names, and then the copy takes itself for bunExe(). A clone costs nothing on APFS.
+        fs.copyFileSync(bunExe(), exe, fs.constants.COPYFILE_FICLONE);
+        return;
+      }
+      try {
+        fs.linkSync(fs.realpathSync(bunExe()), exe);
+      } catch {
+        fs.copyFileSync(bunExe(), exe);
+      }
+    }
+
+    test.concurrent.skipIf(isWindows)(
+      "makes no bunx symlink to that executable",
+      async () => {
+        using dir = tempDir("completions-app", {
+          "app.ts": `console.log("app");`,
+          "app": {},
+          "plain": {},
+          "empty-path": {},
+          "install": { bin: {} },
+          "home": { ".bun": { bin: {} }, ".local": { bin: {} } },
+        });
+        const root = String(dir);
+        const app = join(root, "app", "app");
+        await compileApp(root, app);
+        const bun = join(root, "plain", "bun");
+        copyPlainBun(bun);
+
+        // No bunx is on PATH. stdout is a pipe, so the script for $SHELL is printed.
+        async function completions(exe: string) {
+          await using proc = Bun.spawn({
+            cmd: [exe, "completions"],
+            env: {
+              ...bunEnv,
+              BUN_BE_BUN: "1",
+              SHELL: "/bin/bash",
+              PATH: join(root, "empty-path"),
+              HOME: join(root, "home"),
+              BUN_INSTALL: join(root, "install"),
+            },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { stdout, exitCode };
+        }
+
+        // BUN_BE_BUN=1 does not stop plain bun: it links bunx beside itself.
+        const plain = await completions(bun);
+        expect(plain.stdout).toContain("complete -F _bun_completions bun");
+        expect(plain.exitCode).toBe(0);
+        expect(fs.readlinkSync(join(root, "plain", bunxName))).toBe(fs.realpathSync(bun));
+
+        // The app prints the same script. None of the four places of the link step gets an entry.
+        expect(await completions(app)).toEqual(plain);
+        const places = [
+          join(root, "app"),
+          join(root, "install", "bin"),
+          join(root, "home", ".bun", "bin"),
+          join(root, "home", ".local", "bin"),
+        ];
+        expect(places.map(place => fs.readdirSync(place))).toEqual([["app"], [], [], []]);
+      },
+      timeout,
+    );
+
+    // On Windows the link step deletes bunx.cmd and bunx.exe beside the executable, then makes
+    // bunx.exe. For an executable in `bun\bin` it also writes `bun\uninstall.ps1`.
+    test.concurrent.skipIf(!isWindows)(
+      "keeps bunx.cmd, and makes no bunx.exe and no uninstall.ps1",
+      async () => {
+        const bunxCmd = "@echo the bunx of an installed bun\n";
+        const install = { bun: { bin: { [`${bunxName}.cmd`]: bunxCmd } } };
+        using dir = tempDir("completions-app", { "app.ts": `console.log("app");`, "app": install, "plain": install });
+        const root = String(dir);
+        const app = join(root, "app", "bun", "bin", "app.exe");
+        await compileApp(root, app);
+        const bun = join(root, "plain", "bun", "bin", "bun.exe");
+        copyPlainBun(bun);
+
+        async function completions(exe: string) {
+          await using proc = Bun.spawn({
+            cmd: [exe, "completions"],
+            env: { ...bunEnv, BUN_BE_BUN: "1" },
+            cwd: root,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          // The executable ran as the `bun` CLI, which has no completions for PowerShell.
+          expect(stderr).toContain("PowerShell completions are not yet written for Bun.");
+          expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+          const bin = join(exe, "..");
+          return {
+            bunx: fs.readdirSync(bin).filter(name => name.startsWith(bunxName)),
+            install: fs.readdirSync(join(bin, "..")).sort(),
+          };
+        }
+
+        // BUN_BE_BUN=1 does not stop plain bun: bunx.exe replaces bunx.cmd, and the uninstaller is written.
+        expect(await completions(bun)).toEqual({ bunx: [`${bunxName}.exe`], install: ["bin", "uninstall.ps1"] });
+
+        expect(await completions(app)).toEqual({ bunx: [`${bunxName}.cmd`], install: ["bin"] });
+        expect(fs.readFileSync(join(app, "..", `${bunxName}.cmd`), "utf8")).toBe(bunxCmd);
+      },
+      timeout,
+    );
+  });
   describe("--help preserves <placeholder> text", () => {
     const env = { ...bunEnv, NO_COLOR: "1" };
     const usage: [string, string][] = [

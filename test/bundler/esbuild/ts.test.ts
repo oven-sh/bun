@@ -787,6 +787,180 @@ describe("bundler", () => {
     treeShaking: true,
     external: ["pkg"],
   });
+  // A lowered top-level `using` moves the statements of its module into a `try`.
+  for (const [target, format] of [
+    ["browser", "esm"],
+    ["node", "esm"],
+    ["node", "cjs"],
+    ["browser", "iife"],
+  ] as const) {
+    itBundled(`ts/ImportEqualsBesideLoweredUsing/${target}/${format}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import "./type-alias";
+          import "./interface";
+          import "./declared-namespace";
+          import "./nested-namespace";
+          import "./unused";
+          import "./chain";
+          import "./value";
+          import "./ambient-namespace";
+          import "./mixed";
+        `,
+        "/type-alias.ts": /* ts */ `
+          namespace N { export type T = number; }
+          import T = N.T;
+          using resource = { [Symbol.dispose]() { console.log("disposed"); } };
+          const x: T = 1;
+          console.log("type alias", x);
+        `,
+        "/interface.ts": /* ts */ `
+          namespace N { export interface T { a: number; } }
+          import T = N.T;
+          using resource = { [Symbol.dispose]() {} };
+          const x: T = { a: 1 };
+          console.log("interface", x.a);
+        `,
+        "/declared-namespace.ts": /* ts */ `
+          declare namespace N { type T = number; }
+          import T = N.T;
+          using resource = { [Symbol.dispose]() {} };
+          const x: T = 1;
+          console.log("declared namespace", x);
+        `,
+        "/nested-namespace.ts": /* ts */ `
+          namespace A.B { export type T = string; }
+          import T = A.B.T;
+          using resource = { [Symbol.dispose]() {} };
+          const x: T = "s";
+          console.log("nested namespace", x);
+        `,
+        "/unused.ts": /* ts */ `
+          using resource = { [Symbol.dispose]() {} };
+          namespace N { export type T = number; }
+          import T = N.T;
+          console.log("unused", 1);
+        `,
+        "/chain.ts": /* ts */ `
+          namespace A { export namespace B { export type T = number; } }
+          import B = A.B;
+          import T = B.T;
+          using resource = { [Symbol.dispose]() {} };
+          const x: T = 1;
+          console.log("chain", x);
+        `,
+        "/value.ts": /* ts */ `
+          namespace N { export const v = 1; }
+          import v = N.v;
+          using resource = { [Symbol.dispose]() {} };
+          console.log("value", v);
+        `,
+        "/ambient-namespace.ts": /* ts */ `
+          import Timeout = NodeJS.Timeout;
+          using resource = { [Symbol.dispose]() {} };
+          const timer: Timeout = setTimeout(() => {}, 0);
+          clearTimeout(timer);
+          console.log("ambient namespace", 1);
+        `,
+        "/mixed.ts": /* ts */ `
+          import { one } from "./one";
+          namespace N { export type T = number; export const v = 2; }
+          import T = N.T;
+          import v = N.v;
+          import U = N.T;
+          using resource = { [Symbol.dispose]() {} };
+          const x: T = one;
+          const y: U = v;
+          console.log("mixed", x, y);
+        `,
+        "/one.ts": /* ts */ `
+          export const one = 1;
+        `,
+      },
+      target,
+      format,
+      run: {
+        stdout:
+          "type alias 1\ndisposed\ninterface 1\ndeclared namespace 1\nnested namespace s\nunused 1\nchain 1\nvalue 1\nambient namespace 1\nmixed 1 2",
+      },
+    });
+  }
+  itBundled("ts/ImportEqualsBesideLoweredAwaitUsing", {
+    files: {
+      "/entry.ts": /* ts */ `
+        namespace N { export type T = number; }
+        import T = N.T;
+        await using resource = { async [Symbol.asyncDispose]() { console.log("disposed"); } };
+        const x: T = 1;
+        console.log(x);
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: "1\ndisposed",
+    },
+  });
+  itBundled("ts/ImportEqualsBesideLoweredUsingNoBundle", {
+    files: {
+      "/entry.ts": /* ts */ `
+        namespace N { export type T = number; }
+        import T = N.T;
+        using resource = { [Symbol.dispose]() { console.log("disposed"); } };
+        const x: T = 1;
+        console.log(x);
+      `,
+    },
+    bundling: false,
+    target: "node",
+    run: {
+      stdout: "1\ndisposed",
+    },
+  });
+  // The root of a removed alias keeps its use count. The parser compares that count with the
+  // tracked reads of a `require()` namespace to tell if the namespace escapes.
+  itBundled("ts/ImportEqualsOfRequireNamespaceBesideLoweredUsing", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import ns = require("./lib");
+        const { a } = ns;
+        import A = ns.a;
+        using resource = { [Symbol.dispose]() {} };
+        console.log(a, Object.keys(ns).join(","));
+      `,
+      "/lib.ts": /* ts */ `
+        export const a = 1;
+        export const b = 2;
+        export const c = 3;
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("ns.a");
+    },
+    run: {
+      stdout: "1 a,b,c",
+    },
+  });
+  itBundled("ts/ImportEqualsOfImportStarBesideLoweredUsing", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as NS from "./types";
+        import M = NS;
+        using resource = { [Symbol.dispose]() {} };
+        const x: M.T = 1;
+        console.log(x);
+      `,
+      "/types.ts": /* ts */ `
+        export type T = number;
+        export const v = 1;
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("var M =");
+    },
+    run: {
+      stdout: "1",
+    },
+  });
   itBundled("ts/MinifiedBundleES6", {
     files: {
       "/entry.ts": /* ts */ `

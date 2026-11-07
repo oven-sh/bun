@@ -218,13 +218,7 @@ impl Seq {
     }
 }
 
-/// Parse a positional `seq` argument as `f32`.
-///
-/// Grammar matches Zig's `std.fmt.parseFloat(f32, ...)` (the pre-Rust
-/// implementation): decimal floats, C99 hex floats (`0x1p4`, `0x1.8`), and
-/// `_` digit separators. `bun_core::fmt::parse_f32` is JS-number semantics
-/// (`WTF::parseDouble`) and rejects the latter two; both macOS and GNU
-/// coreutils `seq` accept hex.
+/// Decimal or C99 hex float (`0x1.8p1`), with `_` digit separators.
 fn parse_f32(bytes: &[u8]) -> Option<f32> {
     if bytes.is_empty() {
         return None;
@@ -264,16 +258,7 @@ fn parse_f32(bytes: &[u8]) -> Option<f32> {
     Some(if neg { -mag } else { mag } as f32)
 }
 
-/// Parse the body of a C99 hex float (caller has already consumed `0x`).
-/// Hex mantissa with at most one `.`, optional `p`/`P` binary exponent.
-///
-/// Bun.$ argv is in-process (no OS ARG_MAX), so input length is bounded only
-/// by the address space. `frac_digits` and `dropped_int_bits` advance at most
-/// 4 per input byte, so they cannot reach i64 saturation for any addressable
-/// input and are exact when combined. `exp` is parsed from decimal and can
-/// saturate at i64::MAX, but then dwarfs the other two terms so the combined
-/// sign is preserved; the final clamp to i32 for powi yields inf (rejected by
-/// the caller's `is_finite()`) or underflows to 0.
+/// C99 hex float after the `0x`: hex digits, at most one `.`, optional `p` exponent.
 fn parse_hex_float(s: &[u8]) -> Option<f64> {
     let mut mantissa: u64 = 0;
     let mut frac_digits: i64 = 0;
@@ -327,10 +312,10 @@ fn parse_hex_float(s: &[u8]) -> Option<f64> {
         }
     }
     if mantissa == 0 {
-        // Short-circuit so a huge exponent (`0x0p1024`) doesn't reach
-        // `0.0 * inf = NaN` below.
+        // `0x0p1024` would otherwise compute `0.0 * inf`, which is NaN.
         return Some(0.0);
     }
+    // Only `exp` can saturate: the digit counts grow by at most 4 per input byte.
     let exp = exp
         .saturating_sub(frac_digits.saturating_mul(4))
         .saturating_add(dropped_int_bits)

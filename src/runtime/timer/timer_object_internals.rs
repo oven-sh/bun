@@ -196,7 +196,7 @@ impl TimerObjectInternals {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
         // SAFETY: `vm` is the live per-thread VM (hook contract); field read only.
-        let uws_loop = unsafe { (*vm).uws_loop() };
+        let uws_loop = unsafe { (*vm).uws_loop_ref() };
         let delta = if enable { 1 } else { -1 };
         match self.flags.get().kind() {
             // setImmediate has slightly different event loop logic
@@ -214,23 +214,20 @@ impl TimerObjectInternals {
     /// C++ `Bun__JSTimeout__call` thunk (which handles exceptions internally).
     /// Returns `true` if an exception was thrown.
     ///
-    /// Note (noalias re-entrancy): takes `*mut Self`, NOT `&mut self`.
+    /// Note (noalias re-entrancy): takes `&self`, NOT `&mut self`.
     /// The JS callback can re-enter `cancel()`/`do_refresh()` on this same
-    /// object via a fresh `&mut Self` derived from the JS wrapper's `m_ptr`.
+    /// object via another `&Self` derived from the JS wrapper's `m_ptr`.
     /// With `&mut self` here, LLVM's `noalias` lets it keep `self.flags` in a
     /// register across the FFI call, so `set_in_callback(false)`'s RMW
     /// clobbers the `has_cleared_timer` bit that `cancel()` set — the interval
-    /// re-fires forever. A raw pointer carries no aliasing guarantee, so use
-    /// one here.
+    /// re-fires forever. The fields they write are `Cell`/`JsCell`, so `&self`
+    /// carries no such guarantee.
     ///
     /// # Safety
-    /// `this` points at a live `TimerObjectInternals` embedded in its parent
-    /// container, pinned for the duration of the call by the caller's `ref_()`.
-    /// Both callers (`fire`, `run_immediate_task`) also take `*mut Self`, so
-    /// no `noalias` `&mut Self` is live anywhere in the call chain across
-    /// `Bun__JSTimeout__call` — inlining is safe.
+    /// `vm` is the live per-thread VM, `thrown` is null or a live slot, and the
+    /// caller's `ref_()` pins the parent container for the duration of the call.
     unsafe fn run(
-        this: *mut Self,
+        &self,
         global_this: *mut JSGlobalObject,
         timer: JSValue,
         callback: JSValue,
@@ -239,10 +236,6 @@ impl TimerObjectInternals {
         vm: *mut VirtualMachine,
         thrown: *mut JSValue,
     ) -> bool {
-        // SAFETY: `this` live per fn contract; pinned by caller's `ref_()`.
-        // `&Self` (NOT `&mut`) — fields are `Cell`/`JsCell` so re-entrant JS
-        // touching this object via another `&Self` is sound (no `noalias`).
-        let s = unsafe { &*this };
         // `JSGlobalObject` is an `opaque_ffi!` ZST — `opaque_ref` is the safe
         // deref (panics on null; `vm.global` is never null).
         let global = JSGlobalObject::opaque_ref(global_this);
@@ -254,14 +247,14 @@ impl TimerObjectInternals {
         // Bun__JSTimeout__call handles exceptions.
         // `Cell<Flags>` RMW so the `in_callback` write reaches memory before JS
         // runs (re-entrant `_destroyed` getter reads it via a different pointer).
-        s.update_flags(|f| f.set_in_callback(true));
+        self.update_flags(|f| f.set_in_callback(true));
         // SAFETY: `thrown` is null or the caller's live stack slot.
         let result = unsafe { Bun__JSTimeout__call(global, timer, callback, arguments, thrown) };
         // No early returns between the `in_callback` set and this clear.
         // `Cell<Flags>` RMW: must reload `flags` from memory — re-entrant
         // `cancel()` may have set `has_cleared_timer` / cleared
         // `is_keeping_event_loop_alive`.
-        s.update_flags(|f| f.set_in_callback(false));
+        self.update_flags(|f| f.set_in_callback(false));
 
         // SAFETY: as above.
         if unsafe { (*vm).is_inspector_enabled() } {
@@ -442,11 +435,10 @@ impl TimerObjectInternals {
         let exception_thrown = {
             s.ref_();
             let async_id = s.async_id();
-            // SAFETY: `this` is the live `internals` per fn contract; `ref_()`
-            // above pins the parent across re-entrancy.
+            // SAFETY: `vm` per fn contract; `ref_()` above pins the parent
+            // across re-entrancy.
             let result = unsafe {
-                Self::run(
-                    this,
+                s.run(
                     global_this,
                     timer,
                     callback,
@@ -613,11 +605,10 @@ impl TimerObjectInternals {
             // block. Every path through the labelled-block + `is_timer_done`
             // tail reaches it (no `return` between here and the deref).
 
-            // SAFETY: `this` is the live `internals` per fn contract; `ref_()`
-            // above pins the parent across re-entrancy.
+            // SAFETY: `vm` and `thrown` per fn contract; `ref_()` above pins the
+            // parent across re-entrancy.
             let _ = unsafe {
-                Self::run(
-                    this,
+                s.run(
                     global_this,
                     this_object,
                     callback,

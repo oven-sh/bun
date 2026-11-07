@@ -2164,10 +2164,11 @@ pub type ForEachCallback =
 
 /// Callback signature for [`JSValue::for_each_property`] /
 /// [`JSValue::for_each_property_non_indexed`].
+/// C++ passes the address of a stack `EncodedSlice` as `key`.
 pub(crate) type ForEachPropertyCallback = extern "C" fn(
     global: &JSGlobalObject,
     ctx: *mut c_void,
-    key: *mut bun_core::EncodedSlice,
+    key: &bun_core::EncodedSlice,
     value: JSValue,
     is_symbol: bool,
     is_private_symbol: bool,
@@ -2355,6 +2356,13 @@ impl JSValue {
         }
         JSC__JSValue__isCompiledGenerator(self)
     }
+    /// True for the placeholder that an executable compiled ahead of time hands out for a built-in whose code the build omitted. It has the built-in's name and length; reading any other property throws.
+    pub fn is_placeholder_for_omitted_builtin(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isPlaceholderForOmittedBuiltin(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isPlaceholderForOmittedBuiltin(self)
+    }
     /// `JSValue.isClass` — true if the callable is a class constructor.
     pub fn is_class(self, global: &JSGlobalObject) -> bool {
         unsafe extern "C" {
@@ -2481,13 +2489,9 @@ impl JSValue {
                 callback: ForEachPropertyCallback,
             );
         }
-        let mut scope_storage = core::mem::MaybeUninit::uninit();
-        let scope = crate::TopExceptionScope::init(&mut scope_storage, global);
+        crate::top_scope!(scope, global);
         JSC__JSValue__forEachPropertyOrdered(self, global, ctx, callback);
-        let result = scope.return_if_exception();
-        // SAFETY: `scope` was init'd above and is destroyed exactly once.
-        unsafe { crate::TopExceptionScope::destroy(scope) };
-        result
+        scope.return_if_exception()
     }
     /// Like `for_each_property_ordered`, but passes what a getter returns, or the accessor itself if the getter throws.
     /// Returns true if `for_each_property_ordered_with_non_enumerable` is sure to visit the same properties.

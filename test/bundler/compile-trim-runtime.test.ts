@@ -75,7 +75,7 @@ const saysHello = { stdout: "hello world\n", stderr: "", exitCode: 0 };
 function printedBy(trimmed: Build) {
   const [, size, removed] =
     new RegExp(
-      ` compile +${trimmed.name}(?:\\.exe)? +(\\d+\\.\\d) MB \\((\\d+\\.\\d) MB of unused Bun APIs removed\\)\\n`,
+      ` compile +${trimmed.name}(?:\\.exe)? +(\\d+\\.\\d) MB \\((\\d+\\.\\d) MB of unused Bun APIs removed\\)(?:  compiled [^\\n]+)?\\n`,
     ).exec(trimmed.stdout) ?? [];
   return { size, removed: Number(removed) };
 }

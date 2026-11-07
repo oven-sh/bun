@@ -1,5 +1,5 @@
 use bun_sema::atom::{Atom, known};
-use bun_sema::check::aot::{MemberLookup, ObjectMemberKind};
+use bun_sema::check::aot::ObjectMemberKind;
 use bun_sema::fold::Constant;
 use bun_sema::hir::{self, ExprId, ExprKind, JsxId, PropId, PropKey, PropKind};
 use bun_sema::import_sites::{has_static_children, is_ignored_key, jsx_children};
@@ -9,7 +9,7 @@ use super::Element;
 use crate::ir::{LayoutId, PropertyKeyId, ValueId};
 use crate::lower::member::PropertyName;
 use crate::lower::object::{self, ObjectBuilder};
-use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, convert};
+use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering};
 
 fn collect_attributes(
     hir: &hir::File<'_>,
@@ -117,21 +117,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.add_property(object, name, value, source);
     }
 
-    fn add_attributes(
-        &mut self,
-        object: &mut ObjectBuilder,
-        props_type: Option<CheckerTypeId>,
-        attributes: &[PropId],
-    ) {
+    fn add_attributes(&mut self, object: &mut ObjectBuilder, attributes: &[PropId]) {
         let hir = self.file.hir;
         for &attribute in attributes {
             let prop = hir[attribute];
             if prop.kind == PropKind::Spread {
                 let source = self.lower_expression(prop.value);
                 self.set_position(prop.pos);
-                if let Some(props_type) = props_type {
-                    convert::record_spread_flow(self.file, prop.value, props_type);
-                }
                 self.add_spread(object, source);
                 continue;
             }
@@ -151,21 +143,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn lower_children(
-        &mut self,
-        element: Element,
-        props_type: Option<CheckerTypeId>,
-    ) -> Option<(ValueId, Option<ExprId>)> {
+    fn lower_children(&mut self, element: Element) -> Option<(ValueId, Option<ExprId>)> {
         let hir = self.file.hir;
         let children: SmallVec<[ExprId; 8]> = jsx_children(hir, element.jsx).collect();
         if has_static_children(hir, element.jsx) {
-            if let Some(props_type) = props_type
-                && let Ok(MemberLookup::Member(member)) =
-                    self.file.queries.find_member(props_type, known::children)
-                && let Ok(list) = member.types.checked
-            {
-                self.file.record_list_flow(&children, list);
-            }
             let list = self.lower_argument_list(&[], &children, element.position);
             return Some((list, None));
         }
@@ -177,29 +158,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(super) fn lower_runtime_props(&mut self, element: Element) -> ValueId {
         let hir = self.file.hir;
         let attributes = collect_attributes(hir, element.jsx, element.key);
-        let props_type = self.file.find_props_type(element);
         if let Some(literal) = find_props_literal(hir, &attributes) {
             let props = self.lower_expression(literal);
-            if let (Some(props_type), Ok(own)) =
-                (props_type, self.file.queries.expression_type(literal))
-            {
-                self.file
-                    .record_type_flow(own, props_type, hir[literal].pos);
-            }
-            if let Some((children, _)) = self.lower_children(element, props_type) {
+            if let Some((children, _)) = self.lower_children(element) {
                 let name = PropertyName::Constant(self.file.name_key(known::children));
                 self.set_position(element.position);
                 self.emit_define(props, name, children);
             }
             return props;
         }
+        let props_type = self.file.find_props_type(element);
         let has_children = jsx_children(hir, element.jsx).next().is_some();
         let layout = self
             .file
             .find_props_layout(props_type, &attributes, has_children);
         let mut object = self.begin_object(layout);
-        self.add_attributes(&mut object, props_type, &attributes);
-        if let Some((value, source)) = self.lower_children(element, props_type) {
+        self.add_attributes(&mut object, &attributes);
+        if let Some((value, source)) = self.lower_children(element) {
             self.set_position(element.position);
             self.add_named_property(&mut object, known::children, value, source);
         }
@@ -216,7 +191,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let props_type = self.file.find_props_type(element);
         let layout = self.file.find_props_layout(props_type, &attributes, false);
         let mut object = self.begin_object(layout);
-        self.add_attributes(&mut object, props_type, &attributes);
+        self.add_attributes(&mut object, &attributes);
         self.set_position(element.position);
         object::finish_object(self, object)
     }

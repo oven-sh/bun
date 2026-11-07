@@ -401,6 +401,9 @@ struct Context<'a, 'h> {
     object_methods: IdMap<IdentifierId, (InstructionValue, Option<DiagSourceLocation>)>,
     unique_identifiers: HashSet<String>,
     synthesized_names: HashMap<&'static str, String>,
+    /// Inside an `async function*`, `return undefined` awaits its operand and
+    /// `return;` does not, so the two are not interchangeable there.
+    is_async_generator: bool,
 }
 
 impl<'a, 'h> Context<'a, 'h> {
@@ -418,6 +421,7 @@ impl<'a, 'h> Context<'a, 'h> {
             object_methods: IdMap::new(),
             unique_identifiers,
             synthesized_names: HashMap::default(),
+            is_async_generator: false,
         }
     }
 
@@ -481,6 +485,7 @@ fn codegen_reactive_function(
     cx: &mut Context,
     func: &ReactiveFunction,
 ) -> Result<CodegenFunction, CompilerError> {
+    cx.is_async_generator = func.is_async && func.generator;
     for param in &func.params {
         let place = param.place();
         let ident = &cx.env.identifiers[place.identifier.0 as usize];
@@ -964,7 +969,7 @@ fn codegen_terminal(
         ReactiveTerminal::Return { value, loc, .. } => {
             let expr = codegen_place_to_expression(cx, value)?;
             let stmt_loc = convert_loc(*loc);
-            if matches!(expr.data, ExprData::EUndefined(_)) {
+            if matches!(expr.data, ExprData::EUndefined(_)) && !cx.is_async_generator {
                 return Ok(Some(Stmt::alloc(S::Return { value: None }, stmt_loc)));
             }
             Ok(Some(Stmt::alloc(S::Return { value: Some(expr) }, stmt_loc)))

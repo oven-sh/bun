@@ -69,10 +69,6 @@ public:
 
     WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)> onDidChangeListener = WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)>(nullptr);
 
-    unsigned getMaxListeners() const { return m_maxListeners; };
-
-    void setMaxListeners(unsigned count);
-
     bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
     bool isFiringEventListeners() const;
 
@@ -106,7 +102,6 @@ private:
     bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
 
     EventEmitterData m_eventTargetData;
-    unsigned m_maxListeners { 10 };
 
     mutable JSC::Weak<JSC::JSObject> m_thisObject { nullptr };
 };
@@ -137,11 +132,6 @@ inline bool EventEmitter::hasEventListeners(const Identifier& eventType) const
 inline bool EventEmitter::hasEventListeners(JSC::VM& vm, ASCIILiteral eventType) const
 {
     return this->hasEventListeners(Identifier::fromString(vm, eventType));
-}
-
-inline void EventEmitter::setMaxListeners(unsigned count)
-{
-    this->m_maxListeners = count;
 }
 
 } // namespace WebCore

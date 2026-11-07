@@ -65,6 +65,8 @@ public:
     // Environment's own JS, so every worker warns once itself.
     bool m_warnedProcessBinding = false;
     bool m_warnedErrname = false;
+    // node:events writes its `defaultMaxListeners` here, so the native getMaxListeners() answers it without that module.
+    double m_defaultMaxListeners = 10;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
@@ -140,6 +142,9 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 // Routes its argument onto the uncaught-exception path. Used, via $newCppFunction, by the
 // node-style callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
+
+// Stores its number in Process::m_defaultMaxListeners. Used, via $newCppFunction, by node:events.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetDefaultMaxListeners);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsStandardOutputStream);
 

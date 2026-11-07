@@ -1020,6 +1020,28 @@ test("getMaxListeners", () => {
   expect(emitter.getMaxListeners()).toBe(20);
 });
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L410-L414: only undefined means the default.
+test("getMaxListeners answers a limit of null", () => {
+  const emitter = new EventEmitter() as EventEmitter & { _maxListeners: unknown };
+  emitter._maxListeners = null;
+  expect(emitter.getMaxListeners()).toBeNull();
+  expect(getMaxListeners(emitter)).toBeNull();
+  emitter._maxListeners = undefined;
+  expect(emitter.getMaxListeners()).toBe(10);
+});
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L586-L587: the add path reads the limit through the same helper.
+test("a limit of null is no limit when listeners are added", () => {
+  const emitter = new EventEmitter() as EventEmitter & { _maxListeners: unknown; _events: Record<string, object> };
+  emitter._maxListeners = null;
+  for (let i = 0; i < 11; i++) emitter.on("added", () => {});
+  for (let i = 0; i < 11; i++) emitter.prependListener("prepended", () => {});
+  expect([Object.hasOwn(emitter._events.added, "warned"), Object.hasOwn(emitter._events.prepended, "warned")]).toEqual([
+    false,
+    false,
+  ]);
+});
+
 test("setMaxListeners", () => {
   const emitter = new EventEmitter();
   expect(emitter.getMaxListeners()).toBe(10);
@@ -1150,7 +1172,8 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
   // emitter; a throwing getter must propagate rather than become "invalid this".
   const nativeProto = Object.getPrototypeOf(process);
 
-  const cases: Array<[string, (obj: object) => void]> = [
+  // getMaxListeners reads `_maxListeners` and not `_events`, as node's does: that is the getter it propagates from.
+  const cases: Array<[string, (obj: object) => void, string?]> = [
     ["on", obj => nativeProto.on.call(obj, "foo", () => {})],
     ["addListener", obj => nativeProto.addListener.call(obj, "foo", () => {})],
     ["once", obj => nativeProto.once.call(obj, "foo", () => {})],
@@ -1160,13 +1183,13 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
     ["eventNames", obj => nativeProto.eventNames.call(obj)],
     ["listenerCount", obj => nativeProto.listenerCount.call(obj, "foo")],
     ["listeners", obj => nativeProto.listeners.call(obj, "foo")],
-    ["getMaxListeners", obj => nativeProto.getMaxListeners.call(obj)],
+    ["getMaxListeners", obj => nativeProto.getMaxListeners.call(obj), "_maxListeners"],
   ];
 
-  test.each(cases)("%s", (_name, invoke) => {
+  test.each(cases)("%s", (_name, invoke, property = "_events") => {
     const sentinel = new Error("getter threw");
     const obj = {};
-    Object.defineProperty(obj, "_events", {
+    Object.defineProperty(obj, property, {
       get() {
         throw sentinel;
       },
@@ -1206,6 +1229,73 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
     nativeProto.emit.call(obj, "x");
     expect(fired).toBe(1);
   });
+});
+
+// setMaxListeners and getMaxListeners of process are native and serve any receiver. The limit is the receiver's own
+// `_maxListeners`, as with the two functions of node:events that node has in their place.
+test("the native setMaxListeners and getMaxListeners keep the limit on their receiver", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const events = require("node:events");
+       const native = Object.getPrototypeOf(process);
+       const NativeEmitter = native.constructor;
+       const receivers = {
+         "a plain object": {},
+         "Object.create(process)": Object.create(process),
+         "Object.create(prototype of process)": Object.create(native),
+         "new (constructor of process)()": new NativeEmitter(),
+       };
+       const out = {};
+       for (const [name, receiver] of Object.entries(receivers)) {
+         const row = [native.getMaxListeners.call(receiver)];
+         events.defaultMaxListeners = 3;
+         row.push(native.getMaxListeners.call(receiver));
+         events.defaultMaxListeners = 10;
+         row.push(native.setMaxListeners.call(receiver, 1.5) === receiver, Object.hasOwn(receiver, "_maxListeners") && receiver._maxListeners);
+         row.push(native.getMaxListeners.call(receiver), typeof receiver.getMaxListeners === "function" ? events.getMaxListeners(receiver) : "no method");
+         row.push(Object.hasOwn(receiver, "_events"));
+         out[name] = row;
+       }
+       const thrownBy = fn => { try { return fn(); } catch (error) { return error.name; } };
+       const frozen = Object.freeze({});
+       out.frozen = [native.getMaxListeners.call(frozen), thrownBy(() => native.setMaxListeners.call(frozen, 2))];
+       out.number = [native.getMaxListeners.call(5), thrownBy(() => native.setMaxListeners.call(5, 2))];
+       out.undefined = [thrownBy(() => native.getMaxListeners.call(undefined)), thrownBy(() => native.setMaxListeners.call(undefined, 2))];
+       const { getMaxListeners, setMaxListeners } = native;
+       out.bare = [thrownBy(() => getMaxListeners()), thrownBy(() => setMaxListeners(2))];
+       out.process = [process.getMaxListeners(), Object.hasOwn(process, "_maxListeners"), process._maxListeners === undefined];
+       console.log(JSON.stringify(out));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // [the default, the default after events.defaultMaxListeners = 3, setMaxListeners(1.5) returned the receiver, its own
+  //  _maxListeners, getMaxListeners(), events.getMaxListeners(receiver), the receiver has an own _events]
+  const row = [10, 3, true, 1.5, 1.5, 1.5, false];
+  let printed: unknown;
+  try {
+    printed = JSON.parse(stdout);
+  } catch {
+    printed = { stdout, stderr };
+  }
+  expect(printed).toEqual({
+    "a plain object": row.with(5, "no method"),
+    "Object.create(process)": row,
+    "Object.create(prototype of process)": row,
+    "new (constructor of process)()": row,
+    // [getMaxListeners(), what setMaxListeners(2) threw]
+    "frozen": [10, "TypeError"],
+    "number": [10, "TypeError"],
+    "undefined": ["TypeError", "TypeError"],
+    // Called through a variable, the two functions have no `this`.
+    "bare": ["TypeError", "TypeError"],
+    "process": [10, true, true],
+  });
+  expect(exitCode).toBe(0);
 });
 
 // The loop stands in module code, where the JIT enters it while it runs. An array of 48 or 64 bytes a call is 12 collections or more.

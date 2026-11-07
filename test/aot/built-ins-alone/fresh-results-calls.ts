@@ -145,7 +145,6 @@ export const calls: Record<string, string[]> = {
       ["addListener", '"x", () => {}'],
       ["emit", '"x"'],
       ["eventNames", ""],
-      ["getMaxListeners", ""],
       ["listenerCount", '"x"'],
       ["listeners", '"x"'],
       ["off", '"x", () => {}'],
@@ -156,7 +155,6 @@ export const calls: Record<string, string[]> = {
       ["rawListeners", '"x"'],
       ["removeAllListeners", ""],
       ["removeListener", '"x", () => {}'],
-      ["setMaxListeners", "1"],
     ].map(([name, operands]) => [
       `%EventEmitter%.prototype.${name} > EventEmitter`,
       [`const other = {};\nprocess.${name}.call(other${operands === "" ? "" : `, ${operands}`});\nother._events`],

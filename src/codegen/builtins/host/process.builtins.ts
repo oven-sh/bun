@@ -165,15 +165,6 @@ const removesAllListeners = methodOfEventEmitter({
   writes: listenerLists,
 });
 
-const setsMaxListeners = methodOfEventEmitter({
-  args: { count: b.union(b.f64, b.notPassed) },
-  returns: b.undefined,
-  capability: "heap",
-  throws: true,
-  uses: { this: b.inspected },
-  writes: listenerLists,
-});
-
 const readsListenerLists = (signature: Pick<b.SignatureOptions, "args" | "returns">) =>
   methodOfEventEmitter({
     ...signature,
@@ -242,6 +233,40 @@ const refusal = (operands: readonly string[], implementation: b.ImplementationSp
     uses: Object.fromEntries(operands.map(name => [name, [formattedInErrorMessage]])),
     implementation,
   }) satisfies b.FunctionField;
+
+// The limit is `this._maxListeners`, as in node:events: an ordinary property of whatever the two functions are called on.
+const limitOfListeners = b.keysNamed("_maxListeners");
+
+const setsMaxListeners = [
+  {
+    this: b.any,
+    args: { count: b.f64 },
+    returns: self,
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    uses: { this: [b.storedByKey(limitOfListeners, b.operand("count"))] },
+    implementation: b.generic,
+  },
+  // Any other count is refused before the receiver is read.
+  {
+    ...refusal(["count"], b.generic),
+    this: b.any,
+    uses: { this: b.inspected, count: [formattedInErrorMessage] },
+  },
+] satisfies b.FunctionField[];
+
+// While the limit is undefined the answer is `defaultMaxListeners` of node:events, a number. A limit that the program stored comes back as it is.
+const getsMaxListeners = {
+  this: b.any,
+  returns: b.any,
+  capability: "js",
+  throws: true,
+  runsOnlyOperandCode: true,
+  uses: { this: [b.readByKey(limitOfListeners)] },
+  reads: externalState,
+  implementation: b.generic,
+} satisfies b.FunctionField;
 
 const endsProcessUnlessInWorker = (code: readonly b.UseSpec[]) =>
   ({
@@ -502,6 +527,8 @@ export default b.declarations(
     "process",
     {
       _exiting: b.property(b.bool, { mutability: "ChangesOnItsOwn" }),
+      // setMaxListeners stores a number here, and a program stores what it likes, also from code that the compiler does not see.
+      _maxListeners: b.property(b.any, { mutability: "ChangesOnItsOwn" }),
       ...declareEach(setByCommandLineFlag, b.property(b.union(b.bool, b.undefined), { mutability: "ChangesOnItsOwn" })),
       exit: endsProcessUnlessInWorker([formattedInErrorMessage]),
       reallyExit: replaceableFunction(calledWithExitCode, endsProcessUnlessInWorker(b.inspected)),
@@ -721,7 +748,7 @@ export default b.declarations(
       // Native code looks `emit` up on process for each event, so it calls what a program has stored there.
       emit: replaceableFunction(calledWithEvents, emitsEvent),
       eventNames: readsListenerLists({ returns: newArrayOf(b.union(b.string, b.symbol)) }),
-      getMaxListeners: readsListenerLists({ returns: b.f64 }),
+      getMaxListeners: getsMaxListeners,
       listenerCount: readsListenerLists({ args: { event: b.propertyKey.loose }, returns: b.f64 }),
       listeners: listsListeners,
       rawListeners: listsListeners,

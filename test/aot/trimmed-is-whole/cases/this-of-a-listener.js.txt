@@ -18,7 +18,6 @@ process.emit("ping");
 //// process-on-returns-process
 show(process.on("ping", () => {})[names[0]]);
 //// process-setMaxListeners-returns-process
-//@ exit 1
 show(process.setMaxListeners(20)[names[0]]);
 //// process-off-returns-process
 show(process.off("ping", () => {})[names[0]]);

@@ -59,6 +59,14 @@ let FixedQueue: typeof import("internal/fixed_queue").default.FixedQueue | undef
 const kEmptyObject = Object.freeze(Object.create(null));
 
 var defaultMaxListeners = 10;
+let setNativeDefaultMaxListeners: ((n: number) => void) | undefined;
+
+// `process` keeps its listeners in native code, which has a copy of the default.
+function setDefaultMaxListeners(n: number) {
+  defaultMaxListeners = n;
+  setNativeDefaultMaxListeners ??= $newCppFunction("BunProcess.cpp", "jsFunctionSetDefaultMaxListeners", 1);
+  setNativeDefaultMaxListeners!(n);
+}
 
 interface MaxListenersExceededWarning extends Error {
   emitter?: unknown;
@@ -1097,7 +1105,7 @@ function getEventListeners(emitter: EmitterOrTarget, type: $Node.EventName) {
 function setMaxListeners(n = defaultMaxListeners, ...eventTargets: EmitterOrTarget[]) {
   validateNumber(n, "setMaxListeners", 0);
   if (eventTargets.length === 0) {
-    defaultMaxListeners = n;
+    setDefaultMaxListeners(n);
   } else {
     for (let i = 0; i < eventTargets.length; i++) {
       const target = eventTargets[i];
@@ -1171,8 +1179,10 @@ function checkListener(listener: $Node.Listener) {
   if (typeof listener !== "function") validateFunction(listener, "listener");
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L410-L414, but a missing emitter answers the default where node throws.
 function _getMaxListeners(emitter: { _maxListeners?: number }) {
-  return emitter?._maxListeners ?? defaultMaxListeners;
+  const limit = emitter?._maxListeners;
+  return limit === undefined ? defaultMaxListeners : limit;
 }
 
 type AsyncResourceClass = typeof import("./async_hooks").default.AsyncResource;
@@ -1309,7 +1319,7 @@ Object.defineProperties(EventEmitter, {
     },
     set: (arg: number) => {
       validateNumber(arg, "defaultMaxListeners", 0);
-      defaultMaxListeners = arg;
+      setDefaultMaxListeners(arg);
     },
   },
   kMaxEventTargetListeners: {

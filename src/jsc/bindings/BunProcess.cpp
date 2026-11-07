@@ -5502,6 +5502,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportUncaughtException, (JSC::JSGlobalObject
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetDefaultMaxListeners, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSValue limit = callFrame->argument(0);
+    if (limit.isNumber())
+        defaultGlobalObject(globalObject)->processObject()->m_defaultMaxListeners = limit.asNumber();
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionFatalException, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     // Node-compat: process._fatalException(err, fromPromise) runs the uncaught-exception
@@ -6271,6 +6279,8 @@ void Process::finishCreation(JSC::VM& vm)
     });
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
+    // node's EventEmitter constructor leaves this own property on every emitter; setMaxListeners() stores the limit in it.
+    putDirect(vm, WebCore::builtinNames(vm)._maxListenersPublicName(), jsUndefined(), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
     // Compiled code reads the property as the table of built-ins describes it.
     if (isBunTest && !Bun::hasCompiledModules())

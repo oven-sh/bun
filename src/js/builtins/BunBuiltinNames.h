@@ -37,6 +37,7 @@ using namespace JSC;
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \
     macro(_events) \
+    macro(_maxListeners) \
     macro(abort) \
     macro(addAbortAlgorithmToSignal) \
     macro(armedTimeout) \

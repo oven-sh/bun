@@ -194,6 +194,8 @@ export const libraryLines: readonly Line[] = [
   ["instanceof-unknown", "({}) instanceof JSON.parse(K);"],
   ["in-unknown", "\"a\" in JSON.parse(K);"],
   ["process-on", "process.on(\"exit\", () => {});"],
+  ["process-set-max-listeners", "process.setMaxListeners(process.getMaxListeners() + 1);"],
+  ["process-get-max-listeners", "console.log(process.getMaxListeners());"],
   ["process-env", "process.env[K];"],
   ["process-exit", "process.exit(1);"],
   ["process-stdout", "process.stdout.write(K);"],

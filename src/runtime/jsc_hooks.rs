@@ -1559,10 +1559,10 @@ mod vm_loader_ctx {
                     .map(|b| bun_core::heap::into_raw(Box::new(b)).cast::<()>())
             },
             blob_loader(b) => blob(b).get_loader(&*this),
-            // Returned slices borrow blob heap storage that lives until
+            // Returned slices are interned or borrow blob heap storage that lives until
             // `blob_deinit`; erased to `'static` per the interface signature —
             // sound because the bundler caller drops them before `blob_deinit`.
-            blob_store_path(b) => blob(b).store_path(),
+            blob_store_path(b) => blob_module_path(blob(b)),
             blob_needs_read_file(b) => blob(b).needs_to_read_file(),
             blob_shared_view(b) => blob(b).shared_view(),
             blob_deinit(b) => {
@@ -4386,7 +4386,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                 loader = blob.get_loader(unsafe { &*jsc_vm });
 
                 // "file:" loader makes no sense for blobs, so default to tsx.
-                if let Some(filename) = blob.store_path() {
+                if let Some(filename) = blob_module_path(blob) {
                     // Only treat it as a file if it is a `Bun.file()`.
                     if blob.needs_to_read_file() {
                         path = Fs::Path::init(filename);
@@ -4555,6 +4555,31 @@ fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
         set.insert(interned, ());
         interned
     })
+}
+
+/// `Blob::store_path`, absolute for a `Bun.file()`: it is the module's source URL, so the key of its
+/// source map, and what the map's `sources` and the module's `import()` are resolved against.
+fn blob_module_path(blob: &crate::webcore::Blob) -> Option<&[u8]> {
+    let filename = blob.store_path()?;
+    if !blob.needs_to_read_file() || bun_paths::is_fully_qualified(filename) {
+        return Some(filename);
+    }
+    // `path.resolve(filename)`. `bun_paths` would take a `\` in a POSIX file name for a separator.
+    let paths = [bun_core::top_level_dir(), filename];
+    let len = bun_node_path::resolve_buf_len(cfg!(windows), &paths);
+    let mut buffers = vec![0; 2 * len];
+    let (buf, buf2) = buffers.split_at_mut(len);
+    let resolved = if cfg!(windows) {
+        bun_node_path::resolve_windows_t(&paths, buf, buf2)
+    } else {
+        bun_node_path::resolve_posix_t(&paths, buf, buf2)
+    };
+    match resolved {
+        Ok(absolute) if absolute.len() < bun_paths::MAX_PATH_BYTES => {
+            Some(intern_transpile_path(absolute))
+        }
+        _ => Some(filename),
+    }
 }
 
 /// What loading a file with a loader gives.

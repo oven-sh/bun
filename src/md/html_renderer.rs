@@ -371,7 +371,10 @@ impl<'src> HtmlRenderer<'src> {
                 }
             }
             TextType::Html => {
-                if self.tag_filter {
+                // Inside an image this is the value of `alt`, which a raw `"` would end.
+                if in_image {
+                    self.write_html_escaped(content);
+                } else if self.tag_filter {
                     self.write_html_with_tag_filter(content);
                 } else {
                     self.write(content);

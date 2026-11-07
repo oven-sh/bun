@@ -47,7 +47,6 @@ using namespace JSC;
     macro(attributes) \
     macro(autoAllocateChunkSize) \
     macro(bareStandardStreamPrototypes) \
-    macro(basename) \
     macro(birthtimeMs) \
     macro(blob) \
     macro(body) \
@@ -85,13 +84,11 @@ using namespace JSC;
     macro(exchange) \
     macro(expires) \
     macro(exports) \
-    macro(extname) \
     macro(fastPath) \
     macro(fatal) \
     macro(fd) \
     macro(filename) \
     macro(flush) \
-    macro(format) \
     macro(globScan) \
     macro(globScanSync) \
     macro(handleEvent) \
@@ -110,13 +107,11 @@ using namespace JSC;
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(isAbortSignal) \
-    macro(isAbsolute) \
     macro(isEqualNode) \
     macro(isOpen) \
     macro(isPrepared) \
     macro(isUncloneable) \
     macro(isUntransferable) \
-    macro(join) \
     macro(json) \
     macro(kResistStopPropagation) \
     macro(lazy) \
@@ -143,7 +138,6 @@ using namespace JSC;
     macro(natives) \
     macro(nodeName) \
     macro(nodeType) \
-    macro(normalize) \
     macro(onClose) \
     macro(onDrain) \
     macro(onEndCallbacks) \
@@ -152,7 +146,6 @@ using namespace JSC;
     macro(overridableRequire) \
     macro(ownReadableState) \
     macro(ownWritableState) \
-    macro(parse) \
     macro(partitioned) \
     macro(path) \
     macro(paths) \
@@ -173,7 +166,6 @@ using namespace JSC;
     macro(readableMark) \
     macro(readableType) \
     macro(redirect) \
-    macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
     macro(require) \
     macro(requireCacheCompiledEntry) \
@@ -207,7 +199,6 @@ using namespace JSC;
     macro(textDecoderStreamDecoder) \
     macro(textEncoderStreamEncoder) \
     macro(toClass) \
-    macro(toNamespacedPath) \
     macro(transform) \
     macro(type) \
     macro(updateRef) \

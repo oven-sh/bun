@@ -352,11 +352,6 @@
   ],
   "inputs": [
     {
-      "id": "commandLine",
-      "type": "promptString",
-      "description": "Usage: bun [...]",
-    },
-    {
       "id": "testName",
       "type": "promptString",
       "description": "Usage: bun test [...]",

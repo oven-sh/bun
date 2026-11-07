@@ -1714,9 +1714,13 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
     expect(exitCode).toBe(0);
   });
 
-  test("createRequire() and new Module() belong to the context they are called in", async () => {
+  test("createRequire(), new Module() and Module._load() belong to the context they are called in", async () => {
+    const who = `module.exports = typeof TENANT === "undefined" ? "the host's" : "the graph's";`;
     using d = tempDir("module-graph-node-module-context", {
-      "who.cjs": `module.exports = typeof TENANT === "undefined" ? "the host's" : "the graph's";`,
+      "who.cjs": who,
+      "loaded-for-nobody.cjs": who,
+      "loaded-for-null.cjs": who,
+      "loaded-for-an-object.cjs": who,
       "tenant.mjs": `
         import Module, { createRequire } from "node:module";
         export const viaCreateRequire = () => createRequire(import.meta.url)("./who.cjs");
@@ -1724,6 +1728,37 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
           const made = Object.assign(new Module(import.meta.dir + "/made.cjs"), { filename: import.meta.dir + "/made.cjs", paths: [] });
           made._compile("module.exports = typeof TENANT === 'undefined' ? \\"the host's\\" : \\"the graph's\\";", made.filename);
           return made.exports;
+        };
+        // A parent that is no module object. The file is then in the cache of the context, where a require() finds it.
+        // Its module.parent is that parent, and so is the parent that a replaced Module._resolveFilename is called with.
+        export const viaLoad = () => {
+          const require = createRequire(import.meta.url);
+          const files = ["nobody", "null", "an-object"].map(file => require.resolve("./loaded-for-" + file + ".cjs"));
+          const anObject = { filename: import.meta.filename };
+          const name = parent => (parent === anObject ? "the object" : String(parent));
+          const resolvedFor = [];
+          const resolveFilename = Module._resolveFilename;
+          Module._resolveFilename = function (request, parent, ...rest) {
+            resolvedFor.push(name(parent));
+            return resolveFilename.call(this, request, parent, ...rest);
+          };
+          let loaded;
+          try {
+            loaded = [
+              Module._load(files[0]),
+              Module._load(files[1], null),
+              Module._load("./loaded-for-an-object.cjs", anObject),
+            ];
+          } finally {
+            Module._resolveFilename = resolveFilename;
+          }
+          const modules = files.map(file => require.cache[file]);
+          return {
+            loaded: [...new Set(loaded)].join(),
+            cached: modules.every(Boolean),
+            parents: modules.map(module => name(module?.parent)),
+            resolvedFor,
+          };
         };
       `,
       "main.mjs": `
@@ -1734,15 +1769,30 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
           "createRequire, called by the host": tenant.viaCreateRequire(),
           "new Module, inside run()": graph.run(() => tenant.viaNewModule()),
           "new Module, called by the host": tenant.viaNewModule(),
+          "Module._load, inside run()": graph.run(() => tenant.viaLoad()),
+          "Module._load, called by the host": tenant.viaLoad(),
         }, null, 1));
       `,
     });
     const { stdout, exitCode } = await runBun(["main.mjs"], { cwd: String(d) });
+    const threeParents = ["undefined", "null", "the object"];
     expect(JSON.parse(stdout)).toEqual({
       "createRequire, inside run()": "the graph's",
       "createRequire, called by the host": "the host's",
       "new Module, inside run()": "the graph's",
       "new Module, called by the host": "the host's",
+      "Module._load, inside run()": {
+        loaded: "the graph's",
+        cached: true,
+        parents: threeParents,
+        resolvedFor: threeParents,
+      },
+      "Module._load, called by the host": {
+        loaded: "the host's",
+        cached: true,
+        parents: threeParents,
+        resolvedFor: threeParents,
+      },
     });
     expect(exitCode).toBe(0);
   });

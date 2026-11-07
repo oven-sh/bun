@@ -271,11 +271,13 @@ public:
 
     JSObject* lazyRequireCacheObject();
     Bun::JSCommonJSExtensions* lazyRequireExtensionsObject() const { return m_lazyRequireExtensionsObject.getInitializedOnMainThread(this); }
-    JSC::JSFunction* modulePrototypeUnderscoreCompileFunction() const { return m_modulePrototypeUnderscoreCompileFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* requireESMFromHijackedExtension() const { return m_commonJSRequireESMFromHijackedExtensionFunction.getInitializedOnMainThread(this); }
+    JSC::JSFunction* commonJSDefaultRequireFunction() const { return m_commonJSDefaultRequireFunction.getInitializedOnMainThread(this); }
 
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
-    Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
+    Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleClassStructure.getInitializedOnMainThread(this); }
+    JSObject* nodeModuleConstructor() const { return m_commonJSModuleClassStructure.constructorInitializedOnMainThread(this); }
+    JSObject* commonJSModulePrototype() const { return m_commonJSModuleClassStructure.prototypeInitializedOnMainThread(this); }
     Structure* JSSocketAddressDTOStructure() const { return m_JSSocketAddressDTOStructure.getInitializedOnMainThread(this); }
     Structure* JSReactElementStructure() const { return m_JSReactElementStructure.getInitializedOnMainThread(this); }
     Structure* JSMarkdownListItemMetaStructure() const { return m_JSMarkdownListItemMetaStructure.getInitializedOnMainThread(this); }
@@ -411,9 +413,9 @@ public:
     /* The user-assigned Module._resolveFilename value; require() throws if it is not callable. */           \
     V(public, WriteBarrier<JSC::Unknown>, m_moduleResolveFilenameOverride)                                   \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
-    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_modulePrototypeUnderscoreCompileFunction)            \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSRequireESMFromHijackedExtensionFunction)     \
-    V(public, LazyPropertyOfGlobalObject<JSObject>, m_nodeModuleConstructor)                                 \
+    /* The require() that Module._load calls: a Module.prototype.require store never replaces it. */         \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSDefaultRequireFunction)                      \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_nodeModuleSourceMapEntryStructure)                    \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_nodeModuleSourceMapOriginStructure)                   \
                                                                                                              \
@@ -536,7 +538,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_testMatcherUtilsObject)                                \
     /* Bun::LintHost, for the JavaScript plugins of `bun lint` */                                            \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_lintHost)                                              \
-    V(private, LazyPropertyOfGlobalObject<Structure>, m_commonJSModuleObjectStructure)                       \
+    V(public, LazyClassStructure, m_commonJSModuleClassStructure)                                            \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketAddressDTOStructure)                         \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSReactElementStructure)                             \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownListItemMetaStructure)                     \

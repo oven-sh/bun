@@ -30,7 +30,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireCommonJS);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireNativeModule);
-JSC_DECLARE_HOST_FUNCTION(functionJSCommonJSModule_compile);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireTestModule);
 
 void populateESMExports(
@@ -77,9 +76,8 @@ public:
     JSC::Weak<JSCommonJSModule> m_parent {};
     // `module.parent = 7`: from then on nobody asks the compiled program who required the file first.
     bool m_isParentStored { false };
-    // If compile is overridden, it is assigned to this field. The default
-    // compile function is not stored here, but in
-    mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
+    // Of what Module._load() passes to require() as `this` in a Bun.ModuleGraph for a parent that is no module object: the program sees `m_overriddenParent`, that parent, in its place.
+    bool m_standsInForParent { false };
     // The Bun.ModuleGraph the module belongs to (what loaded it, or the module that
     // required it, did): its require cache, its loader for require(esm), and the scope its
     // wrapper closes over are the graph's. Null: the global object's.
@@ -164,6 +162,8 @@ public:
     {
     }
 };
+
+static_assert(sizeof(JSCommonJSModule) <= 144, "one more field puts every CommonJS module object in a 160-byte cell");
 
 JSC::Structure* createCommonJSModuleStructure(
     Zig::GlobalObject* globalObject);

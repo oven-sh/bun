@@ -702,13 +702,16 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     return JSValue::encode(jsUndefined());
 }
 
+// Defined after JSCommonJSModulePrototype, which it tests the receiver against.
+static bool putOnNonModuleReceiver(JSC::JSGlobalObject*, JSValue receiver, JSC::PropertyName, JSValue value);
+
 JSC_DEFINE_CUSTOM_SETTER(setterPath,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), propertyName, JSValue::decode(value));
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSString* string = JSValue::decode(value).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
@@ -748,7 +751,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), propertyName, JSValue::decode(value));
     {
         WTF::Locker locker { thisObject->cellLock() };
         thisObject->m_children.clear();
@@ -831,7 +834,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterPaths,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), propertyName, JSValue::decode(value));
 
     thisObject->m_paths.set(globalObject->vm(), thisObject, JSValue::decode(value));
     return true;
@@ -843,7 +846,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterFilename,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), propertyName, JSValue::decode(value));
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSString* string = JSValue::decode(value).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
@@ -857,7 +860,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterId,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), propertyName, JSValue::decode(value));
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSString* string = JSValue::decode(value).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
@@ -870,7 +873,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterParent,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), propertyName, JSValue::decode(value));
 
     JSValue decodedValue = JSValue::decode(value);
     thisObject->m_isParentStored = true;
@@ -893,37 +896,14 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
-        return false;
+        return putOnNonModuleReceiver(globalObject, JSValue::decode(thisValue), propertyName, JSValue::decode(value));
 
     thisObject->hasEvaluated = JSValue::decode(value).toBoolean(globalObject);
 
     return true;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(getterUnderscoreCompile, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        return JSValue::encode(jsUndefined());
-    }
-    if (thisObject->m_overriddenCompile) {
-        return JSValue::encode(thisObject->m_overriddenCompile.get());
-    }
-    return JSValue::encode(defaultGlobalObject(globalObject)->modulePrototypeUnderscoreCompileFunction());
-}
-
-JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
-{
-    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
-    if (!thisObject)
-        return false;
-    JSValue decodedValue = JSValue::decode(value);
-    thisObject->m_overriddenCompile.set(globalObject->vm(), thisObject, decodedValue);
-    return true;
-}
-
+static JSC_DECLARE_HOST_FUNCTION(functionJSCommonJSModule_compile);
 JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto* moduleObject = dynamicDowncast<JSCommonJSModule>(callframe->thisValue());
@@ -979,14 +959,13 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 }
 
 static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
-    { "_compile"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterUnderscoreCompile, setterUnderscoreCompile } },
-    { "children"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterChildren, setterChildren } },
-    { "filename"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterFilename, setterFilename } },
-    { "id"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterId, setterId } },
-    { "loaded"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterLoaded, setterLoaded } },
-    { "parent"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterParent, setterParent } },
-    { "path"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPath, setterPath } },
-    { "paths"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPaths, setterPaths } },
+    { "children"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, getterChildren, setterChildren } },
+    { "filename"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, getterFilename, setterFilename } },
+    { "id"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, getterId, setterId } },
+    { "loaded"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, getterLoaded, setterLoaded } },
+    { "parent"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, getterParent, setterParent } },
+    { "path"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, getterPath, setterPath } },
+    { "paths"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, getterPaths, setterPaths } },
 };
 
 class JSCommonJSModulePrototype final : public JSC::JSNonFinalObject {
@@ -1032,10 +1011,23 @@ public:
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
         Bun::reifyStaticPropertyTable(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
+        // A custom value, not a custom accessor: a store to an object that inherits makes an own property there.
+        putDirectCustomAccessor(vm, WebCore::builtinNames(vm).requirePublicName(), JSC::CustomGetterSetter::create(vm, getterRequireFunction, setterRequireFunction), 0);
+        putDirectNativeFunction(vm, globalObject(), JSC::Identifier::fromString(vm, "_compile"_s), 2, functionJSCommonJSModule_compile, ImplementationVisibility::Public, NoIntrinsic, 0);
     }
 };
 
 const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
+
+// An heir of Module.prototype gets an own property. A store on Module.prototype itself is dropped: every module object reads its field through the accessor there.
+static bool putOnNonModuleReceiver(JSC::JSGlobalObject* globalObject, JSValue receiver, JSC::PropertyName propertyName, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSObject* object = receiver.getObject();
+    if (!object || object->inherits<JSCommonJSModulePrototype>())
+        return false;
+    RELEASE_AND_RETURN(scope, object->createDataProperty(globalObject, propertyName, value, false));
+}
 
 void JSCommonJSModule::finishCreation(JSC::VM& vm, const JSC::SourceCode& sourceCode)
 {
@@ -1129,8 +1121,12 @@ JSCommonJSModule* JSCommonJSModule::create(
     out->hasEvaluated = hasEvaluated;
     if (parent && parent.isCell()) {
         if (auto* parentModule = dynamicDowncast<JSCommonJSModule>(parent)) {
-            out->setModuleGraph(vm, parentModule->moduleGraph());
-            out->m_parent = JSC::Weak<JSCommonJSModule>(parentModule);
+            JSModuleGraph* graph = parentModule->moduleGraph();
+            out->setModuleGraph(vm, graph);
+            if (graph && parentModule->m_standsInForParent)
+                out->m_overriddenParent.set(vm, out, parentModule->m_overriddenParent.get());
+            else
+                out->m_parent = JSC::Weak<JSCommonJSModule>(parentModule);
         } else {
             out->m_overriddenParent.set(vm, out, parent);
         }
@@ -1388,7 +1384,6 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_dirname);
     visitor.appendHidden(thisObject->m_paths);
     visitor.appendHidden(thisObject->m_overriddenParent);
-    visitor.appendHidden(thisObject->m_overriddenCompile);
     visitor.appendHidden(thisObject->m_childrenValue);
     visitor.append(thisObject->m_moduleGraph);
     {
@@ -1446,14 +1441,6 @@ void JSCommonJSModule::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         if (childrenValue.isCell()) {
             const Identifier childrenIdentifier = Identifier::fromString(vm, "children"_s);
             analyzer.analyzePropertyNameEdge(cell, childrenValue.asCell(), childrenIdentifier.impl());
-        }
-    }
-
-    if (thisObject->m_overriddenCompile) {
-        JSValue overriddenCompile = thisObject->m_overriddenCompile.get();
-        if (overriddenCompile.isCell()) {
-            const Identifier overriddenCompileIdentifier = Identifier::fromString(vm, "_compile"_s);
-            analyzer.analyzePropertyNameEdge(cell, overriddenCompile.asCell(), overriddenCompileIdentifier.impl());
         }
     }
 }
@@ -1649,9 +1636,16 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     JSValue keyJSString,
     ResolvedSource& source)
 {
-    if (JSValue compileFunction = this->m_overriddenCompile.get()) {
-        auto& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Own only: the loader does not call a `_compile` stored on Module.prototype (#44684).
+    const Identifier compileName = Identifier::fromString(vm, "_compile"_s);
+    PropertySlot slot(this, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool hasOwnCompile = methodTable()->getOwnPropertySlot(this, globalObject, compileName, slot);
+    RETURN_IF_EXCEPTION(scope, );
+    if (hasOwnCompile) {
+        JSValue compileFunction = slot.getValue(globalObject, compileName);
+        RETURN_IF_EXCEPTION(scope, );
         JSC::CallData callData = JSC::getCallData(compileFunction);
         if (callData.type == JSC::CallData::Type::None) {
             throwTypeError(globalObject, scope, "module._compile is not a function"_s);
@@ -1678,6 +1672,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
         RETURN_IF_EXCEPTION(scope, );
         return;
     }
+    scope.release();
     this->evaluate(globalObject, key, source, false);
 }
 
@@ -1783,7 +1778,8 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
-                        if (!moduleObject->hasEvaluated) {
+                        // No source: a `_compile` of the program evaluated the text, or is evaluating it now.
+                        if (!moduleObject->hasEvaluated && !moduleObject->sourceCode.isNull()) {
                             evaluateCommonJSModuleOnce(
                                 vm,
                                 globalObject,

@@ -43,9 +43,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveFileName);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveLookupPaths);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
 
-JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
-JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
-
 // This is a list of builtin module names that do not have the node prefix. It
 // also includes Bun's builtin modules, as well as Bun's thirdparty overrides.
 // The reason for overstuffing this list is so that uses that use these as the
@@ -146,24 +143,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
-
-    // In node, this is supposed to be the actual CommonJSModule constructor.
-    // We are cutting a huge corner by not doing all that work.
-    // This code is only to support babel.
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* idString = JSC::jsString(vm, WTF::String("."_s));
 
     JSString* dirname = jsEmptyString(vm);
 
-    // TODO: handle when JSGlobalObject !== Zig::GlobalObject, such as in node:vm
-    Structure* structure = static_cast<Zig::GlobalObject*>(globalObject)
-                               ->CommonJSModuleObjectStructure();
+    Structure* structure = structureForNewTarget(globalObject, callFrame->newTarget(), &Zig::GlobalObject::m_commonJSModuleClassStructure);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    // TODO: handle ShadowRealm, node:vm, new.target, subclasses
     JSValue idValue = callFrame->argument(0);
     JSValue parentValue = callFrame->argument(1);
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
     if (idValue.isString()) {
         idString = idValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -598,19 +589,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC
 // work (they do Module.prototype.require = ...)
 
 JSC_DEFINE_CUSTOM_GETTER(getterRequireFunction,
-    (JSC::JSGlobalObject * globalObject,
+    (JSC::JSGlobalObject * lexicalGlobalObject,
         JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
+    // `lexicalGlobalObject` can be a node:vm context. See jsRequireCacheGetter.
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     return JSValue::encode(globalObject->getDirect(
         globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().overridableRequirePrivateName()));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
-    (JSC::JSGlobalObject * globalObject,
+    (JSC::JSGlobalObject * lexicalGlobalObject,
         JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value,
         JSC::PropertyName propertyName))
 {
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Bun::willChangeRequireOverride(globalObject, JSC::AOT::RequireOverride::RequireFunction, true);
     RETURN_IF_EXCEPTION(scope, false);
@@ -794,23 +788,38 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
 
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
-    auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-
-    prototype->putDirectCustomAccessor(
-        vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),
-        JSC::CustomGetterSetter::create(vm, getterRequireFunction,
-            setterRequireFunction),
-        0);
-
-    Bun::putDirectNamed(vm, prototype, "_compile"_s, globalObject->modulePrototypeUnderscoreCompileFunction());
-
-    return prototype;
+    return defaultGlobalObject(moduleObject->globalObject())->commonJSModulePrototype();
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// Node's Module._load(request, parent, isMain): isMain is not read, and require() does not call a replaced _load.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue parent = callFrame->argument(1);
+    // A load made in a Bun.ModuleGraph's context is that graph's: require() takes the graph from `this`, so a module object of the graph stands in for any other parent.
+    if (!dynamicDowncast<Bun::JSCommonJSModule>(parent)) {
+        if (auto* graph = Bun::currentModuleGraph(globalObject)) {
+            JSValue filename = jsUndefined();
+            if (parent.isObject()) {
+                filename = parent.get(globalObject, WebCore::clientData(vm)->builtinNames().filenamePublicName());
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+            JSString* id = filename.isString() ? asString(filename) : jsString(vm, String("."_s));
+            auto* standIn = Bun::JSCommonJSModule::create(vm, globalObject->CommonJSModuleObjectStructure(), id, filename, jsEmptyString(vm), SourceCode(), graph);
+            standIn->m_overriddenParent.set(vm, standIn, parent);
+            standIn->m_standsInForParent = true;
+            parent = standIn;
+        }
+    }
+
+    JSC::JSFunction* defaultRequire = globalObject->commonJSDefaultRequireFunction();
+    // The builtin reads its argument count: the request is the only argument, the parent is `this`.
+    JSC::MarkedArgumentBuffer args;
+    args.append(callFrame->argument(0));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(globalObject, JSC::ProfilingReason::API, defaultRequire, JSC::getCallData(defaultRequire), parent, args)));
 }
 
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
@@ -995,7 +1004,7 @@ _debug                  getModuleDebugObject              PropertyCallback
 _extensions             getModuleExtensionsObject         PropertyCallback
 _findPath                jsFunctionFindPath               Function 3
 _initPaths              JSBuiltin                         Function|Builtin 0
-_load                   jsFunctionLoad                    Function 1
+_load                   jsFunctionLoad                    Function 3
 _nodeModulePaths        &Bun::Bindgen::Generated::ResolverJsc::jsNodeModulePaths Function 1
 _pathCache              getPathCacheObject                PropertyCallback
 _preloadModules         jsFunctionPreloadModules          Function 0
@@ -1152,17 +1161,34 @@ extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapOriginObject(
     return JSValue::encode(object);
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L2191-L2198
+JSC_DEFINE_HOST_FUNCTION(jsFunctionModulePrototypeConstructorGetter, (JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    return JSValue::encode(defaultGlobalObject(globalObject)->nodeModuleConstructor());
+}
+
+void initCommonJSModuleClassStructure(JSC::LazyClassStructure::Initializer& init)
+{
+    auto& vm = init.vm;
+    auto* globalObject = defaultGlobalObject(init.global);
+    init.setStructure(createCommonJSModuleStructure(globalObject));
+    JSObject* moduleConstructor = JSModuleConstructor::create(vm, globalObject);
+    init.setConstructor(moduleConstructor);
+    // As in Node, `constructor` is a getter without a setter: `module.constructor = value` stores nothing.
+    auto* getter = JSFunction::create(vm, globalObject, 0, "get"_s, jsFunctionModulePrototypeConstructorGetter, ImplementationVisibility::Public);
+    auto* accessor = GetterSetter::create(vm, globalObject, getter, nullptr);
+    {
+        // A program compiled ahead of time may have made the members of the prototype immutable by now.
+        AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+        bool installed = init.prototype->putDirectAccessor(globalObject, vm.propertyNames->constructor, accessor, PropertyAttribute::Accessor | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+        ASSERT_UNUSED(installed, installed);
+    }
+    JSC::AOT::hostDidCreateNodeModule(init.global, moduleConstructor);
+}
+
 void addNodeModuleConstructorProperties(JSC::VM& vm,
     Zig::GlobalObject* globalObject)
 {
-    globalObject->m_nodeModuleConstructor.initLater(
-        [](const Zig::GlobalObject::Initializer<JSObject>& init) {
-            JSObject* moduleConstructor = JSModuleConstructor::create(
-                init.vm, static_cast<Zig::GlobalObject*>(init.owner));
-            init.set(moduleConstructor);
-            JSC::AOT::hostDidCreateNodeModule(init.owner, moduleConstructor);
-        });
-
     globalObject->m_nodeModuleSourceMapEntryStructure.initLater(
         [](const Zig::GlobalObject::Initializer<Structure>& init) {
             init.set(createNodeModuleSourceMapEntryStructure(init.vm, init.owner));
@@ -1190,19 +1216,16 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             init.set(resolveFilenameFunction);
         });
 
-    globalObject->m_modulePrototypeUnderscoreCompileFunction.initLater(
-        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
-            JSFunction* resolveFilenameFunction = JSFunction::create(
-                init.vm, init.owner, 2, "_compile"_s,
-                functionJSCommonJSModule_compile, JSC::ImplementationVisibility::Public,
-                JSC::NoIntrinsic);
-            init.set(resolveFilenameFunction);
-        });
-
     globalObject->m_commonJSRequireESMFromHijackedExtensionFunction.initLater(
         [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
             JSC::JSFunction* requireESM = JSC::JSFunction::create(init.vm, init.owner, commonJSRequireESMFromHijackedExtensionCodeGenerator(init.vm), init.owner);
             init.set(requireESM);
+        });
+
+    globalObject->m_commonJSDefaultRequireFunction.initLater(
+        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
+            JSC::JSFunction* defaultRequire = JSC::JSFunction::create(init.vm, init.owner, commonJSOverridableRequireCodeGenerator(init.vm), init.owner);
+            init.set(defaultRequire);
         });
 
     globalObject->m_lazyRequireExtensionsObject.initLater(
@@ -1243,7 +1266,7 @@ JSC::JSObject* generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGloba
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
-    auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+    auto* constructor = globalObject->nodeModuleConstructor();
 
     // The exports are the static table's enumerable entries, not the constructor's own properties (`length`,
     // `name`, `prototype`, whatever user code assigned onto Module).

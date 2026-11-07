@@ -282,13 +282,14 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     return JSC::throwVMTypeError(lexicalGlobalObject, scope, "Module._resolveFilename is not a function"_s);
                 }
 
+                auto* standIn = dynamicDowncast<Bun::JSCommonJSModule>(parentModule);
                 MarkedArgumentBuffer args;
                 args.append(moduleName);
-                args.append(parentModule);
+                args.append(standIn && standIn->m_standsInForParent ? standIn->m_overriddenParent.get() : parentModule);
                 args.append(jsBoolean(false));
                 args.append(resolveFilenameOptions);
 
-                JSValue thisValue = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+                JSValue thisValue = globalObject->nodeModuleConstructor();
                 JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, overrideCallData, thisValue, args);
                 RETURN_IF_EXCEPTION(scope, {});
                 if (!isRequireDotResolve) {

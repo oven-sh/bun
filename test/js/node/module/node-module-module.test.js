@@ -1479,4 +1479,972 @@ console.log("survived", require("./late.js"));`,
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/20336
+  describe.concurrent("every module object is an instance of Module", () => {
+    const isModule = `
+      const isModule = m =>
+        m instanceof Module && m.constructor === Module && Object.getPrototypeOf(m) === Module.prototype;`;
+    // Each program prints one line of JSON. Node v26.3.0 prints the same line.
+    async function printedBy(cwd, ...args) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        // Debug builds check every exception scope that the program goes through. Release builds ignore the option.
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        cwd: String(cwd),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: JSON.parse(stdout || "null"), stderr, exitCode };
+    }
+
+    test("of a CommonJS program", async () => {
+      using dir = tempDir("module-class", {
+        "child.cjs": `exports.module = module;`,
+        "created.cjs": `exports.module = module;`,
+        "handled.js": `module.exports = "handled";`,
+        "main.cjs": `
+          // Read before anything loads node:module.
+          const early = module.constructor;
+          const attempt = fn => {
+            try {
+              return fn();
+            } catch (error) {
+              return error.code ?? error.constructor.name;
+            }
+          };
+          const reports = {
+            // n8n calls it when it starts
+            initPaths: typeof early._initPaths,
+            // decache lists the keys of module.constructor._pathCache
+            statics: attempt(() => [
+              typeof early._pathCache,
+              Array.isArray(Object.keys(early._pathCache)),
+              early._cache === require.cache,
+              typeof early._nodeModulePaths,
+              typeof early._resolveFilename,
+            ]),
+            // solc compiles the compiler that it downloaded this way
+            compiled: attempt(() => {
+              const compiled = new early();
+              compiled._compile("module.exports = 42", "from-string.js");
+              return compiled.exports;
+            }),
+          };
+          const child = require("./child.cjs");
+          const Module = require("node:module");
+          const path = require("node:path");
+          ${isModule}
+
+          const handled = [];
+          const js = Module._extensions[".js"];
+          Module._extensions[".js"] = function (m, filename) {
+            handled.push(isModule(m), path.basename(filename));
+            return js(m, filename);
+          };
+          handled.push(require("./handled.js"));
+          Module._extensions[".js"] = js;
+
+          const parents = [];
+          const resolveFilename = Module._resolveFilename;
+          Module._resolveFilename = function (request, parent) {
+            if (request === "./created.cjs") parents.push(parent);
+            return resolveFilename.apply(this, arguments);
+          };
+          const created = Module.createRequire(__filename)("./created.cjs");
+          Module._resolveFilename = resolveFilename;
+
+          // hexo requires its plugins through a module object that it made
+          const plugin = path.join(__dirname, "plugin.js");
+          const made = new Module(plugin);
+          made.filename = plugin;
+          made.paths = Module._nodeModulePaths(plugin);
+          class Sub extends Module {}
+          Sub.prototype.require = function () {
+            return "sub";
+          };
+          const sub = new Sub("sub");
+          console.log(
+            JSON.stringify({
+              early: early === Module,
+              prototypeConstructor: Module.prototype.constructor === Module,
+              module: isModule(module),
+              main: isModule(require.main),
+              cache: isModule(require.cache[require.resolve("./child.cjs")]),
+              child: isModule(child.module),
+              parent: isModule(child.module.parent),
+              children: module.children.map(m => [path.basename(m.filename), isModule(m)]),
+              extensionHandler: handled,
+              createRequire: [parents.map(isModule), isModule(created.module), isModule(created.module.parent)],
+              made: [isModule(made), typeof made.require, attempt(() => made.require("./child.cjs") === child)],
+              // Code of a node:vm context reads require off a module object.
+              inAContext: attempt(() =>
+                require("node:vm").runInNewContext("typeof made.require('node:path').join", { made: new Module("made") }),
+              ),
+              sub: [
+                sub instanceof Sub,
+                sub instanceof Module,
+                sub.constructor === Sub,
+                sub.id,
+                attempt(() => sub.require("y")),
+              ],
+              ...reports,
+            }),
+          );
+        `,
+      });
+      expect(await printedBy(dir, "main.cjs")).toEqual({
+        stdout: {
+          early: true,
+          prototypeConstructor: true,
+          module: true,
+          main: true,
+          cache: true,
+          child: true,
+          parent: true,
+          children: [
+            ["child.cjs", true],
+            ["handled.js", true],
+          ],
+          extensionHandler: [true, "handled.js", "handled"],
+          createRequire: [[true], true, true],
+          made: [true, "function", true],
+          inAContext: "function",
+          sub: [true, true, true, "sub", "sub"],
+          initPaths: "function",
+          statics: ["object", true, true, "function", "function"],
+          compiled: 42,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("that an ES module imports or requires", async () => {
+      using dir = tempDir("module-class-esm", {
+        "imported.cjs": `exports.module = module;`,
+        "required.cjs": `exports.module = module;`,
+        "main.mjs": `
+          import Module, { createRequire } from "node:module";
+          import imported from "./imported.cjs";
+          ${isModule}
+          const require = createRequire(import.meta.url);
+          const parents = [];
+          const resolveFilename = Module._resolveFilename;
+          Module._resolveFilename = function (request, parent) {
+            if (request === "./required.cjs") parents.push(parent);
+            return resolveFilename.apply(this, arguments);
+          };
+          const required = require("./required.cjs");
+          require.resolve("./required.cjs");
+          Module._resolveFilename = resolveFilename;
+          console.log(
+            JSON.stringify({
+              imported: isModule(imported.module),
+              required: [isModule(required.module), required.module.parent === parents[0]],
+              resolveFilenameParents: parents.map(isModule),
+            }),
+          );
+        `,
+      });
+      expect(await printedBy(dir, "main.mjs")).toEqual({
+        stdout: { imported: true, required: [true, true], resolveFilenameParents: [true, true] },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("of a Worker", async () => {
+      using dir = tempDir("module-class-worker", {
+        "child.cjs": `exports.module = module;`,
+        "worker.cjs": `
+          // Read before anything loads node:module.
+          const early = module.constructor;
+          const child = require("./child.cjs");
+          const Module = require("node:module");
+          ${isModule}
+          require("node:worker_threads").parentPort.postMessage({
+            early: early === Module,
+            module: isModule(module),
+            child: isModule(child.module),
+            parent: isModule(child.module.parent),
+          });
+        `,
+        "main.cjs": `
+          const { once } = require("node:events");
+          const Module = require("node:module");
+          const { Worker } = require("node:worker_threads");
+          ${isModule}
+          once(new Worker(require.resolve("./worker.cjs")), "message").then(([worker]) =>
+            console.log(JSON.stringify({ mainThread: isModule(module), worker })),
+          );
+        `,
+      });
+      expect(await printedBy(dir, "main.cjs")).toEqual({
+        stdout: { mainThread: true, worker: { early: true, module: true, child: true, parent: true } },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("of bun -e", async () => {
+      const script = `
+        // Read before anything loads node:module.
+        const early = module.constructor;
+        const Module = require("node:module");
+        ${isModule}
+        console.log(JSON.stringify({ early: early === Module, module: isModule(module) }));
+      `;
+      expect(await printedBy(import.meta.dir, "-e", script)).toEqual({
+        stdout: { early: true, module: true },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // The Module class is created on first use: by the first module object or by the first load of node:module.
+  describe.concurrent("module objects inherit a function stored on Module.prototype", () => {
+    const report = `m => ({ inherits: m.x === x && !Object.hasOwn(m, "x"), instance: m instanceof Module })`;
+    const files = {
+      "after.cjs": `exports.module = module;`,
+      "commonjs-first.cjs": `
+        // The module object of this file is made before node:module is loaded.
+        const Module = require("node:module");
+        const report = ${report};
+        function x() {}
+        Module.prototype.x = x;
+        const after = require("./after.cjs").module;
+        console.log(JSON.stringify({ before: report(module), after: report(after) }));
+      `,
+      "node-module-first.mjs": `
+        // No module object is made before the store.
+        import Module, { createRequire } from "node:module";
+        const report = ${report};
+        function x() {}
+        Module.prototype.x = x;
+        const require = createRequire(import.meta.url);
+        const after = require("./after.cjs").module;
+        console.log(JSON.stringify({ after: report(after) }));
+      `,
+      "made-before-the-store.mjs": `
+        // The first module object is made between the load of node:module and the store.
+        import Module, { createRequire } from "node:module";
+        const report = ${report};
+        function x() {}
+        const before = new Module("before");
+        Module.prototype.x = x;
+        const require = createRequire(import.meta.url);
+        const after = require("./after.cjs").module;
+        console.log(JSON.stringify({ before: report(before), after: report(after) }));
+      `,
+    };
+    const inherited = { inherits: true, instance: true };
+
+    test.each([
+      ["when a CommonJS module is made first", "commonjs-first.cjs", { before: inherited, after: inherited }],
+      ["when node:module is loaded first", "node-module-first.mjs", { after: inherited }],
+      [
+        "when node:module is loaded first and a module is made before the store",
+        "made-before-the-store.mjs",
+        { before: inherited, after: inherited },
+      ],
+    ])("%s", async (_, entry, expected) => {
+      using dir = tempDir("module-prototype-store", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), entry],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Node v26.3.0 prints the same line for each file.
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(expected) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  test("the properties of Module.prototype and the names a module object lists", async () => {
+    using dir = tempDir("module-prototype-shape", {
+      "main.cjs": `
+        const c = require("node:module").prototype._compile;
+        const { _compile, require: r } = require("node:module").prototype;
+        const Module = require("node:module");
+        const util = require("node:util");
+        const descriptorOf = name => {
+          const descriptor = Object.getOwnPropertyDescriptor(Module.prototype, name);
+          if (!descriptor) return null;
+          for (const key of Object.keys(descriptor)) {
+            if (typeof descriptor[key] !== "boolean") descriptor[key] = typeof descriptor[key];
+          }
+          return descriptor;
+        };
+        const listed = [];
+        for (const key in module) listed.push(key);
+        console.log(JSON.stringify({
+          spellings: [typeof c, typeof _compile, typeof r],
+          sameCompile: [c === _compile, Module.prototype._compile === module._compile],
+          compileDescriptor: descriptorOf("_compile"),
+          requireDescriptor: descriptorOf("require"),
+          constructorDescriptor: descriptorOf("constructor"),
+          inspectPrefix: util.inspect(module).split("{")[0],
+          bun: {
+            forIn: listed,
+            keys: Object.keys(module),
+            prototypeKeys: Object.keys(Module.prototype).sort(),
+          },
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      stdout: {
+        // Node v26.3.0 prints the same for every row outside `bun`.
+        spellings: ["function", "function", "function"],
+        sameCompile: [true, true],
+        compileDescriptor: { value: "function", writable: true, enumerable: true, configurable: true },
+        requireDescriptor: { value: "function", writable: true, enumerable: true, configurable: true },
+        constructorDescriptor: { get: "function", set: "undefined", enumerable: false, configurable: false },
+        inspectPrefix: "",
+        // Bun keeps the fields of a module on Module.prototype, so these rows are its own.
+        bun: {
+          forIn: ["exports", "require", "filename", "id", "loaded", "path", "paths", "_compile"],
+          keys: ["exports", "require"],
+          // Node prints ["_compile", "load", "require"].
+          prototypeKeys: ["_compile", "filename", "id", "loaded", "path", "paths", "require"],
+        },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a write through an accessor of Module.prototype stays with the object it is written to, and is dropped on the prototype itself", async () => {
+    using dir = tempDir("module-prototype-receivers", {
+      // Not strict, so a store that fails stays silent.
+      "sloppy.cjs": `
+        exports.storeConstructor = (object, value) => {
+          object.constructor = value;
+        };
+      `,
+      "main.cjs": `
+        "use strict";
+        const Module = require("node:module");
+        const prototypeRequire = Module.prototype.require;
+        const thrownBy = fn => {
+          try {
+            fn();
+            return "nothing";
+          } catch (error) {
+            return error.constructor.name;
+          }
+        };
+
+        const made = new Module("made");
+        made.require = () => "made";
+        class Sub extends Module {}
+        Sub.prototype.require = () => "sub";
+        const plain = Object.create(Module.prototype);
+        plain.id = "plain";
+        plain.paths = ["plain"];
+        plain._compile = "plain";
+        const hook = function hook() {};
+        Module.prototype._compile = hook;
+
+        const out = {
+          made: made.require("node:os"),
+          sub: new Sub("sub").require("node:os"),
+          requireOfTheModule: typeof require("node:os").platform,
+          prototypeRequire: Module.prototype.require === prototypeRequire,
+          plain: [Object.keys(plain).sort(), plain.id, module.id],
+          prototypeCompile: [Module.prototype._compile === hook, module._compile === hook],
+        };
+
+        // Module.prototype.constructor is a getter with no setter.
+        const sloppy = new Module("sloppy");
+        require("./sloppy.cjs").storeConstructor(sloppy, 5);
+        out.constructorStores = {
+          sloppy: [Object.hasOwn(sloppy, "constructor"), sloppy.constructor === Module],
+          strict: thrownBy(() => {
+            new Module("strict").constructor = 5;
+          }),
+          objectAssign: thrownBy(() => Object.assign(new Module("assigned"), { constructor: 5 })),
+          // What TypeScript's __extends for ES5 does. ttypescript 1.5.6 to 1.5.14 extends Module with it.
+          es5Subclass: thrownBy(() => {
+            function Old() {}
+            Old.prototype = Object.create(Module.prototype);
+            Old.prototype.constructor = Old;
+          }),
+          reflectSet: Reflect.set(new Module("reflected"), "constructor", 5),
+        };
+
+        const fields = {};
+        for (const name of ["id", "filename", "loaded", "path", "paths", "parent", "children"]) {
+          const before = [module[name], made[name]];
+          Module.prototype[name] = "P";
+          const deleted = Reflect.deleteProperty(Module.prototype, name);
+          const defined = Reflect.defineProperty(Module.prototype, name, { value: "D", writable: true, configurable: true });
+          const heir = Object.create(Module.prototype);
+          heir[name] = "H";
+          const descriptor = Object.getOwnPropertyDescriptor(Module.prototype, name);
+          fields[name] = [
+            module[name] === before[0] && made[name] === before[1],
+            typeof descriptor.get,
+            Object.hasOwn(heir, name) && heir[name],
+            [deleted, defined, descriptor.configurable],
+          ];
+        }
+        out.bun = { fields, prototypeId: [String(Module.prototype.id), String(Object.create(Module.prototype).id)] };
+        console.log(JSON.stringify(out));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A row: the module and a made one read as before, the prototype keeps its accessor, an heir holds its own value,
+    // and the accessor can be neither deleted nor defined again.
+    const row = [true, "function", "H", [false, false, false]];
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      stdout: {
+        // Node v26.3.0 prints the same for every row outside `bun`.
+        made: "made",
+        sub: "sub",
+        requireOfTheModule: "function",
+        prototypeRequire: true,
+        plain: [["_compile", "id", "paths"], "plain", "."],
+        prototypeCompile: [true, true],
+        constructorStores: {
+          sloppy: [false, true],
+          strict: "TypeError",
+          objectAssign: "TypeError",
+          es5Subclass: "TypeError",
+          reflectSet: false,
+        },
+        bun: {
+          // Node stores "P" on the prototype and prints "undefined" in the middle for every name but parent.
+          // It deletes and defines every name but parent: [true, true, true] at the end.
+          fields: { id: row, filename: row, loaded: row, path: row, paths: row, parent: row, children: row },
+          // Node prints ["P", "P"].
+          prototypeId: ["undefined", "undefined"],
+        },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  describe.concurrent("hooks on Module.prototype and Module._load", () => {
+    async function run(cwd, ...args) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        // Debug builds check every exception scope that the program goes through. Release builds ignore the option.
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        cwd: String(cwd),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    const printed = ({ stdout, stderr, exitCode }) => ({ stdout: JSON.parse(stdout || "null"), stderr, exitCode });
+
+    // pirates and other transpile hooks store module._compile in a handler of Module._extensions.
+    test("module._compile stored by a Module._extensions handler transforms the file", async () => {
+      using dir = tempDir("module-compile-hook", {
+        "hooked.js": `module.exports = "original";`,
+        "main.cjs": `
+          "use strict";
+          const Module = require("node:module");
+          const path = require("node:path");
+          const defaultCompile = Module.prototype._compile;
+
+          // The hook delegates, so the line is the same whether or not the loader calls it.
+          const hook = function hook(code, file) {
+            return defaultCompile.call(this, code, file);
+          };
+          Module.prototype._compile = hook;
+          const compiled = [];
+          const stores = [];
+          const js = Module._extensions[".js"];
+          Module._extensions[".js"] = function (module, filename) {
+            const compile = module._compile;
+            module._compile = function (code, file) {
+              compiled.push(path.basename(file));
+              return compile.call(this, code.replace("original", "patched"), file);
+            };
+            stores.push([compile === hook, Object.hasOwn(module, "_compile")]);
+            return js(module, filename);
+          };
+          const load = () => {
+            delete require.cache[require.resolve("./hooked.js")];
+            compiled.length = 0;
+            return [require("./hooked.js"), compiled.slice()];
+          };
+          const out = {
+            prototypeCompile: Module.prototype._compile === hook,
+            hooked: load(),
+          };
+          // shimmer redefines the method as a data property.
+          Object.defineProperty(Module.prototype, "_compile", {
+            value: hook,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+          out.hookedAfterDefineProperty = load();
+          // For each load: the handler read the hook through the module, and its store made an own property.
+          out.stores = stores;
+          console.log(JSON.stringify(out));
+        `,
+        // Not strict, so a store that fails stays silent.
+        "other-writes.cjs": `
+          const Module = require("node:module");
+          const path = require("node:path");
+          const defaultCompile = Module.prototype._compile;
+          const compiled = [];
+          const transform = (code, file) => {
+            compiled.push(path.basename(file));
+            return code.replace("original", "patched");
+          };
+          const js = Module._extensions[".js"];
+
+          class Sub extends Module {
+            _compile(code, file) {
+              return defaultCompile.call(this, transform(code, file), file);
+            }
+          }
+          const file = path.join(__dirname, "hooked.js");
+          const sub = new Sub(file, module);
+          sub.filename = file;
+          js(sub, file);
+          const out = { subclass: [sub instanceof Sub, sub.exports, compiled.slice()] };
+
+          const hook = function hook(code, file) {
+            return defaultCompile.call(this, code, file);
+          };
+          Module._extensions[".js"] = function (module, filename) {
+            const compile = module._compile;
+            module._compile = function (code, file) {
+              return compile.call(this, transform(code, file), file);
+            };
+            return js(module, filename);
+          };
+          const load = () => {
+            delete require.cache[require.resolve("./hooked.js")];
+            compiled.length = 0;
+            return [require("./hooked.js"), compiled.slice()];
+          };
+          Object.defineProperty(Module.prototype, "_compile", { value: hook });
+          out.redefined = load();
+          Object.defineProperty(Module.prototype, "_compile", { value: hook, writable: false });
+          out.nonWritable = load();
+          Object.defineProperty(Module.prototype, "_compile", { get: () => hook, set() {} });
+          out.accessor = load();
+          console.log(JSON.stringify(out));
+        `,
+      });
+      const [main, otherWrites] = await Promise.all([run(dir, "main.cjs"), run(dir, "other-writes.cjs")]);
+      const patched = ["patched", ["hooked.js"]];
+      const untouched = ["original", []];
+      expect({ main: printed(main), otherWrites: printed(otherWrites) }).toEqual({
+        // Node v26.3.0 prints the same line.
+        main: {
+          stdout: {
+            prototypeCompile: true,
+            hooked: patched,
+            hookedAfterDefineProperty: patched,
+            stores: [
+              [true, true],
+              [true, true],
+            ],
+          },
+          stderr: "",
+          exitCode: 0,
+        },
+        otherWrites: {
+          stdout: {
+            // Node v26.3.0 calls Sub.prototype._compile and prints [true, "patched", ["hooked.js"]].
+            subclass: [true, "original", []],
+            redefined: patched,
+            // Node v26.3.0 prints the same: the store on the module fails.
+            nonWritable: untouched,
+            // Node v26.3.0 prints the same: the store goes to the setter.
+            accessor: untouched,
+          },
+          stderr: "",
+          exitCode: 0,
+        },
+      });
+    });
+
+    test("a file that a _compile or a handler of the program evaluated is loaded and can be imported", async () => {
+      using dir = tempDir("module-compiled-by-the-program", {
+        "dep.js": `
+          globalThis.runs = (globalThis.runs || 0) + 1;
+          module.exports = { dep: true, runs: globalThis.runs };
+        `,
+        "compile.cjs": `
+          const Module = require("node:module");
+          const vm = require("node:vm");
+          const path = require("node:path");
+          // Evaluates the text itself and never calls the built-in _compile, as v8-compile-cache does.
+          exports.compile = function (content, filename) {
+            const fn = vm.runInThisContext(Module.wrap(content), { filename });
+            return fn.call(this.exports, this.exports, id => this.require(id), this, filename, path.dirname(filename));
+          };
+          exports.report = async () => {
+            const first = require("./dep.js");
+            const entry = require.cache[require.resolve("./dep.js")];
+            const second = require("./dep.js");
+            const imported = await import("./dep.js").then(
+              namespace => namespace.default,
+              error => error.message,
+            );
+            console.log(
+              JSON.stringify({ first, loaded: entry.loaded, same: first === second, imported, runs: globalThis.runs }),
+            );
+          };
+        `,
+        // The function is on Module.prototype, and a handler wraps what it reads from the module, as pirates does.
+        "prototype.cjs": `
+          const Module = require("node:module");
+          const { compile, report } = require("./compile.cjs");
+          Module.prototype._compile = compile;
+          const js = Module._extensions[".js"];
+          Module._extensions[".js"] = function (module, filename) {
+            const inherited = module._compile;
+            module._compile = function (code, file) {
+              return inherited.call(this, code, file);
+            };
+            return js(module, filename);
+          };
+          report();
+        `,
+        // A handler stores the function on the module.
+        "own.cjs": `
+          const Module = require("node:module");
+          const { compile, report } = require("./compile.cjs");
+          const js = Module._extensions[".js"];
+          Module._extensions[".js"] = function (module, filename) {
+            module._compile = compile;
+            return js(module, filename);
+          };
+          report();
+        `,
+        // A handler evaluates the file and calls neither the built-in handler nor _compile.
+        "handler.cjs": `
+          const Module = require("node:module");
+          const { compile, report } = require("./compile.cjs");
+          Module._extensions[".js"] = function (module, filename) {
+            compile.call(module, require("node:fs").readFileSync(filename, "utf8"), filename);
+          };
+          report();
+        `,
+      });
+      const [onPrototype, own, handler] = await Promise.all(
+        ["prototype.cjs", "own.cjs", "handler.cjs"].map(entry => run(dir, entry)),
+      );
+      // Node v26.3.0 prints the same line for each file.
+      const evaluatedOnce = {
+        stdout: { first: { dep: true, runs: 1 }, loaded: true, same: true, imported: { dep: true, runs: 1 }, runs: 1 },
+        stderr: "",
+        exitCode: 0,
+      };
+      expect({ onPrototype: printed(onPrototype), own: printed(own), handler: printed(handler) }).toEqual({
+        onPrototype: evaluatedOnce,
+        own: evaluatedOnce,
+        handler: evaluatedOnce,
+      });
+    });
+
+    test("Module._load loads the request for the parent", async () => {
+      const loaded = `module.exports = require("./report.cjs").report(module);`;
+      using dir = tempDir("module-load", {
+        "child.cjs": `module.exports = { child: true };`,
+        "virtual/dep.cjs": `module.exports = { dep: true, parentIsAModule: module.parent instanceof require("node:module") };`,
+        // What a file knows about how it was loaded.
+        "report.cjs": `
+          exports.report = m => ({
+            parent: m.parent === null ? "null" : typeof m.parent,
+            id: m.id === m.filename ? "its filename" : m.id,
+            mainModule: process.mainModule === m,
+          });
+        `,
+        "no-parent.cjs": loaded,
+        "null-parent.cjs": loaded,
+        "plain-parent.cjs": loaded,
+        "launched.cjs": loaded,
+        "main.cjs": `
+          const Module = require("node:module");
+          const path = require("node:path");
+          const vm = require("node:vm");
+          const attempt = fn => {
+            try {
+              return fn();
+            } catch (error) {
+              return error.code ?? error.name;
+            }
+          };
+          const child = attempt(() => module.constructor._load("./child.cjs", module));
+          // require-like@0.1.2 makes the parent. The eval package under Docusaurus and vanilla-extract loads with it (#5925).
+          function requireLike(file) {
+            const parentModule = new Module(file);
+            parentModule.filename = file;
+            parentModule.paths = Module._nodeModulePaths(path.dirname(file));
+            const requireLike = request => Module._load(request, parentModule);
+            requireLike.parentModule = parentModule;
+            return requireLike;
+          }
+          const made = requireLike(path.join(__dirname, "virtual", "file.js"));
+          const plainParent = { filename: __filename };
+          const cached = name => require.cache[path.join(__dirname, name)];
+          console.log(
+            JSON.stringify({
+              builtin: Module._load("node:path", module) === require("node:path"),
+              file: child,
+              sameAsRequire: child === require("./child.cjs"),
+              parent: cached("child.cjs").parent === module,
+              missing: attempt(() => Module._load("./missing.cjs", module)),
+              madeParent: attempt(() =>
+                vm.runInNewContext('[require("./dep.cjs"), typeof require("os").platform]', { require: made }),
+              ),
+              madeParentIsTheParent: attempt(() => cached("virtual/dep.cjs").parent === made.parentModule),
+              madeParentMissing: attempt(() => vm.runInNewContext('require("./missing.cjs")', { require: made })),
+              noParent: attempt(() => [
+                Module._load(path.join(__dirname, "no-parent.cjs")),
+                cached("no-parent.cjs").parent === undefined,
+              ]),
+              nullParent: attempt(() => [
+                Module._load(path.join(__dirname, "null-parent.cjs"), null),
+                cached("null-parent.cjs").parent === null,
+              ]),
+              plainParent: attempt(() => [
+                Module._load("./plain-parent.cjs", plainParent, false),
+                cached("plain-parent.cjs").parent === plainParent,
+              ]),
+              bun: {
+                // pm2 starts the script of an application this way.
+                launched: attempt(() => Module._load(path.join(__dirname, "launched.cjs"), null, true)),
+                mainIsStillTheEntry: require.main === module && process.mainModule === module,
+              },
+            }),
+          );
+        `,
+      });
+      const asLoaded = parent => ({ parent, id: "its filename", mainModule: false });
+      expect(printed(await run(dir, "main.cjs"))).toEqual({
+        stdout: {
+          // Node v26.3.0 prints the same for every row outside `bun`.
+          builtin: true,
+          file: { child: true },
+          sameAsRequire: true,
+          parent: true,
+          missing: "MODULE_NOT_FOUND",
+          madeParent: [{ dep: true, parentIsAModule: true }, "function"],
+          madeParentIsTheParent: true,
+          madeParentMissing: "MODULE_NOT_FOUND",
+          noParent: [asLoaded("undefined"), true],
+          nullParent: [asLoaded("null"), true],
+          plainParent: [asLoaded("object"), true],
+          bun: {
+            // Bun does not read the third argument. Node makes the file the main module: id ".", mainModule true.
+            launched: asLoaded("null"),
+            // Node prints false.
+            mainIsStillTheEntry: true,
+          },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The function is the one of @teambit/bit (scopes/harmony/bit/hook-require.ts).
+    test("a require hook stored through module.constructor.prototype loads with this.constructor._load", async () => {
+      using dir = tempDir("module-constructor-require-hook", {
+        "child.cjs": `module.exports = { child: true, os: typeof require("node:os").platform };`,
+        "main.cjs": `
+          const path = require("path");
+          const fs = require("fs");
+          function hookRequire() {
+            module.constructor.prototype.require = function (id) {
+              if (typeof id !== 'string') throw new Error('hookRequire - id must be a string');
+              if (!id) throw new Error('hookRequire - missing id');
+              if (id.endsWith('.scss') || id.endsWith('.css') || id.endsWith('.less') || id === 'reset-css') {
+                return {};
+              }
+              try {
+                return this.constructor._load(id, this);
+              } catch (firstErr) {
+                if (firstErr.code !== 'MODULE_NOT_FOUND') {
+                  throw firstErr;
+                }
+                try {
+                  const pkgJson = this.constructor._load(path.join(id, 'package.json'), this);
+                  if (!pkgJson.main || pkgJson.main === 'index.js') throw firstErr;
+                  return this.constructor._load(path.join(id, pkgJson.main), this);
+                } catch {
+                  throw firstErr;
+                }
+              }
+            };
+          }
+          hookRequire();
+          const attempt = fn => {
+            try {
+              return fn();
+            } catch (error) {
+              return error.code ?? error.name;
+            }
+          };
+          console.log(
+            JSON.stringify({
+              file: attempt(() => require("./child.cjs")),
+              builtin: attempt(() => require("node:fs") === fs),
+              missing: attempt(() => require("definitely-not-installed-pkg")),
+              // Only the hook answers this name, and it loads nothing for it.
+              answeredByTheHook: attempt(() => require("reset-css")),
+              onObjectPrototype: Object.hasOwn(Object.prototype, "require"),
+            }),
+          );
+        `,
+      });
+      // Node v26.3.0 prints the same line.
+      expect(printed(await run(dir, "--no-install", "main.cjs"))).toEqual({
+        stdout: {
+          file: { child: true, os: "function" },
+          builtin: true,
+          missing: "MODULE_NOT_FOUND",
+          answeredByTheHook: {},
+          onObjectPrototype: false,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test('spyOn(Module.prototype, "_compile") installs and restores', async () => {
+      using dir = tempDir("module-prototype-compile-spy", {
+        "spy.test.cjs": `
+          const { test, expect, spyOn } = require("bun:test");
+          const Module = require("node:module");
+          test("spy", () => {
+            const original = Module.prototype._compile;
+            const spy = spyOn(Module.prototype, "_compile");
+            expect(Module.prototype._compile).toBe(spy);
+            // A module object inherits the spy.
+            const made = new Module("made");
+            made._compile("module.exports = 42", "made.js");
+            expect(spy.mock.calls).toEqual([["module.exports = 42", "made.js"]]);
+            expect(made.exports).toBe(42);
+            spy.mockRestore();
+            expect(Module.prototype._compile).toBe(original);
+            expect(Object.getOwnPropertyDescriptor(Module.prototype, "_compile")).toEqual({
+              value: original,
+              writable: true,
+              enumerable: true,
+              configurable: true,
+            });
+          });
+        `,
+      });
+      const { stderr, exitCode } = await run(dir, "test", "./spy.test.cjs");
+      expect(stderr).toContain(" 1 pass\n 0 fail\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test("every file of bun test --isolate has its own Module, and its module objects are instances of it", async () => {
+    const file = `
+      // Read before this file loads node:module.
+      const early = module.constructor;
+      const Module = require("node:module");
+      const child = require("./child.cjs");
+      test("reads its module object", () => {
+        const inherits = ["leftByATestFile" in module];
+        Module.prototype.leftByATestFile = true;
+        inherits.push("leftByATestFile" in module);
+        console.log(JSON.stringify({
+          early: early === Module,
+          module: module instanceof Module,
+          child: child.module instanceof Module && child.module.constructor === Module,
+          inherits,
+        }));
+      });
+    `;
+    using dir = tempDir("module-class-isolate", {
+      "child.cjs": `exports.module = module;`,
+      "1-first.test.cjs": file,
+      "2-second.test.cjs": file,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./1-first.test.cjs", "./2-second.test.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const printed = stdout.split("\n").filter(line => line.startsWith("{"));
+    // The second file inherits nothing that the first left on Module.prototype.
+    const rows = { early: true, module: true, child: true, inherits: [false, true] };
+    expect(printed.map(line => JSON.parse(line))).toEqual([rows, rows]);
+    expect(stderr).toContain(" 2 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // The bundler wraps a CommonJS file in a function that is handed a plain object: no class reaches it.
+  test("module.constructor is Object in a file that the bundler wrapped", async () => {
+    using dir = tempDir("module-class-bundles", {
+      "dependency.cjs": `
+        const Module = require("node:module");
+        const name = constructor =>
+          constructor === Module ? "Module" : constructor === Object ? "Object" : typeof constructor;
+        module.exports = { name, dependency: name(module.constructor) };
+      `,
+      "entry.cjs": `
+        const { name, dependency } = require("./dependency.cjs");
+        console.log(JSON.stringify({ entry: name(module.constructor), dependency }));
+      `,
+    });
+    const run = async (...args) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const printedBy = async (format, outfile) => {
+      const built = await run("build", "--target=bun", `--format=${format}`, "entry.cjs", "--outfile", outfile);
+      expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { stdout, stderr, exitCode } = await run(outfile);
+      return { stdout: JSON.parse(stdout || "null"), stderr, exitCode };
+    };
+    const [esm, cjs] = await Promise.all([printedBy("esm", "bundle.mjs"), printedBy("cjs", "bundle.cjs")]);
+    expect({ esm, cjs }).toEqual({
+      esm: { stdout: { entry: "Object", dependency: "Object" }, stderr: "", exitCode: 0 },
+      // The runtime loads a CommonJS bundle as a CommonJS file, so the entry point has a module object.
+      cjs: { stdout: { entry: "Module", dependency: "Object" }, stderr: "", exitCode: 0 },
+    });
+  });
 });

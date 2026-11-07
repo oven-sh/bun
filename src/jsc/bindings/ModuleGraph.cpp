@@ -768,10 +768,10 @@ extern "C" uint32_t Bun__TestFile__enterModuleGraph(Zig::GlobalObject* globalObj
     auto* graph = JSModuleGraph::create(vm, globalObject, globalObject->JSModuleGraphStructure(), loader, overlayShape, nullptr, nullptr);
     moduleGraphState(globalObject).testFile.set(vm, graph);
     // node:module is shared by all files, and `Module._cache` is the running file's require.cache.
-    if (globalObject->m_nodeModuleConstructor.isInitialized()) {
+    if (JSObject* moduleConstructor = globalObject->m_commonJSModuleClassStructure.constructorConcurrently()) {
         JSValue cache = requireCacheOf(globalObject, graph, nullptr);
         scope.assertNoException();
-        globalObject->m_nodeModuleConstructor.get(globalObject)->putDirect(vm, Identifier::fromString(vm, "_cache"_s), cache);
+        moduleConstructor->putDirect(vm, Identifier::fromString(vm, "_cache"_s), cache);
     }
     return graph->context().identifier();
 }

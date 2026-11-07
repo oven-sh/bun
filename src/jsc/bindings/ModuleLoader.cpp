@@ -683,7 +683,7 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
         }
         // require("module"), require("node:module")
         case SyntheticModuleType::NodeModule: {
-            return { Kind::Exports, globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject) };
+            return { Kind::Exports, globalObject->nodeModuleConstructor() };
         }
         // require("process"), require("node:process")
         case SyntheticModuleType::NodeProcess: {
@@ -731,7 +731,7 @@ JSValue resolveAndFetchBuiltinModule(
         }
         // require("module"), require("node:module")
         case SyntheticModuleType::NodeModule: {
-            return globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+            return globalObject->nodeModuleConstructor();
         }
         // require("process"), require("node:process")
         case SyntheticModuleType::NodeProcess: {
@@ -780,6 +780,8 @@ void evaluateCommonJSCustomExtension(
     arguments.append(filenameValue);
     JSC::profiledCall(globalObject, ProfilingReason::API, extension, callData, target, arguments);
     RETURN_IF_EXCEPTION(scope, );
+    // Node's Module.prototype.load sets `loaded` when the handler returns, whatever evaluated the file.
+    target->hasEvaluated = true;
 }
 
 // JSCommonJSModule::evaluate(ResolvedSource&) would cache plugin contents as the file's own source, so make and cache the provider here.

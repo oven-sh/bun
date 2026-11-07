@@ -1649,6 +1649,22 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(lines).toEqual(Array(2).fill(JSON.stringify([true, true, false])));
   });
 
+  test("Module._load() for a parent that is no module loads into the running file's cache", async () => {
+    const file = `
+      const Module = require("node:module");
+      test("loads a file", () => {
+        const path = require.resolve("./loaded.cjs");
+        const forNull = Module._load(path, null);
+        const forAnObject = Module._load("./loaded.cjs", { filename: __filename });
+        const parentIsNull = Module._cache[path].parent === null;
+        console.log(JSON.stringify([path in Module._cache, require(path) === forNull, forAnObject === forNull, parentIsNull]));
+      });
+    `;
+    const files = { "loaded.cjs": `module.exports = {};`, "a.test.js": file, "b.test.js": file };
+    const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual(Array(2).fill(JSON.stringify([true, true, true, true])));
+  });
+
   test("process.mainModule is the running file's module", async () => {
     const file = `test("reads it", () => { console.log(JSON.stringify([process.mainModule === module, require.main === module])); });`;
     const files = {

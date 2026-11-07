@@ -57,10 +57,12 @@ for (const name of names) show(require(name));
 //@ ext cjs
 for (const name of names) show(module.require(name));
 //// module-constructor-load
+//@ alone
 //@ exit 1
 //@ ext cjs
 for (const name of names) show(module.constructor._load(name));
 //// module-constructor-prototype-require
+//@ alone
 //@ exit 1
 //@ ext cjs
 for (const name of names) show(module.constructor.prototype.require.call(module, name));
@@ -91,6 +93,7 @@ import Module from "node:module";
 const r = Module.createRequire(import.meta.url);
 for (const name of names) show(r(name));
 //// Module-load
+//@ alone
 //@ exit 1
 import Module from "node:module";
 for (const name of names) show(Module._load(name));

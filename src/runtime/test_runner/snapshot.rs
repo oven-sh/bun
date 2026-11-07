@@ -306,7 +306,9 @@ impl Snapshots {
         let parent = expect.parent.as_ref().ok_or(Error::NoTest)?;
         let buntest_strong = parent.bun_test().ok_or(Error::TestNotActive)?;
         let buntest = buntest_strong.get();
-        let active = core::ptr::NonNull::from(parent.phase.entry(buntest).ok_or(Error::SnapshotInConcurrentGroup)?);
+        let Some(active) = parent.phase.entry(buntest).map(core::ptr::NonNull::from) else {
+            return Err(if parent.phase.sequence_has_ended(buntest) { Error::TestNotActive } else { Error::SnapshotInConcurrentGroup });
+        };
         let test = parent.phase.sequence(buntest).and_then(|sequence| sequence.test_entry);
         // SAFETY: `buntest_strong` owns the entries of its sequences.
         let entry: &ExecutionEntry = unsafe { test.filter(|_| format != Format::Bun).unwrap_or(active).as_ref() };
@@ -342,6 +344,10 @@ impl Snapshots {
         let file_id = buntest.file_id;
         if let Some(file) = self._current_file.as_ref().filter(|file| file.id == file_id) {
             return Ok(file.format);
+        }
+        // A test that has ended gets no snapshot, so it doesn't pick the format of the running file either.
+        if expect.parent.as_ref().is_some_and(|parent| parent.phase.sequence_has_ended(buntest)) {
+            return Err(Error::TestNotActive);
         }
         self.write_snapshot_file(files)?;
 
@@ -396,11 +402,12 @@ impl Snapshots {
         hint: &[u8],
     ) -> Result<Outcome, Error> {
         let format = self.format_of(files, expect)?;
+        // Names the snapshot first: a call that is refused must not create the file.
+        let (mut key, counter) = self.add_count(expect, format, hint)?;
         if format == Format::Bun {
             self.open_to_append(files)?;
         }
 
-        let (mut key, counter) = self.add_count(expect, format, hint)?;
         let mut counter_string_buf = [0u8; 32];
         let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
         key.push(b' ');

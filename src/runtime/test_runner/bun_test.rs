@@ -1780,6 +1780,21 @@ pub(crate) enum RefDataValue {
 }
 
 impl RefDataValue {
+    /// Names a test of a file that is over: no file has this group, so the test has no sequence and is never the running one.
+    pub(crate) const OF_AN_ENDED_FILE: RefDataValue = RefDataValue::Execution {
+        group_index: usize::MAX,
+        entry_data: Some(EntryData { sequence_index: 0, entry: core::ptr::null(), attempt: 0 }),
+    };
+
+    /// Whether this names a test or hook of a sequence that is over, so that what its `expect` does belongs to no running test.
+    pub(crate) fn sequence_has_ended(&self, buntest: &mut BunTest) -> bool {
+        let RefDataValue::Execution { group_index, entry_data: Some(_) } = *self else { return false };
+        if buntest.phase != Phase::Execution || group_index != buntest.execution.group_index {
+            return true;
+        }
+        self.sequence(buntest).is_none_or(|sequence| sequence.active_entry.is_none())
+    }
+
     pub(crate) fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
         let RefDataValue::Execution { group_index, entry_data } = self else { return None };
         let entry_data = (*entry_data)?;

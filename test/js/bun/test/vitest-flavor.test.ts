@@ -643,6 +643,266 @@ describe.concurrent("test context", () => {
     expect(exitCode).toBe(0);
   });
 
+  // In each `block` the test "t" ends and leaves a timer behind. The timer calls the `expect` of t's context while "next" runs.
+  const leftBehind = `
+    function leftBehind(late) {
+      const started = Promise.withResolvers(), ran = Promise.withResolvers();
+      started.promise.then(() => setTimeout(() => { try { late(); } finally { ran.resolve(); } }, 0));
+      return () => { started.resolve(); return ran.promise; };
+    }
+    const message = fn => { try { fn(); return "no error"; } catch (error) { return error.message; } };
+    const settlesLater = () => Promise.resolve().then(() => 1);
+  `;
+  const refused = "Snapshot matchers are not supported after the test has finished executing";
+
+  // `bun:test` passes a context to the tests of `test.extend()` and `test.for()`.
+  test.each([
+    ["vitest", "test", "fails"],
+    ["bun:test", "test.extend({})", "failing"],
+  ])("%s: a context's expect stays bound after its test has finished", async (module, withContext, modifier) => {
+    const { log, results, errors, stderr, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, expect as globalExpect } from "${module}";
+        ${leftBehind}
+        globalExpect.extend({ toLogItsTest() { console.log("custom matcher:", this.currentTestName, this.assertionCalls); return { pass: true, message: () => "" }; } });
+        const testWithContext = ${withContext};
+        function block(name, late, next = test, first = () => {}) {
+          describe(name, () => {
+            let whileNextRuns;
+            testWithContext("t", ({ expect }) => { whileNextRuns = leftBehind(() => late(expect)); });
+            next("next", () => { first(); return whileNextRuns(); });
+          });
+        }
+        block("soft", expect => { expect.soft(1).toBe(101); console.log("soft: goes on"); }, test.${modifier});
+        block("soft, and next passes", expect => expect.soft(1).toBe(101));
+        block("not awaited", expect => void expect(settlesLater()).resolves.toBe(101), test.${modifier});
+        block("not awaited, and next passes", expect => void expect(settlesLater()).resolves.toBe(101));
+        block("poll", expect => void expect.poll(() => 1, { timeout: 1, interval: 1 }).toBe(101), test.${modifier});
+        block("assertions", expect => expect.assertions(3));
+        block("hasAssertions", expect => expect.hasAssertions());
+        block("counts", expect => { expect(1).toBe(1); expect(2).toBe(2); }, test, () => globalExpect.assertions(0));
+        block("setState", expect => expect.setState({ assertionCalls: 7 }), test, () => globalExpect.assertions(0));
+        block("getState", expect => console.log("getState:", expect.getState().currentTestName));
+        block("custom matcher", expect => expect("x").toLogItsTest());
+        block("snapshot", expect => {
+          console.log("toMatchSnapshot:", message(() => expect("late").toMatchSnapshot()));
+          console.log("toThrowErrorMatchingSnapshot:", message(() => expect(() => { throw new Error("late"); }).toThrowErrorMatchingSnapshot()));
+          console.log("toMatchFileSnapshot:", message(() => expect("late").toMatchFileSnapshot("./late.txt")));
+          console.log("toMatchInlineSnapshot:", message(() => expect("late").toMatchInlineSnapshot(\`"late"\`)));
+        });
+        // An Expect that "t" made while it ran is bound to "t" in the same way.
+        describe("made by t", () => {
+          let whileNextRuns;
+          test("t", () => {
+            const soft = globalExpect.soft(1), plain = globalExpect("late");
+            whileNextRuns = leftBehind(() => { soft.toBe(101); console.log("made by t:", message(() => plain.toMatchSnapshot())); });
+          });
+          test("next", () => whileNextRuns());
+        });
+        // "t" times out while it waits, and its body goes on while "next" runs.
+        describe("timed out", () => {
+          const goOn = Promise.withResolvers(), ended = Promise.withResolvers();
+          testWithContext("t", async ({ expect }) => {
+            try {
+              await goOn.promise;
+              console.log("timed out:", expect.getState().currentTestName);
+              expect(1).toBe(1);
+              expect.assertions(9);
+              expect.soft(1).toBe(101);
+              console.log("timed out: goes on");
+            } finally {
+              ended.resolve();
+            }
+          }, 1);
+          test("next", async () => { globalExpect.assertions(0); goOn.resolve(); await ended.promise; });
+        });
+        // "t" has ended, and its group still runs.
+        describe.concurrent("same group", () => {
+          let expectOfT;
+          testWithContext("t", ({ expect }) => { expectOfT = expect; });
+          test("next", async () => {
+            await 1;
+            expectOfT.soft(1).toBe(101);
+            void expectOfT(settlesLater()).resolves.toBe(101);
+            void expectOfT.poll(() => 1, { timeout: 1, interval: 1 }).toBe(101);
+            console.log("same group:", expectOfT.getState().currentTestName);
+          });
+        });
+      `,
+    });
+    expect({
+      log,
+      // After more than 20 passes, `bun test` lists the failed tests again at the end.
+      results: [...new Set(results)],
+      errors: errors.toSorted(),
+      betweenTests: stderr.split("# Unhandled error between tests").length - 1,
+      snapshotsAdded: /\d+ added/.test(stderr),
+      exitCode,
+    }).toEqual({
+      log: [
+        "soft: goes on",
+        "getState: getState > t",
+        "custom matcher: custom matcher > t 1",
+        "toMatchSnapshot: " + refused,
+        "toThrowErrorMatchingSnapshot: " + refused,
+        "toMatchFileSnapshot: " + refused,
+        "toMatchInlineSnapshot: no error",
+        "made by t: " + refused,
+        "timed out: timed out > t",
+        "timed out: goes on",
+        "same group: same group > t",
+      ],
+      results: [
+        "(pass) soft > t",
+        "(fail) soft > next",
+        "(pass) soft, and next passes > t",
+        "(pass) soft, and next passes > next",
+        "(pass) not awaited > t",
+        "(fail) not awaited > next",
+        "(pass) not awaited, and next passes > t",
+        "(pass) not awaited, and next passes > next",
+        "(pass) poll > t",
+        "(fail) poll > next",
+        "(pass) assertions > t",
+        "(pass) assertions > next",
+        "(pass) hasAssertions > t",
+        "(pass) hasAssertions > next",
+        "(pass) counts > t",
+        "(pass) counts > next",
+        "(pass) setState > t",
+        "(pass) setState > next",
+        "(pass) getState > t",
+        "(pass) getState > next",
+        "(pass) custom matcher > t",
+        "(pass) custom matcher > next",
+        "(pass) snapshot > t",
+        "(pass) snapshot > next",
+        "(pass) made by t > t",
+        "(pass) made by t > next",
+        "(fail) timed out > t",
+        "(pass) timed out > next",
+        "(pass) same group > t",
+        "(pass) same group > next",
+      ],
+      // A failed matcher that nothing awaits, and a failed soft matcher, are each one unhandled error. `expect.poll()` prints two lines.
+      errors: [
+        ...Array(2).fill("error: Matcher did not succeed in time."),
+        ...Array(10).fill("error: expect(received).toBe(expected)"),
+      ],
+      betweenTests: 10,
+      snapshotsAdded: false,
+      exitCode: 1,
+    });
+  });
+
+  test("a context's expect stays bound after its file has finished", async () => {
+    using dir = tempDir("vitest-flavor-kept-context", {
+      "a.test.js": `
+        import { test } from "vitest";
+        test("keeps its context", context => { globalThis.kept = context; });
+      `,
+      "b.test.js": `
+        import { test, describe, expect as globalExpect } from "vitest";
+        ${leftBehind}
+        const { expect } = globalThis.kept;
+        function block(name, late, next = test, first = () => {}) {
+          describe(name, () => {
+            let whileNextRuns;
+            test("t", () => { whileNextRuns = leftBehind(late); });
+            next("next", () => { first(); return whileNextRuns(); });
+          });
+        }
+        block("soft", () => { expect.soft(1).toBe(101); console.log("soft: goes on"); }, test.fails);
+        block("soft, and next passes", () => expect.soft(1).toBe(101));
+        block("not awaited", () => void expect(settlesLater()).resolves.toBe(101), test.fails);
+        block("assertions", () => expect.assertions(3));
+        block("hasAssertions", () => expect.hasAssertions());
+        block("setState", () => expect.setState({ assertionCalls: 7 }), test, () => globalExpect.assertions(0));
+        block("getState", () => console.log("getState:", expect.getState().currentTestName));
+        // The late calls come before the first snapshot of this file.
+        describe("snapshot", () => {
+          let whileNextRuns;
+          test("t", () => {
+            whileNextRuns = leftBehind(() => {
+              console.log("toMatchSnapshot:", message(() => expect("late").toMatchSnapshot()));
+              console.log("toThrowErrorMatchingSnapshot:", message(() => expect(() => { throw new Error("late"); }).toThrowErrorMatchingSnapshot()));
+              console.log("toMatchFileSnapshot:", message(() => expect("late").toMatchFileSnapshot("./late.txt")));
+            });
+          });
+          test("next", async () => { await whileNextRuns(); globalExpect("of next").toMatchSnapshot(); });
+        });
+      `,
+      // The inline snapshot loads the snapshot state of this file, in Bun's format, and creates no file.
+      "c.test.js": `
+        import { test, expect } from "bun:test";
+        test("inline", () => { expect("inline").toMatchInlineSnapshot(\`"inline"\`); });
+        test("late", () => {
+          try { globalThis.kept.expect("late").toMatchSnapshot(); } catch (error) { console.log("c.test.js:", error.message); }
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: { ...bunEnv, CI: "false" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      log: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")),
+      results: stderr
+        .split("\n")
+        .filter(line => /^\((pass|fail)\)/.test(line))
+        .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+      errors: stderr.split("\n").filter(line => line.startsWith("error: ")),
+      betweenTests: stderr.split("# Unhandled error between tests").length - 1,
+      snapshots: (await Bun.file(join(String(dir), "__snapshots__", "b.test.js.snap")).text())
+        .split("\n")
+        .filter(Boolean),
+      written: readdirSync(String(dir), { recursive: true }).sort(),
+      exitCode,
+    }).toEqual({
+      log: [
+        "soft: goes on",
+        "getState: undefined",
+        "toMatchSnapshot: " + refused,
+        "toThrowErrorMatchingSnapshot: " + refused,
+        "toMatchFileSnapshot: " + refused,
+        "c.test.js: " + refused,
+      ],
+      results: [
+        "(pass) keeps its context",
+        "(pass) soft > t",
+        "(fail) soft > next",
+        "(pass) soft, and next passes > t",
+        "(pass) soft, and next passes > next",
+        "(pass) not awaited > t",
+        "(fail) not awaited > next",
+        "(pass) assertions > t",
+        "(pass) assertions > next",
+        "(pass) hasAssertions > t",
+        "(pass) hasAssertions > next",
+        "(pass) setState > t",
+        "(pass) setState > next",
+        "(pass) getState > t",
+        "(pass) getState > next",
+        "(pass) snapshot > t",
+        "(pass) snapshot > next",
+        "(pass) inline",
+        "(pass) late",
+      ],
+      errors: Array(3).fill("error: expect(received).toBe(expected)"),
+      betweenTests: 3,
+      snapshots: [
+        "// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html",
+        'exports[`snapshot > next 1`] = `"of next"`;',
+      ],
+      written: ["__snapshots__", "__snapshots__/b.test.js.snap", "a.test.js", "b.test.js", "c.test.js"],
+      exitCode: 1,
+    });
+  });
+
   test("is collected after its test", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

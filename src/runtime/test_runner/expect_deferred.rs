@@ -1014,9 +1014,13 @@ impl Expect {
         let Some(buntest) = test.buntest.upgrade() else {
             return Err(JsError::Thrown);
         };
-        let Some(sequence) = test.sequence(&buntest) else {
+        let sequence = test.sequence(&buntest);
+        // A test that has ended can't fail any more. `on_uncaught_exception` reports its error between tests.
+        if sequence.is_none()
+            && !self.parent.as_ref().is_some_and(|parent| parent.phase.sequence_has_ended(buntest.get()))
+        {
             return Err(JsError::Thrown);
-        };
+        }
         if global.has_pending_termination_exception() {
             return Err(JsError::Thrown);
         }
@@ -1026,12 +1030,14 @@ impl Expect {
             ExpectDeferred__continueStackAt(global, error, call_site);
         }
         // SAFETY: points into `buntest.execution.sequences`; read and written between the calls that may borrow it.
-        let maybe_skip = unsafe { sequence.as_ref() }.maybe_skip;
+        let maybe_skip = sequence.map(|sequence| unsafe { sequence.as_ref() }.maybe_skip);
         buntest
             .get()
             .on_uncaught_exception(global, Some(error), false, &test.entry);
-        // SAFETY: as above.
-        unsafe { (*sequence.as_ptr()).maybe_skip = maybe_skip };
+        if let (Some(sequence), Some(maybe_skip)) = (sequence, maybe_skip) {
+            // SAFETY: as above.
+            unsafe { (*sequence.as_ptr()).maybe_skip = maybe_skip };
+        }
         Ok(match self.flags.get().promise() {
             Promise::None => JSValue::UNDEFINED,
             _ => JSPromise::resolved_promise_value(global, JSValue::UNDEFINED),

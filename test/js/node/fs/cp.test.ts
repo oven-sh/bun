@@ -312,6 +312,16 @@ for (const [name, copy] of impls) {
       expect(e.code).toBe("ERR_FS_CP_FIFO_PIPE");
     });
 
+    // For a top-level source, the walker sends a character or block device to copyFile, as node's does.
+    test.skipIf(isWindows)("a character device gives an empty file", async () => {
+      await using basename = tempDir("cp", {});
+
+      await copy("/dev/null", join(basename, "to.txt"));
+
+      const stats = fs.lstatSync(join(basename, "to.txt"));
+      expect({ isFile: stats.isFile(), size: stats.size }).toEqual({ isFile: true, size: 0 });
+    });
+
     test("filter - works", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",
@@ -429,6 +439,30 @@ test("cp with missing callback throws", () => {
     fs.cp("a", "b" as any);
   }).toThrow(/"cb"/);
 });
+
+// The walker unlinks the destination before it calls copyFile. In node 24 and 26, fs.cpSync alone fails here
+// with EINVAL: it copies onto an existing file with std::filesystem::copy_file, not with copyFile.
+test.skipIf(isWindows)(
+  "fs.cp, fs.promises.cp and fs.cpSync empty an existing file for a character device",
+  async () => {
+    using dir = tempDir("cp-device-existing", {
+      "promises.txt": "old content",
+      "callback.txt": "old content",
+      "sync.txt": "old content",
+    });
+    const [viaPromises, viaCallback, viaSync] = ["promises.txt", "callback.txt", "sync.txt"].map(name =>
+      join(String(dir), name),
+    );
+
+    await fs.promises.cp("/dev/null", viaPromises);
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    fs.cp("/dev/null", viaCallback, err => (err ? reject(err) : resolve()));
+    await promise;
+    fs.cpSync("/dev/null", viaSync);
+
+    expect([viaPromises, viaCallback, viaSync].map(path => fs.readFileSync(path, "utf8"))).toEqual(["", "", ""]);
+  },
+);
 
 // On Windows, _copySingleFileSync's reparse-point branch opens a handle to the
 // source symlink to resolve its target via GetFinalPathNameByHandleW. Previously

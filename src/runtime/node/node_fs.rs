@@ -5303,6 +5303,17 @@ impl NodeFS {
         Ok(())
     }
 
+    /// For a device or FIFO source. libuv opens such a destination, waits for its other end, then unlinks it or gives it the source's mode.
+    #[cfg(not(windows))]
+    fn copy_dest_is_fifo_or_device(dest: &ZStr) -> bool {
+        Syscall::stat(dest).is_ok_and(|st| {
+            matches!(
+                st.st_mode as u32 & sys::S::IFMT,
+                sys::S::IFIFO | sys::S::IFCHR | sys::S::IFBLK
+            )
+        })
+    }
+
     pub(crate) fn copy_file(&mut self, args: &args::CopyFile, _: Flavor) -> Maybe<ret::CopyFile> {
         if let Some(error) = creation_in_executable(args.dest.slice(), sys::Tag::copyfile, E::EROFS)
         {
@@ -5358,6 +5369,7 @@ impl NodeFS {
     /// https://github.com/pnpm/pnpm/issues/2761
     /// https://github.com/libuv/libuv/pull/2578
     /// https://github.com/nodejs/node/issues/34624
+    /// https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/fs.c#L1228-L1434
     fn copy_file_inner(&mut self, args: &args::CopyFile) -> Maybe<ret::CopyFile> {
         // TODO: do we need to fchown?
         #[cfg(target_os = "macos")]
@@ -5381,12 +5393,21 @@ impl NodeFS {
                     Err(err) => return Err(err.with_path(src)),
                 };
 
-                if !sys::S::ISREG(stat_.st_mode as u32) {
+                // libuv copies st_size bytes with sendfile(2), which xnu refuses unless the source is a regular file.
+                let is_regular = sys::S::ISREG(stat_.st_mode as u32);
+                if !is_regular
+                    && (stat_.st_size > 0
+                        || sys::S::ISDIR(stat_.st_mode as u32)
+                        || sys::S::ISSOCK(stat_.st_mode as u32))
+                {
                     return Err(sys::Error {
                         errno: SystemErrno::ENOTSUP as _,
                         syscall: sys::Tag::copyfile,
                         ..Default::default()
                     });
+                }
+                if !is_regular && Self::copy_dest_is_fifo_or_device(dest) {
+                    return Err(sys::Error::from_code(E::ENOTSUP, sys::Tag::copyfile));
                 }
 
                 // 64 KB is about the break-even point for clonefile() to be worth it
@@ -5407,7 +5428,13 @@ impl NodeFS {
                         return Ok(());
                     }
                 } else {
-                    let src_fd = match Syscall::open(src, sys::O::RDONLY, 0o644) {
+                    // libuv waits in open(2) for a writer of a FIFO. No byte of a FIFO or a device is read, so do not wait.
+                    let nonblocking = if is_regular {
+                        0
+                    } else {
+                        sys::O::NONBLOCK | sys::O::NOCTTY
+                    };
+                    let src_fd = match Syscall::open(src, sys::O::RDONLY | nonblocking, 0o644) {
                         Ok(result) => result,
                         Err(err) => return Err(err.with_path(args.src.slice())),
                     };
@@ -5430,14 +5457,19 @@ impl NodeFS {
                         Err(err) => return Err(err.with_path(args.dest.slice())),
                     };
 
-                    let result = Self::copy_file_using_read_write_loop(
-                        src,
-                        dest,
-                        src_fd,
-                        dest_fd,
-                        stat_.st_size.max(0) as usize,
-                        &mut wrote,
-                    );
+                    // libuv copies st_size bytes, none for a device or a FIFO.
+                    let result = if is_regular {
+                        Self::copy_file_using_read_write_loop(
+                            src,
+                            dest,
+                            src_fd,
+                            dest_fd,
+                            stat_.st_size.max(0) as usize,
+                            &mut wrote,
+                        )
+                    } else {
+                        Ok(())
+                    };
                     let _ = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64);
                     let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
                     dest_fd.close();
@@ -5485,12 +5517,19 @@ impl NodeFS {
                 Ok(result) => result,
                 Err(err) => return Err(err),
             };
-            if !sys::S::ISREG(stat_.st_mode as u32) {
-                return Err(sys::Error {
-                    errno: SystemErrno::EOPNOTSUPP as _,
-                    syscall: sys::Tag::copyfile,
-                    ..Default::default()
-                });
+            let is_regular = sys::S::ISREG(stat_.st_mode as u32);
+            if !is_regular {
+                // Node's read of a directory fails with EISDIR, after it emptied the destination.
+                if sys::S::ISDIR(stat_.st_mode as u32) {
+                    return Err(sys::Error::from_code(E::EISDIR, sys::Tag::copyfile));
+                }
+                // A pipe or a socket behind /dev/fd reports its buffered bytes in st_size. Node copies them, and this arm refuses them.
+                if stat_.st_size > 0 {
+                    return Err(sys::Error::from_code(E::EOPNOTSUPP, sys::Tag::copyfile));
+                }
+                if Self::copy_dest_is_fifo_or_device(dest) {
+                    return Err(sys::Error::from_code(E::EOPNOTSUPP, sys::Tag::copyfile));
+                }
             }
 
             let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
@@ -5522,6 +5561,10 @@ impl NodeFS {
             // first; fall back to read/write on cross-device or unsupported
             // fd types.
             'cfr: loop {
+                // libuv copies st_size bytes, none for a device or a FIFO.
+                if !is_regular {
+                    break 'cfr;
+                }
                 // No offsets so the kernel advances the file's seek position, keeping the
                 // read/write fallback (which uses the seek position) coherent if we ever
                 // break mid-loop.
@@ -5554,14 +5597,16 @@ impl NodeFS {
             }
 
             let mut wrote: u64 = 0;
-            if let Err(err) = Self::copy_file_using_read_write_loop(
-                src,
-                dest,
-                src_fd,
-                dest_fd,
-                stat_.st_size.max(0) as usize,
-                &mut wrote,
-            ) {
+            if is_regular
+                && let Err(err) = Self::copy_file_using_read_write_loop(
+                    src,
+                    dest,
+                    src_fd,
+                    dest_fd,
+                    stat_.st_size.max(0) as usize,
+                    &mut wrote,
+                )
+            {
                 let _ = sys::unlink(dest);
                 return Err(err);
             }
@@ -5581,12 +5626,19 @@ impl NodeFS {
 
             let stat_ = Syscall::fstat(src_fd)?;
 
-            if !sys::S::ISREG(stat_.st_mode as u32) {
-                return Err(sys::Error {
-                    errno: SystemErrno::ENOTSUP as _,
-                    syscall: sys::Tag::copyfile,
-                    ..Default::default()
-                });
+            let is_regular = sys::S::ISREG(stat_.st_mode as u32);
+            if !is_regular {
+                // Node's read of a directory fails with EISDIR, after it emptied the destination.
+                if sys::S::ISDIR(stat_.st_mode as u32) {
+                    return Err(sys::Error::from_code(E::EISDIR, sys::Tag::copyfile));
+                }
+                // FICLONE needs two regular files. Node runs it, then unlinks the destination.
+                if args.mode.is_force_clone() {
+                    return Err(sys::Error::from_code(E::ENOTSUP, sys::Tag::copyfile));
+                }
+                if Self::copy_dest_is_fifo_or_device(dest) {
+                    return Err(sys::Error::from_code(E::ENOTSUP, sys::Tag::copyfile));
+                }
             }
 
             let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
@@ -5623,7 +5675,7 @@ impl NodeFS {
             }
 
             // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
-            if sys::S::ISREG(stat_.st_mode as u32) && sys::copy_file::can_use_ioctl_ficlone() {
+            if is_regular && sys::copy_file::can_use_ioctl_ficlone() {
                 let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
                 if rc == 0 {
                     let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
@@ -5643,6 +5695,11 @@ impl NodeFS {
                     let _ = Syscall::fchmod(fd, m as u32);
                     fd.close();
                 });
+
+            // libuv copies st_size bytes, none for a device or a FIFO.
+            if !is_regular {
+                return Ok(());
+            }
 
             let mut off_in_copy: i64 = 0;
             let mut off_out_copy: i64 = 0;
@@ -8963,7 +9020,7 @@ impl NodeFS {
         Syscall::symlink(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)
     }
 
-    /// This is `copyFile`, but it copies symlinks as-is
+    /// Copies one regular file, or recreates a symlink as a link. On POSIX it refuses every other source type.
     pub(crate) fn copy_single_file_sync(
         &mut self,
         src: &OSPathSliceZ,

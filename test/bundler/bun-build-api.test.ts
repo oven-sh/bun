@@ -871,6 +871,55 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  test.concurrent("BuildArtifact paths of 9 entry points in one directory start at that directory", async () => {
+    const names = Array.from({ length: 9 }, (_, i) => `page${i}`);
+    using dir = tempDir(
+      "build-artifact-paths-nine-entry-points",
+      Object.fromEntries(names.map(name => [`pages/${name}.ts`, `console.log("${name}");`])),
+    );
+    const build = await Bun.build({
+      entrypoints: names.map(name => path.join(String(dir), "pages", `${name}.ts`)),
+    });
+    expect(build.outputs.map(output => output.path).sort()).toEqual(names.map(name => `./${name}.js`));
+  });
+
+  test.concurrent(
+    "plugin entry points in a missing directory get the same result with more than 8 entry points",
+    async () => {
+      // What such a build gives is not the subject here: the error, or else the first two output names.
+      async function build(count: number) {
+        try {
+          const result = await Bun.build({
+            entrypoints: Array.from({ length: count }, (_, i) => `no-such-directory/route${i}.js`),
+            plugins: [
+              {
+                name: "routes",
+                setup(builder) {
+                  builder.onResolve({ filter: /^no-such-directory\// }, args => ({
+                    path: args.path,
+                    namespace: "routes",
+                  }));
+                  builder.onLoad({ filter: /.*/, namespace: "routes" }, args => ({
+                    contents: `console.log(${JSON.stringify(args.path)});`,
+                    loader: "js",
+                  }));
+                },
+              },
+            ],
+          });
+          return result.outputs
+            .map(output => output.path)
+            .sort()
+            .slice(0, 2);
+        } catch (error) {
+          return String(error);
+        }
+      }
+
+      expect(await build(9)).toEqual(await build(2));
+    },
+  );
+
   test("BuildArtifact properties sourcemap", async () => {
     Bun.gc(true);
     const outdir = tempDirWithFiles("build-artifact-properties-sourcemap", {

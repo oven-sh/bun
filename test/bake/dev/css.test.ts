@@ -1846,6 +1846,8 @@ for (const root of ["root.css", "root.module.css"]) {
 }
 devTest("stylesheet of a server file and a client file imports a stylesheet that is broken and fixed", {
   framework: frameworkWithClientEntry(false),
+  // By default, a request for a route with a build error bundles the whole route again. That hides a record that went wrong.
+  env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
   files: {
     "child.css": `.child { color: red; }`,
     "root.css": `
@@ -1864,13 +1866,16 @@ devTest("stylesheet of a server file and a client file imports a stylesheet that
   },
   async test(dev) {
     const css = async () => {
-      const { styles } = (await (await dev.fetch("/")).json()) as { styles: string[] };
+      const res = await dev.fetch("/");
+      expect(res.status).toBe(200);
+      const { styles } = (await res.json()) as { styles: string[] };
       return await dev.fetch(styles[0]).text();
     };
     expect(await css()).toContain(".child {");
     await dev.write("child.css", `.child { color: red; }}`, { errors: null });
     // The page has the browser's copy of root.css. This bundles the server's copy, with the broken file.
     await dev.patch("routes/index.ts", { find: "v: 1", replace: "v: 2", errors: null });
+    expect((await dev.fetch("/")).status).toBe(500);
     // The fix bundles root.css again.
     await dev.write("child.css", `.fixed { color: red; }`);
     expect(await css()).toContain(".fixed {");

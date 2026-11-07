@@ -11079,7 +11079,7 @@ declare module "bun" {
     path?: string;
     /**
      * A number is in seconds since the Unix epoch, not in milliseconds. For a value
-     * in milliseconds, such as `Date.now() + 60_000`, pass `new Date(ms)` or `ms / 1000`.
+     * in milliseconds, such as `Date.now() + 60_000`, pass `new Date(ms)`.
      */
     expires?: number | Date | string;
     secure?: boolean;

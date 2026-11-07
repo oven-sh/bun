@@ -4736,6 +4736,72 @@ console.log(foo, array);
       // check("let x = arg0?.[foo]; (0, x)()", "let x = arg0?.[foo];\nx();");
     });
 
+    it("puts no call in tail position that the source has elsewhere", () => {
+      var transpiler = new Bun.Transpiler({
+        inline: true,
+        platform: "bun",
+        allowBunRuntime: false,
+        minify: { syntax: true },
+      });
+      function check(input, output) {
+        expect(
+          transpiler
+            .transformSync("export function hello() {\n" + input + "\n}")
+            .trim()
+            .replaceAll(/^  /gm, ""),
+        ).toBe("export function hello() {\n" + output + "\n}".replaceAll(/^  /gm, ""));
+      }
+
+      check("let x = fn(); return x", "let x = fn();\nreturn x;");
+      check("const x = a.b(); return x", "const x = a.b();\nreturn x;");
+      check("let x = a?.b(); return x", "let x = a?.b();\nreturn x;");
+      check("let x = fn`y`; return x", "let x = fn`y`;\nreturn x;");
+      check("let x = arg0 ? fn() : 1; return x", "let x = arg0 ? fn() : 1;\nreturn x;");
+      check("let x = arg0 || fn(); return x", "let x = arg0 || fn();\nreturn x;");
+      check("let x = (arg0, fn()); return x", "let x = (arg0, fn());\nreturn x;");
+      check("let x = fn(); return 1, x", "let x = fn();\nreturn x;");
+      check("let x = new Error(); return x", "let x = Error();\nreturn x;");
+      check('let x = require("a"); return x', 'let x = require("a");\nreturn x;');
+      check('let x = require.resolve("a"); return x', 'let x = require.resolve("a");\nreturn x;');
+
+      check("return new Error()", "return new Error;");
+      check("return new Error(arg0)", "return new Error(arg0);");
+      check(
+        "return arg0 ? new TypeError(1) : new RangeError(2)",
+        "return arg0 ? new TypeError(1) : new RangeError(2);",
+      );
+      check("return arg0 || new Error()", "return arg0 || new Error;");
+      check("return arg0 && new Error()", "return arg0 && new Error;");
+      check("return arg0 ?? new Error()", "return arg0 ?? new Error;");
+      check("return arg0, new Error()", "return arg0, new Error;");
+      check("return new AggregateError(arg0)", "return new AggregateError(arg0);");
+      check("return new Function(arg0)", "return new Function(arg0);");
+      check("return new Object(arg0)", "return new Object(arg0);");
+      check("return new Array(arg0)", "return new Array(arg0);");
+      check("return () => new Error()", "return () => new Error;");
+
+      // No call comes of these.
+      check("return new Object()", "return {};");
+      check("return new Array()", "return [];");
+      check("let x = new Foo(); return x", "return new Foo;");
+      check("let x = arg0; return x", "return arg0;");
+
+      // The function goes on after these calls.
+      check("throw new Error()", "throw Error();");
+      check("return [new Error()]", "return [Error()];");
+      check("return fn(new Error())", "return fn(Error());");
+      check("return new Error().stack", "return Error().stack;");
+      check("return new Error() || arg0", "return Error() || arg0;");
+      check("return new Error(), arg0", "return Error(), arg0;");
+      check("let x = new Error(); throw x", "throw Error();");
+      check("let x = fn(); throw x", "throw fn();");
+      check("let x = fn(); return x + 2", "return fn() + 2;");
+      check("let x = fn(); return x.y", "return fn().y;");
+      check('let x = require("a"); return x.y', 'return require("a").y;');
+      check("let x = fn(); return x || arg0", "return fn() || arg0;");
+      check("let x = fn(); return [x]", "return [fn()];");
+    });
+
     it("comma operator transforms", () => {
       const expectPrinted = (code, out) => {
         expect(parsed(code, true, true, transpilerMinifySyntax)).toBe(out);

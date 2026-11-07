@@ -2764,6 +2764,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::StmtData::SReturn(mut ret) => {
                     if let Some(value) = ret.value.as_mut() {
+                        // `const value = call(); return value` is not a tail call. `return call()` is one, and it drops the frame of the function.
+                        if replacement.ends_in_call()
+                            && value.any_in_tail_position(&mut |last| {
+                                matches!(last.data, js_ast::ExprData::EIdentifier(id) if self.is_use_of(id.ref_, r#ref))
+                            })
+                        {
+                            return false;
+                        }
                         break 'brk js_ast::StoreRef::from_bump(value);
                     }
                 }
@@ -2838,6 +2846,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         false
     }
 
+    fn is_use_of(&self, used: Ref, r#ref: Ref) -> bool {
+        used.eql(r#ref)
+            || self.symbols[used.inner_index() as usize]
+                .link
+                .get()
+                .eql(r#ref)
+    }
+
     fn substitute_single_use_symbol_in_expr(
         &mut self,
         expr: Expr,
@@ -2855,12 +2871,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         'outer: {
             match expr.data {
                 js_ast::ExprData::EIdentifier(ident) => {
-                    if ident.ref_.eql(r#ref)
-                        || self.symbols[ident.ref_.inner_index() as usize]
-                            .link
-                            .get()
-                            .eql(r#ref)
-                    {
+                    if self.is_use_of(ident.ref_, r#ref) {
                         self.ignore_usage(r#ref);
                         return Substitution::Success(replacement);
                     }

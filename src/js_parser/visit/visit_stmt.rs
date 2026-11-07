@@ -1678,6 +1678,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if let Some(val) = data.value.as_mut() {
+            val.any_in_tail_position(&mut |last| {
+                if let js_ast::ExprData::ENew(mut new) = last.data {
+                    new.is_in_tail_position = true;
+                }
+                false
+            });
             p.visit_expr(val);
 
             // "return undefined;" can safely just always be "return;"

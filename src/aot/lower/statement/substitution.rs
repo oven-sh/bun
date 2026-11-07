@@ -350,7 +350,7 @@ impl FileLowering<'_, '_, '_, '_> {
         !self.transpiled.as_ref().is_none_or(is_printed)
     }
 
-    // `const a = f(); const b = a; return b;` is printed `return f();`. The position of that `return`.
+    // `const a = o.x; const b = a; return b;` is printed `return o.x;`. The position of that `return`.
     pub(in crate::lower) fn find_return_printed_with(&self, declaration: VarDeclId) -> Option<u32> {
         let transpiled = self.transpiled.as_ref()?;
         let position = transpiled.find_return_that_evaluates(self.hir[declaration].init)?;

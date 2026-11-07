@@ -1240,6 +1240,75 @@ test("CallFrame.p.isAsync", async () => {
   expect(prepare).toHaveBeenCalledTimes(1);
 });
 
+test("a function is in the stack of what it calls outside of tail position", () => {
+  function stored() {
+    const error = new TypeError("stored");
+    return error;
+  }
+  function returned() {
+    return new Error("returned");
+  }
+  function either(isFirst) {
+    return isFirst ? new RangeError("first") : new SyntaxError("second");
+  }
+  const arrow = () => new Error("arrow");
+  function compiled() {
+    return new Function("}");
+  }
+  function aggregate() {
+    return new AggregateError(1);
+  }
+  function required() {
+    const loaded = require("./throws-while-it-loads-fixture.cjs");
+    return loaded;
+  }
+  function stackAbove(fn) {
+    const target = {};
+    Error.captureStackTrace(target, fn);
+    return target.stack;
+  }
+  function hidden() {
+    const stack = stackAbove(hidden);
+    return stack;
+  }
+  function shown() {
+    const stack = hidden();
+    return stack;
+  }
+  function thrownBy(fn) {
+    try {
+      fn();
+    } catch (error) {
+      return error;
+    }
+  }
+  const functionsIn = stack => Array.from(stack.matchAll(/^ +at (?:new )?(\w+) \(/gm), match => match[1]);
+
+  expect({
+    stored: functionsIn(stored().stack)[0],
+    returned: functionsIn(returned().stack)[0],
+    first: functionsIn(either(true).stack)[0],
+    second: functionsIn(either(false).stack)[0],
+    arrow: functionsIn(arrow().stack)[0],
+    compiled: functionsIn(thrownBy(compiled).stack).slice(0, 3),
+    aggregate: functionsIn(thrownBy(aggregate).stack).slice(0, 3),
+    required: functionsIn(thrownBy(required).stack)
+      .filter(name => name !== "anonymous")
+      .slice(0, 2),
+    shown: functionsIn(shown())[0],
+  }).toEqual({
+    stored: "stored",
+    returned: "returned",
+    first: "either",
+    second: "either",
+    arrow: "arrow",
+    compiled: ["Function", "compiled", "thrownBy"],
+    aggregate: ["AggregateError", "aggregate", "thrownBy"],
+    required: ["required", "thrownBy"],
+    shown: "shown",
+  });
+});
+
 test("captureStackTrace with constructor function not in stack returns error string", () => {
   // When the second argument to captureStackTrace is a function that isn't in
   // the call stack, all frames are filtered out and .stack should still return
@@ -1738,7 +1807,7 @@ test.concurrent(
       "define stack": error => (Object.defineProperty(error, "stack", { value: "defined" }), error.stack),
       // A clone is made from the complete string: it must not get a second first line.
       "structuredClone": error => structuredClone(error).stack.split("\\n").filter(line => line.includes("boom")),
-      "Bun.inspect": error => Bun.inspect(error).split("\\n").filter(line => line.includes("boom")).map(line => line.trim()),
+      "Bun.inspect": error => Bun.inspect(error).split("\\n").map(line => line.trim()).filter(line => line.startsWith("TypeError")),
       "JSON.stringify": error => JSON.stringify(error),
     };
     const rows = {};

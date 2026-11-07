@@ -3283,8 +3283,7 @@ static JSC::EncodedJSValue mockFn(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
     // Vitest names every vi.fn() "Mock", even one that wraps a named function.
     auto& name = isVitest ? globalObject->mockModule.vitestName : globalObject->mockModule.defaultName;
 
-    if (callframe->argumentCount() > 0) {
-        JSValue value = callframe->argument(0);
+    if (JSValue value = callframe->argument(0); !value.isUndefined()) {
         if (value.isCallable()) {
             wrapFunction(globalObject, thisObject, value, isVitest ? name.getInitializedOnMainThread(globalObject) : nullptr);
         } else {

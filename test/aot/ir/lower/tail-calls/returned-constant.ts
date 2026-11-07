@@ -1,22 +1,25 @@
+// The source has no tail call here, and Bun's transpiler makes none: it leaves the variable where it is.
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="annotated"
 // CHECK: [[annotatedCall]] = Call
-// CHECK-NEXT: ReturnCall [[annotatedCall]] casts=[{declared={type=number site=[[annotation]]}}, {declared={type=number site=[[result]]}}]
+// CHECK-NEXT: [[annotatedExpected]] = Convert [[annotatedCall]] declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: [[annotatedValue]] = Convert [[annotatedExpected]] declared={type=number site=[[annotation]]}
+// CHECK-NEXT: Return [[annotatedValue]]
 // CHECK-LABEL: function {{*}}name="beforeUnreachableStatement"
 // CHECK-NOT: ReturnCall
 // CHECK: Return [[unreachableValue]]
 // CHECK-LABEL: function {{*}}name="declaredWithLet"
 // CHECK: [[letCall]] = Call
-// CHECK-NEXT: ReturnCall [[letCall]]
+// CHECK-NEXT: Return [[letCall]]
 // CHECK-LABEL: function {{*}}name="declaredWithVar"
 // CHECK-NOT: ReturnCall
 // CHECK: Return [[varValue]]
 // CHECK-LABEL: function {{*}}name="interfaceBetween"
 // CHECK: [[interfaceCall]] = Call
-// CHECK-NEXT: ReturnCall [[interfaceCall]]
+// CHECK-NEXT: Return [[interfaceCall]]
 // CHECK-LABEL: function {{*}}name="namedOnce"
 // CHECK: [[onceCall]] = Call
-// CHECK-NEXT: ReturnCall [[onceCall]]
+// CHECK-NEXT: Return [[onceCall]]
 // CHECK-LABEL: function {{*}}name="namedTwice"
 // CHECK-NOT: ReturnCall
 // CHECK: Return [[twiceValue]]
@@ -25,10 +28,10 @@
 // CHECK: Return [[betweenValue]]
 // CHECK-LABEL: function {{*}}name="throughAnotherConstant"
 // CHECK: [[throughCall]] = Call
-// CHECK-NEXT: ReturnCall [[throughCall]]
+// CHECK-NEXT: Return [[throughCall]]
 // CHECK-LABEL: function {{*}}name="typeAliasBetween"
 // CHECK: [[aliasCall]] = Call
-// CHECK-NEXT: ReturnCall [[aliasCall]]
+// CHECK-NEXT: Return [[aliasCall]]
 
 declare function call2(n: number): unknown;
 declare function loose(n: number): any;

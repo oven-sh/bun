@@ -58,7 +58,7 @@ console.log(show(new Holder(text, "t").get()), show(new Holder(count, 2).get()),
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v2 = Call v1 calleeName="make"
-// CHECK-NEXT: ReturnCall v2
+// CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="kind"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_10]] site=[[w_11]]}, {type=anything}] results=[{type=undefined|null|string site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}] {

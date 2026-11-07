@@ -545,6 +545,12 @@ impl Loop {
         // SAFETY: self is a live loop.
         unsafe { uv_loop_alive(self) != 0 }
     }
+    /// The handles and requests that keep the loop alive, Bun's own keep-alive refs included.
+    #[inline]
+    pub fn active_count(&self) -> u32 {
+        // SAFETY: libuv only uses the `count` member of the union.
+        self.active_handles.get() + unsafe { self.active_reqs.count }
+    }
     /// Unlike `uv_loop_alive`, also finds unref'd handles. Only looks at I/O, process and fs-watch handles.
     pub fn has_active_io_handles(&self) -> bool {
         let mut found = false;

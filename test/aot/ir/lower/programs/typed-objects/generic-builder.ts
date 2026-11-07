@@ -50,41 +50,44 @@ console.log(first.name, first.isSafe(), first.isActive(), first.run(), second.la
 // CHECK-NEXT: v23 = Call v22, -, v18, v21, v0 calleeName="Object.defineProperties"
 // CHECK-NEXT: v24 = Convert v23 declared={type=undefined|null|[[L_17]] site=[[w_18]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
 // CHECK-NEXT: v25 = Call v9, v8, v24, v7 calleeName="Object.assign"
-// CHECK-NEXT: ReturnCall v25 casts=[{declared={type=undefined|null|[[L_19]] site=[[w_20]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|[[L_14]] site=[[w_21]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|[[L_14]] site=[[w_22]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|[[L_3]] flags=[IsExpected]}}]
+// CHECK-NEXT: v26 = Convert v25 declared={type=undefined|null|[[L_19]] site=[[w_20]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: v27 = Convert v26 declared={type=undefined|null|[[L_14]] site=[[w_21]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: v28 = Convert v27 declared={type=undefined|null|[[L_3]] flags=[IsExpected]}
+// CHECK-NEXT: Return v28
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="isActive"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean site=[[w_23]]}] functionTypes={{*}}[[f_24]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean site=[[w_22]]}] functionTypes={{*}}[[f_23]]] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Boolean boolean=true
-// CHECK-NEXT: v1 = Convert v0 declared={type=boolean site=[[w_23]]}
+// CHECK-NEXT: v1 = Convert v0 declared={type=boolean site=[[w_22]]}
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="label"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=[[w_25]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_26]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=[[w_24]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_25]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = String string=""
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|string site=[[w_25]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|string site=[[w_24]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="label"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=[[w_27]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_28]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=[[w_26]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_27]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Builtin builtin=String
 // CHECK-NEXT: v2 = Call v1, -, v0 calleeName="String"
-// CHECK-NEXT: ReturnCall v2 casts=[{declared={type=undefined|null|string site=[[w_29]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_27]] flags=[OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: ReturnCall v2 casts=[{declared={type=undefined|null|string site=[[w_28]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_26]] flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="label"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|[[L_1]] site=[[w_2]] variableName="def"}] thisType={type=anything} results=[{type=undefined|null|string site=[[w_30]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_31]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|[[L_1]] site=[[w_2]] variableName="def"}] thisType={type=anything} results=[{type=undefined|null|string site=[[w_29]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_30]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key="name"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|string site=[[w_32]]} illTypedCause=Assertion
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|string site=[[w_31]]} illTypedCause=Assertion
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }

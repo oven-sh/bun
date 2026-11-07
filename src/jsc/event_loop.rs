@@ -843,6 +843,11 @@ impl EventLoop {
             || self.has_concurrent_tasks()
     }
 
+    /// Nothing is queued for the next turn of the loop, so the poll before it may block.
+    pub fn is_idle(&self) -> bool {
+        self.immediate_tasks.is_empty() && self.yield_tasks.is_empty() && !self.has_pending_tasks()
+    }
+
     /// Any thread.
     pub(crate) fn post(&self, task: NonNull<ConcurrentTaskItem>) {
         // SAFETY: the task is the caller's until it is pushed.

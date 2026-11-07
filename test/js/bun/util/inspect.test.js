@@ -1,8 +1,10 @@
+import { jscDescribe } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import {
   bunEnv,
   bunExe,
   isASAN,
+  isDebug,
   isWindows,
   normalizeBunSnapshot,
   tempDir,
@@ -1393,6 +1395,218 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
     expect(stdout).toStartWith("len=");
     expect(stdout).toContain("truncated=true");
     expect(exitCode).toBe(0);
+  });
+});
+
+// JSC has three kinds of arguments objects: DirectArguments (sloppy function), ScopedArguments
+// (sloppy function with a parameter captured by a closure) and ClonedArguments (strict function).
+// The first two keep the arguments outside the regular indexed property storage. This file is a
+// module, so its own functions are strict; the body of a `new Function` is sloppy regardless.
+// A ScopedArguments keeps the arguments that have a parameter in the scope and the rest in its own
+// storage: with three parameters the tests reach both.
+const argumentsObjectKinds = [
+  ["direct", new Function("return arguments")],
+  ["scoped", new Function("a", "b", "c", "const f = () => a; return arguments")],
+  [
+    "cloned",
+    function () {
+      return arguments;
+    },
+  ],
+];
+// Only a sloppy function's arguments object has `callee` as a data property (a strict one has a
+// throwing accessor), so this tells the first two kinds from the third.
+const isSloppyArguments = a => "value" in Object.getOwnPropertyDescriptor(a, "callee");
+// Each kind has its own structure, so this tells the first two kinds from each other.
+const structureId = a => jscDescribe(a).match(/StructureID: (\d+)/)[1];
+
+it("the arguments objects under test are of three kinds", () => {
+  expect(new Set(argumentsObjectKinds.map(([, args]) => structureId(args()))).size).toBe(3);
+});
+
+it.each(argumentsObjectKinds)("Bun.inspect %s arguments object with holes and extra indexes", (kind, args) => {
+  expect(isSloppyArguments(args())).toBe(kind !== "cloned");
+  let a = args(1, 2, 3);
+  delete a[1];
+  expect(Bun.inspect(a)).toBe("[ 1, empty item, 3 ]");
+  a = args(1, 2, 3);
+  delete a[2];
+  expect(Bun.inspect(a)).toBe("[ 1, 2, empty item ]");
+  // Runs of more than one deleted argument, each followed by an argument that is still there.
+  a = args(1, 2, 3, 4, 5, 6, 7);
+  for (const i of [1, 2, 4, 5]) delete a[i];
+  a.length = 9;
+  expect(Bun.inspect(a)).toBe("[ 1, 2 x empty items, 4, 2 x empty items, 7, 2 x empty items ]");
+  // A deleted argument that is assigned again lives in the regular indexed storage. Here it
+  // comes after a hole and before an argument that was never deleted.
+  a = args(1, 2, 3, 4);
+  delete a[1];
+  delete a[2];
+  a[2] = "x";
+  expect(Bun.inspect(a)).toBe('[ 1, empty item, "x", 4 ]');
+  // The same order past the lookups: the run of holes is longer than the one key the sparse map holds.
+  a = args(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+  for (let i = 1; i <= 6; i++) delete a[i];
+  a[5] = "x";
+  expect(Bun.inspect(a)).toBe('[ 0, 4 x empty items, "x", empty item, 7, 8, 9 ]');
+  a = args(1, 2, 3);
+  Object.defineProperty(a, 1, { value: "x", enumerable: false });
+  expect(Bun.inspect(a)).toBe('[ 1, "x", 3 ]');
+  a = args(1, 2, 3);
+  a.length = 2;
+  expect(Bun.inspect(a)).toBe("[ 1, 2 ]");
+  a = args();
+  a.length = 3;
+  expect(Bun.inspect(a)).toBe("[ 3 x empty items ]");
+  // An index past the arguments themselves lands in the regular indexed storage
+  // and only shows once `length` covers it, like any other array-like.
+  a = args(1, 2, 3);
+  a[5] = 6;
+  expect(Bun.inspect(a)).toBe("[ 1, 2, 3 ]");
+  a.length = 5;
+  expect(Bun.inspect(a)).toBe("[ 1, 2, 3, 2 x empty items ]");
+  a.length = 8;
+  expect(Bun.inspect(a)).toBe("[ 1, 2, 3, 2 x empty items, 6, 2 x empty items ]");
+  delete a[2];
+  a[1_000_000] = "far";
+  a.length = 1_000_002;
+  expect(Bun.inspect(a)).toBe('[\n  1, 2, 3 x empty items, 6, 999994 x empty items, "far", empty item\n]');
+  // The search for the element after a run of holes looks up as many indexes as the sparse map
+  // holds keys, then scans the map. A sloppy arguments object holds 4 keys here and a strict one 3
+  // ("near" is with its arguments). These distances put the element at the last lookup, right
+  // after the lookups and one past that, for a kept argument and for an index past the arguments.
+  for (const distance of [2, 3, 4, 5]) {
+    a = args(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+    for (let i = 1; i <= 1 + distance; i++) delete a[i];
+    a[11 + distance] = "near";
+    a[1_000_000] = "far";
+    a[2_000_000] = "farther";
+    a[3_000_000] = "farthest";
+    a.length = 3_000_001;
+    const kept = Array.from({ length: 8 - distance }, (_, i) => 2 + distance + i).join(", ");
+    expect(Bun.inspect(a).replace(/\s+/g, " ")).toBe(
+      `[ 0, ${distance + 1} x empty items, ${kept}, ${distance + 1} x empty items, "near", ` +
+        `${999_988 - distance} x empty items, "far", 999999 x empty items, "farther", 999999 x empty items, "farthest" ]`,
+    );
+  }
+  // An indexed accessor on the prototype gives the object the slow-put kind of indexed storage.
+  const proto = Object.defineProperty({}, 9, { get: () => "inherited", configurable: true });
+  a = args(1, 2, 3);
+  Object.setPrototypeOf(a, proto);
+  delete a[1];
+  expect(Bun.inspect(a)).toBe("[ 1, empty item, 3 ]");
+  a[1_000_000] = "far";
+  a.length = 1_000_002;
+  expect(Bun.inspect(a)).toBe('[\n  1, empty item, 3, 999997 x empty items, "far", empty item\n]');
+});
+
+// A hole is skipped by asking the storage for the next element. The cost of that must follow the
+// length of the run of holes, not how much the object stores: no scan of the argument slots after
+// the hole, and no scan of the sparse map, which is where an arguments object keeps an index that
+// is assigned again or that is past its arguments.
+describe.each(argumentsObjectKinds)(
+  "Bun.inspect %s arguments object does not scan all it holds for each hole",
+  (kind, args) => {
+    function timeInspect(a) {
+      let ms = Infinity;
+      for (let run = 0; run < 5; run++) {
+        const t0 = performance.now();
+        Bun.inspect(a);
+        ms = Math.min(ms, performance.now() - t0);
+      }
+      return ms;
+    }
+    const firstHundred = a => Bun.inspect(a).split("...")[0];
+
+    it.each([
+      [
+        "every other argument is assigned again",
+        "[\n  0, empty item, 2, empty item, 4, empty item, 6,",
+        n => {
+          const a = args(...Array(n).keys());
+          for (let i = 0; i < n; i++) delete a[i];
+          for (let i = 0; i < n; i += 2) a[i] = i;
+          return a;
+        },
+      ],
+      [
+        "a kept argument follows each run of 20 holes, the sparse map is far away",
+        "[\n  20 x empty items, 20, 20 x empty items, 41, 20 x empty items, 62,",
+        n => {
+          const a = args(...Array(n).keys());
+          for (let i = 0; i < 840; i++) if (i % 21 !== 20) delete a[i];
+          for (let i = 1_000; i < n; i++) {
+            delete a[i];
+            a[i] = i;
+          }
+          return a;
+        },
+      ],
+      [
+        "runs of 20 holes between indexes past the arguments",
+        "[\n  1, 2, 3, 1018 x empty items, -1, 20 x empty items, -2, 20 x empty items, -3,",
+        n => {
+          const a = args(1, 2, 3);
+          for (let k = 1; k <= n; k++) a[1_000 + k * 21] = -k;
+          a.length = 1_000 + (n + 1) * 21;
+          return a;
+        },
+      ],
+      [
+        "a hole before `length`, the sparse map is past `length`",
+        "[ 1, 2, empty item ]",
+        n => {
+          const a = args(1, 2, 3);
+          delete a[2];
+          for (let k = 1; k <= n; k++) a[1_000_000 + k] = k;
+          return a;
+        },
+      ],
+    ])("%s", (name, start, build) => {
+      const small = build(1_000);
+      const large = build(32_000);
+      expect(firstHundred(small)).toStartWith(start);
+      expect(firstHundred(large)).toBe(firstHundred(small));
+
+      withoutAggressiveGC(() => {
+        // Both print the same elements. With a scan of the map for a hole the large one took over 20 times longer.
+        expect(timeInspect(large) / timeInspect(small)).toBeLessThan(10);
+      });
+    });
+  },
+);
+
+// Unlike an array's, an arguments object's `length` is an ordinary writable property: it can be
+// any number at all (past 2^32 - 1) with only a handful of elements behind it, so it must not
+// drive an index-by-index probe either. In a child so a regression times this test out instead
+// of hanging the runner. After these prints the fixture checks seeded random arguments objects
+// against the text that their own index keys give.
+it("Bun.inspect arguments object with a huge length summarizes holes without iterating them", async () => {
+  const iterations = isDebug || isASAN ? 100 : 3000;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "inspect-arguments-fixture.mjs")],
+    env: { ...bunEnv, INSPECT_ARGUMENTS_ITERATIONS: String(iterations) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const formatted =
+    "[\n  1, 2, 3, 4294967293 x empty items\n]\n" +
+    '{\n  b: [\n    1, empty item, 3, 67 x empty items, 70, 4294967223 x empty items, "max", 1125895611875329 x empty items\n  ],\n}\n' +
+    '[\n  "zero", 2, 3, 4294967289 x empty items, "far", 4294967299 x empty items\n]\n';
+  expect({ stdout, stderr, exitCode }).toEqual({
+    // The number of kinds, then the prints of each kind, then six prints for each random object.
+    stdout:
+      "3\n" +
+      "true\n" +
+      formatted +
+      "true\n" +
+      formatted +
+      "false\n" +
+      formatted +
+      `${iterations * 6} prints, 0 mismatches\n`,
+    stderr: "",
+    exitCode: 0,
   });
 });
 

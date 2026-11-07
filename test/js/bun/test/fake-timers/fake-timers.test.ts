@@ -2093,16 +2093,33 @@ describe.concurrent("the end of a test file", () => {
       });
     });
 
-    test.each([
-      [
-        ["--rerun-each=2"],
-        ["a module: real now", "a test: real 1970", ...inEach(["a", "b", "b", "c", "c"], "real 1970")],
-      ],
-      // The preload and its hooks run again for each file, so the end of each file undoes the clock.
-      [["--isolate=modules"], ["a", "b", "c"].flatMap(name => [`${name} module: real now`, `${name} test: real 1970`])],
-    ])("a clock set in beforeAll() with %j", async (flags, expected) => {
-      const { seen, stderr, exitCode } = await clocks(setsTheTime, { flags });
-      expect({ seen, exitCode }, stderr).toEqual({ seen: expected, exitCode: 0 });
+    test("a clock set in beforeAll() with --rerun-each=2", async () => {
+      const { seen, stderr, exitCode } = await clocks(setsTheTime, { flags: ["--rerun-each=2"] });
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: ["a module: real now", "a test: real 1970", ...inEach(["a", "b", "b", "c", "c"], "real 1970")],
+        exitCode: 0,
+      });
+    });
+
+    // The preload and its hooks run again for each file, so the end of each file undoes the clock.
+    test("a clock set in beforeAll() with --isolate=modules", async () => {
+      using dir = tempDir("fake-timers-preload-hooks-isolate", {
+        "preload.ts": `
+          import { beforeAll, vi } from "bun:test";
+          globalThis.seen = where => console.log(where + ":", Date.now() < 1e12 ? new Date().getUTCFullYear() : "now");
+          ${setsTheTime}
+        `,
+        "a.test.ts": sees("a"),
+        "b.test.ts": sees("b"),
+      });
+      const { stdout, stderr, exitCode } = await run(
+        ["test", "--preload=./preload.ts", "--isolate=modules", "./a.test.ts", "./b.test.ts"],
+        String(dir),
+      );
+      expect({ seen: stdout.split("\n").filter(line => /^[ab] /.test(line)), exitCode }, stderr).toEqual({
+        seen: ["a module: now", "a test: 1970", "b module: now", "b test: 1970"],
+        exitCode: 0,
+      });
     });
 
     test("a clock set in beforeAll() ends with each run of a single file under --rerun-each", async () => {

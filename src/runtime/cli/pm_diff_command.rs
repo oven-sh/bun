@@ -1025,12 +1025,17 @@ fn registry_get(
 
     let mut response_buf = MutableString::init(64 * 1024)?;
     let display_url = url.href.to_vec();
+    let tls_props = pm
+        .options
+        .tarball_credentials(scope, &url, normalized)
+        .and_then(|registry| pm.registry_tls_config(registry));
     let mut req = pm.registry_request(
         http::Method::GET,
         url,
         headers.entries,
         headers.content.written_slice(),
         b"",
+        tls_props,
     );
     let res = match pm.send_with_retries(&mut req, &mut response_buf) {
         Ok(r) => r,

@@ -1145,6 +1145,9 @@ fn start_queued_task(
     // SAFETY: freshly leaked; this thread is its sole owner until the request
     // completes and `in_flight` gives the pointer back.
     let cloned = unsafe { &mut *cloned_ptr };
+    // Redirects can replace TLS options, so the working copy owns a separate strong reference.
+    let shared_tls = core::mem::ManuallyDrop::new(cloned.async_http.client.tls_props.take());
+    cloned.async_http.client.tls_props = shared_tls.as_ref().cloned();
     cloned.async_http.real = NonNull::new(http);
     // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
     // which may point to other AsyncHTTP structs that could be freed before the callback

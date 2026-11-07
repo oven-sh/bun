@@ -336,8 +336,13 @@ impl Options {
 fn fill_scope_from_url_auth(url_auth: &[Npm::registry::UrlAuth], scope: &mut Npm::registry::Scope) {
     let own = Npm::registry::UrlAuth::find_entry(url_auth, &scope.url.url());
     scope.url_auth_key = own.map(|entry| entry.key.clone());
-    if let Some(entry) = own.filter(|_| !scope.has_credentials() || scope.declared_in_npmrc) {
-        scope.copy_credentials_from(&entry.credentials);
+    if let Some(entry) = own {
+        if !scope.has_credentials() || scope.declared_in_npmrc {
+            scope.copy_credentials_from(&entry.credentials);
+        } else {
+            scope.certfile.clone_from(&entry.credentials.certfile);
+            scope.keyfile.clone_from(&entry.credentials.keyfile);
+        }
     }
 }
 

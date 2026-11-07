@@ -114,6 +114,7 @@ pub mod border_image;
 pub mod border_radius;
 pub mod box_shadow;
 pub mod display;
+pub mod effects;
 pub mod flex;
 pub mod font;
 pub mod margin_padding;
@@ -246,6 +247,8 @@ mod generic_registrations {
         css_modules::Composes,
         // display
         display::Display,
+        // effects
+        effects::FilterList,
         // flex
         flex::Flex,
         flex::FlexFlow,

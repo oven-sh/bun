@@ -2,7 +2,7 @@ import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
@@ -323,6 +323,21 @@ describe.concurrent("bunshell cp src/dest validation", () => {
     using dir = tempDir("cp-self", tree);
     expect(await cp(String(dir), "cp -R d d2")).toEqual({ stderr: "", exitCode: 0 });
     expect(list(dir, "d2")).toEqual(["f", "sub"]);
+  });
+
+  // Like GNU cp, and unlike fs.cp, which replaces the destination.
+  test("overwrites an existing file in place, through its other hard links", async () => {
+    using dir = tempDir("cp-hard-link", { src: "new", store: "original" });
+    const at = (name: string) => join(String(dir), name);
+    linkSync(at("store"), at("dest"));
+    const inode = statSync(at("dest")).ino;
+    expect(await cp(String(dir), "cp src dest")).toEqual({ stderr: "", exitCode: 0 });
+    expect({
+      dest: readFileSync(at("dest"), "utf8"),
+      store: readFileSync(at("store"), "utf8"),
+      sameInode: statSync(at("dest")).ino === inode,
+      storeLinks: statSync(at("store")).nlink,
+    }).toEqual({ dest: "new", store: "new", sameInode: true, storeLinks: 2 });
   });
 
   // The path is too long for macOS (PATH_MAX is 1024), and Windows fails to create it.

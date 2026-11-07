@@ -8207,6 +8207,7 @@ pub mod bv2_impl {
     const SSR_PRETTY_PREFIX: &[u8] = b"ssr:";
 
     /// The path that CSS module names hash. Under the dev server, the SSR graph's copy of a stylesheet gets the names of the other copies.
+    /// A production build keeps the prefix: equal names make its client and SSR CSS chunks byte-equal, which is `DuplicateOutputPath`.
     pub(crate) fn css_module_name_path(
         pretty: &[u8],
         target: options::Target,

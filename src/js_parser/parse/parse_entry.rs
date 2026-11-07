@@ -19,6 +19,7 @@ use crate::parser::{
     Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
     WrapMode,
 };
+use crate::visit::visit_stmt::DeferredTsImportEquals;
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
 use bun_ast::{B, E, Expr, G, S, Stmt};
@@ -1180,7 +1181,6 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            // The index in `parts` where each `S::TsImportEquals` belongs.
             let mut deferred_ts_import_equals = BumpVec::new_in(arena);
 
             // When tree shaking is enabled, each top-level statement is potentially a separate part.
@@ -1289,9 +1289,19 @@ impl<'a> Parser<'a> {
                         p.scope_order_to_visit = &p.scope_order_to_visit[enum_scope_count..];
                     }
                     js_ast::StmtData::STsImportEquals(alias) if TS => {
-                        if let Some(local) = alias.local {
-                            p.defer_ts_import_equals(&local);
-                            deferred_ts_import_equals.push((parts.len(), local, stmt.loc));
+                        let Some(local) = alias.local else { continue };
+                        if p.ts_import_equals_is_constant(&local) {
+                            let stmt = Stmt {
+                                data: js_ast::StmtData::SLocal(local),
+                                loc: stmt.loc,
+                            };
+                            p.append_part(&mut parts, arena.alloc_slice_copy(&[stmt]))?;
+                        } else {
+                            deferred_ts_import_equals.push(DeferredTsImportEquals {
+                                position: parts.len(),
+                                local,
+                                loc: stmt.loc,
+                            });
                         }
                     }
                     _ => {

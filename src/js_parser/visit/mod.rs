@@ -1616,6 +1616,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Outlined functions can use variables from this scope, so they can't go at the end of the module.
                 visited.extend(p.react_compiler_outlined_from_nested.drain(..));
             }
+            // After a stack overflow the visit skips every statement, the end of the list too.
+            debug_assert!(
+                p.reported_stack_overflow.get()
+                    || !visited
+                        .iter()
+                        .any(|stmt| matches!(stmt.data, StmtData::STsImportEquals(_))),
+                "an `S::TsImportEquals` outlived the visit of its list"
+            );
 
             // Transform block-level function declarations into variable declarations
             if before.len() > 0 {

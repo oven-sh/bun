@@ -117,9 +117,8 @@ pub struct Namespace {
 
 /// An unexported TypeScript `import a = b.c`, before the visit pass.
 ///
-/// The visit pass leaves `local` unvisited until it reaches the end of the
-/// statement list that owns the alias. The alias is a `const` if a value
-/// reads `a` by then, and nothing if not (as tsc does).
+/// It is `const a = b.c` if a value in live code reads `a`, and no code if not. tsc does that with `verbatimModuleSyntax` off, and also counts dead code.
+/// A reader can follow the alias, so the visit pass leaves `local` unvisited until the end of the statement list that owns it.
 pub struct TsImportEquals {
     /// `const a = b.c`. `None` marks the end of a statement list that owns such aliases.
     pub local: Option<crate::StoreRef<Local>>,
@@ -286,8 +285,7 @@ impl Local {
 pub enum LocalOrigin {
     #[default]
     Normal,
-    /// From TS `import x = ...`. An unexported `import a = b.c` that no value
-    /// reads never becomes a local: see `TsImportEquals`.
+    /// From TS `import x = ...`. An unexported `import a = b.c` is a `TsImportEquals` first.
     TsImportEquals,
     /// From rewritten `exports.x = ...`.
     CommonJsExport,

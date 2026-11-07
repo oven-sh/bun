@@ -5503,12 +5503,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut part_stmts = bun_alloc::vec_from_iter_in(stmts.iter().copied(), arena);
 
         self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
-        debug_assert!(
-            !part_stmts
-                .iter()
-                .any(|stmt| matches!(stmt.data, js_ast::StmtData::STsImportEquals(_))),
-            "the list of an `S::TsImportEquals` ends with one that has no `local`"
-        );
 
         // Insert any relocated variable statements now
         if !self.relocated_top_level_vars.is_empty() {

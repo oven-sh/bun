@@ -374,9 +374,6 @@ struct Replaced {
     /// `vi.stubGlobal()` had replaced this global before the fake was put there. `vi.unstubAllGlobals()` then gives what
     /// the stub replaced to what replaced the stub: the fake, or a spy under it.
     over_stub: bool,
-    /// What `vi.unstubAllGlobals()` took from under the fake, until the end of the test file. A preload's stub goes back
-    /// there.
-    stub_under: StrongOptional,
 }
 
 impl Replaced {
@@ -522,6 +519,9 @@ pub(crate) struct FakeTimers {
     date_now_offset: f64,
     loop_limit: u32,
     replaced: Vec<Replaced>,
+    /// What `vi.unstubAllGlobals()` took from under a fake of `replaced`, until the end of the test file. A preload's
+    /// stub goes back there.
+    stubs_taken: Vec<(Api, Strong)>,
     /// JS `WeakMap` from every fake ever created, installed or not, to the function it replaced.
     originals: StrongOptional,
     reading_globals: bool,
@@ -549,6 +549,7 @@ impl Default for FakeTimers {
             date_now_offset: 0.0,
             loop_limit: 0,
             replaced: Vec::new(),
+            stubs_taken: Vec::new(),
             originals: StrongOptional::empty(),
             reading_globals: false,
             ticks: VecDeque::new(),
@@ -682,9 +683,10 @@ extern "C" fn Bun__FakeTimers__takeFromOverStub(
         return JSValue::ZERO;
     };
     over.over_stub = false;
-    over.stub_under.set(global, over.original.get());
+    let (api, fake) = (over.api, over.fake.get());
     *replaced = over.original.get();
-    over.fake.get()
+    this.stubs_taken.push((api, Strong::create(*replaced, global)));
+    fake
 }
 
 /// The end of a test file stubs `globalThis[name]` with `stub` again, for the preload. If `vi.unstubAllGlobals()` took
@@ -701,18 +703,21 @@ extern "C" fn Bun__FakeTimers__putStubUnder(
     let Some(originals) = this.originals.get() else {
         return JSValue::ZERO;
     };
-    let Some(over) = this.replaced.iter_mut().find(|over| {
-        // A fake `performance` would have to wrap `stub`.
-        over.stub_under.get() == Some(stub)
-            && over.api != Api::PerformanceObject
-            && name.eq_ascii(over.api.property().as_bytes())
+    // A fake `performance` would have to wrap `stub`.
+    let Some(taken) = this.stubs_taken.iter().position(|(api, taken)| {
+        taken.get() == stub
+            && *api != Api::PerformanceObject
+            && name.eq_ascii(api.property().as_bytes())
     }) else {
+        return JSValue::ZERO;
+    };
+    let (api, _) = this.stubs_taken.swap_remove(taken);
+    let Some(over) = this.replaced.iter_mut().find(|over| over.api == api) else {
         return JSValue::ZERO;
     };
     let under = over.original.get();
     over.sit_on(global, originals, stub);
     over.over_stub = true;
-    over.stub_under.deinit();
     under
 }
 
@@ -908,6 +913,7 @@ impl FakeTimers {
     fn forget_installation(&mut self, global: &JSGlobalObject) {
         Self::hide_clock(global);
         JSMock__setFakeTimersInstalled(global, false);
+        self.stubs_taken.clear();
         self.active = false;
         self.faked = ApiSet::default();
         self.from_preload = false;
@@ -1127,7 +1133,6 @@ impl FakeTimers {
                     original: Strong::create(original, global),
                     fake: Strong::create(original, global),
                     over_stub: false,
-                    stub_under: StrongOptional::empty(),
                 });
                 continue;
             }
@@ -1139,13 +1144,14 @@ impl FakeTimers {
                 _ => bun_jsc::cpp::Bun__FakeTimers__createFunction(global, api as u8)?,
             };
             Bun__FakeTimers__setOriginal(global, originals, fake, original);
-            let name = bun_core::String::static_(api.property());
             fakes.push(Replaced {
                 api,
                 original: Strong::create(original, global),
                 fake: Strong::create(fake, global),
-                over_stub: has_stubs && api.is_global() && !ViUtils__replacedByStub(global, &name).is_empty(),
-                stub_under: StrongOptional::empty(),
+                over_stub: has_stubs
+                    && api.is_global()
+                    && !ViUtils__replacedByStub(global, &bun_core::String::static_(api.property()))
+                        .is_empty(),
             });
         }
         Ok(fakes)
@@ -1938,9 +1944,7 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
     // SAFETY: per-thread `timer::All`; nothing below re-enters it.
     let (active, kept) = unsafe {
         let this = &mut (*timer_all()).fake_timers;
-        for replaced in &mut this.replaced {
-            replaced.stub_under.deinit();
-        }
+        this.stubs_taken.clear();
         // A clock of a preload's hook ends here once a test file has written over one of its fakes.
         let kept = this.from_preload && (!this.from_hook || this.is_whole(global));
         (this.active, kept)

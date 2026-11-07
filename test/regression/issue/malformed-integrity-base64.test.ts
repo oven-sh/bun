@@ -1,65 +1,76 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "node:path";
 
 test("malformed integrity base64 in lockfile should be handled gracefully", async () => {
+  // Decodes to 100 bytes, larger than any digest bun supports (sha512 is 64 bytes).
+  // Parsing this used to write past the end of the fixed-size digest buffer.
+  const oversizedBase64 = Buffer.alloc(100, 0xaa).toString("base64");
+
+  // The integrity string is parsed while bun.lock is loaded, and the lockfile
+  // satisfies package.json, so the --dry-run below has nothing to resolve. The
+  // registry only exists to prove that: it must never receive a request.
+  const registryRequests: string[] = [];
+  using registry = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      registryRequests.push(new URL(req.url).pathname);
+      return new Response("not found", { status: 404 });
+    },
+  });
+
   await using dir = tempDir("malformed-integrity-test", {
     "package.json": JSON.stringify({
       name: "test-malformed-integrity",
       version: "1.0.0",
       dependencies: {
-        "lodash": "4.17.21", // Use a real package that exists
+        "lodash": "4.17.21",
       },
     }),
-  });
-
-  // First create a normal lockfile by running install
-  const { exitCode: installExitCode } = Bun.spawnSync({
-    cmd: [bunExe(), "install"],
-    cwd: dir,
-    env: bunEnv,
-  });
-
-  if (installExitCode !== 0) {
-    throw new Error("Initial install failed");
-  }
-
-  // Now modify the lockfile to have malformed integrity data
-  // The original panic occurs when parsing this during lockfile loading
-  const oversizedBytes = new Uint8Array(100); // Way larger than any hash digest (max 64 bytes)
-  oversizedBytes.fill(0xaa);
-  const oversizedBase64 = Buffer.from(oversizedBytes).toString("base64");
-
-  const lockfile = {
-    lockfileVersion: 1,
-    workspaces: {
-      "": {
-        name: "test-malformed-integrity",
-        dependencies: {
-          "lodash": "4.17.21",
+    "bun.lock": JSON.stringify(
+      {
+        lockfileVersion: 1,
+        workspaces: {
+          "": {
+            name: "test-malformed-integrity",
+            dependencies: {
+              "lodash": "4.17.21",
+            },
+          },
+        },
+        packages: {
+          "lodash": ["lodash@4.17.21", "", {}, `sha256-${oversizedBase64}`],
         },
       },
-    },
-    packages: {
-      "lodash": ["lodash@4.17.21", "", {}, `sha256-${oversizedBase64}`], // This causes the panic
-    },
-  };
-
-  await Bun.write(`${dir}/bun.lock`, JSON.stringify(lockfile, null, 2));
-
-  // Now run any command that would parse the lockfile - this should not panic
-  const { stdout, stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), "install", "--dry-run"],
-    cwd: dir,
-    env: bunEnv,
+      null,
+      2,
+    ),
   });
 
-  expect(normalizeBunSnapshot(stdout.toString(), dir)).toMatchInlineSnapshot(`
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install", "--dry-run"],
+    cwd: dir,
+    env: {
+      ...bunEnv,
+      BUN_CONFIG_REGISTRY: registry.url.href,
+      // The CI runner shares one cache between tests; a warm one could satisfy a
+      // resolution without a registry request and hide it from the check below.
+      BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
     "bun install <version> (<revision>)
 
      lodash@4.17.21 done"
   `);
-  const err = normalizeBunSnapshot(stderr.toString(), dir);
+  const err = normalizeBunSnapshot(stderr, dir);
   expect(err).toContain("warn: Unsupported or malformed integrity hash; ignoring");
   expect(err).not.toContain("error:");
-  expect(exitCode).toMatchInlineSnapshot(`0`);
+  expect(registryRequests).toEqual([]);
+  expect(exitCode).toBe(0);
 });

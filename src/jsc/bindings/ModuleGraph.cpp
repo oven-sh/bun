@@ -715,8 +715,9 @@ void JSModuleGraph::dispose(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!disposed())
-        m_loader->clearAll();
+    // Also when the context is already stopped: bun test --isolate=modules stops the finished
+    // file's context before it leaves the graph. A second clear finds the registry empty.
+    m_loader->clearAll();
     // Everything the graph's script opened goes: servers, sockets, timers, in-flight requests,
     // child processes, workers.
     m_context->stop();

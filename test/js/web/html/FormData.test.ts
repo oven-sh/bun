@@ -80,14 +80,24 @@ describe("FormData", () => {
       form.set("set", new Blob(["y"], { type: "text/plain" }));
       // A File keeps its own name, also an empty one.
       form.append("file", new File(["z"], ""));
+      // Bun lets a Blob have a name (Bun.file(), the name setter). That name stays.
+      const named = new Blob(["n"]) as Blob & { name: string };
+      named.name = "named.txt";
+      form.append("named", named);
       const entries = [...form.entries()].map(([key, value]) => [key, value instanceof File, (value as File).name]);
       expect(entries).toEqual([
         ["appended", true, "blob"],
         ["set", true, "blob"],
         ["file", true, ""],
+        ["named", true, "named.txt"],
       ]);
       const body = await new Response(form).text();
-      expect(body.match(/filename="[^"]*"/g)).toEqual(['filename="blob"', 'filename="blob"', 'filename=""']);
+      expect(body.match(/filename="[^"]*"/g)).toEqual([
+        'filename="blob"',
+        'filename="blob"',
+        'filename=""',
+        'filename="named.txt"',
+      ]);
     });
 
     it("imports the new File for a Blob by its type", async () => {

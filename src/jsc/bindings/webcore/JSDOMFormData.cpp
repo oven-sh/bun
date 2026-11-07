@@ -287,7 +287,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append1Body(JSC
 extern "C" BunString Blob__getFileNameString(void* impl);
 extern "C" SYSV_ABI bool JSDOMFile__hasInstance(JSC::EncodedJSValue, JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
-// https://xhr.spec.whatwg.org/#create-an-entry with no filename: a File is stored as is, and any other Blob becomes a new File, named "blob" if it has no name.
+// https://xhr.spec.whatwg.org/#create-an-entry
 static ALWAYS_INLINE void keepFileOrNameBlob(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value, Blob& blob, String& filename)
 {
     if (JSDOMFile__hasInstance(JSValue::encode(jsUndefined()), lexicalGlobalObject, JSValue::encode(value))) {

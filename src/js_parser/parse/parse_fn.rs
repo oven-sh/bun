@@ -311,7 +311,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !func.flags.contains(Flags::Function::HasRestArg) && p.lexer.token == T::TEquals {
                 // p.markSyntaxFeature
                 p.lexer.next()?;
+
+                // `Initializer[+In]`: esbuild's parseFn inherits a "for" initializer's flag here.
+                let old_allow_in = p.allow_in;
+                p.allow_in = true;
                 default_value = Some(p.parse_expr(Level::Comma)?);
+                p.allow_in = old_allow_in;
             }
 
             args.push(G::Arg {

@@ -253,6 +253,38 @@ describe("unterminated string literals in large files", () => {
   });
 });
 
+describe("`in` in a function expression parameter default inside a for initializer", () => {
+  const js = `
+    const o = { a: 1 };
+    for (var f = function (p = "a" in o) { return p; }; ; ) { console.log("function", f()); break; }
+    for (var g = function* (p = "b" in o) { yield p; }; ; ) { console.log("generator", g().next().value); break; }
+  `;
+  // Annex B: only sloppy code may give the `var` of a for-in head an initializer
+  const sloppy = `for (var k = function (p = "a" in o) {} in { x: 1 }) console.log("for-in", k);`;
+  const typed = `for (var t = function <T>(this: void, p: boolean = "a" in o): boolean { return p; }; ; ) { console.log("typed", t()); break; }`;
+  const asyncFn = `for (var h = async function (p = "a" in o) { return p; }; ; ) { h().then(v => console.log("async", v)); break; }`;
+
+  test.concurrent.each([
+    ["index.cjs", js + sloppy + asyncFn, "function true\ngenerator false\nfor-in x\nasync true\n"],
+    ["index.mjs", js + asyncFn, "function true\ngenerator false\nasync true\n"],
+    ["index.ts", js + typed + asyncFn, "function true\ngenerator false\ntyped true\nasync true\n"],
+  ])("bun %s", async (file, source, expected) => {
+    using dir = tempDir("for-init-fn-default-in", { [file]: source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), file],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe(expected);
+    expect(exitCode).toBe(0);
+  });
+});
+
 // 2 GiB through the printer takes over 30 seconds on a debug or ASAN build.
 test.skipIf(isDebug || isASAN)(
   "printing more than 2 GiB of modules in one process keeps the space after a keyword",

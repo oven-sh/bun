@@ -684,8 +684,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     auto* parentOfCompiledModule = thisObject->m_isParentStored ? nullptr : Bun::parentOfCompiledModule(thisObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (parentOfCompiledModule) {
-        if (auto* parent = dynamicDowncast<JSCommonJSModule>(parentOfCompiledModule))
-            thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parent);
+        thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parentOfCompiledModule);
         return JSValue::encode(parentOfCompiledModule);
     }
 

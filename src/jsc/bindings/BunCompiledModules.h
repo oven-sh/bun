@@ -90,7 +90,7 @@ bool appendNewChildrenOfCompiledModule(JSC::JSGlobalObject*, JSCommonJSModule* p
 // A store to `children` clears the list, with what was required and not shown yet.
 void dropNewChildrenOfCompiledModule(JSCommonJSModule* parent);
 // The module object of the file that required the module first, or null.
-JSC::JSObject* parentOfCompiledModule(JSCommonJSModule*);
+JSCommonJSModule* parentOfCompiledModule(JSCommonJSModule*);
 // What `module.parent` is in a file with the path `id` that `parent` has required.
 JSC::JSValue parentSeenBy(Zig::GlobalObject*, JSC::JSString* id, JSC::JSValue parent);
 // Takes the specifier of every require() and process.getBuiltinModule() that reaches the host, and of every import() in code that is not compiled.

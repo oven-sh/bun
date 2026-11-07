@@ -490,14 +490,6 @@ impl NameNodes {
         let is_star_name = self.tables[table].star_nodes().contains(&node);
         is_star_name.then_some(table)
     }
-
-    fn is_in_file_without_dynamic_stars(&self, node: u32) -> bool {
-        let table = self.tables.partition_point(|table| table.nodes.end <= node);
-        matches!(
-            self.tables[table].dynamic_targets,
-            DynamicStarTargets::Empty
-        )
-    }
 }
 
 #[derive(Copy, Clone)]
@@ -680,16 +672,7 @@ impl ResolutionGraph<'_> {
         };
         let keys = self.nodes.keys.iter().enumerate();
         let results = keys.map(|(node, &(_, name))| (name, summary_of(node).resolve()));
-        let is_lost_unless_followed = |node: u32, summary: Summary| {
-            let mut targets = self.edges[node as usize].iter();
-            summary.binding == Resolution::NotFound
-                && matches!(summary.provider, Resolution::DynamicStar { .. })
-                && targets.any(|&target| self.nodes.is_in_file_without_dynamic_stars(target))
-        };
-        let is_followed = |&node: &u32| {
-            let summary = summary_of(node as usize);
-            summary.should_follow_every_star() || is_lost_unless_followed(node, summary)
-        };
+        let is_followed = |&node: &u32| summary_of(node as usize).should_follow_every_star();
         let followed_nodes = (0..self.edges.len() as u32).filter(is_followed);
         let results = results.collect();
         (results, self.find_star_tables(followed_nodes.collect()))
@@ -1520,12 +1503,6 @@ pub(super) fn finish_exports(
                 ExportBinding::Synthetic(synthetic.id_of(ModuleRef::Runtime(module), name))
             }
             Resolution::LiveName { module, name } => ExportBinding::Indirect { module, name },
-            Resolution::DynamicStar { module, name } if position < own_count => {
-                ExportBinding::Indirect {
-                    module: ModuleRef::File(module),
-                    name,
-                }
-            }
             Resolution::Ambiguous => {
                 let (module, name) = tables.find_name_that_mock_may_settle(file, exported_name)?;
                 ExportBinding::Indirect { module, name }

@@ -19,7 +19,9 @@ const rows: Row[] = [
   ["filter.ts", "a fold over whole numbers", "a fold over fractions", 1.5],
   ["sort-by-a-table.js", "a sort by a comparator with a name", "a sort by a comparator out of a table", 1.3],
   ["sort-by-a-table.js", "a sort by a comparator with a name", "a search for what a table answers", 1],
-  ["parts-of-views.js", "a view between two positions", "a part of a view", 4.5],
+  // It makes a view over the storage of another. Under glibc it takes 4.17 times the instructions of its twin, under musl 4.59.
+  // The words of the new object are copied by the memcpy of the C library, which is taken to be what differs: that is read, and was not run on a machine with musl.
+  ["parts-of-views.js", "a view between two positions", "a part of a view", isMusl ? 5 : 4.5],
   // These two make a view with storage of its own, of 32 and of 64 bytes, and fill it. Under glibc they take 5.69 and 5.4 times the instructions of their twin, under musl 6.15 and 6.13.
   // The compiled code is the same text on both, so what differs is taken to be the memmove and the memset of the C library: that is read, and was not run on a machine with musl.
   ["parts-of-views.js", "a view between two positions", "a copy of a part of a view", isMusl ? 6.5 : 6],

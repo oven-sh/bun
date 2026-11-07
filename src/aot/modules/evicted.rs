@@ -149,14 +149,6 @@ pub(super) fn find_files_that_run_again(
                 may_be_caught: input.entry_points_run_again,
             });
         }
-        if is_started && !started.is_empty() {
-            let loads = loads.of(entry_point.file).iter();
-            possible_loads.extend(loads.map(|load| PossibleLoad {
-                earliest_time: 0,
-                target: load.target,
-                may_be_caught: true,
-            }));
-        }
         if is_started {
             started.push(entry_point.file);
         }
@@ -168,11 +160,15 @@ pub(super) fn find_files_that_run_again(
         &settled_times,
         possible_loads,
     );
+    let is_reached_by_several_started_files =
+        find_files_that_several_started_files_reach(&loads, &modules.compiled_files, &started);
     let mut after_throw_alone = 0;
     let run_again: Vec<ModuleRef> = files
         .filter(|file| {
             let leaves = may_load_again(file);
-            let runs_after_throw = is_commonjs(*file) && may_be_loaded_behind_throw[file.idx()];
+            let runs_after_throw = is_commonjs(*file)
+                && (may_be_loaded_behind_throw[file.idx()]
+                    || is_reached_by_several_started_files[file.idx()]);
             after_throw_alone += usize::from(runs_after_throw && !leaves);
             leaves || runs_after_throw
         })
@@ -852,6 +848,51 @@ impl StartupWalk<'_> {
             }
         }
     }
+}
+
+fn find_files_that_several_started_files_reach(
+    loads: &Loads,
+    all_files: &[FileId],
+    started: &[FileId],
+) -> Vec<bool> {
+    const NOBODY: u32 = u32::MAX;
+    let mut first_to_reach = vec![NOBODY; loads.by_file.len()];
+    let mut is_reached_by_several = vec![false; loads.by_file.len()];
+    let mut to_follow: Vec<FileId> = Vec::new();
+    let mut reached_again: Vec<FileId> = Vec::new();
+    for (number, &entry_point) in started.iter().enumerate() {
+        let number = number as u32;
+        to_follow.push(entry_point);
+        while let Some(file) = to_follow.pop() {
+            let first = &mut first_to_reach[file.idx()];
+            if *first == number {
+                continue;
+            }
+            if *first != NOBODY {
+                reached_again.push(file);
+                continue;
+            }
+            *first = number;
+            for load in loads.of(file) {
+                match load.target {
+                    Some(target) => to_follow.push(target),
+                    None => to_follow.extend_from_slice(all_files),
+                }
+            }
+        }
+        while let Some(file) = reached_again.pop() {
+            if core::mem::replace(&mut is_reached_by_several[file.idx()], true) {
+                continue;
+            }
+            for load in loads.of(file) {
+                match load.target {
+                    Some(target) => reached_again.push(target),
+                    None => reached_again.extend_from_slice(all_files),
+                }
+            }
+        }
+    }
+    is_reached_by_several
 }
 
 fn find_files_that_may_be_loaded_behind_throw(

@@ -9,6 +9,8 @@
 # Where a program stores over the last name of an object, a hint tells the back end to clear the places where the object waited, so that a collection behind it finds none. The net under effects held the hint to
 # its row, as it holds every operation of which the walk believes something, and hashed its operand in front of it and behind it. The body of first() is copied into the loop, and a second hint stands behind the
 # copy, so behind the collection: the net's read there kept eight megabytes alive that the program had let go. Under the net alone: a WeakRef that plain Bun finds empty was full.
+# Under a sanitizer the source itself prints KEPT, so this is asked where there is none.
+# REQUIRES: unsanitized-code
 # RUN: run-in-shell globalThis.collect = () => fullGC(); testing=CheckEffectsAtRunTime mechanisms=all
 # CHECK: collected
 # CHECK-NEXT: exited with 0

@@ -169,6 +169,26 @@
     "windows": 10300,
     "windows-aarch64": 13900
   },
+  "aot/a-file-that-one-test-file-alone-reaches-is-compiled-alike-wherever-the-test-file-stands.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/hello-world-keeps-few-families-of-operations.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-database-that-the-program-makes-beside-its-file-is-opened-though-it-was-absent-at-the-build.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-database-under-a-written-path-made-of-the-own-folder-is-the-one-beside-the-file.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-public-field-laid-by-the-bundlers-helper-sees-what-a-test-lays-above-every-object.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-database-asked-for-by-a-path-made-of-the-own-folder-is-not-refused.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -202,10 +222,6 @@
     "asan": 240000
   },
   "aot/under-the-inspector-the-console-changes-what-is-public-and-no-record-of-an-internal-file.test.ts": {
-    "default": 60000,
-    "asan": 240000
-  },
-  "aot/a-statement-that-hands-a-name-on-hides-the-name-in-the-stars-of-its-own-file.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -290,18 +306,6 @@
     "asan": 240000
   },
   "aot/a-star-keeps-its-place-among-the-stars-of-a-barrel.test.ts": {
-    "default": 60000,
-    "asan": 240000
-  },
-  "aot/parallel-test-runs/a-factory-whose-mock-has-gone-fails-late-behind-another-load-of-the-module/over-a-commonjs-file-a-reset-between-the-failure-and-the-import-that-waits-takes-nothing-from-it/main.test.js": {
-    "default": 60000,
-    "asan": 240000
-  },
-  "aot/parallel-test-runs/a-factory-whose-mock-has-gone-fails-late-behind-another-load-of-the-module/over-a-commonjs-file-that-a-statement-of-another-file-has-loaded-it-is-kept/main.test.js": {
-    "default": 60000,
-    "asan": 240000
-  },
-  "aot/parallel-test-runs/a-factory-whose-mock-has-gone-fails-late-behind-another-load-of-the-module/over-a-commonjs-file-that-was-imported-in-front-of-the-mock-it-is-kept/main.test.js": {
     "default": 60000,
     "asan": 240000
   },

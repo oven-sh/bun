@@ -4,9 +4,9 @@ This page is written by `bun test/aot/tools/list-goals-not-met-yet.ts` out of th
 
 10 wrong answers in 9 files stand under a mark. They are no goals, and are not counted among them.
 
-241 goals in 136 files: 168 on what a program reaches of the library and what --trim keeps, 20 on how a build grows with its program, 53 on other things.
+242 goals in 136 files: 168 on what a program reaches of the library and what --trim keeps, 21 on how a build grows with its program, 53 on other things.
 
-82 of them are a yes or a no. Of the others 37 are held to what is reached today by a case beside them, 6 could be, 1 cannot grow worse, 66 are counted at every run and compared between runs, 48 move with the platform and with every change, and 1 say no measured number.
+82 of them are a yes or a no. Of the others 37 are held to what is reached today by a case beside them, 6 could be, 1 cannot grow worse, 66 are counted at every run and compared between runs, 49 move with the platform and with every change, and 1 say no measured number.
 
 18 cases in 8 files are declared `todo` and never run.
 
@@ -90,6 +90,7 @@ what does. What is not run, or not judged, stands in tables of its own further d
 | test/aot/build-scaling/build-scaling-1.test.ts | compile/aot/build scaling > classes with a field each that extend one another in a row, all constructed at one place: 3.90 times in TableBytesEmitted; the bound is 2.1 | 3.90 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
 | test/aot/build-scaling/build-scaling-1.test.ts | compile/aot/build scaling > elements of a row that the turn of a loop finds are read and stored one by one and all read again behind: 2.26 times in instructions; the bound is 2.1 | 2.26 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
 | test/aot/build-scaling/build-scaling-3.test.ts | compile/aot/build scaling > classes that extend one another in a row, each constructed: 3.45 times in TableBytesEmitted; the bound is 2.1 | 3.45 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
+| test/aot/build-scaling/build-scaling-3.test.ts | compile/aot/build scaling > files that each export everything of the next, loaded behind a mock of the last, in a test run: 2.55 times in instructions; the bound is 2.1 | 2.55 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
 | test/aot/build-scaling/build-scaling-3.test.ts | compile/aot/build scaling > stores of one of two values on this under more names than an order is kept in line for: 2.15 times in instructions; the bound is 2.1 | 2.15 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
 | test/aot/build-scaling/build-scaling-5.test.ts | compile/aot/build scaling > a union of object types that is told apart by a row of ifs over a tag: 3.60 times in instructions; the bound is 2.1 | 3.60 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
 | test/aot/build-scaling/build-scaling-5.test.ts | compile/aot/build scaling > branches in a row that each hand another element on, a name of its own read in front of each: 3.08 times in instructions; the bound is 2.1 | 3.08 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |

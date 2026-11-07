@@ -34,6 +34,8 @@ export type Shape = {
   growsSoFarInInstructionsUnderMusl?: string;
   /** The same for a growth that shows in the code for arm64 on Linux alone. */
   growsSoFarOnLinuxArm64?: string;
+  /** How many times the memory twice the size may take, where the bound of all shapes lies within what one build wavers by. Instructions and counts keep the bound of all shapes. */
+  mostGrowthInMemory?: number;
   write(size: number): Record<string, string>;
 };
 
@@ -387,6 +389,9 @@ export const shapes: Shape[] = [
     counted: "files",
     size: 1200,
     entry: "main.js",
+    // Under musl one and the same build reads 2.08 to 2.12 from try to try, on both sides of the bound of all shapes. The memory is a straight line: 1,200 files more add 37 MB, 2,400 more 82, 4,800 more 160.
+    // The first files fill room that a build of nothing holds already, in another stage, and that bends the first doubling upward. Of a square each doubling adds four times what the one before it added.
+    mostGrowthInMemory: 2.2,
     write: size => {
       const files: Record<string, string> = { "w.js": `postMessage("up");\n` };
       const named = upTo(size, index => (index % 4 === 0 ? `start${index}` : `make${index}`));
@@ -490,6 +495,8 @@ export const shapes: Shape[] = [
     size: 256,
     entry: "a.test.js",
     isTestRun: true,
+    // What is left: which mock answers for a name is found in the view of each file, by a walk of its own through the rest of the chain.
+    growsSoFarInInstructions: "2.55 times in instructions",
     write: size => ({
       "package.json": `{ "name": "p", "type": "module" }\n`,
       ...Object.fromEntries(upTo(size, index => [`m${index}.js`, `export * from "./m${index + 1}.js";\n`])),
@@ -658,6 +665,8 @@ export const shapes: Shape[] = [
     counted: "functions, each with a constant of its own",
     size: 2000,
     entry: "main.js",
+    // Under glibc it grows 2.03 times. What the C library copies, compares and fills for this shape grows in line with it; where the rest goes under musl is not found.
+    growsSoFarInInstructionsUnderMusl: "2.26 times in instructions",
     write: size => ({
       "main.js":
         `function run(n) {\n` +
@@ -1041,6 +1050,8 @@ export const shapes: Shape[] = [
     counted: "loops",
     size: 125,
     entry: "main.js",
+    // Under glibc it grows 2.08 times. What the C library copies, compares and fills for this shape grows in line with it; where the rest goes under musl is not found.
+    growsSoFarInInstructionsUnderMusl: "2.15 times in instructions",
     write: size => ({
       "main.js":
         "function make() {\n  let held = [1.5, 2.5, 3.5];\n  return {\n    total(n) {\n      let s = 0;\n      for (let t = 0; t < n; t++) {\n" +
@@ -4335,8 +4346,6 @@ console.log(typeof outmost.inner);
     // At a quarter of this size what the shape adds is so little that a million instructions more or less moved its growth across the bound.
     size: 8000,
     entry: "main.js",
-    // Under glibc it grows 2.08 times.
-    growsSoFarInInstructionsUnderMusl: "2.37 times in instructions",
     write: size => ({
       "main.js": rowBehindAFunctionWithALoop(size, index => `sum += pick({ k: ${index}, next: null }, 0).k;`),
     }),
@@ -4394,8 +4403,6 @@ console.log(typeof outmost.inner);
     // At a quarter of this size what the shape adds is so little that a million instructions more or less moved its growth across the bound.
     size: 8000,
     entry: "main.js",
-    // Under glibc it grows 2.07 times.
-    growsSoFarInInstructionsUnderMusl: "2.32 times in instructions",
     write: size => ({
       "main.js": rowBehindAFunctionWithALoop(size, index => `{ let c = ${index}; const f = () => c++; pick({ k: f, next: null }, 0); c += 1; }`),
     }),
@@ -4406,7 +4413,6 @@ console.log(typeof outmost.inner);
     counted: "objects",
     size: 4000,
     entry: "main.js",
-    growsSoFarInInstructionsUnderMusl: "2.20 times in instructions",
     write: size => ({
       "main.js": rowBehindAFunctionWithALoop(size, index => `{ const o = pick({ k: ${index}, next: null }, 0); if (o.k > sum) sum += 1; }`),
     }),

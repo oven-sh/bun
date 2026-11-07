@@ -1196,15 +1196,18 @@ function handleToDestroyUnwatched(req: $Node.IncomingMessage, state: $Node.Reada
   try {
     if (!(IS_COMPILED_AHEAD_OF_TIME && $isPlainHeirOf(req, IncomingMessage)) || !isEndUnheard(req)) return undefined;
     const handle = req[kHandle] as $Node.NodeHTTPResponse | undefined;
+    let side = 0;
     if (
       !handle ||
       !req.complete ||
-      mayHaveWritableSide(req) ||
+      (side = writableSideOf(req)) === 2 ||
       (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(req, "destroy", IncomingMessage)) &&
         !findsWithoutAsking(req, "destroy", destroy)) ||
       (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(req, "_destroy", IncomingMessage)) &&
         !findsWithoutAsking(req, "_destroy", incomingMessageDestroy)) ||
       req._readableState !== state ||
+      // destroy() reads it once more.
+      (side === 1 && !!req._writableState) ||
       !readsItsSocketUnseen(req) ||
       !readsReadableEndedThroughAccessor(req) ||
       !advanceFlags(state, kFlagsEnded, kFlagsDestroyed)
@@ -1743,6 +1746,7 @@ function emitBodyEnd(req: $Node.IncomingMessage, state: $Node.ReadableState) {
 function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable): boolean {
   const req: $Node.IncomingMessage = stream as any;
   let handle: $Node.IncomingMessage[typeof kHandle];
+  let side = 0;
   try {
     if (
       (state[kState] & kDestroysItselfMask) !== kDestroysItself ||
@@ -1755,10 +1759,12 @@ function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable)
     if (
       !handle ||
       !req.complete ||
-      mayHaveWritableSide(req) ||
+      (side = writableSideOf(req)) === 2 ||
       (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(req, "destroy", IncomingMessage)) &&
         !findsWithoutAsking(req, "destroy", destroy)) ||
       req._readableState !== state ||
+      // destroy() reads it once more.
+      (side === 1 && !!req._writableState) ||
       !readsReadableEndedThroughAccessor(req) ||
       !readsItsSocketUnseen(req)
     ) {
@@ -1807,16 +1813,23 @@ function releaseParserThenClose(parser: $Node.HTTPParser | $Node.HttpServerParse
 internals.destroyEndedRequest = destroyEndedRequest;
 
 // `writable` and `_writableState` are names that a request lacks. What the request itself holds under one of them is not asked here: the road that reads it asks, once.
-function mayHaveWritableSide(req: $Node.IncomingMessage): boolean {
+// 0: a lookup of neither name finds anything. 1: each was read once and is falsy. 2: the request may have a writable side.
+function writableSideOf(req: $Node.IncomingMessage): number {
   if (
     IS_COMPILED_AHEAD_OF_TIME &&
     $isPlainHeirOf(req, IncomingMessage) &&
     $findsNoMember(req, "writable") &&
     $findsNoMember(req, "_writableState")
   ) {
-    return false;
+    return 0;
   }
-  return ObjectHasOwn(req, "writable") || ObjectHasOwn(req, "_writableState") || !!req.writable || !!req._writableState;
+  return ObjectHasOwn(req, "writable") || ObjectHasOwn(req, "_writableState") || !!req.writable || !!req._writableState
+    ? 2
+    : 1;
+}
+
+function mayHaveWritableSide(req: $Node.IncomingMessage): boolean {
+  return writableSideOf(req) === 2;
 }
 
 function hasNoListenerAndNoWritableSide(req: $Node.IncomingMessage): boolean {

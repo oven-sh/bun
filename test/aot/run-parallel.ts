@@ -754,9 +754,11 @@ function settle(program: Program, verdict: Record<string, unknown>) {
     return say({ ...notWhatItsMarkStandsFor(failsOtherwise), ...goalsNotMetOf(program.file) });
   }
   if (program.todo !== undefined && !all.some(({ died }) => died)) {
+    // Whichever way ends last settles the file, and only the first build says how it grows.
+    const growth = asWritten.find(({ file }) => file === program.file)?.growth;
     // Of how a build grows only the peak is judged where nothing is counted: a mark may stand for the instructions, and a run that has not counted them has not seen it met.
-    const isHalfJudged = program.growth?.of === "the build" && !countsInstructions && !opensCounterOfItsOwn();
-    if (failed || moreFlags.length || !runsAreAsUsersRunThem || (isASAN && program.growth) || isHalfJudged) {
+    const isHalfJudged = growth?.of === "the build" && !countsInstructions && !opensCounterOfItsOwn();
+    if (failed || moreFlags.length || !runsAreAsUsersRunThem || (isASAN && growth) || isHalfJudged) {
       if (program.todo.startsWith("only frames")) programsMarkedForFramesAlone++;
       return say({ file: program.file, state: "skip", message: `todo: ${program.todo}`, ...goalsNotMetOf(program.file) });
     }

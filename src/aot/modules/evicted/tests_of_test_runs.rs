@@ -41,17 +41,14 @@ fn what_lies_below_the_file_that_threw_runs_again_with_it() {
 }
 
 #[test]
-fn what_one_test_file_alone_asks_for_is_told_apart_for_the_first_alone() {
+fn what_one_test_file_alone_asks_for_is_told_apart_wherever_the_test_file_stands() {
     let own = ("own.cjs", "exports.name = 1;");
     let shared = "const gauge = require('./gauge.cjs');";
     let with_own = "const own = require('./own.cjs');\nconst gauge = require('./gauge.cjs');";
     let first_has_it = [("a.test.ts", with_own), ("b.test.ts", shared), own, GAUGE];
     assert_eq!(files_that_run_again(&first_has_it, 2, 0), ["gauge.cjs"]);
     let second_has_it = [("a.test.ts", shared), ("b.test.ts", with_own), own, GAUGE];
-    assert_eq!(
-        files_that_run_again(&second_has_it, 2, 0),
-        ["own.cjs", "gauge.cjs"]
-    );
+    assert_eq!(files_that_run_again(&second_has_it, 2, 0), ["gauge.cjs"]);
 }
 
 #[test]

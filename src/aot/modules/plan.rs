@@ -318,7 +318,7 @@ pub(super) struct Plan {
     keeps_module_object: Vec<bool>,
     names_way_to_module_objects: Vec<bool>,
     is_found_by_name: Vec<bool>,
-    is_every_require_seen: bool,
+    is_first_require_seen: bool,
     is_namespace_seen: Vec<bool>,
     is_marker_stored: Vec<bool>,
     is_imported_as_namespace: Vec<bool>,
@@ -371,7 +371,7 @@ impl Plan {
             keeps_module_object: vec![false; order.numbers.len()],
             names_way_to_module_objects: vec![false; order.numbers.len()],
             is_found_by_name: vec![false; order.numbers.len()],
-            is_every_require_seen: false,
+            is_first_require_seen: false,
             is_namespace_seen: vec![false; order.numbers.len()],
             is_marker_stored: vec![false; order.numbers.len()],
             is_imported_as_namespace: vec![false; order.numbers.len()],
@@ -641,7 +641,7 @@ impl ModuleGraph {
             records: shows_mark
                 || self.keeps_module_object(site.referrer)
                 || self.keeps_module_object(site.target)
-                || (self.plan.is_every_require_seen && matches!(site.target, ModuleRef::File(_)))
+                || (self.plan.is_first_require_seen && matches!(site.target, ModuleRef::File(_)))
                 || matches!(site.target, ModuleRef::File(file) if self.tracks_first_load(file)),
         }
     }
@@ -1246,7 +1246,11 @@ impl ModuleGraph {
         (self.plan.final_requests, self.plan.final_ranges) =
             self.settle_requests(prefixes, &data_files, in_parallel);
         steps.end("plan: requests");
-        self.plan.is_every_require_seen = self.plan.names_way_to_module_objects.contains(&true);
+        let mut first_requests = self.plan.order.first_requests_of_host.iter();
+        self.plan.is_first_require_seen = self.plan.names_way_to_module_objects.contains(&true)
+            && first_requests.any(|&file| {
+                self.kind(file) == ModuleKind::SourceText && !linked_files.leads_to_target(file)
+            });
         self.plan.is_finished = true;
     }
 

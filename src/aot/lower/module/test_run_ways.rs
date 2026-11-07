@@ -210,6 +210,9 @@ impl WayToDeclaration<'_> {
         let modules = self.modules;
         let stars = modules.in_order_of_stars(ModuleRef::File(file), modules.requests(file));
         let mut stars = stars.iter().filter(|request| is_asked(request));
+        let stays = |&&on_path: &&FileId| !modules.is_left_out(ModuleRef::File(on_path));
+        let holder = self.path.iter().rev().find(stays).copied();
+        let holder = holder.or(self.asking_file).unwrap_or(file);
         stars.any(|request| match request.target {
             ModuleRef::File(target) => self.ask(target, name, AskedBy::Star),
             module => {
@@ -218,7 +221,7 @@ impl WayToDeclaration<'_> {
                         module,
                         name,
                         is_behind_its_mock: false,
-                        holder_of_star_to_built_in: Some(file),
+                        holder_of_star_to_built_in: Some(holder),
                     });
                 }
                 false
@@ -396,7 +399,11 @@ fn find_file_that_names_built_in(
         return reader;
     };
     let mut seen = FxHashSet::default();
+    let mut holder = reader;
     while seen.insert((file, name)) {
+        if !modules.is_left_out(ModuleRef::File(file)) {
+            holder = file;
+        }
         if let Some((ModuleRef::File(next), handed_on)) =
             modules.find_what_hands_on_names(file, name)
         {
@@ -422,7 +429,7 @@ fn find_file_that_names_built_in(
             _ => break,
         }
     }
-    file
+    holder
 }
 
 pub(super) fn emit_behind_stations(

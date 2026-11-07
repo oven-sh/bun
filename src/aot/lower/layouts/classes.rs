@@ -8,7 +8,7 @@ use bun_sema::hir::{
     self, BinOp, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, MemberId, PropKey,
 };
 use bun_sema::program::FileId;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 use super::OwnFields;
@@ -263,9 +263,20 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn without_contents_that_are_never(&mut self, ty: TypeId) -> TypeId {
+        self.find_without_contents_that_are_never(ty, &mut FxHashMap::default())
+    }
+
+    fn find_without_contents_that_are_never(
+        &mut self,
+        ty: TypeId,
+        found: &mut FxHashMap<TypeId, TypeId>,
+    ) -> TypeId {
         let said = self.fragment.types.get(ty);
         if said.classes.iter().all(|part| part.contents.is_empty()) {
             return ty;
+        }
+        if let Some(&answer) = found.get(&ty) {
+            return answer;
         }
         let mut rebuilt = Type {
             primitives: said.primitives,
@@ -285,16 +296,18 @@ impl FileLowering<'_, '_, '_, '_> {
             for held in &mut part.contents {
                 let said_of_contents = match *held {
                     TypeTable::NEVER => TypeTable::ANYTHING,
-                    other => self.without_contents_that_are_never(other),
+                    other => self.find_without_contents_that_are_never(other, found),
                 };
                 is_changed |= said_of_contents != *held;
                 *held = said_of_contents;
             }
         }
-        match is_changed {
+        let answer = match is_changed {
             true => self.fragment.types.intern(rebuilt),
             false => ty,
-        }
+        };
+        found.insert(ty, answer);
+        answer
     }
 
     fn find_default_of_store(&self, source: ClassMemberSource) -> Option<ExprId> {

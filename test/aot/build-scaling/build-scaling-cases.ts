@@ -8,7 +8,7 @@
 //
 //   growth     (cost at twice the size - cost at size 0) / (cost at the size - cost at size 0)     may not pass 2.1
 //
-// The bound is the same for every shape, on every platform.
+// The bound is the same for every shape, on every platform, but for what a shape says of its own.
 //
 // By default the allocator returns freed memory to the system after a delay, by the clock, so a build has resident what it needs plus whatever is still
 // waiting to be returned. Two runs of one compiler then differ by up to 40 MB, and the growth of one shape by up to 28%. A build runs with
@@ -173,6 +173,7 @@ export const buildScaling = (part: number, parts: number) =>
         growsSoFar ? `${shape.name}: ${growsSoFar}; the bound is ${mostGrowth}` : shape.name,
         async () => {
           const size = shape.size * factor;
+          const mostGrowthInMemory = shape.mostGrowthInMemory ?? mostGrowth;
           type Costs = [none: Built, once: Built | undefined, twice: Built];
           const grown = ([none, once, twice]: Costs, name: keyof Cost, least: number, leastDivisor: number) => {
             if (none[name] === undefined || once?.[name] === undefined || twice[name] === undefined) return undefined;
@@ -222,7 +223,7 @@ export const buildScaling = (part: number, parts: number) =>
               ];
               return leastSeen;
             },
-            costs => judgesCountsAlone || (grownInMemory(costs) ?? 0) <= mostGrowth,
+            costs => judgesCountsAlone || (grownInMemory(costs) ?? 0) <= mostGrowthInMemory,
           );
           const [none, once, twice] = costs;
           const growth: { instructions: number | undefined; peakBytes: number | undefined } = judgesCountsAlone
@@ -242,7 +243,7 @@ export const buildScaling = (part: number, parts: number) =>
                   twice.counts[name] - none.counts[name] >= leastCountJudged &&
                   grownInCount(costs, name) > mostGrowth,
               );
-          const growsInMemory = once && growth.peakBytes !== undefined && growth.peakBytes > mostGrowth;
+          const growsInMemory = once && growth.peakBytes !== undefined && growth.peakBytes > mostGrowthInMemory;
           const half =
             suspects.length || growsInMemory ? await slot(() => measure(shape, Math.round(size / 2), carrier)) : undefined;
           // A build of nothing may hold its most memory in another stage than the one that grows with the shape. Then the memory is a straight line that starts BELOW what size 0 takes, and measured from
@@ -258,7 +259,7 @@ export const buildScaling = (part: number, parts: number) =>
           // Of a square that doubling too adds four times what the one before it added.
           let builtAtFourTimes: Promise<Built> | undefined;
           const buildAtFourTimes = () => (builtAtFourTimes ??= slot(() => measure(shape, 4 * size, carrier)));
-          if (growsInMemory && growth.peakBytes! > mostGrowth && (growth.instructions ?? 0) <= mostGrowth) {
+          if (growsInMemory && growth.peakBytes! > mostGrowthInMemory && (growth.instructions ?? 0) <= mostGrowth) {
             const fourTimes = await buildAtFourTimes();
             growth.peakBytes = Math.min(
               growth.peakBytes!,
@@ -295,10 +296,10 @@ export const buildScaling = (part: number, parts: number) =>
           );
 
           const worse: string[] = [];
-          for (const what of ["instructions", "peakBytes"] as const) {
-            if (growth[what] !== undefined && growth[what] > mostGrowth)
+          for (const [what, most] of [["instructions", mostGrowth], ["peakBytes", mostGrowthInMemory]] as const) {
+            if (growth[what] !== undefined && growth[what] > most)
               worse.push(
-                `twice as many ${shape.counted} cost ${growth[what].toFixed(2)} times the ${what}; allowed: ${mostGrowth}`,
+                `twice as many ${shape.counted} cost ${growth[what].toFixed(2)} times the ${what}; allowed: ${most}`,
               );
           }
           for (const [name, times] of growthOfCounts)

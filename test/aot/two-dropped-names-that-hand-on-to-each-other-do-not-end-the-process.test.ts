@@ -1,7 +1,7 @@
 // one.mjs and two.mjs each name `round` out of a CommonJS file that lacks it, so the stars of each answer for the name.
 // The first star of one.mjs leads to a file that hands `round` on from two.mjs, and the first star of two.mjs to a file that hands it on from one.mjs.
 // Only the second star of two.mjs comes to the file that has the name. A read of `round` went from namespace to namespace round that ring until the stack ended: the process died of a fault.
-// TODO: `bun <file>` says 5. Until the read goes to the file that the resolution names, it has to end in an error that the program can catch.
+// A read that comes back to a name that is being read now goes to the file that the resolution names.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -47,9 +47,6 @@ for (const [how, main] of readers) {
       exitCode: 0,
     });
     const { stdout, exitCode } = await run([join(String(dir), "made")], String(dir), bunEnv);
-    expect({ said: stdout.trim(), exitCode }).toEqual({
-      said: expect.stringMatching(/^SAID (5|RangeError)$/),
-      exitCode: 0,
-    });
+    expect({ said: stdout.trim(), exitCode }).toEqual({ said: "SAID 5", exitCode: 0 });
   });
 }

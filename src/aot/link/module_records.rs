@@ -1196,18 +1196,14 @@ impl RecordBuilder<'_, '_, '_> {
     ) -> Vec<generated::ModuleRequest> {
         let input = self.input;
         let requests = input.projects.get(project).graph.requests_of(module);
-        let is_star = |it: &modules::ModuleRequest| it.is_star_export || it.is_dynamic_star_export;
-        let stars = || requests.iter().filter(|it| is_star(it));
-        let mut places: Vec<u32> = stars().map(|it| it.star_place).collect();
-        let follows_every_star = stars().all(|it| it.is_dynamic_star_export);
-        let follows_no_star = !stars().any(|it| it.is_dynamic_star_export);
-        let says_nothing_new = follows_no_star || (follows_every_star && places.is_sorted());
-        if says_nothing_new || places.contains(&modules::NO_STAR_PLACE) {
+        let followed = || requests.iter().filter(|it| it.is_dynamic_star_export);
+        let mut places: Vec<u32> = followed().map(|it| it.star_place).collect();
+        if places.is_sorted() || places.contains(&modules::NO_STAR_PLACE) {
             places.clear();
         }
         places.sort_unstable();
         let rank_of = |request: &modules::ModuleRequest| {
-            let is_ranked = is_star(request) && !places.is_empty();
+            let is_ranked = request.is_dynamic_star_export && !places.is_empty();
             is_ranked.then(|| places.partition_point(|&place| place < request.star_place) as u32)
         };
         requests

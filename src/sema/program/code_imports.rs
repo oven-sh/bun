@@ -307,8 +307,15 @@ fn resolve_site<'r>(
     let resolution =
         resolve_file_loaded_another_way(context, key, hir, site, specifier, resolution);
     let resolution = resolve_data_url(context, hir, site, resolution).unwrap_or(resolution);
-    let resolution =
-        resolve_database(context, hir, site, specifier, resolution).unwrap_or(resolution);
+    let resolution = resolve_database(
+        context,
+        hir,
+        site,
+        written.opens_database,
+        specifier,
+        resolution,
+    )
+    .unwrap_or(resolution);
     let resolution =
         resolve_at_run_time(context, site, specifier, resolution).unwrap_or(resolution);
     SiteResolution::Constant(match is_get_builtin_module(site.kind) {
@@ -418,6 +425,7 @@ fn resolve_database<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     hir: &hir::File<'_>,
     site: &ImportSite,
+    opens_database: bool,
     specifier: &[u8],
     resolution: CodeResolution<'r>,
 ) -> Option<CodeResolution<'r>> {
@@ -425,16 +433,15 @@ fn resolve_database<'r>(
         value.is_some_and(|value| context.atoms.bytes(value) == text)
     };
     let is_path = specifier.starts_with(b"./") || specifier.starts_with(b"../");
-    let is_file_or_absent = match resolution {
-        CodeResolution::File(file) => file.host_module.is_none(),
-        CodeResolution::NotFound(CodeFailure::ModuleNotFound) => true,
+    let is_opened_at_run = match resolution {
+        CodeResolution::File(file) => file.host_module.is_none() && opens_database,
+        CodeResolution::NotFound(CodeFailure::ModuleNotFound) => {
+            has_text(loader_attribute(hir, site), b"sqlite")
+                && !has_text(embed_attribute(hir, site), b"true")
+        }
         _ => false,
     };
-    if !is_path
-        || !is_file_or_absent
-        || !has_text(loader_attribute(hir, site), b"sqlite")
-        || has_text(embed_attribute(hir, site), b"true")
-    {
+    if !is_path || !is_opened_at_run {
         return None;
     }
     let path = context.host.create_file_of_database(specifier)?;

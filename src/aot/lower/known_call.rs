@@ -617,6 +617,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if defines.needs_guard || name == known::__proto__ || !is_this_of_construction {
             return None;
         }
+        let added = self.file.inputs.names_added_to_builtins;
+        let descriptor_finds_accessor_above = added.iter().any(|&(holder, laid)| {
+            holder == BuiltinId::ObjectPrototype && (laid == known::get || laid == known::set)
+        });
+        if descriptor_finds_accessor_above {
+            return None;
+        }
         let bound = self.file.queries.files().bound(callee.file);
         let scope = bound.fns[defines.function.definition.idx()].scope;
         let mode = match bound.is_strict_scope(scope) {

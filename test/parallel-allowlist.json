@@ -1614,7 +1614,6 @@
     "aot/new-target-written-with-an-escape-stops-the-build.test.ts",
     "aot/a-text-joined-in-front-of-a-loop-whose-first-turn-leaves.test.ts",
     "aot/a-file-outside-the-executable-is-read-again-behind-a-deletion-from-require-cache.test.ts",
-    "aot/a-statement-that-hands-a-name-on-hides-the-name-in-the-stars-of-its-own-file.test.ts",
     "aot/under-the-inspector-the-console-changes-what-is-public-and-no-record-of-an-internal-file.test.ts",
     "aot/the-functions-of-a-written-object-are-asked-once-whether-they-can-see-it.test.ts",
     "aot/a-written-alternative-without-an-ending-whose-type-the-call-names-is-in-the-program.test.ts",
@@ -1623,6 +1622,11 @@
     "aot/under-the-inspector-the-console-is-refused-what-the-program-never-does.test.ts",
     "aot/a-row-filled-once-by-a-definition-keeps-what-it-is-held-to.test.ts",
     "aot/two-dropped-names-that-hand-on-to-each-other-do-not-end-the-process.test.ts",
-    "aot/a-database-asked-for-by-a-path-made-of-the-own-folder-is-not-refused.test.ts"
+    "aot/a-database-asked-for-by-a-path-made-of-the-own-folder-is-not-refused.test.ts",
+    "aot/a-database-that-the-program-makes-beside-its-file-is-opened-though-it-was-absent-at-the-build.test.ts",
+    "aot/a-database-under-a-written-path-made-of-the-own-folder-is-the-one-beside-the-file.test.ts",
+    "aot/a-public-field-laid-by-the-bundlers-helper-sees-what-a-test-lays-above-every-object.test.ts",
+    "aot/hello-world-keeps-few-families-of-operations.test.ts",
+    "aot/a-file-that-one-test-file-alone-reaches-is-compiled-alike-wherever-the-test-file-stands.test.ts"
   ]
 }

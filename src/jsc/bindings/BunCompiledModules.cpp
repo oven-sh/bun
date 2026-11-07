@@ -1038,6 +1038,15 @@ void didUnmockCompiledFile(Zig::GlobalObject* globalObject, const String& key, b
         return;
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // An earlier end has made the module object, the later mock has set that aside, and the loader's own move has brought it back.
+    JSValue moved = Bun::testFileRequireMap(globalObject)->get(globalObject, jsStringWithCache(vm, key));
+    RETURN_IF_EXCEPTION(scope, );
+    if (auto* present = moved.isCell() ? dynamicDowncast<JSCommonJSModule>(moved.asCell()) : nullptr) {
+        JSValue exports = present->exportsObject();
+        RETURN_IF_EXCEPTION(scope, );
+        if (exports == original)
+            return;
+    }
     JSObject* held = AOT::moduleObjectBehindEntryOfProgram(globalObject, *module);
     auto* back = held ? dynamicDowncast<JSCommonJSModule>(held) : nullptr;
     if (back)
@@ -1433,37 +1442,13 @@ static void pushObservableChild(JSGlobalObject* realm, JSObject* parent, JSObjec
     call(realm, function, getCallData(function), jsUndefined(), arguments);
 }
 
-static void makeListOfChildren(JSGlobalObject* realm, JSCommonJSModule* parent)
-{
-    auto& vm = getVM(realm);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    MarkedArgumentBuffer children;
-    for (WriteBarrier<Unknown> child : parent->m_children) {
-        bool isListed = false;
-        for (size_t index = 0; index < children.size(); ++index)
-            isListed |= children.at(index) == child.get();
-        if (!isListed)
-            children.append(child.get());
-    }
-    JSArray* list = constructArray(realm, static_cast<ArrayAllocationProfile*>(nullptr), children);
-    RETURN_IF_EXCEPTION(scope, void());
-    parent->m_childrenValue.set(vm, parent, list);
-    WTF::Locker locker { parent->cellLock() };
-    parent->m_children.clear();
-}
-
 bool appendNewChildrenOfCompiledModule(JSGlobalObject* realm, JSCommonJSModule* parent)
 {
     auto compiled = compiledModuleThatAsksThrough(parent);
     if (!compiled)
         return true;
     auto& vm = getVM(realm);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    bool areShown = AOT::forEachNewChild(parent->globalObject(), *compiled, [&](JSObject* child) {
-        if (!parent->m_childrenValue && !child->inherits<JSCommonJSModule>()) {
-            makeListOfChildren(realm, parent);
-            RETURN_IF_EXCEPTION(scope, void());
-        }
+    return AOT::forEachNewChild(parent->globalObject(), *compiled, [&](JSObject* child) {
         if (parent->m_childrenValue) {
             pushObservableChild(realm, parent, child);
             return;
@@ -1472,8 +1457,6 @@ bool appendNewChildrenOfCompiledModule(JSGlobalObject* realm, JSCommonJSModule* 
         parent->m_children.append(WriteBarrier<Unknown>());
         parent->m_children.last().set(vm, parent, child);
     });
-    RETURN_IF_EXCEPTION(scope, false);
-    return areShown;
 }
 
 void dropNewChildrenOfCompiledModule(JSCommonJSModule* parent)
@@ -1494,13 +1477,11 @@ static void showChildren(JSGlobalObject* realm, JSObject* module, JSObject* requ
         appendNewChildrenOfCompiledModule(realm, parent);
 }
 
-JSObject* parentOfCompiledModule(JSCommonJSModule* module)
+JSCommonJSModule* parentOfCompiledModule(JSCommonJSModule* module)
 {
     auto compiled = compiledModuleOf(module);
     JSObject* parent = compiled ? AOT::parentModuleObject(module->globalObject(), *compiled) : nullptr;
-    if (parent && !parent->inherits<JSCommonJSModule>())
-        module->m_overriddenParent.set(getVM(module->globalObject()), module, parent);
-    return parent;
+    return parent ? dynamicDowncast<JSCommonJSModule>(parent) : nullptr;
 }
 
 String pathInExecutable(const String& path)
@@ -2284,7 +2265,7 @@ JSValue mainModuleOfExecutable(Zig::GlobalObject*) { return jsUndefined(); }
 void willStorePathOfMainModule(Zig::GlobalObject*, JSValue) {}
 bool appendNewChildrenOfCompiledModule(JSGlobalObject*, JSCommonJSModule*) { return true; }
 void dropNewChildrenOfCompiledModule(JSCommonJSModule*) {}
-JSObject* parentOfCompiledModule(JSCommonJSModule*) { return nullptr; }
+JSCommonJSModule* parentOfCompiledModule(JSCommonJSModule*) { return nullptr; }
 JSValue parentSeenBy(Zig::GlobalObject*, JSString*, JSValue parent) { return parent; }
 JSValue errorIfUnseenCodeIsRefused(JSGlobalObject*, ASCIILiteral) { return {}; }
 bool isAskingWhyFileFailsToLoad() { return false; }

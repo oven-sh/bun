@@ -253,14 +253,15 @@ fn parse_f32(bytes: &[u8]) -> Option<f32> {
     let mag = if hex {
         parse_hex_float(&stripped[2..])?
     } else {
-        bun_core::fmt::parse_f64(stripped)?
+        bun_core::fmt::parse_f64(stripped)? as f32
     };
-    Some(if neg { -mag } else { mag } as f32)
+    Some(if neg { -mag } else { mag })
 }
 
 /// C99 hex float after the `0x`: hex digits, at most one `.`, optional `p` exponent.
-fn parse_hex_float(s: &[u8]) -> Option<f64> {
+fn parse_hex_float(s: &[u8]) -> Option<f32> {
     let mut mantissa: u64 = 0;
+    let mut inexact = false;
     let mut frac_digits: i64 = 0;
     let mut dropped_int_bits: i64 = 0;
     let mut seen_dot = false;
@@ -285,8 +286,11 @@ fn parse_hex_float(s: &[u8]) -> Option<f64> {
             if seen_dot {
                 frac_digits += 1;
             }
-        } else if !seen_dot {
-            dropped_int_bits += 4;
+        } else {
+            inexact |= d != 0;
+            if !seen_dot {
+                dropped_int_bits += 4;
+            }
         }
         i += 1;
     }
@@ -315,11 +319,16 @@ fn parse_hex_float(s: &[u8]) -> Option<f64> {
         // `0x0p1024` would otherwise compute `0.0 * inf`, which is NaN.
         return Some(0.0);
     }
+    // Round to odd at 53 bits, so that the cast to f32 rounds the exact value once.
+    let shift = 11u32.saturating_sub(mantissa.leading_zeros());
+    inexact |= mantissa.trailing_zeros() < shift;
+    let mantissa = (mantissa >> shift) | u64::from(inexact);
     // Only `exp` can saturate: the digit counts grow by at most 4 per input byte.
     let exp = exp
         .saturating_sub(frac_digits.saturating_mul(4))
         .saturating_add(dropped_int_bits)
+        .saturating_add(i64::from(shift))
         .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
     // powi on 2.0 is exact (repeated squaring of exact powers of two).
-    Some(mantissa as f64 * 2.0_f64.powi(exp))
+    Some((mantissa as f64 * 2.0_f64.powi(exp)) as f32)
 }

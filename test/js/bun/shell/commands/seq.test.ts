@@ -136,6 +136,25 @@ describe("seq", async () => {
     .stderr("")
     .runAsTest("hex with huge negative exponent underflows to zero");
 
+  // 2^63 + 2^39 + 1 is just above the midpoint of two f32 values. Its nearest f64 is the midpoint.
+  TestBuilder.command`seq 0x8000008000000001 0x8000008000000001`
+    .exitCode(0)
+    .stdout("9223373000000000000\n")
+    .stderr("")
+    .runAsTest("hex with more than 53 significant bits rounds once");
+
+  TestBuilder.command`seq 0xe52ed68000000.0001p-39 0xe52ed68000000.0001p-39`
+    .exitCode(0)
+    .stdout("7333.855\n")
+    .stderr("")
+    .runAsTest("hex fraction with more than 53 significant bits rounds once");
+
+  TestBuilder.command`seq 0xa8d0017ffffffffffffffffffffffffffffp-130 0xa8d0017ffffffffffffffffffffffffffffp-130`
+    .exitCode(0)
+    .stdout("675.25006\n")
+    .stderr("")
+    .runAsTest("hex digits past the first 16 decide the rounding");
+
   TestBuilder.command`seq 0x`.exitCode(1).stdout("").stderr("seq: invalid argument\n").runAsTest("bare 0x is invalid");
 
   TestBuilder.command`seq 0xg`

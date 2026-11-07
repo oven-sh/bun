@@ -163,9 +163,9 @@ test.concurrent.each([3, 2])("migrate from npm lockfile v%d during `bun add`", a
         },
       },
       "packages": {
-        "is-number": ["is-number@1.0.0", "<registry>/is-number/-/is-number-1.0.0.tgz", {}, "sha512-PWbU1PO3loy/91zx8zOoQ37b8UWuu64eJONVIObQSlUUrYag+zy562vmZuRwRcv2hDhgK1Dc9qkJVS954CB1Nw=="],
+        "is-number": ["is-number@1.0.0", "", {}, "sha512-PWbU1PO3loy/91zx8zOoQ37b8UWuu64eJONVIObQSlUUrYag+zy562vmZuRwRcv2hDhgK1Dc9qkJVS954CB1Nw=="],
 
-        "no-deps": ["no-deps@1.0.0", "<registry>/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+        "no-deps": ["no-deps@1.0.0", "", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
       }
     }"
   `);
@@ -340,7 +340,7 @@ test.concurrent("migrate from npm lockfile that is missing `resolved` properties
         },
       },
       "packages": {
-        "no-deps": ["no-deps@1.0.0", "<registry>/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+        "no-deps": ["no-deps@1.0.0", "", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
       }
     }"
   `);
@@ -716,12 +716,7 @@ describe.concurrent("a package-lock.json entry of another host without an integr
 
     const { stderr, exitCode } = await run(dir, "pm", "migrate");
     expect(stderr).toContain("migrated lockfile from package-lock.json");
-    expect((await readLock(dir)).lock.packages["no-deps"]).toEqual([
-      "no-deps@1.0.0",
-      verified.resolved,
-      {},
-      verified.integrity,
-    ]);
+    expect((await readLock(dir)).lock.packages["no-deps"]).toEqual(["no-deps@1.0.0", "", {}, verified.integrity]);
     expect({ registry: registry.requests, other: other.requests }).toEqual({ registry: [], other: [] });
     expect(exitCode).toBe(0);
   });
@@ -909,7 +904,7 @@ test.concurrent(
         },
       },
       "packages": {
-        "no-deps": ["no-deps@1.0.0", "<registry>/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+        "no-deps": ["no-deps@1.0.0", "", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
       }
     }"
   `);
@@ -2550,7 +2545,7 @@ describe("package-lock.json migration fixes", () => {
       expect(lock.packages).toStrictEqual({
         "file-dep": [
           "file-dep@1.0.0",
-          registry.tarball("file-dep", "1.0.0"),
+          "",
           { dependencies: { files: "file:./the-files" } },
           registry.integrity("file-dep", "1.0.0"),
         ],
@@ -2620,7 +2615,7 @@ describe("package-lock.json migration fixes", () => {
       expect(lock.packages).toStrictEqual({
         "self-file-dep": [
           "self-file-dep@1.0.0",
-          registry.tarball("self-file-dep", "1.0.0"),
+          "",
           { dependencies: { "self-file-dep": "file:." } },
           registry.integrity("self-file-dep", "1.0.0"),
         ],
@@ -3081,12 +3076,7 @@ describe("package-lock.json migration fixes", () => {
         version: "1.0.0",
       });
       const { lock } = await readLock(dir);
-      expect(lock.packages["no-deps"]).toStrictEqual([
-        "no-deps@1.0.0",
-        registry.tarball("no-deps", "1.0.0"),
-        {},
-        registry.integrity("no-deps", "1.0.0"),
-      ]);
+      expect(lock.packages["no-deps"]).toStrictEqual(["no-deps@1.0.0", "", {}, registry.integrity("no-deps", "1.0.0")]);
       expect(registry.requests).toStrictEqual(["/no-deps/-/no-deps-1.0.0.tgz"]);
       await frozen(dir);
     });

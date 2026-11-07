@@ -1843,18 +1843,22 @@ describe.concurrent("lockfile", () => {
     expect(await lock(z)).toBe(xLock);
   });
 
-  // The registry's tarball URLs are not under the default registry, so a row with an empty integrity walks the writer down to v1.
+  // A row with an explicit tarball URL not under the default registry and an empty integrity walks the writer down to v1.
+  // bun writes "" for a tarball under the configured registry, so the URL is spelled out before the integrity is stripped.
   const walkFallbackDeps = { "one-dep": "1.0.0" };
+  const walkFallbackUrl = () => `${registry.registryUrl()}one-dep/-/one-dep-1.0.0.tgz`;
   async function projectWithWalkFallbackLock(stampVersion: 1 | 2 | 3) {
     const dir = await project({ dependencies: walkFallbackDeps });
     await installOk(dir);
     const text = await lock(dir);
     expect(text).toContain('"lockfileVersion": 2');
-    expect(text).toContain('one-dep-1.0.0.tgz", ');
+    expect(text).toContain('"one-dep@1.0.0", "", ');
     const stripped = text
       .replace('"lockfileVersion": 2', `"lockfileVersion": ${stampVersion}`)
+      .replace('"one-dep@1.0.0", "", ', `"one-dep@1.0.0", ${JSON.stringify(walkFallbackUrl())}, `)
       .replace(/, "sha512-[^"]*"\]/g, ', ""]');
     expect(stripped).not.toContain("sha512-");
+    expect(stripped).toContain(`${JSON.stringify(walkFallbackUrl())}, {`);
     await write(join(dir, "bun.lock"), stripped);
     return dir;
   }
@@ -1869,7 +1873,7 @@ describe.concurrent("lockfile", () => {
     expect(err).toContain("Saved lockfile");
     const after = await lock(dir);
     expect(after).toContain('"lockfileVersion": 1');
-    expect(after).toContain('one-dep-1.0.0.tgz", {');
+    expect(after).toContain(`${JSON.stringify(walkFallbackUrl())}, {`);
     expect(after).toContain(', ""]');
   });
 

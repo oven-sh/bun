@@ -179,6 +179,8 @@ test("dependency on workspace without version in package.json", async () => {
 
   // downloads the package from the registry instead of
   // using the workspace locally
+  // bun.lock holds "" for a tarball under the configured registry; parseLockfile
+  // runs with the default registry, so `resolved` comes back as a registry.npmjs.org URL
   for (const version of shouldNotWork) {
     writeFileSync(
       join(packageDir, "packages", "bar", "package.json"),
@@ -539,6 +541,8 @@ test("dependency on same name as workspace and dist-tag", async () => {
 
   const { out } = await runBunInstall(env, packageDir);
   const lockfile = parseLockfile(packageDir);
+  // bun.lock holds "" for a tarball under the configured registry; parseLockfile
+  // runs with the default registry, so `resolved` comes back as a registry.npmjs.org URL
   expect(
     JSON.stringify(lockfile, null, 2).replaceAll(/http:\/\/localhost:\d+/g, "http://localhost:1234"),
   ).toMatchSnapshot("with version");

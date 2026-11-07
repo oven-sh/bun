@@ -230,10 +230,13 @@ pub(crate) fn generate_code_for_lazy_export(
                     // The export alias can be any string, but the variable needs an identifier.
                     let name: &[u8] = if js_lexer::is_identifier(alias) {
                         alias
-                    } else {
+                    } else if bun_core::strings::is_valid_utf8(alias) {
                         alloc.alloc_slice_copy(&bun_core::MutableString::ensure_valid_identifier(
                             alias,
                         )?)
+                    } else {
+                        // A lone surrogate is not a legal export name: `export { x as "\uD800" }` does not parse.
+                        continue;
                     };
 
                     // This initializes the generated variable with a copy of the property

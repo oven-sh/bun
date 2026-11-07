@@ -1900,12 +1900,15 @@ describe("gc entries", () => {
   });
 
   // Runs the test files with `bun test`, and gives what they wrote to "forced.log" too.
-  async function runTestFiles(files: Record<string, string>, ...flags: string[]) {
+  async function runTestFiles(
+    files: Record<string, string>,
+    { flags = [], env = {} }: { flags?: string[]; env?: Record<string, string> } = {},
+  ) {
     using dir = tempDir("perf-hooks-gc-bun-test", files);
     await using proc = tracked(
       Bun.spawn({
         cmd: [bunExe(), "test", ...flags, ...Object.keys(files).filter(name => name.endsWith(".test.js"))],
-        env: { ...bunEnv, NODE_PATH: undefined },
+        env: { ...bunEnv, NODE_PATH: undefined, ...env },
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
@@ -1999,6 +2002,58 @@ describe("gc entries", () => {
     expect(exitCode).toBe(1);
   });
 
+  // The collection is in a timer, so its record waits for a turn of the loop, and its observer settles nothing. The
+  // runner makes that turn without a sleep in it, and then asks again what is left. The timer of Bun's collector is off:
+  // nothing else would end a sleep. A fake timer holds the loop like a real one, and it fires nothing.
+  const collectsInATimerAndWaitsForNothing = (beside = "") => `
+    new PerformanceObserver((list, observer) => {
+      if (!list.getEntries().some(entry => entry.detail.flags === constants.NODE_PERFORMANCE_GC_FLAGS_FORCED)) return;
+      observer.disconnect();
+      appendFileSync("forced.log", "arrived");
+    }).observe({ type: "gc" });
+    await new Promise(resolve => setTimeout(resolve, 1));
+    ${beside}
+    Bun.gc(true);
+    await new Promise(() => {});
+  `;
+  test.concurrent.each([
+    [
+      "a test with no timeout",
+      `test("collects and waits", async () => { ${collectsInATimerAndWaitsForNothing()} }, 0);`,
+      "never settled",
+    ],
+    [
+      "a test with no timeout and a fake timer",
+      `test("collects and waits", async () => {
+         ${collectsInATimerAndWaitsForNothing(`jest.useFakeTimers(); setTimeout(() => {}, 1000);`)}
+       }, 0);`,
+      "never settled",
+    ],
+    [
+      "the top level of a file",
+      `${collectsInATimerAndWaitsForNothing()} test("is not reached", () => {});`,
+      "never finished loading",
+    ],
+  ])(
+    "bun test reports %s that waits for nothing behind the entry of a collection in a timer",
+    async (_, body, report) => {
+      const { output, exitCode, forcedLog } = await runTestFiles(
+        {
+          "gc-in-a-timer.test.js": `
+            import { jest, test } from "bun:test";
+            import { appendFileSync } from "node:fs";
+            import { PerformanceObserver, constants } from "node:perf_hooks";
+            ${body}
+          `,
+        },
+        { env: { BUN_GC_TIMER_DISABLE: "1" } },
+      );
+      expect(output).toContain(report);
+      expect(forcedLog).toBe("arrived");
+      expect(exitCode).toBe(1);
+    },
+  );
+
   // As in Node, where fake timers replace performance.now() and the clock of the collector is the real one.
   test.concurrent("bun test: an entry has its start on the real clock under fake timers", async () => {
     const { output, exitCode } = await runTestFiles({
@@ -2056,7 +2111,7 @@ describe("gc entries", () => {
       `;
       const { output, exitCode, forcedLog } = await runTestFiles(
         { "a.test.js": file("a"), "b.test.js": file("b") },
-        "--isolate",
+        { flags: ["--isolate"] },
       );
       expect(output).toContain("(pass) a gets its own forced collection");
       expect(output).toContain("(pass) b gets its own forced collection");
@@ -2106,7 +2161,7 @@ describe("gc entries", () => {
           `,
           "b.test.js": nextFile(""),
         },
-        isolate,
+        { flags: [isolate] },
       );
       expect(output).toContain("(pass) the next file gets its own forced collection only");
       expect(exitCode).toBe(0);
@@ -2134,7 +2189,7 @@ describe("gc entries", () => {
           `,
           "b.test.js": nextFile("Bun.gc(true); Bun.gc(true); Bun.gc(true);"),
         },
-        isolate,
+        { flags: [isolate] },
       );
       expect(output).toContain("(pass) the next file gets its own forced collection only");
       expect(exitCode).toBe(0);
@@ -2185,7 +2240,7 @@ describe("gc entries", () => {
           "a.test.js": file("a"),
           "b.test.js": file("b"),
         },
-        "--isolate",
+        { flags: ["--isolate"] },
       );
       expect(output).toContain("(pass) a gets its forced collection");
       expect(output).toContain("(pass) b gets its forced collection");

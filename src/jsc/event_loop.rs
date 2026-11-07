@@ -1303,6 +1303,14 @@ impl EventLoop {
 
     /// With nothing keeping the loop alive, `auto_tick` only polls, so a caller that keeps waiting would spin. This sleeps.
     pub fn auto_tick_asleep(&mut self) {
+        // The tick starts with the hand-off of `gc` performance entries and nothing wakes the loop behind it, so it must not sleep: the caller asks again what is left.
+        if self
+            .vm_ref()
+            .gc_performance_entries_wait
+            .load(Ordering::Relaxed)
+        {
+            self.wakeup();
+        }
         if self.vm_ref().is_event_loop_alive_despite_errors() {
             return self.auto_tick();
         }

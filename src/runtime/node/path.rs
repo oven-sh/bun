@@ -850,6 +850,14 @@ fn relative_utf8_checked<'a, const WINDOWS: bool, const CHECK_CWD: bool, R: Reso
     let mut scratch = PathScratch::new(heap, buf_len * 3);
     let (buf, rest) = scratch.slice().split_at_mut(buf_len);
     let (from_buf, tmp_buf) = rest.split_at_mut(buf_len);
+    if !WINDOWS && is_absolute_posix_t(from) && is_absolute_posix_t(to) {
+        return match relative_posix_t(from, to, buf, from_buf, tmp_buf) {
+            Ok(answer) => heap
+                .create_utf8_string(answer)
+                .map(|text| Some(R::from_text(text))),
+            Err(error) => Ok(Some(R::from_error(heap, error))),
+        };
+    }
     // SAFETY: the callback reads native state and never runs JavaScript.
     let global = unsafe { heap.global() };
     native_path_result(

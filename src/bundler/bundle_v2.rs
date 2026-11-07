@@ -4296,15 +4296,10 @@ pub mod bv2_impl {
             (fetcher.on_fetch)(fetcher.ctx, &mut result)
         }
 
-        /// `--compile` without `--aot`: one warning per reachable package that ships a native
-        /// addon (`prebuilds/` or `binding.gyp` in its root) and embeds no `.node` file in the
-        /// executable. Only a `require("./x.node")` with a string literal embeds the addon. A
-        /// loader such as `node-gyp-build` or `bindings` builds the path at run time from the
-        /// inlined `__dirname`, so the executable reads the build machine's `node_modules`.
-        ///
-        /// The resolver walked through every directory it looks at here, so each lookup is a
-        /// cache hit and the pass does no I/O. `binding.gyp` stands in for `build/Release`:
-        /// node-gyp only writes that directory next to a `binding.gyp`.
+        /// `--compile` without `--aot`: warn once per reachable package that ships a native addon
+        /// (`prebuilds/` or `binding.gyp`) but embeds no `.node` file, so its loader (`node-gyp-build`,
+        /// `bindings`) reads the build machine's `node_modules` at run time. Every directory lookup
+        /// is a hit in the resolver's cache.
         fn warn_unembedded_native_addons(
             &mut self,
             reachable_files: &[Index],
@@ -4315,8 +4310,7 @@ pub mod bv2_impl {
 
             let sources = self.graph.input_files.items_source();
             let loaders = self.graph.input_files.items_loader();
-            // Keyed by the address of the resolver-owned `PackageJSON`. The value is whether a
-            // `.node` file of that package is embedded.
+            // address of the resolver-owned `PackageJSON` -> (it, a `.node` file of it is embedded)
             let mut packages: ArrayHashMap<usize, (&'static _resolver::PackageJSON, bool)> =
                 ArrayHashMap::new();
             for source_index in reachable_files {

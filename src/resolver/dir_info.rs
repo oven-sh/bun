@@ -268,10 +268,8 @@ impl DirInfo {
             .get(query)
     }
 
-    /// True if this directory's cached listing has an entry with this name.
-    /// `name_lower` is an already-lowercase basename. The lookup takes
-    /// `entries_mutex` like [`get_entry`](Self::get_entry) and never stats the
-    /// entry.
+    /// Whether the cached listing has an entry named `name_lower` (an already-lowercase basename).
+    /// Locks like [`get_entry`](Self::get_entry), never stats.
     pub fn has_entry(&self, generation: Generation, name_lower: &'static [u8]) -> bool {
         let rfs = &mut fs::FileSystem::instance().fs;
         let _lock = rfs.entries_mutex.lock_guard();

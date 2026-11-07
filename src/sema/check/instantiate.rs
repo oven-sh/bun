@@ -1107,6 +1107,9 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                         (shape, mapper, target) = (as_created, new_mapper, Some(created));
                     }
+                } else if shape.symbol_declared_at.is_some() {
+                    // `len(typeParameters) == 0`
+                    return ty;
                 }
                 let scope = self.begin_scope();
                 let mut new = Shape {

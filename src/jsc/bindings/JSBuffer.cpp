@@ -1749,8 +1749,11 @@ static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last
 
     const uint8_t* typedVectorValue = arrayValue->typedVector();
     if (isUTF16) {
-        return last ? lastIndexOf16(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset)
-                    : indexOf16(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset);
+        if (last)
+            return lastIndexOf16(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset);
+        // Node's IndexOfString (not IndexOfBuffer, not lastIndexOf) rounds an odd forward UCS2 offset up: https://github.com/nodejs/node/blob/v26.12.1/src/node_buffer.cc#L1089-L1092
+        byteOffset = WTF::roundUpToMultipleOf<2>(byteOffset);
+        return indexOf16(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset);
     }
     return last ? lastIndexOf(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset)
                 : indexOf(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset);

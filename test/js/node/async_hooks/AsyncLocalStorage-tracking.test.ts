@@ -6,7 +6,7 @@ import { basename, join } from "path";
 describe.concurrent("AsyncLocalStorage passes context to callbacks", () => {
   let files = [...new Glob(join(import.meta.dir, "async-context", "async-context-*.js")).scanSync()];
 
-  let todos = ["async-context-worker_threads-message.js"];
+  let todos: string[] = [];
   if (isASAN && isBroken && isLinux) {
     todos.push("async-context-dns-resolveTxt.js");
   }

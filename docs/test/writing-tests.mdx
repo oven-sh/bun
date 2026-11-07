@@ -710,6 +710,8 @@ describe("math", () => {
 | `expectedAssertionsNumber` | The count passed to `expect.assertions()`, or `null`                                      |
 | `isExpectingAssertions`    | `true` after `expect.hasAssertions()`, unless the test also calls `expect.assertions()`   |
 
+When a test runs [concurrently](/test#concurrent-test-execution) with other tests, `expect` can't tell which test called it. `currentTestName` is then `undefined`, in `expect.getState()` and on `this` in a custom matcher. The three assertion properties stay at `0`, `null` and `false`. The `expect` of the [test context](#test-context) knows its test, so use that one in concurrent tests.
+
 `expect.setState(state)` merges your own properties into the object `expect.getState()` returns. It can also set the three assertion properties above. Custom matchers don't get your own properties on `this`.
 
 ## Type Testing

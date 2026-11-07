@@ -1702,6 +1702,10 @@ declare module "bun:test" {
     /**
      * Returns `expect`'s state for the running test, plus anything passed to
      * {@link Expect.setState}. Every call returns the same object, kept up to date.
+     *
+     * When a test runs concurrently with other tests, `expect` can't tell which test called it.
+     * `currentTestName` is then `undefined`, and the three counters stay at `0`, `null` and `false`.
+     * The `expect` of the {@link TestContext} knows its test.
      */
     getState(): ExpectState & Record<string, unknown>;
 
@@ -1718,7 +1722,11 @@ declare module "bun:test" {
   export interface ExpectState {
     /** The number of assertions the current test has made. */
     assertionCalls: number;
-    /** The enclosing `describe` blocks' names and the current test's name, joined by a space. */
+    /**
+     * The enclosing `describe` blocks' names and the current test's name, joined by a space.
+     *
+     * `undefined` outside a test, and in a test that runs concurrently with other tests.
+     */
     currentTestName?: string;
     /** The number passed to `expect.assertions()`, if it was called in the current test. */
     expectedAssertionsNumber: number | null;

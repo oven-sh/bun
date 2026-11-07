@@ -38,7 +38,7 @@ describe("FormData", () => {
     const formData = new FormData();
     formData.append("foo", blob);
     // @ts-expect-error
-    expect(formData.get("foo").name).toBeUndefined();
+    expect(formData.get("foo").name).toBe("blob");
     formData.append("foo2", new File([blob], "foo.txt"));
     // @ts-expect-error
     expect(formData.get("foo2").name).toBe("foo.txt");
@@ -73,6 +73,50 @@ describe("FormData", () => {
       expect(form.getAll("blob")[0]).toBe(entry);
     });
 
+    // https://xhr.spec.whatwg.org/#create-an-entry
+    it("names the new File for a Blob 'blob'", async () => {
+      const form = new FormData();
+      form.append("appended", new Blob(["x"]));
+      form.set("set", new Blob(["y"], { type: "text/plain" }));
+      // A File keeps its own name, also an empty one.
+      form.append("file", new File(["z"], ""));
+      const entries = [...form.entries()].map(([key, value]) => [key, value instanceof File, (value as File).name]);
+      expect(entries).toEqual([
+        ["appended", true, "blob"],
+        ["set", true, "blob"],
+        ["file", true, ""],
+      ]);
+      const body = await new Response(form).text();
+      expect(body.match(/filename="[^"]*"/g)).toEqual(['filename="blob"', 'filename="blob"', 'filename=""']);
+    });
+
+    it("imports the new File for a Blob by its type", async () => {
+      const form = new FormData();
+      form.append("json", new Blob(['{"a":1}'], { type: "application/json" }));
+      form.append("text", new Blob(["a,b"], { type: "text/csv" }));
+      const loaded: Record<string, unknown> = {};
+      for (const [key, value] of form.entries()) {
+        const url = URL.createObjectURL(value as File);
+        loaded[key] = await import(url).then(
+          module => module.default,
+          error => error.name,
+        );
+        URL.revokeObjectURL(url);
+      }
+      expect(loaded).toEqual({ json: { a: 1 }, text: "a,b" });
+    });
+
+    it("Bun.serve sends the name of the new File as the Content-Disposition filename", async () => {
+      const form = new FormData();
+      form.append("unnamed", new Blob(["x"], { type: "application/octet-stream" }));
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(form.get("unnamed") as File),
+      });
+      const response = await fetch(server.url);
+      expect(response.headers.get("content-disposition")).toBe('filename="blob"');
+    });
+
     it("returns the same new File every time when a filename is given", async () => {
       const file = new File(["a"], "a.txt", { type: "text/plain" });
       const form = new FormData();
@@ -93,11 +137,11 @@ describe("FormData", () => {
 
     let b1 = form.get("foo") as any;
     expect(blob.name).toBeUndefined();
-    expect(b1.name).toBeUndefined();
+    expect(b1.name).toBe("blob");
 
     form.set("foo", b1, "foo.txt");
     expect(blob.name).toBeUndefined();
-    expect(b1.name).toBeUndefined();
+    expect(b1.name).toBe("blob");
 
     b1 = form.get("foo") as Blob;
     expect(blob.name).toBeUndefined();

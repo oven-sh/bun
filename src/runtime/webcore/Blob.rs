@@ -1788,7 +1788,8 @@ impl BlobExt for Blob {
 
     fn get_loader(&self, jsc_vm: &VirtualMachine) -> Option<bun_ast::Loader> {
         use bun_resolver::fs::PathResolverExt as _;
-        if let Some(filename) = self.get_file_name() {
+        // FormData names an unnamed Blob entry "blob". That name is not a hint for the loader.
+        if let Some(filename) = self.get_file_name().filter(|name| **name != *b"blob") {
             let current_path = bun_resolver::fs::Path::init(&filename);
             return Some(
                 current_path

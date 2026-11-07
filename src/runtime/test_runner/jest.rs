@@ -651,6 +651,8 @@ pub(crate) mod on_unhandled_rejection {
             }
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
             let mut current_state_data = buntest.get_current_state_data();
+            // A failed matcher's error is a failure of the attempt that called the matcher, also in a hook or a failing test.
+            let attempt = buntest.unclaimed.is_failure(&current_state_data, rejection).then_some(current_state_data);
             // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
                 .entry(buntest)
@@ -663,10 +665,6 @@ pub(crate) mod on_unhandled_rejection {
                         // An expected failure has to come from the test's own callback, not from a stray rejection.
                         || matches!(mode, ScopeMode::Failing | ScopeMode::Fails)
                     {
-                        // A failed matcher's error that this attempt already reported is not an error between tests.
-                        if buntest.unclaimed.was_reported(&current_state_data, rejection) {
-                            return;
-                        }
                         // mark errors in hooks as 'unhandled error between tests'
                         current_state_data = RefDataValue::Start;
                     }
@@ -677,7 +675,7 @@ pub(crate) mod on_unhandled_rejection {
                 global_object,
                 Some(rejection),
                 bun_test::Report::Once,
-                &current_state_data,
+                attempt.as_ref().unwrap_or(&current_state_data),
             );
             buntest.is_reporting_uncaught = false;
             buntest.add_result(current_state_data);

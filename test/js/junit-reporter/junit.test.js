@@ -797,9 +797,11 @@ describe("junit reporter", () => {
     const result = await new Promise((resolve, reject) => {
       xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
     });
-    const tc = result.testsuites.testsuite[0].testcase[0];
-    expect(tc.failure).toHaveLength(1);
-    expect(tc.failure[0]._.match(/Expected: 2/g)).toEqual(["Expected: 2"]);
+    expect(result.testsuites.$).toMatchObject({ tests: "1", failures: "1" });
+    const testcases = result.testsuites.testsuite[0].testcase;
+    expect(testcases).toHaveLength(1);
+    expect(testcases[0].failure).toHaveLength(1);
+    expect(testcases[0].failure[0]._.match(/Expected: 2/g)).toEqual(["Expected: 2"]);
     expect(exitCode).toBe(1);
   });
 

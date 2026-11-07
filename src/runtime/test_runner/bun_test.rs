@@ -1586,11 +1586,10 @@ impl BunTest {
             return;
         }
 
-        if let Some(exception) = exception {
-            if report == Report::Once && self.unclaimed.was_reported(user_data, exception) {
-                return;
-            }
-            self.unclaimed.mark_reported(user_data, exception);
+        if report == Report::Once
+            && exception.is_some_and(|exception| self.unclaimed.was_reported(user_data, exception))
+        {
+            return;
         }
 
         if let (Phase::Execution, Some(thrown)) = (self.phase, exception)
@@ -1605,6 +1604,9 @@ impl BunTest {
         let Some(exception) = exception else {
             return; // the exception should not be visible (eg m_terminationException)
         };
+        if report == Report::Once {
+            self.unclaimed.mark_reported(user_data, exception);
+        }
 
         let mut unhandled_failure: Option<crate::cli::test_command::TestFailure> = None;
         let failure_ctx: *mut core::ffi::c_void = 'ctx: {
@@ -1910,12 +1912,12 @@ impl bun_event_loop::Taskable for RunTestsTask {
     }
 }
 
-/// What `BunTest::on_uncaught_exception` does with a failed matcher's error that the same attempt already reported.
+/// Whether `BunTest::on_uncaught_exception` counts a report as the one of a failed matcher (`Unclaimed::was_reported`).
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Report {
-    /// Drops it: the matcher's promise rejects with that error, so a callback, `done()` or a rejection can carry it again.
+    /// Yes: it is dropped if each matcher that failed with this error in the attempt has its report, and is one of them if not.
     Once,
-    /// Reports it: this is a matcher's own report, and two failed matchers are two reports even with one error object.
+    /// No: `expect.soft()` and a matcher that its group or file gives up on report an error that no promise rejects with.
     Always,
 }
 

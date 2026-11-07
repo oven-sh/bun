@@ -313,8 +313,10 @@ describe.concurrent(".resolves and .rejects", () => {
           return { pass: (await received) === expected, message: () => "toBeLater: " + expected };
         },
       });
-      // Timers fire in the order of their deadlines. So each matcher fails when its timer of 1 ms fires,
-      // and the runner has reported that before the timer of 10 ms lets the test take the promise up.
+      // Resolves when the matcher has failed, and puts no reaction on its promise. The runner has reported the failure then.
+      const failure = async matcher => {
+        while (Bun.peek.status(matcher) === "pending") await later();
+      };
       const matchers = {
         ".resolves": () => expect(later(1)).resolves.toBe(2),
         ".rejects": () => expect(laterReject(1)).rejects.toBe(2),
@@ -326,12 +328,12 @@ describe.concurrent(".resolves and .rejects", () => {
       for (const [name, call] of Object.entries(matchers)) {
         test(name + ", awaited later", async () => {
           const matcher = call();
-          await later(0, 10);
+          await failure(matcher);
           await matcher;
         });
         test(name + ", returned later", async () => {
           const matcher = call();
-          await later(0, 10);
+          await failure(matcher);
           return matcher;
         });
       }
@@ -445,6 +447,17 @@ describe.concurrent(".resolves and .rejects", () => {
           throw new Error("another error", { cause });
         }
       });
+      // The same error object is the same failure, whatever the test changed in it.
+      test("thrown again with another message", async () => {
+        const matcher = failed("thrown again with another message");
+        await later();
+        try {
+          await matcher;
+        } catch (error) {
+          error.message = "another message";
+          throw error;
+        }
+      });
       test.failing("failing", async () => {
         const matcher = failed("failing");
         await later();
@@ -494,6 +507,8 @@ describe.concurrent(".resolves and .rejects", () => {
       "error: another error",
       "error: expect(received).toBe(expected)",
       "(fail) as the cause of another error",
+      "error: expect(received).toBe(expected)",
+      "(fail) thrown again with another message",
       "(pass) failing",
       "error: expect(received).toBe(expected)",
       "(pass) concurrent > other",
@@ -569,6 +584,33 @@ describe.concurrent(".resolves and .rejects", () => {
         matcher.then(() => {});
         await later();
       });
+      test.failing("failing, and leaves a promise that then() made before the failure", async () => {
+        const { promise, resolve } = Promise.withResolvers();
+        expect(promise).resolves.toBe("failing, then() before the failure").then(() => {});
+        resolve(1);
+        await later();
+      });
+      // The failure of the test is the expected one, and no report of it was shown. So the hook's rejection is.
+      describe("afterEach of a failing test", () => {
+        let kept;
+        afterEach(async () => {
+          await kept;
+        });
+        test.failing("awaits what its test kept", async () => {
+          kept = failed("kept by a failing test");
+          await later();
+        });
+      });
+      describe("a hook that awaits late", () => {
+        afterEach(async () => {
+          const { promise, resolve } = Promise.withResolvers();
+          const all = Promise.all([expect(promise).resolves.toBe("Promise.all() before the failure, in a hook")]);
+          resolve(1);
+          await later();
+          await all;
+        });
+        test("what Promise.all() made before the failure", () => {});
+      });
     `);
     expect(report).toEqual([
       "error: expect(received).toBe(expected)",
@@ -583,6 +625,11 @@ describe.concurrent(".resolves and .rejects", () => {
       "(fail) awaits a promise that then() made before the failure",
       "(pass) runs while the callback of the test before it rejects",
       "(pass) failing, and leaves the rejection in a promise that then() made",
+      "(pass) failing, and leaves a promise that then() made before the failure",
+      "error: expect(received).toBe(expected)",
+      "(pass) afterEach of a failing test > awaits what its test kept",
+      "error: expect(received).toBe(expected)",
+      "(fail) a hook that awaits late > what Promise.all() made before the failure",
     ]);
     expect(exitCode).toBe(1);
   });
@@ -591,16 +638,19 @@ describe.concurrent(".resolves and .rejects", () => {
     const { report, exitCode } = await runTests(`
       // The runner can't name the test that called this matcher, or the one after a concurrent test's first await.
       // The file or the group reports their failures, and a test that takes the promise up reports the rejection too.
+      const failure = async matcher => {
+        while (Bun.peek.status(matcher) === "pending") await later();
+      };
       const atTopLevel = expect(later(1)).resolves.toBe("at top level");
       test("awaits a matcher that was called at top level", async () => {
-        await later(0, 10);
+        await failure(atTopLevel);
         await atTopLevel;
       });
       describe("concurrent", () => {
         test.concurrent("awaits a matcher that it called after its first await", async () => {
           await later();
           const matcher = expect(later(1)).resolves.toBe("after the first await");
-          await later(0, 10);
+          await failure(matcher);
           await matcher;
         });
         test.concurrent("other", () => {});
@@ -629,6 +679,13 @@ describe.concurrent(".resolves and .rejects", () => {
         expect(promise).resolves.toSatisfy(throwShared);
         resolve(1);
         await later();
+      });
+      test("two matchers that fail with one error object, the second awaited at once", async () => {
+        const { promise, resolve } = Promise.withResolvers();
+        expect(promise).resolves.toSatisfy(throwShared);
+        resolve(1);
+        await later();
+        await expect(later(1)).resolves.toSatisfy(throwShared);
       });
       test("expect.soft() that fails with the error object of a matcher", async () => {
         const { promise, resolve } = Promise.withResolvers();
@@ -669,6 +726,9 @@ describe.concurrent(".resolves and .rejects", () => {
       "error: shared",
       "error: shared",
       "(fail) two matchers that fail with one error object",
+      "error: shared",
+      "error: shared",
+      "(fail) two matchers that fail with one error object, the second awaited at once",
       "error: shared",
       "error: shared",
       "(fail) expect.soft() that fails with the error object of a matcher",

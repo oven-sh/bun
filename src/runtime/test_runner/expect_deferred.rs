@@ -82,32 +82,45 @@ pub(crate) struct Unclaimed {
     of_file: u32,
     /// When the file stops waiting after its tests have run. `EPOCH` means never.
     deadline: Option<Timespec>,
-    /// The errors of matchers that failed in a test or hook. The runner takes each one once for an attempt.
+    /// One record for each matcher that failed in a test or hook, in the order of the groups. The runner shows each once.
     failures: Vec<Failure>,
 }
 
-/// A matcher's error, which its promise rejects with, and the attempt of the sequence whose entry called the matcher.
-struct Failure {
+/// One attempt of a sequence: a test with its hooks.
+#[derive(Copy, Clone, PartialEq, Eq)]
+struct Attempt {
     group_index: usize,
     sequence_index: usize,
     attempt: u32,
+}
+
+impl Attempt {
+    fn of(entry: &RefDataValue) -> Option<Attempt> {
+        match *entry {
+            RefDataValue::Execution {
+                group_index,
+                entry_data: Some(entry),
+            } => Some(Attempt {
+                group_index,
+                sequence_index: entry.sequence_index,
+                attempt: entry.attempt,
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// The error of one failed matcher, which its promise rejects with, and the attempt whose entry called the matcher.
+struct Failure {
+    of: Attempt,
     /// Weak, because only its identity is read.
     error: Weak<()>,
     is_reported: bool,
 }
 
 impl Failure {
-    fn matches(&self, entry: &RefDataValue, value: JSValue) -> bool {
-        let RefDataValue::Execution {
-            group_index,
-            entry_data: Some(entry),
-        } = *entry
-        else {
-            return false;
-        };
-        self.group_index == group_index
-            && self.sequence_index == entry.sequence_index
-            && self.attempt == entry.attempt
+    fn matches(&self, of: Attempt, value: JSValue) -> bool {
+        self.of == of
             && self
                 .error
                 .get()
@@ -122,11 +135,7 @@ impl Unclaimed {
     }
 
     fn add_failure(&mut self, global: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
-        let RefDataValue::Execution {
-            group_index,
-            entry_data: Some(entry),
-        } = *entry
-        else {
+        let Some(of) = Attempt::of(entry) else {
             return;
         };
         // Two failures with equal primitives are two failures, and an engine can keep two equal strings in one cell.
@@ -134,26 +143,52 @@ impl Unclaimed {
             return;
         }
         self.failures.push(Failure {
-            group_index,
-            sequence_index: entry.sequence_index,
-            attempt: entry.attempt,
+            of,
             error: Weak::create_passive(error, global),
             is_reported: false,
         });
     }
 
-    /// `value` is a failed matcher's error that the runner already took for the attempt that `entry` is or was part of.
-    pub(crate) fn was_reported(&self, entry: &RefDataValue, value: JSValue) -> bool {
+    /// The records of a group and of later groups. The runner never goes back to a group, so they are the last ones.
+    fn failures_since(&self, group_index: usize) -> core::ops::RangeFrom<usize> {
         self.failures
-            .iter()
-            .any(|failure| failure.is_reported && failure.matches(entry, value))
+            .partition_point(|failure| failure.of.group_index < group_index)..
     }
 
+    /// How many matchers of the attempt that `entry` is or was part of failed with `value`, and how many are not shown yet.
+    fn failures_with(&self, entry: &RefDataValue, value: JSValue) -> (usize, usize) {
+        let Some(of) = Attempt::of(entry) else {
+            return (0, 0);
+        };
+        self.failures[self.failures_since(of.group_index)]
+            .iter()
+            .filter(|failure| failure.matches(of, value))
+            .fold((0, 0), |(all, not_shown), failure| {
+                (all + 1, not_shown + usize::from(!failure.is_reported))
+            })
+    }
+
+    /// `value` is the error of a matcher that failed in the attempt that `entry` is or was part of.
+    pub(crate) fn is_failure(&self, entry: &RefDataValue, value: JSValue) -> bool {
+        self.failures_with(entry, value).0 > 0
+    }
+
+    /// `value` is such an error, and the runner has shown one report for each matcher that failed with it.
+    pub(crate) fn was_reported(&self, entry: &RefDataValue, value: JSValue) -> bool {
+        matches!(self.failures_with(entry, value), (1.., 0))
+    }
+
+    /// The runner shows `value` now. If a matcher failed with it, this is the one report of that matcher.
     pub(crate) fn mark_reported(&mut self, entry: &RefDataValue, value: JSValue) {
-        for failure in &mut self.failures {
-            if !failure.is_reported && failure.matches(entry, value) {
-                failure.is_reported = true;
-            }
+        let Some(of) = Attempt::of(entry) else {
+            return;
+        };
+        let since = self.failures_since(of.group_index);
+        let not_shown = self.failures[since]
+            .iter_mut()
+            .find(|failure| !failure.is_reported && failure.matches(of, value));
+        if let Some(failure) = not_shown {
+            failure.is_reported = true;
         }
     }
 
@@ -300,7 +335,7 @@ impl RunningEntry {
         if let Some(failure) = failure {
             buntest
                 .get()
-                .on_uncaught_exception(global, Some(failure), Report::Always, &self.entry);
+                .on_uncaught_exception(global, Some(failure), Report::Once, &self.entry);
         }
         let Some(pending_matchers) = self.pending_matchers(&buntest) else {
             return;

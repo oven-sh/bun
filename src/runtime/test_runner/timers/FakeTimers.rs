@@ -377,8 +377,7 @@ struct Replaced {
     api: Api,
     original: Strong,
     fake: Strong,
-    /// The `PropertyLayers` record (JSMockFunction.cpp), while a spy or `vi.stubGlobal()` replaces the same property.
-    /// It says what goes back, and `original` is what was there before any of them.
+    /// The `PropertyLayers` record (JSMockFunction.cpp) while a spy or `vi.stubGlobal()` shares the property. `original` is then what was under them all.
     layers: StrongOptional,
 }
 

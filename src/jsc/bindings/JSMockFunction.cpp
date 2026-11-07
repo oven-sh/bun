@@ -1110,11 +1110,7 @@ DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSMockFunction);
 extern "C" JSC::EncodedJSValue Bun__FakeTimers__fakeOf(JSC::JSGlobalObject*, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue* original, JSC::EncodedJSValue* layers);
 extern "C" void Bun__FakeTimers__setLayers(JSC::JSGlobalObject*, JSC::EncodedJSValue fake, JSC::EncodedJSValue layers);
 
-// A spy, vi.stubGlobal() and a fake timer each replace a property and remember what was there, to put it back later. When two of
-// them replace the same property and the lower one is undone first, the upper one's memory names a value that is gone. So from the
-// moment a second one lands on a property, they share this record instead: what each of them put on the property, bottom to top,
-// over `base`. Its owners point at an InternalFieldTuple, whose first field is the record as a JSCellButterfly: base storage, base
-// attributes, flags, then four elements for each layer.
+// What a spy, vi.stubGlobal() and a fake timer each put on one property, bottom to top over `base`, kept once two of them share it.
 class PropertyLayers {
 public:
     enum class Kind : int32_t {
@@ -1350,8 +1346,7 @@ static SlotContent contentOfDescriptor(JSGlobalObject* globalObject, JSValue sav
     return { storage, descriptor.attributes() & descriptorAttributes };
 }
 
-// The record that a stub or a fake landing on `object[key]` joins, or null if nothing else replaces the property. `content` is what
-// the property holds. `stub` is the name's entry in stubbedGlobals, if it has one.
+// The record that a stub or a fake joins when it lands on `object[key]`, which holds `content`. `stub` is the name's entry in stubbedGlobals.
 static InternalFieldTuple* layersForLanding(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& key, SlotContent content, JSValue stub)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());

@@ -687,7 +687,7 @@ Mocks made with `vi` follow Vitest instead. A `vi.fn(implementation)` mock goes 
 
 ### Restore All Mocks
 
-`mock.restore()` restores every mock at once, instead of calling `mockFn.mockRestore()` on each one. It does not reset modules overridden with `mock.module()`.
+`mock.restore()` restores every spy at once, instead of calling `mockFn.mockRestore()` on each one. A mock made with `mock()`, `jest.fn()` or `vi.fn()` keeps its recorded calls and its implementation. `mock.restore()` does not reset modules overridden with `mock.module()`.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { expect, mock, spyOn, test } from "bun:test";

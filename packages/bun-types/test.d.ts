@@ -90,7 +90,7 @@ declare module "bun:test" {
      */
     module(id: string, factory: ModuleMockFactory): void | Promise<void>;
     /**
-     * Restore the previous value of mocks.
+     * Restore every spied-on property. A mock that is not a spy keeps its recorded calls and its implementation.
      */
     restore(): void;
 

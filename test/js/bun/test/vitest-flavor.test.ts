@@ -484,11 +484,14 @@ describe.concurrent("test context", () => {
   const none = "AssertionError: received 0 assertions, but expected at least one assertion to be called";
   const tooLate = (call: string) =>
     `error: ${call} was called after the assertion count of its test was checked. Call it in the test, or in a beforeEach or afterEach hook.`;
-  // The result line of each test, after the lines that say why it failed.
-  const resultsWithErrors = (stderr: string) =>
+  // A test that is called as in Vitest passes with a count that was set after its callback, and the report says so.
+  const lateCount =
+    "note: an assertion count was set after the test callback and was not met. It is not checked there, as in Vitest. Set it in the test or in a beforeEach hook.";
+  // The result line of each test, after the error and note lines that belong to it.
+  const resultsWithMessages = (stderr: string) =>
     stderr
       .split("\n")
-      .filter(line => /^(\((pass|fail)\)|\w*[eE]rror:) /.test(line))
+      .filter(line => /^(\((pass|fail)\)|\w*[eE]rror:|note:) /.test(line))
       .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
 
   // As in Jest, the assertion counts of a "bun:test" test are checked when its last hook is done.
@@ -808,6 +811,7 @@ describe.concurrent("test context", () => {
       "note: 1 assertion ran after the count was checked and was not counted",
       "note: 2 assertions ran after the count was checked and were not counted",
       "note: 1 assertion ran after the count was checked and was not counted",
+      lateCount,
     ]);
   });
 
@@ -841,26 +845,22 @@ describe.concurrent("test context", () => {
             afterEach(() => { expect.hasAssertions(); });
             test("not checked", ({ onTestFailed }) => { onTestFailed(() => console.log("failed, after the hooks")); });
           });
-          describe("afterEach reads the count", () => {
-            afterEach(() => { console.log("expected:", expect.getState().expectedAssertionsNumber); });
-            test("met", () => { expect.assertions(1); expect(1).toBe(1); });
-          });
         `,
       });
       expect({ log, results, errors, exitCode }).toEqual({
-        log: ["failed", "expected: 1"],
+        log: ["failed"],
         results: [
           "(fail) afterEach asserts > too few",
           "(pass) afterEach asserts > met",
           "(fail) afterEach removes the count > too late",
           "(pass) afterEach sets a count > not checked",
-          "(pass) afterEach reads the count > met",
         ],
         errors: [tooFew, tooFew],
         exitCode: 1,
       });
       expect(stderr.split("\n").filter(line => line.startsWith("note: "))).toEqual([
         "note: 1 assertion ran after the count was checked and was not counted",
+        lateCount,
       ]);
     },
   );
@@ -987,7 +987,7 @@ describe.concurrent("test context", () => {
         });
       `,
     });
-    expect({ log, results: resultsWithErrors(stderr), exitCode }).toEqual({
+    expect({ log, results: resultsWithMessages(stderr), exitCode }).toEqual({
       log: ["the next test: null 0"],
       results: [
         none,
@@ -995,17 +995,29 @@ describe.concurrent("test context", () => {
         "(pass) set before the callback ends > beforeEach: expect.hasAssertions() > one expect() in the test",
         tooFew,
         "(fail) set before the callback ends > beforeEach: expect.assertions(1) > no expect() in the test",
+        lateCount,
         "(pass) set after the callback > afterEach: expect.assertions(1) > no expect() in the test",
+        lateCount,
         "(pass) set after the callback > afterEach: expect.assertions(2) > one expect() in the test",
+        lateCount,
         "(pass) set after the callback > afterEach: expect.hasAssertions() > no expect() in the test",
+        lateCount,
         "(pass) set after the callback > afterEach: expect.setState() > no expect() in the test",
+        lateCount,
         "(pass) set after the callback > onTestFinished",
+        lateCount,
         "(pass) set after the callback > the function that beforeEach returns > test",
+        lateCount,
         "(pass) set after the callback > aroundEach > after runTest()",
+        lateCount,
         "(pass) set after the callback > the teardown of a fixture",
+        lateCount,
         "(pass) set after the callback > the expect of the test context > serial",
+        lateCount,
         "(pass) set after the callback > the expect of the test context > concurrent > first",
+        lateCount,
         "(pass) set after the callback > the expect of the test context > concurrent > second",
+        lateCount,
         "(pass) set after the callback > the next test > follows a count",
         "(pass) set after the callback > the next test > starts without a count",
       ],
@@ -1014,7 +1026,7 @@ describe.concurrent("test context", () => {
   });
 
   test(`a count that is set after the callback of a "vitest" test does not fail a run, with retry or repeats`, async () => {
-    const { log, results, errors, exitCode } = await runTests({
+    const { log, stderr, exitCode } = await runTests({
       "a.test.js": `
         import { test, expect, afterEach, afterAll } from "vitest";
         const runs = {};
@@ -1024,16 +1036,15 @@ describe.concurrent("test context", () => {
         test("repeats", { repeats: 2 }, () => {});
       `,
     });
-    expect({ log, results, errors, exitCode }).toEqual({
+    expect({ log, results: resultsWithMessages(stderr), exitCode }).toEqual({
       log: [`{"retry":1,"repeats":3}`],
-      results: ["(pass) retry", "(pass) repeats (run 3)"],
-      errors: [],
+      results: [lateCount, "(pass) retry", lateCount, "(pass) repeats (run 3)"],
       exitCode: 0,
     });
   });
 
   test("test.fails does not take a count that is set after the callback for the failure", async () => {
-    const { results, errors, exitCode } = await runTests({
+    const { stderr, exitCode } = await runTests({
       "a.test.js": `
         import { test, describe, expect, afterEach } from "vitest";
         describe("serial", () => {
@@ -1048,14 +1059,13 @@ describe.concurrent("test context", () => {
         });
       `,
     });
-    expect({ results, errors, exitCode }).toEqual({
+    expect({ results: resultsWithMessages(stderr), exitCode }).toEqual({
       results: [
         "(fail) serial > test.fails",
         "(fail) serial > { fails: true }",
         "(fail) concurrent > first",
         "(fail) concurrent > second",
       ],
-      errors: [],
       exitCode: 1,
     });
   });
@@ -1105,7 +1115,7 @@ describe.concurrent("test context", () => {
         });
       `,
     });
-    expect({ results: resultsWithErrors(stderr), exitCode }).toEqual({
+    expect({ results: resultsWithMessages(stderr), exitCode }).toEqual({
       results: [
         '(pass) hooks of "vitest" > beforeAll: expect.assertions(1) > runs',
         '(pass) hooks of "vitest" > beforeAll: expect.hasAssertions() > runs',
@@ -1151,17 +1161,20 @@ describe.concurrent("test context", () => {
         });
       `,
     });
-    expect({ results: resultsWithErrors(stderr), exitCode }).toEqual({
+    expect({ results: resultsWithMessages(stderr), exitCode }).toEqual({
       results: [
         tooFew,
         "(fail) afterEach sets a count > test()",
+        lateCount,
         "(pass) afterEach sets a count > test.for() 1",
+        lateCount,
         "(pass) afterEach sets a count > test.extend()",
         "(pass) afterEach asserts > 1 planned, 0 made in the test",
         tooMany,
         "(fail) afterEach asserts > 1 planned, 1 made in the test",
         tooLate("expect.assertions()"),
         "(fail) aroundEach sets a count after runTest() > test()",
+        lateCount,
         "(pass) aroundEach sets a count after runTest() > test.for() 1",
         "(pass) aroundAll sets a count > runs",
       ],

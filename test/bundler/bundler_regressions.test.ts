@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
+import { delimiter } from "node:path";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -281,6 +282,73 @@ describe("bundler", () => {
     },
     run: {
       stdout: "MyClass",
+    },
+  });
+
+  // The fixture of packagejson/NodePathsESBuildIssue2752 without its "browser" map row, which no "exports" decides.
+  itBundled("regression/NODE_PATHPackageExports", {
+    files: {
+      "/src/entry.js": `
+        import "pkg1";
+        import "pkg2";
+        import "@scope/pkg4";
+      `,
+      "/usr/lib/pkg/pkg1/package.json": `{ "main": "./foo.js" }`,
+      "/usr/lib/pkg/pkg1/foo.js": `console.log('pkg1')`,
+      "/lib/pkg/pkg2/package.json": `{ "exports": { ".": "./bar.js" } }`,
+      "/lib/pkg/pkg2/bar.js": `console.log('pkg2')`,
+      "/tmp/pkg/@scope/pkg4/package.json": `{ "exports": { ".": { "import": "./bat.js" } } }`,
+      "/tmp/pkg/@scope/pkg4/bat.js": `console.log('pkg4')`,
+    },
+    entryPoints: ["/src/entry.js"],
+    backend: "cli",
+    env: {
+      NODE_PATH: ["{{root}}/usr/lib/pkg", "{{root}}/lib/pkg", "{{root}}/tmp/pkg"].join(delimiter),
+    },
+    run: {
+      stdout: "pkg1\npkg2\npkg4",
+    },
+  });
+
+  itBundled("regression/NODE_PATHPackageExportsStyle", {
+    files: {
+      "/src/entry.css": `@import "csspkg";`,
+      "/lib/csspkg/package.json": `{ "main": "./legacy.css", "exports": { ".": { "style": "./style.css", "default": "./def.js" } } }`,
+      "/lib/csspkg/style.css": `.from-style { color: red; }`,
+      "/lib/csspkg/legacy.css": `.from-main { color: blue; }`,
+      "/lib/csspkg/def.js": ``,
+    },
+    entryPoints: ["/src/entry.css"],
+    outfile: "/out.css",
+    backend: "cli",
+    env: {
+      NODE_PATH: "{{root}}/lib",
+    },
+    onAfterBundle(api) {
+      const css = api.readFile("/out.css");
+      expect({ style: css.includes(".from-style"), main: css.includes(".from-main") }).toEqual({
+        style: true,
+        main: false,
+      });
+    },
+  });
+
+  // As in node_modules, the "browser" map of the package is read for a file that "exports" names.
+  itBundled("regression/NODE_PATHPackageExportsBrowserMap", {
+    files: {
+      "/src/entry.js": `import "bpkg/x.js";`,
+      "/lib/bpkg/package.json": `{ "exports": { "./x.js": "./x.js" }, "browser": { "./x.js": "./x-browser.js" } }`,
+      "/lib/bpkg/x.js": `console.log("x")`,
+      "/lib/bpkg/x-browser.js": `console.log("x-browser")`,
+    },
+    entryPoints: ["/src/entry.js"],
+    target: "browser",
+    backend: "cli",
+    env: {
+      NODE_PATH: "{{root}}/lib",
+    },
+    run: {
+      stdout: "x-browser",
     },
   });
 

@@ -404,6 +404,39 @@ impl CodeOptions {
     }
 }
 
+/// What `bun run` finds by the "exports" of the package that the specifier names in `node_path`, a `NODE_PATH` entry. `None` where it goes on to the file or the folder of that name.
+#[cfg(test)]
+pub(super) fn find_exported_in_node_path<H: Host + ?Sized>(
+    host: &H,
+    search: &FileSearch<'_>,
+    node_path: &[u8],
+) -> Option<FoundCode> {
+    // The folder has the written name: in a `NODE_PATH` entry a version is a part of it.
+    installed_name(search.specifier)?;
+    let name = written_package_name(search.specifier)?;
+    let subpath = [b".".as_slice(), &search.specifier[name.len()..]].concat();
+    if subpath.len() > SUBPATH_CAPACITY {
+        return None;
+    }
+    let plain = PlainSearch {
+        host,
+        parse_manifest: H::parse_package_json,
+        orders: &BUN_RUN.extension_orders,
+        kind: search.kind,
+        prefers_module_field: search.prefers_module_field,
+        holds: &|condition| BUN_RUN.matches_condition(condition, search.kind),
+        arena: OnceCell::new(),
+    };
+    let directory = join_unrooted(node_path, name);
+    let manifest = plain.read_manifest(&directory)?;
+    let exports = plain.read_exports(&manifest)?;
+    if matches!(exports, ExportsEntry::Invalid) {
+        return None;
+    }
+    let found = plain.find_in_exports(&directory, &exports, &subpath);
+    matches!(found, FoundCode::File { .. }).then_some(found)
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum KeyKind {
     Exact,

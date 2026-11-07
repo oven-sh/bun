@@ -265,6 +265,7 @@ Explain why a package is installed
         package_pattern: &[u8],
         top_only: bool,
     ) -> Result<(), crate::Error> {
+        Output::stdout_is_the_result();
         let max_depth = if top_only {
             1
         } else {

@@ -103,6 +103,7 @@ impl OutdatedCommand {
         Output::flush();
 
         let cli = CommandLineArguments::parse(Subcommand::Outdated)?;
+        Output::stdout_is_the_result();
 
         let (manager, original_cwd) =
             match PackageManager::init(&mut *ctx, &cli, Subcommand::Outdated) {

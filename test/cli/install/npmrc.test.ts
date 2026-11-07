@@ -2840,6 +2840,82 @@ describe.concurrent("a registry URL whose host is easy to misread", () => {
   });
 });
 
+describe.concurrent("the path of a request to the registry", () => {
+  // bun sends the path of the URL it built, a leading `//` included, as npm does. Each row has a
+  // registry of its own, which records the request target and answers 404.
+  type Row = { files: Record<string, string>; cmd?: string[] };
+
+  async function run({ files, cmd = ["install"] }: Row) {
+    const requests: { target: string; auth: string | null }[] = [];
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const url = new URL(req.url);
+        requests.push({ target: url.pathname + url.search, auth: req.headers.get("authorization") });
+        return Response.json({ error: "not found" }, { status: 404 });
+      },
+    });
+    const host = `127.0.0.1:${registry.port}`;
+    using dir = tempDir("registry-request-path", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+      ...Object.fromEntries(Object.entries(files).map(([name, text]) => [name, text.replaceAll("HOST", host)])),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: String(dir),
+      // An ambient proxy would take the requests to the local registry.
+      env: {
+        ...env,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+        http_proxy: "",
+        https_proxy: "",
+        HTTP_PROXY: "",
+        HTTPS_PROXY: "",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { requests, exitCode };
+  }
+
+  test.each<[string, Row, { target: string; auth: string | null }]>([
+    [
+      "a registry at the root, written with two slashes",
+      { files: { ".npmrc": "registry=http://HOST//\n" } },
+      { target: "/no-deps", auth: null },
+    ],
+    [
+      "a registry whose path starts with //",
+      { files: { ".npmrc": "registry=http://HOST//npm/\n" } },
+      { target: "//npm/no-deps", auth: null },
+    ],
+    [
+      "a registry whose path starts with //, for bun pm view",
+      { files: { ".npmrc": "registry=http://HOST//npm/\n" }, cmd: ["pm", "view", "no-deps"] },
+      { target: "//npm/no-deps", auth: null },
+    ],
+    [
+      "a registry whose path starts with //, with credentials in its URL",
+      { files: { ".npmrc": "registry=http://alice:s3cret@HOST//npm/\n" } },
+      { target: "//npm/no-deps", auth: `Basic ${btoa("alice:s3cret")}` },
+    ],
+    [
+      "a token keyed to the path of the registry as written",
+      { files: { ".npmrc": "registry=http://HOST//npm/\n//HOST//npm/:_authToken=abc\n" } },
+      { target: "//npm/no-deps", auth: "Bearer abc" },
+    ],
+    [
+      "a token keyed to /npm/ is not for the registry at //npm/",
+      { files: { ".npmrc": "registry=http://HOST//npm/\n//HOST/npm/:_authToken=abc\n" } },
+      { target: "//npm/no-deps", auth: null },
+    ],
+  ])("%s", async (_, row, request) => {
+    expect(await run(row)).toEqual({ requests: [request], exitCode: 1 });
+  });
+});
+
 describe("protocol-relative registry", () => {
   test("bun install rejects registry=//host:port/path/ instead of requesting http://localhost/host/", async () => {
     // The `:port` used to be taken for a `:option=value` suffix of the pathname and the

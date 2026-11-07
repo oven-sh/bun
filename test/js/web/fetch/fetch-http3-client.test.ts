@@ -159,7 +159,7 @@ beforeAll(async () => {
         );
       },
     },
-    fetch: () => new Response("not found", { status: 404 }),
+    fetch: req => new Response("not found", { status: 404, headers: { "x-seen-path": new URL(req.url).pathname } }),
   });
   base = `https://127.0.0.1:${server.port}`;
 
@@ -195,6 +195,16 @@ describe("fetch protocol: http3", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("x-proto")).toBe("h3");
     expect(await res.text()).toBe("hello over h3");
+  });
+
+  test("the :path keeps the leading slashes of the pathname", async () => {
+    const seen: string[] = [];
+    for (const tail of ["//a//b?x=1", "///", "//?q=1"]) {
+      const res = await fetch(`${base}${tail}`, h3);
+      await res.text();
+      seen.push(res.headers.get("x-seen-path")!);
+    }
+    expect(seen).toEqual(["//a//b", "///", "//"]);
   });
 
   test("'h3' alias", async () => {

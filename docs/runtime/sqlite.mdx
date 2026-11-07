@@ -700,6 +700,30 @@ SQLite reads the input of `cmd` from `value` and writes its output there. `value
 
 The return value is the SQLite status code: `0` is `SQLITE_OK`, `12` is `SQLITE_NOTFOUND` (the VFS does not implement `cmd`, or the database is in memory).
 
+### `.status(op: number, reset?: boolean)`
+
+To use the advanced `sqlite3_db_status` API, call `.status(op, reset)` on your `Database` instance. It reads one counter of this connection. `op` is one of the `SQLITE_DBSTATUS_*` constants.
+
+```ts db.ts icon="/icons/typescript.svg" highlight={5,6}
+import { Database, constants } from "bun:sqlite";
+
+const db = new Database("mydb.sqlite");
+db.query("SELECT * FROM users").all();
+const cache = db.status(constants.SQLITE_DBSTATUS_CACHE_USED);
+console.log(`page cache: ${cache.current} bytes`);
+```
+
+The result has two fields:
+
+- `current`: the present value of the counter.
+- `highwater`: the highest value of the counter so far. An `op` that keeps no high-water mark reports `0` here. `SQLITE_DBSTATUS_CACHE_USED`, `SQLITE_DBSTATUS_CACHE_USED_SHARED`, `SQLITE_DBSTATUS_SCHEMA_USED` and `SQLITE_DBSTATUS_STMT_USED` are of this kind.
+
+Pass `reset: true` to set the high-water mark back to `current` after the read.
+
+Most counters are in bytes. `SQLITE_DBSTATUS_LOOKASIDE_USED` counts lookaside slots. `SQLITE_DBSTATUS_CACHE_HIT`, `SQLITE_DBSTATUS_CACHE_MISS`, `SQLITE_DBSTATUS_CACHE_WRITE` and `SQLITE_DBSTATUS_CACHE_SPILL` count pager events.
+
+`.status()` throws a `RangeError` for an `op` the SQLite library does not know, and an error if the database is closed. Bun turns off the process-wide SQLite memory statistics (`SQLITE_CONFIG_MEMSTATUS`), so `sqlite3_memory_used()` and the other global counters report nothing. `sqlite3_db_status` does not depend on them.
+
 ---
 
 ## User-defined functions
@@ -901,6 +925,7 @@ class Database {
   static setCustomSQLite(path: string): boolean;
   fileControl(op: number, arg?: ArrayBufferView | number | null): number;
   fileControl(zDbName: string, op: number, arg?: ArrayBufferView | number | null): number;
+  status(op: number, reset?: boolean): { current: number; highwater: number };
 
   close(throwOnError?: boolean): void;
 }

@@ -1971,6 +1971,52 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     return JSValue::encode(jsNumber(statusCode));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDbStatusFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    VersionSqlite3* versionDB = databaseForHandle(lexicalGlobalObject, scope, callFrame->argument(0));
+    if (!versionDB) [[unlikely]]
+        return {};
+
+    JSValue opValue = callFrame->argument(1);
+    if (!opValue.isInt32()) {
+        throwTypeError(lexicalGlobalObject, scope, "Expected op to be an integer"_s);
+        return {};
+    }
+    int op = opValue.asInt32();
+    bool reset = callFrame->argument(2).toBoolean(lexicalGlobalObject);
+
+    sqlite3* db = versionDB->handle();
+    if (!db) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
+        return {};
+    }
+
+#if LAZY_LOAD_SQLITE
+    if (!lazy_sqlite3_db_status) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "sqlite3_db_status is not available in this SQLite library"_s));
+        return {};
+    }
+#endif
+
+    // The 32-bit variant: sqlite3_db_status64 is missing from the system libsqlite3 of macOS 13 and 14.
+    int current = 0;
+    int highwater = 0;
+    int rc = sqlite3_db_status(db, op, &current, &highwater, reset);
+    if (rc != SQLITE_OK) {
+        // The only non-OK result is SQLITE_ERROR for an op this library does not know. It sets no errmsg.
+        throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, makeString("Unknown sqlite3_db_status op: "_s, op)));
+        return {};
+    }
+
+    JSObject* result = JSC::constructEmptyObject(lexicalGlobalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "current"_s), jsNumber(current));
+    result->putDirect(vm, Identifier::fromString(vm, "highwater"_s), jsNumber(highwater));
+    return JSValue::encode(result);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementHandleNumberFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1995,6 +2041,7 @@ static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "serialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSerialize, 1 } },
     { "deserialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDeserialize, 2 } },
     { "fcntl"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementFcntlFunction, 2 } },
+    { "dbStatus"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDbStatusFunction, 3 } },
     { "handleNumber"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementHandleNumberFunction, 1 } },
     { "defineFunction"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDefineFunction, 6 } },
     { "updateHook"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementGetUpdateHookFunction, 2 } },

@@ -869,7 +869,7 @@ fn set_method<'a>(
     }
 }
 
-/// `base ** exponent`
+/// `base ** exponent`, with libm's `pow` and not `bun_ast::math::pow`: what ESLint evaluates is V8's power, not Bun's.
 pub(super) fn pow(base: f64, exponent: f64) -> f64 {
     if exponent.is_nan() || (base.abs() == 1.0 && exponent.is_infinite()) {
         return f64::NAN;

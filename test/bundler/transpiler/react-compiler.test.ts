@@ -1910,6 +1910,202 @@ describe("bundler", () => {
     },
   });
 
+  // The compiler folds an operator when it knows both operands. A `let` that is
+  // assigned twice is a constant to the compiler and not to the parser, so these
+  // are the compiler's folds with `minify.syntax` too. The folded number has to
+  // be the one that the source gives.
+  //
+  // `**` was libm's `pow`. JavaScriptCore multiplies for a whole exponent from 0
+  // to 1000 and takes a square root for 0.5 and -0.5, so the last digits
+  // differed, and `1 ** Infinity` was 1. ToInt32 did not wrap an operand of 2^63
+  // or more, so `1e20 | 0` was -1.
+  const folds = [
+    ["1.05", "**", "4", "1.21550625"],
+    ["1.1", "**", "10", "2.593742460100002"],
+    ["0.3", "**", "3", "0.027"],
+    ["1.0000001", "**", "1000", "1.000100004995219"],
+    ["9.85", "**", "0.5", "3.138470965295043"],
+    ["2", "**", "-0.5", "0.7071067811865475"],
+    ["2", "**", "-2", "0.25"],
+    ["1", "**", "Infinity", "NaN"],
+    ["-1", "**", "-Infinity", "NaN"],
+    ["1", "**", "NaN", "NaN"],
+    ["1e20", "|", "0", "1661992960"],
+    ["-1e20", "|", "0", "-1661992960"],
+    ["9223372036854775808", "|", "0", "0"],
+    ["1e20", "&", "-1", "1661992960"],
+    ["1e20", "^", "1", "1661992961"],
+    ["1e20", "<<", "1", "-970981376"],
+    ["1", "<<", "1e20", "1"],
+    ["-1e20", ">>", "4", "-103874560"],
+    ["1e20", ">>>", "0", "1661992960"],
+  ] as const;
+  type Fold = readonly [left: string, operator: string, right: string, ...value: string[]];
+  /** A component that folds each row into a `let`. */
+  const foldsOf = (name: string, rows: readonly Fold[]) => `
+    function ${name}() {
+      ${rows.map(([left, operator, right], i) => `let v${i} = ${left}; v${i} ${operator}= ${right};`).join("\n")}
+      return <t folded={[${rows.map((_, i) => `v${i}`).join(", ")}]} />;
+    }
+  `;
+  /** Each operator over two parameters, which the engine computes when the program runs. */
+  const computed = `
+    const computed = {
+      "**": (a, b) => a ** b,
+      "|": (a, b) => a | b,
+      "&": (a, b) => a & b,
+      "^": (a, b) => a ^ b,
+      "<<": (a, b) => a << b,
+      ">>": (a, b) => a >> b,
+      ">>>": (a, b) => a >>> b,
+    };
+  `;
+  /** The text of a function at the top level of a bundle. */
+  const functionIn = (out: string, name: string) => {
+    const start = out.indexOf(`function ${name}(`);
+    return out.slice(start, out.indexOf("\n}", start));
+  };
+  // A compound assignment is lowered to its operator: one that is not folded prints as `v0 = v0 ** 4`.
+  const anOperator = /\*\*|<<|>>|[|&^]/;
+  for (const target of ["browser", "bun"] as const) {
+    for (const minifySyntax of [false, true] as const) {
+      itBundled(`react-compiler/FoldsToWhatTheSourceGives-${target}-syntax=${minifySyntax}`, {
+        files: {
+          "/entry.jsx": /* jsx */ `
+            ${foldsOf("Folds", folds)}
+            // What reads a folded number: a comparison, a branch and a template.
+            function Reads({ n }) {
+              let x = 1.05;
+              x **= 4;
+              return <t same={x === 1.05 ** n} branch={x === 1.21550625 ? "taken" : "not taken"} text={\`x=\${x}\`} />;
+            }
+            ${computed}
+            const folded = Folds().p.folded;
+            ${JSON.stringify(folds)}.forEach(([left, operator, right], i) => {
+              const source = computed[operator](Number(left), Number(right));
+              const same = Object.is(folded[i], source);
+              console.log(left, operator, right, "=", String(folded[i]) + (same ? "" : ", and the source gives " + source));
+            });
+            console.log(JSON.stringify(Reads({ n: 4 }).p));
+          `,
+          ...stubReact,
+        },
+        reactCompiler: true,
+        target,
+        backend: "api",
+        minifySyntax,
+        run: {
+          stdout: [
+            ...folds.map(([left, operator, right, value]) => `${left} ${operator} ${right} = ${value}`),
+            `{"same":true,"branch":"taken","text":"x=1.21550625"}`,
+          ].join("\n"),
+        },
+        onAfterBundle(api) {
+          // The numbers are in the text: the compiler folded each row, and the engine computes none.
+          const out = api.readFile("/out.js");
+          const text = functionIn(out, "Folds");
+          expect(text).not.toMatch(anOperator);
+          expect(text.replace(/\s+/g, "")).toContain(`folded:[${folds.map(row => row[3]).join(",")}]`);
+          expect(functionIn(out, "Reads")).toContain(`"x=1.21550625"`);
+        },
+      });
+    }
+  }
+
+  // Every kind of operand that ToInt32 or a power treats in its own way, on either
+  // side of each operator. With `minify.syntax` the parser folds the same operator
+  // over two literals, and a bundle has one number for one expression.
+  const wide = [
+    ...["NaN", "Infinity", "-Infinity", "-0", "5e-324", "0.5", "-0.5", "1.5", "-1.5", "123.45", "-123.45"],
+    ...["2147483647", "2147483648", "-2147483648", "4294967295", "4294967295.5", "-4294967295.5", "4294967296"],
+    ...["-4294967296", "9007199254740991", "9007199254740994", "4611686018427387904", "9223372036854775808"],
+    ...["-9223372036854775808", "18446744073709551616", "1e20", "-1e20", "1.7014118346046923e38", "1e300"],
+    "1.7976931348623157e308",
+  ];
+  const narrow = ["0", "1", "-1", "31", "32", "33", "255"];
+  const bases = ["1.05", "1.1", "0.3", "9.85", "2", "-1.05", "1e300", "0", "-0", "1", "-1", "NaN", "Infinity"];
+  const exponents = [
+    ...["0", "-0", "0.5", "-0.5", "2", "3", "4", "10", "1000", "1001", "-2", "1.5"],
+    ...["NaN", "Infinity", "-Infinity"],
+  ];
+  const grid: Fold[] = [
+    ...["|", "&", "^", "<<", ">>", ">>>"].flatMap(operator =>
+      wide.flatMap(a =>
+        narrow.flatMap((b): Fold[] => [
+          [a, operator, b],
+          [b, operator, a],
+        ]),
+      ),
+    ),
+    ...bases.flatMap(base => exponents.map((exponent): Fold => [base, "**", exponent])),
+  ];
+  const parts = Array.from({ length: Math.ceil(grid.length / 200) }, (_, n) => grid.slice(n * 200, n * 200 + 200));
+  itBundled("react-compiler/ParserAndCompilerFoldTheSameNumber", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        ${parts.map((rows, n) => foldsOf(`Grid${n}`, rows)).join("\n")}
+        ${computed}
+        const literals = [${grid.map(([left, operator, right]) => `(${left}) ${operator} (${right})`).join(", ")}];
+        const folded = [${parts.map((_, n) => `Grid${n}`).join(", ")}].flatMap(Grid => Grid().p.folded);
+        let differ = 0;
+        ${JSON.stringify(grid)}.forEach(([left, operator, right], i) => {
+          const source = computed[operator](Number(left), Number(right));
+          if (Object.is(folded[i], literals[i]) && Object.is(folded[i], source)) return;
+          if (differ++ < 10) console.log(left, operator, right, "is", folded[i], "in a component,", literals[i], "over literals and", source, "in the source");
+        });
+        console.log(differ, "of", folded.length, "differ");
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    minifySyntax: true,
+    run: { stdout: `0 of ${grid.length} differ` },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      for (let n = 0; n < parts.length; n++) expect(functionIn(out, `Grid${n}`)).not.toMatch(anOperator);
+      // The parser folded each of `literals`.
+      const start = out.indexOf("literals = [");
+      expect(out.slice(start, out.indexOf("];", start))).not.toMatch(anOperator);
+    },
+  });
+
+  // `bun test --react-compiler` compiles a file when it loads it.
+  test("react-compiler/FoldsToWhatTheSourceGives in bun test", async () => {
+    using dir = tempDir("react-compiler-folds", {
+      "Folds.jsx": /* jsx */ `
+        export function Folds() {
+          let power = 1.05;
+          power **= 4;
+          let bits = 1e20;
+          bits |= 0;
+          return <t folded={[power, bits]} />;
+        }
+      `,
+      "folds.test.js": /* js */ `
+        import { expect, test } from "bun:test";
+        import { Folds } from "./Folds.jsx";
+        const computed = [(a, b) => a ** b, (a, b) => a | b];
+        test("folds", () => {
+          expect(String(Folds)).not.toMatch(${anOperator});
+          expect(Folds().p.folded).toEqual([computed[0](1.05, 4), computed[1](1e20, 0)]);
+        });
+      `,
+      ...stubReact,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--react-compiler", "./folds.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
+
   // prune_non_escaping_scopes does not visit the test of a `?:`. A reactive
   // scope that only the test reaches gets no node, but the local that scope
   // reassigns still refers to it. Once that local has to be memoized, Babel

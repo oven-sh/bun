@@ -103,6 +103,9 @@ pub struct EnvironmentConfig {
     /// `React.useMemo` is React's if `React` is imported from React, under whatever name. To upstream it is if the name
     /// is `React`, wherever that comes from.
     pub react_is_known_by_its_module: bool,
+    /// `a ** b` of two numbers folds to what Bun's engine computes for it, which is also what the parser's fold gives.
+    /// Upstream folds it with libm's `pow`, which has other last digits for many powers.
+    pub powers_fold_as_the_engine_computes: bool,
     /// For `validate_exhaustive_*_dependencies`: the dependencies that are inferred are in the order of their bytes.
     /// Upstream's are in that of `localeCompare`: `a`, `A`, `b`.
     pub dependencies_are_sorted_by_bytes: bool,
@@ -163,6 +166,7 @@ impl Default for EnvironmentConfig {
             unreachable_code_is_reported_at_its_function: false,
             tagged_templates_are_always_called: false,
             react_is_known_by_its_module: true,
+            powers_fold_as_the_engine_computes: true,
             dependencies_are_sorted_by_bytes: false,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,

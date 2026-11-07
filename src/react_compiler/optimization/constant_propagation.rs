@@ -491,7 +491,22 @@ fn evaluate_instruction(
                 Some(Constant::Primitive { value: rhs, .. }),
             ) = (lhs_value, rhs_value)
             {
-                let result = evaluate_binary_op(*operator, lhs, rhs);
+                let result = match (operator, lhs, rhs) {
+                    // Not in upstream, whose fold of `**` is libm's `pow` (`js_exponentiate`, from
+                    // facebook/react#37587). No engine computes every power with libm. What Bun
+                    // builds gets the pow of its engine, which the parser's fold calls too.
+                    (
+                        BinaryOperator::Exponent,
+                        PrimitiveValue::Number(base),
+                        PrimitiveValue::Number(exponent),
+                    ) if env.config.powers_fold_as_the_engine_computes => {
+                        Some(PrimitiveValue::Number(FloatValue::new(bun_ast::math::pow(
+                            base.value(),
+                            exponent.value(),
+                        ))))
+                    }
+                    _ => evaluate_binary_op(*operator, lhs, rhs),
+                };
                 if let Some(ref prim) = result {
                     let loc = *loc;
                     instr.value = InstructionValue::Primitive {
@@ -905,7 +920,7 @@ fn evaluate_binary_op(
         },
         BinaryOperator::Exponent => match (lhs, rhs) {
             (PrimitiveValue::Number(l), PrimitiveValue::Number(r)) => Some(PrimitiveValue::Number(
-                FloatValue::new(l.value().powf(r.value())),
+                FloatValue::new(js_exponentiate(l.value(), r.value())),
             )),
             _ => None,
         },
@@ -1093,19 +1108,23 @@ fn js_abstract_equal(lhs: &PrimitiveValue, rhs: &PrimitiveValue) -> bool {
 // JavaScript Number.toString() approximation
 // =============================================================================
 
+/// ECMAScript Number::exponentiate (`**`). `f64::powf` follows IEEE 754, which
+/// returns 1 for `1 ** NaN` and `(±1) ** ±Infinity`; JavaScript returns NaN.
+fn js_exponentiate(base: f64, exponent: f64) -> f64 {
+    if base.abs() == 1.0 && !exponent.is_finite() {
+        return f64::NAN;
+    }
+    base.powf(exponent)
+}
+
 /// ECMAScript ToInt32: convert f64 to i32 with modular (wrapping) semantics.
 fn js_to_int32(n: f64) -> i32 {
     if n.is_nan() || n.is_infinite() || n == 0.0 {
         return 0;
     }
-    // Truncate, then wrap to 32 bits
-    let int64 = (n.trunc() as i64) & 0xFFFFFFFF;
-    // Reinterpret as signed i32
-    if int64 >= 0x80000000 {
-        (int64 as u32) as i32
-    } else {
-        int64 as i32
-    }
+    // Rust saturates f64-to-i64 conversions, but JavaScript ToInt32 wraps modulo 2^32.
+    let wrapped = n.trunc().rem_euclid((1_u64 << 32) as f64);
+    wrapped as u32 as i32
 }
 
 /// ECMAScript ToUint32: convert f64 to u32 with modular (wrapping) semantics.

@@ -648,6 +648,139 @@ describe("util", () => {
         column: sites[0].columnNumber,
       });
     });
+
+    // Node's getCallSites() is native and reads neither Error.stackTraceLimit nor Error.prepareStackTrace
+    // (lib/util.js getCallSites, src/node_util.cc GetCallSites). Node.js v26.3.0 gives the same for every row.
+    function callSitesSixDeep(n = 6) {
+      try {
+        return n ? callSitesSixDeep(n - 1) : util.getCallSites(3);
+      } finally {
+      }
+    }
+
+    // The rows "0", "x" and "deleted" pass without the native capture too: there the helper could write its own limit.
+    it.each([
+      ["0", () => (Error.stackTraceLimit = 0)],
+      ['"x"', () => (Error.stackTraceLimit = "x")],
+      ["0, not writable", () => Object.defineProperty(Error, "stackTraceLimit", { value: 0, writable: false })],
+      ['"x", not writable', () => Object.defineProperty(Error, "stackTraceLimit", { value: "x", writable: false })],
+      ["5, not writable", () => Object.defineProperty(Error, "stackTraceLimit", { value: 5, writable: false })],
+      [
+        "an accessor that ignores a write",
+        () => Object.defineProperty(Error, "stackTraceLimit", { get: () => 0, set() {} }),
+      ],
+      ["deleted", () => delete Error.stackTraceLimit],
+    ])("returns frameCount call sites when Error.stackTraceLimit is %s", (_, setLimit) => {
+      const descriptor = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+      let names;
+      try {
+        setLimit();
+        names = callSitesSixDeep().map(site => site.functionName);
+      } finally {
+        Object.defineProperty(Error, "stackTraceLimit", descriptor);
+      }
+      expect(names).toEqual(["callSitesSixDeep", "callSitesSixDeep", "callSitesSixDeep"]);
+    });
+
+    it("returns call sites when Error.prepareStackTrace calls it", () => {
+      const savedPrepare = Error.prepareStackTrace;
+      let names;
+      Error.prepareStackTrace = function prepare() {
+        names = callSitesSixDeep().map(site => site.functionName);
+        return "prepared";
+      };
+      try {
+        expect(new Error("formatted by the callback").stack).toBe("prepared");
+      } finally {
+        Error.prepareStackTrace = savedPrepare;
+      }
+      expect(names).toEqual(["callSitesSixDeep", "callSitesSixDeep", "callSitesSixDeep"]);
+    });
+
+    // Each of these leaves the Error constructor in a state that a test cannot undo, so each runs in its own process.
+    it.concurrent.each([
+      ["Error is frozen", `Error.stackTraceLimit = 0; Object.freeze(Error);`],
+      [
+        "Error.prepareStackTrace is not writable",
+        `Object.defineProperty(Error, "prepareStackTrace", { value: () => "prepared", writable: false });`,
+      ],
+      [
+        "Error.stackTraceLimit and Error.prepareStackTrace are accessors",
+        `for (const name of ["stackTraceLimit", "prepareStackTrace"]) {
+          Object.defineProperty(Error, name, {
+            get() { accesses.push("get " + name); },
+            set() { accesses.push("set " + name); },
+          });
+        }`,
+      ],
+      [
+        "Error.captureStackTrace is a function of the program",
+        `Error.captureStackTrace = () => { accesses.push("call captureStackTrace"); throw new RangeError("thrown by the program"); };`,
+      ],
+      ["Error.captureStackTrace is deleted", `delete Error.captureStackTrace;`],
+      ["the global Error is another function", `globalThis.Error = function NotError() {};`],
+    ])("returns frameCount call sites and runs no code of the program when %s", async (_, setup) => {
+      const src = `
+        const util = require("node:util");
+        const accesses = [];
+        ${setup}
+        ${callSitesSixDeep}
+        const names = callSitesSixDeep().map(site => site.functionName);
+        console.log(JSON.stringify({ names, accesses }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({
+        stdout: JSON.stringify({ names: ["callSitesSixDeep", "callSitesSixDeep", "callSitesSixDeep"], accesses: [] }),
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // The frame of a suspended async caller holds a code block that is on no stack. Under these options a collection
+    // runs every few allocations and frees the code of each function that is not running.
+    it("keeps the code of suspended async callers while it makes their call sites", async () => {
+      const src = `
+        const util = require("node:util");
+        async function leaf() {
+          await null;
+          return util.getCallSites(200).map(site => site.functionName).join();
+        }
+        let top = leaf;
+        for (let i = 0; i < 10; i++) {
+          top = (0, eval)("(next => async function awaits" + i + "() { return await next(); })")(top);
+        }
+        (async () => {
+          const seen = new Set();
+          for (let i = 0; i < 20; i++) seen.add(await top());
+          console.log(JSON.stringify([...seen]));
+        })();
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: {
+          ...bunEnv,
+          BUN_JSC_forceCodeBlockToJettisonDueToOldAge: "1",
+          BUN_JSC_useZombieMode: "1",
+          BUN_JSC_slowPathAllocsBetweenGCs: "13",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({
+        stdout: JSON.stringify([
+          "leaf,awaits0,awaits1,awaits2,awaits3,awaits4,awaits5,awaits6,awaits7,awaits8,awaits9,",
+        ]),
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("getSystemErrorName", () => {

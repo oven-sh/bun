@@ -957,7 +957,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!("--seed <INT>                     Set the random seed for test randomization"),
     parse_param!("--coverage                       Generate a coverage profile"),
     parse_param!(
-        "--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'. Implies --coverage."
+        "--coverage-reporter <STR>...     Report coverage in 'text', 'lcov' and/or 'json-summary'. Defaults to 'text'. Implies --coverage."
     ),
     parse_param!(
         "--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'."
@@ -2179,18 +2179,18 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
 
     if !args.options(b"--coverage-reporter").is_empty() {
         ctx.test_options.coverage.enabled = true;
-        ctx.test_options.coverage.reporters = CoverageReporters {
-            text: false,
-            lcov: false,
-        };
+        ctx.test_options.coverage.reporters = CoverageReporters::NONE;
+        ctx.test_options.coverage.reporters_from_cli = true;
         for reporter in args.options(b"--coverage-reporter") {
             if *reporter == b"text" {
                 ctx.test_options.coverage.reporters.text = true;
             } else if *reporter == b"lcov" {
                 ctx.test_options.coverage.reporters.lcov = true;
+            } else if *reporter == b"json-summary" {
+                ctx.test_options.coverage.reporters.json_summary = true;
             } else {
                 bun_core::pretty_errorln!(
-                    "<r><red>error<r>: invalid coverage reporter '{}'. Available options: 'text' (console output), 'lcov' (code coverage file)",
+                    "<r><red>error<r>: invalid coverage reporter '{}'. Available options: 'text' (console output), 'lcov' (code coverage file), 'json-summary' (Istanbul coverage-summary.json)",
                     BStr::new(reporter)
                 );
                 Global::exit(1);

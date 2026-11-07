@@ -84,10 +84,11 @@ coverageDir = "path/to/somewhere"    # default "coverage"
 
 ### Available Reporters
 
-| Reporter | Description                                          |
-| -------- | ---------------------------------------------------- |
-| `text`   | Prints a text summary of the coverage to the console |
-| `lcov`   | Save coverage in lcov format                         |
+| Reporter       | Description                                          |
+| -------------- | ---------------------------------------------------- |
+| `text`         | Prints a text summary of the coverage to the console |
+| `lcov`         | Save coverage in lcov format                         |
+| `json-summary` | Save an Istanbul `coverage-summary.json`             |
 
 ### LCOV Coverage Reporter
 
@@ -129,6 +130,16 @@ jobs:
         with:
           file: ./coverage/lcov.info
 ```
+
+### JSON Summary Coverage Reporter
+
+The `json-summary` reporter writes `coverage-summary.json` to the coverage directory, in the format of Istanbul's reporter of the same name (used by Jest, Vitest and nyc). It has a `total` entry and one entry per file, keyed by absolute path. Each has `lines`, `statements`, `functions` and `branches`, each as `{ "total", "covered", "skipped", "pct" }`.
+
+```bash terminal icon="terminal"
+bun test --coverage-reporter=json-summary
+```
+
+`statements` has the same counts as `lines`. `branches` is not measured yet, and is always `{ "total": 0, "covered": 0, "skipped": 0, "pct": 100 }`.
 
 ## Excluding Files from Coverage
 

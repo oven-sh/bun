@@ -7935,7 +7935,9 @@ it("a listener can cancel Readable.toWeb(req) and end the response in the same t
   expect(exitCode).toBe(0);
 });
 
-// Node.js stamps the idle time of a keep-alive socket with a primordial. The fixture also runs under Node.js when it is installed.
+// Node.js reads no JavaScript clock for the idle time of a keep-alive socket: the timer of the socket starts at libuv's loop time
+// (socket.setTimeout() in resOnFinish of lib/_http_server.js, insert() in lib/internal/timers.js). The fixture also runs under Node.js
+// when it is installed.
 it("a keep-alive server answers with the engine's clock when Date is mocked at the first load of node:http", async () => {
   using dir = tempDir("http-keep-alive-mocked-date", {
     "fixture.cjs": `

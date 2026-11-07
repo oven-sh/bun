@@ -143,7 +143,7 @@ export function assertNoCapturedDateFunction(code: string, file: string) {
   const capture = /\bDate\.now\b(?!\s*\()|\bDate\.prototype\b/.exec(code);
   if (capture) {
     throw new Error(
-      `${file}: \`${capture[0]}\` is whatever script has stored there when this module first runs. Write ${dateFunctions.map(name => `\`$${name}\``).join(", ")}, or add the member to dateFunctions in src/codegen/replacements.ts`,
+      `${file}: \`${capture[0]}\` reads what script has stored on Date. Bind the engine's own function to a const (\`const DatePrototypeGetTime = $DatePrototypeGetTime;\`) and call it with \`DatePrototypeGetTime.$call(date)\`. There are ${dateFunctions.map(name => `\`$${name}\``).join(", ")}. Another one has to be a function in JavaScriptCore's table of DateConstructor or DatePrototype, which toUTCString, toGMTString, toTemporalInstant, [Symbol.toPrimitive] and constructor are not: add it to dateFunctions in src/codegen/replacements.ts, to the rows of src/codegen/builtins/host/bun-syntax.builtins.ts and to src/js/builtins.d.ts. For anything else, call the method on the date itself`,
     );
   }
 }

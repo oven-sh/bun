@@ -1,13 +1,20 @@
-// Alone: it replaces Date.now, which the other programs of an executable would then no longer read as a constant
-// Date.now is replaced while node:v8 and node:http load for the first time, and put back afterwards. Both modules read the engine's clock
-// then and later, and never call the replacement. The server sends no Date header: that one reads the clock anew for each response.
+// Alone: it replaces Date.now and Date.prototype.toString, which the other programs of an executable would then no longer read as constants
+// Date.now and Date.prototype.toString are replaced while node:v8 and node:http load for the first time and util.inspect first runs, and are
+// put back afterwards. The modules read the engine's clock and print with the engine's function then and later, and never call a replacement.
+// The server sends no Date header: that one reads the clock anew for each response.
 const stored =
-  '{"whileReplaced":{"times":[true,true],"statuses":[200,200,200]},"afterwards":{"times":[true,true],"statuses":[200,200,200]},"calls":0}';
+  '{"whileReplaced":{"times":[true,true],"statuses":[200,200,200],"invalid":"Invalid Date"},"afterwards":{"times":[true,true],"statuses":[200,200,200],"invalid":"Invalid Date"},"calls":0}';
 const now = Date.now;
+const toString = Date.prototype.toString;
 let calls = 0;
 Date.now = () => (calls++, 5);
+Date.prototype.toString = function () {
+  calls++;
+  return "replaced";
+};
 const { GCProfiler } = require("node:v8");
 const http = require("node:http");
+const util = require("node:util");
 
 function times() {
   const profiler = new GCProfiler();
@@ -31,9 +38,14 @@ server.listen(0, "127.0.0.1", async () => {
         })
         .on("error", reject);
     });
-  const round = async () => ({ times: times(), statuses: [await get(), await get(), await get()] });
+  const round = async () => ({
+    times: times(),
+    statuses: [await get(), await get(), await get()],
+    invalid: util.inspect(new Date(NaN)),
+  });
   const whileReplaced = await round();
   Date.now = now;
+  Date.prototype.toString = toString;
   const line = JSON.stringify({ whileReplaced, afterwards: await round(), calls });
   console.log(line);
   agent.destroy();

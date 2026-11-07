@@ -329,6 +329,31 @@ describe.concurrent("builtin modules read the native classes and objects, not th
     expect(result.exported).toContain("worker_threads.MessageChannel");
   });
 
+  // A module that reads Date when it first runs keeps a mock that is on at that moment. Node.js lists [] for the same program.
+  it("no module reads the global Date when it first runs", async () => {
+    expect(
+      await run(`
+        const RealDate = Date;
+        const readBy = [];
+        let id;
+        Object.defineProperty(globalThis, "Date", {
+          configurable: true,
+          get() {
+            readBy.push(id);
+            return RealDate;
+          },
+        });
+        for (id of require("node:module").builtinModules) if (!/^bun:(main|wrap)$/.test(id)) require(id);
+        id = "util.inspect()";
+        require("node:util").inspect(new RealDate(0));
+        id = "mock.timers";
+        require("node:test").mock.timers;
+        console.log(JSON.stringify(readBy));
+        process.exit(0);
+      `),
+    ).toEqual([]);
+  });
+
   it("each realm uses its own native classes", async () => {
     expect(
       await run(`

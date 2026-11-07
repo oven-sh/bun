@@ -5418,32 +5418,32 @@ const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &
 
 const JSC::ClassInfo NativeGlobals::s_info = { "NativeGlobals"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NativeGlobals) };
 
-// `@natives.DateNow` and the like (dateFunctions in src/codegen/replacements.ts), made as reifyStaticProperty() makes the public one, from JavaScriptCore's own row.
+// `@natives.DateNow`, `@natives.DatePrototypeGetTime` (dateFunctions in src/codegen/replacements.ts): the function of that name in JavaScriptCore's own table, made as reifyStaticProperty() makes the public one.
 static JSC::JSFunction* createDateFunction(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName)
 {
-    static constexpr struct {
-        ASCIILiteral alias;
-        bool isOnPrototype;
-        ASCIILiteral member;
-    } rows[] = {
-        { "DateNow"_s, false, "now"_s },
-        { "DatePrototypeGetTime"_s, true, "getTime"_s },
-        { "DatePrototypeToISOString"_s, true, "toISOString"_s },
-        { "DatePrototypeToString"_s, true, "toString"_s },
-    };
-    for (auto& row : rows) {
-        if (!WTF::equal(propertyName.publicName(), row.alias))
-            continue;
-        const JSC::HashTable* table = (row.isOnPrototype ? JSC::DatePrototype::info() : JSC::DateConstructor::info())->staticPropHashTable;
-        RELEASE_ASSERT(table);
-        const JSC::HashTableValue* entry = table->entry(JSC::Identifier::fromString(vm, row.member));
-        RELEASE_ASSERT(entry);
-        unsigned attributes = entry->attributes();
-        RELEASE_ASSERT(attributes & PropertyAttribute::Function);
-        RELEASE_ASSERT(!(attributes & PropertyAttribute::Builtin) && !(attributes & PropertyAttribute::DOMJITFunction));
-        return JSC::JSFunction::create(vm, globalObject, entry->functionLength(), row.member, entry->function(), JSC::ImplementationVisibility::Public, entry->intrinsic());
+    StringView name = propertyName.publicName();
+    if (!name.startsWith("Date"_s))
+        return nullptr;
+    name = name.substring(4);
+    const JSC::ClassInfo* info = JSC::DateConstructor::info();
+    if (name.startsWith("Prototype"_s)) {
+        info = JSC::DatePrototype::info();
+        name = name.substring(9);
     }
-    return nullptr;
+    const JSC::HashTable* table = info->staticPropHashTable;
+    RELEASE_ASSERT(table && !name.isEmpty());
+    // `DateUTC` is `UTC`, `DateNow` is `now`.
+    String member = name.toString();
+    const JSC::HashTableValue* entry = table->entry(JSC::Identifier::fromString(vm, member));
+    if (!entry) {
+        member = makeString(toASCIILower(name[0]), name.substring(1));
+        entry = table->entry(JSC::Identifier::fromString(vm, member));
+    }
+    RELEASE_ASSERT(entry);
+    unsigned attributes = entry->attributes();
+    RELEASE_ASSERT(attributes & PropertyAttribute::Function);
+    RELEASE_ASSERT(!(attributes & PropertyAttribute::Builtin) && !(attributes & PropertyAttribute::DOMJITFunction));
+    return JSC::JSFunction::create(vm, globalObject, entry->functionLength(), member, entry->function(), JSC::ImplementationVisibility::Public, entry->intrinsic());
 }
 
 bool NativeGlobals::getOwnPropertySlot(JSC::JSObject* object, JSC::JSGlobalObject* lexicalGlobalObject, JSC::PropertyName propertyName, JSC::PropertySlot& slot)

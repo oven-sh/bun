@@ -1019,6 +1019,7 @@ bitflags::bitflags! {
         // bits 6..7 = _padding
     }
 }
+bun_core::assert_distinct_flag_bits!(Op);
 
 impl Op {
     pub(crate) fn merge(before: Op, after: Op) -> Op {

@@ -1150,6 +1150,7 @@ bitflags::bitflags! {
         // _padding: u17
     }
 }
+bun_core::assert_distinct_flag_bits!(Flags);
 
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 

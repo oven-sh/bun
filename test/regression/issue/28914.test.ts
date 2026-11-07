@@ -114,12 +114,11 @@ describe.concurrent("issue #28914 - bundler preserves top-level @layer statement
     expect(exitCode).toBe(0);
   });
 
-  // The `.source_index` branch of `prepareCssAstsForChunk` only shallow-copies
-  // the stylesheet, so its `rules.v.items` still points at the AST owned by
-  // the parse graph. If the same source is imported from multiple chunks the
-  // filter must not mutate that shared backing buffer. This test imports the
-  // same file twice with two different layer conditions so both copies go
-  // through the filter, and then checks every layer's rule still shows up.
+  // The `SourceIndex` arm of `prepare_css_asts_for_chunk` only shallow-copies
+  // the stylesheet, so its rule list still points at the AST owned by the
+  // parse graph. Nothing may write through that copy. This test imports the
+  // same file twice with two different layer conditions, and then checks
+  // every layer's rule still shows up.
   test("duplicate imports of a layered source don't corrupt the shared AST", async () => {
     using dir = tempDir("css-layer-28914-dup", {
       "entry.css": /* css */ `
@@ -127,10 +126,8 @@ describe.concurrent("issue #28914 - bundler preserves top-level @layer statement
 @import url('./shared.css') layer(one);
 @import url('./shared.css') layer(two);
 `,
-      // `shared.css` deliberately mixes an `.import` rule with an
-      // `.layer_statement` in its prefix so the filter's interleaved
-      // `else` branch (dropped=1, layer_count=1) is exercised, not the
-      // no-op fast path.
+      // `shared.css` has an `@import` and a `@layer` statement before its
+      // style rule: the import is inlined and the statement stays.
       "shared.css": /* css */ `
 @import url('./nested.css');
 @layer base;
@@ -151,14 +148,11 @@ describe.concurrent("issue #28914 - bundler preserves top-level @layer statement
 
     const out = await Bun.file(`${dir}/out/entry.css`).text();
 
-    // Both layer-wrapped copies of shared.css must emit the rule. An
-    // in-place compaction of the shared backing array would leave a stale
-    // slot that the second visit re-reads, producing three matches
-    // instead of two (the duplicated rule falls through to the wrap step).
+    // Both layer-wrapped copies of shared.css must emit the rule. A write
+    // through the shared rule list changes what the second copy prints.
     const sharedMatches = out.match(/\.shared\s*\{/g) ?? [];
     expect(sharedMatches.length).toBe(2);
-    // The shared `@layer base;` declaration must also survive in both
-    // copies — it's part of the prefix the filter scans over.
+    // The shared `@layer base;` statement must also survive in both copies.
     const baseMatches = out.match(/@layer base;/g) ?? [];
     expect(baseMatches.length).toBe(2);
     // The entry file's comma-separated ordering statement must survive.

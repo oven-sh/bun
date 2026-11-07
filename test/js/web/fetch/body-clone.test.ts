@@ -1214,15 +1214,18 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
 
   // The body shares its store with the Bun.file() it was made from. A stat cached
   // there is what `size`, `lastModified`, `exists()` and a later `.body` answer from.
-  describe("clone() of a Bun.file() body does not change what the Bun.file() answers", () => {
-    const post = (body: Bun.BunFile) => new Request("http://example.com/", { method: "POST", body });
+  describe.each([
+    ["Bun.file()", (blob: Blob): BodyInit => blob],
+    ["Bun.file().stream()", (blob: Blob): BodyInit => blob.stream()],
+  ])("clone() of a %s body does not change what the Bun.file() answers", (_, bodyOf) => {
+    const post = (file: Bun.BunFile) => new Request("http://example.com/", { method: "POST", body: bodyOf(file) });
     const cloners: Array<[string, (file: Bun.BunFile) => unknown]> = [
-      ["Response.clone()", file => new Response(file).clone()],
+      ["Response.clone()", file => new Response(bodyOf(file)).clone()],
       ["Request.clone()", file => post(file).clone()],
       ["new Request(request)", file => new Request(post(file))],
       ["new Request(request, init)", file => new Request(post(file), { headers: { "x-test": "1" } })],
       // Bun takes a Response as init and clones its body.
-      ["new Request(url, response)", file => new Request("http://example.com/", new Response(file))],
+      ["new Request(url, response)", file => new Request("http://example.com/", new Response(bodyOf(file)))],
     ];
 
     async function afterClone<T>(
@@ -1258,9 +1261,12 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
       }).toEqual({ lastModified: mtime.getTime(), exists: false });
     });
 
-    test("both bodies see a file that grew", async () => {
-      const path = join(tempDirWithFiles("body-clone-grew", { "log.txt": "12345" }), "log.txt");
-      const original = new Response(Bun.file(path));
+    test.each([
+      ["grew", "12345"],
+      ["was empty at the clone", ""],
+    ])("both bodies see a file that %s", async (_, contents) => {
+      const path = join(tempDirWithFiles("body-clone-grew", { "log.txt": contents }), "log.txt");
+      const original = new Response(bodyOf(Bun.file(path)));
       const clone = original.clone();
       grow(path);
       expect(await Promise.all([original.body, clone.body].map(body => Bun.readableStreamToText(body!)))).toEqual([
@@ -1274,14 +1280,14 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
       const file = Bun.file(path);
       expect(await file.exists()).toBe(false);
       writeFileSync(path, "12345");
-      new Response(file).clone();
+      new Response(bodyOf(file)).clone();
       expect(await file.exists()).toBe(true);
     });
 
     test("the size console.log prints for the clone", () => {
       const sizeOf = (change: (path: string) => void, body: (file: Bun.BunFile) => Blob) => {
         const path = join(tempDirWithFiles("body-clone-label", { "log.txt": "12345" }), "log.txt");
-        const clone = new Response(body(Bun.file(path))).clone();
+        const clone = new Response(bodyOf(body(Bun.file(path)))).clone();
         change(path);
         return [Bun.inspect(clone), Bun.inspect(clone)].map(printed => printed.split("\n")[0]).join(" ");
       };
@@ -1307,13 +1313,51 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     // procfs reports `st_size == 0` for a file that has content, so with that stat cached all three read "".
     test.skipIf(!isLinux)("a procfs file is read whole", async () => {
       const file = Bun.file("/proc/sys/kernel/ostype");
-      const original = new Response(file);
+      const original = new Response(bodyOf(file));
       const clone = original.clone();
       expect({
         original: await original.text(),
         clone: await clone.text(),
         file: await file.text(),
       }).toEqual({ original: "Linux\n", clone: "Linux\n", file: "Linux\n" });
+    });
+
+    describe.skipIf(!isLinux)("a cloned procfs body", () => {
+      const bodies = () => {
+        const original = new Response(bodyOf(Bun.file("/proc/sys/kernel/ostype")));
+        return [original, original.clone()];
+      };
+
+      test.each([
+        ["arrayBuffer()", async (response: Response) => Buffer.from(await response.arrayBuffer()).toString()],
+        ["bytes()", async (response: Response) => Buffer.from(await response.bytes()).toString()],
+        ["text() of its blob()", async (response: Response) => (await response.blob()).text()],
+      ])("is read whole through %s", async (_, read) => {
+        expect(await Promise.all(bodies().map(read))).toEqual(["Linux\n", "Linux\n"]);
+      });
+
+      // The three readers below take the length of a file body from its stat. A procfs body is empty for them,
+      // as a `Bun.file()` body that nothing cloned is.
+
+      // Observed: `.body` yields no chunk. #41593 leaves the stream unsized when `st_size` is 0.
+      test.todo("is read whole through .body", async () => {
+        const chunks = await Promise.all(bodies().map(response => Array.fromAsync(response.body!)));
+        expect(chunks.map(chunk => Buffer.concat(chunk).toString())).toEqual(["Linux\n", "Linux\n"]);
+      });
+
+      // Observed: `size` is 0. blob() returns the file-backed Blob, and its `size` is the `st_size`.
+      test.todo("has its size through blob()", async () => {
+        const blobs = await Promise.all(bodies().map(response => response.blob()));
+        expect(blobs.map(blob => blob.size)).toEqual([6, 6]);
+      });
+
+      // Observed: `Content-Length: 0` and no body. #43974 reads such a file to its end.
+      test.todo("is sent whole by Bun.serve", async () => {
+        const responses = bodies();
+        await using server = Bun.serve({ port: 0, fetch: () => responses.shift()! });
+        const sent = [await fetch(server.url), await fetch(server.url)];
+        expect(await Promise.all(sent.map(response => response.text()))).toEqual(["Linux\n", "Linux\n"]);
+      });
     });
   });
 

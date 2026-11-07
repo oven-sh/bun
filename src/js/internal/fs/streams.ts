@@ -131,9 +131,10 @@ const { internals } = fileHandles;
 if (internals) takeFileHandleInternals(internals);
 else fileHandles.whenLoaded = takeFileHandleInternals;
 
-// node:fs loads with the first stream over a FileHandle.
+// node:fs loads with the first stream over a FileHandle. The stream calls these as node:fs writes them, not what its exports hold now.
 function fileHandleStreamFs(fh: FileHandle) {
-  const { read, write, fsync, writev } = require("node:fs");
+  require("node:fs");
+  const { read, write, fsync, writev } = require("internal/shared").originals.fs!;
   return {
     // try to use the basic fs.read/write/fsync if available, since they are less
     // abstractions. however, node.js allows patching the file handle, so this has

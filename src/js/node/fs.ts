@@ -24,7 +24,7 @@ const fs = require("internal/fs/binding");
 
 const constants = $processBindingConstants.fs;
 
-const { guardCallback, kCustomPromisifyArgsSymbol } = require("internal/shared");
+const { guardCallback, kCustomPromisifyArgsSymbol, originals } = require("internal/shared");
 
 // Captured at load: a process.nextTick that user code replaces later (fake timers) must not hold back fs callbacks.
 const nextTick = process.nextTick;
@@ -679,6 +679,9 @@ defineCustomPromisifyArgs(read, ["bytesRead", "buffer"]);
 defineCustomPromisifyArgs(readv, ["bytesRead", "buffers"]);
 defineCustomPromisifyArgs(write, ["bytesWritten", "buffer"]);
 defineCustomPromisifyArgs(writev, ["bytesWritten", "buffers"]);
+
+// The functions as they are written here: a stream over a FileHandle calls these, whatever a program assigns to the exports.
+originals.fs = { read, write, fsync, writev };
 
 // The implementation (StatWatcher and friends) is lazily loaded from "internal/fs/watchfile"
 // the first time fs.watchFile or fs.unwatchFile is called.

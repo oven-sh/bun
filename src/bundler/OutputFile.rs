@@ -24,8 +24,7 @@ pub struct OutputFile {
     /// Relative
     pub dest_path: Box<[u8]>,
     pub side: Option<Side>,
-    /// This is only set for the JS bundle, and not files associated with an
-    /// entrypoint like sourcemaps and bytecode
+    /// Only `bun build --compile --aot` sets it: entry point `i` of the compiled program is the file with `Some(i)`.
     pub entry_point_index: Option<u32>,
     pub referenced_css_chunks: Box<[Index]>,
     pub source_index: IndexOptional,

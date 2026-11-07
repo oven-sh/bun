@@ -73,8 +73,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         );
         w!(client_graph, IncrementalGraph::default());
         w!(server_graph, IncrementalGraph::default());
-        w!(barrel_files_with_deferrals, Default::default());
-        w!(barrel_needed_exports, Default::default());
+        w!(tracked_barrels, Default::default());
         w!(incremental_result, IncrementalResult::EMPTY);
         w!(route_lookup, Default::default());
         w!(route_bundles, Vec::new());
@@ -541,8 +540,7 @@ impl Drop for DevServer {
                 graph_safety_lock: _,
                 client_graph: _,
                 server_graph: _,
-                barrel_files_with_deferrals: _,
-                barrel_needed_exports: _,
+                tracked_barrels: _,
                 incremental_result: _,
                 route_lookup: _,
                 html_router: _,

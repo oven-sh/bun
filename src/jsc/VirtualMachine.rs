@@ -2711,7 +2711,10 @@ impl VirtualMachine {
         }
         match kind {
             Teardown::Worker => WebWorker__teardownJSCVM(vm.global()),
-            Teardown::MainThreadExit => Zig__GlobalObject__destructOnExit(vm.global()),
+            Teardown::MainThreadExit => {
+                Zig__GlobalObject__destructOnExit(vm.global());
+                VMHolder::set_cached_global_object(Some(core::ptr::null_mut()));
+            }
         }
         // Finalizers just closed the sockets only they owned; `us_socket_close`
         // queues onto `loop->data.closed_head`, normally freed on the next tick.
@@ -5477,7 +5480,7 @@ impl VirtualMachine {
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
         let top_level_dir = self.top_level_dir();
-        let mut source_to_use: &[u8] = if !is_special_source {
+        let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
                 bun_resolver::fs::PathName::init(source).dir_with_trailing_slash()
             } else {
@@ -5491,9 +5494,6 @@ impl VirtualMachine {
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
-        let mut may_retry_from_root = self.finds_entry_points_by_path && !is_special_source;
-        let mut source_before_root: Option<&[u8]> = None;
-        let mut has_read_folders_again = false;
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
@@ -5509,17 +5509,6 @@ impl VirtualMachine {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
-                    if core::mem::take(&mut may_retry_from_root)
-                        && let Some(root) = self
-                            .standalone_module_graph
-                            .map(|graph| graph.base_public_path_with_default_suffix())
-                            .filter(|root| !source_to_use.starts_with(root))
-                    {
-                        source_before_root = Some(source_to_use);
-                        source_to_use = root;
-                        retry_on_not_found = !has_read_folders_again;
-                        continue;
-                    }
                     if !retry_on_not_found {
                         if let Some(chai) = self.resolve_chai_next_to_vitest(
                             normalized_specifier,
@@ -5531,20 +5520,12 @@ impl VirtualMachine {
                         return Err(crate::CrateError::ModuleNotFound);
                     }
                     retry_on_not_found = false;
-                    has_read_folders_again = true;
-                    // A file that was written since the folder of the importer was read is looked for from there again, and then from the root.
-                    if let Some(asked) = source_before_root
-                        .take()
-                        .filter(|asked| bun_paths::is_absolute(asked))
-                    {
-                        source_to_use = asked;
-                        may_retry_from_root = true;
-                    }
 
                     // SAFETY: thread-local heap allocation; sole `&mut` on the JS
                     // thread for the duration of the bust below.
                     let buf = unsafe { &mut *specifier_cache_resolver_buf() }.as_mut_slice();
                     let mut busted_as_spelled = false;
+                    let mut busted_working_directory = false;
                     let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
                         if let Some(dir) = bun_paths::dirname(normalized_specifier) {
                             if dir.len() > buf.len() {
@@ -5590,6 +5571,21 @@ impl VirtualMachine {
                                 let resolver = &mut self.transpiler.resolver;
                                 let found = folders
                                     .find(|it| resolver.read_dir_info_ignore_error(it).is_some());
+                                // From there the resolver has gone on to the working directory.
+                                if found.is_some() {
+                                    use bun_paths::resolve_path::{
+                                        join_abs_string_buf_checked, platform,
+                                    };
+                                    let mut buffer = bun_paths::path_buffer_pool::get();
+                                    let parts = [normalized_specifier, &b".."[..]];
+                                    let folder = join_abs_string_buf_checked::<platform::Auto>(
+                                        top_level_dir,
+                                        &mut buffer[..],
+                                        &parts,
+                                    );
+                                    busted_working_directory =
+                                        folder.is_some_and(|it| resolver.bust_dir_cache(it));
+                                }
                                 Some(found.unwrap_or_else(|| top_level_dir.to_vec()))
                             }
                             _ => None,
@@ -5609,6 +5605,7 @@ impl VirtualMachine {
                     if self.transpiler.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
                     ) || busted_as_spelled
+                        || busted_working_directory
                     {
                         continue;
                     }
@@ -5938,6 +5935,21 @@ impl VirtualMachine {
                 }
                 notes.push(logged.data.clone());
             }
+            // The message is that of `bun run`, which finds the file beside the importer. What helps here is another thing.
+            let importer = normalize_source(source_utf8.slice());
+            let folder = match IS_A_FILE_PATH {
+                true => bun_resolver::fs::PathName::init(importer).dir_with_trailing_slash(),
+                false => importer,
+            };
+            let resolver = &jsc_vm.transpiler.resolver;
+            if resolver.looks_in_executable_alone(folder, specifier_utf8.slice()) {
+                notes.push(bun_ast::Data {
+                    text: std::borrow::Cow::Borrowed(
+                        b"it isn't in this executable, and a relative path is only looked up there. To embed a file, import it by a constant path or pass it to bun compile as another entry point. For a data file you can also write its folder or its extension in the path, as in \"./data/\" + name or name + \".json\". An absolute path loads a data file from disk.",
+                    ),
+                    location: None,
+                });
+            }
             msg.notes = notes.into_boxed_slice();
             return Ok(Err(crate::ResolveMessage::create(
                 global,
@@ -6121,6 +6133,9 @@ impl VirtualMachine {
                 }
             }
         }
+
+        // After the preloads, so the modules they loaded still count as loaded by a preload.
+        crate::cpp::JSMock__didBeginTestFile(self.global());
 
         // Note: reshaped for borrowck.
         let global = self.global;

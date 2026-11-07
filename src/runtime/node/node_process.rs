@@ -28,6 +28,11 @@ extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
 
 #[unsafe(export_name = "Bun__Process__getExecPath")]
 extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
+    if let Some(file) = bun_resolver::compiled_program::FILE_IN_PLACE_OF_EXECUTABLE.get()
+        && file.can_be_started
+    {
+        return EncodedSlice::from_bytes(&file.path).to_js(global_object);
+    }
     let Ok(out) = bun_core::self_exe_path() else {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return create_argv0(global_object);

@@ -1,0 +1,17 @@
+# `Object.create(methods)` as the front end is to write it: an allocation of a layout of its own, the link, which refuses what is neither an object nor null, and the end of the birth
+# The fields are stored behind it, and what the object finds above it is found through the link
+# -- source: main.js
+# const methods = { sum() { return this.a + this.b + this.c; } };
+# function make(i, methods) { const made = Object.create(methods); made.a = i; made.b = i + 1; made.c = i + 2; return made; }
+# let total = 0;
+# for (let i = 0; i < 3; i = i + 1) { const made = make(i, methods); total = total + made.sum(); }
+# print(total); print(Object.keys(make(1, methods))); print(Object.getPrototypeOf(make(1, methods)) === methods);
+# try { Object.create(1); } catch (error) { print(error instanceof TypeError); }
+# -- end of source
+# RUN: run-in-shell
+# CHECK: 18
+# CHECK-NEXT: a,b,c
+# CHECK-NEXT: true
+# CHECK-NEXT: true
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same

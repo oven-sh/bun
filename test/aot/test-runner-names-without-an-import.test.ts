@@ -3,7 +3,8 @@
 import { expect } from "bun:test";
 import { bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
-import { describe, test } from "./supported";
+// One by one: the cases of one run wait for the same three processes.
+import { describe, testOneByOne as test } from "./supported";
 
 const files = {
   "tsconfig.json": `{ "compilerOptions": { "target": "ESNext", "module": "ESNext", "strict": true, "typeRoots": ["./no-types-here"] } }`,
@@ -63,6 +64,21 @@ test("a shorthand property", () => {
   expect(names.test).toBe(test);
 });
 `,
+  "inside-with.test.cjs": `
+function read(object) { with (object) { return [typeof expect, typeof jest, typeof describe].join(); } }
+function call(object) { with (object) { return expect(1); } }
+function ask() {
+  const asked = [];
+  let seen;
+  with (new Proxy({}, { has(target, key) { if (typeof key === "string") asked.push(key); return false; } })) { seen = [typeof expect, typeof jest]; }
+  return asked.join() + " " + seen.join();
+}
+test("an object in front of the names is asked first", () => {
+  console.log("row:", read({ expect: "own" }), read(Object.create({ jest: 1 })), read({}), read({ expect: 1, [Symbol.unscopables]: { expect: true } }));
+  console.log("row:", call({ expect(value) { return [this === globalThis, value].join(); } }), typeof call({}).toBe);
+  console.log("row:", ask());
+});
+`,
   "helper.js": `
 export function check(value) { expect(value).toBe(1); }
 `,
@@ -98,35 +114,70 @@ runner.test("a file that imports the runner by a call has the other names too", 
 `,
 };
 
-async function report(mode: string[], directory: string, file: string) {
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...mode, "./" + file], directory);
-  const lines = (stdout + "\n" + stderr)
-    .split("\n")
-    .filter(line => /^\((pass|fail|skip|todo)\)|^row: |^ *\d+ (pass|fail|skip)$|Error: |error: /.test(line));
-  return { lines: lines.map(line => line.replace(/ \[[\d.]+m?s\]$/, "")).sort(), exitCode };
+// What a run says of each of its test files: the runner's lines below the file's name, and what the file printed. A file begins each line that it prints with "row:",
+// and `named` puts the name of a test file behind that word, so that the lines of one run can be told apart. What another file prints counts for every test file of the run.
+const named = Object.fromEntries(
+  Object.entries(files).map(([name, text]) => [
+    name,
+    name.includes(".test.") ? text.replaceAll(`"row:`, `"row: ${name}:`) : text,
+  ]),
+);
+
+async function report(mode: string[], directory: string, testFiles: string[]) {
+  const { stdout, stderr, exitCode } = await run(
+    [bunExe(), "test", ...mode, ...testFiles.map(file => "./" + file)],
+    directory,
+  );
+  const said = new Map<string, string[]>(testFiles.map(file => [file, []]));
+  let below: string[] | undefined;
+  for (const line of stderr.split("\n")) {
+    below = said.get(line.replace(/:$/, "")) ?? below;
+    if (/^\((pass|fail|skip|todo)\)|Error: |error: /.test(line)) below?.push(line.replace(/ \[[\d.]+m?s\]$/, ""));
+  }
+  const ofOthers: string[] = [];
+  for (const line of (stdout + "\n" + stderr).split("\n"))
+    if (line.startsWith("row: ")) (said.get(line.match(/^row: (\S+):/)?.[1] ?? "") ?? ofOthers).push(line);
+  return { said: new Map([...said].map(([file, lines]) => [file, [...lines, ...ofOthers].sort()])), exitCode };
 }
 
 describe("the names of the test runner without an import", () => {
   const testFiles = Object.keys(files).filter(name => name.includes(".test."));
   const withPreload = testFiles.filter(name => name.includes("-of-a-preload."));
-  const rows = [
-    ...testFiles.filter(file => !withPreload.includes(file)).map(file => [file, []] as const),
-    ["names-of-one-runner.test.js", ["--globals=vitest"]] as const,
-    ...withPreload.map(file => [file, ["--preload=./defines-expect.js"]] as const),
+  // One run for the files that take the same flags.
+  const runs: [flags: string[], files: string[]][] = [
+    [[], testFiles.filter(file => !withPreload.includes(file))],
+    [["--globals=vitest"], ["names-of-one-runner.test.js"]],
+    [["--preload=./defines-expect.js"], withPreload],
   ];
-  for (const [file, flags] of rows) {
+  for (const [flags, together] of runs) {
+    let asked: Promise<Awaited<ReturnType<typeof report>>[]> | undefined;
+    const ask = () =>
+      (asked ??= (async () => {
+        using dir = tempDir("aot-test-runner-names", named);
+        const reports = [];
+        for (const mode of [[], ["--aot"], ["--debug-aot"]])
+          reports.push(await report([...flags, ...mode], String(dir), together));
+        return reports;
+      })());
     test(
-      [file, ...flags].join(" "),
+      ["the run ends as under plain bun test", ...flags].join(" "),
       async () => {
-        using dir = tempDir("aot-test-runner-names", files);
-        const plain = await report([...flags], String(dir), file);
-        expect(plain.lines.join("\n")).toContain("(pass)");
-        expect(plain.lines.join("\n")).not.toContain("(fail)");
-        expect(plain.exitCode).toBe(0);
-        expect(await report([...flags, "--aot"], String(dir), file)).toEqual(plain);
-        expect(await report([...flags, "--debug-aot"], String(dir), file)).toEqual(plain);
+        expect((await ask()).map(({ exitCode }) => exitCode)).toEqual([0, 0, 0]);
       },
       120_000,
     );
+    for (const file of together) {
+      test(
+        [file, ...flags].join(" "),
+        async () => {
+          const [plain, compiled, debugged] = await ask();
+          expect(plain.said.get(file)!.join("\n")).toContain("(pass)");
+          expect(plain.said.get(file)!.join("\n")).not.toContain("(fail)");
+          expect(compiled.said.get(file)).toEqual(plain.said.get(file));
+          expect(debugged.said.get(file)).toEqual(plain.said.get(file));
+        },
+        120_000,
+      );
+    }
   }
 });

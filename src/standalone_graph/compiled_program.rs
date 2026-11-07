@@ -18,7 +18,7 @@ use crate::Error;
 #[cfg(windows)]
 use crate::StandaloneModuleGraph::normalize_file_key;
 use crate::StandaloneModuleGraph::{
-    BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, File, StandaloneModuleGraph, dir_stat,
+    BASE_PUBLIC_PATH, BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, File, StandaloneModuleGraph, dir_stat,
     is_bun_standalone_file_path,
 };
 
@@ -27,8 +27,6 @@ const CORRUPTED: Error = Error::CorruptedCompiledProgram;
 const PAYLOAD_HEADER_SIZE: usize = size_of::<u64>();
 const RECORD_SIZE: usize = 4 * size_of::<u32>();
 const PRESERVES_SOURCE_PATHS: u32 = 1;
-/// Behind the names of packages: for each entry point where its image begins in `CompiledProgramRecord::image`, and its length.
-const HAS_IMAGE_FOR_EACH_ENTRY_POINT: u32 = 2;
 /// Behind the path aliases: the length of `CompiledProgramInput::root_below_working_directory`, then the path.
 const HAS_ROOT_BELOW_WORKING_DIRECTORY: u32 = 4;
 const ALLOWS_CODE_FROM_DISK: u32 = 8;
@@ -36,6 +34,9 @@ const HAS_ROOT_FOLDERS_SPELLED: u32 = 16;
 const HAS_ROOT_FROM_EXECUTABLE: u32 = 32;
 const HAS_FURTHER_PACKAGE_NAMES: u32 = 64;
 const HAS_ROOT_ON_BUILD_MACHINE: u32 = 128;
+const HAS_ASSETS_NAMED_AT_ROOT: u32 = 256;
+const NAMES_PLUGIN: u32 = 512;
+const HAS_LEVELS_ABOVE_ROOT: u32 = 1024;
 /// The length of the path, what `require` and what `import` find, and what the name hides.
 const PACKAGE_NAME_SIZE: usize = 4 * size_of::<u32>();
 const HIDES_OTHER_PATHS: u32 = 1;
@@ -72,8 +73,6 @@ pub struct CompiledEntryPointInput<'a> {
     pub module_id: bun_aot::engine::EngineModuleId,
     pub source_path: &'a [u8],
     pub module_path: &'a [u8],
-    /// 0: `CompiledProgramInput::image`. Above: a position in `further_images`, plus one.
-    pub image_index: u32,
 }
 
 /// `CompiledPackageName`. The indices are positions in `CompiledProgramInput::entry_points`.
@@ -100,10 +99,17 @@ pub(crate) struct EntryPointPathPointers {
     module_path: StringPointer,
 }
 
+/// Where the bytes of the image are when the graph is written.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum ImagePlace {
+    InGraph,
+    /// They stay where they lie. Their room in the graph holds nothing.
+    OutsideGraph,
+}
+
 pub struct CompiledProgramInput<'a> {
-    pub image: &'a [u8],
-    /// Of an executable whose entry points begin programs of their own.
-    pub further_images: &'a [&'a [u8]],
+    /// Where the engine left it. While an executable is written the addresses in it are those of the executable.
+    pub image: &'a mut [u8],
     pub image_alignment: usize,
     /// Entry point `i` belongs to the output file whose `entry_point_index` is `Some(i)`.
     pub entry_points: &'a [CompiledEntryPointInput<'a>],
@@ -113,12 +119,17 @@ pub struct CompiledProgramInput<'a> {
     pub root_below_working_directory: Option<&'a [u8]>,
     /// `--aot-allow-code-from-disk`
     pub allows_code_from_disk: bool,
+    pub names_plugin: bool,
     /// `CompiledProgram::root_folders_spelled`. Empty where the program spells none.
     pub root_folders_spelled: &'a [u8],
     /// `CompiledProgram::root_from_executable`
     pub root_from_executable: Option<&'a [u8]>,
     /// `CompiledProgram::root_on_build_machine`
     pub root_on_build_machine: Option<&'a [u8]>,
+    /// `CompiledProgram::assets_named_at_root`. Empty where there are none.
+    pub assets_named_at_root: &'a [u8],
+    /// `CompiledProgram::levels_above_root`
+    pub levels_above_root: u32,
     /// Ascending by path.
     pub further_package_names: &'a [FurtherPackageName],
     pub preserves_source_paths: bool,
@@ -144,14 +155,7 @@ pub(crate) fn capacity(input: &CompiledProgramInput<'_>) -> usize {
         .iter()
         .map(|it| PATH_ALIAS_SIZE + it.folder.len() + it.key.len() + it.target.len())
         .sum();
-    let further_images: usize = input.further_images.iter().map(|image| image.len()).sum();
-    let image_ranges = match input.further_images.len() {
-        0 => 0,
-        _ => input.entry_points.len() * size_of::<StringPointer>(),
-    };
     input.image.len()
-        + further_images
-        + image_ranges
         + input.image_alignment
         + RECORD_SIZE
         + entry_points
@@ -167,18 +171,23 @@ pub(crate) fn capacity(input: &CompiledProgramInput<'_>) -> usize {
         + input.root_from_executable.map_or(0, <[u8]>::len)
         + size_of::<u32>()
         + input.root_on_build_machine.map_or(0, <[u8]>::len)
+        + size_of::<u32>()
+        + input.assets_named_at_root.len()
+        + size_of::<u32>()
         + encode_further_package_names(input.further_package_names).len()
 }
 
 pub(crate) fn append_image(
     builder: &mut StringBuilder,
     input: &CompiledProgramInput<'_>,
+    place: ImagePlace,
 ) -> crate::Result<StringPointer> {
     let alignment = input.image_alignment;
-    let images = || core::iter::once(input.image).chain(input.further_images.iter().copied());
+    let image = &*input.image;
     if !alignment.is_power_of_two()
         || alignment < PAYLOAD_HEADER_SIZE
-        || images().any(|image| image.is_empty() || !image.len().is_multiple_of(alignment))
+        || image.is_empty()
+        || !image.len().is_multiple_of(alignment)
     {
         return Err(Error::ImageMisaligned);
     }
@@ -187,17 +196,17 @@ pub(crate) fn append_image(
     builder.writable()[..padding].fill(0);
     let offset = builder.len + padding;
     builder.len = offset;
-    for image in images() {
-        let destination = &mut builder.writable()[..image.len()];
+    let destination = &mut builder.writable()[..image.len()];
+    if place == ImagePlace::InGraph {
         // SAFETY: `destination` is `image.len()` writable bytes of the builder's own buffer, which `image` does not overlap.
         unsafe {
             bun_core::copy_in_parallel(destination.as_mut_ptr(), image.as_ptr(), image.len());
         }
-        builder.len += image.len();
     }
+    builder.len += image.len();
     Ok(StringPointer {
         offset: offset as u32,
-        length: (builder.len - offset) as u32,
+        length: image.len() as u32,
     })
 }
 
@@ -259,18 +268,19 @@ pub(crate) fn append_record(
     }
     let package_names = encode_package_names(input.package_names, &places).ok_or(CORRUPTED)?;
     let path_aliases = encode_path_aliases(input.path_aliases).ok_or(CORRUPTED)?;
-    let has_images = !input.further_images.is_empty();
     let header = CompiledProgramRecord {
         image,
         entry_point_count,
         flags: (u32::from(input.preserves_source_paths) * PRESERVES_SOURCE_PATHS)
-            | (u32::from(has_images) * HAS_IMAGE_FOR_EACH_ENTRY_POINT)
             | (u32::from(input.root_below_working_directory.is_some())
                 * HAS_ROOT_BELOW_WORKING_DIRECTORY)
             | (u32::from(input.allows_code_from_disk) * ALLOWS_CODE_FROM_DISK)
+            | (u32::from(input.names_plugin) * NAMES_PLUGIN)
             | (u32::from(!input.root_folders_spelled.is_empty()) * HAS_ROOT_FOLDERS_SPELLED)
             | (u32::from(input.root_from_executable.is_some()) * HAS_ROOT_FROM_EXECUTABLE)
             | (u32::from(input.root_on_build_machine.is_some()) * HAS_ROOT_ON_BUILD_MACHINE)
+            | (u32::from(!input.assets_named_at_root.is_empty()) * HAS_ASSETS_NAMED_AT_ROOT)
+            | (u32::from(input.levels_above_root != 0) * HAS_LEVELS_ABOVE_ROOT)
             | (u32::from(!input.further_package_names.is_empty()) * HAS_FURTHER_PACKAGE_NAMES),
     };
     let root = match input.root_below_working_directory {
@@ -313,20 +323,20 @@ pub(crate) fn append_record(
         .concat(),
         None => Vec::new(),
     };
-    let mut image_ranges: Vec<u32> = Vec::new();
-    if has_images {
-        let lengths = core::iter::once(input.image).chain(input.further_images.iter().copied());
-        let mut ranges = Vec::with_capacity(1 + input.further_images.len());
-        let mut start = 0u32;
-        for length in lengths.map(|image| image.len() as u32) {
-            ranges.push([start, length]);
-            start += length;
-        }
-        for entry in &entries {
-            let index = entry_points[entry.3].image_index as usize;
-            image_ranges.extend(ranges.get(index).ok_or(CORRUPTED)?);
-        }
-    }
+    let assets_named_at_root = match input.assets_named_at_root {
+        b"" => Vec::new(),
+        paths => [
+            &u32::try_from(paths.len())
+                .map_err(|_| CORRUPTED)?
+                .to_le_bytes()[..],
+            paths,
+        ]
+        .concat(),
+    };
+    let levels_above_root = match input.levels_above_root {
+        0 => Vec::new(),
+        levels => levels.to_le_bytes().to_vec(),
+    };
     let _ = builder.add_concat(&[
         bytes_of(&header),
         slice_as_bytes(&records),
@@ -338,8 +348,9 @@ pub(crate) fn append_record(
         &root_folders,
         &root_from_executable,
         &root_on_build_machine,
+        &assets_named_at_root,
+        &levels_above_root,
         &encode_further_package_names(input.further_package_names),
-        slice_as_bytes(&image_ranges),
     ]);
     Ok(())
 }
@@ -632,24 +643,23 @@ fn try_read(
         root_on_build_machine = Some(payload.bytes(end, length)?);
         end += length;
     }
+    let mut assets_named_at_root: &'static [u8] = b"";
+    if header.flags & HAS_ASSETS_NAMED_AT_ROOT != 0 {
+        let length = payload.bytes(end, size_of::<u32>())?;
+        let length = u32::from_le_bytes(length.try_into().ok()?) as usize;
+        end += size_of::<u32>();
+        assets_named_at_root = payload.bytes(end, length)?;
+        end += length;
+    }
+    let mut levels_above_root = 0;
+    if header.flags & HAS_LEVELS_ABOVE_ROOT != 0 {
+        let levels = payload.bytes(end, size_of::<u32>())?;
+        levels_above_root = u32::from_le_bytes(levels.try_into().ok()?) as usize;
+        end += size_of::<u32>();
+    }
     let mut further_package_names = Vec::new();
     if header.flags & HAS_FURTHER_PACKAGE_NAMES != 0 {
         further_package_names = read_further_package_names(payload, &mut end)?;
-    }
-    let mut images: Vec<&'static [u8]> = Vec::new();
-    if header.flags & HAS_IMAGE_FOR_EACH_ENTRY_POINT != 0 {
-        let ranges = payload.bytes(
-            end,
-            entry_point_count.checked_mul(size_of::<StringPointer>())?,
-        )?;
-        end += ranges.len();
-        for [offset, length] in ranges.as_chunks::<4>().0.as_chunks::<2>().0 {
-            let offset = u32::from_le_bytes(*offset) as usize;
-            let part = image
-                .get(offset..)?
-                .get(..u32::from_le_bytes(*length) as usize)?;
-            images.push(part);
-        }
     }
     *record_at = end;
     let backing_file = payload.file.map(|file| ImageFile {
@@ -663,13 +673,15 @@ fn try_read(
         source_path_order,
         header.flags & PRESERVES_SOURCE_PATHS != 0,
     );
-    let program = program.with_images(images.into_boxed_slice());
     let program = program.with_package_names(package_names);
     let program = program.with_root_below_working_directory(root_below_working_directory);
     let program = program.with_code_from_disk(header.flags & ALLOWS_CODE_FROM_DISK != 0);
+    let program = program.with_plugin_named(header.flags & NAMES_PLUGIN != 0);
     let program = program.with_root_folders_spelled(root_folders_spelled);
     let program = program.with_root_from_executable(root_from_executable);
     let program = program.with_root_on_build_machine(root_on_build_machine);
+    let program = program.with_assets_named_at_root(assets_named_at_root);
+    let program = program.with_levels_above_root(levels_above_root);
     let program = program.with_further_package_names(further_package_names.into_boxed_slice());
     Some(program.with_path_aliases(path_aliases))
 }
@@ -764,10 +776,40 @@ fn is_shared_library_name(name: &[u8]) -> bool {
     !version.is_empty() && version.iter().all(is_version_byte)
 }
 
-#[cfg(not(windows))]
-fn load_graph_file(descriptor: Fd, size: usize) -> Option<*mut u8> {
-    let (access, flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE);
-    bun_sys::mmap(core::ptr::null_mut(), size, access, flags, descriptor, 0).ok()
+#[cfg(unix)]
+const ALIGNMENT_OF_PROGRAMS: usize = 64 * 1024;
+
+#[cfg(unix)]
+fn reserve_range_of_programs(size: usize) -> Option<usize> {
+    let size = size + ALIGNMENT_OF_PROGRAMS;
+    // SAFETY: a new mapping, which nothing else refers to.
+    let range = unsafe {
+        libc::mmap(
+            core::ptr::null_mut(),
+            size,
+            libc::PROT_NONE,
+            libc::MAP_PRIVATE | libc::MAP_ANON,
+            -1,
+            0,
+        )
+    };
+    (range != libc::MAP_FAILED).then(|| (range as usize).next_multiple_of(ALIGNMENT_OF_PROGRAMS))
+}
+
+#[cfg(unix)]
+fn load_graph_file_at_its_address(descriptor: Fd, offset: usize, size: usize) -> Option<*mut u8> {
+    let address = reserve_range_of_programs(size)?;
+    let (access, flags) = (
+        libc::PROT_READ | libc::PROT_WRITE,
+        libc::MAP_PRIVATE | libc::MAP_FIXED,
+    );
+    let address = address as *mut u8;
+    bun_sys::mmap(address, size, access, flags, descriptor, offset as _).ok()
+}
+
+#[cfg(windows)]
+fn load_graph_file_at_its_address(descriptor: Fd, offset: usize, size: usize) -> Option<*mut u8> {
+    (offset == 0).then(|| load_graph_file(descriptor, size))?
 }
 
 #[cfg(windows)]
@@ -796,12 +838,21 @@ impl StandaloneModuleGraph {
     pub fn from_descriptor(
         descriptor: Fd,
     ) -> crate::Result<Option<&'static StandaloneModuleGraph>> {
+        Self::from_descriptor_at(descriptor, 0)
+    }
+
+    /// `offset`: a multiple of the size of a page.
+    pub fn from_descriptor_at(
+        descriptor: Fd,
+        offset: usize,
+    ) -> crate::Result<Option<&'static StandaloneModuleGraph>> {
         let size = bun_sys::get_file_size(descriptor).map_err(|_| CORRUPTED)?;
         let size = usize::try_from(size).map_err(|_| CORRUPTED)?;
+        let size = size.checked_sub(offset).ok_or(CORRUPTED)?;
         if size < PAYLOAD_HEADER_SIZE {
             return Err(CORRUPTED);
         }
-        let base = load_graph_file(descriptor, size).ok_or(CORRUPTED)?;
+        let base = load_graph_file_at_its_address(descriptor, offset, size).ok_or(CORRUPTED)?;
         // SAFETY: `size >= PAYLOAD_HEADER_SIZE` bytes are readable at `base`.
         let length = u64::from_le_bytes(unsafe { base.cast::<[u8; PAYLOAD_HEADER_SIZE]>().read() });
         if length > (size - PAYLOAD_HEADER_SIZE) as u64 {
@@ -809,105 +860,11 @@ impl StandaloneModuleGraph {
         }
         let file = ImageFile {
             descriptor: descriptor.native() as isize,
-            offset: PAYLOAD_HEADER_SIZE as i64,
+            offset: (offset + PAYLOAD_HEADER_SIZE) as i64,
         };
         // SAFETY: `PAYLOAD_HEADER_SIZE <= size`.
         let payload = unsafe { base.add(PAYLOAD_HEADER_SIZE) };
         Self::from_payload(payload, length as usize, Some(file))
-    }
-
-    /// `bun test --aot`: programs that were built one after the other for the same realms. The first is the graph of the process. Of the
-    /// others the process takes the image alone: their modules have the paths of their files. The engine wants all images in one range.
-    #[cfg(unix)]
-    pub fn from_descriptors(
-        descriptors: &[Fd],
-    ) -> crate::Result<Option<&'static StandaloneModuleGraph>> {
-        const ALIGNMENT: usize = 64 * 1024;
-        let mut sizes = Vec::with_capacity(descriptors.len());
-        for &descriptor in descriptors {
-            let size = bun_sys::get_file_size(descriptor).map_err(|_| CORRUPTED)?;
-            let size = usize::try_from(size).map_err(|_| CORRUPTED)?;
-            if size < PAYLOAD_HEADER_SIZE {
-                return Err(CORRUPTED);
-            }
-            sizes.push(size);
-        }
-        let total: usize = sizes
-            .iter()
-            .map(|size| size.next_multiple_of(ALIGNMENT))
-            .sum();
-        let anonymous = libc::MAP_PRIVATE | libc::MAP_ANON;
-        // SAFETY: a new mapping, which nothing else refers to.
-        let region = unsafe {
-            libc::mmap(
-                core::ptr::null_mut(),
-                total + ALIGNMENT,
-                libc::PROT_NONE,
-                anonymous,
-                -1,
-                0,
-            )
-        };
-        if region == libc::MAP_FAILED {
-            return Err(CORRUPTED);
-        }
-        let mut address = (region as usize).next_multiple_of(ALIGNMENT);
-        // SAFETY: the region is never unmapped.
-        let all = unsafe { core::slice::from_raw_parts(address as *const u8, total) };
-        let _ = bun_resolver::compiled_program::RANGE_OF_ALL_IMAGES.set(all);
-        let mut first = None;
-        let mut above = Vec::new();
-        for (&descriptor, &size) in descriptors.iter().zip(&sizes) {
-            let (access, flags) = (
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_FIXED,
-            );
-            let base = bun_sys::mmap(address as *mut u8, size, access, flags, descriptor, 0)
-                .map_err(|_| CORRUPTED)?;
-            address += size.next_multiple_of(ALIGNMENT);
-            // SAFETY: `size >= PAYLOAD_HEADER_SIZE` bytes are readable at `base`.
-            let length =
-                u64::from_le_bytes(unsafe { base.cast::<[u8; PAYLOAD_HEADER_SIZE]>().read() });
-            if length > (size - PAYLOAD_HEADER_SIZE) as u64 {
-                return Err(CORRUPTED);
-            }
-            let file = ImageFile {
-                descriptor: descriptor.native() as isize,
-                offset: PAYLOAD_HEADER_SIZE as i64,
-            };
-            // SAFETY: `PAYLOAD_HEADER_SIZE <= size`.
-            let payload = unsafe { base.add(PAYLOAD_HEADER_SIZE) };
-            if first.is_none() {
-                first = Some(Self::from_payload(payload, length as usize, Some(file))?);
-                continue;
-            }
-            let graph = Self::read_payload(payload, length as usize, Some(file))?;
-            let graph: &'static StandaloneModuleGraph =
-                Box::leak(Box::new(graph.ok_or(CORRUPTED)?));
-            above.push(graph.compiled_program.as_ref().ok_or(CORRUPTED)?);
-        }
-        let _ = bun_resolver::compiled_program::PROGRAMS_ABOVE.set(above.into_boxed_slice());
-        Ok(first.flatten())
-    }
-
-    /// The image in the file of `from_descriptor`, as the build wrote it, for the build of a program above it.
-    #[cfg(unix)]
-    pub fn read_image(descriptor: Fd) -> Option<(&'static [u8], &'static StandaloneModuleGraph)> {
-        let size = usize::try_from(bun_sys::get_file_size(descriptor).ok()?).ok()?;
-        if size < PAYLOAD_HEADER_SIZE {
-            return None;
-        }
-        let base = load_graph_file(descriptor, size)?;
-        // SAFETY: `size >= PAYLOAD_HEADER_SIZE` bytes are readable at `base`.
-        let length = u64::from_le_bytes(unsafe { base.cast::<[u8; PAYLOAD_HEADER_SIZE]>().read() });
-        if length > (size - PAYLOAD_HEADER_SIZE) as u64 {
-            return None;
-        }
-        // SAFETY: `PAYLOAD_HEADER_SIZE <= size`.
-        let payload = unsafe { base.add(PAYLOAD_HEADER_SIZE) };
-        let graph = Self::read_payload(payload, length as usize, None).ok()??;
-        let graph: &'static StandaloneModuleGraph = Box::leak(Box::new(graph));
-        Some((graph.compiled_program.as_ref()?.first_image(), graph))
     }
 
     /// What the file of `from_descriptor` holds after the graph.
@@ -959,23 +916,91 @@ impl StandaloneModuleGraph {
             .map(Box::from)
     }
 
-    /// `key`, as `absolute_key` makes it, under the root of the executable, where it lies below the folder in which the program was built.
-    /// `__dirname` and `__filename` hold paths of that folder, as with `bun build --compile`. Where the disk has it no longer, what the executable holds answers.
+    /// How long the folders above the folder in which the program was built are, the nearest first, as far up as code lay.
+    fn find_folders_above_root_with_code(program: &CompiledProgram) -> Box<[usize]> {
+        let Some(root) = program.root_on_build_machine() else {
+            return Box::default();
+        };
+        let mut folder = root.strip_suffix(b"/").unwrap_or(root);
+
+        let mut lengths = Vec::new();
+        for _ in 1..program.levels_above_root() {
+            let Some(end) = strings::last_index_of_char(folder, b'/') else {
+                break;
+            };
+            folder = &folder[..end];
+            lengths.push(end);
+        }
+        lengths.into()
+    }
+
+    /// How many folders above the folder in which the program was built the nearest one lies that `key` is or lies below, and what of `key` stands behind it.
+    fn split_at_known_folder<'k>(
+        root: &[u8],
+        lengths: &[usize],
+        key: &'k [u8],
+    ) -> Option<(usize, &'k [u8])> {
+        let above = lengths.iter().map(|&length| &root[..length]);
+        let folders = core::iter::once(root.strip_suffix(b"/").unwrap_or(root)).chain(above);
+        folders.enumerate().find_map(|(level, folder)| {
+            let below = key.strip_prefix(folder)?;
+            match below.is_empty() {
+                true => Some((level, below)),
+                false => Some((level, below.strip_prefix(b"/")?)),
+            }
+        })
+    }
+
+    /// The path in the executable of what lay at `below`, `level` folders above the folder of the build, and a `/` behind it. `None` where it does not fit.
+    fn spell_under_own_root<'b>(
+        program: &CompiledProgram,
+        level: usize,
+        below: &[u8],
+        buffer: &'b mut [u8],
+    ) -> Option<&'b [u8]> {
+        let (start, folders) = match level {
+            0 => (BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), 0),
+            _ => (
+                BASE_PUBLIC_PATH.as_bytes(),
+                (program.levels_above_root() + 1).checked_sub(level)?,
+            ),
+        };
+        let up = start.len() + 5 * folders;
+        let end = up + below.len();
+        buffer.get_mut(..start.len())?.copy_from_slice(start);
+        for step in buffer.get_mut(start.len()..up)?.as_chunks_mut::<5>().0 {
+            *step = *b"_.._/";
+        }
+        buffer.get_mut(up..end)?.copy_from_slice(below);
+        *buffer.get_mut(end)? = b'/';
+        Some(&buffer[..=end])
+    }
+
+    /// `key`, as `absolute_key` makes it, under the root of the executable, as the loader reads it.
+    /// `__dirname` and `__filename` hold paths of the machine that built the program, as with `bun build --compile`: in, below or above the folder in which it was built. Where the disk has them no longer, what the executable holds answers.
+    /// `/$bunfs/commands` is what `path.join(import.meta.dir, "../commands")` makes.
     fn key_under_own_root(program: &CompiledProgram, key: &[u8]) -> Option<Vec<u8>> {
         if program.preserves_source_paths {
             return None;
         }
-        let mut root = program.root_on_build_machine()?.to_vec();
-        resolve_path::platform_to_posix_in_place(&mut root[..]);
-        let below = key.strip_prefix(&root[..])?;
-        if !below.is_empty() && !below.starts_with(b"/") {
-            return None;
-        }
         let own_root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
-        let own_root = own_root.strip_suffix(b"/").unwrap_or(own_root);
-        let mut under_own_root = [own_root, below].concat();
-        resolve_path::platform_to_posix_in_place(&mut under_own_root[..]);
-        Some(under_own_root)
+        if is_bun_standalone_file_path(key) {
+            return program.join_public_path(own_root, own_root, key);
+        }
+        if cfg!(windows) {
+            return program.public_path_of_source(own_root, key);
+        }
+        // `absolute_key` has left nothing in it to resolve, and above the highest folder with code the executable holds nothing.
+        let lengths = program
+            .folders_above_root_with_code
+            .get_or_init(|| Self::find_folders_above_root_with_code(program));
+        let root = program.root_on_build_machine()?;
+        let (level, below) = Self::split_at_known_folder(root, lengths, key)?;
+        let most = own_root.len() + 5 * program.levels_above_root() + below.len() + 1;
+        let mut buffer = vec![0; most];
+        let length = Self::spell_under_own_root(program, level, below, &mut buffer)?.len();
+        buffer.truncate(length - 1 - usize::from(below.is_empty()));
+        Some(buffer)
     }
 
     /// Whether `key`, as `absolute_key` makes it, can be a file or a directory that the graph answers for outside of its own root: each of those begins as all of them do, or is a directory above them all.
@@ -983,10 +1008,36 @@ impl StandaloneModuleGraph {
         if cfg!(windows) {
             return true;
         }
-        if program
-            .root_on_build_machine()
-            .is_some_and(|root| key.starts_with(root))
-        {
+        let root = program.root_on_build_machine();
+        if let Some(root) = root.filter(|_| !program.preserves_source_paths) {
+            let lengths = program
+                .folders_above_root_with_code
+                .get_or_init(|| Self::find_folders_above_root_with_code(program));
+            let nearest = root.strip_suffix(b"/").unwrap_or(root);
+            let highest = lengths.last().map_or(nearest, |&length| &root[..length]);
+            if !key.starts_with(highest) {
+                // A folder above them all is listed as one.
+                let below = highest.strip_prefix(key);
+                return below.is_some_and(|rest| rest.starts_with(b"/"));
+            }
+            let Some((level, below)) = Self::split_at_known_folder(root, lengths, key) else {
+                return false;
+            };
+            let mut buffer = [0; 512];
+            let spelled = Self::spell_under_own_root(program, level, below, &mut buffer);
+            let Some(spelled) = spelled.filter(|_| !below.is_empty()) else {
+                return true;
+            };
+            if program.may_hold_module_at_or_below(spelled).unwrap_or(true) {
+                return true;
+            }
+            // The folders above each file that the graph carries are among `dirs`.
+            let path = &spelled[..spelled.len() - 1];
+            let folder = strings::last_index_of_char(path, b'/').unwrap_or(0);
+            return self.dirs.contains(&path[..folder])
+                && (self.files.contains(path) || self.dirs.contains(path));
+        }
+        if root.is_some_and(|root| key.starts_with(root)) {
             return true;
         }
         let common = program
@@ -1074,9 +1125,17 @@ impl StandaloneModuleGraph {
         if !is_bun_standalone_file_path(name) {
             return None;
         }
-        self.files
-            .get(name)
+        self.lookup_file(name)
             .filter(|file| self.is_asset_of_compiled_program(name, file))
+    }
+
+    pub(crate) fn key_of_asset_named_at_root(&self, name: &[u8]) -> Option<Vec<u8>> {
+        let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+        let program = self.compiled_program.as_ref()?;
+        let path = program.asset_named_at_root(name.strip_prefix(root)?)?;
+        // The graph has no file for a compiled module that is no entry point.
+        let is_taken = program.holds_module_at(name) || program.holds_module_below(name);
+        (!is_taken).then(|| [root, path].concat())
     }
 
     pub fn find_at_source_path(&self, name: &[u8]) -> Option<&File> {
@@ -1111,11 +1170,21 @@ impl StandaloneModuleGraph {
         buffer: &'a mut PathBuffer,
     ) -> Option<&'a [u8]> {
         if is_bun_standalone_file_path(name) {
-            let key = Self::normalize_dir_path(name, buffer);
             let program = self.compiled_program.as_ref();
-            let is_directory = self.dirs.contains_key(key)
-                || program.is_some_and(|program| program.holds_module_below(key));
-            return is_directory.then_some(key);
+            let is_directory = |key: &[u8]| {
+                self.dirs.contains_key(key)
+                    || program.is_some_and(|program| program.holds_module_below(key))
+            };
+            if is_directory(Self::normalize_dir_path(name, buffer)) {
+                return Some(Self::normalize_dir_path(name, buffer));
+            }
+            let written = Self::normalize_dir_path(name, buffer);
+            let as_read = Self::key_under_own_root(program?, written)?;
+            if as_read.len() > buffer.len() || !is_directory(&as_read) {
+                return None;
+            }
+            buffer[..as_read.len()].copy_from_slice(&as_read);
+            return Some(&buffer[..as_read.len()]);
         }
         let program = self.compiled_program.as_ref()?;
         if !program.preserves_source_paths {
@@ -1179,7 +1248,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::StandaloneModuleGraph::{
         BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, CompileTarget, Flags, GraphRequest, Offsets,
-        RuntimeOptions, to_graph_bytes,
+        RuntimeOptions, to_bytes, to_graph_bytes,
     };
     use crate::executable_request::graph_bytes;
 
@@ -1195,7 +1264,6 @@ pub(crate) mod tests {
             module_id: EngineModuleId(id),
             source_path,
             module_path: source_path,
-            image_index: 0,
         }
     }
 
@@ -1206,17 +1274,19 @@ pub(crate) mod tests {
         preserves_source_paths: bool,
     ) -> CompiledProgramInput<'a> {
         CompiledProgramInput {
-            image,
-            further_images: &[],
+            image: image.to_vec().leak(),
             image_alignment,
             entry_points,
             package_names: &[],
             path_aliases: &[],
             root_below_working_directory: None,
             allows_code_from_disk: false,
+            names_plugin: false,
             root_folders_spelled: b"",
             root_from_executable: None,
             root_on_build_machine: None,
+            assets_named_at_root: b"",
+            levels_above_root: 0,
             further_package_names: &[],
             preserves_source_paths,
             symbols: b"",
@@ -1230,7 +1300,7 @@ pub(crate) mod tests {
     ) -> crate::Result<Written> {
         let mut builder = StringBuilder::init_capacity(prefix_length + capacity(input));
         let _ = builder.append_count(&vec![0xAA; prefix_length]);
-        let image = append_image(&mut builder, input)?;
+        let image = append_image(&mut builder, input, ImagePlace::InGraph)?;
         let paths = append_entry_point_paths(&mut builder, input);
         let record_at = builder.len;
         append_record(&mut builder, input, image, &paths, file_indices)?;
@@ -1281,45 +1351,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn each_entry_point_finds_its_image() {
-        const SECOND: [u8; 2 * ALIGNMENT] = [0xA5; 2 * ALIGNMENT];
-        const THIRD: [u8; ALIGNMENT] = [0x5A; ALIGNMENT];
-        let mut entry_points = [
-            entry_point(10, b"/a/b.ts"),
-            entry_point(1, b"/a/c.ts"),
-            entry_point(1, b"/a/d.ts"),
-        ];
-        entry_points[1].image_index = 1;
-        entry_points[2].image_index = 2;
-        let input = CompiledProgramInput {
-            further_images: &[&SECOND[..], &THIRD[..]],
-            ..program(&IMAGE, ALIGNMENT, &entry_points, false)
-        };
-        let (bytes, record_at, image) = write(&input, &[Some(2), Some(0), Some(1)], 7).unwrap();
-        assert_eq!(image.length as usize, 4 * ALIGNMENT);
-        assert_eq!((PAYLOAD_HEADER_SIZE + image.offset as usize) % ALIGNMENT, 0);
-        let length = bytes.len();
-        let (program, record_end) = read_back(bytes, record_at).unwrap();
-        assert_eq!(record_end, length);
-        assert_eq!(program.image.len(), 4 * ALIGNMENT);
-        assert_eq!(program.first_image(), IMAGE);
-        assert_eq!(program.image_beginning_at(b"/a/b.ts"), IMAGE);
-        assert_eq!(program.image_beginning_at(b"/a/c.ts"), SECOND);
-        assert_eq!(program.image_beginning_at(b"/a/d.ts"), THIRD);
-        assert_eq!(program.image_beginning_at(b"/a/elsewhere.ts"), IMAGE);
-        assert_eq!(program.images().count(), 3);
-    }
-
-    #[test]
-    fn one_image_adds_nothing_to_the_record() {
-        let (bytes, record_at, _) = write_three(false);
-        let (program, _) = read_back(bytes, record_at).unwrap();
-        assert_eq!(program.images().count(), 1);
-        assert_eq!(program.first_image(), IMAGE);
-        assert_eq!(program.image_beginning_at(b"/a/b.ts"), IMAGE);
-    }
-
-    #[test]
     fn record_round_trips() {
         let (mut bytes, record_at, _) = write_three(true);
         let (program, record_end) = read_back(bytes.clone(), record_at).unwrap();
@@ -1345,7 +1376,7 @@ pub(crate) mod tests {
         let module_ids: Vec<u32> = in_directory.map(|entry| entry.module_id).collect();
         assert_eq!(module_ids, [10, 12]);
 
-        patch(&mut bytes, record_at + 12, !PRESERVES_SOURCE_PATHS);
+        patch(&mut bytes, record_at + 12, 0);
         let (program, _) = read_back(bytes, record_at).unwrap();
         assert!(!program.preserves_source_paths);
     }
@@ -1535,6 +1566,26 @@ pub(crate) mod tests {
         use bun_resolver::compiled_program::PackageLookup::Found;
         assert_eq!(find(b"@lib/job.js"), Found(b"/$bunfs/root/aliased/job.js"));
         assert_eq!(find(b"task.js"), Found(b"/$bunfs/root/src/task.js"));
+        assert_eq!(
+            read_back(bytes[..bytes.len() - 1].to_vec(), record_at).err(),
+            Some(CORRUPTED)
+        );
+    }
+
+    #[test]
+    fn assets_named_at_root_round_trip() {
+        let entry_points = [entry_point(10, b"/$bunfs/root/main.js")];
+        let mut input = program(&IMAGE, ALIGNMENT, &entry_points, false);
+        input.assets_named_at_root = b"a/config.json\0deep/down/one.txt\0";
+        let (bytes, record_at, _) = write(&input, &[Some(0)], 5).unwrap();
+        let (program, record_end) = read_back(bytes.clone(), record_at).unwrap();
+        assert_eq!(record_end, bytes.len());
+        let find = |name: &[u8]| program.asset_named_at_root(name);
+        assert_eq!(find(b"config.json"), Some(&b"a/config.json"[..]));
+        assert_eq!(find(b"one.txt"), Some(&b"deep/down/one.txt"[..]));
+        assert_eq!(find(b"a/config.json"), None);
+        assert_eq!(find(b"down"), None);
+        assert_eq!(find(b""), None);
         assert_eq!(
             read_back(bytes[..bytes.len() - 1].to_vec(), record_at).err(),
             Some(CORRUPTED)
@@ -1920,6 +1971,93 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
+    fn files_above_the_folder_of_the_build_are_found_as_the_loader_reads_their_paths() {
+        fn list_modules(start: &[u8], each: &mut dyn FnMut(&[u8]) -> bool) {
+            for path in [
+                "/$bunfs/_.._/_.._/_.._/commands/build.js",
+                "/$bunfs/_.._/_.._/top.js",
+                "/$bunfs/_.._/_.._/two-more/x.js",
+                "/$bunfs/root/main.js",
+            ] {
+                let path = path.as_bytes();
+                if path.starts_with(start) && !each(path) {
+                    return;
+                }
+            }
+        }
+        use SourcePathKind::{Directory, File};
+        let folder = TemporaryFolder::create("above-the-root");
+        // The program was built in `one/two/app`, which the disk has no longer. Its entry points lay there.
+        let app = TemporaryFolder(folder.join("one/two/app"));
+        let mut graph = with_request(&app, false, read_graph);
+        let program = graph.compiled_program.take().unwrap();
+        program.set_module_listing(list_modules);
+        // As the image answers: a bit for each folder with code or above code, and a lookup of a whole path.
+        program.set_test_of_path_starts(|start| {
+            let folder = &start[..=strings::last_index_of_char(start, b'/').unwrap()];
+            let mut holds_one = false;
+            list_modules(folder, &mut |_| {
+                holds_one = true;
+                false
+            });
+            holds_one
+        });
+        program.set_module_lookup(|path| {
+            let mut is_held = false;
+            list_modules(path, &mut |held| {
+                is_held = held == path;
+                false
+            });
+            is_held.then_some(&b"held"[..])
+        });
+        let root: &'static [u8] = app.0.clone().leak();
+        let program = program.with_root_on_build_machine(Some(root));
+        graph.compiled_program = Some(program.with_levels_above_root(3));
+        let rows = [
+            (folder.join("one/two/commands"), Some(Directory)),
+            (folder.join("one/two/commands/build.js"), Some(File)),
+            (folder.join("one/top.js"), Some(File)),
+            // Its path begins as the folder above the root does, and not at a separator.
+            (folder.join("one/two-more/x.js"), Some(File)),
+            (folder.join("one/two/app/main.js"), Some(File)),
+            // What `path.join(import.meta.dir, "../commands")` makes.
+            (b"/$bunfs/commands".to_vec(), Some(Directory)),
+            (b"/$bunfs/commands/build.js".to_vec(), Some(File)),
+            (b"/$bunfs/none".to_vec(), None),
+        ];
+        for (path, kind) in rows {
+            let shown = String::from_utf8_lossy(&path);
+            assert!(graph.may_answer_for(&path), "{shown}");
+            assert_eq!(graph.source_path_kind(&path), kind, "{shown}");
+            let key = b"/$bunfs/_.._/_.._/_.._/commands".to_vec();
+            let key = (kind == Some(Directory)).then_some(key);
+            assert_eq!(directory_key(&graph, &path), key, "{shown}");
+        }
+        let listed = graph.readdir(b"/$bunfs/commands", false).unwrap();
+        assert_eq!(listed, [(Box::from(&b"build.js"[..]), false)]);
+        assert!(!graph.may_answer_for(b"/no-such-root/commands"));
+        // Beside the code above the root, and what merely begins as it does.
+        for beside in [
+            "one/two/commands/none.js",
+            "one/two/commands/none/a.js",
+            "one/two/app/none.js",
+            "one/two/app/none/a.js",
+            "one/two/app/main.js/none",
+            "one/two/none",
+            "one/two/commands-of-others/a.js",
+            "one/none.js",
+            "none",
+        ] {
+            let path = folder.join(beside);
+            assert!(!graph.may_answer_for(&path), "{beside}");
+            assert_eq!(graph.source_path_kind(&path), None, "{beside}");
+        }
+        assert!(graph.may_answer_for(&folder.join("one/two")));
+        assert!(graph.may_answer_for(&folder.join("one")));
+    }
+
+    #[test]
     fn virtual_root_paths() {
         let folder = TemporaryFolder::create("virtual-root");
         let mut graph = with_request(&folder, false, read_graph);
@@ -1927,8 +2065,11 @@ pub(crate) mod tests {
         let none = in_virtual_root("none");
 
         assert!(graph.find_at_source_path(&note).is_none());
-        assert_eq!(graph.preserved_shared_libraries().count(), 0);
-        assert!(graph.owns_directory(&plugins) && !graph.owns_directory(&folder.0));
+        let library = in_virtual_root("lib/libx.so.1");
+        let libraries: Vec<_> = graph.preserved_shared_libraries().collect();
+        assert_eq!(libraries, [(&library[..], &b"a library"[..])]);
+        // It tells nobody the folders of the machine that built it.
+        assert!(!graph.owns_directory(&plugins) && !graph.owns_directory(&folder.0));
         assert_eq!(find_module_id(&graph, "plugins/a.js"), Some(2));
         assert_eq!(find_module_id(&graph, "data/note.txt"), None);
         assert_eq!(find_module_id(&graph, "none.js"), None);
@@ -1958,6 +2099,33 @@ pub(crate) mod tests {
                 with_entry_point_indices(&folder, false, entry_point_indices, graph_bytes);
             assert_eq!(written.err(), Some(CORRUPTED), "{name}");
         }
+    }
+
+    #[test]
+    fn graph_with_room_for_its_image_differs_in_the_room_alone() {
+        let folder = TemporaryFolder::create("room");
+        let (joined, with_room) = with_request(&folder, false, |request| {
+            let with_room = to_bytes(
+                request.target,
+                request.module_prefix,
+                request.output_files,
+                request.output_format,
+                request.exec_argv,
+                request.flags,
+                request.runtime_options,
+                request.compiled_program.as_ref(),
+                ImagePlace::OutsideGraph,
+            );
+            (graph_bytes(request).unwrap(), with_room.unwrap())
+        });
+        let (image, room) = (joined.image.unwrap(), with_room.image.unwrap());
+        assert_eq!((image.offset, image.length), (room.offset, room.length));
+        let start = image.offset as usize;
+        let end = start + image.length as usize;
+        assert_eq!(joined.bytes[start..end], IMAGE);
+        assert_eq!(joined.bytes.len(), with_room.bytes.len());
+        assert!(joined.bytes[..start] == with_room.bytes[..start]);
+        assert!(joined.bytes[end..] == with_room.bytes[end..]);
     }
 
     #[test]

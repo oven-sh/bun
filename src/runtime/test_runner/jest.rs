@@ -532,7 +532,7 @@ pub(crate) mod Jest {
 
     unsafe extern "C" {
         pub(crate) safe fn Bun__Jest__testModuleObject(global: &JSGlobalObject) -> JSValue;
-        safe fn Bun__Jest__vitestModuleObject(global: &JSGlobalObject) -> JSValue;
+        pub(crate) safe fn Bun__Jest__vitestModuleObject(global: &JSGlobalObject) -> JSValue;
         safe fn JSMock__putModuleMockFunctions(global: &JSGlobalObject, mock_fn: JSValue, jest: JSValue, vi: JSValue);
         safe fn JSMock__putMockFunctionUtilities(global: &JSGlobalObject, mock_fn: JSValue, jest: JSValue, vi: JSValue);
     }
@@ -546,6 +546,35 @@ pub(crate) mod Jest {
         pub(crate) fn JSMock__jsResetAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsSpyOn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
     }
+}
+
+/// Nothing transpiles a test file or a preload that is compiled, so nothing has looked at what it imports.
+pub(crate) fn compiled_entry_point_imports_vitest(path: &[u8]) -> bool {
+    bun_jsc::compiled_program::is_compiled_module(path)
+        && bun_removable_features::removable_body!(AotCompiler, ReturnDefault, {
+            bun_sys::File::read_from(bun_sys::Fd::cwd(), path)
+                .is_ok_and(|text| bun_aot::builtins::imports_vitest(path, &text))
+        })
+}
+
+/// `VirtualMachine::has_globals_of_vitest` for a compiled file that loads now.
+fn loads_compiled_file_below_vitest(vm: &VirtualMachine) -> bool {
+    thread_local! {
+        static LAST_TEST_FILE: core::cell::RefCell<(Vec<u8>, bool)> = const { core::cell::RefCell::new((Vec::new(), false)) };
+    }
+    if vm.has_globals_of_vitest() || vm.is_in_preload {
+        return vm.has_globals_of_vitest();
+    }
+    let Some(main) = vm.main() else {
+        return false;
+    };
+    LAST_TEST_FILE.with_borrow_mut(|(path, imports_vitest)| {
+        if path != main {
+            *imports_vitest = compiled_entry_point_imports_vitest(main);
+            *path = main.to_vec();
+        }
+        *imports_vitest
+    })
 }
 
 /// `Bun.jest(path)`
@@ -571,6 +600,14 @@ pub(crate) fn jest(cx: &mut JsScope<'_>, path: Option<&[u8]>) -> JsResult<JSValu
     jsc::from_js_host_call(global_object, || {
         Jest::Bun__Jest__testModuleObject(global_object)
     })
+}
+
+pub(crate) fn asked_by_compiled_test_file(own_globals: bool) -> u32 {
+    let vm = VirtualMachine::get();
+    match own_globals {
+        true => vm.transpiler.options.own_test_globals,
+        false => u32::from(loads_compiled_file_below_vitest(vm)),
+    }
 }
 
 /// `setDefaultTimeout(milliseconds)` and `jest.setTimeout(milliseconds)`

@@ -22,8 +22,6 @@ pub(super) fn find_main_module_comparison(
     }
 }
 
-/// `main_module_operand` where both names hold what the file was handed: whether the file is the entry point answers the comparison.
-/// `module = {}`, `require = {}`, `arguments[2] = 5`: then the two values are compared like any others.
 pub fn settled_main_module_operand(
     hir: &File<'_>,
     bound: &Bound<'_>,

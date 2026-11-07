@@ -1,5 +1,6 @@
 // The path of an embedded file goes through a Map and through JSON text to `new Worker()`.
 // Alone: which files the build compiles for a Worker depends on what else the executable holds
+// The load follows no value this far. It can't read what the two Workers start from, so it compiles every embedded file of code.
 import w1 from "./w1.ts" with { type: "file" };
 function ask(w: Worker, text: string): Promise<string> {
   return new Promise((resolve, reject) => {

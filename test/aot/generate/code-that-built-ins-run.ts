@@ -2261,19 +2261,6 @@ try {
 }
 `;
 
-/** Array methods hand their callback the array too, which holds the first operand: a validating build takes that operand for one that Object.assign keeps. */
-const handsOverTheArray = [
-  "every",
-  "filter",
-  "find",
-  "find-last-index",
-  "flat-map",
-  "for-each",
-  "map",
-  "reduce-direct",
-  "some",
-];
-const assignsFromEveryOperand = ["assign-to-o", "instance-assign"];
 /** What their callback throws does not come back to the caller: the process would end with it. A buffer can be transferred once, and each program takes three turns. */
 const reportsElsewhereWhatTheCallbackThrows = [
   "construct-executor",
@@ -2365,10 +2352,6 @@ export function programs(): WrittenProgram[] {
           undefined,
           isAsynchronous,
         );
-        if (handsOverTheArray.includes(taker) && assignsFromEveryOperand.includes(handed))
-          files[`${taker}-is-handed--${handed}.json`] = JSON.stringify({
-            skipInVariants: "a validating build stops where one source of Object.assign holds another",
-          });
       }
   for (const [how, [source, setup]] of Object.entries(sourcesOfAssignment))
     for (const [kind, value] of Object.entries(assignedValues))

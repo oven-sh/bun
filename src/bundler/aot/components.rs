@@ -8,6 +8,9 @@ use crate::{ParseTask, Worker};
 use bun_aot::load::source_provider::{ComponentFile, apply_jsx_settings};
 use bun_ast::{Index, Log};
 use bun_js_parser::Macro::KnownAnswers;
+use bun_js_parser::{
+    ExpandedImportMetaGlob, leave_import_meta_globs_as_written, record_import_meta_globs,
+};
 use bun_ptr::{BackRef, ParentRef, detach_lifetime};
 use bun_react_compiler::{Observer, observe};
 use bun_sys::Fd;
@@ -20,11 +23,35 @@ const TARGET: Target = Target::Bun;
 /// Parses `file` through `ParseTask`, so the parser gets exactly the options a bundle gives it. Returns false if the
 /// file has an error.
 ///
-/// `known_answers`: the load runs the macros of the file too.
+/// `known_answers`: the results of macro calls in the file that already ran. Without it, macros are disabled, and
+/// calling one is an error in the file.
 pub(crate) fn compile_components(
     context: &BuildContext,
     file: &ComponentFile<'_>,
     observer: &mut dyn Observer,
+    known_answers: Option<&mut dyn KnownAnswers>,
+    log: &mut Log,
+) -> bool {
+    // An expanded `import.meta.glob()` refers to imports that exist only in the parser's tree.
+    leave_import_meta_globs_as_written(|| {
+        observe(observer, || parse(context, file, known_answers, log))
+    })
+}
+
+/// Every call of `import.meta.glob()` in `file` as a bundle expands it.
+pub(crate) fn expand_globs(
+    context: &BuildContext,
+    file: &ComponentFile<'_>,
+    log: &mut Log,
+) -> Vec<ExpandedImportMetaGlob> {
+    let mut expanded = Vec::new();
+    record_import_meta_globs(&mut expanded, || parse(context, file, None, log));
+    expanded
+}
+
+fn parse(
+    context: &BuildContext,
+    file: &ComponentFile<'_>,
     known_answers: Option<&mut dyn KnownAnswers>,
     log: &mut Log,
 ) -> bool {
@@ -37,13 +64,13 @@ pub(crate) fn compile_components(
     let pool = context.bundle().graph.pool();
     let mut worker = scopeguard::guard(Worker::get(pool), |worker| worker.unget());
     with_ast_scope(|arena| {
-        // A bundle keeps every AST until it finishes. This one is dead once `observer` has seen it.
+        // A bundle keeps every AST until it finishes. This one is dead once the parser returns.
         let arena_of_bundle = std::mem::replace(&mut worker.arena, BackRef::new(arena));
         let mut worker = scopeguard::guard(&mut **worker, |worker| {
             worker.arena = arena_of_bundle;
-            set_known_answers(worker, None);
+            set_known_answers(context, worker, None);
         });
-        set_known_answers(&mut worker, known_answers);
+        set_known_answers(context, &mut worker, known_answers);
         let mut task = create_task(context, file);
         let mut entry = Entry {
             contents: Contents::SharedBuffer {
@@ -54,15 +81,20 @@ pub(crate) fn compile_components(
             ..Default::default()
         };
         let mut step = Step::Pending;
-        let parsed = observe(observer, || {
-            run_with_source_code(&mut task, &mut worker, &mut step, log, &mut entry)
-        });
+        let parsed = run_with_source_code(&mut task, &mut worker, &mut step, log, &mut entry);
         parsed.is_ok_and(|success| !success.log.has_errors())
     })
 }
 
-fn set_known_answers(worker: &mut Worker, known_answers: Option<NonNull<dyn KnownAnswers>>) {
-    let macros = worker.transpiler_for_target(TARGET).macro_context.as_mut();
+fn set_known_answers(
+    context: &BuildContext,
+    worker: &mut Worker,
+    known_answers: Option<NonNull<dyn KnownAnswers>>,
+) {
+    let transpiler = worker.transpiler_for_target(TARGET);
+    // Load fails the build on a macro import, so nothing is lost by disabling macros here.
+    transpiler.options.no_macros = context.options().no_macros || known_answers.is_none();
+    let macros = transpiler.macro_context.as_mut();
     macros.expect("Worker::create wires it").known_answers = known_answers;
 }
 

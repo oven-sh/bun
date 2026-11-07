@@ -13,8 +13,8 @@ namespace Bun {
 // - The second look counts when its frame time is at least 8 ms later: more than the 0.002 ms between the two frames
 //   that Chrome runs after a long task, less than a frame at 120 Hz. A time that stands still (a paused animation
 //   clock) counts after 100 ms.
-// - An animation that has yet to start holds its element at the first keyframe. Chrome reports it as pending. Safari
-//   before 26 reports it as started, at time 0. The ones found at the second look are waited for, for 8 frames at
+// - An animation that has yet to start holds its element at the first keyframe. Chrome reports it as pending.
+//   WebKit 18.4 reports it as started, at time 0. The ones found at the second look are waited for, for 8 frames at
 //   most, and then one more frame. They are looked for in the whole document and in the shadow trees around the
 //   element, because an animation of another element can push this one. The search is not repeated for that box. So
 //   a page that begins an animation in every frame, or whose animation never starts, cannot hold a still element

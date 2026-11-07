@@ -142,8 +142,8 @@ export const clickSelectorPages: ClickSelectorPage[] = [
     want: "100",
   },
   {
-    // Safari before 26 starts an animation at once, at time 0: in the next frame it is not pending and has not moved.
-    // The page sets the start time to get the same in every browser.
+    // WebKit 18.4 starts an animation at once, at time 0: in the next frame it is not pending and has not moved. The
+    // page sets the start time to get the same in every browser.
     name: "waits for an animation that has started in this frame",
     page: `
       <style>#mover { position: fixed; left: 0; top: 50px; width: 60px; height: 60px; }</style>

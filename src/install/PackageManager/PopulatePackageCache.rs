@@ -7,7 +7,7 @@ use super::enqueue::{
     enqueue_git_for_checkout, enqueue_package_for_download, enqueue_tarball_for_download,
     enqueue_tarball_for_reading,
 };
-use super::install_with_manager::{install_with_manager, wait_for_everything_except_peers};
+use super::install_with_manager::{install_with_manager, wait_for_pinned_packages};
 use super::package_manager_options::{Do, LogLevel};
 use super::{Command, PackageManager};
 use crate::network_task::ForTarballError;
@@ -177,12 +177,6 @@ pub(crate) fn download_pinned_packages(
         }
     }
 
-    // A `Dependency` callback would resolve its dependency again, which would download a `github:`
-    // package twice.
-    for waiters in manager.task_queue.values_mut() {
-        waiters.retain(|waiter| matches!(waiter, TaskCallbackContext::GitCheckout { .. }));
-    }
-
     let _ = super::run_tasks::schedule_tasks(manager);
 
     if manager.pending_task_count() > 0 {
@@ -193,7 +187,7 @@ pub(crate) fn download_pinned_packages(
             Output::flush();
         }
 
-        let waited = wait_for_everything_except_peers(manager);
+        let waited = wait_for_pinned_packages(manager);
 
         if log_level.show_progress() {
             manager.end_progress_bar();

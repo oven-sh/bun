@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync, writeFileSync } from "node:fs";
+import { readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/commands";
 import { type BundlerTestInput, decodeSourceMappingsLine, itBundled } from "./expectBundled";
@@ -1869,6 +1869,219 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain("h(");
     },
+  });
+  // A file passed to --external is left out by its path: the file that an import resolves to is
+  // compared, not only the specifier. Each case builds with files that say "INLINED", then runs the
+  // output with those files replaced. The output has to load the replacement.
+  const externalFileFixture = {
+    "/tsconfig.json": `{ "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["./src/*"] } } }`,
+    "/package.json": `{ "name": "app", "imports": { "#a": "./src/a.ts" } }`,
+    "/src/a.ts": `export const a = "INLINED";`,
+    "/src/index.ts": `export const a = "INLINED";`,
+    "/lib/nested.ts": `export { a } from "../src/a";`,
+    "/node_modules/p/package.json": `{ "name": "p", "main": "./m.js" }`,
+    "/node_modules/p/m.js": `export const a = "INLINED";`,
+    "/node_modules/x/package.json": `{ "name": "x", "exports": { "./sub": "./lib/sub.js" } }`,
+    "/node_modules/x/lib/sub.js": `export const a = "INLINED";`,
+    "/node_modules/q/package.json": `{ "name": "q", "main": "./m.js", "sideEffects": false }`,
+    "/node_modules/q/m.js": `globalThis.q = "INLINED";`,
+  };
+  const externalFileAtRunTime = Object.fromEntries(
+    Object.entries(externalFileFixture).map(([file, text]) => [file, text.replaceAll("INLINED", "LOADED")]),
+  );
+  const importsA = (specifier: string) => `import { a } from "${specifier}"; console.log(a);`;
+  const externalFileCases: [
+    id: string,
+    external: string,
+    entry: string,
+    options?: Partial<BundlerTestInput>,
+    stdout?: string,
+  ][] = [
+    ["NoExtension", "./src/a.ts", importsA("./src/a")],
+    ["NoExtensionCLI", "./src/a.ts", importsA("./src/a"), { backend: "cli" }],
+    ["AbsolutePath", "{{root}}/src/a.ts", importsA("./src/a")],
+    ["TypeScriptExtensionRewrite", "./src/a.ts", importsA("./src/a.js")],
+    ["DirectoryIndex", "./src/index.ts", importsA("./src")],
+    // The import that is left is the one in lib/nested.ts, so the output goes beside that file.
+    ["NestedImporter", "./src/a.ts", importsA("./lib/nested"), { outfile: "/lib/out.js" }],
+    ["TSConfigPaths", "./src/a.ts", importsA("@/a")],
+    ["TSConfigPathsWithPackagesExternal", "./src/a.ts", importsA("@/a"), { packages: "external" }],
+    ["TSConfigBaseUrl", "./src/a.ts", importsA("src/a")],
+    ["PackageImports", "./src/a.ts", importsA("#a")],
+    ["PackageMain", "./node_modules/p/m.js", importsA("p")],
+    ["PackageExports", "./node_modules/x/lib/sub.js", importsA("x/sub")],
+    // The package says it has no side effects. The import stays all the same: nothing read that.
+    ["PackageWithoutSideEffects", "./node_modules/q/m.js", `import "q"; console.log(globalThis.q);`],
+    [
+      "RequireAndDynamicImport",
+      "./src/a.ts",
+      `const m = await import("./src/a"); console.log(require("./src/a").a, m.a, require.resolve("./src/a").endsWith("a.ts"));`,
+      {},
+      "LOADED LOADED true",
+    ],
+    [
+      "TwoSpellings",
+      "./src/a.ts",
+      `import { a } from "./src/a.ts"; import { a as b } from "./src/a"; console.log(a, b);`,
+      {},
+      "LOADED LOADED",
+    ],
+    [
+      "AfterPluginDeclines",
+      "./src/a.ts",
+      importsA("./src/a"),
+      { plugins: builder => void builder.onResolve({ filter: /.*/ }, () => undefined) },
+    ],
+  ];
+  for (const [id, external, entry, options, stdout = "LOADED"] of externalFileCases) {
+    itBundled(`edgecase/ExternalFileMatchesFoundPath/${id}`, {
+      files: { "/entry.ts": entry, ...externalFileFixture },
+      runtimeFiles: externalFileAtRunTime,
+      external: [external],
+      target: "bun",
+      ...options,
+      onAfterBundle(api) {
+        api.expectFile(options?.outfile ?? "/out.js").not.toContain("INLINED");
+      },
+      run: { stdout },
+    });
+  }
+  // The file is not read, so an error in it is not an error of the build.
+  itBundled("edgecase/ExternalFileMatchesFoundPath/IsNotParsed", {
+    files: {
+      "/entry.ts": importsA("./broken"),
+      "/broken.ts": `export const a = ;`,
+    },
+    runtimeFiles: {
+      "/broken.ts": `export const a = "LOADED";`,
+    },
+    external: ["./broken.ts"],
+    target: "bun",
+    run: { stdout: "LOADED" },
+  });
+  // The external file is also an entry point. The import that is left names the file that the
+  // entry point writes, so the module runs once.
+  itBundled("edgecase/ExternalFileMatchesFoundPath/AlsoAnEntryPoint", {
+    files: {
+      "/src/index.ts": `import { runs } from "./util"; console.log(runs);`,
+      "/src/util.ts": `globalThis.runs = (globalThis.runs ?? 0) + 1; export const runs = globalThis.runs;`,
+    },
+    entryPoints: ["/src/index.ts", "/src/util.ts"],
+    external: ["./src/util.ts"],
+    outdir: "/out",
+    target: "bun",
+    onAfterBundle(api) {
+      const index = api.readFile("/out/index.js");
+      expect(index).toContain(`from "./util"`);
+      expect(index).not.toContain("globalThis.runs =");
+    },
+    run: { file: "/out/index.js", stdout: "1" },
+  });
+  // A server build resolves what an imported HTML file loads with a second resolver, for the browser.
+  itBundled("edgecase/ExternalFileMatchesFoundPath/ScriptOfImportedHTML", {
+    files: {
+      "/entry.ts": `import page from "./index.html"; console.log(page);`,
+      "/index.html": `<script type="module" src="./client.ts"></script>`,
+      "/client.ts": importsA("./src/a"),
+      "/src/a.ts": `export const a = "INLINED";`,
+    },
+    external: ["./src/a.ts"],
+    target: "bun",
+    outdir: "/out",
+    onAfterBundle(api) {
+      const scripts = readdirSync(api.outdir).filter(file => file.endsWith(".js") && file !== "entry.js");
+      expect(scripts).toHaveLength(1);
+      const script = api.readFile(join("out", scripts[0]));
+      expect(script).not.toContain("INLINED");
+      expect(new Bun.Transpiler().scanImports(script)).toEqual([{ kind: "import-statement", path: "./src/a" }]);
+    },
+  });
+  // A stylesheet or a page keeps its reference as written, and a browser does not resolve it again.
+  // So a reference that only resolution leads to the file stays bundled.
+  itBundled("edgecase/ExternalFileMatchesFoundPath/CSSImportStaysBundled", {
+    files: {
+      "/entry.css": `@import "./base"; @import "sheets/theme.css";`,
+      "/base.css": `.base { color: red }`,
+      "/node_modules/sheets/package.json": `{ "name": "sheets" }`,
+      "/node_modules/sheets/theme.css": `.theme { color: red }`,
+    },
+    external: ["./base.css", "./node_modules/sheets/theme.css"],
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      const css = api.readFile("/out.css");
+      expect(css).toContain(".base");
+      expect(css).toContain(".theme");
+      expect(css).not.toContain("@import");
+    },
+  });
+  itBundled("edgecase/ExternalFileMatchesFoundPath/ScriptOfHTMLStaysBundled", {
+    files: {
+      "/index.html": `<script type="module" src="./src/client"></script>`,
+      "/src/client.ts": `console.log("INLINED");`,
+    },
+    entryPoints: ["/index.html"],
+    external: ["./src/client.ts"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const scripts = [...api.readFile("/out/index.html").matchAll(/src="\.\/([^"]+)"/g)].map(match => match[1]);
+      expect(scripts).toEqual([expect.stringMatching(/^index-.+\.js$/)]);
+      expect(api.readFile(join("out", scripts[0]))).toContain("INLINED");
+    },
+  });
+  // An executable does not embed the file. It loads the file from the working directory when it runs.
+  itBundled("edgecase/ExternalFileMatchesFoundPath/Compile", {
+    compile: true,
+    files: {
+      "/entry.ts": importsA("./src/a"),
+      "/src/a.ts": `export const a = "INLINED";`,
+    },
+    runtimeFiles: {
+      "/src/a.ts": `export const a = "LOADED";`,
+    },
+    external: ["./src/a.ts"],
+    run: { stdout: "LOADED", setCwd: true },
+  });
+  // --external applies to imports: an entry point is bundled whatever name reaches its file.
+  itBundled("edgecase/ExternalFileMatchesFoundPath/EntryPointIsBundled", {
+    files: {
+      "/entry.ts": `console.log("BUNDLED");`,
+    },
+    entryPointsRaw: ["./entry"],
+    external: ["./entry.ts"],
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("BUNDLED");
+    },
+  });
+  // A macro runs at build time from the file the lookup found, also when that file is external.
+  itBundled("edgecase/ExternalFileMatchesFoundPath/MacroStillRuns", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { atBuildTime } from "./macro" with { type: "macro" };
+        console.log(atBuildTime());
+      `,
+      "/macro.ts": `export function atBuildTime() { return "from the macro"; }`,
+    },
+    external: ["./macro.ts"],
+    target: "bun",
+    run: { stdout: "from the macro" },
+  });
+  // The path compared is the one the lookup took, as in esbuild: a link in it is not followed first.
+  test("edgecase/ExternalFileMatchesFoundPath/Symlink", async () => {
+    using dir = tempDir("external-file-found-path-symlink", {
+      "real/a.ts": `export const a = "INLINED";`,
+      "entry.ts": importsA("./link/a"),
+    });
+    const root = String(dir);
+    symlinkSync(join(root, "real"), join(root, "link"), "junction");
+    const build = async (external: string) => {
+      const result = await Bun.build({ entrypoints: [join(root, "entry.ts")], external: [join(root, external)] });
+      return await result.outputs[0].text();
+    };
+    const throughLink = await build("link/a.ts");
+    expect(throughLink).not.toContain("INLINED");
+    expect(new Bun.Transpiler().scanImports(throughLink)).toEqual([{ kind: "import-statement", path: "./link/a" }]);
+    expect(await build("real/a.ts")).toContain("INLINED");
   });
   // `bun build --compile --aot` resolves entry points with a resolver of its own, to the same answers.
   const itCompiledAheadOfTime = (id: string, opts: BundlerTestInput) =>

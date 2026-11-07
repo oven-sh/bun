@@ -248,11 +248,13 @@ impl Ls {
                 b'd' => opts.list_directories = true,
                 b'l' => opts.long_listing = true,
                 b'R' => opts.recursive = true,
+                // POSIX `-f`: turn on `-a`, do not sort. Entries are not sorted here anyway.
+                b'f' => opts.dotfiles = DotfileMode::All,
                 // The remaining short flags are recognised but currently no-op.
-                b'r' | b'1' | b'b' | b'B' | b'c' | b'C' | b'D' | b'f' | b'F' | b'g' | b'G'
-                | b'h' | b'H' | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p'
-                | b'q' | b'Q' | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x'
-                | b'X' | b'Z' => {}
+                b'r' | b'1' | b'b' | b'B' | b'c' | b'C' | b'D' | b'F' | b'g' | b'G' | b'h'
+                | b'H' | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p' | b'q'
+                | b'Q' | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x' | b'X'
+                | b'Z' => {}
                 _ => return ParseFlag::IllegalOption(Box::from(&flag[1..2])),
             }
         }
@@ -490,6 +492,7 @@ impl ShellLsTask {
                         this.add_entry(name, fd);
                         if matches!(current.kind, bun_sys::EntryKind::Directory)
                             && this.opts.recursive
+                            && !this.should_skip_entry(name)
                         {
                             this.enqueue(name);
                         }
@@ -791,7 +794,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
     }
 }
 
-/// `-a` vs `-A`; the last one on the command line wins (GNU coreutils).
+/// `-a`, `-A` or `-f`: the last one on the command line wins (GNU coreutils).
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum DotfileMode {
     #[default]

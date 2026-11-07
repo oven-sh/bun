@@ -2152,6 +2152,180 @@ describe.concurrent("bundler", () => {
       assert(!text.includes("renameMe"), "Should have renamed all `renameMe` variabled");
     },
   });
+  const directEvalWarning = "Using direct eval with a bundler is not recommended and may cause problems";
+  // The CLI backend checks the warnings of every file exactly: a file that is
+  // not a key of `bundleWarnings` must print none. esbuild 0.25.10 gives the same counts.
+  itBundled("default/DirectEvalWarning", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./import-only.js";
+        import "./export.js";
+        import "./import-meta.js";
+        import "./top-level-await.js";
+        import "./no-syntax.mjs";
+        import "./import-type.ts";
+        import "./ts-empty-export.ts";
+        import "./import.cjs";
+        import "./three-calls.js";
+        import "./esm-pkg/no-syntax.js";
+        import "./esm-pkg/commonjs.js";
+        import "./esm-pkg/legacy.cjs";
+        import "./cjs-pkg/module.mjs";
+        import "./cjs-pkg/script.js";
+        import "./commonjs.js";
+        import "./script.js";
+        import "./import-equals.ts";
+        import "./export-equals.ts";
+        import "./dynamic-import.js";
+        import "./indirect.js";
+        import "pkg";
+        import "single";
+      `,
+      "/import-only.js": /* js */ `
+        import { helper } from "./lib.js";
+        const secret = 42;
+        console.log(eval("secret + helper()"));
+      `,
+      "/lib.js": `export function helper() { return 1; }`,
+      "/export.js": `export const value = eval("1");`,
+      "/import-meta.js": `globalThis.a = [import.meta.url, eval("1")];`,
+      "/top-level-await.js": `await 0; globalThis.b = eval("1");`,
+      "/no-syntax.mjs": `globalThis.c = eval("1");`,
+      "/import-type.ts": `import type { T } from "./types"; globalThis.d = eval("1");`,
+      "/types.ts": `export type T = number;`,
+      "/ts-empty-export.ts": `globalThis.e = eval("1");\nexport {};`,
+      "/import.cjs": `import "./lib.js"; globalThis.f = eval("1");`,
+      "/three-calls.js": /* js */ `
+        export const top = eval("1");
+        export function nested() { return eval("2"); }
+        if (false) eval("3");
+      `,
+      // The "type" of the nearest package.json makes a file with no module syntax an ES module.
+      "/esm-pkg/package.json": `{ "type": "module" }`,
+      "/esm-pkg/no-syntax.js": `globalThis.g = eval("1");`,
+      "/esm-pkg/commonjs.js": `module.exports = eval("1");`,
+      "/esm-pkg/legacy.cjs": `globalThis.h = eval("1");`,
+      "/cjs-pkg/package.json": `{ "type": "commonjs" }`,
+      "/cjs-pkg/module.mjs": `globalThis.i = eval("1");`,
+      "/cjs-pkg/script.js": `globalThis.j = eval("1");`,
+      "/commonjs.js": `module.exports = eval("1");`,
+      "/script.js": `globalThis.k = eval("1");`,
+      "/import-equals.ts": `import lib = require("./commonjs.js");\nglobalThis.l = [lib, eval("1")];`,
+      "/export-equals.ts": `const value = eval("1");\nexport = value;`,
+      "/dynamic-import.js": `globalThis.m = [import("./lib.js"), eval("1")];`,
+      "/indirect.js": /* js */ `
+        export const a = (0, eval)("1");
+        export const b = eval?.("1");
+        export const c = globalThis.eval("1");
+        const alias = eval;
+        export const d = alias("1");
+        export const e = new Function("return 1")();
+      `,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "main": "index.js" }`,
+      "/node_modules/pkg/index.js": `export const value = eval("1");`,
+      "/node_modules/single.js": `export const value = eval("1");`,
+    },
+    bundleWarnings: {
+      "/import-only.js": [directEvalWarning],
+      "/export.js": [directEvalWarning],
+      "/import-meta.js": [directEvalWarning],
+      "/top-level-await.js": [directEvalWarning],
+      "/no-syntax.mjs": [directEvalWarning],
+      "/import-type.ts": [directEvalWarning],
+      "/ts-empty-export.ts": [directEvalWarning],
+      "/import.cjs": [directEvalWarning],
+      "/three-calls.js": [directEvalWarning, directEvalWarning, directEvalWarning],
+      "/esm-pkg/no-syntax.js": [directEvalWarning],
+      "/esm-pkg/commonjs.js": [directEvalWarning],
+      "/cjs-pkg/module.mjs": [directEvalWarning],
+    },
+  });
+  // The two forms that the note of the warning names. Neither warns, and both
+  // keep their meaning when the minifier moves a single-use value.
+  itBundled("default/DirectEvalWarningRemedies", {
+    files: {
+      "/entry.js": /* js */ `
+        import { helper } from "./lib.js";
+        const secret = 42;
+        const viaFunction = new Function("secret", "helper", "return secret + helper()")(secret, helper);
+        function viaGlobalEval(code) { const result = globalThis.eval(code); return result + "!"; }
+        console.log(viaFunction, viaGlobalEval("typeof code"));
+        export const control = eval("1");
+      `,
+      "/lib.js": `export function helper() { return 1; }`,
+    },
+    minifySyntax: true,
+    bundleWarnings: {
+      "/entry.js": [directEvalWarning],
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("globalThis.eval(code)");
+    },
+    run: {
+      stdout: "43 undefined!",
+    },
+  });
+  // The minifier moves a single-use value into the next statement and visits that
+  // statement again. The call it then sees is `eval(...)`, but the source has an
+  // indirect eval. Only the direct eval at the end warns.
+  itBundled("default/DirectEvalWarningIndirectEvalAfterInlining", {
+    files: {
+      "/entry.js": /* js */ `
+        export function viaAlias(x) { const e = eval; return typeof e(x); }
+        export function viaComma(code) { const r = (0, eval)(code); return r + "!"; }
+        export const control = eval("1");
+      `,
+    },
+    minifySyntax: true,
+    bundleWarnings: {
+      "/entry.js": [directEvalWarning],
+    },
+  });
+  // `eval("require")` works in cjs output and warns. The note says to pass
+  // `require` as an argument, which works with no warning.
+  itBundled("default/DirectEvalWarningRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        import { helper } from "./lib.js";
+        const viaEval = eval("require");
+        const viaFunction = new Function("require", "return require")(require);
+        console.log(typeof viaEval, typeof viaFunction, helper());
+      `,
+      "/lib.js": `export function helper() { return 1; }`,
+    },
+    target: "node",
+    format: "cjs",
+    bundleWarnings: {
+      "/entry.js": [directEvalWarning],
+    },
+    run: {
+      stdout: "function function 1",
+    },
+  });
+  // The minifier visits the statement that receives a single-use value twice.
+  // A warning about a private name must not print twice.
+  itBundled("default/PrivateNameWarningAfterInlining", {
+    files: {
+      "/entry.js": /* js */ `
+        export class Foo {
+          #method() {}
+          get #getter() { return 1; }
+          set #setter(v) {}
+          writeMethod(v) { const value = v; return value + (this.#method = 1); }
+          writeGetter(v) { const value = v; return value + (this.#getter = 1); }
+          readSetter(v) { const value = v; return value + this.#setter; }
+        }
+      `,
+    },
+    minifySyntax: true,
+    bundleWarnings: {
+      "/entry.js": [
+        `Writing to read-only method "#method" will throw`,
+        `Writing to getter-only property "#getter" will throw`,
+        `Reading from setter-only property "#setter" will throw`,
+      ],
+    },
+  });
   itBundled("default/ImportReExportES6ESBuildIssue149", {
     files: {
       "/app.jsx": /* jsx */ `
@@ -4007,9 +4181,9 @@ describe.concurrent("bundler", () => {
     "/write-getter.js": `class Foo { get #foo() {} foo() { this.#foo = 123 } }`,
     "/read-setter.js": `class Foo { set #foo(x) {} foo() { return this.#foo } }`,
     "/delete-super.js": `class Foo extends Bar { foo() { delete super.foo } }`,
+    "/direct-eval.js": `export default eval("1")`,
   };
   itBundled("default/WarningsInsideNodeModules", {
-    todo: true,
     files: {
       "/entry.js": Object.keys(WarningsInsideNodeModules)
         .map(file => `import "./${file}"; import "./node_modules/${file}"; import "@plugin/${file}"`)
@@ -4025,6 +4199,7 @@ describe.concurrent("bundler", () => {
     bundleWarnings: {
       "/write-getter.js": [`Writing to getter-only property "#foo" will throw`],
       "/read-setter.js": [`Reading from setter-only property "#foo" will throw`],
+      "/direct-eval.js": [directEvalWarning],
     },
   });
   itBundled("default/RequireResolve", {

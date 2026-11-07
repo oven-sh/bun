@@ -387,8 +387,8 @@ describe.concurrent(".resolves and .rejects", () => {
   });
 
   test("a pending matcher rejects when its test ends, so finally blocks and disposers run", async () => {
-    // Each test with a time limit never finishes, and none waits for a timer before it calls its matcher.
-    // A stalled process reaches a limit first. A test that has to pass then fails, and a later test gets the matcher.
+    // Each test with a short time limit never finishes, and none waits for a timer before it calls its matcher.
+    // A stalled process reaches a limit first. "afterwards" has to pass, so its limit is long.
     const { stdout, report, exitCode, signalCode } = await runTests(`
       const unwound = [];
       expect.extend({ toNeverAnswer: never });
@@ -425,7 +425,8 @@ describe.concurrent(".resolves and .rejects", () => {
       });
       let isTaken = false, attempts = 0;
       test("the next attempt finds what the first one took released", async () => {
-        if (++attempts > 1) {
+        const attempt = ++attempts;
+        if (attempt > 1) {
           await 0;
           unwound.push("the next attempt: " + (isTaken ? "still taken" : "released"));
         }
@@ -434,6 +435,7 @@ describe.concurrent(".resolves and .rejects", () => {
           await expect(never()).resolves.toBe(1);
         } finally {
           isTaken = false;
+          unwound.push("attempt " + attempt + ": finally");
         }
       }, { retry: 1, timeout: 20 });
       describe("concurrent", () => {
@@ -450,7 +452,7 @@ describe.concurrent(".resolves and .rejects", () => {
       test("afterwards", async () => {
         await later();
         for (const line of unwound) console.log(line);
-      });
+      }, 30_000);
     `);
     expect(stdout).toEqual([
       ...[".resolves", "a custom matcher", "an asymmetric matcher", "toThrow()", "expect.poll()"].flatMap(name => [
@@ -458,7 +460,9 @@ describe.concurrent(".resolves and .rejects", () => {
         name + ": disposed",
       ]),
       "a test that fails: The test that called this matcher has ended",
+      "attempt 1: finally",
       "the next attempt: released",
+      "attempt 2: finally",
       "concurrent: finally",
     ]);
     expect(report.filter(line => !line.includes("timed out after"))).toEqual([

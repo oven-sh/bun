@@ -419,8 +419,7 @@ enum Drive {
     Next(u32, NextStep),
 }
 
-/// `First` is `nextAsync()` of @sinonjs/fake-timers 15.4.0: it runs the timer before the pending ticks, where its `next()` runs the
-/// ticks first (https://github.com/sinonjs/fake-timers/issues/597). The other two are the `tickAsync(0)` that Jest calls after it.
+/// `First` is `nextAsync()` of @sinonjs/fake-timers 15.4.0: the timer runs before the pending ticks (https://github.com/sinonjs/fake-timers/issues/597).
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum NextStep {
     First,

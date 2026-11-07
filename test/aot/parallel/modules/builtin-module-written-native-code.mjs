@@ -69,3 +69,28 @@ for (const name of ["node:buffer", "bun:jsc"]) {
   console.log("an entry of the cache:", require.cache[made(name)].exports, made(name) in require.cache, Object.keys(require.cache).includes(name), require(made(name)) === 1);
   console.log(delete require.cache[made(name)], made(name) in require.cache, require(made(name)) === written[name].default);
 }
+/* Output:
+abort-controller: 10 10 true true true true true true abort-controller abort-controller
+bun:jsc: 10 10 true true true true true true bun:jsc bun:jsc
+node:buffer: 10 10 true true true true true true node:buffer node:buffer
+node:constants: 10 10 true true true true true true node:constants node:constants
+node:module: 10 10 true true true true true true node:module node:module
+node:path: 10 10 true true true true true true node:path node:path
+node:process: 10 10 true true true true true true node:process node:process
+node:string_decoder: 10 10 true true true true true true node:string_decoder node:string_decoder
+node:util/types: 10 10 true true true true true true node:util/types node:util/types
+utf-8-validate: 10 10 true true true true true true utf-8-validate utf-8-validate
+@vercel/fetch: 10 10 true true true true true true @vercel/fetch @vercel/fetch
+buffer: true node:buffer
+constants: true node:constants
+module: true node:module
+process: true node:process
+string_decoder: true node:string_decoder
+util/types: true node:util/types
+a prefix and the rest: true true
+bun: false true true false
+an entry of the cache: 1 true true false
+true false true
+exit code 1
+error: Cannot store an entry under 'bun:jsc' in require.cache: the build read no store under that key, so require("bun:jsc") was compiled to answer with the module. Spell the key where it is stored: require.cache["bun:jsc"] = entry. In a test, mock.module("bun:jsc", () => ({ .. })) replaces the module too. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+*/

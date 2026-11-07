@@ -2101,6 +2101,15 @@ pub mod formatter {
                 });
             }
 
+            if js_type == jsc::JSType::InternalFunction
+                && value.is_placeholder_for_omitted_builtin()
+            {
+                return Ok(TagResult {
+                    tag: TagPayload::Function,
+                    cell: js_type,
+                });
+            }
+
             if js_type.can_get()
                 && js_type != jsc::JSType::ProxyObject
                 && !opts.contains(TagOptions::DISABLE_INSPECT_CUSTOM)

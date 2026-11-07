@@ -1,4 +1,4 @@
-// COUNT: operations <= 100
+// COUNT: operations <= 100 Todo: 4,023: an object of a class below a built-in class has no typed form yet: each of the 4,000 patterns is one call into the run time, which reads it by index
 class Row extends Array<number> {
   firstTwo(): number {
     const [a, b] = this;

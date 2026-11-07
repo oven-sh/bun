@@ -34,7 +34,7 @@ const files = {
         evaluate("[3, 1, 2].sort().join() + JSON.stringify(Object.keys({ a: 1 }))");
         kept.push(evaluate);
       }
-      console.log(name + " " + Math.floor((countExecutables() - before) / 100) + " " + kept.length);
+      console.log(name + " " + Math.trunc((countExecutables() - before) / 100) + " " + kept.length);
     }
   `,
   "answers.ts": `

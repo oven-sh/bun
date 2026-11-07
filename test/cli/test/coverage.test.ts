@@ -1247,6 +1247,68 @@ test("reports an uncalled function on the last line of a // @bun file without a 
   expect(exitCode).toBe(0);
 });
 
+// `bun build --sourcemap=external` writes one debug id into the file and into the map beside it.
+test.concurrent("coverage of a // @bun file uses the map beside it unless the map has another debug id", async () => {
+  const fileId = "0123456789ABCDEF64756E2164756E21";
+  const otherId = "FEDCBA987654321064756E2164756E21";
+  const prebuilt = `// @bun\nexport function first() {\n  return 1;\n}\nexport const second = () => 2;\n//# debugId=${fileId}\n`;
+  // Line 1 of the file is line 11 of the source, and so on. The one source of each map is the file itself.
+  const map = (source: string, debugId: string) =>
+    JSON.stringify({
+      version: 3,
+      sources: [source],
+      sourcesContent: [null],
+      names: [],
+      mappings: "AAUA;AACA;AACA;AACA;AACA;AACA",
+      debugId,
+    });
+  using dir = tempDir("cov-debug-id", {
+    "same-id.js": prebuilt,
+    "same-id.js.map": map("same-id.js", fileId),
+    "other-id.js": prebuilt,
+    "other-id.js.map": map("other-id.js", otherId),
+    "a.test.ts": `
+      import { expect, test } from "bun:test";
+      import * as sameId from "./same-id.js";
+      import * as otherId from "./other-id.js";
+      test("calls first", () => { expect(sameId.first() + otherId.first()).toBe(2); });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const linesOf = (file: string) => {
+    const lines = lcov.split("\n").filter(line => line.startsWith("SF:") || line.startsWith("DA:"));
+    const start = lines.indexOf("SF:" + file) + 1;
+    const end = lines.findIndex((line, index) => index >= start && line.startsWith("SF:"));
+    return lines.slice(start, end === -1 ? undefined : end);
+  };
+  expect({
+    sameId: linesOf("same-id.js"),
+    otherId: linesOf("other-id.js"),
+    warnings: stderr.split("\n").filter(line => line.startsWith("warn: ") || line.startsWith("note: ")),
+  }).toEqual({
+    sameId: ["DA:12,1", "DA:15,1", "DA:16,1"],
+    otherId: ["DA:2,1", "DA:3,1", "DA:5,1", "DA:6,1"],
+    warnings: [
+      expect.stringMatching(
+        new RegExp(
+          `^warn: Ignoring sourcemap ".*other-id\\.js\\.map": its debugId "${otherId}" is not the debugId "${fileId}" that ".*other-id\\.js" had when it was last loaded$`,
+        ),
+      ),
+      "note: positions in this file stay unmapped until Bun loads it again beside a map with the same debugId",
+    ],
+  });
+  expect(exitCode).toBe(0);
+});
+
 // `braces.ts` in `source-positions-corpus.ts` has this for a file that Bun transpiles and reports by its source map.
 test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSourcemaps"])(
   "both braces of an object are listed and no brace of a block is: %s",

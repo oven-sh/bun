@@ -6,10 +6,43 @@
 // evaluate() and screenshot(). evaluate() runs the expression in this
 // process, which is how the tests move chosen payloads across the pipes and
 // how they make the fake browser misbehave on cue (the __fake_* globals).
-import { closeSync, readSync, writeSync } from "node:fs";
+import { closeSync, mkdirSync, readSync, writeFileSync, writeSync } from "node:fs";
+import { join } from "node:path";
 
 const COMMANDS = 3;
 const REPLIES = 4;
+
+// The profile directory the runtime hands us (`--user-data-dir=<dir>`). The
+// runtime puts its flag before the script, so it lands in execArgv; a
+// `backend.argv` one comes after the script and lands in argv. A real browser
+// fills the directory; one file is enough for a deletion to have to be recursive.
+const userDataDir = [...process.execArgv, ...process.argv]
+  .find(a => a.startsWith("--user-data-dir="))
+  ?.slice("--user-data-dir=".length);
+if (userDataDir) writeFileSync(join(userDataDir, "Local State"), "{}");
+
+// `--helper`: a child that outlives us, the way Chrome's network service
+// outlives the browser process. It writes into the profile once we are gone
+// (it reads EOF on the pipe we hold) and then stays alive, like an orphaned
+// helper would. It inherits our stdout, so whoever reads that pipe sees EOF
+// only once the helper has been killed.
+if (userDataDir && process.argv.includes("--helper")) {
+  const cacheDir = join(userDataDir, "Cache", "Cache_Data");
+  Bun.spawn({
+    cmd: [
+      process.execPath,
+      "-e",
+      `await Bun.stdin.text();
+       const fs = require("node:fs");
+       fs.mkdirSync(${JSON.stringify(cacheDir)}, { recursive: true });
+       fs.writeFileSync(${JSON.stringify(join(cacheDir, "index"))}, "late");
+       setInterval(() => {}, 2 ** 30);`,
+    ],
+    stdin: "pipe",
+    stdout: "inherit",
+    stderr: "ignore",
+  });
+}
 
 // Same bytes as SCREENSHOT_BYTES in the test file.
 const screenshot = Buffer.alloc(100_000);

@@ -253,13 +253,6 @@ public:
         return ptr;
     }
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDatabaseSyncPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
@@ -272,6 +265,7 @@ private:
     }
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDatabaseSyncPrototype, JSDatabaseSyncPrototype::Base);
 
 class JSDatabaseSyncConstructor final : public JSC::InternalFunction {
 public:
@@ -436,13 +430,6 @@ public:
         return ptr;
     }
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStatementSyncPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
@@ -455,6 +442,7 @@ private:
     }
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStatementSyncPrototype, JSStatementSyncPrototype::Base);
 
 class JSStatementSyncConstructor final : public JSC::InternalFunction {
 public:
@@ -546,13 +534,6 @@ public:
         return ptr;
     }
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStatementSyncIteratorPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
@@ -565,6 +546,7 @@ private:
     }
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStatementSyncIteratorPrototype, JSStatementSyncIteratorPrototype::Base);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Session — thin wrapper over sqlite3_session* returned by
@@ -635,13 +617,6 @@ public:
         return ptr;
     }
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSNodeSqliteSessionPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
@@ -654,6 +629,7 @@ private:
     }
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSNodeSqliteSessionPrototype, JSNodeSqliteSessionPrototype::Base);
 
 class JSNodeSqliteSessionConstructor final : public JSC::InternalFunction {
 public:
@@ -814,13 +790,6 @@ public:
         return ptr;
     }
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSNodeSqliteTagStorePrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
@@ -833,6 +802,7 @@ private:
     }
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSNodeSqliteTagStorePrototype, JSNodeSqliteTagStorePrototype::Base);
 
 class JSNodeSqliteTagStoreConstructor final : public JSC::InternalFunction {
 public:

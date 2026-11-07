@@ -185,13 +185,6 @@ public:
 
     DECLARE_INFO;
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBunRequestPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-
 private:
     JSBunRequestPrototype(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
@@ -205,6 +198,7 @@ private:
         Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBunRequestPrototype, JSBunRequestPrototype::Base);
 
 const JSC::ClassInfo JSBunRequestPrototype::s_info = { "BunRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBunRequestPrototype) };
 const JSC::ClassInfo JSBunRequest::s_info = { "BunRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBunRequest) };

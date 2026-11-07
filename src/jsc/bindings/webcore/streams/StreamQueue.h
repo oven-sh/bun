@@ -206,7 +206,6 @@ public:
     // The returned reference is INVALID after any call that can run user JS or mutate the
     // queue — re-fetch.
     Entry& first() { return m_queue.first(); }
-    const Entry& first() const { return m_queue.first(); }
     void removeFirst(const WTF::AbstractLocker&)
     {
         m_queue.removeFirst();
@@ -244,7 +243,6 @@ private:
         if (v && v.isCell())
             analyzer.analyzeIndexEdge(from, v.asCell(), i);
     }
-    static void analyzeEntry(JSC::JSCell*, JSC::HeapAnalyzer&, ByteQueueEntry&, uint32_t) {}
 
     template<typename Visitor>
     static void visitEntry(Visitor& visitor, ValueWithSize& entry) { visitor.appendHidden(entry.value); }

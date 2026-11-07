@@ -1,13 +1,60 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, gc, isASAN, tempDir, tls } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, gc, isASAN, tempDir, tls } from "harness";
 import { createServer } from "net";
 import { join } from "path";
-import process from "process";
-import { RawSocket } from "./raw-peer";
-const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
+import { closedPort, RawSocket } from "./raw-peer";
 const COMMON_CERT = { ...tls };
+
+// Records what `ws` fires until it closes. `onopen` runs when it opens.
+function eventsUntilClose(ws, onopen) {
+  const events = [];
+  const { promise, resolve } = Promise.withResolvers();
+  ws.onopen = () => {
+    events.push("open");
+    onopen?.();
+  };
+  ws.onmessage = ({ data }) => events.push({ message: data });
+  ws.onerror = ({ message, error }) => {
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe(message);
+    events.push({ error: message, code: error.code });
+  };
+  ws.onclose = ({ code, reason, wasClean }) => {
+    events.push({ close: code, reason, wasClean });
+    resolve(events);
+  };
+  return promise;
+}
+
+const closed1006 = { close: 1006, reason: "", wasClean: false };
+
+function secureServer(websocket, cert = COMMON_CERT) {
+  return Bun.serve({
+    port: 0,
+    tls: cert,
+    fetch(req, server) {
+      // upgrade the request to a WebSocket
+      if (server.upgrade(req)) {
+        return; // do not return a Response
+      }
+      return new Response("Upgrade failed :(", { status: 500 });
+    },
+    websocket,
+  });
+}
+
+const helloAndClose = {
+  message(ws, message) {
+    ws.send(message);
+    ws.close();
+  },
+  open(ws) {
+    ws.send("Hello from Bun!");
+  },
+};
 
 describe.concurrent("WebSocket", () => {
   it("should connect", async () => {
@@ -29,33 +76,46 @@ describe.concurrent("WebSocket", () => {
       },
     });
     const ws = new WebSocket(`ws://${server.hostname}:${server.port}`, {});
-    await new Promise(resolve => {
+    expect(ws.readyState).toBe(WebSocket.CONNECTING);
+    await new Promise((resolve, reject) => {
       ws.onopen = resolve;
+      ws.onerror = event => reject(event.error);
     });
+    expect(ws.readyState).toBe(WebSocket.OPEN);
     var closed = new Promise(resolve => {
       ws.onclose = resolve;
     });
     ws.close();
-    await closed;
+    expect(ws.readyState).toBe(WebSocket.CLOSING);
+    const { code, reason, wasClean } = await closed;
+    expect({ code, reason, wasClean }).toEqual({ code: 1005, reason: "", wasClean: true });
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
     Bun.gc(true);
   });
 
   it("should connect over https", async () => {
-    const ws = new WebSocket(TEST_WEBSOCKET_HOST.replaceAll("wss:", "https:"));
+    using server = secureServer({ message() {} });
+    // The certificate names "localhost", and `ca` makes the client verify it.
+    const ws = new WebSocket(`https://localhost:${server.port}/raw`, { tls: { ca: COMMON_CERT.cert } });
+    expect(ws.url).toBe(`wss://localhost:${server.port}/raw`);
     await new Promise((resolve, reject) => {
       ws.onopen = resolve;
-      ws.onerror = reject;
+      ws.onerror = event => reject(event.error);
     });
     var closed = new Promise((resolve, reject) => {
       ws.onclose = resolve;
     });
 
     ws.close();
-    await closed;
+    const { code, reason, wasClean } = await closed;
+    expect({ code, reason, wasClean }).toEqual({ code: 1005, reason: "", wasClean: true });
     Bun.gc(true);
   });
 
   it("should connect many times over https", async () => {
+    const total = 300;
+    let opened = 0;
+    let closedCleanly = 0;
     {
       using server = Bun.serve({
         port: 0,
@@ -81,15 +141,17 @@ describe.concurrent("WebSocket", () => {
           const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
           await new Promise((resolve, reject) => {
             ws.onopen = resolve;
+            ws.onerror = event => reject(event.error);
           });
+          opened++;
           var closed = new Promise((resolve, reject) => {
             ws.onclose = resolve;
           });
 
           ws.close();
-          await closed;
+          if ((await closed).wasClean) closedCleanly++;
         }
-        for (let i = 0; i < 300; i++) {
+        for (let i = 0; i < total; i++) {
           batch[i % batchSize] = run();
           if (i % batchSize === batchSize - 1) {
             await Promise.all(batch);
@@ -98,129 +160,45 @@ describe.concurrent("WebSocket", () => {
         await Promise.all(batch);
         Bun.gc(true);
       }
+      // The promise resolves once every connection is closed.
+      await server.stop(true);
     }
     // test GC after all connections are closed
     Bun.gc(true);
-    // wait to make sure all connections are closed/freed
-    await Bun.sleep(10);
-    // 300 TLS handshakes take 2 s alone on a debug build, 6 s alongside the rest of this concurrent group.
+    expect({ opened, closedCleanly }).toEqual({ opened: total, closedCleanly: total });
+    // 300 TLS handshakes take 3 s alone on a debug build, longer alongside the rest of this concurrent group.
   }, 90_000);
 
   it("rejectUnauthorized should reject self-sign certs when true/default", async () => {
-    using server = Bun.serve({
-      port: 0,
-      tls: COMMON_CERT,
-      fetch(req, server) {
-        // upgrade the request to a WebSocket
-        if (server.upgrade(req)) {
-          return; // do not return a Response
-        }
-        return new Response("Upgrade failed :(", { status: 500 });
-      },
-      websocket: {
-        message(ws, message) {
-          ws.send(message);
-          ws.close();
-        }, // a message is received
-        open(ws) {
-          // a socket is opened
-          ws.send("Hello from Bun!");
-        },
-      },
-    });
-
-    {
-      function testClient(client) {
-        const { promise, resolve, reject } = Promise.withResolvers();
-        let messages = [];
-        let error;
-        client.onopen = () => {
-          client.send("Hello from client!");
-        };
-        client.onmessage = e => {
-          messages.push(e.data);
-        };
-        client.onerror = e => {
-          error = e;
-          // Don't reject, we expect both error and close events
-        };
-        client.onclose = e => {
-          resolve({ result: e, messages, error });
-        };
-        return promise;
-      }
-      const url = server.url.href;
+    using server = secureServer(helloAndClose);
+    const url = server.url.href;
+    const rejected = [
       {
-        // by default rejectUnauthorized is true
-        const client = new WebSocket(url);
-        const { result, messages, error } = await testClient(client);
-        expect(error.message).toContain("TLS handshake failed");
-        expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
-        expect(result.code).toBe(1006);
-        expect(result.reason).toBe("");
-      }
+        error: `WebSocket connection to '${url.replace("https:", "wss:")}' failed: TLS handshake failed: self signed certificate`,
+        code: "DEPTH_ZERO_SELF_SIGNED_CERT",
+      },
+      closed1006,
+    ];
 
-      {
-        // just in case we change the default to true and test
-        const client = new WebSocket(url, { tls: { rejectUnauthorized: true } });
-        const { result, messages, error } = await testClient(client);
-        expect(error.message).toContain("TLS handshake failed");
-        expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
-        expect(result.code).toBe(1006);
-        expect(result.reason).toBe("");
-      }
-    }
+    // by default rejectUnauthorized is true
+    const byDefault = new WebSocket(url);
+    expect(await eventsUntilClose(byDefault, () => byDefault.send("Hello from client!"))).toEqual(rejected);
+
+    // just in case we change the default to true and test
+    const explicit = new WebSocket(url, { tls: { rejectUnauthorized: true } });
+    expect(await eventsUntilClose(explicit, () => explicit.send("Hello from client!"))).toEqual(rejected);
   });
 
   it("rejectUnauthorized should NOT reject self-sign certs when false", async () => {
-    using server = Bun.serve({
-      port: 0,
-      tls: COMMON_CERT,
-      fetch(req, server) {
-        // upgrade the request to a WebSocket
-        if (server.upgrade(req)) {
-          return; // do not return a Response
-        }
-        return new Response("Upgrade failed :(", { status: 500 });
-      },
-      websocket: {
-        message(ws, message) {
-          ws.send(message);
-          ws.close();
-        }, // a message is received
-        open(ws) {
-          // a socket is opened
-          ws.send("Hello from Bun!");
-        },
-      },
-    });
-
-    {
-      function testClient(client) {
-        const { promise, resolve, reject } = Promise.withResolvers();
-        let messages = [];
-        client.onopen = () => {
-          client.send("Hello from client!");
-        };
-        client.onmessage = e => {
-          messages.push(e.data);
-        };
-        client.onerror = reject;
-        client.onclose = e => {
-          resolve({ result: e, messages });
-        };
-        return promise;
-      }
-      const url = `wss://127.0.0.1:${server.address.port}`;
-
-      {
-        // should allow self-signed certs when rejectUnauthorized is false
-        const client = new WebSocket(url, { tls: { rejectUnauthorized: false } });
-        const { result, messages } = await testClient(client);
-        expect(["Hello from Bun!", "Hello from client!"]).toEqual(messages);
-        expect(result.code).toBe(1000);
-      }
-    }
+    using server = secureServer(helloAndClose);
+    // should allow self-signed certs when rejectUnauthorized is false
+    const client = new WebSocket(`wss://127.0.0.1:${server.address.port}`, { tls: { rejectUnauthorized: false } });
+    expect(await eventsUntilClose(client, () => client.send("Hello from client!"))).toEqual([
+      "open",
+      { message: "Hello from Bun!" },
+      { message: "Hello from client!" },
+      { close: 1000, reason: "", wasClean: true },
+    ]);
   });
 
   it("should not accept untrusted certificates", async () => {
@@ -230,68 +208,24 @@ describe.concurrent("WebSocket", () => {
       passphrase: "123123123",
     };
 
-    using server = Bun.serve({
-      port: 0,
-      tls: UNTRUSTED_CERT,
-      fetch(req, server) {
-        // upgrade the request to a WebSocket
-        if (server.upgrade(req)) {
-          return; // do not return a Response
-        }
-        return new Response("Upgrade failed :(", { status: 500 });
-      },
-      websocket: {
-        message(ws, message) {
-          ws.send(message);
-          ws.close();
-        }, // a message is received
-        open(ws) {
-          // a socket is opened
-          ws.send("Hello from Bun!");
-        },
-      },
-    });
-
-    {
-      function testClient(client) {
-        const { promise, resolve, reject } = Promise.withResolvers();
-        let messages = [];
-        let error;
-        client.onopen = () => {
-          client.send("Hello from client!");
-        };
-        client.onmessage = e => {
-          messages.push(e.data);
-        };
-        client.onerror = e => {
-          error = e;
-          // Don't reject, we expect both error and close events
-        };
-        client.onclose = e => {
-          resolve({ result: e, messages, error });
-        };
-        return promise;
-      }
-      const url = `wss://localhost:${server.address.port}`;
+    using server = secureServer(helloAndClose, UNTRUSTED_CERT);
+    const url = `wss://localhost:${server.address.port}`;
+    const client = new WebSocket(url);
+    expect(await eventsUntilClose(client, () => client.send("Hello from client!"))).toEqual([
       {
-        const client = new WebSocket(url);
-        const { result, messages, error } = await testClient(client);
-        expect(error.message).toContain("TLS handshake failed");
-        expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
-        expect(result.code).toBe(1006);
-        expect(result.reason).toBe("");
-      }
-    }
+        error: `WebSocket connection to '${url}/' failed: TLS handshake failed: unable to verify the first certificate`,
+        code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      },
+      closed1006,
+    ]);
   });
 
-  it("supports headers", done => {
-    const server = Bun.serve({
+  it("supports headers", async () => {
+    const request = Promise.withResolvers();
+    using server = Bun.serve({
       port: 0,
       fetch(req, server) {
-        expect(req.headers.get("X-Hello")).toBe("World");
-        expect(req.headers.get("content-type")).toBe("lolwut");
-        server.stop();
-        done();
+        request.resolve({ "X-Hello": req.headers.get("X-Hello"), "content-type": req.headers.get("content-type") });
         return new Response();
       },
       websocket: {
@@ -306,10 +240,17 @@ describe.concurrent("WebSocket", () => {
         "content-type": "lolwut",
       },
     });
+    const events = eventsUntilClose(ws);
+    expect(await request.promise).toEqual({ "X-Hello": "World", "content-type": "lolwut" });
+    // The server answers 200 and not 101.
+    expect(await events).toEqual([
+      { error: `WebSocket connection to '${ws.url}' failed: Expected 101 status code: 200`, code: undefined },
+      closed1006,
+    ]);
   });
 
-  it("should FAIL to connect over http when the status code is invalid", done => {
-    const server = Bun.serve({
+  it("should FAIL to connect over http when the status code is invalid", async () => {
+    using server = Bun.serve({
       port: 0,
       fetch(req, server) {
         server.stop();
@@ -324,18 +265,15 @@ describe.concurrent("WebSocket", () => {
       },
     });
     var ws = new WebSocket(`http://${server.hostname}:${server.port}`, {});
-    ws.onopen = () => {
-      ws.send("Hello World!");
-    };
-
-    ws.onclose = e => {
-      expect(e.code).toBe(1006);
-      done();
-    };
+    expect(await eventsUntilClose(ws, () => ws.send("Hello World!"))).toEqual([
+      { error: `WebSocket connection to '${ws.url}' failed: Expected 101 status code: 200`, code: undefined },
+      closed1006,
+    ]);
   });
 
-  it("should connect over http ", done => {
-    const server = Bun.serve({
+  it("should connect over http ", async () => {
+    const received = [];
+    using server = Bun.serve({
       port: 0,
       fetch(req, server) {
         server.upgrade(req);
@@ -345,24 +283,24 @@ describe.concurrent("WebSocket", () => {
       },
       websocket: {
         open(ws) {},
-        message(ws) {
+        message(ws, message) {
+          received.push(message);
           ws.close();
         },
         close() {},
       },
     });
     var ws = new WebSocket(`http://${server.hostname}:${server.port}`, {});
-    ws.onopen = () => {
-      ws.send("Hello World!");
-    };
-
-    ws.onclose = () => {
-      done();
-    };
+    expect(ws.url).toBe(`ws://${server.hostname}:${server.port}/`);
+    expect(await eventsUntilClose(ws, () => ws.send("Hello World!"))).toEqual([
+      "open",
+      { close: 1000, reason: "", wasClean: true },
+    ]);
+    expect(received).toEqual(["Hello World!"]);
   });
   describe("nodebuffer", () => {
-    it("should support 'nodebuffer' binaryType", done => {
-      const server = Bun.serve({
+    it("should support 'nodebuffer' binaryType", async () => {
+      using server = Bun.serve({
         port: 0,
         fetch(req, server) {
           if (server.upgrade(req)) {
@@ -381,19 +319,26 @@ describe.concurrent("WebSocket", () => {
       ws.binaryType = "nodebuffer";
       expect(ws.binaryType).toBe("nodebuffer");
       Bun.gc(true);
+      const message = Promise.withResolvers();
+      const closed = Promise.withResolvers();
+      ws.onclose = closed.resolve;
       ws.onmessage = ({ data }) => {
         ws.close();
-        expect(Buffer.isBuffer(data)).toBe(true);
-        expect(data).toEqual(new Uint8Array([1, 2, 3]));
         server.stop(true);
         Bun.gc(true);
-        done();
+        message.resolve(data);
       };
+      const data = await message.promise;
+      expect(Buffer.isBuffer(data)).toBe(true);
+      expect(data).toEqual(Buffer.from([1, 2, 3]));
+      await closed.promise;
     });
 
-    it("should support 'nodebuffer' binaryType when the handler is not immediately provided", done => {
+    it("should support 'nodebuffer' binaryType when the handler is not immediately provided", async () => {
       var client;
-      const server = Bun.serve({
+      const message = Promise.withResolvers();
+      const closed = Promise.withResolvers();
+      using server = Bun.serve({
         port: 0,
         fetch(req, server) {
           if (server.upgrade(req)) {
@@ -407,10 +352,8 @@ describe.concurrent("WebSocket", () => {
             ws.sendBinary(new Uint8Array([1, 2, 3]));
             client.onmessage = ({ data }) => {
               client.close();
-              expect(Buffer.isBuffer(data)).toBe(true);
-              expect(data).toEqual(new Uint8Array([1, 2, 3]));
               server.stop(true);
-              done();
+              message.resolve(data);
             };
           },
         },
@@ -418,100 +361,101 @@ describe.concurrent("WebSocket", () => {
       client = new WebSocket(`http://${server.hostname}:${server.port}`, {});
       client.binaryType = "nodebuffer";
       expect(client.binaryType).toBe("nodebuffer");
+      client.onclose = closed.resolve;
+      const data = await message.promise;
+      expect(Buffer.isBuffer(data)).toBe(true);
+      expect(data).toEqual(Buffer.from([1, 2, 3]));
+      await closed.promise;
     });
   });
 
   it("should send and receive messages", async () => {
-    const ws = new WebSocket(TEST_WEBSOCKET_HOST);
+    using server = secureServer({
+      message(ws, message) {
+        // echo
+        ws.send(message);
+      },
+    });
+    const ws = new WebSocket(`wss://localhost:${server.port}/raw`, { tls: { ca: COMMON_CERT.cert } });
     await new Promise((resolve, reject) => {
       ws.onopen = resolve;
-      ws.onerror = reject;
+      ws.onerror = event => reject(event.error);
       ws.onclose = () => {
         reject("WebSocket closed");
       };
     });
     const count = 10;
+    // The forced collections are the slow part of this test. Each place below collects on its first pass only:
+    // after a send, inside a message handler, around a handler swap, and after close().
 
     // 10 messages in burst
+    const burst = [];
     var promise = new Promise((resolve, reject) => {
-      var remain = count;
       ws.onmessage = event => {
-        gc(true);
-        expect(event.data).toBe("Hello World!");
-        remain--;
+        if (burst.length === 0) gc(true);
+        burst.push(event.data);
 
-        if (remain <= 0) {
+        if (burst.length >= count) {
           ws.onmessage = () => {};
           resolve();
         }
       };
-      ws.onerror = reject;
+      ws.onerror = event => reject(event.error);
     });
 
     for (let i = 0; i < count; i++) {
       ws.send("Hello World!");
-      gc(true);
+      if (i === 0) gc(true);
     }
 
     await promise;
+    expect(burst).toEqual(Array.from({ length: count }, () => "Hello World!"));
     var echo = 0;
 
     // 10 messages one at a time
     function waitForEcho() {
       return new Promise((resolve, reject) => {
-        gc(true);
+        const collect = echo === 0;
+        if (collect) gc(true);
         const msg = `Hello World! ${echo++}`;
         ws.onmessage = event => {
-          expect(event.data).toBe(msg);
-          resolve();
+          resolve([msg, event.data]);
         };
-        ws.onerror = reject;
+        ws.onerror = event => reject(event.error);
         ws.onclose = reject;
         ws.send(msg);
-        gc(true);
+        if (collect) gc(true);
       });
     }
-    gc(true);
-    for (let i = 0; i < count; i++) await waitForEcho();
-    ws.onclose = () => {};
+    for (let i = 0; i < count; i++) {
+      const [sent, received] = await waitForEcho();
+      expect(received).toBe(sent);
+    }
+    const closed = Promise.withResolvers();
+    ws.onclose = ({ code, reason, wasClean }) => closed.resolve({ code, reason, wasClean });
     ws.onerror = () => {};
     ws.close();
     gc(true);
-  });
+    expect(await closed.promise).toEqual({ code: 1005, reason: "", wasClean: true });
+    // Takes 0.6 s alone on a debug build, up to 4 s next to the 300 TLS handshakes of this concurrent group.
+  }, 90_000);
 
-  // If this test fails locally, check that ATT DNS error assist is disabled
-  // or, make sure that your DNS server is pointed to a DNS server that does not mitm your requests
   it("should report failing websocket connection in onerror and onclose for DNS resolution error", async () => {
-    const url = `ws://aposdkpaosdkpasodk.com`;
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const { promise: promise2, resolve: resolve2, reject: reject2 } = Promise.withResolvers();
-
-    const ws = new WebSocket(url, {});
-    ws.onopen = () => reject(new Error("should not be called"));
-    ws.onmessage = () => reject(new Error("should not be called"));
-    ws.onerror = event => {
-      expect(event.error).toBeInstanceOf(Error);
-      resolve();
-    };
-    ws.onclose = () => resolve2();
-    await Promise.all([promise, promise2]);
+    // getaddrinfo rejects a DNS label longer than 63 bytes without sending a query.
+    const url = `ws://${Buffer.alloc(64, "a")}.com/`;
+    expect(await eventsUntilClose(new WebSocket(url, {}))).toEqual([
+      { error: `WebSocket connection to '${url}' failed: Failed to connect`, code: "ENOTFOUND" },
+      closed1006,
+    ]);
   });
 
   // We want to test that the `onConnectError` callback gets called.
   it("should report failing websocket connection in onerror and onclose for connection refused", async () => {
-    const url = `ws://localhost:65412`;
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const { promise: promise2, resolve: resolve2, reject: reject2 } = Promise.withResolvers();
-
-    const ws = new WebSocket(url, {});
-    ws.onopen = () => reject(new Error("should not be called"));
-    ws.onmessage = () => reject(new Error("should not be called"));
-    ws.onerror = event => {
-      expect(event.error).toBeInstanceOf(Error);
-      resolve();
-    };
-    ws.onclose = () => resolve2();
-    await Promise.all([promise, promise2]);
+    const url = `ws://localhost:${await closedPort()}/`;
+    expect(await eventsUntilClose(new WebSocket(url, {}))).toEqual([
+      { error: `WebSocket connection to '${url}' failed: Failed to connect`, code: "ECONNREFUSED" },
+      closed1006,
+    ]);
   });
 
   it("should be able to send big messages", async () => {
@@ -541,35 +485,27 @@ describe.concurrent("WebSocket", () => {
 
     const payload = crypto.randomBytes(1024 * 16);
     const iterations = 10;
-    const expected = payload.byteLength * iterations;
 
-    let total_received = 0;
-    const timeout = setTimeout(() => {
-      ws.close();
-    }, 4000);
-    ws.addEventListener("close", e => {
-      clearTimeout(timeout);
-      resolve(total_received);
-    });
+    const received = [];
+    ws.addEventListener("close", ({ code, reason, wasClean }) => resolve({ code, reason, wasClean }));
 
     ws.addEventListener("message", e => {
-      if (typeof e.data === "string") {
-        return;
-      }
-      const received = e.data.byteLength || e.data.size || 0;
-      total_received += received;
-      if (total_received >= expected) {
+      received.push(e.data);
+      if (received.length === iterations) {
         ws.close();
       }
     });
-    ws.addEventListener("error", reject);
+    ws.addEventListener("error", event => reject(event.error));
     ws.addEventListener("open", () => {
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < iterations; i++) {
         ws.send(payload);
       }
     });
 
-    expect(await promise).toBe(expected);
+    expect(await promise).toEqual({ code: 1005, reason: "", wasClean: true });
+    expect(received.map(data => Buffer.isBuffer(data) && data.equals(payload))).toEqual(
+      Array.from({ length: iterations }, () => true),
+    );
   });
 
   it("headers should keep the original case", async () => {
@@ -593,9 +529,8 @@ describe.concurrent("WebSocket", () => {
         socket.end();
       });
 
-      socket.on("error", err => {
-        console.error("Socket error:", err);
-      });
+      // The client can reset the connection after it reads the 403.
+      socket.on("error", () => {});
     });
 
     server.listen(0, () => {
@@ -610,13 +545,11 @@ describe.concurrent("WebSocket", () => {
         },
       });
 
-      ws.onclose = () => {
-        resolve();
-      };
+      resolve(eventsUntilClose(ws));
     });
 
     try {
-      await promise;
+      const events = await promise;
 
       expect(receivedHeaders).toContain("MyCustomHeader");
       expect(receivedHeaders).toContain("Custom_Header_2");
@@ -633,15 +566,42 @@ describe.concurrent("WebSocket", () => {
         if (header === "mycustomheader4") continue;
         expect(header).not.toBe(header.toLowerCase());
       }
+      expect(events).toEqual([
+        {
+          error: `WebSocket connection to 'ws://localhost:${server.address().port}/' failed: Expected 101 status code: 403`,
+          code: undefined,
+        },
+        closed1006,
+      ]);
     } finally {
       server.close();
     }
   });
 });
 
+// ASAN builds may print a benign signal-handler warning to stderr at
+// startup; ignore that line so only real subprocess errors fail the test.
+function stderrLines(stderr) {
+  return stderr.split("\n").filter(line => line && !line.startsWith("WARNING: ASAN interferes"));
+}
+
+// Runs websocket-subprocess.ts against `url`. It prints "Connected!" when its socket opens and "Closed!" when it closes.
+function spawnClient(url) {
+  return Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "websocket-subprocess.ts"), url],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
+
+function output(subprocess) {
+  return Promise.all([subprocess.stdout.text(), subprocess.stderr.text(), subprocess.exited]);
+}
+
 describe.concurrent("websocket in subprocess", () => {
   it.concurrent("should exit", async () => {
-    let messageReceived = false;
+    const received = [];
     using server = Bun.serve({
       port: 0,
       fetch(req, server) {
@@ -655,23 +615,20 @@ describe.concurrent("websocket in subprocess", () => {
         open(ws) {
           ws.send("hello websocket");
         },
-        message(ws) {
-          messageReceived = true;
+        message(ws, message) {
+          received.push(message);
           ws.close();
         },
         close(ws) {},
       },
     });
-    await using subprocess = Bun.spawn({
-      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", `http://${server.hostname}:${server.port}`],
-      stderr: "inherit",
-      stdin: "inherit",
-      stdout: "inherit",
-      env: bunEnv,
-    });
+    await using subprocess = spawnClient(`http://${server.hostname}:${server.port}`);
 
-    expect(await subprocess.exited).toBe(0);
-    expect(messageReceived).toBe(true);
+    const [stdout, stderr, exitCode] = await output(subprocess);
+    expect(stderrLines(stderr)).toEqual([]);
+    expect(stdout).toBe("Connected!\nClosed!\n");
+    expect(exitCode).toBe(0);
+    expect(received).toEqual(["hello"]);
   });
 
   it.concurrent("should work with process.nextTick override", async () => {
@@ -697,7 +654,10 @@ describe.concurrent("websocket in subprocess", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const exitCode = await proc.exited;
+    const [stdout, stderr, exitCode] = await output(proc);
+    expect(stderrLines(stderr)).toEqual([]);
+    // The override prints its argument. Bun called it with a function.
+    expect(stdout).toStartWith("[Function");
     expect(exitCode).toBe(0);
   });
 
@@ -712,41 +672,55 @@ describe.concurrent("websocket in subprocess", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await output(proc);
+    expect(stderrLines(stderr)).toEqual([]);
     expect(stdout.trim()).toBe(String(WebSocket.CONNECTING));
     expect(exitCode).toBe(0);
   });
 
   it("should exit after killed", async () => {
-    await using subprocess = Bun.spawn({
-      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", TEST_WEBSOCKET_HOST],
-      stderr: "inherit",
-      stdin: "inherit",
-      stdout: "inherit",
-      env: bunEnv,
-    });
+    const opened = Promise.withResolvers();
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
 
+        return new Response("http response");
+      },
+      websocket: {
+        open(ws) {
+          opened.resolve();
+        },
+        message(ws, message) {},
+      },
+    });
+    await using subprocess = spawnClient(server.url.href);
+
+    // An open socket keeps the process alive, so only the signal ends it.
+    await Promise.race([opened.promise, subprocess.exited]);
     subprocess.kill();
 
-    expect(await subprocess.exited).toBe(143); // 128 + 15 (SIGTERM)
+    const [stdout, , exitCode] = await output(subprocess);
+    // The signal can arrive before the open handler prints. The close handler never runs.
+    expect(["", "Connected!\n"]).toContain(stdout);
+    expect(exitCode).toBe(143); // 128 + 15 (SIGTERM)
     expect(subprocess.exitCode).toBe(null);
     expect(subprocess.signalCode).toBe("SIGTERM");
   });
 
   it("should exit with invalid url", async () => {
-    await using subprocess = Bun.spawn({
-      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", "invalid url"],
-      stderr: "inherit",
-      stdin: "inherit",
-      stdout: "inherit",
-      env: bunEnv,
-    });
+    await using subprocess = spawnClient("invalid url");
 
-    expect(await subprocess.exited).toBe(1);
+    const [stdout, stderr, exitCode] = await output(subprocess);
+    expect(stderr).toContain("SyntaxError: Invalid url for WebSocket invalid url");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
   });
 
   it("should exit after timeout", async () => {
-    let messageReceived = false;
+    const received = [];
     let start = 0;
     let end = 0;
     using server = Bun.serve({
@@ -764,29 +738,26 @@ describe.concurrent("websocket in subprocess", () => {
           ws.send("timeout");
         },
         message(ws, message) {
-          messageReceived = true;
+          received.push(message);
           end = performance.now();
           ws.close();
         },
         close(ws) {},
       },
     });
-    await using subprocess = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "websocket-subprocess.ts"), server.url.href],
-      stderr: "inherit",
-      stdin: "inherit",
-      stdout: "inherit",
-      env: bunEnv,
-    });
+    await using subprocess = spawnClient(server.url.href);
 
-    expect(await subprocess.exited).toBe(0);
-    expect(messageReceived).toBe(true);
+    const [stdout, stderr, exitCode] = await output(subprocess);
+    expect(stderrLines(stderr)).toEqual([]);
+    expect(stdout).toBe("Connected!\nClosed!\n");
+    expect(exitCode).toBe(0);
+    expect(received).toEqual(["close"]);
     expect(Math.ceil(end - start)).toBeGreaterThanOrEqual(290);
   });
 
   it("should exit after server stop and 0 messages", async () => {
     const { promise, resolve } = Promise.withResolvers();
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       fetch(req, server) {
         if (server.upgrade(req)) {
@@ -804,37 +775,25 @@ describe.concurrent("websocket in subprocess", () => {
       },
     });
 
-    await using subprocess = Bun.spawn({
-      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", `http://${server.hostname}:${server.port}`],
-      stderr: "inherit",
-      stdin: "inherit",
-      stdout: "inherit",
-      env: bunEnv,
-    });
-    await promise;
+    await using subprocess = spawnClient(`http://${server.hostname}:${server.port}`);
+    await Promise.race([promise, subprocess.exited]);
     server.stop(true);
-    expect(await subprocess.exited).toBe(0);
+
+    const [stdout, stderr, exitCode] = await output(subprocess);
+    expect(stderrLines(stderr)).toEqual([]);
+    expect(stdout).toBe("Connected!\nClosed!\n");
+    expect(exitCode).toBe(0);
   });
 });
 
-it.concurrent("#16995", async () => {
-  const publicAddress = new URL("https://1.1.1.1:3000");
-  for (let i = 0; i < 4096; i++) {
-    const socket = new WebSocket(publicAddress.toString());
-    socket.close();
-  }
-});
-
-// 1000 sequential connections take 2.5 s alone on a debug build.
+// Runs alone: it counts every WebSocket in the heap.
+// 1000 connections take 2.5 s alone on a debug build.
 it.serial("instances should be finalized when GC'd", { timeout: 90_000 }, async () => {
-  let current_websocket_count = 0;
+  const batchSize = 20;
+  let connecting_websocket_count = 0;
   let initial_websocket_count = 0;
   function getWebSocketCount() {
-    Bun.gc(true);
-    const objectTypeCounts = require("bun:jsc").heapStats().objectTypeCounts || {
-      WebSocket: 0,
-    };
-    return objectTypeCounts.WebSocket || 0;
+    return heapStats().objectTypeCounts.WebSocket || 0;
   }
 
   async function run() {
@@ -866,23 +825,58 @@ it.serial("instances should be finalized when GC'd", { timeout: 90_000 }, async 
       return promise;
     }
 
-    for (let i = 0; i < 1000; i++) {
-      await openAndCloseWS();
-      if (i % 100 === 0) {
-        if (initial_websocket_count === 0) {
-          initial_websocket_count = getWebSocketCount();
-        }
-      }
+    Bun.gc(true);
+    initial_websocket_count = getWebSocketCount();
+    for (let i = 0; i < 1000; i += batchSize) {
+      const batch = Array.from({ length: batchSize }, openAndCloseWS);
+      // No socket of the first batch has opened yet, so the heap holds all of them.
+      if (i === 0) connecting_websocket_count = getWebSocketCount();
+      await Promise.all(batch);
     }
   }
   await run();
 
-  // wait next tick to run the last time
-  await Bun.sleep(100);
-  current_websocket_count = getWebSocketCount();
-  console.log({ current_websocket_count, initial_websocket_count });
+  expect(connecting_websocket_count).toBeGreaterThanOrEqual(batchSize);
   // expect that current and initial websocket be close to the same (normaly 1 or 2 difference)
-  expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(50);
+  await expectMaxObjectTypeCount(expect, "WebSocket", initial_websocket_count + 50);
+});
+
+// https://github.com/oven-sh/bun/issues/16995
+// Runs alone: the loop does not yield, and it takes 3.5 s on a debug build.
+it.serial("#16995", { timeout: 90_000 }, async () => {
+  const count = 4096;
+  // The host is an IP address, so there is no lookup: the socket exists and its connect() has started when the
+  // constructor returns. close() runs before the event loop can report the result of that connect().
+  const listener = createServer(socket => socket.destroy());
+  await new Promise(resolve => listener.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = new URL(`https://127.0.0.1:${listener.address().port}`);
+    let errors = 0;
+    let closes = 0;
+    const closeCodes = new Set();
+    const { promise, resolve } = Promise.withResolvers();
+    function onerror() {
+      errors++;
+    }
+    function onclose(event) {
+      closeCodes.add(event.code);
+      if (++closes === count) resolve();
+    }
+    for (let i = 0; i < count; i++) {
+      const socket = new WebSocket(address.toString());
+      socket.onerror = onerror;
+      socket.onclose = onclose;
+      socket.close();
+    }
+    await promise;
+    expect({ errors, closes, closeCodes: [...closeCodes] }).toEqual({
+      errors: count,
+      closes: count,
+      closeCodes: [1006],
+    });
+  } finally {
+    listener.close();
+  }
 });
 
 // Every case throws from the constructor, before it connects.
@@ -1086,14 +1080,8 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // ASAN builds may print a benign signal-handler warning to stderr at
-    // startup; ignore that line so only real subprocess errors fail the test.
-    const filteredStderr = stderr
-      .split("\n")
-      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-      .join("\n");
-    expect(filteredStderr).toBe("");
+    const [stdout, stderr, exitCode] = await output(proc);
+    expect(stderrLines(stderr)).toEqual([]);
     const { growthMiB } = JSON.parse(stdout.trim());
     expect(growthMiB).toBeLessThan(isASAN ? 256 : 64);
     expect(exitCode).toBe(0);

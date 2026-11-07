@@ -515,22 +515,27 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
     // needs to exist for https://github.com/nodejs/node/blob/8641d941893/test/parallel/test-worker-message-port-transfer-fake-js-transferable.js to pass
     [Symbol("messaging_transfer_symbol")]() {}
 
-    async appendFile(data, options?: BufferEncoding | { encoding?: BufferEncoding | null; flush?: boolean } | null) {
+    async appendFile(
+      data,
+      options?: BufferEncoding | { encoding?: BufferEncoding | null; flush?: boolean; signal?: AbortSignal } | null,
+    ) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
       let encoding: BufferEncoding = "utf8";
       let flush = false;
+      let signal: AbortSignal | undefined = undefined;
       if (options == null || typeof options === "function") {
       } else if (typeof options === "string") {
         encoding = options;
       } else {
         encoding = options?.encoding ?? encoding;
         flush = options?.flush ?? flush;
+        signal = options?.signal ?? undefined;
       }
 
       try {
         this[kRef]();
-        return await writeFile(fd, data, { encoding, flush, flag: this[kFlag] });
+        return await writeFile(fd, data, { encoding, flush, flag: this[kFlag], signal });
       } finally {
         this[kUnref]();
       }
@@ -1695,9 +1700,6 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     flag = optionsOrEncoding?.flag ?? (flag || "w");
     mode = optionsOrEncoding?.mode ?? (mode || 0o666);
     signal = optionsOrEncoding?.signal ?? null;
-    if (signal?.aborted) {
-      throw $makeAbortError(undefined, { cause: signal.reason });
-    }
   } else if (typeof optionsOrEncoding === "string" || optionsOrEncoding == null) {
     encoding = optionsOrEncoding || "utf8";
     flag ??= "w";
@@ -1707,6 +1709,13 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
   if (!Buffer.isEncoding(encoding)) {
     // ERR_INVALID_OPT_VALUE_ENCODING was removed in Node v15.
     throw new TypeError(`Unknown encoding: ${encoding}`);
+  }
+
+  // As the binding has it for a string or a Buffer: undefined, null and "" are no signal. Node takes only undefined for none.
+  if (signal === "") signal = null;
+  if (signal !== null) validateAbortSignal(signal, "options.signal");
+  if (signal?.aborted) {
+    throw $makeAbortError(undefined, { cause: signal.reason });
   }
 
   let mustClose = typeof fdOrPath === "string";

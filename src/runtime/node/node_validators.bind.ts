@@ -69,7 +69,7 @@ export const validateObject = validator(
 
 export const validateBuffer = validator("validateBuffer", valueAndName, usesOfValueAndName);
 
-/** An object that is no `AbortSignal` passes for one if it has a property `aborted`, its own or inherited. */
+/** An object that is no `AbortSignal` and no function passes for one if it has a property `aborted`, its own or inherited. */
 export const validateAbortSignal = validator("validateAbortSignal", valueAndName, {
   ...usesOfValueAndName,
   value: [table.runs(table.named("aborted"), "PrototypeChain"), ...describedInMessage],

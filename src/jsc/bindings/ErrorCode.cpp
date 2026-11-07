@@ -2009,10 +2009,6 @@ extern "C" JSC::EncodedJSValue Bun__wrapAbortError(JSC::JSGlobalObject* lexicalG
     auto& vm = JSC::getVM(globalObject);
     auto cause = JSC::JSValue::decode(causeParam);
 
-    if (cause.isUndefined()) {
-        return JSC::JSValue::encode(Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, Bun::commonStrings(vm).OperationWasAbortedString()));
-    }
-
     auto message = Bun::commonStrings(vm).OperationWasAbortedString();
     JSC::JSObject* options = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
     Bun::putDirectNamed(vm, options, "cause"_s, cause);

@@ -137,10 +137,15 @@ impl AbortSignal {
         }
         // `jsReason` returns the same (cached) object the JS `.reason` getter
         // does, so `err.cause === signal.reason` holds, matching Node.
-        Some(Bun__wrapAbortError(
+        Some(Self::node_abort_error(
             global,
             WebCore__AbortSignal__jsReason(self, global),
         ))
+    }
+
+    /// Node's `new AbortError(undefined, { cause })`, for the reason of any signal.
+    pub fn node_abort_error(global: &JSGlobalObject, cause: JSValue) -> JSValue {
+        Bun__wrapAbortError(global, cause)
     }
 
     /// Take a ref on the signal.

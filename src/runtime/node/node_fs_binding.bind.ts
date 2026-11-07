@@ -37,6 +37,19 @@ const uses = {
   ],
 };
 
+/** `readFile`, `writeFile` and `appendFile` take any object that has `aborted` for `signal`: they look for the property. */
+const takesSignal = new Set(["appendFile", "readFile", "writeFile"]);
+const looksForAborted = [...uses.args, ...table.hostOptionBag(["aborted"])];
+const usesOfSync = (name: string) => (takesSignal.has(name) ? { this: uses.this, args: looksForAborted } : uses);
+/**
+ * With a promise they keep a `signal` that is no AbortSignal, and read `aborted` and `reason` of it before the
+ * operation is scheduled and when it completes (`args::FileSignal` in node_fs.rs).
+ */
+const usesOfPromise = (name: string) =>
+  takesSignal.has(name)
+    ? { this: uses.this, args: [...looksForAborted, table.memberStoredIn(["signal"], table.nativeMemory)] }
+    : uses;
+
 /** `[length of x, length of xSync]`. `xCb` is `x` with a leading callback. */
 const operations: Record<string, readonly [number, number]> = {
   access: [3, 2],
@@ -113,9 +126,12 @@ export const NodeJSFS = b.class({
   proto: Object.fromEntries(
     [
       ...Object.entries(operations).flatMap(([name, [length, syncLength]]) => [
-        [name, { ...operation(length, "Promise"), uses }] as const,
+        [name, { ...operation(length, "Promise"), uses: usesOfPromise(name) }] as const,
         [`${name}Cb`, operation(length + 1, "undefined")] as const,
-        [`${name}Sync`, { ...operation(syncLength, ...(syncResults[name] ?? ["undefined"])), uses }] as const,
+        [
+          `${name}Sync`,
+          { ...operation(syncLength, ...(syncResults[name] ?? ["undefined"])), uses: usesOfSync(name) },
+        ] as const,
       ]),
       ["cp", { ...operation(2, "Promise"), uses }] as const,
       ["cpSync", { ...operation(2, "undefined"), uses }] as const,

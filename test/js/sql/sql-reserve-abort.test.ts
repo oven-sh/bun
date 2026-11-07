@@ -134,7 +134,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     await expect(sql.reserve({ signal: 123 as unknown as AbortSignal })).rejects.toMatchObject({
       name: "TypeError",
       code: "ERR_INVALID_ARG_TYPE",
-      message: 'The "options.signal" property must be of type AbortSignal. Received type number (123)',
+      message: 'The "options.signal" property must be an instance of AbortSignal. Received type number (123)',
     });
 
     expect(await sql`select 1 as x`).toEqual([{ x: 1 }]);

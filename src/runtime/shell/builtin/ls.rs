@@ -38,7 +38,7 @@ pub(crate) struct ExecState {
     pub(crate) output_done: usize,
     /// FIFO of in-flight `OutputTask`s awaiting an IOWriter chunk
     /// completion. Stopgap until `WriterTag` can carry the `OutputTask`
-    /// directly — see mkdir.rs `Exec::output_queue` for rationale.
+    /// directly.
     pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Ls>>>,
 }
 

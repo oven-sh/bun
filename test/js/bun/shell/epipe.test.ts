@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { sep } from "node:path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -22,7 +23,8 @@ describe.if(isPosix)("IOWriter epipe", () => {
   });
 });
 
-// These builtins queue one chunk per operand or directory and wait for each of them to complete or fail.
+// These builtins queue several chunks and wait for each of them to complete or fail: `ls` and `rm` one
+// per operand or directory, `mkdir` one per page of lines.
 describe.concurrent("a pipeline stage whose reader exits without reading", () => {
   const names = Array.from({ length: 64 }, (_, i) => `entry${i}`);
   const operands = names.join(" ");
@@ -37,6 +39,29 @@ describe.concurrent("a pipeline stage whose reader exits without reading", () =>
     using dir = tempDir("shell-epipe-stage", files);
     const { stdout, exitCode } = await $`${{ raw: pipeline }}`.cwd(String(dir)).quiet().nothrow();
     expect({ stdout: stdout.toString(), exitCode }).toEqual({ stdout: "", exitCode: 0 });
+  });
+
+  // Every second operand fails, and the lines of the others fill several pages. The error lines go to
+  // stderr in operand order while the chunks for stdout fail.
+  test("mkdir -v of several pages with failing operands", async () => {
+    using dir = tempDir("shell-epipe-stage", {});
+    const operands = Array.from({ length: 600 }, (_, i) => (i % 2 ? `missing/entry${i}` : `entry${i}`));
+    const { stdout, stderr, exitCode } = await $`${{ raw: `mkdir -v ${operands.join(" ")} | true` }}`
+      .cwd(String(dir))
+      .quiet()
+      .nothrow();
+    expect({
+      stdout: stdout.toString(),
+      stderr: stderr.toString().replaceAll(String(dir) + sep, ""),
+      exitCode,
+    }).toEqual({
+      stdout: "",
+      stderr: operands
+        .filter((_, i) => i % 2)
+        .map(name => `mkdir: ${name.replaceAll("/", sep)}: No such file or directory\n`)
+        .join(""),
+      exitCode: 0,
+    });
   });
 
   // These two finish at their first failed chunk, with more chunks queued behind it.

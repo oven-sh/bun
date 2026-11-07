@@ -1,394 +1,96 @@
 use crate::node::fs::{MkdirCtx, NodeFS, args as fs_args};
 use crate::node::types::PathLike;
-use crate::shell::ExitCode;
-use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
-use crate::shell::interpreter::{
-    EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags,
-};
-use crate::shell::io_writer::{ChildPtr, WriterTag};
+use crate::shell::builtin::Kind;
+use crate::shell::builtins::operands::{self, OperandBuiltin, OperandWalkTask, Walk};
+use crate::shell::interpreter::{FlagParser, Interpreter, NodeId, ParseFlagResult};
 use crate::shell::yield_::Yield;
-use core::ops::ControlFlow;
-use core::ptr::NonNull;
 
 #[derive(Default)]
 pub(crate) struct Mkdir {
-    pub(crate) opts: Opts,
-    pub(crate) state: State,
+    walk: Walk,
 }
 
-#[derive(Default)]
-pub(crate) enum State {
-    #[default]
-    Idle,
-    Exec(Exec),
-    WaitingWriteErr,
-    Done,
-}
-
-pub(crate) struct Exec {
-    pub(crate) started: bool,
-    pub(crate) tasks_count: usize,
-    pub(crate) tasks_done: usize,
-    pub(crate) output_waiting: usize,
-    pub(crate) output_done: usize,
-    /// Index into `Builtin::args` where filepath args start (storing the
-    /// index keeps the lifetime tied to the Cmd's argv without a
-    /// self-reference).
-    pub(crate) args_start: usize,
-    pub(crate) err: Option<bun_sys::Error>,
-    /// FIFO of in-flight `OutputTask`s awaiting an IOWriter chunk
-    /// completion. Stopgap until `WriterTag` can carry the `OutputTask`
-    /// directly (IOWriter.rs is out of scope here): `write_err`/`write_out`
-    /// push, `on_io_writer_chunk` pops and forwards to
-    /// `OutputTask::on_io_writer_chunk` so the box is reclaimed and the
-    /// writeErr→writeOut→onDone state machine runs.
-    pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Mkdir>>>,
-}
+pub(crate) type ShellMkdirTask = OperandWalkTask<Mkdir>;
 
 impl Mkdir {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let (args_start, mut opts) = {
-            let mut opts = Opts::default();
-            let args = Builtin::of(interp, cmd).args_slice();
-            match parse_flags(&mut opts, args) {
-                Ok(Some(rest)) => {
-                    let start = args.len() - rest.len();
-                    (start, opts)
-                }
-                Ok(None) => {
-                    return Self::fail_usage(interp, cmd);
-                }
-                Err(e) => {
-                    return Builtin::fail_parse(interp, cmd, Kind::Mkdir, &e, || {
-                        Self::state_mut(interp, cmd).state = State::WaitingWriteErr
-                    });
-                }
-            }
-        };
-        // Hand the parsed opts back into state.
-        core::mem::swap(&mut Self::state_mut(interp, cmd).opts, &mut opts);
-
-        Self::state_mut(interp, cmd).state = State::Exec(Exec {
-            started: false,
-            tasks_count: 0,
-            tasks_done: 0,
-            output_waiting: 0,
-            output_done: 0,
-            args_start,
-            err: None,
-            output_queue: std::collections::VecDeque::new(),
-        });
-        Self::next(interp, cmd)
-    }
-
-    fn fail_usage(interp: &Interpreter, cmd: NodeId) -> Yield {
-        Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
-        Builtin::write_failing_error(interp, cmd, Kind::Mkdir.usage_string(), 1)
-    }
-
-    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
-        // NOTE: reshaped for borrowck — read scalars, drop the borrow,
-        // then act.
-        let action = match &mut Self::state_mut(interp, cmd).state {
-            State::Idle => panic!("Invalid state"),
-            State::Exec(exec) => {
-                if exec.started {
-                    if exec.tasks_done >= exec.tasks_count
-                        && exec.output_done >= exec.output_waiting
-                    {
-                        let exit_code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
-                        exec.err = None;
-                        NextAction::Done(exit_code)
-                    } else {
-                        return Yield::suspended();
-                    }
-                } else {
-                    exec.started = true;
-                    NextAction::Schedule(exec.args_start)
-                }
-            }
-            State::WaitingWriteErr => return Yield::suspended(),
-            State::Done => return Builtin::done(interp, cmd, 0),
-        };
-        match action {
-            NextAction::Done(code) => {
-                Self::state_mut(interp, cmd).state = State::Done;
-                Builtin::done(interp, cmd, code)
-            }
-            NextAction::Schedule(args_start) => {
-                let argc = Builtin::of(interp, cmd).args_slice().len();
-                let task_count = argc - args_start;
-                if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                    exec.tasks_count = task_count;
-                }
-                let opts = Self::state_mut(interp, cmd).opts;
-                let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
-                let evtloop = Builtin::event_loop(interp, cmd);
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
-                for i in args_start..argc {
-                    let path = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
-                    let task =
-                        ShellMkdirTask::create(cmd, opts, path, cwd.clone(), evtloop, interp_ptr);
-                    // SAFETY: freshly heap-allocated.
-                    unsafe { ShellTask::schedule(task) };
-                }
-                Yield::suspended()
-            }
-        }
+        operands::start::<Self>(interp, cmd)
     }
 
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
-        written: usize,
-        e: Option<bun_sys::SystemError>,
+        _written: usize,
+        _e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        let pending = match &mut Self::state_mut(interp, cmd).state {
-            State::WaitingWriteErr => return Builtin::done(interp, cmd, 1),
-            State::Exec(exec) => exec.output_queue.pop_front(),
-            State::Idle | State::Done => panic!("Invalid state"),
-        };
-        if let Some(task) = pending {
-            return OutputTask::<Mkdir>::on_io_writer_chunk(task, interp, written, e);
-        }
-        Self::next(interp, cmd)
-    }
-
-    /// The caller ([`ShellMkdirTask::run_from_main_thread`]) owns the heap
-    /// allocation and drops it after this returns.
-    fn on_shell_mkdir_task_done(interp: &Interpreter, cmd: NodeId, task: &mut ShellMkdirTask) {
-        let output = core::mem::take(&mut task.created_directories);
-        let err = task.err.take();
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.tasks_done += 1;
-        }
-
-        let output_task = OutputTask::<Mkdir>::new(cmd, OutputSrc::Arrlist(output));
-        let errstr: Option<Vec<u8>> = err.map(|e| {
-            let s = Builtin::task_error_to_string(interp, cmd, Kind::Mkdir, &e).to_vec();
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.err = Some(e);
-            }
-            s
-        });
-        OutputTask::<Mkdir>::start(output_task, interp, errstr.as_deref()).run(interp);
+        operands::on_io_writer_chunk::<Self>(interp, cmd)
     }
 }
 
-enum NextAction {
-    Done(ExitCode),
-    Schedule(usize),
-}
+impl OperandBuiltin for Mkdir {
+    const KIND: Kind = Kind::Mkdir;
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
+    type Opts = Opts;
 
-impl OutputTaskVTable for Mkdir {
-    fn write_err(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-        errbuf: &[u8],
-    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            // OutputTask has no `WriterTag` of its own (it is not directly
-            // dispatchable as an IOWriter child), so the enqueue is tagged
-            // `WriterTag::Builtin` and `child` is stashed on `output_queue`;
-            // `on_io_writer_chunk` pops it to route the completion back to
-            // the OutputTask state machine and reclaim the box.
-            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
-                unreachable!()
-            };
-            exec.output_queue.push_back(child);
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stderr
-                    .enqueue(childptr, errbuf, safeguard),
-            );
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        ControlFlow::Continue(child)
+    fn walk_state(&mut self) -> &mut Walk {
+        &mut self.walk
     }
 
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
-
-    fn write_out(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            let buf = child.output.slice().to_vec();
-            // See write_err — stash `child` so the chunk callback routes to
-            // OutputTask::on_io_writer_chunk.
-            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
-                unreachable!()
-            };
-            exec.output_queue.push_back(child);
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(childptr, &buf, safeguard),
-            );
-        }
-        let buf = child.output.slice().to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        ControlFlow::Continue(child)
-    }
-
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
-
-    fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
-        Self::next(interp, cmd)
-    }
-}
-
-/// Runs `mkdir`/`mkdir -p` on a worker
-/// thread, then bounces back to the main thread.
-pub(crate) struct ShellMkdirTask {
-    /// Owning Cmd node (the mkdir builtin's id).
-    pub cmd: NodeId,
-    pub opts: Opts,
-    /// Owned copy of the target path (owned to avoid threading a lifetime
-    /// through the WorkPool).
-    pub filepath: Vec<u8>,
-    pub cwd_path: Vec<u8>,
-    pub created_directories: Vec<u8>,
-    pub err: Option<bun_sys::Error>,
-    pub task: ShellTask,
-}
-
-impl ShellMkdirTask {
-    fn create(
-        cmd: NodeId,
+    fn run_operand(
         opts: Opts,
-        filepath: Vec<u8>,
-        cwd_path: Vec<u8>,
-        evtloop: EventLoopHandle,
-        interp: *mut Interpreter,
-    ) -> *mut ShellMkdirTask {
-        let mut task = Box::new(ShellMkdirTask {
-            cmd,
-            opts,
-            filepath,
-            cwd_path,
-            created_directories: Vec::new(),
-            err: None,
-            task: ShellTask::new(evtloop),
-        });
-        task.task.interp = interp;
-        bun_core::heap::into_raw(task)
-    }
-
-    fn run_from_thread_pool(this: &mut ShellMkdirTask) {
+        cwd: &[u8],
+        operand: &bun_core::ZStr,
+        spill: &mut Vec<u8>,
+        stdout: &mut Vec<u8>,
+    ) -> bun_sys::Result<()> {
         use bun_paths::{Platform, platform, resolve_path};
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
-        let mut spill = Vec::new();
-        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
-            // Owned `Vec<u8>`; ensure NUL-terminated.
-            if this.filepath.last() != Some(&0) {
-                this.filepath.push(0);
-            }
-            bun_core::ZStr::from_buf(&this.filepath, this.filepath.len() - 1)
+        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(operand.as_bytes()) {
+            operand
         } else {
-            resolve_path::join_z_spill::<platform::Auto>(
-                &mut spill,
-                &[&this.cwd_path, &this.filepath],
-            )
+            resolve_path::join_z_spill::<platform::Auto>(spill, &[cwd, operand.as_bytes()])
         };
 
         // `NodeFS` expects the `Valid::path_too_long` bound its JS callers
         // enforce; past it, `PathLike::slice_z` yields "" and mkdir reports ENOENT.
         if filepath.len() >= bun_paths::MAX_PATH_BYTES {
-            this.err = Some(
+            return Err(
                 bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::mkdir)
                     .with_path(filepath.as_bytes()),
             );
-            return;
         }
 
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
             path: PathLike::borrowed(filepath.as_bytes()),
-            recursive: this.opts.parents,
+            recursive: opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,
         };
 
-        if this.opts.parents {
+        if opts.parents {
             let mut vtable = MkdirVerboseVTable {
-                inner: &mut this.created_directories,
-                active: this.opts.verbose,
+                inner: stdout,
+                active: opts.verbose,
             };
-            if let Err(e) = node_fs.mkdir_recursive_impl(&args, &mut vtable) {
-                this.err = Some(e.with_path(filepath.as_bytes()));
-                core::hint::black_box(&node_fs);
-            }
+            node_fs
+                .mkdir_recursive_impl(&args, &mut vtable)
+                .map_err(|e| e.with_path(filepath.as_bytes()))?;
         } else {
-            match node_fs.mkdir_non_recursive(&args) {
-                Ok(_) => {
-                    if this.opts.verbose {
-                        this.created_directories
-                            .extend_from_slice(filepath.as_bytes());
-                        this.created_directories.push(b'\n');
-                    }
-                }
-                Err(e) => {
-                    this.err = Some(e.with_path(filepath.as_bytes()));
-                    core::hint::black_box(&node_fs);
-                }
+            node_fs
+                .mkdir_non_recursive(&args)
+                .map_err(|e| e.with_path(filepath.as_bytes()))?;
+            if opts.verbose {
+                stdout.extend_from_slice(filepath.as_bytes());
+                stdout.push(b'\n');
             }
         }
-        // Bounce-back to the main thread is posted by `shell_task_trampoline`
-        // via `ShellTask::on_finish::<Self>` (handles both JS and mini event
-        // loops).
-    }
-
-    /// Reclaims ownership of the heap allocation produced by [`Self::create`]
-    /// and forwards it to [`Mkdir::on_shell_mkdir_task_done`].
-    fn run_from_main_thread(this: NonNull<ShellMkdirTask>, interp: &Interpreter) {
-        // SAFETY: `this` is a live heap allocation produced by `Self::create`;
-        // the dispatch contract guarantees it is not yet freed.
-        let mut task = unsafe { bun_core::heap::take(this.as_ptr()) };
-        let cmd = task.cmd;
-        Mkdir::on_shell_mkdir_task_done(interp, cmd, &mut task);
+        Ok(())
     }
 }
 
-impl bun_event_loop::Taskable for ShellMkdirTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
-    /// A pool completion that will not run: drop the keep-alive and the box
-    /// (nothing else frees an unrun one).
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box the builtin scheduled.
-        unsafe {
-            (*this).task.unref_unrun();
-            drop(bun_core::heap::take(this));
-        }
-    }
-    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
-    }
-}
-
-/// Collects each created directory into
-/// `created_directories` (newline-separated) when `-v` is set.
+/// Collects each created directory into the operand's stdout when `-v` is set.
 struct MkdirVerboseVTable<'a> {
     inner: &'a mut Vec<u8>,
     active: bool,
@@ -412,18 +114,6 @@ impl MkdirCtx for MkdirVerboseVTable<'_> {
             out.extend_from_slice(dirpath.as_bytes());
             out.push(b'\n');
         }
-    }
-}
-
-impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
-    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: &mut Self) {
-        Self::run_from_thread_pool(this)
-    }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // `ShellTaskCtx` callers guarantee `this` is the live, non-null
-        // heap-allocated task posted via `ShellTask::schedule`.
-        Self::run_from_main_thread(NonNull::new(this).unwrap(), interp)
     }
 }
 

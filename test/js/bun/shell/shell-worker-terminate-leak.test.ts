@@ -234,6 +234,49 @@ test.skipIf(!isASAN || isWindows)(
   LEAK_TEST_TIMEOUT,
 );
 
+test.skipIf(!isASAN || isWindows)(
+  "worker.terminate() with the output of a mkdir operand walk still queued does not leak it",
+  async () => {
+    // `mkdir -v` prints more than the pipe holds and the reader stops after one byte, so the write never finishes.
+    await runTerminateScenario(`
+      const names = Array.from({ length: 6000 }, (_, i) => String(i).padStart(240, "x"));
+      const running = Bun.$\`mkdir -v \${names} | sh -c "head -c 1 > /dev/null && echo ok > flag.txt && exec sleep 100"\`.nothrow();
+      (async () => {
+        await running;
+      })();
+      const deadline = Date.now() + 20_000;
+      while (!(await Bun.file("flag.txt").exists())) {
+        if (Date.now() > deadline) throw new Error("the reader of the pipe did not start");
+        await Bun.sleep(5);
+      }
+      postMessage("ok");
+    `);
+  },
+  LEAK_TEST_TIMEOUT,
+);
+
+test.skipIf(!isASAN || isWindows)(
+  "worker.terminate() while a mkdir operand walk is on the thread pool does not leak its task",
+  async () => {
+    // The first operand shows that the walk has started. The others keep the pool thread busy.
+    await runTerminateScenario(`
+      const { existsSync } = require("node:fs");
+      const failing = Array.from({ length: 50000 }, (_, i) => "missing/" + i);
+      let finished = false;
+      // Shell promises are lazy; then() starts the interpreter.
+      Bun.$\`mkdir started \${failing}\`.quiet().nothrow().then(() => (finished = true));
+      const deadline = Date.now() + 20_000;
+      while (!existsSync("started")) {
+        if (Date.now() > deadline) throw new Error("mkdir did not handle its first operand");
+        await Bun.sleep(1);
+      }
+      if (finished) throw new Error("mkdir handled every operand before the worker could be terminated");
+      postMessage("ok");
+    `);
+  },
+  LEAK_TEST_TIMEOUT,
+);
+
 test.skipIf(!isLinux)(
   "worker.terminate() kills a live Bun.$ subprocess",
   async () => {

@@ -288,6 +288,8 @@ describe("FormData", () => {
     const headers = { "Content-Type": `multipart/form-data; boundary=${boundary}` };
     // "RIFF" + 4-byte size + "WEBPVP8 ": no entry in the magic-byte sniff table.
     const webp = Buffer.concat([Buffer.from("RIFF"), Buffer.from([0, 0, 0, 0]), Buffer.from("WEBPVP8 ")]);
+    // The PNG signature has an entry in that table.
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
     function buildPart(headerLines: string[], content: Uint8Array): Uint8Array {
       const head = `--${boundary}\r\n${headerLines.join("\r\n")}\r\n\r\n`;
@@ -339,6 +341,14 @@ describe("FormData", () => {
         expect((form.get("file") as File).type).toBe(declared);
       });
 
+      it.each([
+        ["noext", "text/plain"],
+        ["blob", "application/octet-stream"],
+      ])(`${C.name}: PNG bytes named %s sent as %s have that type`, async (filename, declared) => {
+        const form = await parse(C, buildBody(declared, filename, png));
+        expect((form.get("file") as File).type).toBe(declared);
+      });
+
       it(`reads a Content-Type that other headers surround (${C.name})`, async () => {
         const body = buildPart(
           [disposition("banner.txt"), "Content-Transfer-Encoding: binary", "Content-Type: image/webp", "X-Last: 1"],
@@ -351,10 +361,36 @@ describe("FormData", () => {
         const message = "FormData parse error is missing header colon separator";
         const field = buildPart([`Content-Disposition: form-data; name="file"`, "no colon"], webp);
         const file = buildPart([disposition("banner.txt"), "no colon"], webp);
+        const foldedBeforeFilename = buildPart(
+          [`Content-Disposition: form-data; name="file";`, ` filename="a.txt"`],
+          webp,
+        );
         await expect(parse(C, field)).rejects.toThrow(message);
         await expect(parse(C, file)).rejects.toThrow(message);
+        await expect(parse(C, foldedBeforeFilename)).rejects.toThrow(message);
       });
 
+      // Indy (Delphi) folds a long RFC 2047 file name inside its quotes. Chrome reads such a part, Node rejects it.
+      it(`skips a folded line after the name and file name (${C.name})`, async () => {
+        const indy = buildPart(
+          [
+            `Content-Disposition: form-data; name="file"; filename="=?UTF-8?B?0JrQstCw0YDRgtCw0LvRjNC90YvQuQ==?=`,
+            ` =?UTF-8?B?LmRvY3g=?="`,
+            "Content-Type: application/octet-stream",
+            "Content-Transfer-Encoding: binary",
+          ],
+          webp,
+        );
+        const foldedType = buildPart([disposition("banner.txt"), "Content-Type: image/webp;", " x=1"], webp);
+        const file = (await parse(C, indy)).get("file") as File;
+        expect([file.name, file.type]).toEqual([
+          "=?UTF-8?B?0JrQstCw0YDRgtCw0LvRjNC90YvQuQ==?=",
+          "application/octet-stream",
+        ]);
+        expect(((await parse(C, foldedType)).get("file") as File).type).toBe("image/webp");
+      });
+
+      // Main and Chrome keep the first line. Node takes the last one (whatwg/fetch#1922 is open).
       it.each([
         `Content-Disposition: form-data; name="other"`,
         `Content-Disposition: form-data; name="other"; filename="other.png"`,
@@ -365,6 +401,7 @@ describe("FormData", () => {
         expect([[...form.keys()], file.name, file.type]).toEqual([["file"], "banner", "image/webp"]);
       });
 
+      // As on main and in Node. Chrome keeps the field.
       it(`a Content-Disposition line with no filename does not end the header (${C.name})`, async () => {
         const form = await parse(
           C,
@@ -377,6 +414,7 @@ describe("FormData", () => {
         expect([[...form.keys()], file.name, file.type]).toEqual([["file"], "banner", "image/webp"]);
       });
 
+      // As on main and in Chrome. Node takes the last line.
       it(`keeps the first Content-Type line (${C.name})`, async () => {
         const body = buildPart([disposition("banner"), "Content-Type: image/webp", "Content-Type: text/plain"], webp);
         expect(((await parse(C, body)).get("file") as File).type).toBe("image/webp");
@@ -390,7 +428,8 @@ describe("FormData", () => {
           type: file.type,
           header: new Response(file).headers.get("content-type"),
           parsedAgain: ((await new Response(again).formData()).get("file") as File).type,
-        }).toEqual({ type: "text/plain", header: "text/plain", parsedAgain: "text/plain" });
+          slice: file.slice(0, 1).type,
+        }).toEqual({ type: "text/plain", header: "text/plain", parsedAgain: "text/plain", slice: "" });
       });
 
       it(`a part typed multipart/form-data parses again with its own boundary (${C.name})`, async () => {
@@ -420,10 +459,7 @@ describe("FormData", () => {
 
       it.each(ways)("%s rejects a header line with no colon after Content-Disposition", async (_way, read) => {
         const noColon = buildPart([disposition("banner.txt"), "no colon"], webp);
-        const folded = buildPart([disposition("banner.txt"), "Content-Type: text/plain;", " charset=utf-8"], webp);
-        for (const body of [noColon, folded]) {
-          await expect((async () => read(body))()).rejects.toThrow("missing header colon separator");
-        }
+        await expect((async () => read(noColon))()).rejects.toThrow("missing header colon separator");
       });
 
       it("fetch() response and Bun.serve request read the declared type", async () => {
@@ -438,6 +474,12 @@ describe("FormData", () => {
         const fromResponse = (await (await fetch(server.url)).formData()).get("file") as File;
         const fromRequest = await (await fetch(server.url, { method: "POST", body, headers })).json();
         expect([fromResponse.type, fromRequest]).toEqual(["text/plain", "text/plain"]);
+      });
+
+      it("a parsed File sent as a fetch body carries its declared type", async () => {
+        await using server = Bun.serve({ port: 0, fetch: req => Response.json(req.headers.get("content-type")) });
+        const file = (await parse(Response, buildBody("image/webp", "banner.txt", webp))).get("file") as File;
+        expect(await (await fetch(server.url, { method: "POST", body: file })).json()).toBe("image/webp");
       });
     });
   });

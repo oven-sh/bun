@@ -942,17 +942,20 @@ impl FakeTimers {
             layers,
         } in deactivated.replaced
         {
+            let Some(layers) = layers.get() else {
+                api.put(global, original.get());
+                continue;
+            };
             let owner = api.owner(global);
-            match layers.get() {
-                Some(layers) if owner.is_object() => JSMock__removeFakeFromLayers(
+            if owner.is_object() {
+                JSMock__removeFakeFromLayers(
                     global,
                     owner,
                     &bun_core::String::static_(api.property()),
                     layers,
                     fake.get(),
                     restore == Restore::Always,
-                ),
-                _ => api.put(global, original.get()),
+                );
             }
         }
         deactivated.drives

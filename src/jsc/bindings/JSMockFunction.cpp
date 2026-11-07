@@ -1346,21 +1346,39 @@ static SlotContent contentOfDescriptor(JSGlobalObject* globalObject, JSValue sav
     return { storage, descriptor.attributes() & descriptorAttributes };
 }
 
+// A spy is always a direct property of a global, so this cheap look finds every one.
+static bool mayBeSpy(Zig::GlobalObject* globalObject, const Identifier& key)
+{
+    JSValue direct = globalObject->getDirect(globalObject->vm(), key);
+    return direct && direct.isCell() && (direct.inherits<JSMockFunction>() || direct.inherits<GetterSetter>());
+}
+
+struct InstalledFake {
+    JSValue fake;
+    JSValue original;
+    InternalFieldTuple* layers { nullptr };
+};
+
+static InstalledFake fakeOf(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& key)
+{
+    if (key.isSymbol())
+        return {};
+    BunString name = Bun::toString(key.string());
+    EncodedJSValue original {}, layers {};
+    JSValue fake = JSValue::decode(Bun__FakeTimers__fakeOf(globalObject, JSValue::encode(object), &name, &original, &layers));
+    return { fake, JSValue::decode(original), JSValue::decode(layers) ? uncheckedDowncast<InternalFieldTuple>(JSValue::decode(layers)) : nullptr };
+}
+
 // The record that a stub or a fake joins when it lands on `object[key]`, which holds `content`. `stub` is the name's entry in stubbedGlobals.
 static InternalFieldTuple* layersForLanding(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& key, SlotContent content, JSValue stub)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    EncodedJSValue fakeOriginal {}, fakeLayers {};
-    JSValue fake;
-    if (!key.isSymbol()) {
-        BunString name = Bun::toString(key.string());
-        fake = JSValue::decode(Bun__FakeTimers__fakeOf(globalObject, JSValue::encode(object), &name, &fakeOriginal, &fakeLayers));
-    }
+    auto [fake, fakeOriginal, fakeLayers] = fakeOf(globalObject, object, key);
     auto* spy = liveSpyOn(content, object, key);
 
     // An owner whose record is over an uninstalled fake is off the property, and so is that record.
     InternalFieldTuple* candidates[] = {
-        fake && JSValue::decode(fakeLayers) ? uncheckedDowncast<InternalFieldTuple>(JSValue::decode(fakeLayers)) : nullptr,
+        fakeLayers,
         stub && stub.inherits<InternalFieldTuple>() ? uncheckedDowncast<InternalFieldTuple>(stub) : nullptr,
         spy ? spy->layers() : nullptr,
     };
@@ -1378,7 +1396,7 @@ static InternalFieldTuple* layersForLanding(Zig::GlobalObject* globalObject, JSO
         }
         return cell;
     }
-    if (fake && JSValue::decode(fakeLayers))
+    if (fakeLayers)
         fake = JSValue();
     if (stub && stub.inherits<InternalFieldTuple>())
         stub = JSValue();
@@ -1387,7 +1405,7 @@ static InternalFieldTuple* layersForLanding(Zig::GlobalObject* globalObject, JSO
     if (spy && !spy->isLayered()) {
         SlotContent covered = spy->covered();
         if (fake && covered.storage == fake) {
-            record.base = { JSValue::decode(fakeOriginal), covered.attributes };
+            record.base = { fakeOriginal, covered.attributes };
             record.add(PropertyLayers::Kind::Fake, fake);
         } else if (stub) {
             record.base = contentOfDescriptor(globalObject, stub);
@@ -1397,7 +1415,7 @@ static InternalFieldTuple* layersForLanding(Zig::GlobalObject* globalObject, JSO
             record.base = covered;
         record.adopt(spy);
     } else if (fake && content.storage == fake) {
-        record.base = { JSValue::decode(fakeOriginal), content.attributes };
+        record.base = { fakeOriginal, content.attributes };
         record.add(PropertyLayers::Kind::Fake, fake);
     } else if (stub) {
         record.base = contentOfDescriptor(globalObject, stub);
@@ -1479,6 +1497,8 @@ JSValue layersOfStubbedGlobal(Zig::GlobalObject* globalObject, const Identifier&
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSObject* object = globalObject;
+    if (!(stub && stub.inherits<InternalFieldTuple>()) && !mayBeSpy(globalObject, key) && !fakeOf(globalObject, object, key).fake)
+        return {};
     SlotContent content = contentOf(globalObject, object, key);
     RETURN_IF_EXCEPTION(scope, {});
     auto* cell = layersForLanding(globalObject, object, key, content, stub);
@@ -1504,6 +1524,8 @@ bool removeStubbedGlobalFromLayers(Zig::GlobalObject* globalObject, const Identi
         RETURN_IF_EXCEPTION(scope, true);
         return true;
     }
+    if (!mayBeSpy(globalObject, key))
+        return false;
     SlotContent content = contentOf(globalObject, object, key);
     RETURN_IF_EXCEPTION(scope, true);
     auto* spy = liveSpyOn(content, object, key);
@@ -1516,16 +1538,10 @@ bool removeStubbedGlobalFromLayers(Zig::GlobalObject* globalObject, const Identi
     return true;
 }
 
-static InternalFieldTuple* layersOfFake(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& key, JSValue fake, JSValue original, bool wasLayered, JSValue& base)
+static InternalFieldTuple* layersOfFake(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& key, JSValue fake, JSValue original, bool wasLayered, bool isSpy, JSValue& base)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    SlotContent content = contentOf(globalObject, object, key);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    // Anything else is what useFakeTimers() read, or what an uninstalled fake that was left on the property stands for.
-    if (!PropertyLayers::spyOf(content) && !(content.storage && content.storage.inherits<GetterSetter>()))
-        content.storage = original;
 
     JSValue stub;
     if (auto* stubbed = stubbedGlobalsOf(globalObject, object)) {
@@ -1537,6 +1553,14 @@ static InternalFieldTuple* layersOfFake(Zig::GlobalObject* globalObject, JSObjec
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
     }
+    if (!stub && !wasLayered && !isSpy)
+        return nullptr;
+
+    SlotContent content = contentOf(globalObject, object, key);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    // Anything else is what useFakeTimers() read, or what an uninstalled fake that was left on the property stands for.
+    if (!PropertyLayers::spyOf(content) && !(content.storage && content.storage.inherits<GetterSetter>()))
+        content.storage = original;
     auto* cell = layersForLanding(globalObject, object, key, content, stub);
     RETURN_IF_EXCEPTION(scope, nullptr);
     PropertyLayers record;
@@ -1563,12 +1587,13 @@ static InternalFieldTuple* layersOfFake(Zig::GlobalObject* globalObject, JSObjec
 extern "C" JSC::EncodedJSValue JSMock__layersOfFake(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue fake, JSC::EncodedJSValue original, bool wasLayered, JSC::EncodedJSValue* encodedBase)
 {
     // Only a spy that useFakeTimers() read from the property, or a stubbed global, can share it.
-    if (!wasLayered && !globalObject->mockModule.stubbedGlobals && !tryJSDynamicCast<JSMockFunction*>(JSValue::decode(original)))
+    bool isSpy = tryJSDynamicCast<JSMockFunction*>(JSValue::decode(original));
+    if (!wasLayered && !isSpy && !globalObject->mockModule.stubbedGlobals)
         return {};
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue base;
-    auto* layers = layersOfFake(globalObject, asObject(JSValue::decode(owner)), Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy)), JSValue::decode(fake), JSValue::decode(original), wasLayered, base);
+    auto* layers = layersOfFake(globalObject, asObject(JSValue::decode(owner)), Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy)), JSValue::decode(fake), JSValue::decode(original), wasLayered, isSpy, base);
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         return {};

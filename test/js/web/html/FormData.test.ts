@@ -355,10 +355,14 @@ describe("FormData", () => {
         await expect(parse(C, file)).rejects.toThrow(message);
       });
 
-      // The parsed File has the type `new File(bytes, name, { type })` gives it.
-      it(`lowercases the declared type like the File constructor (${C.name})`, async () => {
+      it(`lowercases the declared type, as the File constructor does (${C.name})`, async () => {
         const body = buildPart([disposition("banner"), "Content-Type: IMAGE/WebP"], webp);
-        expect(((await parse(C, body)).get("file") as File).type).toBe("image/webp");
+        const file = (await parse(C, body)).get("file") as File;
+        expect(file.type).toBe("image/webp");
+        // The bytes stay as sent: no charset is added to a text type.
+        const text = buildPart([disposition("a.txt"), "Content-Type: Text/Plain"], Buffer.from("hi"));
+        const parsed = (await parse(C, text)).get("file") as File;
+        expect([parsed.type, new Response(parsed).headers.get("content-type")]).toEqual(["text/plain", "text/plain"]);
       });
 
       it(`uses the last Content-Type line (${C.name})`, async () => {

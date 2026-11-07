@@ -165,10 +165,10 @@ pub(crate) fn to_js_from_multipart_data(
                 let filename = EncodedSlice::utf8(filename_str);
 
                 if !field.content_type.is_empty() {
-                    // Same normalization as `new File(bytes, name, { type })`.
+                    // Lowercased like a script-given type, but the bytes stay as sent: no charset is added.
                     let ct = field.content_type.slice(buf);
                     blob.content_type
-                        .set(crate::webcore::blob::BlobContentType::from_script(ct));
+                        .set(crate::webcore::blob::BlobContentType::from_lowercased(ct));
                     blob.content_type_was_set.set(true);
                 } else {
                     let mime = 'brk: {

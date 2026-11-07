@@ -337,6 +337,8 @@ impl History {
 struct LineEditor {
     buffer: Vec<u8>,
     cursor: usize,
+    /// False: no line break in the buffer. Only `set` brings one in (a recalled history entry).
+    may_have_line_break: bool,
 }
 
 impl LineEditor {
@@ -344,22 +346,26 @@ impl LineEditor {
         LineEditor {
             buffer: Vec::new(),
             cursor: 0,
+            may_have_line_break: false,
         }
     }
 
     fn clear(&mut self) {
         self.buffer.clear();
         self.cursor = 0;
+        self.may_have_line_break = false;
     }
 
     fn set(&mut self, text: &[u8]) -> Result<(), bun_alloc::AllocError> {
         self.buffer.clear();
         self.buffer.extend_from_slice(text);
         self.cursor = text.len();
+        self.may_have_line_break = strings::contains_char(text, b'\n');
         Ok(())
     }
 
     fn insert(&mut self, ch: u8) -> Result<(), bun_alloc::AllocError> {
+        debug_assert!(ch != b'\n');
         if self.cursor == self.buffer.len() {
             self.buffer.push(ch);
         } else {
@@ -370,6 +376,7 @@ impl LineEditor {
     }
 
     fn insert_slice(&mut self, slice: &[u8]) -> Result<(), bun_alloc::AllocError> {
+        debug_assert!(!strings::contains_char(slice, b'\n'));
         if self.cursor == self.buffer.len() {
             self.buffer.extend_from_slice(slice);
         } else {
@@ -867,6 +874,11 @@ impl ScreenPos {
     }
 }
 
+/// Starts every line of an input but the first.
+const CONTINUATION_PROMPT: &[u8] = b"... ";
+const CONTINUATION_PROMPT_DIM: &[u8] = concat!("\x1b[2m", "... ", "\x1b[0m").as_bytes();
+const CONTINUATION_COLUMNS: usize = CONTINUATION_PROMPT.len();
+
 /// Follows where the terminal puts text written after the prompt.
 struct Layout {
     width: usize,
@@ -899,6 +911,22 @@ impl Layout {
             text = rest;
         }
         first.unwrap_or_else(|| self.next())
+    }
+
+    /// `advance` over the lines `Repl::write_lines` draws.
+    #[cold]
+    fn advance_lines(&mut self, text: &[u8]) -> ScreenPos {
+        let mut lines = strings::split(text, b"\n");
+        let first = self.advance(lines.next().unwrap_or_default());
+        for line in lines {
+            // One row down from a full row too: CR LF comes before the terminal wraps.
+            self.pos = ScreenPos {
+                row: self.pos.row + 1,
+                col: CONTINUATION_COLUMNS,
+            };
+            self.advance(line);
+        }
+        first
     }
 
     /// The cell the next glyph goes to. A full row counts as wrapped; `refresh_line` makes that so.
@@ -1303,13 +1331,17 @@ impl<'a> Repl<'a> {
     // Prompt and Display
     // ========================================================================
 
+    fn continuation_prompt(&self) -> &'static [u8] {
+        if self.use_colors {
+            CONTINUATION_PROMPT_DIM
+        } else {
+            CONTINUATION_PROMPT
+        }
+    }
+
     fn get_prompt(&self) -> &'static [u8] {
         if self.input_mode != InputMode::Normal {
-            if self.use_colors {
-                return concat!("\x1b[2m", "... ", "\x1b[0m").as_bytes();
-            } else {
-                return b"... ";
-            }
+            return self.continuation_prompt();
         }
 
         if self.use_colors {
@@ -1321,7 +1353,7 @@ impl<'a> Repl<'a> {
 
     fn get_prompt_length(&self) -> usize {
         if self.input_mode != InputMode::Normal {
-            return 4; // "... "
+            return CONTINUATION_COLUMNS;
         }
         2 // "> " or "\u{276f} "
     }
@@ -1357,6 +1389,7 @@ impl<'a> Repl<'a> {
         let prompt = self.get_prompt();
         let prompt_len = self.get_prompt_length();
         let line = self.line_editor.get_line();
+        let may_have_line_break = self.line_editor.may_have_line_break;
 
         // Erase the previous drawing from the prompt's row down.
         if drawing.cursor.row > 0 {
@@ -1369,7 +1402,9 @@ impl<'a> Repl<'a> {
         self.write(prompt);
 
         // Write line with syntax highlighting
-        if self.use_colors && !line.is_empty() && line.len() <= 2048 {
+        if may_have_line_break {
+            self.write_lines(line);
+        } else if self.use_colors && !line.is_empty() && line.len() <= 2048 {
             self.write_highlighted(line);
         } else {
             self.write(line);
@@ -1390,8 +1425,13 @@ impl<'a> Repl<'a> {
                 col: prompt_len,
             },
         };
-        layout.advance(before_cursor);
-        let mut cursor = layout.advance(after_cursor);
+        let mut cursor = if may_have_line_break {
+            layout.advance_lines(before_cursor);
+            layout.advance_lines(after_cursor)
+        } else {
+            layout.advance(before_cursor);
+            layout.advance(after_cursor)
+        };
         let end = layout.next();
         if !ghost.is_empty() {
             // Only drawn with the cursor at the end of the line, so the cursor sits on the ghost.
@@ -1416,6 +1456,24 @@ impl<'a> Repl<'a> {
         self.drawing = Some(drawing);
 
         Output::flush();
+    }
+
+    /// One row per line of `text`; `Layout::advance_lines` counts the same rows.
+    #[cold]
+    fn write_lines(&self, text: &[u8]) {
+        let highlight = self.use_colors && text.len() <= 2048;
+        for (row, line) in strings::split(text, b"\n").enumerate() {
+            if row > 0 {
+                self.write(b"\r\n");
+                self.write(self.continuation_prompt());
+            }
+            if highlight && !line.is_empty() {
+                // One line at a time: the highlighter drops the line break that ends a `//` comment.
+                self.write_highlighted(line);
+            } else {
+                self.write(line);
+            }
+        }
     }
 
     /// Erases the ghost, writes `echo` after the line, and moves to the start of the row below it.

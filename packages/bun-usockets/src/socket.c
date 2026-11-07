@@ -188,6 +188,13 @@ int us_socket_queued_input(struct us_socket_t *s) {
     return bsd_queued_input(us_poll_fd(&s->p));
 }
 
+int us_socket_queued_input_len(struct us_socket_t *s) {
+    if (s->flags.is_closed || !us_socket_is_established(s)) {
+        return 0;
+    }
+    return bsd_queued_input_len(us_poll_fd(&s->p));
+}
+
 /* Detach c from its group + drop the borrowed SSL_CTX ref, but leave c
  * allocated. After this, c->group is NULL and the embedding owner may safely
  * deinit; the only remaining link is into a loop-owned list. */

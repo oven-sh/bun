@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib";
 
@@ -99,6 +99,54 @@ describe("fetch compress option", () => {
       const json: any = await res.json();
       expect(json.encoding).toBe(encoding);
       expect(json.decoded).toBe(payload);
+    });
+  });
+
+  test.concurrent("deflate is a zlib header that tells the level, a DEFLATE stream and the Adler-32", async () => {
+    using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.arrayBuffer()) });
+    const checksum = Buffer.alloc(4);
+    checksum.writeUInt32BE(Bun.hash.adler32(payload));
+    for (let level = 0; level <= 12; level++) {
+      const header = level < 2 ? "7801" : level < 6 ? "785e" : level < 8 ? "789c" : "78da";
+      const res = await fetch(server.url, { method: "POST", body: payload, compress: { encoding: "deflate", level } });
+      expect(Buffer.from(await res.arrayBuffer())).toEqual(
+        Buffer.concat([
+          Buffer.from(header, "hex"),
+          Bun.deflateSync(payload, { library: "libdeflate", level }),
+          checksum,
+        ]),
+      );
+    }
+  });
+
+  test.concurrent.each([
+    ["libdeflate", {}, true],
+    ["zlib with BUN_FEATURE_FLAG_NO_LIBDEFLATE=1", { BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1" }, false],
+  ])("gzip is compressed by %s", async (_, env, byLibdeflate) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const payload = Buffer.alloc(20_000, "hello world ");
+          using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.arrayBuffer()) });
+          const res = await fetch(server.url, { method: "POST", body: payload, compress: "gzip" });
+          const sent = Buffer.from(await res.arrayBuffer());
+          console.log(JSON.stringify({
+            byLibdeflate: sent.equals(Buffer.from(Bun.gzipSync(payload, { library: "libdeflate", level: 6 }))),
+            intact: payload.equals(Buffer.from(Bun.gunzipSync(sent))),
+          }));
+        `,
+      ],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      result: { byLibdeflate, intact: true },
+      stderr: "",
+      exitCode: 0,
     });
   });
 

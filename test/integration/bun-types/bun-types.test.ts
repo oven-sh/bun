@@ -417,6 +417,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "jest.bind.ts": null,
   "js_bun_spawn_bindings.bind.ts": "typeof Bun",
   "jsc_hooks.bind.ts": null,
+  "libdeflate_test.bind.ts": null,
   "linear_fifo_testing.bind.ts": null,
   "memory_pressure.bind.ts": null,
   "mysql.bind.ts": null,

@@ -296,13 +296,6 @@ __arm_tpidr2_save  [SVE]
 
 
 # ----------------------------------------------------------------------------
-# libdeflate Adler-32 NEON DotProd. Gate: HWCAP_ASIMDDP.
-# (1 symbols)
-# ----------------------------------------------------------------------------
-adler32_arm_neon_dotprod  [DotProd]
-
-
-# ----------------------------------------------------------------------------
 # Bun.Image highway kernels (image_resize.cpp). Gate: BUN_HWY_DISPATCH ->
 # hwy::SupportedTargets() via getauxval(AT_HWCAP). Same gate as the
 # highway_strings.cpp block above.

@@ -320,22 +320,15 @@ impl ExtractTarball {
                         let _ = zlib_pool.ensure_unused_capacity(isize as usize);
                     }
                     if zlib_pool.list.capacity() > 16 {
-                        use bun_libdeflate_sys::libdeflate;
-                        if let Some(mut decompressor) = libdeflate::OwnedDecompressor::new() {
-                            zlib_pool.list.clear();
-                            let result = decompressor.decompress_to_vec(
-                                tgz_bytes,
-                                &mut zlib_pool.list,
-                                libdeflate::Encoding::Gzip,
-                            );
-                            // libdeflate only reads the first gzip member, so a tarball with more
-                            // than one member is left to `extract_to_dir`.
-                            if result.status == libdeflate::Status::Success
-                                && result.read == tgz_bytes.len()
-                            {
-                                decompressed_in_memory = true;
-                            }
-                        }
+                        zlib_pool.list.clear();
+                        let result = bun_libdeflate::Decompressor::new().decompress_to_vec(
+                            tgz_bytes,
+                            &mut zlib_pool.list,
+                            bun_libdeflate::Decoding::Gzip,
+                        );
+                        // Only the first gzip member is read, so a tarball with more is left to `extract_to_dir`.
+                        decompressed_in_memory =
+                            result.is_ok_and(|counts| counts.read == tgz_bytes.len());
                     }
                 }
             }

@@ -76,7 +76,7 @@ members = [
   "src/js_parser",
   "src/js_parser_jsc",
   "src/js_printer",
-  "src/libdeflate_sys",
+  "src/libdeflate",
   "src/libuv_sys",
   "src/ast",
   "src/ast_jsc",
@@ -455,7 +455,7 @@ bun_install_types = { path = "src/install_types" }
 bun_js_parser = { path = "src/js_parser" }
 bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }
-bun_libdeflate_sys = { path = "src/libdeflate_sys" }
+bun_libdeflate = { path = "src/libdeflate" }
 bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
@@ -511,6 +511,10 @@ bun_output = { path = "src/output" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
+
+# Every `bun install` of a debug build goes through it, and unoptimized it is many times slower.
+[profile.dev.package.bun_libdeflate]
+opt-level = 3
 
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
 # checks stay on. scripts/build/flags.ts does the same for highway_png.cpp.

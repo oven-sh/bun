@@ -123,6 +123,8 @@ unsafe extern "C" {
     pub fn inflateValidate(stream: *mut zStream_struct, check: c_int) -> ReturnCode;
 
     pub fn crc32(crc: uLong, buf: *const Bytef, len: uInt) -> uLong;
+
+    pub fn adler32(adler: uLong, buf: *const Bytef, len: uInt) -> uLong;
 }
 
 /// Safe CRC-32 over an arbitrary-length slice. zlib's `crc32` takes a 32-bit
@@ -134,6 +136,16 @@ pub fn crc32_bytes(crc: u32, data: &[u8]) -> u32 {
         crc = unsafe { crc32(crc, chunk.as_ptr(), chunk.len() as uInt) };
     }
     crc as u32
+}
+
+/// [`crc32_bytes`] for Adler-32, which starts from 1.
+pub fn adler32_bytes(adler: u32, data: &[u8]) -> u32 {
+    let mut adler: uLong = uLong::from(adler);
+    for chunk in data.chunks(u32::MAX as usize) {
+        // SAFETY: `chunk` is a valid slice with `len <= u32::MAX`.
+        adler = unsafe { adler32(adler, chunk.as_ptr(), chunk.len() as uInt) };
+    }
+    adler as u32
 }
 
 pub use bun_core::compress::State;

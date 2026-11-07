@@ -1,5 +1,5 @@
 [package]
-name = "bun_libdeflate_sys"
+name = "bun_libdeflate"
 version.workspace = true
 edition.workspace = true
 
@@ -10,5 +10,7 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bun_opaque.workspace = true
 bun_alloc.workspace = true
+bun_core.workspace = true
+bun_zlib.workspace = true
+thiserror.workspace = true

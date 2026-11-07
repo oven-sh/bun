@@ -472,7 +472,6 @@ export type DepName =
   | "brotli"
   | "cares"
   | "highway"
-  | "libdeflate"
   | "libjpeg-turbo"
   | "libuv"
   | "libwebp"

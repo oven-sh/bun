@@ -95,8 +95,13 @@ namespace uWS {
 #include <zlib.h>
 #include <string>
 #include <string_view>
-#include "libdeflate.h"
 #include "ReceiveBuffer.h"
+
+/* src/uws_sys/inflate.rs */
+struct BunInflater;
+extern "C" BunInflater *Bun__Inflater__create(size_t outputSize);
+extern "C" void Bun__Inflater__destroy(BunInflater *inflater);
+extern "C" const char *Bun__Inflater__inflate(BunInflater *inflater, const char *input, size_t inputLength, size_t *written);
 
 namespace uWS {
 
@@ -110,18 +115,18 @@ struct ZlibContext {
     ReceiveBuffer dynamicInflationBuffer;
     char *deflationBuffer;
     char *inflationBuffer;
-    libdeflate_decompressor *decompressor;
+    BunInflater *inflater;
 
     ZlibContext() {
         deflationBuffer = (char *) malloc(LARGE_BUFFER_SIZE);
         inflationBuffer = (char *) malloc(LARGE_BUFFER_SIZE);
-        decompressor = libdeflate_alloc_decompressor();
+        inflater = Bun__Inflater__create(LARGE_BUFFER_SIZE);
     }
 
     ~ZlibContext() {
         free(deflationBuffer);
         free(inflationBuffer);
-        libdeflate_free_decompressor(decompressor);
+        Bun__Inflater__destroy(inflater);
     }
 };
 
@@ -210,7 +215,7 @@ struct InflationStream {
 
     /* Zero length inflates are possible and valid */
     InflateResult inflate(ZlibContext *zlibContext, std::string_view compressed, size_t maxPayloadLength, bool reset) {
-        /* The libdeflate fast path is stateless: it cannot resolve back-references into a
+        /* The one-shot fast path is stateless: it cannot resolve back-references into a
          * previous message's sliding window, and whatever it inflates never reaches the zlib
          * stream's window. Both are only correct without context takeover, i.e. when reset is set. */
         if (reset) {
@@ -221,15 +226,15 @@ struct InflationStream {
             char tmp[9];
             memcpy(tmp, (char *) compressed.data() + compressed.length(), 9);
             memcpy((char *) compressed.data() + compressed.length(), "\x00\x00\xff\xff\x01\x00\x00\xff\xff", 9);
-            libdeflate_result res = libdeflate_deflate_decompress(zlibContext->decompressor, compressed.data(), compressed.length() + 9, zlibContext->inflationBuffer, LARGE_BUFFER_SIZE, &written);
+            const char *inflated = Bun__Inflater__inflate(zlibContext->inflater, compressed.data(), compressed.length() + 9, &written);
             memcpy((char *) compressed.data() + compressed.length(), tmp, 9);
 
-            if (res == 0) {
+            if (inflated) {
                 /* Fast path wins */
                 if (written > maxPayloadLength) {
                     return {{}, 1009};
                 }
-                return {{zlibContext->inflationBuffer, written}, 0};
+                return {{inflated, written}, 0};
             }
         }
 

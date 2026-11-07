@@ -11,9 +11,8 @@
  *
  * DirectBuild: no config.h, no codegen. Every dsp/*_{sse2,sse41,neon,msa,
  * mips}*.c file self-guards on WEBP_USE_<ISA> (derived from compiler arch
- * macros in src/dsp/cpu.h), so the off-target ones compile to empty TUs —
- * same pattern as libdeflate's arm/x86 cpu_features split. We list them all
- * and let the preprocessor prune.
+ * macros in src/dsp/cpu.h), so the off-target ones compile to empty TUs. We
+ * list them all and let the preprocessor prune.
  *
  * Threading: WEBP_USE_THREAD is left OFF. The decoder/encoder are invoked
  * from Bun's worker pool already; libwebp's internal pthread pool would just

@@ -876,6 +876,7 @@ describe.concurrent("test context", () => {
             afterEach(() => { expect(1).toBe(1); });
             test("too few", ({ onTestFailed }) => { onTestFailed(() => console.log("failed")); expect.assertions(1); });
             test("one of three", () => { expect.assertions(3); expect(1).toBe(1); });
+            test("none", () => { expect.hasAssertions(); });
             test("met", () => { expect.assertions(1); expect(1).toBe(1); });
           });
           describe("afterEach removes the count", () => {
@@ -893,6 +894,9 @@ describe.concurrent("test context", () => {
           "AssertionError: expected 3 assertions, but test ended with 1 assertion",
           lateInVitest,
           "(fail) afterEach asserts > one of three",
+          none,
+          lateInVitest,
+          "(fail) afterEach asserts > none",
           "(pass) afterEach asserts > met",
           tooFew,
           "(fail) afterEach removes the count > too late",

@@ -1,6 +1,7 @@
 // HTML tests are tests relating to HTML files themselves.
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { renameSync } from "node:fs";
+import { type Dev, devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
   files: {
@@ -514,5 +515,493 @@ devTest("editing a file imported from outside the project root hot-reloads", {
       `,
     );
     await c.expectMessage("three");
+  },
+});
+// One watch batch that holds an html file and a file it references makes both
+// entry points of one rebuild. https://github.com/oven-sh/bun/issues/22263
+// The client connects after the rebuild, because a client that is connected gets
+// the html file as a hot update. https://github.com/oven-sh/bun/issues/31908
+devTest("html file and its scripts rebuilt together load by their module ids", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["script.ts", "./other.ts"],
+      body: "<h1>Hello</h1>",
+    }),
+    "script.ts": `
+      console.log("v1");
+    `,
+    "other.ts": `
+      console.log("other v1");
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.patch("index.html", { find: "Hello", replace: "World" });
+      await dev.write("script.ts", `console.log("v2");`);
+      await dev.write("other.ts", `console.log("other v2");`);
+    }
+    // previously: Failed to load bundled module '<absolute path>/script.ts'
+    await using c = await dev.client("/");
+    await c.expectMessage("v2", "other v2");
+    await dev.fetch("/").expect.toInclude("<h1>World</h1>");
+  },
+});
+devTest("script that fails in the same rebuild as its html file comes back once fixed", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["./first.ts"],
+      body: "<h1>Hello</h1>",
+    }),
+    "first.ts": `
+      import { value } from "./dep.ts";
+      console.log("first " + value);
+    `,
+    "dep.ts": `
+      export const value = "dep";
+    `,
+    "second.ts": `
+      console.log("second");
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.write(
+        "index.html",
+        emptyHtmlFile({
+          scripts: ["./first.ts", "./second.ts"],
+          body: "<h1>World</h1>",
+        }),
+      );
+      await dev.write(
+        "first.ts",
+        `
+          import { value } from "./dep.ts";
+          import "./missing.ts";
+          console.log("first " + value);
+        `,
+      );
+    }
+    // Not a page request: that bundles the whole route again.
+    await dev.output.waitForLine(/Could not resolve: "\.\/missing\.ts"/);
+    await dev.write(
+      "first.ts",
+      `
+        import { value } from "./dep.ts";
+        console.log("first fixed " + value);
+      `,
+    );
+    // previously: Failed to load bundled module './first.ts'
+    await using c = await dev.client("/");
+    await c.expectMessage("first fixed dep", "second");
+    await dev.fetch("/").expect.toInclude("<h1>World</h1>");
+  },
+});
+devTest("stylesheet that fails in the same rebuild as its html file comes back once fixed", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["./styles.css"],
+      body: "<h1>Hello</h1>",
+    }),
+    "styles.css": `
+      body {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.patch("index.html", { find: "Hello", replace: "World" });
+      await dev.write(
+        "styles.css",
+        `
+          body {
+            color: blue;
+          }}
+        `,
+      );
+    }
+    // Not a page request: that bundles the whole route again.
+    await dev.output.waitForLine(/Unexpected end of input/);
+    await dev.write(
+      "styles.css",
+      `
+        body {
+          color: blue;
+        }
+      `,
+    );
+    // previously: the page had no stylesheet
+    await using c = await dev.client("/");
+    await c.style("body").color.expect.toBe("#00f");
+    await dev.fetch("/").expect.toInclude("<h1>World</h1>");
+  },
+});
+// Each `onResolve` callback of a test plugin prints "onResolve <specifier>". These are the next `count` calls, sorted.
+const onResolveCalls = async (dev: Dev, count: number) => {
+  const calls: string[] = [];
+  while (calls.length < count) calls.push((await dev.output.waitForLine(/^onResolve (.+)$/))[1]);
+  return calls.sort();
+};
+devTest("html script that an onResolve plugin resolves loads by its module id", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      import path from "node:path";
+      export default {
+        name: "resolve-scripts",
+        setup(build) {
+          build.onResolve({ filter: /declined\\.ts$/ }, args => {
+            console.log("onResolve " + args.path);
+          });
+          build.onResolve({ filter: /answered\\.ts$/ }, args => {
+            console.log("onResolve " + args.path);
+            return { path: path.resolve(path.dirname(args.importer), args.path) };
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["./declined.ts", "./answered.ts"],
+    }),
+    "declined.ts": `
+      console.log("declined");
+    `,
+    "answered.ts": `
+      console.log("answered");
+    `,
+  },
+  async test(dev) {
+    // previously: Failed to load bundled module './declined.ts'
+    await using c = await dev.client("/");
+    await c.expectMessage("declined", "answered");
+    expect(await onResolveCalls(dev, 2)).toEqual(["./answered.ts", "./declined.ts"]);
+  },
+});
+devTest("html script that an onResolve plugin puts in a namespace loads by its module id", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    // Only onLoad says that "plain" is a script. "virtual:prefixed.ts" keeps its prefix in its path.
+    "plugin.ts": `
+      export default {
+        name: "virtual-scripts",
+        setup(build) {
+          build.onResolve({ filter: /^(plain|virtual:prefixed\\.ts)$/ }, args => ({
+            path: args.path,
+            namespace: "virtual",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, args => ({
+            contents: "console.log(" + JSON.stringify(args.path) + ");",
+            loader: "ts",
+          }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["plain", "virtual:prefixed.ts"],
+    }),
+  },
+  async test(dev) {
+    // previously: Failed to load bundled module 'plain'
+    await using c = await dev.client("/");
+    await c.expectMessage("plain", "virtual:prefixed.ts");
+  },
+});
+// Only the linker gives these records the path of their file: the target is neither a script nor a stylesheet.
+devTest("script import of a json file that an onResolve plugin resolves loads by its module id", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      import path from "node:path";
+      export default {
+        name: "resolve-json",
+        setup(build) {
+          build.onResolve({ filter: /declined\\.json$/ }, args => {
+            console.log("onResolve " + args.path);
+          });
+          build.onResolve({ filter: /answered\\.json$/ }, args => {
+            console.log("onResolve " + args.path);
+            return { path: path.resolve(path.dirname(args.importer), args.path) };
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["./index.ts"],
+    }),
+    "index.ts": `
+      import declined from "./declined.json";
+      import answered from "./answered.json";
+      console.log(declined.name);
+      console.log(answered.name);
+    `,
+    "declined.json": `{ "name": "declined" }`,
+    "answered.json": `{ "name": "answered" }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("declined", "answered");
+    expect(await onResolveCalls(dev, 2)).toEqual(["./answered.json", "./declined.json"]);
+  },
+});
+devTest("stylesheet that an onResolve plugin resolves comes back after a failed first build", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "resolve-styles",
+        setup(build) {
+          build.onResolve({ filter: /styles\\.css$/ }, args => {
+            console.log("onResolve " + args.path);
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      styles: ["./styles.css"],
+      body: "<h1>Hello</h1>",
+    }),
+    "styles.css": `
+      body {
+        color: red;
+      }}
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    expect(await onResolveCalls(dev, 1)).toEqual(["./styles.css"]);
+    await dev.write("styles.css", `body { color: red; }`);
+    // previously: the page had no stylesheet
+    await using c = await dev.client("/");
+    await c.style("body").color.expect.toBe("red");
+  },
+});
+// A `[serve.static]` plugin that holds the index.html that says "World" until another file of the
+// same rebuild has resolved its imports. The signal is the load of `marker`, which that file imports.
+const holdHtmlRebuildUntilLoaded = (marker: string) => ({
+  "bunfig.toml": `
+    [serve.static]
+    plugins = ["./plugin.ts"]
+  `,
+  "plugin.ts": `
+    export default {
+      name: "hold-html-rebuild",
+      setup(build) {
+        const markerLoaded = Promise.withResolvers();
+        build.onLoad({ filter: /${marker.replace(".", "[.]")}$/ }, () => {
+          markerLoaded.resolve();
+        });
+        build.onLoad({ filter: /index[.]html$/ }, async args => {
+          const contents = await Bun.file(args.path).text();
+          if (contents.includes("World")) {
+            await markerLoaded.promise;
+            console.log("index.html waited for ${marker}");
+          }
+          return { contents, loader: "html" };
+        });
+      },
+    };
+  `,
+});
+devTest("html link to a file that a stylesheet of the same rebuild also uses keeps its asset URL", {
+  files: {
+    ...holdHtmlRebuildUntilLoaded("marker.css"),
+    "index.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./styles.css"><link rel="icon" href="./shared.txt"></head><body><h1>Hello</h1></body></html>`,
+    "styles.css": `
+      body {
+        background: url(./shared.txt);
+        color: red;
+      }
+    `,
+    "marker.css": `
+      h1 {
+        color: red;
+      }
+    `,
+    "shared.txt": "SHARED",
+  },
+  async test(dev) {
+    const iconHref = async () => (await dev.fetch("/").text()).match(/<link rel="icon" href="([^"]+)"/)?.[1];
+    expect(await iconHref()).toStartWith("/_bun/asset/");
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.patch("index.html", { find: "Hello", replace: "World" });
+      await dev.write(
+        "styles.css",
+        `
+          @import "./marker.css";
+          body {
+            background: url(./shared.txt);
+            color: blue;
+          }
+        `,
+      );
+    }
+    // The stylesheet put shared.txt in the rebuild before index.html resolved it.
+    await dev.output.waitForLine(/index\.html waited for marker\.css/);
+    const href = await iconHref();
+    expect(href).toStartWith("/_bun/asset/");
+    await dev.fetch(href!).expect.toBe("SHARED");
+    await dev.fetch("/").expect.toInclude("<h1>World</h1>");
+  },
+});
+devTest("html file and a saved script that start to use the same script in one rebuild", {
+  files: {
+    ...holdHtmlRebuildUntilLoaded("marker.ts"),
+    "index.html": emptyHtmlFile({
+      scripts: ["./first.ts"],
+      body: "<h1>Hello</h1>",
+    }),
+    "first.ts": `
+      import "./dep.ts";
+      console.log("first");
+    `,
+    "dep.ts": `
+      console.log("dep v1");
+    `,
+    "second.ts": `
+      console.log("second");
+    `,
+    "marker.ts": `
+      export {};
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.write("index.html", emptyHtmlFile({ scripts: ["./first.ts", "./second.ts"], body: "<h1>World</h1>" }));
+      await dev.write(
+        "dep.ts",
+        `
+          import "./second.ts";
+          import "./marker.ts";
+          console.log("dep v2");
+        `,
+      );
+    }
+    // dep.ts put second.ts in the rebuild before index.html resolved it.
+    await dev.output.waitForLine(/index\.html waited for marker\.ts/);
+    // previously: Failed to load bundled module './second.ts'
+    await using c = await dev.client("/");
+    await c.expectMessage("second", "dep v2", "first");
+  },
+});
+// Vim saves a file this way: it renames the script to a backup and writes a new file. The script is gone
+// for a moment, the rebuild of the html file fails, and the next rebuild holds both files.
+// https://github.com/oven-sh/bun/issues/20877
+const renameToBackup = async (dev: Dev, file: string) => {
+  await using _batch = await dev.batchChanges({ errors: null });
+  renameSync(dev.join(file), dev.join(file + "~"));
+};
+devTest("script that is renamed away and written again loads by its module id", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["./main.js"],
+      body: "<h1>Hello</h1>",
+    }),
+    "main.js": `
+      console.log("v1");
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
+    await renameToBackup(dev, "main.js");
+    await dev.output.waitForLine(/Could not resolve: "\.\/main\.js"/);
+    await dev.write("main.js", `console.log("v2");`);
+    // previously: Failed to load bundled module './main.js'
+    await using c = await dev.client("/");
+    await c.expectMessage("v2");
+  },
+});
+// The rename save, and the save of an html file together with its script, with the page open. A debug build
+// stops at `ASSERTION FAILED` in `replaceModules` of the HMR runtime, because the open page gets the html file
+// as a hot update: https://github.com/oven-sh/bun/issues/31908
+devTest("script that is renamed away and written again reloads the open page", {
+  skip: ["debug"],
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["./main.js"],
+      body: "<h1>Hello</h1>",
+    }),
+    "main.js": `
+      console.log("v1");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("v1");
+    await renameToBackup(dev, "main.js");
+    await c.expectReload(async () => {
+      await dev.write("main.js", `console.log("v2");`, { errors: null });
+    });
+    // previously: Failed to load bundled module './main.js'
+    await c.expectMessage("v2");
+  },
+});
+devTest("html file and its script saved together reload the open page", {
+  skip: ["debug"],
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["script.ts"],
+      body: "<h1>Hello</h1>",
+    }),
+    "script.ts": `
+      console.log("v1");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("v1");
+    await c.expectReload(async () => {
+      await using _batch = await dev.batchChanges();
+      await dev.patch("index.html", { find: "Hello", replace: "World" });
+      await dev.write("script.ts", `console.log("v2");`);
+    });
+    // previously: Failed to load bundled module '<absolute path>/script.ts'
+    await c.expectMessage("v2");
+    expect(await c.elemText("h1")).toBe("World");
+  },
+});
+devTest("html routes that share a script and are first bundled together", {
+  files: {
+    "a.html": emptyHtmlFile({ scripts: ["./ab.ts", "./ac.ts"] }),
+    "b.html": emptyHtmlFile({ scripts: ["./ab.ts", "./bc.ts"] }),
+    "c.html": emptyHtmlFile({ scripts: ["./ac.ts", "./bc.ts"] }),
+    "ab.ts": `console.log("ab");`,
+    "ac.ts": `console.log("ac");`,
+    "bc.ts": `console.log("bc");`,
+  },
+  async test(dev) {
+    // The first request starts a bundle. The two other routes wait and are bundled together,
+    // and each pair of routes shares one script.
+    const responses = await Promise.all([dev.fetch("/a"), dev.fetch("/b"), dev.fetch("/c")]);
+    expect(responses.map(response => response.status)).toEqual([200, 200, 200]);
+    for (const [route, messages] of [
+      ["/a", ["ab", "ac"]],
+      ["/b", ["ab", "bc"]],
+      ["/c", ["ac", "bc"]],
+    ] as const) {
+      // previously: Failed to load bundled module './bc.ts'
+      await using c = await dev.client(route);
+      await c.expectMessage(...messages);
+    }
   },
 });

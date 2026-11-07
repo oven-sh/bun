@@ -134,7 +134,8 @@ export interface DevServerTest {
    */
   cwd?: string;
 
-  skip?: ("win32" | "darwin" | "linux" | "ci")[];
+  /** Register the test as `test.todo` on these platforms, in CI, or on a debug build of bun. */
+  skip?: ("win32" | "darwin" | "linux" | "ci" | "debug")[];
   /**
    * Only run this test.
    */
@@ -1929,7 +1930,7 @@ export function indexHtmlScript(htmlFiles: string[]) {
   ].join("\n");
 }
 
-const skipTargets = [process.platform, isCI ? "ci" : null].filter(Boolean);
+const skipTargets = [process.platform, isCI ? "ci" : null, isDebugBuild ? "debug" : null].filter(Boolean);
 
 function testImpl<T extends DevServerTest>(
   description: string,

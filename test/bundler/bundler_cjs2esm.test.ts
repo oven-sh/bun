@@ -1706,6 +1706,125 @@ describe("bundler", () => {
       stdout: "helped:in",
     },
   });
+  // A wrapped file prints its lifted `exports.x = ...` as written, so its wrapper takes `exports`.
+  // Here dead code or a removed statement makes the file CommonJS and counts no use of `exports`.
+  const wrappedWithNoUseOfExports: Record<string, string> = {
+    "/dead-branch.cjs": `exports.a = 1; if (false) { console.log(this); }`,
+    "/dead-ternary.cjs": `exports.a = 1; exports.b = true ? 2 : this;`,
+    "/dead-or.cjs": `exports.a = 1; exports.b = 0 || 2 || this;`,
+    "/dead-and.cjs": `exports.a = 1; false && this.x;`,
+    "/dead-call.cjs": `exports.a = 1; function f() { return 1; } if (false) { f.call(this); }`,
+    "/removed-this.cjs": `exports.a = 1; this;`,
+    "/removed-arrow.cjs": `exports.a = 1; (() => this);`,
+    "/removed-delete.cjs": `exports.a = 1; (function () { delete exports.a; });`,
+    "/removed-delete-all.cjs": `exports.a = 1; (function () { delete module.exports; });`,
+    "/removed-call.cjs": `exports.a = 1; (function () { module.exports(); });`,
+    "/removed-delete-member.cjs": `exports.a = 1; (function () { delete module.exports.a; });`,
+    "/removed-store.cjs": `exports.a = 1; (function () { module.exports = {}; });`,
+  };
+  // A counted use of `exports` already gives these wrappers the parameter.
+  const wrappedWithAUseOfExports: Record<string, string> = {
+    "/live-this.cjs": `exports.a = 1; exports.b = this === exports;`,
+    "/live-typeof-this.cjs": `exports.a = 1; exports.b = typeof this;`,
+    "/later-use.cjs": `exports.a = 1; var self = 1 ? globalThis : this; exports.b = typeof self;`,
+    "/this-first.cjs": `this; exports.a = 1;`,
+  };
+  // Dead code of these kinds does not make the file CommonJS.
+  const stillLifted: Record<string, string> = {
+    "/dead-delete.cjs": `exports.a = 1; if (false) { delete exports.a; }`,
+    "/dead-store.cjs": `exports.a = 1; if (false) { module.exports = {}; }`,
+  };
+  const importAs: Record<string, (file: string, i: number) => string> = {
+    Default: (file, i) => `import f${i} from ".${file}"; const a${i} = f${i}.a;`,
+    Named: (file, i) => `import { a as a${i} } from ".${file}";`,
+    Star: (file, i) => `import * as f${i} from ".${file}"; const a${i} = f${i}.a;`,
+    Require: (file, i) => `const a${i} = require(".${file}").a;`,
+  };
+  const readA = (files: string[], importLine: (file: string, i: number) => string) =>
+    files.map(importLine).join("\n") + `\nconsole.log(${files.map((_, i) => `a${i}`).join(", ")});`;
+  for (const [form, importLine] of Object.entries(importAs)) {
+    const wrapped = Object.keys(wrappedWithNoUseOfExports);
+    itBundled(`cjs2esm/WrappedFileWithLiftedExportsTakesExports${form}Import`, {
+      files: { "/entry.js": readA(wrapped, importLine), ...wrappedWithNoUseOfExports },
+      run: { stdout: wrapped.map(() => "1").join(" ") },
+    });
+  }
+  itBundled("cjs2esm/WrappedFileWithLiftedExportsTakesExports", {
+    files: {
+      "/entry.js": readA(
+        Object.keys({ ...wrappedWithNoUseOfExports, ...wrappedWithAUseOfExports, ...stillLifted }),
+        importAs.Default,
+      ),
+      ...wrappedWithNoUseOfExports,
+      ...wrappedWithAUseOfExports,
+      ...stillLifted,
+    },
+    cjs2esm: { unhandled: Object.keys({ ...wrappedWithNoUseOfExports, ...wrappedWithAUseOfExports }) },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__commonJS(function() {");
+    },
+    run: { stdout: Array(18).fill("1").join(" ") },
+  });
+  itBundled("cjs2esm/WrappedEntryPointWithLiftedExportsTakesExports", {
+    files: {
+      "/entry.cjs": `exports.a = 1; if (false) { console.log(this); } console.log("loaded");`,
+    },
+    run: { stdout: "loaded" },
+  });
+  itBundled("cjs2esm/WrappedFileWithLiftedExportsTakesExportsMinifyIdentifiers", {
+    files: {
+      "/entry.js": readA(["/dead-branch.cjs", "/removed-this.cjs", "/removed-store.cjs"], importAs.Default),
+      ...wrappedWithNoUseOfExports,
+    },
+    minifyIdentifiers: true,
+    run: { stdout: "1 1 1" },
+  });
+  itBundled("cjs2esm/WrappedFileWithLiftedExportsTakesExportsSplitting", {
+    files: {
+      "/entry.js": `const lib = await import("./dead-branch.cjs"); console.log(lib.default.a);`,
+      ...wrappedWithNoUseOfExports,
+    },
+    outdir: "/out",
+    splitting: true,
+    run: { file: "/out/entry.js", stdout: "1" },
+  });
+  // The production define makes the branch dead.
+  itBundled("cjs2esm/ThisInDeadDevelopmentBranchKeepsExports", {
+    files: {
+      "/entry.js": `import lib from "./lib.cjs"; console.log(lib.a);`,
+      "/lib.cjs": /* js */ `
+        exports.a = 1;
+        if (process.env.NODE_ENV !== "production") {
+          console.log("dev", this === exports);
+        }
+      `,
+    },
+    define: { "process.env.NODE_ENV": '"production"' },
+    run: { stdout: "1" },
+  });
+  // `process.browser` is `false` for these targets without a flag.
+  for (const target of ["bun", "node"] as const) {
+    itBundled(`cjs2esm/ThisInDeadProcessBrowserBranchKeepsExports_${target}`, {
+      files: {
+        "/entry.js": `import lib from "./lib.cjs"; console.log(lib.a, lib.a2);`,
+        "/lib.cjs": /* js */ `
+          exports.a = 1;
+          if (process.browser) { this.a2 = 1; }
+        `,
+      },
+      target,
+      run: { stdout: "1 undefined" },
+    });
+  }
+  // The linker wraps this file for the default import. No parser mark is involved.
+  itBundled("cjs2esm/LinkerWrappedFileWithLiftedExportsTakesExports", {
+    files: {
+      "/entry.js": `import React from "react"; console.log(React.a);`,
+      "/node_modules/react/index.js": `import { z } from "./z.js"; exports.a = z;`,
+      "/node_modules/react/z.js": `export const z = 7;`,
+    },
+    run: { stdout: "7" },
+  });
   itBundled("cjs2esm/DefaultImportJsxClassicRuntime", {
     files: {
       "/entry.jsx": /* jsx */ `

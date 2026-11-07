@@ -446,12 +446,8 @@ impl Checker<'_, '_> {
             // `checkObjectLiteral`: an accessor is the member's symbol. For any other member it creates a symbol with
             // `SymbolFlagsProperty | member.Flags`.
             PropSource::Literal(file, literal_prop) => {
-                let bound = self.bound(*file);
-                let member = bound.symbol_of_declaration(Decl::Property(*literal_prop));
-                let flags = match member.is_some() {
-                    true => bound.symbol(member).flags & SymFlags::CLASS_MEMBER,
-                    false => SymFlags::empty(),
-                };
+                let flags =
+                    self.flags_of_literal_member(*file, *literal_prop) & SymFlags::CLASS_MEMBER;
                 match flags.intersects(SymFlags::ACCESSOR) {
                     true => flags,
                     false => flags | SymFlags::PROPERTY,

@@ -7507,6 +7507,35 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // `bun install` reads the package.json of each `file:` dependency into one buffer. Files of one size are then at one address.
+  it("reports an error in the package.json of a `file:` dependency at its own line and column", async () => {
+    // Each file has 260 bytes.
+    const sized = (text: (padding: string) => string) => text(Buffer.alloc(260 - text("").length, "x").toString());
+    // A duplicate key on line 4, and then a syntax error further into a file of one line.
+    const a = sized(padding => `{\n  "name": "a",\n  "version": "1.0.0",\n  "p": "1", "p": "${padding}"\n}\n`);
+    const b = sized(
+      padding => `{"name":"b","version":"1.0.0","p":"${Buffer.alloc(100, "y")}",oops,"q":"${padding}"}\n`,
+    );
+    using dir = tempDir("file-dependencies-of-one-size", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        dependencies: { a: "file:./a", b: "file:./b" },
+      }),
+      "a/package.json": a,
+      "b/package.json": b,
+    });
+    await using proc = spawn({ cmd: [bunExe(), "install"], cwd: String(dir), env, stdout: "ignore", stderr: "pipe" });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({
+      positions: stderr.match(/[ab]\/package\.json:\d+:\d+/g),
+      exitCode,
+    }).toEqual({
+      positions: ["a/package.json:4:13", `b/package.json:1:${b.indexOf("oops") + 1}`],
+      exitCode: 1,
+    });
+  });
+
   // The depth that counts as "too deep" depends on the build's stack frames, so each test tries the depths around it.
   describe.concurrent("package.json nested deeper than the stack has room for", () => {
     const depths = [250, 500, 1000, 2000, 4000, 8000, 9000, 10_000, 11_000, 12_000, 16_000, 32_000, 48_000, 64_000];

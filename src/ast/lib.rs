@@ -3389,7 +3389,7 @@ mod position_index_tests {
         for contents in &corpus {
             let source = Source::init_path_string(b"index-test.js" as &[u8], contents.as_slice());
             let len = contents.len();
-            let stride = if cfg!(miri) { len / 16 } else { 1 };
+            let stride = if cfg!(miri) { len / 8 } else { 1 };
 
             // From the end, the fifth offset and each one after it is behind all four cursors.
             for offset in (0..len + 2).rev().step_by(stride) {
@@ -3520,11 +3520,12 @@ mod position_index_tests {
 
     #[test]
     fn position_index_is_shared_between_threads() {
-        let contents = b"0123456789\r\n".repeat(if cfg!(miri) { 4 } else { 64 });
+        let (lines, threads) = if cfg!(miri) { (2, 2) } else { (64, 4) };
+        let contents = b"0123456789\r\n".repeat(lines);
         let source = Source::init_path_string(b"index-test.js" as &[u8], contents.as_slice());
         let len = contents.len();
         std::thread::scope(|scope| {
-            for thread in 0..4 {
+            for thread in 0..threads {
                 let source = &source;
                 scope.spawn(move || {
                     for i in 0..len {

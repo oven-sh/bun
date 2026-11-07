@@ -6696,6 +6696,57 @@ describe("parse error flood", () => {
   );
 });
 
+describe("parse error notes", () => {
+  // The lines before each note end with a lone CR, U+2028 and CRLF, and an astral character is on the line of the note.
+  const prefix = 'var cr = 1;\r"\u2028";\r\n/* \u{1F600} */ ';
+  const cases = {
+    "duplicate export": {
+      source: "export const dup = 1;\nexport { cr as dup };",
+      error: ['Multiple exports with the same name "dup"', 5, 16, "export { cr as dup };"],
+      note: ['"dup" was originally exported here', 4, 23, "/* \u{1F600} */ export const dup = 1;"],
+    },
+    "hoisted var": {
+      source: "let x;\n{ var x; }",
+      error: ["x has already been declared", 4, 14, "/* \u{1F600} */ let x;"],
+      note: ["x was originally declared here", 5, 7, "{ var x; }"],
+    },
+    "assignment to a constant": {
+      source: "const c = 1;\nc = 2;",
+      error: ['This assignment will throw because "c" is a constant', 5, 1, "c = 2;"],
+      note: ['The symbol "c" was declared a constant here:', 4, 16, "/* \u{1F600} */ const c = 1;"],
+    },
+    "reserved word in strict mode": {
+      source: "export {};\nstatic;",
+      error: ['"static" is a reserved word and cannot be used in strict mode', 5, 1, "static;"],
+      note: [
+        'This file is implicitly in strict mode because of the "export" keyword here',
+        4,
+        10,
+        "/* \u{1F600} */ export {};",
+      ],
+    },
+    "await outside an async function": {
+      source: "function f() {\n  await cr;\n}",
+      error: ['"await" can only be used inside an "async" function', 5, 9, "  await cr;"],
+      note: ['Consider adding the "async" keyword here', 4, 10, "/* \u{1F600} */ function f() {"],
+    },
+  };
+  const located = ({ message, position }) => [message, position.line, position.column, position.lineText];
+
+  for (const [name, { source, error, note }] of Object.entries(cases)) {
+    it(`${name}: the error and its note have their own line, column and text`, () => {
+      let thrown;
+      try {
+        new Bun.Transpiler({ loader: "js" }).transformSync(prefix + source);
+      } catch (e) {
+        thrown = e;
+      }
+      const [first] = thrown.errors ?? [thrown];
+      expect({ error: located(first), note: located(first.notes[0]) }).toEqual({ error, note });
+    });
+  }
+});
+
 describe("multi-line comment scanning", () => {
   // The lexer's block-comment scanner switches to a SIMD skip
   // (bun_highway::index_of_interesting_character_in_multiline_comment) when at

@@ -1065,10 +1065,7 @@ impl BunTest {
 
     fn handle_timeout(&mut self, global_this: &JSGlobalObject, now: &Timespec) {
         let _g = group_begin!();
-        // Under JS the callback ran promise jobs after it read `now`. One of them can have reported a later clock from `Bun.spawnSync()`.
-        if now.greater(&self.judged_at) {
-            self.judged_at = *now;
-        }
+        self.judged_at = *now;
         let judged = Execution::Execution::judge(self, global_this, now);
         // The last verdict steps the group. Without one, `Start` does.
         if !judged.timed_out {
@@ -1095,7 +1092,6 @@ impl BunTest {
         let _g = group_begin!();
         let this: *mut BunTest = this_strong.as_ptr();
         let global = vm.global();
-        let now = Timespec::now_force_real_time();
         // SAFETY: `this` derived from `UnsafeCell::get`; single-threaded; each
         // deref is a point-use that does not span a re-entrant `.get()`.
         unsafe {
@@ -1103,9 +1099,10 @@ impl BunTest {
             (*this).timer.state = EventLoopTimerState::PENDING;
         }
         if in_timer_pass && global.vm().is_entered() {
-            // A timer pass under JS runs the promise jobs of its timers last. Those of the timers before this one run now, so that the fire finds what they end in the queue, as at the top level.
+            // A timer pass under JS runs the promise jobs of its timers last. Those of the timers before this one run now, so that a fire is the same cut as at the top level.
             let _ = global.bun_vm().event_loop_mut().drain_microtasks();
         }
+        let now = Timespec::now_force_real_time();
         // SAFETY: as above.
         unsafe {
             match (*this).phase {

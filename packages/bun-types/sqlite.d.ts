@@ -737,6 +737,29 @@ declare module "bun:sqlite" {
      * @link https://www.sqlite.org/c3ref/file_control.html
      */
     fileControl(zDbName: string, op: number, arg?: ArrayBufferView | number | null): number;
+
+    /**
+     * Call `sqlite3_db_status` on this connection.
+     *
+     * `op` is one of the `SQLITE_DBSTATUS_*` constants. It selects the counter to read: the bytes the page cache holds, the lookaside slots in use, the cache hits since the connection opened, and so on.
+     *
+     * - `current` is the present value of the counter.
+     * - `highwater` is its highest value so far. It is `0` for an `op` that keeps no high-water mark, such as `SQLITE_DBSTATUS_CACHE_USED`.
+     * - `reset` sets the high-water mark back to `current` after the read. It changes nothing for an `op` that keeps no high-water mark.
+     *
+     * `SQLITE_DBSTATUS_LOOKASIDE_USED` counts slots, not bytes.
+     *
+     * Throws a `RangeError` if the SQLite library does not know `op`. Throws if the database is closed.
+     *
+     * @example
+     * ```ts
+     * const { current } = db.status(constants.SQLITE_DBSTATUS_CACHE_USED);
+     * console.log(`page cache: ${current} bytes`);
+     * ```
+     *
+     * @link https://www.sqlite.org/c3ref/db_status.html
+     */
+    status(op: number, reset?: boolean): { current: number; highwater: number };
   }
 
   /**
@@ -1462,6 +1485,64 @@ declare module "bun:sqlite" {
      * @constant 42
      */
     const SQLITE_FCNTL_RESET_CACHE: number;
+
+    /**
+     * @constant 0
+     */
+    const SQLITE_DBSTATUS_LOOKASIDE_USED: number;
+    /**
+     * @constant 1
+     */
+    const SQLITE_DBSTATUS_CACHE_USED: number;
+    /**
+     * @constant 2
+     */
+    const SQLITE_DBSTATUS_SCHEMA_USED: number;
+    /**
+     * @constant 3
+     */
+    const SQLITE_DBSTATUS_STMT_USED: number;
+    /**
+     * @constant 4
+     */
+    const SQLITE_DBSTATUS_LOOKASIDE_HIT: number;
+    /**
+     * @constant 5
+     */
+    const SQLITE_DBSTATUS_LOOKASIDE_MISS_SIZE: number;
+    /**
+     * @constant 6
+     */
+    const SQLITE_DBSTATUS_LOOKASIDE_MISS_FULL: number;
+    /**
+     * @constant 7
+     */
+    const SQLITE_DBSTATUS_CACHE_HIT: number;
+    /**
+     * @constant 8
+     */
+    const SQLITE_DBSTATUS_CACHE_MISS: number;
+    /**
+     * @constant 9
+     */
+    const SQLITE_DBSTATUS_CACHE_WRITE: number;
+    /**
+     * @constant 10
+     */
+    const SQLITE_DBSTATUS_DEFERRED_FKS: number;
+    /**
+     * @constant 11
+     */
+    const SQLITE_DBSTATUS_CACHE_USED_SHARED: number;
+    /**
+     * @constant 12
+     */
+    const SQLITE_DBSTATUS_CACHE_SPILL: number;
+    /**
+     * Needs SQLite 3.51 or later. On macOS, Bun uses the system SQLite library. An older library throws a `RangeError` for this op.
+     * @constant 13
+     */
+    const SQLITE_DBSTATUS_TEMPBUF_SPILL: number;
   }
 
   export type SQLQueryBindings =

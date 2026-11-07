@@ -2904,6 +2904,66 @@ it("run() reports a closed database when a bound parameter's getter closes it", 
   });
 });
 
+describe("Database#status", () => {
+  const dbStatusOps = Object.keys(constants).filter(name => name.startsWith("SQLITE_DBSTATUS_"));
+
+  it("reads the sqlite3_db_status counters of the connection", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+    const insert = db.prepare("INSERT INTO t (v) VALUES (?)");
+    const filler = Buffer.alloc(120, "v").toString();
+    for (let i = 0; i < 500; i++) insert.run(filler + i);
+    expect(db.query("SELECT count(*) AS n FROM t").get().n).toBe(500);
+
+    // The page cache holds the pages the inserts and the scan touched. SQLite keeps no high-water mark for it.
+    const cacheUsed = db.status(constants.SQLITE_DBSTATUS_CACHE_USED);
+    expect(cacheUsed.current).toBeGreaterThan(0);
+    expect(cacheUsed.highwater).toBe(0);
+    expect(db.status(constants.SQLITE_DBSTATUS_CACHE_USED_SHARED)).toEqual(cacheUsed);
+    expect(db.status(constants.SQLITE_DBSTATUS_SCHEMA_USED).current).toBeGreaterThan(0);
+    expect(db.status(constants.SQLITE_DBSTATUS_STMT_USED).current).toBeGreaterThan(0);
+
+    // `reset` is the default `false`, so two reads agree.
+    expect(db.status(constants.SQLITE_DBSTATUS_CACHE_USED)).toEqual(cacheUsed);
+
+    // Every op this library knows answers with the same shape. macOS uses the system SQLite: TEMPBUF_SPILL needs 3.51.
+    const ops = dbStatusOps.filter(name => !(isMacOS && name === "SQLITE_DBSTATUS_TEMPBUF_SPILL"));
+    const all = Object.fromEntries(ops.map(name => [name, db.status(constants[name])]));
+    expect(all).toEqual(
+      Object.fromEntries(ops.map(name => [name, { current: expect.any(Number), highwater: expect.any(Number) }])),
+    );
+  });
+
+  it("reset sets the high-water mark back to the current value", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+    // Prepared statements check lookaside slots out, and finalize gives them back.
+    const statements = Array.from({ length: 50 }, (_, i) => db.prepare(`SELECT * FROM t WHERE id = ${i}`));
+    const peak = db.status(constants.SQLITE_DBSTATUS_LOOKASIDE_USED);
+    for (const stmt of statements) stmt.finalize();
+    db.clearQueryCache();
+
+    const afterFinalize = db.status(constants.SQLITE_DBSTATUS_LOOKASIDE_USED);
+    expect(afterFinalize.current).toBeLessThan(peak.current);
+    expect(afterFinalize.highwater).toBeGreaterThanOrEqual(peak.current);
+
+    // The read with `reset` still reports the old high-water mark. The next read starts from `current`.
+    expect(db.status(constants.SQLITE_DBSTATUS_LOOKASIDE_USED, true)).toEqual(afterFinalize);
+    const afterReset = db.status(constants.SQLITE_DBSTATUS_LOOKASIDE_USED);
+    expect(afterReset).toEqual({ current: afterFinalize.current, highwater: afterFinalize.current });
+  });
+
+  it("throws for an unknown op, a non-integer op, and a closed database", () => {
+    const db = new Database(":memory:");
+    expect(() => db.status(999)).toThrow(RangeError);
+    expect(() => db.status(999)).toThrow("Unknown sqlite3_db_status op: 999");
+    expect(() => db.status("SQLITE_DBSTATUS_CACHE_USED")).toThrow(TypeError);
+    expect(() => db.status(1.5)).toThrow(TypeError);
+    db.close();
+    expect(() => db.status(constants.SQLITE_DBSTATUS_CACHE_USED)).toThrow("Database has closed");
+  });
+});
+
 // Several SQLITE_FCNTL_* opcodes (VFSNAME, MMAP_SIZE, FILE_POINTER, ...) write
 // a full pointer or int64 through the result argument, so the result buffer
 // must be at least 8 bytes. A 1-byte Uint8Array used to be passed through

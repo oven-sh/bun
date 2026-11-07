@@ -115,6 +115,21 @@ const constants = {
   SQLITE_FCNTL_EXTERNAL_READER: 40,
   SQLITE_FCNTL_CKSM_FILE: 41,
   SQLITE_FCNTL_RESET_CACHE: 42,
+
+  SQLITE_DBSTATUS_LOOKASIDE_USED: 0,
+  SQLITE_DBSTATUS_CACHE_USED: 1,
+  SQLITE_DBSTATUS_SCHEMA_USED: 2,
+  SQLITE_DBSTATUS_STMT_USED: 3,
+  SQLITE_DBSTATUS_LOOKASIDE_HIT: 4,
+  SQLITE_DBSTATUS_LOOKASIDE_MISS_SIZE: 5,
+  SQLITE_DBSTATUS_LOOKASIDE_MISS_FULL: 6,
+  SQLITE_DBSTATUS_CACHE_HIT: 7,
+  SQLITE_DBSTATUS_CACHE_MISS: 8,
+  SQLITE_DBSTATUS_CACHE_WRITE: 9,
+  SQLITE_DBSTATUS_DEFERRED_FKS: 10,
+  SQLITE_DBSTATUS_CACHE_USED_SHARED: 11,
+  SQLITE_DBSTATUS_CACHE_SPILL: 12,
+  SQLITE_DBSTATUS_TEMPBUF_SPILL: 13,
 };
 
 // What JSSQLStatement.cpp defines.
@@ -473,6 +488,10 @@ class Database implements SqliteTypes.Database {
   fileControl(zDbName, op?, arg?) {
     if (typeof zDbName === "string" || arguments.length > 2) return SQL.fcntl(this.#handle, zDbName, op, arg);
     return SQL.fcntl(this.#handle, null, zDbName, op);
+  }
+
+  status(op: number, reset: boolean = false) {
+    return SQL.dbStatus(this.#handle, op, reset);
   }
 
   close(throwOnError = false) {

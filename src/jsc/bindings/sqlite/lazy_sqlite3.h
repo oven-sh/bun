@@ -75,6 +75,7 @@ typedef int (*lazy_sqlite3_exec_type)(sqlite3*, const char* sql, int (*callback)
 typedef int (*lazy_sqlite3_limit_type)(sqlite3*, int id, int newVal);
 typedef int (*lazy_sqlite3_sleep_type)(int);
 typedef int (*lazy_sqlite3_stmt_status_type)(sqlite3_stmt*, int op, int resetFlg);
+typedef int (*lazy_sqlite3_db_status_type)(sqlite3*, int op, int* pCur, int* pHiwtr, int resetFlg);
 typedef int (*lazy_sqlite3_load_extension_type)(sqlite3* db, const char* zFile, const char* zProc, char** pzErrMsg);
 typedef const char* (*lazy_sqlite3_libversion_type)();
 typedef void* (*lazy_sqlite3_malloc64_type)(sqlite3_uint64);
@@ -189,6 +190,7 @@ inline lazy_sqlite3_exec_type lazy_sqlite3_exec;
 inline lazy_sqlite3_limit_type lazy_sqlite3_limit;
 inline lazy_sqlite3_sleep_type lazy_sqlite3_sleep;
 inline lazy_sqlite3_stmt_status_type lazy_sqlite3_stmt_status;
+inline lazy_sqlite3_db_status_type lazy_sqlite3_db_status;
 inline lazy_sqlite3_set_authorizer_type lazy_sqlite3_set_authorizer;
 inline lazy_sqlite3_update_hook_type lazy_sqlite3_update_hook;
 inline lazy_sqlite3_create_function_v2_type lazy_sqlite3_create_function_v2;
@@ -285,6 +287,7 @@ inline lazy_sqlite3changeset_apply_type lazy_sqlite3changeset_apply;
 #define sqlite3_limit lazy_sqlite3_limit
 #define sqlite3_sleep lazy_sqlite3_sleep
 #define sqlite3_stmt_status lazy_sqlite3_stmt_status
+#define sqlite3_db_status lazy_sqlite3_db_status
 #define sqlite3_set_authorizer lazy_sqlite3_set_authorizer
 #define sqlite3_update_hook lazy_sqlite3_update_hook
 #define sqlite3_create_function_v2 lazy_sqlite3_create_function_v2
@@ -437,6 +440,7 @@ inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
     lazy_sqlite3_limit = (lazy_sqlite3_limit_type)dlsym(sqlite3_handle, "sqlite3_limit");
     lazy_sqlite3_sleep = (lazy_sqlite3_sleep_type)dlsym(sqlite3_handle, "sqlite3_sleep");
     lazy_sqlite3_stmt_status = (lazy_sqlite3_stmt_status_type)dlsym(sqlite3_handle, "sqlite3_stmt_status");
+    lazy_sqlite3_db_status = (lazy_sqlite3_db_status_type)dlsym(sqlite3_handle, "sqlite3_db_status");
     lazy_sqlite3_set_authorizer = (lazy_sqlite3_set_authorizer_type)dlsym(sqlite3_handle, "sqlite3_set_authorizer");
     lazy_sqlite3_update_hook = (lazy_sqlite3_update_hook_type)dlsym(sqlite3_handle, "sqlite3_update_hook");
     lazy_sqlite3_create_function_v2 = (lazy_sqlite3_create_function_v2_type)dlsym(sqlite3_handle, "sqlite3_create_function_v2");

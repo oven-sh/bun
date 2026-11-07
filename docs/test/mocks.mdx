@@ -790,6 +790,7 @@ test("lazy import", async () => {
 ```
 
 - Stubs that are still in place are undone when the test file ends. Stubs made by a `--preload` script apply to every file.
+- A stub and a spy on the same global can be undone in either order. The one that was made later stays in place until it is undone too.
 - `vi.waitFor()` and `vi.waitUntil()` wait in real time. If fake timers are on, they also advance the fake clock by `interval` before each call to the callback.
 
 ### Differences from Vitest

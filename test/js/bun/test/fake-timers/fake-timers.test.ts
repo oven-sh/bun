@@ -2179,52 +2179,95 @@ describe.concurrent("the end of a test file", () => {
       });
     });
 
-    // The first file's spy or stub is under the fake that the hook installs. The end of that file undoes it.
-    describe.each([
-      ["no spy", ``],
-      ["a spy", `import { spyOn } from "bun:test"; spyOn(globalThis, "setTimeout");`],
+    // A spy or a stub that the first file makes at its top level is under the fake that the hook installs afterwards.
+    // Whatever undoes it leaves the fake in place.
+    test.each([
       [
-        "a spy that it restores",
-        `import { afterAll, spyOn } from "bun:test"; const spy = spyOn(globalThis, "setTimeout"); afterAll(() => spy.mockRestore());`,
+        "leaves spies and stubs in place",
+        `spyOn(globalThis, "setTimeout");
+        vi.stubGlobal("setInterval", () => 0);
+        spyOn(globalThis, "clearTimeout");
+        vi.stubGlobal("clearInterval", () => {});
+        afterAll(() => {
+          spyOn(globalThis, "clearTimeout");
+          vi.stubGlobal("clearInterval", () => {});
+        });`,
       ],
-      ["a stub", `vi.stubGlobal("setTimeout", () => 0);`],
-    ])("fake timers from beforeAll(), with %s on setTimeout in the first file", (_, atTheTop) => {
-      const fires = (name: string, first = "") => `
-        import { expect, test, vi } from "bun:test";
-        ${first}
+      [
+        "leaves a spy over a stub, and stubs over spies, in place",
+        `vi.stubGlobal("setTimeout", () => 0);
+        spyOn(globalThis, "setInterval");
+        vi.stubGlobal("setInterval", () => 0);
+        vi.stubGlobal("clearTimeout", () => {});
+        spyOn(globalThis, "clearTimeout");
+        spyOn(globalThis, "clearInterval");
+        afterAll(() => {
+          spyOn(globalThis, "setTimeout");
+          vi.stubGlobal("clearInterval", () => {});
+        });`,
+      ],
+      [
+        "undoes its spies and stubs itself",
+        `const spy = spyOn(globalThis, "setTimeout");
+        vi.stubGlobal("setInterval", () => 0);
+        const under = [spyOn(globalThis, "clearTimeout"), spyOn(globalThis, "clearInterval")];
+        afterAll(() => {
+          const over = [spyOn(globalThis, "clearTimeout"), spyOn(globalThis, "clearInterval")];
+          spy.mockRestore();
+          vi.unstubAllGlobals();
+          for (const restored of [under[0], over[0], over[1], under[1]]) restored.mockRestore();
+        });`,
+      ],
+      [
+        "has restoreMocks and unstubGlobals on",
+        `vi.setConfig({ restoreMocks: true, unstubGlobals: true });
+        spyOn(globalThis, "setTimeout");
+        vi.stubGlobal("setInterval", () => 0);`,
+      ],
+    ])("fake timers from beforeAll() fire in every file when the first file %s", async (_, atTheTop) => {
+      const fires = (name: string, atTheTop = "", atTheEnd = "") => `
+        import { afterAll, expect, spyOn, test, vi } from "bun:test";
+        ${atTheTop}
         test("${name}", () => {
+          globalThis.fakes ??= functions();
+          expect(which()).toEqual({ setTimeout: "fake", clearTimeout: "fake", setInterval: "fake", clearInterval: "fake" });
           const fired = [];
           setTimeout(() => fired.push("timeout"), 1000);
+          clearTimeout(setTimeout(() => fired.push("cleared"), 1000));
           const interval = setInterval(() => fired.push("interval"), 500);
-          expect([Object.hasOwn(setTimeout, "clock"), vi.getTimerCount()]).toEqual([true, 2]);
           vi.advanceTimersByTime(1000);
           clearInterval(interval);
+          vi.advanceTimersByTime(1000);
           expect(fired).toEqual(["interval", "timeout", "interval"]);
+          ${atTheEnd}
         });
       `;
-
-      test("fire in every file", async () => {
-        const { stderr, exitCode } = await clocks(`beforeAll(() => void vi.useFakeTimers({ now: 0 }));`, {
-          files: { "a.test.ts": fires("a", atTheTop), "b.test.ts": fires("b"), "c.test.ts": fires("c") },
-        });
-        expect({ passed: passed(stderr), exitCode }, stderr).toEqual({
-          passed: ["(pass) a", "(pass) b", "(pass) c"],
-          exitCode: 0,
-        });
-      });
-
-      test("leave the real setTimeout after a later file's useRealTimers()", async () => {
-        const { stderr, exitCode } = await clocks(`beforeAll(() => void vi.useFakeTimers({ now: 0 }));`, {
+      const { stderr, exitCode } = await clocks(
+        `const functions = () => ({ setTimeout, clearTimeout, setInterval, clearInterval });
+        const real = functions();
+        const which = () =>
+          Object.fromEntries(
+            Object.entries(functions()).map(([name, now]) => [name, now === real[name] ? "real" : now === fakes[name] ? "fake" : "other"]),
+          );
+        Object.assign(globalThis, { functions, which });
+        beforeAll(() => void vi.useFakeTimers({ now: 0 }));`,
+        {
           files: {
-            "a.test.ts": `import { test, vi } from "bun:test"; ${atTheTop} test("a", () => {});`,
-            "b.test.ts": `import { test, vi } from "bun:test"; test("b", () => void vi.useRealTimers());`,
-            "c.test.ts": needsRealTimers,
+            "a.test.ts": fires("a", atTheTop),
+            "b.test.ts": fires("b"),
+            "c.test.ts": fires(
+              "c",
+              "",
+              `vi.useRealTimers();
+              expect(which()).toEqual({ setTimeout: "real", clearTimeout: "real", setInterval: "real", clearInterval: "real" });`,
+            ),
+            "d.test.ts": needsRealTimers,
           },
-        });
-        expect({ passed: passed(stderr), exitCode }, stderr).toEqual({
-          passed: ["(pass) a", "(pass) b", "(pass) nothing is faked"],
-          exitCode: 0,
-        });
+        },
+      );
+      expect({ passed: passed(stderr), exitCode }, stderr).toEqual({
+        passed: ["(pass) a", "(pass) b", "(pass) c", "(pass) nothing is faked"],
+        exitCode: 0,
       });
     });
 
@@ -2275,7 +2318,7 @@ describe.concurrent("the end of a test file", () => {
       });
     });
 
-    test("a fake performance over the first file's stub of it goes with the stub", async () => {
+    test("a fake performance over the first file's stub of it wraps the real one once the stub is undone", async () => {
       const { seen, stderr, exitCode } = await clocks(`beforeAll(() => void vi.useFakeTimers({ now: 0 }));`, {
         module: "vitest",
         files: {
@@ -2287,23 +2330,160 @@ describe.concurrent("the end of a test file", () => {
           `,
           "b.test.ts": `
             import { test, vi } from "bun:test";
-            test("b", () => console.log("b:", performance === realPerformance, vi.isFakeTimers()));
+            test("b", () => {
+              vi.advanceTimersByTime(1000);
+              console.log("b:", performance === realPerformance, performance.now(), typeof performance.mark);
+              vi.useRealTimers();
+              console.log("real:", performance === realPerformance);
+            });
           `,
           "c.test.ts": `import { test } from "bun:test"; test("c", () => {});`,
         },
       });
-      expect({ seen, exitCode }, stderr).toEqual({ seen: ["a: false true", "b: true true"], exitCode: 0 });
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: ["a: false true", "b: false 1000 function", "real: true"],
+        exitCode: 0,
+      });
     });
 
-    test("a global that a test file assigns over the preload's fake stays for the next file", async () => {
+    test("a timer that one file leaves pending fires in the next file", async () => {
+      const { seen, stderr, exitCode } = await clocks(`beforeAll(() => void vi.useFakeTimers({ now: 0 }));`, {
+        files: {
+          "a.test.ts": `import { test } from "bun:test"; test("a", () => void setTimeout(() => console.log("fired:", Date.now()), 1000));`,
+          "b.test.ts": `
+            import { test, vi } from "bun:test";
+            test("b", () => {
+              console.log("pending:", vi.getTimerCount());
+              vi.advanceTimersByTime(1500);
+            });
+          `,
+          "c.test.ts": `import { test, vi } from "bun:test"; test("c", () => console.log("left:", vi.getTimerCount(), Date.now()));`,
+        },
+      });
+      expect({ seen, exitCode }, stderr).toEqual({ seen: ["pending: 1", "fired: 1000", "left: 0 1500"], exitCode: 0 });
+    });
+
+    // No spy or stub undoes an assignment, so nothing tells the clock what is under its fake now.
+    test.each([
+      [
+        "assigns a function over a fake",
+        `test("a", () => void (globalThis.setTimeout = function assigned() {}));`,
+        "assigned",
+      ],
+      [
+        "puts back a function that it had replaced before the hook ran",
+        `const real = setTimeout;
+        globalThis.setTimeout = function wrapper(...args) { return real(...args); };
+        afterAll(() => void (globalThis.setTimeout = real));
+        test("a", () => {});`,
+        "setTimeout",
+      ],
+    ])("fake timers from beforeAll() end with a test file that %s", async (_, inA, name) => {
+      const { seen, stderr, exitCode } = await clocks(`beforeAll(() => void vi.useFakeTimers({ now: 0 }));`, {
+        files: {
+          "a.test.ts": `import { afterAll, test } from "bun:test"; ${inA}`,
+          "b.test.ts": sees("b", `console.log("setTimeout:", setTimeout.name);`),
+        },
+      });
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: ["b module: real now", "b test: real now", `setTimeout: ${name}`, ...inEach(["c"], "real now")],
+        exitCode: 0,
+      });
+    });
+
+    test("fake timers from the top level of the preload stay on when a test file assigns a function over a fake", async () => {
       const { seen, stderr, exitCode } = await clocks(`vi.useFakeTimers({ now: 0 });`, {
         files: {
           "a.test.ts": `import { test } from "bun:test"; test("a", () => void (globalThis.setTimeout = function assigned() {}));`,
-          "b.test.ts": `import { test } from "bun:test"; test("b", () => console.log("setTimeout:", setTimeout.name));`,
-          "c.test.ts": `import { test } from "bun:test"; test("c", () => {});`,
+          "b.test.ts": sees("b", `console.log("setTimeout:", setTimeout.name);`),
         },
       });
-      expect({ seen, exitCode }, stderr).toEqual({ seen: ["setTimeout: assigned"], exitCode: 0 });
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: ["b module: fake 1970", "b test: fake 1970", "setTimeout: assigned", ...inEach(["c"], "fake 1970")],
+        exitCode: 0,
+      });
+    });
+
+    // What each file has as setTimeout: the fake, the real function, or the name of what is there instead.
+    const has = (name: string, before = "", after = "", atTheTop = "") => `
+      import { jest, test, vi } from "bun:test";
+      const is = () => (Object.hasOwn(setTimeout, "clock") ? "fake" : setTimeout === realSetTimeout ? "real" : setTimeout.name);
+      ${atTheTop}
+      test("${name}", () => {
+        ${before}
+        console.log("${name}:", is());
+        ${after}
+      });
+    `;
+    const endsTheClock = `vi.useRealTimers(); console.log("real:", is()); vi.unstubAllGlobals(); console.log("unstubbed:", is());`;
+
+    test.each([
+      [
+        "a stub",
+        "at its top level",
+        `vi.stubGlobal("setTimeout", function stub() {}); vi.useFakeTimers();`,
+        "",
+        "stub",
+      ],
+      [
+        "a stub",
+        "in beforeAll()",
+        `beforeAll(() => { vi.stubGlobal("setTimeout", function stub() {}); vi.useFakeTimers(); });`,
+        "",
+        "stub",
+      ],
+      [
+        "a stub that a test file undoes",
+        "at its top level",
+        `vi.stubGlobal("setTimeout", function stub() {}); vi.useFakeTimers();`,
+        "vi.unstubAllGlobals();",
+        "stub",
+      ],
+      [
+        "a spy that a test file restores",
+        "at its top level",
+        `import { spyOn } from "bun:test"; spyOn(globalThis, "setTimeout"); vi.useFakeTimers();`,
+        "jest.restoreAllMocks();",
+        "real",
+      ],
+    ])(
+      "%s is under the fake timers that the preload turned on after it, %s, in every file",
+      async (_, __, preload, inA, under) => {
+        const { seen, stderr, exitCode } = await clocks(`globalThis.realSetTimeout = setTimeout; ${preload}`, {
+          files: { "a.test.ts": has("a", inA), "b.test.ts": has("b"), "c.test.ts": has("c", "", endsTheClock) },
+        });
+        expect({ seen, exitCode }, stderr).toEqual({
+          seen: ["a: fake", "b: fake", "c: fake", `real: ${under}`, "unstubbed: real"],
+          exitCode: 0,
+        });
+      },
+    );
+
+    test.each([
+      ["the first file", "vi.unstubAllGlobals(); vi.useFakeTimers();", "", "real"],
+      ["a later file", "vi.unstubAllGlobals();", "vi.useFakeTimers();", "fake"],
+    ])("useFakeTimers() in %s doesn't bring back the stub that was under the clock", async (_, inA, inB, inBefore) => {
+      const { seen, stderr, exitCode } = await clocks(
+        `globalThis.realSetTimeout = setTimeout; beforeAll(() => void vi.useFakeTimers());`,
+        {
+          files: {
+            "a.test.ts": has("a", inA, "", `vi.stubGlobal("setTimeout", function stub() {});`),
+            "b.test.ts": has("b", `console.log("before:", is()); ${inB}`, endsTheClock),
+            "c.test.ts": has("c"),
+          },
+        },
+      );
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: [
+          "a: fake",
+          `before: ${inBefore}`,
+          `b: ${inB ? "fake" : "real"}`,
+          "real: real",
+          "unstubbed: real",
+          "c: real",
+        ],
+        exitCode: 0,
+      });
     });
   });
 
@@ -3471,6 +3651,178 @@ describe("a fake put back by a spy or stub after useRealTimers()", () => {
       stdout: JSON.stringify({ isReal: true, clock: false }) + "\n",
       exitCode: 0,
     });
+  });
+});
+
+// In Vitest and Jest, the spy or stub puts back what it replaced, so the real function is on the global while the
+// clock is faked, and useRealTimers() then puts the spy or stub back.
+describe("a spy or stub under a fake that is undone while the clock is faked", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    jest.restoreAllMocks();
+    vi.unstubAllGlobals();
+    globalThis.setTimeout = saved.setTimeout;
+  });
+  const fires = () => {
+    const fired = jest.fn();
+    setTimeout(fired, 1000);
+    vi.advanceTimersByTime(1000);
+    return fired.mock.calls.length === 1;
+  };
+  const stub = () => void vi.stubGlobal("setTimeout", () => 0);
+  const spies = [
+    ["jest.spyOn() and mockRestore()", () => jest.spyOn(globalThis, "setTimeout"), (spy: any) => spy.mockRestore()],
+    ["jest.spyOn() and restoreAllMocks()", () => jest.spyOn(globalThis, "setTimeout"), () => jest.restoreAllMocks()],
+    [`vi.spyOn() of "bun:test"`, () => bunVi.spyOn(globalThis, "setTimeout"), (spy: any) => spy.mockRestore()],
+    [`vi.spyOn() of "vitest"`, () => vi.spyOn(globalThis, "setTimeout"), () => vi.restoreAllMocks()],
+  ] as const;
+  const ways = [...spies, ["vi.stubGlobal()", stub, () => vi.unstubAllGlobals()]] as const;
+
+  test.each(ways)("%s: the fake stays, and useRealTimers() leaves the real function", (_, replace, undo) => {
+    const under = replace();
+    vi.useFakeTimers();
+    const fake = setTimeout;
+    undo(under);
+    expect({ isTheFake: setTimeout === fake, fires: fires() }).toEqual({ isTheFake: true, fires: true });
+    vi.useRealTimers();
+    expect(setTimeout).toBe(saved.setTimeout);
+  });
+
+  test.each(spies.flatMap(([name, ...way]) => [[name, "first", ...way] as const, [name, "last", ...way] as const]))(
+    "%s: the same with a second spy over the fake, when the one under it is restored %s",
+    (_, when, replace, undo) => {
+      const under = replace();
+      vi.useFakeTimers();
+      const fake = setTimeout;
+      const over = replace();
+      expect(over).not.toBe(under);
+      for (const spy of when === "first" ? [under, over] : [over, under]) undo(spy);
+      expect({ isTheFake: setTimeout === fake, fires: fires() }).toEqual({ isTheFake: true, fires: true });
+      vi.useRealTimers();
+      expect(setTimeout).toBe(saved.setTimeout);
+    },
+  );
+
+  test.each([
+    ["a spy and a stub over it, the spy first", false, true],
+    ["a spy and a stub over it, the stub first", false, false],
+    ["a stub and a spy over it, the spy first", true, true],
+    ["a stub and a spy over it, the stub first", true, false],
+  ])("under the fake are %s", (_, stubFirst, spyFirst) => {
+    if (stubFirst) stub();
+    const spy = jest.spyOn(globalThis, "setTimeout");
+    if (!stubFirst) stub();
+    vi.useFakeTimers();
+    const fake = setTimeout;
+    const undo = [() => spy.mockRestore(), () => vi.unstubAllGlobals()];
+    for (const step of spyFirst ? undo : undo.reverse()) {
+      step();
+      expect({ isTheFake: setTimeout === fake, fires: fires() }).toEqual({ isTheFake: true, fires: true });
+    }
+    vi.useRealTimers();
+    expect(setTimeout).toBe(saved.setTimeout);
+  });
+
+  test.each([
+    ["a second stub", () => void vi.stubGlobal("setTimeout", () => 1)],
+    ["a spy", () => void jest.spyOn(globalThis, "setTimeout")],
+  ])("a stub under the fake and %s over it", (_, replace) => {
+    stub();
+    vi.useFakeTimers();
+    const fake = setTimeout;
+    replace();
+    vi.unstubAllGlobals();
+    jest.restoreAllMocks();
+    expect({ isTheFake: setTimeout === fake, fires: fires() }).toEqual({ isTheFake: true, fires: true });
+    vi.useRealTimers();
+    expect(setTimeout).toBe(saved.setTimeout);
+  });
+
+  test.each([
+    ["setInterval", globalThis],
+    ["setImmediate", globalThis],
+    ["queueMicrotask", globalThis],
+    ["nextTick", process],
+  ] as const)("%s: a restored spy leaves the fake, then the real function", (name, owner: any) => {
+    const real = owner[name];
+    const spy = jest.spyOn(owner, name);
+    vi.useFakeTimers({ toFake: [name] });
+    const fake = owner[name];
+    spy.mockRestore();
+    expect(owner[name]).toBe(fake);
+    vi.useRealTimers();
+    expect(owner[name]).toBe(real);
+  });
+
+  test("a spy that a test put back over the fake is what its restore takes off", () => {
+    const spy = jest.spyOn(globalThis, "setTimeout");
+    vi.useFakeTimers();
+    globalThis.setTimeout = spy as unknown as typeof setTimeout;
+    spy.mockRestore();
+    expect(setTimeout).toBe(saved.setTimeout);
+    vi.useRealTimers();
+    expect(setTimeout).toBe(saved.setTimeout);
+  });
+
+  test("the next useFakeTimers() replaces what the restored spy had replaced", () => {
+    const spy = jest.spyOn(globalThis, "setTimeout");
+    vi.useFakeTimers();
+    spy.mockRestore();
+    vi.useFakeTimers();
+    expect(fires()).toBe(true);
+    vi.useRealTimers();
+    expect(setTimeout).toBe(saved.setTimeout);
+  });
+
+  test("the fake has the attributes of the property that the stub replaced", () => {
+    const before = Object.getOwnPropertyDescriptor(globalThis, "setTimeout")!;
+    try {
+      Object.defineProperty(globalThis, "setTimeout", { ...before, enumerable: false });
+      stub();
+      vi.useFakeTimers();
+      vi.unstubAllGlobals();
+      expect(Object.getOwnPropertyDescriptor(globalThis, "setTimeout")!.enumerable).toBe(false);
+      vi.useRealTimers();
+      expect(Object.getOwnPropertyDescriptor(globalThis, "setTimeout")).toEqual({ ...before, enumerable: false });
+    } finally {
+      Object.defineProperty(globalThis, "setTimeout", before);
+    }
+  });
+
+  test.each([
+    ["a global that the stub made", () => void delete (globalThis as any).requestAnimationFrame],
+    [
+      "an accessor",
+      () => void Object.defineProperty(globalThis, "requestAnimationFrame", { get: () => 1, configurable: true }),
+    ],
+  ])("%s is back as it was, and is no longer faked", (_, define) => {
+    try {
+      define();
+      const before = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
+      vi.stubGlobal("requestAnimationFrame", () => 0);
+      vi.useFakeTimers();
+      vi.unstubAllGlobals();
+      expect(Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame")).toEqual(before);
+      vi.useRealTimers();
+      expect(Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame")).toEqual(before);
+    } finally {
+      delete (globalThis as any).requestAnimationFrame;
+    }
+  });
+
+  test("a fake performance wraps what the stub replaced", () => {
+    const real = performance;
+    vi.stubGlobal("performance", { now: () => -1 });
+    vi.useFakeTimers({ now: 0 });
+    vi.unstubAllGlobals();
+    vi.advanceTimersByTime(1000);
+    expect({ isReal: performance === real, now: performance.now(), mark: typeof performance.mark }).toEqual({
+      isReal: false,
+      now: 1000,
+      mark: "function",
+    });
+    vi.useRealTimers();
+    expect(performance).toBe(real);
   });
 });
 

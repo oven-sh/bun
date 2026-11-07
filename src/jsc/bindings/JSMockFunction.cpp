@@ -863,8 +863,6 @@ public:
     // `original` is getOwnPropertyStorage() of the replaced property, or empty if the target had no own one.
     void didInstall(JSObject* target, const Identifier& key, JSValue original, unsigned attributes);
 
-    bool isRestoredSpy() const { return isSpy && !m_spyTarget; }
-
     // What the spy replaced as the value of its property, while it is installed. Empty if it replaced nothing.
     JSValue replacedValue() const { return m_spyTarget ? m_spyOriginal.get() : JSValue(); }
 
@@ -884,7 +882,9 @@ public:
         }
 
         if (auto* target = m_spyTarget.get()) {
-            if (!this->handsOverOriginal(target))
+            // What replaced this spy can take over what the spy replaced. The property then stays as it is.
+            bool isHandedOver = mayBeReplaced() && (handOverOriginal(target) || scope.exception());
+            if (!isHandedOver)
                 this->putBackOriginal(globalObject, target);
             if (scope.exception()) [[unlikely]] {
                 // It's still installed, so keep it where restoreAllMocks() finds it.
@@ -895,14 +895,11 @@ public:
         didUninstall();
     }
 
-    // A fake timer function or a `vi.stubGlobal()` that replaced this spy replaces what the spy replaced from now on.
-    // Returns true if the property then stays as it is: the spy is no longer on it, or an exception is pending.
-    bool handsOverOriginal(JSObject* target)
+    // Only a fake timer function and a `vi.stubGlobal()` keep what they replaced.
+    bool mayBeReplaced() const
     {
         auto& mocks = mockModule();
-        if (!mocks.fakeTimersAreInstalled && !mocks.stubbedGlobals) [[likely]]
-            return false;
-        return handsOverOriginalSlow(target);
+        return mocks.fakeTimersAreInstalled || mocks.stubbedGlobals;
     }
 
     static void clearAll(Zig::GlobalObject*);
@@ -976,7 +973,9 @@ private:
         leave(List::Spies);
     }
 
-    NEVER_INLINE bool handsOverOriginalSlow(JSObject* target)
+    // A fake timer function or a `vi.stubGlobal()` that replaced this spy replaces what the spy replaced from now on.
+    // Returns whether one did and the spy is no longer on its property, or an exception is pending.
+    NEVER_INLINE bool handOverOriginal(JSObject* target)
     {
         if (!isValueOf(target, m_spyIdentifier))
             return false;
@@ -2938,12 +2937,6 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC
 }
 
 extern "C" void Bun__FakeTimers__setSystemTime(JSC::JSGlobalObject* globalObject, double ms);
-
-extern "C" bool JSMock__isRestoredSpy(JSC::EncodedJSValue value)
-{
-    auto* mock = dynamicDowncast<JSMockFunction>(JSValue::decode(value));
-    return mock && mock->isRestoredSpy();
-}
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {

@@ -65,9 +65,9 @@ pub(crate) fn clone_active_strong() -> Option<BunTestPtr> {
     runner.bun_test_root.clone_active_file()
 }
 
-/// Whether the caller is a preload that acts for the whole run: its module, or one of its `aroundAll()` (until
-/// `runSuite()`) and `beforeAll()` hooks in a file that is `first && !last`, where the hook runs once for all test
-/// files. What it sets up stays for every file.
+/// Whether the caller is a preload that acts for the whole run: its module, or one of its `aroundAll()` (until the
+/// suite starts to run) and `beforeAll()` hooks in a file that is `first && !last`, where the hook runs once for all
+/// test files. What it sets up stays for every file.
 ///
 /// Every other hook of a preload acts for the test file it runs with, and the end of that file undoes what it set up.
 pub(crate) fn is_preload_for_the_run(vm: &VirtualMachine) -> bool {
@@ -75,9 +75,10 @@ pub(crate) fn is_preload_for_the_run(vm: &VirtualMachine) -> bool {
         return true;
     }
     let Some(runner) = Jest::runner_ptr() else { return false };
-    // SAFETY: `runner_ptr` only returns it on the thread that runs the test files. A caller up the stack may hold a
-    // `&mut` to the runner or to the file, so this only reads fields through raw pointers. Each of the first
-    // `once_per_run_groups` groups has one sequence.
+    // SAFETY: `runner_ptr` only returns it on the thread that runs the test files, and the runner keeps the file alive.
+    // A caller up the stack can hold a `&mut` to the file, and `run_one` holds one to the active entry while that
+    // entry's callback runs. So this makes no reference to the `BunTest` or to the entry: it reads their fields in
+    // place. Each of the first `once_per_run_groups` groups has one sequence.
     unsafe {
         let Some(file) = &*core::ptr::addr_of!((*runner.as_ptr()).bun_test_root.active_file) else { return false };
         let file = file.as_ptr();
@@ -90,7 +91,7 @@ pub(crate) fn is_preload_for_the_run(vm: &VirtualMachine) -> bool {
         // A fixture that the hook uses is set up by an entry of its own, and lasts for the file.
         (*execution).sequences[sequence]
             .active_entry
-            .is_some_and(|entry| entry.as_ref().added_in_phase == AddedInPhase::Preload)
+            .is_some_and(|entry| (*entry.as_ptr()).added_in_phase == AddedInPhase::Preload)
     }
 }
 

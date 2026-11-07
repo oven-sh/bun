@@ -20,7 +20,6 @@ use bun_jsc::{
 unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
-    safe fn JSMock__isRestoredSpy(value: JSValue) -> bool;
     safe fn JSMock__setFakeTimersInstalled(global: &JSGlobalObject, installed: bool);
     /// What `value` replaced, if it is a spy that is installed. Empty otherwise.
     safe fn JSMock__replacedBySpy(value: JSValue) -> JSValue;
@@ -395,7 +394,7 @@ impl Replaced {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Restore {
     Always,
-    /// Skips globals `vi.unstubAllGlobals()` already restored, where `original` is the stale `vi.stubGlobal()` value.
+    /// Skips globals where something else has replaced the fake, such as a function that a test assigned.
     WhereStillInstalled,
 }
 
@@ -1041,11 +1040,6 @@ impl FakeTimers {
             });
         }
         for Replaced { api, original, .. } in deactivated.replaced {
-            // Restored while the clock was faked, it has already put back what it replaced.
-            if matches!(api, Api::Date | Api::Performance) && JSMock__isRestoredSpy(original.get())
-            {
-                continue;
-            }
             api.put(global, original.get());
         }
         deactivated.drives

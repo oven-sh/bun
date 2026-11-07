@@ -322,6 +322,58 @@ describe("vi.stubGlobal", () => {
       exitCode: 1,
     });
   });
+
+  // In Vitest, each of the two puts back what it replaced, whatever is on the global by then.
+  describe("with a spy on the same global", () => {
+    afterEach(() => void jest.restoreAllMocks());
+
+    test("a stub over the spy stays when the spy is restored first", () => {
+      const original = fetch;
+      const spy = jest.spyOn(globalThis, "fetch");
+      vi.stubGlobal("fetch", "stub");
+      spy.mockRestore();
+      expect<unknown>(fetch).toBe("stub");
+      vi.unstubAllGlobals();
+      expect(fetch).toBe(original);
+    });
+
+    test.each([
+      ["exists", () => void Object.assign(globalThis, { viUtilsSpied: () => "original" })],
+      ["the stub makes", () => {}],
+    ])("a spy over the stub stays when the stub is undone first, on a global that %s", (_, define) => {
+      try {
+        define();
+        const before = Object.getOwnPropertyDescriptor(globalThis, "viUtilsSpied");
+        vi.stubGlobal("viUtilsSpied", () => "stub");
+        const spy = jest.spyOn(globalThis as any, "viUtilsSpied");
+        vi.unstubAllGlobals();
+        expect(globalThis.viUtilsSpied).toBe(spy);
+        spy.mockRestore();
+        expect(Object.getOwnPropertyDescriptor(globalThis, "viUtilsSpied")).toEqual(before);
+      } finally {
+        delete globalThis.viUtilsSpied;
+      }
+    });
+
+    test("the end of a test file leaves what the first of the two replaced", async () => {
+      const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {
+        "a.test.ts": `
+          import { jest, test, vi } from "bun:test";
+          Object.assign(globalThis, { viUtilsOriginals: [fetch, queueMicrotask] });
+          jest.spyOn(globalThis, "fetch");
+          vi.stubGlobal("fetch", () => {});
+          vi.stubGlobal("queueMicrotask", () => {});
+          jest.spyOn(globalThis, "queueMicrotask");
+          test("a", () => {});
+        `,
+        "b.test.ts": `
+          import { expect, test } from "bun:test";
+          test("b", () => expect([fetch, queueMicrotask]).toEqual(viUtilsOriginals));
+        `,
+      });
+      expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+    });
+  });
 });
 
 describe.concurrent("stubs do not outlive their test file", () => {

@@ -3011,6 +3011,157 @@ describe.concurrent("a mocked module's exports are read from the object the fact
   });
 });
 
+describe.concurrent("util.inspect() of a mocked module", () => {
+  test("prints an export that it cannot read", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export const value = "real-value"; export const plain = "real-plain";`,
+        "star.ts": `export * from "./dep";`,
+        "named.ts": `export { value as renamed, plain } from "./dep";`,
+        "unreadable.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import util from "node:util";
+          import * as ns from "./dep";
+          import * as star from "./star";
+          import * as named from "./named";
+
+          vi.mock("./dep", () => ({
+            get value() {
+              throw new Error("from the factory getter");
+            },
+            get later() {
+              throw new ReferenceError("later is not defined");
+            },
+            plain: 1,
+          }));
+          const print = value => util.inspect(value, { breakLength: Infinity });
+
+          test("the mocked module", () => {
+            expect(print(ns)).toEndWith("{ value: <Inspection threw (from the factory getter)>, later: <uninitialized>, plain: 1 }");
+            expect(print([ns])).toEndWith("{ value: <Inspection threw (from the factory getter)>, later: <uninitialized>, plain: 1 } ]");
+            expect(util.format("%O", ns)).toEndWith("{\\n  value: <Inspection threw (from the factory getter)>,\\n  later: <uninitialized>,\\n  plain: 1\\n}");
+          });
+
+          test("a module that re-exports from it", () => {
+            expect(print(star)).toEndWith("{ later: <uninitialized>, plain: 1, value: <Inspection threw (from the factory getter)> }");
+            expect(print(named)).toEndWith("{ plain: 1, renamed: <Inspection threw (from the factory getter)> }");
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("prints a mocked module whose constructor and toString exports cannot be read", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export const a = "real-a";`,
+        "other.ts": `export const a = "other-a";`,
+        "cycle.ts": `import { formatted, printed } from "./prints-cycle"; export const a = "real-a"; export { formatted, printed };`,
+        "prints-cycle.ts": `
+          import util from "node:util";
+          import * as ns from "./cycle";
+          export const printed = util.inspect(ns, { breakLength: Infinity });
+          export const formatted = util.format("%s", ns);
+        `,
+        "constructor.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import util from "node:util";
+          import * as ns from "./dep";
+          import * as cycle from "./cycle";
+
+          vi.mock("./dep", () => import("./other"));
+          vi.mock("./cycle", async importOriginal => ({ ...(await importOriginal()) }));
+
+          test("a mocked module whose factory did not return it", () => {
+            expect(() => ns.constructor).toThrow('No "constructor" export is defined on the mock of "./dep".');
+            expect(util.inspect(ns)).toEndWith("{ a: 'other-a' }");
+            expect(util.inspect([ns])).toEndWith("{ a: 'other-a' } ]");
+            expect(util.inspect({ ns }, { depth: 0 })).toStartWith("{ ns: [Module");
+            expect(() => ns.toString).toThrow('No "toString" export is defined on the mock of "./dep".');
+            expect(util.format("%s", ns)).toEndWith("{ a: 'other-a' }");
+          });
+
+          test("a mocked module that is printed before its factory has returned", () => {
+            expect(cycle.printed).toEndWith("{  }");
+            expect(cycle.formatted).toEndWith("{  }");
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("formats with %s a mocked module whose factory returned an object or a function", async () => {
+    await expectFixturesToPass(
+      {
+        ...Object.fromEntries(
+          ["vi-mock", "jest-mock", "mock-module", "jest-fn", "own", "thrown"].map(name => [
+            `${name}.ts`,
+            `export const a = "real-a";`,
+          ]),
+        ),
+        "thrown-star.ts": `export * from "./thrown";`,
+        "format.test.ts": `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          import util from "node:util";
+          import * as viMock from "./vi-mock";
+          import * as jestMock from "./jest-mock";
+          import * as jestFn from "./jest-fn";
+          import * as own from "./own";
+          import * as thrownStar from "./thrown-star";
+
+          vi.mock("./vi-mock", () => ({ a: "mocked-a" }));
+          jest.mock("./jest-mock", () => ({ a: "mocked-a" }));
+          jest.mock("./jest-fn", () => jest.fn());
+          vi.mock("./own", () => ({ a: "mocked-a", toString: () => "from the factory's toString" }));
+          vi.mock("./thrown", () => ({
+            get unreadable() {
+              throw Object.defineProperty(new Error("x"), "message", {
+                get() {
+                  throw new RangeError("from the message getter");
+                },
+              });
+            },
+            get string() {
+              throw "a string";
+            },
+            get nothing() {
+              throw null;
+            },
+          }));
+
+          test("the toString that the factory's object inherits is not called", async () => {
+            mock.module("./mock-module", () => ({ a: "mocked-a" }));
+            for (const ns of [viMock, jestMock, await import("./mock-module")]) {
+              expect(util.format("%s", ns)).toEndWith("{ a: 'mocked-a' }");
+            }
+            expect(util.format("%s", jestFn)).toEndWith("{  }");
+            expect(util.format("%s", own)).toBe("from the factory's toString");
+          });
+
+          test("the constructor of the factory's object does not name the mocked module", () => {
+            expect(util.inspect(viMock)).toMatch(/^\\[?Module\\b.* \\{ a: 'mocked-a' \\}$/);
+            expect(util.inspect(jestFn)).toMatch(/^\\[?Module\\b/);
+          });
+
+          test("a Proxy of the mocked module prints as the module", () => {
+            expect(util.inspect(new Proxy(viMock, {}))).toBe(util.inspect(viMock));
+            expect(util.format("%s", new Proxy(viMock, {}))).toBe(util.inspect(viMock));
+          });
+
+          test("a getter that throws a value whose message cannot be read", () => {
+            expect(util.inspect(thrownStar, { breakLength: Infinity })).toEndWith(
+              "{ nothing: <Inspection threw (null)>, string: <Inspection threw (undefined)>, unreadable: <Inspection threw (undefined)> }",
+            );
+          });
+        `,
+      },
+      4,
+    );
+  });
+});
+
 describe.concurrent("a factory that returns a module namespace object", () => {
   const files = {
     "a.ts": `export const a = "real-a";`,

@@ -1288,7 +1288,7 @@ function formatValue(ctx: Context, value, recurseTimes: number, typedArray?: boo
   // any proxy handlers.
   const proxy = getProxyDetails(value, !!ctx.showProxy);
   if (proxy !== undefined) {
-    if (proxy === null || proxy[0] === null) {
+    if (proxy === null || (ctx.showProxy && proxy[0] === null)) {
       return ctx.stylize("<Revoked Proxy>", "special");
     }
     if (ctx.showProxy) {
@@ -2210,10 +2210,15 @@ function formatPrimitive(fn: Stylize, value: string | number | bigint | boolean 
 function formatNamespaceObject(keys: Key[], ctx: Context, value, recurseTimes: number) {
   const output = new Array<string>(keys.length);
   for (let i = 0; i < keys.length; i++) {
+    let described = false;
     try {
-      output[i] = formatProperty(ctx, value, recurseTimes, keys[i], kObjectType);
+      const desc = ObjectGetOwnPropertyDescriptor(value, keys[i]);
+      described = true;
+      output[i] = formatProperty(ctx, value, recurseTimes, keys[i], kObjectType, desc);
     } catch (err) {
-      assert(isNativeError(err) && err.name === "ReferenceError");
+      const uninitialized = isNativeError(err) && err.name === "ReferenceError";
+      // Describing an export of a mocked module runs a getter of its factory's object, which can throw any error.
+      assert(uninitialized || !described);
       // Use the existing functionality. This makes sure the indentation and
       // line breaks are always correct. Otherwise it is very difficult to keep
       // this aligned, even though this is a hacky way of dealing with this.
@@ -2222,7 +2227,13 @@ function formatNamespaceObject(keys: Key[], ctx: Context, value, recurseTimes: n
       const pos = StringPrototypeLastIndexOf.$call(output[i], " ");
       // We have to find the last whitespace and have to replace that value as
       // it will be visualized as a regular string.
-      output[i] = StringPrototypeSlice.$call(output[i], 0, pos + 1) + ctx.stylize("<uninitialized>", "special");
+      let thrown: string | undefined;
+      try {
+        thrown = `${err == null ? err : (err as Error).message}`;
+      } catch {}
+      output[i] =
+        StringPrototypeSlice.$call(output[i], 0, pos + 1) +
+        ctx.stylize(uninitialized ? "<uninitialized>" : `<Inspection threw (${thrown})>`, "special");
     }
   }
   // Reset the keys to an empty array. This prevents duplicated inspection.
@@ -2652,6 +2663,15 @@ function returnFalse() {
   return false;
 }
 
+// A mocked module reports the `toString` that the object of its factory inherits as its own. It is no export.
+function isToStringThatAMockInherits(value, toString) {
+  return (
+    (toString === ObjectPrototypeToString || toString === FunctionPrototypeToString) &&
+    isModuleNamespaceObject(value) &&
+    !ArrayPrototypeIncludes.$call(ObjectGetOwnPropertyNames(value), "toString")
+  );
+}
+
 function hasBuiltInToString(value) {
   // Prevent triggering proxy traps.
   const getFullProxy = false;
@@ -2666,8 +2686,16 @@ function hasBuiltInToString(value) {
   let hasOwnToString = ObjectPrototypeHasOwnProperty;
   let hasOwnToPrimitive = ObjectPrototypeHasOwnProperty;
 
+  let toString;
+  try {
+    toString = value.toString;
+  } catch (err) {
+    // Only a mocked module throws for an export that it does not have.
+    if (!isModuleNamespaceObject(value) || "toString" in value) throw err;
+  }
+
   // Count objects without `toString` and `Symbol.toPrimitive` function as built-in.
-  if (typeof value.toString !== "function") {
+  if (typeof toString !== "function") {
     if (typeof value[SymbolToPrimitive] !== "function") {
       return true;
     } else if (ObjectPrototypeHasOwnProperty.$call(value, SymbolToPrimitive)) {
@@ -2675,7 +2703,7 @@ function hasBuiltInToString(value) {
     }
     hasOwnToString = returnFalse;
   } else if (ObjectPrototypeHasOwnProperty.$call(value, "toString")) {
-    return false;
+    return isToStringThatAMockInherits(value, toString);
   } else if (typeof value[SymbolToPrimitive] !== "function") {
     hasOwnToPrimitive = returnFalse;
   } else if (ObjectPrototypeHasOwnProperty.$call(value, SymbolToPrimitive)) {
@@ -2957,8 +2985,12 @@ function previewEntries(val, isIterator = false) {
 }
 function internalGetConstructorName(val): string {
   if (!val || typeof val !== "object") throw new Error("Invalid object");
-  const ctorName = val.constructor?.name;
-  if (ctorName) return ctorName;
+  // Node.js asks the engine, which runs no getter and does not take an export named `constructor` for a constructor.
+  let ctorName;
+  try {
+    ctorName = val.constructor?.name;
+  } catch {}
+  if (typeof ctorName === "string" && ctorName !== "" && !isModuleNamespaceObject(val)) return ctorName;
   const str = ObjectPrototypeToString.$call(val);
   const m = StringPrototypeMatch.$call(str, /^\[object ([^\]]+)\]/); // e.g. [object Boolean]
   return m ? m[1] : "Object";

@@ -662,6 +662,35 @@ it("assetPrefix and origin are what the router was given, or null", () => {
   expect(empty.origin).toBeNull();
 });
 
+it("a warning in a tsconfig.json under the routes dir does not fail the constructor", () => {
+  // The resolver logs the warning of a tsconfig.json the first time it reads
+  // the directory. So each directory below is given to one constructor only.
+  const tsconfig = JSON.stringify({ compilerOptions: { jsxFactory: "1abc" } });
+  using dir = tempDir("fsr-tsconfig-warning", {
+    "pages/tsconfig.json": tsconfig,
+    "pages/index.tsx": "export default 1;\n",
+    "control/tsconfig.json": tsconfig,
+    "control/[foo.tsx": "export default 1;\n",
+  });
+
+  // Proves that this tsconfig.json puts a warning in the log of the
+  // constructor: the route error of the control directory carries it.
+  let thrown: any;
+  try {
+    new FileSystemRouter({ dir: path.join(String(dir), "control"), style: "nextjs" });
+  } catch (e) {
+    thrown = e;
+  }
+  expect(thrown).toBeInstanceOf(AggregateError);
+  expect(thrown.errors.map((m: any) => [m.level, m.message])).toEqual([
+    ["warn", 'Invalid JSX member expression: "1abc"'],
+    ["error", "Route is missing a closing bracket]"],
+  ]);
+
+  const router = new FileSystemRouter({ dir: path.join(String(dir), "pages"), style: "nextjs" });
+  expect(Object.keys(router.routes)).toEqual(["/"]);
+});
+
 // POSIX allows arbitrary bytes (except '/' and NUL) in filenames, including 0xFF.
 // The route sorter's lookup table must cover the full u8 range.
 // Windows and macOS (APFS/HFS+) require filenames to be valid Unicode, so skip there.

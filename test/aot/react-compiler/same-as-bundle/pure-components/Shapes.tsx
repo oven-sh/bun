@@ -121,3 +121,13 @@ export function Elements({ a, text, list }: Props) {
     </ul>
   );
 }
+
+// The compiler has no spread child, so it leaves this component as it is written: each member of the list is a child.
+export function SpreadChild({ a, list }: Props) {
+  return (
+    <ul>
+      {a}
+      {...list}
+    </ul>
+  );
+}

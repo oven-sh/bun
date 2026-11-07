@@ -166,7 +166,7 @@ JSC::JSMap* testFileRequireMap(Zig::GlobalObject*);
 // Both halves of "the context that is current" are swapped: the async context, and the context
 // native code entered (VirtualMachine::entered_context), so a handler called from inside a
 // stopped graph's dispatch is not itself called for nobody.
-// It runs on top of the async context that is current where the error is reported: a reporter
+// It runs on the AsyncLocalStorage stores that are current where the error is reported: a reporter
 // that reports before it restores the failing callback's context (timers, the tick queue) shows
 // the handler that callback's AsyncLocalStorage stores, as node does. What the handler leaves in
 // the async context (enterWith()) ends with it.

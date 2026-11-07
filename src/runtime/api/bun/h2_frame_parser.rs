@@ -648,9 +648,26 @@ impl Handlers {
 
     /// A zero/empty arg means a value failed to materialize (e.g. a header
     /// materializer bailed); skip the callback rather than passing it to JS.
-    /// The pending-termination-exception guard lives in `run_callback`.
+    /// The pending-termination-exception guard lives in `call_handler`.
     fn should_skip_dispatch(&self, data: &[JSValue]) -> bool {
         data.contains(&JSValue::ZERO)
+    }
+
+    /// `run_callback_with_result` that restores before it reports: the stored async context is the session's, not that of the stream, ping or `settings()` call whose callback threw.
+    #[inline(never)]
+    fn call_handler(&self, callback: JSValue, this_value: JSValue, data: &[JSValue]) -> JSValue {
+        let global = self.global();
+        if global.has_exception() {
+            return JSValue::ZERO;
+        }
+        let _entered = self.vm.enter_event_loop_scope();
+        match callback.call(&global, this_value, data) {
+            Ok(value) => value,
+            Err(err) => {
+                let _ = bun_jsc::task::report_error_or_terminate(&global, err);
+                JSValue::ZERO
+            }
+        }
     }
 
     pub(crate) fn call_event_handler(
@@ -669,13 +686,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm.event_loop_ref().run_callback(
-            bun_event_loop::ContextId::NONE,
-            callback,
-            &self.global(),
-            context,
-            data,
-        );
+        self.call_handler(callback, context, data);
         true
     }
 
@@ -686,13 +697,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm.event_loop_ref().run_callback(
-            bun_event_loop::ContextId::NONE,
-            callback,
-            &self.global(),
-            JSValue::UNDEFINED,
-            data,
-        );
+        self.call_handler(callback, JSValue::UNDEFINED, data);
         true
     }
 
@@ -708,13 +713,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return JSValue::ZERO;
         }
-        self.vm.event_loop_ref().run_callback_with_result(
-            bun_event_loop::ContextId::NONE,
-            callback,
-            &self.global(),
-            this_value,
-            data,
-        )
+        self.call_handler(callback, this_value, data)
     }
 
     fn new(global_object: &JSGlobalObject) -> Handlers {

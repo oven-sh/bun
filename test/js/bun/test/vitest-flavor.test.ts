@@ -936,6 +936,51 @@ describe.concurrent("each and for", () => {
     expect([vitest.exitCode, bun.exitCode, jest.exitCode]).toEqual([0, 0, 0]);
   });
 
+  // `.for()` takes Vitest's format in every module. docs/test/writing-tests.mdx lists these differences from `.each()`.
+  test("titles: test.for and describe.for follow Vitest's format in every module", async () => {
+    const file = (module: string) => `
+      import { test, describe } from "${module}";
+      test.for(["a"])("for %p, 100%% %s", () => {});
+      test.for([{ n: "x" }])("for %o $# $n $missing", () => {});
+      test.for([[1, 2]])("for $0 $1", () => {});
+      test.for([null])("for null %s", () => {});
+      describe.for([{ n: "x" }])("describe.for %p %o $#", () => { test("test", () => {}); });
+      test.each(["a"])("each %p, 100%% %s", () => {});
+      test.each([{ n: "x" }])("each %o $# $n $missing", () => {});
+      test.each([[1, 2]])("each $0 $1", () => {});
+      test.each([null])("each null %s", () => {});
+      describe.each([{ n: "x" }])("describe.each %p %o $#", () => { test("test", () => {}); });
+    `;
+    const [vitest, bun, jest] = await Promise.all(
+      ["vitest", "bun:test", "@jest/globals"].map(module => runTests({ "a.test.js": file(module) })),
+    );
+    const titlesOfFor = [
+      "(pass) for %p, 100% a undefined",
+      "(pass) for { n: 'x' } $# x undefined",
+      "(pass) for 1 2",
+      "(pass) for null undefined",
+      "(pass) describe.for %p { n: 'x' } $# > test",
+    ];
+    expect(vitest.results).toEqual([
+      ...titlesOfFor,
+      "(pass) each %p, 100% a undefined",
+      "(pass) each { n: 'x' } $# x undefined",
+      "(pass) each 1 2",
+      "(pass) each null null",
+      "(pass) describe.each %p { n: 'x' } $# > test",
+    ]);
+    expect(bun.results).toEqual([
+      ...titlesOfFor,
+      `(pass) each "a", 100% %s`,
+      `(pass) each { n: "x" } 0 x $missing`,
+      "(pass) each $0 $1",
+      "(pass) each null null",
+      `(pass) describe.each { n: "x" } %o 0 > test`,
+    ]);
+    expect(jest.results).toEqual(bun.results);
+    expect([vitest.exitCode, bun.exitCode, jest.exitCode]).toEqual([0, 0, 0]);
+  });
+
   test("titles: -t finds them, and every reporter prints them", async () => {
     const files = {
       "a.test.js": `

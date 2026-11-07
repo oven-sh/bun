@@ -778,6 +778,12 @@ declare module "bun:test" {
     each<const T>(table: readonly T[]): Describe<[T]>;
     /**
      * Like `each()`, but an array row is passed as one argument instead of being spread.
+     *
+     * The title is formatted the way Vitest formats it, not the way `each()` does. For example, `%p` isn't a
+     * specifier, `%%` also prints the next value, `$#` isn't the index, and `$name` prints `undefined` when the
+     * row has no `name`.
+     *
+     * @see https://bun.com/docs/test/writing-tests#vitest-title-format
      */
     for<const T>(table: readonly T[]): Describe<[row: T]>;
     for(headings: TemplateStringsArray, ...values: any[]): Describe<[row: any]>;
@@ -1194,12 +1200,18 @@ declare module "bun:test" {
      * Like `each()`, but an array row is passed as one argument instead of being spread,
      * and the second argument is the {@link TestContext}.
      *
+     * The title is formatted the way Vitest formats it, not the way `each()` does. For example, `%p` isn't a
+     * specifier, `%%` also prints the next value, `$#` isn't the index, and `$name` prints `undefined` when the
+     * row has no `name`.
+     *
      * @example
      * ```ts
      * test.for([[1, 2, 3]])("%i + %i = %i", ([a, b, sum], { expect }) => {
      *   expect(a + b).toBe(sum);
      * });
      * ```
+     *
+     * @see https://bun.com/docs/test/writing-tests#vitest-title-format
      */
     for<const Row>(table: readonly Row[]): TestWithContext<object, [row: Row]>;
     for(headings: TemplateStringsArray, ...values: any[]): TestWithContext<object, [row: any]>;
@@ -1690,6 +1702,11 @@ declare module "bun:test" {
     /**
      * Returns `expect`'s state for the running test, plus anything passed to
      * {@link Expect.setState}. Every call returns the same object, kept up to date.
+     *
+     * When a test runs concurrently with other tests, `expect` can't tell which test called it.
+     * `currentTestName` is then `undefined`, and the three counters stay at `0`, `null` and `false`.
+     * The `expect` of the {@link TestContext} knows its test. Its `getState()` writes into the same object,
+     * so copy the values you need before the next `await`.
      */
     getState(): ExpectState & Record<string, unknown>;
 
@@ -1706,7 +1723,12 @@ declare module "bun:test" {
   export interface ExpectState {
     /** The number of assertions the current test has made. */
     assertionCalls: number;
-    /** The enclosing `describe` blocks' names and the current test's name, joined by a space. */
+    /**
+     * The enclosing `describe` blocks' names and the current test's name, joined by a space.
+     *
+     * `undefined` outside a test. In a test that runs concurrently with other tests, it is `undefined`
+     * unless you read it through the `expect` of the {@link TestContext}.
+     */
     currentTestName?: string;
     /** The number passed to `expect.assertions()`, if it was called in the current test. */
     expectedAssertionsNumber: number | null;

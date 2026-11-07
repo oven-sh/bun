@@ -7,6 +7,7 @@ use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as js_ast, B, E, Expr, G, ImportKind, Ref, S, Stmt};
 use bun_collections::VecExt;
 
+use crate::lower::import_meta_glob::object_of;
 use crate::p::P;
 use crate::parser::{Jest, RefMap};
 
@@ -343,10 +344,11 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         if is_test_module(record.path.text) || record.path.text == b"bun" {
             return MockHoistOrder::BeforeHoisted;
         }
-        if import.phase_defer
-            || record.loader.is_some()
-            || record.tag != js_ast::ImportRecordTag::None
-        {
+        if import.phase_defer || record.tag != js_ast::ImportRecordTag::None {
+            return MockHoistOrder::InPlace;
+        }
+        // An import with attributes stays static, unless that leaves it linked ahead of a mock of the same path.
+        if record.loader.is_some() && !self.is_named_by_hoisted_mock(record.path.text) {
             return MockHoistOrder::InPlace;
         }
         // `export { a }` needs `a` to be a binding.
@@ -464,11 +466,20 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     pub(crate) fn lower_import_to_dynamic(&mut self, import: &S::Import, loc: js_ast::Loc) -> Stmt {
         let record = &self.import_records.items()[import.import_record_index as usize];
         let (path, path_loc) = (record.path.text, record.range.loc);
+        // An import attribute picked the loader: `with { type: "json" }`.
+        let options = match record.loader {
+            Some(loader) => {
+                let r#type = loader.import_attribute_type().as_bytes();
+                let r#type = Expr::init(E::String::init(r#type), loc);
+                object_of(b"with", object_of(b"type", r#type))
+            }
+            None => Expr::EMPTY,
+        };
         let path = self.new_expr(E::String::init(path), path_loc);
         let namespace = self.new_expr(
             E::Import {
                 expr: path,
-                options: Expr::EMPTY,
+                options,
                 import_record_index: import.import_record_index,
                 namespace_ref: Ref::NONE,
             },

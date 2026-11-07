@@ -85,8 +85,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 50: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
-/// Version 52: An import that the parser adds, like that of the JSX runtime, is `await import()` behind
-/// a hoisted mock of `bun test` that names it.
+/// Version 52: An import that a hoisted mock of `bun test` names is `await import()` behind the mock also
+/// when it has attributes, or when the parser adds it, like that of the JSX runtime.
 const EXPECTED_VERSION: u32 = 52;
 
 /// Source files smaller than this are not written to / read from the on-disk

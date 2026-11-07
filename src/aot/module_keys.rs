@@ -85,15 +85,6 @@ pub fn loader_name(loader: Loader) -> &'static str {
     loader.into()
 }
 
-/// What `bun run` writes for the `type` of an import statement whose attribute names the loader.
-pub fn type_attribute_of(loader: Loader) -> &'static str {
-    match loader {
-        Loader::Bunsh => "sh",
-        Loader::SqliteEmbedded => "sqlite",
-        _ => loader_name(loader),
-    }
-}
-
 /// A file stands under its path as what an import without attributes gets. As anything else it stands here.
 pub fn path_of_form(path: &[u8], loader: Loader) -> Vec<u8> {
     [path, b"?", loader_name(loader).as_bytes()].concat()
@@ -190,16 +181,32 @@ mod tests {
     #[test]
     fn the_type_written_for_a_loader_names_the_loader() {
         for loader in [
-            Loader::Toml,
+            Loader::Jsx,
+            Loader::Js,
+            Loader::Ts,
+            Loader::Tsx,
+            Loader::Css,
+            Loader::File,
             Loader::Json,
+            Loader::Jsonc,
+            Loader::Toml,
+            Loader::Wasm,
+            Loader::Napi,
+            Loader::Base64,
+            Loader::Dataurl,
             Loader::Text,
             Loader::Bunsh,
             Loader::Sqlite,
+            Loader::Html,
+            Loader::Yaml,
+            Loader::Json5,
+            Loader::Md,
+            Loader::Xml,
         ] {
-            let written = type_attribute_of(loader).as_bytes();
+            let written = loader.import_attribute_type().as_bytes();
             assert_eq!(Loader::from_string(written), Some(loader));
         }
-        assert_eq!(type_attribute_of(Loader::SqliteEmbedded), "sqlite");
+        assert_eq!(Loader::SqliteEmbedded.import_attribute_type(), "sqlite");
     }
 
     #[test]

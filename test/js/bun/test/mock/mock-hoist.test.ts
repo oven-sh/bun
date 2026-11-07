@@ -49,6 +49,11 @@ const react = {
     (globalThis.events ??= []).push("load compiler runtime");
     export function c(size) { events.push(${withoutThis(`"cache"`)}); return ${memoCache}; }
   `,
+  "node_modules/pkg/package.json": `{ "name": "pkg", "type": "module" }`,
+  "node_modules/pkg/self.js": `
+    (globalThis.events ??= []).push("load pkg");
+    export function self() { return ${withoutThis(`"self"`)}; }
+  `,
 };
 const mockedRuntime = `() => {
   (globalThis.events ??= []).push("factory");
@@ -648,6 +653,43 @@ describe.concurrent("hoisting", () => {
     ).toEqual([["load runtime", "load mod", "i"]]);
   });
 
+  test("a mock of a package reaches an import of it with attributes", async () => {
+    expect(
+      await events({
+        "node_modules/pkg/package.json": `{ "name": "pkg" }`,
+        "node_modules/pkg/data.json": `{ "v": "real" }`,
+        "node_modules/pkg/note.txt": `real`,
+        "hoist.test.ts": `
+          import { test, vi } from "vitest";
+          import data from "pkg/data.json" with { type: "json" };
+          import note from "pkg/note.txt" with { type: "text" };
+          vi.mock("pkg/data.json", () => ({ default: { v: "mocked" } }));
+          vi.mock("pkg/note.txt", () => ({ default: "mocked" }));
+          (globalThis.events ??= []).push(data.v, note);
+          ${print}
+        `,
+      }),
+    ).toEqual([["mocked", "mocked"]]);
+  });
+
+  test("an import with attributes that a hoisted call names keeps its loader", async () => {
+    expect(
+      await events({
+        "data.ts": `not typescript`,
+        "hoist.test.ts": `
+          import { test, vi } from "vitest";
+          import text from "./data.ts" with { type: "text" };
+          vi.unmock("./data.ts");
+          function read() { return text; }
+          (globalThis.events ??= []).push(text, read.toString().replace(/\\s+/g, " "));
+          ${print}
+        `,
+      }),
+    ).toEqual([
+      ["not typescript", expect.stringMatching(/^function read\(\) \{ return import_data\$\d+\.default; \}$/)],
+    ]);
+  });
+
   // The visit pass can't drop the namespace of these callees: the parser and the React Compiler write the calls later.
   test.each([
     ["a classic JSX factory", [], `/** @jsxRuntime classic @jsx h */`, `<b />`, ["b"]],
@@ -685,8 +727,8 @@ describe.concurrent("hoisting", () => {
   });
 });
 
-// An import that stays static in a file that hoists: the ones that Bun adds for JSX and for the React Compiler. It runs
-// behind the hoisted statements once one of them names its path.
+// An import that stays static in a file that hoists: the ones that Bun adds for JSX and for the React Compiler, and one
+// with attributes. It runs behind the hoisted statements once one of them names its path.
 describe.concurrent.each([
   {
     kind: "the JSX runtime",
@@ -717,6 +759,16 @@ describe.concurrent.each([
     mock: `{ c(size) { events.push("mocked"); return ${memoCache}; } }`,
     real: ["load compiler runtime", "cache"],
     flags: ["--react-compiler"],
+  },
+  {
+    kind: "an import with attributes",
+    path: "pkg/self.js",
+    file: "node_modules/pkg/self.js",
+    head: `import { self } from "pkg/self.js" with { type: "js" };`,
+    use: `self()`,
+    mock: `{ self: () => "mocked" }`,
+    real: ["load pkg", "self"],
+    flags: [],
   },
 ])("$kind", ({ path, file, head, use, mock, real, flags }) => {
   async function eventsOf(hoisted: string, body = `events.push(result());`, files: Record<string, string> = react) {

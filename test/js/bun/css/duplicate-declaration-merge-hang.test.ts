@@ -53,6 +53,9 @@ const script = `
       Array.from({ length: n }, (_, i) => \`.a\${i}{color:red}\`).join(""),
       { chrome: 80 << 16 },
     ],
+    "user-select": [repeat(".a{user-select:none}"), { safari: 14 << 16 }],
+    "user-select-two-values": [repeat(".a{user-select:none}.a{user-select:text}"), { safari: 14 << 16 }],
+    "print-color-adjust": [repeat(".a{print-color-adjust:exact}"), { chrome: 80 << 16, firefox: 78 << 16 }],
   };
   for (const [name, [src, targets]] of Object.entries(floods)) {
     const out = targets === undefined ? c.minifyTest(src, "") : c._test(src, "", targets);
@@ -85,6 +88,9 @@ test("duplicate declarations across merged rules minify in linear time instead o
       "OK:clamp",
       "OK:distinct-custom-props",
       "OK:distinct-selectors",
+      "OK:user-select",
+      "OK:user-select-two-values",
+      "OK:print-color-adjust",
       "",
     ].join("\n"),
     stderr: "",

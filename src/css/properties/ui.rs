@@ -4,9 +4,56 @@ use crate as css;
 use css::css_properties::Property;
 use css::{PrintErr, Printer, PropertyHandlerContext};
 
-use css::css_values::ident::DashedIdent;
+use css::css_values::ident::{DashedIdent, Ident};
+use css::generics::{CssEql, DeepClone};
 
 // bumpalo::Bump re-export (CSS is an arena crate)
+
+/// A value for the [user-select](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#content-selection) property.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
+pub enum UserSelect {
+    /// The UA determines whether text is selectable.
+    Auto,
+    /// Text is selectable.
+    Text,
+    /// Text is not selectable.
+    None,
+    /// Text selection is contained to the element.
+    Contain,
+    /// Only the entire element is selectable.
+    All,
+}
+
+/// A value for the [appearance](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#appearance-switching) property.
+#[derive(Clone, Copy, css::Parse, css::ToCss, DeepClone, CssEql)]
+pub enum Appearance {
+    None,
+    Auto,
+    Textfield,
+    MenulistButton,
+    Button,
+    Checkbox,
+    Listbox,
+    Menulist,
+    Meter,
+    ProgressBar,
+    PushButton,
+    Radio,
+    Searchfield,
+    SliderHorizontal,
+    SquareButton,
+    Textarea,
+    NonStandard(Ident),
+}
+
+/// A value for the [print-color-adjust](https://drafts.csswg.org/css-color-adjust/#propdef-print-color-adjust) property.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
+pub enum PrintColorAdjust {
+    /// The user agent is allowed to make adjustments to the element as it deems appropriate.
+    Economy,
+    /// The user agent is not allowed to make adjustments to the element.
+    Exact,
+}
 
 bitflags::bitflags! {
     /// A value for the [color-scheme](https://drafts.csswg.org/css-color-adjust/#color-scheme-prop) property.

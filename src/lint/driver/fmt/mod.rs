@@ -1102,8 +1102,7 @@ fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Languag
         None if configs.is_oxfmt_for(scope) => {
             files::language_for_oxfmt(path, configs.formats_svelte(scope, Some(path)))
         }
-        // Prettier's `inferParser` reads the languages of the plugins before its own, so a listed plugin's ending
-        // wins over a name Prettier knows: `a.go.html` is a Go template, not HTML.
+        // As in Prettier's `inferParser`, a listed plugin's ending wins over a name Prettier knows (`a.go.html`).
         None if configs.is_formatted_by_plugin(scope, path) => Language::Plugin,
         None => match files::language_of(path) {
             Language::Unknown

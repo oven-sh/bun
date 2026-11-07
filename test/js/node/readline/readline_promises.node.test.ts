@@ -1,6 +1,7 @@
 import { createTest } from "node-harness";
 import { EventEmitter } from "node:events";
 import readlinePromises from "node:readline/promises";
+import { Duplex, type DuplexOptions, PassThrough, Transform, Writable } from "node:stream";
 const { describe, it, expect, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
 
 // ----------------------------------------------------------------------------
@@ -91,5 +92,40 @@ describe("readline/promises.createInterface()", () => {
 
     assert.strictEqual(closed, true);
     assert.strictEqual((rl as any).closed, true);
+  });
+});
+
+describe("readline/promises.Readline", () => {
+  const sink = () =>
+    new Writable({
+      write(chunk, encoding, callback) {
+        callback();
+      },
+    });
+
+  const noop = () => {};
+  // @types/node leaves `writable` out of DuplexOptions.
+  const notWritable = { writable: false } as DuplexOptions;
+
+  it.each<[string, () => unknown]>([
+    ["a destroyed Writable", () => sink().destroy()],
+    ["a Writable destroyed with an error", () => sink().on("error", noop).destroy(new Error("boom"))],
+    ["an ended Writable", () => sink().end()],
+    ["an ended PassThrough", () => new PassThrough().end()],
+    ["a PassThrough with writable: false", () => new PassThrough(notWritable)],
+    ["a Duplex with writable: false", () => new Duplex({ ...notWritable, read() {} })],
+    ["a Transform with writable: false", () => new Transform(notWritable)],
+    ["an object with write() that is not a stream", () => ({ write() {} })],
+  ])("the constructor throws ERR_INVALID_ARG_TYPE for %s", (_, make) => {
+    const stream = make() as Writable;
+    expect(() => new readlinePromises.Readline(stream)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+  });
+
+  it.each<[string, () => Writable]>([
+    ["a Writable", sink],
+    ["a PassThrough", () => new PassThrough()],
+  ])("the constructor accepts %s and commit() resolves with null", async (_, make) => {
+    const readline = new readlinePromises.Readline(make());
+    expect(await readline.clearLine(0).commit()).toBeNull();
   });
 });

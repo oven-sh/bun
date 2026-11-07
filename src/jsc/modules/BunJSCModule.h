@@ -176,6 +176,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGCAndSweep,
 {
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
+    vm.heap.completeAllJITPlans();
     vm.heap.collectNow(Sync, CollectionScope::Full);
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
 }
@@ -186,6 +187,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFullGC,
 {
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
+    vm.heap.completeAllJITPlans();
     vm.heap.collectSync(CollectionScope::Full);
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
 }

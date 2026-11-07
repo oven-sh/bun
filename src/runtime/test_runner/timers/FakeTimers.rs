@@ -14,7 +14,7 @@ use bun_jsc::{
     JSFunction, JSGlobalObject, JSHostFn, JSPromiseStrong, JSValue, JsError, JsResult, Strong,
     StrongOptional,
 };
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_ptr::RefPtr;
 
 // JSMock C++ bindings (fake timers are only used by bun:test, so these stay local).
 unsafe extern "C" {
@@ -502,7 +502,7 @@ pub(crate) struct FakeTimers {
     /// Armed in the real heap while `tick_mode` is `Interval`.
     tick_timer: EventLoopTimer,
     auto_step_posted: bool,
-    /// `Bun.cron()` jobs that `fire` ran a tick of. A job is in no heap while its tick runs or is pending, so `clear` stops these too.
+    /// `Bun.cron()` jobs whose tick `fire` started. A job is in no heap while its tick runs or is pending, so `clear` stops these too.
     cron_ticks: Vec<RefPtr<CronJob>>,
 }
 
@@ -834,8 +834,12 @@ impl FakeTimers {
                             .push(AbortSignalTimeout::from_timer_ptr(timer));
                     }
                     EventLoopTimerTag::CronJob => {
-                        let job = ThisPtr::new(CronJob::from_timer_ptr(timer));
-                        Self::add_cron_job(&mut cleared.cron_jobs, job);
+                        let job = CronJob::from_timer_ptr(timer);
+                        // Already there if `fire` started a tick of it and it armed itself again.
+                        let jobs = &mut cleared.cron_jobs;
+                        if !jobs.iter().any(|ticked| ticked.as_ptr() == job) {
+                            jobs.push(RefPtr::init_ref(job));
+                        }
                     }
                     tag => debug_assert!(
                         false,
@@ -847,12 +851,6 @@ impl FakeTimers {
         }
 
         cleared
-    }
-
-    fn add_cron_job(jobs: &mut Vec<RefPtr<CronJob>>, job: ThisPtr<CronJob>) {
-        if !jobs.iter().any(|listed| listed.as_ptr() == job.as_ptr()) {
-            jobs.push(RefPtr::from_this(job));
-        }
     }
 
     fn count(&self) -> usize {
@@ -1059,8 +1057,10 @@ impl FakeTimers {
         let popped = unsafe {
             let this = &mut (*timer_all()).fake_timers;
             if tag == EventLoopTimerTag::CronJob {
-                let job = ThisPtr::new(CronJob::from_timer_ptr(timer));
-                Self::add_cron_job(&mut this.cron_ticks, job);
+                // Forgets the jobs that are back in the heap, or stopped.
+                this.cron_ticks.retain(|ticked| ticked.is_mid_tick());
+                let job = CronJob::from_timer_ptr(timer);
+                this.cron_ticks.push(RefPtr::init_ref(job));
             }
             Popped {
                 installs: this.installs,

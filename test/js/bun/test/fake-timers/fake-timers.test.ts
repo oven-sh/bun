@@ -499,6 +499,51 @@ describe("clearAllTimers() from the callback of a timer", () => {
     },
   );
 
+  test("a timeout with _repeat that it dropped can't be armed again with refresh()", () => {
+    vi.useFakeTimers();
+    let runs = 0;
+    const timeout = withRepeat(
+      setTimeout(() => (runs++, vi.clearAllTimers()), 10),
+      10,
+    );
+    vi.advanceTimersByTime(50);
+    timeout.refresh();
+    const pending = vi.getTimerCount();
+    vi.advanceTimersByTime(50);
+    expect({ runs, pending }).toEqual({ runs: 1, pending: 0 });
+  });
+
+  // Nothing was going to arm it again, so nothing dropped it. refresh() arms a timeout that has run, as in Jest and Node.js.
+  test("a timeout without _repeat that called it can be armed again with refresh()", () => {
+    vi.useFakeTimers();
+    let runs = 0;
+    const timeout = setTimeout(() => (runs++, vi.clearAllTimers()), 10);
+    vi.advanceTimersByTime(50);
+    timeout.refresh();
+    const pending = vi.getTimerCount();
+    vi.advanceTimersByTime(50);
+    expect({ runs, pending }).toEqual({ runs: 2, pending: 1 });
+  });
+
+  test.each([
+    ["after", [10, 110, 210], 1],
+    ["before", [10], 0],
+  ] as const)("a timeout with _repeat that calls refresh() %s it", (order, ranAt, pending) => {
+    vi.useFakeTimers({ now: 0 });
+    const at: number[] = [];
+    const timeout = withRepeat(
+      setTimeout(() => {
+        if (at.push(Date.now()) > 1) return;
+        if (order === "before") timeout.refresh();
+        vi.clearAllTimers();
+        if (order === "after") timeout.refresh();
+      }, 10),
+      100,
+    );
+    vi.advanceTimersByTime(250);
+    expect({ at, pending: vi.getTimerCount() }).toEqual({ at: [...ranAt], pending });
+  });
+
   test("stops a Bun.cron() job whose tick calls it", () => {
     vi.useFakeTimers();
     let ticks = 0;

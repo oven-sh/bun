@@ -621,21 +621,6 @@ impl TimerObjectInternals {
                 )
             };
 
-            // `FakeTimers::clear` can't see a timer whose callback is running, so what it dropped meanwhile is cancelled here.
-            let dropped = match popped {
-                // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
-                Some(popped) => unsafe { (*state).timer.fake_timers.dropped_since(popped) },
-                None => fake_timers::Dropped::No,
-            };
-            // After `clearAllTimers()`, a timer that the callback armed again is a new timer and stays.
-            if dropped == fake_timers::Dropped::WithItsClock
-                || (dropped == fake_timers::Dropped::Cleared
-                    && kind == KindBig::SetInterval
-                    && s.event_loop_timer_state() == EventLoopTimerState::FIRED)
-            {
-                s.cancel(vm);
-            }
-
             match kind {
                 KindBig::SetTimeout | KindBig::SetInterval => {
                     idle_timeout = JSTimeout::idle_timeout_get_cached(this_object)
@@ -644,6 +629,23 @@ impl TimerObjectInternals {
                         .expect("TimeoutObject repeat slot");
                 }
                 KindBig::SetImmediate => {}
+            }
+
+            // `FakeTimers::clear` can't see a timer whose callback is running, so what it dropped meanwhile is cancelled here.
+            let dropped = match popped {
+                // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
+                Some(popped) => unsafe { (*state).timer.fake_timers.dropped_since(popped) },
+                None => fake_timers::Dropped::No,
+            };
+            // `clearAllTimers()` drops what would be armed again below. What the callback armed again after it is a new timer.
+            let repeats =
+                kind == KindBig::SetInterval || (kind == KindBig::SetTimeout && !repeat.is_null());
+            if dropped == fake_timers::Dropped::WithItsClock
+                || (dropped == fake_timers::Dropped::Cleared
+                    && repeats
+                    && s.event_loop_timer_state() == EventLoopTimerState::FIRED)
+            {
+                s.cancel(vm);
             }
 
             // Every `s.flags.get()` below is a fresh `Cell` read — re-entrant
@@ -695,7 +697,8 @@ impl TimerObjectInternals {
                 } else {
                     if kind == KindBig::SetTimeout
                         && !repeat.is_null()
-                        && dropped == fake_timers::Dropped::No
+                        && (dropped == fake_timers::Dropped::No
+                            || s.event_loop_timer_state() == EventLoopTimerState::ACTIVE)
                     {
                         if let Some(num) = idle_timeout.get_number() {
                             if num != -1.0 {

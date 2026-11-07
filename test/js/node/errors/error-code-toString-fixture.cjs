@@ -2,6 +2,7 @@
 // toString() that every error inherits, not with the `name [code]: message` one of its NodeError classes.
 // Prints one line for what each producer throws. Node prints the same lines as Bun:
 //   node --no-addons --unhandled-rejections=throw --experimental-vm-modules --no-warnings error-code-toString-fixture.cjs
+const { MAX_STRING_LENGTH } = require("node:buffer").constants;
 const { spawnSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
@@ -85,6 +86,8 @@ const producers = {
   ERR_SCRIPT_EXECUTION_TIMEOUT: () => new vm.Script("while (true) {}").runInThisContext({ timeout: 5 }),
   ERR_SQLITE_ERROR: () => new DatabaseSync(":memory:").exec("nope"),
   ERR_SSL_NO_CIPHER_MATCH: () => tls.createServer({ ciphers: "nope" }),
+  // Bun refuses the length and reads no page of the 2 GiB. Node copies its 512 MiB first.
+  ERR_STRING_TOO_LONG: () => Buffer.allocUnsafe(MAX_STRING_LENGTH + 1).toString(),
   ERR_TLS_INVALID_PROTOCOL_METHOD: () => tls.createSecureContext({ secureProtocol: "nope" }),
   // With --unhandled-rejections=throw and no unhandledRejection listener, the rejection becomes an uncaught exception.
   ERR_UNHANDLED_REJECTION: () =>

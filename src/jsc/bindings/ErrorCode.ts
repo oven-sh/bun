@@ -241,7 +241,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_STREAM_UNSHIFT_AFTER_END_EVENT", Error],
   ["ERR_STREAM_WRAP", Error],
   ["ERR_STREAM_WRITE_AFTER_END", Error],
-  // Its producer needs a buffer of 2 GiB (WTF::String::MaxLength): the fixture has none for it.
   plain("ERR_STRING_TOO_LONG", Error),
   ["ERR_TLS_CERT_ALTNAME_FORMAT", SyntaxError],
   ["ERR_TLS_CERT_ALTNAME_INVALID", Error],

@@ -244,7 +244,7 @@ describe("an error that is no NodeError in Node inherits Error.prototype.toStrin
     const fixture = join(import.meta.dir, "error-code-toString-fixture.cjs");
     // --no-addons is for ERR_DLOPEN_DISABLED, --unhandled-rejections=throw for ERR_UNHANDLED_REJECTION.
     const flags = ["--no-addons", "--unhandled-rejections=throw"];
-    const expected = [
+    const rows = [
       ["ERR_CLOSED_MESSAGE_PORT", "Error"],
       ["ERR_CONSTRUCT_CALL_INVALID", "TypeError"],
       ["ERR_CRYPTO_INVALID_AUTH_TAG", "TypeError"],
@@ -271,13 +271,22 @@ describe("an error that is no NodeError in Node inherits Error.prototype.toStrin
       ["ERR_SCRIPT_EXECUTION_TIMEOUT", "Error"],
       ["ERR_SQLITE_ERROR", "Error"],
       ["ERR_SSL_NO_CIPHER_MATCH", "Error"],
+      ["ERR_STRING_TOO_LONG", "Error"],
       ["ERR_TLS_INVALID_PROTOCOL_METHOD", "TypeError"],
       ["ERR_UNHANDLED_REJECTION", "UnhandledPromiseRejection"],
       ["ERR_VM_MODULE_CACHED_DATA_REJECTED", "Error"],
       ["ERR_ZLIB_INITIALIZATION_FAILED", "Error"],
-    ].map(([code, name]) =>
+    ];
+    const expected = rows.map(([code, name]) =>
       JSON.stringify({ code, name, string: "name: message", inheritsToString: true, hasOwnToString: false }),
     );
+
+    // A mark without a producer has nothing that holds it against Node.
+    test("each has a producer in the fixture", async () => {
+      const table = await Bun.file(join(import.meta.dir, "../../../../src/jsc/bindings/ErrorCode.ts")).text();
+      const marked = Array.from(table.matchAll(/\bplain\("(\w+)"/g), match => match[1]);
+      expect(marked.sort()).toEqual(rows.map(([code]) => code).sort());
+    });
 
     // The producers were held against v26.3.0, v26.12.1 and v26.13.0. An older Node refuses some of their inputs in another way.
     for (const [name, runtime, runtimeFlags] of [

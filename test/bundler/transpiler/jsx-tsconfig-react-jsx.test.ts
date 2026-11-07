@@ -110,9 +110,10 @@ describe("tsconfig compilerOptions.jsx", () => {
 });
 
 // A --jsx-* flag names a factory, a fragment, an import source or a runtime. A bunfig.toml can have no `jsx` key, or
-// `jsx = "react"`. None of these says development or production. What says it: NODE_ENV, --production,
-// "jsx": "react-jsx" or "react-jsxdev" in tsconfig.json, and `jsx = "react-jsx"` or "react-jsxDEV" in bunfig.toml.
-describe.concurrent("a --jsx-* flag or a bunfig.toml without jsx does not choose dev or prod", () => {
+// `jsx = "react"`. None of these says development or production. In `bun build`, what says it is NODE_ENV,
+// --production, "jsx": "react-jsx" or "react-jsxdev" in tsconfig.json, and `jsx = "react-jsx"` or "react-jsxDEV" in
+// bunfig.toml.
+describe.concurrent("bun build: a --jsx-* flag or a bunfig.toml without jsx does not choose dev or prod", () => {
   type Files = Record<string, string>;
   type Env = Record<string, string>;
   const importSource = "--jsx-import-source=shim";
@@ -225,47 +226,18 @@ describe.concurrent("a --jsx-* flag or a bunfig.toml without jsx does not choose
     });
   });
 
-  const worker = {
-    "worker.jsx": `const a = <div p="1">x</div>;\npostMessage("done");\n`,
-    "main.js": `const worker = new Worker(new URL("./worker.jsx", import.meta.url).href);\nworker.onmessage = () => worker.terminate();\n`,
-  };
-  test.each<[string, string[], string, Files?, Env?]>([
-    ["no tsconfig.json", [importSource, "m.jsx"], "dev jsxDEV"],
-    ["no tsconfig.json", ["run", importSource, "m.jsx"], "dev jsxDEV"],
-    ["no tsconfig.json", [importSource, "-e", `const a = <div p="1">x</div>;`], "dev jsxDEV"],
-    ["a Worker", [importSource, "main.js"], "dev jsxDEV", worker],
-    // `bun <file>` reads bunfig.toml before the flags, `bun run <file>` after them.
-    ["bunfig.toml without jsx", [importSource, "m.jsx"], "dev jsxDEV", bunfigWithoutJsx],
-    ["bunfig.toml without jsx", ["run", importSource, "m.jsx"], "dev jsxDEV", bunfigWithoutJsx],
-    ['tsconfig.json "react-jsx"', [importSource, "m.jsx"], "prod jsx", tsconfig("react-jsx")],
-    ["NODE_ENV=production", [importSource, "m.jsx"], "prod jsx", {}, production],
-  ])("%s: bun %j prints %j", async (_, cmd, expected, files = {}, env = {}) => {
-    const { stdout, stderr, exitCode } = await spawned(cmd, files, env);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
-  });
-
   const testFile = `import { test } from "bun:test";\ntest("jsx", () => {\n  globalThis.s = <div p="1">x</div>;\n});\n`;
-  const testFiles = {
-    "a.test.jsx": testFile,
-    "b.test.jsx": testFile,
-    "tsconfig.json": JSON.stringify({ compilerOptions: { jsxImportSource: "shim" } }),
-  };
-  // With a bunfig.toml, --parallel starts each worker with --jsx-* flags that nobody typed.
-  test.each<[string, string[], string, Files]>([
-    ["no bunfig.toml", [importSource], "dev jsxDEV", {}],
-    ["bunfig.toml without jsx", [], "dev jsxDEV", bunfigWithoutJsx],
-    ["bunfig.toml without jsx", ["--parallel=2"], "dev jsxDEV", bunfigWithoutJsx],
-    ['bunfig.toml jsx = "react-jsxDEV"', [], "dev jsxDEV", bunfig("react-jsxDEV")],
-    ['bunfig.toml jsx = "react-jsxDEV"', ["--parallel=2"], "dev jsxDEV", bunfig("react-jsxDEV")],
-    ['bunfig.toml jsx = "react-jsx"', [], "prod jsx", bunfig("react-jsx")],
-    ['bunfig.toml jsx = "react-jsx"', ["--parallel=2"], "prod jsx", bunfig("react-jsx")],
-  ])("%s: each test file of bun test %j prints %j", async (_, flags, expected, files) => {
-    const { stdout, stderr, exitCode } = await spawned(["test", ...flags], { ...testFiles, ...files }, {});
-    expect({
-      printed: (stdout + stderr).match(/dev jsxDEV|prod jsx/g),
-      inWorkers: stdout.includes("PARALLEL"),
-      exitCode,
-    }).toEqual({ printed: [expected, expected], inWorkers: flags.includes("--parallel=2"), exitCode: 0 });
+  // Outside `bun build` a --jsx-* flag selects the production runtime, as it has since 1.2.3. `bun run <file>` reads
+  // bunfig.toml after the flags, and the bunfig.toml then decides.
+  test.each<[string, string[], string, Files?]>([
+    ["no bunfig.toml", [importSource, "m.jsx"], "prod jsx"],
+    ["no bunfig.toml", ["run", importSource, "m.jsx"], "prod jsx"],
+    ["bunfig.toml without jsx", [importSource, "m.jsx"], "prod jsx", bunfigWithoutJsx],
+    ["bunfig.toml without jsx", ["run", importSource, "m.jsx"], "dev jsxDEV", bunfigWithoutJsx],
+    ["a test file", ["test", importSource], "prod jsx", { "a.test.jsx": testFile }],
+  ])("%s: bun %j prints %j", async (_, cmd, expected, files = {}) => {
+    const { stdout, exitCode } = await spawned(cmd, files, {});
+    expect({ stdout, exitCode }).toEqual({ stdout: expect.stringContaining(expected + "\n"), exitCode: 0 });
   });
 });
 

@@ -84,7 +84,7 @@ for name, make in KINDS.items():
     print(name, len(LENGTHS), wrong)
 
 print('--- floats that are not numbers like others')
-for n in (1, 2, 3, 50, 95, 96, 97, 98, 200, 1500):
+for n in (1, 2, 3, 50, 78, 79, 96, 97, 128, 129, 200, 1500):
     for special in (math.nan, math.inf, -math.inf, -0.0, 5e-324, 1.7976931348623157e308):
         for at in {0, n // 2, n - 1}:
             a = [i + 0.5 for i in range(n)]
@@ -117,5 +117,5 @@ def site(a):
 
 
 for turn in range(3):
-    for n in (0, 1, 95, 96, 97, 300):
+    for n in (0, 1, 78, 79, 96, 97, 128, 129, 300):
         print(turn, n, [len(site(make(n))) for make in KINDS.values()], [len(site(a)) for a in EMPTY.values()])

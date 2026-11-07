@@ -43,17 +43,39 @@ def digest(result):
     return (len(args), sum(args), args[:2], args[-2:], kw)
 
 
+def floats(items):
+    return [i + 0.5 for i in items]
+
+
 for before, scope in forms.items():
     for count in (0, 1, 2, 5):
-        for make in (tuple, list, iter):
+        for make in (tuple, list, floats, iter):
             for k in ({}, {'x': 1}):
                 print(before, count, make.__name__, k, *(digest(attempt(scope[name], fvk, make(range(count)), k)) for name in ('star', 'both', 'only_keywords', 'variables')))
 
 print('--- long ones')
-for count in (1022, 1023, 1024, 1025, 1026, 5000, 70000):
-    for make in (tuple, list, iter):
+for count in (77, 78, 79, 80, 95, 96, 97, 98, 127, 128, 129, 130, 1023, 1024, 1025, 5000, 70000):
+    for make in (tuple, list, floats, iter):
         print(count, make.__name__, digest(fvk(*make(range(count)))), digest(fvk(7, *make(range(count)), **{})), digest(fvk(7, 8, *make(range(count)), **{'x': 1})),
             attempt(f3, *make(range(count)))[:60], len(attempt(max, *make(range(count)), key=lambda v: -v).__repr__()))
+
+print('--- floats of every sort, in a list that may have them as doubles in a row: each comes through as itself')
+import math, struct
+sorts = [1.5, -1.5, 0.0, -0.0, 2.0, -3.0, 1e308, 5e-324, 2.2250738585072014e-308, math.inf, -math.inf, math.nan, -math.nan, struct.unpack('<d', bytes.fromhex('010000000000f87f'))[0],
+         struct.unpack('<d', bytes.fromhex('ffffffffffffffff'))[0], float(2 ** 53), 4294967296.5]
+bits = lambda items: [(type(x).__name__, struct.pack('<d', x).hex()) for x in items]
+for special in sorts:
+    for place in (0, 1, 2):
+        l = [0.5, 1.5, 2.5]
+        built = [x for x in l]
+        built[place] = special
+        display = [special if i == place else i + 0.5 for i in range(3)]
+        appended = []
+        for x in display:
+            appended.append(x)
+        for name, made in (('stored', built), ('comprehension', display), ('appended', appended)):
+            want = bits(made[i] for i in range(3))
+            print(repr(special), place, name, bits(fvk(*made)[0]) == want, bits(fvk(7.5, *made)[0][1:]) == want, bits(fvk(*made, **{})[0]) == want, bits(f3(*made)) == want, bits(tuple(made)) == want, bits([*made]) == want)
 
 print('--- the result goes where an operand was')
 

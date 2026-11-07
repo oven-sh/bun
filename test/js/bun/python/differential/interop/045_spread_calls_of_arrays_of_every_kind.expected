@@ -1,0 +1,98 @@
+status: 0
+oracle: none
+---
+--- arrays with nothing in them, of every kind, and with doubles up to where the interpreter copies them and beyond
+never had an item | ArrayWithUndecided | ((), {}) | ((0,), {}) | ((), {}) | ((), {'x': 1}) 
+ints emptied | ArrayWithInt32 | ((), {}) | ((0,), {}) | ((), {}) | ((), {'x': 1}) 
+doubles emptied | ArrayWithDouble | ((), {}) | ((0,), {}) | ((), {}) | ((), {'x': 1}) 
+doubles popped | ArrayWithDouble | ((), {}) | ((0,), {}) | ((), {}) | ((), {'x': 1}) 
+strs emptied | ArrayWithContiguous | ((), {}) | ((0,), {}) | ((), {}) | ((), {'x': 1}) 
+sparse, emptied | ArrayWithArrayStorage | ((), {}) | ((0,), {}) | ((), {}) | ((), {'x': 1}) 
+sparse, of doubles, emptied | ArrayWithArrayStorage | ((), {}) | ((0,), {}) | ((), {}) | ((), {'x': 1}) 
+with a setter in a prototype | ArrayWithSlowPutArrayStorage | ((), {}) | ((0,), {}) | ((), {}) | ((), {'x': 1}) 
+frozen after emptying doubles | ArrayWithArrayStorage | ((), {}) | ((0,), {}) | ((), {}) | ((), {'x': 1}) 
+1 None ArrayWithDouble True True True
+1 0 ArrayWithDouble True True True
+1 0 ArrayWithDouble True True True
+1 0 ArrayWithDouble True True True
+2 None ArrayWithDouble True True True
+2 0 ArrayWithDouble True True True
+2 1 ArrayWithDouble True True True
+2 1 ArrayWithDouble True True True
+3 None ArrayWithDouble True True True
+3 0 ArrayWithDouble True True True
+3 1 ArrayWithDouble True True True
+3 2 ArrayWithDouble True True True
+95 None ArrayWithDouble True True True
+95 0 ArrayWithDouble True True True
+95 47 ArrayWithDouble True True True
+95 94 ArrayWithDouble True True True
+96 None ArrayWithDouble True True True
+96 0 ArrayWithDouble True True True
+96 48 ArrayWithDouble True True True
+96 95 ArrayWithDouble True True True
+97 None ArrayWithDouble True True True
+97 0 ArrayWithDouble True True True
+97 48 ArrayWithDouble True True True
+97 96 ArrayWithDouble True True True
+127 None ArrayWithDouble True True True
+127 0 ArrayWithDouble True True True
+127 63 ArrayWithDouble True True True
+127 126 ArrayWithDouble True True True
+128 None ArrayWithDouble True True True
+128 0 ArrayWithDouble True True True
+128 64 ArrayWithDouble True True True
+128 127 ArrayWithDouble True True True
+129 None ArrayWithDouble True True True
+129 0 ArrayWithDouble True True True
+129 64 ArrayWithDouble True True True
+129 128 ArrayWithDouble True True True
+130 None ArrayWithDouble True True True
+130 0 ArrayWithDouble True True True
+130 65 ArrayWithDouble True True True
+130 129 ArrayWithDouble True True True
+300 None ArrayWithDouble True True True
+300 0 ArrayWithDouble True True True
+300 150 ArrayWithDouble True True True
+300 299 ArrayWithDouble True True True
+--- what is in an array of doubles, or would be but for one item: each item comes through as a[i] gives it
+a literal (copied when written to) | CopyOnWriteArrayWithDouble | [0.5, 1.5, 2.5] | True True True True True True True True
+NaN | ArrayWithContiguous | [0.5, nan, 2.5] | True True True True True True True True
+0 / 0 stored | ArrayWithContiguous | [0.5, nan, 2.5] | True True True True True True True True
+a NaN with other bits | ArrayWithContiguous | [0.5, nan, 2.5] | True True True True True True True True
+-0 | ArrayWithDouble | [0.5, 0, 2.5] | True True True True True True True True
+infinities | ArrayWithDouble | [inf, -inf, 2.5] | True True True True True True True True
+the smallest | ArrayWithDouble | [5e-324, 2.2250738585072014e-308, 2.5] | True True True True True True True True
+whole numbers | ArrayWithDouble | [0.5, 2, -3] | True True True True True True True True
+whole numbers stored | ArrayWithDouble | [7, 1.5, 4294967296] | True True True True True True True True
+after shift() | ArrayWithDouble | [0.5, 1.5, 2.5] | True True True True True True True True
+after pop() | ArrayWithDouble | [0.5, 1.5, 2.5] | True True True True True True True True
+room for more | ArrayWithDouble | [0.5, 1.5, 2.5] | True True True True True True True True
+made longer | ArrayWithDouble | [0.5, None, None] | True True True True True True True True
+holes only | ArrayWithDouble | [None, None, None] | True True True True True True True True
+a hole, and the index in the prototype | ArrayWithDouble | [0.5, None, 2.5] | True True True True True True True True
+sealed | ArrayWithArrayStorage | [0.5, 1.5, 2.5] | True True True True True True True True
+not extensible | ArrayWithArrayStorage | [0.5, 1.5, 2.5] | True True True True True True True True
+with a property | ArrayWithDouble | [0.5, 1.5, 2.5] | True True True True True True True True
+of a class derived from Array | ArrayWithDouble | [0.5, 1.5, 2.5] | True True True True True True True True
+--- sorted, and tuple, of arrays of every kind, with a key that changes the array
+doubles | nothing | [0.5, 1.5, 2.5] | (2.5, 0.5, 1.5) | (0.5, 1.5, 2.5)
+doubles | append | [0.5, 1.5, 2.5] | (2.5, 0.5, 1.5, 9.5, 9.5, 9.5) | ValueError: list modified during sort
+doubles | clear | [0.5, 1.5, 2.5] | () | ()
+doubles | store | [0.5, 1.5, 2.5] | ('x', 0.5, 1.5) | IndexError: list assignment index out of range
+doubles and a hole | nothing | [None, 1.5, 2.5, 3.5] | (2.5, None, 1.5, 3.5) | (None, 1.5, 2.5, 3.5)
+doubles and a hole | append | [None, 1.5, 2.5, 3.5] | (2.5, None, 1.5, 3.5, 9.5, 9.5, 9.5, 9.5) | ValueError: list modified during sort
+doubles and a hole | clear | [None, 1.5, 2.5, 3.5] | () | ()
+doubles and a hole | store | [None, 1.5, 2.5, 3.5] | ('x', None, 1.5, 3.5) | IndexError: list assignment index out of range
+ints | nothing | [1, 2, 3] | (3, 1, 2) | (1, 2, 3)
+ints | append | [1, 2, 3] | (3, 1, 2, 9.5, 9.5, 9.5) | ValueError: list modified during sort
+ints | clear | [1, 2, 3] | () | ()
+ints | store | [1, 2, 3] | ('x', 1, 2) | IndexError: list assignment index out of range
+sparse | nothing | [0.5, 1.5, 2.5] | (2.5, 0.5, 1.5) | (0.5, 1.5, 2.5)
+sparse | append | [0.5, 1.5, 2.5] | (2.5, 0.5, 1.5, 9.5, 9.5, 9.5) | ValueError: list modified during sort
+sparse | clear | [0.5, 1.5, 2.5] | () | ()
+sparse | store | [0.5, 1.5, 2.5] | ('x', 0.5, 1.5) | IndexError: list assignment index out of range
+frozen | nothing | [0.5, 1.5, 2.5] | (2.5, 0.5, 1.5) | JSTypeError: TypeError: Attempted to assign to readonly property.
+frozen | append | JSTypeError: TypeError: Attempted to assign to readonly property. | (2.5, 0.5, 1.5) | JSTypeError: TypeError: Attempted to assign to readonly property.
+frozen | clear | JSTypeError: TypeError: Attempted to assign to readonly property. | (2.5, 0.5, 1.5) | JSTypeError: TypeError: Attempted to assign to readonly property.
+frozen | store | JSTypeError: TypeError: Attempted to assign to readonly property. | (2.5, 0.5, 1.5) | JSTypeError: TypeError: Attempted to assign to readonly property.

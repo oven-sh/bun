@@ -466,7 +466,7 @@ For cross-platform compatibility, Bun Shell implements a set of builtin commands
 - `rm`: remove files and directories
 - `echo`: print text
 - `pwd`: print the working directory
-- `bun`: run bun in bun
+- `bun`: run bun in bun. If `PATH` has no `bun`, this is the running executable. A [standalone executable](/compiler/executables#act-as-the-bun-cli) that includes the `bun` CLI then starts as `bun`.
 - `cat`
 - `touch`
 - `mkdir`

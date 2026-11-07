@@ -1004,6 +1004,17 @@ pub(crate) mod command {
     }
     pub(crate) use create_context_data as init;
 
+    /// Why `BUN_BE_BUN` cannot make this executable start as the `bun` CLI, if it cannot.
+    pub(crate) fn why_not_bun() -> Option<&'static str> {
+        if cfg!(bun_locked_environment) {
+            return Some("this executable has a locked environment and cannot start as bun");
+        }
+        if bun_removable_features::is_removed(bun_removable_features::Feature::Tools) {
+            return Some("this executable doesn't include the Bun command line");
+        }
+        None
+    }
+
     /// Full subcommand dispatch.
     ///
     /// Kept deliberately tiny: every arm is a single call into a

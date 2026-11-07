@@ -1,5 +1,5 @@
 trim-feature cli : Tools Lint Fmt Check Install TestCommand BuildCommand AotCompiler Repl Create Upgrade ImageCompiler
-  about "The whole `bun` command line: the package manager, the test runner, `bun build`, `bun lint`, `bun fmt`, `bun check` and the ahead-of-time compiler. Includes `\"lint\"`, `\"fmt\"`, `\"check\"`, `\"install\"`, `\"aot\"`, `\"repl\"`, `\"create\"`, `\"upgrade\"` and `\"run\"`. An executable only uses it with `BUN_BE_BUN=1`, with `--help` in `BUN_OPTIONS`, or when it calls `Bun.build()` with `check` or `compile.aot`."
+  about "The whole `bun` command line: the package manager, the test runner, `bun build`, `bun lint`, `bun fmt`, `bun check` and the ahead-of-time compiler. Includes `\"lint\"`, `\"fmt\"`, `\"check\"`, `\"install\"`, `\"aot\"`, `\"repl\"`, `\"create\"`, `\"upgrade\"` and `\"run\"`. An executable only uses it with `BUN_BE_BUN=1`, with `--help` in `BUN_OPTIONS`, when a Bun Shell script runs `bun` and `PATH` has no `bun`, or when it calls `Bun.build()` with `check` or `compile.aot`."
   saves 47.4 44.8
 
 trim-feature lint : Lint

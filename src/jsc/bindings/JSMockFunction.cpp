@@ -775,6 +775,9 @@ public:
 
     void setImplementations(JSGlobalObject* globalObject, JSValue implementation, JSValue tail, JSValue fallback)
     {
+        // What pushImplOnce() relies on: an implementation at the head that isn't a once implementation is the fallback, and the tail is a once implementation.
+        ASSERT(implementation == fallback || !tryJSDynamicCast<JSMockImplementation*>(implementation) || tryJSDynamicCast<JSMockImplementation*>(implementation)->isOnce());
+        ASSERT(!tail || (tryJSDynamicCast<JSMockImplementation*>(tail) && tryJSDynamicCast<JSMockImplementation*>(tail)->isOnce()));
         auto& vm = this->vm();
         Configuration& configuration = willConfigure();
         configuration.implementation.set(vm, this, implementation);
@@ -2460,14 +2463,19 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionWithImplementation, __att
     auto lastTail = thisObject->configuration().tail.get();
     auto lastFallback = thisObject->configuration().fallbackImplmentation.get();
 
-    JSMockImplementation* impl = JSMockImplementation::create(
-        globalObject,
-        globalObject->mockModule.mockImplementationStructure.getInitializedOnMainThread(globalObject),
-        JSMockImplementation::Kind::Call,
-        tempImplValue,
-        false);
+    // A falsy value is no implementation, as in Jest: nothing is installed, so a method of an automocked instance still falls back on its prototype's mock.
+    JSValue impl;
+    if (tempImplValue.toBoolean(globalObject)) {
+        impl = JSMockImplementation::create(
+            globalObject,
+            globalObject->mockModule.mockImplementationStructure.getInitializedOnMainThread(globalObject),
+            JSMockImplementation::Kind::Call,
+            tempImplValue,
+            false);
+    }
 
-    thisObject->setImplementations(globalObject, impl, JSValue(), JSValue());
+    // The fallback too, as mockImplementation() leaves it: a once implementation that the callback queues links to the fallback.
+    thisObject->setImplementations(globalObject, impl, JSValue(), impl);
     RETURN_IF_EXCEPTION(scope, {});
 
     MarkedArgumentBuffer args;

@@ -1445,8 +1445,7 @@ function makeCancelledByParentError() {
   return makeTestFailure("test did not finish before its parent and was cancelled", "cancelledByParent");
 }
 
-// Node's Test#abortHandler (test.js:1059): the reason itself is the test's error, tagged testAborted, and a
-// falsy reason becomes Node's own AbortError. Node throws on a reason it cannot tag (a string, a frozen object).
+// Node's #abortHandler (test.js:1059): the reason itself is the error, tagged. Node throws where it cannot tag it.
 function abortFailure(signal: AbortSignal): unknown {
   const reason = signal.reason || $makeAbortError("The test was aborted");
   try {
@@ -1717,9 +1716,7 @@ class TestNode {
     this.#abortController?.abort();
   }
 
-  // Port of Node's Test#cancel (test.js:1064). `error` is the timeout failure or the `signal` option's reason;
-  // without one the node is a subtest its parent finished without. As in Node's fail(), the first error a node
-  // gets is the one it keeps, so this does nothing to a node that already failed.
+  // Node's Test#cancel (test.js:1064). Without an `error` the parent is over. A node keeps the first error it gets.
   cancel(error: unknown) {
     if (this.ended || this.cancelError !== undefined || (this.finished && this.error !== null)) return;
     const cancelError = (this.cancelError = error ?? makeCancelledByParentError());
@@ -1730,27 +1727,23 @@ class TestNode {
     if (wait !== undefined) $rejectPromiseWithFirstResolvingFunctionCallCheck(wait, cancelError);
   }
 
-  // Port of Node's postRun() sweep (test.js:1486): a test that is over cancels the subtests it did not wait
-  // for, and they cancel theirs. A running one is woken by cancel() and finishes itself, hooks included. One
-  // that never started has no run to wake: it is reported here and its chain link returns at its turn. A test
-  // (not a suite) starts a subtest in Node when it is created unless a sibling is running, so its oldest
-  // subtest counts as running even while its link still waits behind a `t.before()` hook.
+  // Node's postRun() sweep (test.js:1486): a node that is over cancels the subtests it did not wait for.
   cancelSubtests() {
+    // Node starts a test's subtest when it is created unless a sibling runs, so the oldest one counts as running.
     let oldest = this.started && !this.isSuite;
     for (let child = this.firstChild; child !== undefined; child = child.nextSibling) {
       if (child.ended) continue;
       child.cancel(undefined);
       child.cancelSubtests();
+      // cancel() woke a running child, which finishes itself. One that never started has no run: report it here.
       if (!child.started && (child.isSuite || !oldest)) finishCancelled(child);
       oldest = false;
     }
   }
 
-  // bun:test calls a registration again for each `--retry` attempt, and every run keeps its state on its node,
-  // so each attempt gets its own. The attempt it replaces can still be running (bun:test's own timeout or an
-  // uncaught error ended it): what its `timeout` and `signal` option armed is released, so that nothing it
-  // does later is charged to this attempt. It is not cancelled, which would run its abort listeners now.
+  // bun:test calls a registration again for each --retry attempt, and a run keeps its state on its node.
   nextAttempt(): TestNode {
+    // bun:test's own timeout can replace an attempt that still runs. Release it: cancel() would run its listeners.
     this.ended = true;
     const { timer, outerAbort } = this;
     if (timer !== undefined) realClearTimeout(timer);
@@ -2164,8 +2157,7 @@ function applyExpectFailure(node: TestNode, failure: unknown): unknown {
 function validateTestOptions(options: TestOptions): { ownTags: string[] | undefined } {
   const { concurrency, tags, plan } = options;
 
-  // Tests enforce timeout and signal (executeTestNode). On a suite they are only validated for Node's error
-  // contract, and so is concurrency everywhere: subtests always run serially.
+  // A test enforces timeout and signal (executeTestNode). A suite only validates them, like concurrency everywhere.
   validateTimeoutAndSignal(options);
   if (concurrency != null && typeof concurrency !== "boolean") {
     if (typeof concurrency === "number") {
@@ -2279,13 +2271,13 @@ function invokeTestFn(fn: Function, arg: unknown) {
   return (fn as (arg: unknown) => unknown)(arg);
 }
 
-// cancel() stops a run by rejecting the promise it is parked on, so a run that nothing cancels pays for no stop
-// promise and no race (Node's stopTest() makes both for every test). `promise` must be an async function's own
-// or a `new Promise`: those ignore a second settling, a `.then()` result asserts. Await the result, do not return it.
+// cancel() stops a run by rejecting the promise it is parked on, so a run that nothing cancels makes no stop promise.
 function park<T>(node: TestNode, promise: Promise<T>): Promise<T> {
+  // Only an async function's own promise or a `new Promise` ignores a second settling. A .then() result asserts.
   node.wait = promise;
   const { cancelError } = node;
   if (cancelError !== undefined) $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, cancelError);
+  // Await this in place: an async function that returns it settles two turns later, and the body can win by then.
   return promise;
 }
 
@@ -2397,14 +2389,11 @@ async function runOwnBeforeHooks(node: TestNode) {
 
 async function waitForBody(node: TestNode, body: unknown) {
   await body;
-  // Wait for inline subtests created during the body (awaited or not),
-  // including ones scheduled while earlier subtests were running.
+  // Wait for the inline subtests created during the body, awaited or not, and for the ones they schedule.
   await drainSubtestChain(node);
 }
 
-// A node cancelled before it started runs no hook and no body: Node's run() goes straight to postRun() for
-// a `signal` option that is already aborted ([kShouldAbort], test.js:1306) and never runs a subtest its parent
-// swept. Its fail() still puts the cancellation through expectFailure.
+// A node cancelled before it started runs no hook and no body (test.js:1306). expectFailure still applies to a test.
 function finishCancelled(node: TestNode): unknown {
   const { cancelError } = node;
   node.finished = true;
@@ -2460,20 +2449,16 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   }
 
   if (failure === undefined) {
-    // Node arms one stop (timeout + signal) for both the body AND the plan wait,
-    // so plan({wait:true}) is bounded by the test timeout. The stop here is
-    // cancel(), which rejects whichever of the waits below the run is parked on.
+    // One timer bounds the body and the plan wait, like Node's stopPromise: cancel() rejects the wait in progress.
     const { timeout } = node;
     let timer: ReturnType<typeof setTimeout> | undefined;
     if (typeof timeout === "number" && Number.isFinite(timeout)) {
-      // Not unref'd: always cleared below, and on Windows an unref'd timer
-      // alone under bun:test leaves the uws loop inactive so auto_tick busy-spins.
+      // Not unref'd: on Windows an unref'd timer alone under bun:test leaves the uws loop inactive (busy-spin).
       timer = node.timer = realSetTimeout(onTestTimeout, timeout, node, timeout);
     }
     try {
       try {
-        // The body is called here, not in waitForBody(): when it throws, Node fails the test before a microtask
-        // runs, so a cancellation the body queued first does not replace its error.
+        // Called here, not in waitForBody(): a throw fails the test before a microtask can cancel it, as in Node.
         const body = runWithNode(node, () => invokeTestFn(fn, ctx));
         await park(node, waitForBody(node, body));
       } catch (err) {
@@ -2582,8 +2567,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
 let neverSettles: Promise<undefined> | undefined;
 
-// What t.test() / an inline describe() returns once the chain link is over. For a node the sweep cancelled before
-// it started the promise never settles: Node's postRun() drops the deferred behind it (test.js:1484).
+// The t.test() promise of a subtest cancelled before it started never settles: postRun() drops it (test.js:1484).
 function settledOrNever(node: TestNode): Promise<undefined> | undefined {
   return node.cancelError !== undefined && !node.started ? (neverSettles ??= new Promise(() => {})) : undefined;
 }
@@ -2678,11 +2662,12 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
         recordSuiteFailure(suite, err);
       }
     }
-    // Wait for children created during the callback and any they schedule. Only
-    // cancel() rejects this wait, and it cancelled the children with the suite.
+    // Wait for children created during the callback and any they schedule.
     try {
       await park(suite, drainSubtestChain(suite));
-    } catch {}
+    } catch {
+      // Only cancel() rejects this wait, and the sweep that called it cancels the children as well.
+    }
     suite.wait = undefined;
     if (runHooks) {
       for (const hook of suite.hooks.after) {

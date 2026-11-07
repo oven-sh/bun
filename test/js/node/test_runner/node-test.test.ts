@@ -1,32 +1,36 @@
 import { spawn } from "bun";
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 import { run } from "node:test";
 
-// Nearly every test here spawns a bun child, and a debug+ASAN child takes
-// several seconds just to start (more on a loaded machine), so the 5s default
-// is marginal for all of them. CI passes a much larger --timeout regardless.
-setDefaultTimeout(30_000);
-
 describe("node:test", () => {
-  // These three drive the largest fixtures (01-harness has 32 node:test cases),
-  // so let them spawn in parallel instead of serially.
-  test.concurrent("should run basic tests", async () => {
-    const { exitCode, stderr } = await runTests(["01-harness.js"]);
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 0,
-      stderr: expect.stringContaining("0 fail"),
-    });
-  });
+  // These three drive the largest fixtures (01-harness has 32 node:test cases);
+  // a debug+ASAN `bun test` child takes several seconds to start, so give them
+  // headroom and let them spawn in parallel instead of serially.
+  test.concurrent(
+    "should run basic tests",
+    async () => {
+      const { exitCode, stderr } = await runTests(["01-harness.js"]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+    30_000,
+  );
 
-  test.concurrent("should run hooks in the right order", async () => {
-    const { exitCode, stderr } = await runTests(["02-hooks.js"]);
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 0,
-      stderr: expect.stringContaining("0 fail"),
-    });
-  });
+  test.concurrent(
+    "should run hooks in the right order",
+    async () => {
+      const { exitCode, stderr } = await runTests(["02-hooks.js"]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+    30_000,
+  );
 
   test("should run tests with different variations", async () => {
     const { exitCode, stderr } = await runTests(["03-test-variations.js"]);
@@ -44,14 +48,18 @@ describe("node:test", () => {
     });
   });
 
-  test.concurrent("should run all tests from multiple files", async () => {
-    const { exitCode, stderr } = await runTests(["01-harness.js", "02-hooks.js"]);
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 0,
-      // 32 from 01-harness + 3 from 02-hooks
-      stderr: expect.stringContaining("35 pass"),
-    });
-  });
+  test.concurrent(
+    "should run all tests from multiple files",
+    async () => {
+      const { exitCode, stderr } = await runTests(["01-harness.js", "02-hooks.js"]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        // 32 from 01-harness + 3 from 02-hooks
+        stderr: expect.stringContaining("35 pass"),
+      });
+    },
+    30_000,
+  );
 
   test("should run test() and describe() called inside another test() as subtests", async () => {
     const { exitCode, stderr } = await runTests(["05-test-in-test.js"]);
@@ -317,48 +325,213 @@ describe("node:test", () => {
     });
   });
 
-  test("should abort t.signal on timeout and enforce the test-level signal option", async () => {
-    const { exitCode, stdout, stderr } = await runTests(["30-signal-abort.js"]);
-    expect(stdout).toContain("OBS top-level timeout aborted t.signal");
-    expect(stdout).not.toContain("OBS pre-aborted top-level body ran");
-    // The three deliberate failures: the timeout plus each signal's reason.
-    expect(stderr).toContain("test timed out after 10ms");
-    expect(stderr).toContain("top-level abort reason");
-    expect(stderr).toContain("aborted before start");
-    expect(stderr).toContain("6 pass");
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 1,
-      stderr: expect.stringContaining("3 fail"),
-    });
-  });
+  // The fixtures from here on log what they observe, and the tests compare those lines exactly. Where a
+  // fixture also runs under Node, the expected lines are what `node <fixture>` (v26.3.0) prints.
+  test.concurrent(
+    "should abort t.signal and enforce the timeout and signal options of a test like Node",
+    async () => {
+      const { lines, counts, exitCode } = observed(await runTests(["30-signal-abort.js"]));
+      expect(lines).toEqual(
+        linesOf(`
+          abort event reason=AbortError passed=false error=test timed out after 1ms aborted=true
+          afterEach(times out) passed=false error=test timed out after 1ms aborted=true
+          t.after passed=false error=test timed out after 1ms aborted=true
+          abort event
+          afterEach(times out with the timeout it was declared with) passed=false error=test timed out after 1ms aborted=true
+          afterEach(passes) passed=true error=null aborted=false
+          t.after passed=true error=null aborted=false same=true
+          abort event after the hooks
+          afterEach(throws) passed=false error=boom aborted=false
+          abort event after the hooks
+          afterEach(never reads its signal) passed=true error=null aborted=false
+          passing aborted=true reason=AbortError
+          unread aborted=true same=true
+          afterEach(reads them afterwards) passed=true error=null aborted=false
+          own signal=true
+          abort event reason=AbortError passed=false error=stop right there aborted=true
+          afterEach(aborted while running) passed=false error=stop right there aborted=true
+          t.after failureType=testAborted error is the reason=true
+          afterEach(aborted with a falsy reason) passed=false error=The test was aborted aborted=true
+          t.after name=AbortError code=ABORT_ERR
+          afterEach(aborted, then throws) passed=false error=the abort came first aborted=true
+          afterEach(throws, then aborted in a microtask) passed=false error=the throw came first aborted=false
+          afterEach(aborted with a timeout as well) passed=false error=the reason wins aborted=true
+          afterEach(aborted, callback style) passed=false error=callback reason aborted=true
+          none
+          afterEach(hooks of the tests that never started) passed=true error=null aborted=false
+          body starts aborted=true
+          afterEach(aborted during beforeEach) passed=false error=beforeEach reason aborted=true
+          afterEach(aborted during afterEach) passed=false error=afterEach reason aborted=true
+          afterEach(aborted during t.after) passed=true error=null aborted=false
+          t.after passed=false error=t.after reason aborted=true
+          listeners on its signal while it runs: 1
+          afterEach(finished) passed=true error=null aborted=false
+          listeners on its signal afterwards: 0
+          finished passed=true error=null
+          afterEach(aborted after it finished) passed=true error=null aborted=false
+          body ran
+          afterEach(resolves later) passed=false error=aborted while the runner waits for the body aborted=true
+          afterEach(rejects later) passed=false error=aborted while the runner waits for the body aborted=true
+          afterEach(aborted before its first await, rejects later) passed=false error=aborted before the runner waits for the body aborted=true
+          afterEach(calls back later) passed=false error=aborted while the runner waits for the callback aborted=true
+          afterEach(times out while the runner waits for its plan) passed=false error=test timed out after 1ms aborted=true
+          resolves later: the body goes on
+          rejects later: the body goes on
+          aborted before its first await, rejects later: the body goes on
+          calls back later: the body goes on
+          afterEach(every body goes on) passed=true error=null aborted=false
+          abort event
+          afterEach(subtest aborted while running) passed=false error=subtest reason aborted=true
+          abort event
+          afterEach(subtest that times out) passed=false error=test timed out after 1ms aborted=true
+          t.test() resolved with undefined
+          suite signal aborted=false
+        `),
+      );
+      expect({ counts, exitCode }).toEqual({ counts: ["9 pass", "22 fail"], exitCode: 1 });
+    },
+    30_000,
+  );
 
-  test("should cancel the subtests a timed-out test stopped waiting for", async () => {
-    const { exitCode, stderr } = await runTests(["31-cancelled-by-parent.js"]);
-    expect(stderr).toContain("test timed out after 20ms");
-    expect(stderr).toContain("1 pass");
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 1,
-      stderr: expect.stringContaining("1 fail"),
-    });
-  });
+  test.concurrent(
+    "should cancel the subtests that a test did not wait for like Node",
+    async () => {
+      const { lines, counts, exitCode } = observed(await runTests(["31-cancelled-by-parent.js"]));
+      // A cancelled subtest finishes on its own promise chain while the runner moves on, so the order of
+      // the lines across tests is not the same in bun and in Node, and is not compared.
+      expect(lines.toSorted()).toEqual(
+        linesOf(`
+          parent t.after the running subtest is aborted=false
+          running: abort event passed=false error=test did not finish before its parent and was cancelled aborted=true
+          grandchild: abort event
+          queued suite: abort event
+          afterEach(running) passed=false error=test did not finish before its parent and was cancelled aborted=true
+          afterEach(grandchild) passed=false error=test did not finish before its parent and was cancelled aborted=true
+          running: t.after failureType=cancelledByParent
+          afterEach(running) passed=false error=test did not finish before its parent and was cancelled aborted=true
+          child of the parent that throws: abort event
+          beforeEach ends
+          child of the parent that throws: t.after passed=false error=test did not finish before its parent and was cancelled aborted=true
+          running: t.after store=the caller's store
+          child body starts
+          afterEach(child) passed=false error=test did not finish before its parent and was cancelled aborted=true
+          afterEach(first) passed=true error=null aborted=false
+          parent t.after ends
+          second: abort event
+          afterEach(second) passed=false error=test did not finish before its parent and was cancelled aborted=true
+          beforeEach(oldest) aborted=true
+          oldest body starts
+          afterEach(oldest) passed=false error=test did not finish before its parent and was cancelled aborted=true
+          afterEach(rejects later) passed=false error=test did not finish before its parent and was cancelled aborted=true
+          running suite: after hook
+          resolves later: t.after passed=false error=test did not finish before its parent and was cancelled aborted=true
+          rejects later: the body goes on
+          suite child: the body goes on
+          afterEach(planned) passed=false error=test did not finish before its parent and was cancelled aborted=true
+          planned: the body goes on
+        `).toSorted(),
+      );
+      expect({ counts, exitCode }).toEqual({ counts: ["3 pass", "10 fail"], exitCode: 1 });
+    },
+    30_000,
+  );
 
-  test("should report every cancelled subtest and suite as a failure through run()", async () => {
-    const events = await run({ files: [join(import.meta.dirname, "fixtures", "31-cancelled-by-parent.js")] }).toArray();
-    const outcomes = events
-      .filter(({ type }) => type === "test:pass" || type === "test:fail")
-      .map(({ type, data }) => [data.name, type === "test:pass" ? "pass" : data.details.error.message])
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    const cancelled = "test did not finish before its parent and was cancelled";
-    expect(outcomes).toEqual([
-      ["parent times out while a subtest is still running", "test timed out after 20ms"],
-      ["queued", cancelled],
-      ["queued empty suite", cancelled],
-      ["queued suite", cancelled],
-      ["running", cancelled],
-      ["suite child", cancelled],
-      ["the subtests the parent stopped waiting for were cancelled", "pass"],
-    ]);
-  });
+  test.concurrent(
+    "should report the subtests and suites that a test cancelled through run()",
+    async () => {
+      const events = await run({ files: [join(import.meta.dirname, "fixtures", "31-cancelled-by-parent.js")] }).toArray();
+      const cancelled = events
+        .filter(({ type, data }) => type === "test:fail" && data.details.error.failureType === "cancelledByParent")
+        .map(({ data }) => data.name);
+      // The names that run() in Node reports with this failureType for the same file.
+      expect(cancelled.toSorted()).toEqual([
+        "child",
+        "grandchild",
+        "next",
+        "oldest",
+        "planned",
+        "queued",
+        "queued empty suite",
+        "queued suite",
+        "rejects later",
+        "resolves later",
+        "running",
+        "running",
+        "running",
+        "running suite",
+        "second",
+        "suite",
+        "suite child",
+      ]);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should give every --retry attempt of a test its own state",
+    async () => {
+      const { lines, counts, exitCode } = observed(await runTests(["32-retry.js"], {}, ["--retry", "1"]));
+      expect(lines).toEqual(
+        linesOf(`
+          t.signal: attempt 1 aborted=false previous attempt aborted=undefined
+          t.signal: attempt 2 aborted=false previous attempt aborted=true
+          subtests: attempt 1 child runs=1
+          subtests: attempt 2 child runs=2
+          t.after(): hook of attempt 1 runs=1
+          t.after(): hook of attempt 2 runs=2
+          timeout: abort event of attempt 1
+          timeout: the body of attempt 1 goes on aborted=true
+          timeout: attempt 2 aborted=false
+          timeout: abort event of attempt 2
+        `),
+      );
+      expect({ counts, exitCode }).toEqual({ counts: ["5 pass", "0 fail"], exitCode: 0 });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should drop the failure of a --retry attempt that bun:test's own timeout replaced",
+    async () => {
+      const args = ["--retry", "1", "--timeout", "1"];
+      const { lines, counts, exitCode } = observed(await runTests(["33-retry-abandoned-attempt.js"], {}, args));
+      expect(lines).toEqual([
+        "t.after of the first attempt",
+        "runs once: attempts of the other test=2 runs of this test=1",
+      ]);
+      expect({ counts, exitCode }).toEqual({ counts: ["1 pass", "1 fail"], exitCode: 1 });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should abort the t.signal of each test on its own under --concurrent",
+    async () => {
+      const { lines, counts, exitCode } = observed(await runTests(["34-concurrent.js"], {}, ["--concurrent"]));
+      expect(lines.toSorted()).toEqual([
+        "first: abort event",
+        "first: body ends aborted=false",
+        "second: abort event",
+        "second: body ends aborted=false",
+      ]);
+      expect({ counts, exitCode }).toEqual({ counts: ["2 pass", "0 fail"], exitCode: 0 });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should make no AbortController for a test that never reads t.signal",
+    async () => {
+      const { lines, counts, exitCode } = observed(await runTests(["35-unread-signal.js"]));
+      expect(lines).toEqual([
+        "contexts=8 controllers made=0",
+        "controllers made=8 aborted: plain=true, with a timeout=true, with hooks, subtests and a suite=true, " +
+          "subtest=true, suite=false, suite child=true, subtest that nothing awaits=true, that times out=true",
+      ]);
+      expect({ counts, exitCode }).toEqual({ counts: ["5 pass", "1 fail"], exitCode: 1 });
+    },
+    30_000,
+  );
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {
@@ -378,6 +551,22 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     new Response(stderrStream).text(),
   ]);
   return { exitCode, stdout, stderr };
+}
+
+// The lines a fixture logged with its "OBS " prefix, and the counts that `bun test` printed at the end.
+function observed({ exitCode, stdout, stderr }: Awaited<ReturnType<typeof runTests>>) {
+  const lines = linesOf(stdout)
+    .filter(line => line.startsWith("OBS "))
+    .map(line => line.slice(4));
+  const counts = linesOf(stderr).filter(line => /^\d+ (pass|fail|skip|todo|errors?)$/.test(line));
+  return { lines, counts, exitCode };
+}
+
+function linesOf(text: string) {
+  return text
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => line !== "");
 }
 
 describe("node:test mock", () => {

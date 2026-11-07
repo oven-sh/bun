@@ -3054,15 +3054,24 @@ exports[\`a serializer 1\`] = \`
   });
 
   test("and fails for another value, and for the string of the value", () => {
-    expect(() => expect(day(2)).toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`)).toThrow(
+    const messageOf = (fn: () => void) => {
+      try {
+        fn();
+      } catch (error) {
+        return Bun.stripANSI((error as Error).message);
+      }
+    };
+    expect(messageOf(() => expect(day(2)).toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`))).toContain(
       "Received: Temporal.PlainDate 2020-01-02",
     );
-    expect(() => expect("2020-01-01").toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`)).toThrow(
+    expect(messageOf(() => expect("2020-01-01").toMatchInlineSnapshot(`Temporal.PlainDate 2020-01-01`))).toContain(
       'Received: "2020-01-01"',
     );
-    expect(() =>
-      expect({ when: day(2) }).toMatchInlineSnapshot(`\n{\n  "when": Temporal.PlainDate 2020-01-01,\n}\n`),
-    ).toThrow('+   "when": Temporal.PlainDate 2020-01-02,');
+    expect(
+      messageOf(() =>
+        expect({ when: day(2) }).toMatchInlineSnapshot(`\n{\n  "when": Temporal.PlainDate 2020-01-01,\n}\n`),
+      ),
+    ).toContain('+   "when": Temporal.PlainDate 2020-01-02,');
   });
 });
 

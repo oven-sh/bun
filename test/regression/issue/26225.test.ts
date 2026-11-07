@@ -1,12 +1,35 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// These tests install npm packages, so they need a longer timeout
+// Loading form-data (and the mime-db table behind it) in the child takes ~3s on
+// a debug build, which is most of the default per-test budget.
 setDefaultTimeout(30_000);
 
-// Test for GitHub issue #26225
+// https://github.com/oven-sh/bun/issues/26225
 // Multipart uploads using form-data + node-fetch@2 + fs.createReadStream() are truncated
-test("node-fetch with form-data and fs.createReadStream works correctly", async () => {
+//
+// `node-fetch` always resolves to Bun's bundled implementation (the one this
+// issue is about), so nothing needs to be installed for it. `form-data` is the
+// real npm package from test/node_modules, required by absolute path; its
+// CombinedStream body is the old-style stream that used to get truncated.
+const formDataPath = require.resolve("form-data");
+
+async function runClient(name: string, clientJs: string) {
+  using dir = tempDir(name, { "client.js": clientJs });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "client.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+test.concurrent("node-fetch with form-data and fs.createReadStream works correctly", async () => {
   using server = Bun.serve({
     port: 0,
     async fetch(req) {
@@ -30,18 +53,12 @@ test("node-fetch with form-data and fs.createReadStream works correctly", async 
     },
   });
 
-  using dir = tempDir("test-26225", {
-    "package.json": JSON.stringify({
-      name: "test-26225",
-      dependencies: {
-        "form-data": "^4.0.0",
-        "node-fetch": "^2.7.0",
-      },
-    }),
-    "client.js": `
+  const { stdout, stderr, exitCode } = await runClient(
+    "test-26225",
+    `
 const fs = require('fs');
 const path = require('path');
-const FormData = require('form-data');
+const FormData = require(${JSON.stringify(formDataPath)});
 const fetch = require('node-fetch');
 
 const tmpFile = path.join(__dirname, 'test.txt');
@@ -64,47 +81,15 @@ fetch('http://localhost:${server.port}', {
     process.exit(1);
   });
 `,
-  });
+  );
 
-  // Install dependencies
-  const installProc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const installExitCode = await installProc.exited;
-  expect(installExitCode).toBe(0);
-
-  // Run the client
-  const proc = Bun.spawn({
-    cmd: [bunExe(), "client.js"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  if (stderr) {
-    console.error("stderr:", stderr);
-  }
-  if (!stdout.trim()) {
-    console.error("stdout was empty, exit code:", exitCode);
-  }
-
-  expect(stdout.trim()).not.toBe("");
-  const result = JSON.parse(stdout.trim());
-  expect(result.success).toBe(true);
-  expect(result.bytesReceived).toBe(1024);
-  expect(result.contentValid).toBe(true);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ success: true, bytesReceived: 1024, contentValid: true });
   expect(exitCode).toBe(0);
 });
 
 // Test that regular async iterables still work
-test("node-fetch with async iterable body still works", async () => {
+test.concurrent("node-fetch with async iterable body still works", async () => {
   using server = Bun.serve({
     port: 0,
     async fetch(req) {
@@ -120,14 +105,9 @@ test("node-fetch with async iterable body still works", async () => {
     },
   });
 
-  using dir = tempDir("test-26225-async", {
-    "package.json": JSON.stringify({
-      name: "test-26225-async",
-      dependencies: {
-        "node-fetch": "^2.7.0",
-      },
-    }),
-    "client.js": `
+  const { stdout, stderr, exitCode } = await runClient(
+    "test-26225-async",
+    `
 const fetch = require('node-fetch');
 
 // Create an async iterable body
@@ -147,43 +127,15 @@ fetch('http://localhost:${server.port}', {
     process.exit(1);
   });
 `,
-  });
+  );
 
-  // Install dependencies
-  const installProc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const installExitCode = await installProc.exited;
-  expect(installExitCode).toBe(0);
-
-  // Run the client
-  const proc = Bun.spawn({
-    cmd: [bunExe(), "client.js"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  if (stderr) {
-    console.error("stderr:", stderr);
-  }
-
-  expect(stdout.trim()).not.toBe("");
-  const result = JSON.parse(stdout.trim());
-  expect(result.success).toBe(true);
-  expect(result.content).toBe("Hello, World!");
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ success: true, bytesReceived: 13, content: "Hello, World!" });
   expect(exitCode).toBe(0);
 });
 
 // Test with larger file to ensure streaming works
-test("node-fetch with form-data and large file stream", async () => {
+test.concurrent("node-fetch with form-data and large file stream", async () => {
   const fileSize = 1024 * 100; // 100KB
 
   using server = Bun.serve({
@@ -215,18 +167,12 @@ test("node-fetch with form-data and large file stream", async () => {
     },
   });
 
-  using dir = tempDir("test-26225-large", {
-    "package.json": JSON.stringify({
-      name: "test-26225-large",
-      dependencies: {
-        "form-data": "^4.0.0",
-        "node-fetch": "^2.7.0",
-      },
-    }),
-    "client.js": `
+  const { stdout, stderr, exitCode } = await runClient(
+    "test-26225-large",
+    `
 const fs = require('fs');
 const path = require('path');
-const FormData = require('form-data');
+const FormData = require(${JSON.stringify(formDataPath)});
 const fetch = require('node-fetch');
 
 const fileSize = ${fileSize};
@@ -250,38 +196,9 @@ fetch('http://localhost:${server.port}', {
     process.exit(1);
   });
 `,
-  });
+  );
 
-  // Install dependencies
-  const installProc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const installExitCode = await installProc.exited;
-  expect(installExitCode).toBe(0);
-
-  // Run the client
-  const proc = Bun.spawn({
-    cmd: [bunExe(), "client.js"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  if (stderr) {
-    console.error("stderr:", stderr);
-  }
-
-  expect(stdout.trim()).not.toBe("");
-  const result = JSON.parse(stdout.trim());
-  expect(result.success).toBe(true);
-  expect(result.bytesReceived).toBe(fileSize);
-  expect(result.contentValid).toBe(true);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ success: true, bytesReceived: fileSize, contentValid: true });
   expect(exitCode).toBe(0);
 });

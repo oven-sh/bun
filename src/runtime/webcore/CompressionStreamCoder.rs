@@ -730,7 +730,7 @@ pub(crate) enum AsyncInput {
 }
 
 impl AsyncInput {
-    /// JS thread: pin `chunk` if it is a pinnable ArrayBuffer/view, else copy `fallback`.
+    /// JS thread: borrow `chunk` with [`PinnedArrayBuffer::root_read_only`] if it is a pinnable ArrayBuffer/view, else copy `fallback`.
     pub(crate) fn new(
         global: &JSGlobalObject,
         chunk: JSValue,

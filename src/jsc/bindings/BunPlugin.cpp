@@ -1001,24 +1001,23 @@ static void addToImportChain(Zig::GlobalObject* globalObject, BunPlugin::OnLoad:
     }
 }
 
-// Whether a spy mock has replaced the methods of the module that is registered under `key`.
-static bool isSpiedModule(Zig::GlobalObject* globalObject, const String& key)
+// The module that is registered under `key`, if a spy mock has replaced its methods in place.
+static JSC::AbstractModuleRecord* spiedModuleAt(Zig::GlobalObject* globalObject, const String& key)
 {
     auto& spiedModules = globalObject->onLoadPlugins.spiedModules;
-    auto spied = spiedModules.find(key);
-    if (spied == spiedModules.end())
-        return false;
+    if (spiedModules.isEmpty())
+        return nullptr;
     auto* loader = Bun::testFileModuleLoader(globalObject);
     auto identifier = JSC::Identifier::fromString(globalObject->vm(), key);
     using Type = JSC::ScriptFetchParameters::Type;
     for (Type type : { Type::JavaScript, Type::HostDefined, Type::JSON, Type::Text, Type::WebAssembly, Type::CSS, Type::None }) {
         auto* entry = loader->getRegisteredMayBeNull(identifier, type);
-        if (entry && entry->record() && entry->record() == spied->value.get())
-            return true;
+        auto* record = entry ? entry->record() : nullptr;
+        // A dead entry is for a record that was collected. Another cell may have its address now.
+        if (auto spied = record ? spiedModules.find(record) : spiedModules.end(); spied != spiedModules.end() && spied->value.get() == record)
+            return record;
     }
-    // That module has left the registry, so the key is free again.
-    spiedModules.remove(spied);
-    return false;
+    return nullptr;
 }
 
 // Each instance of the original that a spy mock can be made from has one more "&spy" than the one before.
@@ -1046,7 +1045,7 @@ static String dependencyKeyOfModuleMock(JSC::JSGlobalObject* globalObject, JSMod
         auto* zigGlobalObject = defaultGlobalObject(globalObject);
         do
             mock->instanceOfOriginal++;
-        while (mock->instanceOfOriginal < std::numeric_limits<uint16_t>::max() && isSpiedModule(zigGlobalObject, keyOfInstanceToSpyOn(specifier, mock->instanceOfOriginal)));
+        while (mock->instanceOfOriginal < std::numeric_limits<uint16_t>::max() && spiedModuleAt(zigGlobalObject, keyOfInstanceToSpyOn(specifier, mock->instanceOfOriginal)));
     }
     return keyOfInstanceToSpyOn(specifier, mock->instanceOfOriginal);
 }
@@ -1270,10 +1269,9 @@ static JSValue mockExportsOfLoadedModule(Zig::GlobalObject* globalObject, const 
 // so the mocks of it share that instance.
 static void didSpyOnModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::AbstractModuleRecord* record)
 {
-    const String& key = record->moduleKey().string();
-    if (mock->isOfVitest() && isExternalizedByVitest(globalObject, key))
+    if (mock->isOfVitest() && isExternalizedByVitest(globalObject, record->moduleKey().string()))
         return;
-    globalObject->onLoadPlugins.spiedModules.set(key, JSC::Weak<JSC::JSCell> { record });
+    globalObject->onLoadPlugins.spiedModules.set(record, JSC::Weak<JSC::JSCell> { record });
 }
 
 static JSObject* exportsOfModuleMockWithoutFactory(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSValue moduleNamespace)
@@ -2716,7 +2714,7 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     if (mock->instanceOfOriginal) {
         String spied = dependencyKeyOfModuleMock(globalObject, mock);
         RETURN_IF_EXCEPTION(scope, );
-        if (globalObject->onLoadPlugins.spiedModules.contains(spied))
+        if (spiedModuleAt(globalObject, spied))
             evict.modules.append(spied);
     }
 
@@ -3746,10 +3744,14 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
     for (auto& module : plugins.moduleMocksBeingLoaded.keys())
         evict.modules.append(module);
     // A mock that was replaced in place, or dropped by Bun.plugin.clearAll(), was never unmocked, so what it spied on is still registered.
-    for (auto& spied : plugins.spiedModules.keys()) {
-        auto* mock = plugins.testFileOfModule.get(spied) ? registeredModuleMock(globalObject, withoutOriginalModuleQuery(spied)) : nullptr;
-        if (plugins.testFileOfModule.get(spied) && !(mock && mock->instanceOfOriginal && keyOfInstanceToSpyOn(mock->specifier->tryGetValue().data, mock->instanceOfOriginal) == spied))
-            evict.modules.append(spied);
+    plugins.spiedModules.removeIf([](auto& spied) { return !spied.value; });
+    for (auto& spied : plugins.spiedModules.values()) {
+        String key = uncheckedDowncast<JSC::AbstractModuleRecord>(spied.get())->moduleKey().string();
+        if (spiedModuleAt(globalObject, key) != spied.get())
+            continue;
+        auto* mock = registeredModuleMock(globalObject, withoutOriginalModuleQuery(key));
+        if (!mock || !mock->instanceOfOriginal || keyOfInstanceToSpyOn(mock->specifier->tryGetValue().data, mock->instanceOfOriginal) != key)
+            evict.modules.append(key);
     }
     evict.isEndOfTestFile = plugins.hasVirtualModules();
     evictModulesAndTheirImporters(globalObject, WTF::move(evict));

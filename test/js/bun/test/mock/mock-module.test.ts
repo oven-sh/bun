@@ -1915,6 +1915,8 @@ describe.concurrent("a { spy: true } mock spies on an instance of the original t
             vi.doMock("./unmocked", { spy: true });
             const first = configure(await import("./unmocked"));
             vi.doUnmock("./unmocked");
+            // The module that the mock spied on went with it.
+            expect(Object.keys(require.cache).filter(key => key.endsWith("&spy"))).toEqual([]);
             expect(vi.isMockFunction((await import("./unmocked")).own.method)).toBe(false);
             vi.doMock("./unmocked", { spy: true });
             expect(read(await import("./unmocked"), first)).toEqual(ofNewInstance);
@@ -2094,7 +2096,14 @@ describe.concurrent("a { spy: true } mock spies on an instance of the original t
     );
   });
 
-  test("a test file's own mock leaves the instance of a preload's mock alone", async () => {
+  // The preload's module is evicted while the file's mock is in its place, and is registered again when the file ends.
+  test.each([
+    ["a mock over it", `import { own } from "./dep"; vi.mock("./dep", { spy: true });`],
+    [
+      "vi.doUnmock() and a mock",
+      `vi.doUnmock("./dep"); vi.doMock("./dep", { spy: true }); const { own } = await import("./dep");`,
+    ],
+  ])("a test file's own mock leaves the instance of a preload's mock alone: %s", async (_, mockAgain) => {
     await expectFixturesToPass(
       {
         "dep.ts": original("dep"),
@@ -2107,8 +2116,7 @@ describe.concurrent("a { spy: true } mock spies on an instance of the original t
         `,
         "a.test.ts": `
           import { expect, test, vi } from "bun:test";
-          import { own } from "./dep";
-          vi.mock("./dep", { spy: true });
+          ${mockAgain}
           test("the file's own mock", () => {
             expect([own.method(), own === ofPreload, globalThis.loads.dep]).toEqual(["original", false, 2]);
             own.method.mockReturnValue("of the file");

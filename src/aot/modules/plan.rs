@@ -326,6 +326,7 @@ pub(super) struct Plan {
     externals_named_by_mocks: Vec<ModuleRef>,
     may_be_mocked: Vec<bool>,
     is_named_by_mock: Vec<bool>,
+    is_any_module_named_by_mock: bool,
     runtime_modules_named_by_mocks: Vec<RuntimeModule>,
     names_without_code_that_mocks_give: Vec<Atom>,
     files_with_late_stars: Vec<FileId>,
@@ -379,6 +380,7 @@ impl Plan {
             externals_named_by_mocks: Vec::new(),
             may_be_mocked: vec![false; order.numbers.len()],
             is_named_by_mock: vec![false; order.numbers.len()],
+            is_any_module_named_by_mock: false,
             runtime_modules_named_by_mocks: Vec::new(),
             names_without_code_that_mocks_give: Vec::new(),
             files_with_late_stars: Vec::new(),
@@ -452,6 +454,7 @@ impl Plan {
     }
 
     pub(super) fn set_is_named_by_mock(&mut self, module: ModuleRef) {
+        self.is_any_module_named_by_mock = true;
         match module {
             ModuleRef::Runtime(module) => {
                 if !self.runtime_modules_named_by_mocks.contains(&module) {
@@ -981,6 +984,10 @@ impl ModuleGraph {
             }
             _ => plan.may_mock_every_module || plan.has(&plan.is_named_by_mock, module),
         }
+    }
+
+    pub fn is_any_module_named_by_mock(&self) -> bool {
+        self.plan.may_mock_every_module || self.plan.is_any_module_named_by_mock
     }
 
     pub fn is_handed_out_by_test_runner(&self, module: RuntimeModule) -> bool {

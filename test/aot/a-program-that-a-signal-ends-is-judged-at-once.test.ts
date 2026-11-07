@@ -86,7 +86,7 @@ test.skipIf(isWindows || !isCanary)(
       "says-what-it-may-do.js",
     ].map(name => join(root, name));
     const { stdout, exitCode } = await run(
-      [bunExe(), join(import.meta.dir, "run-parallel.ts"), `--root=${root}`, "--jobs=3", ...files],
+      [bunExe(), join(import.meta.dir, "run-parallel.ts"), `--root=${root}`, "--jobs=3", "--seconds=180", ...files],
       root,
       { ...bunEnv, BUN_CRASH_REPORT_URL: undefined, BUN_ENABLE_CRASH_REPORTING: undefined },
     );
@@ -128,5 +128,7 @@ test.skipIf(isWindows || !isCanary)(
     ]);
     expect(exitCode).toBe(1);
   },
-  80_000,
+  // Less than the limit of a run that the driver is given above, which is less than what the programs sleep.
+  // The nine builds take 4 s on an arm64 Mac and 52 to 80 s on an Intel Mac.
+  170_000,
 );

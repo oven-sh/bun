@@ -786,7 +786,9 @@ fn list_names_left_to_run(input: &RecordInput<'_, '_>) -> NamesLeftToRun {
         };
         let graph = input.projects.get(asking.project).graph;
         let mut requests = graph.requests(asking.file).iter();
-        if !requests.any(|request| request.is_dynamic_star_export) {
+        if !graph.is_any_module_named_by_mock()
+            || !requests.any(|request| request.is_dynamic_star_export)
+        {
             continue;
         }
         for export in graph.exports(asking.file) {

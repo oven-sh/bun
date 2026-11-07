@@ -246,43 +246,44 @@ test("an argument, a Buffer cwd and an env value that are not strings reach the 
 
 describe("what the operating system refuses is still in result.error", () => {
   const missing = path.join(dir, "does-not-exist");
-  const failures: [name: string, file: string, options: object, code: string][] = [
-    ["a command that is not in PATH", "does-not-exist", {}, "ENOENT"],
-    ["a file that does not exist", missing, {}, "ENOENT"],
-    ["a cwd that does not exist", exe, { cwd: Buffer.from(missing) }, "ENOENT"],
-  ];
   // Windows has other errors for these two: no mode says that a file is not executable, and a bad fd is a libuv error.
-  if (process.platform !== "win32") {
-    failures.push(["a file that is not executable", import.meta.filename, {}, "EACCES"]);
-    failures.push(["an fd that is not open", exe, { stdio: ["ignore", "ignore", "ignore", 10240] }, "EBADF"]);
+  const posix = { skip: process.platform === "win32" };
+
+  function refused(file: string, options: object, code: string) {
+    // `spawnargs` keeps the number that the caller passed, not the string that the spawn gets.
+    const { error, ...result } = spawnSync(file, ["-e", 0 as any], options);
+    const failure = error as (NodeJS.ErrnoException & { spawnargs?: unknown[] }) | undefined;
+    assert.deepStrictEqual(
+      {
+        ...result,
+        code: failure?.code,
+        errno: typeof failure?.errno,
+        syscall: failure?.syscall,
+        spawnargs: failure?.spawnargs,
+      },
+      {
+        status: null,
+        signal: null,
+        output: null,
+        pid: 0,
+        // node reads these two from `output` with `?.`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1123-L1124
+        stdout: undefined,
+        stderr: undefined,
+        code,
+        errno: "number",
+        syscall: "spawnSync " + file,
+        spawnargs: ["-e", 0],
+      },
+    );
   }
 
-  for (const [name, file, options, code] of failures) {
-    test(name, () => {
-      // `spawnargs` keeps the number that the caller passed, not the string that the spawn gets.
-      const { error, ...result } = spawnSync(file, ["-e", 0 as any], options);
-      const failure = error as (NodeJS.ErrnoException & { spawnargs?: unknown[] }) | undefined;
-      assert.deepStrictEqual(
-        {
-          ...result,
-          code: failure?.code,
-          errno: typeof failure?.errno,
-          syscall: failure?.syscall,
-          spawnargs: failure?.spawnargs,
-        },
-        {
-          status: null,
-          signal: null,
-          output: null,
-          pid: 0,
-          stdout: undefined,
-          stderr: undefined,
-          code,
-          errno: "number",
-          syscall: "spawnSync " + file,
-          spawnargs: ["-e", 0],
-        },
-      );
-    });
-  }
+  test("a command that is not in PATH", () => refused("does-not-exist", {}, "ENOENT"));
+  test("a file that does not exist", () => refused(missing, {}, "ENOENT"));
+  test("a cwd that does not exist", () => refused(exe, { cwd: Buffer.from(missing) }, "ENOENT"));
+  test("a file that is not executable", posix, () => refused(import.meta.filename, {}, "EACCES"));
+  test("an fd that is not open", posix, () => {
+    // An fd that is open in this process is inherited, and then the child runs.
+    assert.throws(() => fs.fstatSync(10240), { code: "EBADF" });
+    refused(exe, { stdio: ["ignore", "ignore", "ignore", 10240] }, "EBADF");
+  });
 });

@@ -158,7 +158,8 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
         Script::NOT_INHERITED
             .iter()
             .for_each(|name| variables.remove(name));
-        true
+        // The program reads no bunfig.toml, so a `telemetry = false` of this process goes with it in the environment.
+        bun_analytics::is_enabled() || variables.put(b"DO_NOT_TRACK", b"1").is_ok()
     };
     match run_to_end(argv, script.cwd, &adapt, &input)? {
         result if result.is_ok() => Ok(result.stdout),

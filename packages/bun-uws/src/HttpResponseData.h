@@ -297,13 +297,28 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
     std::string nodeHttpResponseTrailers;
     /* Raw bytes of the trailer section received after the final 0-size chunk
      * of the current request's chunked body, including its terminating CRLF.
-     * Cleared when a new request is dispatched; consumed by the JS layer when
-     * the request reaches EOF (req.trailers/rawTrailers). The parser gets it
-     * as a nullable pointer (see HttpParser::consumePostPadded). */
+     * Moved onto the request at its last chunk (req.trailers/rawTrailers), and
+     * freed where no request takes it (releaseRequestTrailers). The parser gets
+     * it as a nullable pointer (see HttpParser::consumePostPadded). */
     std::string nodeHttpRequestTrailers;
     bool headersCompleted = false;
     /* Timeout sweep already reported this message; reset when it completes. */
     bool requestTimeoutReported = false;
+
+    /* An idle connection keeps no heap block of a trailer section whose message is over or will
+     * not complete, and a rejected section reaches no request. clear() alone keeps the block. */
+    void releaseRequestTrailers() {
+        if (nodeHttpRequestTrailers.capacity() > std::string().capacity()) [[unlikely]] {
+            freeRequestTrailers();
+        } else {
+            nodeHttpRequestTrailers.clear();
+        }
+    }
+
+    /* noinline: the callers run for every request, and a section with a heap block is rare. */
+    __attribute__((noinline)) void freeRequestTrailers() {
+        std::string().swap(nodeHttpRequestTrailers);
+    }
 };
 
 /* Readable name for the IsNodeHttp=true specialization (used by the node:http

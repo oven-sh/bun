@@ -481,9 +481,10 @@ pub(crate) fn handle_template_value(
             return Ok(());
         }
 
+        // ToString throws for an object without a prototype, and the message would end at the colon.
+        let name = template_value.object_prototype_to_string(global)?;
         return Err(global.throw(format_args!(
-            "Invalid JS object used in shell: {}, you might need to call `.toString()` on it",
-            template_value.fmt_string(global)
+            "Invalid JS object used in shell: {name}, you might need to call `.toString()` on it"
         )));
     }
 

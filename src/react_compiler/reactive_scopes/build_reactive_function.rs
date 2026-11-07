@@ -118,6 +118,8 @@ struct Context<'a> {
     scheduled: HashSet<BlockId>,
     catch_handlers: HashSet<BlockId>,
     control_flow_stack: Vec<ControlFlowTarget>,
+    /// Not in upstream: `control_flow_stack.len()` when the innermost open `switch` began its cases, 0 if none is open.
+    open_switch_depth: usize,
 }
 
 impl<'a> Context<'a> {
@@ -130,6 +132,7 @@ impl<'a> Context<'a> {
             scheduled: HashSet::default(),
             catch_handlers: HashSet::default(),
             control_flow_stack: Vec::new(),
+            open_switch_depth: 0,
         }
     }
 
@@ -262,7 +265,8 @@ impl<'a> Context<'a> {
             let target = &self.control_flow_stack[i];
             if target.block() == block {
                 let kind = if target.is_loop() {
-                    if has_preceding_loop {
+                    // Not in upstream, which labels only past another loop. A `switch` takes an unlabeled `break` too.
+                    if has_preceding_loop || self.open_switch_depth > i {
                         ReactiveTerminalTargetKind::Labeled
                     } else {
                         ReactiveTerminalTargetKind::Unlabeled
@@ -462,6 +466,9 @@ impl<'a, 'b> Driver<'a, 'b> {
                     if let Some(ft) = fallthrough_id {
                         schedule_ids.push(self.cx.schedule(ft, "switch")?);
                     }
+                    // Not in upstream: see `get_break_target`. A `switch` that nothing falls out of has no frame.
+                    let outer_depth = self.cx.open_switch_depth;
+                    self.cx.open_switch_depth = self.cx.control_flow_stack.len();
 
                     // TS processes cases in reverse order, then reverses the result.
                     // This ensures that later cases are scheduled when earlier cases
@@ -494,6 +501,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                         });
                     }
                     reactive_cases.reverse();
+                    self.cx.open_switch_depth = outer_depth;
 
                     self.cx.unschedule_all(&schedule_ids)?;
                     block_value.push(ReactiveStatement::Terminal(ReactiveTerminalStatement {

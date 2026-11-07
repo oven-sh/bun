@@ -10,7 +10,6 @@ use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
 use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_paths::resolve_path::{self, platform};
-use bun_wyhash::hash as wyhash;
 
 // `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
 // (T0, already a dep). Re-exported under `api::` so `QueryStringMap` /
@@ -973,8 +972,48 @@ pub use bun_core::ip_address::strip_ipv6_brackets;
 #[derive(Clone, Copy)]
 pub struct Param {
     pub(crate) name: api::StringPointer,
-    pub(crate) name_hash: u64,
+    pub(crate) name_hash: NameHash,
     pub(crate) value: api::StringPointer,
+}
+
+mod name_hash {
+    use bun_core::StringPointer;
+
+    /// The hash of a decoded parameter name. No `==`: two different names can have the same hash.
+    #[derive(Clone, Copy)]
+    pub(crate) struct NameHash(u64);
+
+    impl NameHash {
+        #[inline]
+        pub(crate) fn new(name: &[u8]) -> Self {
+            Self(bun_wyhash::hash(name))
+        }
+
+        /// Whether `name` (hash `self`) is the name at `other_name` in `names` (hash `other`).
+        #[inline]
+        pub(crate) fn same_name(
+            self,
+            name: &[u8],
+            other: Self,
+            names: &[u8],
+            other_name: StringPointer,
+        ) -> bool {
+            self.0 == other.0 && other_name.slice(names) == name
+        }
+    }
+}
+use name_hash::NameHash;
+
+/// A route parameter hides a query pair: https://nextjs.org/docs/routing/dynamic-routes
+fn hidden_by_route_parameter(
+    name: &[u8],
+    name_hash: NameHash,
+    route_parameters: &[Param],
+    names: &[u8],
+) -> bool {
+    route_parameters
+        .iter()
+        .any(|p| name_hash.same_name(name, p.name_hash, names, p.name))
 }
 
 // Vec<Param> (AoS); SoA would be a perf optimization only.
@@ -1041,10 +1080,15 @@ impl QueryStringMap {
         Iterator::init(self)
     }
 
-    pub(crate) fn str(&self, ptr: api::StringPointer) -> &[u8] {
+    /// The bytes that every name and value of `list` points into.
+    fn bytes(&self) -> &[u8] {
         // SAFETY: `slice` is valid for the lifetime of `self` (either borrows
         // `self.buffer` or an external query_string the caller keeps alive).
-        let slice = unsafe { &*self.slice };
+        unsafe { &*self.slice }
+    }
+
+    pub(crate) fn str(&self, ptr: api::StringPointer) -> &[u8] {
+        let slice = self.bytes();
         &slice[ptr.offset as usize..ptr.offset as usize + ptr.length as usize]
     }
 
@@ -1104,7 +1148,7 @@ impl QueryStringMap {
             buf.extend_from_slice(name_slice);
             buf_writer_pos += u32::try_from(name_slice.len()).unwrap();
 
-            let name_hash: u64 = wyhash(name_slice);
+            let name_hash = NameHash::new(name_slice);
 
             let value_slice = result.raw_value(scanner.pathname.pathname);
             value.length = u32::try_from(value_slice.len()).unwrap();
@@ -1127,53 +1171,41 @@ impl QueryStringMap {
             }
             let mut name = result.name;
             let mut value = result.value;
-            let name_hash: u64;
+            let raw_name = result.raw_name(scanner.query.query_string);
+            name.offset = buf_writer_pos;
+            let name_hash;
             if result.name_needs_decoding {
-                name.length = match PercentEncoding::decode(
-                    &mut buf,
-                    &scanner.query.query_string[name.offset as usize..][..name.length as usize],
-                ) {
+                name.length = match PercentEncoding::decode(&mut buf, raw_name) {
                     Ok(n) => n,
                     Err(_) => {
                         buf.truncate(buf_writer_pos as usize);
                         continue;
                     }
                 };
-                name.offset = buf_writer_pos;
-                buf_writer_pos += name.length;
-                name_hash = wyhash(&buf[name.offset as usize..][..name.length as usize]);
-                if let Some(index) = list.iter().position(|p| p.name_hash == name_hash) {
-                    if index < route_parameter_begin {
-                        continue;
-                    }
-
-                    name = list[index].name;
+                let decoded_name = &buf[name.offset as usize..][..name.length as usize];
+                name_hash = NameHash::new(decoded_name);
+                if hidden_by_route_parameter(
+                    decoded_name,
+                    name_hash,
+                    &list[..route_parameter_begin],
+                    &buf,
+                ) {
+                    buf.truncate(buf_writer_pos as usize);
+                    continue;
                 }
             } else {
-                name_hash = wyhash(result.raw_name(scanner.query.query_string));
-                if let Some(index) = list.iter().position(|p| p.name_hash == name_hash) {
-                    // query string parameters should not override route parameters
-                    // see https://nextjs.org/docs/routing/dynamic-routes
-                    if index < route_parameter_begin {
-                        continue;
-                    }
-
-                    name = list[index].name;
-                } else {
-                    name.length = match PercentEncoding::decode(
-                        &mut buf,
-                        &scanner.query.query_string[name.offset as usize..][..name.length as usize],
-                    ) {
-                        Ok(n) => n,
-                        Err(_) => {
-                            buf.truncate(buf_writer_pos as usize);
-                            continue;
-                        }
-                    };
-                    name.offset = buf_writer_pos;
-                    buf_writer_pos += name.length;
+                name_hash = NameHash::new(raw_name);
+                if hidden_by_route_parameter(
+                    raw_name,
+                    name_hash,
+                    &list[..route_parameter_begin],
+                    &buf,
+                ) {
+                    continue;
                 }
+                buf.extend_from_slice(raw_name);
             }
+            buf_writer_pos += name.length;
 
             value.length = match PercentEncoding::decode(
                 &mut buf,
@@ -1243,7 +1275,7 @@ impl QueryStringMap {
 
                 let name = result.name;
                 let value = result.value;
-                let name_hash: u64 = wyhash(result.raw_name(query_string));
+                let name_hash = NameHash::new(result.raw_name(query_string));
                 list.push(Param {
                     name,
                     value,
@@ -1270,40 +1302,21 @@ impl QueryStringMap {
             }
             let mut name = result.name;
             let mut value = result.value;
-            let name_hash: u64;
+            let raw_name = result.raw_name(query_string);
+            name.offset = buf_writer_pos;
             if result.name_needs_decoding {
-                name.length = match PercentEncoding::decode(
-                    &mut buf,
-                    &query_string[name.offset as usize..][..name.length as usize],
-                ) {
+                name.length = match PercentEncoding::decode(&mut buf, raw_name) {
                     Ok(n) => n,
                     Err(_) => {
                         buf.truncate(buf_writer_pos as usize);
                         continue;
                     }
                 };
-                name.offset = buf_writer_pos;
-                buf_writer_pos += name.length;
-                name_hash = wyhash(&buf[name.offset as usize..][..name.length as usize]);
             } else {
-                name_hash = wyhash(result.raw_name(query_string));
-                if let Some(index) = list.iter().position(|p| p.name_hash == name_hash) {
-                    name = list[index].name;
-                } else {
-                    name.length = match PercentEncoding::decode(
-                        &mut buf,
-                        &query_string[name.offset as usize..][..name.length as usize],
-                    ) {
-                        Ok(n) => n,
-                        Err(_) => {
-                            buf.truncate(buf_writer_pos as usize);
-                            continue;
-                        }
-                    };
-                    name.offset = buf_writer_pos;
-                    buf_writer_pos += name.length;
-                }
+                buf.extend_from_slice(raw_name);
             }
+            buf_writer_pos += name.length;
+            let name_hash = NameHash::new(name.slice(&buf));
 
             value.length = match PercentEncoding::decode(
                 &mut buf,
@@ -1386,34 +1399,17 @@ impl<'a> Iterator<'a> {
         self.visited.set(self.i);
         self.i += 1;
 
-        let remainder = &list[self.i..];
-
+        let names = self.map.bytes();
         let mut target_i: usize = 1;
-        let mut current_i: usize = 0;
-
-        while let Some(next_index) = remainder[current_i..]
-            .iter()
-            .position(|p| p.name_hash == hash)
-        {
-            let real_i = current_i + next_index + self.i;
-            debug_assert!(!self.visited.is_set(real_i));
-
-            self.visited.set(real_i);
-            target[target_i] = self.map.str(remainder[current_i + next_index].value);
-            target_i += 1;
-
-            current_i += next_index + 1;
-            if target_i >= target.len() {
-                return Some(IteratorResult {
-                    name,
-                    values: &mut target[0..target_i],
-                });
-            }
-            if real_i + 1 >= self.map.list.len() {
-                return Some(IteratorResult {
-                    name,
-                    values: &mut target[0..target_i],
-                });
+        for (offset, param) in list[self.i..].iter().enumerate() {
+            if hash.same_name(name, param.name_hash, names, param.name) {
+                debug_assert!(!self.visited.is_set(self.i + offset));
+                self.visited.set(self.i + offset);
+                target[target_i] = self.map.str(param.value);
+                target_i += 1;
+                if target_i >= target.len() {
+                    break;
+                }
             }
         }
 
@@ -1825,7 +1821,7 @@ impl<'a> Scanner<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::URL;
+    use super::{CombinedScanner, QueryStringMap, URL, route_param};
 
     const ORIGIN: &[u8] = b"http://localhost:3000";
 
@@ -1967,5 +1963,165 @@ mod tests {
         expected.extend_from_slice(&basename);
         expected.extend_from_slice(b".js");
         assert_eq!(join(b"", b"dir", &basename, b".js"), expected);
+    }
+
+    /// Every name has one wyhash: see `sameHashName` in test/js/bun/util/filesystem_router.test.ts.
+    fn same_hash_names() -> [Vec<u8>; 2] {
+        let [a, b] = [b"aaaaaaaa", b"bbbbbbbb"]
+            .map(|free| [&b"rs5rgaaaprefixed"[..], free, b"38zu8ai7", b"yyyyyyyy"].concat());
+        assert_ne!(a, b);
+        assert_eq!(bun_wyhash::hash(&a), bun_wyhash::hash(&b));
+        [a, b]
+    }
+
+    /// Every name that the iterator returns, with its values.
+    fn names_and_values(map: &QueryStringMap) -> Vec<(&[u8], Vec<&[u8]>)> {
+        let mut values: [&[u8]; 256] = [b""; 256];
+        let mut iter = map.iter();
+        let mut out = Vec::new();
+        while let Some(entry) = iter.next(&mut values) {
+            out.push((entry.name, entry.values.to_vec()));
+        }
+        out
+    }
+
+    fn parse(query: &[u8]) -> QueryStringMap {
+        QueryStringMap::init(query)
+            .expect("the allocation does not fail")
+            .expect("the query has parameters")
+    }
+
+    fn parse_with_route(
+        query: &[u8],
+        pathname: &[u8],
+        route: &[u8],
+        params: &route_param::List,
+    ) -> QueryStringMap {
+        QueryStringMap::init_with_scanner(CombinedScanner::init(query, pathname, route, params))
+            .expect("the allocation does not fail")
+            .expect("the route has parameters")
+    }
+
+    #[test]
+    fn query_names_with_one_hash_are_different_names() {
+        let [a, b] = same_hash_names();
+        // Without the last pair the map borrows the query. The "+" makes it copy every pair.
+        for last_pair in [&b""[..], b"&ok=x+y"] {
+            let query = [&a[..], b"=1&", &b, b"=2&", &b, b"=3&", &a, b"=4", last_pair].concat();
+            let mut expected = vec![
+                (&a[..], vec![&b"1"[..], b"4"]),
+                (&b[..], vec![&b"2"[..], b"3"]),
+            ];
+            if !last_pair.is_empty() {
+                expected.push((b"ok", vec![b"x+y"]));
+            }
+            assert_eq!(names_and_values(&parse(&query)), expected);
+        }
+    }
+
+    #[test]
+    fn route_parameter_names_with_one_hash_are_different_names() {
+        let [a, b] = same_hash_names();
+        let route = [&b"["[..], &a, b"]/[", &b, b"]"].concat();
+        let pathname = b"x/y";
+        let params: route_param::List = vec![
+            route_param::Param {
+                name: &route[1..][..a.len()],
+                value: &pathname[..1],
+            },
+            route_param::Param {
+                name: &route[a.len() + 4..][..b.len()],
+                value: &pathname[2..],
+            },
+        ];
+        for (query, query_pairs) in [
+            (&b""[..], vec![]),
+            (b"ok=3", vec![(&b"ok"[..], vec![&b"3"[..]])]),
+        ] {
+            let mut expected = vec![(&a[..], vec![&b"x"[..]]), (&b[..], vec![&b"y"[..]])];
+            expected.extend(query_pairs);
+            let map = parse_with_route(query, pathname, &route, &params);
+            assert_eq!(names_and_values(&map), expected);
+        }
+    }
+
+    #[test]
+    fn a_route_parameter_hides_only_the_query_pairs_with_its_name() {
+        let [a, b] = same_hash_names();
+        let route = [&b"["[..], &a, b"]"].concat();
+        let pathname = b"7";
+        let params: route_param::List = vec![route_param::Param {
+            name: &route[1..][..a.len()],
+            value: pathname,
+        }];
+        let escaped = |name: &[u8]| [format!("%{:02x}", name[0]).as_bytes(), &name[1..]].concat();
+        // `b` has the hash of the route parameter `a` and stays, in both spellings. `a` does not.
+        let query = [
+            &b[..],
+            b"=1&",
+            &a,
+            b"=2&",
+            &escaped(&a),
+            b"=3&",
+            &escaped(&b),
+            b"=4&ok=5",
+        ]
+        .concat();
+        let map = parse_with_route(&query, pathname, &route, &params);
+        assert_eq!(
+            names_and_values(&map),
+            [
+                (&a[..], vec![&b"7"[..]]),
+                (&b[..], vec![&b"1"[..], b"4"]),
+                (b"ok", vec![&b"5"[..]]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_name_with_more_values_than_the_buffer_continues_in_the_next_group() {
+        let map = parse(b"a=1&a=2&a=3&b=4&a=5");
+        let mut values: [&[u8]; 2] = [b""; 2];
+        let mut iter = map.iter();
+        let mut groups = Vec::new();
+        while let Some(entry) = iter.next(&mut values) {
+            groups.push((entry.name, entry.values.to_vec()));
+        }
+        assert_eq!(
+            groups,
+            [
+                (&b"a"[..], vec![&b"1"[..], b"2"]),
+                (b"a", vec![&b"3"[..], b"5"]),
+                (b"b", vec![&b"4"[..]]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_repeated_name_does_not_outgrow_the_reserved_buffer() {
+        // Every pair stores its own name: the buffer has room for "a1" + "a2" + "bx+y".
+        let map = parse(b"a=1&a=2&b=x+y");
+        assert_eq!(map.buffer.capacity(), b"a1a2bx+y".len());
+        assert_eq!(
+            names_and_values(&map),
+            [
+                (&b"a"[..], vec![&b"1"[..], b"2"]),
+                (b"b", vec![&b"x+y"[..]])
+            ]
+        );
+
+        // With a route parameter: "id7" + "a1" + "a2".
+        let route = b"[id]";
+        let pathname = b"7";
+        let params: route_param::List = vec![route_param::Param {
+            name: &route[1..3],
+            value: pathname,
+        }];
+        let map = parse_with_route(b"a=1&a=2", pathname, route, &params);
+        assert_eq!(map.buffer.capacity(), b"id7a1a2".len());
+        assert_eq!(
+            names_and_values(&map),
+            [(&b"id"[..], vec![&b"7"[..]]), (b"a", vec![&b"1"[..], b"2"])]
+        );
     }
 }

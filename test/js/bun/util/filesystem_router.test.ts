@@ -945,6 +945,129 @@ it("does not match a dynamic route whose static segment merely collides on lengt
   expect(router.match(`/${collidingSegment}/42`)).toBeNull();
 }, 60_000);
 
+// Every name below has one seed-0 `Bun.hash.wyhash`. For a name of 17 to 47 bytes the hash mixes lane 0 in
+// 16-byte rounds and then reads the last 16 bytes: the 8 bytes at offset 24 are lane 0 after the first round,
+// which drives lane 0 to zero for every spelling of the 8 bytes at offset 16.
+const sameHashName = (free: string) => "rs5rgaaaprefixed" + free + "38zu8ai7" + "yyyyyyyy";
+
+// 16 bytes with the `Bun.hash.wyhash` of "token". A name of 16 bytes or less hashes as one multiply of two
+// words built from its bytes, which a search inverts for any short name in about a second.
+const tokenPreimage = Buffer.from("b40b440130797bbc8070b97371f34018", "hex");
+// 16 bytes with the hash of "id", the parameter name of the `[id]` routes below.
+const idPreimage = Buffer.from("e9ca8518e8ded10320091f0a54cd0cc0", "hex");
+
+// The router percent-decodes the whole URL before it parses the query string, so a name that the query parser
+// must see as `bytes` is written twice-escaped. A sender controls the spelling.
+const escapedSpelling = (name: string | Buffer) =>
+  [...Buffer.from(name)].map(byte => "%25" + byte.toString(16).padStart(2, "0")).join("");
+
+// Compares the keys in their order too.
+function expectQuery(router: FileSystemRouter, url: string, query: Record<string, string | string[]>) {
+  expect({ url, query: Object.entries(router.match(url)!.query) }).toEqual({ url, query: Object.entries(query) });
+}
+
+it(".query does not merge different names that have the same 64-bit hash", () => {
+  const [A, B, C] = ["aaaaaaaa", "bbbbbbbb", "cccccccc"].map(sameHashName);
+  expect(new Set([A, B, C]).size).toBe(3);
+  expect(new Set([A, B, C].map(name => Bun.hash.wyhash(name))).size).toBe(1);
+
+  const { dir } = make(["posts.tsx", "posts/[id].tsx", `one/[${A}].tsx`]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  // Nothing to decode: the parser borrows the query string.
+  expectQuery(router, `/posts?${A}=1&${B}=2&ok=3`, { [A]: "1", [B]: "2", ok: "3" });
+  expectQuery(router, `/posts?${B}=2&${A}=1`, { [B]: "2", [A]: "1" });
+  expectQuery(router, `/posts?${A}=1&${B}=2&${B}=3&${A}=4&${C}=5`, { [A]: ["1", "4"], [B]: ["2", "3"], [C]: "5" });
+  // A "+" or an escape: the parser copies every pair.
+  expectQuery(router, `/posts?${A}=1&${B}=2&ok=a+b`, { [A]: "1", [B]: "2", ok: "a+b" });
+  expectQuery(router, `/posts?${A}=1&${escapedSpelling(B)}=2&${B}=3`, { [A]: "1", [B]: ["2", "3"] });
+  // A route with a parameter.
+  expectQuery(router, `/posts/7?${A}=1&${B}=2&ok=3`, { id: "7", [A]: "1", [B]: "2", ok: "3" });
+  expectQuery(router, `/posts/7?${A}=1&${escapedSpelling(B)}=2&${B}=3`, { id: "7", [A]: "1", [B]: ["2", "3"] });
+  // The route parameter is A. It hides a query pair named A, and no other pair.
+  expectQuery(router, `/one/7?${B}=2&ok=3`, { [A]: "7", [B]: "2", ok: "3" });
+  expectQuery(router, `/one/7?${escapedSpelling(B)}=2&ok=3`, { [A]: "7", [B]: "2", ok: "3" });
+  expectQuery(router, `/one/7?${A}=8&${escapedSpelling(A)}=9&ok=3`, { [A]: "7", ok: "3" });
+});
+
+it(".query keeps a name whose hash a sender copied from the application's own name", () => {
+  expect(Bun.hash.wyhash(tokenPreimage)).toBe(Bun.hash.wyhash("token"));
+  expect(Bun.hash.wyhash(idPreimage)).toBe(Bun.hash.wyhash("id"));
+
+  const { dir } = make(["api.tsx", "posts/[id].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  // The sent name is 16 bytes that are not valid UTF-8, so its key is their lossy conversion.
+  const sent = tokenPreimage.toString();
+  expect(sent).not.toBe("token");
+
+  // `query.token` is the application's value, a string, and the sender's pair is its own key.
+  const url = `/api?token=GOOD&${escapedSpelling(tokenPreimage)}=EVIL`;
+  expectQuery(router, url, { token: "GOOD", [sent]: "EVIL" });
+  expect(router.match(new Request("http://localhost" + url))!.query).toEqual({ token: "GOOD", [sent]: "EVIL" });
+  expectQuery(router, `/api?${escapedSpelling(tokenPreimage)}=EVIL&token=GOOD`, { [sent]: "EVIL", token: "GOOD" });
+
+  // The same name as a route parameter: the pair is not the parameter, so the router keeps it.
+  const match = router.match(`/posts/7?${escapedSpelling(idPreimage)}=EVIL&ok=1`)!;
+  expect(Object.keys(match.query)).toHaveLength(3);
+  expect(match.query.id).toBe("7");
+  expect(match.params).toEqual({ id: "7" });
+});
+
+it(".params does not merge route parameters whose names have the same 64-bit hash", () => {
+  const [A, B] = ["aaaaaaaa", "bbbbbbbb"].map(sameHashName);
+  expect(Bun.hash.wyhash(A)).toBe(Bun.hash.wyhash(B));
+
+  const { dir } = make([`[${A}]/[${B}].tsx`]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  expect(Object.entries(router.match("/x/y?ok=3")!.params)).toEqual(Object.entries({ [A]: "x", [B]: "y" }));
+  expectQuery(router, "/x/y?ok=3", { [A]: "x", [B]: "y", ok: "3" });
+  // Both route parameters hide a query pair of their own name, and each only its own.
+  expectQuery(router, `/x/y?${B}=9&${A}=8&ok=3`, { [A]: "x", [B]: "y", ok: "3" });
+  // With no query string, `.query` comes from the route parameters alone.
+  expectQuery(router, "/x/y", { [A]: "x", [B]: "y" });
+});
+
+it(".query gives a repeated name one key on every parse path", () => {
+  const { dir } = make(["posts.tsx", "posts/[id].tsx", "u/[a]/[b].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  expectQuery(router, "/posts?a=1&b=2&a=3", { a: ["1", "3"], b: "2" });
+  expectQuery(router, "/posts?a=1&a=2&b=x+y&a=3", { a: ["1", "2", "3"], b: "x+y" });
+  expectQuery(router, "/posts?%2561=1&a=2&%2561=3", { a: ["1", "2", "3"] });
+  expectQuery(router, "/posts/7?a=1&b=2&a=3", { id: "7", a: ["1", "3"], b: "2" });
+  expectQuery(router, "/posts/7?%2561=1&a=2&b=x+y", { id: "7", a: ["1", "2"], b: "x+y" });
+  // A name with a malformed escape: only that pair is dropped.
+  expectQuery(router, "/posts?a=1&%25zz=2&a=3&b=4", { a: ["1", "3"], b: "4" });
+  expectQuery(router, "/posts?a=1&x%25zz=2&a=3&b=4", { a: ["1", "3"], b: "4" });
+  expectQuery(router, "/posts/7?a=1&x%25zz=2&a=3&b=4", { id: "7", a: ["1", "3"], b: "4" });
+  // Every route parameter hides a query pair of its own name, and each only its own.
+  expectQuery(router, "/posts/7?a=1&id=8&%2569d=9&a=2", { id: "7", a: ["1", "2"] });
+  expectQuery(router, "/u/one/two?a=1&b=2&c=3", { a: "one", b: "two", c: "3" });
+
+  // One name sent 256 times reads as one key with 256 values.
+  const values = Array.from({ length: 256 }, (_, i) => "v" + i);
+  expectQuery(router, "/posts?" + values.map(value => "tag=" + value).join("&"), { tag: values });
+});
+
+it(".query keeps the first 2048 pairs on every parse path", () => {
+  const { dir } = make(["posts.tsx", "posts/[id].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  // On the route with a parameter, `id` is one of the 2048.
+  const pairs = (value: string) => Array.from({ length: 3000 }, (_, i) => `k${i}=${value}${i}`).join("&");
+  for (const [url, first, last] of [
+    ["/posts?" + pairs("v"), "k0", "k2047"],
+    ["/posts?" + pairs("v+"), "k0", "k2047"],
+    ["/posts/7?" + pairs("v"), "id", "k2046"],
+    ["/posts/7?" + pairs("v+"), "id", "k2046"],
+  ] as const) {
+    const keys = Object.keys(router.match(url)!.query);
+    expect({ count: keys.length, first: keys[0], last: keys.at(-1) }).toEqual({ count: 2048, first, last });
+  }
+});
+
 it("match() does not panic on a leading '?' or a path that percent-decodes to empty", async () => {
   // URLPath::parse assumed the decoded pathname was non-empty and had a leading
   // byte to skip. A bare query string ("?", "?foo") makes the path slice end at 0

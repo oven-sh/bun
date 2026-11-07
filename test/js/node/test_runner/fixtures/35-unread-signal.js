@@ -7,6 +7,8 @@ const { heapStats } = require("bun:jsc");
 const log = (...args) => console.log("OBS", ...args);
 const controllers = () => heapStats().objectTypeCounts.AbortController ?? 0;
 const contexts = [];
+// The first controller of a process also makes the prototype and the constructor, which count as well.
+const first = new AbortController();
 const before = controllers();
 
 test("plain", t => {

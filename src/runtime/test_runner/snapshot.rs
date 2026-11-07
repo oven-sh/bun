@@ -102,6 +102,9 @@ enum Ran {
     NotAll,
     /// A `describe()` callback threw, so the tests after the throw are not registered.
     NotAllRegistered,
+    /// The file registered no test, and the run asked the snapshot file for no entry. Without `--isolate`, the tests of a
+    /// module belong to the first test file that imports it, so such a test file says nothing about the entries.
+    NoTest,
 }
 
 /// What the flush writes.
@@ -597,7 +600,8 @@ impl Snapshots {
             return Ok(());
         }
         let ran = Self::keep_entries_of_tests(&mut self.values, file, buntest);
-        file.keeps_all |= ran == Ran::NotAllRegistered || (file.unparsed && ran != Ran::ToTheEnd);
+        file.keeps_all |=
+            matches!(ran, Ran::NotAllRegistered | Ran::NoTest) || (file.unparsed && ran != Ran::ToTheEnd);
         if file.unparsed {
             if !file.keeps_all && !self.values.is_empty() {
                 file.unparsed = false;
@@ -670,6 +674,7 @@ impl Snapshots {
         // Vitest counts a todo, and a `test.fails` that throws, as tests that ran, and removes their entries.
         let is_vitest = file.format == Format::Vitest;
         let mut names: StringArrayHashMap<()> = StringArrayHashMap::new();
+        let mut has_test = false;
         let mut scopes = vec![&buntest.collection.root_scope];
         while let Some(scope) = scopes.pop() {
             if scope.failed {
@@ -687,6 +692,7 @@ impl Snapshots {
                     }
                     TestScheduleEntry::TestCallback(test) => test,
                 };
+                has_test = true;
                 let result = result_of(test);
                 let ran_to_the_end = match test.base.mode {
                     ScopeMode::Normal => result == Some(TestResult::Pass),
@@ -707,6 +713,11 @@ impl Snapshots {
                     names.insert(&Self::escape_line_breaks(*format, name), ());
                 }
             }
+        }
+
+        // A hook of a file with no test can still take a snapshot.
+        if !has_test && !values.values().iter().any(|entry| entry.checked) {
+            return Ran::NoTest;
         }
 
         // The key of a snapshot that a hook takes has `(unnamed)` for the name of the test.

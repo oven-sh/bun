@@ -59,7 +59,7 @@ It keeps the entries of a test that did not run to the end:
 - a `test.todo` that has a body
 - a `test.failing` test, which can throw before it reaches its snapshot
 
-If a `describe()` callback throws, Bun removes no entry from the snapshot file of that test file, because the tests after the throw are not registered.
+If a `describe()` callback throws, Bun removes no entry from the snapshot file of that test file, because the tests after the throw are not registered. Bun also removes no entry when the test file registers no test. Without [`--isolate`](/test/parallel#--isolate), the tests of a module belong to the first test file that imports it, so a later test file that imports the same module can register none.
 
 To remove one of these entries, delete it from the snapshot file. To write a snapshot file from scratch, delete the file and run `bun test --update-snapshots`.
 

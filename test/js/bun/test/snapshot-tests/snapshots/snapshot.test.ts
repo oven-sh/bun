@@ -1915,6 +1915,33 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       });
     });
 
+    // Without --isolate, the tests of a module that an earlier test file imported are not registered again.
+    // So a test file that registers no test says nothing about the entries of its snapshot file.
+    describe.each(formats)("%s: a test file that registers no test", format => {
+      const stored = file(format, { "gone 1": "g", "left out 1": "l" });
+      const update = async (tests: string, before = stored) => {
+        using dir = tempDir("snapshot-no-test", { "a.test.js": tests, "__snapshots__/a.test.js.snap": before });
+        const { exitCode } = await runTests(String(dir), { CI: "false" }, "--update-snapshots", "./a.test.js");
+        const names = readdirSync(join(String(dir), "__snapshots__"));
+        return { snap: names.length ? snap(dir) : "<removed>", exitCode };
+      };
+
+      test.each([
+        ["outside of a test", `expect(1).toMatchInlineSnapshot(\`1\`);`],
+        ["in a hook", `beforeAll(() => { expect(1).toMatchInlineSnapshot(\`1\`); });`],
+        ["in a describe with no test", `describe("empty", () => { expect(1).toMatchInlineSnapshot(\`1\`); });`],
+      ])("keeps every entry when only an inline snapshot %s loads its snapshot file", async (_, tests) => {
+        expect(await update(tests)).toEqual({ snap: stored, exitCode: 0 });
+      });
+
+      // What the hook asks for says which entries the file uses.
+      test("loses its unused entry when a hook takes a snapshot from the file", async () => {
+        const tests = `beforeAll(() => { expect("hook").toMatchSnapshot(); });`;
+        const before = file(format, { "(unnamed) 1": "hook", "gone 1": "g" });
+        expect(await update(tests, before)).toEqual({ snap: file(format, { "(unnamed) 1": "hook" }), exitCode: 0 });
+      });
+    });
+
     // The first run finds its value in the file. The second one prints another value, which replaces it.
     describe.each(formats)("%s: a value that the second run of a test replaces counts as added", format => {
       test.each([

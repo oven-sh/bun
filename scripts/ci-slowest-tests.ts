@@ -108,7 +108,8 @@ export type Row = { file: string; maxMs: number; maxPlat: string; attempts: numb
 export function addLog(agg: Map<string, Agg>, plat: string, log: string): void {
   eachAttempt(log, (file, ms) => {
     let a = agg.get(file);
-    if (!a) agg.set(file, (a = { maxMs: 0, maxPlat: "", perPlat: new Map() }));
+    // `maxPlat` starts as this platform, so a file whose attempts all take 0 ms has one too.
+    if (!a) agg.set(file, (a = { maxMs: 0, maxPlat: plat, perPlat: new Map() }));
     const before = a.perPlat.get(plat);
     const total = (before ?? 0) + ms;
     a.perPlat.set(plat, total);

@@ -454,6 +454,34 @@ describe("a file that fails in its parallel bucket", () => {
       `2\t972.95\t${twice}\tdebian 13 x64-asan\t5\t196.93`,
     ]);
   });
+
+  test("a row whose attempts all take 0 ms has a platform, and the attempts of that platform", () => {
+    // Lines of build 137815, ubuntu 25.04 x64, job 01a1adc4-0c3a-436b-ad84-5c83a716d85c. A program compiled ahead of
+    // time fails, and the runner prints its header and its failure in the same millisecond. It fails like that on
+    // three platforms of the build.
+    const program = "test/aot/parallel/module-loaders/raw-behind-a-path-asks-for-the-text-of-the-file/main.mjs";
+    const failsAtOnce = [
+      bk(0, `--- ${gray("[294/687]")} ${program}`),
+      bk(0, ``),
+      bk(
+        0,
+        `--- \x1b[31m[294/687] ${program} - compare: with --aot-erase-types: it does not exit and print as plain Bun does\x1b[0m`,
+      ),
+      bk(1, `bun test/aot/run-parallel.ts ${program}`),
+    ].join("\r\r\n");
+    const agg = new Map<string, Agg>();
+    addLog(agg, "ubuntu 25.04 x64", failsAtOnce);
+    addLog(agg, "debian 13 x64-asan", failsAtOnce);
+    // No platform took longer than the first one, so the row stays with it.
+    expect(slowestRows(agg, 500)).toEqual([
+      { file: program, maxMs: 0, maxPlat: "ubuntu 25.04 x64", attempts: 1, maxAttemptMs: 0 },
+    ]);
+    // One more attempt of 0 ms on that platform adds no time, and it is an attempt.
+    addLog(agg, "ubuntu 25.04 x64", failsAtOnce);
+    expect(slowestRows(agg, 500)).toEqual([
+      { file: program, maxMs: 0, maxPlat: "ubuntu 25.04 x64", attempts: 2, maxAttemptMs: 0 },
+    ]);
+  });
 });
 
 test("what .buildkite/update-test-durations.yml runs with node imports no TypeScript", () => {

@@ -48,6 +48,11 @@ export const boringssl: Dependency = {
       includes: ["include"],
       defines: {
         BORINGSSL_IMPLEMENTATION: true,
+        // The two defines below make BoringSSL call functions its embedder
+        // defines. packages/h3blast links these objects too, with its own
+        // definitions in packages/h3blast/src/boringssl_hooks.c: a new hook
+        // needs one there as well.
+        //
         // The fork (oven-sh/boringssl#11) binds OPENSSL_memory_* as plain externs
         // on every object format, not just as ELF weak symbols, and routes the
         // sites upstream keeps on libc malloc (TLS record buffers, error queue,

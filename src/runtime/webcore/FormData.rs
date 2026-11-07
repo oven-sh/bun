@@ -26,20 +26,6 @@ pub(crate) trait AsyncFormDataExt {
 impl AsyncFormDataExt for AsyncFormData {
     /// Parse errors are routed into the promise rejection; only settlement's own exception escapes.
     fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()> {
-        if let Encoding::Multipart(b) = &self.encoding {
-            if b.is_empty() {
-                scoped_log!(
-                    FormData,
-                    "AsnycFormData.toJS -> promise.reject missing boundary"
-                );
-                promise.reject(
-                    global,
-                    global.create_error_instance(format_args!("FormData missing boundary")),
-                )?;
-                return Ok(());
-            }
-        }
-
         let js_value = match FormData::to_js(global, data, &self.encoding) {
             Ok(v) => v,
             Err(crate::Error::JSError) => {

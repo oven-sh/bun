@@ -713,14 +713,15 @@ const cache = db.status(constants.SQLITE_DBSTATUS_CACHE_USED);
 console.log(`page cache: ${cache.current} bytes`);
 ```
 
-The result has two fields:
+The result has two fields, `current` and `highwater`. Where the value lands depends on the op:
 
-- `current`: the present value of the counter.
-- `highwater`: the highest value of the counter so far. An `op` that keeps no high-water mark reports `0` here. `SQLITE_DBSTATUS_CACHE_USED`, `SQLITE_DBSTATUS_CACHE_USED_SHARED`, `SQLITE_DBSTATUS_SCHEMA_USED` and `SQLITE_DBSTATUS_STMT_USED` are of this kind.
+- `SQLITE_DBSTATUS_LOOKASIDE_USED`: `current` is the number of lookaside slots in use, `highwater` is its peak. `reset: true` sets `highwater` back to `current`.
+- `SQLITE_DBSTATUS_LOOKASIDE_HIT`, `SQLITE_DBSTATUS_LOOKASIDE_MISS_SIZE`, `SQLITE_DBSTATUS_LOOKASIDE_MISS_FULL`: the count is in `highwater`, `current` is always `0`. `reset: true` sets the count to `0`.
+- `SQLITE_DBSTATUS_CACHE_USED`, `SQLITE_DBSTATUS_CACHE_USED_SHARED`, `SQLITE_DBSTATUS_SCHEMA_USED`, `SQLITE_DBSTATUS_STMT_USED`: `current` is the bytes in use now, `highwater` is always `0`. `reset` does nothing.
+- `SQLITE_DBSTATUS_CACHE_HIT`, `SQLITE_DBSTATUS_CACHE_MISS`, `SQLITE_DBSTATUS_CACHE_WRITE`, `SQLITE_DBSTATUS_CACHE_SPILL`, `SQLITE_DBSTATUS_TEMPBUF_SPILL`: `current` is the count since the connection opened, `highwater` is always `0`. `reset: true` sets the count to `0`. `CACHE_WRITE` and `TEMPBUF_SPILL` overlap, so a reset of one lowers the other.
+- `SQLITE_DBSTATUS_DEFERRED_FKS`: `current` is `1` while the open transaction has an unresolved foreign key constraint, else `0`. `highwater` is always `0`.
 
-Pass `reset: true` to set the high-water mark back to `current` after the read.
-
-Most counters are in bytes. `SQLITE_DBSTATUS_LOOKASIDE_USED` counts lookaside slots. `SQLITE_DBSTATUS_CACHE_HIT`, `SQLITE_DBSTATUS_CACHE_MISS`, `SQLITE_DBSTATUS_CACHE_WRITE` and `SQLITE_DBSTATUS_CACHE_SPILL` count pager events.
+On macOS, Bun uses the system SQLite library. A library older than 3.51 has no `sqlite3_db_status64`, so a count above 2,147,483,647 is truncated there. Elsewhere the values are exact.
 
 `.status()` throws a `RangeError` for an `op` the SQLite library does not know, and an error if the database is closed. Bun turns off the process-wide SQLite memory statistics (`SQLITE_CONFIG_MEMSTATUS`), so `sqlite3_memory_used()` and the other global counters report nothing. `sqlite3_db_status` does not depend on them.
 

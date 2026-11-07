@@ -1971,6 +1971,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     return JSValue::encode(jsNumber(statusCode));
 }
 
+static_assert(SQLITE_DBSTATUS_MAX == 13, "new SQLITE_DBSTATUS_* op: add it to constants in src/js/bun/sqlite.ts and packages/bun-types/sqlite.d.ts");
+
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDbStatusFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1981,11 +1983,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDbStatusFunction, (JSC::JSGlobalObject * 
         return {};
 
     JSValue opValue = callFrame->argument(1);
-    if (!opValue.isInt32()) {
+    double opNumber = opValue.isNumber() ? opValue.asNumber() : std::numeric_limits<double>::quiet_NaN();
+    if (opNumber != std::trunc(opNumber)) {
         throwTypeError(lexicalGlobalObject, scope, "Expected op to be an integer"_s);
         return {};
     }
-    int op = opValue.asInt32();
     bool reset = callFrame->argument(2).toBoolean(lexicalGlobalObject);
 
     sqlite3* db = versionDB->handle();
@@ -1994,26 +1996,20 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDbStatusFunction, (JSC::JSGlobalObject * 
         return {};
     }
 
-#if LAZY_LOAD_SQLITE
-    if (!lazy_sqlite3_db_status) [[unlikely]] {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "sqlite3_db_status is not available in this SQLite library"_s));
-        return {};
-    }
-#endif
-
-    // The 32-bit variant: sqlite3_db_status64 is missing from the system libsqlite3 of macOS 13 and 14.
-    int current = 0;
-    int highwater = 0;
-    int rc = sqlite3_db_status(db, op, &current, &highwater, reset);
+    sqlite3_int64 current = 0;
+    sqlite3_int64 highwater = 0;
+    // SQLite answers SQLITE_ERROR for an op it does not know, and sets no errmsg.
+    int rc = opNumber >= std::numeric_limits<int>::min() && opNumber <= std::numeric_limits<int>::max()
+        ? sqlite3_db_status64(db, static_cast<int>(opNumber), &current, &highwater, reset)
+        : SQLITE_ERROR;
     if (rc != SQLITE_OK) {
-        // The only non-OK result is SQLITE_ERROR for an op this library does not know. It sets no errmsg.
-        throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, makeString("Unknown sqlite3_db_status op: "_s, op)));
+        throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, makeString("Unknown sqlite3_db_status op: "_s, opNumber)));
         return {};
     }
 
     JSObject* result = JSC::constructEmptyObject(lexicalGlobalObject);
-    result->putDirect(vm, Identifier::fromString(vm, "current"_s), jsNumber(current));
-    result->putDirect(vm, Identifier::fromString(vm, "highwater"_s), jsNumber(highwater));
+    result->putDirect(vm, Identifier::fromString(vm, "current"_s), jsNumber(static_cast<double>(current)));
+    result->putDirect(vm, Identifier::fromString(vm, "highwater"_s), jsNumber(static_cast<double>(highwater)));
     return JSValue::encode(result);
 }
 

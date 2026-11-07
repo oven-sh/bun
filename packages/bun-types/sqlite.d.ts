@@ -739,15 +739,15 @@ declare module "bun:sqlite" {
     fileControl(zDbName: string, op: number, arg?: ArrayBufferView | number | null): number;
 
     /**
-     * Call `sqlite3_db_status` on this connection.
+     * Call `sqlite3_db_status` on this connection. It reads one counter.
      *
-     * `op` is one of the `SQLITE_DBSTATUS_*` constants. It selects the counter to read: the bytes the page cache holds, the lookaside slots in use, the cache hits since the connection opened, and so on.
+     * `op` is one of the `SQLITE_DBSTATUS_*` constants. Where the value lands depends on the op:
      *
-     * - `current` is the present value of the counter.
-     * - `highwater` is its highest value so far. It is `0` for an `op` that keeps no high-water mark, such as `SQLITE_DBSTATUS_CACHE_USED`.
-     * - `reset` sets the high-water mark back to `current` after the read. It changes nothing for an `op` that keeps no high-water mark.
-     *
-     * `SQLITE_DBSTATUS_LOOKASIDE_USED` counts slots, not bytes.
+     * - `SQLITE_DBSTATUS_LOOKASIDE_USED`: `current` is the number of lookaside slots in use, `highwater` is its peak. `reset` sets `highwater` back to `current`.
+     * - `SQLITE_DBSTATUS_LOOKASIDE_HIT`, `_LOOKASIDE_MISS_SIZE`, `_LOOKASIDE_MISS_FULL`: the count is in `highwater`, `current` is always `0`. `reset` sets the count to `0`.
+     * - `SQLITE_DBSTATUS_CACHE_USED`, `_CACHE_USED_SHARED`, `_SCHEMA_USED`, `_STMT_USED`: `current` is the bytes in use now, `highwater` is always `0`. `reset` does nothing.
+     * - `SQLITE_DBSTATUS_CACHE_HIT`, `_CACHE_MISS`, `_CACHE_WRITE`, `_CACHE_SPILL`, `_TEMPBUF_SPILL`: `current` is the count since the connection opened, `highwater` is always `0`. `reset` sets the count to `0`. `CACHE_WRITE` and `TEMPBUF_SPILL` overlap: a reset of one lowers the other.
+     * - `SQLITE_DBSTATUS_DEFERRED_FKS`: `current` is `1` while the open transaction has an unresolved foreign key constraint, else `0`. `highwater` is always `0`.
      *
      * Throws a `RangeError` if the SQLite library does not know `op`. Throws if the database is closed.
      *
@@ -1527,6 +1527,7 @@ declare module "bun:sqlite" {
      */
     const SQLITE_DBSTATUS_CACHE_WRITE: number;
     /**
+     * A flag, not a count: `current` is `1` while the open transaction has an unresolved foreign key constraint.
      * @constant 10
      */
     const SQLITE_DBSTATUS_DEFERRED_FKS: number;

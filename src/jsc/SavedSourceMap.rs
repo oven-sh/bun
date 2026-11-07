@@ -17,6 +17,22 @@ pub struct SavedSourceMap {
     /// Only accessed between [`Self::lock`] and [`Self::unlock`].
     map: HashTable,
     mutex: Mutex,
+    /// `bun test --isolate`: an entry goes with the last source provider it maps the code of,
+    /// see [`Self::retain`]. Otherwise it stays until it's replaced.
+    pub drops_unused: bool,
+    /// By the key of `map`, if `drops_unused`. Accessed like `map`.
+    users: HashMap<u64, Users, IdentityContext<u64>>,
+    /// How many test files are finished. Accessed like `map`.
+    finished_files: u32,
+}
+
+#[derive(Default)]
+struct Users {
+    providers: u32,
+    /// Sources that were transpiled, on any thread, and that no provider was created of yet.
+    unclaimed: u32,
+    /// `finished_files` when the last of them was.
+    transpiled_by_file: u32,
 }
 
 impl SavedSourceMap {
@@ -111,35 +127,37 @@ impl SavedSourceMap {
     /// as a `ParsedSourceMap` materialized from that provider.
     pub fn remove_source_provider(&mut self, opaque_source_provider: *mut c_void, path: &[u8]) {
         self.lock();
-        // Note: reshaped for borrowck — explicit unlock paired manually.
-        // `get`+`remove(&key)`: the std
-        // backing has no key-slot pointer to hand out, and the key is a u64 hash
-        // we already have in hand.
-        let key = hash(path);
-        let Some(&ptr) = self.map.get(&key) else {
-            self.unlock();
-            return;
-        };
-        let old_value = Value::from(Some(ptr));
-        let refers_to_provider = if let Some(provider) = old_value.get::<AnySourceProvider>() {
+        self.remove_if(hash(path), |value| {
+            Self::provider_of(value)
+                .is_some_and(|provider| core::ptr::eq(provider.ptr(), opaque_source_provider))
+        });
+        self.unlock();
+    }
+
+    /// The external provider that `value` is, or was materialized from.
+    fn provider_of(value: Value) -> Option<AnySourceProvider> {
+        if let Some(provider) = value.get::<AnySourceProvider>() {
             // SAFETY: the box was stored by `put_source_provider` and is live
             // while in the table.
-            core::ptr::eq(unsafe { (*provider).ptr() }, opaque_source_provider)
-        } else if let Some(parsed) = old_value.get::<ParsedSourceMap>() {
+            Some(unsafe { *provider })
+        } else if let Some(parsed) = value.get::<ParsedSourceMap>() {
             // SAFETY: `parsed` was stored by us and is live while in the table.
-            unsafe { (*parsed).underlying_provider }
-                .provider()
-                .is_some_and(|prov| core::ptr::eq(prov.ptr(), opaque_source_provider))
+            unsafe { (*parsed).underlying_provider }.provider()
         } else {
-            false
-        };
-        if refers_to_provider {
-            self.map.remove(&key);
-            // SAFETY: `old_value` was stored by us; the table's ownership of
-            // it ends here.
-            unsafe { Self::release_value(old_value) };
+            None
         }
-        self.unlock();
+    }
+
+    /// Called between [`Self::lock`] and [`Self::unlock`].
+    fn remove_if(&mut self, key: u64, predicate: impl FnOnce(Value) -> bool) {
+        if let Some(&ptr) = self.map.get(&key)
+            && predicate(Value::from(Some(ptr)))
+        {
+            self.map.remove(&key);
+            // SAFETY: the value was stored by us; the table's ownership of
+            // it ends here.
+            unsafe { Self::release_value(Value::from(Some(ptr))) };
+        }
     }
 }
 
@@ -181,6 +199,14 @@ impl SavedSourceMap {
         if !InternalSourceMap::is_valid_blob(mappings.list.as_slice()) {
             return Ok(());
         }
+        if self.drops_unused {
+            self.lock();
+            let finished_files = self.finished_files;
+            let users = self.users.entry(hash(source.path.text)).or_default();
+            users.unclaimed += 1;
+            users.transpiled_by_file = finished_files;
+            self.unlock();
+        }
 
         // --hot can re-read a file mid-rewrite (truncate + write) and transpile
         // a comment-only prefix into a 0-mapping map. Overwriting a real map
@@ -214,6 +240,61 @@ impl SavedSourceMap {
             Value::init(blob_ptr.cast::<c_void>().cast::<InternalSourceMap>()),
         );
         Ok(())
+    }
+
+    /// A source provider whose code is mapped by the entry of `path` was created. Returns whether
+    /// it must call [`Self::release`] when it's destroyed.
+    pub(crate) fn retain(&mut self, path: &[u8]) -> bool {
+        if !self.drops_unused {
+            return false;
+        }
+        self.lock();
+        let users = self.users.entry(hash(path)).or_default();
+        users.unclaimed = users.unclaimed.saturating_sub(1);
+        users.providers += 1;
+        self.unlock();
+        true
+    }
+
+    /// May run on any thread that destroys a source provider.
+    pub(crate) fn release(&mut self, path: &[u8]) {
+        self.lock();
+        let key = hash(path);
+        if let Some(users) = self.users.get_mut(&key) {
+            users.providers -= 1;
+            if users.providers == 0 && users.unclaimed == 0 {
+                self.users.remove(&key);
+                self.remove_if(key, |value| Self::provider_of(value).is_none());
+            }
+        }
+        self.unlock();
+    }
+
+    /// Between two test files. Not every source becomes a provider: `module._compile()` can be
+    /// overridden, and a module may load while it's transpiled a second time.
+    pub(crate) fn did_finish_file(&mut self) {
+        if !self.drops_unused {
+            return;
+        }
+        self.lock();
+        let finished_file = self.finished_files;
+        self.finished_files += 1;
+        let mut unused = Vec::new();
+        self.users.retain(|&key, users| {
+            // The transpiler's threads may still be at the sources of the finished file.
+            if users.transpiled_by_file == finished_file {
+                return true;
+            }
+            users.unclaimed = 0;
+            if users.providers == 0 {
+                unused.push(key);
+            }
+            users.providers > 0
+        });
+        for key in unused {
+            self.remove_if(key, |value| Self::provider_of(value).is_none());
+        }
+        self.unlock();
     }
 
     pub(crate) fn put_value(&mut self, path: &[u8], value: Value) {

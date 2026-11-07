@@ -529,6 +529,7 @@ unsafe extern "C" {
     safe fn Bun__TestFile__enterModuleGraph(global: &JSGlobalObject) -> u32;
     safe fn Bun__Process__resetArgv(global: &JSGlobalObject);
     safe fn Bun__TestFile__leaveModuleGraph(global: &JSGlobalObject);
+    safe fn Bun__IsolatedModuleCache__didFinishFile(global: &JSGlobalObject, max_bytes: usize);
     safe fn Zig__GlobalObject__retireDerivedRealmsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
@@ -6142,6 +6143,27 @@ impl VirtualMachine {
                 .unwrap_or(false)
     }
 
+    /// # Safety
+    /// `this` is live. See [`crate::SavedSourceMap::retain`].
+    #[unsafe(export_name = "Bun__VM__retainSourceMap")]
+    pub unsafe extern "C" fn retain_source_map(
+        this: *mut Self,
+        source_url: &bun_core::String,
+    ) -> bool {
+        // SAFETY: only this field is borrowed, and it has its own mutex.
+        let source_mappings = unsafe { &mut *core::ptr::addr_of_mut!((*this).source_mappings) };
+        source_mappings.retain(&source_url.to_utf8())
+    }
+
+    /// # Safety
+    /// `this` is live. See [`crate::SavedSourceMap::release`].
+    #[unsafe(export_name = "Bun__VM__releaseSourceMap")]
+    pub unsafe extern "C" fn release_source_map(this: *mut Self, source_url: &bun_core::String) {
+        // SAFETY: only this field is borrowed, and it has its own mutex.
+        let source_mappings = unsafe { &mut *core::ptr::addr_of_mut!((*this).source_mappings) };
+        source_mappings.release(&source_url.to_utf8());
+    }
+
     #[unsafe(export_name = "Bun__VM__isMainModule")]
     pub extern "C" fn is_main_module(&self, key: &bun_core::String) -> bool {
         self.main().is_some_and(|main| key.eql_utf8(main))
@@ -6494,6 +6516,14 @@ impl VirtualMachine {
             // stays installed for the whole test run.
             unsafe { (hooks.cancel_timers)(core::ptr::from_mut(self), None) };
         }
+
+        self.source_mappings.did_finish_file();
+        Bun__IsolatedModuleCache__didFinishFile(
+            self.global(),
+            bun_core::env_var::BUN_TEST_ISOLATION_SOURCE_CACHE_MAX_BYTES::get()
+                .and_then(|bytes| usize::try_from(bytes).ok())
+                .unwrap_or(usize::MAX),
+        );
 
         self.overridden_main.deinit();
         self.entry_point_result.value.deinit();

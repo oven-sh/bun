@@ -17,6 +17,7 @@
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
 #include "BunBuiltinNames.h"
+#include "BunCPUProfiler.h"
 
 namespace Zig {
 
@@ -57,6 +58,9 @@ void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
 extern "C" bool BunTest__shouldGenerateCodeCoverage(const BunString* sourceURL);
 extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
 extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
+extern "C" bool isBunTest;
+extern "C" bool Bun__VM__retainSourceMap(void* bunVM, const BunString* sourceURL);
+extern "C" void Bun__VM__releaseSourceMap(void* bunVM, const BunString* sourceURL);
 
 Ref<SourceProvider> SourceProvider::create(
     Zig::GlobalObject* globalObject,
@@ -140,6 +144,11 @@ Ref<SourceProvider> SourceProvider::create(
     if (provider->m_alreadyBundled) {
         BunString str = Bun::toString(provider->sourceURL());
         Bun__addSourceProviderSourceMap(globalObject->bunVM(), provider.ptr(), &str);
+    } else if (isBunTest && !isBuiltin) {
+        BunString str = Bun::toString(provider->sourceURL());
+        const bool mustRelease = Bun__VM__retainSourceMap(globalObject->bunVM(), &str);
+        // --coverage and --cpu-prof look up source maps when the run ends, so then it's never released.
+        provider->m_releasesSourceMap = mustRelease && !isCodeCoverageEnabled && !Bun::isCPUProfilerRunning();
     }
 
     return provider;
@@ -155,6 +164,10 @@ SourceProvider::~SourceProvider()
     if (m_alreadyBundled) {
         BunString str = Bun::toString(sourceURL());
         Bun__removeSourceProviderSourceMap(m_bunVM, this, &str);
+    }
+    if (m_releasesSourceMap) {
+        BunString str = Bun::toString(sourceURL());
+        Bun__VM__releaseSourceMap(m_bunVM, &str);
     }
     if (m_moduleInfo) {
         zig__ModuleInfoDeserialized__deinit(m_moduleInfo);

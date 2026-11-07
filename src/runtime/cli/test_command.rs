@@ -2908,6 +2908,7 @@ impl TestCommand {
 
         if ctx.test_options.isolate {
             vm.test_isolation_enabled = true;
+            vm.source_mappings.drops_unused = true;
             vm.auto_killer.enabled = true;
         }
         vm.test_isolation_state.shares_global = run_compiled::test_files_share_global(ctx);

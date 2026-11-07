@@ -7,6 +7,8 @@
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/StrongInlines.h>
 #include <JavaScriptCore/UnlinkedFunctionExecutable.h>
+#include <algorithm>
+#include <wtf/HashSet.h>
 
 namespace Bun {
 
@@ -35,7 +37,7 @@ static uint64_t madeFromHash(JSC::VM& vm, const WTF::String& key, const CodeStri
     return Bun__VM__hasGlobalsOfVitest(bunVM) ? ~hash : hash;
 }
 
-Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
+static Zig::SourceProvider* findProvider(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
 {
     auto& cache = WebCore::clientData(vm)->isolationSourceProviderCache;
     auto it = cache.find(key);
@@ -46,12 +48,38 @@ Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String&
     return provider->m_madeFromHash == madeFromHash(vm, key, pluginContents) ? provider : nullptr;
 }
 
+static void didUseProvider(JSC::VM& vm, Zig::SourceProvider& provider)
+{
+    const uint32_t file = WebCore::clientData(vm)->isolationFileNumber;
+    if (provider.m_filesThatUsedIt && provider.m_lastUsedByFile == file)
+        return;
+    provider.m_lastUsedByFile = file;
+    provider.m_filesThatUsedIt++;
+}
+
+Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
+{
+    auto* provider = findProvider(vm, key, pluginContents);
+    if (provider)
+        didUseProvider(vm, *provider);
+    return provider;
+}
+
 void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)
 {
     if (!isTagCacheable(static_cast<SyntheticModuleType>(provider.m_tag)) || provider.m_dependsOnMoreThanSource)
         return;
+    auto* clientData = WebCore::clientData(vm);
     provider.m_madeFromHash = madeFromHash(vm, key, pluginContents);
-    WebCore::clientData(vm)->isolationSourceProviderCache.set(key, &provider);
+    BunString borrowedKey = Bun::toString(key);
+    provider.m_isMainModule = Bun__VM__isMainModule(clientData->bunVM, &borrowedKey);
+    auto& cached = clientData->isolationSourceProviderCache.add(key, nullptr).iterator->value;
+    if (auto* replaced = static_cast<Zig::SourceProvider*>(cached.get())) {
+        provider.m_lastUsedByFile = replaced->m_lastUsedByFile;
+        provider.m_filesThatUsedIt = replaced->m_filesThatUsedIt;
+    }
+    didUseProvider(vm, provider);
+    cached = &provider;
 }
 
 const IsolatedInternalModule* IsolatedModuleCache::lookupInternalModule(JSC::VM& vm, uint32_t id)
@@ -70,7 +98,7 @@ void IsolatedModuleCache::insertInternalModule(JSC::VM& vm, uint32_t id, const J
 
 void IsolatedModuleCache::insertIfAbsent(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)
 {
-    if (!lookup(vm, key, pluginContents))
+    if (!findProvider(vm, key, pluginContents))
         insert(vm, key, provider, pluginContents);
 }
 
@@ -84,6 +112,55 @@ void IsolatedModuleCache::clear(JSC::VM& vm)
     WebCore::clientData(vm)->isolationSourceProviderCache.clear();
 }
 
+void IsolatedModuleCache::didFinishFile(JSC::VM& vm, size_t maxBytes)
+{
+    auto* clientData = WebCore::clientData(vm);
+    auto& cache = clientData->isolationSourceProviderCache;
+    const uint32_t finishedFile = clientData->isolationFileNumber++;
+    // A source that is loaded again has another SourceID, which `bun test --coverage` counts as another source.
+    if (vm.controlFlowProfiler())
+        return;
+
+    struct Candidate {
+        double score;
+        size_t bytes;
+        JSC::SourceProvider* provider;
+    };
+    Vector<Candidate> candidates;
+    size_t bytes = 0;
+    cache.removeIf([&](auto& entry) {
+        auto& provider = static_cast<Zig::SourceProvider&>(*entry.value);
+        if (provider.m_isMainModule)
+            return true;
+        // Removing one that has another owner would free nothing.
+        if (provider.m_lastUsedByFile != finishedFile && provider.hasOneRef()) {
+            // Capped, so that no module stays for long after the files that use it.
+            constexpr uint32_t maxFiles = 8;
+            const double score = static_cast<double>(finishedFile - provider.m_lastUsedByFile) / std::min(provider.m_filesThatUsedIt, maxFiles);
+            candidates.append({ score, provider.source().sizeInBytes(), &provider });
+            bytes += candidates.last().bytes;
+        }
+        return false;
+    });
+    if (bytes <= maxBytes)
+        return;
+
+    std::ranges::sort(candidates, std::ranges::greater {}, &Candidate::score);
+    WTF::HashSet<JSC::SourceProvider*> dropped;
+    for (auto& candidate : candidates) {
+        if (bytes <= maxBytes)
+            break;
+        bytes -= candidate.bytes;
+        dropped.add(candidate.provider);
+    }
+    cache.removeIf([&](auto& entry) { return dropped.contains(entry.value.get()); });
+}
+
+extern "C" void Bun__IsolatedModuleCache__didFinishFile(JSC::JSGlobalObject* globalObject, size_t maxBytes)
+{
+    IsolatedModuleCache::didFinishFile(JSC::getVM(globalObject), maxBytes);
+}
+
 // Test-only (bun:internal-for-testing). Returns the cached provider's
 // JSC::SourceProviderSourceType name for a resolved specifier, or null when
 // the key isn't cached. Lets tests assert that transpiled ESM enters the
@@ -95,7 +172,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsolatedModuleCacheSourceType, (JSC::JSGlobal
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto key = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto* provider = IsolatedModuleCache::lookup(vm, key);
+    auto* provider = findProvider(vm, key, nullptr);
     if (!provider)
         return JSC::JSValue::encode(JSC::jsNull());
     switch (provider->sourceType()) {

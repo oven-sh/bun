@@ -854,7 +854,7 @@ describe("bundler", () => {
           "type": "module",
           "exports": {
             ".": {
-              "require": "./require.js",
+              "require": "./require.js"
             }
           }
         }

@@ -4,12 +4,12 @@ import { join } from "path";
 test.concurrent("empty jsonc - package.json", async () => {
   await using dir = tempDir("jsonc", {
     "package.json": ``,
-    "index.ts": `
+    "index.mjs": `
     import pkg from './package.json';
     if (JSON.stringify(pkg) !== '{}') throw new Error('package.json should be empty');
     `,
   });
-  expect(await bunRun(join(dir, "index.ts"))).toSpawn();
+  expect(await bunRun(join(dir, "index.mjs"))).toSpawn();
 });
 
 test.concurrent("empty jsonc - tsconfig.json", async () => {

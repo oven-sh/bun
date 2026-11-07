@@ -2312,17 +2312,20 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
 });
 
 describe.concurrent("a snapshot that does not match what the value prints as", () => {
-  async function logOf(files: Record<string, string>) {
-    using dir = tempDir("snapshot-mismatch", files);
+  async function logIn(cwd: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test"],
       env: { ...bunEnv, CI: "true" },
-      cwd: String(dir),
+      cwd,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { log: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")), stderr, exitCode };
+  }
+  async function logOf(files: Record<string, string>) {
+    using dir = tempDir("snapshot-mismatch", files);
+    return await logIn(String(dir));
   }
   const firstLine = `const firstLine = f => { try { f(); return "passes"; } catch (error) { return error.message.split("\\n")[0]; } };`;
 
@@ -2527,6 +2530,13 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
               }
             \`);
           });
+          test("Bun 1.4.4, which had another class for the sandbox", () => {
+            expect({ sandbox: sandbox() }).toMatchInlineSnapshot(\`
+              {
+                "sandbox": NodeVMGlobalProxy {},
+              }
+            \`);
+          });
           test("another value", () => {
             console.log(firstLine(() => expect({ namespace }).toMatchInlineSnapshot(\`
               {
@@ -2545,6 +2555,114 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
       exitCode: 0,
     });
   });
+
+  // No older version listed the properties of the global of a node:vm context. 1.4.4 had the class NodeVMGlobalProxy for it.
+  // 1.4.0 to 1.4.3 named it JSGlobalProxy whatever prototype a script gave it, which is what jsdom does to its window.
+  test.each(["bun:test", "vitest"])(
+    "passes when it is what Bun 1.4.3 or Bun 1.4.4 wrote for the global of a node:vm context, in a test of %j",
+    async module => {
+      const written: Record<string, Record<string, string>> = {
+        sandbox: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "NodeVMGlobalProxy {}" },
+        window: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "Window {}" },
+        tagged: { "1.4.3": "Tagged {}", "1.4.4": "Tagged {}" },
+        taggedAsTheClass: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "JSGlobalProxy {}" },
+        taggedWithNoText: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "NodeVMGlobalProxy {}" },
+        thisOfNotContextified: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "NodeVMGlobalProxy {}" },
+        notContextified: { "1.4.4": "NodeVMGlobalProxy {}" },
+        classPrototype: { "1.4.3": "JSGlobalProxy {}" },
+        // The global of the main realm had the same class in both.
+        mainGlobal: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "JSGlobalProxy {}" },
+      };
+      const notAccepted: [string, string][] = [
+        // No version wrote these for the value.
+        ["sandbox", "Window {}"],
+        ["sandbox", `\nNodeVMGlobalProxy {\n  "a": 1,\n  "b": 2,\n}\n`],
+        ["window", "NodeVMGlobalProxy {}"],
+        ["tagged", "NodeVMGlobalProxy {}"],
+        ["tagged", "JSGlobalProxy {}"],
+        ["taggedAsTheClass", "NodeVMGlobalProxy {}"],
+        ["mainGlobal", "NodeVMGlobalProxy {}"],
+        // Up to 1.4.3 vm.createContext(vm.constants.DONT_CONTEXTIFY) returned another object than the global. It no longer exists.
+        ["notContextified", `\nNodeVMSpecialSandbox {\n  "a": 1,\n}\n`],
+        // 1.4.4 named the global after the class of a prototype that a script gave it.
+        ["classPrototype", "Plain {}"],
+      ];
+      // An older Bun put a property matcher on the global itself, and then listed that property.
+      const withPropertyMatchers = `\nNodeVMGlobalProxy {\n  "a": 1,\n}\n`;
+      const versions = ["1.4.3", "1.4.4"];
+      const inFile = (version: string) =>
+        Object.keys(written)
+          .filter(name => written[name][version])
+          .sort();
+      const snapshot =
+        headers.bun +
+        versions
+          .map(version => {
+            const lines = inFile(version).map(name => `  "${name}": ${written[name][version]},\n`);
+            return `\nexports[\`in a file that Bun ${version} wrote 1\`] = \`\n{\n${lines.join("")}}\n\`;\n`;
+          })
+          .join("");
+      using dir = tempDir("snapshot-context-global", {
+        "a.test.js": `
+          import { test, expect } from ${JSON.stringify(module)};
+          import vm from "node:vm";
+          ${firstLine}
+          const context = sandbox => vm.runInContext("this", vm.createContext(sandbox));
+          class Plain {}
+          class Window {}
+          Object.defineProperty(Window.prototype, Symbol.toStringTag, { value: "Window" });
+          const values = {
+            sandbox: () => context({ b: 2, a: 1 }),
+            // jsdom gives the prototype of its Window class to the global of its context.
+            window: () => Object.setPrototypeOf(context({ document: {} }), Window.prototype),
+            tagged: () => context({ [Symbol.toStringTag]: "Tagged" }),
+            taggedAsTheClass: () => context({ [Symbol.toStringTag]: "JSGlobalProxy" }),
+            taggedWithNoText: () => context({ [Symbol.toStringTag]: "" }),
+            notContextified: () => Object.assign(vm.createContext(vm.constants.DONT_CONTEXTIFY), { a: 1 }),
+            thisOfNotContextified: () => vm.runInContext("this", values.notContextified()),
+            classPrototype: () => Object.setPrototypeOf(context({ a: 1 }), Plain.prototype),
+            mainGlobal: () => globalThis,
+          };
+          const written = ${JSON.stringify(written)};
+          for (const version of ${JSON.stringify(versions)}) {
+            test("in a file that Bun " + version + " wrote", () => {
+              const names = Object.keys(written).filter(name => written[name][version]);
+              expect(Object.fromEntries(names.map(name => [name, values[name]()]))).toMatchSnapshot();
+            });
+          }
+          test("inline", () => {
+            for (const [name, texts] of Object.entries(written)) {
+              for (const [version, text] of Object.entries(texts)) {
+                const alone = firstLine(() => expect(values[name]()).toMatchInlineSnapshot(text));
+                const inside = firstLine(() => expect([values[name]()]).toMatchInlineSnapshot("\\n[\\n  " + text + ",\\n]\\n"));
+                console.log(name, version, alone, inside);
+              }
+            }
+            for (const [name, text] of ${JSON.stringify(notAccepted)}) {
+              console.log(name, JSON.stringify(text), firstLine(() => expect(values[name]()).toMatchInlineSnapshot(text)));
+            }
+            const withPropertyMatchers = () => expect(values.sandbox()).toMatchInlineSnapshot({ a: expect.any(Number) }, ${JSON.stringify(withPropertyMatchers)});
+            console.log("with property matchers", firstLine(withPropertyMatchers));
+          });
+        `,
+        "__snapshots__/a.test.js.snap": snapshot,
+      });
+      const { log, stderr, exitCode } = await logIn(String(dir));
+      const mismatch = "expect(received).toMatchInlineSnapshot(expected)";
+      expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({
+        log: [
+          ...Object.entries(written).flatMap(([name, texts]) =>
+            Object.keys(texts).map(version => `${name} ${version} passes passes`),
+          ),
+          ...notAccepted.map(([name, text]) => `${name} ${JSON.stringify(text)} ${mismatch}`),
+          `with property matchers ${mismatch}`,
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8")).toBe(snapshot);
+    },
+  );
 
   test("of import.meta.env fails when a variable has another value", async () => {
     using dir = tempDir("snapshot-import-meta-env", {

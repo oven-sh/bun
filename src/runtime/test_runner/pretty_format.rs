@@ -320,8 +320,8 @@ pub(crate) struct Formatter<'a> {
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
     pub(crate) snapshot_format: SnapshotFormat,
-    /// Set by `did_older_bun_print`. The cell turns true once the output has diverged, so printing can stop.
-    like_older_bun: Option<&'a core::cell::Cell<bool>>,
+    /// Set by `did_older_bun_print`. Printing can stop once the output has diverged from the saved text.
+    like_older_bun: Option<&'a ExpectedText<'a>>,
     same_as_older_bun: bool,
     /// Bytes written so far. Only failure messages track it.
     output_length: Option<&'a core::cell::Cell<usize>>,
@@ -2389,7 +2389,12 @@ impl<'a> Formatter<'a> {
                     self.same_as_older_bun &= result?;
 
                     if iter_i == 0 {
-                        let object_name = value.get_class_name(self.global_this)?;
+                        let mut object_name = value.get_class_name(self.global_this)?;
+                        if let Some(saved) = self.like_older_bun
+                            && let Some(older_name) = saved.name_of_context_global(self.global_this, value, &object_name)?
+                        {
+                            object_name = older_name;
+                        }
 
                         if !object_name.eq_ascii(b"Object") {
                             writer.print(format_args!("{} {{}}", object_name));
@@ -2564,8 +2569,8 @@ impl<'a> Formatter<'a> {
         // `self.global_this` is restored to the previous value at the end.
         self.global_this = global_this;
 
-        if let Some(differs) = self.like_older_bun {
-            self.failed |= differs.get();
+        if let Some(saved) = self.like_older_bun {
+            self.failed |= saved.differs.get();
         } else if matches!(result.tag, Tag::Object | Tag::Array | Tag::JSON) {
             match super::dom_format::print_in_snapshot(self, writer, value) {
                 Ok(false) => {}
@@ -3508,18 +3513,54 @@ impl ObjectList {
     }
 }
 
+/// The text an older Bun saved. Printing the value the way that Bun did consumes it.
 struct ExpectedText<'a> {
-    rest: &'a [u8],
-    differs: &'a core::cell::Cell<bool>,
+    rest: core::cell::Cell<&'a [u8]>,
+    /// Turns true once the output has diverged, and stays true.
+    differs: core::cell::Cell<bool>,
 }
 
-impl bun_io::Write for ExpectedText<'_> {
+impl bun_io::Write for &ExpectedText<'_> {
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
-        match self.rest.strip_prefix(buf) {
-            Some(rest) => self.rest = rest,
+        match self.rest.get().strip_prefix(buf) {
+            Some(rest) => self.rest.set(rest),
             None => self.differs.set(true),
         }
         Ok(())
+    }
+}
+
+impl ExpectedText<'_> {
+    /// What Bun 1.4.0 to 1.4.4 named the global of a `node:vm` context where that is not `name`, if the saved text continues with it.
+    #[cold]
+    fn name_of_context_global(
+        &self,
+        global: &JSGlobalObject,
+        value: JSValue,
+        name: &bun_core::String,
+    ) -> JsResult<Option<bun_core::String>> {
+        unsafe extern "C" {
+            safe fn SnapshotFormat__hasOwnStringTag(global: &JSGlobalObject, object: JSValue) -> bool;
+        }
+        let is_context_global = value.js_type() == JSType::GlobalProxy
+            && value.get_proxy_target().get_class_info_name().is_some_and(|class| class == b"NodeVMGlobalObject");
+        if !is_context_global {
+            return Ok(None);
+        }
+        let (older_name, printed): (&'static str, &[u8]) = if name.eq_ascii(b"JSGlobalProxy") {
+            // 1.4.4 had the class `NodeVMGlobalProxy` for it.
+            ("NodeVMGlobalProxy", b"NodeVMGlobalProxy {}")
+        } else {
+            // `name` is a `Symbol.toStringTag`. 1.4.0 to 1.4.3 did not read one from a prototype that a script set.
+            ("JSGlobalProxy", b"JSGlobalProxy {}")
+        };
+        // Every version printed the `Symbol.toStringTag` of the global itself.
+        if !self.rest.get().starts_with(printed)
+            || jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__hasOwnStringTag(global, value))?
+        {
+            return Ok(None);
+        }
+        Ok(Some(bun_core::String::static_(older_name)))
     }
 }
 
@@ -3528,15 +3569,15 @@ impl JestPrettyFormat {
     /// They printed DOM nodes as plain objects, accessors as `[native code]`, and non-enumerable properties.
     #[cold]
     pub(crate) fn did_older_bun_print(global: &JSGlobalObject, value: JSValue, saved: &[u8]) -> JsResult<bool> {
-        let differs = core::cell::Cell::new(false);
-        let mut expected = ExpectedText { rest: saved, differs: &differs };
+        let expected = ExpectedText { rest: core::cell::Cell::new(saved), differs: core::cell::Cell::new(false) };
         let mut formatter = Formatter::new(global);
         formatter.quote_strings = true;
-        formatter.like_older_bun = Some(&differs);
+        formatter.like_older_bun = Some(&expected);
         let tag = Tag::get(value, global)?;
-        let mut bridge = AsFmt::new(&mut expected);
+        let mut writer = &expected;
+        let mut bridge = AsFmt::new(&mut writer);
         formatter.format::<_, false>(tag, &mut bun_io::write::FmtAdapter::new(&mut bridge), value, global)?;
-        Ok(!differs.get() && expected.rest.is_empty())
+        Ok(!expected.differs.get() && expected.rest.get().is_empty())
     }
 
     /// Returns true if an older Bun would have printed the same text, so `did_older_bun_print` can be skipped.

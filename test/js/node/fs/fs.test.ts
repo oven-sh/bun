@@ -3688,6 +3688,25 @@ it.if(isWindows)("symlink on windows with forward slashes", async () => {
   expect(await fs.promises.readlink(join(r, "file-sym.txt"))).toBe("files\\2024\\123.txt");
 });
 
+// `fs.symlink` puts the `\\?\` prefix in front of the target of a junction. A target that has the prefix already keeps
+// it, as `path.toNamespacedPath()` keeps it. A relative target is joined to the directory of the link.
+describe.skipIf(!isWindows)("junction on windows", () => {
+  it.each([
+    ["a plain target", (real: string, link: string) => [real, link]],
+    ["a target that has the \\\\?\\ prefix", (real: string, link: string) => ["\\\\?\\" + real, link]],
+    [
+      "a link path that has the \\\\?\\ prefix, and a relative target",
+      (_: string, link: string) => ["real", "\\\\?\\" + link],
+    ],
+  ])("with %s", (_, spell) => {
+    using dir = tempDir("fs-junction-prefix", { "real/inner.txt": "through the junction" });
+    const link = join(String(dir), "link");
+    const [target, linkPath] = spell(join(String(dir), "real"), link);
+    symlinkSync(target, linkPath, "junction");
+    expect(readFileSync(join(link, "inner.txt"), "utf8")).toBe("through the junction");
+  });
+});
+
 it("realpath async", async () => {
   const actual = join(tmpdirSync(), "fs-realpath.txt");
   try {

@@ -1209,6 +1209,16 @@ test("prints an event that holds itself once, and a getter of an event that thro
     '  "target": [native code],',
     '  "type": [native code],',
   ]);
+
+  class TargetsItself extends Event {
+    get target() {
+      return this;
+    }
+  }
+  expect(printedInFailure(new TargetsItself("a")).filter(line => /"(target|type)"/.test(line))).toEqual([
+    '  "target": [Circular],',
+    '  "type": "a",',
+  ]);
 });
 
 test("prints the object that dispatched an event as its class", () => {

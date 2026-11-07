@@ -1893,19 +1893,6 @@ impl<'a> Formatter<'a> {
                     writer.print(format_args!("{}", str));
                 }
                 Tag::Event => {
-                    // In a failure message the walk of the Object arm prints what `toEqual` reads of an event.
-                    if self.output_length.is_some() {
-                        let dispatcher = match value.get(self.global_this, "target") {
-                            Ok(target) => target.unwrap_or(JSValue::ZERO),
-                            Err(JsError::Thrown) if self.global_this.clear_exception_except_termination() => JSValue::ZERO,
-                            Err(error) => return Err(error),
-                        };
-                        let outer = core::mem::replace(&mut self.dispatcher, dispatcher);
-                        let printed = self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(writer.ctx, value, JSType::Event);
-                        self.dispatcher = outer;
-                        return printed;
-                    }
-
                     let event_type_value: JSValue = 'brk: {
                         let value_: JSValue = match value.get(self.global_this, "type")? {
                             Some(v) => v,
@@ -2570,6 +2557,19 @@ impl<'a> Formatter<'a> {
             if value == self.dispatcher {
                 let _ = writer.write_fmt(format_args!("[{}]", value.get_class_name(global_this)?));
                 return Ok(());
+            }
+            // The walk of the Object arm prints what `toEqual` reads of an event.
+            if result.tag == Tag::Event {
+                let dispatcher = match value.get(global_this, "target") {
+                    Ok(target) => target.filter(|target| *target != value).unwrap_or(JSValue::ZERO),
+                    Err(JsError::Thrown) if global_this.clear_exception_except_termination() => JSValue::ZERO,
+                    Err(error) => return Err(error),
+                };
+                let outer = core::mem::replace(&mut self.dispatcher, dispatcher);
+                let event = TagResult { tag: Tag::Object, cell: JSType::Event };
+                let printed = self.format::<W, ENABLE_ANSI_COLORS>(event, writer, value, global_this);
+                self.dispatcher = outer;
+                return printed;
             }
         }
         let mut result = result;

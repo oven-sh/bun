@@ -15,12 +15,14 @@ use self::measure::Measure;
 use self::output::Out;
 use super::element::{
     BestFitting, Condition, CursorMark, DedentMode, Fallback, Flat, FlatFlags, FormatElement,
-    Group, GroupId, GroupMode, Interned, LineMode, PrintMode, Tag, TextWidth,
+    Group, GroupId, GroupMode, Interned, JsLabels, LabelId, LineMode, PrintMode, Tag, TextWidth,
 };
 use super::formatter::{END_LINE_SUFFIX, REST_OF_INDENTED_LINE_GROUP, Storage, line_break};
 use crate::FormatError;
 use crate::options::{Flavor, FormatOptions, IndentStyle, LineEnding};
 use smallvec::SmallVec;
+
+const OWN_BOUNDARY: LabelId = LabelId::of(JsLabels::OwnBoundary);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum PrintError {
@@ -35,14 +37,17 @@ pub(crate) enum PrintError {
     NestedTooDeeply,
     /// See [`crate::is_too_long`].
     TooLong,
+    /// A text that was written in place of a document doesn't fit on its line. See `js/flat.rs`.
+    ShortCutTooWide,
 }
 
 impl From<PrintError> for FormatError {
     fn from(error: PrintError) -> FormatError {
         match error {
-            PrintError::InvalidDocument | PrintError::MeasureAgain | PrintError::StaysExpanded => {
-                FormatError::InvalidDocument
-            }
+            PrintError::InvalidDocument
+            | PrintError::MeasureAgain
+            | PrintError::StaysExpanded
+            | PrintError::ShortCutTooWide => FormatError::InvalidDocument,
             PrintError::NestedTooDeeply => FormatError::NestedTooDeeply,
             PrintError::TooLong => FormatError::TooLong,
         }
@@ -70,7 +75,7 @@ impl PrinterOptions {
             line_ending: options.line_ending.resolve(source),
             indent_style: options.indent_style,
             flavor: options.flavor,
-            marks_line_breaks_in_texts: options.is_in_markdown,
+            marks_line_breaks_in_texts: options.is_in_markdown && !options.is_at_margin,
         }
     }
 }
@@ -232,6 +237,11 @@ struct Printer<'d> {
     /// just as they will when the output is formatted again.
     expanded_group: u32,
     has_empty_line: bool,
+    /// A [`FormatElement::LineSuffixBoundary`] has queued a line break, and itself behind that.
+    is_boundary_pending: bool,
+    /// The length of `out` behind the line break of a [`FormatElement::LineSuffixBoundary`]. The line that starts there
+    /// counts as one with something on it: Prettier's printer, which skips no line break, prints the next one too.
+    after_boundary: usize,
     line_width: usize,
     /// The run being printed.
     elements: Elements<'d>,
@@ -286,6 +296,8 @@ pub(crate) fn print(
         is_trying: false,
         expanded_group: u32::MAX,
         has_empty_line: false,
+        is_boundary_pending: false,
+        after_boundary: usize::MAX,
         line_width: 0,
         elements: Elements::new(Run::of(root), &storage.pool),
         mode: PrintMode::Expanded,
@@ -306,7 +318,7 @@ pub(crate) fn print(
 impl<'d> Printer<'d> {
     fn print_all(&mut self) -> PrintResult<()> {
         loop {
-            self.print_elements::<false>(PrintMode::Expanded)?;
+            self.print_elements(None)?;
             if self.buffers.line_suffixes.is_empty() {
                 return Ok(());
             }
@@ -429,16 +441,16 @@ impl<'d> Printer<'d> {
 
     /// Prints the queue.
     ///
-    /// With `ENTRY`, it only prints from the [`Tag::StartEntry`] that's next in the queue to its [`Tag::EndEntry`], in
-    /// `entry_mode`.
-    fn print_elements<const ENTRY: bool>(&mut self, entry_mode: PrintMode) -> PrintResult<()> {
+    /// With `entry_mode`, it only prints from the [`Tag::StartEntry`] that's next in the queue to its
+    /// [`Tag::EndEntry`], in that mode.
+    #[inline(never)]
+    fn print_elements(&mut self, entry_mode: Option<PrintMode>) -> PrintResult<()> {
         let mut depth = 0usize;
         loop {
             let Some(element) = self.next() else {
-                return if ENTRY {
-                    Err(PrintError::InvalidDocument)
-                } else {
-                    Ok(())
+                return match entry_mode {
+                    Some(_) => Err(PrintError::InvalidDocument),
+                    None => Ok(()),
                 };
             };
             match element {
@@ -468,7 +480,12 @@ impl<'d> Printer<'d> {
                     self.print_text(self.source, text.range(), text.width)
                 }
                 FormatElement::OwnedText(text) => {
-                    self.print_text(self.text, text.range(), text.width)
+                    self.print_text(self.text, text.range(), text.width);
+                    if let Some(after) = text.width.room_needed_after()
+                        && self.line_width + after as usize > self.options.print_width
+                    {
+                        return Err(PrintError::ShortCutTooWide);
+                    }
                 }
                 FormatElement::Line(line_mode) => self.print_line(*line_mode),
                 FormatElement::IndentedLineGroup(id) => {
@@ -493,7 +510,21 @@ impl<'d> Printer<'d> {
                 // `document::Tracker` already handled it.
                 FormatElement::ExpandParent => {}
                 FormatElement::LineSuffixBoundary => {
-                    self.flush_line_suffixes(Some(line_break(LineMode::Hard)))
+                    if self.buffers.line_suffixes.is_empty() {
+                        if self.is_boundary_pending {
+                            self.is_boundary_pending = false;
+                            self.after_boundary = self.out.len();
+                        }
+                    } else {
+                        if !self.options.flavor.is_oxfmt() {
+                            self.is_boundary_pending = true;
+                            self.print_next(Interned {
+                                start: self.elements.at().saturating_sub(1),
+                                len: 1,
+                            });
+                        }
+                        self.flush_line_suffixes(Some(line_break(LineMode::Hard)));
+                    }
                 }
                 FormatElement::BestFitting(best_fitting) => {
                     self.print_best_fitting(*best_fitting)?
@@ -544,7 +575,7 @@ impl<'d> Printer<'d> {
                     Tag::StartFill => self.print_fill_entries()?,
                     Tag::EndFill => self.pop(FrameKind::Fill)?,
                     Tag::StartEntry => {
-                        if ENTRY {
+                        if let Some(entry_mode) = entry_mode {
                             depth += 1;
                             if depth == 1 {
                                 self.push(FrameKind::Entry, entry_mode);
@@ -555,7 +586,7 @@ impl<'d> Printer<'d> {
                     }
                     Tag::EndEntry => {
                         self.pop(FrameKind::Entry)?;
-                        if ENTRY {
+                        if entry_mode.is_some() {
                             depth = depth.saturating_sub(1);
                             if depth == 0 {
                                 return Ok(());
@@ -625,6 +656,10 @@ impl<'d> Printer<'d> {
                             self.buffers.indentions.push(indention);
                         }
                     }
+                    // The boundary in it then finds nothing that waits, and notes nothing.
+                    Tag::StartLabelled(label) if *label == OWN_BOUNDARY => {
+                        self.flush_line_suffixes(Some(line_break(LineMode::Hard)));
+                    }
                     Tag::StartLabelled(_) | Tag::EndLabelled | Tag::EndConditionalContent => {}
                 },
             }
@@ -676,7 +711,7 @@ impl<'d> Printer<'d> {
             return Err(PrintError::NestedTooDeeply);
         }
         match self.is_at_start_entry() {
-            true => self.print_elements::<true>(mode),
+            true => self.print_elements(Some(mode)),
             false => Err(PrintError::InvalidDocument),
         }
     }
@@ -863,6 +898,7 @@ impl<'d> Printer<'d> {
         let pending = (self.pending_indent, self.pending_space);
         let measured_group_fits = self.measured_group_fits;
         let has_empty_line = self.has_empty_line;
+        let boundary = (self.is_boundary_pending, self.after_boundary);
         let line_width = self.line_width;
         let elements = self.elements.clone();
         let mode = self.mode;
@@ -890,6 +926,7 @@ impl<'d> Printer<'d> {
         (self.pending_indent, self.pending_space) = pending;
         self.measured_group_fits = measured_group_fits;
         self.has_empty_line = has_empty_line;
+        (self.is_boundary_pending, self.after_boundary) = boundary;
         self.line_width = line_width;
         self.elements = elements;
         self.mode = mode;
@@ -1094,7 +1131,10 @@ impl<'d> Printer<'d> {
         self.has_empty_line = false;
         if width.is_multiline() {
             let line_width = self.line_width + width.value() as usize;
-            self.print_lines(text.get(range).unwrap_or_default());
+            self.print_lines(
+                text.get(range).unwrap_or_default(),
+                !width.is_forced_line_breaks(),
+            );
             // Prettier adds the whole string's width, counting a line break like any other character.
             if width.is_one_string() {
                 self.line_width = line_width;
@@ -1106,14 +1146,30 @@ impl<'d> Printer<'d> {
     }
 
     #[cold]
-    fn print_lines(&mut self, text: &[u8]) {
+    fn print_lines(&mut self, text: &[u8], is_text: bool) {
+        // In the flavor of oxfmt every line break that is written as a text has the mark.
+        let marks_line_breaks =
+            self.options.marks_line_breaks_in_texts && (is_text || self.options.flavor.is_oxfmt());
+        if !marks_line_breaks
+            && matches!(self.options.line_ending, LineEnding::Lf | LineEnding::Auto)
+            && let Some(last_line_break) = bun_core::strings::last_index_of_char(text, b'\n')
+        {
+            self.out.bytes(text);
+            let width = TextWidth::from_javascript(
+                &text[last_line_break + 1..],
+                self.options.flavor,
+                self.options.indent_width,
+            );
+            self.line_width = width.value() as usize;
+            return;
+        }
         let mut lines = bun_core::strings::split(text, b"\n");
         if let Some(first) = lines.next() {
             self.out.bytes(first);
         }
         let mut last = None;
         for line in lines {
-            if self.options.marks_line_breaks_in_texts {
+            if marks_line_breaks {
                 self.out.bytes(b"\r");
             }
             self.print_line_break();
@@ -1147,7 +1203,8 @@ impl<'d> Printer<'d> {
     #[inline(never)]
     fn has_text_without_width(&self) -> bool {
         let printed = self.out.since(self.start);
-        !matches!(printed.last(), None | Some(b'\n' | b'\r')) && printed != b"\xEF\xBB\xBF"
+        self.out.len() == self.after_boundary
+            || (!matches!(printed.last(), None | Some(b'\n' | b'\r')) && printed != b"\xEF\xBB\xBF")
     }
 }
 

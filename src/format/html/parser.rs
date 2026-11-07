@@ -1,9 +1,12 @@
 //! `angular-html-parser` 10.12: `ml_parser/parser.ts`.
 
-use super::ast::{Attribute, Id, Kind, Node, Span, StartTagComment, Tree};
+use super::ast::{Attribute, Flags, Id, Kind, Node, Span, StartTagComment, Tree};
 use super::data::{self, TagDefinition};
 use super::error::{ErrorKind, SyntaxError};
-use super::lexer::{self, ContentType, GetTagContentType, LexedAttribute, Parts, Token, TokenType};
+use super::lexer::{
+    self, ContentType, GetTagContentType, LexedAttribute, Parts, Token, TokenType, Tokenizer,
+};
+use super::runs::{self, Parent, Runs};
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 
@@ -14,6 +17,8 @@ pub(crate) struct Options<'f> {
     /// Prettier's `shouldParseAsRawText(tagName, prefix, hasParent, attrs)`
     pub(crate) should_parse_as_raw_text:
         Option<&'f dyn Fn(&[u8], bool, &[LexedAttribute<'_>]) -> bool>,
+    /// `None` if everything goes the long way.
+    pub(crate) runs: Option<runs::Settings>,
 }
 
 pub(crate) struct ParseResult<'a> {
@@ -23,10 +28,12 @@ pub(crate) struct ParseResult<'a> {
     pub(crate) is_nested_too_deeply: bool,
 }
 
-struct TreeBuilder<'a, 't, 'k> {
+struct TreeBuilder<'a, 't, 'k, 'f> {
     text: &'a [u8],
     tree: &'t mut Tree<'a>,
-    tokens: &'k [Token],
+    /// Makes the tokens as they are asked for, so that it can be told what has become of the ones before. The token at
+    /// `index` is always there.
+    lexer: &'k mut Tokenizer<'a, 'f>,
     index: usize,
     /// The index where this builder's tokens end, and the token it sees there instead.
     end: usize,
@@ -59,18 +66,112 @@ pub(crate) fn definition_of(name: &[u8], is_case_sensitive: bool) -> &'static Ta
     }
 }
 
-impl<'a> TreeBuilder<'a, '_, '_> {
+impl<'a> TreeBuilder<'a, '_, '_, '_> {
+    #[inline]
     fn peek(&self) -> Token {
         match self.index < self.end {
-            true => self.tokens.get(self.index).copied().unwrap_or(self.eof),
+            true => (self.lexer.tokens.get(self.index).copied()).unwrap_or(self.eof),
             false => self.eof,
         }
     }
 
+    /// Has the lexer go on until the token at `index` is there.
+    fn fill(&mut self) {
+        if self.index < self.lexer.tokens.len() {
+            return;
+        }
+        if self.lexer.forgets_tokens() {
+            self.index = 0;
+        }
+        while self.index >= self.lexer.tokens.len() {
+            if self.lexer.may_start_run()
+                && let Some(parent) = self.parent_of_run()
+            {
+                self.lexer.find_runs(parent, &mut self.tree.printed);
+            }
+            if !self.lexer.takes_run() && !self.lexer.step() {
+                break;
+            }
+        }
+    }
+
+    /// Returns what a child that starts at the lexer's cursor is in, or `None` if it has to go the long way. Every
+    /// token but white space in front of the cursor has been taken.
+    fn parent_of_run(&self) -> Option<Parent<'a>> {
+        let mut is_in_svg = false;
+        let (element, container) = match self.container() {
+            None => (None, self.root),
+            Some(id) => {
+                let (node, name) = (&self.tree[id], self.full_name_of(id).name);
+                let definition = node.tag_definition;
+                is_in_svg = node.namespace == b"svg";
+                let is_plain = node.kind == Kind::Element
+                    && definition.content_type == ContentType::ParsableData
+                    && !definition.ignore_first_lf
+                    && !definition.is_void
+                    && !data::is_pre_tag(name);
+                // What is in these is not printed like the rest, nor is an `<svg>` further in.
+                let is_plain = is_plain
+                    && !node.has(Flags::IS_IN_TEXT_OR_FOREIGN_OBJECT)
+                    && match is_in_svg {
+                        true => true,
+                        false => {
+                            node.namespace.is_empty()
+                                && name.iter().all(|byte| match byte {
+                                    b'a'..=b'z' | b'0'..=b'9' | b'-' => true,
+                                    b'A'..=b'Z' => self.is_tag_name_case_sensitive,
+                                    _ => false,
+                                })
+                        }
+                    };
+                if !is_plain || node.has(Flags::FOLLOWS_DISPLAY_COMMENT) {
+                    return None;
+                }
+                (Some((name, definition)), id)
+            }
+        };
+        // A comment can say how what follows it is printed. A text becomes a part of the CDATA section in front of it.
+        if (self.tree.last_child(container)).is_some_and(|last| match self.tree[last].kind {
+            Kind::Comment | Kind::Cdata => true,
+            Kind::Text => self.is_white_space_behind_comment(last),
+            _ => false,
+        }) {
+            return None;
+        }
+        Some(Parent {
+            level: self.container_stack.len(),
+            element,
+            is_in_svg,
+            has_children: self.tree.has_children(container),
+        })
+    }
+
+    /// White space is a text by the time a run is asked for if an end tag that closes nothing follows it.
+    #[cold]
+    fn is_white_space_behind_comment(&self, text: Id) -> bool {
+        let mut last = Some(text);
+        while let Some(text) = last.filter(|&it| {
+            let node = &self.tree[it];
+            node.kind == Kind::Text && node.span.of(self.text).trim_ascii().is_empty()
+        }) {
+            last = self.tree.prev(text);
+        }
+        last.is_some_and(|last| matches!(self.tree[last].kind, Kind::Comment | Kind::Cdata))
+    }
+
+    fn consume_ready(&mut self, token: Token) {
+        let mut node = Node::new(Kind::Ready, token.span);
+        if let Parts::Ready(printed, level, flags) = token.parts {
+            (node.printed, node.printed_level, node.flags) = (printed, level, flags);
+        }
+        self.add_to_parent(node);
+    }
+
     fn advance(&mut self) -> Token {
         let token = self.peek();
-        if self.index < self.end {
+        if self.index < self.end && token.kind != TokenType::Eof {
             self.index += 1;
+            self.fill();
         }
         token
     }
@@ -143,6 +244,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
                 IncompleteBlockOpen => self.consume_incomplete_block(token),
                 LetStart => self.consume_let(token),
                 DocTypeStart => self.consume_doc_type(token),
+                Ready => self.consume_ready(token),
                 IncompleteLet => {
                     let name = match token.parts {
                         Parts::Value(name) => name.of(self.text),
@@ -296,7 +398,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         let mut builder = TreeBuilder {
             text: self.text,
             tree: &mut *self.tree,
-            tokens: self.tokens,
+            lexer: &mut *self.lexer,
             index: first,
             end: last,
             eof: Token {
@@ -434,8 +536,10 @@ impl<'a> TreeBuilder<'a, '_, '_> {
     fn consume_element_start_tag(&mut self, start_tag_token: Token) {
         let first_attr = self.tree.attrs.len() as u32;
         let first_comment = self.tree.start_tag_comments.len() as u32;
+        let mut ready = Parts::None;
         loop {
             match self.peek().kind {
+                TokenType::ReadyAttributes => ready = self.advance().parts,
                 TokenType::AttrName => {
                     let name = self.advance();
                     let attr = self.consume_attr(name);
@@ -483,6 +587,10 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         node.tag_definition = definition;
         node.attrs = (first_attr, self.tree.attrs.len() as u32);
         node.start_tag_comments = (first_comment, self.tree.start_tag_comments.len() as u32);
+        if let Parts::Ready(printed, level, flags) = ready {
+            (node.printed, node.printed_level) = (printed, level);
+            node.flags |= flags | Flags::HAS_READY_START_TAG;
+        }
         let is_closed_by_child = self
             .container()
             .and_then(|it| self.definition_of_node(it))
@@ -499,9 +607,32 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         }
     }
 
-    fn push_container(&mut self, node: Node<'a>, is_closed_by_child: bool) {
+    fn push_container(&mut self, mut node: Node<'a>, is_closed_by_child: bool) {
         if is_closed_by_child {
             self.container_stack.pop();
+        }
+        if node.name.eq_ignore_ascii_case(b"text")
+            || node.name.eq_ignore_ascii_case(b"foreignObject")
+            || (self.container())
+                .is_some_and(|parent| self.tree[parent].has(Flags::IS_IN_TEXT_OR_FOREIGN_OBJECT))
+        {
+            node.flags.insert(Flags::IS_IN_TEXT_OR_FOREIGN_OBJECT);
+        }
+        // White space between a comment and the element is still a text.
+        let is_blank = |id: &Id| {
+            let node = &self.tree[*id];
+            node.kind == Kind::Text && node.span.of(self.text).trim_ascii().is_empty()
+        };
+        let last = (self.tree).last_child(self.container().unwrap_or(self.root));
+        let before = match last.filter(is_blank) {
+            Some(blank) => self.tree.prev_of(blank),
+            None => last.map(|it| &self.tree[it]),
+        };
+        if before.is_some_and(|it| {
+            it.kind == Kind::Comment
+                && bun_core::strings::contains(it.span.of(self.text), b"display:")
+        }) {
+            node.flags.insert(Flags::FOLLOWS_DISPLAY_COMMENT);
         }
         let id = self.add_to_parent(node);
         self.container_stack.push(id);
@@ -707,22 +838,28 @@ pub(crate) fn parse<'a>(
         }
     };
     let get_tag_content_type: GetTagContentType<'_> = &get_tag_content_type;
-    let (tokens, mut errors) = lexer::tokenize(text, start, get_tag_content_type, options.lexer);
-    // A node is typically three or four tokens.
-    tree.nodes.reserve(tokens.len() / 3);
+    let runs = (options.runs.filter(|_| start == 0)).map(|settings| {
+        let spare = tree.spare_runs.take().map(|mut runs| {
+            runs.reset(settings);
+            runs
+        });
+        (tree.runs.take().or(spare)).unwrap_or_else(|| Runs::new(settings))
+    });
+    let mut lexer = Tokenizer::new(text, start, get_tag_content_type, options.lexer, runs);
+    // A node is typically about thirty bytes.
+    tree.nodes.reserve(text.len().saturating_sub(start) / 32);
     let root = tree.add(Node::new(Kind::Root, Span::new(0, text.len() as u32)));
-    let end = tokens.len().saturating_sub(1);
     let mut builder = TreeBuilder {
         text,
         tree,
-        tokens: &tokens,
+        lexer: &mut lexer,
         index: 0,
-        end,
-        eof: tokens.last().copied().unwrap_or_else(|| Token {
+        end: usize::MAX,
+        eof: Token {
             kind: TokenType::Eof,
             span: Span::new(text.len() as u32, text.len() as u32),
             parts: Parts::None,
-        }),
+        },
         container_stack: Vec::new(),
         root,
         errors: Vec::new(),
@@ -733,15 +870,25 @@ pub(crate) fn parse<'a>(
         stack_check: crate::stack::check_for_tree(),
         case_ends: FxHashMap::default(),
     };
+    builder.fill();
     builder.build();
-    errors.append(&mut builder.errors);
-    let ended = builder.eof.span.start;
+    let (mut tree_errors, is_nested_too_deeply) = (builder.errors, builder.is_nested_too_deeply);
+    // There is more only if the tree is nested too deeply.
+    while lexer.step() {}
+    if let Some(runs) = lexer.runs.take() {
+        tree.has_typescript_script_in_run |= runs.has_typescript_script;
+        tree.assumes_typescript = tree.assumes_typescript.or(runs.assumes_typescript);
+        tree.spare_runs = Some(runs);
+    }
+    let mut errors = lexer.errors;
+    errors.append(&mut tree_errors);
+    let ended = (lexer.tokens.last()).map_or(text.len() as u32, |eof| eof.span.start);
     if (ended as usize) < text.len() {
         errors.push(SyntaxError::new(ended, ErrorKind::TextAfterNul, b""));
     }
     ParseResult {
         root,
         errors,
-        is_nested_too_deeply: builder.is_nested_too_deeply,
+        is_nested_too_deeply,
     }
 }

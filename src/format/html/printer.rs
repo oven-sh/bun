@@ -2,6 +2,8 @@
 
 use super::ast::{Attribute, Flags, Id, Kind, StartTagComment, Tree};
 use super::cursor::{Cursor, Target};
+use super::js::SourceType;
+use super::runs::{Code, Language};
 use super::tag::Tags;
 use super::utilities::{
     html_split, html_trim_preserve_indentation, is_pre_like, is_script_like_tag, is_text_like,
@@ -22,6 +24,8 @@ pub(crate) struct Printer<'t, 'a, 'o, 'w, 'f> {
     pub(crate) ancestors: usize,
     pub(crate) stack_check: bun_core::StackCheck,
     pub(crate) is_nested_too_deeply: bool,
+    /// What has been written is of no use: the text has to be formatted without short cuts.
+    pub(crate) has_wrong_short_cut: bool,
     /// Cached `isVueSfcWithTypescriptScript`.
     pub(crate) has_typescript_script: Option<bool>,
     /// Cached `hasTsxScriptBlock` from oxfmt.
@@ -29,6 +33,7 @@ pub(crate) struct Printer<'t, 'a, 'o, 'w, 'f> {
     pub(crate) cursor: Cursor,
     /// Reused for formatting style sheets.
     pub(crate) css_scratch: crate::css::Scratch,
+    pub(crate) scripts: super::Scripts,
 }
 
 /// The return value of `printBetweenLine`.
@@ -121,6 +126,65 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         self.out.end_group();
         if ends_with_line_break {
             self.out.hardline();
+        }
+    }
+
+    /// What `print_root` writes for a text that is front matter and one run, for which `run` is printed.
+    pub(crate) fn print_front_matter_and_run(&mut self, front_matter: &[u8], run: &[u8]) {
+        if !(self.formats_embedded() && self.embed_front_matter(front_matter)) {
+            self.out.text(front_matter);
+        }
+        if !front_matter.is_empty() {
+            self.out.hardline();
+            self.out.hardline();
+        }
+        self.print_lines_and_code(run, 0);
+        self.out.hardline();
+    }
+
+    /// Writes what is printed for a run at `level`: lines, and the code between them.
+    fn print_lines_and_code(&mut self, mut lines: &[u8], level: u32) {
+        let mut indents = 0;
+        while let Some((before, code, after)) = Code::split(lines) {
+            self.out.lines(before);
+            for _ in 0..std::mem::replace(&mut indents, u32::from(code.level).saturating_sub(level))
+            {
+                self.out.end_indent();
+            }
+            for _ in 0..indents {
+                self.out.start_indent();
+            }
+            self.out.hardline();
+            let (parser, source_type): (&[u8], _) = match code.language {
+                Language::Script => (b"babel", SourceType::Script),
+                Language::JavaScript => (b"babel", SourceType::Unknown),
+                Language::TypeScript => (b"typescript", SourceType::Unknown),
+                Language::Css => (b"css", SourceType::Unknown),
+                Language::Scss => (b"scss", SourceType::Unknown),
+                Language::Less => (b"less", SourceType::Unknown),
+            };
+            let attempt = self.out.start_attempt();
+            let is_written = self.text_to_doc(
+                code.span.of(self.options.original_text),
+                parser,
+                source_type,
+            );
+            // What cannot be formatted is printed as it is written.
+            if !self.out.end_attempt(attempt, is_written) {
+                self.print_lines_without_indentation(code.span.of(self.options.original_text));
+            }
+            self.has_wrong_short_cut |= u32::from(code.tag_level) < level;
+            // The line break in front of the end tag is written with it.
+            while indents > u32::from(code.tag_level).saturating_sub(level) {
+                self.out.end_indent();
+                indents -= 1;
+            }
+            self.out.hardline();
+            lines = after;
+        }
+        self.out.lines(lines);
+        for _ in 0..indents {
+            self.out.end_indent();
         }
     }
 
@@ -231,6 +295,40 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             }
             // It has been merged into a text.
             Kind::Cdata => {}
+            Kind::Ready => self.print_ready(id),
+        }
+    }
+
+    /// Writes the text of a run, which has been read for one indentation and to be printed between two line breaks.
+    fn print_ready(&mut self, id: Id) {
+        let node = &self.tree[id];
+        let parent_prints_end_of_last_child = || {
+            (self.tree.parent(id)).is_some_and(|parent| {
+                self.tags()
+                    .needs_to_borrow_last_child_closing_tag_end_marker(parent)
+            })
+        };
+        if node.has(Flags::HAS_BROKEN_VOID_TAG) && parent_prints_end_of_last_child() {
+            self.has_wrong_short_cut = true;
+            return;
+        }
+        // The children are on lines of their own, so everything around them is broken.
+        self.out.break_parent();
+        self.print_printed(id);
+    }
+
+    /// Writes `Node::printed`, which has been read to start a line.
+    fn print_printed(&mut self, id: Id) {
+        let node = &self.tree[id];
+        if self.out.indent_level() != Some(node.printed_level) || !self.out.is_at_start_of_line() {
+            self.has_wrong_short_cut = true;
+            return;
+        }
+        match node.has(Flags::IS_PRINTED_AS_WRITTEN) {
+            true => (self.out).lines(node.printed.of(self.options.original_text)),
+            false => {
+                self.print_lines_and_code(node.printed.of(&self.tree.printed), node.printed_level)
+            }
         }
     }
 
@@ -239,6 +337,29 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         let result = print(self);
         self.ancestors -= 1;
         result
+    }
+
+    /// The lines of a text in which white space counts and the indentation doesn't: `getTextValueParts`.
+    fn print_lines_without_indentation(&mut self, value: &[u8]) {
+        let value = html_trim_preserve_indentation(value);
+        let dedent = min_indentation(value);
+        // Where lines start at the margin and none ends in white space, which a line break removes, the lines are
+        // printed as they are written. A host tells a line break in a text from the others.
+        if dedent == 0
+            && self.out.indent_level() == Some(0)
+            && !self.options.has_parent_parser
+            && !self.options.format.no_short_cuts
+            && !strings::contains(value, b" \n")
+            && !strings::contains(value, b"\t\n")
+        {
+            return self.out.lines(value);
+        }
+        for (index, line) in strings::split(value, b"\n").enumerate() {
+            if index > 0 {
+                self.out.hardline();
+            }
+            self.out.text(line.get(dedent..).unwrap_or_default());
+        }
     }
 
     fn print_text(&mut self, id: Id) {
@@ -263,16 +384,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             self.out.built_text(|out| tags.opening_tag_prefix(id, out));
             match parent.has(Flags::IS_INDENTATION_SENSITIVE) {
                 true => self.out.text(value),
-                false => {
-                    let value = html_trim_preserve_indentation(value);
-                    let dedent = min_indentation(value);
-                    for (index, line) in strings::split(value, b"\n").enumerate() {
-                        if index > 0 {
-                            self.out.hardline();
-                        }
-                        self.out.text(line.get(dedent..).unwrap_or_default());
-                    }
-                }
+                false => self.print_lines_without_indentation(value),
             }
             return self.out.built_text(|out| tags.closing_tag_suffix(id, out));
         }
@@ -475,7 +587,11 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                     leading_line = Some(is_text_like(&tree[prev]));
                 }
             }
-            self.out.start_group();
+            // There is nothing in the groups around a run that could break.
+            let is_ready = tree[child].kind == Kind::Ready;
+            if !is_ready {
+                self.out.start_group();
+            }
             match leading_line {
                 Some(true) => self.write_between_line(prev_line),
                 Some(false) => {
@@ -497,13 +613,17 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                 }
                 _ => None,
             };
-            self.out.start_group_with(false, prev_group_id);
+            if !is_ready {
+                self.out.start_group_with(false, prev_group_id);
+            }
             self.print_child(child);
             if is_trailing_line {
                 self.write_between_line(next_line);
             }
-            self.out.end_group();
-            self.out.end_group();
+            if !is_ready {
+                self.out.end_group();
+                self.out.end_group();
+            }
             if next.is_some_and(|next| is_text_like(&tree[next])) {
                 if forces_next_empty_line {
                     self.out.hardline();
@@ -641,6 +761,9 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
     // ───────────────────────────── `print/tag.js` ─────────────────────────────
 
     pub(crate) fn print_opening_tag(&mut self, id: Id) {
+        if self.tree[id].has(Flags::HAS_READY_START_TAG) {
+            return self.print_printed(id);
+        }
         let tags = self.tags();
         self.out.built_text(|out| tags.opening_tag_start(id, out));
         self.print_attributes(id);

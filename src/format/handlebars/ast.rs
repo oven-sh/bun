@@ -148,6 +148,8 @@ pub(crate) enum Kind {
         /// `head.original`
         name: Text,
         tail: Range,
+        /// It's known to be printed as it's written.
+        is_as_written: bool,
     },
     String {
         value: Text,
@@ -187,6 +189,8 @@ pub(crate) struct Tree {
     owned: Vec<u8>,
     /// The parsers dropped something that isn't inside any node. So the whole template is printed verbatim.
     pub(crate) has_lost_text: bool,
+    /// The last tag is the start of a `<title>`, `<style>` or `<script>`, so a `<` after the text wouldn't start a tag.
+    pub(crate) ends_in_raw_text: bool,
 }
 
 impl Default for Tree {
@@ -197,6 +201,7 @@ impl Default for Tree {
             names: Vec::new(),
             owned: Vec::new(),
             has_lost_text: false,
+            ends_in_raw_text: false,
         };
         tree.clear();
         tree
@@ -211,6 +216,7 @@ impl Tree {
         self.names.clear();
         self.owned.clear();
         self.has_lost_text = false;
+        self.ends_in_raw_text = false;
     }
 
     pub(crate) fn add(&mut self, kind: Kind, start: usize, end: usize) -> NodeId {

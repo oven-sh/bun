@@ -38,39 +38,60 @@ impl<'a> Formatter<'a> {
     /// Calls `write`, with [`Formatter::is_quiet`] set if there's no comment in `span`.
     #[inline]
     fn in_scope(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
-        if self.context().cursor.is_active() {
-            return self.in_scope_with_cursor(span, write);
-        }
-        let outer = self.context().is_quiet;
-        self.context_mut().is_quiet = outer || self.has_no_comments_in(span);
+        let outer = self.enter_scope(span);
         write(self);
-        self.context_mut().is_quiet = outer;
+        self.leave_scope(span, outer);
+    }
+
+    /// Returns what [`Formatter::is_quiet`] was, for [`Formatter::leave_scope`].
+    fn enter_scope(&mut self, span: Span) -> bool {
+        let outer = self.context().is_quiet;
+        if self.context().cursor.is_active() {
+            self.enter_scope_with_cursor(span);
+        } else {
+            self.context_mut().is_quiet = outer || self.has_no_comments_in(span);
+        }
+        outer
     }
 
     #[cold]
-    fn in_scope_with_cursor(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
+    fn enter_scope_with_cursor(&mut self, span: Span) {
         let cursor = self.context().cursor;
-        let outer = self.context().is_quiet;
         // The nodes that contain the cursor region, and the nodes right before and after it, aren't quiet, so this
         // still gets called for them.
         self.context_mut().is_quiet =
-            outer || (!cursor.overlaps(span) && self.has_no_comments_in(span));
+            self.context().is_quiet || (!cursor.overlaps(span) && self.has_no_comments_in(span));
         cursor.enter(span, self);
-        write(self);
-        cursor.exit(span, self);
+    }
+
+    #[inline]
+    fn leave_scope(&mut self, span: Span, outer: bool) {
+        self.exit_at_cursor(span);
         self.context_mut().is_quiet = outer;
+    }
+
+    #[inline]
+    fn enter_at_cursor(&mut self, span: Span) {
+        if self.context().cursor.is_active() {
+            let cursor = self.context().cursor;
+            cursor.enter(span, self);
+        }
+    }
+
+    #[inline]
+    fn exit_at_cursor(&mut self, span: Span) {
+        if self.context().cursor.is_active() {
+            let cursor = self.context().cursor;
+            cursor.exit(span, self);
+        }
     }
 
     /// Calls `write`, which writes the node at `span`, for callers that don't go through [`Formatter::in_scope`].
     #[inline]
     pub(crate) fn track_cursor(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
-        let cursor = self.context().cursor;
-        if !cursor.is_active() {
-            return write(self);
-        }
-        cursor.enter(span, self);
+        self.enter_at_cursor(span);
         write(self);
-        cursor.exit(span, self);
+        self.exit_at_cursor(span);
     }
 }
 
@@ -130,15 +151,44 @@ pub(crate) fn format_node<'a>(
     }
 }
 
+/// [`format_node`] for a handle. What kind of node it is takes a look at what it's in, and only matters for comments.
+#[inline]
+fn format_handle<'a, H: AsAstNodes<'a>>(
+    handle: H,
+    f: &mut Formatter<'a>,
+    write: impl FnOnce(&mut Formatter<'a>),
+) {
+    match f.is_quiet() {
+        true => write(f),
+        false => format_node_with_comments(handle.as_ast_nodes(), f, write),
+    }
+}
+
+#[inline]
 fn format_node_with_comments<'a>(
     node: AstNodes<'a>,
     f: &mut Formatter<'a>,
     write: impl FnOnce(&mut Formatter<'a>),
 ) {
+    let mut write = Some(write);
+    format_node_with_comments_by(node, f, &mut |f| {
+        if let Some(write) = write.take() {
+            write(f);
+        }
+    });
+}
+
+/// There's one copy of this, whatever writes the node.
+#[inline(never)]
+fn format_node_with_comments_by<'a>(
+    node: AstNodes<'a>,
+    f: &mut Formatter<'a>,
+    write: &mut dyn FnMut(&mut Formatter<'a>),
+) {
     let skip_trailing = f.context_mut().take_skip_trailing_comments();
     let owned = f.comments().of_node(node);
     if owned.is_ignored {
-        return format_ignored_node(node, &owned, skip_trailing, f, |f| {
+        return format_ignored_node(node, &owned, skip_trailing, f, &mut |f| {
             write_ignored_node(node, f)
         });
     }
@@ -173,7 +223,7 @@ fn format_ignored_node<'a>(
     owned: &OwnedComments<'a>,
     skip_trailing: bool,
     f: &mut Formatter<'a>,
-    write_source_text: impl FnOnce(&mut Formatter<'a>),
+    write_source_text: &mut dyn FnMut(&mut Formatter<'a>),
 ) {
     let node_start = node.span_with_decorators().start;
     let count_before_node = (owned.leading.iter())
@@ -205,7 +255,7 @@ pub(crate) fn format_node_without_comments<'a>(
         return write(f);
     }
     let owned = f.comments().of_node(node);
-    format_ignored_node(node, &owned, false, f, |f| write_ignored_node(node, f));
+    format_ignored_node(node, &owned, false, f, &mut |f| write_ignored_node(node, f));
 }
 
 /// Writes a name or a key, which is a token here and a node for Prettier, with the comments it owns.
@@ -226,6 +276,7 @@ pub(crate) fn name_without_comments<'a>(span: Span) -> impl Format<'a> {
 /// [`format_name`] for a name that Prettier prints like any other node, so a `prettier-ignore` comment applies to it:
 /// `import /* prettier-ignore */ *  as a from /* prettier-ignore */ 'b'`, `a./* prettier-ignore */ \u{62}`. Don't use
 /// it for a property key.
+#[inline]
 pub(crate) fn format_ignorable_name<'a>(
     span: Span,
     f: &mut Formatter<'a>,
@@ -244,6 +295,22 @@ fn format_name_or_copy<'a>(
     if f.is_quiet() {
         return write(f);
     }
+    let mut write = Some(write);
+    format_name_with_comments(can_be_ignored, span, f, &mut |f| {
+        if let Some(write) = write.take() {
+            write(f);
+        }
+    });
+}
+
+/// There's one copy of this, whatever writes the name.
+#[inline(never)]
+fn format_name_with_comments<'a>(
+    can_be_ignored: bool,
+    span: Span,
+    f: &mut Formatter<'a>,
+    write: &mut dyn FnMut(&mut Formatter<'a>),
+) {
     let owned = f.comments().of_name(span.start);
     FormatLeadingComments::Comments(owned.leading).fmt(f);
     f.track_cursor(span, |f| match can_be_ignored && owned.is_ignored {
@@ -385,10 +452,18 @@ impl<'a> FormatExpr<'a> {
 
     #[cold]
     fn fmt_with_comments(self, is_chain_expression: bool, f: &mut Formatter<'a>) {
+        // Prettier's `ParenthesizedExpression` prints what is in it without the arguments that it was printed with.
+        let in_parentheses = FormatExpr {
+            options: match f.options().flavor.is_oxfmt() {
+                true => self.options,
+                false => ExprOptions::None,
+            },
+            ..self
+        };
         let write_target =
-            |f: &mut Formatter<'a>| self.fmt_without_type_casts(is_chain_expression, f);
+            |f: &mut Formatter<'a>| in_parentheses.fmt_without_type_casts(is_chain_expression, f);
         if self.is_in_chain_expression || !write_type_casts(self.expr, f, &write_target) {
-            write_target(f);
+            self.fmt_without_type_casts(is_chain_expression, f);
         }
     }
 
@@ -421,7 +496,7 @@ impl<'a> FormatExpr<'a> {
         let skip_trailing = f.context_mut().take_skip_trailing_comments();
         let owned = f.comments().of_node(node);
         if owned.is_ignored {
-            return format_ignored_node(node, &owned, skip_trailing, f, |f| {
+            return format_ignored_node(node, &owned, skip_trailing, f, &mut |f| {
                 write_suppressed_expression(expr, is_chain_expression, f)
             });
         }
@@ -558,8 +633,17 @@ fn format_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     // longer if they're written with escapes or are placeholders for an expression in a template.
     if tag == ExprTag::Ident {
         let span = e.span();
-        let may_need_parentheses =
-            span.len() >= 3 && (span.len() <= 9 || span.len() >= 35 || !f.is_plain_source(span));
+        let may_need_parentheses = match span.len() {
+            0..=2 => false,
+            len @ 3..=9 => {
+                parentheses::expression::starts_like_name_that_may_need_parentheses(
+                    len,
+                    f.source_text().byte_at(span.start),
+                ) || !f.is_plain_source(span)
+            }
+            10..=34 => !f.is_plain_source(span),
+            _ => true,
+        };
         return match may_need_parentheses && parentheses::expression::needs_parentheses(e, f) {
             true => format_expression_slow_path(e, f),
             false => write!(f, source_text(span)),
@@ -998,6 +1082,14 @@ impl Spanned for FormatDeclaration<'_> {
 
 /// Step 5 for a statement.
 pub(crate) fn write_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
+    let starts_line =
+        std::mem::take(&mut f.context_mut().short_cuts.next_in_list) == statement.span().start + 1;
+    if starts_line
+        && f.context().short_cuts.mode != super::flat::Mode::Off
+        && super::flat::write_statement(statement, f)
+    {
+        return;
+    }
     let is_declaration = !matches!(
         statement.tag(),
         StmtTag::ExportNamed | StmtTag::ExportDefault | StmtTag::ExportStar
@@ -1336,7 +1428,7 @@ macro_rules! format_with_comments {
             #[inline]
             fn fmt(&self, f: &mut Formatter<'a>) {
                 let handle = *self;
-                format_node(handle.as_ast_nodes(), f, |f| $write(handle, f));
+                format_handle(handle, f, |f| $write(handle, f));
             }
         })*
     };
@@ -1346,9 +1438,7 @@ impl<'a> Format<'a> for Member<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let member = *self;
-        format_node(member.as_ast_nodes(), f, |f| {
-            print::class::write_member(member, f)
-        });
+        format_handle(member, f, |f| print::class::write_member(member, f));
         if !f.context().comments_without_printer.is_empty() {
             write_comments_without_printer(member.span(), f);
         }
@@ -1386,9 +1476,7 @@ impl<'a> Format<'a> for Pat<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let pat = *self;
-        format_node(pat.as_ast_nodes(), f, |f| {
-            print::patterns::write_binding_pattern(pat, f)
-        });
+        format_handle(pat, f, |f| print::patterns::write_binding_pattern(pat, f));
     }
 }
 
@@ -1408,7 +1496,7 @@ impl<'a> Format<'a> for TupleElem<'a> {
         if element.name().is_none() && !element.is_rest() && !element.is_optional() {
             return element.ty().fmt(f);
         }
-        format_node(element.as_ast_nodes(), f, |f| {
+        format_handle(element, f, |f| {
             print::tuple_type::write_ts_tuple_element(element, f)
         });
     }

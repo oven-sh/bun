@@ -1,7 +1,10 @@
 //! Computes the parent (or owner) of each node in a file, and nothing else.
 
+mod claims;
+
 use super::*;
 use crate::util::SharedSort;
+pub use claims::{ClaimLens, Claims, TypeParents, try_bind_for_format_with};
 
 fn refill<T: Copy>(list: &mut Vec<T>, len: usize, value: T) {
     list.clear();
@@ -37,6 +40,9 @@ struct Lists<'l> {
     class_scope: &'l mut [ScopeId],
     type_scope: &'l mut [ScopeId],
     type_param_scope: &'l mut [ScopeId],
+    /// With [`Claims`] only, whose lists these are.
+    type_parent: &'l mut [PackedTypeParent],
+    type_param_parent: &'l mut [PackedTypeParent],
     /// Lint only. `Bound::expr_kinds` starts as all `NOT_REACHED`, `Bound::expr_kind_counts` as all
     /// zeros.
     expr_kinds: &'l mut [u8],
@@ -77,19 +83,6 @@ pub fn bind_for_format_in<'r>(
     }
 }
 
-/// [`bind_for_format_in`] for a file that's still in the parser's growable lists. It doesn't read
-/// anything that `File::finish_nodes` computes. Returns `None` if the file needs the binder, which
-/// takes a [`File`]. It isn't generic and is never inlined, so `fill_in` is compiled for it in this
-/// crate, with this crate's options.
-#[inline(never)]
-pub fn try_bind_for_format_in<'r>(
-    f: &FileBuilder,
-    recycled: &'r mut Recycled,
-) -> Option<&'r BoundBuilder> {
-    let b = &mut recycled.buffers().b;
-    fill_in::<Growable, false>(f, b).then_some(&*b)
-}
-
 /// Fills in `b` as [`bind_for_format_in`] describes. With `LINT`, also fills in `expr_kinds`,
 /// `expr_kind_counts` and `kind_counts`, and puts the `return` statements in `ids`, in the order of
 /// the file's statement list. Returns false if the file needs the binder.
@@ -121,7 +114,7 @@ pub(super) fn fill_in<S: Storage, const LINT: bool>(f: &FileIn<S>, b: &mut Bound
     refill(&mut b.class_scope, f.classes.len(), ScopeId::NONE);
     refill(&mut b.type_scope, f.types.len(), ScopeId::NONE);
     refill(&mut b.type_param_scope, f.type_params.len(), ScopeId::NONE);
-    fill::<S, LINT>(f, lists_of(b)) && is_done(b)
+    fill::<S, LINT, false>(f, lists_of(b), false) && is_done(b)
 }
 
 fn lists_of(b: &mut BoundBuilder) -> Lists<'_> {
@@ -141,6 +134,8 @@ fn lists_of(b: &mut BoundBuilder) -> Lists<'_> {
         class_scope: &mut b.class_scope,
         type_scope: &mut b.type_scope,
         type_param_scope: &mut b.type_param_scope,
+        type_parent: &mut [],
+        type_param_parent: &mut [],
         expr_kinds: &mut b.expr_kinds,
         expr_kind_counts: &mut b.expr_kind_counts,
         kind_counts: &mut b.kind_counts,
@@ -167,7 +162,14 @@ fn sort_and_dedup(type_query_operands: &mut Vec<ExprId>) {
 
 /// Returns false if the file needs the binder. It also does if [`every_node_has_parent`] is
 /// false.
-fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
+///
+/// With `CLAIMED`, the lists already have what the expressions, the statements and the types say: see [`Claims`]. Only
+/// the operands of `typeof` types are still missing, if the file `has_type_queries`.
+fn fill<S: Storage, const LINT: bool, const CLAIMED: bool>(
+    f: &FileIn<S>,
+    lists: Lists,
+    has_type_queries: bool,
+) -> bool {
     let Lists {
         expr_parent,
         stmt_parent,
@@ -184,6 +186,8 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         class_scope,
         type_scope,
         type_param_scope,
+        type_parent,
+        type_param_parent,
         expr_kinds,
         expr_kind_counts,
         kind_counts,
@@ -203,23 +207,35 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             }
         };
     }
-    // Marks the types and the type parameters that `bind` reaches from a node.
+    // Marks the types and the type parameters that `bind` reaches from a node. With `CLAIMED`, the node after the `;` is
+    // noted as their parent.
     macro_rules! ty {
         ($($ty:expr),*) => {{ $(set!(type_scope[$ty] = REACHED);)* }};
+        ($($ty:expr),*; $parent:expr) => {{
+            $(
+                set!(type_scope[$ty] = REACHED);
+                if CLAIMED {
+                    set!(type_parent[$ty] = $parent);
+                }
+            )*
+        }};
     }
     macro_rules! tys {
-        ($list:expr) => {
+        ($list:expr $(; $parent:expr)?) => {
             for ty in f.ids($list) {
-                set!(type_scope[ty] = REACHED);
+                ty!(ty $(; $parent)?);
             }
         };
     }
     macro_rules! type_params {
-        ($params:expr) => {
+        ($params:expr; $parent:expr) => {
             for p in $params.iter() {
                 set!(type_param_scope[p] = REACHED);
+                if CLAIMED {
+                    set!(type_param_parent[p] = $parent);
+                }
                 if let Some(param) = f.type_params.get(p.idx()) {
-                    ty!(param.constraint, param.default);
+                    ty!(param.constraint, param.default; TypeParent::TypeParam(p));
                 }
             }
         };
@@ -243,7 +259,16 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     // `({ a = 1 }) => 0`, and their operands end up belonging to something that isn't an
     // expression. If two expressions claim an operand, the parser kept the one it created later.
     let mut counts = [0u32; 2 * ExprTag::COUNT];
-    for (i, e) in f.exprs.iter().enumerate() {
+    // Empty if `CLAIMED`.
+    macro_rules! unclaimed {
+        ($nodes:ident) => {
+            match CLAIMED {
+                true => &[][..],
+                false => &f.$nodes[..],
+            }
+        };
+    }
+    for (i, e) in unclaimed!(exprs).iter().enumerate() {
         let id = ExprId(i as u32);
         let me = Parent::Expr(id);
         // The rare `+ 1` kinds are fixed up in the match arms below (`link!`).
@@ -384,7 +409,14 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         all.copy_from_slice(&counts);
     }
     let mut others = [0u32; kind_counts::LEN];
-    for (i, ty) in f.types.iter().enumerate() {
+    if CLAIMED && has_type_queries {
+        for ty in f.types.iter() {
+            if let TypeNodeKind::Typeof { expr, .. } = ty.kind {
+                push_type_query_operands(f, expr, type_query_operands);
+            }
+        }
+    }
+    for (i, ty) in unclaimed!(types).iter().enumerate() {
         let id = TypeNodeId(i as u32);
         if LINT {
             others[kind_counts::TYPES + ty.kind.tag() as usize] += 1;
@@ -395,14 +427,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             TypeNodeKind::Typeof { expr, args, .. } => {
                 tys!(args);
                 set!(expr_parent[expr] = Parent::File);
-                let mut at = expr;
-                while let Some(operand) = f.exprs.get(at.idx()) {
-                    type_query_operands.push(at);
-                    let ExprKind::Dot { obj, .. } = operand.kind else {
-                        break;
-                    };
-                    at = obj;
-                }
+                push_type_query_operands(f, expr, type_query_operands);
             }
             TypeNodeKind::Fn(func) => set!(fns[func].owner = FnOwner::Type(id)),
             TypeNodeKind::Object(members) => {
@@ -412,7 +437,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             }
             TypeNodeKind::Mapped(mapped) => {
                 if let Some(mapped) = f.mapped.get(mapped.idx()) {
-                    type_params!(Span::<TypeParamId>::new(mapped.param.0, 1));
+                    type_params!(Span::<TypeParamId>::new(mapped.param.0, 1); TypeParent::Type(id));
                     ty!(mapped.name_ty, mapped.ty);
                     for m in mapped.members.iter() {
                         set!(member_owner[m] = MemberOwner::TypeLiteral(id));
@@ -467,13 +492,13 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         }
     }
     for alias in f.aliases.iter() {
-        type_params!(alias.type_params);
-        ty!(alias.ty);
+        type_params!(alias.type_params; TypeParent::Stmt(alias.stmt));
+        ty!(alias.ty; TypeParent::Stmt(alias.stmt));
     }
     for (i, interface) in f.interfaces.iter().enumerate() {
-        type_params!(interface.type_params);
-        tys!(interface.extends);
-        tys!(interface.other_heritage);
+        type_params!(interface.type_params; TypeParent::Stmt(interface.stmt));
+        tys!(interface.extends; TypeParent::Stmt(interface.stmt));
+        tys!(interface.other_heritage; TypeParent::Stmt(interface.stmt));
         for m in interface.members.iter() {
             set!(member_owner[m] = MemberOwner::Interface(InterfaceId(i as u32)));
         }
@@ -485,10 +510,10 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         for other in f.ids(class.other_extends) {
             set!(expr_parent[other] = Parent::ClassExtends(id));
         }
-        type_params!(class.type_params);
-        tys!(class.extends_args);
-        tys!(class.implements);
-        tys!(class.other_implements);
+        type_params!(class.type_params; TypeParent::Class(id));
+        tys!(class.extends_args; TypeParent::Class(id));
+        tys!(class.implements; TypeParent::Class(id));
+        tys!(class.other_implements; TypeParent::Class(id));
         for m in class.members.iter() {
             set!(member_owner[m] = MemberOwner::Class(id));
         }
@@ -503,14 +528,18 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         }
         set!(fns[member.func].owner = FnOwner::Member(id));
         set!(expr_parent[member.init] = Parent::MemberInit(id));
-        ty!(member.ty);
+        // The type of a method is the return type of its function.
+        match member.func.is_none() {
+            true => ty!(member.ty; TypeParent::Member(id)),
+            false => ty!(member.ty),
+        }
     }
     for &(id, modifiers) in f.modifiers_of_stmts.iter() {
         if !matches!(f.stmts.get(id.idx()), Some(s) if matches!(s.kind, StmtKind::Class(_))) {
             decorators!(modifiers, Parent::Stmt(id));
         }
     }
-    for (i, s) in f.stmts.iter().enumerate() {
+    for (i, s) in unclaimed!(stmts).iter().enumerate() {
         let id = StmtId(i as u32);
         let me = Parent::Stmt(id);
         macro_rules! exprs {
@@ -636,8 +665,9 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     for (i, func) in f.fns.iter().enumerate() {
         let id = FnId(i as u32);
         set!(param_fn[func.this_param] = id);
-        type_params!(func.type_params);
-        ty!(func.ret, func.this_ty(f));
+        type_params!(func.type_params; TypeParent::Func(id));
+        ty!(func.ret; TypeParent::Func(id));
+        ty!(func.this_ty(f); TypeParent::Param(func.this_param));
         // Decorators on a class member's parameters are evaluated with the class.
         let class = match fns[i].owner {
             FnOwner::Member(m) => match member_owner.get(m.idx()) {
@@ -652,7 +682,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             };
             set!(param_fn[p] = id);
             set!(pat_parent[param.pat] = PatParent::Param(p));
-            ty!(param.ty);
+            ty!(param.ty; TypeParent::Param(p));
             set!(expr_parent[param.default] = Parent::ParamDefault(p));
             decorators!(
                 f.param_modifiers(p),
@@ -673,6 +703,11 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         }
     }
     fill_var_decls(&f.var_decls, expr_parent, pat_parent, type_scope);
+    if CLAIMED {
+        for (i, declaration) in f.var_decls.iter().enumerate() {
+            set!(type_parent[declaration.ty] = TypeParent::VarDecl(VarDeclId(i as u32)));
+        }
+    }
     for (i, pat) in f.pats.iter().enumerate() {
         let id = PatId(i as u32);
         if LINT {
@@ -735,6 +770,19 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         all.copy_from_slice(&others);
     }
     true
+}
+
+/// Adds the `a.b` of `typeof a.b`, its `a`, and so on.
+#[inline(always)]
+fn push_type_query_operands<S: Storage>(f: &FileIn<S>, expr: ExprId, operands: &mut Vec<ExprId>) {
+    let mut at = expr;
+    while let Some(operand) = f.exprs.get(at.idx()) {
+        operands.push(at);
+        let ExprKind::Dot { obj, .. } = operand.kind else {
+            break;
+        };
+        at = obj;
+    }
 }
 
 /// The part of [`fill`] that handles variable declarations.

@@ -25,11 +25,14 @@ use crate::lexer::{Lexer, Mark};
 use crate::token::T;
 use crate::{Options, Parsed, Rejected, Rejection, Scratch};
 use bun_sema::atom::{Atom, Intern, known};
+use bun_sema::bind::{ClaimLens, Claims};
 use bun_sema::hir::*;
 use bun_sema::util::SharedSort;
+pub(crate) use comments::CommentTracker;
 pub(crate) use declared::Declared;
 pub(crate) use recover::ListKind;
 pub use recover::keyword_suggestion;
+use std::mem::ManuallyDrop;
 
 /// `ParserContext`, as bits.
 pub(crate) mod ctx {
@@ -143,12 +146,14 @@ macro_rules! file_lists {
             $(file.$field.truncate(lens.$field as usize);)*
         }
 
-        /// Returns an empty file that reuses the list allocations of `old`, which loses them.
+        /// Returns an empty file that reuses the list allocations of `old`, which is left as `FileBuilder::default()`.
         fn recycled_file(old: &mut FileBuilder) -> FileBuilder {
+            let FileBuilder { $(mut $field,)* .. } = std::mem::take(old);
             let mut file = FileBuilder::default();
             $(
-                old.$field.clear();
-                file.$field = std::mem::take(&mut old.$field);
+                $field.clear();
+                // A list that has never had anything in it has nothing to free, which the compiler can't know.
+                let _not_dropped = ManuallyDrop::new(std::mem::replace(&mut file.$field, $field));
             )*
             file
         }
@@ -205,9 +210,11 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) is_ecmascript: bool,
     pub(crate) options: Options,
     pub(crate) lx: Lexer<'a>,
-    comments: comments::CommentTracker,
+    comments: &'a mut CommentTracker,
     pub(crate) f: FileBuilder,
     pub(crate) s: Stacks,
+    /// See [`Parser::CLAIMS`].
+    pub(crate) claims: &'a mut Claims,
     pub(crate) jsdoc: jsdoc::State,
     /// The private names the enclosing classes have declared so far.
     pub(crate) declared_private_names: Vec<Atom>,
@@ -327,6 +334,8 @@ struct Seed<'a> {
     lx: Lexer<'a>,
     file: FileBuilder,
     stacks: Stacks,
+    claims: &'a mut Claims,
+    comments: &'a mut CommentTracker,
     declared: Declared,
     options: Options,
     jsdoc: jsdoc::State,
@@ -396,10 +405,14 @@ pub(crate) fn run<'a>(
     lx.decodes_ill_formed_text = options.compiles || options.reads_as_bun_run;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
+    scratch.claims.begin(!is_general && options.attach_comments);
+    scratch.comments.begin();
     let seed = Seed {
         lx,
         file,
         stacks,
+        claims: &mut scratch.claims,
+        comments: &mut scratch.comments,
         declared,
         options,
         jsdoc,
@@ -438,7 +451,8 @@ pub(crate) fn run<'a>(
         return Err(Rejected::new(Rejection::TooLarge));
     }
     f.comment_directives = comment_directives;
-    if !options.keeps_function_directives {
+    // A formatter doesn't ask which calls are pure, and finding out reads every comment.
+    if !options.keeps_function_directives && !options.attach_comments {
         pure_calls::mark_pure_calls(&mut f, text);
     }
     let names = &mut scratch.names;
@@ -473,12 +487,18 @@ pub(crate) fn run<'a>(
 }
 
 impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS> {
+    /// True if each node is reported to [`Claims`] as it's added. Only a formatter reads those, and only for a file that
+    /// this instance has parsed.
+    pub(crate) const CLAIMS: bool = COMMENTS && !GENERAL;
+
     #[inline(always)]
     fn new(seed: Seed<'a>) -> Self {
         let Seed {
             lx,
             file,
             stacks,
+            claims,
+            comments,
             declared,
             options,
             jsdoc,
@@ -498,13 +518,14 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             lx,
             f: file,
             s: stacks,
+            claims,
             context,
             class_depth: 0,
             options,
             recovers: options.recovers,
             reads_jsdoc: jsdoc.wanted != 0,
             jsdoc,
-            comments: comments::CommentTracker::default(),
+            comments,
             lists: 0,
             // An empty range, so it contains no token.
             declaration_scan: stmt::DeclarationScan {
@@ -556,7 +577,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
     }
 
-    /// Parses the source and stores the result in `file`.
+    /// Parses the source and stores the result in `file`, which is `FileBuilder::default()`.
     fn parse_into(mut self, file: &mut FileBuilder) -> Harvest<'a> {
         self.source_file();
         self.resolve_top_level_comments();
@@ -570,8 +591,12 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         if self.lx.has_legacy_octal {
             self.f.rare_syntax |= rare::LEGACY_OCTAL;
         }
+        if self.lx.has_escaped_name {
+            self.f.rare_syntax |= rare::ESCAPED_NAME;
+        }
         self.note_odd_exports();
-        *file = self.f;
+        // `recycled_file` left nothing in it to drop, which the compiler can't know: it would look at every list.
+        let _not_dropped = ManuallyDrop::new(std::mem::replace(file, self.f));
         Harvest {
             lx: self.lx,
             stacks: self.s,
@@ -1068,6 +1093,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     pub(crate) fn rollback(&mut self, to: &Checkpoint) {
         self.lx.reset(to.mark);
+        self.forget_claims_since(&to.file);
         truncate_file(&mut self.f, &to.file);
         self.s.truncate(&to.stacks);
         self.context = to.context;
@@ -1080,6 +1106,27 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.rollback_jsdoc(to);
         }
         self.rollback_comments(to);
+    }
+
+    /// Call before truncating the file's lists to `lens`.
+    #[inline(always)]
+    fn forget_claims_since(&mut self, lens: &FileLens) {
+        if Self::CLAIMS {
+            let lens = ClaimLens {
+                exprs: lens.exprs,
+                stmts: lens.stmts,
+                types: lens.types,
+                props: lens.props,
+                members: lens.members,
+                var_decls: lens.var_decls,
+                cases: lens.cases,
+                classes: lens.classes,
+                fns: lens.fns,
+                type_params: lens.type_params,
+                tuple_elems: lens.tuple_elems,
+            };
+            self.claims.forget_since(&self.f, &lens);
+        }
     }
 
     /// Discards the nodes built since `since`, which don't belong anywhere in the tree. The tokens stay consumed, and
@@ -1095,6 +1142,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             after_skipped: now.after_skipped,
             ..since.file
         };
+        self.forget_claims_since(&lens);
         truncate_file(&mut self.f, &lens);
         let strays = since.stacks.stray_decorators as usize;
         self.s.stray_decorators.truncate(strays);

@@ -293,29 +293,38 @@ impl<'a> FormatLiteralStringToken<'a> {
     }
 }
 
-/// True if `text` is printable ASCII without `quote`.
-#[inline]
-fn is_printable_ascii_without(text: &[u8], quote: u8) -> bool {
-    #[inline]
-    fn all<const N: usize>(block: &[u8; N], quote: u8) -> bool {
-        block.iter().fold(true, |all, &byte| {
-            all & matches!(byte, 0x20..=0x7E) & (byte != quote)
-        })
+/// True if `is_allowed` is true for every byte of `text`.
+#[inline(always)]
+fn all_bytes(text: &[u8], is_allowed: impl Fn(u8) -> bool + Copy) -> bool {
+    #[inline(always)]
+    fn all<const N: usize>(block: &[u8; N], is_allowed: impl Fn(u8) -> bool) -> bool {
+        block.iter().fold(true, |all, &byte| all & is_allowed(byte))
     }
     if let Some(last) = text.last_chunk::<16>() {
         return text
             .as_chunks::<16>()
             .0
             .iter()
-            .all(|block| all(block, quote))
-            && all(last, quote);
+            .all(|block| all(block, is_allowed))
+            && all(last, is_allowed);
     }
     match (text.first_chunk::<8>(), text.last_chunk::<8>()) {
-        (Some(first), Some(last)) => all(first, quote) & all(last, quote),
-        _ => text
-            .iter()
-            .all(|&byte| matches!(byte, 0x20..=0x7E) && byte != quote),
+        (Some(first), Some(last)) => all(first, is_allowed) & all(last, is_allowed),
+        _ => text.iter().all(|&byte| is_allowed(byte)),
     }
+}
+
+/// True if `text` is printable ASCII without `quote`.
+#[inline]
+fn is_printable_ascii_without(text: &[u8], quote: u8) -> bool {
+    all_bytes(text, |byte| matches!(byte, 0x20..=0x7E) & (byte != quote))
+}
+
+#[inline]
+fn is_printable_ascii_without_quotes_and_escapes(text: &[u8]) -> bool {
+    all_bytes(text, |byte| {
+        matches!(byte, 0x20..=0x7E) & !matches!(byte, b'"' | b'\'' | b'\\')
+    })
 }
 
 impl FormatLiteralStringToken<'_> {
@@ -331,15 +340,46 @@ impl FormatLiteralStringToken<'_> {
     }
 }
 
+impl<'a> FormatLiteralStringToken<'a> {
+    /// Returns the content if [`FormatLiteralStringToken::clean_text`] only replaces the quotes around it by the
+    /// configured ones, and its width equals its length.
+    #[inline]
+    fn content_for_other_quotes(&self, f: &Formatter<'_>) -> Option<&'a [u8]> {
+        let other = f.options().quote_style.other().as_byte();
+        match self.string {
+            [first, content @ .., last]
+                if *first == other
+                    && *last == other
+                    && !self.jsx
+                    && self.parent_kind == StringLiteralParentKind::Expression
+                    && !is_in_html_attribute(f.options())
+                    && is_printable_ascii_without_quotes_and_escapes(content) =>
+            {
+                Some(content)
+            }
+            _ => None,
+        }
+    }
+}
+
 impl<'a> Format<'a> for FormatLiteralStringToken<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        match self.is_clean_ascii(f) {
-            true => f.write_text(
+        if self.is_clean_ascii(f) {
+            return f.write_text(
                 self.string,
                 Some(TextWidth::single(self.string.len() as u32)),
-            ),
-            false => self.clean_text(f).fmt(f),
+            );
         }
+        let Some(content) = self.content_for_other_quotes(f) else {
+            return self.clean_text(f).fmt(f);
+        };
+        let quote = f.options().quote_style.as_byte();
+        f.write_built_printable_ascii(|out| {
+            out.reserve(content.len() + 2);
+            out.push(quote);
+            out.extend_from_slice(content);
+            out.push(quote);
+        });
     }
 }
 

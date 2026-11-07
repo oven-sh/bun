@@ -7,6 +7,7 @@ use crate::js::utils::call_expression::{
 };
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::suppressed::FormatSuppressedNode;
+use crate::js::utils::typecast::is_cast_target_that_hides_its_kind;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -79,7 +80,7 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
                 function.parent(),
                 Node::Expr(call) if call.tag() == ExprTag::Call
                     && is_test_call_expression_in_flavor(call, f)
-                    && !is_angular_test_wrapper(call)
+                    && !is_angular_test_wrapper(call, f)
             )
         ) {
         ParameterLayout::Hug
@@ -100,6 +101,25 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
     if !parentheses_not_needed {
         write!(f, ")");
     }
+}
+
+/// True if the parameters of `func`, which have no comments, are each on a line if they don't fit on one: there are
+/// some, they're in parentheses, and [`write_formal_parameters`] doesn't hug them.
+pub(crate) fn can_break_between_parameters<'a>(func: Func<'a>, f: &Formatter<'a>) -> bool {
+    let parentheses_not_needed = func.is_arrow() && can_avoid_parentheses(func, f);
+    func.params_with_this().next().is_some()
+        && !parentheses_not_needed
+        && !f.file().is_flow()
+        && !should_hug_function_parameters(func, parentheses_not_needed, f)
+        && !matches!(
+            func.owner(),
+            Node::Expr(function) if matches!(
+                function.parent(),
+                Node::Expr(call) if call.tag() == ExprTag::Call
+                    && is_test_call_expression_in_flavor(call, f)
+                    && !is_angular_test_wrapper(call, f)
+            )
+        )
 }
 
 /// The node whose parameters Prettier prints for `func`. It owns the comments in empty parentheses. Babel has no
@@ -161,7 +181,8 @@ fn write_dangling_comments_in_parentheses<'a>(func: Func<'a>, f: &mut Formatter<
 fn parameter_has_comment<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
     let comments = f.comments();
     (comments.is_owner(Node::Param(param)) && comments.has_comments(param.as_ast_nodes()))
-        || (comments.is_owner(Node::Pat(param.pat()))
+        || (!matches!(param.pat().kind(), PatKind::Missing)
+            && comments.is_owner(Node::Pat(param.pat()))
             && param.default().is_none()
             && !hugs_pattern_with_comments(f)
             && comments.has_comments(param.pat().as_ast_nodes()))
@@ -289,7 +310,7 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
         should_hug_function_parameters(func, parentheses_not_needed, f)
     });
 
-    if is_hug_parameter && !has_decorators {
+    if is_hug_parameter && !has_decorators && !empty_pattern_is_group(param, f) {
         write!(f, content);
     } else if !has_decorators {
         write!(f, group(&content));
@@ -297,6 +318,11 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
         write!(
             f,
             [group(&FormatDecorators::from_param(param)), group(&content)]
+        );
+    } else if is_hug_parameter && type_breaks_with_decorators(param) {
+        write!(
+            f,
+            group(&format_args!(FormatDecorators::from_param(param), content))
         );
     } else {
         write!(
@@ -307,6 +333,19 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
             ))
         );
     }
+}
+
+/// `function a({}: { b }): C<⏎D,⏎E⏎> {}`: Prettier's `printObject` makes a group of a pattern with nothing in it and its type.
+fn empty_pattern_is_group<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
+    matches!(param.pat().kind(), PatKind::Object(properties) if properties.is_empty())
+        && !f.options().flavor.is_oxfmt()
+}
+
+/// `a(⏎@b⏎c: {⏎d;⏎},⏎) {}`: the object type of an only parameter is no group in Prettier's `printObject`, with
+/// decorators or without.
+fn type_breaks_with_decorators(param: Param<'_>) -> bool {
+    !matches!(param.pat().kind(), PatKind::Object(_))
+        && (param.ty()).is_some_and(|ty| matches!(ty.kind(), TypeKind::Object(_)))
 }
 
 /// ```ts
@@ -441,7 +480,7 @@ pub(crate) fn should_hug_function_parameters<'a>(
     };
     let is_huggable = match only_parameter.pat().kind() {
         PatKind::Array(_) | PatKind::Object(_) => {
-            only_parameter.default().is_none_or(is_huggable_expression)
+            (only_parameter.default()).is_none_or(|default| is_huggable_expression(default, f))
         }
         PatKind::Ident(_) | PatKind::Missing => {
             only_parameter.default().is_none()
@@ -468,8 +507,9 @@ pub(crate) fn has_only_simple_parameters(func: Func<'_>, allow_type_annotations:
 }
 
 /// `{}`, `[]` or a name.
-fn is_huggable_expression(e: Expr<'_>) -> bool {
+fn is_huggable_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     match e.kind() {
+        _ if is_cast_target_that_hides_its_kind(e, f) => false,
         ExprKind::Object(props) => props.is_empty(),
         ExprKind::Array(elements) => elements.is_empty(),
         ExprKind::Ident(_) => true,

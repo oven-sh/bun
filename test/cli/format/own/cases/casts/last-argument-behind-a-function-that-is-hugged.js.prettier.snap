@@ -1,0 +1,83 @@
+------------------
+{ printWidth: 80 }
+------------------
+const counts = list.reduce((acc, item) => {
+  acc[item] = (acc[item] || 0) + 1;
+  return acc;
+}, /** @type {Record<string, number>} */ ({}));
+setTimeout(function () {
+  doSomething();
+}, /** @type {number} */ (undefined));
+useEffect(() => {
+  doSomething();
+}, /** @type {T} */ ([alpha, beta]));
+new Thing(function () {
+  doSomething();
+}, /** @type {T} */ (alpha.beta));
+call(function () {
+  doSomething();
+}, /** @type {U} */ (/** @type {T} */ (alpha)));
+call(function () {
+  doSomething();
+}, /** @type {T} */ (alpha + beta));
+call(
+  function () {
+    doSomething();
+  },
+  /** @type {T} */ (getSomething(alpha, beta, gamma)),
+);
+call(
+  function () {
+    doSomething();
+  },
+  /** @type {T} */ (alpha ? beta : gamma),
+);
+call(
+  function () {
+    doSomething();
+  },
+  [/** @type {T} */ (alpha)],
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const counts = list.reduce((acc, item) => {
+  acc[item] = (acc[item] || 0) + 1;
+  return acc;
+}, /** @type {Record<string, number>} */ ({}));
+setTimeout(function () {
+  doSomething();
+}, /** @type {number} */ (undefined));
+useEffect(() => {
+  doSomething();
+}, /** @type {T} */ ([alpha, beta]));
+new Thing(function () {
+  doSomething();
+}, /** @type {T} */ (alpha.beta));
+call(function () {
+  doSomething();
+}, /** @type {U} */ (/** @type {T} */ (alpha)));
+call(function () {
+  doSomething();
+}, /** @type {T} */ (alpha + beta));
+call(
+  function () {
+    doSomething();
+  },
+  /** @type {T} */ (getSomething(alpha, beta, gamma)),
+);
+call(
+  function () {
+    doSomething();
+  },
+  /** @type {T} */ (alpha ? beta : gamma),
+);
+call(
+  function () {
+    doSomething();
+  },
+  [/** @type {T} */ (alpha)],
+);
+
+===================== End =====================

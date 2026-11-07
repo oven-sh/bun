@@ -4,6 +4,7 @@
 //! other things that file records on nodes are computed on demand here.
 
 use super::ast::{Kind, NodeId, Str, Tree};
+use super::printer::{Ignore, prettier_ignore};
 use super::strings::is_in;
 use super::unicode_tables::{CJK, HANGUL, PUNCTUATION, VARIATION_SELECTORS};
 use crate::text::{first_char, last_char};
@@ -339,6 +340,9 @@ pub(crate) struct Preprocessor<'x> {
     pub(crate) tab_width: usize,
     pub(crate) stack_check: bun_core::StackCheck,
     pub(crate) is_nested_too_deeply: bool,
+    /// An `AsWritten` isn't what its blocks are printed as: one of them is a list that follows a list, which was taken
+    /// for the first of its kind, or follows a comment that says to leave it alone.
+    pub(crate) is_wrong_as_written: bool,
 }
 
 /// Facts about a node derived from its ancestors.
@@ -369,7 +373,9 @@ impl Preprocessor<'_> {
     /// A paragraph where wrapping could turn `[[` and `]]` into a wiki link keeps its texts as is. Such a paragraph has
     /// `spread` set.
     fn mark_risky_paragraphs(&mut self, root: NodeId) {
-        if !bun_core::strings::contains(self.text, b"[[") {
+        if !self.tree.nodes.iter().any(|node| node.kind == Kind::Text)
+            || !bun_core::strings::contains(self.text, b"[[")
+        {
             return;
         }
         // In source order. The paragraphs around the current node are on `open`, each with a flag for whether `[[` has
@@ -436,11 +442,35 @@ impl Preprocessor<'_> {
                     {
                         previous.first_align + 1
                     }
+                    Some(previous) if previous.kind == Kind::AsWritten => {
+                        self.is_wrong_as_written |= previous.last_kind() == Kind::List
+                            && previous.is_last_ordered() == node.ordered;
+                        0
+                    }
                     _ => 0,
                 };
                 if let Some(node) = self.tree.get_mut(id) {
                     (node.is_aligned, node.first_align) = (is_aligned, nth);
                 }
+            }
+            Kind::AsWritten => {
+                // There is none in the flavor of oxfmt.
+                let flavor = crate::options::Flavor::Prettier;
+                self.is_wrong_as_written |= self.tree.get(node.previous).is_some_and(|previous| {
+                    match previous.last_kind() {
+                        Kind::List => {
+                            node.first_kind() == Kind::List
+                                && previous.is_last_ordered() == node.is_first_ordered()
+                        }
+                        // The `Reader` leaves a block behind such a comment to the parser: `follows_ignore_comment`.
+                        Kind::Html | Kind::Paragraph => {
+                            let (tree, previous) = (&*self.tree, node.previous);
+                            prettier_ignore(tree, self.text, self.is_mdx, flavor, previous)
+                                == Some(Ignore::Next)
+                        }
+                        _ => false,
+                    }
+                });
             }
             Kind::Paragraph | Kind::Heading if ancestry.paragraph.is_none() => {
                 ancestry.paragraph = Some((id, ancestry.is_in_blockquote));

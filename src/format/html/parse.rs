@@ -6,6 +6,7 @@ use super::data;
 use super::error::SyntaxError;
 use super::lexer::{self, LexedAttribute};
 use super::parser;
+use super::runs;
 use super::utilities::is_unknown_namespace;
 use bun_core::strings;
 use std::borrow::Cow;
@@ -108,6 +109,8 @@ struct Context<'a, 't> {
     tree: &'t mut Tree<'a>,
     /// True if `parseVue` is the parsing function. The options can still be HTML's.
     is_vue: bool,
+    /// `None` if everything goes the long way.
+    runs: Option<runs::Settings>,
 }
 
 impl<'a> Context<'a, '_> {
@@ -132,6 +135,10 @@ impl<'a> Context<'a, '_> {
                 lexer: options.lexer,
                 is_tag_name_case_sensitive: options.is_tag_name_case_sensitive,
                 should_parse_as_raw_text,
+                // They are read for the options of the parser that has been asked for, and for all of the text.
+                runs: (self.runs).filter(|runs| {
+                    runs.parser == options.name && range.len() as usize == self.text.len()
+                }),
             },
         );
         match result.is_nested_too_deeply {
@@ -167,6 +174,24 @@ impl<'a> Context<'a, '_> {
         });
         if is_html {
             return self.parse_html(range, parse_options(Parser::Html));
+        }
+        // Without `getTagContentType` a `<script>` and a `<style>` are raw text all the same, and a `<template>` of HTML is
+        // not. With nothing else at the top the second result is the first.
+        let is_second_result_the_same = errors.is_empty()
+            && self.tree.children(root).all(|id| {
+                let node = &self.tree[id];
+                node.kind != Kind::Element
+                    || (node.namespace.is_empty()
+                        && match &node.name[..] {
+                            b"script" | b"style" => true,
+                            b"template" => {
+                                !(self.tree.attrs(id).iter()).any(|attr| &attr.name[..] == b"lang")
+                            }
+                            _ => false,
+                        })
+            });
+        if is_second_result_the_same {
+            return Ok((options, root));
         }
         let mut second: Option<parser::ParseResult<'a>> = None;
         // The second result's first error, before the errors are sorted.
@@ -507,11 +532,23 @@ pub(crate) fn parse<'a>(
     parser: Parser,
     tree: &mut Tree<'a>,
 ) -> Result<'a, ()> {
+    parse_with_runs(text, front_matter_len, parser, None, tree)
+}
+
+/// Like `parse`. With `runs`, the tree can have nodes of `Kind::Ready`.
+pub(crate) fn parse_with_runs<'a>(
+    text: &'a [u8],
+    front_matter_len: Option<usize>,
+    parser: Parser,
+    runs: Option<runs::Settings>,
+    tree: &mut Tree<'a>,
+) -> Result<'a, ()> {
     let all = Span::new(0, text.len() as u32);
     let mut context = Context {
         text,
         tree,
         is_vue: parser == Parser::Vue,
+        runs,
     };
     let root = context.parse(all, parse_options(parser))?;
     if let Some(len) = front_matter_len {

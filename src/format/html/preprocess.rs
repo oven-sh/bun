@@ -110,7 +110,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             next = self.tree.next(child);
             if !matches!(
                 self.tree[child].kind,
-                Kind::Text | Kind::Comment | Kind::DocType
+                Kind::Text | Kind::Comment | Kind::DocType | Kind::Ready
             ) {
                 let is_in_svg_foreign_object =
                     is_in_svg_foreign_object || self.is_svg_foreign_object(child);

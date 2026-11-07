@@ -12,9 +12,13 @@ use smallvec::SmallVec;
 /// True if `e` is in parentheses that stay.
 #[inline]
 pub(crate) fn is_cast_target<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    f.comments().has_type_cast_comments()
-        && e.is_parenthesized()
-        && !cast_parentheses(e, f).is_empty()
+    f.comments().has_type_cast_comments() && is_in_cast_parentheses(e, f)
+}
+
+#[cold]
+#[inline(never)]
+fn is_in_cast_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    e.is_parenthesized() && !cast_parentheses(e, f).is_empty()
 }
 
 /// The same, for the places where only Prettier sees the parentheses as the node. oxfmt looks inside them: in the

@@ -45,6 +45,9 @@ pub enum Kind {
     EsComment,
     /// The result of Prettier's `splitText` on a `Text`: words and whitespace, which aren't nodes here.
     Sentence,
+    /// Blocks, or what is in a paragraph or a heading, that haven't been parsed because it's known what they are printed
+    /// as: see `as_written.rs`, and [`Tree::as_written`].
+    AsWritten,
 }
 
 pub type NodeId = u32;
@@ -106,10 +109,12 @@ pub enum Align {
 #[derive(Copy, Clone, Debug)]
 pub struct Node {
     pub kind: Kind,
-    /// A list's or item's `spread`, a list's `ordered`.
+    /// For `AsWritten`: the kinds of its first and its last block.
+    pub(crate) ends: (Kind, Kind),
+    /// A list's or item's `spread`, a list's `ordered`. For `AsWritten`: `ordered` of its first block.
     pub spread: bool,
     pub ordered: bool,
-    /// A list's `isAligned`.
+    /// A list's `isAligned`. For `AsWritten`: `ordered` of its last block.
     pub is_aligned: bool,
     /// An item's `checked`: 0 is `null`, 1 `false`, 2 `true`.
     pub checked: u8,
@@ -141,6 +146,7 @@ impl Node {
     pub(crate) fn new(kind: Kind, start: u32, end: u32) -> Node {
         Node {
             kind,
+            ends: (kind, kind),
             spread: false,
             ordered: false,
             is_aligned: false,
@@ -163,6 +169,40 @@ impl Node {
     }
 }
 
+impl Node {
+    /// What the block before it sees: its kind, or that of the first of the blocks that it stands for.
+    pub(crate) fn first_kind(&self) -> Kind {
+        match self.kind {
+            Kind::AsWritten => self.ends.0,
+            kind => kind,
+        }
+    }
+
+    /// The same for the block after it.
+    pub(crate) fn last_kind(&self) -> Kind {
+        match self.kind {
+            Kind::AsWritten => self.ends.1,
+            kind => kind,
+        }
+    }
+
+    /// `ordered` of the list that `first_kind` is about.
+    pub(crate) fn is_first_ordered(&self) -> bool {
+        match self.kind {
+            Kind::AsWritten => self.spread,
+            _ => self.ordered,
+        }
+    }
+
+    /// `ordered` of the list that `last_kind` is about.
+    pub(crate) fn is_last_ordered(&self) -> bool {
+        match self.kind {
+            Kind::AsWritten => self.is_aligned,
+            _ => self.ordered,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Tree {
     pub(crate) nodes: Vec<Node>,
@@ -172,6 +212,8 @@ pub struct Tree {
     pub(crate) tokens: Vec<super::preprocess::Token>,
     /// The start of each line of the text.
     pub(crate) line_starts: Vec<u32>,
+    /// What the `AsWritten` are printed as that aren't printed as they are written.
+    pub(crate) rewritten: Vec<u8>,
 }
 
 impl Tree {
@@ -306,6 +348,16 @@ impl Tree {
         };
         let (start, len) = (string.start as usize, (string.len & !Str::OWNED) as usize);
         from.get(start..start + len).unwrap_or_default()
+    }
+
+    /// What `node`, an `AsWritten`, is printed as: its `value` is a range of the text, or with `checked` of `rewritten`.
+    pub(crate) fn as_written<'t>(&'t self, text: &'t [u8], node: &Node) -> &'t [u8] {
+        let from = if node.checked != 0 {
+            &self.rewritten
+        } else {
+            text
+        };
+        self.str(from, node.value)
     }
 
     /// Remaps every offset into the text with `map`: node spans, strings that are ranges of the text, and line starts.

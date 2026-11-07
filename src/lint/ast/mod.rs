@@ -36,6 +36,7 @@ mod list;
 mod name;
 mod node;
 mod pat;
+mod plain;
 mod reach;
 mod stmt;
 mod ty;
@@ -202,7 +203,7 @@ impl Bound<'_> {
 }
 
 /// The first and last of [`Lazy::unicode_escapes`]. It covers the whole text until those are computed, and it's empty
-/// if there are none.
+/// if there are none, or none in a name.
 struct UnicodeEscapeRange(Cell<(u32, u32)>);
 
 impl Default for UnicodeEscapeRange {
@@ -253,6 +254,8 @@ pub struct File<'a> {
     /// `hir.stmts`, if there are no casts to hide. Otherwise empty.
     plain_stmts: &'a [hir::Stmt],
     pub(crate) bound: Bound<'a>,
+    /// [`File::with_type_parents`]
+    pub(crate) type_parents: Option<bind::TypeParents<'a>>,
     pub(crate) atoms: &'a dyn Intern,
     pub(crate) texts: bun_sema::atom::OwnTexts<'a>,
     pub(crate) lazy: Lazy,
@@ -329,9 +332,16 @@ impl<'a> File<'a> {
             },
             hir: Hir::new(hir),
             bound: Bound::new(bound),
+            type_parents: None,
             atoms,
             texts: atoms.own_texts(),
-            lazy: Lazy::default(),
+            lazy: Lazy {
+                unicode_escape_range: match hir.rare_syntax & hir::rare::ESCAPED_NAME {
+                    0 => UnicodeEscapeRange(Cell::new((u32::MAX, 0))),
+                    _ => UnicodeEscapeRange::default(),
+                },
+                ..Lazy::default()
+            },
             types,
             sink: crate::context::Sink::default(),
             modules: std::cell::Cell::new(None),
@@ -383,6 +393,18 @@ impl<'a> File<'a> {
     pub fn with_text(mut self, text: &'a [u8]) -> File<'a> {
         self.hir.text = text;
         self
+    }
+
+    /// [`File::with_text`], where the file is.
+    pub fn set_text(&mut self, text: &'a [u8]) {
+        self.hir.text = text;
+    }
+
+    /// The parents of the file's types, if whoever made `bound` knows them. They aren't looked for then.
+    pub fn set_type_parents(&mut self, parents: Option<bind::TypeParents<'a>>) {
+        self.type_parents = parents;
+        #[cfg(debug_assertions)]
+        self.assert_type_parents_are_right();
     }
 
     #[inline]
@@ -523,8 +545,8 @@ impl<'a> File<'a> {
         })
     }
 
-    /// True if the text is known to have no `\u` from `pos` to `end`, so an identifier there ends where the HIR says.
-    /// Most files have none at all, and most of the rest have a few in strings.
+    /// True if the text is known to have no `\u` from `pos` to `end`, or none in a name, so an identifier there ends where
+    /// the HIR says. The parser says whether a name has one (`rare::ESCAPED_NAME`).
     #[inline]
     pub(crate) fn has_no_unicode_escape_in(&self, pos: u32, end: u32) -> bool {
         let (first, last) = self.lazy.unicode_escape_range.0.get();

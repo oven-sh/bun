@@ -1,5 +1,6 @@
 use super::expressions::FormatObjectMember;
 use super::parameters::should_hug_function_parameters;
+use crate::js::flat::{CertainIf, Deeper};
 use crate::prelude::*;
 use crate::write;
 
@@ -39,7 +40,8 @@ impl<'a> ObjectLike<'a> {
                 .func()
                 .is_some_and(|func| should_hug_function_parameters(func, false, f)),
             AstNodes::TSThisParameter(param) => param.func().is_some_and(|func| {
-                matches!(func.as_ast_nodes(), AstNodes::Function(_))
+                (!f.options().flavor.is_oxfmt()
+                    || matches!(func.as_ast_nodes(), AstNodes::Function(_)))
                     && should_hug_function_parameters(func, false, f)
             }),
             _ => false,
@@ -89,10 +91,21 @@ impl<'a> Format<'a> for ObjectLike<'a> {
                     true => f.source_text().contains_newline(before_first),
                     false => f.source_text().has_newline_in_range(before_first),
                 };
-            let members = format_with(|f| self.write_members(f));
+            let follows_line = std::mem::take(&mut f.context_mut().short_cuts.follows_line);
+            let should_hug = self.should_hug(f);
+            let members = format_with(|f| {
+                let outer = f.context().short_cuts.properties_start_lines;
+                // One that's hugged breaks with the parameters.
+                f.context_mut().short_cuts.properties_start_lines =
+                    (should_expand || follows_line) && !should_hug;
+                self.write_members(f);
+                f.context_mut().short_cuts.properties_start_lines = outer;
+            });
+            let members = Deeper(&members);
+            let members = CertainIf(follows_line, &members);
             let inner =
                 soft_block_indent_with_maybe_space(&members, f.options().bracket_spacing.value());
-            match self.should_hug(f) {
+            match should_hug {
                 true => write!(f, inner),
                 false => write!(
                     f,

@@ -14,7 +14,7 @@ use crate::js::utils::array::write_array_node;
 use crate::js::utils::assignment_like::AssignmentLike;
 use crate::js::utils::conditional::ConditionalLike;
 use crate::js::utils::object::{format_computed_or_property_key, should_preserve_quote};
-use crate::js::utils::typecast::has_comments_that_count;
+use crate::js::utils::typecast::{has_comments_that_count, is_cast_target_that_hides_its_kind};
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
 
@@ -125,6 +125,8 @@ impl<'a> Format<'a> for FormatObjectMember<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let property = self.0;
         let write = |f: &mut Formatter<'a>| match property.kind() {
+            _ if f.context().short_cuts.properties_start_lines
+                && crate::js::flat::write_property(property, f) => {}
             PropKind::Spread => write!(f, ["...", property.value()]),
             _ => write_object_property(property, f),
         };
@@ -302,13 +304,14 @@ pub(crate) fn write_await_expression<'a>(e: Expr<'a>, argument: Expr<'a>, f: &mu
         AstNodes::NewExpression(new) => new.callee() == Some(e) && f.options().flavor.is_oxfmt(),
         _ => false,
     };
-    if !is_callee_or_object {
+    // `/** @type {A} */ (await a).b`: the parent is the `ParenthesizedExpression`, which indents what is in it.
+    if !is_callee_or_object || is_cast_target_that_hides_its_kind(e, f) {
         return write!(f, format_inner);
     }
 
     // `await (await a).b`: the parentheses break together with the group that contains the outer `await`.
     let indented = soft_block_indent(&format_inner);
-    match left_edge_end(e, AstNodes::AwaitExpression(e)).1 {
+    match left_edge_end(e, AstNodes::AwaitExpression(e), f).1 {
         AstNodes::AwaitExpression(_) => write!(f, indented),
         _ => write!(f, group(&indented)),
     }
@@ -371,6 +374,8 @@ pub(crate) fn write_ts_type_assertion<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
         return write!(f, [format_cast, expression]);
     }
     let format_cast = format_cast.memoized();
+    // It's printed flat first, and indented in one of the variants.
+    let expression = crate::js::flat::LongWay(&expression);
     let format_expression = expression.memoized();
     write!(
         f,

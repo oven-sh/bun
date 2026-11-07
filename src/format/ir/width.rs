@@ -154,10 +154,10 @@ fn width_of_characters(text: &[u8], flavor: Flavor) -> u32 {
                     c,
                     0x605 | 0x890..=0x891 | 0x8E2 | 0x200C..=0x200D | 0x2065..=0x2069
                 ));
-        let emoji_len = match emoji_len(&chars[i..]) {
+        let emoji_len = match is_skin_tone(c) && !flavor.is_oxfmt() {
             // No emoji that `emoji-regex` knows starts with a skin tone, so the joiner after it counts as a column.
-            2.. if is_skin_tone(c) && !flavor.is_oxfmt() => 1,
-            len => len,
+            true => usize::from(is_in(EMOJI, c)),
+            false => emoji_len(&chars[i..]),
         };
         match emoji_len {
             0 => {}

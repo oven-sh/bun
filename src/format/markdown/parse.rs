@@ -4,6 +4,7 @@
 //! ends in mdast: micromark and mdast-util-from-markdown have their own rules for line breaks and whitespace at the
 //! ends of containers.
 
+use super::as_written::{Lines, Reader, What};
 use super::ast::{Align, Kind, NONE, Node, NodeId, ReferenceType, Str, Tree};
 use super::spans::{self, push_without_nul};
 use super::strings::{normalize_identifier, push_lowercase, unescape};
@@ -14,7 +15,7 @@ use bun_md::types::{
     JsResult, LeafStart, OFF, Reference, Renderer, RendererImpl, SpanDetail, SpanStart, SpanType,
     TextType, VerbatimLine,
 };
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 /// A part of a line that belongs to a leaf block.
 #[derive(Copy, Clone, Debug)]
@@ -60,15 +61,23 @@ pub(crate) fn blank_front_matter(text: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Fills `tree` with the syntax tree of `text`, in which every line break is `\n`. Returns the root. `original` is the
-/// same text, or the input of [`blank_front_matter`] if `text` is its output.
+/// same text, or the input of [`blank_front_matter`] if `text` is its output. `as_written` reads what it can of `text`
+/// in the place of the parser.
 pub(crate) fn parse(
     text: &[u8],
     original: &[u8],
     syntax: Syntax,
     tree: &mut Tree,
+    as_written: Option<&RefCell<Reader<'_>>>,
 ) -> Option<NodeId> {
+    let parse_from = |tree: &mut Tree, first_line: usize| {
+        as_written
+            .and_then(|reader| tree_without_parser(text, tree, first_line, reader))
+            .inspect(|_| crate::whole_texts::note())
+            .or_else(|| parse_lines_with(text, tree, syntax, first_line, as_written))
+    };
     let Some(front_matter) = super::front_matter::parse(original) else {
-        return parse_lines(text, tree, syntax, 0);
+        return parse_from(tree, 0);
     };
     let is_blanked = !matches!(original.get(front_matter.end), None | Some(b'\n'));
     let first_line = if is_blanked {
@@ -76,7 +85,7 @@ pub(crate) fn parse(
     } else {
         front_matter.end + 1
     };
-    let root = parse_lines(text, tree, syntax, first_line)?;
+    let root = parse_from(tree, first_line)?;
     let node = tree.add(Kind::FrontMatter, 0, front_matter.end as u32);
     tree.prepend(root, node);
     Some(root)
@@ -468,6 +477,102 @@ fn span_at(
     }
 }
 
+/// The kind of the node for `lines`.
+fn kind_of(lines: Lines) -> Kind {
+    match lines.what {
+        What::Blocks { .. } => Kind::AsWritten,
+        What::Code { .. } => Kind::Code,
+    }
+}
+
+/// Sets what `node`, the node for `lines`, has besides its kind and its place.
+fn fill(tree: &mut Tree, node: NodeId, lines: Lines, text: &[u8]) {
+    let Lines { start, end, what } = lines;
+    match what {
+        What::Blocks {
+            rewritten: range,
+            ends,
+            are_ordered,
+        } => {
+            let (from, to) = range.unwrap_or((start, end));
+            if let Some(node) = tree.get_mut(node) {
+                (node.ends, node.value) = (ends, Str::source(from, to));
+                (node.spread, node.is_aligned) = are_ordered;
+                node.checked = u8::from(range.is_some());
+            }
+        }
+        // There's nothing to decode in what follows such a fence, and one space after the language.
+        What::Code { info_end, code_end } => {
+            let info_start = start + 3;
+            let info = text
+                .get(info_start as usize..info_end as usize)
+                .unwrap_or_default();
+            let language_end = info_start
+                + bun_core::strings::index_of_char_usize(info, b' ').unwrap_or(info.len()) as u32;
+            let string = |start: u32, end: u32| match start < end {
+                true => Str::source(start, end),
+                false => Str::NO,
+            };
+            if let Some(node) = tree.get_mut(node) {
+                node.second = string(info_start, language_end);
+                node.third = string(language_end + 1, info_end);
+                node.value = Str::source(info_end + 1, code_end);
+            }
+        }
+    }
+}
+
+/// The tree of a `text` that `as_written` reads from `first_line` to its end, so that nothing is left for the parser.
+fn tree_without_parser(
+    text: &[u8],
+    tree: &mut Tree,
+    first_line: usize,
+    as_written: &RefCell<Reader<'_>>,
+) -> Option<NodeId> {
+    if text.len() >= (1 << 30) {
+        return None;
+    }
+    let mut reader = as_written.borrow_mut();
+    let mut at = first_line;
+    loop {
+        // Lines with nothing on them.
+        let rest = text.get(at..).unwrap_or_default();
+        let is_white = |byte: &&u8| matches!(byte, b' ' | b'\t' | b'\n');
+        let white = rest.iter().take_while(is_white).count();
+        at += white;
+        if at >= text.len() {
+            break;
+        }
+        if white > 0 && text[at - 1] != b'\n' {
+            reader.start_over();
+            return None;
+        }
+        let Some(end) = reader.lines_at(at, false) else {
+            reader.start_over();
+            return None;
+        };
+        at = end + 1;
+    }
+    tree.clear();
+    let root = tree.add(Kind::Root, 0, text.len() as u32);
+    // Nobody asks about a line in these nodes. What is asked is whether there's a line between two of them.
+    tree.line_starts.push(0);
+    let mut previous_end = first_line.saturating_sub(1) as u32;
+    for &lines in reader.found() {
+        if lines.start > previous_end + 1 {
+            tree.line_starts.push(previous_end + 1);
+        }
+        if lines.start > 0 {
+            tree.line_starts.push(lines.start);
+        }
+        previous_end = lines.end;
+        let node = tree.add(kind_of(lines), lines.start, lines.end);
+        tree.append(root, node);
+        fill(tree, node, lines, text);
+    }
+    Some(root)
+}
+
 /// An open container.
 struct Open {
     node: NodeId,
@@ -482,7 +587,7 @@ struct Unended {
     first_segment: usize,
 }
 
-struct Builder<'t> {
+struct Builder<'t, 'r> {
     /// The whole text.
     text: &'t [u8],
     /// Where the parser's input starts in it.
@@ -521,6 +626,8 @@ struct Builder<'t> {
     text_range: Option<(u32, u32)>,
     text_value: Vec<u8>,
     text_matches_source: bool,
+    /// Where the last character reference that was decoded into `text_value` ends in it.
+    text_reference_end: usize,
     /// The text content of the open image.
     alt: Vec<u8>,
     /// Where its last part ends.
@@ -537,6 +644,11 @@ struct Builder<'t> {
     guarded_break: Option<GuardedBreak>,
     /// For oxfmt: the current line is one that it prints verbatim.
     is_on_verbatim_line: bool,
+    /// What has read lines in the place of the parser, and how many of `Reader::found` are in the tree.
+    as_written: Option<&'t RefCell<Reader<'r>>>,
+    found_in_tree: usize,
+    /// What the paragraph or heading that starts next is printed as, if the parser doesn't read what is in it.
+    known_content: Option<Option<(u32, u32)>>,
 }
 
 /// A line break before a line that is paragraph text only because it's indented. Prettier always strips the
@@ -655,7 +767,7 @@ pub(crate) fn leaves_paragraph(above: Option<&[u8]>, line: &[u8], syntax: Syntax
         .is_some_and(|first| first.kind == Kind::Paragraph && first.next == NONE)
 }
 
-impl Builder<'_> {
+impl Builder<'_, '_> {
     // ───────────────────────────── positions ─────────────────────────────
 
     /// The end of the line that `offset` is on.
@@ -997,6 +1109,26 @@ impl Builder<'_> {
         self.spans.push(node);
     }
 
+    /// The language and the rest of the text after the opening fence of `node`.
+    fn set_info(&mut self, node: NodeId, kind: Kind, info_start: u32, info_end: u32) {
+        let info = &self.text[info_start as usize..info_end as usize];
+        let lang_len = match kind {
+            Kind::Code => info.iter().take_while(|&&byte| !is_space(byte)).count(),
+            _ => 0,
+        } as u32;
+        let whitespace_len = info[lang_len as usize..]
+            .iter()
+            .take_while(|&&byte| is_space(byte))
+            .count() as u32;
+        let (lang, meta) = (
+            self.string_value(info_start, info_start + lang_len),
+            self.string_value(info_start + lang_len + whitespace_len, info_end),
+        );
+        if let Some(node) = self.tree.get_mut(node) {
+            (node.second, node.third) = (lang, meta);
+        }
+    }
+
     /// `info_start` is where the text after the opening fence starts.
     fn fenced_code(&mut self, lines: &[VerbatimLine], info_start: u32, is_closed: bool) {
         let mut fence_end = info_start;
@@ -1020,22 +1152,7 @@ impl Builder<'_> {
             Kind::Code
         };
         let node = self.add_leaf(kind, start, end);
-        let info = &self.text[info_start as usize..info_end as usize];
-        let lang_len = match kind {
-            Kind::Code => info.iter().take_while(|&&byte| !is_space(byte)).count(),
-            _ => 0,
-        } as u32;
-        let whitespace_len = info[lang_len as usize..]
-            .iter()
-            .take_while(|&&byte| is_space(byte))
-            .count() as u32;
-        let (lang, meta) = (
-            self.string_value(info_start, info_start + lang_len),
-            self.string_value(info_start + lang_len + whitespace_len, info_end),
-        );
-        if let Some(node) = self.tree.get_mut(node) {
-            (node.second, node.third) = (lang, meta);
-        }
+        self.set_info(node, kind, info_start, info_end);
         let first_segment = self.segments.len();
         for line in lines {
             let segment = self.segment(line);
@@ -1102,8 +1219,21 @@ impl Builder<'_> {
         }
     }
 
-    /// A block that `liquid_end` or `es_syntax_end` found.
+    /// Lines that the parser has skipped.
+    fn lines_as_written(&mut self, lines: Lines) {
+        let node = self.add_leaf(kind_of(lines), lines.start, lines.end);
+        fill(self.tree, node, lines, self.text);
+    }
+
+    /// A block that `liquid_end`, `es_syntax_end` or `as_written` found.
     fn extension(&mut self, line: &VerbatimLine) {
+        if let Some(reader) = self.as_written
+            && let Some(&lines) = reader.borrow().found().get(self.found_in_tree)
+            && lines.start == line.beg
+        {
+            self.found_in_tree += 1;
+            return self.lines_as_written(lines);
+        }
         let source = self
             .text
             .get(line.beg as usize..line.end as usize)
@@ -1463,6 +1593,7 @@ impl Builder<'_> {
             }
         };
         self.text_value.clear();
+        self.text_reference_end = 0;
         let node = self.tree.add(Kind::Text, start, end);
         if let Some(node) = self.tree.get_mut(node) {
             node.value = value;
@@ -1649,7 +1780,7 @@ impl Builder<'_> {
     }
 }
 
-impl RendererImpl for Builder<'_> {
+impl RendererImpl for Builder<'_, '_> {
     fn wants_source(&self) -> bool {
         true
     }
@@ -1682,6 +1813,20 @@ impl RendererImpl for Builder<'_> {
             end: line.end + base,
             indent: line.indent,
         }));
+        if let Some(reader) = self.as_written
+            && matches!(block_type, BlockType::P | BlockType::H)
+        {
+            let mut reader = reader.borrow_mut();
+            // How a line that's indented like code is printed depends on more than what is on it.
+            let is_indented = self.lines.iter().skip(1).any(|it| it.indent >= 4);
+            let lines = self
+                .lines
+                .iter()
+                .map(|it| (it.beg as usize, it.end as usize));
+            let lines = lines.take_while(|_| !is_indented);
+            self.known_content = reader.content_of(lines);
+            return self.known_content.is_some();
+        }
         matches!(
             block_type,
             BlockType::Code | BlockType::Html | BlockType::Hr
@@ -1819,6 +1964,20 @@ impl RendererImpl for Builder<'_> {
                 _ => Align::Right,
             })),
             BlockType::Td => self.table_cell(None),
+        }
+        if let Some(rewritten) = self.known_content.take() {
+            let (start, end) = (
+                lines.first().map_or(0, |it| it.beg),
+                lines.last().map_or(0, |it| it.end),
+            );
+            let node = self.tree.add(Kind::AsWritten, start, end);
+            let (from, to) = rewritten.unwrap_or((start, end));
+            if let Some(node) = self.tree.get_mut(node) {
+                node.value = Str::source(from, to);
+                node.checked = u8::from(rewritten.is_some());
+            }
+            self.tree
+                .append(self.spans.last().copied().unwrap_or(NONE), node);
         }
         // A paragraph's content is sliced from them.
         self.lines = lines;
@@ -2030,8 +2189,9 @@ impl RendererImpl for Builder<'_> {
             TextType::Entity => {
                 self.add_text(b"", false);
                 unescape(content, &mut self.text_value);
+                self.text_reference_end = self.text_value.len();
             }
-            // The whitespace before it isn't part of the text.
+            // The whitespace before it isn't part of the text, unless a character reference stands for it.
             TextType::Softbr => {
                 let so_far = match self.text_range {
                     Some((start, end)) if self.text_matches_source => {
@@ -2039,7 +2199,8 @@ impl RendererImpl for Builder<'_> {
                     }
                     _ => &self.text_value[..],
                 };
-                let whitespace_len = so_far.iter().rev().take_while(|it| is_white(it)).count();
+                let written = so_far.get(self.text_reference_end..).unwrap_or_default();
+                let whitespace_len = written.iter().rev().take_while(|it| is_white(it)).count();
                 if whitespace_len > 0 {
                     self.copy_text();
                     self.text_value
@@ -2142,6 +2303,16 @@ pub(crate) fn parse_lines(
     syntax: Syntax,
     first_line: usize,
 ) -> Option<NodeId> {
+    parse_lines_with(text, tree, syntax, first_line, None)
+}
+
+fn parse_lines_with(
+    text: &[u8],
+    tree: &mut Tree,
+    syntax: Syntax,
+    first_line: usize,
+    as_written: Option<&RefCell<Reader<'_>>>,
+) -> Option<NodeId> {
     tree.clear();
     if text.len() >= (1 << 30) {
         return None;
@@ -2179,7 +2350,14 @@ pub(crate) fn parse_lines(
     let memo = Cell::new(SpanMemo::default());
     let can_start_with_check = Cell::new(false);
     let span = |start: &SpanStart<'_>| span_at(start, syntax, can_start_with_check.get(), &memo);
+    let lines = |start: OFF, is_after_container: bool| {
+        let start = first_line + start as usize;
+        let mut reader = as_written?.borrow_mut();
+        let end = reader.lines_at(start, is_after_container)?;
+        Some((end - first_line) as OFF)
+    };
     let extensions = Extensions {
+        lines: as_written.map(|_| &lines as &dyn Fn(OFF, bool) -> Option<OFF>),
         leaf_bytes: match syntax {
             Syntax::Plain | Syntax::CommonMark { .. } => b"",
             Syntax::Mdx => b"ie",
@@ -2231,6 +2409,7 @@ pub(crate) fn parse_lines(
         marker_ends: Vec::new(),
         text_range: None,
         text_value: Vec::new(),
+        text_reference_end: 0,
         text_matches_source: false,
         alt: Vec::new(),
         alt_end: 0,
@@ -2243,12 +2422,15 @@ pub(crate) fn parse_lines(
         },
         guarded_break: None,
         is_on_verbatim_line: false,
+        as_written,
+        found_in_tree: 0,
+        known_content: None,
     };
     render_with_extensions(
         &text[first_line..],
         options,
         Renderer { ptr: &mut builder },
-        extensions,
+        &extensions,
     )
     .ok()?;
     Some(root)

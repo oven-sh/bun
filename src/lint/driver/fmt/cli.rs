@@ -108,7 +108,7 @@ const OUTPUT: &[Param] = &[
 
 const OTHER: &[Param] = &[
     clap::param!(
-        "--threads <n>                   Number of threads <d>(default: one per CPU core)<r>"
+        "--threads <n>                   Number of threads <d>(default: as many as the work pays for, up to one per CPU core)<r>"
     ),
     clap::param!(
         "--debug-check                   Do not write. Fail if formatting a file would change what it means"
@@ -184,6 +184,19 @@ const OPPOSITES: &[Param] = &[
     clap::param!("--script"),
 ];
 
+/// True if `bun fmt` has the flags for tests and measurements. Release builds don't.
+pub const HAS_FLAGS_FOR_TESTS: bool =
+    bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
+
+/// `--help` doesn't list them.
+const FOR_TESTS: &[Param] = match HAS_FLAGS_FOR_TESTS {
+    true => &[
+        clap::param!("--bench <rounds>"),
+        clap::param!("--short-cuts"),
+    ],
+    false => &[],
+};
+
 pub const HELP: Help = Help {
     groups: &[
         Group {
@@ -240,6 +253,8 @@ pub(crate) const PARAMS: &[Param] = clap::concat_params!(
     OXFMT_COMPAT,
     OPPOSITES
 );
+
+const PARAMS_OF_THIS_BUILD: &[Param] = clap::concat_params!(PARAMS, FOR_TESTS);
 
 /// `--config-precedence`
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -363,6 +378,11 @@ pub struct Options {
     pub debug_check: bool,
     /// Print the files that would be formatted, without formatting.
     pub list_files: bool,
+    /// `--bench`, for measurements: read the files, format all of them this many times, and print how long each round
+    /// took.
+    pub bench: usize,
+    /// `--no-short-cuts`, for tests: `FormatOptions::no_short_cuts`.
+    pub no_short_cuts: bool,
 }
 
 impl Default for Options {
@@ -412,6 +432,8 @@ impl Default for Options {
             cwd: None,
             debug_check: false,
             list_files: false,
+            bench: 0,
+            no_short_cuts: false,
         }
     }
 }
@@ -562,6 +584,11 @@ impl Options {
             b"timing" => self.timing = is_on,
             b"cwd" => self.cwd = owned(),
             b"debug-check" => self.debug_check = is_on,
+            b"bench" => match bun_core::fmt::parse_decimal::<usize>(text) {
+                Some(rounds) if rounds > 0 => self.bench = rounds,
+                _ => return error(&[b"--bench takes a number above zero, not \"", text, b"\""]),
+            },
+            b"short-cuts" => self.no_short_cuts = !is_on,
             _ => {}
         }
         Ok(())
@@ -736,13 +763,17 @@ impl Options {
                 }
             })
             .collect();
-        crate::args::parse(PARAMS, &args, &mut |argument| match argument {
-            Argument::Flag { name, value, is_on } => options.set(name, value, is_on),
-            Argument::Positional(pattern) => {
-                options.patterns.push(pattern.to_vec());
-                Ok(())
-            }
-        })?;
+        crate::args::parse(
+            PARAMS_OF_THIS_BUILD,
+            &args,
+            &mut |argument| match argument {
+                Argument::Flag { name, value, is_on } => options.set(name, value, is_on),
+                Argument::Positional(pattern) => {
+                    options.patterns.push(pattern.to_vec());
+                    Ok(())
+                }
+            },
+        )?;
         if options.all && !options.help {
             return error(&[b"--all has no effect without --help"]);
         }

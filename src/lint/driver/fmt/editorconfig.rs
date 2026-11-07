@@ -411,6 +411,23 @@ fn text_of(value: bool) -> Vec<u8> {
     }
 }
 
+/// One bit for each section of `files`, set if [`options_for`] reads it for the file at `path`: two files with the same
+/// bits get the same options. `None` if there are more sections than bits.
+pub(crate) fn sections_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]) -> Option<u64> {
+    let candidate = Candidate::new(path);
+    let (mut bits, mut at) = (0u64, 0u32);
+    for file in files {
+        let is_above = paths::inside(&file.directory, path).is_some();
+        for section in &file.sections {
+            let glob = section.glob.as_ref().filter(|_| is_above);
+            let matches_file = glob.is_some_and(|it| it.matches_candidate(&candidate));
+            bits |= u64::from(matches_file).checked_shl(at)?;
+            at += 1;
+        }
+    }
+    Some(bits)
+}
+
 /// The Prettier options that `files` set for the file at `path`. `files` is ordered farthest first.
 pub(crate) fn options_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]) -> Found {
     // `combine`. `unset` is a value like any other, since Prettier doesn't ask for special handling.

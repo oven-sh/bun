@@ -3,6 +3,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  compileFixture,
   isASAN,
   isDebug,
   isLinux,
@@ -117,6 +118,10 @@ async function formatChecked(files: Record<string, string>, args: string[], opti
  */
 const slowdown = (odd: { cpu: number }, plain: { cpu: number }) =>
   odd.cpu / Math.max(plain.cpu, isWindows ? 1 / 64 : 0);
+
+/** `unit` so many times. (`String.prototype.repeat` is slow in a debug build.) */
+const repeated = (unit: string, times: number) =>
+  Buffer.alloc(Buffer.byteLength(unit) * Math.floor(times), unit).toString();
 
 /** True if the temporary directory is inside a repository. */
 const isInRepository = (function look(directory: string): boolean {
@@ -890,6 +895,44 @@ describe.concurrent("bun fmt", () => {
     }
   });
 
+  // Prettier 3.9.9 rejects the code whatever white space is before it.
+  describe.each<[string, string, number, number]>([
+    ["nothing", "", 1, 0],
+    ["a byte order mark", "﻿", 1, 0],
+    ["a byte order mark and a zero width no-break space", "﻿﻿", 1, 1],
+    ["a no-break space", " ", 1, 1],
+    ["an ideographic space", "　", 1, 1],
+    ["a line separator", " ", 2, 0],
+    ["a name that isn't ASCII and a no-break space", "é; ", 1, 3],
+    ["a space", " ", 1, 1],
+    ["a comment", "/**/", 1, 4],
+  ])("a syntax error in the first words of a file, after %s", (_, before, line, columns) => {
+    test.each([
+      ["a.js", 'import.d("foo");', 8, "The only valid meta property for import is 'import.meta'"],
+      ["a.mjs", "import . d;", 10, "The only valid meta property for import is 'import.meta'"],
+      ["a.cjs", "import/**/.d;", 12, "The only valid meta property for import is 'import.meta'"],
+      ["a.jsx", 'import.defers("a");', 8, "The only valid meta property for import is 'import.meta'"],
+      ["a.ts", 'import.d("foo");', 1, "'d' is not a valid meta-property for keyword 'import'."],
+      ["a.tsx", 'import.d("foo");', 1, "'d' is not a valid meta-property for keyword 'import'."],
+      ["a.mts", 'import.d("foo");', 1, "'d' is not a valid meta-property for keyword 'import'."],
+    ])("%s: %s", async (name, code, column, message) => {
+      const result = await format({}, ["--stdin-filepath", name], { stdin: `${before}${code}\n` });
+      expect(result.stderr).toEndWith(`\nerror: ${message}\n    at ${name}:${line}:${column + columns}`);
+      expect(result.raw).toBe("");
+      expect(result.exitCode).toBe(2);
+    });
+
+    // oxlint 1.70.0, which has the same parser as oxfmt, reports only this one.
+    test.each(["a.js", "a.ts"])("with an .oxfmtrc.json, %s: import / a", async name => {
+      const files = { [name]: `${before}import / a\n`, ".oxfmtrc.json": "{}\n" };
+      const result = await format(files, ["--check", name]);
+      expect(result.stderr).toContain(
+        `\nerror: Expected \`from\` but found \`/\`\n    at ${name}:${line}:${8 + columns}`,
+      );
+      expect(result.exitCode).toBe(2);
+    });
+  });
+
   test("a TOML syntax error uses Bun's parser message and is only a warning, because oxfmt skips such a file", async () => {
     const files = { "a.toml": 'a = 1\nb = "c\n', ".oxfmtrc.json": "{}\n" };
     const warning = [
@@ -968,6 +1011,28 @@ describe.concurrent("bun fmt", () => {
     const checked = await format(files, ["--debug-check"]);
     expect(checked.stderr).toBe("");
     expect(checked.exitCode).toBe(0);
+  });
+
+  test.each([
+    [
+      [],
+      `"plain"|'with "double"'|"with 'single'"|"with 'single'"|"plain"|"both ' and \\""|"é"|"tab\\there"|"tab\there"|"\\\\"|""`,
+    ],
+    [
+      ["--single-quote"],
+      `'plain'|'with "double"'|"with 'single'"|"with 'single'"|'plain'|'both \\' and "'|'é'|'tab\\there'|'tab\there'|'\\\\'|''`,
+    ],
+  ])("gives a string the quotes that need the fewest escapes: %j", async (flags, strings) => {
+    const written = `'plain'|'with "double"'|'with \\'single\\''|"with 'single'"|"plain"|'both \\' and "'|'é'|'tab\\there'|'tab\there'|'\\\\'|''`;
+    const text = `call(${written.split("|").join(", ")}, /* comment */ a);\n`;
+    const result = await format({ "a.js": text }, flags, { reads: ["a.js"] });
+    expect(result.files).toEqual({
+      "a.js": `call(\n${strings
+        .split("|")
+        .map(string => `  ${string},\n`)
+        .join("")}  /* comment */ a,\n);\n`,
+    });
+    expect(result.exitCode).toBe(0);
   });
 
   test("treats a vertical tab next to a comment as whitespace", async () => {
@@ -2173,6 +2238,20 @@ describe.concurrent("bun fmt", () => {
         expect(result.files).toEqual({ "a.mdx": "## first 2. second\n", "b.mdx": "## one line\n" });
         expect(result.exitCode).toBe(0);
       });
+    });
+
+    test("a column of an MDX table without a cell in the delimiter row isn't aligned like that of another table", async () => {
+      const files = {
+        "a.mdx": "{|||\n|-\n\n|a|b|c*|d|\n|-|-|-:|-|\n",
+        "b.mdx": "|a|b|c*|d|\n|-|-|-:|-|\n\n{|||\n|-\n",
+      };
+      const [short, long] = [
+        "| {   |     |     |\n| --- | --- | --- |\n",
+        "| a   | b   | c\\* | d   |\n| --- | --- | --: | --- |\n",
+      ];
+      const result = await format(files, [], { reads: Object.keys(files) });
+      expect(result.files).toEqual({ "a.mdx": `${short}\n${long}`, "b.mdx": `${long}\n${short}` });
+      expect(result.exitCode).toBe(0);
     });
 
     describe("the fence of a code block", () => {
@@ -4159,6 +4238,19 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
+  test("what follows -- is the name of a file, whatever it looks like", async () => {
+    const names = ["--bench=1.js", "--no-short-cuts", "--check.ts"];
+    const result = await format(
+      Object.fromEntries(names.map(name => [name, ugly])),
+      ["--parser=babel", "--", ...names],
+      {
+        reads: names,
+      },
+    );
+    expect(result.files).toEqual(Object.fromEntries(names.map(name => [name, formatted])));
+    expect(result.exitCode).toBe(0);
+  });
+
   test("formats HTML in template literals", async () => {
     const result = await format(
       {
@@ -5949,6 +6041,170 @@ exports.format = async text => "by Prettier";
     ]);
   });
 
+  test("a name that ends with .vue is a Vue file, whatever another language goes by is in front of that", async () => {
+    // Only in a Vue file is the value of `:a` code.
+    const text = '<template>\n<p :a="b+c">d</p>\n</template>\n';
+    const asVue = '<template>\n  <p :a="b + c">d</p>\n</template>\n';
+    const asHtml = '<template>\n  <p :a="b+c">d</p>\n</template>\n';
+    const kinds: Record<string, string> = {
+      "a.vue": asVue,
+      ".vue": asVue,
+      "A.VUE": asVue,
+      "a.Vue": asVue,
+      "package.json.vue": asVue,
+      "a.json.vue": asVue,
+      ".babelrc.vue": asVue,
+      "a.css.vue": asVue,
+      "a.scss.vue": asVue,
+      "a.yaml.vue": asVue,
+      "a.yml.mysql.vue": asVue,
+      ".prettierrc.vue": asVue,
+      "a.md.vue": asVue,
+      "README.vue": asVue,
+      "a.mdx.vue": asVue,
+      "a.graphql.vue": asVue,
+      "a.hbs.vue": asVue,
+      "a.html.vue": asVue,
+      "a.component.html.vue": asVue,
+      "a.mjml.vue": asVue,
+      "a.ts.vue": asVue,
+      "a.js.flow.vue": asVue,
+      "a.start.frag.vue": asVue,
+      "Jakefile.vue": asVue,
+      "a.toml.vue": asVue,
+      "a.svelte.vue": asVue,
+      "b.vue/c.vue": asVue,
+      "a.vue.html": asHtml,
+      "b.vue/c.html": asHtml,
+      "a.vue.md": text,
+      "a.vuex": text,
+      "a.vue~": text,
+      "avue": text,
+      "vue": text,
+    };
+    const names = Object.keys(kinds);
+    const result = await format(Object.fromEntries(names.map(name => [name, text])), [], { reads: names });
+    expect(result.files).toEqual(kinds);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a name that ends with .css, .scss or .less is a style sheet, whatever another language goes by is in front of that", async () => {
+    const text = "@a:b;\n$c:(d:e);\n";
+    const asCss = "@a:b;\n$c: (d: e);\n";
+    const asScss = "@a:b;\n$c: (\n  d: e,\n);\n";
+    const asLess = "@a: b;\n$c: (d: e);\n";
+    const kinds: Record<string, string> = {
+      "a.css": asCss,
+      ".css": asCss,
+      "A.CSS": asCss,
+      "a.Css": asCss,
+      "a.wxss": asCss,
+      "a.pcss": asCss,
+      "a.postcss": asCss,
+      "a.scss": asScss,
+      ".scss": asScss,
+      "A.SCSS": asScss,
+      "a.less": asLess,
+      ".less": asLess,
+      "A.LESS": asLess,
+      "package.json.css": asCss,
+      "a.json.scss": asScss,
+      ".babelrc.less": asLess,
+      "a.js.css": asCss,
+      "a.ts.scss": asScss,
+      "a.js.flow.less": asLess,
+      "a.start.frag.css": asCss,
+      "Jakefile.scss": asScss,
+      "a.vue.less": asLess,
+      "a.yaml.css": asCss,
+      "a.md.scss": asScss,
+      "a.html.less": asLess,
+      "a.less.css": asCss,
+      "a.css.scss": asScss,
+      "a.scss.less": asLess,
+      "b.css/c.scss": asScss,
+      "b.css/d.less": asLess,
+      "a.css.md": text,
+      "a.cssx": text,
+      "a.css~": text,
+      "acss": text,
+      "less": text,
+    };
+    const names = Object.keys(kinds);
+    const result = await format(Object.fromEntries(names.map(name => [name, text])), [], { reads: names });
+    expect(result.files).toEqual(kinds);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("the last extension of a name says that it is YAML, Markdown, MDX, GraphQL, Handlebars or HTML, whatever is in front of it", async () => {
+    // What is printed for the text in the language, and for the same text in no language that changes it.
+    const languages: Record<string, [text: string, formatted: string]> = {
+      "yaml": ["a:   1\n", "a: 1\n"],
+      "yml": ["a:   1\n", "a: 1\n"],
+      "md": ["<A   />\n\n#   h\n", "<A   />\n\n# h\n"],
+      "mdx": ["<A   />\n\n#   h\n", "<A />\n\n# h\n"],
+      "graphql": ["{a}\n", "{\n  a\n}\n"],
+      "gql": ["{a}\n", "{\n  a\n}\n"],
+      "hbs": ["{{a   b}}\n", "{{a b}}"],
+      "handlebars": ["{{a   b}}\n", "{{a b}}"],
+      "html": ['<p (click)="a=1"   >b</p>\n', '<p (click)="a=1">b</p>\n'],
+      "component.html": ['<p (click)="a=1"   >b</p>\n', '<p (click)="a = 1">b</p>\n'],
+    };
+    const fronts = [
+      "a",
+      "",
+      "A",
+      "package.json",
+      "a.json",
+      ".babelrc",
+      "a.js",
+      "a.ts",
+      "a.js.flow",
+      "a.start.frag",
+      "Jakefile",
+      "a.css",
+      "a.vue",
+      "a.yaml",
+      "a.yml.mysql",
+      ".lintstagedrc",
+      "README",
+      "a.md",
+      "a.mdx",
+      "a.graphql",
+      "a.hbs",
+      "a.html",
+      "a.toml",
+      "b.css/c",
+      "b.md/c",
+    ];
+    const files: Record<string, string> = {};
+    const expected: Record<string, string> = {};
+    for (const [extension, [text, formatted]] of Object.entries(languages)) {
+      for (const front of fronts) {
+        const inDirectory = `${extension}/${front}.${extension}`;
+        files[inDirectory] = text;
+        expected[inDirectory] = formatted;
+      }
+      for (const [name, isFormatted] of [
+        [`A.${extension.toUpperCase()}`, true],
+        [`a.${extension[0].toUpperCase()}${extension.slice(1)}`, true],
+        [`a.${extension}x`, false],
+        [`a.${extension}~`, false],
+        [`a${extension.replaceAll(".", "")}`, false],
+        [extension.replaceAll(".", ""), false],
+      ] as const) {
+        // `a.mdx` is a language of its own.
+        if (name === "a.mdx") continue;
+        files[`${extension}/${name}`] = text;
+        expected[`${extension}/${name}`] = isFormatted ? formatted : text;
+      }
+    }
+    const names = Object.keys(files);
+    const result = await format(files, [], { reads: names });
+    expect(result.files).toEqual(expected);
+    expect(result.exitCode).toBe(0);
+  });
+
   test("formats files under an .oxfmtrc.json like oxfmt, even if the run starts above it", async () => {
     const files = {
       "a.ts": "let a = // comment\n{\n  b: 1\n}\n",
@@ -5960,6 +6216,13 @@ exports.format = async text => "by Prettier";
       "a.ts": "let a =\n  // comment\n  {\n    b: 1,\n  };\n",
       "packages/c/a.ts": "let a = // comment\n  {\n    b: 1,\n  };\n",
     });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("with an .oxfmtrc.json, a table of tests with a comment that names a language stays a table", async () => {
+    const files = { ".oxfmtrc.json": "{}\n", "a.js": "describe.each/* HTML */`\n  a | b\n  ${1} | ${2}\n`;\n" };
+    const result = await format(files, ["a.js"], { reads: ["a.js"] });
+    expect(result.files).toEqual({ "a.js": "describe.each /* HTML */ `\n  a    | b\n  ${1} | ${2}\n`;\n" });
     expect(result.exitCode).toBe(0);
   });
 
@@ -6655,6 +6918,19 @@ exports.format = async text => "by Prettier";
       },
     );
 
+    // The children of an element that are written as lines ask for lines again. Without indentation no line gets full, so
+    // that went on until the stack ended, at depths between the limit of the printers and that of the parser.
+    test.skipIf(isWindows || isDebug || isASAN).concurrent.each([16_000, 18_000, 20_000, 22_000, 23_500])(
+      "%d elements of JSX in each other, with a tabWidth of 0",
+      async depth => {
+        const text = nested("x = (\n", "<a>\n<b />\n", "x\n", "</a>\n", ");\n", depth);
+        const result = await format({ "a.jsx": text }, ["--check", "--log-level=error", "--tab-width=0"]);
+        const tooDeep = problem("a.jsx", "The code is nested too deeply") + "\n\nCould not check 1 file.";
+        expect(result.stderr).toBeOneOf(["", tooDeep]);
+        expect(result.exitCode).toBe(result.stderr === "" ? 1 : 2);
+      },
+    );
+
     test("rejects output longer than JavaScript's maximum string length", async () => {
       // 560 MB. Prettier prints 490 MB.
       const text = `<img srcset="${"u".repeat(70_000)} 1w${", a 2w".repeat(8_000)}">\n`;
@@ -6753,6 +7029,118 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(2);
   });
 
+  // TypeScript's parser accepts these. typescript-estree throws while it converts the tree.
+  test.each([
+    "a?.b`c`",
+    "a()++",
+    "++a?.b",
+    "--a!.b?.c",
+    "class A { #x; m() { return 1 + #x } }",
+    "class A { #x; m() { return this in #x } }",
+    'import("a", "b", "c")',
+    "import()",
+    'import.source("a")',
+    "a;\nexport declare function f() {}",
+    "a;\nb;\nasync var c",
+    "declare var a = 1",
+  ])("an expression or a modifier that Prettier rejects in TypeScript is a syntax error: %j", async code => {
+    const result = await format({ "a.ts": code + "\n" }, ["a.ts"], { reads: ["a.ts"] });
+    expect(result.files).toEqual({ "a.ts": code + "\n" });
+    expect(result.stderr).toMatch(syntaxErrorIn("a.ts"));
+    expect(result.exitCode).toBe(2);
+  });
+
+  // Prettier prints `catch ({} // comment⏎: T) {}`.
+  test("a line comment alone in the pattern of a catch clause that has a type stays in the braces", async () => {
+    const code = "try {\n} catch ({\n  // comment\n}: T) {}\n";
+    const result = await format({ "a.ts": "try {} catch ({ // comment\n}: T) {}\n" }, ["a.ts"], { reads: ["a.ts"] });
+    expect(result.files).toEqual({ "a.ts": code });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("the same kinds of expressions are formatted where they are valid", async () => {
+    const code =
+      'a++;\nb.c--;\n++d[e];\nf!++;\nclass A {\n  #x;\n  m() {\n    return #x in this;\n  }\n}\nimport("a");\ng`h`;\n(i?.j)`k`;\n';
+    const result = await format({ "a.ts": code }, ["a.ts", "--check"], { reads: ["a.ts"] });
+    expect(result.stderr).toBe("1 file is formatted.");
+    expect(result.exitCode).toBe(0);
+  });
+
+  // One for each check that is skipped in a file where the parser has not seen what the check is about.
+  test.each([
+    "a() = 1",
+    "[a()] = b",
+    "a()++",
+    "for (a() of b);",
+    "for (async of a);",
+    "if (a) let b;",
+    "while (a) async function f() {}",
+    "for (using a in b);",
+    "class A { #a; b() { delete this.#a; } }",
+    "function f() { new.a; }",
+    "({ get a(b) {} })",
+    'function f(a = 1) { "use strict"; }',
+    "async function f(a = await b) {}",
+    "function* f(a = yield) {}",
+    "class A extends B { #a; b() { super.#a; } }",
+    "class A extends B { #a; b() { super./* c */ #a; } }",
+    "class A extends B { #a; b() { super // c\n.#a; } }",
+    "class A extends B { #a; b() { super.\u00a0#a; } }",
+    "class A { constructor() {} constructor() {} }",
+    "class A { #a; #a; }",
+    "({ a = 1 })",
+    "({ __proto__: 1, __proto__: 2 })",
+    "break;",
+    "a: { continue a; }",
+    "a: a: b;",
+    "let let = 1;",
+    "switch (a) { default: default: }",
+    "throw\na;",
+    "a ?? b || c",
+    "a?.b`c`",
+    "/a/gg",
+    "new import('a')",
+    "function f() { super(); }",
+  ])("JavaScript that Prettier rejects is a syntax error: %j", async code => {
+    const files = { "a.js": code + "\n", "flow.js": `// @flow\n${code}\n` };
+    const result = await format(files, ["a.js", "flow.js"], { reads: ["a.js", "flow.js"] });
+    expect(result.files).toEqual(files);
+    expect(result.stderr).toMatch(syntaxErrorIn("a.js"));
+    expect(result.stderr).toMatch(syntaxErrorIn("flow.js"));
+    expect(result.exitCode).toBe(2);
+  });
+
+  // What only Flow has is checked like what stands for it in the tree, and the parser says nothing about it beforehand.
+  // With the other kind of ternaries a file goes the long way.
+  test.each([
+    "type A = { get a(b: number): number };",
+    "type A = { set a(): void };",
+    "type A = { set @@iterator(): T };",
+    "declare class A { static prototype: T }",
+    "declare class A { get a(b: T): T }",
+    "async function f() { component A(a = await b) {} }",
+    "function* f() { component A(a = yield) {} }",
+    "function* f() { component A(a = yield b) {} }",
+    'component A(a = 1) { "use strict"; }',
+    "component A() { break; }",
+  ])("Flow that Prettier rejects is a syntax error: %j", async code => {
+    const files = { "a.js.flow": code + "\n" };
+    const result = await format(files, ["a.js.flow", "--experimental-ternaries"], { reads: ["a.js.flow"] });
+    expect(result.files).toEqual(files);
+    expect(result.stderr).toMatch(syntaxErrorIn("a.js.flow"));
+    expect(result.exitCode).toBe(2);
+  });
+
+  test.each(["function f<>() {}", "class A { m<>() {} }", "interface A<> {}", "type A<> = 1", "type A = <>() => void"])(
+    "an empty list of type parameters is a syntax error: %j",
+    async code => {
+      const result = await format({ "a.ts": code + "\n" }, ["a.ts"], { reads: ["a.ts"] });
+      expect(result.files).toEqual({ "a.ts": code + "\n" });
+      expect(result.stderr).toMatch(syntaxErrorIn("a.ts"));
+      expect(result.exitCode).toBe(2);
+    },
+  );
+
   test.each([
     "function f(x: number): string",
     "function* g()",
@@ -6841,6 +7229,137 @@ const b = (x: mixed): implies x is { a: () => void } => true;
     const result = await format({ "a.js": code }, ["--parser", "flow", "--check", "a.js"]);
     expect(result.stderr).not.toContain("a.js");
     expect(result.exitCode).toBe(0);
+  });
+
+  // Each row is the name of a file, the flags, the text, and what Prettier 3.9.9 prints for it. `bun fmt` printed each in another way
+  // once, with and without its short cuts alike, so the rows of `short-cuts.test.ts` that compare the two were no help.
+  describe("texts that were printed unlike Prettier prints them", () => {
+    const rows: [name: string, flags: string, text: string, byPrettier: string][] = [
+      // JavaScript: what a rule looks for, in or around the parentheses of a cast of JSDoc. The tag of a table of tests, or of a
+      // template of GraphQL, that is more than a name. A computed key that is short, with a comment or a type. Flow: what a declared
+      // hook returns.
+      [
+        "a.js",
+        "",
+        '/** @type {A} */ (describe.each)`\na|b\n${1}|${2}\n`("x", () => {});\n/** @type {A} */ (describe).each`\na|b\n${1}|${2}\n`("x", () => {});\n',
+        '/** @type {A} */ (describe.each)`\na|b\n${1}|${2}\n`("x", () => {});\n/** @type {A} */ (describe).each`\na|b\n${1}|${2}\n`("x", () => {});\n',
+      ],
+      [
+        "a.js",
+        "",
+        '/** @type {A} */ (it)("does something really long and complicated so I have to write a very long name for the test", () => { a; });\n/** @type {A} */ (require)("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");\n/** @type {A} */ (require).resolve("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");\n/** @type {A} */ (define)(["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"], function (a, b) {});\n',
+        '/** @type {A} */ (it)(\n  "does something really long and complicated so I have to write a very long name for the test",\n  () => {\n    a;\n  },\n);\n/** @type {A} */ (require)(\n  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",\n);\n/** @type {A} */ (require).resolve(\n  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",\n);\n/** @type {A} */ (define)(\n  [\n    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",\n    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",\n  ],\n  function (a, b) {},\n);\n',
+      ],
+      [
+        "a.js",
+        "",
+        "if (!/** @type {A} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && cccccccccccccccccccccccccccccc)) {}\n",
+        "if (\n  !(\n    /** @type {A} */ (\n      aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n        bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &&\n        cccccccccccccccccccccccccccccc\n    )\n  )\n) {\n}\n",
+      ],
+      [
+        "a.js",
+        "",
+        "const c = /** @type {A} */ (styled).div`\ndisplay:flex;\n`;\nconst d = /** @type {A} */ (graphql)`\nquery { a }\n`;\nconst e = /** @type {A} */ (html)`<div>  <b>x</b></div>`;\nconst m = /** @type {A} */ (markdown)`\n  # hi\n`;\ngraphql(schema, /** @type {A} */ (`\nquery { a }\n`));\nconst j = <style jsx>{/** @type {A} */ (`\ndiv{color:red}\n`)}</style>;\n",
+        "const c = /** @type {A} */ (styled).div`\ndisplay:flex;\n`;\nconst d = /** @type {A} */ (graphql)`\nquery { a }\n`;\nconst e = /** @type {A} */ (html)`<div>  <b>x</b></div>`;\nconst m = /** @type {A} */ (markdown)`\n  # hi\n`;\ngraphql(\n  schema,\n  /** @type {A} */ (\n    `\nquery { a }\n`\n  ),\n);\nconst j = (\n  <style jsx>\n    {\n      /** @type {A} */ (\n        `\ndiv{color:red}\n`\n      )\n    }\n  </style>\n);\n",
+      ],
+      [
+        "a.js",
+        "",
+        'it("does something", /** @type {X} */ ((aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccccccccc) => {\n  a;\n}));\n',
+        'it(\n  "does something",\n  /** @type {X} */ (\n    (\n      aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,\n      ccccccccccccccccccccc,\n    ) => {\n      a;\n    }\n  ),\n);\n',
+      ],
+      [
+        "a.js",
+        "",
+        'const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = /** @type {X} */ (require)("a");\n',
+        'const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa =\n  /** @type {X} */ (require)("a");\n',
+      ],
+      ["a.js", "", "graphql[experimental]`query { a }`;\n", "graphql[experimental]`\n  query {\n    a\n  }\n`;\n"],
+      [
+        "a.js",
+        "",
+        'it.each/* GraphQL */`\nquery { a }\n`;\ntest.only.each/* HTML */`<a   b="c"></a>`;\ndescribe.each/* GraphQL */`\na|b\n${1}|${2}\n`;\ndescribe.each/* css */`\na|b\n${1}|${2}\n`;\n',
+        'it.each /* GraphQL */ `\n  query {\n    a\n  }\n`;\ntest.only.each /* HTML */ `<a b="c"></a>`;\ndescribe.each /* GraphQL */ `\n  a    | b\n  ${1} | ${2}\n`;\ndescribe.each /* css */ `\n  a    | b\n  ${1} | ${2}\n`;\n',
+      ],
+      [
+        "a.js",
+        "",
+        'a = {\n  [1 // c\n  ]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+        'a = {\n  // c\n  [1]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+      ],
+      [
+        "a.js",
+        "--tab-width=8",
+        'a = {\n  [/*日日*/ a]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+        'a = {\n        [/*日日*/ a]:\n                "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+      ],
+      [
+        "a.ts",
+        "--tab-width=8",
+        'a = {\n  [a as 日日]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+        'a = {\n        [a as 日日]:\n                "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+      ],
+      [
+        "a.ts",
+        "--tab-width=8",
+        'a = {\n  [await /**/ a]: "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+        'a = {\n        [await /**/ a]:\n                "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string",\n};\n',
+      ],
+      [
+        "a.js.flow",
+        "--arrow-parens=avoid",
+        "declare export hook useA(): X => Y;\ndeclare function f(): X => Y %checks;\nhook useB(): X => Y {}\nfunction g(a: X): X => Y {}\ndeclare function h(): X => Y;\ndeclare hook useC(a: X => Y): void;\n",
+        "declare export hook useA(): (X) => Y;\ndeclare function f(): X => Y %checks;\nhook useB(): X => Y {}\nfunction g(a: X): X => Y {}\ndeclare function h(): X => Y;\ndeclare hook useC(a: (X) => Y): void;\n",
+      ],
+      [
+        "a.js.flow",
+        "",
+        "declare hook useA(): X => Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\n",
+        "declare hook useA(): (\n  X,\n) =>\n  | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\n",
+      ],
+      // Markdown: a reference for a space or a tab in front of a line break of a paragraph.
+      ["a.md", "", "**Note:**&#x20;\nnext line\n", "**Note:**&#x20;\nnext line\n"],
+      ["a.md", "", "- &#x20;\n  w\n", "- &#x20;\n  w\n"],
+      ["a.md", "", "&#9;\n&#9;\nw\n", "&#9;\n&#9;\nw\n"],
+      ["a.md", "", "**a**&#32; \nb\n", "**a**&#32;\nb\n"],
+      ["a.md", "", "**a**&#32;&Tab;\t\nb\n", "**a**&#32;&Tab;\nb\n"],
+      ["a.md", "", "- [x] &#32;\n  w\n", "- [x] &#32;\n      w\n"],
+      ["a.md", "", "**a**&#32;\nb\n===\n", "**a**&#32;\nb\n===\n"],
+      ["a.mdx", "", "**a**&#32; \nb\n", "**a**&#32;\nb\n"],
+      ["a.md", "--prose-wrap=always", "x **a**&#32;\nb\n", "x **a**&#32; b\n"],
+      ["a.md", "--prose-wrap=never", "&#32;\nb\n", "&#32; b\n"],
+      // Flow: a predicate behind a type that ends with `typeof`. A template of Angular in a cast. A number in the type of a key.
+      [
+        "a.js.flow",
+        "",
+        'declare function f(x: mixed): typeof y %checks(x);\ndeclare function g(x: mixed): typeof y[] %checks(x);\ndeclare function h(x: mixed): typeof y %checks(typeof x === "a");\n',
+        'declare function f(x: mixed): typeof y %checks(x);\ndeclare function g(x: mixed): (typeof y)[] %checks(x);\ndeclare function h(x: mixed): typeof y %checks(typeof x === "a");\n',
+      ],
+      [
+        "a.js.flow",
+        "",
+        "declare function f(x: mixed): /* c */ typeof y %checks(x);\n",
+        "declare function f(x: mixed): /* c */ typeof y %checks(x);\n",
+      ],
+      [
+        "a.js",
+        "",
+        "@Component({ styles: [/** @type {any} */ (`  a {  color : red }`)] }) class A {}\n",
+        "@Component({ styles: [/** @type {any} */ (`  a {  color : red }`)] })\nclass A {}\n",
+      ],
+      [
+        "a.ts",
+        "--tab-width=8",
+        'x = { [kk as .5]: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" };\nx = { [k as (T)[]]: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" };\nx = { [k as 0.50]: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" };\n',
+        'x = {\n        [kk as 0.5]:\n                "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",\n};\nx = {\n        [k as T[]]: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",\n};\nx = {\n        [k as 0.5]: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",\n};\n',
+      ],
+    ];
+    test.each([...Map.groupBy(rows, row => row[1])])("with %j", async (flags, group) => {
+      const files = Object.fromEntries(group.map(([name, , text], index) => [`${index}/${name}`, text]));
+      const result = await format(files, flags.split(" ").filter(Boolean), { reads: Object.keys(files) });
+      expect(result.files).toEqual(Object.fromEntries(group.map((row, index) => [`${index}/${row[0]}`, row[3]])));
+      expect(result.exitCode).toBe(0);
+    });
   });
 
   // This is what oxfmt 0.72.0 does with each. It only runs OXC's parser, so code with errors from the pass that builds
@@ -7258,6 +7777,12 @@ try {
           "¦",
         ),
         ...'@charset "a";¦<!--¦-->¦a{b:c!important;}\n¦/* prettier-ignore */\na{b:c}\n¦---\n'.split("¦"),
+        ..."a{/* b */}¦a{/* b */c:d}¦a {\n¦a {\n  b: c;\n¦a,\n¦a:b\n¦a: b\n¦a: 'b;\n¦a: f(b,\n¦a: (b,\n¦/* a */\n".split(
+          "¦",
+        ),
+        ...'a: b; /* c */\n¦:is(a,\n¦a: url(b;¦a[b="c\n¦a {\n  b: c;\n}\n¦a {\n  b: c;\n} /* d */\n¦@media (a: b) {\n'.split(
+          "¦",
+        ),
       ],
     ],
     [
@@ -7274,6 +7799,12 @@ try {
           "¦",
         ),
         ...'@error "a"+¦a{@extend b;}\n¦...¦@media #{$a} and '.split("¦"),
+        ..."&-a {\n¦a {\n  // b\n¦a{// b\n}¦@include a($b,\n¦$a: (0: b, -1: c,\n¦@return (a: b,\n¦.a-#{$b}-c ¦@if a {\n".split(
+          "¦",
+        ),
+        ...'.a-#{$b\n¦a: #{b\n¦a: b +\n¦@use "a\n¦@forward "a" as b-* ¦$a: b, // c\n¦@if a {\n} @else {\n}\n'.split(
+          "¦",
+        ),
       ],
     ],
     [
@@ -7289,11 +7820,16 @@ try {
         ..."@media @a{¦.m(@a;@b){¦@r:{a:b};\n¦@r();\n¦.a{b:@c+¦.a{b:(@c*¦!important¦.a !important;\n¦// '\n¦// \"\n".split(
           "¦",
         ),
+        ...".a() {\n¦.a(@b;\n¦.a(@b,\n¦.a when (b) and ¦.a when (b\n¦@a: f(~`b('c', 1) `,\n¦.@{a}-b,\n¦.@{a\n¦// (a\n".split(
+          "¦",
+        ),
+        ..."//prettier-ignore'\n¦@a: (@b +\n¦@a: @b\n¦a{/* b */}¦a{// b\n}".split("¦"),
       ],
     ],
     [
       "yaml",
-      'name: value\nlist:\n  - one\n  - two: "three"\nmap: { a: 1, b: [2, 3] }\n# a comment\n',
+      // The explicit key sends the text through the parser and the printer, like most of the units.
+      'name: value\nlist:\n  - one\n  - two: "three"\nmap: { a: 1, b: [2, 3] }\n# a comment\n? key\n: value\n',
       [
         ..."a: b\n¦- a\n¦a:\n¦- ¦- - ¦? a\n¦: a\n¦? ¦a: ¦[¦]¦{¦}¦[a,¦{a: b,¦\"a\" ¦\"¦'¦'a' ¦# a\n¦#¦&a ¦*a ¦!a ".split(
           "¦",
@@ -7312,7 +7848,7 @@ try {
     ],
     [
       "graphql",
-      "type User {\n  id: ID!\n  name(first: Int = 1): [String!]\n}\n\nquery {\n  user(id: 1) {\n    name\n  }\n}\n\n",
+      "type User {\n  id: ID!\n  name(first: Int = 1): [String!]\n  friends(first: Int = 10, after: String, orderBy: [Order!] = [{ field: NAME }]): [User!]! @cost(value: 5)\n}\n\nquery {\n  user(id: 1) {\n    name\n  }\n}\n\n",
       [
         ...'{a}\n¦{¦}¦a ¦query{a}\n¦type A{b:C}\n¦type A{¦b:C ¦# a\n¦"a" ¦"""a""" ¦"¦"""¦(¦)¦[¦]¦$a '.split("¦"),
         ..."@a ¦...¦...a ¦...on A{b} ¦a:b ¦a(b:1) ¦{a{¦!¦|¦&¦=¦:¦,¦\n¦ ¦1 ¦1.5 ¦enum A{B}\n¦union A=B|C\n¦union A=B".split(
@@ -7322,6 +7858,17 @@ try {
           "¦",
         ),
         ..."interface A{b:C}\n¦type A implements B&C{d:E}\n¦&B¦{a(b:[¦{a(b:{c:¦é¦\\".split("¦"),
+        ..."{a # b\n(c:1)}\n¦{a(b:1 # c\n)}\n¦{a(\n# b\nc:1\n# d\ne:2)}\n¦{a}# b\n¦{\n# a\nb\n# c\n}\n¦# prettier-ignore\n{a}\n".split(
+          "¦",
+        ),
+        ...'"""a\n¦"""\\¦"a\\¦{a(b:"""\n¦{a(b:"¦type A{\n"""a\n¦{a}/*¦{a}\n/*¦{a}//¦$a$b¦{a(b:$c$d)}\n¦{a},,,,\n¦{a}﻿\n'.split(
+          "¦",
+        ),
+        // A name that's longer than a word of the scanner's bitmaps, and what can end it.
+        ...[" ", "$", "}\n{", '"'].map(end => "a".repeat(100) + end),
+        `{a(b:[[[[["${"a".repeat(30)}","${"a".repeat(30)}","${"a".repeat(30)}"]]]]])}\n`,
+        `type A{b(c:D=[${"a".repeat(30)},${"a".repeat(30)},${"a".repeat(30)}] @f(g:"${"a".repeat(90)}")):E}\n`,
+        `union A=${"a".repeat(30)}|${"a".repeat(30)}|${"a".repeat(30)}\n`,
       ],
     ],
     [
@@ -7345,21 +7892,28 @@ try {
     "takes linear time in the size of the text: .%s",
     async (extension, ordinary, units) => {
       const count = isDebug || isASAN ? 2_000 : 40_000;
-      const repeated = (unit: string, times: number) =>
-        Buffer.alloc(Buffer.byteLength(unit) * Math.floor(times), unit).toString();
       const texts = units.map(unit => repeated(unit, count));
       const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
-      for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }]) {
-        const run = (text: (index: number) => string) =>
-          format(
-            {
-              ...configuration,
-              ...Object.fromEntries(texts.map((_, index) => [`${index}.${extension}`, text(index)])),
-            },
-            ["--check", "--log-level", "silent"],
-          );
-        const shapes = await run(index => texts[index]);
-        const plain = await run(() => repeated(ordinary, length / ordinary.length));
+      const configurations = [{}, { ".oxfmtrc.json": "{}\n" }];
+      const run = (configuration: Record<string, string>, text: (index: number) => string) =>
+        format(
+          {
+            ...configuration,
+            ...Object.fromEntries(texts.map((_, index) => [`${index}.${extension}`, text(index)])),
+          },
+          ["--check", "--log-level", "silent"],
+        );
+      // Ordinary text takes short cuts that most of the units can't take, and that one of the flavors may not have. The
+      // units are compared with the long way.
+      let plain = { cpu: 0 };
+      // Handlebars has the same short cut in both flavors, but none where white space doesn't count.
+      const longWay = extension === "hbs" ? [{ ".prettierrc": '{ "htmlWhitespaceSensitivity": "ignore" }\n' }] : [];
+      for (const configuration of [...configurations, ...longWay]) {
+        const result = await run(configuration, () => repeated(ordinary, length / ordinary.length));
+        if (result.cpu > plain.cpu) plain = result;
+      }
+      for (const configuration of configurations) {
+        const shapes = await run(configuration, index => texts[index]);
         expect(slowdown(shapes, plain)).toBeLessThan(4);
       }
     },
@@ -7447,8 +8001,9 @@ try {
       ["component.html", "{a, plural, ", "=0 {b} ", "}"],
     ];
     const texts = shapes.map(([, before, unit, after]) => before + unit.repeat(count) + after);
+    // Too long for a line and with a value that is written anew, so that it is parsed and laid out.
     const ordinary =
-      '<div class="a b">\n  <p>The quick brown fox <b>jumps</b> over the <a href="c">lazy dog</a>.</p>\n  <img src="d" alt="e" />\n</div>\n';
+      '<div class="a b">\n  <p>The quick brown fox <b>jumps</b> over the <a href=\'c\'>lazy dog</a>, and then <i>once more</i> for good measure.</p>\n  <img src="d" alt="e" style="f:g" />\n</div>\n';
     const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
     const run = (text: (index: number) => string) =>
       format(Object.fromEntries(shapes.map(([ending], index) => [`${index}.${ending}`, text(index)])), ["--check"]);
@@ -7456,6 +8011,161 @@ try {
     // 3 when all is well.
     expect(slowdown(odd, plain)).toBeLessThan(6);
   }, 120_000);
+
+  // What the short cut for Handlebars refuses goes the long way by itself, or together with what is around it. Neither
+  // the search for its end nor an attempt to write something on one line is repeated for each level or each repetition.
+  test("Handlebars takes linear time where parts of a template go the long way", async () => {
+    const count = isDebug || isASAN ? 2_000 : 40_000;
+    const deep = 100;
+    // Each row is a prefix, the repeated unit and a suffix.
+    const shapes: [string, string, string][] = [
+      ["<a>\n".repeat(deep), "<b>c</b>\n", "\\{{x}}" + "</a>".repeat(deep)],
+      ["<a>\n".repeat(deep), "<b>c</b>\n", "<pre></pre>" + "</a>".repeat(deep)],
+      ["{{#a}}\n".repeat(deep), "<b>c</b>\n", "\\{{x}}" + "{{/a}}".repeat(deep)],
+      ["<a>\n".repeat(deep), "b ", "\\{{x}}" + "</a>".repeat(deep)],
+      ["\\{{a}} ", "<b></b> ", "\\\\{{c}}"],
+      ["\\{{a}}\n", "<b></b>\n", "\\\\{{c}}"],
+      ['<a b="\\{{"></a>\n', "<b></b>\n", "\\\\{{c}}"],
+      ["", "{{! prettier-ignore }}\n<a   b></a>\n", ""],
+      ["", "{{! prettier-ignore }}\n", ""],
+      ["", "{{! prettier-ignore }} ", ""],
+      ["", "<pre>a</pre>\n", ""],
+      ["", "{{a.[b]}}\n", ""],
+      ["", '<a title="b\nc">\nd\n</a>\n', ""],
+      ["", "{{#a b.[c]}}\nd\n{{/a}}\n", ""],
+      ["<p>", "<a>b</a> ", "</p>"],
+      ["<p> ", "<a>b</a>", "</p>"],
+      ["<a> ".repeat(deep), "b ", "</a>".repeat(deep)],
+      ["<a> ".repeat(deep), "<b>c</b>", "\n" + "</a>".repeat(deep)],
+      ["", "<!-- a\n b -->\n", ""],
+      ["", "<a>\n", ""],
+      ["", "{{#a}}\n", ""],
+      ["", "<a>\n", repeated("</a>", count)],
+      ["", '<a b="c\nd">\n', ""],
+      ["", '<a class="b {{c}}\n', ""],
+      ['<a class="', "b {{c d}} ", '"></a>'],
+      ["<a\n", "b={{c d}}\n", "></a>"],
+      ["{{a ", "(b c) ", "}}"],
+      ["{{a " + "(b ".repeat(deep), "c ", ")".repeat(deep) + "}}"],
+      ["", "{{a (b\n", ""],
+      ["", "a\n\f\n", ""],
+      ["", "<Foo>\n", repeated("</Foo>", count)],
+      ["", "{{#a}} ", repeated("{{/a}}", count)],
+    ];
+    const texts = shapes.map(([before, unit, after]) => before + repeated(unit, count) + after);
+    const ordinary = '<div class="a {{b}}">\n  {{#if c}}\n    <span>{{d.e}}</span>\n  {{/if}}\n</div>\n';
+    const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
+    const run = (configuration: Record<string, string>, text: (index: number) => string) =>
+      format({ ...configuration, ...Object.fromEntries(shapes.map((_, index) => [`${index}.hbs`, text(index)])) }, [
+        "--check",
+        "--log-level",
+        "silent",
+      ]);
+    // Ordinary text goes the long way where white space doesn't count.
+    const longWay = { ".prettierrc": '{ "htmlWhitespaceSensitivity": "ignore" }\n' };
+    const [odd, plain] = [
+      await run({}, index => texts[index]),
+      await run(longWay, () => repeated(ordinary, length / ordinary.length)),
+    ];
+    // 1 when all is well.
+    expect(slowdown(odd, plain)).toBeLessThan(4);
+  });
+
+  // Something on every line that is opened and not closed, or refused after a look ahead: what reads children from the
+  // bytes looks for the end of each, which must not be a search through the rest of the text every time.
+  test.each([[[]], [["--embedded-language-formatting=off"]]])(
+    "HTML and Vue with something unclosed on every line take linear time: %j",
+    async flags => {
+      const count = isDebug || isASAN ? 500 : 40_000;
+      const [open, close] = ["<template>\n", "</template>\n"];
+      // Each row is the file extension, a prefix, the repeated unit and a suffix.
+      const shapes: [string, string, string, string][] = [
+        ["vue", open, "{{ a\n", close],
+        ["vue", open, "{{ a\n", "}}\n" + close],
+        ["vue", open, "<p>{{ a</p>\n", close],
+        ["vue", open, "<p>{{ a</p>\n", "}}\n" + close],
+        ["vue", open, "<p>{{ 'a</p>\n", close],
+        ["vue", open, "<p>{{ a(</p>\n", close],
+        ["vue", open + "<p>", "{{ a ", "</p>\n" + close],
+        ["vue", open, '<a :b="c(\n', close],
+        ["vue", open, '<a :b="\'c">\n', close],
+        ["vue", open + '<a :b="', "f(", '" />\n' + close],
+        ["vue", open, "<ElA>\n<b c='d'/>\n", close],
+        ["html", "", "<p>{{ a</p>\n", ""],
+        ["html", "", "<!-- a\n", ""],
+        ["html", "", "<!-- a\n", "-->\n"],
+        ["html", "", "<!-- a\n", "-->x\n"],
+        ["html", "", "<!-- a -->x\n", ""],
+        ["html", "", '<a b="c\n', ""],
+        ["html", "", '<a b="c\n', '">\n'],
+        ["html", '<a b="', "<i>x</i>\n", ""],
+        ["html", "", "<a b='c\n", ""],
+        ["html", "", "<a\n", ""],
+        ["html", "", "<a b\n", ""],
+        ["html", "<a", '\nb="c"', " d='e'>\n</a>\n"],
+        ["html", "", "<div>\n<a b='c'/>\n", ""],
+        ["html", "<svg>\n", "<g>\n<a b='c'/>\n", "</svg>\n"],
+        ["html", "<div>\n<p>a</p>\n", "</p>\n", "</div>\n"],
+        ["html", "", "<p>a</p\n", ""],
+        ["html", "<div>\n<p>a</p", "\n", "x>\n</div>\n"],
+        ["html", "", "a <\n", ""],
+        ["html", "", "a\n<a: b\n", ""],
+        ["html", "<div>\n", "a\n", "<b>c</b> d\n</div>\n"],
+        ["html", "<ul>\n", "<li>\na\n", "</ul>\n"],
+        ["html", "", "<p>&bogus;</p>\n", ""],
+        ["html", "<div>\n<p>a</p>", "\n", "</div>\n"],
+        ["html", "<p>x</p>\n<", "a", ""],
+      ];
+      const texts = shapes.map(([, before, unit, after]) => before + repeated(unit, count) + after);
+      const ordinary =
+        '<div class="a b">\n  <p>The quick brown fox <b>jumps</b> over the <a href=\'c\'>lazy dog</a>, and then <i>once more</i> for good measure.</p>\n  <img src="d" alt="e" style="f:g" />\n</div>\n';
+      const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
+      const run = (text: (index: number) => string) =>
+        format(Object.fromEntries(shapes.map(([ending], index) => [`${index}.${ending}`, text(index)])), [
+          "--check",
+          ...flags,
+        ]);
+      const [odd, plain] = [
+        await run(index => texts[index]),
+        await run(() => repeated(ordinary, length / ordinary.length)),
+      ];
+      expect(slowdown(odd, plain)).toBeLessThan(6);
+    },
+  );
+
+  // A search for two bytes is so fast that it takes a long text to tell, and a text of its own.
+  test.each<[string, string, string[]]>([
+    ["vue", "<p>{{ a</p>\n", ["--embedded-language-formatting=off"]],
+    ["vue", "<p>{{ a</p>\n", []],
+    ["vue", "<p>{{ 'a</p>\n", []],
+    ["html", "<p>{{ a</p>\n", []],
+    ["html", "<title>a\n", []],
+  ])(
+    "the end of what is opened on every line is not looked for in all of the text: .%s %j %j",
+    async (ending, unit, flags) => {
+      const count = isDebug || isASAN ? 500 : 40_000;
+      const run = (times: number) =>
+        format({ [`a.${ending}`]: `<template>\n${repeated(unit, times)}</template>\n` }, ["--check", ...flags]);
+      const [long, short] = [await run(4 * count), await run(count)];
+      // 4 when all is well, 12 when it is not.
+      expect(slowdown(long, short)).toBeLessThan(7);
+    },
+  );
+
+  // A `<` can start type arguments and a `(` the parameters of an arrow function. With the other kind of ternaries a
+  // file goes the long way.
+  test.each<[string, string]>([
+    ["ts", "for (let i = 0; i < n; i++) {}\n"],
+    ["ts", "a = b < c;\n"],
+    ["js", "x = (a);\n"],
+  ])("a parser that takes something back on every line takes linear time: .%s %j", async (ending, unit) => {
+    const count = isDebug || isASAN ? 1_000 : 16_000;
+    const run = (times: number) =>
+      format({ [`a.${ending}`]: repeated(unit, times) }, ["--check", "--experimental-ternaries", "--threads=1"]);
+    const [long, short] = [await run(4 * count), await run(count)];
+    // 3 to 4 when all is well, 8 to 13 when it is not.
+    expect(slowdown(long, short)).toBeLessThan(6);
+  });
 
   // A comment in each repetition. These are inputs that attaching or printing comments once rescanned for each comment,
   // and similar ones.
@@ -7546,23 +8256,39 @@ try {
       ["js", "a", "\n// c\n.b", ";"],
       ["js", "(", "/* c */ ", `a${".b".repeat(count)})();`],
       ["js", "(", "/* c */ ", `a${".b".repeat(count)}).c;`],
+      ["ts", "a", "! /* c */ ", ";"],
+      ["ts", "a?.b", "! /* c */ ", ";"],
+      ["js", "f()", " /* c */ .a()", ";"],
+      ["js", "f()", " /* c */ (g() /* c */ ())", ";"],
+      ["js", "f()", "\n// c\n.a(g()\n// c\n.b())", ";"],
+      ["js", "new f()", " /* c */ ()", ";"],
+      ["js", "x = ", "/** c */ ", `(${repeated("/* c */ ", count)}a);`],
+      ["ts", "type A = [x, ", "a /* c */ | ", `b${repeated(" ", count)}, y];`],
     ];
     const texts = shapes.map(([, before, unit, after]) => before + unit.repeat(count) + after);
     const ordinary =
       "// Returns the sum.\nfunction add(first, second) {\n  const sum = first + second; // a number\n  return [sum, { first, second }];\n}\n\n";
     const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
-    for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }]) {
-      const run = (text: (index: number) => string) =>
-        format(
-          {
-            ...configuration,
-            ...Object.fromEntries(shapes.map(([ending], index) => [`${index}.${ending}`, text(index)])),
-          },
-          ["--check", "--log-level", "silent"],
-        );
-      const odd = await run(index => texts[index]);
-      const plain = await run(() => ordinary.repeat(length / ordinary.length));
-      // 2.3 to 3 on Linux and 8.3 on Windows when all is well. One shape that takes quadratic time adds 9 or more.
+    const configurations = [{}, { ".oxfmtrc.json": "{}\n" }];
+    const run = (configuration: Record<string, string>, text: (index: number) => string) =>
+      format(
+        {
+          ...configuration,
+          ...Object.fromEntries(shapes.map(([ending], index) => [`${index}.${ending}`, text(index)])),
+        },
+        ["--check", "--log-level", "silent"],
+      );
+    // The ordinary code goes the quick way, which takes a third of the time, refuses most of the shapes, and isn't there
+    // in the flavor of oxfmt. The shapes are compared with the long way.
+    let plain = { cpu: 0 };
+    for (const configuration of configurations) {
+      const result = await run(configuration, () => repeated(ordinary, length / ordinary.length));
+      if (result.cpu > plain.cpu) plain = result;
+    }
+    for (const configuration of configurations) {
+      const odd = await run(configuration, index => texts[index]);
+      // 1.7 to 2.2 on Linux when all is well, and 8.3 on Windows where everything goes the long way. One shape that takes
+      // quadratic time adds 7 or more.
       expect(slowdown(odd, plain)).toBeLessThan(isWindows ? 16 : 8);
     }
   }, 120_000);
@@ -7612,6 +8338,17 @@ try {
         ...":::\n,:::a\n,:::a\nb\n:::\n\n,:-\n,a\n    - b\n,a\n    <!-- b -->\n,a\n    ```\n,a  \n    # b\n".split(","),
         ..."| a |\n| - |\n| b |\n\n,| - |\n,|\n,http://a.b ,www.a.b ,a@b.c ,a@,a  \n,a\\\n".split(","),
         ..."中文 a\n,a,\ta\n,\n, , ,😀 ".split(","),
+        // What is looked for ahead where text isn't parsed: the end of the line, of Liquid, of emphasis, of a tag, of a
+        // fence, an empty line.
+        ..."- a_b\n,- a_ b\n,a_b\n,| a_b |\n,[a]({{ b }}) ,[a]({{ b ,{{ a\n,a\n{{ b }}\n,**a\n,**a\n\n,- **a\n,_a\n\n".split(
+          ",",
+        ),
+        ...'```js\na\n\n,```\na\n ```\n\n,<A\n,<A>\n\n,<A b="\n\n,a <b c="d\n\n,<!-- a\n\n,{/* a\n\n,{/* a */}\n\n'.split(
+          ",",
+        ),
+        ...'`a\n\n,``a`\n\n,[a\n\n,[a](b\n\n,[a](b "c\n\n,aw.\n,aw. ,a  b\n,a  b ,a://b\n\n,a\n# b\n,a\n- b\n\n,a\n> b\n\n'.split(
+          ",",
+        ),
       ];
       const each = (line: (index: number) => string) =>
         Array.from({ length: count }, (_, index) => line(index)).join("");
@@ -7621,8 +8358,20 @@ try {
         `| a | b |\n| - | - |\n${"| c | d |\n".repeat(count)}`,
         each(index => `${"  ".repeat(index % 40)}- a\n`),
         each(index => `${"> ".repeat((index % 40) + 1)}a\n`),
+        // Read to the end before it turns out that the parser has to read it.
+        `${repeated("- a_b\n", count)}- a_ b\n`,
+        `${repeated("- a\n", count)}- *\n`,
+        `${repeated("- a\n\n", count)}- *\n`,
+        `${repeated("1. a\n", count)}1. *\n`,
+        `${repeated("> a\n", count)}> *\n`,
+        `${repeated("a\n", count)}*\n`,
+        `| a |\n| - |\n${repeated("| a_b |\n", count)}| a_ b |\n`,
+        `<div>\n${repeated("a\n", count)} \n`,
+        `<A>\n${repeated("a\n", count)}/\n`,
+        `\`\`\`\n${repeated("a\n", count)}\`\`\` b\n`,
       ];
-      const prose = "The quick brown fox jumps over the lazy dog, and *then* it `rests` for a [while](u).\n\n";
+      // `__` keeps it from being printed without being parsed, which takes a tenth of the time.
+      const prose = "The quick brown fox jumps over the lazy dog, and __then__ it `rests` for a [while](u).\n\n";
       const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
       const run = (text: (index: number) => string) =>
         format(
@@ -9225,6 +9974,287 @@ try {
       expect(result.stdout).toContain("bun fmt");
       expect(result.stdout).toContain("--check");
       expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("many files", () => {
+    const files: Record<string, string> = { ".prettierrc": "{}", "notes.xyz": "?" };
+    for (let i = 0; i < 240; i++) {
+      const directory = ["", "a/", "a-b/", "a.b/", "A/", "a/b/c/d/", "z/y/"][i % 7];
+      const text = [ugly, formatted, "const = ;\n", ugly.repeat(1 + (i % 40))][i % 4];
+      files[`${directory}f${i}.ts`] = text;
+    }
+    const named = Object.keys(files).filter(name => name.endsWith(".ts"));
+
+    test.each([
+      ["a search", ["."]],
+      ["names", named],
+      ["names in another order, some of them twice", [...named.toReversed(), ...named.slice(0, 50), "./f0.ts"]],
+      ["a search and names that it finds too", ["a/f1.ts", ".", "z/y/f6.ts", "a", "missing.ts"]],
+    ])("%s says the same on any number of threads", async (_, paths) => {
+      const [one, ...others] = await Promise.all(
+        [["--threads=1"], ["--threads=2"], ["--threads=13"], []].map(threads =>
+          format(files, ["--check", ...threads, ...paths]),
+        ),
+      );
+      expect(one.stderr).toContain("[warn] f0.ts");
+      expect(one.stderr).toMatch(syntaxErrorIn("a-b/f2.ts"));
+      for (const other of others) {
+        expect({ ...other, cpu: 0 }).toEqual({ ...one, cpu: 0 });
+      }
+    });
+
+    test("warnings about configuration files come in the same order on any number of threads", async () => {
+      const files: Record<string, string> = {};
+      for (let i = 0; i < 24; i++) {
+        const directory = `${"sub/".repeat(i % 3)}d${i}`;
+        files[`${directory}/.prettierrc`] = JSON.stringify({ plugins: [`prettier-plugin-number-${i}`] });
+        files[`${directory}/a.ts`] = ugly;
+      }
+      using dir = tempDir("bun-format", files);
+      const run = async (threads: string[]) => {
+        await using proc = spawn({
+          cmd: [...command, "--check", "--allow-unsupported", ...threads],
+          env,
+          cwd: String(dir),
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        return (await proc.stderr.text()).split("\n").filter(line => line.includes("prettier-plugin-number-"));
+      };
+      const one = await run(["--threads=1"]);
+      expect(one).toHaveLength(24);
+      for (const threads of [["--threads=2"], ["--threads=13"], [], []]) {
+        expect(await run(threads)).toEqual(one);
+      }
+    });
+
+    /** What `bun fmt --check` says in `dir` on one thread, after it has said the same on other numbers of threads. */
+    async function saysOnAnyNumberOfThreads(dir: string, args: string[] = []) {
+      const run = async (threads: string[]) => {
+        await using proc = spawn({
+          cmd: [...command, "--check", ...args, ...threads],
+          env,
+          cwd: dir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr: normalizeBunSnapshot(stderr, dir), exitCode };
+      };
+      const one = await run(["--threads=1"]);
+      for (const threads of [["--threads=2"], ["--threads=5"], ["--threads=13"], [], [], [], []]) {
+        expect(await run(threads)).toEqual(one);
+      }
+      return one;
+    }
+
+    /** Directories with nothing to say about them, which keep the threads of a search busy. */
+    const plainDirectories = Object.fromEntries(
+      Array.from({ length: 300 }, (_, i) => [`plain${i >> 1}/f${i}.ts`, formatted]),
+    );
+
+    test("of two configuration files that cannot be read, the one closer to the start of the search is the error", async () => {
+      using dir = tempDir("bun-format", {
+        ".prettierrc": "{}",
+        "top/.prettierrc": "{ semi: tru",
+        "top/a.ts": formatted,
+        ...plainDirectories,
+        "deep/b/c/d/.prettierrc": "{ tabWidth: [[[",
+        "deep/b/c/d/a.ts": formatted,
+      });
+      const { stderr, exitCode } = await saysOnAnyNumberOfThreads(String(dir));
+      expect(stderr).toContain("top/.prettierrc");
+      expect(stderr).not.toContain("deep");
+      expect(exitCode).toBe(2);
+    });
+
+    test("of two directories with a configuration file of each tool, the one closer to the start of the search is noted", async () => {
+      using dir = tempDir("bun-format", {
+        "top/.oxfmtrc.json": "{}\n",
+        "top/.prettierrc": "{}\n",
+        "top/a.ts": formatted,
+        ...plainDirectories,
+        "deep/b/c/d/.oxfmtrc.json": "{}\n",
+        "deep/b/c/d/.prettierrc": "{}\n",
+        "deep/b/c/d/a.ts": formatted,
+      });
+      const { stderr, exitCode } = await saysOnAnyNumberOfThreads(String(dir));
+      expect(stderr).toContain("note: Using top/.oxfmtrc.json. .prettierrc is ignored.");
+      expect(exitCode).toBe(0);
+    });
+
+    test("warnings about the options of files come in the order of the files", async () => {
+      const files: Record<string, string> = { ".prettierrc": "{}" };
+      for (let i = 10; i < 22; i++) {
+        files[`d${i}/.prettierrc`] = JSON.stringify({
+          [`unknownOption${i}`]: i,
+          [i % 2 ? "sortTailwindcss" : "experimentalTailwindcss"]: true,
+        });
+        // The largest files, which are formatted first, are in the last directories.
+        for (let j = 0; j < 12; j++) files[`d${i}/f${j}.ts`] = formatted.repeat(1 + ((i * j) % 50) + (j ? 0 : i * 30));
+      }
+      using dir = tempDir("bun-format", files);
+      const { stderr, exitCode } = await saysOnAnyNumberOfThreads(String(dir), ["**/*.ts"]);
+      expect(stderr.split("\n").filter(line => line.includes("unknownOption"))).toEqual(
+        Array.from({ length: 12 }, (_, i) => `warn: Ignored unknown option { unknownOption${i + 10}: ${i + 10} }.`),
+      );
+      expect(stderr).toContain("error: experimentalTailwindcss, sortTailwindcss are not supported yet");
+      expect(exitCode).toBe(2);
+    });
+
+    test("warnings about configuration files come in the order of the names, not of the listing", async () => {
+      // Made in an order that is neither that of the names nor its reverse.
+      const names = Array.from({ length: 40 }, (_, i) => `d${String((i * 17) % 40).padStart(2, "0")}`);
+      const files: Record<string, string> = {};
+      for (const name of [...names, "d05/deep"]) {
+        files[`${name}/.prettierrc`] = JSON.stringify({ plugins: [`prettier-plugin-zz-${name.replace("/", "-")}`] });
+        files[`${name}/f.ts`] = formatted;
+      }
+      using dir = tempDir("bun-format", files);
+      const { stderr, exitCode } = await saysOnAnyNumberOfThreads(String(dir), ["--allow-unsupported", "**/*.ts"]);
+      // Those closer to the start of the search come first.
+      const expected = [...names].sort().concat("d05-deep");
+      expect(stderr.match(/prettier-plugin-zz-[\w-]+(?= in )/g)).toEqual(
+        expected.map(name => `prettier-plugin-zz-${name}`),
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test("of several configuration files that cannot be read as close to the start of the search, the error is about the first by name", async () => {
+      const files: Record<string, string> = {};
+      for (let i = 0; i < 24; i++) files[`q${i}/f.ts`] = formatted;
+      for (const name of ["q3", "q7", "q12", "q19", "q1/deep/er"]) {
+        files[`${name}/.prettierrc`] = `{"semi": `;
+        files[`${name}/f.ts`] = formatted;
+      }
+      // After `q12` in that order, so nothing is said about it.
+      files["q2/.prettierrc"] = JSON.stringify({ plugins: ["prettier-plugin-zz"] });
+      using dir = tempDir("bun-format", files);
+      const { stderr, exitCode } = await saysOnAnyNumberOfThreads(String(dir), ["--allow-unsupported", "."]);
+      expect(stderr.replaceAll("\\", "/")).toContain("q12/.prettierrc:");
+      expect(stderr).not.toContain("prettier-plugin-zz");
+      expect(stderr.match(/Cannot load the configuration file/g)).toHaveLength(1);
+      expect(exitCode).toBe(2);
+    });
+
+    test("warnings about the configuration files of a directory and of one whose name starts with its name come in the order of the files", async () => {
+      const files: Record<string, string> = {};
+      for (const name of ["src", "src-old"]) {
+        files[`${name}/.prettierrc`] = JSON.stringify({ plugins: [`prettier-plugin-zz-${name}`] });
+        files[`${name}/f.ts`] = formatted;
+      }
+      using dir = tempDir("bun-format", files);
+      const { stderr, exitCode } = await saysOnAnyNumberOfThreads(String(dir), ["--allow-unsupported", "**/*.ts"]);
+      // "-" sorts before "/".
+      expect(stderr.match(/prettier-plugin-zz-[\w-]+(?= in )/g)).toEqual([
+        "prettier-plugin-zz-src-old",
+        "prettier-plugin-zz-src",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    // bun-musl is statically linked, and ASAN builds have their own pthread_create, so neither calls the one below.
+    test.skipIf(!isLinux || isMusl || isASAN || !Bun.which("cc"))(
+      "a system that starts no thread is an error, and nothing waits forever",
+      async () => {
+        using dir = tempDir("bun-format", {
+          "shim.c": `#include <errno.h>\n#include <pthread.h>\nint pthread_create(pthread_t *thread, const pthread_attr_t *attributes, void *(*start)(void *), void *argument) { return EAGAIN; }\n`,
+          "src/a.ts": ugly,
+          "src/b.ts": ugly,
+        });
+        const shim = compileFixture(join(String(dir), "shim.c"));
+        await using proc = spawn({
+          cmd: [...command, "--check", "src"],
+          env: { ...env, LD_PRELOAD: [shim, env.LD_PRELOAD].filter(Boolean).join(":") },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toStartWith("error: Failed to start a thread of the thread pool: ");
+        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+      },
+    );
+
+    test.each([2, 7])("%d threads write in different directories at the same time", async threads => {
+      const text = ugly.repeat(50);
+      const files: Record<string, string> = {};
+      for (let i = 0; i < 601; i++) files[`${i < 300 ? "a" : "b"}/f${i}.ts`] = text;
+      using dir = tempDir("bun-format", files);
+      await using proc = spawn({
+        cmd: [...command, `--threads=${threads}`, "--log-level=warn"],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+      const names = Object.keys(files);
+      expect(names.filter(name => readFileSync(join(String(dir), name), "utf8") !== formatted.repeat(50))).toEqual([]);
+      // Only one thread at a time can add a file to a directory, so no directory is done before the next one is begun.
+      const [a, b] = ["a/", "b/"].map(directory =>
+        names
+          .filter(name => name.startsWith(directory))
+          .map(name => statSync(join(String(dir), name)).mtimeMs)
+          .sort((x, y) => x - y),
+      );
+      expect(a[0]).toBeLessThanOrEqual(b[50]);
+      expect(b[0]).toBeLessThanOrEqual(a[50]);
+    });
+
+    test("files of one directory get the options of the overrides and sections that match each of them", async () => {
+      const text = `function f() {\n  return "a";\n}\n`;
+      const names = ["a.ts", "b.ts", "a.test.ts", "b.test.ts", "a.spec.ts", "b.spec.ts", "a.test.mts", "b.test.mts"];
+      const result = await format(
+        {
+          ".prettierrc": JSON.stringify({
+            overrides: [
+              { files: "*.test.*", options: { singleQuote: true } },
+              { files: "src/*.spec.ts", options: { semi: false } },
+            ],
+          }),
+          ".editorconfig": "[*.mts]\nindent_style = tab\n[*.spec.ts]\nindent_size = 4\n",
+          ...Object.fromEntries(names.map(name => [`src/${name}`, text])),
+        },
+        // One thread, so that it has resolved the options of a file before it comes to the next one.
+        ["--threads=1", "."],
+        { reads: names.map(name => `src/${name}`) },
+      );
+      const expected = {
+        "ts": text,
+        "test.ts": `function f() {\n  return 'a';\n}\n`,
+        "spec.ts": `function f() {\n    return "a"\n}\n`,
+        "test.mts": `function f() {\n\treturn 'a';\n}\n`,
+      };
+      expect(result.files).toEqual(
+        Object.fromEntries(names.map(name => [`src/${name}`, expected[name.slice(2) as keyof typeof expected]])),
+      );
+    });
+
+    test("what is only true of one file's name is not true of the next file", async () => {
+      const json = `{ "version": "1.0.0", "name": "a" }\n`;
+      const result = await format(
+        {
+          ".prettierrc": JSON.stringify({ plugins: ["prettier-plugin-packagejson"] }),
+          "a.json": json,
+          "package.json": json,
+          "z.json": json,
+          "script": "#!/usr/bin/env node\nlet  a\n",
+          "text": "let  a\n",
+        },
+        ["--threads=1", "a.json", "package.json", "z.json", "script", "text"],
+        { reads: ["a.json", "package.json", "z.json", "script", "text"] },
+      );
+      expect(result.files).toEqual({
+        "a.json": json,
+        "package.json": `{\n  "name": "a",\n  "version": "1.0.0"\n}\n`,
+        "z.json": json,
+        "script": "#!/usr/bin/env node\nlet a;\n",
+        "text": "let  a\n",
+      });
+      expect(result.exitCode).toBe(2);
     });
   });
 });

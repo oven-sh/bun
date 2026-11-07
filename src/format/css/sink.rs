@@ -222,13 +222,53 @@ impl<'o> Sink<'o> {
         let printer = self.printer.as_ref().filter(|_| {
             self.writes_directly() && !self.needs_document && self.line_breaks == line_breaks
         })?;
-        Some((printer.out.get(len..)?, self.has_group_in_line))
+        // A text can have a line break in it too, which isn't in the output as it was in the text.
+        let output = printer.out.get(len..)?;
+        (!bun_core::strings::contains_any(output, b"\n\r"))
+            .then_some((output, self.has_group_in_line))
     }
 
     /// Writes output that `written_since` returned earlier.
     pub(crate) fn replay_output(&mut self, text: &[u8], has_group: bool) {
         self.text(text);
         self.has_group_in_line |= has_group;
+    }
+
+    // ───────────────────────────── what the parser has printed ─────────────────────────────
+
+    /// True where a unit can start whose output goes straight to the output.
+    fn is_between_units(&self) -> bool {
+        !(self.is_document || self.has_group_in_line || self.needs_document || self.flat_groups > 0)
+    }
+
+    /// Writes `text`, which is what's printed for a whole unit if it fits on the line. `can_break` is false if it's
+    /// printed like that anyway. Returns false, and writes nothing, if it doesn't fit or this isn't the place for it.
+    pub(crate) fn printed_line(&mut self, text: &[u8], can_break: bool) -> bool {
+        let is_taken = self.printer.is_some()
+            && self.is_between_units()
+            && !(can_break && !self.has_room_for(text.len()));
+        if is_taken {
+            self.text(text);
+        }
+        is_taken
+    }
+
+    /// Writes `text`, which is what's printed for a whole unit that starts its line in `depth` blocks. Each `\n` in it
+    /// is followed by its indentation. Returns false, and writes nothing, if this isn't such a place.
+    pub(crate) fn printed_lines(&mut self, text: &[u8], depth: u32) -> bool {
+        let is_between_units = self.is_between_units();
+        let Some(printer) = self.printer.as_mut().filter(|_| is_between_units) else {
+            return false;
+        };
+        if printer.out.len() != self.line_start
+            || !printer.is_indent_of(self.indent, depth as usize, self.line_start_column)
+        {
+            return false;
+        }
+        self.line_start_column = printer.write_lines(text);
+        self.line_start = printer.out.len();
+        self.line_breaks += 1;
+        true
     }
 
     // ───────────────────────────── the parts of a document ─────────────────────────────

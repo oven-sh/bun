@@ -327,17 +327,25 @@ _ZN3bun4xxh310N_SVE2_1288HashLongEPKhmS3_                                     [S
 
 # ----------------------------------------------------------------------------
 # Bun's Highway kernels for the scanner of `bun check`, `bun lint` and `bun fmt`. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
-# (12 symbols)
+# (20 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun5N_SVE19ScannerRunStopsImplEPKhmPhm        [SVE]
 _ZN3bun5N_SVE14LineStartsImplEPKhmPj              [SVE]
 _ZN3bun5N_SVE13OddBlocksImplEPKhmPm               [SVE]
+_ZN3bun5N_SVE13HtmlMarksImplEPKhmPhm              [SVE]
+_ZN3bun5N_SVE13YamlMarksImplEPKhmPhm              [SVE]
 _ZN3bun6N_SVE219ScannerRunStopsImplEPKhmPhm       [SVE]
 _ZN3bun6N_SVE214LineStartsImplEPKhmPj             [SVE]
 _ZN3bun6N_SVE213OddBlocksImplEPKhmPm              [SVE]
+_ZN3bun6N_SVE213HtmlMarksImplEPKhmPhm             [SVE]
+_ZN3bun6N_SVE213YamlMarksImplEPKhmPhm             [SVE]
 _ZN3bun9N_SVE_25619ScannerRunStopsImplEPKhmPhm    [SVE]
 _ZN3bun9N_SVE_25614LineStartsImplEPKhmPj          [SVE]
 _ZN3bun9N_SVE_25613OddBlocksImplEPKhmPm           [SVE]
+_ZN3bun9N_SVE_25613HtmlMarksImplEPKhmPhm          [SVE]
+_ZN3bun9N_SVE_25613YamlMarksImplEPKhmPhm          [SVE]
 _ZN3bun10N_SVE2_12819ScannerRunStopsImplEPKhmPhm  [SVE]
 _ZN3bun10N_SVE2_12814LineStartsImplEPKhmPj        [SVE]
 _ZN3bun10N_SVE2_12813OddBlocksImplEPKhmPm         [SVE]
+_ZN3bun10N_SVE2_12813HtmlMarksImplEPKhmPhm        [SVE]
+_ZN3bun10N_SVE2_12813YamlMarksImplEPKhmPhm        [SVE]

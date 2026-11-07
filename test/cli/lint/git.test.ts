@@ -975,6 +975,32 @@ test.concurrent("bun fmt --staged doesn't count a file it skips", async () => {
   expect(exitCode).toBe(2);
 });
 
+test.concurrent.each(["--staged", "--changed"])(
+  "bun fmt %s says nothing about the options of files that it does not format",
+  async flag => {
+    // The override makes the language of a file depend on its options.
+    const config = (more: object) =>
+      JSON.stringify({ ...more, overrides: [{ files: "*.zzz", options: { parser: "babel" } }] }) + "\n";
+    using repo = await repository({
+      "other/.prettierrc": config({ sortTailwindcss: true, unknownOption: 1 }),
+      "other/a.js": tidy,
+      "sub/.prettierrc": config({ anotherUnknownOption: 2 }),
+      "sub/a.js": tidy,
+      "sub/b.zzz": tidy,
+    });
+    const { root } = repo;
+    write(root, "sub/a.js", before);
+    write(root, "sub/b.zzz", before);
+    await git(root, "add", "-A");
+    expect(await bun(root, ["fmt", flag, "--check"])).toEqual({
+      stdout: "sub/a.js\nsub/b.zzz\n",
+      stderr:
+        "warn: Ignored unknown option { anotherUnknownOption: 2 }.\n2 files need formatting. Run bun fmt to fix them.\n",
+      exitCode: 1,
+    });
+  },
+);
+
 test.concurrent("bun lint --staged and --changed don't warn that many files were loaded for a few", async () => {
   using repo = await repository({
     // Without `include` it includes everything.

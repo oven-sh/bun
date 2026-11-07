@@ -1,0 +1,33 @@
+-------------------------------
+{ printWidth: 80, semi: false }
+-------------------------------
+first
+;/** @type {T} */ (await alpha)
+second
+;/** @type {T} */ (new Alpha())
+third
+;/** @type {T} */ (new Alpha())
+fourth
+;/** @type {T} */ ((a) => {})
+function* g() {
+  fifth
+  ;/** @type {T} */ (yield a)
+}
+
+--------------------------------
+{ printWidth: 100, semi: false }
+--------------------------------
+first
+;/** @type {T} */ (await alpha)
+second
+;/** @type {T} */ (new Alpha())
+third
+;/** @type {T} */ (new Alpha())
+fourth
+;/** @type {T} */ ((a) => {})
+function* g() {
+  fifth
+  ;/** @type {T} */ (yield a)
+}
+
+===================== End =====================

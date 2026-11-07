@@ -1,0 +1,35 @@
+------------------
+{ printWidth: 80 }
+------------------
+/** @type {T} */ (
+  someRatherLongVariableNameForTheFirstValueOfIt,
+  someRatherLongVariableNameForTheSecondValueOfIt,
+  third
+);
+const f = () =>
+  /** @type {T} */ (
+    someRatherLongVariableNameForTheFirstValue,
+    someRatherLongVariableNameForTheSecondValue,
+    third
+  );
+for (
+  /** @type {T} */ ((alpha = beta), 1);
+  ;
+  /** @type {T} */ ((alpha = beta), 1)
+) {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+/** @type {T} */ (
+  someRatherLongVariableNameForTheFirstValueOfIt,
+  someRatherLongVariableNameForTheSecondValueOfIt,
+  third
+);
+const f = () =>
+  /** @type {T} */ (
+    someRatherLongVariableNameForTheFirstValue, someRatherLongVariableNameForTheSecondValue, third
+  );
+for (/** @type {T} */ ((alpha = beta), 1); ; /** @type {T} */ ((alpha = beta), 1)) {}
+
+===================== End =====================

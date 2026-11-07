@@ -1253,11 +1253,45 @@ impl<'o> Printer<'o> {
         self.make_indent(indent, IndentCommand::Dedent)
     }
 
+    /// True if `indent` is printed like `levels` nested `indent`s, and ends at `column`.
+    pub(crate) fn is_indent_of(&self, indent: u32, levels: usize, column: usize) -> bool {
+        let Indent { bytes, length, .. } = self.indents[indent as usize];
+        let unit = if self.use_tabs { 1 } else { self.tab_width };
+        bytes == levels * unit && length == levels * self.tab_width && length == column
+    }
+
+    /// Writes `text`, in which each `\n` is a `hardline` that's followed by its indentation. Returns the column after it.
+    pub(crate) fn write_lines(&mut self, text: &[u8]) -> usize {
+        if matches!(self.new_line, [b'\n']) {
+            self.out.extend_from_slice(text);
+        } else {
+            for (index, line) in bun_core::strings::split(text, b"\n").enumerate() {
+                if index > 0 {
+                    self.out.extend_from_slice(self.new_line);
+                }
+                self.out.extend_from_slice(line);
+            }
+        }
+        if crate::is_too_long(self.out.len()) {
+            self.failure = Some(FormatError::TooLong);
+        }
+        let last_line_start =
+            bun_core::strings::last_index_of_char(text, b'\n').map_or(0, |at| at + 1);
+        let last_line = &text[last_line_start..];
+        let tabs = last_line.iter().take_while(|it| **it == b'\t').count();
+        tabs * self.tab_width + string_width(&last_line[tabs..])
+    }
+
     /// Prints a `hardline`. Returns the column after the indentation.
     pub(crate) fn write_hard_line(&mut self, indent: u32) -> usize {
         self.trim();
         self.out.extend_from_slice(self.new_line);
         self.write_indent(indent)
+    }
+
+    /// Prints a `literalline` where nothing is indented.
+    pub(crate) fn write_literal_line(&mut self) {
+        self.out.extend_from_slice(self.literal_new_line);
     }
 
     fn trim(&mut self) {

@@ -2,19 +2,20 @@
 //! configuration file, it's oxfmt's `ScopedWalker` instead.
 
 use super::cli::Options;
-use super::config::{Configs, Flavor, Scope, oxc_glob, prettier_glob};
+use super::config::{Configs, Flavor, Remarks, Scope, oxc_glob, prettier_glob};
 use crate::gitignore::{self, Chain, GitIgnores};
-use crate::run::{Fatal, Pool};
+use crate::run::{Fatal, Meanwhile, Pool};
 use crate::{fs, paths};
 use bun_collections::index_sort;
 use bun_core::strings;
 use bun_lint::glob::Picomatch;
 use bun_lint::linter::config::glob_error;
 use bun_sema::util::{FxHashMap, FxHashSet};
-use bun_threading::Guarded;
+use bun_threading::{Futex, Guarded};
 use std::cell::LazyCell;
+use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 /// A file to format.
 pub(crate) struct Target {
@@ -29,13 +30,71 @@ pub(crate) struct Target {
     pub(crate) is_named: bool,
     /// `Some` if the file has hard links. The other links can be targets too.
     pub(crate) linked: Option<fs::Identity>,
+    /// [`language_when_found`]
+    pub(crate) language: Language,
 }
 
-/// The expansion of the arguments, in the order Prettier processes them.
+/// What an argument stands for, or a part of that.
 pub(crate) enum Expanded {
     File(Target),
     /// An error message for the user. The exit code is 2.
     Error(Vec<u8>),
+}
+
+/// The expansion of the arguments.
+#[derive(Default)]
+pub(crate) struct Expansion {
+    /// In the order Prettier processes them, except within each of `unsorted`.
+    pub(crate) all: Vec<Expanded>,
+    unsorted: Vec<Unsorted>,
+}
+
+/// The files that a search has found, in no particular order. Only what is said about them depends on their order, so
+/// they can be sorted while they are formatted.
+struct Unsorted {
+    /// Where they are in [`Expansion::all`].
+    range: std::ops::Range<usize>,
+    /// The prefix of the paths that `fast-glob` returns, which they're sorted by, and the directory that it stands for.
+    base: (Vec<u8>, Vec<u8>),
+}
+
+impl Unsorted {
+    fn key(&self, it: &Expanded) -> Vec<u8> {
+        let Expanded::File(target) = it else {
+            return Vec::new();
+        };
+        let relative = paths::relative(&self.base.1, &target.path);
+        collation_key(&match &self.base.0[..] {
+            b"" => relative,
+            prefix => paths::join(prefix, &relative),
+        })
+    }
+}
+
+impl Expansion {
+    pub(crate) fn is_sorted(&self) -> bool {
+        self.unsorted.is_empty()
+    }
+
+    /// The indices of `all` in the order Prettier processes them.
+    pub(crate) fn order(&self) -> Vec<usize> {
+        let mut order = Vec::from_iter(0..self.all.len());
+        for files in &self.unsorted {
+            if let Some(part) = order.get_mut(files.range.clone()) {
+                index_sort::sort_slice_by_cached_key(part, |&at| files.key(&self.all[at]));
+            }
+        }
+        order
+    }
+
+    /// Puts `all` in that order.
+    pub(crate) fn put_in_order(&mut self) {
+        for files in std::mem::take(&mut self.unsorted) {
+            if let Some(part) = self.all.get_mut(files.range.clone()) {
+                index_sort::sort_slice_by_cached_key(part, |it| files.key(it));
+            }
+        }
+    }
 }
 
 /// How well a file's language is supported, judging by its name.
@@ -147,6 +206,26 @@ impl Kind {
         if let Some(parser) = parser {
             return Kind::from_parser(parser);
         }
+        // Most files. Such a path ends with its extension, wherever its name starts.
+        if has_script_extension(path) {
+            return Some(Kind::Script);
+        }
+        // No name and no extension that the languages go by which are asked before theirs ends like one of these.
+        let dot = strings::last_index_of_char(path, b'.');
+        match dot.map_or(&b""[..], |dot| &path[dot + 1..]) {
+            b"vue" => return Some(Kind::Html(bun_format::html::Parser::Vue)),
+            b"css" => return Some(Kind::Css(bun_format::css::Parser::Css)),
+            b"scss" => return Some(Kind::Css(bun_format::css::Parser::Scss)),
+            b"less" => return Some(Kind::Css(bun_format::css::Parser::Less)),
+            b"yaml" | b"yml" => return Some(Kind::Yaml),
+            b"md" => return Some(Kind::Markdown),
+            b"mdx" => return Some(Kind::Mdx),
+            b"graphql" | b"gql" => return Some(Kind::GraphQl),
+            b"hbs" | b"handlebars" => return Some(Kind::Handlebars),
+            // `a.component.html` is Angular's.
+            b"html" => return bun_format::html::parser_for_path(path).map(Kind::Html),
+            _ => {}
+        }
         // Prettier's `getLanguageByFileName` compares the lowercased name.
         let lowered;
         let name = match paths::basename(path) {
@@ -158,10 +237,8 @@ impl Kind {
         };
         let extension =
             strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
-        if matches!(
-            extension,
-            b"js" | b"mjs" | b"cjs" | b"jsx" | b"ts" | b"mts" | b"cts" | b"tsx"
-        ) || name.ends_with(b".js.flow")
+        if has_script_extension(name)
+            || name.ends_with(b".js.flow")
             || extension == b"wxs"
             || is_other_javascript_name(name, extension)
             || name == b"jakefile"
@@ -216,6 +293,14 @@ fn is_other_javascript_name(name: &[u8], extension: &[u8]) -> bool {
     ) || matches!(name, b"Jakefile" | b"start.frag" | b"end.frag")
         || name.ends_with(b".start.frag")
         || name.ends_with(b".end.frag")
+}
+
+/// True if `path` ends with an extension of JavaScript or TypeScript, as written here.
+pub(crate) fn has_script_extension(path: &[u8]) -> bool {
+    const EXTENSIONS: [&[u8]; 8] = [
+        b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts",
+    ];
+    EXTENSIONS.iter().any(|it| path.ends_with(it))
 }
 
 /// Returns true for the file names oxfmt treats as TOML.
@@ -362,7 +447,45 @@ pub(crate) fn parser_by_interpreter(path: &[u8]) -> Option<&'static [u8]> {
     }
 }
 
-pub(crate) fn language_of(path: &[u8]) -> Language {
+/// Classifies the file at `path`, in `scope`, the way the tool this run emulates would.
+pub(crate) fn language_of(configs: &Configs, scope: &Scope, path: &[u8]) -> Language {
+    // The `parser` option decides. A parser that Prettier doesn't have belongs to a plugin.
+    match configs.parser_for(scope, path) {
+        Some(parser) if &*parser == b"svelte" && !configs.formats_svelte(scope, Some(path)) => {
+            Language::Other
+        }
+        Some(parser) if Kind::from_parser(&parser).is_none() => Language::Other,
+        Some(_) => Language::Supported,
+        None if configs.is_oxfmt_for(scope) => {
+            language_for_oxfmt(path, configs.formats_svelte(scope, Some(path)))
+        }
+        None => match language_by_name(path) {
+            Language::Unknown
+                if path.ends_with(b".svelte") && configs.formats_svelte(scope, Some(path)) =>
+            {
+                Language::Supported
+            }
+            Language::Unknown if configs.is_formatted_by_plugin(scope, path) => Language::Other,
+            Language::Unknown if is_toml(path) && configs.is_native_in(scope) => {
+                Language::Supported
+            }
+            Language::Unknown if parser_by_interpreter(path).is_some() => Language::Supported,
+            language => language,
+        },
+    }
+}
+
+/// [`language_of`] for a file that a search has found or an argument names. With `--staged` and `--changed` it's
+/// `Language::Unknown`: the options of a file can decide, and there is something to say about some options, which is of
+/// no interest if the file isn't one of those that are formatted. The caller asks again about those that are.
+fn language_when_found(configs: &Configs, scope: &Scope, path: &[u8]) -> Language {
+    match configs.leaves_out_found_files() {
+        true => Language::Unknown,
+        false => language_of(configs, scope, path),
+    }
+}
+
+fn language_by_name(path: &[u8]) -> Language {
     if Kind::of(path, None).is_some() {
         return Language::Supported;
     }
@@ -417,6 +540,15 @@ fn collation_key(path: &[u8]) -> Vec<u8> {
     );
     key.extend_from_slice(&[0, 0]);
     key.extend(path.iter().map(|byte| !byte));
+    key
+}
+
+/// The key of a directory in a search: those closer to where the search starts first, then where its files are among
+/// those of other directories, so `a-b/c` is before `a/c`.
+fn directory_key(directory: &[u8]) -> Vec<u8> {
+    let depth = strings::count_char(directory, b'/') as u32;
+    let mut key = depth.to_be_bytes().to_vec();
+    key.extend(collation_key(&paths::join(directory, b"")));
     key
 }
 
@@ -618,6 +750,9 @@ struct Directory {
     is_ignored_by_configuration: bool,
 }
 
+/// About what it takes to list a directory and then to format what is in it, in nanoseconds.
+const TIME_FOR_A_DIRECTORY: u64 = 100_000;
+
 /// The files in `base` for which `matches` returns true, given their path relative to the working directory.
 fn search(
     configs: &Configs,
@@ -629,11 +764,18 @@ fn search(
     // Git's ignore files that apply in `base`, or `None` if they aren't read.
     git: Option<GitIgnores>,
 ) -> Result<Vec<Target>, Fatal> {
-    let (mut found, mut failure) = (Guarded::new(Vec::new()), Guarded::new(None::<Fatal>));
+    // Of the directories whose configuration can't be used, the first in the order of the search: its key, and why.
+    let failure = Guarded::new(None::<(Vec<u8>, Fatal)>);
+    let has_failed = AtomicBool::new(false);
+    let is_before_failure = |path: &[u8]| {
+        let key = directory_key(path);
+        let failure = failure.lock();
+        (failure.as_ref()).is_none_or(|(failed, _)| key < *failed)
+    };
     let reads_gitignore = git.is_some();
     let git = git.unwrap_or_default();
     let above = configs.for_directory(base)?;
-    let mut level = vec![Directory {
+    let first = Directory {
         path: base.to_vec(),
         is_first: true,
         git,
@@ -642,11 +784,10 @@ fn search(
             base,
         ),
         above,
-    }];
-    while !level.is_empty() && failure.lock().is_none() {
-        let mut next = Guarded::new(Vec::new());
-        pool.for_each(level.len(), 1, &|index| {
-            let directory = &level[index];
+    };
+    // Adds what is in `directory`.
+    let search_in =
+        |directory: &Directory, files: &mut Vec<Target>, directories: &mut VecDeque<Directory>| {
             let Some(mut listing) = fs::list(&directory.path) else {
                 return;
             };
@@ -662,7 +803,12 @@ fn search(
             let scope = match scope {
                 Ok(scope) => scope,
                 Err(error) => {
-                    failure.lock().get_or_insert(error);
+                    let key = directory_key(&directory.path);
+                    let mut failure = failure.lock();
+                    if failure.as_ref().is_none_or(|it| key < it.0) {
+                        *failure = Some((key, error));
+                    }
+                    has_failed.store(true, Ordering::Relaxed);
                     return;
                 }
             };
@@ -676,7 +822,6 @@ fn search(
                     entries.iter().any(|it| it.name == name)
                 });
             }
-            let (mut files, mut directories) = (Vec::new(), Vec::new());
             // Links are neither followed nor formatted.
             for entry in entries.iter().filter(|it| !it.is_link) {
                 let path = paths::join(&directory.path, &entry.name);
@@ -699,7 +844,7 @@ fn search(
                     || gitignore::is_ignored(ignore_patterns, &path, entry.is_directory);
                 if entry.is_directory {
                     if enters(&relative) {
-                        directories.push(Directory {
+                        directories.push_back(Directory {
                             path,
                             above: Arc::clone(&scope),
                             is_first: false,
@@ -712,6 +857,7 @@ fn search(
                     && let Some((size, linked)) = listing.size_and_identity_of(&entry.name)
                 {
                     files.push(Target {
+                        language: language_when_found(configs, &scope, &path),
                         path,
                         size,
                         scope: Arc::clone(&scope),
@@ -721,19 +867,118 @@ fn search(
                     });
                 }
             }
-            if !files.is_empty() {
-                found.lock().append(&mut files);
+        };
+    // A thread searches the directories that it finds itself, in the order in which it finds them. What it gives away is
+    // for threads with nothing to do, so the threads share next to nothing while there is enough for all.
+    let given_away = Guarded::new(vec![first]);
+    // Changes when something is given away, and when the search is over.
+    let changes = AtomicU32::new(0);
+    let idle_threads = AtomicUsize::new(0);
+    // Directories that are found and not searched to the end.
+    let unfinished = AtomicUsize::new(1);
+    // About what it takes to format the files that are found, in nanoseconds.
+    let time_for_files = AtomicU64::new(0);
+    let searchers = pool.threads();
+    // With the paths of their directories.
+    type AllRemarks = Vec<(Vec<u8>, Remarks)>;
+    let mut found: Vec<Guarded<(Vec<Target>, AllRemarks)>> =
+        (0..searchers).map(|_| Default::default()).collect();
+    let search_all = |searcher: usize| {
+        let (mut files, mut own, mut remarks) = (Vec::new(), VecDeque::new(), Vec::new());
+        loop {
+            let Some(directory) = own.pop_front().or_else(|| given_away.lock().pop()) else {
+                idle_threads.fetch_add(1, Ordering::SeqCst);
+                let seen = changes.load(Ordering::SeqCst);
+                let is_over = unfinished.load(Ordering::SeqCst) == 0;
+                if !is_over && given_away.lock().is_empty() {
+                    Futex::wait_forever(&changes, seen);
+                }
+                idle_threads.fetch_sub(1, Ordering::SeqCst);
+                match is_over {
+                    true => break,
+                    false => continue,
+                }
+            };
+            let (files_before, own_before) = (files.len(), own.len());
+            // The error is that of the first directory that has one, whichever a thread finds first. What is above a
+            // directory comes before it, so everything that comes before the failure is still found.
+            if !has_failed.load(Ordering::Relaxed) || is_before_failure(&directory.path) {
+                let kept_back =
+                    Configs::keeping_back(|| search_in(&directory, &mut files, &mut own));
+                if !kept_back.is_empty() {
+                    remarks.push((directory.path, kept_back));
+                }
             }
-            if !directories.is_empty() {
-                next.lock().append(&mut directories);
+            let left = unfinished.fetch_add(own.len() - own_before, Ordering::SeqCst)
+                + (own.len() - own_before)
+                - 1;
+            if unfinished.fetch_sub(1, Ordering::SeqCst) == 1 {
+                changes.fetch_add(1, Ordering::SeqCst);
+                Futex::wake(&changes, u32::MAX);
+                continue;
             }
-        });
-        level = std::mem::take(next.get_mut());
+            // The first ones are the closest to where the search started, with the most below them.
+            let idle = idle_threads.load(Ordering::SeqCst);
+            if idle > 0 && own.len() > 1 {
+                let count = idle.min(own.len() / 2);
+                given_away.lock().extend(own.drain(..count));
+                changes.fetch_add(1, Ordering::SeqCst);
+                Futex::wake(&changes, count as u32);
+            }
+            let time = time_to_format(files[files_before..].iter().map(|it| it.size));
+            let time = time_for_files.fetch_add(time, Ordering::Relaxed) + time;
+            let to_come = TIME_FOR_A_DIRECTORY.saturating_mul(left as u64);
+            // This thread, or the one that started the search, is one of them.
+            pool.call_up(pool.threads_for(time.saturating_add(to_come)) - 1);
+        }
+        *found[searcher].lock() = (files, remarks);
+    };
+    let threads = pool.threads_for(TIME_FOR_A_DIRECTORY);
+    pool.for_each_while(threads, searchers, 1, &search_all, Meanwhile::Helps);
+    // Which of the directories after the failure were searched is a matter of chance.
+    let mut remarks: AllRemarks = (found.iter_mut())
+        .flat_map(|it| std::mem::take(&mut it.get_mut().1))
+        .filter(|it| is_before_failure(&it.0))
+        .collect();
+    index_sort::sort_slice_by_cached_key(&mut remarks[..], |it| directory_key(&it.0));
+    for (_, remarks) in &remarks {
+        configs.pass_on(remarks);
     }
-    match failure.get_mut().take() {
-        Some(error) => Err(error),
-        None => Ok(std::mem::take(found.get_mut())),
+    match failure.lock().take() {
+        Some((_, error)) => Err(error),
+        None => Ok((found.iter_mut())
+            .flat_map(|it| std::mem::take(&mut it.get_mut().0))
+            .collect()),
     }
+}
+
+/// About what it takes to look at an argument and then to format the file that it names, however short, in nanoseconds.
+const TIME_FOR_AN_ARGUMENT: u64 = 5_000 + TIME_FOR_ANY_FILE;
+
+/// How many threads pay to format files of these sizes.
+pub(crate) fn threads_to_format(pool: &Pool, sizes: impl Iterator<Item = u64> + Clone) -> usize {
+    pool.threads_for_parts(
+        time_to_format(sizes.clone()),
+        sizes.clone().count(),
+        time_to_format(sizes.max().into_iter()),
+    )
+}
+
+/// How many threads pay if each of `count` arguments names a file of a few kilobytes.
+pub(crate) fn threads_for_arguments(pool: &Pool, count: usize) -> usize {
+    pool.threads_for(100_000u64.saturating_mul(count as u64))
+        .clamp(1, count.max(1))
+}
+
+/// What it takes to format a file however short it is, in nanoseconds.
+const TIME_FOR_ANY_FILE: u64 = 20_000;
+
+/// About how long it takes one thread to format files of these `sizes`, in nanoseconds.
+pub(crate) fn time_to_format(sizes: impl Iterator<Item = u64>) -> u64 {
+    const PER_BYTE: u64 = 20;
+    sizes
+        .map(|size| TIME_FOR_ANY_FILE.saturating_add(size.saturating_mul(PER_BYTE)))
+        .fold(0, u64::saturating_add)
 }
 
 enum Entry {
@@ -749,18 +994,30 @@ pub(crate) fn expand(
     ignored: &mut Ignored,
     patterns: &[Vec<u8>],
     error_on_unmatched_pattern: bool,
-) -> Result<Vec<Expanded>, Fatal> {
+) -> Result<Expansion, Fatal> {
     let cwd = ignored.cwd.clone();
-    let mut expanded = Vec::new();
+    let (mut expanded, mut unsorted) = (Vec::new(), Vec::new());
     // Each entry keeps the argument as written, which is how Prettier echoes it.
     let mut entries: Vec<(Entry, Vec<u8>, &[u8])> = Vec::new();
-    for raw_argument in patterns {
-        let pattern = paths::from_native(raw_argument);
+    let look_up = |at: usize| {
+        let pattern = paths::from_native(&patterns[at]);
         let path = paths::resolve(&cwd, &pattern);
-        if ignored.is_in_ignored_directory(&path) {
+        let found = (!ignored.is_in_ignored_directory(&path)).then(|| fs::lstat(&path));
+        (pattern, path, found)
+    };
+    let looked_up = pool.map(patterns.len(), TIME_FOR_AN_ARGUMENT, &look_up);
+    // The threads start while the rest of this function finds out what else there is to know about the files.
+    let sizes = looked_up.iter().filter_map(|it| match it.2 {
+        Some(Some((fs::LinkKind::File, size, _))) => Some(size),
+        _ => None,
+    });
+    pool.call_up(threads_to_format(pool, sizes));
+    entries.reserve(looked_up.len());
+    for (raw_argument, (pattern, path, found)) in patterns.iter().zip(looked_up) {
+        let Some(found) = found else {
             continue;
-        }
-        match fs::lstat(&path) {
+        };
+        match found {
             Some((fs::LinkKind::Link, ..)) => {
                 if error_on_unmatched_pattern {
                     expanded.push(Expanded::Error(
@@ -774,7 +1031,12 @@ pub(crate) fn expand(
                 }
             }
             Some((fs::LinkKind::File, size, linked)) => {
-                configs.name(paths::dirname(&path));
+                let directory = paths::dirname(&path);
+                // One file after the other of the same directory is what a shell makes of `*`.
+                if !matches!(entries.last(), Some((Entry::File(last, ..), ..)) if paths::dirname(last) == directory)
+                {
+                    configs.name(directory);
+                }
                 entries.push((Entry::File(path, size, linked), pattern, &raw_argument[..]))
             }
             Some((fs::LinkKind::Directory, ..)) => {
@@ -788,31 +1050,56 @@ pub(crate) fn expand(
         }
     }
     let ignored = &*ignored;
+    configs.list_ahead(
+        pool,
+        entries.iter().filter_map(|it| match &it.0 {
+            Entry::File(path, ..) => Some(paths::dirname(path)),
+            _ => None,
+        }),
+    );
+    // One argument finds no file twice.
+    let finds_twice = entries.len() > 1;
     let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    seen.reserve(entries.len());
+    expanded.reserve(entries.len());
     let mut is_anything_ignored = false;
+    // The directory of the last file that was named, and its scope.
+    let mut last_scope: Option<(Vec<u8>, Arc<Scope>)> = None;
     for (entry, input, raw_argument) in entries {
         // The prefix of the paths that `fast-glob` returns, which they're sorted by.
-        let mut pattern_base: (Vec<u8>, Vec<u8>) = (Vec::new(), cwd.clone());
-        let (mut found, empty_message): (Vec<Target>, &[u8]) = match entry {
+        let mut pattern_base: (Vec<u8>, Vec<u8>) = (Vec::new(), Vec::new());
+        let (found, empty_message): (Vec<Target>, &[u8]) = match entry {
             Entry::File(path, size, linked) => {
                 // An ignored file's configuration isn't even read.
                 if ignored.ignores_file(&path, &None) {
                     is_anything_ignored = true;
                     continue;
                 }
-                let found = match ignored.is_negated(&path) {
-                    true => Vec::new(),
-                    false => vec![Target {
-                        scope: configs.for_directory(paths::dirname(&path))?,
-                        path,
-                        size,
-                        ignores_unknown: false,
-                        is_named: true,
-                        linked,
-                    }],
-                };
+                if !ignored.is_negated(&path) {
+                    let directory = paths::dirname(&path);
+                    let scope = match &last_scope {
+                        Some((last, scope)) if last == directory => Arc::clone(scope),
+                        _ => {
+                            let scope = configs.for_directory(directory)?;
+                            last_scope = Some((directory.to_vec(), Arc::clone(&scope)));
+                            scope
+                        }
+                    };
+                    if !finds_twice || seen.insert(path.clone()) {
+                        expanded.push(Expanded::File(Target {
+                            language: language_when_found(configs, &scope, &path),
+                            scope,
+                            path,
+                            size,
+                            ignores_unknown: false,
+                            is_named: true,
+                            linked,
+                        }));
+                    }
+                    continue;
+                }
                 (
-                    found,
+                    Vec::new(),
                     b"Explicitly specified file was ignored due to negative glob patterns",
                 )
             }
@@ -834,9 +1121,10 @@ pub(crate) fn expand(
                 let glob = prettier_glob(pattern, Picomatch::FastGlob);
                 let parent = bun_glob::scan::glob_parent(pattern);
                 let base = paths::resolve(&cwd, &parent);
-                if parent != b"." {
-                    pattern_base = (parent, base.clone());
-                }
+                pattern_base = match &parent[..] {
+                    b"." => (Vec::new(), cwd.clone()),
+                    _ => (parent, base.clone()),
+                };
                 // `fast-glob` matches paths spelled with the pattern's own base: an absolute pattern's results are
                 // absolute, and what `../**` finds in the working directory starts with `../` plus that directory's
                 // name.
@@ -883,18 +1171,16 @@ pub(crate) fn expand(
             }
             continue;
         }
-        let key = |target: &Target| match &pattern_base.0[..] {
-            b"" => paths::relative(&pattern_base.1, &target.path),
-            base_prefix => {
-                paths::join(base_prefix, &paths::relative(&pattern_base.1, &target.path))
-            }
-        };
-        index_sort::sort_slice_by_cached_key(&mut found[..], |target| collation_key(&key(target)));
+        let start = expanded.len();
         for target in found {
-            if seen.insert(target.path.clone()) {
+            if !finds_twice || seen.insert(target.path.clone()) {
                 expanded.push(Expanded::File(target));
             }
         }
+        unsorted.push(Unsorted {
+            range: start..expanded.len(),
+            base: pattern_base,
+        });
     }
     if expanded.is_empty() && !is_anything_ignored && error_on_unmatched_pattern {
         let patterns = patterns.join(&b' ');
@@ -902,7 +1188,10 @@ pub(crate) fn expand(
             [b"No matching files. Patterns: ", &patterns[..]].concat(),
         ));
     }
-    Ok(expanded)
+    Ok(Expansion {
+        all: expanded,
+        unsorted,
+    })
 }
 
 /// oxfmt's `ScopedWalker`. `patterns` is the list of arguments.
@@ -912,7 +1201,7 @@ pub(crate) fn expand_as_oxfmt(
     ignored: &mut Ignored,
     patterns: &[Vec<u8>],
     error_on_unmatched_pattern: bool,
-) -> Result<Vec<Expanded>, Fatal> {
+) -> Result<Expansion, Fatal> {
     let cwd = ignored.cwd.clone();
     let (mut targets, mut globs, mut excluded) = (Vec::new(), Vec::new(), Vec::new());
     for pattern in patterns {
@@ -993,6 +1282,7 @@ pub(crate) fn expand_as_oxfmt(
         let scope = configs.for_directory(paths::dirname(path))?;
         if !is_ignored(configs.config_ignores(&scope), path, *kind) {
             found.push(Target {
+                language: language_when_found(configs, &scope, path),
                 path: path.clone(),
                 size: *size,
                 linked: *linked,
@@ -1011,7 +1301,13 @@ pub(crate) fn expand_as_oxfmt(
     found.dedup_by(|a, b| a.path == b.path);
     if found.is_empty() && error_on_unmatched_pattern {
         let error = b"Expected at least one target file. All matched files may have been excluded by ignore rules.";
-        return Ok(vec![Expanded::Error(error.to_vec())]);
+        return Ok(Expansion {
+            all: vec![Expanded::Error(error.to_vec())],
+            ..Default::default()
+        });
     }
-    Ok(found.into_iter().map(Expanded::File).collect())
+    Ok(Expansion {
+        all: found.into_iter().map(Expanded::File).collect(),
+        ..Default::default()
+    })
 }

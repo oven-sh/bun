@@ -606,17 +606,18 @@ fn rejection<'a>(
     // The parser has no diagnostic for `declare module "a" {}`, `declare global {}` or `export as namespace A`. Babel
     // parses `declare` as an identifier, and after `export` it expects the `{` of `export {}`.
     let reject_declaration = |it: Stmt| {
-        let start = it.span().start;
-        let after_first_token =
-            start + token_len(file.text().get(start as usize..).unwrap_or_default()) as u32;
+        let after_first_token = || {
+            let start = it.span().start;
+            start + token_len(file.text().get(start as usize..).unwrap_or_default()) as u32
+        };
         match it.try_raw()?.kind {
             StmtKind::Module(_) => Some(Rejection {
                 message: b"Missing semicolon.".to_vec(),
-                at: after_first_token,
+                at: after_first_token(),
             }),
             StmtKind::ExportAsNamespace(_) => Some(Rejection {
                 message: b"Unexpected token, expected \"{\"".to_vec(),
-                at: skip_trivia(file.text(), after_first_token),
+                at: skip_trivia(file.text(), after_first_token()),
             }),
             _ => None,
         }

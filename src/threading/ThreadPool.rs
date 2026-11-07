@@ -839,8 +839,9 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
 };
 
 /// Set in a process that runs an ahead-of-time compiled program, which starts
-/// its threads late, when a limit on threads may have been reached, and in one
-/// that compiles such a program.
+/// its threads late, when a limit on threads may have been reached, in one that
+/// compiles such a program, and by `bun fmt` and `bun lint`, whose calling thread
+/// waits for what it hands to a pool.
 static EXITS_WITHOUT_ANY_THREAD: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
@@ -1282,6 +1283,70 @@ fn now_ns() -> u64 {
     }
 }
 
+/// What a worker does first on its thread. It's called `name` and a number.
+fn configure_worker(name: &str, needs_stack_bounds: bool) {
+    // No args, no preconditions; marks this OS thread as a mimalloc
+    // threadpool worker so deferred frees are processed eagerly. `safe fn`
+    // (Rust 2024) discharges the link-time proof so no `unsafe` block.
+    unsafe extern "C" {
+        safe fn mi_thread_set_in_threadpool();
+    }
+    mi_thread_set_in_threadpool();
+
+    {
+        let mut counter_buf = [0u8; 100];
+        let int = COUNTER.fetch_add(1, Ordering::SeqCst);
+        // Format into the buffer, track written
+        // length via the advancing &mut [u8] cursor, then NUL-terminate.
+        use std::io::Write;
+        let len = {
+            let mut cur: &mut [u8] = &mut counter_buf[..99];
+            let before = cur.len();
+            match write!(&mut cur, "{} {}", name, int) {
+                Ok(()) => before - cur.len(),
+                Err(_) => 0,
+            }
+        };
+        // SAFETY: `counter_buf[len] == 0` (set just below for len>0; the literal
+        // for the fallback is NUL-terminated), and the buffer outlives the call.
+        let named: &bun_core::ZStr = unsafe {
+            if len > 0 {
+                counter_buf[len] = 0;
+                bun_core::ZStr::from_raw(counter_buf.as_ptr(), len)
+            } else {
+                bun_core::ZStr::from_raw(c"Bun Pool".as_ptr().cast(), 8)
+            }
+        };
+        // Pools whose tasks never consult `StackCheck` (install, HTTP) opt
+        // out via `needs_stack_bounds = false` so we don't pull in
+        // `Bun__StackCheck__initialize` → `WTF::StackBounds` and fault the
+        // JSC `.text` pages on the `bun install` cold path. Bundler/parser
+        // pools leave it `true` (the parser's recursion guard reads the
+        // WTF stack-end this initializes).
+        if needs_stack_bounds {
+            Output::Source::configure_named_thread(named);
+        } else {
+            Output::Source::configure_named_thread_no_js(named);
+        }
+    }
+}
+
+/// Starts a thread that is set up like the worker of a pool called `name`, and calls `work` on it. It belongs to no
+/// pool, and nobody waits for it.
+pub fn spawn_detached_worker(
+    name: &'static str,
+    stack_size: u32,
+    work: impl FnOnce() + Send + 'static,
+) -> std::io::Result<()> {
+    let spawned = std::thread::Builder::new()
+        .stack_size(stack_size as usize)
+        .spawn(move || {
+            configure_worker(name, true);
+            work();
+        });
+    spawned.map(drop)
+}
+
 impl Thread {
     #[inline]
     pub fn current() -> *mut Thread {
@@ -1299,50 +1364,8 @@ impl Thread {
 
     /// Thread entry point which runs a worker for the ThreadPool
     fn run(thread_pool: bun_ptr::BackRef<ThreadPool>) {
-        // No args, no preconditions; marks this OS thread as a mimalloc
-        // threadpool worker so deferred frees are processed eagerly. `safe fn`
-        // (Rust 2024) discharges the link-time proof so no `unsafe` block.
-        unsafe extern "C" {
-            safe fn mi_thread_set_in_threadpool();
-        }
-        mi_thread_set_in_threadpool();
-
-        {
-            let mut counter_buf = [0u8; 100];
-            let int = COUNTER.fetch_add(1, Ordering::SeqCst);
-            // Format into the buffer, track written
-            // length via the advancing &mut [u8] cursor, then NUL-terminate.
-            use std::io::Write;
-            let len = {
-                let mut cur: &mut [u8] = &mut counter_buf[..99];
-                let before = cur.len();
-                match write!(&mut cur, "{} {}", thread_pool.get().name, int) {
-                    Ok(()) => before - cur.len(),
-                    Err(_) => 0,
-                }
-            };
-            // SAFETY: `counter_buf[len] == 0` (set just below for len>0; the literal
-            // for the fallback is NUL-terminated), and the buffer outlives the call.
-            let named: &bun_core::ZStr = unsafe {
-                if len > 0 {
-                    counter_buf[len] = 0;
-                    bun_core::ZStr::from_raw(counter_buf.as_ptr(), len)
-                } else {
-                    bun_core::ZStr::from_raw(c"Bun Pool".as_ptr().cast(), 8)
-                }
-            };
-            // Pools whose tasks never consult `StackCheck` (install, HTTP) opt
-            // out via `needs_stack_bounds = false` so we don't pull in
-            // `Bun__StackCheck__initialize` → `WTF::StackBounds` and fault the
-            // JSC `.text` pages on the `bun install` cold path. Bundler/parser
-            // pools leave it `true` (the parser's recursion guard reads the
-            // WTF stack-end this initializes).
-            if thread_pool.get().needs_stack_bounds {
-                Output::Source::configure_named_thread(named);
-            } else {
-                Output::Source::configure_named_thread_no_js(named);
-            }
-        }
+        let pool = thread_pool.get();
+        configure_worker(pool.name, pool.needs_stack_bounds);
 
         let self_ = Thread {
             next: Cell::new(ptr::null_mut()),

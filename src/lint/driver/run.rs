@@ -22,10 +22,11 @@ use bun_lint::linter::{
 };
 use bun_sema::resolve::ScriptKind;
 use bun_sema::util::FxHashSet;
+pub(crate) use bun_sema_driver::Meanwhile;
 use bun_threading::Guarded;
 use std::io::Write;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 macro_rules! pretty {
@@ -159,6 +160,18 @@ pub(crate) struct Fatal(pub(crate) Vec<u8>);
 pub(crate) struct Pool {
     caches: bun_sema_driver::ThreadCaches,
     threads: usize,
+    /// True if somebody asked for that many threads.
+    is_chosen: bool,
+    /// [`Pool::with_standing_threads`]
+    standing: Option<Arc<bun_sema_driver::StandingThreads>>,
+}
+
+impl Drop for Pool {
+    fn drop(&mut self) {
+        if let Some(standing) = &self.standing {
+            standing.dismiss();
+        }
+    }
 }
 
 /// The resources that linting a file needs beyond the native code.
@@ -278,6 +291,8 @@ impl Pool {
     pub(crate) fn new(threads: usize) -> Pool {
         Pool {
             caches: Default::default(),
+            is_chosen: threads != 0,
+            standing: None,
             threads: match threads {
                 0 => usize::from(bun_core::get_thread_count()),
                 threads => threads.min(Pool::MAX_THREADS),
@@ -285,13 +300,105 @@ impl Pool {
         }
     }
 
+    /// The same pool, with threads of its own that can be started before there is something to do: [`Pool::call_up`].
+    /// `name` is what they are called, before their number.
+    pub(crate) fn with_standing_threads(mut self, name: &'static str) -> Pool {
+        self.standing = Some(bun_sema_driver::StandingThreads::new(name));
+        self
+    }
+
+    /// Starts threads, unless `threads` have been started by now, and doesn't wait for them.
+    pub(crate) fn call_up(&self, threads: usize) {
+        if let Some(standing) = &self.standing {
+            standing.call_up(threads.min(self.threads()));
+        }
+    }
+
     pub(crate) fn threads(&self) -> usize {
         self.threads
     }
 
+    /// How many threads to do work on that takes one thread `nanoseconds`: as many as somebody asked for, else as many
+    /// as pay. A thread takes time to start and touches memory of its own, which the system takes back page by page when
+    /// the process ends. The more threads there are, the longer each waits for the system to hand out a page, and the
+    /// more of them share a core. Measured from 16 files to 12,000, the time that a run takes has its minimum where the
+    /// number of threads is five times the cube root of the milliseconds, and changes little around it.
+    pub(crate) fn threads_for(&self, nanoseconds: u64) -> usize {
+        match self.is_chosen {
+            true => self.threads,
+            false => {
+                let milliseconds = nanoseconds as f64 / 1e6;
+                ((5.0 * milliseconds.cbrt()) as usize).clamp(1, self.threads.max(1))
+            }
+        }
+    }
+
+    /// [`Pool::threads_for`] work in `count` parts, each for one thread, of which the longest takes `longest`. The work
+    /// takes that long at least, so there's no use for more threads than do the rest in that time.
+    pub(crate) fn threads_for_parts(&self, nanoseconds: u64, count: usize, longest: u64) -> usize {
+        let threads = self.threads_for(nanoseconds).min(count);
+        match self.is_chosen {
+            true => threads,
+            false => threads.min(nanoseconds.div_ceil(longest.max(1)) as usize),
+        }
+    }
+
+    /// `make(0)`, `make(1)`, .. up to `count`. `make` needs little stack: the calling thread makes them all if no second
+    /// thread pays. `nanoseconds` is what one of them takes, together with the work that it brings for the threads
+    /// afterwards.
+    pub(crate) fn map<T: Send + Sync>(
+        &self,
+        count: usize,
+        nanoseconds: u64,
+        make: &(dyn Fn(usize) -> T + Sync),
+    ) -> Vec<T> {
+        const RUN: usize = 16;
+        let threads = self.threads_for(nanoseconds.saturating_mul(count as u64));
+        if threads.min(count.div_ceil(RUN)) <= 1 {
+            return (0..count).map(make).collect();
+        }
+        let made: Vec<OnceLock<T>> = (0..count).map(|_| OnceLock::new()).collect();
+        let make = |at: usize| _ = made[at].set(make(at));
+        self.for_each_while(threads, count, RUN, &make, Meanwhile::Helps);
+        made.into_iter().filter_map(OnceLock::into_inner).collect()
+    }
+
     /// Calls `work` with every index below `count`, `run` consecutive ones at a time.
     pub(crate) fn for_each(&self, count: usize, run: usize, work: &(dyn Fn(usize) + Sync)) {
-        bun_sema_driver::for_each_parallel_in_runs(&self.caches, self.threads(), count, run, work);
+        self.for_each_on(self.threads(), count, run, work);
+    }
+
+    /// [`Pool::for_each`] on at most `threads` of the pool's threads.
+    pub(crate) fn for_each_on(
+        &self,
+        threads: usize,
+        count: usize,
+        run: usize,
+        work: &(dyn Fn(usize) + Sync),
+    ) {
+        self.for_each_while(threads, count, run, work, Meanwhile::Waits);
+    }
+
+    /// [`Pool::for_each_on`]. `meanwhile` says what the calling thread does until all is done. Without
+    /// [standing threads](Pool::with_standing_threads) it does that afterwards, and doesn't help.
+    pub(crate) fn for_each_while(
+        &self,
+        threads: usize,
+        count: usize,
+        run: usize,
+        work: &(dyn Fn(usize) + Sync),
+        meanwhile: Meanwhile<'_>,
+    ) {
+        let (threads, caches) = (threads.min(self.threads()), &self.caches);
+        match &self.standing {
+            Some(standing) => standing.for_each(caches, threads, count, run, work, meanwhile),
+            None => {
+                bun_sema_driver::for_each_parallel_in_runs(caches, threads, count, run, work);
+                if let Meanwhile::Does(something) = meanwhile {
+                    something();
+                }
+            }
+        }
     }
 }
 
@@ -942,6 +1049,7 @@ impl Run<'_> {
         }
         let linter = Linter::new(registry.with_native_plugins(options.native_plugin_rules.clone()));
         bun_sema_driver::use_dedicated_pool("Bun Lint");
+        bun_threading::thread_pool::exit_without_any_thread();
         let pool = Pool::new(options.threads);
         // Nothing starts unless a config has a JavaScript plugin.
         let js_plugins = Host::with_engine(

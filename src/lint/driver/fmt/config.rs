@@ -13,7 +13,7 @@ use super::{editorconfig, tailwind};
 use crate::configs::{VITE_CONFIG_NAMES, package_that_depends_on};
 use crate::gitignore::{self, Chain};
 use crate::paths::package_of;
-use crate::run::{Environment, Fatal};
+use crate::run::{Environment, Fatal, Pool};
 use crate::{evaluate, fs, paths};
 use bun_ast::Expr;
 use bun_ast::expr::Data;
@@ -28,9 +28,10 @@ use bun_lint::json::{self, Notation};
 use bun_lint::linter::config::{glob_error, strings_of};
 use bun_lint::linter::write_json;
 use bun_lint::options::Json;
-use bun_sema::util::FxHashMap;
+use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_threading::Guarded;
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::sync::{Arc, OnceLock};
 
 /// Configuration file names, in priority order: oxfmt's, then Prettier's `CONFIG_FILES`.
@@ -910,7 +911,7 @@ impl Config {
 }
 
 /// How to format a file.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Resolved {
     pub(crate) options: FormatOptions,
     /// oxfmt's `insertFinalNewline: false`.
@@ -920,6 +921,63 @@ pub(crate) struct Resolved {
     /// Format files with errors that oxc's parser recovers from, as oxc's formatter tests do. oxfmt itself rejects
     /// them.
     pub(crate) formats_recoverable_errors: bool,
+    /// True if another file with the same [`OptionsKey`] can have other options.
+    pub(crate) depends_on_directory: bool,
+}
+
+/// Everything that the options of a file depend on, but for `filepath`, unless they are
+/// [`Resolved::depends_on_directory`].
+#[derive(Copy, Clone, PartialEq, Eq)]
+struct OptionsKey {
+    /// The address of the `Scope`, which `Configs::by_directory` keeps alive.
+    scope: usize,
+    /// One bit for each of `overrides` in the configuration file, set if it matches the file.
+    overrides: u64,
+    /// The same for `[[fmt.overrides]]`.
+    bunfig_overrides: u64,
+    /// [`editorconfig::sections_for`]
+    sections: u64,
+    is_package_json: bool,
+}
+
+/// The options that a thread has resolved so far, each with what there was to say about them. Nearly all files of a
+/// project share a few sets of options.
+#[derive(Default)]
+pub(crate) struct KnownOptions(Vec<(OptionsKey, Resolved, Option<Arc<Remarks>>)>);
+
+/// What there is to say about the configuration of a directory or a file, apart from errors. Threads that work side by
+/// side come by it in any order, so each [keeps it back](Configs::keeping_back) until the order of the directories or
+/// files is known. Then it's [passed on](Configs::pass_on).
+#[derive(Default)]
+pub(crate) struct Remarks {
+    /// [`Configs::warnings`]
+    warnings: Vec<Vec<u8>>,
+    /// [`Configs::unsupported_options`]
+    unsupported_options: Vec<Vec<u8>>,
+    /// [`Configs::note`]
+    note: Option<Vec<u8>>,
+}
+
+impl Remarks {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.warnings.is_empty() && self.unsupported_options.is_empty() && self.note.is_none()
+    }
+
+    fn append(&mut self, mut later: Remarks) {
+        self.warnings.append(&mut later.warnings);
+        self.unsupported_options
+            .append(&mut later.unsupported_options);
+        self.note = self.note.take().or(later.note);
+    }
+}
+
+/// One bit for each of `overrides`, set if it matches `relative`. `None` if there are more of them than bits.
+fn matching(overrides: &[Override], relative: &[u8]) -> Option<u64> {
+    let mut bits = 0u64;
+    for (at, it) in overrides.iter().enumerate() {
+        bits |= u64::from(it.matches(relative)).checked_shl(u32::try_from(at).ok()?)?;
+    }
+    Some(bits)
 }
 
 /// Adds the JSX settings from the `tsconfig.json` at `path`, after those of the files it extends.
@@ -1004,10 +1062,17 @@ struct Listed {
     is_project_root: bool,
 }
 
+thread_local! {
+    /// [`Configs::keeping_back`]
+    static KEPT_BACK: RefCell<Option<Remarks>> = const { RefCell::new(None) };
+}
+
 pub(crate) struct Configs<'c> {
     options: Cow<'c, Options>,
     environment: &'c Environment<'c>,
     by_directory: Guarded<FxHashMap<Vec<u8>, Found>>,
+    /// [`Configs::list_ahead`]
+    listed_ahead: Guarded<FxHashMap<Vec<u8>, Listed>>,
     /// `[[fmt.overrides]]`. Globs are relative to `bunfig_base_directory`.
     overrides: Vec<Override>,
     /// [`Options::bunfig_base_directory`]
@@ -1015,7 +1080,7 @@ pub(crate) struct Configs<'c> {
     /// `--config`
     named: Option<Result<Arc<Config>, Fatal>>,
     /// [`Configs::name`]
-    arguments: Guarded<Vec<Vec<u8>>>,
+    arguments: Guarded<FxHashSet<Vec<u8>>>,
     /// [`Configs::lacks_file`]
     lacks_file: OnceLock<bool>,
     /// [`Configs::note`]
@@ -1088,6 +1153,7 @@ impl<'c> Configs<'c> {
             overrides,
             environment,
             by_directory: Guarded::new(FxHashMap::default()),
+            listed_ahead: Guarded::new(FxHashMap::default()),
             named: None,
             arguments: Default::default(),
             lacks_file: OnceLock::new(),
@@ -1190,11 +1256,51 @@ impl<'c> Configs<'c> {
     }
 
     fn warn(&self, parts: &[&[u8]]) {
-        let warning = parts.concat();
-        let mut warnings = self.warnings.lock();
-        if !warnings.contains(&warning) {
-            warnings.push(warning);
+        self.remark(Remarks {
+            warnings: vec![parts.concat()],
+            ..Default::default()
+        });
+    }
+
+    fn remark(&self, remarks: Remarks) {
+        let said_now = KEPT_BACK.with_borrow_mut(|kept_back| match kept_back {
+            Some(kept_back) => {
+                kept_back.append(remarks);
+                None
+            }
+            None => Some(remarks),
+        });
+        if let Some(remarks) = said_now {
+            self.pass_on(&remarks);
         }
+    }
+
+    /// The user gets to read `remarks`, after what has been passed on before, and nothing twice.
+    pub(crate) fn pass_on(&self, remarks: &Remarks) {
+        for (all, new) in [
+            (&self.warnings, &remarks.warnings),
+            (&self.unsupported_options, &remarks.unsupported_options),
+        ] {
+            if new.is_empty() {
+                continue;
+            }
+            let mut all = all.lock();
+            for it in new {
+                if !all.contains(it) {
+                    all.push(it.clone());
+                }
+            }
+        }
+        if let Some(note) = &remarks.note {
+            self.note.get_or_init(|| note.clone());
+        }
+    }
+
+    /// Calls `work` and returns what it leads to saying on this thread, which isn't passed on.
+    pub(crate) fn keeping_back(work: impl FnOnce()) -> Remarks {
+        let outer = KEPT_BACK.replace(Some(Remarks::default()));
+        work();
+        KEPT_BACK.replace(outer).unwrap_or_default()
     }
 
     /// Prettier's `loadConfig`. `None` if the file has no configuration, like most `package.json` files.
@@ -1370,14 +1476,55 @@ impl<'c> Configs<'c> {
         Ok(Some(Arc::new(config)))
     }
 
-    /// The scope for `directory`, whose parent's scope is `above`. `entries` has each entry's name and whether it's a
-    /// directory.
-    fn scope<'n>(
+    /// False if the scope of a directory doesn't depend on what is in it, because nothing is looked for.
+    fn looks_into_directories(&self) -> bool {
+        (self.named.is_none() && self.options.config_lookup)
+            || (self.flavor == Flavor::Prettier && self.options.editorconfig)
+    }
+
+    /// Lists `directories` and their parents on the threads of `pool`, as far as [`Configs::for_directory`] would list
+    /// them one after the other when it's asked about them.
+    pub(crate) fn list_ahead<'d>(&self, pool: &Pool, directories: impl Iterator<Item = &'d [u8]>) {
+        if !self.looks_into_directories() || self.options.disable_nested_config {
+            return;
+        }
+        let mut missing: Vec<&[u8]> = Vec::new();
+        let mut seen: FxHashSet<&[u8]> = FxHashSet::default();
+        {
+            let known = self.by_directory.lock();
+            for directory in directories {
+                missing.extend(
+                    paths::ancestors(directory)
+                        .take_while(|&it| !known.contains_key(it) && seen.insert(it)),
+                );
+            }
+        }
+        let listed = pool.map(missing.len(), 15_000, &|at| self.list(missing[at]));
+        let listed = missing.iter().map(|it| it.to_vec()).zip(listed);
+        self.listed_ahead.lock().extend(listed);
+    }
+
+    /// What matters of the entries of `directory`.
+    fn list(&self, directory: &[u8]) -> Listed {
+        if !self.looks_into_directories() {
+            return Listed::default();
+        }
+        if let Some(listed) = self.listed_ahead.lock().remove(directory) {
+            return listed;
+        }
+        let entries = fs::list(directory).map_or_else(Vec::new, |it| it.entries);
+        self.listed(
+            directory,
+            entries.iter().map(|it| (&it.name[..], it.is_directory)),
+        )
+    }
+
+    /// What matters of the entries of `directory`. `entries` has each entry's name and whether it's a directory.
+    fn listed<'n>(
         &self,
         directory: &[u8],
         entries: impl Iterator<Item = (&'n [u8], bool)>,
-        above: Option<&Scope>,
-    ) -> Found {
+    ) -> Listed {
         let count = if self.flavor == Flavor::Oxfmt {
             OXFMT_NAME_COUNT
         } else {
@@ -1408,11 +1555,12 @@ impl<'c> Configs<'c> {
                 );
             }
         }
-        self.scope_of(directory, listed, above)
+        listed
     }
 
-    /// The scope for `directory`, given its relevant entries in `listed` and its parent's scope `above`.
-    fn scope_of(&self, directory: &[u8], listed: Listed, above: Option<&Scope>) -> Found {
+    /// The scope for `directory`, given its relevant entries in `listed` and its parent's scope `above`, which it
+    /// shares if nothing in it makes a difference.
+    fn scope_of(&self, directory: &[u8], listed: Listed, above: Option<&Arc<Scope>>) -> Found {
         let Listed {
             mut candidates,
             has_editorconfig,
@@ -1455,7 +1603,15 @@ impl<'c> Configs<'c> {
                 }
             }
         }
+        let shared = above.filter(|it| match (&it.config, &config) {
+            (Some(theirs), Some(own)) => Arc::ptr_eq(theirs, own),
+            (None, None) => true,
+            _ => false,
+        });
         if self.flavor == Flavor::Oxfmt {
+            if let Some(shared) = shared {
+                return Ok(Arc::clone(shared));
+            }
             let editorconfigs = self.oxfmt_editorconfig.iter().map(Arc::clone).collect();
             return Ok(Arc::new(Scope {
                 config,
@@ -1468,6 +1624,12 @@ impl<'c> Configs<'c> {
             None
         };
         let starts_over = is_project_root || own.as_ref().is_some_and(|it| it.is_root);
+        if let Some(shared) = shared
+            && own.is_none()
+            && (!starts_over || shared.editorconfigs.is_empty())
+        {
+            return Ok(Arc::clone(shared));
+        }
         let mut editorconfigs = match (starts_over, above) {
             (false, Some(above)) => above.editorconfigs.clone(),
             _ => Vec::new(),
@@ -1481,10 +1643,11 @@ impl<'c> Configs<'c> {
 
     /// Records that the oxfmt config at `used` won over the Prettier config `ignored` in the same directory.
     fn note_ignored(&self, used: &[u8], ignored: &[u8]) {
-        self.note.get_or_init(|| {
-            let used = paths::relative(&self.environment.cwd, used);
-            let end = b" is ignored. Use --config to pick it.";
-            [b"Using ", &used[..], b". ", ignored, end].concat()
+        let used = paths::relative(&self.environment.cwd, used);
+        let end = b" is ignored. Use --config to pick it.";
+        self.remark(Remarks {
+            note: Some([b"Using ", &used[..], b". ", ignored, end].concat()),
+            ..Default::default()
         });
     }
 
@@ -1516,8 +1679,8 @@ impl<'c> Configs<'c> {
     /// Records that `directory`, or a file in it, was passed as an argument.
     pub(crate) fn name(&self, directory: &[u8]) {
         let mut arguments = self.arguments.lock();
-        if !arguments.iter().any(|it| it == directory) {
-            arguments.push(directory.to_vec());
+        if !arguments.contains(directory) {
+            arguments.insert(directory.to_vec());
         }
     }
 
@@ -1536,7 +1699,8 @@ impl<'c> Configs<'c> {
 
     /// The scope for the files in `directory`.
     pub(crate) fn for_directory(&self, directory: &[u8]) -> Found {
-        let directory = if self.options.disable_nested_config {
+        // Where nothing is looked for, all directories are alike.
+        let directory = if self.options.disable_nested_config || !self.looks_into_directories() {
             &self.environment.cwd[..]
         } else {
             directory
@@ -1553,14 +1717,13 @@ impl<'c> Configs<'c> {
             }
         }
         for directory in missing.into_iter().rev() {
-            let entries = fs::list(directory).map_or_else(Vec::new, |it| it.entries);
-            let entries = entries.iter().map(|it| (&it.name[..], it.is_directory));
+            let listed = self.list(directory);
             let found = match &above {
-                Some(Ok(above)) => self.scope(directory, entries, Some(above)),
-                None => self.scope(directory, entries, None),
+                Some(Ok(above)) => self.scope_of(directory, listed, Some(above)),
+                None => self.scope_of(directory, listed, None),
                 // A broken configuration file doesn't matter if there's a nearer one.
                 Some(Err(error)) => {
-                    self.scope(directory, entries, None)
+                    self.scope_of(directory, listed, None)
                         .and_then(|scope| match scope.config {
                             Some(_) => Ok(scope),
                             None => Err(error.clone()),
@@ -1586,10 +1749,14 @@ impl<'c> Configs<'c> {
         if self.options.disable_nested_config {
             return Ok(Arc::clone(above));
         }
-        let found = self.scope(directory, entries, Some(above));
-        self.by_directory
-            .lock()
-            .insert(directory.to_vec(), found.clone());
+        let found = self.scope_of(directory, self.listed(directory, entries), Some(above));
+        // Whoever asks about a directory that isn't noted finds out the same from the closest one above that is. All
+        // threads of a search come by here, so they take the lock for what makes a difference only.
+        if !matches!(&found, Ok(scope) if Arc::ptr_eq(scope, above)) {
+            self.by_directory
+                .lock()
+                .insert(directory.to_vec(), found.clone());
+        }
         found
     }
 
@@ -1848,6 +2015,11 @@ impl<'c> Configs<'c> {
         self.is_native() && self.config_of(scope).is_ok_and(|it| it.is_none())
     }
 
+    /// True for `--staged` and `--changed`: not all files that are found are formatted.
+    pub(crate) fn leaves_out_found_files(&self) -> bool {
+        self.options.only.is_some()
+    }
+
     /// The `parser` option for the file at `path` in `scope`, if it's set.
     pub(crate) fn parser_for(&self, scope: &Scope, path: &[u8]) -> Option<Box<[u8]>> {
         let is_about_parser = |it: &(Vec<u8>, Vec<u8>)| it.0 == b"parser";
@@ -1869,6 +2041,68 @@ impl<'c> Configs<'c> {
     /// Prettier's `getOptionsForFile`: how to format the file at `path` in `scope`.
     pub(crate) fn options_for(&self, scope: &Scope, path: &[u8]) -> Result<Resolved, Fatal> {
         self.options_of(scope, Some(path))
+    }
+
+    /// [`Configs::options_for`], which resolves the options that many files share once for `known`. What there is to
+    /// say about the options is returned for every file that has them, and not passed on: which of the files a thread
+    /// comes by first is a matter of chance.
+    pub(crate) fn options_for_one_of_many(
+        &self,
+        known: &mut KnownOptions,
+        scope: &Scope,
+        path: &[u8],
+    ) -> (Result<Resolved, Fatal>, Option<Arc<Remarks>>) {
+        let key = self.options_key(scope, path);
+        if let Some((_, resolved, remarks)) = known.0.iter().find(|it| Some(it.0) == key) {
+            let mut resolved = resolved.clone();
+            let _ = resolved.options.set(b"filepath", path);
+            return (Ok(resolved), remarks.clone());
+        }
+        let mut resolved = Err(Fatal(Vec::new()));
+        let remarks = Configs::keeping_back(|| resolved = self.options_for(scope, path));
+        let remarks = (!remarks.is_empty()).then(|| Arc::new(remarks));
+        // They are looked through one by one.
+        if let (Some(key), Ok(resolved)) = (key, &resolved)
+            && !resolved.depends_on_directory
+            && known.0.len() < 32
+        {
+            known.0.push((key, resolved.clone(), remarks.clone()));
+        }
+        (resolved, remarks)
+    }
+
+    /// `None` if the options depend on more than a key has.
+    fn options_key(&self, scope: &Scope, path: &[u8]) -> Option<OptionsKey> {
+        let name = paths::basename(path);
+        // Without a `.` the first line of the file can say what it is. oxfmt's `.editorconfig` depends on `useTabs`.
+        if !strings::contains_char(name, b'.') || self.is_oxfmt_for(scope) {
+            return None;
+        }
+        let overrides = match self.config_of(scope).ok()? {
+            Some(config) if !config.overrides.is_empty() => {
+                let relative = paths::relative(paths::dirname(&config.path), path);
+                matching(&config.overrides, &relative)?
+            }
+            _ => 0,
+        };
+        let bunfig_overrides = match self.overrides.is_empty() {
+            true => 0,
+            false => {
+                let relative = paths::relative(&self.bunfig_base_directory, path);
+                matching(&self.overrides, &relative)?
+            }
+        };
+        let sections = match self.options.config_lookup && !scope.editorconfigs.is_empty() {
+            true => editorconfig::sections_for(scope.editorconfigs.iter().map(|it| &**it), path)?,
+            false => 0,
+        };
+        Some(OptionsKey {
+            scope: std::ptr::from_ref(scope) as usize,
+            overrides,
+            bunfig_overrides,
+            sections,
+            is_package_json: name == b"package.json",
+        })
     }
 
     /// Same for text without a file name, like `prettier --parser x < file`. `scope` is the working directory's.
@@ -1956,6 +2190,7 @@ impl<'c> Configs<'c> {
         resolved.options.parse_javascript = Some(super::parse_javascript);
         resolved.options.parse_parts = Some(super::parse_parts);
         resolved.options.embedded_html = true;
+        resolved.options.no_short_cuts = self.options.no_short_cuts;
         resolved.options.toml = self.is_native_in(scope);
         resolved.options.svelte.is_on = self.formats_svelte(scope, path);
         if is_oxfmt {
@@ -2073,10 +2308,10 @@ impl<'c> Configs<'c> {
                 }
                 name if is_tailwind(name) && value != b"false" => {
                     resolved.has_unsupported_option = true;
-                    let mut unsupported = self.unsupported_options.lock();
-                    if !unsupported.iter().any(|it| it == name) {
-                        unsupported.push(name.to_vec());
-                    }
+                    self.remark(Remarks {
+                        unsupported_options: vec![name.to_vec()],
+                        ..Default::default()
+                    });
                 }
                 name if OPTIONS.contains(&name) && resolved.options.set(name, value).is_err() => {
                     return Err(Fatal(match not_an_integer(name, value, false) {
@@ -2128,6 +2363,7 @@ impl<'c> Configs<'c> {
             ]);
         }
         if sort.organizes_imports() {
+            resolved.depends_on_directory = true;
             for (name, value) in self.tsconfig_of(directory).iter() {
                 sort.set(name, value);
             }
@@ -2159,6 +2395,7 @@ impl<'c> Configs<'c> {
             }
             (None, None) => (b"false".to_vec(), SetBy::Bun(&self.bunfig_base_directory)),
         };
+        resolved.depends_on_directory |= value != b"false";
         if value != b"false"
             && let Some(mut tailwind) =
                 tailwind::for_file(&self.classes, &value, (set_by, directory))
@@ -2189,6 +2426,10 @@ impl<'c> Configs<'c> {
     }
 
     fn sort_imports(&self, settings: SortSettings) -> Result<Option<Arc<SortImports>>, Fatal> {
+        // With nothing set there's nothing to compile, so no thread has to wait for another.
+        if settings == SortSettings::default() {
+            return settings.compile().map_err(Fatal);
+        }
         let mut known = self.sort_imports.lock();
         if let Some((_, compiled)) = known.iter().find(|it| it.0 == settings) {
             return Ok(compiled.clone());

@@ -14,7 +14,8 @@ fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> b
     ) && template.quasi_count() == 1
         && matches!(e.ast_parent(), AstNodes::TaggedTemplateExpression(tagged)
             if matches!(tagged.kind(), ExprKind::TaggedTemplate(call)
-                if matches!(call.callee().kind(), ExprKind::Ident(_)) && matches!(call.callee().text(), b"md" | b"markdown")))
+                if matches!(call.callee().kind(), ExprKind::Ident(_)) && matches!(call.callee().text(), b"md" | b"markdown")
+                    && !crate::js::utils::typecast::is_cast_target_that_hides_its_kind(call.callee(), f)))
         && template.cooked(0).is_some()
 }
 
@@ -37,7 +38,7 @@ pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 }
 
 /// A part of a document, in print order.
-enum Op<'d> {
+pub(crate) enum Op<'d> {
     Text(&'d [u8]),
     Line(Line),
     Element(FormatElement),
@@ -131,9 +132,41 @@ fn flatten<'d>(doc: &'d Doc<'_>, ops: &mut Vec<Op<'d>>, stack_check: bun_core::S
     }
 }
 
-/// Line breaks that are written as is, with nothing trimmed before them and nothing added after them.
-fn write_line_breaks(count: usize, f: &mut Formatter<'_>) {
-    f.write_text(&vec![b'\n'; count], Some(TextWidth::multiline(0)));
+/// Allocations for a text, reused for the next one.
+#[derive(Default)]
+pub(crate) struct Scratch(super::ast::Tree);
+
+/// Calls `then` with the document of `text`, which is what a template has between its backticks without its escapes and
+/// its indentation, and with the document's parts. Returns `None` if the template stays as it is.
+pub(crate) fn with_document_of_template<R>(
+    text: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    then: impl FnOnce(&Doc<'_>, &[Op<'_>]) -> R,
+) -> Option<R> {
+    let mode = super::Mode {
+        is_in_template: true,
+        is_mdx: false,
+    };
+    super::with_document(text, options, &mut scratch.0, mode, None, |document| {
+        let document = doc::text_to_doc(document).ok()?;
+        let mut ops = Vec::new();
+        flatten(&document, &mut ops, bun_core::StackCheck::init()).then(|| then(&document, &ops))
+    })
+    .ok()
+    .flatten()
+}
+
+/// Line breaks that are written as is, with nothing trimmed before them and nothing added after them. The first one is a
+/// `literalline` if `is_literal`, the others are `hardline`s.
+fn write_line_breaks(is_literal: bool, count: usize, f: &mut Formatter<'_>) {
+    if is_literal {
+        f.write_text(b"\n", Some(TextWidth::multiline(0)));
+    }
+    let count = count - usize::from(is_literal);
+    if count > 0 {
+        f.write_text(&vec![b'\n'; count], Some(TextWidth::forced_line_breaks()));
+    }
 }
 
 /// Prettier's `escapeTemplateCharacters(doc, true)`, for one text.
@@ -177,7 +210,7 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
                     .rposition(|op| matches!(op, Op::Line(Line::Hard)));
                 let Some(last) = last else {
                     if is_literal {
-                        write_line_breaks(1, f);
+                        write_line_breaks(true, 1, f);
                     }
                     f.write_element(FormatElement::Line(LineMode::Hard));
                     continue;
@@ -189,7 +222,7 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
                 let is_single_empty_line = count == 2 && !is_literal;
                 match is_single_empty_line {
                     true => f.write_element(FormatElement::Line(LineMode::Hard)),
-                    false => write_line_breaks(count, f),
+                    false => write_line_breaks(is_literal, count, f),
                 }
                 for op in rest {
                     if let Op::Element(element) = op {
@@ -257,35 +290,23 @@ pub(crate) fn write_template<'a>(
     }
 
     let options = f.options().clone();
-    let mut tree = super::ast::Tree::default();
-    let mode = super::Mode {
-        is_in_template: true,
-        is_mdx: false,
-    };
-    let is_written = super::with_document(&text, &options, &mut tree, mode, None, |document| {
-        let Ok(document) = doc::text_to_doc(document) else {
-            return false;
-        };
-        let mut ops = Vec::new();
-        if !flatten(&document, &mut ops, bun_core::StackCheck::init()) {
-            return false;
-        }
+    let scratch = &mut Scratch::default();
+    let is_written = with_document_of_template(&text, &options, scratch, |_, ops| {
         f.write_token("`");
         if indentation.is_empty() {
-            write_line_breaks(1, f);
+            write_line_breaks(true, 1, f);
             f.write_element(FormatElement::ExpandParent);
             f.write_element(FormatElement::Tag(Tag::StartDedent(DedentMode::Root)));
-            write_ops(&ops, f);
+            write_ops(ops, f);
             f.write_element(FormatElement::Tag(Tag::EndDedent(DedentMode::Root)));
         } else {
             f.write_element(FormatElement::Tag(Tag::StartIndent));
             f.write_element(FormatElement::Line(LineMode::Soft));
-            write_ops(&ops, f);
+            write_ops(ops, f);
             f.write_element(FormatElement::Tag(Tag::EndIndent));
         }
         f.write_element(FormatElement::Line(LineMode::Soft));
         f.write_token("`");
-        true
     });
-    is_written == Ok(true)
+    is_written.is_some()
 }

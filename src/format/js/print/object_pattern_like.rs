@@ -58,8 +58,8 @@ impl<'a> ObjectPatternLike<'a> {
     }
 
     /// Prettier's `shouldBreak` for patterns: some property's value is a pattern. Doesn't apply inside a function
-    /// parameter, unless the function is only a signature.
-    fn should_break_properties(&self) -> bool {
+    /// parameter, unless the function is only a signature, nor to what has a default value.
+    fn should_break_properties(&self, f: &Formatter<'a>) -> bool {
         match self {
             Self::ObjectPattern(_, props) => {
                 let is_exempt = match self.parent() {
@@ -79,13 +79,17 @@ impl<'a> ObjectPatternLike<'a> {
                             )
                     })
             }
-            Self::ObjectAssignmentTarget(_, props) => props.iter().any(|property| {
-                property.kind() == PropKind::Init
-                    && (property.value()).is_some_and(|it| {
-                        matches!(it.kind(), ExprKind::Object(_) | ExprKind::Array(_))
-                            && it.is_assignment_target()
+            Self::ObjectAssignmentTarget(_, props) => {
+                (f.options().flavor.is_oxfmt()
+                    || !matches!(self.parent(), AstNodes::AssignmentTargetWithDefault(_)))
+                    && props.iter().any(|property| {
+                        property.kind() == PropKind::Init
+                            && (property.value()).is_some_and(|it| {
+                                matches!(it.kind(), ExprKind::Object(_) | ExprKind::Array(_))
+                                    && it.is_assignment_target()
+                            })
                     })
-            }),
+            }
         }
     }
 
@@ -104,7 +108,7 @@ impl<'a> ObjectPatternLike<'a> {
     fn layout(&self, f: &Formatter<'a>) -> ObjectPatternLayout {
         if self.is_empty() {
             ObjectPatternLayout::Empty
-        } else if self.should_break_properties() {
+        } else if self.should_break_properties(f) {
             match self.is_hugged_parameter(f) {
                 true => ObjectPatternLayout::Inline,
                 false => ObjectPatternLayout::Group { expand: true },

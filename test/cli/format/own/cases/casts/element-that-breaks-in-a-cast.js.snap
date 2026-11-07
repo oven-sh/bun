@@ -1,0 +1,55 @@
+------------------
+{ printWidth: 80 }
+------------------
+a = /** @type {A} */ (
+  (
+    <div>
+      {bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
+      {cccccccccccccccccccccccccccccccccccccccccccccccccc}
+    </div>
+  )
+);
+/** @type {A} */ (
+  <div>
+    {bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
+    {cccccccccccccccccccccccccccccccccccccccccccccccccc}
+  </div>
+);
+f(
+  /** @type {A} */ (
+    <div>
+      {bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
+      {cccccccccccccccccccccccccccccccccccccccccccccccccc}
+    </div>
+  ),
+);
+g = /** @type {A} */ (<div>{b}</div>);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a = /** @type {A} */ (
+  (
+    <div>
+      {bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
+      {cccccccccccccccccccccccccccccccccccccccccccccccccc}
+    </div>
+  )
+);
+/** @type {A} */ (
+  <div>
+    {bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
+    {cccccccccccccccccccccccccccccccccccccccccccccccccc}
+  </div>
+);
+f(
+  /** @type {A} */ (
+    <div>
+      {bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
+      {cccccccccccccccccccccccccccccccccccccccccccccccccc}
+    </div>
+  ),
+);
+g = /** @type {A} */ (<div>{b}</div>);
+
+===================== End =====================

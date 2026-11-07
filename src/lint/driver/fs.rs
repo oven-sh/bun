@@ -149,6 +149,22 @@ pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
     read_stream(&file)
 }
 
+/// [`read`] for what was a regular file of `size` bytes when it was found. Replaces what is in `text`. A read that asks
+/// for more than `size` bytes and gets exactly as many has all of it, so nothing else is asked about the file.
+pub(crate) fn read_file_of_size(path: &[u8], size: u64, text: &mut Vec<u8>) -> bun_sys::Result<()> {
+    text.clear();
+    if size <= 64 << 20 {
+        text.reserve(size as usize + 1);
+        let count = open_nonblocking(path)?.read_once_into(text)?;
+        if count as u64 == size {
+            return Ok(());
+        }
+    }
+    // It's another file by now, and not necessarily a regular one.
+    *text = read(path)?;
+    Ok(())
+}
+
 /// Contents of the named pipes passed to flags, keyed by path. A pipe can only be read once, but a run reads some of
 /// these files more than once.
 #[derive(Clone, Debug, Default)]

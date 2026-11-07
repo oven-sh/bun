@@ -1,7 +1,7 @@
 use crate::js::format::write_trailing_comments_of;
 use crate::js::utils::array::{is_line_after_element_empty, write_array_node};
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
-use crate::js::utils::typecast::has_comments;
+use crate::js::utils::typecast::{has_comments, is_cast_target_that_hides_its_kind};
 use crate::prelude::*;
 use crate::write;
 
@@ -9,11 +9,44 @@ use crate::write;
 pub(crate) struct ArrayElementList<'a> {
     elements: List<'a, Expr<'a>>,
     group_id: GroupId,
+    /// The array is certain to break.
+    breaks: bool,
+}
+
+/// An element of an array that isn't printed concisely.
+#[derive(Copy, Clone)]
+struct FormatArrayElement<'a> {
+    element: Expr<'a>,
+    /// It's on a line of its own.
+    starts_line: bool,
+    is_last: bool,
+}
+
+impl<'a> Format<'a> for FormatArrayElement<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        if self.starts_line
+            && f.is_quiet()
+            && crate::js::flat::write_array_element(self.element, self.is_last, f)
+        {
+            return;
+        }
+        self.element.fmt(f);
+    }
+}
+
+impl Spanned for FormatArrayElement<'_> {
+    fn span(&self) -> Span {
+        self.element.span()
+    }
 }
 
 impl<'a> ArrayElementList<'a> {
-    pub(crate) fn new(elements: List<'a, Expr<'a>>, group_id: GroupId) -> Self {
-        Self { elements, group_id }
+    pub(crate) fn new(elements: List<'a, Expr<'a>>, group_id: GroupId, breaks: bool) -> Self {
+        Self {
+            elements,
+            group_id,
+            breaks,
+        }
     }
 }
 
@@ -21,11 +54,16 @@ impl<'a> Format<'a> for ArrayElementList<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         if !can_concisely_print_array_list(self.elements, f) {
             // One per line if they don't all fit on one line.
+            let last_index = self.elements.len().saturating_sub(1);
             return write_array_node(
                 self.elements.len(),
-                self.elements
-                    .iter()
-                    .map(|e| (!matches!(e.kind(), ExprKind::Missing)).then_some(e)),
+                self.elements.iter().enumerate().map(|(index, element)| {
+                    (!matches!(element.kind(), ExprKind::Missing)).then_some(FormatArrayElement {
+                        element,
+                        starts_line: self.breaks,
+                        is_last: index == last_index,
+                    })
+                }),
                 f,
             );
         }
@@ -103,7 +141,9 @@ pub(crate) fn can_concisely_print_array_list<'a>(
                 }
                 _ => false,
             };
-            is_number && !has_line_comment_after_code(element, f)
+            is_number
+                && !has_line_comment_after_code(element, f)
+                && !is_cast_target_that_hides_its_kind(element, f)
         })
 }
 

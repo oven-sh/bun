@@ -12,6 +12,7 @@ mod misc;
 mod parse;
 mod postcss;
 mod printer;
+mod quick;
 mod selector_parser;
 mod sink;
 mod value_groups;
@@ -19,8 +20,9 @@ mod value_parser;
 
 use self::doc::Doc;
 use self::memo::Memo;
+use self::quick::Quick;
 use self::sink::Sink;
-use crate::options::{EmbeddedLanguageFormatting, QuoteStyle, TrailingCommas};
+use crate::options::{EmbeddedLanguageFormatting, LineEnding, QuoteStyle, TrailingCommas};
 use crate::pragma::BeforeParsing;
 use crate::range::Offsets;
 use crate::stack::Stack;
@@ -71,6 +73,16 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
 #[derive(Default)]
 pub struct Scratch {
     memo: Memo,
+    quick: Quick,
+    buffers: postcss::Buffers,
+    parsed: parse::Parsed,
+}
+
+impl Scratch {
+    /// Forgets what is known from the style sheets that have been formatted, as at the start of a run.
+    pub fn forget_other_files(&mut self) {
+        self.memo = Memo::default();
+    }
 }
 
 /// Prettier's `replaceQuotesInInlineComments`. Returns the inline comments whose quotes and asterisks must be replaced
@@ -84,72 +96,80 @@ fn inline_comments_with_quotes(text: &[u8]) -> Vec<(usize, usize)> {
         CommentBlock,
         CommentInline,
     }
+    use bun_core::strings::{contains_any, index_of_any};
+    // Nearly always, no line has a quote or an asterisk after a `//`.
+    let mut from = 0;
+    loop {
+        let Some(at) = text::index_of_from(text, b"//", from) else {
+            return Vec::new();
+        };
+        match index_of_any(&text[at + 2..], b"\n\r\"'*") {
+            None => return Vec::new(),
+            Some(len) if matches!(text[at + 2 + len], b'\n' | b'\r') => from = at + 2 + len,
+            Some(_) => break,
+        }
+    }
     let mut state = State::Initial;
     let mut state_to_return_from_quotes = State::Initial;
-    let mut inline_comment_start = 0;
-    let mut inline_comment_contains_quotes = false;
     let mut comments = Vec::new();
+    // In each state, goes on to the next byte that means something there.
     let mut i = 0;
-    while let Some(&c) = text.get(i) {
+    loop {
+        let rest = text.get(i..).unwrap_or_default();
+        let found = match state {
+            State::Initial => index_of_any(rest, b"'\"/("),
+            State::Quotes(quote) => index_of_any(rest, &[quote, b'\n', b'\r']),
+            State::Url => index_of_any(rest, b")\n\r'\""),
+            // The `*` of `/*` can be that of `*/` too.
+            State::CommentBlock => text::index_of_from(text, b"*/", i - 1).map(|at| at + 1 - i),
+            State::CommentInline => index_of_any(rest, b"\n\r"),
+        };
+        let Some(found) = found else {
+            return comments;
+        };
+        let start = i;
+        i += found;
+        let c = text[i];
         match state {
             State::Initial => match c {
                 b'\'' | b'"' => state = State::Quotes(c),
-                b'u' | b'U'
-                    if text
-                        .get(i..i + 4)
-                        .is_some_and(|it| it.eq_ignore_ascii_case(b"url(")) =>
-                {
-                    state = State::Url;
-                    i += 3;
-                }
+                b'(' if i >= 3 && text[i - 3..i].eq_ignore_ascii_case(b"url") => state = State::Url,
                 b'/' if text.get(i + 1) == Some(&b'*') => {
                     state = State::CommentBlock;
                     i += 1;
                 }
                 b'/' if text.get(i + 1) == Some(&b'/') => {
                     state = State::CommentInline;
-                    inline_comment_start = i;
                     i += 1;
                 }
                 _ => {}
             },
             State::Quotes(quote) => {
-                if c == quote && text[i - 1] != b'\\' {
-                    state = std::mem::replace(&mut state_to_return_from_quotes, State::Initial);
-                }
-                if matches!(c, b'\n' | b'\r') {
+                if c != quote {
                     return Vec::new();
+                }
+                if text[i - 1] != b'\\' {
+                    state = std::mem::replace(&mut state_to_return_from_quotes, State::Initial);
                 }
             }
             State::Url => match c {
                 b')' => state = State::Initial,
-                b'\n' | b'\r' => return Vec::new(),
                 b'\'' | b'"' => {
                     state = State::Quotes(c);
                     state_to_return_from_quotes = State::Url;
                 }
-                _ => {}
+                _ => return Vec::new(),
             },
-            State::CommentBlock => {
-                if c == b'/' && text[i - 1] == b'*' {
-                    state = State::Initial;
+            State::CommentBlock => state = State::Initial,
+            State::CommentInline => {
+                if contains_any(&text[start..i], b"\"'*") {
+                    comments.push((start - 2, i));
                 }
+                state = State::Initial;
             }
-            State::CommentInline => match c {
-                b'"' | b'\'' | b'*' => inline_comment_contains_quotes = true,
-                b'\n' | b'\r' => {
-                    if inline_comment_contains_quotes {
-                        comments.push((inline_comment_start, i));
-                    }
-                    state = State::Initial;
-                    inline_comment_contains_quotes = false;
-                }
-                _ => {}
-            },
         }
         i += 1;
     }
-    comments
 }
 
 /// oxfmt treats Less's `each(@list, { .. })` as a statement and adds the `;` after it if it's missing. `postcss-less`
@@ -231,21 +251,58 @@ fn with_semicolons_after_each(text: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(result)
 }
 
+/// How a style sheet is parsed.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Way {
+    Long,
+    /// For a sink that writes to the output: statements are printed while they're read, if `takes_short_cuts`. If that
+    /// fails, `Quick::is_refused` is set.
+    Quick,
+    /// `Quick`, after `Quick::read_first_lines`: it takes short cuts, and it's parsed as it is.
+    QuickAfterFirstLines,
+}
+
+/// What `quick` knows is what Prettier prints.
+fn takes_short_cuts(options: &FormatOptions) -> bool {
+    // The printer makes the indentation of each line that could start in a statement, and fails if that's too long for a
+    // string, whether or not a line starts there. With a narrower indentation, a style sheet that's nested deeply enough
+    // for that is too long as a whole: `n` blocks in each other are indented by `n * n / 2` levels.
+    let level = match options.indent_style.is_tab() {
+        true => 1,
+        false => options.indent_width.value() as usize,
+    };
+    !options.no_short_cuts
+        && !options.flavor.is_oxfmt()
+        && options.tailwind.is_none()
+        && !crate::is_too_long(level << 16)
+}
+
 /// Parses `text`, whose line breaks must be `\n`, and writes it to `sink`.
 fn parse_and_print<'o>(
     text: &[u8],
     parser: Parser,
     options: &FormatOptions,
     mut sink: Sink<'o>,
-    memo: &'o mut Memo,
+    scratch: &'o mut Scratch,
+    way: Way,
 ) -> Result<Sink<'o>, FormatError> {
+    let Scratch {
+        memo,
+        quick,
+        buffers,
+        parsed,
+    } = scratch;
     let with_semicolons = match parser == Parser::Less && options.flavor.is_oxfmt() {
         true => with_semicolons_after_each(text),
         false => Cow::Borrowed(text),
     };
     let text = &with_semicolons[..];
+    let is_as_it_is = way == Way::QuickAfterFirstLines;
     // The front matter is replaced with spaces before parsing, so all offsets stay valid.
-    let front_matter = front_matter::parse(text).map(|it| &text[..it.end]);
+    let front_matter = match is_as_it_is {
+        true => None,
+        false => front_matter::parse(text).map(|it| &text[..it.end]),
+    };
     let mut blanked: Cow<'_, [u8]> = match front_matter {
         None => Cow::Borrowed(text),
         Some(front_matter) => {
@@ -259,7 +316,7 @@ fn parse_and_print<'o>(
         }
     };
 
-    if parser == Parser::Less {
+    if parser == Parser::Less && !is_as_it_is {
         for (start, end) in inline_comments_with_quotes(&blanked) {
             for byte in &mut blanked.to_mut()[start..end] {
                 if matches!(byte, b'"' | b'\'' | b'*') {
@@ -273,7 +330,34 @@ fn parse_and_print<'o>(
         true => postcss::Placeholder::Statement,
         false => postcss::Placeholder::AtRule,
     };
-    let tree = postcss::parse(&blanked, parser, placeholder).map_err(FormatError::SyntaxErrorAt)?;
+    let is_quick =
+        is_as_it_is || (way == Way::Quick && takes_short_cuts(options) && front_matter.is_none());
+    if !is_as_it_is {
+        quick.start(options);
+    }
+    let tree = postcss::parse(
+        &blanked,
+        text,
+        parser,
+        placeholder,
+        (quick, is_quick),
+        buffers,
+    )
+    .map_err(FormatError::SyntaxErrorAt)?;
+    // A style sheet that's one run is printed. This is what `Printer::print_root` does with it.
+    let root = &tree.nodes[0];
+    let of = |range| postcss::text_of_range(range, &blanked, &tree.extra);
+    if root.first_child == root.last_child
+        && let Some(run) = tree.nodes.get(root.first_child as usize)
+        && run.kind == postcss::Kind::Run
+        && bun_core::strings::trim_js_whitespace(of(root.after)).is_empty()
+        && sink.printed_lines(of(run.printed.text), run.printed.depth)
+    {
+        sink.hard_line();
+        let result = sink.result().map(|()| sink);
+        buffers.recycle(tree);
+        return result;
+    }
     if let Some(front_matter) = front_matter {
         let has_nodes = tree.nodes[0].first_child != 0;
         // Prettier's `printEmbedFrontMatter`.
@@ -356,16 +440,20 @@ fn parse_and_print<'o>(
         failure: None,
         sink,
         memo,
+        has_no_short_cuts: options.no_short_cuts,
+        has_refused_run: false,
         is_memoizable: false,
     };
-    printer.print_root(&tree, &mut parse::Parsed::default());
-    if printer.context.stack.ran_out() {
-        return Err(FormatError::NestedTooDeeply);
-    }
-    match printer.failure {
+    printer.print_root(&tree, parsed);
+    quick.is_refused = printer.has_refused_run;
+    let result = match printer.failure {
+        _ if printer.context.stack.ran_out() => Err(FormatError::NestedTooDeeply),
+        _ if printer.has_refused_run => Err(FormatError::InvalidDocument),
         Some(error) => Err(FormatError::SyntaxErrorAt(error)),
         None => printer.sink.result().map(|()| printer.sink),
-    }
+    };
+    buffers.recycle(tree);
+    result
 }
 
 /// Prettier's `textToDoc`: returns the document for a style sheet embedded in another language. `text`'s line breaks
@@ -375,8 +463,9 @@ pub(crate) fn document(
     parser: Parser,
     options: &FormatOptions,
 ) -> Result<Doc<'static>, FormatError> {
-    let mut memo = Memo::default();
-    let sink = parse_and_print(text, parser, options, Sink::to_document(), &mut memo)?;
+    let mut scratch = Scratch::default();
+    let sink = Sink::to_document();
+    let sink = parse_and_print(text, parser, options, sink, &mut scratch, Way::Long)?;
     doc::text_to_doc(sink.into_document()?)
 }
 
@@ -405,12 +494,9 @@ pub fn format(
     // printed back unchanged.
     let is_range = start > first || end < original.len();
     let text = bun_core::strings::crlf_as_lf(text);
-    let text = match crate::pragma::before_parsing_css(
-        &text,
-        front_matter::parse(&text).map_or(0, |it| it.end),
-        !is_range,
-        options,
-    ) {
+    let front_matter_len = front_matter::parse(&text).map_or(0, |it| it.end);
+    let text = match crate::pragma::before_parsing_css(&text, front_matter_len, !is_range, options)
+    {
         BeforeParsing::LeaveUnchanged => {
             out.extend_from_slice(original);
             return Ok(());
@@ -434,7 +520,8 @@ pub fn format(
             parser,
             options,
             Sink::to_document(),
-            &mut scratch.memo,
+            scratch,
+            Way::Long,
         )
         .inspect_err(|_| out.truncate(start))
         .map_err(in_original)?;
@@ -445,9 +532,34 @@ pub fn format(
             out,
         );
     }
+    out.reserve(text.len() + text.len() / 8 + 16);
     let is_in_html = options.in_html.root != crate::options::HtmlRoot::None;
+    let mut way = Way::Quick;
+    if takes_short_cuts(options)
+        && !is_in_html
+        && front_matter_len == 0
+        && (parser != Parser::Less || inline_comments_with_quotes(text).is_empty())
+    {
+        scratch.quick.start(options);
+        // A style sheet that's written as it's printed needs no parser and no printer.
+        if let Some((from, end)) = scratch.quick.read_first_lines(text, parser)
+            && options.line_ending.resolve(original) == LineEnding::Lf
+            && !crate::is_too_long(out.len() + (end - from) + 1)
+        {
+            out.extend_from_slice(&text[from..end]);
+            out.push(b'\n');
+            crate::whole_texts::note();
+            return Ok(());
+        }
+        way = Way::QuickAfterFirstLines;
+    }
     let sink = Sink::to_output(doc::Printer::new(options, original, out), is_in_html);
-    let result = parse_and_print(text, parser, options, sink, &mut scratch.memo).map(drop);
+    let mut result = parse_and_print(text, parser, options, sink, scratch, way).map(drop);
+    if result.is_err() && scratch.quick.is_refused {
+        out.truncate(start + if has_bom { BOM.len() } else { 0 });
+        let sink = Sink::to_output(doc::Printer::new(options, original, out), is_in_html);
+        result = parse_and_print(text, parser, options, sink, scratch, Way::Long).map(drop);
+    }
     result
         .inspect_err(|_| out.truncate(start))
         .map_err(in_original)

@@ -9,6 +9,7 @@ pub use compile::{CompileParseOptions, parse_for_compile};
 use crate::{Options, Part, Rejection, Scratch};
 use bun_alloc::Arena;
 use bun_sema::atom::{Intern, Interner};
+use bun_sema::bind::Claims;
 use bun_sema::hir::{
     Diagnostic, DiagnosticKind, ExprKind, File, FileBuilder, FileKind, Stmt, StmtKind, rare,
 };
@@ -418,7 +419,7 @@ fn parse_into_arena<'s>(
     atoms: &dyn Intern,
 ) -> File<'s> {
     let mut file = parse_file(scratch, how, text, Some(atoms));
-    let mut in_arena = Summary::InPlace(&mut file).into_arena(memory);
+    let mut in_arena = Summary::InPlace(&mut file, &mut scratch.claims).into_arena(memory);
     if in_arena.kind == FileKind::Json {
         bun_sema::json::validate_json(&mut in_arena, text);
     }
@@ -565,8 +566,9 @@ pub fn summarize_in<'s>(
 
 /// The file that [`with_summary_in_place`] passes to its callback.
 pub enum Summary<'a, 's> {
-    /// Still in the parser's buffers. It doesn't hold its text, and `File::finish_nodes` hasn't run.
-    InPlace(&'a mut FileBuilder),
+    /// Still in the parser's buffers. It doesn't hold its text, and `File::finish_nodes` hasn't run. With
+    /// `attach_comments`, the parents that the parser has noted come with it.
+    InPlace(&'a mut FileBuilder, &'a mut Claims),
     InArena(Box<File<'s>>),
 }
 
@@ -575,7 +577,7 @@ impl<'s> Summary<'_, 's> {
     pub fn into_arena(self, (arena, session): (&'s Arena, &'s Session)) -> File<'s> {
         match self {
             Summary::InArena(file) => *file,
-            Summary::InPlace(file) => {
+            Summary::InPlace(file, _) => {
                 let (mut in_arena, emptied) = core::mem::take(file).into_arena(arena, session);
                 *file = emptied;
                 in_arena.finish_nodes();
@@ -603,7 +605,7 @@ pub fn with_summary<R>(
 ) -> R {
     with_summary_in_place(
         dialect,
-        (arena, session),
+        session,
         path,
         script_kind,
         text,
@@ -616,7 +618,7 @@ pub fn with_summary<R>(
                 file.text = std::borrow::Cow::Borrowed(text);
                 then(*file, atoms)
             }
-            Summary::InPlace(file) => {
+            Summary::InPlace(file, _) => {
                 let mut file = file.lend(arena, session);
                 file.finish_nodes();
                 file.text = std::borrow::Cow::Borrowed(text);
@@ -627,9 +629,10 @@ pub fn with_summary<R>(
 }
 
 /// [`with_summary`] for a caller that can read the file from the parser's buffers, which saves copying its lists.
+/// Only a JSON file asks `session` for the calling thread's arena, and `atoms` for anything.
 pub fn with_summary_in_place<'s, R>(
     dialect: Dialect,
-    memory: (&'s Arena, &'s Session),
+    session: &'s Session,
     path: &[u8],
     script_kind: Option<ScriptKind>,
     text: &[u8],
@@ -657,12 +660,14 @@ pub fn with_summary_in_place<'s, R>(
     let mut scratch = take_scratch();
     // JSON is validated once it's in the arena.
     if is_json(path, script_kind) {
+        let memory = (session.arena(), session);
         let file = parse_into_arena(&mut scratch, how, memory, text, atoms);
         return_scratch(scratch);
         return then(Summary::InArena(Box::new(file)), atoms);
     }
     let mut file = parse_file(&mut scratch, how, text, None);
-    let result = then(Summary::InPlace(&mut file), &scratch.atoms(text));
+    let atoms = scratch.names.file_atoms(text);
+    let result = then(Summary::InPlace(&mut file, &mut scratch.claims), &atoms);
     // Don't keep a very large file's capacity around for every later file.
     if text.len() >= 4 << 20 {
         *file = FileBuilder::default();
@@ -752,8 +757,8 @@ impl<'t> Parts<'t> {
         let mut parsed =
             parsed.map_err(|rejection| PartError::of(&rejection, part.from + rejection.at))?;
         let result = then(
-            Summary::InPlace(&mut parsed.file),
-            &scratch.atoms(code),
+            Summary::InPlace(&mut parsed.file, &mut scratch.claims),
+            &scratch.names.file_atoms(code),
             code,
             parsed.end.0,
         );

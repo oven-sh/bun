@@ -195,8 +195,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let id = ExprId(self.f.exprs.len() as u32);
         self.finish_node(NodeData::Expr(id), pos, end);
         let flags = self.flags_of(&kind);
+        self.f.rare_syntax |= rare::of_expression(&kind);
         self.f.exprs.push(Expr { kind, pos, end });
         self.f.expr_flags.push(flags);
+        if Self::CLAIMS {
+            self.claims.expr(&self.f, id, &kind);
+        }
         id
     }
 
@@ -218,7 +222,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let end = self.prev_end();
         let kind = self.f.dot(obj, name, end);
         let dot = self.add_expr(kind, pos, end);
-        self.note_private_name(dot, name.1);
+        self.note_private_name(dot, obj.0, name.1);
         dot
     }
 

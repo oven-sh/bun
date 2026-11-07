@@ -159,7 +159,7 @@ fn write_arrow<'a>(
     let has_own_line_comment = has_own_line_comment && !is_block_after_comments;
     // In that case the body is a `ParenthesizedExpression` for Prettier, no matter what's inside.
     let is_body_type_cast = get_expression(tail).is_some_and(|body| is_cast_target(body, f));
-    let add_parens_if_not_break = !is_body_type_cast && should_add_parens_if_not_break(tail);
+    let add_parens_if_not_break = !is_body_type_cast && should_add_parens_if_not_break(tail, f);
     let is_body_on_same_line = (!has_own_line_comment
         && !is_body_type_cast
         && (get_expression(tail)
@@ -198,7 +198,8 @@ fn write_arrow<'a>(
         let trailing_comma = expand_last_arg.then_some(FormatTrailingCommas::All);
         // The `)` of the call, or the `}` in JSX, goes on its own line if the body does.
         let should_add_soft_line = (expand_last_arg
-            || matches!(e.ast_parent(), AstNodes::JSXExpressionContainer(_)))
+            || (matches!(e.ast_parent(), AstNodes::JSXExpressionContainer(_))
+                && !is_cast_target_that_hides_its_kind(e, f)))
             && !f.comments().has_comments(arrow.as_ast_nodes());
         let trailing_line = should_add_soft_line.then_some(soft_line_break());
         if breaks_with_chain {
@@ -257,7 +258,9 @@ fn write_arrow<'a>(
     // `(() => () => a)()`: as a callee, the chain breaks onto its own lines, to show that it's the result that gets
     // called.
     let parent = e.ast_parent();
-    let is_callee = parent.is_call_like_callee(e);
+    // `/** @type {A} */ ((a) => (b) => c)()`: the parent is the `ParenthesizedExpression`.
+    let is_cast = is_cast_target_that_hides_its_kind(e, f);
+    let is_callee = !is_cast && parent.is_call_like_callee(e);
     // As a callee or on the right of an assignment, all signatures are indented by one level.
     let should_indent_signatures = is_callee || options.assignment_layout.is_some();
     // Prettier checks `CommentCheckFlags.Leading & CommentCheckFlags.Line`, which evaluates to no flags at all.
@@ -274,14 +277,15 @@ fn write_arrow<'a>(
         || (is_callee && (!is_body_on_same_line || breaks_with_chain));
     // As an argument or an operand, the first signature starts where the chain starts.
     let is_first_indented = !first_signature_starts_where_chain_starts(f)
-        && !matches!(
-            parent,
-            AstNodes::CallExpression(_)
-                | AstNodes::NewExpression(_)
-                | AstNodes::ImportExpression(_)
-                | AstNodes::BinaryExpression(_)
-                | AstNodes::LogicalExpression(_)
-        );
+        && (is_cast
+            || !matches!(
+                parent,
+                AstNodes::CallExpression(_)
+                    | AstNodes::NewExpression(_)
+                    | AstNodes::ImportExpression(_)
+                    | AstNodes::BinaryExpression(_)
+                    | AstNodes::LogicalExpression(_)
+            ));
 
     // Prettier's `printArrowFunctionSignatures`.
     let format_rest = format_with(|f| {
@@ -448,15 +452,22 @@ fn is_multiline_and_starts_on_same_line(expression: Expr<'_>, source_text: Sourc
 
 /// Prettier's `shouldAddParensIfNotBreak`: `a => (b ? c : d)`, so it isn't mistaken for `a <= b ? c : d`. This doesn't
 /// apply if the condition starts with something that gets parentheses anyway.
-fn should_add_parens_if_not_break(arrow: Func<'_>) -> bool {
+fn should_add_parens_if_not_break<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
     let Some(expression) = get_expression(arrow) else {
         return false;
     };
-    matches!(expression.kind(), ExprKind::Cond { .. })
-        && !matches!(
-            ExpressionLeftSide::leftmost(expression).kind(),
-            ExprKind::Object(_)
-        )
+    if !matches!(expression.kind(), ExprKind::Cond { .. }) {
+        return false;
+    }
+    let mut leftmost = expression;
+    for it in ExpressionLeftSide::from(expression).iter_expression() {
+        // `/** @type {A} */ ({}) ? b : c` starts with a `ParenthesizedExpression`.
+        if is_cast_target_that_hides_its_kind(it, f) {
+            return true;
+        }
+        leftmost = it;
+    }
+    !matches!(leftmost.kind(), ExprKind::Object(_))
 }
 
 /// Writes `content`, which prints `comments`. A call argument can be formatted twice, but a comment can only be printed

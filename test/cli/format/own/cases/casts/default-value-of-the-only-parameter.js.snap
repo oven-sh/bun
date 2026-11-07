@@ -1,0 +1,63 @@
+------------------
+{ printWidth: 80 }
+------------------
+function someRatherLongFunctionName({
+  alphaAlphaAlphaAlpha,
+  betaBetaBetaBeta,
+  gammaGammaGamma,
+} = /** @type {T} */ (defaults)) {}
+function someRatherLongFunctionName({
+  alphaAlphaAlphaAlphaAlpha,
+  betaBetaBetaBetaBeta,
+  gammaGammaGamma,
+} = /** @type {T} */ ({})) {}
+function someRatherLongFunctionName([
+  alphaAlphaAlphaAlphaAlpha,
+  betaBetaBetaBetaBeta,
+  gammaGammaGammaGamma,
+] = /** @type {T} */ ([])) {}
+const someRatherLongName = ({
+  alphaAlphaAlphaAlpha,
+  betaBetaBetaBeta,
+  gammaGammaGammaGamma,
+} = /** @type {T} */ (defaults)) => {};
+class A {
+  someRatherLongMethodName({
+    alphaAlphaAlphaAlpha,
+    betaBetaBetaBeta,
+    gammaGammaGammaGamma,
+  } = /** @type {T} */ (defaults)) {}
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function someRatherLongFunctionName({
+  alphaAlphaAlphaAlpha,
+  betaBetaBetaBeta,
+  gammaGammaGamma,
+} = /** @type {T} */ (defaults)) {}
+function someRatherLongFunctionName({
+  alphaAlphaAlphaAlphaAlpha,
+  betaBetaBetaBetaBeta,
+  gammaGammaGamma,
+} = /** @type {T} */ ({})) {}
+function someRatherLongFunctionName([
+  alphaAlphaAlphaAlphaAlpha,
+  betaBetaBetaBetaBeta,
+  gammaGammaGammaGamma,
+] = /** @type {T} */ ([])) {}
+const someRatherLongName = ({
+  alphaAlphaAlphaAlpha,
+  betaBetaBetaBeta,
+  gammaGammaGammaGamma,
+} = /** @type {T} */ (defaults)) => {};
+class A {
+  someRatherLongMethodName({
+    alphaAlphaAlphaAlpha,
+    betaBetaBetaBeta,
+    gammaGammaGammaGamma,
+  } = /** @type {T} */ (defaults)) {}
+}
+
+===================== End =====================

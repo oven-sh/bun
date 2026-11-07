@@ -68,6 +68,49 @@ test.skipIf(!hasRunner).concurrent.each([
   5 * 60_000,
 );
 
+// Most fixtures are printed by a short cut, and the long way prints them only where the short cut is turned off, so
+// the runner prints each fixture both ways. The quick way has printed another program for each of these inputs.
+// (Where only one way fails, the line names it. Nothing makes the ways differ here, so that is not tested.)
+test.skipIf(!hasRunner).concurrent.each([
+  ["a.ts", "type A = { [await(x).y]: B };\n"],
+  ["a.js", "// @flow\nx = a ? (b) : c % checks;\nfunction f() {}\n"],
+])("both ways print %s %j alike, and a fixture fails only if its snapshot is something else", async (name, input) => {
+  using dir = tempDir("format-both-ways", {});
+  const run = async (args: string[], stdin?: string) => {
+    await using proc = spawn({
+      cmd: [bunExe(), "fmt", ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    return stdout;
+  };
+  const piped = ["--no-config", "--no-editorconfig", `--stdin-filepath=${name}`];
+  const [short, long] = await Promise.all([run(piped, input), run([...piped, "--no-short-cuts"], input)]);
+  expect(short).toBe(long);
+  const options = "{ printWidth: 80 }";
+  const rule = Buffer.alloc(options.length, "-").toString();
+  /** What the runner says about the fixture with `expected` as its snapshot: the failures and the count. */
+  const said = async (title: string, expected: string) => {
+    const bundle = join(String(dir), `${title}.txt`);
+    const files = { [name]: input, [`${name}.prettier.snap`]: `${rule}\n${options}\n${rule}\n${expected}\n` };
+    await Bun.write(
+      bundle,
+      concatenate(new Map(Object.entries(files).map(([name, text]) => [name, Buffer.from(text)]))),
+    );
+    return (await run(["--run-oxfmt-tests", bundle])).split("\n").filter(line => /^FAIL |^as Prettier/.test(line));
+  };
+  expect(await said("right", long)).toEqual(["as Prettier prints them: 1/1"]);
+  expect(await said("wrong", `${long}0;\n`)).toEqual([
+    `FAIL prettier ${name} ${options}`,
+    "as Prettier prints them: 0/1",
+  ]);
+});
+
 // `own/comment-owners.txt` lists the node that Prettier attaches each comment in our own inputs to.
 // `own/comment-owners.ts` generates it.
 test.skipIf(!hasRunner)("attaches comments to the same nodes as Prettier", async () => {

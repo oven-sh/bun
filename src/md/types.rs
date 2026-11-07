@@ -342,6 +342,14 @@ pub struct Extensions<'a> {
     /// Nothing but blanks may follow on that line. It is reported as `Html`
     /// with `BLOCK_EXTENSION`, in one piece.
     pub leaf: &'a dyn Fn(&LeafStart<'_>) -> Option<OFF>,
+    /// Asked at the start of a line that is not indented, that no container goes
+    /// on with and that goes on with no leaf block, before anything else is
+    /// looked for there: where the last of the lines ends that the consumer reads
+    /// by itself, if it does. They are reported like a leaf block of `leaf`. Of
+    /// these lines, `RendererImpl::line_starts` has the first only. It is told
+    /// whether containers are open, which the line ends unless it is the next
+    /// item of a list.
+    pub lines: Option<&'a dyn Fn(OFF, bool) -> Option<OFF>>,
     /// The bytes by which a span of its own is told in the text of a
     /// paragraph, a heading or a cell.
     pub span_bytes: &'a [u8],

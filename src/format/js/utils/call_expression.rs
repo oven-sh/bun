@@ -1,7 +1,7 @@
 //! Calls that are printed in a special way because of their callee: `it("..", () => {})`.
 
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
-use super::typecast::comments_of_expression;
+use super::typecast::{comments_of_expression, is_cast_target_that_hides_its_kind};
 use crate::prelude::*;
 use crate::write;
 
@@ -12,7 +12,9 @@ use crate::write;
 /// node type checks give different answers.
 #[inline]
 pub(crate) fn is_call_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    e.tag() == ExprTag::Call && (f.context().has_babel_tree() || !e.is_chain_root())
+    e.tag() == ExprTag::Call
+        && (f.context().has_babel_tree() || !e.is_chain_root())
+        && !is_cast_target_that_hides_its_kind(e, f)
 }
 
 /// Prettier's `isMemberExpression`. See [`is_call_expression`].
@@ -20,6 +22,7 @@ pub(crate) fn is_call_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 pub(crate) fn is_member_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     matches!(e.tag(), ExprTag::Dot | ExprTag::Index)
         && (f.context().has_babel_tree() || !e.is_chain_root())
+        && !is_cast_target_that_hides_its_kind(e, f)
 }
 
 /// Prettier's `stripChainElementWrappers`: `e` without the `!`s after it. The `ChainExpression` isn't a node here.
@@ -117,17 +120,17 @@ pub(crate) fn write_comments_after_callee<'a>(comments: CommentList<'a>, f: &mut
 ///   names, the first argument is a string or a template, the second is a function with at most one parameter, and the
 ///   third, if any, is a number.
 /// - `beforeEach(inject(() => {}))`
-pub(crate) fn is_test_call_expression(e: Expr<'_>) -> bool {
-    is_test_call(e, contains_a_test_pattern)
+pub(crate) fn is_test_call_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    is_test_call(e, contains_a_test_pattern, f)
 }
 
 /// The same, with the callees that the flavor recognizes.
 pub(crate) fn is_test_call_expression_in_flavor<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     match recognizes_vitest_and_deno_test_callees(f) {
         true => {
-            is_test_call(e, contains_oxfmt_test_pattern) && !has_comments_around_arguments(e, f)
+            is_test_call(e, contains_oxfmt_test_pattern, f) && !has_comments_around_arguments(e, f)
         }
-        false => is_test_call_expression(e),
+        false => is_test_call_expression(e, f),
     }
 }
 
@@ -157,11 +160,11 @@ fn recognizes_vitest_and_deno_test_callees(f: &Formatter<'_>) -> bool {
 }
 
 /// oxfmt's `contains_a_test_pattern`: Prettier's `testCallCalleePatterns` and some more.
-fn contains_oxfmt_test_pattern(e: Expr<'_>) -> bool {
-    if contains_a_test_pattern(e) {
+fn contains_oxfmt_test_pattern<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    if contains_a_test_pattern(e, f) {
         return true;
     }
-    let Some(mut names) = callee_name_iterator(e) else {
+    let Some(mut names) = callee_name_iterator(e, f) else {
         return false;
     };
     let (first, second, third) = (names.next(), names.next(), names.next());
@@ -190,7 +193,11 @@ fn contains_oxfmt_test_pattern(e: Expr<'_>) -> bool {
         )
 }
 
-fn is_test_call(e: Expr<'_>, is_test_callee: fn(Expr<'_>) -> bool) -> bool {
+fn is_test_call<'a>(
+    e: Expr<'a>,
+    is_test_callee: fn(Expr<'a>, &Formatter<'a>) -> bool,
+    f: &Formatter<'a>,
+) -> bool {
     let Some(call) = e
         .as_call_like()
         .filter(|call| e.tag() == ExprTag::Call && !call.is_optional())
@@ -199,29 +206,35 @@ fn is_test_call(e: Expr<'_>, is_test_callee: fn(Expr<'_>) -> bool) -> bool {
     };
     let callee = call.callee();
     let arguments = call.args();
+    // An argument in a type cast is no string, no function, no number and no call of a wrapper.
+    if f.comments().has_type_cast_comments()
+        && (arguments.iter()).any(|argument| is_cast_target_that_hides_its_kind(argument, f))
+    {
+        return false;
+    }
     let mut args = arguments.iter();
 
     match (args.next(), args.next(), args.next()) {
         (Some(argument), None, None) => {
-            if is_angular_test_wrapper(e)
+            if is_angular_test_wrapper(e, f)
                 // A wrapper that contains only another wrapper doesn't count, because its argument isn't a function.
                 && matches!(e.as_chain_element().parent(), AstNodes::CallExpression(parent)
-                    if !(is_angular_test_wrapper(parent) && parent.as_call_like().is_some_and(|it| it.args().len() == 1))
-                        && is_test_call(parent, is_test_callee))
+                    if !(is_angular_test_wrapper(parent, f) && parent.as_call_like().is_some_and(|it| it.args().len() == 1))
+                        && is_test_call(parent, is_test_callee, f))
             {
                 return argument.as_fn().is_some();
             }
-            is_unit_test_set_up_callee(callee) && is_angular_test_wrapper_expression(argument)
+            is_unit_test_set_up_callee(callee, f) && is_angular_test_wrapper_expression(argument, f)
         }
         (Some(first), Some(second), third)
             if arguments.len() <= 3
                 && matches!(first.tag(), ExprTag::String | ExprTag::Template)
-                && is_test_callee(callee) =>
+                && is_test_callee(callee, f) =>
         {
             if !third.is_none_or(|third| third.tag() == ExprTag::Number) {
                 return false;
             }
-            if is_angular_test_wrapper_expression(second) {
+            if is_angular_test_wrapper_expression(second, f) {
                 return true;
             }
             let Some(function) = second.as_fn() else {
@@ -234,34 +247,43 @@ fn is_test_call(e: Expr<'_>, is_test_callee: fn(Expr<'_>) -> bool) -> bool {
     }
 }
 
-fn is_angular_test_wrapper_expression(e: Expr<'_>) -> bool {
-    matches!(e.as_ast_nodes(), AstNodes::CallExpression(_)) && is_angular_test_wrapper(e)
+fn is_angular_test_wrapper_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    matches!(e.as_ast_nodes(), AstNodes::CallExpression(_)) && is_angular_test_wrapper(e, f)
 }
 
 /// AngularJS's `inject(..)`, and Angular's `async(..)`, `fakeAsync(..)` and `waitForAsync(..)`. `e` is a call.
-pub(crate) fn is_angular_test_wrapper(e: Expr<'_>) -> bool {
+pub(crate) fn is_angular_test_wrapper<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     e.callee().is_some_and(|callee| {
         callee.tag() == ExprTag::Ident
             && matches!(
                 callee.text(),
                 b"async" | b"inject" | b"fakeAsync" | b"waitForAsync"
             )
+            && !is_cast_target_that_hides_its_kind(callee, f)
     })
 }
 
-fn is_unit_test_set_up_callee(callee: Expr<'_>) -> bool {
+fn is_unit_test_set_up_callee<'a>(callee: Expr<'a>, f: &Formatter<'a>) -> bool {
     callee.tag() == ExprTag::Ident
         && matches!(
             callee.text(),
             b"beforeEach" | b"beforeAll" | b"afterEach" | b"afterAll"
         )
+        && !is_cast_target_that_hides_its_kind(callee, f)
 }
 
-/// The names in `a.b.c`, from the left. `None` if there are more than five, or it's anything but names and dots.
-pub(crate) fn callee_name_iterator<'a>(e: Expr<'a>) -> Option<impl Iterator<Item = &'a [u8]>> {
+/// The names in `a.b.c`, from the left. `None` if there are more than five, or it's anything but names and dots: a
+/// type cast around one of them is something else.
+pub(crate) fn callee_name_iterator<'a>(
+    e: Expr<'a>,
+    f: &Formatter<'a>,
+) -> Option<impl Iterator<Item = &'a [u8]>> {
     let mut names: [Option<&'a [u8]>; 5] = [None; 5];
     let mut current = e;
     for slot in &mut names {
+        if is_cast_target_that_hides_its_kind(current, f) {
+            return None;
+        }
         match current.as_ast_nodes() {
             AstNodes::IdentifierReference(_) => {
                 *slot = Some(current.text());
@@ -293,8 +315,8 @@ pub(crate) fn callee_name_iterator<'a>(e: Expr<'a>) -> Option<impl Iterator<Item
 /// │     └─ .serial[.only]
 /// └─ skip|xit|xdescribe|xtest|fit|fdescribe|ftest
 /// ```
-fn contains_a_test_pattern(e: Expr<'_>) -> bool {
-    let Some(mut names) = callee_name_iterator(e) else {
+fn contains_a_test_pattern<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let Some(mut names) = callee_name_iterator(e, f) else {
         return false;
     };
     match names.next() {
@@ -325,9 +347,57 @@ fn contains_a_test_pattern(e: Expr<'_>) -> bool {
     }
 }
 
-/// `` describe.each`table` ``, `` test.only.each`table` ``, ..
-pub(crate) fn is_test_each_pattern(e: Expr<'_>) -> bool {
-    let Some(mut names) = callee_name_iterator(e) else {
+/// The object and the name of `a.b` and of `a[b]`, which is a `MemberExpression` with an `Identifier` too. Not of a
+/// member access in a type cast.
+fn object_and_name_of_member<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<(Expr<'a>, &'a [u8])> {
+    if is_cast_target_that_hides_its_kind(e, f) {
+        return None;
+    }
+    match (e.as_ast_nodes(), e.kind()) {
+        (AstNodes::StaticMemberExpression(_), ExprKind::Dot { obj, name, .. }) => {
+            Some((obj, name.bytes()))
+        }
+        (AstNodes::ComputedMemberExpression(_), ExprKind::Index { obj, index, .. })
+            if index.tag() == ExprTag::Ident && !is_cast_target_that_hides_its_kind(index, f) =>
+        {
+            Some((obj, index.text()))
+        }
+        _ => None,
+    }
+}
+
+/// Prettier's `isJestEachTemplateLiteral`, for the tag: `` describe.each`table` ``, `` xit.only.each`table` ``.
+pub(crate) fn is_test_each_pattern<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    if recognizes_vitest_and_deno_test_callees(f) {
+        return is_oxfmt_test_each_pattern(e, f);
+    }
+    let Some((object, b"each")) = object_and_name_of_member(e, f) else {
+        return false;
+    };
+    let function = match object_and_name_of_member(object, f) {
+        Some((function, b"only" | b"skip")) => function,
+        Some(_) => return false,
+        None => object,
+    };
+    function.tag() == ExprTag::Ident
+        && !is_cast_target_that_hides_its_kind(function, f)
+        && matches!(
+            function.text(),
+            b"describe"
+                | b"fdescribe"
+                | b"xdescribe"
+                | b"it"
+                | b"fit"
+                | b"xit"
+                | b"test"
+                | b"ftest"
+                | b"xtest"
+        )
+}
+
+/// `` test.concurrent.each`table` ``, `` it.failing.each`table` `` are tables for oxfmt too.
+fn is_oxfmt_test_each_pattern<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let Some(mut names) = callee_name_iterator(e, f) else {
         return false;
     };
     let (first, second, third, fourth, fifth) = (

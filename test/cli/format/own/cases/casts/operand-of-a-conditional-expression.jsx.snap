@@ -1,0 +1,85 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = /** @type {T} */ (
+  <div className="alphaAlphaAlphaAlpha" id="betaBetaBeta">
+    delta
+  </div>
+) ? (
+  someRatherLongConsequentName
+) : (
+  someRatherLongAlternateName
+);
+const b = someRatherLongConditionName ? (
+  /** @type {T} */ (<div className="alphaAlphaAlphaAlpha">delta</div>)
+) : (
+  someRatherLongAlternateNameForIt
+);
+const c = someRatherLongConditionName ? (
+  someRatherLongConsequentNameForIt
+) : (
+  /** @type {T} */ (<div className="alphaAlphaAlphaAlpha">delta</div>)
+);
+const d = test ? /** @type {T} */ (null) : (
+  <span className="alphaAlphaAlphaAlpha">
+    second second second second second second second
+  </span>
+);
+const e = test ? (
+  <span className="alphaAlphaAlphaAlpha">
+    second second second second second second second
+  </span>
+) : /** @type {T} */ (undefined);
+const f = test ? (/** @type {T} */ (alpha ? beta : gamma)) : second;
+const g = (
+  <div>
+    {cond ? (
+      /** @type {T} */ (
+        <a href="alphaAlphaAlphaAlphaAlpha">
+          first first first first first first first
+        </a>
+      )
+    ) : null}
+  </div>
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = /** @type {T} */ (
+  <div className="alphaAlphaAlphaAlpha" id="betaBetaBeta">
+    delta
+  </div>
+) ? (
+  someRatherLongConsequentName
+) : (
+  someRatherLongAlternateName
+);
+const b = someRatherLongConditionName ? (
+  /** @type {T} */ (<div className="alphaAlphaAlphaAlpha">delta</div>)
+) : (
+  someRatherLongAlternateNameForIt
+);
+const c = someRatherLongConditionName ? (
+  someRatherLongConsequentNameForIt
+) : (
+  /** @type {T} */ (<div className="alphaAlphaAlphaAlpha">delta</div>)
+);
+const d = test ? /** @type {T} */ (null) : (
+  <span className="alphaAlphaAlphaAlpha">second second second second second second second</span>
+);
+const e = test ? (
+  <span className="alphaAlphaAlphaAlpha">second second second second second second second</span>
+) : /** @type {T} */ (undefined);
+const f = test ? (/** @type {T} */ (alpha ? beta : gamma)) : second;
+const g = (
+  <div>
+    {cond ? (
+      /** @type {T} */ (
+        <a href="alphaAlphaAlphaAlphaAlpha">first first first first first first first</a>
+      )
+    ) : null}
+  </div>
+);
+
+===================== End =====================

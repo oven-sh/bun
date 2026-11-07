@@ -15,7 +15,7 @@ pub(crate) use bun_lint_driver::fmt::cli::HELP;
 
 /// True if `bun fmt --run-prettier-tests` exists, for `test/cli/format/conformance.test.ts`.
 /// Release builds don't include it.
-const HAS_TEST_RUNNER: bool = bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
+const HAS_TEST_RUNNER: bool = bun_lint_driver::fmt::cli::HAS_FLAGS_FOR_TESTS;
 
 fn test_runner(flag: &[u8]) -> Option<fn(&Bundle<'_>, &Flags<'_>, Format<'_>)> {
     match flag {

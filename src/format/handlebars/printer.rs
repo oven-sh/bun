@@ -153,6 +153,9 @@ impl<'a> Printer<'a> {
 
     /// `text.replaceAll("{{", "\\{{")`: a mustache in a text must have been escaped in the source.
     fn escaped(&mut self, mut text: &[u8]) {
+        if text.len() < 32 && !strings::contains_char(text, b'{') {
+            return self.out.text(text);
+        }
         while let Some(at) = strings::index_of(text, b"{{") {
             self.out.text(&text[..at]);
             self.token("\\{{");
@@ -179,7 +182,9 @@ impl<'a> Printer<'a> {
         }
         let mut rest = words;
         loop {
-            let len = strings::index_of_any(rest, HTML_WHITE_SPACE).unwrap_or(rest.len());
+            let len = (rest.iter())
+                .position(u8::is_ascii_whitespace)
+                .unwrap_or(rest.len());
             self.out.start_item();
             self.escaped(&rest[..len]);
             self.out.end_item();
@@ -211,17 +216,27 @@ impl<'a> Printer<'a> {
 
     /// `isVoidElement`. Prettier treats `<imG>` as `<img>`, even if it has children.
     fn is_void_element(&self, tag: &[u8], children: &[NodeId], is_self_closing: bool) -> bool {
-        let is_void_tag = || is_void_tag(&text::to_lower_case(tag)) && !starts_with_upper_case(tag);
+        let is_lower_case = || {
+            tag.iter()
+                .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9'))
+        };
+        let is_void_tag = || {
+            !starts_with_upper_case(tag)
+                && match is_lower_case() {
+                    true => is_void_tag(tag),
+                    false => is_void_tag(&text::to_lower_case(tag)),
+                }
+        };
         let is_glimmer_component = || {
             !tag.starts_with(b":")
                 && (starts_with_upper_case(tag) || strings::contains_char(tag, b'.'))
         };
         is_self_closing
-            || ((is_void_tag() || is_glimmer_component()) && self.are_white_space(children))
+            || (self.are_white_space(children) && (is_void_tag() || is_glimmer_component()))
     }
 
     /// `isPrettierIgnoreNode`
-    fn is_prettier_ignore(&self, node: NodeId) -> bool {
+    pub(crate) fn is_prettier_ignore(&self, node: NodeId) -> bool {
         matches!(self.tree.kind(node), Kind::MustacheComment { value } if strings::trim_js_whitespace(self.text(value)) == b"prettier-ignore")
     }
 
@@ -241,6 +256,59 @@ impl<'a> Printer<'a> {
             self.start_group();
             self.children(self.list(body), Parent::Template, None);
             self.out.end_group();
+        }
+    }
+
+    /// Prints the nodes of `template`, which is a part of a template: nodes among others that are on several lines.
+    pub(crate) fn part(&mut self, template: NodeId) {
+        if let Kind::Template { body } = self.tree.kind(template) {
+            self.out.start_group(doc::Group {
+                should_break: true,
+                ..doc::Group::default()
+            });
+            self.children(self.list(body), Parent::Template, None);
+            self.out.end_group();
+        }
+    }
+
+    /// Prints the start tag of the element, or the `{{#a}}` of the block, that's all there is in `template` and that has
+    /// nothing in it. Returns false if `template` is something else.
+    pub(crate) fn head(&mut self, template: NodeId) -> bool {
+        let Kind::Template { body } = self.tree.kind(template) else {
+            return false;
+        };
+        let &[only] = self.list(body) else {
+            return false;
+        };
+        let node = self.tree.node(only);
+        match node.kind {
+            _ if node.is_verbatim => false,
+            Kind::Element {
+                tag,
+                attributes,
+                block_params,
+                children,
+                is_self_closing: false,
+            } if children.is_empty() => {
+                self.starting_tag(self.text(tag), self.list(attributes), block_params, false);
+                true
+            }
+            Kind::BlockStatement {
+                call,
+                program,
+                inverse: NOTHING,
+                strip,
+            } => {
+                let (body, block_params) = self.body_of(program);
+                if !body.is_empty() {
+                    return false;
+                }
+                self.start_group();
+                self.open_block(call, block_params, strip);
+                self.out.end_group();
+                true
+            }
+            _ => false,
         }
     }
 
@@ -422,7 +490,21 @@ impl<'a> Printer<'a> {
         if !self.is_white_space_sensitive && follows_element {
             self.out.line(Line::Soft);
         }
-        // `printStartingTag`
+        self.starting_tag(tag, attributes, block_params, is_void);
+        if is_void {
+            return;
+        }
+        self.rest_of_element(tag, attributes, children);
+    }
+
+    /// `printStartingTag`
+    fn starting_tag(
+        &mut self,
+        tag: &[u8],
+        attributes: &[NodeId],
+        block_params: Range,
+        is_void: bool,
+    ) {
         self.start_group();
         self.token("<");
         self.out.text(tag);
@@ -448,10 +530,10 @@ impl<'a> Printer<'a> {
         }
         self.out.end_if_break();
         self.out.end_group();
-        if is_void {
-            return;
-        }
+    }
 
+    /// The children and the end tag.
+    fn rest_of_element(&mut self, tag: &[u8], attributes: &[NodeId], children: &'a [NodeId]) {
         // Prettier fills the text of `<script>` and `<textarea>` like any other text, which joins the lines.
         let is_raw_text = match tag == b"style" {
             true => self.has_significant_mustache_in_style(children),
@@ -551,6 +633,28 @@ impl<'a> Printer<'a> {
     fn attr_node(&mut self, name: &[u8], value: NodeId) {
         let node = self.tree.node(value);
         let is_class = name.eq_ignore_ascii_case(b"class");
+        // Nearly every value is a text that's printed as it is, between the usual quotes.
+        if let Kind::Text { chars } = node.kind
+            && !chars.is_empty()
+            && let chars = self.text(chars)
+            && is_plain_value(chars, is_class)
+        {
+            let quote = preferred_quote(0, 0, self.single_quote);
+            let is_grouped = name == b"class";
+            self.out.text(name);
+            self.token("=");
+            self.token(quote);
+            if is_grouped {
+                self.start_group();
+                self.start_indent();
+            }
+            self.out.text(chars);
+            if is_grouped {
+                self.out.end_indent();
+                self.out.end_group();
+            }
+            return self.token(quote);
+        }
         let quote = match node.kind {
             // The attribute has no value.
             Kind::Text { chars } if chars.is_empty() && node.start == node.end => {
@@ -862,6 +966,31 @@ impl<'a> Printer<'a> {
         self.token(if strips { "~}}" } else { "}}" });
     }
 
+    /// `printOpenBlock`, without the group around it.
+    fn open_block(&mut self, call: Call, block_params: Range, strip: u8) {
+        let has_params = !call.params.is_empty() || !call.pairs.is_empty();
+        self.open_mustache(strip & ast::OPEN_OPEN != 0, "#");
+        self.expression(call.path, false);
+        if has_params || !block_params.is_empty() {
+            self.start_indent();
+            self.out.line(Line::Space);
+            if has_params {
+                self.start_group();
+                self.params(call, false);
+                self.out.end_group();
+            }
+            if !block_params.is_empty() {
+                if has_params {
+                    self.out.line(Line::Space);
+                }
+                self.block_params(block_params);
+            }
+            self.out.end_indent();
+        }
+        self.out.line(Line::Soft);
+        self.close_mustache(strip & ast::OPEN_CLOSE != 0);
+    }
+
     /// If `outer_strip` is set, the block is printed as the `{{else if ..}}` of an outer block with that `strip`.
     fn block_statement(&mut self, node: Node, outer_strip: Option<u8>) {
         let Kind::BlockStatement {
@@ -874,7 +1003,6 @@ impl<'a> Printer<'a> {
             return;
         };
         let (body, block_params) = self.body_of(program);
-        let has_params = !call.params.is_empty() || !call.pairs.is_empty();
         let is_ignoring_white_space = !self.is_white_space_sensitive;
 
         self.start_group();
@@ -897,29 +1025,7 @@ impl<'a> Printer<'a> {
                 self.out.line(Line::Soft);
                 self.close_mustache(outer & ast::INVERSE_CLOSE != 0);
             }
-            // `printOpenBlock`
-            None => {
-                self.open_mustache(strip & ast::OPEN_OPEN != 0, "#");
-                self.expression(call.path, false);
-                if has_params || !block_params.is_empty() {
-                    self.start_indent();
-                    self.out.line(Line::Space);
-                    if has_params {
-                        self.start_group();
-                        self.params(call, false);
-                        self.out.end_group();
-                    }
-                    if !block_params.is_empty() {
-                        if has_params {
-                            self.out.line(Line::Space);
-                        }
-                        self.block_params(block_params);
-                    }
-                    self.out.end_indent();
-                }
-                self.out.line(Line::Soft);
-                self.close_mustache(strip & ast::OPEN_CLOSE != 0);
-            }
+            None => self.open_block(call, block_params, strip),
         }
         self.out.end_group();
 
@@ -1069,7 +1175,17 @@ impl<'a> Printer<'a> {
                 self.token(")");
                 self.out.end_group();
             }
-            Kind::Path { head, name, tail } => {
+            Kind::Path {
+                is_as_written: true,
+                ..
+            } => self.out.text(
+                self.source
+                    .get(node.start as usize..node.end as usize)
+                    .unwrap_or_default(),
+            ),
+            Kind::Path {
+                head, name, tail, ..
+            } => {
                 let name = if head == Head::This {
                     &b"this"[..]
                 } else {
@@ -1081,6 +1197,12 @@ impl<'a> Printer<'a> {
                 }
             }
             // The trailing backslash would escape the closing quote.
+            Kind::String { value } if is_plain_value(self.text(value), false) => {
+                let quote = preferred_quote(0, 0, self.single_quote != needs_opposite_quote);
+                self.token(quote);
+                self.out.text(self.text(value));
+                self.token(quote);
+            }
             Kind::String { value } if self.text(value).ends_with(b"\\") => self.ignored(node),
             Kind::String { value } => {
                 let mut value = self.text(value);
@@ -1169,6 +1291,19 @@ impl<'a> Printer<'a> {
             self.token("]");
         }
     }
+}
+
+/// True if `chars`, the text of an attribute's value or of a string, has nothing in it that's printed differently or
+/// that decides on the quotes. With `is_class`, it's a list of classes.
+pub(crate) fn is_plain_value(chars: &[u8], is_class: bool) -> bool {
+    let mut follows_space = true;
+    chars.iter().all(|&byte| {
+        let is_space = byte.is_ascii_whitespace();
+        let is_plain = !matches!(byte, b'"' | b'\'' | b'{' | b'\\' | b'\n')
+            && !(is_class && is_space && (follows_space || byte != b' '));
+        follows_space = is_space;
+        is_plain
+    }) && !(is_class && follows_space)
 }
 
 /// `isPathExpressionPartNeedBrackets`

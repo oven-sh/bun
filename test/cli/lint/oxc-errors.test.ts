@@ -5981,6 +5981,21 @@ describe.concurrent("bun lint with .oxlintrc.json", () => {
     await expectErrors(table, config);
   });
 
+  // Each row is what oxlint 1.70.0 prints. Its offsets are in bytes and count a byte order mark.
+  test("the parser gives up at the `/` after `import`, wherever the statement starts", async () => {
+    const expected = (offset: number) => [` | Expected \`from\` but found \`/\` |  | ${offset}+1 \`from\` expected`];
+    await expectErrors([
+      ["js ts", "import/ 21", expected(6)],
+      ["js ts", " import/ 21", expected(7)],
+      ["js ts", ";import/ 21", expected(7)],
+      ["js ts", "﻿import/ 21", expected(9)],
+      ["js ts", "/**/import / a /", expected(11)],
+      ["js ts", "a;\nimport/ 21", expected(9)],
+      // After an `@` it wants an expression.
+      ["js", "@/ a", [" | Unterminated regular expression |  | 1+4", " | Unexpected token |  | 1+4"]],
+    ]);
+  });
+
   // oxlint 1.87 also reports a name that's imported from another package, and its fix imports the name a second time.
   describe("vitest/prefer-importing-vitest-globals only reports globals", () => {
     const config = {

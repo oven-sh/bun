@@ -52,10 +52,15 @@ pub(crate) struct JsFormatContext<'a> {
     pub(crate) long_member_chain: Cell<Option<(Expr<'a>, bool)>>,
     /// Caches an offset and the start of its line.
     pub(crate) line_start: Cell<(u32, u32)>,
+    /// Where the last `/*⏎ * ..⏎ */` that was written ends in the source, and whether it's JSDoc. See `Comment::fmt`.
+    pub(crate) last_indentable_comment: (u32, bool),
     /// True if the `a | b` being written is a Vue value and filter.
     pub(crate) is_vue_filter_sequence: Cell<bool>,
     /// Parses the code in HTML, overriding `FormatOptions::parse_javascript`.
     pub(crate) parse_javascript: Option<JavaScriptParser<'a>>,
+    /// See `flat.rs`.
+    pub(crate) short_cuts: super::flat::ShortCuts,
+    pub(crate) line_buffers: super::flat::Buffers<'a>,
 }
 
 impl<'a> JsFormatContext<'a> {
@@ -67,6 +72,7 @@ impl<'a> JsFormatContext<'a> {
         Self {
             file: Some(file),
             has_babel_tree: has_babel_tree(file, &options),
+            short_cuts: super::flat::ShortCuts::for_file(file, &options),
             comments: Comments::new(Some(file), options.flavor, comments),
             ..Self::without_file(options, comments)
         }
@@ -92,9 +98,12 @@ impl<'a> JsFormatContext<'a> {
             ran_out_of_stack: false,
             comments_without_printer: Vec::new(),
             line_start: Cell::new((0, 0)),
+            last_indentable_comment: (u32::MAX, false),
             long_member_chain: Cell::new(None),
             is_vue_filter_sequence: Cell::new(false),
             parse_javascript: None,
+            short_cuts: Default::default(),
+            line_buffers: Default::default(),
         }
     }
 

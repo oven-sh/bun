@@ -1,0 +1,43 @@
+------------------
+{ printWidth: 80 }
+------------------
+const {
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+}: Cccccccccccccccccccc<Ddddddddd> = () => {};
+const [
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+]: Ccccccccccccccc<Ddddddd> = (e) => e;
+const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: Ccccccccccccccc<
+  Ddddddd
+> = (e) => e;
+const []: Ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc<Ddddddd> =
+  (e) => e;
+const {
+  a,
+  b,
+}: Ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc<Ddddddd> = () => {};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const {
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+}: Cccccccccccccccccccc<Ddddddddd> = () => {};
+const [
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+]: Ccccccccccccccc<Ddddddd> = (e) => e;
+const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: Ccccccccccccccc<
+  Ddddddd
+> = (e) => e;
+const []: Ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc<Ddddddd> =
+  (e) => e;
+const {
+  a,
+  b,
+}: Ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc<Ddddddd> = () => {};
+
+===================== End =====================

@@ -173,7 +173,8 @@ pub(crate) fn should_unquote_attribute_value(attr: &Attribute<'_>, options: &Opt
 /// `preferHardlineAsSurroundingSpaces`
 fn prefer_hardline_as_surrounding_spaces(node: &Node<'_>) -> bool {
     match node.kind {
-        Kind::IeConditionalComment | Kind::Comment => true,
+        // The first and the last child of a run have a line break in front of them and behind them.
+        Kind::IeConditionalComment | Kind::Comment | Kind::Ready => true,
         Kind::Element => matches!(&node.name[..], b"script" | b"select"),
         _ => false,
     }
@@ -450,12 +451,12 @@ impl<'a> Tree<'a> {
             }
     }
 
-    /// `getLastDescendant`
-    pub(crate) fn last_descendant(&self, mut id: Id) -> Id {
+    /// `isTextLikeNode(getLastDescendant(node))`
+    pub(crate) fn ends_in_text(&self, mut id: Id) -> bool {
         while let Some(last) = self.last_child(id) {
             id = last;
         }
-        id
+        is_text_like(&self[id]) || self[id].has(Flags::ENDS_IN_TEXT)
     }
 
     /// `getNodeCssStyleDisplay`. `is_in_svg_foreign_object` is true if the node or one of its ancestors is one.

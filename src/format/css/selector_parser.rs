@@ -603,7 +603,7 @@ impl<'t> Parser<'t> {
 }
 
 /// `/\/[/*]/.test(selector.replaceAll(/"[^"]+"|'[^']+'/g, ""))`
-fn has_comment(selector: &[u8]) -> bool {
+pub(super) fn has_comment(selector: &[u8]) -> bool {
     if !bun_core::strings::contains_char(selector, b'/') {
         return false;
     }

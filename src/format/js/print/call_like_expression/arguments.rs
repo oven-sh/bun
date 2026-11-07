@@ -14,9 +14,10 @@ use crate::js::utils::call_expression::{is_call_expression, strip_chain_element_
 use crate::js::utils::is_long_curried_call;
 use crate::js::utils::member_chain::simple_argument::SimpleArgument;
 use crate::js::utils::typecast::{
-    comments_of_expression, comments_of_outermost_node, has_comments, has_comments_that_count,
-    is_cast_target,
+    cast_parentheses, comments_of_expression, comments_of_outermost_node, has_comments,
+    has_comments_that_count, is_cast_target, is_cast_target_that_hides_its_kind,
 };
+use crate::js::utils::typescript::has_type_argument_list;
 use crate::prelude::*;
 use crate::{format_args, write};
 use smallvec::SmallVec;
@@ -73,17 +74,7 @@ impl<'a> Format<'a> for FormatArguments<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let last_index = match self.len() {
             0 if f.is_quiet() => return write!(f, "()"),
-            // `call(/* comment */)`
-            0 => {
-                return write!(
-                    f,
-                    [
-                        "(",
-                        dangling_comments(self.parent).with_soft_block_indent(),
-                        ")"
-                    ]
-                );
-            }
+            0 => return write_comments_in_parentheses(self.parent, f),
             len => len - 1,
         };
 
@@ -97,26 +88,13 @@ impl<'a> Format<'a> for FormatArguments<'a> {
             has |= kind(argument.tag());
             has_empty_line = has_empty_line
                 || previous_end.is_some_and(|end| is_empty_line_between(end, argument, f));
-            previous_end = (index != last_index).then(|| argument.span().end);
+            previous_end = (index != last_index).then(|| end_of_argument(argument, f));
         }
         let has_function = has & kind(ExprTag::Fn) != 0;
 
         if has_function && has & kind(ExprTag::Array) != 0 && is_react_hook_with_deps_array(self, f)
         {
-            return write!(
-                f,
-                [
-                    "(",
-                    format_with(|f| {
-                        f.join_with(space()).entries_with_trailing_separator(
-                            self.iter(),
-                            ",",
-                            TrailingSeparator::Omit,
-                        );
-                    }),
-                    ")"
-                ]
-            );
+            return write!(f, FormatArgumentsOnOneLine(self.args));
         }
 
         if has & (kind(ExprTag::Template) | kind(ExprTag::TaggedTemplate)) != 0
@@ -148,19 +126,7 @@ impl<'a> Format<'a> for FormatArguments<'a> {
             write_grouped_arguments(self, group_layout, f);
         } else if matches!(self.parent, AstNodes::CallExpression(call) if is_long_curried_call(call, f))
         {
-            let trailing_separator =
-                FormatTrailingCommas::Arguments.trailing_separator(f.options());
-            write!(
-                f,
-                [
-                    "(",
-                    soft_block_indent(&format_with(|f| {
-                        f.join_with(soft_line_break_or_space())
-                            .entries_with_trailing_separator(self.iter(), ",", trailing_separator);
-                    })),
-                    ")",
-                ]
-            );
+            write_arguments_of_long_curried_call(self, f);
         } else {
             // Whether the group breaks is only known once its content is written.
             let start = f.reserve_tag();
@@ -182,10 +148,105 @@ impl<'a> Format<'a> for FormatArguments<'a> {
     }
 }
 
+/// How arguments without comments and without an empty line between them are laid out.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum ArgumentsLayout {
+    /// `useEffect(() => {}, [a, b])`: there's no line break between them.
+    ReactHook,
+    /// Each is on a line, whether they fit or not.
+    AllBrokenOut,
+    /// The first or the last is hugged if the others fit on the line.
+    Grouped(GroupedCallArgumentLayout),
+    /// They break together with the arguments of the call that this one is the callee of.
+    Curried,
+    /// On one line, or each on a line.
+    Default,
+}
+
+/// The choice that [`FormatArguments::fmt`] makes for `args`, which aren't empty, of the call or `new` expression
+/// `parent`.
+pub(crate) fn arguments_layout<'a>(
+    args: List<'a, Expr<'a>>,
+    parent: AstNodes<'a>,
+    f: &Formatter<'a>,
+) -> ArgumentsLayout {
+    if is_react_hook_with_deps_array(&FormatArguments::new(args, parent), f) {
+        return ArgumentsLayout::ReactHook;
+    }
+    if is_function_composition_args(args, f) && !matches!(parent.parent(), AstNodes::Decorator(_)) {
+        return ArgumentsLayout::AllBrokenOut;
+    }
+    if let Some(layout) = arguments_grouped_layout(args, f) {
+        return ArgumentsLayout::Grouped(layout);
+    }
+    match parent {
+        AstNodes::CallExpression(call) if is_long_curried_call(call, f) => ArgumentsLayout::Curried,
+        _ => ArgumentsLayout::Default,
+    }
+}
+
+/// True if the parameters of `function`, a function expression that's hugged as the last of `count` arguments of
+/// `parent`, stay on one line.
+pub(crate) fn hugged_function_keeps_parameters_on_one_line<'a>(
+    function: Func<'a>,
+    count: usize,
+    parent: AstNodes<'a>,
+    f: &Formatter<'a>,
+) -> bool {
+    (matches!(parent, AstNodes::CallExpression(_))
+        || (matches!(parent, AstNodes::NewExpression(_)) && treats_new_like_call(f)))
+        && (count != 1 || has_only_simple_parameters(function, false))
+        && has_signature_without_soft_lines(function)
+}
+
+/// `call(/* comment */)`
+#[cold]
+#[inline(never)]
+fn write_comments_in_parentheses<'a>(call: AstNodes<'a>, f: &mut Formatter<'a>) {
+    write!(
+        f,
+        ["(", dangling_comments(call).with_soft_block_indent(), ")"]
+    );
+}
+
+#[inline(never)]
+fn write_arguments_of_long_curried_call<'a>(node: &FormatArguments<'a>, f: &mut Formatter<'a>) {
+    let trailing_separator = FormatTrailingCommas::Arguments.trailing_separator(f.options());
+    write!(
+        f,
+        [
+            "(",
+            soft_block_indent(&format_with(|f| {
+                f.join_with(soft_line_break_or_space())
+                    .entries_with_trailing_separator(node.iter(), ",", trailing_separator);
+            })),
+            ")",
+        ]
+    );
+}
+
 /// oxfmt counts the line breaks between two arguments, wherever the comma is. Prettier checks the line after the
 /// argument.
 fn counts_line_breaks_between_arguments(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
+}
+
+/// Prettier's `locEnd` of an argument. The parentheses of a type cast are the node there, so what follows the argument follows them.
+#[inline]
+fn end_of_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> u32 {
+    match f.comments().has_type_cast_comments() {
+        true => end_of_type_cast(argument, f),
+        false => argument.span().end,
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn end_of_type_cast<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> u32 {
+    match cast_parentheses(argument, f).first() {
+        Some(outermost) if !counts_line_breaks_between_arguments(f) => outermost.end,
+        _ => argument.span().end,
+    }
 }
 
 /// True if the arguments break because there's an empty line between the one at `index` and the next.
@@ -195,8 +256,10 @@ fn is_followed_by_empty_line<'a>(
     f: &Formatter<'a>,
 ) -> bool {
     match (args.get(index), args.get(index + 1)) {
-        (Some(argument), Some(next)) => is_empty_line_between(argument.span().end, next, f),
-        (Some(argument), None) => is_next_line_empty(f.source_text(), argument.span().end),
+        (Some(argument), Some(next)) => {
+            is_empty_line_between(end_of_argument(argument, f), next, f)
+        }
+        (Some(argument), None) => is_next_line_empty(f.source_text(), end_of_argument(argument, f)),
         (None, _) => false,
     }
 }
@@ -246,7 +309,9 @@ fn is_function_composition_args<'a>(args: List<'a, Expr<'a>>, f: &Formatter<'a>)
             has_seen_function_like = true;
         } else if matches!(arg.tag(), ExprTag::Call | ExprTag::NonNull)
             && let ExprKind::Call(call) = strip_chain_element_wrappers(arg).kind()
-            && call.args().iter().any(is_function_like)
+            && (call.args().iter()).any(|inner| {
+                is_function_like(inner) && !is_cast_target_that_hides_its_kind(inner, f)
+            })
         {
             return true;
         }
@@ -329,10 +394,16 @@ fn as_expression(argument: Expr<'_>) -> Option<Expr<'_>> {
 }
 
 /// True if `e` is a template that's formatted as its embedded language.
-pub(super) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    has_non_html_embed_label(e, f) || crate::html::in_js::label(e, f).is_some()
+pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    is_template(e) && (has_non_html_embed_label(e, f) || crate::html::in_js::label(e, f).is_some())
 }
 
+#[inline]
+fn is_template(e: Expr<'_>) -> bool {
+    matches!(e.tag(), ExprTag::Template | ExprTag::TaggedTemplate)
+}
+
+/// `e` is a template.
 fn has_non_html_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     crate::css::embed::has_embed_label(e, f)
         || crate::graphql::embed::has_embed_label(e, f)
@@ -341,8 +412,9 @@ fn has_non_html_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 
 /// `label?.embed && label?.hug !== false`
 fn has_embed_label_with_hug<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    has_non_html_embed_label(e, f)
-        || crate::html::in_js::label(e, f) == Some(crate::html::in_js::Label::Embed)
+    is_template(e)
+        && (has_non_html_embed_label(e, f)
+            || crate::html::in_js::label(e, f) == Some(crate::html::in_js::Label::Embed))
 }
 
 /// Prettier's `shouldGroupFirst` and `shouldGroupLast`.
@@ -350,10 +422,12 @@ fn arguments_grouped_layout<'a>(
     args: List<'a, Expr<'a>>,
     f: &Formatter<'a>,
 ) -> Option<GroupedCallArgumentLayout> {
-    // An ignored template is copied verbatim, so it has no label. oxfmt doesn't check that.
+    // An ignored template is copied verbatim, so it has no label. oxfmt doesn't check that. Nor have the parentheses
+    // of a type cast around the template.
     if args.len() == 1
         && args.first().is_some_and(|only| {
             has_embed_label_with_hug(only, f)
+                && !is_cast_target_that_hides_its_kind(only, f)
                 && (f.is_quiet()
                     || f.options().flavor.is_oxfmt()
                     || !f.comments().is_ignored(only.as_ast_nodes()))
@@ -471,7 +545,11 @@ fn should_group_last_argument_impl<'a>(
     match last.kind() {
         ExprKind::Array(elements) if args_len > 1 => {
             // Not for `useEffect(() => {}, [a, b])`.
-            if args_len == 2 && penultimate.is_some_and(|it| it.arrow_function().is_some()) {
+            if args_len == 2
+                && penultimate.is_some_and(|it| {
+                    it.arrow_function().is_some() && !is_cast_target_that_hides_its_kind(it, f)
+                })
+            {
                 return false;
             }
             !can_concisely_print_array_list(elements, f)
@@ -503,12 +581,12 @@ fn is_simple_ts_type(ty: TypeNode<'_>) -> bool {
         | TypeKind::BigIntLit { .. }
         | TypeKind::BoolLit(_)
         | TypeKind::Template(_) => true,
-        TypeKind::Ref { args, .. } => args.is_empty(),
+        TypeKind::Ref { args, .. } => !has_type_argument_list(extracted_generic_type, args),
         _ => false,
     }
 }
 
-/// Prettier's `isHopefullyShortCallArgument`.
+/// Prettier's `isHopefullyShortCallArgument`. It is the one rule that looks into the parentheses of a type cast.
 fn is_hopefully_short_call_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
     let is_simple = |e: Expr<'a>| SimpleArgument::new(e, f).is_simple_with_depth(1);
     match argument.kind() {
@@ -517,14 +595,19 @@ fn is_hopefully_short_call_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -
         {
             argument.type_annotation().is_none_or(is_simple_ts_type) && is_simple(expr)
         }
-        ExprKind::Call(call) if call.args().len() > 1 && is_call_expression(argument, f) => false,
+        ExprKind::Call(call)
+            if call.args().len() > 1
+                && (is_call_expression(argument, f) || is_cast_target(argument, f)) =>
+        {
+            false
+        }
         ExprKind::New(call) if call.args().len() > 1 => false,
         ExprKind::ImportCall { args } if args.len() > 1 => false,
         ExprKind::Binary { op, left, right } if op != BinOp::Comma => {
             is_simple(left) && is_simple(right)
         }
         ExprKind::Regex(_) => true,
-        _ => SimpleArgument::new(argument, f).is_simple(),
+        _ => SimpleArgument::new(argument, f).is_simple_in_cast_parentheses(),
     }
 }
 
@@ -779,14 +862,17 @@ fn write_grouped_arguments<'a>(
             &format_args!(
                 "(",
                 format_with(|f| {
-                    f.join_with(soft_line_break_or_space())
-                        .entries(grouped.iter().map(|&element| {
-                            format_with(move |f: &mut Formatter<'a>| {
-                                if let Some(element) = element {
-                                    f.write_element(element);
-                                }
-                            })
-                        }));
+                    for (index, &element) in grouped.iter().enumerate() {
+                        match index {
+                            0 => {}
+                            // Text in Prettier, which its `canBreak()` does not count.
+                            1 if group_layout.is_grouped_first() => write!(f, space()),
+                            _ => write!(f, soft_line_break_or_space()),
+                        }
+                        if let Some(element) = element {
+                            f.write_element(element);
+                        }
+                    }
                 }),
                 ")",
             ),

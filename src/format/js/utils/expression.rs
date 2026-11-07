@@ -24,14 +24,6 @@ impl<'a> From<Expr<'a>> for ExpressionLeftSide<'a> {
 }
 
 impl<'a> ExpressionLeftSide<'a> {
-    /// The last expression down `expression`'s left edge that ESTree calls an `Expression`.
-    pub(crate) fn leftmost(expression: Expr<'a>) -> Expr<'a> {
-        ExpressionLeftSide::from(expression)
-            .iter_expression()
-            .last()
-            .unwrap_or(expression)
-    }
-
     pub(crate) fn left(self) -> Option<Self> {
         let expression = |expr| {
             Some(ExpressionLeftSide {

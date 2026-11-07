@@ -40,12 +40,14 @@ pub(crate) struct Lexer<'a> {
     pub(crate) newline_before: bool,
     /// The name or keyword has a Unicode escape, or the template piece has an invalid escape.
     pub(crate) has_escape: bool,
+    /// `rare::ESCAPED_NAME`
+    pub(crate) has_escaped_name: bool,
     pub(crate) rejection: Option<Rejection>,
     pub(crate) number: f64,
     pub(crate) stack_check: bun_core::StackCheck,
     pub(crate) src: &'a [u8],
     /// Every scanned private name that wasn't declared by a class that has ended since, for
-    /// `hir::rare::ODD_PRIVATE_NAME`. `Atom::NONE` marks one after `super.`.
+    /// `hir::rare::ODD_PRIVATE_NAME`.
     pub(crate) private_names: Vec<Atom>,
     /// `hir::File::comment_directives`
     pub(crate) comment_directives: Vec<CommentDirective>,
@@ -281,6 +283,7 @@ impl<'a> Lexer<'a> {
             token: T::Eof,
             newline_before: false,
             has_escape: false,
+            has_escaped_name: false,
             start: 0,
             end: 0,
             full_start: 0,
@@ -1097,6 +1100,7 @@ impl<'a> Lexer<'a> {
                 return self.reject(Rejection::InvalidEscape);
             };
             self.has_escape |= is_escape;
+            self.has_escaped_name |= is_escape;
             text.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
             pos += len;
         }
@@ -1111,7 +1115,7 @@ impl<'a> Lexer<'a> {
         let mut kind = crate::token::keyword(&text);
         self.buffer = text;
         if is_private {
-            self.note_private_name(start);
+            self.note_private_name();
             return self.set(T::PrivateIdentifier, start, pos);
         }
         if self.has_escape && kind != T::Identifier {
@@ -1192,19 +1196,13 @@ impl<'a> Lexer<'a> {
         }
         self.has_escape = false;
         self.atom = (self.names).atom(Text::from_source(src, start, end), self.atoms);
-        self.note_private_name(start);
+        self.note_private_name();
         self.set(T::PrivateIdentifier, start, end);
     }
 
-    /// Records the private name at `start`, whose atom is `self.atom`.
-    fn note_private_name(&mut self, start: usize) {
+    /// Records the private name whose atom is `self.atom`.
+    fn note_private_name(&mut self) {
         self.private_names.push(self.atom);
-        let before = self.src.get(..start).unwrap_or_default().trim_ascii_end();
-        if let Some(object) = before.strip_suffix(b".")
-            && object.trim_ascii_end().ends_with(b"super")
-        {
-            self.private_names.push(Atom::NONE);
-        }
     }
 
     /// The `#` case of `Scan`, for a `#` at `start` that isn't followed by a name.

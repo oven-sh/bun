@@ -1,0 +1,3 @@
+define(/** @type {T} */ (["alphaAlphaAlphaAlphaAlphaAlpha", "betaBetaBetaBetaBetaBeta", "gammaGammaGammaGamma"]), function (alpha, beta) {
+  run();
+});

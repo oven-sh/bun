@@ -134,6 +134,25 @@ pub(crate) struct CommentTracker {
 }
 
 impl CommentTracker {
+    /// Call before parsing a file. Keeps the allocations of the last one.
+    pub(crate) fn begin(&mut self) {
+        let CommentTracker {
+            mut pending,
+            mut set_aside,
+            mut undo_log,
+            ..
+        } = std::mem::take(self);
+        pending.clear();
+        set_aside.clear();
+        undo_log.clear();
+        *self = CommentTracker {
+            pending,
+            set_aside,
+            undo_log,
+            ..CommentTracker::default()
+        };
+    }
+
     /// Restores the pending comments to what they were when `undo_log` had `len` entries, except for the comments from
     /// `discarded_from` on.
     fn undo_until(&mut self, len: usize, discarded_from: u32) {
@@ -398,6 +417,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if (self.f.far_names.last()).is_some_and(|it| it.0.idx() == last) {
             self.f.far_names.pop();
         }
+        if Self::CLAIMS {
+            self.claims.forget_last_expr(&self.f);
+        }
         self.f.pop_expr()
     }
 
@@ -406,6 +428,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     pub(crate) fn pop_type(&mut self) -> Option<TypeNode> {
         let last = TypeNodeId(self.f.types.len().saturating_sub(1) as u32);
         self.unfinish_node(NodeData::Type(last));
+        if Self::CLAIMS {
+            self.claims.forget_last_type(&self.f);
+        }
         self.f.types.pop()
     }
 
@@ -718,7 +743,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn set_aside_pending_comments_after(&mut self, start: u32) {
         let CommentTracker {
             pending, set_aside, ..
-        } = &mut self.comments;
+        } = &mut *self.comments;
         while let Some(comments) = pending.pop_if(|comments| comments.start >= start) {
             set_aside.push(comments);
         }
@@ -728,7 +753,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn put_back_pending_comments(&mut self) {
         let CommentTracker {
             pending, set_aside, ..
-        } = &mut self.comments;
+        } = &mut *self.comments;
         pending.extend(set_aside.drain(..).rev());
         self.update_max_relevant_node_start();
     }

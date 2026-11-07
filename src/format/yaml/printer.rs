@@ -449,6 +449,31 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         }
     }
 
+    /// If the text is one document without markers whose content is a block collection with one item: prints that
+    /// collection, aligned to `column`, the way it's printed at the end of a document. Returns where the last comment
+    /// ends, or 0.
+    pub(crate) fn print_only_item(&mut self, column: u32) -> Option<usize> {
+        let root = self.node(self.tree.root);
+        let document = self
+            .first_child(root)
+            .filter(|_| root.children.len() == 1)?;
+        if document.directives_end_marker || document.document_end_marker {
+            return None;
+        }
+        let body = self.node(document.children.last()?);
+        let id = body.children.first()?;
+        let content = self.node(id);
+        if !matches!(content.kind, Kind::Mapping | Kind::Sequence) || content.children.len() != 1 {
+            return None;
+        }
+        self.start_align(column);
+        self.print(id, true);
+        self.out.end_indent();
+        let comments = (self.tree.nodes.iter()).filter(|it| it.kind == Kind::Comment);
+        let ends = comments.map(|it| it.position.end.offset as usize);
+        Some(ends.max().unwrap_or(0))
+    }
+
     fn print_node(&mut self, node: &'t Node<'a>, is_last_descendant: bool) {
         let tree = self.tree;
         match node.kind {

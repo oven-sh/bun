@@ -4,6 +4,7 @@
 //! Every string that `postcss` stores is built from consecutive tokens, so here it's a range of the text.
 
 use super::Parser as Syntax;
+use super::quick::{Block, Printed, Quick};
 use crate::syntax_error::{Message, Rejected, Rejection, SyntaxError};
 use crate::text::{self, ByteSet};
 
@@ -31,16 +32,16 @@ impl Range {
 
 /// The text, plus strings that aren't substrings of it. Those exist because `postcss-less` drops some tokens and uses
 /// others twice. A range that starts past the end of the text points into `extra`.
-struct Texts<'a> {
+pub(super) struct Texts<'a> {
     css: &'a [u8],
-    extra: Vec<u8>,
+    pub(super) extra: Vec<u8>,
     /// Consecutive tokens in a list are also adjacent in the text. Only `postcss-less` moves tokens around.
     is_in_order: bool,
 }
 
 /// The offset where `extra`'s ranges start. The gap of one keeps a range that ends at the end of the text from looking
 /// adjacent to one in `extra`.
-fn extra_start(css: &[u8]) -> usize {
+pub(super) fn extra_start(css: &[u8]) -> usize {
     css.len() + 1
 }
 
@@ -61,7 +62,7 @@ impl Texts<'_> {
 
     /// `a + b`
     #[inline]
-    fn join(&mut self, a: Range, b: Range) -> Range {
+    pub(super) fn join(&mut self, a: Range, b: Range) -> Range {
         if a.is_empty() {
             b
         } else if b.is_empty() {
@@ -116,7 +117,7 @@ impl Texts<'_> {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum TokenKind {
+pub(super) enum TokenKind {
     Space,
     /// `[`, `]`, `{`, `}`, `:`, `;`, `(`, `)`
     Control(u8),
@@ -128,17 +129,17 @@ enum TokenKind {
 }
 
 #[derive(Debug, Copy, Clone)]
-struct Token {
-    kind: TokenKind,
+pub(super) struct Token {
+    pub(super) kind: TokenKind,
     /// `token[1]`
-    range: Range,
+    pub(super) range: Range,
     /// `token[2]`, the start offset. It differs from `range.start` once `postcss-less` has restarted its tokenizer on
     /// the rest of the text.
-    start: u32,
+    pub(super) start: u32,
     /// `token[3]`, roughly the offset of its last character.
-    last: Option<u32>,
+    pub(super) last: Option<u32>,
     /// `token[4] === "inline"`
-    inline: bool,
+    pub(super) inline: bool,
 }
 
 impl Token {
@@ -159,19 +160,21 @@ impl Token {
     }
 }
 
-struct Tokenizer<'a> {
+pub(super) struct Tokenizer<'a> {
     css: &'a [u8],
     syntax: Syntax,
     /// Why the tokenizer or the parser rejected the text.
     rejection: Rejection,
-    pos: usize,
+    pub(super) pos: usize,
     /// Subtracted from an offset to get the offset that `postcss` reports.
-    shift: usize,
+    pub(super) shift: usize,
     /// Words that no `(` has consumed yet.
     buffer: Vec<Range>,
+    /// How many of them are `url`. That's all a `(` wants to know about the word it consumes.
+    pub(super) urls_in_buffer: usize,
     /// Tokens pushed back with `back`. `None` is a pushed-back `undefined`.
-    returned: Vec<Option<Token>>,
-    last_bad_paren: Option<usize>,
+    pub(super) returned: Vec<Option<Token>>,
+    pub(super) last_bad_paren: Option<usize>,
     /// Cached offset of the first `)` after the last `(` examined. The outer `None` means it isn't known.
     next_close: Option<Option<usize>>,
 }
@@ -187,6 +190,11 @@ impl<'a> Tokenizer<'a> {
 
     fn back(&mut self, token: Option<Token>) {
         self.returned.push(token);
+    }
+
+    /// For a text that's read again without short cuts, so that nobody sees why.
+    pub(super) fn reject_short_cut(&self) -> Rejected {
+        self.rejection.note(Message::UnexpectedEnd, self.pos as u32)
     }
 
     /// Returns the offset of the next unescaped `byte`, a quote or a `)`, after `from`.
@@ -237,7 +245,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     #[inline]
-    fn next_token(&mut self, ignore_unclosed: bool) -> Result<Option<Token>, Rejected> {
+    pub(super) fn next_token(&mut self, ignore_unclosed: bool) -> Result<Option<Token>, Rejected> {
         if let Some(token) = self.returned.pop() {
             return Ok(token);
         }
@@ -287,6 +295,7 @@ impl<'a> Tokenizer<'a> {
             break;
         }
         self.buffer.push(Range::new(pos as u32, end as u32));
+        self.urls_in_buffer += usize::from(css.get(pos..end) == Some(b"url"));
         end
     }
 
@@ -324,6 +333,7 @@ impl<'a> Tokenizer<'a> {
             b',' if is_scss => (kind, next) = (TokenKind::Word, pos),
             b'(' => {
                 let prev = self.buffer.pop().map_or(&b""[..], |range| range.of(css));
+                self.urls_in_buffer -= usize::from(prev == b"url");
                 let n = css.get(pos + 1);
                 if prev == b"url" && !matches!(n, Some(b'\'' | b'"')) && is_scss {
                     let mut brackets = 1;
@@ -475,6 +485,8 @@ pub(crate) enum Kind {
     Rule,
     Decl,
     AtRule,
+    /// Statements in a row of which nothing is known but what's printed for them: see `quick`.
+    Run,
 }
 
 /// A node, with the fields of every kind of node. `raws.x` is stored as `x`.
@@ -533,6 +545,8 @@ pub(crate) struct Node {
     pub(crate) identifier: Range,
     /// True if `raws.ownSemicolon` is set.
     own_semicolon: bool,
+    /// What's printed for it, if the parser already knows.
+    pub(crate) printed: Printed,
 }
 
 pub(crate) struct Tree {
@@ -540,6 +554,25 @@ pub(crate) struct Tree {
     pub(crate) nodes: Vec<Node>,
     /// See `text_of_range`.
     pub(crate) extra: Vec<u8>,
+}
+
+/// Allocations for parsing a style sheet, reused for the next one.
+#[derive(Default)]
+pub(crate) struct Buffers {
+    nodes: Vec<Node>,
+    extra: Vec<u8>,
+    words: Vec<Range>,
+    returned: Vec<Option<Token>>,
+    tokens: Vec<Token>,
+}
+
+impl Buffers {
+    /// Takes back the allocations of a tree that's no longer needed.
+    pub(crate) fn recycle(&mut self, tree: Tree) {
+        (self.nodes, self.extra) = (tree.nodes, tree.extra);
+        self.nodes.clear();
+        self.extra.clear();
+    }
 }
 
 impl Tree {
@@ -552,22 +585,27 @@ impl Tree {
     }
 }
 
-struct Parser<'a> {
-    css: &'a [u8],
-    texts: Texts<'a>,
-    syntax: Syntax,
-    tokenizer: Tokenizer<'a>,
-    nodes: Vec<Node>,
-    current: NodeId,
+pub(super) struct Parser<'a> {
+    pub(super) css: &'a [u8],
+    /// `css` before anything in it was replaced with spaces. Comments are printed from this.
+    pub(super) original: &'a [u8],
+    pub(super) texts: Texts<'a>,
+    pub(super) syntax: Syntax,
+    pub(super) tokenizer: Tokenizer<'a>,
+    pub(super) nodes: Vec<Node>,
+    pub(super) current: NodeId,
     /// `lastNode` in `postcss-less`
     last_node: NodeId,
-    spaces: Range,
-    semicolon: bool,
+    pub(super) spaces: Range,
+    pub(super) semicolon: bool,
     /// The next word isn't a custom property's name, even if it starts with `--`.
     is_custom_property_set: bool,
     /// Reused buffer for a statement's tokens.
     token_buffer: Vec<Token>,
     placeholder: Placeholder,
+    /// Statements are printed while they're read, where that's possible.
+    is_quick: bool,
+    pub(super) quick: &'a mut Quick,
 }
 
 /// How to parse `@prettier-placeholder-1-id`, which replaces a `${}` of a JavaScript template, at the start of a
@@ -667,7 +705,7 @@ impl<'a> Parser<'a> {
         self.reject(Message::UnexpectedEnd, self.css.len() as u32)
     }
 
-    fn node(&mut self, id: NodeId) -> &mut Node {
+    pub(super) fn node(&mut self, id: NodeId) -> &mut Node {
         &mut self.nodes[id as usize]
     }
 
@@ -676,7 +714,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `init`
-    fn new_node(&mut self, kind: Kind, offset: u32) -> NodeId {
+    pub(super) fn new_node(&mut self, kind: Kind, offset: u32) -> NodeId {
         let id = self.nodes.len() as NodeId;
         let current = self.current;
         let parent = self.node(current);
@@ -700,13 +738,25 @@ impl<'a> Parser<'a> {
         id
     }
 
-    fn open(&mut self, id: NodeId) {
+    pub(super) fn open(&mut self, id: NodeId) {
         self.node(id).has_block = true;
         self.current = id;
+        if self.is_quick {
+            let node = &self.nodes[id as usize];
+            let name = self.texts.of(node.name);
+            let block = Block::new(self.quick.blocks.last(), node.kind, name, self.syntax);
+            self.quick.blocks.push(block);
+        }
     }
 
     fn parse(&mut self) -> Result<(), Rejected> {
         while !self.tokenizer.end_of_file() {
+            if self.is_quick {
+                self.read_known_statements()?;
+                if self.tokenizer.end_of_file() {
+                    break;
+                }
+            }
             let token = self
                 .tokenizer
                 .next_token(false)?
@@ -754,10 +804,13 @@ impl<'a> Parser<'a> {
         self.semicolon = false;
     }
 
-    fn end(&mut self, token: Token) -> Result<(), Rejected> {
+    pub(super) fn end(&mut self, token: Token) -> Result<(), Rejected> {
         self.close_current();
         if self.current == 0 {
             return Err(self.reject(Message::UnexpectedClosingBrace, token.range.start));
+        }
+        if self.is_quick {
+            self.quick.blocks.pop();
         }
         let current = self.current;
         let node = self.node(current);
@@ -783,7 +836,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Returns `inner` with whitespace trimmed from both ends.
-    fn trimmed(&self, inner: Range) -> Range {
+    pub(super) fn trimmed(&self, inner: Range) -> Range {
         let content = inner.of(self.css);
         let trimmed = bun_core::strings::trim_js_whitespace(content);
         let left = text::leading_white_space_len(content).min(content.len() - trimmed.len()) as u32;
@@ -793,7 +846,7 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn comment(&mut self, token: Token) {
+    pub(super) fn comment(&mut self, token: Token) {
         let id = self.new_node(Kind::Comment, token.start);
         let start = token.range.start + 2;
         let text = self.trimmed(match token.inline {
@@ -1380,12 +1433,16 @@ impl<'a> Parser<'a> {
             return Ok(());
         }
         self.base_atrule(token.start, name)?;
+        self.less_variable();
+        Ok(())
+    }
 
-        // `nodes/variable.js`
+    /// `nodes/variable.js`, for the at-rule that was read last.
+    pub(super) fn less_variable(&mut self) {
         let node = &mut self.nodes[self.last_node as usize];
         let name = self.texts.of(node.name);
         if !name.ends_with(b":") {
-            return Ok(());
+            return;
         }
         // `name.replace(":", "")` removes the first colon, which isn't necessarily the last.
         let first_colon = bun_core::strings::index_of_char_usize(name, b':').unwrap_or(0) as u32;
@@ -1406,7 +1463,6 @@ impl<'a> Parser<'a> {
             let skipped = Range::new(node.params.start, node.params.start + node.value_skips);
             node.after_name = self.texts.join(node.after_name, skipped);
         }
-        Ok(())
     }
 
     fn less_each(&mut self, tokens: &mut Vec<Token>) -> Result<(), Rejected> {
@@ -1593,6 +1649,7 @@ impl<'a> Parser<'a> {
                 self.tokenizer.pos = pos;
                 self.tokenizer.shift = pos;
                 self.tokenizer.buffer.clear();
+                self.tokenizer.urls_in_buffer = 0;
                 self.tokenizer.returned.clear();
                 self.tokenizer.last_bad_paren = None;
             }
@@ -1616,12 +1673,18 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// With `is_quick`, the tree also says what's printed, where that's known. `original` is `css` before anything in it was
+/// replaced with spaces.
 pub(crate) fn parse(
     css: &[u8],
+    original: &[u8],
     syntax: Syntax,
     placeholder: Placeholder,
+    (quick, is_quick): (&mut Quick, bool),
+    buffers: &mut Buffers,
 ) -> Result<Tree, SyntaxError> {
-    parse_from(css, syntax, 0, false, placeholder)
+    let quick = (quick, is_quick);
+    parse_from(css, original, syntax, 0, false, placeholder, quick, buffers)
 }
 
 /// Parses `--a: { .. }`, which spans from `start` to the end of `css`, as if it were the rule `a: { .. }`. Prettier
@@ -1631,15 +1694,29 @@ pub(crate) fn parse_custom_property_set(
     syntax: Syntax,
     start: u32,
 ) -> Result<Tree, SyntaxError> {
-    parse_from(css, syntax, start as usize, true, Placeholder::AtRule)
+    let (placeholder, buffers) = (Placeholder::AtRule, &mut Buffers::default());
+    let quick = (&mut Quick::default(), false);
+    parse_from(
+        css,
+        css,
+        syntax,
+        start as usize,
+        true,
+        placeholder,
+        quick,
+        buffers,
+    )
 }
 
 fn parse_from(
     css: &[u8],
+    original: &[u8],
     syntax: Syntax,
     pos: usize,
     is_custom_property_set: bool,
     placeholder: Placeholder,
+    (quick, is_quick): (&mut Quick, bool),
+    buffers: &mut Buffers,
 ) -> Result<Tree, SyntaxError> {
     // Half of the `u32` range is reserved for `Texts::extra`, which is never longer than the text.
     if css.len() >= (u32::MAX / 2) as usize {
@@ -1647,9 +1724,10 @@ fn parse_from(
     }
     let mut parser = Parser {
         css,
+        original,
         texts: Texts {
             css,
-            extra: Vec::new(),
+            extra: std::mem::take(&mut buffers.extra),
             is_in_order: syntax != Syntax::Less,
         },
         syntax,
@@ -1659,29 +1737,45 @@ fn parse_from(
             rejection: Rejection::default(),
             pos,
             shift: 0,
-            buffer: Vec::new(),
-            returned: Vec::new(),
+            buffer: std::mem::take(&mut buffers.words),
+            urls_in_buffer: 0,
+            returned: std::mem::take(&mut buffers.returned),
             last_bad_paren: None,
             next_close: None,
         },
-        nodes: Vec::with_capacity((css.len() - pos.min(css.len())) / 32 + 1),
+        nodes: std::mem::take(&mut buffers.nodes),
         current: 0,
         last_node: 0,
         spaces: Range::default(),
         semicolon: false,
         is_custom_property_set,
-        token_buffer: Vec::new(),
+        token_buffer: std::mem::take(&mut buffers.tokens),
         placeholder,
+        is_quick,
+        quick,
     };
     parser.nodes.push(Node {
         has_block: true,
         ..Node::default()
     });
-    parser
-        .parse()
-        .map_err(|_| parser.tokenizer.rejection.reason())?;
-    Ok(Tree {
+    let result = parser.parse();
+    (buffers.words, buffers.returned, buffers.tokens) = (
+        parser.tokenizer.buffer,
+        parser.tokenizer.returned,
+        parser.token_buffer,
+    );
+    buffers.words.clear();
+    buffers.returned.clear();
+    buffers.tokens.clear();
+    let tree = Tree {
         nodes: parser.nodes,
         extra: parser.texts.extra,
-    })
+    };
+    match result {
+        Ok(()) => Ok(tree),
+        Err(_) => {
+            buffers.recycle(tree);
+            Err(parser.tokenizer.rejection.reason())
+        }
+    }
 }

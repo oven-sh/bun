@@ -1,0 +1,125 @@
+------------------
+{ printWidth: 80 }
+------------------
+- Markdown in a template:
+
+  ```js
+  const m = markdown`
+    ~~~toml
+    a = 1
+
+
+
+    [b]
+    ~~~
+
+    ~~~yaml
+    a: |
+      x
+
+      y
+    ~~~
+  `;
+  ```
+
+> Markup in a template:
+>
+> ```js
+> const h = html`
+>   <script type="importmap">
+>     a
+>
+>
+>     b
+>   </script>
+>   <script type="text/x-handlebars-template">
+>     <p>{{a}}</p>
+>   </script>
+> `;
+> ```
+
+1. A block that is left alone:
+
+   ```vue
+   <custom>
+   a
+   
+   
+   
+   b
+   </custom>
+   ```
+
+   ```html
+   <script type="text/unknown">
+     a
+
+
+
+     b
+   </script>
+   ```
+
+-------------------
+{ printWidth: 100 }
+-------------------
+- Markdown in a template:
+
+  ```js
+  const m = markdown`
+    ~~~toml
+    a = 1
+
+
+
+    [b]
+    ~~~
+
+    ~~~yaml
+    a: |
+      x
+
+      y
+    ~~~
+  `;
+  ```
+
+> Markup in a template:
+>
+> ```js
+> const h = html`
+>   <script type="importmap">
+>     a
+>
+>
+>     b
+>   </script>
+>   <script type="text/x-handlebars-template">
+>     <p>{{a}}</p>
+>   </script>
+> `;
+> ```
+
+1. A block that is left alone:
+
+   ```vue
+   <custom>
+   a
+   
+   
+   
+   b
+   </custom>
+   ```
+
+   ```html
+   <script type="text/unknown">
+     a
+
+
+
+     b
+   </script>
+   ```
+
+===================== End =====================

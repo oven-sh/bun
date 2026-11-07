@@ -120,6 +120,8 @@ impl Parser<'_> {
             .take_while(|&&byte| helpers::is_blank(byte))
             .count();
         let row_text = &row_text[..row_text.len() - blanks];
+        // Only these have an alignment: what is behind them in `table_alignments` is that of another table.
+        let aligned = col_count.min(types::TABLE_MAXCOLCOUNT);
         // Who wants to know what is written gets the cells that are written.
         let col_count = if self.track { u32::MAX } else { col_count };
         let mut start: usize = 0;
@@ -161,7 +163,7 @@ impl Parser<'_> {
             } else {
                 BlockType::Td
             };
-            let align_data: u32 = if cell_index < types::TABLE_MAXCOLCOUNT {
+            let align_data: u32 = if cell_index < aligned {
                 self.table_alignments[cell_index as usize] as u32
             } else {
                 0

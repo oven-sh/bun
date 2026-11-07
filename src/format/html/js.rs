@@ -48,31 +48,7 @@ pub(crate) const EXPRESSION_JSX: &[u8] = b"\0.jsx";
 pub(crate) const EXPRESSION_TS: &[u8] = b"\0.ts";
 pub(crate) const EXPRESSION_TSX: &[u8] = b"\0.tsx";
 
-/// Prettier's `isProbablyJsx`: `/(?:^[^"'`]*<\/|^[^/]{2}.*\/>)/m`
-pub fn is_probably_jsx(text: &[u8]) -> bool {
-    // `</` with no quote between it and the start of its line.
-    let mut rest = if strings::contains(text, b"</") {
-        text
-    } else {
-        b""
-    };
-    let mut is_after_quote = false;
-    while let Some(at) = strings::index_of_any(rest, b"\"'`\n<") {
-        match rest[at] {
-            b'\n' => is_after_quote = false,
-            b'<' if is_after_quote || rest.get(at + 1) != Some(&b'/') => {}
-            b'<' => return true,
-            _ => is_after_quote = true,
-        }
-        rest = &rest[at + 1..];
-    }
-    strings::split(text, b"\n").any(|line| {
-        line.len() >= 4
-            && line[0] != b'/'
-            && line[1] != b'/'
-            && strings::contains(&line[2..], b"/>")
-    })
-}
+pub use bun_format_quick::is_probably_jsx;
 
 /// Returns the options for code embedded in HTML that's formatted with `options`.
 pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> FormatOptions {
@@ -96,6 +72,7 @@ pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> Forma
         require_pragma: false,
         check_ignore_pragma: false,
         is_in_markdown: false,
+        is_at_margin: false,
         is_mdx_jsx: false,
         is_mdx_es_syntax: false,
         sort_imports: None,
@@ -242,7 +219,11 @@ pub(crate) fn with_file(
                         result = Attempt::Sorted(sorted);
                         return;
                     }
-                    let context = JsFormatContext::new(file, options.clone(), comments);
+                    let mut context = JsFormatContext::new(file, options.clone(), comments);
+                    if matches!(piece, Piece::Script(_)) {
+                        context.short_cuts =
+                            (f.context_mut().short_cuts).for_script(file, &options);
+                    }
                     let is_written = match file.comment_count() {
                         0 => f.write_embedded(context, file.text(), |f| write(file, f)),
                         // Prettier's `ensureAllCommentsPrinted`. It throws, so the code is left as written:

@@ -19,6 +19,7 @@ use crate::js::format::{
     write_expression,
 };
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use crate::js::utils::number::format_number_token;
 use crate::js::utils::object::{format_computed_or_property_key, key_requires_quotes};
 use crate::js::utils::typescript::is_simple_type;
 use crate::prelude::*;
@@ -319,12 +320,22 @@ fn function_type_needs_parentheses<'a>(ty: TypeNode<'a>, func: Func<'a>) -> bool
         (_, Node::Param(param)) => {
             param.pat().tag() == PatTag::Missing
                 && is_function_type_param(param)
+                && !is_key_of_indexer_or_rest_of_component(param)
                 && func
                     .params_with_this()
                     .any(|it| it.ty().is_some_and(|it| it.tag() == TypeTag::JSDoc))
         }
         _ => false,
     }
+}
+
+/// `{ [A]: B }`, `component(...A)`: a parameter without a name in the tree that is no `FunctionTypeParam`.
+fn is_key_of_indexer_or_rest_of_component(param: Param<'_>) -> bool {
+    param.func().is_some_and(|func| match func.owner() {
+        Node::Member(member) => member.kind() == MemberKind::IndexSignature,
+        Node::Type(ty) => keyword_of_function_type(ty, func) == Some("component"),
+        _ => false,
+    })
 }
 
 /// Writes `content`, which is `ty` without parentheses, adding parentheses if `ty` needs them.
@@ -410,7 +421,13 @@ pub(crate) fn predicate_prefix(ty: TypeNode<'_>) -> &'static str {
 /// in the tree.
 pub(crate) fn as_declared_predicate(ty: TypeNode<'_>) -> Option<(Option<TypeNode<'_>>, Expr<'_>)> {
     match ty.kind() {
-        TypeKind::Typeof { expr, args, .. } if ty.first_token() != b"typeof" => {
+        // The `T` stands before the `e`, the type arguments of a query behind what it asks about. `T` can be a query itself.
+        TypeKind::Typeof { expr, args, .. }
+            if match args.first() {
+                Some(return_type) => return_type.span().start < expr.span().start,
+                None => ty.first_token() != b"typeof",
+            } =>
+        {
             Some((args.first(), expr))
         }
         _ => None,
@@ -568,19 +585,62 @@ pub(crate) fn is_shorthand_function_type(func: Func<'_>) -> bool {
         || only.is_rest()
         || only.pat().tag() != PatTag::Missing
         || only.flow_outer_name().is_some()
-        || !only.ty().is_some_and(is_simple_type)
+        // `*` is an `ExistsTypeAnnotation`, which `isSimpleType` does not list.
+        || !(only.ty()).is_some_and(|it| is_simple_type(it) && it.first_token() != b"*")
     {
         return false;
     }
     let is_function_type = keyword_of_function_type(ty, func).is_none();
-    match ty.parent() {
-        Node::Member(member) => is_function_type && !member.is_static(),
-        Node::Param(param) => is_function_type && !is_function_type_param(param),
-        Node::VarDecl(_) => is_function_type,
-        Node::Func(owner) => is_function_type || matches!(owner.owner(), Node::Type(_)),
-        Node::Stmt(statement) => {
-            statement.tag() == StmtTag::TypeAlias && !is_declared(statement.modifiers())
+    // For `T %checks(e)` and `T %checks`, Prettier's return type is the `T`.
+    let parent = match ty.parent() {
+        Node::Type(parent)
+            if as_declared_predicate(parent).is_some() || is_checks_predicate(parent) =>
+        {
+            parent.parent()
         }
+        parent => parent,
+    };
+    match parent {
+        // `static` is a matter of an `ObjectTypeProperty`. The property of a class has a `TypeAnnotation`.
+        Node::Member(member) => {
+            is_function_type
+                && member.kind() != MemberKind::IndexSignature
+                && !member.is_flow_spread()
+                && (!member.is_static()
+                    || matches!(member.parent(), Node::Class(class) if !is_declared_class(class)))
+        }
+        // The parameter of a component that is only declared has a `TypeAnnotation` too.
+        Node::Param(param) => {
+            is_function_type
+                && (!is_function_type_param(param)
+                    || matches!(param.func().map(Func::owner), Some(Node::Stmt(statement))
+                        if has_word_in(statement.file(), statement.modifiers(), b"component")))
+        }
+        Node::VarDecl(_) => is_function_type,
+        // (the value of an indexer is the return type of its signature)
+        Node::Func(owner) => match owner.owner() {
+            Node::Type(_) => true,
+            Node::Member(member) if member.kind() == MemberKind::IndexSignature => false,
+            // A hook that is only declared is a `HookTypeAnnotation`.
+            Node::Stmt(statement)
+                if !owner.has_body()
+                    && has_word_in(statement.file(), statement.modifiers(), b"hook") =>
+            {
+                false
+            }
+            // A signature and a function that is only declared are a `FunctionTypeAnnotation` too.
+            _ => is_function_type || (!owner.has_body() && !owner.is_arrow()),
+        },
+        Node::Stmt(statement) => match statement.kind() {
+            // See `write_pseudo_type_alias`.
+            StmtKind::TypeAlias(alias) if alias.name().name().is("module.exports") => {
+                is_function_type
+            }
+            StmtKind::TypeAlias(_) => {
+                !statement.is_default_export() && !is_declared(statement.modifiers())
+            }
+            _ => false,
+        },
         Node::Type(parent) => matches!(parent.tag(), TypeTag::Union | TypeTag::Intersection),
         Node::Expr(e) => is_function_type && e.is_flow_type_cast(),
         _ => false,
@@ -602,10 +662,14 @@ pub(crate) fn is_union_indented_by_parameters(ty: TypeNode<'_>) -> bool {
     if param.pat().tag() == PatTag::Missing {
         return true;
     }
-    // The function type is the type of a property.
+    // The function type is the type of a property of an object type. Not of a class, which has a `TypeAnnotation`.
     !param.is_rest()
         && matches!(func.owner(), Node::Type(owner) if keyword_of_function_type(owner, func).is_none()
-            && matches!(owner.parent(), Node::Member(member) if !member.is_static()))
+            && matches!(owner.parent(), Node::Member(member) if !member.is_static()
+                && member.kind() == MemberKind::Property
+                && !member.is_flow_spread()
+                && member.flow_internal_slot().is_none()
+                && !matches!(member.parent(), Node::Class(class) if !is_declared_class(class))))
 }
 
 /// Writes the parameter of a function type for which [`is_shorthand_function_type`] is true.
@@ -1563,6 +1627,12 @@ fn write_match_object_pattern_property<'a>(property: Prop<'a>, f: &mut Formatter
     let format_key = format_with(|f| {
         format_name(span, f, |f| match key.kind() {
             KeyKind::String(_) => write!(f, FormatStringLiteral { span }),
+            KeyKind::Number(_) => match f.source_text().text_for(&span) {
+                big_int if big_int.ends_with(b"n") => {
+                    write!(f, text_without_whitespace(&big_int.to_ascii_lowercase()))
+                }
+                number => write!(f, format_number_token(number)),
+            },
             _ => write!(f, source_text(span)),
         });
     });

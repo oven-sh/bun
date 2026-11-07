@@ -1,21 +1,22 @@
 //! Formats Vue attributes. A port of Prettier's `language-html/embed/vue-*.js`.
 
 use super::ast::{Attribute, Id, Kind};
+use super::canonical::{self, Spelling};
 use super::js::{self, Binding, Hug, Syntax};
 use super::printer::Printer;
 use crate::options::{HtmlRoot, InHtml};
 use crate::text;
 
 /// `v-for="left operator right"`
-struct VFor<'v> {
+pub(super) struct VFor<'v> {
     /// The alias, then `iterator1` and `iterator2`. A missing one is empty.
-    left: [&'v [u8]; 3],
-    operator: &'v [u8],
-    right: &'v [u8],
+    pub(super) left: [&'v [u8]; 3],
+    pub(super) operator: &'v [u8],
+    pub(super) right: &'v [u8],
 }
 
 /// `parseVueVForDirective`
-fn parse_vue_v_for_directive(value: &[u8]) -> Option<VFor<'_>> {
+pub(super) fn parse_vue_v_for_directive(value: &[u8]) -> Option<VFor<'_>> {
     // `/(.*?)\s+(in|of)\s+(.*)/s`
     let mut at = 0;
     let (alias, operator, right) = loop {
@@ -82,13 +83,14 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     pub(crate) fn is_vue_sfc_with_typescript_script(&mut self) -> bool {
         let (tree, options) = (self.tree, self.options);
         *self.has_typescript_script.get_or_insert_with(|| {
-            tree.children(tree.root).any(|child| {
-                tree.is_vue_script_tag(child, options)
-                    && matches!(
-                        tree.attribute(child, b"lang").flatten(),
-                        Some(b"ts" | b"typescript")
-                    )
-            })
+            tree.has_typescript_script_in_run
+                || tree.children(tree.root).any(|child| {
+                    tree.is_vue_script_tag(child, options)
+                        && matches!(
+                            tree.attribute(child, b"lang").flatten(),
+                            Some(b"ts" | b"typescript")
+                        )
+                })
         })
     }
 
@@ -140,6 +142,15 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 .foreign(|f| js::write_expression(f, right, is_typescript, in_html, Hug::Always))
     }
 
+    /// True if the code in `value` is printed as it is written, so that nobody has to parse it.
+    fn is_printed_as_written(&self, element: Id, name: &[u8], value: &[u8]) -> bool {
+        !self.options.script_flavor.is_oxfmt()
+            && !self.tree.is_vue_sfc_block(element, self.options)
+            && self.has_room_on_line_of_its_own(element, name.len() + value.len() + 3)
+            && canonical::is_vue_attribute(name, value, Spelling::new(self.options.format))
+                == Some(true)
+    }
+
     /// The printers in `embed/vue-attributes.js`. `value` has its quote entities already decoded. Returns true if it
     /// printed the attribute.
     pub(crate) fn embed_vue_attribute(
@@ -150,6 +161,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     ) -> bool {
         let name = attr.full_name();
         let name = &name[..];
+        if self.is_printed_as_written(element, name, value) {
+            return false;
+        }
         let is_typescript = self.is_vue_sfc_with_typescript_script();
         let flavor = self.options.script_flavor;
         let in_html = |root: HtmlRoot| InHtml {
@@ -159,6 +173,27 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         };
         let expression = in_html(HtmlRoot::JsExpression);
         if name == b"v-for" {
+            if let Some(v_for) = parse_vue_v_for_directive(value) {
+                let names = v_for.left.iter().take_while(|it| !it.is_empty()).count();
+                let names = v_for.left.get(..names).unwrap_or_default();
+                let left = Some((names, v_for.operator));
+                // The same name twice is an error.
+                let is_new =
+                    |(index, it): (usize, &&[u8])| !names.iter().take(index).any(|name| name == it);
+                if names.iter().all(|it| canonical::is_name(it))
+                    && names.iter().enumerate().all(is_new)
+                    && self.write_attribute_quickly(
+                        element,
+                        attr,
+                        left,
+                        v_for.right,
+                        is_typescript,
+                        false,
+                    )
+                {
+                    return true;
+                }
+            }
             return self.print_attribute_with(attr, |printer| {
                 printer.print_vue_v_for_directive(value, is_typescript, expression)
             });
@@ -198,6 +233,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             });
         }
         if name.starts_with(b"@") || name.starts_with(b"v-on:") {
+            if self.write_attribute_quickly(element, attr, None, value, is_typescript, false) {
+                return true;
+            }
             // `printVueVOnDirective`
             let syntax = if is_typescript {
                 Syntax::BabelTs
@@ -228,6 +266,10 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             } else {
                 return false;
             };
+        let has_filters = root == HtmlRoot::VueExpression;
+        if self.write_attribute_quickly(element, attr, None, value, is_typescript, has_filters) {
+            return true;
+        }
         self.print_attribute_with(attr, |printer| {
             printer.out.foreign(|f| {
                 js::write_expression(f, value, is_typescript, in_html(root), Hug::Expression)

@@ -3,6 +3,7 @@
 use super::parameters::can_avoid_parentheses;
 use super::semicolon::OptionalSemicolon;
 use crate::js::comments::OwnedComments;
+use crate::js::flat::LongWay;
 use crate::js::format::{identifier, name_without_comments};
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::trivia::comments_stay_between_head_and_body;
@@ -12,7 +13,9 @@ use crate::js::utils::statement_body::{
     FormatStatementBody, TrailingComments, write_comments_before_keyword,
     write_comments_before_token, write_space_before_body,
 };
-use crate::js::utils::typecast::{comments_of_expression, has_comments, is_cast_target};
+use crate::js::utils::typecast::{
+    comments_of_expression, has_comments, is_cast_target, is_cast_target_that_hides_its_kind,
+};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -90,6 +93,8 @@ pub(crate) fn expression_statement_needs_semicolon<'a>(
         return false;
     }
     match expression.kind() {
+        // `/** @type {T} */ (await a)` starts with its parenthesis. oxfmt prints no `;` before it.
+        _ if is_cast_target_that_hides_its_kind(expression, f) => {}
         // `a => {}` starts with a name.
         ExprKind::Fn(func) if func.is_arrow() => return !can_avoid_parentheses(func, f),
         ExprKind::New(_) | ExprKind::Await(_) | ExprKind::Yield { .. } => return false,
@@ -264,8 +269,8 @@ pub(crate) fn write_do_while_statement<'a>(
     );
 }
 
-/// `!(a || b)` or `!!(a || b)`
-fn is_negated_logical_expression(test: Expr<'_>) -> bool {
+/// `!(a || b)` or `!!(a || b)`. With a type cast around the operand of a `!`, that operand is the parentheses.
+fn is_negated_logical_expression<'a>(test: Expr<'a>, f: &Formatter<'a>) -> bool {
     fn logical_not_argument(e: Expr<'_>) -> Option<Expr<'_>> {
         match e.kind() {
             ExprKind::Unary {
@@ -278,8 +283,12 @@ fn is_negated_logical_expression(test: Expr<'_>) -> bool {
     let Some(argument) = logical_not_argument(test) else {
         return false;
     };
-    let argument = logical_not_argument(argument).unwrap_or(argument);
+    let argument = match logical_not_argument(argument) {
+        Some(inner) if !is_cast_target(argument, f) => inner,
+        _ => argument,
+    };
     matches!(argument.kind(), ExprKind::Binary { op, .. } if op.is_logical())
+        && !is_cast_target(argument, f)
 }
 
 /// Prettier 3.9 prints `if (!(` on one line. oxfmt follows 3.8, which breaks after `if (`.
@@ -290,7 +299,7 @@ fn hugs_negated_condition(f: &Formatter<'_>) -> bool {
 /// Prettier's `shouldInlineCondition`: a negated logical expression starts right after the statement's `(`, so its
 /// operands are indented the same as without the `!`.
 fn should_inline_condition<'a>(test: Expr<'a>, f: &Formatter<'a>) -> bool {
-    is_negated_logical_expression(test)
+    is_negated_logical_expression(test, f)
         && hugs_negated_condition(f)
         && !has_comments(test, f)
         && !is_cast_target(test, f)
@@ -355,9 +364,10 @@ struct FormatForHead<'a>(Stmt<'a>);
 
 impl<'a> Format<'a> for FormatForHead<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
+        // However deep in it, `a in b` is in parentheses.
         match self.0.kind() {
-            StmtKind::Expr(expression) => write!(f, expression),
-            _ => write!(f, self.0),
+            StmtKind::Expr(expression) => write!(f, LongWay(&expression)),
+            _ => write!(f, LongWay(&self.0)),
         }
     }
 }

@@ -95,7 +95,7 @@ fn is_literal_lookahead(rest: &[u8]) -> bool {
 
 /// Returns the length of the `open(\\close|[^close])*close` match, where `text` starts with the opening character. The
 /// match ends at the first `close` that has no backslash before it or, if there's none, at the last one that has.
-fn delimited_len(text: &[u8], close: u8) -> Option<usize> {
+pub(crate) fn delimited_len(text: &[u8], close: u8) -> Option<usize> {
     let mut at = 1;
     let mut last_escaped = None;
     while let Some(found) = text
@@ -387,19 +387,22 @@ impl Lexer<'_> {
             }
             b'@' => self.token(TokenKind::Data, 1),
             b'|' => self.token(TokenKind::CloseBlockParams, 1),
+            b' ' if matches!(rest.get(1), Some(0x21..0x80)) => self.at += 1,
             _ if strings::js_whitespace_len(rest) > 0 => {
                 self.at += crate::text::leading_white_space_len(rest)
             }
-            _ if followed_by(b"true") => self.token(TokenKind::Boolean, 4),
-            _ if followed_by(b"false") => self.token(TokenKind::Boolean, 5),
-            _ if followed_by(b"undefined") => self.token(TokenKind::Undefined, 9),
-            _ if followed_by(b"null") => self.token(TokenKind::Null, 4),
-            _ => {
-                if let Some(len) = number_len(rest) {
+            b't' if followed_by(b"true") => self.token(TokenKind::Boolean, 4),
+            b'f' if followed_by(b"false") => self.token(TokenKind::Boolean, 5),
+            b'u' if followed_by(b"undefined") => self.token(TokenKind::Undefined, 9),
+            b'n' if followed_by(b"null") => self.token(TokenKind::Null, 4),
+            first => {
+                if matches!(first, b'-' | b'0'..=b'9')
+                    && let Some(len) = number_len(rest)
+                {
                     self.token(TokenKind::Number, len);
                     return Ok(());
                 }
-                if let Some(after) = rest.strip_prefix(b"as") {
+                if let [b'a', b's', after @ ..] = rest {
                     let whitespace_len = crate::text::leading_white_space_len(after);
                     if whitespace_len > 0 && after.get(whitespace_len) == Some(&b'|') {
                         self.token(TokenKind::OpenBlockParams, 2 + whitespace_len + 1);

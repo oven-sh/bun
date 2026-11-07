@@ -12,7 +12,6 @@ use super::ast::{Attribute, Flags, Id};
 use super::js::{self, AngularExpression, Hug};
 use super::printer::Printer;
 use super::utilities::{html_split, html_trim_preserve_indentation, min_indentation};
-use crate::ir::element::TextWidth;
 use crate::options::{HtmlRoot, InHtml};
 use crate::prelude::*;
 use crate::write;
@@ -174,10 +173,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             // `shouldHugJsExpression` never hugs this.
             Code::Printed(printed) => {
                 self.write_hugged(hug.should_hug_non_expression(), |printer| {
-                    printer.out.foreign(|f| {
-                        js::write_string(ignored.unwrap_or(printed), f);
-                        write_rest(f);
-                    });
+                    printer.out.string(ignored.unwrap_or(printed));
+                    printer.out.foreign(|f| write_rest(f));
                     true
                 })
             }
@@ -220,6 +217,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         // An `NGEmptyExpression` or an `NGChainedExpression`.
         self.write_hugged(hug.should_hug_non_expression(), |printer| {
             if !is_action {
+                // Nothing between two lines: two blanks in the document of the quick way, one here.
+                printer.out.gives_up_quick_way();
                 return true;
             }
             let mut is_written = true;
@@ -448,17 +447,11 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 self.out.text(part);
                 continue;
             }
-            // Two `line`s with an `NGEmptyExpression`, which prints nothing, between them. When Prettier measures
-            // whether something fits, they count as a single space.
+            // Two `line`s with an `NGEmptyExpression`, which prints nothing, between them.
             if is_blank(part) {
                 self.out.start_group();
                 self.out.token("{{");
-                self.out.start_if(false, None);
-                self.out
-                    .foreign(|f| f.write_text(b"  ", Some(TextWidth::single(1))));
-                self.out.end_if();
-                self.out.softline();
-                self.out.softline();
+                self.out.two_lines();
                 self.out.token("}}");
                 self.out.end_group();
                 continue;
@@ -527,7 +520,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             return self
                 .print_attribute_with(attr, |printer| printer.print_angular_i18n(element, value));
         }
-        if split_at_interpolations(raw_value).len() > 1 {
+        if strings::contains(raw_value, b"{{") && split_at_interpolations(raw_value).len() > 1 {
             return self
                 .print_attribute_with(attr, |printer| printer.print_angular_interpolation(value));
         }

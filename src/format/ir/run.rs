@@ -2,9 +2,11 @@
 
 use super::element::Interned;
 use super::formatter::Formatter;
+use super::printer::PrintError;
 use crate::cursor::CursorRegion;
 use crate::js::comments;
 use crate::js::context::JsFormatContext;
+use crate::js::flat::Mode;
 use crate::options::DebugComments;
 use crate::{FormatError, FormatOptions};
 use bun_lint::ast::File;
@@ -18,6 +20,8 @@ pub struct Scratch {
     unprinted_comments: Vec<u8>,
     /// Their ids, for the second pass.
     unprinted_comment_ids: Vec<u32>,
+    /// `flat::Buffers::text`
+    line_text: Vec<u8>,
 }
 
 /// Formats `file` by printing the document that `write` writes, and appends the text to `out`. Returns the offsets of
@@ -46,30 +50,43 @@ pub(crate) fn format_with_marks<'a>(
         crate::js::attach::list(file, &cast_parens, attach_options, out);
         return Ok([None; 2]);
     }
-    let mut root = write_document(file, options, cursor, scratch, Vec::new(), &write);
-    if options.debug_comments == DebugComments::Unprinted {
-        out.append(&mut scratch.unprinted_comments);
-        return Ok([None; 2]);
+    let start = out.len();
+    // A short cut that rests on a wrong guess shows when the document is printed.
+    for short_cuts in [Mode::All, Mode::Certain, Mode::Off] {
+        let how = (cursor, short_cuts);
+        let mut root = write_document(file, options, how, scratch, Vec::new(), &write);
+        if options.debug_comments == DebugComments::Unprinted {
+            out.append(&mut scratch.unprinted_comments);
+            return Ok([None; 2]);
+        }
+        if matches!(root, Err(FormatError::InvalidDocument)) {
+            let comments_without_printer = std::mem::take(&mut scratch.unprinted_comment_ids);
+            root = write_document(
+                file,
+                options,
+                how,
+                scratch,
+                comments_without_printer,
+                &write,
+            );
+        }
+        match try_print(root?, file.text(), options, scratch, out) {
+            Err(PrintError::ShortCutTooWide) => out.truncate(start),
+            printed => return Ok(printed.map(|()| scratch.printer.marks)?),
+        }
     }
-    if matches!(root, Err(FormatError::InvalidDocument)) {
-        let comments_without_printer = std::mem::take(&mut scratch.unprinted_comment_ids);
-        root = write_document(
-            file,
-            options,
-            cursor,
-            scratch,
-            comments_without_printer,
-            &write,
-        );
-    }
-    print(root?, file.text(), options, scratch, out)?;
-    Ok(scratch.printer.marks)
+    Err(FormatError::InvalidDocument)
 }
 
 impl Scratch {
     /// Returns the offsets of the cursor marks in the last printed text.
     pub(crate) fn marks(&self) -> [Option<u32>; 2] {
         self.printer.marks
+    }
+
+    /// What the last document that [`write_with`] has returned is a range of.
+    pub(crate) fn storage(&self) -> &super::formatter::Storage {
+        &self.formatter.storage
     }
 }
 
@@ -81,6 +98,16 @@ pub(crate) fn print(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
+    Ok(try_print(root, source, options, scratch, out)?)
+}
+
+fn try_print(
+    root: Interned,
+    source: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<(), PrintError> {
     let printer_options = super::printer::PrinterOptions::new(options, source);
     super::printer::print(
         root,
@@ -90,13 +117,12 @@ pub(crate) fn print(
         &mut scratch.printer,
         out,
     )
-    .map_err(FormatError::from)
 }
 
 fn write_document<'a>(
     file: &'a File<'a>,
     options: &FormatOptions,
-    cursor: CursorRegion,
+    (cursor, short_cuts): (CursorRegion, Mode),
     scratch: &mut Scratch,
     comments_without_printer: Vec<u32>,
     write: &impl Fn(&'a File<'a>, &mut Formatter<'a>),
@@ -107,7 +133,9 @@ fn write_document<'a>(
     let comments = comments::for_file(file, options);
     let mut context = JsFormatContext::new(file, options.clone(), comments);
     context.cursor = cursor;
+    context.short_cuts.mode = context.short_cuts.mode.min(short_cuts);
     context.comments_without_printer = comments_without_printer;
+    context.line_buffers.text = std::mem::take(&mut scratch.line_text);
     write_with(context, file.text(), scratch, |f| write(file, f))
 }
 
@@ -126,8 +154,12 @@ pub(crate) fn write_with<'a>(
 }
 
 /// Hands `formatter`'s buffers back to `scratch` and returns the document's range.
-fn finish(formatter: Formatter<'_>, scratch: &mut Scratch) -> Result<Interned, FormatError> {
+fn finish(mut formatter: Formatter<'_>, scratch: &mut Scratch) -> Result<Interned, FormatError> {
     let ran_out_of_stack = formatter.context().ran_out_of_stack;
+    let line_text = std::mem::take(&mut formatter.context_mut().line_buffers.text);
+    if !line_text.is_empty() {
+        scratch.line_text = line_text;
+    }
     scratch.unprinted_comments.clear();
     scratch.unprinted_comment_ids.clear();
     for comment in formatter.context().comments().unprinted() {

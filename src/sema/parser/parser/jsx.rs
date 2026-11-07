@@ -62,6 +62,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             _ => return operand,
         };
         self.next();
+        self.note_target(operand);
         self.finish_expr(ExprKind::Unary { op, operand }, start)
     }
 

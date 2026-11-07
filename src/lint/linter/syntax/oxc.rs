@@ -1430,6 +1430,16 @@ pub(super) fn translate_typescript_error<'a>(
         let rest = Span::new(it.start, file.text().len() as u32);
         let lexer_error = SyntaxError::oxc_error(line, "Unterminated regular expression");
         let parser_error = SyntaxError::oxc_error(rest, "Unexpected token").stage(Stage::Fatal);
+        // The lexer reads a `/` as a regular expression when the parser asks it to, which it doesn't if it has given up
+        // before the `/`. TypeScript's parser starts a new statement at the `/` of `import / a`.
+        let gives_up_before = |other: &Diagnostic| {
+            other.kind == DiagnosticKind::OxcFatal
+                && oxc_typescript::decode_recorded_error(file, other)
+                    .is_some_and(|other| other.order() < it.start)
+        };
+        if file.hir.diagnostics.iter().any(gives_up_before) {
+            return vec![parser_error];
+        }
         return match unterminated_regex_context(file, it.start) {
             RegexContext::Nothing => {
                 vec![lexer_error.stage(Stage::Parser).noticed_at(0), parser_error]

@@ -45,8 +45,8 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
 // behind `bun_core::strings`, driven directly so tests can sweep lengths and
 // alignments. Returns the kernel's raw result: an index (`haystack.length` =
 // not found), a count, or for memmem/memrmem the offset with -1 = not found.
-// scannerRunStops fills `arg` with its three bitmaps and returns 0. lineStarts
-// fills `arg` with uint32 offsets and returns how many. oddBlocks fills `arg`
+// scannerRunStops fills `arg` with its three bitmaps and returns 0, yamlMarks with its four, htmlMarks
+// with its seven. lineStarts fills `arg` with uint32 offsets and returns how many. oddBlocks fills `arg`
 // with uint64 words and returns 0.
 export const highwayStringsForTesting: (
   op:
@@ -67,6 +67,8 @@ export const highwayStringsForTesting: (
     | "memmem16"
     | "memrmem16"
     | "scannerRunStops"
+    | "yamlMarks"
+    | "htmlMarks"
     | "lineStarts"
     | "oddBlocks",
   haystack: Uint8Array,

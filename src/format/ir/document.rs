@@ -140,11 +140,7 @@ impl Tracker {
                 }
                 self.text(text.width.value(), index);
             }
-            FormatElement::Space => {
-                self.state.last_space = index;
-                self.state.is_space_pending = true;
-                self.state.is_space_element_pending = true;
-            }
+            FormatElement::Space => self.space(index),
             // These print nothing when the enclosing content is flat.
             FormatElement::TokenIfBreaks(_) | FormatElement::Nop | FormatElement::Cursor(_) => {}
             FormatElement::Line(mode) => self.line(mode, index),
@@ -160,12 +156,7 @@ impl Tracker {
                 self.best_fitting(best_fitting.first, index, storage)
             }
             FormatElement::Tag(tag) => match tag {
-                Tag::StartGroup(group) => {
-                    if group.mode() == GroupMode::Expand && !self.state.is_in_line_suffix {
-                        self.state.last_will_break = index;
-                    }
-                    self.open(FrameKind::Group, index);
-                }
+                Tag::StartGroup(group) => self.start_group(group.mode(), index),
                 Tag::EndGroup => self.end_group(index, storage),
                 Tag::StartConditionalContent(condition) => {
                     match (condition.group_id, condition.mode) {
@@ -210,8 +201,40 @@ impl Tracker {
         self.state.last_will_break as usize >= start
     }
 
+    /// Records a [`FormatElement::Space`] at `index`.
     #[inline(always)]
-    fn line(&mut self, mode: LineMode, index: u32) {
+    pub(super) fn space(&mut self, index: u32) {
+        self.state.last_space = index;
+        self.state.is_space_pending = true;
+        self.state.is_space_element_pending = true;
+    }
+
+    /// Records the start tag of a group at `index`.
+    #[inline(always)]
+    pub(super) fn start_group(&mut self, mode: GroupMode, index: u32) {
+        if mode == GroupMode::Expand && !self.state.is_in_line_suffix {
+            self.state.last_will_break = index;
+        }
+        let frame = Frame {
+            kind: FrameKind::Group,
+            start_flags: FlatFlags::default(),
+            start: index,
+            first_text: NO_TEXT,
+        };
+        if self.frames.push_within_capacity(frame).is_err() {
+            self.open_first_group_at_this_depth(index);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn open_first_group_at_this_depth(&mut self, start: u32) {
+        self.open(FrameKind::Group, start);
+    }
+
+    /// Records a line break at `index`, by itself or as part of a tag.
+    #[inline(always)]
+    pub(super) fn line(&mut self, mode: LineMode, index: u32) {
         match mode {
             LineMode::Soft | LineMode::SoftEmpty => {}
             LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty => {
@@ -295,7 +318,9 @@ impl Tracker {
         }
     }
 
-    fn end_group(&mut self, index: u32, storage: &mut Storage) {
+    /// Records the end tag of a group at `index`.
+    #[inline]
+    pub(super) fn end_group(&mut self, index: u32, storage: &mut Storage) {
         if let Some(frame) = self.close(&[FrameKind::Group])
             && let Some(FormatElement::Tag(Tag::StartGroup(group))) =
                 storage.pool.get_mut(frame.start as usize)
@@ -373,21 +398,37 @@ impl Tracker {
         Some((frame.start, flat, will_break))
     }
 
+    /// True if the next text is the first one in some frame.
+    #[inline(always)]
+    pub(super) fn waits_for_first_text(&self) -> bool {
+        (self.state.first_frame_without_text as usize) < self.frames.len()
+    }
+
     /// Records a text of `width` columns at `index`.
-    #[inline]
-    fn text(&mut self, width: u32, index: u32) {
+    #[inline(always)]
+    pub(super) fn text(&mut self, width: u32, index: u32) {
+        if self.waits_for_first_text() {
+            self.first_text(
+                self.state
+                    .width
+                    .wrapping_add(u32::from(self.state.is_space_pending)),
+            );
+        }
+        self.text_after_first(width, index);
+    }
+
+    /// Same, if [`Tracker::waits_for_first_text`] is false.
+    #[inline(always)]
+    pub(super) fn text_after_first(&mut self, width: u32, index: u32) {
         // Whether a space after a zero-width text counts depends on whether the line was empty before it.
         if width == 0 {
             self.state.last_unknown = index;
         }
-        let start = self
+        self.state.width = self
             .state
             .width
-            .wrapping_add(u32::from(self.state.is_space_pending));
-        if (self.state.first_frame_without_text as usize) < self.frames.len() {
-            self.first_text(start);
-        }
-        self.state.width = start.wrapping_add(width);
+            .wrapping_add(u32::from(self.state.is_space_pending))
+            .wrapping_add(width);
         self.state.is_space_pending = false;
         self.state.is_space_element_pending = false;
     }

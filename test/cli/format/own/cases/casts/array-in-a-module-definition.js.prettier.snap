@@ -1,0 +1,29 @@
+------------------
+{ printWidth: 80 }
+------------------
+define(
+  /** @type {T} */ ([
+    "alphaAlphaAlphaAlphaAlphaAlpha",
+    "betaBetaBetaBetaBetaBeta",
+    "gammaGammaGammaGamma",
+  ]),
+  function (alpha, beta) {
+    run();
+  },
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+define(
+  /** @type {T} */ ([
+    "alphaAlphaAlphaAlphaAlphaAlpha",
+    "betaBetaBetaBetaBetaBeta",
+    "gammaGammaGammaGamma",
+  ]),
+  function (alpha, beta) {
+    run();
+  },
+);
+
+===================== End =====================

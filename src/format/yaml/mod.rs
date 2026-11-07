@@ -2,6 +2,7 @@
 //! parser.
 
 mod ast;
+mod direct;
 mod printer;
 mod scalar;
 
@@ -19,6 +20,7 @@ use std::borrow::Cow;
 #[derive(Default)]
 pub struct Scratch {
     elements: Elements,
+    direct: direct::Scratch,
 }
 
 /// True if Prettier treats the file at `path` as YAML.
@@ -49,9 +51,15 @@ pub fn is_yaml_path(path: &[u8]) -> bool {
         b".lintstagedrc",
     ];
     // Prettier's `getLanguageByFileName` compares lowercased names.
-    let name = name.to_ascii_lowercase();
-    NAMES.iter().any(|it| it.eq_ignore_ascii_case(&name))
-        || EXTENSIONS.iter().any(|extension| name.ends_with(extension))
+    let ends_with = |extension: &[u8]| {
+        (name.len().checked_sub(extension.len()))
+            .is_some_and(|at| name[at..].eq_ignore_ascii_case(extension))
+    };
+    // Most names end with one of these.
+    ends_with(b".yml")
+        || ends_with(b".yaml")
+        || NAMES.iter().any(|it| it.eq_ignore_ascii_case(name))
+        || EXTENSIONS.iter().any(|extension| ends_with(extension))
 }
 
 /// Returns the doc for `text`, whose line breaks are `\n`, as a tree.
@@ -84,12 +92,13 @@ fn to_format_error(error: ParseError, at: usize) -> FormatError {
     FormatError::SyntaxErrorAt(SyntaxError(message, at as u32))
 }
 
-/// Writes the doc for `text`, whose line breaks are `\n`, to `out`, which must be empty.
-fn write_document(
+/// Parses `text`, whose line breaks are `\n`, and calls `print` with a printer that writes to `out`.
+fn with_printer<T>(
     text: &[u8],
     options: &FormatOptions,
     out: &mut Elements,
-) -> Result<(), FormatError> {
+    print: impl FnOnce(&mut printer::Printer<'_, '_>) -> T,
+) -> Result<T, FormatError> {
     // Running out of stack overrides whatever other error was reported.
     let to_error = |stack: &Stack, error: SyntaxError| match stack.ran_out() {
         true => FormatError::NestedTooDeeply,
@@ -126,11 +135,36 @@ fn write_document(
         out,
         stack: &stack,
     };
-    printer.print(tree.root, true);
+    let result = print(&mut printer);
     match stack.ran_out() {
         true => Err(FormatError::NestedTooDeeply),
-        false => Ok(()),
+        false => Ok(result),
     }
+}
+
+/// Writes the doc for `text`, whose line breaks are `\n`, to `out`, which must be empty.
+fn write_document(
+    text: &[u8],
+    options: &FormatOptions,
+    out: &mut Elements,
+) -> Result<(), FormatError> {
+    with_printer(text, options, out, |printer| {
+        printer.print(printer.tree.root, true)
+    })
+}
+
+/// For a `text` that's one document without markers whose content is a block collection with one item: writes the doc
+/// for that collection, aligned to `column`, to `out`, which must be empty. Returns where the last comment ends, or 0.
+fn write_only_item(
+    text: &[u8],
+    options: &FormatOptions,
+    column: usize,
+    out: &mut Elements,
+) -> Option<usize> {
+    with_printer(text, options, out, |printer| {
+        printer.print_only_item(u32::try_from(column).ok()?)
+    })
+    .ok()?
 }
 
 /// `/(?:[/\\]|^)\.(?:prettier|stylelint|lintstaged)rc$/`: a file that Prettier first tries to format as JSON.
@@ -180,8 +214,15 @@ pub fn format(
     if text.trim_ascii().is_empty() {
         return Ok(());
     }
-    // It has to parse as YAML in any case.
     let document = &mut scratch.elements;
+    if !is_range
+        && !options.filepath.as_deref().is_some_and(can_be_json)
+        && direct::format(&text, original, options, &mut scratch.direct, document, out)
+    {
+        crate::whole_texts::note();
+        return Ok(());
+    }
+    // It has to parse as YAML in any case.
     document.clear();
     write_document(&text, options, document)
         .inspect_err(|_| out.truncate(start))

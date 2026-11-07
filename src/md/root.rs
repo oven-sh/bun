@@ -199,7 +199,7 @@ pub fn render_with_extensions<'a>(
     text: &'a [u8],
     options: Options,
     renderer: Renderer<'a>,
-    extensions: crate::types::Extensions<'a>,
+    extensions: &crate::types::Extensions<'a>,
 ) -> Result<(), parser::ParserError> {
     parser::render_with_renderer(
         text,

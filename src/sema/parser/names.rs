@@ -22,6 +22,8 @@ struct Short {
     words: [u64; 2],
     atom: u32,
     kind: T,
+    /// A field and not padding, so that filling a table with `NO_SHORT` writes every byte, which is a `memset`.
+    _unused: [u8; 3],
 }
 
 /// A text of 16 to 32 bytes. An entry with length 0 is free.
@@ -31,6 +33,8 @@ struct Long {
     words: [u64; 4],
     atom: u32,
     len: u8,
+    /// As in `Short`.
+    _unused: [u8; 3],
 }
 
 impl Long {
@@ -45,6 +49,7 @@ impl Long {
 
 const MENTIONED_WORDS: usize = bun_sema::hir::MENTIONED_BITS / 64;
 const SHORT_BITS: u32 = 14;
+const MIN_SHORT_BITS: u32 = 5;
 const LONG_BITS: u32 = 12;
 const KNOWN_BITS: u32 = 10;
 const KNOWN_LONG_BITS: u32 = 6;
@@ -108,16 +113,21 @@ pub(crate) struct Names {
     late: Late,
 }
 
+// A table starts as memory that the system hands out zeroed, so a page of it that no file needs is never touched.
+bun_core::impl_zeroable!(Short, Long);
+
 // These are all zero bytes, so filling a table with them is fast.
 const NO_SHORT: Short = Short {
     words: [0; 2],
     atom: 0,
     kind: T::Eof,
+    _unused: [0; 3],
 };
 const NO_LONG: Long = Long {
     words: [0; 4],
     atom: 0,
     len: 0,
+    _unused: [0; 3],
 };
 
 fn boxed<E: Copy, const N: usize>(entry: E) -> Box<[E; N]> {
@@ -147,6 +157,7 @@ impl Default for Names {
                     words,
                     atom,
                     len: text.len() as u8,
+                    _unused: [0; 3],
                 };
                 continue;
             }
@@ -165,8 +176,8 @@ impl Default for Names {
             }
         }
         Names {
-            short: boxed(NO_SHORT),
-            long: boxed(NO_LONG),
+            short: bun_core::ffi::boxed_zeroed(),
+            long: bun_core::ffi::boxed_zeroed(),
             other: Table::default(),
             short_mask: (1 << SHORT_BITS) - 1,
             long_mask: (1 << LONG_BITS) - 1,
@@ -310,19 +321,33 @@ impl Names {
 
     /// Call before parsing a file of `len` bytes that has its own atoms.
     pub(crate) fn begin_own(&mut self, len: usize) {
-        // One slot in `short` for every 8 bytes of text.
+        // One slot in `short` for every 8 bytes of text, and no fewer than 256. A short text, like an expression in a
+        // template, has one for every 2 bytes: clearing 256 would take longer than reading it.
         let bits = (len / 8)
+            .max((len / 2).min(256))
             .next_power_of_two()
             .trailing_zeros()
-            .clamp(8, SHORT_BITS);
+            .clamp(MIN_SHORT_BITS, SHORT_BITS);
         self.short_mask = (1 << bits) - 1;
         self.long_mask = self.short_mask >> (SHORT_BITS - LONG_BITS);
         self.short[..=self.short_mask].fill(NO_SHORT);
         self.long[..=self.long_mask].fill(NO_LONG);
         self.of = bun_sema::atom::next_interner_number();
         self.is_own = true;
-        self.spans.clear();
-        self.spans.extend_from_slice(&KNOWN_SPANS.0);
+        // Of the known texts, only those that the last file had are somewhere else than at the start.
+        self.spans.truncate(KNOWN_SPANS.0.len());
+        for (index, &word) in self.known_in_file.iter().enumerate() {
+            let mut rest = word;
+            while rest != 0 {
+                let known = index * 64 + rest.trailing_zeros() as usize;
+                if let (Some(span), Some(at_start)) =
+                    (self.spans.get_mut(known), KNOWN_SPANS.0.get(known))
+                {
+                    *span = *at_start;
+                }
+                rest &= rest - 1;
+            }
+        }
         self.cooked.truncate(KNOWN_SPANS.1);
         self.other.clear();
         self.mentioned = [0; MENTIONED_WORDS];
@@ -476,7 +501,12 @@ impl Names {
             self.mention(&words[0].to_le_bytes()[..(len as usize).min(8)], bit);
             self.spans.push((start as u32, len));
             let atom = self.spans.len() as u32 - 1;
-            self.short[at] = Short { words, atom, kind };
+            self.short[at] = Short {
+                words,
+                atom,
+                kind,
+                _unused: [0; 3],
+            };
             return (Atom(atom), kind);
         }
         let text = Text::from_source(source, start, start + len as usize);
@@ -515,6 +545,7 @@ impl Names {
             words,
             atom: atom.0,
             kind,
+            _unused: [0; 3],
         };
         (atom, kind)
     }
@@ -578,6 +609,7 @@ impl Names {
             words,
             atom: atom.0,
             len: text.text.len() as u8,
+            _unused: [0; 3],
         };
         atom
     }

@@ -218,7 +218,10 @@ pub(crate) fn write_ts_interface_signatures<'a>(
     members: List<'a, Member<'a>>,
     f: &mut Formatter<'a>,
 ) {
+    let outer = f.context().short_cuts.properties_start_lines;
+    f.context_mut().short_cuts.properties_start_lines = true;
     write_signatures(members, true, f);
+    f.context_mut().short_cuts.properties_start_lines = outer;
 }
 
 fn write_signatures<'a>(members: List<'a, Member<'a>>, is_interface: bool, f: &mut Formatter<'a>) {

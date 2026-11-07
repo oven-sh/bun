@@ -13,6 +13,7 @@ use super::union_type::{
 };
 use crate::cursor::with_node_marks;
 use crate::js::comments::OwnedComments;
+use crate::js::flat::{Deeper, Mode, write_enum_member};
 use crate::js::format::{
     format_ignorable_name, format_name, format_node, identifier, name_without_comments,
     write_ignored_node,
@@ -20,7 +21,9 @@ use crate::js::format::{
 use crate::js::utils::assignment_like::AssignmentLikeLayout;
 use crate::js::utils::object::{FormatKey, key_requires_quotes};
 use crate::js::utils::statement_body::write_space_before_body;
-use crate::js::utils::typescript::{should_hug_type, without_lone_operator};
+use crate::js::utils::typescript::{
+    has_type_argument_list, should_hug_type, without_lone_operator,
+};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -168,7 +171,6 @@ pub(crate) fn write_ts_interface_declaration<'a>(
         }
     });
 
-    let body = AstNodes::TSInterfaceBody(statement);
     let content = format_with(|f| {
         write!(
             f,
@@ -188,25 +190,31 @@ pub(crate) fn write_ts_interface_declaration<'a>(
             ),
             false => write!(f, [format_name_and_type_parameters, format_extends]),
         }
-        write_space_before_body(body, f);
-        format_node(body, f, |f| {
-            write!(f, "{");
-            match interface.members().is_empty() {
-                true => write!(f, dangling_comments(body).with_block_indent()),
-                false => {
-                    write!(
-                        f,
-                        block_indent(&format_with(|f| write_ts_interface_signatures(
-                            interface.members(),
-                            f
-                        )))
-                    );
-                }
-            }
-            write!(f, "}");
-        });
+        write_interface_body_after_head(statement, interface, f);
     });
     write!(f, group(&content));
+}
+
+/// ` { .. }`
+pub(crate) fn write_interface_body_after_head<'a>(
+    statement: Stmt<'a>,
+    interface: Interface<'a>,
+    f: &mut Formatter<'a>,
+) {
+    let body = AstNodes::TSInterfaceBody(statement);
+    write_space_before_body(body, f);
+    format_node(body, f, |f| {
+        write!(f, "{");
+        match interface.members().is_empty() {
+            true => write!(f, dangling_comments(body).with_block_indent()),
+            false => {
+                let members =
+                    format_with(|f| write_ts_interface_signatures(interface.members(), f));
+                write!(f, block_indent(&Deeper(&members)));
+            }
+        }
+        write!(f, "}");
+    });
 }
 
 /// `type A = B`. Prettier's `printTypeAlias`, plus what its `printAssignment` does if the right side is a type.
@@ -365,7 +373,7 @@ fn type_alias_layout<'a>(
 ) -> AssignmentLikeLayout {
     let is_generic = |ty: TypeNode<'a>| match ty.kind() {
         TypeKind::Fn(func) => func.kind() == FnKind::FunctionType && !func.type_params().is_empty(),
-        TypeKind::Ref { args, .. } => !args.is_empty(),
+        TypeKind::Ref { args, .. } => has_type_argument_list(ty, args),
         _ => false,
     };
     let leading_comments = match f.is_quiet() {
@@ -436,8 +444,17 @@ pub(crate) fn write_ts_enum_declaration<'a>(
             space(),
         ]
     );
-    let body = AstNodes::TSEnumBody(statement);
     write!(f, identifier(declaration.name()));
+    write_enum_body_after_head(statement, declaration, f);
+}
+
+/// ` { .. }`
+pub(crate) fn write_enum_body_after_head<'a>(
+    statement: Stmt<'a>,
+    declaration: Enum<'a>,
+    f: &mut Formatter<'a>,
+) {
+    let body = AstNodes::TSEnumBody(statement);
     write_space_before_body(body, f);
     format_node(body, f, |f| {
         if f.file().is_flow() {
@@ -471,7 +488,7 @@ fn write_ts_enum_body<'a>(body: AstNodes<'a>, declaration: Enum<'a>, f: &mut For
         }
         write!(
             f,
-            block_indent(&format_with(|f| {
+            block_indent(&Deeper(&format_with(|f| {
                 // Flow's `enum A { /* comment */ ... }`
                 let comments = f.comments().of_node(body).dangling;
                 write!(
@@ -493,7 +510,7 @@ fn write_ts_enum_body<'a>(body: AstNodes<'a>, declaration: Enum<'a>, f: &mut For
                 };
                 f.join_nodes_with_soft_line()
                     .entries_with_trailing_separator(members.iter(), ",", trailing_separator);
-            }))
+            })))
         );
         if is_consistent {
             f.context_mut().pop_quote_needed();
@@ -504,6 +521,9 @@ fn write_ts_enum_body<'a>(body: AstNodes<'a>, declaration: Enum<'a>, f: &mut For
 
 /// `A`, `A = 1`, `"a" = 1`
 pub(crate) fn write_ts_enum_member<'a>(member: EnumMember<'a>, f: &mut Formatter<'a>) {
+    if f.context().short_cuts.mode != Mode::Off && write_enum_member(member, f) {
+        return;
+    }
     if super::flow::is_unknown_members_mark(member) {
         return write!(f, "...");
     }
@@ -531,8 +551,6 @@ pub(crate) fn write_ts_module_declaration<'a>(
     module: Module<'a>,
     f: &mut Formatter<'a>,
 ) {
-    let innermost = module.innermost();
-    let body_span = innermost.body_span();
     write!(f, is_declared(statement).then_some("declare "));
 
     match module.name() {
@@ -558,7 +576,17 @@ pub(crate) fn write_ts_module_declaration<'a>(
         current = nested;
     }
 
-    let Some(span) = body_span else {
+    write_module_body_after_head(statement, module, f);
+}
+
+/// ` { .. }`, or `;`
+pub(crate) fn write_module_body_after_head<'a>(
+    statement: Stmt<'a>,
+    module: Module<'a>,
+    f: &mut Formatter<'a>,
+) {
+    let innermost = module.innermost();
+    let Some(span) = innermost.body_span() else {
         return write!(f, OptionalSemicolon);
     };
     let body = AstNodes::TSModuleBlock(statement);
@@ -574,7 +602,10 @@ pub(crate) fn write_ts_module_declaration<'a>(
                 write!(f, hard_line_break());
             }
             true => write!(f, dangling_comments(body).with_block_indent()),
-            false => write!(f, block_indent(&FormatStatements(innermost.body()))),
+            false => write!(
+                f,
+                block_indent(&Deeper(&FormatStatements(innermost.body())))
+            ),
         }
         write!(f, "}");
     });

@@ -86,7 +86,9 @@ describe.concurrent.each([
     const { stdout, stderr, exitCode } = await run(command, "--help", "--all");
     expect(stdout.match(/^\S.*:$/gm)).toEqual([...headings.map(heading => `${heading}:`), "Examples:"]);
     const params = readFileSync(join(root, source), "utf8").matchAll(/clap::param!\(\s*"(?:-\w, )?(--[^\s"]+)/g);
-    const acceptedFlags = [...params].flatMap(it => it[1].split("/"));
+    // Only debug and canary builds have the flags for tests and measurements.
+    const forTests = ["--bench", "--short-cuts"];
+    const acceptedFlags = [...params].flatMap(it => it[1].split("/")).filter(flag => !forTests.includes(flag));
     expect(acceptedFlags.length).toBeGreaterThan(70);
     const mentioned = new Set(stdout.match(/--[\w-]+/g));
     // Listing `--no-semi` covers `--semi` too.

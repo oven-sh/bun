@@ -1,0 +1,63 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A<T> =
+  T<> extends (infer U)[]
+    ? U
+    : T extends (...args: any[]) => infer U
+      ? SomeReallyLongThingThatBreaksTheLine<U>
+      : T;
+type B<T> =
+  T extends U<>
+    ? SomeReallyLongThingThatBreaksTheLine<U>
+    : SomeReallyLongThingThatBreaksTheLineToo<T>;
+type C = $ReadOnlyArray<
+  Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<>,
+>;
+type D = { res: DeepReadOnly<CDPResponse<>>, path: NodePath<> | null };
+function f(request: http$IncomingMessage<>) {}
+a.reduce(
+  (b, c) => {
+    d;
+  },
+  (e: F<>),
+);
+a.reduce(
+  (b, c) => {
+    d;
+  },
+  (e: F<>[]),
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A<T> =
+  T<> extends (infer U)[]
+    ? U
+    : T extends (...args: any[]) => infer U
+      ? SomeReallyLongThingThatBreaksTheLine<U>
+      : T;
+type B<T> =
+  T extends U<>
+    ? SomeReallyLongThingThatBreaksTheLine<U>
+    : SomeReallyLongThingThatBreaksTheLineToo<T>;
+type C = $ReadOnlyArray<
+  Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<>,
+>;
+type D = { res: DeepReadOnly<CDPResponse<>>, path: NodePath<> | null };
+function f(request: http$IncomingMessage<>) {}
+a.reduce(
+  (b, c) => {
+    d;
+  },
+  (e: F<>),
+);
+a.reduce(
+  (b, c) => {
+    d;
+  },
+  (e: F<>[]),
+);
+
+===================== End =====================

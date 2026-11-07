@@ -173,6 +173,17 @@ impl File {
     pub fn read_to_end_into(&self, buf: &mut Vec<u8>) -> Maybe<usize> {
         read_fill_vec(buf, 8192, |dst, _| read(self.handle, dst))
     }
+    /// One `read()` into the spare capacity of `buf`, or into 8 KB if it has none. Returns the
+    /// bytes appended, which need not be all there is.
+    pub fn read_once_into(&self, buf: &mut Vec<u8>) -> Maybe<usize> {
+        let mut has_read = false;
+        read_fill_vec(buf, 8192, |dst, _| {
+            match std::mem::replace(&mut has_read, true) {
+                true => Ok(0),
+                false => read(self.handle, dst),
+            }
+        })
+    }
     pub fn read_to_end(&self) -> Maybe<Vec<u8>> {
         let mut v = Vec::new();
         // fstat-presized, pread-from-0; not a cursor read.

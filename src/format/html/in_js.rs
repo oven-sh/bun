@@ -13,6 +13,7 @@ use crate::ir::element::{Group, Interned, LineMode};
 use crate::ir::printer::PrinterOptions;
 use crate::js::context::JsFormatContext;
 use crate::js::print::template::write_embedded_template_expression;
+use crate::js::utils::typecast::is_cast_target_that_hides_its_kind;
 use crate::options::{HtmlRoot, HtmlWhitespaceSensitivity, LineEnding};
 use crate::prelude::*;
 use crate::text;
@@ -27,11 +28,16 @@ fn is_angular_component_template(parent: AstNodes<'_>) -> bool {
     crate::css::embed::is_angular_component_property(parent, b"template")
 }
 
-/// `` html`..` ``. `e` is a template and `parent` is its parent.
-fn has_html_tag<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool {
-    matches!(parent, AstNodes::TaggedTemplateExpression(tagged)
-        if matches!(tagged.kind(), ExprKind::TaggedTemplate(call)
-            if call.callee() != e && matches!(call.callee().kind(), ExprKind::Ident(_)) && call.callee().text() == b"html"))
+/// The tag of `` html`..` ``. `e` is a template and `parent` is its parent.
+fn html_tag<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> Option<Expr<'a>> {
+    let AstNodes::TaggedTemplateExpression(tagged) = parent else {
+        return None;
+    };
+    let ExprKind::TaggedTemplate(call) = tagged.kind() else {
+        return None;
+    };
+    let tag = call.callee();
+    (tag != e && matches!(tag.kind(), ExprKind::Ident(_)) && tag.text() == b"html").then_some(tag)
 }
 
 /// True if the template `e` might be formatted as HTML. Of the comments that mark a template as HTML, this only
@@ -47,7 +53,7 @@ pub(crate) fn can_be_html(e: Expr<'_>) -> bool {
         before = outside.trim_ascii_end();
     }
     let parent = e.ast_parent();
-    has_html_tag(e, parent)
+    html_tag(e, parent).is_some()
         || is_angular_component_template(parent)
         || before.ends_with(b"/* HTML */")
 }
@@ -63,21 +69,28 @@ fn parser_of<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> Opti
         return None;
     }
     let parent = e.ast_parent();
-    let parser = if has_html_tag(e, parent)
-        || crate::graphql::embed::has_language_comment(e, parent, b" HTML ", f)
-    {
-        Parser::Html
-    } else if is_angular_component_template(parent) {
-        Parser::Angular
-    } else {
-        return None;
-    };
+    // A tag in a type cast is no name.
+    let has_html_tag =
+        html_tag(e, parent).is_some_and(|tag| !is_cast_target_that_hides_its_kind(tag, f));
+    let parser =
+        if has_html_tag || crate::graphql::embed::has_language_comment(e, parent, b" HTML ", f) {
+            Parser::Html
+        } else if is_angular_component_template(parent) {
+            Parser::Angular
+        } else {
+            return None;
+        };
     // CSS and GraphQL take precedence.
     let is_in_another_language =
-        crate::css::embed::is_embed_css(e) || crate::graphql::embed::is_embed_graphql(e, f);
+        crate::css::embed::is_embed_css_in(e, f) || crate::graphql::embed::is_embed_graphql(e, f);
     (!is_in_another_language
         && (0..template.quasi_count()).all(|index| template.cooked(index).is_some()))
     .then_some(parser)
+}
+
+/// True if `embed` treats the template `e` as HTML.
+pub(crate) fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> bool {
+    parser_of(e, template, f).is_some()
 }
 
 /// Returns the text of `template` with placeholders. `counter` distinguishes them from the placeholders of an outer
@@ -114,8 +127,25 @@ fn text_with_placeholders(template: Template<'_>, counter: u32) -> Vec<u8> {
     }
 }
 
+/// Returns the options for the text of a template in the file `path`, which is formatted with `options`.
+pub(crate) fn options_in_template(
+    options: &FormatOptions,
+    path: &[u8],
+    parser: Parser,
+) -> FormatOptions {
+    FormatOptions {
+        html_template_depth: options.html_template_depth.saturating_add(1),
+        parser: None,
+        filepath: Some(path.into()),
+        range_start: None,
+        range_end: None,
+        cursor_offset: None,
+        ..super::options_of_host(options, parser)
+    }
+}
+
 /// Returns the line break between the backticks and the text, or `None` if there's none.
-fn surrounding_line(text: &[u8], options: &FormatOptions) -> Option<LineMode> {
+pub(crate) fn surrounding_line(text: &[u8], options: &FormatOptions) -> Option<LineMode> {
     if options.html_whitespace_sensitivity == HtmlWhitespaceSensitivity::Ignore {
         return Some(LineMode::Hard);
     }
@@ -348,15 +378,7 @@ pub(crate) fn write_template<'a>(
         }
         None => text,
     };
-    let options = FormatOptions {
-        html_template_depth: counter.saturating_add(1),
-        parser: None,
-        filepath: Some(f.filepath().into()),
-        range_start: None,
-        range_end: None,
-        cursor_offset: None,
-        ..super::options_of_host(f.options(), parser)
-    };
+    let options = options_in_template(f.options(), f.filepath(), parser);
     let line = surrounding_line(&text, &options);
     // The printer decides where the lines start. But languages that are printed separately (JSON, YAML, ..) need to
     // know the available width up front, so assume the indentation the file would have if it had been formatted before.

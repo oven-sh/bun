@@ -1,0 +1,7596 @@
+//! A recursive descent parser for JavaScript with JSX. It builds the tree that Babel would build (as Prettier sees it after
+//! its post-processing), because Prettier's layout rules and comment placement depend on node kinds and ranges.
+//! It accepts a superset of the language: a formatter has no use for early errors.
+
+use crate::arena::SUB_SHIFT;
+use crate::ast::{
+    EXT_AT, F_ACCESSOR, F_AFTER_EMPTY, F_ANY_WIDTH, F_ASYNC, F_AWAIT, F_CHAIN, F_COMPUTED,
+    F_DECIDED, F_DEFINITE, F_DELEGATE, F_ESCAPE, F_EXPR_BODY, F_EXT, F_EXTRA, F_GENERATOR, F_LINES,
+    F_MOVED, F_OPTIONAL, F_PAREN, F_PREFIX, F_SELF_CLOSING, F_SHORTHAND, F_STANDS, F_STATIC,
+    IK_SHIFT, IK_TYPE, M_CONSTRUCTOR, M_GET, M_MASK, M_METHOD, M_SET, MOD_DECLARE, P_DEFER,
+    P_MODULE, P_NONE, P_SOURCE, V_AWAIT_USING, V_CONST, V_LET, V_USING, V_VAR, k,
+};
+use crate::fast::{
+    AFTER_BLOCK, AFTER_REFUSED, BLOCK_ARROW, BLOCK_ASYNC, BLOCK_CLASS, BLOCK_CONSTRUCTOR,
+    BLOCK_DERIVED, BLOCK_FUNCTION, BLOCK_INTERFACE, BLOCK_JSX, BLOCK_OBJECT, JSX_ELEMENT,
+    JSX_REFUSED, MEMBER_OF_CLASS, STARTS_READY, STARTS_READY_MEMBER,
+};
+use crate::holes::FILTER_END_OF_LINE;
+use crate::lang::lang;
+use crate::lexer::{
+    C_END, C_FLAGS, C_ID_PART, C_START, C_STRIDE, CF_BLOCK, CF_CLAIMED, CT, PREC, Saved, kw, tk,
+};
+use crate::mode::SINGLE_JSX_IN_MARKDOWN;
+use crate::options::{EOL_LF, QUOTE_PROPS_CONSISTENT};
+use crate::parse::flow::ParseFlow;
+use crate::parse::typescript::{
+    PARAMETERS_OF_CONSTRUCTOR, PARAMETERS_OF_METHOD, PARAMETERS_PLAIN, ParseTypescript,
+};
+use crate::{Bytes, Numbers, Quick, R, Stop, Words, larger, rare, why, zeros};
+
+/// What the parser knows, but for what is in lists ([`ParseStacks`]). A reading of the text on trial goes back to a copy of it: see [`Trial`].
+#[derive(Clone, Copy)]
+pub(crate) struct Parse {
+    // ---- context
+    pub(crate) in_function: i32,
+    pub(crate) in_async: i32,
+    pub(crate) in_generator: i32,
+    /// bit 0: `in` is no operator here (the head of a `for`); bit 1: NO_IN_FSHARP_BODY. Whatever is in brackets starts with 0.
+    pub(crate) no_in: i32,
+    pub(crate) typed: i32,
+    /// Is `<a>` an element? Not in a .ts file.
+    pub(crate) jsx_enabled: bool,
+    /// A .cjs or .cts file: `await` is a name outside of async functions.
+    pub(crate) is_common_js: bool,
+    // ---- trying a reading of the text. While this is not 0, a syntax error is thrown without a message: whoever tries catches it.
+    pub(crate) speculating: i32,
+    /// TypeScript and Flow: the next call of parse_maybe_assign() parses something that may turn out to be a parameter of an arrow
+    /// function, so `?` and `: type` can follow its left side.
+    pub(crate) paren_item: i32,
+    /// Where the last statement that semicolon() ended stops, without the semicolon.
+    pub(crate) content_end: i32,
+    /// The statement that ended the directive prologue.
+    pub(crate) pending_statement: i32,
+    /// Whoever calls for a block, or the body of a class, and goes on reading bytes behind it sets this: the lexer then stays at the end of the block and does not look at what follows.
+    pub(crate) lexer_stays: bool,
+    // ------------------------------------------------------------------------------------------------------- statements
+    /// Simple statements are read, and printed, without tokens and nodes: see fast.rs.
+    pub(crate) reads_ahead: bool,
+    pub(crate) top_level_await: bool,
+    /// How many lists are open whose items are indented: blocks, bodies of classes, objects, arguments and arrays that start on a new line.
+    pub(crate) list_depth: i32,
+    /// How many comments there were when claim_comments() looked last.
+    pub(crate) comments_seen: i32,
+    /// Where a statement starts that fast.rs has looked at and cannot read.
+    pub(crate) refused_at: i32,
+    // ---- What stands in the source as it will be printed is one text, however many lines it has: statements and members that fast.rs has read and not changed, one behind the other, each
+    /// indented as the lists around it say, with no more than one empty line between two of them; and a statement with blocks, if all that is in the blocks stands like that.
+    /// Whether the lists are right about the indentation is for the printer to say: see standing() of doc.rs.
+    pub(crate) joins_lines: bool,
+    /// The item that stands and was pushed last. It counts if it is the last item of the list at hand.
+    pub(crate) last_standing: i32,
+    /// list_depth for the statements of the cases of the innermost `switch`: there a comment can belong to the next `case`.
+    pub(crate) cases_depth: i32,
+    /// What parse_statement_with_blocks() found: the statement stands, from its start to where the function says that it ends. It has not been pushed then.
+    pub(crate) wrap_stands: bool,
+    /// from the last `}` on
+    pub(crate) wrap_last_length: i32,
+    pub(crate) wrap_kind: i32,
+    /// F_DECIDED, if that goes for something in the blocks
+    pub(crate) wrap_decided: i32,
+    /// How many of `ParseStacks::known_blocks` count. Those of the statement that is parsed again start at `known_blocks_base`, in the order of the text. What is
+    /// parsed again is outside of all of them, and what is in it is between two braces that none of them is between: the blocks of the statements around it are not met.
+    pub(crate) known_blocks_count: i32,
+    pub(crate) known_blocks_base: i32,
+    /// The first one that does not start before the place that was asked about last.
+    pub(crate) known_blocks_next: i32,
+    /// Where the last block of the statement that parse_statement_with_blocks() has at hand ends.
+    pub(crate) block_end: i32,
+    /// Decorators that stood before `abstract class` or `declare class`.
+    pub(crate) pending_decorators: i32,
+    // ---------------------------------------------------------------------------------------------------------- classes
+    /// The call of parse_subscripts() that comes next is for a superclass or the like: a `{` behind it starts something else than a record.
+    pub(crate) no_record_expression: i32,
+    /// The call of parse_subscripts() that comes next is for a decorator.
+    pub(crate) in_decorator: i32,
+    /// What a class extends is read, however deep in it: Flow has no `match` there.
+    pub(crate) in_superclass: bool,
+    /// Set when an item between parentheses got a `?` or a type: an arrow has to follow.
+    pub(crate) saw_typed_item: i32,
+    /// TypeScript, Flow: the arguments that are parsed next may be the parameters of `async (..) => ..`
+    pub(crate) arguments_may_be_parameters: i32,
+    /// Among the arguments that were parsed last is one with a `?` or a type.
+    pub(crate) arguments_were_typed: bool,
+    /// The object that is parsed next is known to be a pattern.
+    pub(crate) object_is_binding: bool,
+    /// Set by parse_attributes: F_EXTRA when the keyword is `assert`.
+    pub(crate) attributes_flag: i32,
+    // ---- for the rules that are about more than the order of the tokens
+    pub(crate) place: Place,
+    /// How many `await` and `yield` expressions there have been, but for those in the bodies of functions that have ended.
+    pub(crate) suspensions: i32,
+    /// PARAMETERS_PLAIN ..: whose parameters are read.
+    pub(crate) parameters_owner: i32,
+    /// Where the first `default` stands that the file exports, or 0.
+    pub(crate) default_export_at: i32,
+    /// The names that are declared next are those of `let`, `const` or `using`, in a language in which `let` cannot be one of them.
+    pub(crate) binds_lexically: bool,
+    /// For parse_class_body(): the class has a superclass.
+    pub(crate) next_class_is_derived: bool,
+    /// For parse_paren_and_distinguish(): the parentheses stand where no arrow function can start, so nobody takes them for the parameters of one.
+    pub(crate) is_operand: bool,
+    /// How often `await` has been read as a name: the file is no module.
+    pub(crate) await_names: i32,
+    /// Something has been read that only a module can have: `await a`, `for await` or `using` outside of all functions.
+    pub(crate) needs_module: bool,
+}
+
+/// Where the parser is.
+#[derive(Clone, Copy)]
+pub(crate) struct Place {
+    /// How many loops are open in the function at hand (A_LOOP each) and how many `switch`es (A_SWITCH each).
+    pub(crate) jumps: u64,
+    /// `labels` from here on belong to the function at hand ..
+    pub(crate) labels_base: i32,
+    /// .. and this is where they end.
+    pub(crate) labels_top: i32,
+    /// What `this` belongs to: SCOPE_*.
+    pub(crate) scope: i32,
+    /// The class at hand has a superclass.
+    pub(crate) is_derived: bool,
+    /// Where its constructor starts, or 0.
+    pub(crate) constructor_at: i32,
+    /// `private_names` from here on are its own ..
+    pub(crate) private_base: i32,
+    /// .. and this is where they end.
+    pub(crate) private_top: i32,
+    /// Between the parentheses around the parameters of a function, outside of any function in there.
+    pub(crate) in_parameters: bool,
+    /// How many things have been read in objects that only a pattern can have: `{ a = 1 }`, a second `__proto__: b`.
+    pub(crate) only_for_patterns: i32,
+}
+
+/// What a function leaves behind when it is entered: see enter_function().
+#[derive(Clone, Copy)]
+pub(crate) struct Outside {
+    jumps: u64,
+    labels_base: i32,
+    in_parameters: bool,
+    parameters_owner: i32,
+    suspensions: i32,
+}
+
+/// the bytes of `this`
+const THIS: i32 = 0x73696874;
+
+/// In the lower half what `continue` can go to, in the upper half what `break` can go to.
+const A_LOOP: u64 = (1 << 32) | 1;
+const A_SWITCH: u64 = 1 << 32;
+
+/// outside of all functions but arrow functions
+pub(crate) const SCOPE_TOP: i32 = 0;
+pub(crate) const SCOPE_FUNCTION: i32 = 1;
+/// a method of a class or an object, a getter, a setter, the constructor of a class without a superclass
+pub(crate) const SCOPE_METHOD: i32 = 2;
+/// the constructor of a class with a superclass
+pub(crate) const SCOPE_DERIVED_CONSTRUCTOR: i32 = 3;
+/// the value of a property of a class
+pub(crate) const SCOPE_FIELD: i32 = 4;
+pub(crate) const SCOPE_STATIC_BLOCK: i32 = 5;
+
+const NOWHERE: Place = Place {
+    jumps: 0,
+    labels_base: 0,
+    labels_top: 0,
+    scope: SCOPE_TOP,
+    is_derived: false,
+    constructor_at: 0,
+    private_base: 0,
+    private_top: 0,
+    in_parameters: false,
+    only_for_patterns: 0,
+};
+impl Parse {
+    pub(crate) fn new() -> Self {
+        Self {
+            in_function: 0,
+            in_async: 0,
+            in_generator: 0,
+            no_in: 0,
+            typed: 0,
+            jsx_enabled: true,
+            is_common_js: false,
+            speculating: 0,
+            paren_item: 0,
+            content_end: 0,
+            pending_statement: 0,
+            lexer_stays: false,
+            reads_ahead: false,
+            top_level_await: false,
+            list_depth: 0,
+            comments_seen: 0,
+            refused_at: 0,
+            joins_lines: false,
+            last_standing: 0,
+            cases_depth: -1,
+            wrap_stands: false,
+            wrap_last_length: 0,
+            wrap_kind: 0,
+            wrap_decided: 0,
+            known_blocks_count: 0,
+            known_blocks_base: 0,
+            known_blocks_next: 0,
+            block_end: 0,
+            pending_decorators: 0,
+            no_record_expression: 0,
+            in_decorator: 0,
+            in_superclass: false,
+            saw_typed_item: 0,
+            arguments_may_be_parameters: 0,
+            arguments_were_typed: false,
+            object_is_binding: false,
+            attributes_flag: 0,
+            place: NOWHERE,
+            suspensions: 0,
+            parameters_owner: PARAMETERS_PLAIN,
+            default_export_at: 0,
+            binds_lexically: false,
+            next_class_is_derived: false,
+            is_operand: false,
+            await_names: 0,
+            needs_module: false,
+        }
+    }
+}
+
+/// The lists of the parser. How much of each counts is in [`Parse`], so that whoever goes back to an earlier state has no need to look at them.
+pub(crate) struct ParseStacks {
+    /// Blocks that have been read, for a parser that comes by a second time: see parse_statement_with_blocks().
+    pub(crate) known_blocks: Vec<i32>,
+    /// The labels that are in force, each a start and an end in the text, and 1 if it stands in front of a loop.
+    pub(crate) labels: Vec<i32>,
+    /// The private names that the classes at hand have declared so far: a start, an end, and PRIVATE_*.
+    pub(crate) private_names: Vec<i32>,
+    /// The trials that have failed inside of another trial: see is_known_to_fail(). A table of keys, 0 where there is none.
+    failed_trials: Vec<u64>,
+    failed_trials_count: i32,
+}
+impl ParseStacks {
+    pub(crate) fn new() -> Self {
+        Self {
+            known_blocks: zeros(16),
+            labels: Vec::new(),
+            private_names: Vec::new(),
+            failed_trials: Vec::new(),
+            failed_trials_count: 0,
+        }
+    }
+}
+
+/// What a reading of the text on trial goes back to if it fails: all that the lexer and the parsers know, and how much there is of what they have made.
+/// Whatever is added to [`Parse`], [`ParseFlow`] or [`ParseTypescript`] is part of it.
+#[derive(Clone, Copy)]
+pub(crate) struct Trial {
+    lexer: Saved,
+    parse: Parse,
+    flow: ParseFlow,
+    typescript: ParseTypescript,
+    nodes: i32,
+    list_items: i32,
+    texts: i32,
+}
+
+// The trials that can hold one another, so that what fails is read twice at every level.
+pub(crate) const TRIAL_RETURN_TYPE: u64 = 1;
+pub(crate) const TRIAL_TYPE_ARGUMENTS: u64 = 2;
+pub(crate) const TRIAL_GENERIC_ARROW: u64 = 3;
+
+/// By the kind of method: M_METHOD, M_GET, M_SET, M_CONSTRUCTOR.
+static PARAMETERS_OF: [i32; 4] = [
+    PARAMETERS_OF_METHOD,
+    PARAMETERS_PLAIN,
+    PARAMETERS_OF_METHOD,
+    PARAMETERS_OF_CONSTRUCTOR,
+];
+
+/// Where `key` is in the table, or where it goes. The length of the table is a power of two, and half of it is free.
+fn slot_of_trial(table: &[u64], key: u64) -> usize {
+    let mask = table.len().wrapping_sub(1);
+    let mut slot = (key.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 32) as usize & mask;
+    while table.get(slot).is_some_and(|&it| it != 0 && it != key) {
+        slot = (slot + 1) & mask;
+    }
+    slot
+}
+
+// ---- which language: 0 JavaScript, 1 TypeScript, 2 Flow
+pub(crate) const TYPED_TS: i32 = 1;
+pub(crate) const TYPED_FLOW: i32 = 2;
+impl Quick {
+    pub(crate) fn set_parser_mode(&mut self, language: i32, jsx: bool) {
+        self.parse.typed = language;
+        self.parse.jsx_enabled = jsx;
+    }
+
+    pub(crate) fn set_is_common_js(&mut self, value: bool) {
+        self.parse.is_common_js = value;
+    }
+
+    /// Forgets the comments from `p` on: the lexer is about to read them a second time.
+    pub(crate) fn drop_comments_from(&mut self, p: i32) {
+        let mut count = self.lexer.c_count;
+        while count > self.lexer.c_base && self.lexer.c.at((count - 1) * C_STRIDE + C_START) >= p {
+            count -= 1;
+        }
+        self.set_comment_count(count);
+    }
+
+    /// A reading of the text starts that may have to be given up.
+    #[inline]
+    pub(crate) fn begin_trial(&self) -> Trial {
+        Trial {
+            lexer: self.save(),
+            parse: self.parse,
+            flow: self.parse_flow,
+            typescript: self.parse_typescript,
+            nodes: self.arena.n_pos,
+            list_items: self.arena.ls_pos,
+            texts: self.text.gen_pos,
+        }
+    }
+
+    /// The reading has failed: everything is as it was when it started. The nodes, the comments and the texts that it has made are gone, and nobody knows them: a node
+    /// that is older has at most been told that one of them is its parent, and whoever takes it next tells it otherwise.
+    pub(crate) fn abandon(&mut self, trial: &Trial) -> R<()> {
+        let read = (self.lexer.pos - trial.lexer.pos).max(0);
+        let made = self.arena.n_pos - trial.nodes;
+        self.restore(trial.lexer);
+        self.parse = trial.parse;
+        self.parse_flow = trial.flow;
+        self.parse_typescript = trial.typescript;
+        self.arena.n_pos = trial.nodes;
+        self.arena.ls_pos = trial.list_items;
+        self.text.gen_pos = trial.texts;
+        self.waste(read + made)
+    }
+
+    /// What the outcome of a trial that starts at the current token depends on.
+    fn key_of_trial(&self, kind: u64) -> u64 {
+        ((self.lexer.tok_start as u64) << 8)
+            | kind
+            | ((self.parse.in_function as u64 & 1) << 2)
+            | ((self.parse.in_async as u64 & 1) << 3)
+            | ((self.parse.in_generator as u64 & 1) << 4)
+            | ((self.parse.no_in as u64 & 7) << 5)
+    }
+
+    /// Has this trial failed before? What is read on trial and given up is read again, with all the trials in it. Without this each level of
+    /// `<T>(a = <T>(a = <T>(a = 1)))` doubles the work.
+    #[inline]
+    pub(crate) fn is_known_to_fail(&self, kind: u64) -> bool {
+        self.parse_stacks.failed_trials_count != 0 && self.has_failed(self.key_of_trial(kind))
+    }
+
+    #[cold]
+    fn has_failed(&self, key: u64) -> bool {
+        let table = &self.parse_stacks.failed_trials;
+        table.get(slot_of_trial(table, key)) == Some(&key)
+    }
+
+    /// abandon() for a trial of which is_known_to_fail() is asked.
+    pub(crate) fn abandon_for_good(&mut self, trial: &Trial, kind: u64) -> R<()> {
+        self.abandon(trial)?;
+        // nobody comes by a second time unless another trial is under way
+        if self.parse.speculating == 0 {
+            return Ok(());
+        }
+        let key = self.key_of_trial(kind);
+        let count = self.parse_stacks.failed_trials_count;
+        if (count + 1) * 2 > self.parse_stacks.failed_trials.len() as i32 {
+            let Some(length) = larger(
+                self.parse_stacks.failed_trials.len() as i32,
+                (count + 1) * 2,
+            ) else {
+                return Err(self.stop(why::TOO_LARGE));
+            };
+            let old = std::mem::replace(&mut self.parse_stacks.failed_trials, zeros(length));
+            let table = &mut self.parse_stacks.failed_trials;
+            for key in old.into_iter().filter(|&key| key != 0) {
+                let slot = slot_of_trial(table, key);
+                if let Some(slot) = table.get_mut(slot) {
+                    *slot = key;
+                }
+            }
+        }
+        let table = &mut self.parse_stacks.failed_trials;
+        let slot = slot_of_trial(table, key);
+        if let Some(slot) = table.get_mut(slot) {
+            self.parse_stacks.failed_trials_count += (*slot == 0) as i32;
+            *slot = key;
+        }
+        Ok(())
+    }
+
+    fn forget_failed_trials(&mut self) {
+        if self.parse_stacks.failed_trials_count != 0 {
+            self.parse_stacks.failed_trials.fill(0);
+            self.parse_stacks.failed_trials_count = 0;
+        }
+    }
+
+    /// The body of a function starts: no loop and no label outside of it counts in there, and what suspends it does not suspend what is around it.
+    #[inline]
+    pub(crate) fn enter_function(&mut self) -> Outside {
+        let place = &mut self.parse.place;
+        let outside = Outside {
+            jumps: place.jumps,
+            labels_base: place.labels_base,
+            in_parameters: place.in_parameters,
+            parameters_owner: self.parse.parameters_owner,
+            suspensions: self.parse.suspensions,
+        };
+        place.jumps = 0;
+        place.labels_base = place.labels_top;
+        place.in_parameters = false;
+        self.parse.parameters_owner = PARAMETERS_PLAIN;
+        return outside;
+    }
+
+    #[inline]
+    pub(crate) fn leave_function(&mut self, outside: Outside) {
+        self.parse.place.jumps = outside.jumps;
+        self.parse.place.labels_base = outside.labels_base;
+        self.parse.place.in_parameters = outside.in_parameters;
+        self.parse.parameters_owner = outside.parameters_owner;
+        self.parse.suspensions = outside.suspensions;
+    }
+
+    pub(crate) fn set_speculating(&mut self, depth: i32) {
+        self.parse.speculating = depth;
+    }
+
+    pub(crate) fn unexpected(&self) -> Stop {
+        if self.parse.speculating != 0 {
+            return self.stop(why::SYNTAX);
+        }
+        return self.fail(self.lexer.tok_start);
+    }
+
+    // The context: four small numbers in one.
+    pub(crate) fn save_context(&self) -> i32 {
+        return self.parse.in_function
+            | (self.parse.in_async << 1)
+            | (self.parse.in_generator << 2)
+            | (self.parse.no_in << 4)
+            | (self.parse.list_depth << 8);
+    }
+
+    pub(crate) fn restore_context(&mut self, saved: i32) {
+        self.parse.in_function = saved & 1;
+        self.parse.in_async = (saved >> 1) & 1;
+        self.parse.in_generator = (saved >> 2) & 1;
+        self.parse.no_in = (saved >> 4) & 7;
+        self.parse.list_depth = saved >> 8;
+        self.parse.paren_item = 0;
+    }
+}
+// A bit of `no_in`, which is put aside and cleared wherever brackets open: between the `?` and the `:` of a conditional expression,
+// where `(a): b => c` needs a second look.
+pub(crate) const NO_IN_CONSEQUENT: i32 = 4;
+impl Quick {
+    pub(crate) fn expect(&mut self, type_: i32) -> R<()> {
+        if self.lexer.tok != type_ {
+            return Err(self.unexpected());
+        }
+        self.next()?;
+        Ok(())
+    }
+
+    pub(crate) fn eat(&mut self, type_: i32) -> R<bool> {
+        if self.lexer.tok == type_ {
+            self.next()?;
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+
+    pub(crate) fn is_word(&self) -> bool {
+        return self.lexer.tok == tk::Name || self.lexer.tok >= tk::In;
+    }
+
+    pub(crate) fn is_kw(&self, kw: i32) -> bool {
+        return self.lexer.tok == tk::Name && self.lexer.tok_kw == kw;
+    }
+
+    /// Consumes a semicolon, written or inserted.
+    /// The token is a `;` or the `,` of a member of a type. Where the empty lines around it and the comments behind it go, and what these
+    /// count for, depends on where the node before it is taken to end. Code without semicolons has `;[a].b()` and `;(a)()`, which are plain.
+    #[inline(always)]
+    pub(crate) fn check_semicolon_at_line_start(&self) -> R<()> {
+        if self.lexer.tok_nl != 0 {
+            let next = self.t.at(self.lexer.tok_end);
+            if next <= 32 || next == 47 || next == 59 {
+                return Err(self.rare(rare::SEMICOLON));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn semicolon(&mut self) -> R<()> {
+        self.parse.content_end = self.lexer.prev_end;
+        if self.lexer.tok == tk::Semi {
+            self.check_semicolon_at_line_start()?;
+            self.next()?;
+        } else if self.lexer.tok != tk::BraceR
+            && self.lexer.tok != tk::EOF
+            && self.lexer.tok_nl == 0
+        {
+            return Err(self.unexpected());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn set_kind(&mut self, n: i32, kind: i32) {
+        self.n.put(n, (self.n.at(n) & 0x00ffff00) | kind);
+    }
+
+    /// A node without children that has room for a type annotation and decorators (F_EXT).
+    pub(crate) fn leaf_with_room(&mut self, head: i32, start: i32, end: i32) -> i32 {
+        let n = self.node_raw(head, start, end, 2);
+        self.n.put(n + 4, 0);
+        self.n.put(n + 5, 0);
+        return n;
+    }
+
+    #[inline]
+    pub(crate) fn identifier(&mut self) -> R<i32> {
+        // `let` and `async` are the two names that can need parentheses
+        let head = k::Identifier
+            | self.lexer.tok_flags
+            | (if self.lexer.tok_kw == kw::Let || self.lexer.tok_kw == kw::Async {
+                if self.lexer.tok_kw == kw::Let {
+                    return Err(self.rare(rare::LET));
+                }
+                F_EXTRA
+            } else {
+                0
+            });
+        let n = if self.parse.typed == 0 {
+            self.node0(head, self.lexer.tok_start, self.lexer.tok_end)
+        } else {
+            self.leaf_with_room(head, self.lexer.tok_start, self.lexer.tok_end)
+        };
+        self.next()?;
+        return Ok(n);
+    }
+
+    /// Is the word that `kw` (not 0) stands for no name in this place?
+    #[cold]
+    pub(crate) fn is_reserved_here(&mut self, kw: i32) -> bool {
+        match kw {
+            kw::Enum => true,
+            kw::Await => {
+                self.parse.await_names += 1;
+                self.parse.in_async != 0
+                    || self.dialect.module_only
+                    || self.dialect.declaration_file
+                    || self.parse.needs_module
+                    || self.parse.place.scope == SCOPE_STATIC_BLOCK
+                    || self.may_be_operator_for_type_script()
+                    // `await ** a`
+                    || (self.parse.typed == TYPED_TS && {
+                        let p = self.next_char_index(self.lexer.tok_end);
+                        self.t.at(p) == 42 && self.t.at(p + 1) == 42
+                    })
+            }
+            kw::Yield => self.parse.in_generator != 0 || self.may_be_operator_for_type_script(),
+            _ => false,
+        }
+    }
+
+    /// The current token is `await` or `yield`. TypeScript's parser takes it for the operator wherever a word, a number or a string follows on its line.
+    fn is_operator_for_type_script(&self) -> bool {
+        let c = self.t.at(self.blanks(self.lexer.tok_end));
+        self.parse.typed == TYPED_TS
+            && ((CT.at(c) & C_ID_PART) != 0 || c == 34 || c == 39 || c == 92)
+    }
+
+    /// .. or a block comment, behind which anything may follow.
+    fn may_be_operator_for_type_script(&self) -> bool {
+        let p = self.blanks(self.lexer.tok_end);
+        self.is_operator_for_type_script()
+            || (self.parse.typed == TYPED_TS && self.t.at(p) == 47 && self.t.at(p + 1) == 42)
+    }
+
+    /// A name that is bound or read.
+    pub(crate) fn parse_ident(&mut self) -> R<i32> {
+        if self.lexer.tok != tk::Name {
+            return Err(self.unexpected());
+        }
+        if self.lexer.tok_kw != 0 && self.is_reserved_here(self.lexer.tok_kw) {
+            return Err(self.text_refuse());
+        }
+        return self.identifier();
+    }
+
+    /// After a dot or as a key: any word.
+    pub(crate) fn parse_ident_name(&mut self) -> R<i32> {
+        if !self.is_word() {
+            return Err(self.unexpected());
+        }
+        return self.identifier();
+    }
+
+    // ---------------------------------------------------------------------------------------------------------- program
+    pub(crate) fn parse_program(&mut self) -> R<i32> {
+        self.reserve_ast((self.text.src_end - self.text.src_start) * 2 + 1024);
+        self.reset_lexer()?;
+        self.parse.no_in = 0;
+        self.parse.in_generator = 0;
+        self.parse.in_async = 0;
+        self.parse.in_function = 0;
+        self.forget_place();
+        self.reset_typed();
+        self.parse.known_blocks_count = 0;
+        self.parse.known_blocks_base = 0;
+        self.parse.known_blocks_next = 0;
+        self.forget_failed_trials();
+        self.parse.refused_at = 0;
+        self.parse.list_depth = self.options.indentation;
+        // (a syntax error can have left these as they were)
+        self.parse.lexer_stays = false;
+        self.parse.cases_depth = -1;
+        self.parse.last_standing = 0;
+        self.parse.comments_seen = self.lexer.c_count;
+        self.forget_source_unit();
+        self.set_jsx_is_on(self.parse.jsx_enabled);
+        self.parse.reads_ahead = self.options.short_cuts
+            && self.options.guessing
+            && (self.doc.text_filter == 0 || self.doc.text_filter == FILTER_END_OF_LINE)
+            && self.options.semi
+            && !self.options.operator_position_start
+            && self.options.quote_props != QUOTE_PROPS_CONSISTENT
+            && (self.mode.single_statement_mode == 0
+                || self.mode.single_statement_mode == SINGLE_JSX_IN_MARKDOWN);
+        self.parse.top_level_await =
+            !self.parse.is_common_js && (self.parse.typed != TYPED_FLOW || self.mode.is_babel_flow);
+        // (MDX looks at each statement)
+        self.parse.joins_lines = self.parse.reads_ahead
+            && self.doc.text_filter == 0
+            && self.options.end_of_line == EOL_LF
+            && !self.options.use_tabs
+            && self.mode.single_statement_mode == 0
+            && !self.options.is_mdx_es_syntax;
+        self.set_may_break_lines(self.parse.joins_lines);
+        self.next()?;
+        let mut i = self.lexer.c_base;
+        while i < self.lexer.c_count {
+            let at = self.lexer.c.at(i * C_STRIDE + C_START);
+            if self.t.at(at + 2) == 47
+                && self.t.at(at + 1) == 47
+                && !self.is_valid_if_reference(at + 3, self.lexer.c.at(i * C_STRIDE + C_END))
+            {
+                return Err(self.fail(at));
+            }
+            i += 1;
+        }
+        let directives = self.parse_directives()?;
+        let mark = self.arena.ls_pos;
+        if self.parse.pending_statement != 0 {
+            self.list_push(self.parse.pending_statement);
+            self.parse.pending_statement = 0;
+        }
+        while self.lexer.tok != tk::EOF {
+            if self.lexer.c_count != self.parse.comments_seen {
+                self.claim_comments(false);
+            }
+            if self.parse.reads_ahead && STARTS_READY.at(self.lexer.tok) != 0 {
+                let behind = self.parse_statements_in_list()?;
+                if behind != 0 {
+                    self.catch_up(behind)?;
+                }
+            } else {
+                let v0 = self.parse_statement()?;
+                self.list_push(v0);
+            }
+        }
+        if self.parse.place.only_for_patterns != 0
+            || self.parse_typescript.stray_optional_types != 0
+            || (self.parse.needs_module && self.parse.await_names != 0)
+        {
+            return Err(self.text_refuse());
+        }
+        let body = self.list_finish(mark);
+        return Ok(self.node_ll(
+            k::Program,
+            self.text.src_start,
+            self.text.src_end,
+            directives,
+            body,
+        ));
+    }
+
+    /// T[p, end) is what follows the `///` of a comment in front of the first token. If it is `<reference ..`, TypeScript's parser, which reads every file first, wants to understand it.
+    #[cold]
+    fn is_valid_if_reference(&self, p: i32, end: i32) -> bool {
+        let text = self.t.sub(p, end);
+        let blanks = |at: usize| {
+            at + text
+                .get(at..)
+                .unwrap_or_default()
+                .iter()
+                .take_while(|c| **c == b' ' || **c == b'\t')
+                .count()
+        };
+        let name = |at: usize| {
+            let rest = text.get(at..).unwrap_or_default();
+            let length = rest
+                .iter()
+                .take_while(|c| c.is_ascii_alphabetic() || **c == b'-')
+                .count();
+            rest.get(..length).unwrap_or_default()
+        };
+        let mut at = blanks(0);
+        if text.get(at) != Some(&b'<') || !name(at + 1).eq_ignore_ascii_case(b"reference") {
+            return true;
+        }
+        at += "<reference".len();
+        let (mut has_types, mut has_other, mut has_no_default_lib) = (false, false, false);
+        let mut is_mode_valid = true;
+        loop {
+            at = blanks(at);
+            let key = name(at);
+            if key.is_empty() {
+                break;
+            }
+            at = blanks(at + key.len());
+            if text.get(at) != Some(&b'=') {
+                break;
+            }
+            at = blanks(at + 1);
+            let Some(&quote) = text.get(at).filter(|c| **c == b'"' || **c == b'\'') else {
+                break;
+            };
+            let rest = text.get(at + 1..).unwrap_or_default();
+            let Some(length) = bun_core::strings::index_of_char_usize(rest, quote) else {
+                break;
+            };
+            let value = rest.get(..length).unwrap_or_default();
+            // (of two with the same name the last one counts)
+            if key.eq_ignore_ascii_case(b"types") {
+                has_types = true;
+            } else if key.eq_ignore_ascii_case(b"lib") || key.eq_ignore_ascii_case(b"path") {
+                has_other = true;
+            } else if key.eq_ignore_ascii_case(b"resolution-mode") {
+                is_mode_valid = value == b"import" || value == b"require";
+            } else if key.eq_ignore_ascii_case(b"no-default-lib") {
+                has_no_default_lib = value == b"true";
+            }
+            at += length + 2;
+        }
+        has_no_default_lib || (has_types && is_mode_valid) || (!has_types && has_other)
+    }
+
+    pub(crate) fn reset_typed(&mut self) {
+        // a syntax error can have left any of these set
+        self.parse.pending_decorators = 0;
+        self.parse.no_record_expression = 0;
+        self.parse.in_decorator = 0;
+        self.parse.in_superclass = false;
+        self.parse.arguments_may_be_parameters = 0;
+        self.parse.saw_typed_item = 0;
+        self.parse.paren_item = 0;
+        self.parse.speculating = 0;
+        self.parse.object_is_binding = false;
+        self.parse.binds_lexically = false;
+        self.parse.next_class_is_derived = false;
+        self.parse.is_operand = false;
+        // whatever the language now: the last file may have been Flow, and have ended in the middle
+        self.ts_reset_context();
+    }
+
+    pub(crate) fn parse_directives(&mut self) -> R<i32> {
+        self.parse.pending_statement = 0;
+        if self.lexer.tok != tk::String {
+            return Ok(0);
+        }
+        let mark = self.arena.ls_pos;
+        while self.lexer.tok == tk::String {
+            let statement = self.parse_statement()?;
+            let expression = self.n.at(statement + 4);
+            if (self.n.at(statement) & 0xff) == k::ExpressionStatement
+                && (self.n.at(expression) & (0xff | F_PAREN)) == k::StringLiteral
+            {
+                self.set_kind_keep_flags(expression, k::DirectiveLiteral);
+                self.set_kind(statement, k::Directive);
+                self.list_push(statement);
+            } else {
+                self.parse.pending_statement = statement;
+                break;
+            }
+        }
+        return Ok(self.list_finish(mark));
+    }
+
+    pub(crate) fn set_kind_keep_flags(&mut self, n: i32, kind: i32) {
+        self.n.put(n, (self.n.at(n) & !0xff) | kind);
+    }
+
+    /// `{ directives statements }`; the current token is `{`.
+    pub(crate) fn parse_block_like(&mut self, kind: i32, with_directives: bool) -> R<i32> {
+        let start = self.lexer.tok_start;
+        let stays = self.parse.lexer_stays;
+        self.parse.lexer_stays = false;
+        if self.parse.known_blocks_count != 0 && self.lexer.tok == tk::BraceL {
+            let known = self.known_block_at(start);
+            if known != 0 {
+                self.set_pos(self.n.at(known + 2));
+                if !stays {
+                    self.next()?;
+                }
+                return Ok(known);
+            }
+        }
+        if self.lexer.tok != tk::BraceL {
+            return Err(self.unexpected());
+        }
+        self.parse.list_depth += 1;
+        let mut directives: i32 = 0;
+        let mut mark = self.arena.ls_pos;
+        // not 0: the lexer has been left behind, and this is the end of the last statement
+        let mut behind: i32 = 0;
+        let mut started = false;
+        if self.parse.reads_ahead && self.t.at(self.lexer.tok_end) == 10 {
+            let mut read = self.read_next_statement_of(
+                self.lexer.tok_end,
+                self.parse.typed,
+                self.parse.in_async != 0
+                    || (self.parse.in_function == 0 && self.parse.top_level_await),
+                self.parse.list_depth.wrapping_mul(self.options.tab_width),
+            )?;
+            let mut from = self.lexer.tok_end;
+            if !read && self.fast.ready_start == 0 && self.parse.joins_lines {
+                let end = self.read_comments(
+                    from,
+                    self.parse.list_depth.wrapping_mul(self.options.tab_width),
+                    false,
+                );
+                if end != 0 {
+                    self.push_standing(
+                        self.fast.comments_start,
+                        end,
+                        self.fast.comments_last_length,
+                        k::None,
+                        0,
+                    );
+                    from = end;
+                    behind = end;
+                    read = self.read_next_statement(from)?;
+                }
+            }
+            if read {
+                behind = self.read_statements(self.fast.ready_start, from)?;
+                from = 0;
+            } else {
+                self.parse.refused_at = self.fast.ready_start;
+            }
+            if from == self.lexer.tok_end {
+                self.next()?;
+            } else {
+                started = true;
+            }
+        } else {
+            self.next()?;
+        }
+        if !started {
+            if with_directives {
+                directives = self.parse_directives()?;
+                mark = self.arena.ls_pos;
+                if self.parse.pending_statement != 0 {
+                    self.list_push(self.parse.pending_statement);
+                    self.parse.pending_statement = 0;
+                }
+            }
+        }
+        let end: i32;
+        loop {
+            if behind != 0 {
+                let brace = self.closing_brace_behind(behind);
+                if brace != 0 {
+                    end = brace + 1;
+                    break;
+                }
+                self.catch_up(behind)?;
+                behind = 0;
+            }
+            if self.lexer.tok == tk::BraceR {
+                end = self.lexer.tok_end;
+                break;
+            }
+            if self.lexer.tok == tk::EOF {
+                return Err(self.unexpected());
+            }
+            if self.lexer.c_count != self.parse.comments_seen {
+                self.claim_comments(false);
+            }
+            if self.parse.reads_ahead && STARTS_READY.at(self.lexer.tok) != 0 {
+                behind = self.parse_statements_in_list()?;
+            } else {
+                let v0 = self.parse_statement()?;
+                self.list_push(v0);
+            }
+        }
+        let body = self.list_finish(mark);
+        self.parse.list_depth -= 1;
+        self.set_pos(end);
+        if !stays {
+            self.next()?;
+        }
+        if kind == k::StaticBlock {
+            return Ok(self.node_l(kind, start, end, body));
+        }
+        return Ok(self.node_ll(kind, start, end, directives, body));
+    }
+
+    /// Where the `}` stands, if nothing but blanks and ends of lines comes before it behind p; else 0.
+    pub(crate) fn closing_brace_behind(&self, p: i32) -> i32 {
+        let mut q = p;
+        q = self.blank_lines_end(q);
+        return if self.t.at(q) == 125 { q } else { 0 };
+    }
+
+    /// The lexer was left behind. It goes on behind p, where the last thing that was read from the bytes ends.
+    pub(crate) fn catch_up(&mut self, p: i32) -> R<()> {
+        self.set_pos(p);
+        self.next()?;
+        Ok(())
+    }
+
+    /// A block whose statements somebody will look at.
+    pub(crate) fn parse_block_of_nodes(&mut self) -> R<i32> {
+        let saved = self.parse.reads_ahead;
+        self.parse.reads_ahead = false;
+        let v0 = (|| -> R<i32> {
+            return self.parse_block();
+        })();
+        self.parse.reads_ahead = saved;
+        return v0;
+    }
+
+    pub(crate) fn parse_block(&mut self) -> R<i32> {
+        return self.parse_block_like(k::BlockStatement, false);
+    }
+
+    pub(crate) fn enter_list(&mut self) {
+        self.parse.list_depth += 1;
+    }
+
+    pub(crate) fn leave_list(&mut self) {
+        self.parse.list_depth -= 1;
+    }
+
+    /// A statement with decorators has been read: it has to be a class.
+    pub(crate) fn decorated(&self, n: i32) -> R<i32> {
+        let k = self.n.at(n) & 0xff;
+        let d = if k == k::ExportNamedDeclaration || k == k::ExportDefaultDeclaration {
+            self.n.at(n + 4)
+        } else {
+            n
+        };
+        if d == 0 || (self.n.at(d) & 0xff) != k::ClassDeclaration {
+            return Err(self.fail(self.n.at(n + 1)));
+        }
+        return Ok(n);
+    }
+
+    /// The current token starts an item of a list of statements or members. The comments between the last token and this one become items of the list
+    /// themselves (K.ReadyComment), if each stands alone on its lines: Prettier gives them to the item that follows, and prints them in front of
+    /// it, each on lines of its own, with the empty lines of the source. So nobody has to find out where they belong. Those on the line of the last token
+    /// are not among them. All or none: "prettier-ignore" in any of them is about the item that follows.
+    pub(crate) fn claim_comments(&mut self, members: bool) {
+        if self.parse.joins_lines && self.parse.reads_ahead {
+            let end = self.read_comments(
+                if self.lexer.prev_end == self.text.src_start {
+                    self.text.src_start - 1
+                } else {
+                    self.lexer.prev_end
+                },
+                self.parse.list_depth.wrapping_mul(self.options.tab_width),
+                members,
+            );
+            if end != 0 {
+                self.drop_comments_from(self.lexer.prev_end);
+                self.parse.comments_seen = self.lexer.c_count;
+                self.push_standing(
+                    self.fast.comments_start,
+                    end,
+                    self.fast.comments_last_length,
+                    k::None,
+                    0,
+                );
+                return;
+            }
+        }
+        let count = self.lexer.c_count;
+        self.parse.comments_seen = count;
+        // (a comment in front of a template can say in which language that is)
+        if !self.parse.reads_ahead
+            || self.lexer.tok == tk::ParenL
+            || self.lexer.tok == tk::Semi
+            || self.t.at(self.lexer.tok_start) == 96
+        {
+            return;
+        }
+        let from = self.lexer.prev_end;
+        let mut first = count;
+        while first > self.lexer.c_base && self.lexer.c.at((first - 1) * C_STRIDE + C_START) >= from
+        {
+            first -= 1;
+        }
+        let mut claimed = count;
+        let mut i = first;
+        while i < count {
+            'c2: {
+                let s = self.lexer.c.at(i * C_STRIDE + C_START);
+                let mut b = s;
+                while self.t.at(b - 1) == 32 || self.t.at(b - 1) == 9 {
+                    b -= 1;
+                }
+                if self.t.at(b - 1) != 10 && self.t.at(b - 1) != 0 {
+                    // behind something on its line: the last token, or another comment
+                    if claimed != count {
+                        return;
+                    }
+                    break 'c2;
+                }
+                if claimed == count {
+                    claimed = i;
+                }
+                let mut v = s + 2;
+                if (self.lexer.c.at(i * C_STRIDE + C_FLAGS) & CF_BLOCK) != 0 {
+                    let mut e = self.lexer.c.at(i * C_STRIDE + C_END);
+                    while self.t.at(e) == 32 || self.t.at(e) == 9 {
+                        e += 1;
+                    }
+                    if self.t.at(e) != 10 {
+                        return;
+                    }
+                    // `/*:: ..` and `/*: ..` can be code
+                    if self.t.at(v) == 58 {
+                        return;
+                    }
+                    if self.t.at(v) == 42 {
+                        v += 1;
+                    }
+                }
+                while self.t.at(v) == 32 || self.t.at(v) == 9 || self.t.at(v) == 10 {
+                    v += 1;
+                }
+                if self.t.at(v) == 112 && self.text_is(v, v + 15, b"prettier-ignore") {
+                    // (what is printed as it is written is one item, which fast.rs would join with those that follow)
+                    self.parse.refused_at = self.lexer.tok_start;
+                    return;
+                }
+            }
+            i += 1;
+        }
+        let mut i = claimed;
+        while i < count {
+            let at = i * C_STRIDE;
+            let n = self.node_raw(
+                k::ReadyComment,
+                self.lexer.c.at(at + C_START),
+                self.lexer.c.at(at + C_END),
+                1,
+            );
+            self.n.put(n + 4, self.lexer.c.at(at + C_FLAGS));
+            let v0 = at + C_FLAGS;
+            self.lexer.c.put(v0, self.lexer.c.at(v0) | CF_CLAIMED);
+            self.list_push(n);
+            i += 1;
+        }
+    }
+
+    /// Pushes a statement of a list, where each starts a line of the output; and the simple statements that follow it, if it is one itself.
+    /// Returns 0 if the current token is what follows. Else the lexer has been left behind, and what is returned is where the last statement ends: see catch_up().
+    pub(crate) fn parse_statements_in_list(&mut self) -> R<i32> {
+        let start = self.lexer.tok_start;
+        if start == self.parse.refused_at
+            || !self.read_statement(
+                start,
+                self.parse.typed,
+                self.parse.in_async != 0
+                    || (self.parse.in_function == 0 && self.parse.top_level_await),
+                self.parse.list_depth.wrapping_mul(self.options.tab_width),
+            )?
+        {
+            let v0 = self.parse_statement()?;
+            self.list_push(v0);
+            return Ok(0);
+        }
+        return self.read_statements(start, self.lexer.prev_end);
+    }
+
+    /// fast.rs has read the statement at `start`; what stands in front of it ends at `behind`. Pushes it and those that follow, as far as fast.rs reads them. Returns what parse_statements_in_list() returns.
+    pub(crate) fn read_statements(&mut self, mut start: i32, mut behind: i32) -> R<i32> {
+        loop {
+            if self.fast.ready_block != 0 {
+                let last = self.parse.last_standing;
+                behind = self.parse_statement_with_blocks(start, behind, false)?;
+                if behind == 0 {
+                    return Ok(0);
+                }
+                self.parse.last_standing = last;
+                if self.parse.wrap_stands {
+                    self.push_standing(
+                        start,
+                        behind,
+                        self.parse.wrap_last_length,
+                        self.parse.wrap_kind,
+                        self.parse.wrap_decided,
+                    );
+                } else {
+                    self.parse.last_standing = 0;
+                }
+                if !self.read_next_statement_of(
+                    behind,
+                    self.parse.typed,
+                    self.parse.in_async != 0
+                        || (self.parse.in_function == 0 && self.parse.top_level_await),
+                    self.parse.list_depth.wrapping_mul(self.options.tab_width),
+                )? {
+                    if self.fast.ready_start != 0
+                        || !self.parse.joins_lines
+                        || self.parse.list_depth == self.parse.cases_depth
+                    {
+                        break;
+                    }
+                    let end = self.read_comments(
+                        behind,
+                        self.parse.list_depth.wrapping_mul(self.options.tab_width),
+                        false,
+                    );
+                    if end == 0 {
+                        break;
+                    }
+                    self.push_standing(
+                        self.fast.comments_start,
+                        end,
+                        self.fast.comments_last_length,
+                        k::None,
+                        0,
+                    );
+                    behind = end;
+                    if !self.read_next_statement(behind)? {
+                        break;
+                    }
+                }
+            } else {
+                if self.fast.ready_stands
+                    && self.parse.joins_lines
+                    && start + self.fast.ready_length == self.fast.ready_next
+                {
+                    self.push_standing(
+                        start,
+                        self.fast.ready_next,
+                        self.fast.ready_last_length,
+                        self.fast.ready_kind,
+                        0,
+                    );
+                } else if self.fast.ready_last_length != self.fast.ready_length {
+                    // lines that the reader has put together
+                    let n = self.node_raw(
+                        k::Ready
+                            | F_LINES
+                            | self.fast.ready_flags
+                            | (self.fast.ready_kind << SUB_SHIFT),
+                        start,
+                        self.fast.ready_end,
+                        4,
+                    );
+                    self.n.put(n + 4, self.fast.ready_text);
+                    self.n.put(n + 5, self.fast.ready_length);
+                    self.n.put(n + 6, self.fast.ready_column);
+                    self.n.put(n + 7, self.fast.ready_last_length);
+                    self.list_push(n);
+                    self.parse.last_standing = 0;
+                } else {
+                    let n = self.node_raw(
+                        k::Ready | self.fast.ready_flags | (self.fast.ready_kind << SUB_SHIFT),
+                        start,
+                        self.fast.ready_end,
+                        2,
+                    );
+                    self.n.put(n + 4, self.fast.ready_text);
+                    self.n.put(n + 5, self.fast.ready_length);
+                    self.list_push(n);
+                    self.parse.last_standing = 0;
+                }
+                behind = self.fast.ready_next;
+                self.parse.content_end = self.fast.ready_end;
+                if !self.read_next_statement(behind)? {
+                    if self.fast.ready_start != 0
+                        || !self.parse.joins_lines
+                        || self.parse.list_depth == self.parse.cases_depth
+                    {
+                        break;
+                    }
+                    let end = self.read_comments(
+                        behind,
+                        self.parse.list_depth.wrapping_mul(self.options.tab_width),
+                        false,
+                    );
+                    if end == 0 {
+                        break;
+                    }
+                    self.push_standing(
+                        self.fast.comments_start,
+                        end,
+                        self.fast.comments_last_length,
+                        k::None,
+                        0,
+                    );
+                    behind = end;
+                    if !self.read_next_statement(behind)? {
+                        break;
+                    }
+                }
+            }
+            start = self.fast.ready_start;
+        }
+        self.parse.refused_at = self.fast.ready_start;
+        return Ok(behind);
+    }
+
+    /// The item that fast.rs has read last stands: T[start, end), whose last line has `last_length` bytes. It goes on the text before it, or becomes a node.
+    #[inline]
+    pub(crate) fn push_standing(
+        &mut self,
+        start: i32,
+        end: i32,
+        last_length: i32,
+        kind: i32,
+        decided: i32,
+    ) {
+        let last = self.parse.last_standing;
+        let column = self.parse.list_depth.wrapping_mul(self.options.tab_width);
+        let head = k::Ready | F_STANDS | self.fast.ready_flags | decided | (kind << SUB_SHIFT);
+        if last != 0 && self.arena.ls_pos > 0 && self.arena.ls.at(self.arena.ls_pos - 1) == last {
+            let [
+                last_head,
+                last_start,
+                _,
+                parent,
+                text,
+                length,
+                last_column,
+                _,
+            ] = self.n.several(last);
+            // a line break, or two, and the indentation
+            let last_end = text + length;
+            let between = start - last_end - column;
+            if last_column == column
+                && self.t.at(last_end) == 10
+                && (between == 1 || (between == 2 && self.t.at(last_end + 1) == 10))
+            {
+                self.n.put_several(
+                    last,
+                    [
+                        head | F_LINES | (last_head & F_DECIDED),
+                        last_start,
+                        self.fast.ready_end,
+                        parent,
+                        text,
+                        end - text,
+                        column,
+                        last_length,
+                    ],
+                );
+                return;
+            }
+        }
+        // (a comment may be as long as it likes)
+        let n = self.node_raw(
+            if end - start != last_length || kind == k::None {
+                head | F_LINES
+            } else {
+                head
+            },
+            start,
+            self.fast.ready_end,
+            4,
+        );
+        self.n
+            .put_several(n + 4, [start, end - start, column, last_length]);
+        self.list_push(n);
+        self.parse.last_standing = n;
+    }
+
+    /// Is all that the block or body of a class `block`, of a statement that is indented by `column`, holds one text that stands, and do its braces stand as they are printed?
+    pub(crate) fn block_stands(&self, block: i32, list: i32, column: i32) -> bool {
+        if self.n.at(list) != 1 {
+            return false;
+        }
+        let item = self.n.at(list + 1);
+        if (self.n.at(item) & (0xff | F_STANDS)) != (k::Ready | F_STANDS) {
+            return false;
+        }
+        let from = self.n.at(item + 4);
+        // `{`, a line break, the indentation
+        if from - self.n.at(block + 1) != self.n.at(item + 6) + 2
+            || self.n.at(item + 6) != column + self.options.tab_width
+        {
+            return false;
+        }
+        // a line break, the indentation, `}`
+        let mut p = from + self.n.at(item + 5);
+        let brace = self.n.at(block + 2) - 1;
+        if self.t.at(p) != 10 || brace - p != column + 1 {
+            return false;
+        }
+        p += 1;
+        while p < brace {
+            if self.t.at(p) != 32 {
+                return false;
+            }
+            p += 1;
+        }
+        return true;
+    }
+
+    /// Pushes the member of a class or an interface at hand, and the simple ones that follow it, if fast.rs can read it; else nothing has happened.
+    pub(crate) fn parse_ready_members(&mut self, where_: i32) -> R<bool> {
+        let start = self.lexer.tok_start;
+        if !self.parse.reads_ahead
+            || start == self.parse.refused_at
+            || !self.read_member(
+                start,
+                where_,
+                self.parse.typed,
+                self.parse.list_depth.wrapping_mul(self.options.tab_width),
+            )?
+        {
+            return Ok(false);
+        }
+        let behind = self.read_members(start, self.lexer.prev_end, where_)?;
+        if behind != 0 {
+            self.catch_up(behind)?;
+        }
+        return Ok(true);
+    }
+
+    /// read_statements() for members.
+    pub(crate) fn read_members(&mut self, mut start: i32, mut behind: i32, where_: i32) -> R<i32> {
+        loop {
+            if self.fast.ready_block != 0 {
+                let last = self.parse.last_standing;
+                behind = self.parse_statement_with_blocks(start, behind, true)?;
+                if behind == 0 {
+                    return Ok(0);
+                }
+                self.parse.last_standing = last;
+                if self.parse.wrap_stands {
+                    self.push_standing(
+                        start,
+                        behind,
+                        self.parse.wrap_last_length,
+                        self.parse.wrap_kind,
+                        self.parse.wrap_decided,
+                    );
+                } else {
+                    self.parse.last_standing = 0;
+                }
+                if !self.read_next_member_of(
+                    behind,
+                    where_,
+                    self.parse.typed,
+                    self.parse.list_depth.wrapping_mul(self.options.tab_width),
+                )? {
+                    if self.fast.ready_start != 0
+                        || !self.parse.joins_lines
+                        || where_ != MEMBER_OF_CLASS
+                    {
+                        break;
+                    }
+                    let end = self.read_comments(
+                        behind,
+                        self.parse.list_depth.wrapping_mul(self.options.tab_width),
+                        true,
+                    );
+                    if end == 0 {
+                        break;
+                    }
+                    self.push_standing(
+                        self.fast.comments_start,
+                        end,
+                        self.fast.comments_last_length,
+                        k::None,
+                        0,
+                    );
+                    behind = end;
+                    if !self.read_next_member(behind, where_)? {
+                        break;
+                    }
+                }
+            } else {
+                if self.fast.ready_stands
+                    && self.parse.joins_lines
+                    && start + self.fast.ready_length == self.fast.ready_next
+                {
+                    self.push_standing(
+                        start,
+                        self.fast.ready_next,
+                        self.fast.ready_last_length,
+                        self.fast.ready_kind,
+                        0,
+                    );
+                } else if self.fast.ready_last_length != self.fast.ready_length {
+                    let n = self.node_raw(
+                        k::Ready
+                            | F_LINES
+                            | self.fast.ready_flags
+                            | (self.fast.ready_kind << SUB_SHIFT),
+                        start,
+                        self.fast.ready_end,
+                        4,
+                    );
+                    self.n.put(n + 4, self.fast.ready_text);
+                    self.n.put(n + 5, self.fast.ready_length);
+                    self.n.put(n + 6, self.fast.ready_column);
+                    self.n.put(n + 7, self.fast.ready_last_length);
+                    self.list_push(n);
+                    self.parse.last_standing = 0;
+                } else {
+                    let n = self.node_raw(
+                        k::Ready | self.fast.ready_flags | (self.fast.ready_kind << SUB_SHIFT),
+                        start,
+                        self.fast.ready_end,
+                        2,
+                    );
+                    self.n.put(n + 4, self.fast.ready_text);
+                    self.n.put(n + 5, self.fast.ready_length);
+                    self.list_push(n);
+                    self.parse.last_standing = 0;
+                }
+                behind = self.fast.ready_next;
+                if !self.read_next_member(behind, where_)? {
+                    if self.fast.ready_start != 0
+                        || !self.parse.joins_lines
+                        || where_ != MEMBER_OF_CLASS
+                    {
+                        break;
+                    }
+                    let end = self.read_comments(
+                        behind,
+                        self.parse.list_depth.wrapping_mul(self.options.tab_width),
+                        true,
+                    );
+                    if end == 0 {
+                        break;
+                    }
+                    self.push_standing(
+                        self.fast.comments_start,
+                        end,
+                        self.fast.comments_last_length,
+                        k::None,
+                        0,
+                    );
+                    behind = end;
+                    if !self.read_next_member(behind, where_)? {
+                        break;
+                    }
+                }
+            }
+            start = self.fast.ready_start;
+        }
+        self.parse.refused_at = self.fast.ready_start;
+        return Ok(behind);
+    }
+
+    /// The parser comes by the blocks in their order, and goes back over as many as it has tried.
+    pub(crate) fn known_block_at(&mut self, start: i32) -> i32 {
+        let mut i = self.parse.known_blocks_next;
+        while i > self.parse.known_blocks_base
+            && self.n.at(self.parse_stacks.known_blocks.at(i - 1) + 1) >= start
+        {
+            i -= 1;
+        }
+        while i < self.parse.known_blocks_count
+            && self.n.at(self.parse_stacks.known_blocks.at(i) + 1) < start
+        {
+            i += 1;
+        }
+        self.parse.known_blocks_next = i;
+        if i < self.parse.known_blocks_count {
+            let known = self.parse_stacks.known_blocks.at(i);
+            if self.n.at(known) != 0 && self.n.at(known + 1) == start {
+                return known;
+            }
+        }
+        return 0;
+    }
+
+    /// fast.rs has read the statement up to the `{` of a block. The block is read here, then fast.rs goes on behind it. If it does not like what it
+    /// finds there (`}, 100);`, `}).then(..)`), the statement is parsed like any other, but for the blocks, which are not read again.
+    /// What stands in front of the statement ends at `behind`. Pushes the statement, and returns what parse_statements_in_list() returns.
+    pub(crate) fn parse_statement_with_blocks(
+        &mut self,
+        start: i32,
+        behind: i32,
+        is_class_member: bool,
+    ) -> R<i32> {
+        self.stack()?;
+        let kind = self.fast.ready_kind;
+        let column = self.fast.ready_column;
+        let list_mark = self.arena.ls_pos;
+        let node_mark = self.arena.n_pos;
+        let any_width = self.fast.ready_flags & F_ANY_WIDTH;
+        let mut stands = self.fast.ready_stands && self.parse.joins_lines;
+        let mut decided = self.fast.ready_flags & F_DECIDED;
+        // the head can have more than one line
+        let head_last_length = self.fast.ready_last_length;
+        let head_has_lines = self.fast.ready_last_length != self.fast.ready_length;
+        // where the blocks are, as the parser would know if it had read the head
+        let asks = self.parse.typed != TYPED_TS;
+        let is_field = is_class_member && kind == k::ClassProperty;
+        let mut outer_scope = 0;
+        let outer_function = (
+            self.parse.in_function,
+            self.parse.in_async,
+            self.parse.in_generator,
+        );
+        if is_field {
+            outer_scope = self.parse.place.scope;
+            self.parse.place.scope = SCOPE_FIELD;
+            // as in parse_class_property_value()
+            self.parse.in_function = 1;
+            self.parse.in_async = 0;
+            self.parse.in_generator = 0;
+        }
+        let is_loop = asks
+            && (kind == k::ForStatement
+                || kind == k::ForOfStatement
+                || kind == k::ForInStatement
+                || kind == k::WhileStatement);
+        if is_loop {
+            self.parse.place.jumps += A_LOOP;
+        }
+        let mut after: i32;
+        // Has the lexer looked at what follows the last block?
+        let mut looked: bool;
+        loop {
+            if stands && self.fast.ready_text + self.fast.ready_length != self.fast.ready_block {
+                stands = false;
+            }
+            let pending = self.fast.ready_pending;
+            let flags = self.fast.ready_block_flags;
+            self.list_push(self.fast.ready_text);
+            self.list_push(self.fast.ready_length);
+            if (flags & BLOCK_JSX) != 0 {
+                // `(`, an element, `)`: the element brings the parentheses with it, if it breaks
+                self.set_pos(self.fast.ready_block + 1);
+                self.next()?;
+                let f = self.parse.in_function;
+                let a = self.parse.in_async;
+                let g = self.parse.in_generator;
+                if (flags & BLOCK_FUNCTION) != 0 {
+                    self.parse.in_function = 1;
+                    self.parse.in_async = if (flags & BLOCK_ASYNC) != 0 { 1 } else { 0 };
+                    self.parse.in_generator = 0;
+                }
+                self.parse.list_depth += 1;
+                let element = self.parse_jsx_element(JSX_IN_PARENS)?;
+                self.parse.list_depth -= 1;
+                self.parse.in_function = f;
+                self.parse.in_async = a;
+                self.parse.in_generator = g;
+                let comments_inside = self.lexer.c_count;
+                self.next()?;
+                self.list_push(element);
+                looked = true;
+                stands = false;
+                if self.lexer.tok != tk::ParenR || self.lexer.c_count != comments_inside {
+                    after = AFTER_REFUSED;
+                    break;
+                }
+                self.next()?;
+            } else {
+                self.at_brace(self.fast.ready_block);
+                looked = (flags & (BLOCK_INTERFACE | BLOCK_OBJECT)) != 0;
+                self.parse.lexer_stays = !looked;
+                let block = if (flags & BLOCK_CLASS) != 0 {
+                    // (only the head of a declaration is read that way)
+                    let outer_is_declaration = self.parse_typescript.in_class_declaration;
+                    self.parse_typescript.in_class_declaration = true;
+                    self.parse.next_class_is_derived = (flags & BLOCK_DERIVED) != 0;
+                    let body = self.parse_class_body()?;
+                    self.parse_typescript.in_class_declaration = outer_is_declaration;
+                    body
+                } else {
+                    if (flags & BLOCK_INTERFACE) != 0 {
+                        self.ts_parse_interface_body()?
+                    } else {
+                        if (flags & BLOCK_OBJECT) != 0 {
+                            self.parse_object()?
+                        } else {
+                            if (flags & BLOCK_FUNCTION) != 0 {
+                                let scope = self.parse.place.scope;
+                                if (flags & BLOCK_ARROW) == 0 && asks {
+                                    self.parse.place.scope = if kind != k::ClassMethod {
+                                        SCOPE_FUNCTION
+                                    } else if (flags & BLOCK_CONSTRUCTOR) != 0
+                                        && self.parse.place.is_derived
+                                    {
+                                        SCOPE_DERIVED_CONSTRUCTOR
+                                    } else {
+                                        SCOPE_METHOD
+                                    };
+                                }
+                                let body =
+                                    self.parse_function_body(if (flags & BLOCK_ASYNC) != 0 {
+                                        F_ASYNC
+                                    } else {
+                                        0
+                                    })?;
+                                self.parse.place.scope = scope;
+                                // see check_directives()
+                                if self.n.at(self.n.at(body + 4)) != 0
+                                    && self.parse.typed != TYPED_TS
+                                    && self.has_use_strict(body)
+                                    && self.has_odd_parameters(self.n.at(body + 1))
+                                {
+                                    return Err(self.text_refuse());
+                                }
+                                body
+                            } else {
+                                self.parse_block()?
+                            }
+                        }
+                    }
+                };
+                self.list_push(block);
+                if stands {
+                    let list = self
+                        .n
+                        .at(block + (if (flags & BLOCK_CLASS) != 0 { 4 } else { 5 }));
+                    stands = !looked
+                        && ((flags & BLOCK_CLASS) != 0 || self.n.at(self.n.at(block + 4)) == 0)
+                        && self.block_stands(block, list, column);
+                    if stands {
+                        decided |= self.n.at(self.n.at(list + 1)) & F_DECIDED;
+                    }
+                }
+            }
+            // (where the lexer stays, it stays at the end of the block)
+            let end = if looked {
+                self.lexer.prev_end
+            } else {
+                self.lexer.tok_end
+            };
+            // (`else`, `catch` and `finally` are all that matters)
+            let mut follows = if looked {
+                self.lexer.tok
+            } else {
+                if (pending & 15) >= 2 && (pending & 15) <= 4 {
+                    self.word_behind_block(end)
+                } else {
+                    0
+                }
+            };
+            if follows < 0 {
+                self.next()?;
+                looked = true;
+                follows = self.lexer.tok;
+            }
+            after = self.read_after_block(
+                end,
+                pending,
+                column,
+                follows,
+                self.parse.typed,
+                self.parse.in_async != 0
+                    || (self.parse.in_function == 0 && self.parse.top_level_await),
+            )?;
+            if !self.fast.ready_stands
+                || (after != AFTER_BLOCK
+                    && self.fast.ready_length != 0
+                    && end + self.fast.ready_length != self.fast.ready_next)
+            {
+                stands = false;
+            }
+            if after != AFTER_BLOCK {
+                self.parse.block_end = end;
+            }
+            if !(after == AFTER_BLOCK) {
+                break;
+            }
+        }
+        if is_field {
+            self.parse.place.scope = outer_scope;
+            (
+                self.parse.in_function,
+                self.parse.in_async,
+                self.parse.in_generator,
+            ) = outer_function;
+        }
+        if is_loop {
+            self.parse.place.jumps -= A_LOOP;
+        }
+        let count = (self.arena.ls_pos - list_mark) / 3;
+        if after == AFTER_REFUSED {
+            let base = self.parse.known_blocks_count;
+            if base + count > (self.parse_stacks.known_blocks.len() as i32) {
+                self.make_room(|q| &mut q.parse_stacks.known_blocks, base + count);
+            }
+            let mut i: i32 = 0;
+            while i < count {
+                self.parse_stacks
+                    .known_blocks
+                    .put(base + i, self.arena.ls.at(list_mark + i * 3 + 2));
+                i += 1;
+            }
+            self.parse.known_blocks_count = base + count;
+            let outer = (self.parse.known_blocks_base, self.parse.known_blocks_next);
+            self.parse.known_blocks_base = base;
+            self.parse.known_blocks_next = base;
+            self.list_truncate(list_mark);
+            // the comments in the blocks stay; those behind the last block will be read again
+            self.drop_comments_from(
+                self.n
+                    .at(self.parse_stacks.known_blocks.at(base + count - 1) + 2),
+            );
+            let v0 = (|| -> R<i32> {
+                self.next_at(start, behind)?;
+                let v1 = if !is_class_member {
+                    self.parse_statement()?
+                } else {
+                    let member = if self.parse.typed != 0 {
+                        self.ts_parse_class_member()?
+                    } else {
+                        self.parse_class_member()?
+                    };
+                    self.check_class_member(member)?;
+                    member
+                };
+                self.list_push(v1);
+                return Ok(0);
+            })();
+            self.parse.known_blocks_count = base;
+            (self.parse.known_blocks_base, self.parse.known_blocks_next) = outer;
+            return v0;
+        }
+        if is_field {
+            self.check_for_arguments(start, self.fast.ready_end)?;
+        }
+        self.parse.wrap_stands = stands;
+        if stands {
+            // nobody will look at the blocks
+            self.list_truncate(list_mark);
+            self.truncate_ast(node_mark);
+            self.parse.content_end = self.fast.ready_end;
+            self.parse.wrap_kind = kind;
+            self.parse.wrap_decided = decided;
+            let resume = if self.fast.ready_length != 0 {
+                self.fast.ready_next
+            } else {
+                self.parse.block_end
+            };
+            self.parse.wrap_last_length = resume - self.parse.block_end + 1;
+            if looked {
+                self.drop_comments_from(resume);
+            }
+            return Ok(resume);
+        }
+        let list = self.alloc_ast(count + 1);
+        let n = self.node_raw(
+            k::ReadyWrap
+                | self.fast.ready_flags
+                | any_width
+                | (if head_has_lines { F_LINES } else { 0 })
+                | (kind << SUB_SHIFT),
+            start,
+            self.fast.ready_end,
+            5 + count * 2,
+        );
+        self.n.put(list, count);
+        self.n.put(n + 4, list);
+        let mut i: i32 = 0;
+        while i < count {
+            let block = self.arena.ls.at(list_mark + i * 3 + 2);
+            self.n.put(list + 1 + i, block);
+            self.n.put(block + 3, n);
+            self.n
+                .put(n + 5 + i * 2, self.arena.ls.at(list_mark + i * 3));
+            self.n
+                .put(n + 6 + i * 2, self.arena.ls.at(list_mark + i * 3 + 1));
+            i += 1;
+        }
+        self.n.put(n + 5 + count * 2, self.fast.ready_text);
+        self.n.put(n + 6 + count * 2, self.fast.ready_length);
+        self.n.put(n + 7 + count * 2, column);
+        self.n.put(n + 8 + count * 2, head_last_length);
+        self.list_truncate(list_mark);
+        self.list_push(n);
+        self.parse.content_end = self.fast.ready_end;
+        let resume = if self.fast.ready_length != 0 {
+            self.fast.ready_next
+        } else {
+            self.parse.block_end
+        };
+        // the lexer may have looked at the token behind the block, and at the comments before that token
+        if looked {
+            self.drop_comments_from(resume);
+        }
+        return Ok(resume);
+    }
+
+    pub(crate) fn parse_statement(&mut self) -> R<i32> {
+        self.stack()?;
+        let start = self.lexer.tok_start;
+        's0: {
+            match self.lexer.tok {
+                tk::BraceL => {
+                    return self.parse_block();
+                }
+                tk::Semi => {
+                    // The body of a loop or of an `if` stands behind a `)` or a word.
+                    let before = self.t.at(self.lexer.prev_end - 1);
+                    if self.lexer.tok_nl == 0
+                        && before != 41
+                        && !(before >= 97 && before <= 122)
+                        && start != self.text.src_start
+                    {
+                        return Err(self.rare(rare::SEMICOLON));
+                    }
+                    self.check_semicolon_at_line_start()?;
+                    self.next()?;
+                    return Ok(self.node0(k::EmptyStatement, start, self.lexer.prev_end));
+                }
+                tk::Var => {
+                    return self.parse_var_statement(start, V_VAR);
+                }
+                tk::Const => {
+                    if self.parse.typed == TYPED_TS {
+                        let declaration = self.ts_parse_statement(start)?;
+                        if declaration != 0 {
+                            return Ok(declaration);
+                        }
+                    }
+                    return self.parse_var_statement(start, V_CONST);
+                }
+                tk::Function => {
+                    let declaration = self.parse_function(start, k::FunctionDeclaration, 0)?;
+                    if self.n.at(declaration + 4) == 0 {
+                        return Err(self.fail(start));
+                    }
+                    return Ok(declaration);
+                }
+                tk::Class => {
+                    let declaration = self.parse_class(start, k::ClassDeclaration, 0)?;
+                    if self.n.at(declaration + 4) == 0 {
+                        return Err(self.fail(start));
+                    }
+                    return Ok(declaration);
+                }
+                tk::At => {
+                    {
+                        let decorators = self.parse_decorators()?;
+                        if self.lexer.tok == tk::Export {
+                            if self.lexer.tok_nl == 0 {
+                                return Err(self.rare(rare::DECORATOR));
+                            }
+                            let v0 = self.parse_export(start, decorators)?;
+                            return self.decorated(v0);
+                        }
+                        if self.parse.typed == TYPED_TS && self.lexer.tok == tk::Name {
+                            // @dec abstract class, @dec declare class
+                            self.parse.pending_decorators = decorators;
+                            let declaration = self.ts_parse_statement(start)?;
+                            if declaration != 0 {
+                                return self.decorated(declaration);
+                            }
+                        }
+                        if self.lexer.tok != tk::Class {
+                            return Err(self.unexpected());
+                        }
+                        let declaration =
+                            self.parse_class(start, k::ClassDeclaration, decorators)?;
+                        if self.n.at(declaration + 4) == 0 {
+                            return Err(self.fail(start));
+                        }
+                        return Ok(declaration);
+                    }
+                }
+                tk::If => {
+                    self.next()?;
+                    let test = self.parse_paren_expression()?;
+                    let consequent = self.parse_body()?;
+                    let mut alternate: i32 = 0;
+                    if self.eat(tk::Else)? {
+                        alternate = self.parse_body()?;
+                    }
+                    return Ok(self.node3(
+                        k::IfStatement,
+                        start,
+                        self.n.at((if alternate != 0 {
+                            alternate
+                        } else {
+                            consequent
+                        }) + 2),
+                        test,
+                        consequent,
+                        alternate,
+                    ));
+                }
+                tk::Return | tk::Throw => {
+                    let kind = if self.lexer.tok == tk::Return {
+                        k::ReturnStatement
+                    } else {
+                        k::ThrowStatement
+                    };
+                    self.next()?;
+                    let mut argument: i32 = 0;
+                    if self.lexer.tok != tk::Semi
+                        && self.lexer.tok != tk::BraceR
+                        && self.lexer.tok != tk::EOF
+                        && self.lexer.tok_nl == 0
+                    {
+                        argument = self.parse_expression()?;
+                    } else if kind == k::ThrowStatement {
+                        return Err(self.unexpected());
+                    }
+                    let end = self.lexer.prev_end;
+                    self.semicolon()?;
+                    return Ok(self.node1(kind, start, end, argument));
+                }
+                tk::For => {
+                    return self.parse_for(start);
+                }
+                tk::While => {
+                    self.next()?;
+                    let test = self.parse_paren_expression()?;
+                    let body = self.parse_loop_body()?;
+                    return Ok(self.node2(
+                        k::WhileStatement,
+                        start,
+                        self.n.at(body + 2),
+                        test,
+                        body,
+                    ));
+                }
+                tk::Do => {
+                    self.next()?;
+                    let body = self.parse_loop_body()?;
+                    self.expect(tk::While)?;
+                    let test = self.parse_paren_expression()?;
+                    let end = self.lexer.prev_end;
+                    self.eat(tk::Semi)?;
+                    return Ok(self.node2(k::DoWhileStatement, start, end, body, test));
+                }
+                tk::Break | tk::Continue => {
+                    let kind = if self.lexer.tok == tk::Break {
+                        k::BreakStatement
+                    } else {
+                        k::ContinueStatement
+                    };
+                    self.next()?;
+                    let mut label: i32 = 0;
+                    if self.lexer.tok == tk::Name && self.lexer.tok_nl == 0 {
+                        label = self.parse_ident()?;
+                    }
+                    if !self.can_jump(kind == k::ContinueStatement, label) {
+                        return Err(self.text_refuse());
+                    }
+                    let end = self.lexer.prev_end;
+                    self.semicolon()?;
+                    return Ok(self.node1(kind, start, end, label));
+                }
+                tk::Switch => {
+                    return self.parse_switch(start);
+                }
+                tk::Try => {
+                    self.next()?;
+                    let block = self.parse_block()?;
+                    let mut handler: i32 = 0;
+                    let mut finalizer: i32 = 0;
+                    if self.lexer.tok == tk::Catch {
+                        let clause_start = self.lexer.tok_start;
+                        self.next()?;
+                        let mut param: i32 = 0;
+                        if self.eat(tk::ParenL)? {
+                            if self.lexer.tok == tk::This {
+                                return Err(self.unexpected());
+                            }
+                            param = self.parse_binding_atom()?;
+                            if self.parse.typed != 0 && self.lexer.tok == tk::Colon {
+                                self.parse_binding_suffix(param)?;
+                            }
+                            self.expect(tk::ParenR)?;
+                        }
+                        let body = self.parse_block()?;
+                        handler = self.node2(
+                            k::CatchClause,
+                            clause_start,
+                            self.lexer.prev_end,
+                            param,
+                            body,
+                        );
+                    }
+                    if self.eat(tk::Finally)? {
+                        finalizer = self.parse_block()?;
+                    }
+                    if handler == 0 && finalizer == 0 {
+                        return Err(self.unexpected());
+                    }
+                    return Ok(self.node3(
+                        k::TryStatement,
+                        start,
+                        self.lexer.prev_end,
+                        block,
+                        handler,
+                        finalizer,
+                    ));
+                }
+                tk::With => {
+                    self.next()?;
+                    let object = self.parse_paren_expression()?;
+                    let body = self.parse_body()?;
+                    return Ok(self.node2(
+                        k::WithStatement,
+                        start,
+                        self.n.at(body + 2),
+                        object,
+                        body,
+                    ));
+                }
+                tk::Debugger => {
+                    self.next()?;
+                    let end = self.lexer.prev_end;
+                    self.semicolon()?;
+                    return Ok(self.node0(k::DebuggerStatement, start, end));
+                }
+                tk::Import => {
+                    {
+                        // import( and import. start expressions
+                        let saved = self.save();
+                        self.next()?;
+                        let after = self.lexer.tok;
+                        self.restore(saved);
+                        if after == tk::ParenL || after == tk::Dot {
+                            break 's0;
+                        }
+                        return self.parse_import(start);
+                    }
+                }
+                tk::Export => {
+                    return self.parse_export(start, 0);
+                }
+                tk::Name => {
+                    if self.parse.typed != 0 {
+                        let declaration = if self.parse.typed == TYPED_TS {
+                            self.ts_parse_statement(start)?
+                        } else {
+                            self.flow_parse_statement(start)?
+                        };
+                        if declaration != 0 {
+                            return Ok(declaration);
+                        }
+                    }
+                    match self.lexer.tok_kw {
+                        kw::Let => {
+                            let saved = self.save();
+                            self.next()?;
+                            let is_declaration = self.lexer.tok == tk::Name
+                                || self.lexer.tok == tk::BracketL
+                                || self.lexer.tok == tk::BraceL;
+                            // `let`, the end of the line, `function f() {}`
+                            let is_odd = self.lexer.tok >= tk::In;
+                            self.restore(saved);
+                            if is_declaration {
+                                return self.parse_var_statement(start, V_LET);
+                            }
+                            if is_odd {
+                                return Err(self.text_refuse());
+                            }
+                            return Err(self.rare(rare::LET));
+                        }
+                        kw::Static => {
+                            // TypeScript's parser, which reads every file first, takes it for a modifier of what follows, on whatever line
+                            let saved = self.save();
+                            self.next()?;
+                            let is_odd = self.is_word();
+                            self.restore(saved);
+                            if is_odd {
+                                return Err(self.text_refuse());
+                            }
+                        }
+                        kw::Async => {
+                            let saved = self.save();
+                            self.next()?;
+                            let is_function =
+                                self.lexer.tok == tk::Function && self.lexer.tok_nl == 0;
+                            if is_function {
+                                let declaration =
+                                    self.parse_function(start, k::FunctionDeclaration, F_ASYNC)?;
+                                if self.n.at(declaration + 4) == 0 {
+                                    return Err(self.fail(start));
+                                }
+                                return Ok(declaration);
+                            }
+                            self.restore(saved);
+                        }
+                        kw::Using => {
+                            let saved = self.save();
+                            self.next()?;
+                            let is_declaration = (self.lexer.tok == tk::Void
+                                || (self.lexer.tok == tk::Name && self.lexer.tok_kw != kw::Of))
+                                && self.lexer.tok_nl == 0;
+                            self.restore(saved);
+                            if is_declaration {
+                                return self.parse_var_statement(start, V_USING);
+                            }
+                        }
+                        kw::Await => {
+                            let saved = self.save();
+                            self.next()?;
+                            // (whether a line break counts here is a matter of the parser)
+                            if self.is_kw(kw::Using) && self.lexer.tok_nl != 0 {
+                                return Err(self.text_refuse());
+                            }
+                            let mut is_declaration =
+                                self.is_kw(kw::Using) && self.lexer.tok_nl == 0;
+                            if is_declaration {
+                                self.next()?;
+                                is_declaration = (self.lexer.tok == tk::Name
+                                    || self.lexer.tok == tk::Void)
+                                    && self.lexer.tok_nl == 0;
+                            }
+                            self.restore(saved);
+                            if is_declaration {
+                                self.next()?;
+                                return self.parse_var_statement(start, V_AWAIT_USING);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        let expression = self.parse_expression()?;
+        if self.lexer.tok == tk::Colon
+            && (self.n.at(expression) & (0xff | F_PAREN)) == k::Identifier
+        {
+            self.next()?;
+            let labels = self.parse.place.labels_top;
+            self.push_label(start, expression)?;
+            let body = self.parse_body()?;
+            self.parse.place.labels_top = labels;
+            return Ok(self.node2(
+                k::LabeledStatement,
+                start,
+                self.n.at(body + 2),
+                expression,
+                body,
+            ));
+        }
+        // `(type) as A;`: some names get parentheses at the start of such a statement
+        if matches!(
+            self.n.at(expression) & (0xff | F_PAREN),
+            k::AsExpression | k::SatisfiesExpression
+        ) {
+            return Err(self.rare(rare::LET));
+        }
+        let end = self.lexer.prev_end;
+        self.semicolon()?;
+        return Ok(self.node1(k::ExpressionStatement, start, end, expression));
+    }
+
+    /// The statement behind `if (a)`, `else`, `with (a)`, a label or the head of a loop. Of the declarations, Babel takes those with `var` and `function` in this place; TypeScript's parser takes them all.
+    fn parse_body(&mut self) -> R<i32> {
+        match self.lexer.tok {
+            tk::Const | tk::Class | tk::At | tk::Export => {
+                return Err(self.text_refuse());
+            }
+            tk::Name => {
+                if (self.lexer.tok_kw != 0 || self.parse.typed == TYPED_FLOW)
+                    && self.is_declaration_as_body()?
+                {
+                    return Err(self.text_refuse());
+                }
+                let statement = self.parse_statement()?;
+                if self.parse.typed != 0
+                    && (self.n.at(statement) & 0xff) != k::ExpressionStatement
+                    && self.is_odd_as_body(statement)
+                {
+                    return Err(self.text_refuse());
+                }
+                return Ok(statement);
+            }
+            _ => {}
+        }
+        return self.parse_statement();
+    }
+
+    /// What starts with a word that is a name elsewhere: `declare enum`, which is printed like an enum; a record, which is a class;
+    /// an async component or hook, which is an async function.
+    #[cold]
+    fn is_odd_as_body(&self, statement: i32) -> bool {
+        let head = self.n.at(statement);
+        match head & 0xff {
+            k::EnumDeclaration | k::RecordDeclaration => true,
+            k::ComponentDeclaration | k::HookDeclaration => (head & F_ASYNC) != 0,
+            _ => false,
+        }
+    }
+
+    #[cold]
+    fn is_declaration_as_body(&mut self) -> R<bool> {
+        match self.lexer.tok_kw {
+            // an enum in this place is printed in ways of its own
+            kw::Enum => Ok(true),
+            // whether this is a declaration depends on the parser, and on where the line ends
+            kw::Let => Ok(self.parse.typed != TYPED_TS),
+            kw::Async => {
+                let saved = self.save();
+                self.next()?;
+                let is_function = self.lexer.tok == tk::Function && self.lexer.tok_nl == 0;
+                self.restore(saved);
+                Ok(is_function && self.parse.typed != TYPED_TS)
+            }
+            _ => Ok(self.parse.typed == TYPED_FLOW
+                && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"declare")),
+        }
+    }
+
+    fn parse_loop_body(&mut self) -> R<i32> {
+        self.parse.place.jumps += A_LOOP;
+        let body = self.parse_body()?;
+        self.parse.place.jumps -= A_LOOP;
+        return Ok(body);
+    }
+
+    /// Is there something that `break` or `continue` goes to: a loop, for `break` a `switch` too, or the label `label` (0: none)? TypeScript's parser does not ask.
+    pub(crate) fn can_jump(&self, is_continue: bool, label: i32) -> bool {
+        if self.parse.typed == TYPED_TS {
+            return true;
+        }
+        if label == 0 {
+            return if is_continue {
+                self.parse.place.jumps as u32 != 0
+            } else {
+                self.parse.place.jumps != 0
+            };
+        }
+        let mut i = self.parse.place.labels_base;
+        while i < self.parse.place.labels_top {
+            if self.is_same_text(
+                self.parse_stacks.labels.at(i),
+                self.parse_stacks.labels.at(i + 1),
+                self.n.at(label + 1),
+                self.n.at(label + 2),
+            ) {
+                return !is_continue || self.parse_stacks.labels.at(i + 3) != 0;
+            }
+            i += 4;
+        }
+        return false;
+    }
+
+    fn is_same_text(&self, start: i32, end: i32, other_start: i32, other_end: i32) -> bool {
+        self.t.sub(start, end) == self.t.sub(other_start, other_end)
+    }
+
+    /// The label `name`, of a statement that starts at `start`, has been read, and the current token is what follows the `:`.
+    fn push_label(&mut self, start: i32, name: i32) -> R<()> {
+        if self.parse.typed == TYPED_TS {
+            return Ok(());
+        }
+        let top = self.parse.place.labels_top;
+        let is_loop =
+            self.lexer.tok == tk::For || self.lexer.tok == tk::While || self.lexer.tok == tk::Do;
+        let mut i = self.parse.place.labels_base;
+        // (each is compared with all: there are never many)
+        if top - i > 4 * 32 {
+            return Err(self.text_refuse());
+        }
+        while i < top {
+            if self.is_same_text(
+                self.parse_stacks.labels.at(i),
+                self.parse_stacks.labels.at(i + 1),
+                self.n.at(name + 1),
+                self.n.at(name + 2),
+            ) {
+                return Err(self.text_refuse());
+            }
+            // `a: b: for (;;)`: a label of a label of a loop is the label of a loop
+            if self.parse_stacks.labels.at(i + 2) == start {
+                self.parse_stacks.labels.put(i + 2, self.lexer.tok_start);
+                self.parse_stacks.labels.put(i + 3, is_loop as i32);
+            }
+            i += 4;
+        }
+        if top + 4 > self.parse_stacks.labels.len() as i32 {
+            self.make_room(|q| &mut q.parse_stacks.labels, top + 4);
+        }
+        self.parse_stacks.labels.put(top, self.n.at(name + 1));
+        self.parse_stacks.labels.put(top + 1, self.n.at(name + 2));
+        self.parse_stacks.labels.put(top + 2, self.lexer.tok_start);
+        self.parse_stacks.labels.put(top + 3, is_loop as i32);
+        self.parse.place.labels_top = top + 4;
+        Ok(())
+    }
+
+    pub(crate) fn parse_paren_expression(&mut self) -> R<i32> {
+        self.expect(tk::ParenL)?;
+        let expression = self.parse_expression()?;
+        self.expect(tk::ParenR)?;
+        return Ok(expression);
+    }
+
+    pub(crate) fn take_pending_decorators(&mut self) -> i32 {
+        let decorators = self.parse.pending_decorators;
+        self.parse.pending_decorators = 0;
+        return decorators;
+    }
+
+    /// TypeScript, Flow: `?` and `: type` behind the name or pattern `n`, which has room for them.
+    pub(crate) fn parse_binding_suffix(&mut self, n: i32) -> R<()> {
+        if self.lexer.tok == tk::Question {
+            if (self.n.at(n) & 0xff) == k::RestElement {
+                return Err(self.text_refuse());
+            }
+            self.n.put(n, self.n.at(n) | F_OPTIONAL);
+            self.next()?;
+            self.n.put(n + 2, self.lexer.prev_end);
+        }
+        if self.lexer.tok == tk::Colon {
+            if EXT_AT.at(self.n.at(n) & 0xff) == 0 {
+                // `void: T`: there is no room, and no such thing
+                return Err(self.unexpected());
+            }
+            let annotation = self.ts_parse_type_annotation()?;
+            self.n.put(n, self.n.at(n) | F_EXT);
+            self.set_child(n, EXT_AT.at(self.n.at(n) & 0xff), annotation);
+            self.n.put(n + 2, self.lexer.prev_end);
+        }
+        Ok(())
+    }
+
+    /// The current token is the keyword (the last one of `await using`).
+    pub(crate) fn parse_var(&mut self, start: i32, kind: i32) -> R<i32> {
+        self.next()?;
+        let mark = self.arena.ls_pos;
+        let mut last: i32;
+        let binds_lexically = kind != V_VAR && self.parse.typed != TYPED_TS;
+        loop {
+            let decl_start = self.lexer.tok_start;
+            if self.lexer.tok == tk::This || (binds_lexically && self.is_kw(kw::Let)) {
+                return Err(self.text_refuse());
+            }
+            self.parse.binds_lexically = binds_lexically;
+            let id = self.parse_binding_atom()?;
+            self.parse.binds_lexically = false;
+            if kind >= V_USING && (self.n.at(id) & 0xff) != k::Identifier {
+                return Err(self.text_refuse());
+            }
+            let mut flags: i32 = 0;
+            if self.parse.typed != 0 {
+                if self.parse.typed == TYPED_TS
+                    && self.lexer.tok == tk::Not
+                    && self.lexer.tok_nl == 0
+                {
+                    flags = F_DEFINITE;
+                    self.n.put(id, self.n.at(id) | F_DEFINITE);
+                    self.next()?;
+                    // `let a!: A;`, and nothing else
+                    if (self.n.at(id) & 0xff) != k::Identifier
+                        || kind > V_LET
+                        || (self.parse.no_in & 1) != 0
+                        || self.lexer.tok != tk::Colon
+                    {
+                        return Err(self.text_refuse());
+                    }
+                }
+                if self.lexer.tok == tk::Colon {
+                    self.parse_binding_suffix(id)?;
+                }
+            }
+            let mut init: i32 = 0;
+            if self.eat(tk::Eq)? {
+                if flags != 0 {
+                    return Err(self.text_refuse());
+                }
+                init = self.parse_maybe_assign()?;
+            }
+            last = self.node2(
+                k::VariableDeclarator | flags,
+                decl_start,
+                self.lexer.prev_end,
+                id,
+                init,
+            );
+            self.list_push(last);
+            if !self.eat(tk::Comma)? {
+                break;
+            }
+        }
+        let v0 = k::VariableDeclaration | (kind << SUB_SHIFT);
+        let v1 = self.n.at(last + 2);
+        let v2 = self.list_finish(mark);
+        return Ok(self.node_l(v0, start, v1, v2));
+    }
+
+    pub(crate) fn parse_var_statement(&mut self, start: i32, kind: i32) -> R<i32> {
+        let declaration = self.parse_var(start, kind)?;
+        // not at the top level of a script, and in a `case` not without a block around it (which TypeScript's parser does not mind)
+        if kind >= V_USING
+            && ((self.parse.is_common_js
+                && self.parse.in_function == 0
+                && self.parse.list_depth == self.options.indentation)
+                || (self.parse.list_depth == self.parse.cases_depth
+                    && self.parse.typed != TYPED_TS))
+        {
+            return Err(self.text_refuse());
+        }
+        if kind >= V_USING
+            && self.parse.in_function == 0
+            && self.parse.list_depth == self.options.indentation
+        {
+            self.need_module()?;
+        }
+        if kind >= V_USING && self.parse.typed != 0 && !self.mode.is_babel_flow {
+            // only Babel lets this pass
+            let list = self.n.at(declaration + 4);
+            let mut i: i32 = 1;
+            while i <= self.n.at(list) {
+                if self.n.at(self.n.at(list + i) + 5) == 0 {
+                    return Err(self.fail(self.n.at(self.n.at(list + i) + 1)));
+                }
+                i += 1;
+            }
+        }
+        self.semicolon()?;
+        return Ok(declaration);
+    }
+
+    pub(crate) fn parse_for(&mut self, start: i32) -> R<i32> {
+        self.next()?;
+        let mut await_flag: i32 = 0;
+        if self.is_kw(kw::Await) {
+            await_flag = F_AWAIT;
+            self.next()?;
+            if self.parse.in_async == 0 {
+                self.need_module()?;
+            }
+        }
+        self.expect(tk::ParenL)?;
+        let mut init: i32 = 0;
+        if self.lexer.tok != tk::Semi {
+            let init_start = self.lexer.tok_start;
+            let mut var_kind: i32 = -1;
+            if self.lexer.tok == tk::Var {
+                var_kind = V_VAR;
+            } else if self.lexer.tok == tk::Const {
+                var_kind = V_CONST;
+            } else if self.lexer.tok == tk::Name
+                && (self.lexer.tok_kw == kw::Let
+                    || self.lexer.tok_kw == kw::Using
+                    || self.lexer.tok_kw == kw::Await)
+            {
+                let kw = self.lexer.tok_kw;
+                let saved = self.save();
+                self.next()?;
+                if kw == kw::Let {
+                    if self.lexer.tok == tk::Name
+                        || self.lexer.tok == tk::BracketL
+                        || self.lexer.tok == tk::BraceL
+                    {
+                        var_kind = V_LET;
+                    }
+                } else if kw == kw::Using {
+                    if (self.lexer.tok == tk::Void
+                        || (self.lexer.tok == tk::Name && self.lexer.tok_kw != kw::Of))
+                        && self.lexer.tok_nl == 0
+                    {
+                        var_kind = V_USING;
+                    }
+                } else if self.is_kw(kw::Using) && self.lexer.tok_nl == 0 {
+                    self.next()?;
+                    if (self.lexer.tok == tk::Name || self.lexer.tok == tk::Void)
+                        && self.lexer.tok_nl == 0
+                    {
+                        var_kind = V_AWAIT_USING;
+                    }
+                }
+                self.restore(saved);
+                if var_kind == V_AWAIT_USING {
+                    self.next()?;
+                }
+                if var_kind < 0 && kw == kw::Let && self.parse.typed == TYPED_TS {
+                    // always a declaration
+                    return Err(self.text_refuse());
+                }
+            }
+            let saved_no_in = self.parse.no_in;
+            let outer_head = self.parse_typescript.in_head_of_for;
+            self.parse.no_in = 1;
+            self.parse_typescript.in_head_of_for = self.parse.typed == TYPED_TS;
+            if var_kind >= 0 {
+                init = self.parse_var(init_start, var_kind)?;
+            } else {
+                init = self.parse_expression()?;
+            }
+            self.parse.no_in = saved_no_in;
+            self.parse_typescript.in_head_of_for = outer_head;
+            if self.parse.typed == TYPED_TS {
+                self.ts_check_head_of_for(
+                    init,
+                    var_kind,
+                    self.lexer.tok == tk::In || self.is_kw(kw::Of),
+                )?;
+            }
+            if self.lexer.tok == tk::In || self.is_kw(kw::Of) {
+                let kind = if self.lexer.tok == tk::In {
+                    k::ForInStatement
+                } else {
+                    k::ForOfStatement
+                };
+                if kind == k::ForInStatement && (await_flag != 0 || var_kind >= V_USING) {
+                    return Err(self.text_refuse());
+                }
+                // `for (var a = b in c)` (a type cast, of Flow or of JSDoc, gets more parentheses there)
+                if kind == k::ForInStatement
+                    && var_kind >= 0
+                    && self.n.at(self.n.at(self.n.at(init + 4) + 1) + 5) != 0
+                {
+                    return Err(self.rare(rare::FLOW));
+                }
+                if var_kind < 0 {
+                    self.to_assignable(init)?;
+                    if self.parse.typed != TYPED_TS {
+                        self.check_target(init, true)?;
+                    }
+                    // `for (let.a of b)`; `for (async of` could go on with `=> 1;;)`, which TypeScript's parser does not mind
+                    if kind == k::ForOfStatement
+                        && (self.text_is(init_start, init_start + 3, b"let")
+                            && (CT.at(self.t.at(init_start + 3)) & C_ID_PART) == 0
+                            || (self.parse.typed != TYPED_TS
+                                && await_flag == 0
+                                && (self.n.at(init) & (0xff | F_PAREN)) == k::Identifier
+                                && self.text_is(init_start, self.n.at(init + 2), b"async")))
+                    {
+                        return Err(self.text_refuse());
+                    }
+                }
+                self.next()?;
+                let right = if kind == k::ForInStatement {
+                    self.parse_expression()?
+                } else {
+                    self.parse_maybe_assign()?
+                };
+                self.expect(tk::ParenR)?;
+                let body = self.parse_loop_body()?;
+                return Ok(self.node3(
+                    kind | await_flag,
+                    start,
+                    self.n.at(body + 2),
+                    init,
+                    right,
+                    body,
+                ));
+            }
+        }
+        if await_flag != 0 {
+            return Err(self.text_refuse());
+        }
+        self.expect(tk::Semi)?;
+        let test = if self.lexer.tok == tk::Semi {
+            0
+        } else {
+            self.parse_expression()?
+        };
+        self.expect(tk::Semi)?;
+        let update = if self.lexer.tok == tk::ParenR {
+            0
+        } else {
+            self.parse_expression()?
+        };
+        self.expect(tk::ParenR)?;
+        let body = self.parse_loop_body()?;
+        return Ok(self.node4(
+            k::ForStatement,
+            start,
+            self.n.at(body + 2),
+            init,
+            test,
+            update,
+            body,
+        ));
+    }
+
+    /// `n` stands in front of a `:`. TypeScript's parser, and the long way in JavaScript too, tries `(a): T` and `async (a): T` as the
+    /// head of an arrow function wherever an expression that can be assigned starts, and takes it for one if a `{` or a `=>` follows what
+    /// it has read as the return type: `case (a): { if (b) {} }`. Does `n` end with such a head?
+    /// `is_allowed`: parentheses count where `n` starts (TypeScript's `allowReturnTypeInArrowFunction`). They do not in the branch of a
+    /// conditional expression in front of its `:`, nor in what that branch hands it down to; they do again in the operand of `yield` and in
+    /// the body of what can only be an arrow function: `a ? () => (b) : c => d`, `a ? yield (b) : c => d`. (In Flow whoever reads the
+    /// parentheses tries the same.)
+    fn ends_with_head_of_arrow_function(&self, mut n: i32, mut is_allowed: bool) -> bool {
+        loop {
+            let head = self.n.at(n);
+            if (head & F_PAREN) != 0 {
+                return is_allowed;
+            }
+            n = match head & 0xff {
+                k::ArrowFunctionExpression => {
+                    is_allowed |= self.parse.typed != TYPED_FLOW;
+                    self.n.at(n + 5)
+                }
+                k::YieldExpression => {
+                    is_allowed |= self.parse.typed != TYPED_FLOW;
+                    self.n.at(n + 4)
+                }
+                k::AssignmentExpression => self.n.at(n + 5),
+                k::ConditionalExpression => self.n.at(n + 6),
+                // `async (a)`, allowed or not
+                k::CallExpression => {
+                    let callee = self.n.at(n + 4);
+                    return self.text_is(self.n.at(callee + 1), self.n.at(callee + 2), b"async");
+                }
+                k::SequenceExpression => {
+                    let list = self.n.at(n + 4);
+                    self.n.at(list + self.n.at(list))
+                }
+                _ => return false,
+            };
+        }
+    }
+
+    pub(crate) fn parse_switch(&mut self, start: i32) -> R<i32> {
+        self.next()?;
+        let discriminant = self.parse_paren_expression()?;
+        self.expect(tk::BraceL)?;
+        self.parse.list_depth += 2;
+        let outer_cases = self.parse.cases_depth;
+        self.parse.cases_depth = self.parse.list_depth;
+        self.parse.place.jumps += A_SWITCH;
+        let mut has_default = false;
+        let mark = self.arena.ls_pos;
+        while self.lexer.tok != tk::BraceR {
+            let case_start = self.lexer.tok_start;
+            let mut test: i32 = 0;
+            if self.eat(tk::Case)? {
+                test = self.parse_expression()?;
+                if self.t.at(self.lexer.prev_end - 1) == 41
+                    && self.ends_with_head_of_arrow_function(test, true)
+                {
+                    return Err(self.rare(rare::OTHER));
+                }
+            } else {
+                self.expect(tk::Default)?;
+                if has_default {
+                    return Err(self.text_refuse());
+                }
+                has_default = true;
+            }
+            self.expect(tk::Colon)?;
+            let inner = self.arena.ls_pos;
+            while self.lexer.tok != tk::Case
+                && self.lexer.tok != tk::Default
+                && self.lexer.tok != tk::BraceR
+            {
+                if self.lexer.tok == tk::EOF {
+                    return Err(self.unexpected());
+                }
+                if self.parse.reads_ahead && STARTS_READY.at(self.lexer.tok) != 0 {
+                    let behind = self.parse_statements_in_list()?;
+                    if behind != 0 {
+                        self.catch_up(behind)?;
+                    }
+                } else {
+                    let v0 = self.parse_statement()?;
+                    self.list_push(v0);
+                }
+            }
+            let consequent = self.list_finish(inner);
+            let v1 = self.node1_l(
+                k::SwitchCase,
+                case_start,
+                self.lexer.prev_end,
+                test,
+                consequent,
+            );
+            self.list_push(v1);
+        }
+        let cases = self.list_finish(mark);
+        self.parse.place.jumps -= A_SWITCH;
+        self.parse.cases_depth = outer_cases;
+        self.parse.list_depth -= 2;
+        self.next()?;
+        return Ok(self.node1_l(
+            k::SwitchStatement,
+            start,
+            self.lexer.prev_end,
+            discriminant,
+            cases,
+        ));
+    }
+
+    // -------------------------------------------------------------------------------------------------------- functions
+    /// `( params )`; returns the list.
+    pub(crate) fn parse_params(&mut self) -> R<i32> {
+        return self.parse_params_of(PARAMETERS_PLAIN);
+    }
+
+    /// `owner`: PARAMETERS_PLAIN ..
+    pub(crate) fn parse_params_of(&mut self, owner: i32) -> R<i32> {
+        self.expect(tk::ParenL)?;
+        let saved_no_in = self.parse.no_in;
+        self.parse.no_in = 0;
+        let mark = self.arena.ls_pos;
+        let outer = self.parse.place.in_parameters;
+        self.parse.place.in_parameters = true;
+        let outer_owner = self.parse.parameters_owner;
+        self.parse.parameters_owner = owner;
+        let odd = self.parse_typescript.odd_parameters;
+        while self.lexer.tok != tk::ParenR {
+            let v0 = self.parse_binding_element()?;
+            self.list_push(v0);
+            if self.lexer.tok != tk::ParenR {
+                self.expect(tk::Comma)?;
+                // (TypeScript's parser lets parameters follow `...a`)
+                if (self.n.at(v0) & 0xff) == k::RestElement
+                    && self.lexer.tok != tk::ParenR
+                    && self.parse.typed != TYPED_TS
+                {
+                    return Err(self.text_refuse());
+                }
+            }
+        }
+        self.parse.place.in_parameters = outer;
+        self.parse.parameters_owner = outer_owner;
+        if self.parse_typescript.odd_parameters != odd {
+            self.ts_check_parameters(mark, owner)?;
+        }
+        self.next()?;
+        self.parse.no_in = saved_no_in;
+        return Ok(self.list_finish(mark));
+    }
+
+    pub(crate) fn node1_with_room(&mut self, head: i32, start: i32, end: i32, child: i32) -> i32 {
+        let n = self.node_raw(head, start, end, 3);
+        self.n.put(n + 4, child);
+        self.n.put(n + 5, 0);
+        self.n.put(n + 6, 0);
+        self.n.put(child + 3, n);
+        return n;
+    }
+
+    pub(crate) fn node2_with_room(
+        &mut self,
+        head: i32,
+        start: i32,
+        end: i32,
+        c0: i32,
+        c1: i32,
+    ) -> i32 {
+        let n = self.node_raw(head, start, end, 4);
+        self.n.put(n + 4, c0);
+        self.n.put(n + 5, c1);
+        self.n.put(n + 6, 0);
+        self.n.put(n + 7, 0);
+        self.n.put(c0 + 3, n);
+        self.n.put(c1 + 3, n);
+        return n;
+    }
+
+    pub(crate) fn list_node_with_room(
+        &mut self,
+        head: i32,
+        start: i32,
+        end: i32,
+        list: i32,
+    ) -> i32 {
+        let n = self.node_raw(head, start, end, 3);
+        self.n.put(n + 5, 0);
+        self.n.put(n + 6, 0);
+        self.set_list(n, 4, list);
+        return n;
+    }
+
+    /// A copy of the parameter `n` with room for decorators.
+    pub(crate) fn with_room(&mut self, n: i32) -> R<i32> {
+        let head = self.n.at(n);
+        let start = self.n.at(n + 1);
+        let end = self.n.at(n + 2);
+        match head & 0xff {
+            k::Identifier => {
+                return Ok(self.leaf_with_room(head, start, end));
+            }
+            k::ObjectPattern | k::ArrayPattern => {
+                return Ok(self.list_node_with_room(head, start, end, self.n.at(n + 4)));
+            }
+            k::RestElement => {
+                return Ok(self.node1_with_room(head, start, end, self.n.at(n + 4)));
+            }
+            k::AssignmentPattern => {
+                return Ok(self.node2_with_room(
+                    head,
+                    start,
+                    end,
+                    self.n.at(n + 4),
+                    self.n.at(n + 5),
+                ));
+            }
+            _ => {}
+        }
+        return Err(self.unexpected());
+    }
+
+    pub(crate) fn parse_typed_binding_element(&mut self) -> R<i32> {
+        let start = self.lexer.tok_start;
+        let decorators = if self.lexer.tok == tk::At {
+            self.check_place_of_decorated_parameter()?;
+            let await_names = self.parse.await_names;
+            let decorators = self.parse_decorators()?;
+            // an operator there for some, if it is one around the function
+            if self.parse.await_names != await_names && self.parse.typed != TYPED_TS {
+                return Err(self.text_refuse());
+            }
+            decorators
+        } else {
+            0
+        };
+        let modifiers_start = self.lexer.tok_start;
+        let modifiers = if self.parse.typed == TYPED_TS {
+            self.ts_parse_binding_modifiers()?
+        } else {
+            0
+        };
+        let element_start = self.lexer.tok_start;
+        let mut element: i32;
+        if self.parse.typed == TYPED_TS && (modifiers | decorators) != 0 {
+            self.parse_typescript.odd_parameters += 1;
+        }
+        if self.lexer.tok == tk::This {
+            // the type of `this`, written as a parameter: nothing before it, and only the type behind it
+            if (modifiers | decorators) != 0 {
+                return Err(self.text_refuse());
+            }
+            element = self.identifier()?;
+            if self.lexer.tok == tk::Colon {
+                self.parse_binding_suffix(element)?;
+            }
+            return Ok(element);
+        }
+        if self.lexer.tok == tk::Ellipsis {
+            self.next()?;
+            if self.lexer.tok == tk::This {
+                return Err(self.unexpected());
+            }
+            let argument = self.parse_binding_atom()?;
+            // the type of a rest parameter belongs to the name in Flow
+            if self.parse.typed == TYPED_FLOW {
+                self.parse_binding_suffix(argument)?;
+            }
+            element =
+                self.node1_with_room(k::RestElement, element_start, self.lexer.prev_end, argument);
+            self.parse_binding_suffix(element)?;
+        } else {
+            element = self.parse_binding_atom()?;
+            self.parse_binding_suffix(element)?;
+            if self.lexer.tok == tk::Eq {
+                self.next()?;
+                let right = self.parse_maybe_assign()?;
+                element = self.node2_with_room(
+                    k::AssignmentPattern,
+                    element_start,
+                    self.lexer.prev_end,
+                    element,
+                    right,
+                );
+            }
+        }
+        if modifiers != 0 {
+            return Ok(self.node1_l(
+                k::ParameterProperty | (modifiers & 0x00ffff00) | (modifiers << SUB_SHIFT),
+                if decorators != 0 {
+                    start
+                } else {
+                    modifiers_start
+                },
+                self.lexer.prev_end,
+                element,
+                decorators,
+            ));
+        }
+        if decorators != 0 {
+            self.n.put(element, self.n.at(element) | F_EXT);
+            self.n.put(element + 1, start);
+            self.set_list(
+                element,
+                EXT_AT.at(self.n.at(element) & 0xff) + 1,
+                decorators,
+            );
+        }
+        return Ok(element);
+    }
+
+    /// A parameter of a function that is no method of a class has a decorator: an error for TypeScript's parser, and to the long way
+    /// the arguments of such a decorator are those of any call.
+    fn check_place_of_decorated_parameter(&self) -> R<()> {
+        if self.parse.typed != TYPED_TS && self.parse.parameters_owner == PARAMETERS_PLAIN {
+            return Err(self.rare(rare::DECORATOR));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn parse_binding_element(&mut self) -> R<i32> {
+        self.stack()?;
+        if self.parse.typed != 0 {
+            return self.parse_typed_binding_element();
+        }
+        let start = self.lexer.tok_start;
+        if self.lexer.tok == tk::At {
+            self.check_place_of_decorated_parameter()?;
+            let await_names = self.parse.await_names;
+            let decorators = self.parse_decorators()?;
+            // an operator there for some, if it is one around the function
+            if self.parse.await_names != await_names {
+                return Err(self.text_refuse());
+            }
+            let v0 = self.parse_binding_element()?;
+            let element = self.with_room(v0)?;
+            self.n.put(element, self.n.at(element) | F_EXT);
+            self.n.put(element + 1, start);
+            self.set_list(
+                element,
+                EXT_AT.at(self.n.at(element) & 0xff) + 1,
+                decorators,
+            );
+            return Ok(element);
+        }
+        if self.lexer.tok == tk::Ellipsis {
+            self.next()?;
+            let argument = self.parse_binding_atom()?;
+            return Ok(self.node1(k::RestElement, start, self.lexer.prev_end, argument));
+        }
+        let target = self.parse_binding_atom()?;
+        if self.lexer.tok == tk::Eq {
+            self.next()?;
+            let right = self.parse_maybe_assign()?;
+            return Ok(self.node2(
+                k::AssignmentPattern,
+                start,
+                self.lexer.prev_end,
+                target,
+                right,
+            ));
+        }
+        return Ok(target);
+    }
+
+    pub(crate) fn parse_binding_atom(&mut self) -> R<i32> {
+        if self.lexer.tok == tk::BracketL || self.lexer.tok == tk::BraceL {
+            let saved_no_in = self.parse.no_in;
+            self.parse.no_in = 0;
+            self.parse.object_is_binding = self.lexer.tok == tk::BraceL;
+            let pattern = if self.lexer.tok == tk::BracketL {
+                self.parse_array()?
+            } else {
+                self.parse_object()?
+            };
+            self.parse.no_in = saved_no_in;
+            self.to_assignable(pattern)?;
+            if !self.is_binding(pattern)? {
+                return Err(self.text_refuse());
+            }
+            return Ok(pattern);
+        }
+        if self.lexer.tok == tk::Void {
+            return Err(self.text_refuse());
+        }
+        return self.parse_ident();
+    }
+
+    pub(crate) fn parse_function_body(&mut self, flags: i32) -> R<i32> {
+        let f = self.parse.in_function;
+        let a = self.parse.in_async;
+        let g = self.parse.in_generator;
+        let i = self.parse.no_in;
+        self.parse.in_function = 1;
+        self.parse.in_async = if (flags & F_ASYNC) != 0 { 1 } else { 0 };
+        self.parse.in_generator = if (flags & F_GENERATOR) != 0 { 1 } else { 0 };
+        self.parse.no_in = 0;
+        let body: i32;
+        if self.parse.typed == TYPED_TS {
+            let in_parameters = self.parse.place.in_parameters;
+            self.parse.place.in_parameters = false;
+            body = self.parse_block_like(k::BlockStatement, true)?;
+            self.parse.place.in_parameters = in_parameters;
+        } else {
+            let outside = self.enter_function();
+            body = self.parse_block_like(k::BlockStatement, true)?;
+            self.leave_function(outside);
+        }
+        self.parse.in_function = f;
+        self.parse.in_async = a;
+        self.parse.in_generator = g;
+        self.parse.no_in = i;
+        return Ok(body);
+    }
+
+    /// "use strict" in the body of a function whose parameters are more than names is an error, but not for TypeScript's parser.
+    #[inline]
+    fn check_directives(&self, body: i32, params: i32) -> R<()> {
+        if self.n.at(self.n.at(body + 4)) != 0 && self.has_misplaced_use_strict(body, params) {
+            return Err(self.text_refuse());
+        }
+        Ok(())
+    }
+
+    #[cold]
+    fn has_misplaced_use_strict(&self, body: i32, params: i32) -> bool {
+        if self.parse.typed == TYPED_TS {
+            return false;
+        }
+        let mut are_names = true;
+        let mut i: i32 = 1;
+        while i <= self.n.at(params) {
+            are_names = are_names && (self.n.at(self.n.at(params + i)) & 0xff) == k::Identifier;
+            i += 1;
+        }
+        return !are_names && self.has_use_strict(body);
+    }
+
+    /// Is "use strict" among the directives of the block `body`?
+    pub(crate) fn has_use_strict(&self, body: i32) -> bool {
+        let directives = self.n.at(body + 4);
+        let mut i: i32 = 1;
+        while i <= self.n.at(directives) {
+            let literal = self.n.at(self.n.at(directives + i) + 4);
+            if self.text_is(
+                self.n.at(literal + 1) + 1,
+                self.n.at(literal + 2) - 1,
+                b"use strict",
+            ) {
+                return true;
+            }
+            i += 1;
+        }
+        return false;
+    }
+
+    /// The current token is `function`. `flags` can hold modifiers in the place of the sub-kind.
+    pub(crate) fn parse_function(&mut self, start: i32, kind: i32, mut flags: i32) -> R<i32> {
+        self.next()?;
+        if self.eat(tk::Mul)? {
+            flags |= F_GENERATOR;
+        }
+        let mut id: i32 = 0;
+        if self.lexer.tok == tk::Name {
+            id = self.parse_ident()?;
+        }
+        let type_parameters = if self.parse.typed != 0 && self.lexer.tok == tk::Lt {
+            self.ts_parse_type_parameters()?
+        } else {
+            0
+        };
+        let a = self.parse.in_async;
+        let g = self.parse.in_generator;
+        self.parse.in_async = if (flags & F_ASYNC) != 0 { 1 } else { 0 };
+        self.parse.in_generator = if (flags & F_GENERATOR) != 0 { 1 } else { 0 };
+        let outer_scope = self.parse.place.scope;
+        self.parse.place.scope = SCOPE_FUNCTION;
+        let params = self.parse_params()?;
+        self.parse.in_async = a;
+        self.parse.in_generator = g;
+        let return_type = if self.parse.typed != 0 && self.lexer.tok == tk::Colon {
+            self.ts_parse_return_type()?
+        } else {
+            0
+        };
+        if self.parse.typed != 0
+            && self.lexer.tok != tk::BraceL
+            && kind == k::FunctionDeclaration
+            && !self.mode.is_babel_flow
+        {
+            // an overload, or `declare function`
+            if self.parse.typed == TYPED_FLOW || (flags & F_GENERATOR) != 0 {
+                return Err(self.text_refuse());
+            }
+            self.parse.place.scope = outer_scope;
+            self.semicolon()?;
+            return Ok(self.function_node(
+                k::TSDeclareFunction | flags,
+                start,
+                self.lexer.prev_end,
+                id,
+                0,
+                params,
+                0,
+                type_parameters,
+                return_type,
+            ));
+        }
+        let predicate = if self.parse_flow.flow_predicate != 0 {
+            self.flow_take_predicate()
+        } else {
+            0
+        };
+        let body = self.parse_function_body(flags)?;
+        self.parse.place.scope = outer_scope;
+        self.check_directives(body, params)?;
+        let n = self.function_node(
+            kind | flags,
+            start,
+            self.lexer.prev_end,
+            id,
+            body,
+            params,
+            0,
+            type_parameters,
+            return_type,
+        );
+        if predicate != 0 {
+            self.set_child(n, 10, predicate);
+        }
+        return Ok(n);
+    }
+
+    /// Type parameters, params and body of a method; the current token is `(` or `<`.
+    pub(crate) fn parse_method_rest(
+        &mut self,
+        head: i32,
+        start: i32,
+        key: i32,
+        decorators: i32,
+    ) -> R<i32> {
+        let type_parameters = if self.parse.typed != 0 && self.lexer.tok == tk::Lt {
+            self.ts_parse_type_parameters()?
+        } else {
+            0
+        };
+        // (nothing of the place is asked about in TypeScript)
+        let asks = self.parse.typed != TYPED_TS;
+        let a = self.parse.in_async;
+        let g = self.parse.in_generator;
+        let outer_scope = self.parse.place.scope;
+        let is_method = (head & 0xff) == k::ClassMethod || (head & 0xff) == k::ObjectMethod;
+        let method = ((head as u32) >> SUB_SHIFT) as i32 & M_MASK;
+        self.parse.in_async = if (head & F_ASYNC) != 0 { 1 } else { 0 };
+        self.parse.in_generator = if (head & F_GENERATOR) != 0 { 1 } else { 0 };
+        if asks {
+            self.parse.place.scope = if !is_method {
+                SCOPE_FUNCTION
+            } else if method == M_CONSTRUCTOR
+                && (head & 0xff) == k::ClassMethod
+                && self.parse.place.is_derived
+            {
+                SCOPE_DERIVED_CONSTRUCTOR
+            } else {
+                SCOPE_METHOD
+            };
+        }
+        let params = self.parse_params_of(if (head & 0xff) == k::ClassMethod {
+            PARAMETERS_OF.at(((head as u32) >> SUB_SHIFT) as i32 & 3)
+        } else {
+            PARAMETERS_PLAIN
+        })?;
+        self.parse.in_async = a;
+        self.parse.in_generator = g;
+        // a getter has no parameter, a setter has one (TypeScript's parser does not count)
+        if (method == M_GET || method == M_SET)
+            && self.parse.typed != TYPED_TS
+            && is_method
+            && (self.n.at(params) != (if method == M_GET { 0 } else { 1 })
+                || (method == M_SET
+                    && ((self.n.at(self.n.at(params + 1)) & 0xff) == k::RestElement
+                        || self.t.i32_at(self.n.at(self.n.at(params + 1) + 1)) == THIS)))
+        {
+            return Err(self.text_refuse());
+        }
+        let needs_body = self.parse_typescript.parameters_need_body;
+        if needs_body {
+            self.parse_typescript.parameters_need_body = false;
+        }
+        let return_type = if self.parse.typed != 0 && self.lexer.tok == tk::Colon {
+            self.ts_parse_return_type()?
+        } else {
+            0
+        };
+        if self.parse.typed == TYPED_TS
+            && self.lexer.tok != tk::BraceL
+            && (head & 0xff) == k::ClassMethod
+        {
+            // an overload, an abstract method, a method of a `declare class`
+            if needs_body {
+                return Err(self.text_refuse());
+            }
+            self.semicolon()?;
+            return Ok(self.function_node(
+                head,
+                start,
+                self.lexer.prev_end,
+                key,
+                0,
+                params,
+                decorators,
+                type_parameters,
+                return_type,
+            ));
+        }
+        let predicate = if self.parse_flow.flow_predicate != 0 {
+            self.flow_take_predicate()
+        } else {
+            0
+        };
+        let body = self.parse_function_body(head)?;
+        if asks {
+            self.parse.place.scope = outer_scope;
+            self.check_directives(body, params)?;
+        }
+        let n = self.function_node(
+            head,
+            start,
+            self.lexer.prev_end,
+            key,
+            body,
+            params,
+            decorators,
+            type_parameters,
+            return_type,
+        );
+        if predicate != 0 {
+            self.set_child(n, 10, predicate);
+        }
+        return Ok(n);
+    }
+
+    /// The current token is `=>`.
+    pub(crate) fn parse_arrow_rest(&mut self, start: i32, params: i32, flags: i32) -> R<i32> {
+        return self.parse_typed_arrow_rest(start, params, flags, 0, 0);
+    }
+
+    pub(crate) fn parse_typed_arrow_rest(
+        &mut self,
+        start: i32,
+        params: i32,
+        mut flags: i32,
+        type_parameters: i32,
+        return_type: i32,
+    ) -> R<i32> {
+        let predicate = if self.parse_flow.flow_predicate != 0 {
+            self.flow_take_predicate()
+        } else {
+            0
+        };
+        self.next()?;
+        let saved_no_in = self.parse.no_in;
+        self.parse.no_in = saved_no_in & !NO_IN_CONSEQUENT;
+        let body: i32;
+        if self.lexer.tok == tk::BraceL {
+            body = self.parse_function_body(flags)?;
+        } else {
+            // (TypeScript's parser, which reads every file first, has no class with decorators in this place)
+            if self.lexer.tok == tk::At {
+                return Err(self.text_refuse());
+            }
+            let f = self.parse.in_function;
+            let a = self.parse.in_async;
+            let g = self.parse.in_generator;
+            self.parse.in_function = 1;
+            self.parse.in_async = if (flags & F_ASYNC) != 0 { 1 } else { 0 };
+            self.parse.in_generator = 0;
+            let suspensions = self.parse.suspensions;
+            let in_parameters = self.parse.place.in_parameters;
+            self.parse.place.in_parameters = false;
+            body = self.parse_maybe_assign()?;
+            self.parse.suspensions = suspensions;
+            self.parse.place.in_parameters = in_parameters;
+            self.parse.in_function = f;
+            self.parse.in_async = a;
+            self.parse.in_generator = g;
+            flags |= F_EXPR_BODY;
+        }
+        self.parse.no_in = saved_no_in;
+        if (flags & F_EXPR_BODY) == 0 {
+            self.check_directives(body, params)?;
+        }
+        let n = self.function_node(
+            k::ArrowFunctionExpression | flags,
+            start,
+            self.lexer.prev_end,
+            0,
+            body,
+            params,
+            0,
+            type_parameters,
+            return_type,
+        );
+        if predicate != 0 {
+            self.set_child(n, 10, predicate);
+        }
+        return Ok(n);
+    }
+
+    pub(crate) fn parse_decorators(&mut self) -> R<i32> {
+        let mark = self.arena.ls_pos;
+        while self.lexer.tok == tk::At {
+            let start = self.lexer.tok_start;
+            self.next()?;
+            let mut expression: i32;
+            if self.parse.typed == TYPED_TS {
+                // any expression that can be called, but `@a [b]() {}` is a decorator before a computed key
+                let expr_start = self.lexer.tok_start;
+                if self.lexer.tok == tk::Lt || self.is_kw(kw::Yield) {
+                    return Err(self.text_refuse());
+                }
+                let await_names = self.parse.await_names;
+                let atom = self.parse_expr_atom()?;
+                if self.is_bare_arrow(atom) {
+                    return Err(self.text_refuse());
+                }
+                self.parse.in_decorator = 1;
+                expression = self.parse_subscripts(atom, expr_start, false)?;
+                self.parse.in_decorator = 0;
+                if self.is_bare_arrow(expression) {
+                    return Err(self.text_refuse());
+                }
+                if self.parse.await_names != await_names {
+                    // `await` is the operator in a decorator
+                    return Err(self.text_refuse());
+                }
+            } else if self.lexer.tok == tk::ParenL {
+                expression = self.parse_paren_and_distinguish()?;
+                // (a cast brings its parentheses along, and gets another pair)
+                if self.is_bare_arrow(expression)
+                    || (self.n.at(expression) & 0xff) == k::TypeCastExpression
+                {
+                    return Err(self.text_refuse());
+                }
+            } else {
+                let expr_start = self.lexer.tok_start;
+                expression = self.parse_ident()?;
+                while self.lexer.tok == tk::Dot {
+                    self.next()?;
+                    let property = if self.lexer.tok == tk::PrivateName {
+                        self.private_name()?
+                    } else {
+                        self.parse_ident_name()?
+                    };
+                    expression = self.node2(
+                        k::MemberExpression,
+                        expr_start,
+                        self.lexer.prev_end,
+                        expression,
+                        property,
+                    );
+                }
+                if self.lexer.tok == tk::ParenL {
+                    let args = self.parse_arguments()?;
+                    expression = self.call_node(
+                        k::CallExpression,
+                        expr_start,
+                        self.lexer.prev_end,
+                        expression,
+                        args,
+                        0,
+                    );
+                }
+            }
+            // (the long way puts the parentheses of a class in this place on the lines of the class)
+            if (self.n.at(expression) & 0xff) == k::ClassExpression {
+                return Err(self.rare(rare::DECORATOR));
+            }
+            let v0 = self.node1(k::Decorator, start, self.lexer.prev_end, expression);
+            self.list_push(v0);
+        }
+        return Ok(self.list_finish(mark));
+    }
+
+    pub(crate) fn private_name(&mut self) -> R<i32> {
+        let n = self.node0(
+            k::PrivateName | self.lexer.tok_flags,
+            self.lexer.tok_start,
+            self.lexer.tok_end,
+        );
+        self.next()?;
+        return Ok(n);
+    }
+
+    /// The current token is `class`. `kind` can hold modifiers in the place of the sub-kind.
+    /// `{ members }`; the current token is the `{`.
+    pub(crate) fn parse_class_body(&mut self) -> R<i32> {
+        let body_start = self.lexer.tok_start;
+        let stays = self.parse.lexer_stays;
+        self.parse.lexer_stays = false;
+        if self.lexer.tok != tk::BraceL {
+            return Err(self.unexpected());
+        }
+        let outer = self.parse.place;
+        let saved_no_in = self.parse.no_in;
+        self.parse.no_in = 0;
+        self.parse.place.is_derived = self.parse.next_class_is_derived;
+        self.parse.next_class_is_derived = false;
+        self.parse.place.constructor_at = 0;
+        self.parse.place.private_base = outer.private_top;
+        self.parse.list_depth += 1;
+        let mark = self.arena.ls_pos;
+        let mut behind: i32 = 0;
+        if self.parse.reads_ahead && self.t.at(self.lexer.tok_end) == 10 {
+            let mut read = self.read_next_member_of(
+                self.lexer.tok_end,
+                MEMBER_OF_CLASS,
+                self.parse.typed,
+                self.parse.list_depth.wrapping_mul(self.options.tab_width),
+            )?;
+            let mut from = self.lexer.tok_end;
+            if !read && self.fast.ready_start == 0 && self.parse.joins_lines {
+                let end = self.read_comments(
+                    from,
+                    self.parse.list_depth.wrapping_mul(self.options.tab_width),
+                    true,
+                );
+                if end != 0 {
+                    self.push_standing(
+                        self.fast.comments_start,
+                        end,
+                        self.fast.comments_last_length,
+                        k::None,
+                        0,
+                    );
+                    from = end;
+                    behind = end;
+                    read = self.read_next_member(from, MEMBER_OF_CLASS)?;
+                }
+            }
+            if read {
+                behind = self.read_members(self.fast.ready_start, from, MEMBER_OF_CLASS)?;
+                from = 0;
+            } else {
+                self.parse.refused_at = self.fast.ready_start;
+            }
+            if from == self.lexer.tok_end {
+                self.next()?;
+            }
+        } else {
+            self.next()?;
+        }
+        let end: i32;
+        loop {
+            if behind != 0 {
+                let brace = self.closing_brace_behind(behind);
+                if brace != 0 {
+                    end = brace + 1;
+                    break;
+                }
+                self.catch_up(behind)?;
+                behind = 0;
+            }
+            if self.lexer.tok == tk::BraceR {
+                end = self.lexer.tok_end;
+                break;
+            }
+            if self.lexer.tok == tk::Semi {
+                return Err(self.rare(rare::SEMICOLON));
+            }
+            if self.lexer.tok == tk::EOF {
+                return Err(self.unexpected());
+            }
+            if self.lexer.c_count != self.parse.comments_seen {
+                self.claim_comments(true);
+            }
+            if self.parse.reads_ahead
+                && STARTS_READY_MEMBER.at(self.lexer.tok) != 0
+                && self.lexer.tok_start != self.parse.refused_at
+                && self.read_member(
+                    self.lexer.tok_start,
+                    MEMBER_OF_CLASS,
+                    self.parse.typed,
+                    self.parse.list_depth.wrapping_mul(self.options.tab_width),
+                )?
+            {
+                behind =
+                    self.read_members(self.lexer.tok_start, self.lexer.prev_end, MEMBER_OF_CLASS)?;
+                continue;
+            }
+            let v0 = if self.parse.typed != 0 {
+                self.ts_parse_class_member()?
+            } else {
+                self.parse_class_member()?
+            };
+            if self.parse.typed != TYPED_TS {
+                self.check_class_member(v0)?;
+            }
+            self.list_push(v0);
+        }
+        self.parse.place.is_derived = outer.is_derived;
+        self.parse.place.constructor_at = outer.constructor_at;
+        self.parse.place.private_base = outer.private_base;
+        self.parse.place.private_top = outer.private_top;
+        self.parse.no_in = saved_no_in;
+        let members = self.list_finish(mark);
+        self.parse.list_depth -= 1;
+        self.set_pos(end);
+        if !stays {
+            self.next()?;
+        }
+        return Ok(self.node_l(k::ClassBody, body_start, end, members));
+    }
+
+    /// What the parsers ask of a member of a class beyond its form.
+    fn check_class_member(&mut self, n: i32) -> R<()> {
+        let head = self.n.at(n);
+        let kind = head & 0xff;
+        if kind != k::ClassMethod && kind != k::ClassProperty {
+            // a static block has no decorators
+            if kind == k::StaticBlock && self.t.at(self.n.at(n + 1)) == 64 {
+                return Err(self.text_refuse());
+            }
+            return Ok(());
+        }
+        // `accessor a() {}`, which Flow's parsers read in their own way
+        if kind == k::ClassMethod && (head & F_ACCESSOR) != 0 && self.parse.typed != TYPED_FLOW {
+            return Err(self.text_refuse());
+        }
+        if (head & F_COMPUTED) != 0 {
+            return Ok(());
+        }
+        let key = self.n.at(n + 4);
+        let length = self.n.at(key + 2) - self.n.at(key + 1);
+        if ((self.n.at(key) & 0xff) == k::PrivateName || (length >= 9 && length <= 13))
+            && !self.is_member_name_fine(n, key)
+        {
+            return Err(self.text_refuse());
+        }
+        Ok(())
+    }
+
+    /// `constructor`, `prototype` and private names.
+    #[cold]
+    fn is_member_name_fine(&mut self, n: i32, key: i32) -> bool {
+        let head = self.n.at(n);
+        let is_method = (head & 0xff) == k::ClassMethod;
+        let method = ((head as u32) >> SUB_SHIFT) as i32 & M_MASK;
+        let is_static = (head & F_STATIC) != 0;
+        let counts = self.parse.typed != TYPED_TS;
+        let mut start = self.n.at(key + 1);
+        let mut end = self.n.at(key + 2);
+        match self.n.at(key) & 0xff {
+            k::PrivateName => {
+                if !counts {
+                    return true;
+                }
+                if self.text_is(start + 1, end, b"constructor") {
+                    return false;
+                }
+                // (a method without a body is an overload)
+                if is_method && self.n.at(n + 5) == 0 {
+                    return true;
+                }
+                // a getter and a setter, both static or neither, make one name
+                let half = if is_method && (method == M_GET || method == M_SET) {
+                    method + (if is_static { 2 } else { 0 })
+                } else {
+                    0
+                };
+                return self.declare_private_name(start, end, half);
+            }
+            k::StringLiteral => {
+                start += 1;
+                end -= 1;
+            }
+            k::Identifier => {}
+            _ => {
+                return true;
+            }
+        }
+        if self.text_is(start, end, b"prototype") {
+            return !is_static || !counts;
+        }
+        if !self.text_is(start, end, b"constructor") {
+            return true;
+        }
+        if !is_method {
+            return false;
+        }
+        // no decorators, static or not
+        if self.n.at(n + 7) != 0 {
+            return false;
+        }
+        if is_static {
+            return true;
+        }
+        if !counts {
+            return true;
+        }
+        if method != M_CONSTRUCTOR || (head & (F_ASYNC | F_GENERATOR)) != 0 {
+            return false;
+        }
+        return self.n.at(n + 5) == 0 || !self.is_second_constructor(self.n.at(key + 1));
+    }
+
+    /// A constructor with a body, whose name stands at `at`, has been read, maybe not for the first time.
+    pub(crate) fn is_second_constructor(&mut self, at: i32) -> bool {
+        if self.parse.place.constructor_at == 0 {
+            self.parse.place.constructor_at = at;
+        }
+        return self.parse.place.constructor_at != at;
+    }
+
+    /// False if the class at hand has the name already. `half`: 0, or what tells a getter from a setter and a static one from one that is not.
+    fn declare_private_name(&mut self, start: i32, end: i32, half: i32) -> bool {
+        let top = self.parse.place.private_top;
+        let mut i = self.parse.place.private_base;
+        // (each is compared with all)
+        if top - i > 3 * 128 {
+            return false;
+        }
+        while i < top {
+            if self.is_same_text(
+                self.parse_stacks.private_names.at(i),
+                self.parse_stacks.private_names.at(i + 1),
+                start,
+                end,
+            ) {
+                // the same place: it is read for the second time
+                if self.parse_stacks.private_names.at(i) == start {
+                    return true;
+                }
+                let other = self.parse_stacks.private_names.at(i + 2);
+                self.parse_stacks.private_names.put(i + 2, 0);
+                return half != 0 && other != 0 && half != other && (half > 2) == (other > 2);
+            }
+            i += 3;
+        }
+        if top + 3 > self.parse_stacks.private_names.len() as i32 {
+            self.make_room(|q| &mut q.parse_stacks.private_names, top + 3);
+        }
+        self.parse_stacks.private_names.put(top, start);
+        self.parse_stacks.private_names.put(top + 1, end);
+        self.parse_stacks.private_names.put(top + 2, half);
+        self.parse.place.private_top = top + 3;
+        return true;
+    }
+
+    pub(crate) fn parse_class(&mut self, start: i32, kind: i32, decorators: i32) -> R<i32> {
+        self.next()?;
+        let mut id: i32 = 0;
+        if self.lexer.tok == tk::Name
+            && !(self.parse.typed != 0
+                && self.lexer.tok_end - self.lexer.tok_start == 10
+                && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"implements"))
+        {
+            // (TypeScript's parser, which reads every file first, does not take `implements` for a name)
+            if self.lexer.tok_end - self.lexer.tok_start == 10
+                && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"implements")
+            {
+                return Err(self.text_refuse());
+            }
+            id = self.parse_ident()?;
+        }
+        let type_parameters = if self.parse.typed != 0 && self.lexer.tok == tk::Lt {
+            self.ts_parse_type_parameters_of(true)?
+        } else {
+            0
+        };
+        let mut super_class: i32 = 0;
+        let mut super_type_arguments: i32 = 0;
+        let mut implemented: i32 = 0;
+        if self.eat(tk::Extends)? {
+            // TypeScript's parser, which reads every file first, takes `{` for the start of the body, and does not take `implements` for a name
+            if self.lexer.tok == tk::BraceL
+                || self.lexer.tok == tk::At
+                || (self.lexer.tok == tk::Name
+                    && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"implements"))
+            {
+                return Err(self.text_refuse());
+            }
+            if self.parse.typed == TYPED_TS
+                && (self.lexer.tok == tk::Lt
+                    || (self.lexer.tok == tk::Name
+                        && self.lexer.tok_end - self.lexer.tok_start == 10
+                        && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"implements")))
+            {
+                return Err(self.text_refuse());
+            }
+            // (whoever reads the parentheses takes it back; nobody else does)
+            self.parse.is_operand = self.lexer.tok == tk::ParenL;
+            let in_superclass = self.parse.in_superclass;
+            self.parse.in_superclass = true;
+            self.parse_typescript.in_heritage = true;
+            let super_start = self.lexer.tok_start;
+            super_class = self.parse_expr_atom()?;
+            if !self.is_bare_arrow(super_class) {
+                // (not before the atom: in parentheses there is no superclass)
+                if self.parse.typed == TYPED_FLOW {
+                    self.parse.no_record_expression = 1;
+                }
+                super_class = self.parse_subscripts(super_class, super_start, false)?;
+            }
+            self.parse_typescript.in_heritage = false;
+            self.parse.in_superclass = in_superclass;
+            self.parse.is_operand = false;
+            self.parse.no_record_expression = 0;
+            if self.is_bare_arrow(super_class) {
+                return Err(self.text_refuse());
+            }
+            if self.parse.typed != 0 {
+                if (self.n.at(super_class) & (0xff | F_PAREN)) == k::InstantiationExpression {
+                    super_type_arguments = self.n.at(super_class + 5);
+                    super_class = self.n.at(super_class + 4);
+                } else if self.lexer.tok == tk::Lt {
+                    // TypeScript does not split a `<<` here
+                    super_type_arguments = self.ts_parse_type_arguments()?;
+                }
+            }
+        }
+        if self.parse.typed != 0 && self.lexer.tok == tk::Name {
+            implemented = if self.parse.typed == TYPED_TS {
+                self.ts_parse_class_heritage()?
+            } else {
+                self.flow_parse_class_implements()?
+            };
+        }
+        self.parse.next_class_is_derived = super_class != 0;
+        let outer_is_declaration = self.parse_typescript.in_class_declaration;
+        self.parse_typescript.in_class_declaration = (kind & 0xff) == k::ClassDeclaration;
+        let body = self.parse_class_body()?;
+        self.parse_typescript.in_class_declaration = outer_is_declaration;
+        let n = self.class_node(
+            kind,
+            start,
+            self.lexer.prev_end,
+            id,
+            super_class,
+            body,
+            decorators,
+        );
+        if self.parse.typed != 0 {
+            self.set_list(n, 8, implemented);
+            self.set_child(n, 9, type_parameters);
+            self.set_child(n, 10, super_type_arguments);
+        }
+        return Ok(n);
+    }
+
+    /// After a word that may be a modifier: does the member's name still have to come?
+    pub(crate) fn word_was_key(&self) -> bool {
+        return self.lexer.tok == tk::ParenL
+            || self.lexer.tok == tk::Eq
+            || self.lexer.tok == tk::Semi
+            || self.lexer.tok == tk::BraceR
+            || self.lexer.tok == tk::EOF;
+    }
+
+    /// The current token is the `{` behind `static`.
+    pub(crate) fn parse_static_block(&mut self, start: i32) -> R<i32> {
+        let outside = self.enter_function();
+        let scope = self.parse.place.scope;
+        self.parse.place.scope = SCOPE_STATIC_BLOCK;
+        let block = self.parse_block_like(k::StaticBlock, false)?;
+        self.parse.place.scope = scope;
+        self.leave_function(outside);
+        self.n.put(block + 1, start);
+        self.check_for_arguments(start, self.n.at(block + 2))?;
+        return Ok(block);
+    }
+
+    /// T[start, end) is a static block or the value of a property of a class. There are no `arguments` in there, but in a function in it; TypeScript's parser does not mind.
+    /// Nobody looks at each name for that: the word is rare enough.
+    pub(crate) fn check_for_arguments(&self, start: i32, end: i32) -> R<()> {
+        if self.parse.typed != TYPED_TS
+            && self.parse.place.scope < SCOPE_FIELD
+            && bun_core::strings::contains(self.t.sub(start, end), b"arguments")
+        {
+            return Err(self.text_refuse());
+        }
+        Ok(())
+    }
+
+    /// Is this key, which is not computed, the word or the string "constructor"?
+    pub(crate) fn is_constructor_key(&self, key: i32) -> bool {
+        let k = self.n.at(key) & 0xff;
+        if k == k::Identifier {
+            return self.text_is(self.n.at(key + 1), self.n.at(key + 2), b"constructor");
+        }
+        return k == k::StringLiteral
+            && self.text_is(
+                self.n.at(key + 1) + 1,
+                self.n.at(key + 2) - 1,
+                b"constructor",
+            );
+    }
+
+    /// ` = value` of a class property, or nothing.
+    pub(crate) fn parse_class_property_value(&mut self) -> R<i32> {
+        if !self.eat(tk::Eq)? {
+            return Ok(0);
+        }
+        let f = self.parse.in_function;
+        let a = self.parse.in_async;
+        let g = self.parse.in_generator;
+        self.parse.in_function = 1;
+        self.parse.in_generator = 0;
+        self.parse.in_async = 0;
+        let outside = self.enter_function();
+        let scope = self.parse.place.scope;
+        self.parse.place.scope = SCOPE_FIELD;
+        let start = self.lexer.tok_start;
+        let value = self.parse_maybe_assign()?;
+        self.parse.place.scope = scope;
+        self.leave_function(outside);
+        self.check_for_arguments(start, self.lexer.prev_end)?;
+        self.parse.in_function = f;
+        self.parse.in_async = a;
+        self.parse.in_generator = g;
+        return Ok(value);
+    }
+
+    pub(crate) fn parse_class_member(&mut self) -> R<i32> {
+        let start = self.lexer.tok_start;
+        let decorators = if self.lexer.tok == tk::At {
+            self.parse_decorators()?
+        } else {
+            0
+        };
+        let mut flags: i32 = 0;
+        let mut method = M_METHOD;
+        let mut key: i32 = 0;
+        if self.is_kw(kw::Static) {
+            let word = self.identifier()?;
+            if self.word_was_key() {
+                key = word;
+            } else if self.lexer.tok == tk::BraceL {
+                if decorators != 0 {
+                    return Err(self.unexpected());
+                }
+                let f = self.parse.in_function;
+                let a = self.parse.in_async;
+                let g = self.parse.in_generator;
+                self.parse.in_function = 1;
+                self.parse.in_generator = 0;
+                self.parse.in_async = 0;
+                let block = self.parse_static_block(start)?;
+                self.parse.in_function = f;
+                self.parse.in_async = a;
+                self.parse.in_generator = g;
+                return Ok(block);
+            } else {
+                flags |= F_STATIC;
+            }
+        }
+        if key == 0 && self.is_kw(kw::Accessor) {
+            let word = self.identifier()?;
+            if self.word_was_key() || self.lexer.tok_nl != 0 {
+                key = word;
+            } else {
+                flags |= F_ACCESSOR;
+            }
+        }
+        if key == 0 && self.is_kw(kw::Async) {
+            let word = self.identifier()?;
+            if self.word_was_key() || self.lexer.tok_nl != 0 {
+                key = word;
+            } else {
+                flags |= F_ASYNC;
+            }
+        }
+        if key == 0 && self.lexer.tok == tk::Mul {
+            self.next()?;
+            flags |= F_GENERATOR;
+        }
+        if key == 0
+            && (flags & (F_ASYNC | F_GENERATOR | F_ACCESSOR)) == 0
+            && self.lexer.tok == tk::Name
+            && (self.lexer.tok_kw == kw::Get || self.lexer.tok_kw == kw::Set)
+        {
+            let kw = self.lexer.tok_kw;
+            let word = self.identifier()?;
+            if self.word_was_key() {
+                key = word;
+            } else {
+                method = if kw == kw::Get { M_GET } else { M_SET };
+            }
+        }
+        if key == 0 {
+            if self.lexer.tok == tk::BracketL {
+                flags |= F_COMPUTED;
+            }
+            // TypeScript's parser, which reads every file first, takes these for modifiers of what follows, on whatever line; and so
+            // it does behind `accessor`, where they are names to the others
+            let is_modifier = self.lexer.tok == tk::Export
+                || self.lexer.tok == tk::Default
+                || ((flags & F_ACCESSOR) != 0
+                    && self.lexer.tok == tk::Name
+                    && matches!(self.lexer.tok_kw, kw::Static | kw::Get | kw::Set));
+            key = self.parse_property_name()?;
+            if is_modifier && !self.word_was_key() {
+                return Err(self.text_refuse());
+            }
+        }
+        if self.lexer.tok == tk::ParenL {
+            if method == M_METHOD
+                && (flags & (F_STATIC | F_COMPUTED)) == 0
+                && self.is_constructor_key(key)
+            {
+                method = M_CONSTRUCTOR;
+            }
+            return self.parse_method_rest(
+                k::ClassMethod | flags | (method << SUB_SHIFT),
+                start,
+                key,
+                decorators,
+            );
+        }
+        // `*`, `async`, `get` and `set` announce a method
+        if (flags & (F_GENERATOR | F_ASYNC)) != 0 || method != M_METHOD {
+            return Err(self.unexpected());
+        }
+        let value = self.parse_class_property_value()?;
+        self.semicolon()?;
+        return Ok(self.class_property_node(
+            k::ClassProperty | flags,
+            start,
+            self.lexer.prev_end,
+            key,
+            value,
+            decorators,
+            0,
+            0,
+        ));
+    }
+
+    /// The current token is a string with a backslash in it, as a key. There are rules about `constructor`, `prototype` and
+    /// `__proto__`, however they are spelled: does it stand for one of them?
+    #[cold]
+    fn spells_a_special_name(&self) -> bool {
+        const NAMES: [&[u8]; 3] = [b"constructor", b"prototype", b"__proto__"];
+        let hex = |c: i32| if c <= 57 { c - 48 } else { (c | 32) - 87 };
+        let end = self.lexer.tok_end - 1;
+        let mut p = self.lexer.tok_start + 1;
+        let mut length: i32 = 0;
+        let mut may_be = [true; 3];
+        while p < end {
+            let mut c = self.t.at(p);
+            p += 1;
+            if c == 92 {
+                c = self.t.at(p);
+                p += 1;
+                match c {
+                    // (the lexer has seen to it that these are whole)
+                    117 | 120 => {
+                        let stop = if c == 120 {
+                            p + 2
+                        } else if self.t.at(p) == 123 {
+                            p += 1;
+                            end
+                        } else {
+                            p + 4
+                        };
+                        c = 0;
+                        while p < stop && self.t.at(p) != 125 {
+                            c = (c << 4 | hex(self.t.at(p))) & 0xffffff;
+                            p += 1;
+                        }
+                        if stop == end {
+                            p += 1;
+                        }
+                    }
+                    48..=55 => {
+                        let most = if c <= 51 { 2 } else { 1 };
+                        let mut digits: i32 = 0;
+                        c -= 48;
+                        while digits < most && matches!(self.t.at(p), 48..=55) {
+                            c = c * 8 + self.t.at(p) - 48;
+                            p += 1;
+                            digits += 1;
+                        }
+                    }
+                    // the line goes on
+                    10 => continue,
+                    // \n \r \t \b \f \v
+                    110 | 114 | 116 | 98 | 102 | 118 => return false,
+                    _ => {}
+                }
+            }
+            for (name, may_be) in NAMES.iter().zip(&mut may_be) {
+                *may_be &= name.at(length) == c;
+            }
+            length += 1;
+        }
+        return NAMES
+            .iter()
+            .zip(may_be)
+            .any(|(name, may_be)| may_be && name.len() as i32 == length);
+    }
+
+    /// A key of an object or class member. The caller sets F_COMPUTED when it sees `[`.
+    pub(crate) fn parse_property_name(&mut self) -> R<i32> {
+        match self.lexer.tok {
+            tk::String => {
+                if (self.lexer.tok_flags & F_ESCAPE) != 0 && self.spells_a_special_name() {
+                    return Err(self.text_refuse());
+                }
+                let n = self.node0(
+                    k::StringLiteral | self.lexer.tok_flags,
+                    self.lexer.tok_start,
+                    self.lexer.tok_end,
+                );
+                self.next()?;
+                return Ok(n);
+            }
+            tk::Num => {
+                let n = self.node0(k::NumericLiteral, self.lexer.tok_start, self.lexer.tok_end);
+                self.next()?;
+                return Ok(n);
+            }
+            tk::BigInt => {
+                let n = self.node0(k::BigIntLiteral, self.lexer.tok_start, self.lexer.tok_end);
+                self.next()?;
+                return Ok(n);
+            }
+            tk::BracketL => {
+                self.next()?;
+                let saved_no_in = self.parse.no_in;
+                self.parse.no_in = 0;
+                let is_async = self.is_kw(kw::Async);
+                let n = self.parse_maybe_assign()?;
+                // (Flow: the long way does not take `[(a: B)]` for a short key)
+                if (self.n.at(n) & 0xff) == k::TypeCastExpression {
+                    return Err(self.rare(rare::FLOW));
+                }
+                // `[async a => 1]`: a modifier and a name make an index signature for TypeScript's parser, which reads every file first
+                if is_async && self.is_bare_arrow(n) {
+                    return Err(self.text_refuse());
+                }
+                // (the long way breaks the line behind it)
+                if (self.n.at(n) & 0xff) == k::ClassExpression {
+                    return Err(self.rare(rare::UNLIKE_PRETTIER));
+                }
+                self.parse.no_in = saved_no_in;
+                self.expect(tk::BracketR)?;
+                return Ok(n);
+            }
+            tk::PrivateName => {
+                return self.private_name();
+            }
+            _ => {}
+        }
+        return self.parse_ident_name();
+    }
+
+    // ------------------------------------------------------------------------------------------------------ expressions
+    pub(crate) fn parse_expression(&mut self) -> R<i32> {
+        let start = self.lexer.tok_start;
+        let first = self.parse_maybe_assign()?;
+        if self.lexer.tok != tk::Comma {
+            return Ok(first);
+        }
+        let mark = self.arena.ls_pos;
+        self.list_push(first);
+        while self.eat(tk::Comma)? {
+            let v0 = self.parse_maybe_assign()?;
+            self.list_push(v0);
+        }
+        let v1 = self.lexer.prev_end;
+        let v2 = self.list_finish(mark);
+        return Ok(self.node_l(k::SequenceExpression, start, v1, v2));
+    }
+
+    pub(crate) fn is_bare_arrow(&self, n: i32) -> bool {
+        return (self.n.at(n) & (0xff | F_PAREN)) == k::ArrowFunctionExpression;
+    }
+
+    pub(crate) fn starts_expression(&self) -> bool {
+        match self.lexer.tok {
+            tk::ParenR
+            | tk::BracketR
+            | tk::BraceR
+            | tk::Comma
+            | tk::Semi
+            | tk::Colon
+            | tk::EOF
+            | tk::In => {
+                return false;
+            }
+            _ => {}
+        }
+        return !self.is_kw(kw::Of);
+    }
+
+    /// `?` and `: type` behind what may be a parameter of an arrow function.
+    pub(crate) fn parse_paren_item_suffix(&mut self, left: i32) -> R<i32> {
+        if self.parse.typed == TYPED_FLOW {
+            if self.lexer.tok == tk::Question {
+                self.n.put(left, self.n.at(left) | F_OPTIONAL);
+                self.next()?;
+                self.n.put(left + 2, self.lexer.prev_end);
+                self.parse.saw_typed_item = 1;
+            }
+            if self.lexer.tok != tk::Colon {
+                return Ok(left);
+            }
+            // `(a: T)`: a cast, or a parameter of an arrow function, see to_assignable_parameter()
+            let annotation = self.ts_parse_type_annotation()?;
+            return Ok(self.node2(
+                k::TypeCastExpression,
+                self.n.at(left + 1),
+                self.lexer.prev_end,
+                left,
+                annotation,
+            ));
+        }
+        let k = self.n.at(left) & (0xff | F_PAREN);
+        if k != k::Identifier && k != k::ObjectExpression && k != k::ArrayExpression {
+            return Err(self.unexpected());
+        }
+        self.parse_binding_suffix(left)?;
+        self.parse.saw_typed_item = 1;
+        return Ok(left);
+    }
+
+    pub(crate) fn parse_maybe_assign(&mut self) -> R<i32> {
+        self.stack()?;
+        let start = self.lexer.tok_start;
+        let mut is_paren_item: i32 = 0;
+        if self.parse.typed != 0 {
+            is_paren_item = self.parse.paren_item;
+            self.parse.paren_item = 0;
+        }
+        if self.parse.in_generator != 0 && self.is_kw(kw::Yield) {
+            self.next()?;
+            let mut flags: i32 = 0;
+            let mut argument: i32 = 0;
+            if self.lexer.tok_nl == 0 {
+                if self.eat(tk::Mul)? {
+                    flags = F_DELEGATE;
+                    argument = self.parse_maybe_assign()?;
+                } else if self.starts_expression() {
+                    argument = self.parse_maybe_assign()?;
+                }
+            }
+            self.suspend()?;
+            return Ok(self.node1(
+                k::YieldExpression | flags,
+                start,
+                self.lexer.prev_end,
+                argument,
+            ));
+        }
+        let mut left = self.parse_maybe_conditional()?;
+        if is_paren_item != 0 && (self.lexer.tok == tk::Colon || self.lexer.tok == tk::Question) {
+            left = self.parse_paren_item_suffix(left)?;
+        }
+        if self.lexer.tok >= tk::Eq && self.lexer.tok <= tk::NullishEq {
+            let op = self.lexer.tok;
+            let lk = self.n.at(left) & 0xff;
+            if lk == k::TypeCastExpression
+                && is_paren_item != 0
+                && op == tk::Eq
+                && self.t.at(self.n.at(left + 1)) != 40
+            {
+                // `(a: A = 1) => ..`
+                self.parse.saw_typed_item = 1;
+            } else if lk != k::Identifier && lk != k::MemberExpression {
+                if op == tk::Eq {
+                    self.to_assignable(left)?;
+                }
+                if self.parse.typed == TYPED_TS {
+                    self.check_target_of_type_script(left, op == tk::Eq)?;
+                } else {
+                    self.check_target(left, op == tk::Eq)?;
+                }
+            }
+            self.next()?;
+            let right = self.parse_maybe_assign()?;
+            return Ok(self.node2(
+                k::AssignmentExpression | (op << SUB_SHIFT),
+                start,
+                self.lexer.prev_end,
+                left,
+                right,
+            ));
+        }
+        return Ok(left);
+    }
+
+    /// At the start of a text.
+    pub(crate) fn forget_place(&mut self) {
+        self.parse.place = NOWHERE;
+        self.parse.suspensions = 0;
+        self.parse.default_export_at = 0;
+        self.parse.await_names = 0;
+        self.parse.needs_module = false;
+    }
+
+    /// What has been read makes the file a module, in which `await` is no name.
+    pub(crate) fn need_module(&mut self) -> R<()> {
+        self.parse.needs_module = true;
+        if self.parse.await_names != 0 {
+            return Err(self.text_refuse());
+        }
+        Ok(())
+    }
+
+    /// An `await` or `yield` expression has been read.
+    fn suspend(&mut self) -> R<()> {
+        self.parse.suspensions += 1;
+        if self.parse.place.in_parameters {
+            return Err(self.text_refuse());
+        }
+        Ok(())
+    }
+
+    /// `a ?? b || c`: is `n`, an operand of `op`, an expression with an operator that takes parentheses next to `op`?
+    fn mixes_with(&self, n: i32, op: i32) -> bool {
+        let head = self.n.at(n);
+        (head & (0xff | F_PAREN)) == k::LogicalExpression
+            && (((head as u32) >> SUB_SHIFT) as i32 == tk::Nullish) != (op == tk::Nullish)
+    }
+
+    pub(crate) fn parse_maybe_conditional(&mut self) -> R<i32> {
+        let start = self.lexer.tok_start;
+        let v0 = self.parse_maybe_unary()?;
+        let test = self.parse_expr_op(v0, start, 0)?;
+        if self.lexer.tok != tk::Question || self.is_bare_arrow(test) {
+            return Ok(test);
+        }
+        if self.parse.typed != 0 {
+            // `(a?: T) => ..`, `(a?, b) => ..`: the mark of an optional parameter
+            let saved = self.save();
+            self.next()?;
+            let is_optional_mark = self.lexer.tok == tk::Colon
+                || self.lexer.tok == tk::Comma
+                || self.lexer.tok == tk::ParenR
+                || self.lexer.tok == tk::Eq;
+            self.restore(saved);
+            if is_optional_mark {
+                return Ok(test);
+            }
+        }
+        self.next()?;
+        let saved_no_in = self.parse.no_in;
+        self.parse.no_in = NO_IN_CONSEQUENT;
+        let consequent = self.parse_maybe_assign()?;
+        self.parse.no_in = saved_no_in;
+        if self.t.at(self.lexer.prev_end - 1) == 41
+            && self.ends_with_head_of_arrow_function(consequent, false)
+        {
+            return Err(self.rare(rare::OTHER));
+        }
+        self.expect(tk::Colon)?;
+        let alternate = self.parse_maybe_assign()?;
+        return Ok(self.node3(
+            k::ConditionalExpression,
+            start,
+            self.lexer.prev_end,
+            test,
+            consequent,
+            alternate,
+        ));
+    }
+
+    pub(crate) fn make_logical(
+        &mut self,
+        op: i32,
+        start: i32,
+        end: i32,
+        left: i32,
+        right: i32,
+    ) -> R<i32> {
+        let head = k::LogicalExpression | (op << SUB_SHIFT);
+        if (self.n.at(right) & (0xff | (0xff << SUB_SHIFT))) == head {
+            return self.move_logical(head, start, end, left, right);
+        }
+        return Ok(self.node2(head, start, end, left, right));
+    }
+
+    /// Prettier turns `a || (b || c)` into `(a || b) || c`: the operands of `right` get new nodes, with `left` below them.
+    /// In `a || (b || (c || ..))` that happens to the last operand once for each pair of parentheses. How often it has happened to one of them is the word
+    /// behind the node that is returned (F_MOVED), and a text in which it happens too often is left to the long way.
+    #[cold]
+    fn move_logical(&mut self, head: i32, start: i32, end: i32, left: i32, right: i32) -> R<i32> {
+        const MOST_MOVES: i32 = 16;
+        const KIND_AND_OPERATOR: i32 = 0xff | (0xff << SUB_SHIFT);
+        let mark = self.arena.ls_pos;
+        let mut moves = 0;
+        let mut first = right;
+        while (self.n.at(first) & KIND_AND_OPERATOR) == head {
+            if (self.n.at(first) & F_MOVED) != 0 {
+                moves = moves.max(self.n.at(first + 6));
+            }
+            self.list_push(first);
+            first = self.n.at(first + 4);
+        }
+        if moves == MOST_MOVES {
+            return Err(self.rare(rare::OTHER));
+        }
+        // (what then stands on the line of the operator before it does not on the long way)
+        if matches!(
+            self.n.at(first) & 0xff,
+            k::ObjectExpression | k::ArrayExpression | k::JSXElement | k::JSXFragment
+        ) {
+            return Err(self.rare(rare::UNLIKE_PRETTIER));
+        }
+        let left_start = self.n.at(left + 1);
+        let mut moved = self.node2(head, left_start, self.n.at(first + 2), left, first);
+        let mut i = self.arena.ls_pos - 1;
+        while i > mark {
+            let old = self.arena.ls.at(i);
+            moved = self.node2(
+                head,
+                left_start,
+                self.n.at(old + 2),
+                moved,
+                self.n.at(old + 5),
+            );
+            i -= 1;
+        }
+        self.list_truncate(mark);
+        moved = self.node2(head | F_MOVED, start, end, moved, self.n.at(right + 5));
+        let word = self.alloc_ast(1);
+        self.n.put(word, moves + 1);
+        return Ok(moved);
+    }
+
+    pub(crate) fn parse_expr_op(
+        &mut self,
+        mut left: i32,
+        left_start: i32,
+        min_prec: i32,
+    ) -> R<i32> {
+        self.stack()?;
+        // the precedence of the operator of `left`, if it was read here
+        let mut last_prec = i32::MAX;
+        loop {
+            let op = self.lexer.tok;
+            let prec = PREC.at(op);
+            if prec <= min_prec
+                || (op == tk::In && (self.parse.no_in & 1) != 0)
+                || self.is_bare_arrow(left)
+            {
+                if self.parse.typed != 0
+                    && op == tk::Name
+                    && min_prec < 8
+                    && self.lexer.tok_nl == 0
+                    && !self.is_bare_arrow(left)
+                    && self.ts_is_as_or_satisfies()
+                {
+                    left = self.ts_parse_as_or_satisfies(left, left_start)?;
+                    if PREC.at(self.lexer.tok) > last_prec && self.parse.typed == TYPED_TS {
+                        // `a + b as T * c`
+                        return Err(self.text_refuse());
+                    }
+                    continue;
+                }
+                return Ok(left);
+            }
+            self.next()?;
+            let right_start = self.lexer.tok_start;
+            if op == tk::Pipeline {
+                return Err(self.text_refuse());
+            }
+            // `await() ** a`: to TypeScript whatever starts with the word is an operand of the operator
+            if op == tk::Pow
+                && self.parse.typed == TYPED_TS
+                && self.text_is(left_start, left_start + 5, b"await")
+            {
+                return Err(self.text_refuse());
+            }
+            if op == tk::In && self.parse_typescript.in_head_of_for {
+                // TypeScript forgets in few places that it is in the head of a `for`
+                return Err(self.text_refuse());
+            }
+            let v0 = self.parse_maybe_unary()?;
+            let right =
+                self.parse_expr_op(v0, right_start, if op == tk::Pow { prec - 1 } else { prec })?;
+            if self.is_bare_arrow(right) {
+                return Err(self.text_refuse());
+            }
+            last_prec = prec;
+            if op == tk::LOr || op == tk::LAnd || op == tk::Nullish {
+                if self.mixes_with(left, op) || self.mixes_with(right, op) {
+                    return Err(self.text_refuse());
+                }
+                left = self.make_logical(op, left_start, self.lexer.prev_end, left, right)?;
+            } else {
+                if op == tk::Gt
+                    && (self.parse.typed == TYPED_TS || self.parse.typed == TYPED_FLOW)
+                    && (self.n.at(left) & 0xff) == k::BinaryExpression
+                    && ((self.n.at(left) as u32) >> SUB_SHIFT) as i32 == tk::Lt
+                {
+                    return Err(self.rare(rare::LESS_GREATER));
+                }
+                left = self.node2(
+                    k::BinaryExpression | (op << SUB_SHIFT),
+                    left_start,
+                    self.lexer.prev_end,
+                    left,
+                    right,
+                );
+            }
+        }
+    }
+
+    /// TypeScript takes `await x` for what it looks like wherever a word or a literal follows on the same line.
+    pub(crate) fn is_operand_of_await_in_type_script(&mut self) -> R<bool> {
+        let saved = self.save();
+        self.next()?;
+        let result = self.lexer.tok_nl == 0
+            && (self.is_word()
+                || self.lexer.tok == tk::Num
+                || self.lexer.tok == tk::BigInt
+                || self.lexer.tok == tk::String);
+        self.restore(saved);
+        return Ok(result);
+    }
+
+    /// `n` is the operand of an operator in front of it: no arrow function, and `**` does not follow.
+    pub(crate) fn check_operand(&self, n: i32) -> R<()> {
+        if self.is_bare_arrow(n) || self.lexer.tok == tk::Pow {
+            return Err(self.text_refuse());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn parse_maybe_unary(&mut self) -> R<i32> {
+        self.stack()?;
+        let start = self.lexer.tok_start;
+        match self.lexer.tok {
+            tk::Not
+            | tk::Tilde
+            | tk::Add
+            | tk::Sub
+            | tk::Typeof
+            | tk::Void
+            | tk::Delete
+            | tk::Throw => {
+                {
+                    let op = self.lexer.tok;
+                    if op == tk::Throw {
+                        return Err(self.text_refuse());
+                    }
+                    self.next()?;
+                    // `void` where a binding can stand
+                    if op == tk::Void
+                        && (self.lexer.tok == tk::Comma
+                            || self.lexer.tok == tk::ParenR
+                            || self.lexer.tok == tk::BracketR
+                            || self.lexer.tok == tk::BraceR
+                            || self.lexer.tok == tk::Eq
+                            || self.lexer.tok == tk::In
+                            || self.is_kw(kw::Of))
+                    {
+                        return Err(self.text_refuse());
+                    }
+                    let argument = self.parse_maybe_unary()?;
+                    self.check_operand(argument)?;
+                    // (TypeScript's parser minds only behind `?.`)
+                    if op == tk::Delete
+                        && (self.n.at(argument) & (0xff | F_PAREN)) == k::MemberExpression
+                        && (self.n.at(self.n.at(argument + 5)) & 0xff) == k::PrivateName
+                    {
+                        return Err(self.text_refuse());
+                    }
+                    return Ok(self.node1(
+                        k::UnaryExpression | (op << SUB_SHIFT),
+                        start,
+                        self.lexer.prev_end,
+                        argument,
+                    ));
+                }
+            }
+            tk::Inc | tk::Dec => {
+                let op = self.lexer.tok;
+                self.next()?;
+                if self.lexer.tok == tk::Lt && self.parse.typed == TYPED_TS {
+                    // `++<T>a`
+                    return Err(self.text_refuse());
+                }
+                let argument = self.parse_maybe_unary()?;
+                self.check_target(argument, false)?;
+                return Ok(self.node1(
+                    k::UpdateExpression | F_PREFIX | (op << SUB_SHIFT),
+                    start,
+                    self.lexer.prev_end,
+                    argument,
+                ));
+            }
+            tk::Name => {
+                // Flow: `await <a />`, `await<A>(b)`: an operand, or the type arguments of a call
+                if self.lexer.tok_kw == kw::Await
+                    && self.parse.typed == TYPED_FLOW
+                    && self.t.at(self.blanks(self.lexer.tok_end)) == 60
+                {
+                    return Err(self.text_refuse());
+                }
+                if self.lexer.tok_kw == kw::Await
+                    && (self.dialect.declaration_file
+                        || (self.parse_typescript.in_namespace != 0
+                            && self.parse.in_function == 0
+                            && !self.is_operator_for_type_script()))
+                {
+                    // a name there, for some
+                    return Err(self.text_refuse());
+                }
+                if self.lexer.tok_kw == kw::Await
+                    && self.parse.typed == TYPED_TS
+                    && self.parse.in_async == 0
+                    && self.parse.place.in_parameters
+                    && !self.is_operand_of_await_in_type_script()?
+                {
+                    // a name among the parameters, also at the top of a module
+                    return Err(self.text_refuse());
+                }
+                if self.lexer.tok_kw == kw::Await
+                    && (self.parse.in_async != 0
+                        || (self.parse.in_function == 0
+                            && !self.parse.is_common_js
+                            && (self.parse.typed != TYPED_FLOW || self.mode.is_babel_flow))
+                        || (self.parse.typed == TYPED_TS
+                            && self.is_operand_of_await_in_type_script()?))
+                {
+                    let saved = self.save();
+                    self.next()?;
+                    // `await of`: an operand, or the head of a loop
+                    if self.is_kw(kw::Of) {
+                        return Err(self.text_refuse());
+                    }
+                    // `await` alone, or before something that cannot start an operand, is a name
+                    let is_operand = self.starts_expression()
+                        && self.lexer.tok != tk::Eq
+                        && self.lexer.tok != tk::Dot
+                        && self.lexer.tok != tk::Arrow
+                        && !(PREC.at(self.lexer.tok) != 0
+                            && self.lexer.tok != tk::Add
+                            && self.lexer.tok != tk::Sub
+                            && self.lexer.tok != tk::Div
+                            && self.lexer.tok != tk::Lt)
+                        && self.lexer.tok != tk::Question
+                        && self.lexer.tok != tk::QuestionDot
+                        && !(self.lexer.tok >= tk::Eq && self.lexer.tok <= tk::NullishEq);
+                    if is_operand || self.parse.in_async != 0 {
+                        let argument = self.parse_maybe_unary()?;
+                        self.check_operand(argument)?;
+                        self.suspend()?;
+                        if self.parse.in_async == 0 {
+                            self.need_module()?;
+                        }
+                        return Ok(self.node1(
+                            k::AwaitExpression,
+                            start,
+                            self.lexer.prev_end,
+                            argument,
+                        ));
+                    }
+                    self.restore(saved);
+                }
+            }
+            _ => {}
+        }
+        let expression = self.parse_expr_subscripts()?;
+        if (self.lexer.tok == tk::Inc || self.lexer.tok == tk::Dec)
+            && self.lexer.tok_nl == 0
+            && !self.is_bare_arrow(expression)
+        {
+            let op = self.lexer.tok;
+            self.next()?;
+            self.check_target(expression, false)?;
+            return Ok(self.node1(
+                k::UpdateExpression | (op << SUB_SHIFT),
+                start,
+                self.lexer.prev_end,
+                expression,
+            ));
+        }
+        return Ok(expression);
+    }
+
+    pub(crate) fn parse_expr_subscripts(&mut self) -> R<i32> {
+        let start = self.lexer.tok_start;
+        let atom = self.parse_expr_atom()?;
+        if self.is_bare_arrow(atom) {
+            return Ok(atom);
+        }
+        return self.parse_subscripts(atom, start, false);
+    }
+
+    pub(crate) fn parse_arguments(&mut self) -> R<i32> {
+        self.expect(tk::ParenL)?;
+        let saved_no_in = self.parse.no_in;
+        self.parse.no_in = 0;
+        let saved_depth = self.parse.list_depth;
+        self.parse.list_depth = saved_depth + self.lexer.tok_nl;
+        let mut may_be_parameters: i32 = 0;
+        let mut saved_typed_item: i32 = 0;
+        if self.parse.typed != 0 {
+            may_be_parameters = self.parse.arguments_may_be_parameters;
+            saved_typed_item = self.parse.saw_typed_item;
+            self.parse.arguments_may_be_parameters = 0;
+            self.parse.saw_typed_item = 0;
+        }
+        let mark = self.arena.ls_pos;
+        while self.lexer.tok != tk::ParenR {
+            if may_be_parameters != 0 {
+                self.parse.paren_item = 1;
+            }
+            if self.lexer.tok == tk::Ellipsis {
+                let start = self.lexer.tok_start;
+                self.next()?;
+                self.parse.paren_item = 0;
+                let argument = self.parse_maybe_assign()?;
+                if self.parse.typed == 0 {
+                    let v0 = self.node1(k::SpreadElement, start, self.lexer.prev_end, argument);
+                    self.list_push(v0);
+                } else {
+                    let spread = self.node1_with_room(
+                        k::SpreadElement,
+                        start,
+                        self.lexer.prev_end,
+                        argument,
+                    );
+                    if may_be_parameters != 0 && self.lexer.tok == tk::Colon {
+                        self.parse_binding_suffix(spread)?;
+                        self.parse.saw_typed_item = 1;
+                    }
+                    self.list_push(spread);
+                }
+            } else if self.lexer.tok == tk::Question {
+                // f(?, x)
+                let saved = self.save();
+                self.next()?;
+                if self.lexer.tok == tk::Comma || self.lexer.tok == tk::ParenR {
+                    return Err(self.text_refuse());
+                }
+                self.restore(saved);
+                let v1 = self.parse_maybe_assign()?;
+                self.list_push(v1);
+            } else {
+                let v2 = self.parse_maybe_assign()?;
+                self.list_push(v2);
+            }
+            if self.lexer.tok != tk::ParenR {
+                self.expect(tk::Comma)?;
+            }
+        }
+        if self.parse.typed != 0 {
+            self.parse.paren_item = 0;
+            self.parse.arguments_were_typed = self.parse.saw_typed_item != 0;
+            self.parse.saw_typed_item = saved_typed_item;
+        }
+        self.parse.list_depth = saved_depth;
+        self.next()?;
+        self.parse.no_in = saved_no_in;
+        return Ok(self.list_finish(mark));
+    }
+
+    /// `: type =>` behind the parameters of an arrow function, tried: returns the function, or 0 with the lexer where it was.
+    /// The current token is the `:`.
+    pub(crate) fn try_parse_arrow_with_return_type(
+        &mut self,
+        start: i32,
+        list_mark: i32,
+        flags: i32,
+    ) -> R<i32> {
+        if self.is_known_to_fail(TRIAL_RETURN_TYPE) {
+            return Ok(0);
+        }
+        let trial = self.begin_trial();
+        let is_in_consequent = (self.parse.no_in & NO_IN_CONSEQUENT) != 0;
+        let depth = self.parse.speculating;
+        let list_top = self.arena.ls_pos;
+        self.parse.speculating = depth + 1;
+        let mut result: i32 = 0;
+        let v0 = (|| -> R<Option<i32>> {
+            let return_type = self.ts_parse_arrow_return_type()?;
+            // `a ? (b) : c`, the end of the line, `{}`: TypeScript's parser misses a `=>`
+            if self.lexer.tok == tk::BraceL && self.parse.typed == TYPED_TS {
+                return Err(self.text_refuse());
+            }
+            if self.lexer.tok != tk::Arrow {
+                return Err(self.unexpected());
+            }
+            // (a function for the long way, which then minds the line break)
+            if self.lexer.tok_nl != 0 {
+                return Err(self.text_refuse());
+            }
+            // `a ? (b) : c => d`: to whom the colon belongs is decided in more than one way
+            if is_in_consequent && list_top != list_mark {
+                return Err(self.text_refuse());
+            }
+            // the parameters stay on the stack in case this fails
+            let mut i = list_mark;
+            while i < list_top {
+                self.list_push(self.arena.ls.at(i));
+                i += 1;
+            }
+            let params = self.list_finish(list_top);
+            self.parse.speculating = if is_in_consequent { depth + 1 } else { depth };
+            result = self.parse_typed_arrow_rest(start, params, flags, 0, return_type)?;
+            // `a ? (b) : c => d`: the colon belongs to the conditional expression unless another one follows
+            if is_in_consequent && self.lexer.tok != tk::Colon {
+                return Err(self.unexpected());
+            }
+            Ok(None)
+        })();
+        let v0 = match v0 {
+            Err(Stop) => (|| -> R<Option<i32>> {
+                if !(self.why.get() == why::SYNTAX)
+                    || (self.parse.speculating == depth && depth == 0)
+                {
+                    return Err(Stop);
+                }
+                result = 0;
+                Ok(None)
+            })(),
+            ok => ok,
+        };
+        if let Some(v) = v0? {
+            return Ok(v);
+        }
+        if result == 0 {
+            self.abandon_for_good(&trial, TRIAL_RETURN_TYPE)?;
+            // `a ? (b) : class {}`: the same, any word being the name of a type for TypeScript's parser
+            if self.parse.typed == TYPED_TS {
+                let saved = self.save();
+                self.next()?;
+                let is_body = self.lexer.tok >= tk::In && self.peek()? == tk::BraceL;
+                self.restore(saved);
+                if is_body {
+                    return Err(self.text_refuse());
+                }
+            }
+            return Ok(0);
+        }
+        self.parse.speculating = depth;
+        let params = self.n.at(result + 6);
+        let mut i: i32 = 1;
+        while i <= self.n.at(params) {
+            let parameter = self.to_assignable_parameter(self.n.at(params + i))?;
+            self.n.put(params + i, parameter);
+            self.n.put(parameter + 3, result);
+            i += 1;
+        }
+        self.list_truncate(list_mark);
+        return Ok(result);
+    }
+
+    pub(crate) fn parse_subscripts(&mut self, mut base: i32, start: i32, no_calls: bool) -> R<i32> {
+        let mut chain: i32 = 0;
+        let mut is_decorator: i32 = 0;
+        let mut is_record_constructor: i32 = 1;
+        if (self.parse.in_decorator | self.parse.no_record_expression) != 0 {
+            is_decorator = self.parse.in_decorator;
+            is_record_constructor = 1 - self.parse.no_record_expression;
+            self.parse.no_record_expression = 0;
+            self.parse.in_decorator = 0;
+        }
+        loop {
+            match self.lexer.tok {
+                tk::Dot => {
+                    self.next()?;
+                    if self.lexer.tok_nl != 0 {
+                        self.ts_check_name_on_new_line()?;
+                    }
+                    let property = if self.lexer.tok == tk::PrivateName {
+                        // `super.#a`; in TypeScript `a?.b.#c`
+                        if (self.n.at(base) & 0xff) == k::Super
+                            || (chain != 0 && self.parse.typed == TYPED_TS)
+                        {
+                            return Err(self.text_refuse());
+                        }
+                        self.private_name()?
+                    } else {
+                        self.parse_ident_name()?
+                    };
+                    base = self.node2(
+                        k::MemberExpression | chain,
+                        start,
+                        self.lexer.prev_end,
+                        base,
+                        property,
+                    );
+                    continue;
+                }
+                tk::QuestionDot => {
+                    if no_calls {
+                        return Ok(base);
+                    }
+                    chain = F_CHAIN;
+                    self.next()?;
+                    if self.lexer.tok == tk::ParenL {
+                        let args = self.parse_arguments()?;
+                        base = self.call_node(
+                            k::CallExpression | F_CHAIN | F_OPTIONAL,
+                            start,
+                            self.lexer.prev_end,
+                            base,
+                            args,
+                            0,
+                        );
+                    } else if self.parse.typed != 0
+                        && (self.lexer.tok == tk::Lt || self.lexer.tok == tk::Shl)
+                    {
+                        let type_arguments = self.ts_parse_type_arguments()?;
+                        let args = self.parse_arguments()?;
+                        base = self.call_node(
+                            k::CallExpression | F_CHAIN | F_OPTIONAL,
+                            start,
+                            self.lexer.prev_end,
+                            base,
+                            args,
+                            type_arguments,
+                        );
+                    } else if self.lexer.tok == tk::BracketL {
+                        self.next()?;
+                        let saved_no_in = self.parse.no_in;
+                        self.parse.no_in = 0;
+                        let property = self.parse_expression()?;
+                        self.parse.no_in = saved_no_in;
+                        self.expect(tk::BracketR)?;
+                        base = self.node2(
+                            k::MemberExpression | F_CHAIN | F_OPTIONAL | F_COMPUTED,
+                            start,
+                            self.lexer.prev_end,
+                            base,
+                            property,
+                        );
+                    } else {
+                        if self.lexer.tok_nl != 0 {
+                            self.ts_check_name_on_new_line()?;
+                        }
+                        let property = if self.lexer.tok == tk::PrivateName {
+                            if self.parse.typed == TYPED_TS {
+                                return Err(self.text_refuse());
+                            }
+                            self.private_name()?
+                        } else {
+                            self.parse_ident_name()?
+                        };
+                        base = self.node2(
+                            k::MemberExpression | F_CHAIN | F_OPTIONAL,
+                            start,
+                            self.lexer.prev_end,
+                            base,
+                            property,
+                        );
+                    }
+                    continue;
+                }
+                tk::BracketL => {
+                    if is_decorator != 0 {
+                        return Ok(base);
+                    }
+                    self.next()?;
+                    let saved_no_in = self.parse.no_in;
+                    self.parse.no_in = 0;
+                    let property = self.parse_expression()?;
+                    self.parse.no_in = saved_no_in;
+                    self.expect(tk::BracketR)?;
+                    base = self.node2(
+                        k::MemberExpression | F_COMPUTED | chain,
+                        start,
+                        self.lexer.prev_end,
+                        base,
+                        property,
+                    );
+                    continue;
+                }
+                tk::ParenL => {
+                    if no_calls {
+                        return Ok(base);
+                    }
+                    let maybe_async = (self.n.at(base) & (0xff | F_PAREN)) == k::Identifier
+                        && self.n.at(base + 2) - self.n.at(base + 1) == 5
+                        && self.lexer.tok_nl == 0
+                        && self.text_is(self.n.at(base + 1), self.n.at(base + 2), b"async");
+                    if !maybe_async {
+                        let args = self.parse_arguments()?;
+                        base = self.call_node(
+                            k::CallExpression | chain,
+                            start,
+                            self.lexer.prev_end,
+                            base,
+                            args,
+                            0,
+                        );
+                        continue;
+                    }
+                    if self.parse.typed != 0 {
+                        self.parse.arguments_may_be_parameters = 1;
+                    }
+                    let suspensions = self.parse.suspensions;
+                    let await_names = self.parse.await_names;
+                    // `async (...` is taken for the start of a function without a further look
+                    let has_to_be_arrow = maybe_async && {
+                        let p = self.lexer.tok_end;
+                        self.t.at(self.next_char_index(p)) == 46
+                    };
+                    let args = self.parse_arguments()?;
+                    if (has_to_be_arrow
+                        && self.lexer.tok != tk::Arrow
+                        && self.lexer.tok != tk::Colon)
+                        || (maybe_async && self.lexer.tok == tk::BraceL)
+                    {
+                        return Err(self.text_refuse());
+                    }
+                    let are_typed = maybe_async && self.parse.arguments_were_typed;
+                    if maybe_async && self.lexer.tok == tk::Arrow && self.lexer.tok_nl == 0 {
+                        if self.parse.suspensions != suspensions
+                            || self.parse.await_names != await_names
+                        {
+                            return Err(self.text_refuse());
+                        }
+                        let count = self.n.at(args);
+                        let mut i: i32 = 1;
+                        while i <= count {
+                            let v0 = args + i;
+                            let v1 = self.to_assignable_parameter(self.n.at(args + i))?;
+                            self.n.put(v0, v1);
+                            if (self.n.at(v1) & 0xff) == k::RestElement
+                                && i != count
+                                && self.parse.typed != TYPED_TS
+                            {
+                                return Err(self.text_refuse());
+                            }
+                            i += 1;
+                        }
+                        return self.parse_arrow_rest(start, args, F_ASYNC);
+                    }
+                    if maybe_async && self.parse.typed != 0 && self.lexer.tok == tk::Colon {
+                        let suspends = self.parse.suspensions != suspensions;
+                        let list_mark = self.arena.ls_pos;
+                        let mut i: i32 = 1;
+                        while i <= self.n.at(args) {
+                            self.list_push(self.n.at(args + i));
+                            i += 1;
+                        }
+                        let arrow =
+                            self.try_parse_arrow_with_return_type(start, list_mark, F_ASYNC)?;
+                        if arrow != 0 {
+                            if suspends || self.parse.await_names != await_names {
+                                return Err(self.text_refuse());
+                            }
+                            return Ok(arrow);
+                        }
+                        self.list_truncate(list_mark);
+                    }
+                    if are_typed {
+                        // they were parameters, and there is no function
+                        return Err(self.text_refuse());
+                    }
+                    if maybe_async && self.parse.typed == TYPED_FLOW {
+                        // the same: in Flow they look like casts without parentheses
+                        let mut i: i32 = 1;
+                        while i <= self.n.at(args) {
+                            let argument = self.n.at(args + i);
+                            if (self.n.at(argument) & 0xff) == k::TypeCastExpression
+                                && self.n.at(argument + 1) == self.n.at(self.n.at(argument + 4) + 1)
+                            {
+                                return Err(self.text_refuse());
+                            }
+                            i += 1;
+                        }
+                    }
+                    base = self.call_node(
+                        k::CallExpression | chain,
+                        start,
+                        self.lexer.prev_end,
+                        base,
+                        args,
+                        0,
+                    );
+                    continue;
+                }
+                tk::BackQuote => {
+                    if chain != 0 {
+                        return Err(self.text_refuse());
+                    }
+                    // styled.#a`..` is no CSS for the long way
+                    if (self.n.at(base) & 0xff) == k::MemberExpression
+                        && (self.n.at(self.n.at(base + 5)) & 0xff) == k::PrivateName
+                    {
+                        return Err(self.rare(rare::UNLIKE_PRETTIER));
+                    }
+                    let quasi = self.parse_template(false)?;
+                    base = self.node3(
+                        k::TaggedTemplateExpression,
+                        start,
+                        self.lexer.prev_end,
+                        base,
+                        quasi,
+                        0,
+                    );
+                    continue;
+                }
+                tk::Not => {
+                    if !self.mode.allows_non_null || self.lexer.tok_nl != 0 {
+                        return Ok(base);
+                    }
+                    self.next()?;
+                    base = self.node1(
+                        k::NonNullExpression | chain,
+                        start,
+                        self.lexer.prev_end,
+                        base,
+                    );
+                    continue;
+                }
+                tk::Lt | tk::Shl => {
+                    if self.parse.typed == 0 {
+                        return Ok(base);
+                    }
+                    let type_arguments = self.ts_try_parse_type_arguments_in_expression()?;
+                    if type_arguments == 0 {
+                        // `new A < b > c`: Flow's parsers are set on type arguments
+                        if no_calls && self.parse.typed == TYPED_FLOW {
+                            return Err(self.text_refuse());
+                        }
+                        return Ok(base);
+                    }
+                    if self.lexer.tok == tk::ParenL && !no_calls {
+                        let args = self.parse_arguments()?;
+                        base = self.call_node(
+                            k::CallExpression | chain,
+                            start,
+                            self.lexer.prev_end,
+                            base,
+                            args,
+                            type_arguments,
+                        );
+                    } else if self.lexer.tok == tk::BackQuote {
+                        // (not printed alike in Flow)
+                        if self.parse.typed == TYPED_FLOW || chain != 0 {
+                            return Err(self.text_refuse());
+                        }
+                        let quasi = self.parse_template(false)?;
+                        base = self.node3(
+                            k::TaggedTemplateExpression,
+                            start,
+                            self.lexer.prev_end,
+                            base,
+                            quasi,
+                            type_arguments,
+                        );
+                    } else if self.parse.typed == TYPED_FLOW && !no_calls {
+                        // In Flow type arguments are those of a call or a superclass. (What else the parsers take, they do not print alike.)
+                        // (`class A extends B<<T>() => C>`, the end of the line, `{`: two operators for the long way)
+                        if is_record_constructor != 0
+                            || (self.lexer.tok_nl != 0
+                                && self.t.at(self.n.at(type_arguments + 1) + 1) == 60)
+                        {
+                            return Err(self.text_refuse());
+                        }
+                        return Ok(self.node2(
+                            k::InstantiationExpression,
+                            start,
+                            self.lexer.prev_end,
+                            base,
+                            type_arguments,
+                        ));
+                    } else {
+                        if self.lexer.tok == tk::Dot || self.lexer.tok == tk::QuestionDot {
+                            return Err(self.text_refuse());
+                        }
+                        base = self.node2(
+                            k::InstantiationExpression,
+                            start,
+                            self.lexer.prev_end,
+                            base,
+                            type_arguments,
+                        );
+                    }
+                    continue;
+                }
+                tk::BraceL => {
+                    {
+                        // R {a: 1}
+                        if self.parse.typed != TYPED_FLOW
+                            || self.lexer.tok_nl != 0
+                            || is_record_constructor == 0
+                            || chain != 0
+                        {
+                            return Ok(base);
+                        }
+                        let k = self.n.at(base) & (0xff | F_PAREN);
+                        if k != k::Identifier && k != k::MemberExpression {
+                            return Ok(base);
+                        }
+                        // R {a: 1}: the long way does not read it
+                        return Err(self.text_refuse());
+                    }
+                }
+                tk::DoubleColon => {
+                    if no_calls {
+                        return Ok(base);
+                    }
+                    return Err(self.text_refuse());
+                }
+                _ => {}
+            }
+            return Ok(base);
+        }
+    }
+
+    pub(crate) fn leaf(&mut self, kind: i32) -> R<i32> {
+        let n = self.node0(
+            kind | self.lexer.tok_flags,
+            self.lexer.tok_start,
+            self.lexer.tok_end,
+        );
+        self.next()?;
+        return Ok(n);
+    }
+
+    pub(crate) fn parse_expr_atom(&mut self) -> R<i32> {
+        self.stack()?;
+        let start = self.lexer.tok_start;
+        match self.lexer.tok {
+            tk::Name => {
+                {
+                    if self.parse.typed == TYPED_FLOW
+                        && self.lexer.tok_end - self.lexer.tok_start == 5
+                        && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"match")
+                    {
+                        let match_ = self.flow_try_parse_match(false)?;
+                        if match_ != 0 {
+                            return Ok(match_);
+                        }
+                    }
+                    if self.lexer.tok_kw == kw::Async {
+                        let saved = self.save();
+                        self.next()?;
+                        if self.lexer.tok_nl == 0 {
+                            if self.lexer.tok == tk::Function {
+                                return self.parse_function(start, k::FunctionExpression, F_ASYNC);
+                            }
+                            if self.lexer.tok == tk::Lt {
+                                // async <T>(x: T) => y
+                                let arrow = if self.parse.typed != 0 {
+                                    self.ts_parse_less_than_expression(start, F_ASYNC)?
+                                } else {
+                                    0
+                                };
+                                if arrow != 0 {
+                                    return Ok(arrow);
+                                }
+                                // `async<A>(b)`: no call for Flow's own parser, and a rare one for the others. `async < a, b`: the start of a function
+                                // for TypeScript's parser, which reads every file first.
+                                return Err(self.text_refuse());
+                            } else if self.lexer.tok == tk::Name {
+                                // async x => y
+                                let kw = self.lexer.tok_kw;
+                                let param = self.identifier()?;
+                                if self.lexer.tok == tk::Arrow && self.lexer.tok_nl == 0 {
+                                    if kw != 0 && self.is_reserved_here(kw) {
+                                        return Err(self.text_refuse());
+                                    }
+                                    let mark = self.arena.ls_pos;
+                                    self.list_push(param);
+                                    let v0 = self.list_finish(mark);
+                                    return self.parse_arrow_rest(start, v0, F_ASYNC);
+                                }
+                            } else if self.lexer.tok == tk::Do {
+                                return Err(self.text_refuse());
+                            }
+                        }
+                        // (the long way looks for type arguments, on whatever line, and gives up if there are some)
+                        if (self.lexer.tok == tk::Lt || self.lexer.tok == tk::Shl)
+                            && self.parse.typed == TYPED_FLOW
+                        {
+                            return Err(self.text_refuse());
+                        }
+                        self.restore(saved);
+                    } else if self.lexer.tok_kw == kw::Module {
+                        let saved = self.save();
+                        self.next()?;
+                        if self.lexer.tok == tk::BraceL && self.lexer.tok_nl == 0 {
+                            return Err(self.text_refuse());
+                        }
+                        self.restore(saved);
+                    } else if self.lexer.tok_kw != 0 && self.is_reserved_here(self.lexer.tok_kw) {
+                        return Err(self.text_refuse());
+                    }
+                    let id = self.identifier()?;
+                    if self.lexer.tok == tk::Arrow && self.lexer.tok_nl == 0 {
+                        let mark = self.arena.ls_pos;
+                        self.list_push(id);
+                        let v1 = self.list_finish(mark);
+                        return self.parse_arrow_rest(start, v1, 0);
+                    }
+                    return Ok(id);
+                }
+            }
+            tk::Num => {
+                return self.leaf(k::NumericLiteral);
+            }
+            tk::String => {
+                return self.leaf(k::StringLiteral);
+            }
+            tk::BigInt => {
+                return self.leaf(k::BigIntLiteral);
+            }
+            tk::ParenL => {
+                return self.parse_paren_and_distinguish();
+            }
+            tk::BracketL => {
+                return self.parse_array();
+            }
+            tk::BraceL => {
+                return self.parse_object();
+            }
+            tk::This => {
+                return self.leaf(k::ThisExpression);
+            }
+            tk::Null => {
+                return self.leaf(k::NullLiteral);
+            }
+            tk::True | tk::False => {
+                return self.leaf(k::BooleanLiteral);
+            }
+            tk::Function => {
+                if self.t.at(self.lexer.tok_end) == 46
+                    && self.text_is(self.lexer.tok_end + 1, self.lexer.tok_end + 5, b"sent")
+                {
+                    // function.sent
+                    return Err(self.text_refuse());
+                }
+                return self.parse_function(start, k::FunctionExpression, 0);
+            }
+            tk::Class => {
+                return self.parse_class(start, k::ClassExpression, 0);
+            }
+            tk::At => {
+                let decorators = self.parse_decorators()?;
+                if self.lexer.tok != tk::Class {
+                    return Err(self.unexpected());
+                }
+                return self.parse_class(start, k::ClassExpression, decorators);
+            }
+            tk::New => {
+                return self.parse_new();
+            }
+            tk::BackQuote => {
+                return self.parse_template(false);
+            }
+            tk::Div | tk::DivEq => {
+                self.rescan_regex()?;
+                return self.leaf(k::RegExpLiteral);
+            }
+            tk::Super => {
+                let n = self.leaf(k::Super)?;
+                self.check_super()?;
+                return Ok(n);
+            }
+            tk::Import => {
+                return self.parse_import_expression();
+            }
+            tk::Lt => {
+                {
+                    if self.parse.typed != 0 {
+                        // <T>(x: T) => y, <T>x
+                        let expression = self.ts_parse_less_than_expression(start, 0)?;
+                        if expression != 0 {
+                            return Ok(expression);
+                        }
+                    }
+                    let element = self.parse_jsx_element(JSX_ELSEWHERE)?;
+                    self.next()?;
+                    // another element? They need something around them.
+                    if self.lexer.tok == tk::Lt {
+                        return Err(self.text_refuse());
+                    }
+                    if self.parse.typed == TYPED_TS {
+                        // nothing goes on behind an element
+                        match self.lexer.tok {
+                            tk::Dot
+                            | tk::QuestionDot
+                            | tk::ParenL
+                            | tk::BracketL
+                            | tk::BackQuote
+                            | tk::Lt => {
+                                return Err(self.text_refuse());
+                            }
+                            tk::Not => {
+                                if self.lexer.tok_nl == 0 {
+                                    return Err(self.text_refuse());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    return Ok(element);
+                }
+            }
+            tk::PrivateName => {
+                if !self.can_be_left_of_in(self.lexer.prev_end) {
+                    return Err(self.text_refuse());
+                }
+                let n = self.private_name()?;
+                // (in the head of a `for` the `in` is not an operator)
+                if self.lexer.tok != tk::In || (self.parse.no_in & 1) != 0 {
+                    return Err(self.text_refuse());
+                }
+                return Ok(n);
+            }
+            tk::Do | tk::DoubleColon | tk::Mod => {
+                return Err(self.text_refuse());
+            }
+            _ => {}
+        }
+        return Err(self.unexpected());
+    }
+
+    /// `super` has been read: what follows it, and may it stand here? At the top level Prettier has Babel take it, and TypeScript's parser takes it everywhere.
+    #[cold]
+    fn check_super(&self) -> R<()> {
+        let is_call = self.lexer.tok == tk::ParenL;
+        if !is_call && self.lexer.tok != tk::Dot && self.lexer.tok != tk::BracketL {
+            return Err(self.text_refuse());
+        }
+        let scope = self.parse.place.scope;
+        if self.parse.typed != TYPED_TS
+            && scope != SCOPE_TOP
+            && (scope == SCOPE_FUNCTION || (is_call && scope != SCOPE_DERIVED_CONSTRUCTOR))
+        {
+            return Err(self.text_refuse());
+        }
+        Ok(())
+    }
+
+    /// `#a in b`: can the token in front of the `#a`, which ends at p, stand in front of the left operand of `in`? Not an operator that binds as tightly as `in` or more so.
+    #[cold]
+    fn can_be_left_of_in(&self, p: i32) -> bool {
+        match self.t.at(p - 1) {
+            // ( ) [ { } , ; : ? & | ^
+            40 | 41 | 91 | 123 | 125 | 44 | 59 | 58 | 63 | 38 | 124 | 94 => true,
+            // `=`, `==`, `+=`, but not `<=`
+            61 => self.t.at(p - 2) != 60 && self.t.at(p - 2) != 62,
+            // `=>`
+            62 => self.t.at(p - 2) == 61,
+            _ => p == self.text.src_start || self.text_is(p - 6, p, b"return"),
+        }
+    }
+
+    pub(crate) fn parse_paren_and_distinguish(&mut self) -> R<i32> {
+        let start = self.lexer.tok_start;
+        let is_operand = self.parse.is_operand;
+        self.parse.is_operand = false;
+        // (Flow's own parser has no node for the parentheses of a cast)
+        let keep_parens = (self.parse.typed == 0 || self.mode.is_babel_flow)
+            && self.lexer.c_count > self.lexer.c_base
+            && self.lexer.c.at((self.lexer.c_count - 1) * C_STRIDE + C_END) > self.lexer.prev_end
+            && self.lexer.c.at((self.lexer.c_count - 1) * C_STRIDE + C_END) <= start
+            && self.is_type_cast_comment_at(self.lexer.c_count - 1);
+        self.next()?;
+        let saved_no_in = self.parse.no_in;
+        let saved_typed_item = self.parse.saw_typed_item;
+        self.parse.no_in = 0;
+        self.parse.saw_typed_item = 0;
+        let mark = self.arena.ls_pos;
+        let inner_start = self.lexer.tok_start;
+        let mut saw_rest = false;
+        let mut trailing_comma = false;
+        let suspensions = self.parse.suspensions;
+        while self.lexer.tok != tk::ParenR {
+            trailing_comma = false;
+            if saw_rest && self.parse.typed != TYPED_TS {
+                return Err(self.text_refuse());
+            }
+            if self.lexer.tok == tk::Ellipsis {
+                let rest_start = self.lexer.tok_start;
+                self.next()?;
+                let argument = self.parse_binding_atom()?;
+                if self.parse.typed == 0 {
+                    let v0 = self.node1(k::RestElement, rest_start, self.lexer.prev_end, argument);
+                    self.list_push(v0);
+                } else {
+                    let rest = self.node1_with_room(
+                        k::RestElement,
+                        rest_start,
+                        self.lexer.prev_end,
+                        argument,
+                    );
+                    self.parse_binding_suffix(rest)?;
+                    self.list_push(rest);
+                }
+                saw_rest = true;
+            } else if self.parse.typed != 0 {
+                if self.lexer.tok == tk::This && self.parse.typed == TYPED_TS {
+                    // (this: T) => ..
+                    let saved = self.save();
+                    self.next()?;
+                    let is_parameter = self.lexer.tok == tk::Colon;
+                    self.restore(saved);
+                    if is_parameter {
+                        let parameter = self.identifier()?;
+                        self.parse_binding_suffix(parameter)?;
+                        self.parse.saw_typed_item = 1;
+                        self.list_push(parameter);
+                        if self.lexer.tok != tk::ParenR {
+                            self.expect(tk::Comma)?;
+                        }
+                        continue;
+                    }
+                }
+                self.parse.paren_item = 1;
+                let v1 = self.parse_maybe_assign()?;
+                self.list_push(v1);
+                self.parse.paren_item = 0;
+            } else {
+                let v2 = self.parse_maybe_assign()?;
+                self.list_push(v2);
+            }
+            if self.lexer.tok != tk::ParenR {
+                self.expect(tk::Comma)?;
+                trailing_comma = true;
+            }
+        }
+        let inner_end = self.lexer.prev_end;
+        self.next()?;
+        self.parse.no_in = saved_no_in;
+        let typed_item = self.parse.saw_typed_item;
+        self.parse.saw_typed_item = saved_typed_item;
+        if self.lexer.tok == tk::Arrow && self.lexer.tok_nl == 0 {
+            if self.parse.suspensions != suspensions {
+                return Err(self.text_refuse());
+            }
+            let mut i = mark;
+            while i < self.arena.ls_pos {
+                let v3 = self.to_assignable_parameter(self.arena.ls.at(i))?;
+                self.arena.ls.put(i, v3);
+                i += 1;
+            }
+            let v4 = self.list_finish(mark);
+            return self.parse_arrow_rest(start, v4, 0);
+        }
+        if self.parse.typed != 0 && self.lexer.tok == tk::Colon {
+            let suspends = self.parse.suspensions != suspensions;
+            let arrow = self.try_parse_arrow_with_return_type(start, mark, 0)?;
+            if arrow != 0 {
+                if suspends {
+                    return Err(self.text_refuse());
+                }
+                return Ok(arrow);
+            }
+        }
+        let count = self.arena.ls_pos - mark;
+        if count == 0 || saw_rest || trailing_comma || typed_item != 0 {
+            return Err(self.unexpected());
+        }
+        // `(a)`, the end of the line, `{}`: TypeScript's parser, which reads every file first, misses a `=>`
+        if self.lexer.tok == tk::BraceL && !is_operand {
+            return Err(self.text_refuse());
+        }
+        let expression: i32;
+        if count == 1 {
+            expression = self.arena.ls.at(mark);
+            self.list_truncate(mark);
+        } else {
+            // `(a: A, b)`: a cast has parentheses of its own. (Whether it has is not seen at a glance: `(a, (b).c: (D))`.)
+            if self.parse.typed == TYPED_FLOW {
+                let mut i = mark;
+                while i < self.arena.ls_pos {
+                    let item = self.arena.ls.at(i);
+                    if (self.n.at(item) & 0xff) == k::TypeCastExpression {
+                        return Err(self.text_refuse());
+                    }
+                    i += 1;
+                }
+            }
+            let v5 = self.list_finish(mark);
+            expression = self.node_l(k::SequenceExpression, inner_start, inner_end, v5);
+        }
+        if (self.n.at(expression) & (0xff | F_PAREN)) == k::TypeCastExpression {
+            // (`((a)(): (A))`, `((a: A))`: whether it has its parentheses already is not seen at a glance)
+            if self.t.at(self.n.at(expression + 1)) == 40
+                && self.t.at(self.n.at(expression + 2) - 1) == 41
+            {
+                return Err(self.rare(rare::OTHER));
+            }
+            // the parentheses are part of the cast
+            self.n.put(expression + 1, start);
+            self.n.put(expression + 2, self.lexer.prev_end);
+            return Ok(expression);
+        }
+        if keep_parens {
+            // (the long way indents what follows the first comma)
+            if (self.n.at(expression) & 0xff) == k::SequenceExpression {
+                return Err(self.rare(rare::UNLIKE_PRETTIER));
+            }
+            return Ok(self.node1(
+                k::ParenthesizedExpression,
+                start,
+                self.lexer.prev_end,
+                expression,
+            ));
+        }
+        // `(a?.b).c`: some trees have a node for the chain, and where the lines of what goes on break is a matter of the tree
+        if matches!(
+            self.lexer.tok,
+            tk::Dot | tk::QuestionDot | tk::BracketL | tk::ParenL | tk::BackQuote | tk::Not
+        ) && self.is_part_of_optional_chain(expression)
+        {
+            return Err(self.rare(rare::OTHER));
+        }
+        self.n.put(expression, self.n.at(expression) | F_PAREN);
+        return Ok(expression);
+    }
+
+    pub(crate) fn parse_new(&mut self) -> R<i32> {
+        self.stack()?;
+        let start = self.lexer.tok_start;
+        let meta_end = self.lexer.tok_end;
+        self.next()?;
+        if self.lexer.tok == tk::Dot {
+            let meta = self.node0(k::Identifier, start, meta_end);
+            self.next()?;
+            if !self.is_kw(kw::Target) {
+                return Err(self.text_refuse());
+            }
+            let property = self.parse_ident_name()?;
+            return Ok(self.node2(k::MetaProperty, start, self.lexer.prev_end, meta, property));
+        }
+        let callee_start = self.lexer.tok_start;
+        // (`new await`: a name for some, an operator without an operand for others)
+        if (self.lexer.tok == tk::Lt && self.parse.typed == TYPED_TS) || self.is_kw(kw::Await) {
+            return Err(self.text_refuse());
+        }
+        let v0 = if self.lexer.tok == tk::New {
+            self.parse_new()?
+        } else {
+            self.parse_expr_atom()?
+        };
+        // new a => b, new import("a"); in TypeScript new import.meta
+        if self.is_bare_arrow(v0)
+            || (self.n.at(v0) & (0xff | F_PAREN)) == k::ImportExpression
+            || ((self.n.at(v0) & (0xff | F_PAREN)) == k::MetaProperty
+                && self.parse.typed == TYPED_TS
+                && self.t.at(callee_start) == 105)
+        {
+            return Err(self.text_refuse());
+        }
+        let mut callee = self.parse_subscripts(v0, callee_start, true)?;
+        // new a?.b
+        if self.lexer.tok == tk::QuestionDot {
+            return Err(self.text_refuse());
+        }
+        let mut type_arguments: i32 = 0;
+        if self.parse.typed != 0
+            && (self.n.at(callee) & (0xff | F_PAREN)) == k::InstantiationExpression
+        {
+            type_arguments = self.n.at(callee + 5);
+            callee = self.n.at(callee + 4);
+        }
+        // new A {b: 1}
+        if self.parse.typed == TYPED_FLOW && self.lexer.tok == tk::BraceL && self.lexer.tok_nl == 0
+        {
+            return Err(self.text_refuse());
+        }
+        let args = if self.lexer.tok == tk::ParenL {
+            self.parse_arguments()?
+        } else {
+            0
+        };
+        return Ok(self.call_node(
+            k::NewExpression,
+            start,
+            self.lexer.prev_end,
+            callee,
+            args,
+            type_arguments,
+        ));
+    }
+
+    pub(crate) fn parse_import_expression(&mut self) -> R<i32> {
+        let start = self.lexer.tok_start;
+        let meta_end = self.lexer.tok_end;
+        self.next()?;
+        let mut phase = P_NONE;
+        if self.lexer.tok == tk::Dot {
+            self.next()?;
+            if self.is_kw(kw::Meta) {
+                if self.parse.is_common_js && self.parse.typed == 0 {
+                    return Err(self.fail(start));
+                }
+                // it makes a file of TypeScript a module
+                self.parse.needs_module |= self.parse.typed == TYPED_TS;
+                let meta = self.node0(k::Identifier, start, meta_end);
+                let property = self.identifier()?;
+                return Ok(self.node2(k::MetaProperty, start, self.lexer.prev_end, meta, property));
+            }
+            if self.is_kw(kw::Defer) {
+                phase = P_DEFER;
+            } else if self.is_kw(kw::Source) && self.lang.lang != lang::Flow {
+                if self.parse.typed == TYPED_TS {
+                    return Err(self.text_refuse());
+                }
+                phase = P_SOURCE;
+            } else {
+                return Err(self.unexpected());
+            }
+            self.next()?;
+        }
+        self.expect(tk::ParenL)?;
+        let saved_no_in = self.parse.no_in;
+        self.parse.no_in = 0;
+        let mark = self.arena.ls_pos;
+        let v0 = self.parse_maybe_assign()?;
+        self.list_push(v0);
+        if self.eat(tk::Comma)? && self.lexer.tok != tk::ParenR {
+            let v1 = self.parse_maybe_assign()?;
+            self.list_push(v1);
+            self.eat(tk::Comma)?;
+        }
+        self.parse.no_in = saved_no_in;
+        self.expect(tk::ParenR)?;
+        // the same shape as a call: no callee, then the arguments
+        let v2 = k::ImportExpression | (phase << SUB_SHIFT);
+        let v3 = self.lexer.prev_end;
+        let v4 = self.list_finish(mark);
+        return Ok(self.call_node(v2, start, v3, 0, v4, 0));
+    }
+
+    /// The current token is "`". `is_type`: between `${` and `}` stand types.
+    pub(crate) fn parse_template(&mut self, is_type: bool) -> R<i32> {
+        let start = self.lexer.tok_start;
+        let mark = self.arena.ls_pos;
+        self.scan_template_chunk(self.lexer.tok_end)?;
+        loop {
+            let flags = self.lexer.tok_flags;
+            let v0 = self.node0(
+                k::TemplateElement | flags,
+                self.lexer.tok_start,
+                self.lexer.tok_end,
+            );
+            self.list_push(v0);
+            if (flags & F_PREFIX) != 0 {
+                // F_TAIL
+                break;
+            }
+            self.set_pos(self.lexer.pos);
+            let comments = self.lexer.c_count;
+            self.next()?;
+            let saved_no_in = self.parse.no_in;
+            self.parse.no_in = 0;
+            let v1 = if is_type {
+                let from = self.lexer.tok_start;
+                let hole = self.ts_parse_type()?;
+                // (with braces in it Prettier breaks the parameters of a function whose return type it is part of)
+                if self.has_byte_in_range(123, from, self.lexer.prev_end) {
+                    return Err(self.rare(rare::UNLIKE_PRETTIER));
+                }
+                if self.lexer.c_count != comments {
+                    return Err(self.rare(rare::COMMENT));
+                }
+                hole
+            } else {
+                self.parse_expression()?
+            };
+            self.list_push(v1);
+            self.parse.no_in = saved_no_in;
+            if self.lexer.tok != tk::BraceR {
+                return Err(self.unexpected());
+            }
+            self.scan_template_chunk(self.lexer.tok_end)?;
+        }
+        self.set_pos(self.lexer.pos);
+        let end = self.lexer.pos;
+        // quasis and expressions alternate on the stack
+        let count = self.arena.ls_pos - mark;
+        let expressions = count >> 1;
+        self.reserve_ast(count + 2);
+        let split = self.arena.ls_pos;
+        let mut i: i32 = 0;
+        while i < count {
+            self.list_push(self.arena.ls.at(mark + i));
+            i += 2;
+        }
+        let quasi_list = self.list_finish(split);
+        let mut i: i32 = 1;
+        while i < count {
+            self.list_push(self.arena.ls.at(mark + i));
+            i += 2;
+        }
+        let expression_list = if expressions == 0 {
+            0
+        } else {
+            self.list_finish(split)
+        };
+        self.list_truncate(mark);
+        self.next()?;
+        return Ok(self.node_ll(
+            if is_type && expressions != 0 {
+                k::TemplateLiteralType
+            } else {
+                k::TemplateLiteral
+            },
+            start,
+            end,
+            quasi_list,
+            expression_list,
+        ));
+    }
+
+    pub(crate) fn parse_array(&mut self) -> R<i32> {
+        let start = self.lexer.tok_start;
+        self.next()?;
+        let saved_no_in = self.parse.no_in;
+        self.parse.no_in = 0;
+        let saved_depth = self.parse.list_depth;
+        self.parse.list_depth = saved_depth + self.lexer.tok_nl;
+        let mark = self.arena.ls_pos;
+        while self.lexer.tok != tk::BracketR {
+            if self.lexer.tok == tk::Comma {
+                self.next()?;
+                self.list_push(0);
+                continue;
+            }
+            if self.lexer.tok == tk::Ellipsis {
+                let spread_start = self.lexer.tok_start;
+                self.next()?;
+                let argument = self.parse_maybe_assign()?;
+                let v0 = self.node1(
+                    k::SpreadElement,
+                    spread_start,
+                    self.lexer.prev_end,
+                    argument,
+                );
+                self.list_push(v0);
+            } else {
+                let v1 = self.parse_maybe_assign()?;
+                self.list_push(v1);
+            }
+            if self.lexer.tok != tk::BracketR {
+                self.expect(tk::Comma)?;
+            }
+        }
+        self.parse.list_depth = saved_depth;
+        self.next()?;
+        self.parse.no_in = saved_no_in;
+        if self.parse.typed != 0 {
+            let v2 = self.lexer.prev_end;
+            let v3 = self.list_finish(mark);
+            return Ok(self.list_node_with_room(k::ArrayExpression, start, v2, v3));
+        }
+        let v4 = self.lexer.prev_end;
+        let v5 = self.list_finish(mark);
+        return Ok(self.node_l(k::ArrayExpression, start, v4, v5));
+    }
+
+    pub(crate) fn parse_object(&mut self) -> R<i32> {
+        let start = self.lexer.tok_start;
+        if self.parse.known_blocks_count != 0 {
+            let known = self.known_block_at(start);
+            if known != 0 {
+                self.parse.object_is_binding = false;
+                self.set_pos(self.n.at(known + 2));
+                self.next()?;
+                return Ok(known);
+            }
+        }
+        self.next()?;
+        let saved_no_in = self.parse.no_in;
+        self.parse.no_in = 0;
+        let mark = self.arena.ls_pos;
+        let is_binding = self.parse.object_is_binding;
+        self.parse.object_is_binding = false;
+        self.parse.list_depth += 1;
+        let mut has_proto = false;
+        while self.lexer.tok != tk::BraceR {
+            if self.parse.reads_ahead
+                && self.lexer.tok_nl != 0
+                && (self.lexer.tok == tk::Name
+                    || self.lexer.tok == tk::String
+                    || self.lexer.tok >= tk::In)
+                && self.lexer.tok_start != self.parse.refused_at
+                && self.read_property(
+                    self.lexer.tok_start,
+                    self.parse.typed,
+                    self.parse.in_async != 0
+                        || (self.parse.in_function == 0 && self.parse.top_level_await),
+                    is_binding,
+                    self.parse.list_depth.wrapping_mul(self.options.tab_width),
+                    false,
+                )?
+            {
+                let mut property_start = self.lexer.tok_start;
+                let mut behind: i32;
+                loop {
+                    let n = self.node_raw(
+                        k::Ready | self.fast.ready_flags | (k::ObjectProperty << SUB_SHIFT),
+                        property_start,
+                        self.fast.ready_end,
+                        3,
+                    );
+                    self.n.put(n + 4, self.fast.ready_text);
+                    self.n.put(n + 5, self.fast.ready_length);
+                    self.n.put(n + 6, self.fast.ready_level);
+                    self.list_push(n);
+                    behind = self.fast.ready_next;
+                    // on without the lexer, as long as properties follow that can be read
+                    if self.t.at(behind) != 44 {
+                        break;
+                    }
+                    if !self.read_next_property(behind + 1, is_binding)? {
+                        self.parse.refused_at = self.fast.ready_start;
+                        break;
+                    }
+                    property_start = self.fast.ready_start;
+                }
+                self.set_pos(behind);
+                self.next()?;
+            } else {
+                let length = self.lexer.tok_end - self.lexer.tok_start;
+                let v0 = self.parse_object_member()?;
+                if (length == 9 || length == 11) && self.is_proto(v0) {
+                    if has_proto {
+                        self.parse.place.only_for_patterns += 1;
+                    }
+                    has_proto = true;
+                }
+                self.list_push(v0);
+            }
+            if self.lexer.tok != tk::BraceR {
+                self.expect(tk::Comma)?;
+            }
+        }
+        self.parse.list_depth -= 1;
+        self.next()?;
+        self.parse.no_in = saved_no_in;
+        if self.parse.typed != 0 {
+            let v1 = self.lexer.prev_end;
+            let v2 = self.list_finish(mark);
+            return Ok(self.list_node_with_room(k::ObjectExpression, start, v1, v2));
+        }
+        let v3 = self.lexer.prev_end;
+        let v4 = self.list_finish(mark);
+        return Ok(self.node_l(k::ObjectExpression, start, v3, v4));
+    }
+
+    /// The current token starts a member of an object type of Flow. Pushes it, and those that follow it, if fast.rs can read them; the current token is then what
+    /// stands behind the last one, a separator or the end of the type.
+    pub(crate) fn parse_ready_type_properties(&mut self) -> R<bool> {
+        if !self.parse.reads_ahead
+            || self.lexer.tok_nl == 0
+            || self.lexer.tok_start == self.parse.refused_at
+            || !self.read_type_property(
+                self.lexer.tok_start,
+                self.parse.list_depth.wrapping_mul(self.options.tab_width),
+            )?
+        {
+            return Ok(false);
+        }
+        let mut start = self.lexer.tok_start;
+        let mut behind: i32;
+        loop {
+            let n = self.node_raw(
+                k::Ready | self.fast.ready_flags | (k::ObjectTypeProperty << SUB_SHIFT),
+                start,
+                self.fast.ready_end,
+                2,
+            );
+            self.n.put(n + 4, self.fast.ready_text);
+            self.n.put(n + 5, self.fast.ready_length);
+            self.list_push(n);
+            behind = self.fast.ready_next;
+            if self.t.at(behind) != 44 && self.t.at(behind) != 59 {
+                break;
+            }
+            if !self.read_next_type_property(behind + 1)? {
+                self.parse.refused_at = self.fast.ready_start;
+                break;
+            }
+            start = self.fast.ready_start;
+        }
+        self.set_pos(behind);
+        self.next()?;
+        return Ok(true);
+    }
+
+    /// Is the member `n` of an object `__proto__: a`? There can be one, unless the object is a pattern. (TypeScript's parser does not count.)
+    #[inline]
+    fn is_proto(&self, n: i32) -> bool {
+        if (self.n.at(n) & (0xff | F_SHORTHAND | F_COMPUTED)) != k::ObjectProperty {
+            return false;
+        }
+        let key = self.n.at(n + 4);
+        let length = self.n.at(key + 2) - self.n.at(key + 1);
+        return (length == 9 || length == 11) && self.is_proto_key(key);
+    }
+
+    #[cold]
+    fn is_proto_key(&self, key: i32) -> bool {
+        let start = self.n.at(key + 1);
+        let end = self.n.at(key + 2);
+        self.parse.typed != TYPED_TS
+            && (self.text_is(start, end, b"__proto__")
+                || ((self.n.at(key) & 0xff) == k::StringLiteral
+                    && self.text_is(start + 1, end - 1, b"__proto__")))
+    }
+
+    /// The object `n` turns out to be a pattern: what only a pattern can have is in its place.
+    #[cold]
+    fn settle_what_is_for_patterns(&mut self, n: i32) {
+        let l = self.n.at(n + 4);
+        let mut has_proto = false;
+        let mut i: i32 = 1;
+        while i <= self.n.at(l) {
+            let member = self.n.at(l + i);
+            if self.is_proto(member) {
+                if has_proto {
+                    self.parse.place.only_for_patterns -= 1;
+                }
+                has_proto = true;
+            } else if (self.n.at(member) & (0xff | F_SHORTHAND))
+                == (k::ObjectProperty | F_SHORTHAND)
+                && (self.n.at(self.n.at(member + 5)) & 0xff) == k::AssignmentPattern
+                && self.parse.typed != TYPED_TS
+            {
+                self.parse.place.only_for_patterns -= 1;
+            }
+            i += 1;
+        }
+    }
+
+    pub(crate) fn object_word_was_key(&self) -> bool {
+        return self.lexer.tok == tk::ParenL
+            || self.lexer.tok == tk::Comma
+            || self.lexer.tok == tk::BraceR
+            || self.lexer.tok == tk::Colon
+            || self.lexer.tok == tk::Eq
+            || (self.lexer.tok == tk::Lt && self.parse.typed != 0);
+    }
+
+    pub(crate) fn parse_object_member(&mut self) -> R<i32> {
+        let start = self.lexer.tok_start;
+        if self.lexer.tok == tk::Ellipsis {
+            self.next()?;
+            let argument = self.parse_maybe_assign()?;
+            return Ok(self.node1(k::SpreadElement, start, self.lexer.prev_end, argument));
+        }
+        let mut flags: i32 = 0;
+        let mut method = M_METHOD;
+        let mut key: i32 = 0;
+        if self.is_kw(kw::Async) {
+            let word = self.identifier()?;
+            if self.object_word_was_key() || self.lexer.tok_nl != 0 {
+                key = word;
+            } else {
+                flags |= F_ASYNC;
+            }
+        }
+        if key == 0 && self.lexer.tok == tk::Mul {
+            self.next()?;
+            flags |= F_GENERATOR;
+        }
+        if key == 0
+            && flags == 0
+            && self.lexer.tok == tk::Name
+            && (self.lexer.tok_kw == kw::Get || self.lexer.tok_kw == kw::Set)
+        {
+            let kw = self.lexer.tok_kw;
+            let word = self.identifier()?;
+            if self.object_word_was_key() {
+                key = word;
+            } else {
+                method = if kw == kw::Get { M_GET } else { M_SET };
+            }
+        }
+        // what the key is, if it is a word
+        let mut word = tk::Name;
+        let mut word_kw = kw::None;
+        if key == 0 {
+            if self.lexer.tok == tk::BracketL {
+                flags |= F_COMPUTED;
+            }
+            word = self.lexer.tok;
+            word_kw = self.lexer.tok_kw;
+            if word == tk::PrivateName {
+                return Err(self.unexpected());
+            }
+            key = self.parse_property_name()?;
+        }
+        if self.lexer.tok == tk::ParenL || (self.lexer.tok == tk::Lt && self.parse.typed != 0) {
+            return self.parse_method_rest(
+                k::ObjectMethod | flags | (method << SUB_SHIFT),
+                start,
+                key,
+                0,
+            );
+        }
+        // `*`, `async`, `get` and `set` announce a method
+        if (flags & (F_GENERATOR | F_ASYNC)) != 0 || method != M_METHOD {
+            return Err(self.unexpected());
+        }
+        if self.eat(tk::Colon)? {
+            let value = self.parse_maybe_assign()?;
+            return Ok(self.node2(
+                k::ObjectProperty | flags,
+                start,
+                self.lexer.prev_end,
+                key,
+                value,
+            ));
+        }
+        // shorthand
+        if (self.n.at(key) & 0xff) != k::Identifier || (flags & F_COMPUTED) != 0 {
+            return Err(self.unexpected());
+        }
+        // the name is read, or bound
+        if word != tk::Name || (word_kw != 0 && self.is_reserved_here(word_kw)) {
+            return Err(self.text_refuse());
+        }
+        let mut value = if self.parse.typed == 0 {
+            self.node0(self.n.at(key), self.n.at(key + 1), self.n.at(key + 2))
+        } else {
+            self.leaf_with_room(self.n.at(key), self.n.at(key + 1), self.n.at(key + 2))
+        };
+        if self.eat(tk::Eq)? {
+            let right = self.parse_maybe_assign()?;
+            value = self.node2(
+                k::AssignmentPattern,
+                start,
+                self.lexer.prev_end,
+                value,
+                right,
+            );
+            // (TypeScript's parser leaves that to others)
+            if self.parse.typed != TYPED_TS {
+                self.parse.place.only_for_patterns += 1;
+            }
+        }
+        return Ok(self.node2(
+            k::ObjectProperty | F_SHORTHAND,
+            start,
+            self.lexer.prev_end,
+            key,
+            value,
+        ));
+    }
+
+    /// Turns an expression into the pattern it covers, in place.
+    /// The same for what stood between parentheses and turns out to be a parameter. Returns the node that takes the place of `n`.
+    pub(crate) fn to_assignable_parameter(&mut self, n: i32) -> R<i32> {
+        self.stack()?;
+        if (self.n.at(n) & F_PAREN) != 0 {
+            return Err(self.text_refuse());
+        }
+        if self.parse.typed == TYPED_FLOW {
+            let k = self.n.at(n) & 0xff;
+            if k == k::TypeCastExpression {
+                let expression = self.n.at(n + 4);
+                let annotation = self.n.at(n + 5);
+                if EXT_AT.at(self.n.at(expression) & 0xff) == 0 {
+                    return Err(self.unexpected());
+                }
+                // `((a): A) => 1`, `((a: A)) => 1`
+                if (self.n.at(expression) & F_PAREN) != 0 || self.t.at(self.n.at(n + 1)) == 40 {
+                    return Err(self.text_refuse());
+                }
+                self.to_assignable(expression)?;
+                if !self.is_binding(expression)? {
+                    return Err(self.text_refuse());
+                }
+                self.n.put(expression, self.n.at(expression) | F_EXT);
+                self.set_child(
+                    expression,
+                    EXT_AT.at(self.n.at(expression) & 0xff),
+                    annotation,
+                );
+                self.n.put(expression + 2, self.n.at(annotation + 2));
+                return Ok(expression);
+            }
+            if k == k::AssignmentExpression
+                && (self.n.at(self.n.at(n + 4)) & 0xff) == k::TypeCastExpression
+            {
+                let v0 = self.to_assignable_parameter(self.n.at(n + 4))?;
+                self.set_child(n, 4, v0);
+            }
+        }
+        self.to_assignable(n)?;
+        // what was read as an expression has to have become a name or a pattern
+        let mut target = n;
+        if (self.n.at(target) & 0xff) == k::AssignmentPattern
+            || (self.n.at(target) & 0xff) == k::RestElement
+        {
+            let is_rest = (self.n.at(target) & 0xff) == k::RestElement;
+            target = self.n.at(target + 4);
+            if (self.n.at(target) & F_PAREN) != 0
+                || (is_rest && (self.n.at(target) & 0xff) == k::AssignmentPattern)
+            {
+                return Err(self.text_refuse());
+            }
+        }
+        match self.n.at(target) & 0xff {
+            k::Identifier | k::TypeCastExpression | k::AssignmentPattern => {}
+            k::ObjectPattern | k::ArrayPattern => {
+                if !self.is_binding(target)? {
+                    return Err(self.text_refuse());
+                }
+            }
+            _ => {
+                if self.parse.speculating != 0 {
+                    return Err(self.unexpected());
+                }
+                return Err(self.fail(self.n.at(target + 1)));
+            }
+        }
+        return Ok(n);
+    }
+
+    /// Babel's checkLVal() for what is assigned to: a name, a member, or (with `patterns`) a pattern of those, which to_assignable() has
+    /// made of the literal. The parsers reject everything else.
+    pub(crate) fn check_target(&self, n: i32, patterns: bool) -> R<()> {
+        if self.is_target(n, patterns, true)? {
+            return Ok(());
+        }
+        return Err(self.text_refuse());
+    }
+
+    /// `outermost`: `n` is all that is assigned to, not a part of a pattern.
+    fn is_target(&self, n: i32, patterns: bool, outermost: bool) -> R<bool> {
+        self.stack()?;
+        let head = self.n.at(n);
+        let in_parentheses = (head & F_PAREN) != 0;
+        match head & 0xff {
+            k::Identifier => {
+                return Ok(true);
+            }
+            // (`a?.b = 1` does not come here)
+            k::MemberExpression => {
+                return Ok((head & F_CHAIN) == 0);
+            }
+            k::ObjectPattern => {
+                if !patterns || in_parentheses {
+                    return Ok(false);
+                }
+                let l = self.n.at(n + 4);
+                let mut i: i32 = 1;
+                while i <= self.n.at(l) {
+                    let member = self.n.at(l + i);
+                    let is_fine = match self.n.at(member) & 0xff {
+                        k::ObjectProperty => self.is_target(self.n.at(member + 5), true, false)?,
+                        // to_assignable() has looked at it
+                        k::Ready => true,
+                        k::RestElement => self.is_target(member, true, false)?,
+                        _ => false,
+                    };
+                    if !is_fine {
+                        return Ok(false);
+                    }
+                    i += 1;
+                }
+                return Ok(true);
+            }
+            k::ArrayPattern => {
+                if !patterns || in_parentheses {
+                    return Ok(false);
+                }
+                let l = self.n.at(n + 4);
+                let mut i: i32 = 1;
+                while i <= self.n.at(l) {
+                    if self.n.at(l + i) != 0 && !self.is_target(self.n.at(l + i), true, false)? {
+                        return Ok(false);
+                    }
+                    i += 1;
+                }
+                return Ok(true);
+            }
+            k::RestElement => {
+                let argument = self.n.at(n + 4);
+                return Ok(patterns
+                    && (self.n.at(argument) & 0xff) != k::AssignmentPattern
+                    && self.is_target(argument, true, false)?);
+            }
+            k::AssignmentPattern => {
+                return Ok(patterns
+                    && !outermost
+                    && !in_parentheses
+                    && self.is_target(self.n.at(n + 4), true, false)?);
+            }
+            // parentheses that stay for the comment in front of them
+            k::ParenthesizedExpression => {
+                return self.is_target(self.n.at(n + 4), false, false);
+            }
+            k::NonNullExpression
+            | k::AsExpression
+            | k::SatisfiesExpression
+            | k::InstantiationExpression => {
+                return Ok(self.parse.typed == TYPED_TS
+                    && self.is_target(self.n.at(n + 4), false, false)?);
+            }
+            k::TypeAssertion => {
+                return Ok(self.parse.typed == TYPED_TS
+                    && self.is_target(self.n.at(n + 5), false, false)?);
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
+    /// `n` is what to_assignable() has made of an array or an object that stands where names are declared: are there names, patterns of names and default values in it, and nothing else?
+    fn is_binding(&self, n: i32) -> R<bool> {
+        self.stack()?;
+        let head = self.n.at(n);
+        if (head & F_PAREN) != 0 {
+            return Ok(false);
+        }
+        match head & 0xff {
+            k::Identifier => {
+                // (F_EXTRA: `let` or `async`)
+                return Ok((head & F_EXTRA) == 0
+                    || !self.parse.binds_lexically
+                    || self.n.at(n + 2) - self.n.at(n + 1) != 3);
+            }
+            k::AssignmentPattern => {
+                return self.is_binding(self.n.at(n + 4));
+            }
+            k::ObjectPattern => {
+                let l = self.n.at(n + 4);
+                let count = self.n.at(l);
+                let mut i: i32 = 1;
+                while i <= count {
+                    let member = self.n.at(l + i);
+                    let is_fine = match self.n.at(member) & 0xff {
+                        k::ObjectProperty => self.is_binding(self.n.at(member + 5))?,
+                        // the reader was told that this is a pattern
+                        k::Ready => true,
+                        k::RestElement => {
+                            i == count
+                                && (self.n.at(self.n.at(member + 4)) & (0xff | F_PAREN))
+                                    == k::Identifier
+                        }
+                        _ => false,
+                    };
+                    if !is_fine {
+                        return Ok(false);
+                    }
+                    i += 1;
+                }
+                return Ok(true);
+            }
+            k::ArrayPattern => {
+                let l = self.n.at(n + 4);
+                let count = self.n.at(l);
+                let mut i: i32 = 1;
+                while i <= count {
+                    let mut element = self.n.at(l + i);
+                    if element != 0 {
+                        if (self.n.at(element) & 0xff) == k::RestElement {
+                            element = self.n.at(element + 4);
+                            if i != count || (self.n.at(element) & 0xff) == k::AssignmentPattern {
+                                return Ok(false);
+                            }
+                        }
+                        if !self.is_binding(element)? {
+                            return Ok(false);
+                        }
+                    }
+                    i += 1;
+                }
+                return Ok(true);
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
+    /// What stands before `=` in TypeScript, if it is no name and no member: a pattern, or a name or member with `!` behind it or, in parentheses, with a type.
+    /// TypeScript's parser takes more (`3 = a`), and what is printed then is left to the long way.
+    pub(crate) fn check_target_of_type_script(&self, n: i32, patterns: bool) -> R<()> {
+        let head = self.n.at(n);
+        if patterns
+            && ((head & (0xff | F_PAREN)) == k::ObjectPattern
+                || (head & (0xff | F_PAREN)) == k::ArrayPattern)
+        {
+            return Ok(());
+        }
+        if ((head & F_PAREN) != 0 || (head & 0xff) == k::NonNullExpression)
+            && self.ts_is_valid_target(n)
+        {
+            return Ok(());
+        }
+        return Err(self.text_refuse());
+    }
+
+    /// TypeScript: a pattern or a default in parentheses, inside of a pattern, is printed in a way of its own.
+    #[inline(always)]
+    fn ts_check_element_of_pattern(&self, n: i32) -> R<()> {
+        if (self.n.at(n) & F_PAREN) != 0 && self.parse.typed == TYPED_TS {
+            let kind = self.n.at(n) & 0xff;
+            if kind == k::ObjectExpression
+                || kind == k::ArrayExpression
+                || kind == k::AssignmentExpression
+            {
+                return Err(self.text_refuse());
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn to_assignable(&mut self, n: i32) -> R<()> {
+        self.stack()?;
+        if n == 0 {
+            return Ok(());
+        }
+        match self.n.at(n) & 0xff {
+            k::ObjectExpression => {
+                self.set_kind_keep_flags(n, k::ObjectPattern);
+                if self.parse.place.only_for_patterns != 0 {
+                    self.settle_what_is_for_patterns(n);
+                }
+                let l = self.n.at(n + 4);
+                let count = self.n.at(l);
+                let mut i: i32 = 1;
+                while i <= count {
+                    let member = self.n.at(l + i);
+                    let kind = self.n.at(member) & 0xff;
+                    if kind == k::ObjectProperty {
+                        self.ts_check_element_of_pattern(self.n.at(member + 5))?;
+                        self.to_assignable(self.n.at(member + 5))?;
+                    } else if kind == k::SpreadElement {
+                        self.to_assignable(member)?;
+                    } else if kind == k::ObjectMethod && self.parse.typed == TYPED_TS {
+                        return Err(self.text_refuse());
+                    } else if kind == k::Ready && (self.n.at(member) & F_EXTRA) == 0 {
+                        return Err(self.redo());
+                    }
+                    i += 1;
+                }
+                return Ok(());
+            }
+            k::ArrayExpression => {
+                self.set_kind_keep_flags(n, k::ArrayPattern);
+                let l = self.n.at(n + 4);
+                let count = self.n.at(l);
+                let mut i: i32 = 1;
+                while i <= count {
+                    self.ts_check_element_of_pattern(self.n.at(l + i))?;
+                    self.to_assignable(self.n.at(l + i))?;
+                    i += 1;
+                }
+                return Ok(());
+            }
+            k::SpreadElement => {
+                self.set_kind_keep_flags(n, k::RestElement);
+                self.ts_check_element_of_pattern(self.n.at(n + 4))?;
+                self.to_assignable(self.n.at(n + 4))?;
+                return Ok(());
+            }
+            k::AssignmentExpression => {
+                // `[a += 1] = b`, which TypeScript's parser takes
+                if ((self.n.at(n) as u32) >> SUB_SHIFT) as i32 != tk::Eq {
+                    return Err(self.text_refuse());
+                }
+                self.set_kind(n, k::AssignmentPattern);
+                return Ok(());
+            }
+            k::ParenthesizedExpression
+            | k::NonNullExpression
+            | k::AsExpression
+            | k::SatisfiesExpression => {
+                if self.parse.typed == TYPED_TS
+                    && (self.n.at(n) & 0xff) != k::ParenthesizedExpression
+                    && !self.ts_is_valid_target(n)
+                {
+                    // `[{ ...a }!] = b`: no pattern for the long way
+                    return Err(self.text_refuse());
+                }
+                self.to_assignable(self.n.at(n + 4))?;
+                return Ok(());
+            }
+            k::TypeAssertion => {
+                if !self.ts_is_valid_target(n) {
+                    return Err(self.text_refuse());
+                }
+                self.to_assignable(self.n.at(n + 5))?;
+                return Ok(());
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    // ---------------------------------------------------------------------------------------------------------- modules
+    pub(crate) fn module_export_name(&mut self) -> R<i32> {
+        if self.lexer.tok == tk::String {
+            // Babel looks for half a character in it: `"\uD83D"`
+            if (self.lexer.tok_flags & F_ESCAPE) != 0 && self.parse.typed != TYPED_TS {
+                return Err(self.text_refuse());
+            }
+            return self.leaf(k::StringLiteral);
+        }
+        return self.parse_ident_name();
+    }
+
+    /// `default` at `at` is a name that the file exports, and this may not be the first time that it is read. Is there another one? (TypeScript's parser does not count.)
+    pub(crate) fn is_second_default_export(&mut self, at: i32) -> bool {
+        if self.parse.typed == TYPED_TS || self.parse.default_export_at < 0 {
+            return false;
+        }
+        if self.parse.default_export_at == 0 {
+            self.parse.default_export_at = at;
+        }
+        return self.parse.default_export_at != at;
+    }
+
+    /// Is the current token, a name that is exported, `default` or "default"?
+    pub(crate) fn is_default_name(&self) -> bool {
+        self.lexer.tok == tk::Default
+            || (self.lexer.tok == tk::String
+                && self.text_is(self.lexer.tok_start + 1, self.lexer.tok_end - 1, b"default"))
+    }
+
+    pub(crate) fn string_literal(&mut self) -> R<i32> {
+        if self.lexer.tok != tk::String {
+            return Err(self.unexpected());
+        }
+        return self.leaf(k::StringLiteral);
+    }
+
+    /// The same behind an export, where TypeScript wants `with` on the same line.
+    pub(crate) fn parse_attributes_of_export(&mut self) -> R<i32> {
+        if self.lexer.tok == tk::With && self.lexer.tok_nl != 0 && self.parse.typed == TYPED_TS {
+            return Err(self.text_refuse());
+        }
+        return self.parse_attributes();
+    }
+
+    /// `with { type: "json" }`, or nothing.
+    pub(crate) fn parse_attributes(&mut self) -> R<i32> {
+        self.parse.attributes_flag = 0;
+        let mut is_assert = false;
+        if self.lexer.tok == tk::With {
+            self.next()?;
+        } else if self.lexer.tok == tk::Name
+            && self.lexer.tok_nl == 0
+            && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"assert")
+        {
+            is_assert = true;
+            self.next()?;
+        } else {
+            return Ok(0);
+        }
+        if is_assert {
+            self.parse.attributes_flag = F_EXTRA;
+        }
+        self.expect(tk::BraceL)?;
+        let mark = self.arena.ls_pos;
+        while self.lexer.tok != tk::BraceR {
+            let start = self.lexer.tok_start;
+            let key = self.module_export_name()?;
+            self.expect(tk::Colon)?;
+            let value = self.string_literal()?;
+            let v0 = self.node2(k::ImportAttribute, start, self.lexer.prev_end, key, value);
+            self.list_push(v0);
+            if self.lexer.tok != tk::BraceR {
+                self.expect(tk::Comma)?;
+            }
+        }
+        self.next()?;
+        return Ok(self.list_finish(mark));
+    }
+
+    /// The current token is `import`, and a declaration follows.
+    pub(crate) fn parse_import(&mut self, start: i32) -> R<i32> {
+        // (for TypeScript's parser a file with an import or an export is a module)
+        self.parse.needs_module |= self.parse.typed == TYPED_TS;
+        self.next()?;
+        let mut phase = P_NONE;
+        let mark = self.arena.ls_pos;
+        if self.lexer.tok == tk::String {
+            let source = self.string_literal()?;
+            let attributes = self.parse_attributes()?;
+            let end = self.lexer.prev_end;
+            self.semicolon()?;
+            return Ok(self.node1_ll(
+                k::ImportDeclaration | self.parse.attributes_flag,
+                start,
+                end,
+                source,
+                0,
+                attributes,
+            ));
+        }
+        let mut import_kind: i32 = 0;
+        if self.parse.typed == TYPED_FLOW {
+            import_kind = self.flow_parse_import_kind()?;
+        }
+        if self.parse.typed == TYPED_TS && self.lexer.tok == tk::Name {
+            if self.lexer.tok_end - self.lexer.tok_start == 4
+                && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"type")
+            {
+                // `import type X from`, `import type { X } from`, `import type * as X from`; but `import type from "x"`, `import type, { X } from`
+                let saved = self.save();
+                self.next()?;
+                let is_kind = self.lexer.tok != tk::Comma
+                    && self.lexer.tok != tk::Eq
+                    && !(self.is_kw(kw::From) && self.peek_is_string());
+                if is_kind {
+                    import_kind = IK_TYPE;
+                } else {
+                    self.restore(saved);
+                }
+            }
+            if self.lexer.tok == tk::Name {
+                let saved = self.save();
+                self.next()?;
+                let is_equals = self.lexer.tok == tk::Eq;
+                self.restore(saved);
+                if is_equals {
+                    return self.ts_parse_import_equals(start, import_kind);
+                }
+            }
+        }
+        if self.lexer.tok == tk::Name
+            && (self.lexer.tok_kw == kw::Defer
+                || self.lexer.tok_kw == kw::Source
+                || self.lexer.tok_kw == kw::Module)
+        {
+            // `import defer * as ns`, `import source x from`; but `import defer from "x"` imports a default
+            let kw = self.lexer.tok_kw;
+            let saved = self.save();
+            self.next()?;
+            let is_phase = if kw == kw::Defer {
+                self.lexer.tok == tk::Mul
+            } else {
+                self.lexer.tok == tk::Name
+                    && !(self.lexer.tok_kw == kw::From && self.peek_is_string())
+            };
+            if is_phase {
+                // TypeScript knows `defer`; nobody knows it together with `type`
+                if (self.parse.typed == TYPED_TS && kw != kw::Defer) || import_kind != 0 {
+                    return Err(self.text_refuse());
+                }
+                phase = if kw == kw::Defer {
+                    P_DEFER
+                } else {
+                    if kw == kw::Source { P_SOURCE } else { P_MODULE }
+                };
+                // `import module a` is a proposal; `import source a` is one that Flow's own parser does not know
+                if phase == P_MODULE || (phase == P_SOURCE && self.lang.lang == lang::Flow) {
+                    return Err(self.text_refuse());
+                }
+            } else {
+                self.restore(saved);
+            }
+        }
+        let mut flags: i32 = 0;
+        if self.lexer.tok == tk::Name {
+            let spec_start = self.lexer.tok_start;
+            let local = self.parse_ident()?;
+            let v0 = self.node1(
+                k::ImportDefaultSpecifier,
+                spec_start,
+                self.lexer.prev_end,
+                local,
+            );
+            self.list_push(v0);
+            if import_kind != 0 && self.parse.typed == TYPED_TS && self.lexer.tok == tk::Comma {
+                // a type-only import has a default import or named bindings
+                return Err(self.unexpected());
+            }
+            if self.lexer.tok == tk::Comma {
+                self.next()?;
+                if (self.lexer.tok != tk::Mul && self.lexer.tok != tk::BraceL) || phase != P_NONE {
+                    return Err(self.unexpected());
+                }
+            } else if self.lexer.tok == tk::Mul || self.lexer.tok == tk::BraceL {
+                // `import type {a}` is no JavaScript
+                return Err(self.unexpected());
+            }
+        }
+        if self.lexer.tok == tk::Mul {
+            let spec_start = self.lexer.tok_start;
+            self.next()?;
+            if !self.is_kw(kw::As) {
+                return Err(self.unexpected());
+            }
+            self.next()?;
+            let local = self.parse_ident()?;
+            let v1 = self.node1(
+                k::ImportNamespaceSpecifier,
+                spec_start,
+                self.lexer.prev_end,
+                local,
+            );
+            self.list_push(v1);
+        } else if self.lexer.tok == tk::BraceL {
+            // has braces
+            flags |= F_SHORTHAND;
+            self.next()?;
+            while self.lexer.tok != tk::BraceR {
+                let spec_start = self.lexer.tok_start;
+                if self.parse.typed == TYPED_TS
+                    && self.lexer.tok == tk::Name
+                    && self.lexer.tok_end - self.lexer.tok_start == 4
+                    && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"type")
+                {
+                    let v2 = self.ts_parse_import_or_export_specifier(k::ImportSpecifier)?;
+                    let local = self.n.at(v2 + 5);
+                    if self.text_is(self.n.at(local + 1), self.n.at(local + 2), b"enum") {
+                        return Err(self.text_refuse());
+                    }
+                    self.list_push(v2);
+                    if self.lexer.tok != tk::BraceR {
+                        self.expect(tk::Comma)?;
+                    }
+                    continue;
+                }
+                if self.parse.typed == TYPED_FLOW
+                    && (self.lexer.tok == tk::Typeof
+                        || (self.lexer.tok == tk::Name
+                            && self.lexer.tok_end - self.lexer.tok_start == 4
+                            && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"type")))
+                {
+                    let v3 = self.flow_parse_import_specifier()?;
+                    self.list_push(v3);
+                    if self.lexer.tok != tk::BraceR {
+                        self.expect(tk::Comma)?;
+                    }
+                    continue;
+                }
+                let is_name = self.lexer.tok == tk::Name
+                    && !(self.lexer.tok_kw != 0 && self.is_reserved_here(self.lexer.tok_kw));
+                let imported = self.module_export_name()?;
+                let local: i32;
+                if self.is_kw(kw::As) {
+                    self.next()?;
+                    local = self.parse_ident()?;
+                } else {
+                    if !is_name {
+                        return Err(self.text_refuse());
+                    }
+                    local = self.node0(
+                        self.n.at(imported),
+                        self.n.at(imported + 1),
+                        self.n.at(imported + 2),
+                    );
+                }
+                let v4 = self.node2(
+                    k::ImportSpecifier,
+                    spec_start,
+                    self.lexer.prev_end,
+                    imported,
+                    local,
+                );
+                self.list_push(v4);
+                if self.lexer.tok != tk::BraceR {
+                    self.expect(tk::Comma)?;
+                }
+            }
+            self.next()?;
+        }
+        if !self.is_kw(kw::From) {
+            return Err(self.unexpected());
+        }
+        self.next()?;
+        let specifiers = self.list_finish(mark);
+        let source = self.string_literal()?;
+        let attributes = self.parse_attributes()?;
+        let end = self.lexer.prev_end;
+        self.semicolon()?;
+        return Ok(self.node1_ll(
+            k::ImportDeclaration
+                | flags
+                | self.parse.attributes_flag
+                | ((phase | (import_kind << IK_SHIFT)) << SUB_SHIFT),
+            start,
+            end,
+            source,
+            specifiers,
+            attributes,
+        ));
+    }
+
+    pub(crate) fn peek_is_string(&self) -> bool {
+        // only called between save() and restore(): look one more token ahead by hand
+        let p = self.lexer.pos;
+        let mut q = p;
+        while self.t.at(q) == 32 || self.t.at(q) == 9 || self.t.at(q) == 10 {
+            q += 1;
+        }
+        return self.t.at(q) == 34 || self.t.at(q) == 39;
+    }
+
+    /// The end of an export declaration around `declaration`: without the semicolon, if the declaration counts it in.
+    pub(crate) fn end_without_semicolon(&self, declaration: i32) -> i32 {
+        let end = self.n.at(declaration + 2);
+        return if self.t.at(end - 1) == 59 {
+            self.parse.content_end
+        } else {
+            end
+        };
+    }
+
+    /// The current token is `export`. `decorators` stood in front of it.
+    pub(crate) fn parse_export(&mut self, start: i32, decorators: i32) -> R<i32> {
+        self.parse.needs_module |= self.parse.typed == TYPED_TS;
+        self.next()?;
+        let mut export_kind: i32 = 0;
+        if self.parse.typed == TYPED_TS {
+            if self.lexer.tok == tk::Name
+                || self.lexer.tok == tk::Eq
+                || self.lexer.tok == tk::Import
+                || self.lexer.tok == tk::Const
+            {
+                // export =, export as namespace, export import a = b, export declare .., export type .., export interface ..
+                self.parse.pending_decorators = decorators;
+                let declaration = self.ts_parse_export_declaration(start)?;
+                self.parse.pending_decorators = 0;
+                if declaration < 0 {
+                    // `export type` before `{` or `*`
+                    export_kind = IK_TYPE;
+                } else if declaration != 0 {
+                    let k = self.n.at(declaration) & 0xff;
+                    if k == k::ExportAssignment || k == k::NamespaceExportDeclaration {
+                        return Ok(declaration);
+                    }
+                    return Ok(self.node2_ll(
+                        k::ExportNamedDeclaration | (if decorators != 0 { F_EXTRA } else { 0 }),
+                        start,
+                        self.end_without_semicolon(declaration),
+                        declaration,
+                        0,
+                        0,
+                        0,
+                    ));
+                }
+            }
+        }
+        if self.parse.typed == TYPED_FLOW && self.lexer.tok == tk::Name {
+            let declaration = self.flow_parse_export_declaration()?;
+            if declaration < 0 {
+                export_kind = IK_TYPE;
+            } else if declaration != 0 {
+                return Ok(self.node2_ll(
+                    k::ExportNamedDeclaration,
+                    start,
+                    self.end_without_semicolon(declaration),
+                    declaration,
+                    0,
+                    0,
+                    0,
+                ));
+            }
+        }
+        if self.lexer.tok == tk::Mul {
+            let spec_start = self.lexer.tok_start;
+            self.next()?;
+            if self.is_kw(kw::As) {
+                self.next()?;
+                if self.is_default_name() && self.is_second_default_export(self.lexer.tok_start) {
+                    return Err(self.text_refuse());
+                }
+                let exported = self.module_export_name()?;
+                let mark = self.arena.ls_pos;
+                let v0 = self.node1(
+                    k::ExportNamespaceSpecifier,
+                    spec_start,
+                    self.lexer.prev_end,
+                    exported,
+                );
+                self.list_push(v0);
+                return self.finish_export_from(
+                    start,
+                    mark,
+                    true,
+                    export_kind << IK_SHIFT << SUB_SHIFT,
+                );
+            }
+            if !self.is_kw(kw::From) {
+                return Err(self.unexpected());
+            }
+            self.next()?;
+            let source = self.string_literal()?;
+            let attributes = self.parse_attributes_of_export()?;
+            let end = self.lexer.prev_end;
+            self.semicolon()?;
+            return Ok(self.node2_l(
+                k::ExportAllDeclaration
+                    | self.parse.attributes_flag
+                    | (export_kind << IK_SHIFT << SUB_SHIFT),
+                start,
+                end,
+                0,
+                source,
+                attributes,
+            ));
+        }
+        if self.lexer.tok == tk::Default {
+            if self.is_second_default_export(self.lexer.tok_start) {
+                return Err(self.text_refuse());
+            }
+            self.next()?;
+            let decl_start = self.lexer.tok_start;
+            let mut declaration: i32;
+            let mut needs_semicolon = false;
+            if self.lexer.tok == tk::Function {
+                declaration = self.parse_function(decl_start, k::FunctionDeclaration, 0)?;
+            } else if self.lexer.tok == tk::Class {
+                declaration = self.parse_class(
+                    if decorators != 0 { start } else { decl_start },
+                    k::ClassDeclaration,
+                    decorators,
+                )?;
+            } else if self.lexer.tok == tk::At {
+                if decorators != 0 && self.parse.typed == TYPED_TS {
+                    return Err(self.text_refuse());
+                }
+                let own = self.parse_decorators()?;
+                if decorators != 0 || self.lexer.tok != tk::Class {
+                    return Err(self.unexpected());
+                }
+                declaration = self.parse_class(decl_start, k::ClassDeclaration, own)?;
+            } else {
+                declaration = 0;
+                if self.parse.typed == TYPED_TS && self.lexer.tok == tk::Name {
+                    // export default interface X {}, export default abstract class X {}
+                    self.parse.pending_decorators = decorators;
+                    declaration = self
+                        .parse_declaration(if decorators != 0 { start } else { decl_start }, 0)?;
+                    self.parse.pending_decorators = 0;
+                    let k = self.n.at(declaration) & 0xff;
+                    if declaration != 0
+                        && (k != k::InterfaceDeclaration && k != k::ClassDeclaration
+                            || (self.n.at(declaration) & (MOD_DECLARE << SUB_SHIFT)) != 0)
+                    {
+                        return Err(self.unexpected());
+                    }
+                    if declaration == 0
+                        && self.lexer.tok_end - self.lexer.tok_start == 9
+                        && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"interface")
+                    {
+                        // never a name here
+                        return Err(self.text_refuse());
+                    }
+                }
+                if self.parse.typed == TYPED_FLOW && self.lexer.tok == tk::Name {
+                    // export default component X() {}, hook, enum, record
+                    let trial = self.begin_trial();
+                    declaration = self.flow_parse_statement(decl_start)?;
+                    let k = self.n.at(declaration) & 0xff;
+                    if declaration != 0
+                        && k != k::ComponentDeclaration
+                        && k != k::HookDeclaration
+                        && k != k::EnumDeclaration
+                        && k != k::RecordDeclaration
+                    {
+                        self.abandon(&trial)?;
+                        declaration = 0;
+                    } else if (self.n.at(declaration) & F_ASYNC) != 0 && k != k::EnumDeclaration {
+                        // (behind `default`, the long way knows `async` in front of `function` only)
+                        return Err(self.text_refuse());
+                    }
+                }
+                if declaration == 0 && self.is_kw(kw::Async) {
+                    let saved = self.save();
+                    self.next()?;
+                    if self.lexer.tok == tk::Function && self.lexer.tok_nl == 0 {
+                        declaration =
+                            self.parse_function(decl_start, k::FunctionDeclaration, F_ASYNC)?;
+                    } else {
+                        self.restore(saved);
+                    }
+                }
+                if declaration == 0 {
+                    // (TypeScript's parser, which reads every file first, expects a declaration)
+                    if self.lexer.tok == tk::Name
+                        && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"interface")
+                    {
+                        return Err(self.text_refuse());
+                    }
+                    declaration = self.parse_maybe_assign()?;
+                    needs_semicolon = true;
+                }
+            }
+            let end = if needs_semicolon {
+                self.lexer.prev_end
+            } else {
+                self.end_without_semicolon(declaration)
+            };
+            if needs_semicolon {
+                self.semicolon()?;
+            }
+            return Ok(self.node1(
+                k::ExportDefaultDeclaration | (if decorators != 0 { F_EXTRA } else { 0 }),
+                start,
+                end,
+                declaration,
+            ));
+        }
+        if self.lexer.tok == tk::BraceL {
+            let mark = self.arena.ls_pos;
+            let needs_from = self.parse_export_specifiers()?;
+            return self.finish_export_from(
+                start,
+                mark,
+                needs_from,
+                F_SHORTHAND | (export_kind << IK_SHIFT << SUB_SHIFT),
+            );
+        }
+        let declaration: i32;
+        let decl_start = self.lexer.tok_start;
+        's0: {
+            match self.lexer.tok {
+                tk::Var | tk::Const | tk::Function => {
+                    declaration = self.parse_statement()?;
+                }
+                tk::Class => {
+                    declaration = self.parse_class(
+                        if decorators != 0 { start } else { decl_start },
+                        k::ClassDeclaration,
+                        decorators,
+                    )?;
+                    if self.n.at(declaration + 4) == 0 {
+                        return Err(self.fail(decl_start));
+                    }
+                }
+                tk::At => {
+                    // decorators on both sides of `export`
+                    if decorators != 0 {
+                        return Err(self.unexpected());
+                    }
+                    declaration = self.parse_statement()?;
+                    if (self.n.at(declaration) & 0xff) != k::ClassDeclaration {
+                        return Err(self.fail(decl_start));
+                    }
+                }
+                tk::Name => {
+                    if self.lexer.tok_kw == kw::Let
+                        || self.lexer.tok_kw == kw::Async
+                        || self.lexer.tok_kw == kw::Using
+                        || self.lexer.tok_kw == kw::Await
+                    {
+                        let saved = self.save();
+                        self.next()?;
+                        let looks_like_declaration = self.lexer.tok == tk::Name
+                            || self.lexer.tok == tk::Function
+                            || self.lexer.tok == tk::BracketL
+                            || self.lexer.tok == tk::BraceL;
+                        let is_from = self.is_kw(kw::From);
+                        self.restore(saved);
+                        if looks_like_declaration && !is_from {
+                            declaration = self.parse_statement()?;
+                            // `export async`, the end of the line, `function f() {}`
+                            let kind = self.n.at(declaration) & 0xff;
+                            if kind == k::ExpressionStatement || kind == k::LabeledStatement {
+                                return Err(self.fail(decl_start));
+                            }
+                            break 's0;
+                        }
+                    }
+                    {
+                        // export v from "mod"; export v, { a } from "mod"
+                        return Err(self.text_refuse());
+                    }
+                }
+                _ => {
+                    return Err(self.unexpected());
+                }
+            }
+        }
+        // the end leaves the semicolon of the declaration out
+        return Ok(self.node2_ll(
+            k::ExportNamedDeclaration | (if decorators != 0 { F_EXTRA } else { 0 }),
+            start,
+            self.end_without_semicolon(declaration),
+            declaration,
+            0,
+            0,
+            0,
+        ));
+    }
+
+    /// `{ a, b as c }`, pushed on the list stack. Returns whether `from` has to follow: what is exported is no name that could be bound here.
+    pub(crate) fn parse_export_specifiers(&mut self) -> R<bool> {
+        self.expect(tk::BraceL)?;
+        let mut needs_from = false;
+        self.parse_typescript.export_needs_from = false;
+        while self.lexer.tok != tk::BraceR {
+            let spec_start = self.lexer.tok_start;
+            if self.parse.typed == TYPED_TS
+                && self.lexer.tok == tk::Name
+                && self.lexer.tok_end - self.lexer.tok_start == 4
+                && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"type")
+            {
+                let v0 = self.ts_parse_import_or_export_specifier(k::ExportSpecifier)?;
+                self.list_push(v0);
+                if self.lexer.tok != tk::BraceR {
+                    self.expect(tk::Comma)?;
+                }
+                continue;
+            }
+            if self.lexer.tok != tk::Name || self.lexer.tok_kw == kw::Enum {
+                needs_from = true;
+            }
+            let mut is_default = self.is_default_name();
+            let local = self.module_export_name()?;
+            let exported: i32;
+            if self.is_kw(kw::As) {
+                self.next()?;
+                is_default = self.is_default_name();
+                exported = self.module_export_name()?;
+            } else {
+                exported = self.node0(self.n.at(local), self.n.at(local + 1), self.n.at(local + 2));
+            }
+            if is_default && self.is_second_default_export(self.n.at(exported + 1)) {
+                return Err(self.text_refuse());
+            }
+            let v1 = self.node2(
+                k::ExportSpecifier,
+                spec_start,
+                self.lexer.prev_end,
+                local,
+                exported,
+            );
+            self.list_push(v1);
+            if self.lexer.tok != tk::BraceR {
+                self.expect(tk::Comma)?;
+            }
+        }
+        self.next()?;
+        Ok(needs_from)
+    }
+
+    pub(crate) fn finish_export_from(
+        &mut self,
+        start: i32,
+        mark: i32,
+        needs_from: bool,
+        flags: i32,
+    ) -> R<i32> {
+        let specifiers = self.list_finish(mark);
+        let mut source: i32 = 0;
+        let mut attributes: i32 = 0;
+        self.parse.attributes_flag = 0;
+        if self.is_kw(kw::From) {
+            self.next()?;
+            source = self.string_literal()?;
+            attributes = self.parse_attributes_of_export()?;
+        } else if needs_from {
+            return Err(self.unexpected());
+        } else if self.parse_typescript.export_needs_from {
+            return Err(self.text_refuse());
+        }
+        let end = self.lexer.prev_end;
+        self.semicolon()?;
+        return Ok(self.node2_ll(
+            k::ExportNamedDeclaration | flags | self.parse.attributes_flag,
+            start,
+            end,
+            0,
+            source,
+            specifiers,
+            attributes,
+        ));
+    }
+
+    // -------------------------------------------------------------------------------------------------------------- JSX
+    pub(crate) fn jsx_name(&mut self) -> R<i32> {
+        if self.lexer.tok != tk::JSXName {
+            return Err(self.unexpected());
+        }
+        let n = self.node0(
+            k::JSXIdentifier | self.lexer.tok_flags,
+            self.lexer.tok_start,
+            self.lexer.tok_end,
+        );
+        self.next_jsx_tag()?;
+        return Ok(n);
+    }
+
+    pub(crate) fn parse_jsx_element_name(&mut self) -> R<i32> {
+        let start = self.lexer.tok_start;
+        let mut name = self.jsx_name()?;
+        if self.lexer.tok == tk::Colon {
+            self.next_jsx_tag()?;
+            let local = self.jsx_name()?;
+            return Ok(self.node2(
+                k::JSXNamespacedName,
+                start,
+                self.lexer.prev_end,
+                name,
+                local,
+            ));
+        }
+        while self.lexer.tok == tk::Dot {
+            self.next_jsx_tag()?;
+            let property = self.jsx_name()?;
+            // `a-b.c`
+            if bun_core::strings::contains_char(self.t.sub(start, self.lexer.prev_end), b'-') {
+                return Err(self.text_refuse());
+            }
+            name = self.node2(
+                k::JSXMemberExpression,
+                start,
+                self.lexer.prev_end,
+                name,
+                property,
+            );
+        }
+        return Ok(name);
+    }
+
+    /// `{ expression }` in a tag or between tags. The current token is `{`; on return it is the `}`.
+    pub(crate) fn parse_jsx_container(&mut self) -> R<i32> {
+        let start = self.lexer.tok_start;
+        self.next()?;
+        if self.lexer.tok == tk::BraceR {
+            let empty = self.node0(k::JSXEmptyExpression, start + 1, self.lexer.tok_start);
+            return Ok(self.node1(k::JSXExpressionContainer, start, self.lexer.tok_end, empty));
+        }
+        if self.lexer.tok == tk::Ellipsis {
+            self.next()?;
+            let expression = self.parse_expression()?;
+            if self.lexer.tok != tk::BraceR {
+                return Err(self.unexpected());
+            }
+            // (with something before or behind it on its line: the long way keeps a blank there that Prettier writes as `{" "}`,
+            // gives it no line of its own behind a word, and what fits on the line is counted in two ways)
+            let behind = self.t.at(self.lexer.tok_end);
+            let mut before = start - 1;
+            while matches!(self.t.at(before), 32 | 9) {
+                before -= 1;
+            }
+            if (behind != 10 && !(behind == 60 && self.t.at(self.lexer.tok_end + 1) == 47))
+                || !matches!(self.t.at(before), 10 | 62)
+            {
+                return Err(self.rare(rare::UNLIKE_PRETTIER));
+            }
+            return Ok(self.node1(k::JSXSpreadChild, start, self.lexer.tok_end, expression));
+        }
+        let expression = self.parse_expression()?;
+        if self.lexer.tok != tk::BraceR {
+            return Err(self.unexpected());
+        }
+        // `{a, b}`: not for Babel
+        if (self.n.at(expression) & (0xff | F_PAREN)) == k::SequenceExpression
+            && self.parse.typed != TYPED_TS
+        {
+            return Err(self.text_refuse());
+        }
+        return Ok(self.node1(
+            k::JSXExpressionContainer,
+            start,
+            self.lexer.tok_end,
+            expression,
+        ));
+    }
+
+    pub(crate) fn is_same_jsx_name(&self, a: i32, b: i32) -> R<bool> {
+        self.stack()?;
+        let k = self.n.at(a) & 0xff;
+        if k != (self.n.at(b) & 0xff) {
+            return Ok(false);
+        }
+        if k != k::JSXIdentifier {
+            return Ok(self.is_same_jsx_name(self.n.at(a + 4), self.n.at(b + 4))?
+                && self.is_same_jsx_name(self.n.at(a + 5), self.n.at(b + 5))?);
+        }
+        let start = self.n.at(a + 1);
+        let length = self.n.at(a + 2) - start;
+        let other = self.n.at(b + 1);
+        if self.n.at(b + 2) - other != length {
+            return Ok(false);
+        }
+        let mut i: i32 = 0;
+        while i < length {
+            if self.t.at(start + i) != self.t.at(other + i) {
+                return Ok(false);
+            }
+            i += 1;
+        }
+        return Ok(true);
+    }
+
+    /// Is `name` the name in the opening tag?
+    pub(crate) fn closes_jsx(&self, opening: i32, name: i32) -> R<bool> {
+        if (self.n.at(opening) & 0xff) != k::Ready {
+            return self.is_same_jsx_name(self.n.at(opening + 4), name);
+        }
+        // The name in the opening tag is written without blanks or comments. If this one is not, it is not found to be the same, and the long way finds out.
+        let length = self.n.at(opening + 6);
+        let start = self.n.at(opening + 1) + 1;
+        let other = self.n.at(name + 1);
+        if self.n.at(name + 2) - other != length {
+            return Err(self.redo());
+        }
+        let mut i: i32 = 0;
+        while i < length {
+            if self.t.at(start + i) != self.t.at(other + i) {
+                return Ok(false);
+            }
+            i += 1;
+        }
+        return Ok(true);
+    }
+
+    /// A node for what fast.rs has read of an element.
+    pub(crate) fn ready_jsx(&mut self, kind: i32, start: i32) -> i32 {
+        let n = self.node_raw(
+            k::Ready | self.fast.ready_flags | (kind << SUB_SHIFT),
+            start,
+            self.fast.ready_end,
+            3,
+        );
+        self.n.put(n + 4, self.fast.ready_text);
+        self.n.put(n + 5, self.fast.ready_length);
+        self.n.put(n + 6, self.fast.ready_name_length);
+        return n;
+    }
+}
+pub(crate) const JSX_ELSEWHERE: i32 = 0;
+pub(crate) const JSX_CHILD: i32 = 1;
+/// a child behind `{}`, in which there can be a comment that says to leave it alone
+pub(crate) const JSX_CHILD_AFTER_EMPTY: i32 = 2;
+/// in parentheses that count as a list
+pub(crate) const JSX_IN_PARENS: i32 = 3;
+impl Quick {
+    /// The current token is `<`. On return `pos` stands behind the last `>`, and no token has been read there.
+    pub(crate) fn parse_jsx_element(&mut self, where_: i32) -> R<i32> {
+        self.stack()?;
+        let start = self.lexer.tok_start;
+        if self.parse.known_blocks_count != 0 {
+            let known = self.known_block_at(start);
+            if known != 0 {
+                self.set_pos(self.n.at(known + 2));
+                return Ok(known);
+            }
+        }
+        let saved_no_in = self.parse.no_in;
+        self.parse.no_in = 0;
+        let mut opening: i32 = 0;
+        let mut is_fragment = false;
+        let mut self_closing = false;
+        let mut tag_column: i32 = -1;
+        if self.parse.reads_ahead {
+            let read = self.read_jsx_tag(
+                start,
+                self.parse.typed,
+                self.parse.in_async != 0
+                    || (self.parse.in_function == 0 && self.parse.top_level_await),
+                self.parse.list_depth.wrapping_mul(self.options.tab_width),
+                where_ == JSX_CHILD,
+                where_ == JSX_IN_PARENS,
+            )?;
+            if read != JSX_REFUSED {
+                self.set_pos(self.fast.ready_end);
+                if read == JSX_ELEMENT {
+                    self.parse.no_in = saved_no_in;
+                    return Ok(self.ready_jsx(k::JSXElement, start));
+                }
+                opening = self.ready_jsx(k::JSXOpeningElement, start);
+            } else {
+                tag_column = self.fast.ready_tag_column;
+            }
+        }
+        if opening == 0 {
+            if self.t.at(start + 1) == 47 && self.parse.typed == TYPED_TS {
+                // a comment: `</` is one token for TypeScript
+                return Err(self.text_refuse());
+            }
+            self.set_pos(start + 1);
+            self.next_jsx_tag()?;
+            if self.lexer.tok == tk::Gt {
+                is_fragment = true;
+                opening = self.node0(k::JSXOpeningFragment, start, self.lexer.tok_end);
+            } else {
+                let name = self.parse_jsx_element_name()?;
+                // `<const A>() => 1`
+                if self.text_is(self.n.at(name + 1), self.n.at(name + 2), b"const") {
+                    return Err(self.text_refuse());
+                }
+                let mut type_arguments: i32 = 0;
+                if self.parse.typed != 0 && self.lexer.tok == tk::Lt {
+                    // <Component<T> prop />
+                    // nor here; `</` is one token in a tag, also where a comment starts
+                    if self.t.at(self.lexer.tok_end) == 60 || self.t.at(self.lexer.tok_end) == 47 {
+                        return Err(self.unexpected());
+                    }
+                    type_arguments = self.ts_parse_type_arguments()?;
+                    self.drop_comments_from(self.lexer.prev_end);
+                    self.set_pos(self.lexer.prev_end);
+                    self.next_jsx_tag()?;
+                }
+                let mark = self.arena.ls_pos;
+                // whether there is `jsx` among the attributes of <style> is asked by what is in it
+                if tag_column >= 0
+                    && self.n.at(name + 2) - self.n.at(name + 1) == 5
+                    && self.text_is(self.n.at(name + 1), self.n.at(name + 2), b"style")
+                {
+                    tag_column = -1;
+                }
+                // `<A extends B>` is taken for the type parameters of a function, but not by Flow's parsers
+                if self.lexer.tok == tk::JSXName
+                    && self.parse.typed != TYPED_FLOW
+                    && self.text_is(self.lexer.tok_start, self.lexer.tok_end, b"extends")
+                {
+                    return Err(self.text_refuse());
+                }
+                while self.lexer.tok != tk::Div && self.lexer.tok != tk::Gt {
+                    let mut attr_start = self.lexer.tok_start;
+                    if tag_column >= 0
+                        && attr_start != self.parse.refused_at
+                        && self.read_jsx_attribute(
+                            attr_start,
+                            self.parse.typed,
+                            self.parse.in_async != 0
+                                || (self.parse.in_function == 0 && self.parse.top_level_await),
+                            tag_column,
+                        )?
+                    {
+                        let mut behind: i32;
+                        loop {
+                            let v0 = self.ready_jsx(self.fast.ready_kind, attr_start);
+                            self.list_push(v0);
+                            behind = self.fast.ready_end;
+                            if !self.read_next_jsx_attribute(behind, tag_column)? {
+                                self.parse.refused_at = self.fast.ready_start;
+                                break;
+                            }
+                            attr_start = self.fast.ready_start;
+                        }
+                        self.set_pos(behind);
+                        self.next_jsx_tag()?;
+                        continue;
+                    }
+                    if self.lexer.tok == tk::BraceL {
+                        self.next()?;
+                        self.expect(tk::Ellipsis)?;
+                        let argument = self.parse_maybe_assign()?;
+                        if self.lexer.tok != tk::BraceR {
+                            return Err(self.unexpected());
+                        }
+                        let v1 = self.node1(
+                            k::JSXSpreadAttribute,
+                            attr_start,
+                            self.lexer.tok_end,
+                            argument,
+                        );
+                        self.list_push(v1);
+                        self.next_jsx_tag()?;
+                        continue;
+                    }
+                    let mut attr_name = self.jsx_name()?;
+                    if self.lexer.tok == tk::Colon {
+                        self.next_jsx_tag()?;
+                        let local = self.jsx_name()?;
+                        attr_name = self.node2(
+                            k::JSXNamespacedName,
+                            attr_start,
+                            self.lexer.prev_end,
+                            attr_name,
+                            local,
+                        );
+                    }
+                    let mut value: i32 = 0;
+                    let mut end = self.lexer.prev_end;
+                    if self.lexer.tok == tk::Eq {
+                        self.next_jsx_tag()?;
+                        if self.lexer.tok == tk::String {
+                            // (Flow: behind white space the long way reads a string of JavaScript, in which a backslash means something)
+                            if self.lexer.tok_start != self.lexer.prev_end
+                                && self.parse.typed == TYPED_FLOW
+                                && bun_core::strings::contains_char(
+                                    self.t.sub(self.lexer.tok_start, self.lexer.tok_end),
+                                    b'\\',
+                                )
+                            {
+                                return Err(self.text_refuse());
+                            }
+                            value = self.node0(
+                                k::StringLiteral | self.lexer.tok_flags,
+                                self.lexer.tok_start,
+                                self.lexer.tok_end,
+                            );
+                            end = self.lexer.tok_end;
+                        } else if self.lexer.tok == tk::BraceL {
+                            value = self.parse_jsx_container()?;
+                            if (self.n.at(value) & 0xff) == k::JSXSpreadChild {
+                                return Err(self.fail(self.n.at(value + 1)));
+                            }
+                            // (TypeScript reports that later)
+                            if self.parse.typed != TYPED_TS
+                                && (self.n.at(self.n.at(value + 4)) & 0xff) == k::JSXEmptyExpression
+                            {
+                                return Err(self.fail(self.n.at(value + 1)));
+                            }
+                            end = self.lexer.tok_end;
+                        } else if self.lexer.tok == tk::Lt {
+                            value = self.parse_jsx_element(JSX_ELSEWHERE)?;
+                            end = self.lexer.pos;
+                            self.set_pos(self.lexer.pos);
+                        } else {
+                            return Err(self.unexpected());
+                        }
+                        self.next_jsx_tag()?;
+                    }
+                    let v2 = self.node2(k::JSXAttribute, attr_start, end, attr_name, value);
+                    self.list_push(v2);
+                }
+                let attributes = self.list_finish(mark);
+                if self.lexer.tok == tk::Div {
+                    self_closing = true;
+                    self.next_jsx_tag()?;
+                    if self.lexer.tok != tk::Gt {
+                        return Err(self.unexpected());
+                    }
+                }
+                opening = self.call_node(
+                    k::JSXOpeningElement | (if self_closing { F_SELF_CLOSING } else { 0 }),
+                    start,
+                    self.lexer.tok_end,
+                    name,
+                    attributes,
+                    type_arguments,
+                );
+            }
+        }
+        let mut closing: i32 = 0;
+        let mut children: i32 = 0;
+        if !self_closing {
+            // Flow: `<a>` may be the type parameters of a function, so the long way reads a token of JavaScript behind it, and does not
+            // get over a backslash in that.
+            if self.parse.typed == TYPED_FLOW && where_ != JSX_CHILD {
+                let mut p = self.lexer.pos;
+                while matches!(self.t.at(p), 32 | 9 | 10) {
+                    p += 1;
+                }
+                while (CT.at(self.t.at(p)) & C_ID_PART) != 0 {
+                    p += 1;
+                }
+                if self.t.at(p) == 92 {
+                    return Err(self.text_refuse());
+                }
+            }
+            let mark = self.arena.ls_pos;
+            // the last child but for text is `{}`, with or without a comment in it, which can be "prettier-ignore"
+            let mut after_empty = false;
+            loop {
+                self.next_jsx_child()?;
+                if self.lexer.tok == tk::JSXText {
+                    let v3 = self.node0(
+                        k::JSXText | self.lexer.tok_flags,
+                        self.lexer.tok_start,
+                        self.lexer.tok_end,
+                    );
+                    self.list_push(v3);
+                } else if self.lexer.tok == tk::BraceL {
+                    if self.parse.reads_ahead
+                        && self.read_jsx_container(
+                            self.lexer.tok_start,
+                            self.parse.typed,
+                            self.parse.in_async != 0
+                                || (self.parse.in_function == 0 && self.parse.top_level_await),
+                            self.parse.list_depth.wrapping_mul(self.options.tab_width),
+                        )?
+                    {
+                        let v4 = self.ready_jsx(k::JSXExpressionContainer, self.lexer.tok_start);
+                        self.list_push(v4);
+                        self.set_pos(self.fast.ready_end);
+                        after_empty = false;
+                    } else {
+                        let container = self.parse_jsx_container()?;
+                        after_empty =
+                            (self.n.at(self.n.at(container + 4)) & 0xff) == k::JSXEmptyExpression;
+                        self.list_push(container);
+                    }
+                } else {
+                    // `<`: a child or the closing tag
+                    let tag_start = self.lexer.tok_start;
+                    if self.t.at(tag_start + 1) == 47 {
+                        // the closing tag, written like most
+                        if is_fragment {
+                            if self.t.at(tag_start + 2) == 62 {
+                                closing =
+                                    self.node0(k::JSXClosingFragment, tag_start, tag_start + 3);
+                                self.set_pos(tag_start + 3);
+                                break;
+                            }
+                        } else if self.parse.reads_ahead {
+                            let is_ready = (self.n.at(opening) & 0xff) == k::Ready;
+                            let name = if is_ready {
+                                self.n.at(opening + 1) + 1
+                            } else {
+                                self.n.at(self.n.at(opening + 4) + 1)
+                            };
+                            let end = self.closing_tag_end(
+                                tag_start,
+                                name,
+                                if is_ready {
+                                    self.n.at(opening + 6)
+                                } else {
+                                    self.n.at(self.n.at(opening + 4) + 2) - name
+                                },
+                            );
+                            if end != 0 {
+                                closing = self.node0(
+                                    k::Ready | (k::JSXClosingElement << SUB_SHIFT),
+                                    tag_start,
+                                    end,
+                                );
+                                self.set_pos(end);
+                                break;
+                            }
+                        }
+                    }
+                    let saved = self.save();
+                    let comments_before = self.lexer.c_count;
+                    self.next_jsx_tag()?;
+                    if self.parse.typed == TYPED_TS
+                        && ((self.lexer.tok == tk::Div) != (self.t.at(tag_start + 1) == 47)
+                            || self.lexer.tok_start != tag_start + 1)
+                    {
+                        // `</` is one token for TypeScript: `< /a>` closes nothing, and `</* */ a>` does
+                        return Err(self.text_refuse());
+                    }
+                    if self.lexer.tok == tk::Div {
+                        self.next_jsx_tag()?;
+                        if self.lexer.tok == tk::Gt {
+                            closing =
+                                self.node0(k::JSXClosingFragment, tag_start, self.lexer.tok_end);
+                        } else {
+                            let name = self.parse_jsx_element_name()?;
+                            if self.lexer.tok != tk::Gt {
+                                return Err(self.unexpected());
+                            }
+                            closing = self.node1(
+                                k::JSXClosingElement,
+                                tag_start,
+                                self.lexer.tok_end,
+                                name,
+                            );
+                        }
+                        if if is_fragment {
+                            (self.n.at(closing) & 0xff) != k::JSXClosingFragment
+                        } else {
+                            (self.n.at(closing) & 0xff) != k::JSXClosingElement
+                                || !self.closes_jsx(opening, self.n.at(closing + 4))?
+                        } {
+                            return Err(self.fail(tag_start));
+                        }
+                        // a comment in the closing tag can break the opening one
+                        if self.lexer.c_count != comments_before
+                            && (self.n.at(opening) & 0xff) == k::Ready
+                        {
+                            return Err(self.redo());
+                        }
+                        break;
+                    }
+                    self.restore(saved);
+                    let v5 = self.parse_jsx_element(if after_empty {
+                        JSX_CHILD_AFTER_EMPTY
+                    } else {
+                        JSX_CHILD
+                    })?;
+                    self.list_push(v5);
+                    self.set_pos(self.lexer.pos);
+                    after_empty = false;
+                }
+            }
+            children = self.list_finish(mark);
+        }
+        self.parse.no_in = saved_no_in;
+        return Ok(self.node2_l(
+            (if is_fragment {
+                k::JSXFragment
+            } else {
+                k::JSXElement
+            }) | (if where_ == JSX_CHILD_AFTER_EMPTY {
+                F_AFTER_EMPTY
+            } else {
+                0
+            }),
+            start,
+            self.lexer.tok_end,
+            opening,
+            closing,
+            children,
+        ));
+    }
+}

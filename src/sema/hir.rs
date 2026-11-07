@@ -1590,6 +1590,8 @@ pub mod rare {
     pub const TYPE_PARAMETER_MODIFIER: u32 = 1 << 8;
     /// A function has a `"use strict"` directive that does not count.
     pub const DROPPED_STRICT_DIRECTIVE: u32 = 1 << 14;
+    /// A tagged template, `import()`, or a private name that is an expression: `#a in b`.
+    pub const UNCOMMON_EXPRESSION: u32 = 1 << 15;
     /// `T?`, `?T`, `T!` or `!T` as a type, outside a comment.
     pub const JSDOC_TYPE: u32 = 1 << 9;
     /// A type predicate: `a is T`, `asserts a`.
@@ -1618,6 +1620,8 @@ pub mod rare {
     pub const ODD_JUMP: u32 = 1 << 21;
     /// A statement in the body of a function or of a namespace starts with `declare`.
     pub const NESTED_DECLARE: u32 = 1 << 22;
+    /// A name or a keyword is written with a Unicode escape: `\u0061`.
+    pub const ESCAPED_NAME: u32 = 1 << 23;
     /// An `await`, a `yield` or an `await using` is in a static block, or in a function in one.
     pub const SUSPENDS_IN_STATIC_BLOCK: u32 = 1 << 24;
     /// `await using a = b`
@@ -1631,6 +1635,17 @@ pub mod rare {
     pub const IMPORT_META: u32 = 1 << 28;
     /// `010`, `08`, `"\1"` or `"\8"`, which only sloppy code allows. Only set for text that is compiled.
     pub const LEGACY_OCTAL: u32 = 1 << 29;
+    /// A list of type parameters has nothing in it: `<>`.
+    pub const EMPTY_TYPE_PARAMETERS: u32 = 1 << 30;
+    /// The bits that a file has because it has an expression of this kind.
+    #[inline(always)]
+    pub fn of_expression(kind: &super::ExprKind) -> u32 {
+        use super::ExprKind::{ImportCall, PrivateIdentifier, TaggedTemplate};
+        match kind {
+            TaggedTemplate(_) | ImportCall { .. } | PrivateIdentifier(_) => UNCOMMON_EXPRESSION,
+            _ => 0,
+        }
+    }
     /// The bits that the parser only sets for oxc's dialect. In another dialect a clear bit means nothing.
     pub const ONLY_IN_OXC_DIALECT: u32 = NESTED_MODULE_SYNTAX | MAY_REDECLARE | ODD_EXPORT;
 }
@@ -3224,6 +3239,7 @@ impl FileBuilder {
     #[inline]
     pub fn expr(&mut self, kind: ExprKind, pos: u32, end: u32) -> ExprId {
         let id = ExprId(self.exprs.len() as u32);
+        self.rare_syntax |= rare::of_expression(&kind);
         self.exprs.push(Expr { kind, pos, end });
         self.expr_flags.push(kind_flags(&kind));
         id

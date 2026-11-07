@@ -289,6 +289,22 @@ impl Parser<'_> {
                 self.last_line_has_list_loosening_effect = false;
             }
 
+            // Check for lines that the consumer reads by itself
+            if n_parents + n_brothers + n_children == 0
+                && off == off_start
+                && !follows_empty_item
+                && (effective_pivot_type == LineType::Blank
+                    || (effective_pivot_type == LineType::Html && self.html_block_type == 0))
+                && let Some(lines) = self.extensions.and_then(|it| it.lines)
+                && let Some(end) = lines(off, self.n_containers > 0)
+            {
+                line.data = types::BLOCK_EXTENSION | types::BLOCK_CLOSED;
+                line.enforce_new_block = true;
+                line.r#type = LineType::Html;
+                off = end.clamp(off, self.size);
+                break;
+            }
+
             // Indented code continuation
             if effective_pivot_type == LineType::Indentedcode {
                 if line.indent >= self.code_indent_offset {

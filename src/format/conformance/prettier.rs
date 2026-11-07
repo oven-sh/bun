@@ -9,7 +9,9 @@
 //!
 //! This runs the same checks. Syntax error messages aren't compared.
 
-use crate::{Bundle, Count, Failure, Flags, Format, output_line, show_cursor};
+use crate::{
+    Bundle, Count, Failure, Flags, Format, both_ways, failing_way, output_line, show_cursor,
+};
 use bstr::BStr;
 use bun_core::strings;
 use bun_format::FormatOptions;
@@ -433,8 +435,9 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
     );
     let mut by_directory: BTreeMap<Vec<u8>, Tally> = BTreeMap::new();
     let mut excluded: BTreeMap<&str, usize> = BTreeMap::new();
-    let fail = |kind: &str, id: &[u8], described: &[u8]| {
-        output_line!("FAIL {kind} {}{}", BStr::new(id), BStr::new(described))
+    // `way` is from `failing_way`.
+    let fail = |kind: &str, id: &[u8], described: &[u8], way: &str| {
+        output_line!("FAIL {kind} {}{}{way}", BStr::new(id), BStr::new(described))
     };
     let mut index = 0;
 
@@ -555,7 +558,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                     .any(|(name, value)| options.set(name, value).is_err())
                 {
                     tally.format.add(false);
-                    fail("unknown-option", &id, &described);
+                    fail("unknown-option", &id, &described, "");
                     continue;
                 }
 
@@ -602,9 +605,11 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 let format = |original: &[u8]| {
                     let mut options = options.clone();
                     let input = replace_placeholders(original, &mut options);
-                    format(&path, &input, &options).map(|(mut text, cursor)| {
-                        show_cursor(&mut text, cursor);
-                        text
+                    both_ways(&options).map(|options| {
+                        format(&path, &input, &options).map(|(mut text, cursor)| {
+                            show_cursor(&mut text, cursor);
+                            text
+                        })
                     })
                 };
 
@@ -616,11 +621,12 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                         if (parsers.is_empty() || parsers.iter().any(|it| it == ours))
                             && on_disk.is_some()
                         {
-                            let is_rejected =
-                                format(original).is_err_and(|it| it == Failure::SyntaxError);
-                            tally.errors.add(is_rejected);
-                            if !is_rejected {
-                                fail("rejected", &id, &described);
+                            let accepting = failing_way(&format(original), |it| {
+                                matches!(it, Err(Failure::SyntaxError))
+                            });
+                            tally.errors.add(accepting.is_none());
+                            if let Some(way) = accepting {
+                                fail("rejected", &id, &described, way);
                             }
                         }
                         continue;
@@ -628,18 +634,21 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 };
 
                 let is_visualized = case.options.iter().any(|it| it.0 == b"endOfLine");
-                let output = format(original);
-                let actual = match &output {
+                let [output, long_output] = format(original);
+                let actual = [&output, &long_output].map(|output| match output {
                     Ok(actual) if is_visualized => visualize_end_of_line(actual),
                     Ok(actual) => actual.clone(),
                     Err(Failure::SyntaxError) => b"<SyntaxError>".to_vec(),
                     Err(Failure::Other) => b"<the formatter failed>".to_vec(),
-                };
-                tally.format.add(actual == *expected);
-                let Some(output) = output.ok().filter(|_| actual == *expected) else {
+                });
+                let failing = failing_way(&actual, |it| it == expected);
+                tally.format.add(failing.is_none());
+                let (None, Ok(output)) = (failing, output) else {
+                    let [short, long] = &actual;
+                    let actual = if short == expected { long } else { short };
                     tally.syntax_errors += usize::from(actual == b"<SyntaxError>");
-                    fail("format", &id, &described);
-                    flags.write_report(&[&id[..], &described].concat(), expected, &actual, &input);
+                    fail("format", &id, &described, failing.unwrap_or_default());
+                    flags.write_report(&[&id[..], &described].concat(), expected, actual, &input);
                     continue;
                 };
 
@@ -650,10 +659,10 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                     && output != input
                     && !UNSTABLE.iter().any(|it| id == it.as_bytes())
                 {
-                    let is_stable = format(&output).is_ok_and(|it| it == output);
-                    tally.second_format.add(is_stable);
-                    if !is_stable {
-                        fail("second-format", &id, &described);
+                    let unstable = failing_way(&format(&output), |it| it.as_ref() == Ok(&output));
+                    tally.second_format.add(unstable.is_none());
+                    if let Some(way) = unstable {
+                        fail("second-format", &id, &described, way);
                     }
                 }
                 if !has_placeholders {
@@ -678,19 +687,20 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                         }
                         _ => output.clone(),
                     };
-                    let is_same = format(&strings::replace_owned(original, b"\n", end_of_line))
-                        .is_ok_and(|it| it == expected);
-                    count.add(is_same);
-                    if !is_same {
-                        fail(kind, &id, &described);
+                    let other = format(&strings::replace_owned(original, b"\n", end_of_line));
+                    let different = failing_way(&other, |it| it.as_ref() == Ok(&expected));
+                    count.add(different.is_none());
+                    if let Some(way) = different {
+                        fail(kind, &id, &described, way);
                     }
                 }
                 if !input.starts_with(BOM) {
-                    let is_same = format(&[BOM, original].concat())
-                        .is_ok_and(|it| it.strip_prefix(BOM) == Some(&output));
-                    tally.bom.add(is_same);
-                    if !is_same {
-                        fail("BOM", &id, &described);
+                    let different = failing_way(&format(&[BOM, original].concat()), |it| {
+                        (it.as_ref()).is_ok_and(|it| it.strip_prefix(BOM) == Some(&output))
+                    });
+                    tally.bom.add(different.is_none());
+                    if let Some(way) = different {
+                        fail("BOM", &id, &described, way);
                     }
                 }
             }

@@ -2,7 +2,9 @@
 //!
 //! The text only has `\n` line breaks. A token's contents are always substrings of the text, so a token stores spans.
 
+use super::ast::Flags;
 use super::error::{ErrorKind, SyntaxError};
+use super::runs::{Parent, Runs};
 use bun_core::strings;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -42,6 +44,10 @@ pub(crate) enum TokenType {
     LetValue,
     LetEnd,
     IncompleteLet,
+    /// Not a token of Angular's lexer: children that have been read by `runs.rs`.
+    Ready,
+    /// The same for all that is between the name of a start tag and what ends the tag.
+    ReadyAttributes,
     Eof,
 }
 
@@ -81,6 +87,9 @@ pub(crate) enum Parts {
     DefaultNever,
     /// The contents of a comment in a start tag, and whether the comment ends at the end of the line.
     Comment(Span, bool),
+    /// What is printed for a run, as a range of `Tree::printed`, the number of `indent`s that it has been read for, and
+    /// the flags of the node.
+    Ready(Span, u32, Flags),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -238,10 +247,18 @@ fn is_two_words(text: &[u8], first: &[u8], second: &[u8]) -> bool {
     rest.len() < before && rest.starts_with(second)
 }
 
-struct Tokenizer<'a, 'f> {
+pub(crate) struct Tokenizer<'a, 'f> {
     text: &'a [u8],
     /// `_cursor`
     pos: usize,
+    /// The `Eof` token comes next, wherever the cursor is.
+    is_stuck: bool,
+    /// The `Eof` token has been made.
+    is_done: bool,
+    /// `None` if everything goes the long way.
+    pub(crate) runs: Option<Runs>,
+    /// The cursor is at the first thing on a line, or at the start of the text, and a child starts there.
+    is_at_start_of_line: bool,
     get_tag_content_type: GetTagContentType<'f>,
     options: Options,
     /// `_currentTokenStart` and `_currentTokenType`
@@ -251,8 +268,10 @@ struct Tokenizer<'a, 'f> {
     full_name_stack: Vec<(Span, Span)>,
     /// The attributes of the start tag being read.
     attributes: Vec<LexedAttribute<'a>>,
-    tokens: Vec<Token>,
-    errors: Vec<SyntaxError<'a>>,
+    pub(crate) tokens: Vec<Token>,
+    /// The kind of the last token that has been dropped from `tokens`.
+    forgotten: TokenType,
+    pub(crate) errors: Vec<SyntaxError<'a>>,
     /// Details of the last `Fail::Parse`: its kind, the span of the name in its message, and `_isInExpansionForm()`.
     thrown: (ErrorKind, Span, bool),
 }
@@ -495,30 +514,163 @@ impl<'a> Tokenizer<'a, '_> {
         self.pos += next.unwrap_or(rest.len());
     }
 
-    fn tokenize(&mut self) {
-        while self.peek() != 0 {
-            let start = self.pos;
-            match self.tokenize_one() {
-                // The lexer didn't advance, so it would loop forever.
-                Ok(()) if self.pos == start => {
-                    self.handle_error(start as u32, (ErrorKind::Other, Span::new(0, 0), false));
-                    break;
-                }
-                Ok(()) => {}
-                Err(Fail::Parse(at)) => self.handle_error(at, self.thrown),
-                Err(Fail::Cursor(at)) => {
-                    self.current = None;
-                    let end = Span::new(self.text.len() as u32, self.text.len() as u32);
-                    let is_in_expansion_form = self.is_in_expansion_form();
-                    self.handle_error(
-                        at,
-                        (ErrorKind::UnexpectedCharacter, end, is_in_expansion_form),
-                    );
-                }
+    /// One turn of the loop in `tokenize`: reads a tag with its attributes, a text, a comment and so on, and appends its
+    /// tokens, of which there can be none. Returns false once the `Eof` token is there.
+    pub(crate) fn step(&mut self) -> bool {
+        if self.is_done {
+            return false;
+        }
+        if self.is_stuck || self.peek() == 0 {
+            self.begin_token(TokenType::Eof);
+            let _ = self.end_token(Parts::None);
+            self.is_done = true;
+            return true;
+        }
+        if self.runs.is_some() && self.splits_off_blank_text() {
+            return true;
+        }
+        let start = self.pos;
+        match self.tokenize_one() {
+            // The lexer didn't advance, so it would loop forever.
+            Ok(()) if self.pos == start => {
+                self.handle_error(start as u32, (ErrorKind::Other, Span::new(0, 0), false));
+                self.is_stuck = true;
+            }
+            Ok(()) => {}
+            Err(Fail::Parse(at)) => self.handle_error(at, self.thrown),
+            Err(Fail::Cursor(at)) => {
+                self.current = None;
+                let end = Span::new(self.text.len() as u32, self.text.len() as u32);
+                let is_in_expansion_form = self.is_in_expansion_form();
+                self.handle_error(
+                    at,
+                    (ErrorKind::UnexpectedCharacter, end, is_in_expansion_form),
+                );
             }
         }
-        self.begin_token(TokenType::Eof);
-        let _ = self.end_token(Parts::None);
+        true
+    }
+
+    /// If white space with a line break in it starts a text at the cursor, makes a token of it alone, so that what is
+    /// behind it is only read once the parser has seen everything in front of it.
+    fn splits_off_blank_text(&mut self) -> bool {
+        let start = self.pos;
+        if !matches!(self.text.get(start), Some(b'\n' | b' ' | b'\t'))
+            || !self.expansion_case_stack.is_empty()
+            || matches!(
+                self.tokens.last().map_or(self.forgotten, |last| last.kind),
+                TokenType::Text | TokenType::Interpolation | TokenType::EncodedEntity
+            )
+        {
+            return false;
+        }
+        let (mut at, mut has_line_break) = (start, false);
+        loop {
+            match self.text.get(at) {
+                Some(b'\n') => has_line_break = true,
+                Some(b' ' | b'\t') => {}
+                _ => break,
+            }
+            at += 1;
+        }
+        if !has_line_break || at >= self.text.len() {
+            return false;
+        }
+        self.tokens.push(Token {
+            kind: TokenType::Text,
+            span: Span::new(start as u32, at as u32),
+            parts: Parts::None,
+        });
+        self.pos = at;
+        self.is_at_start_of_line = true;
+        true
+    }
+
+    /// Drops the tokens, all of which have been taken. Returns false if they have to stay: a case of an ICU expression
+    /// is read twice.
+    pub(crate) fn forgets_tokens(&mut self) -> bool {
+        if self.options.tokenize_angular_blocks {
+            return false;
+        }
+        if let Some(last) = self.tokens.last() {
+            self.forgotten = last.kind;
+        }
+        self.tokens.clear();
+        true
+    }
+
+    /// True if a child starts at the cursor that may be the first of a run that has not been looked for.
+    pub(crate) fn may_start_run(&self) -> bool {
+        self.is_at_start_of_line
+            && (self.runs.as_ref()).is_some_and(|runs| !runs.has_scanned(self.pos))
+            && !self.peek_str(b"</")
+    }
+
+    /// Looks for runs from the cursor on, where a child of `parent` starts. Appends what is printed for them to
+    /// `printed`.
+    pub(crate) fn find_runs(&mut self, parent: Parent<'_>, printed: &mut Vec<u8>) {
+        if let Some(runs) = &mut self.runs {
+            runs.scan(self.text, self.pos, parent, printed, None);
+        }
+    }
+
+    /// If a run starts at the cursor, makes a token of it.
+    pub(crate) fn takes_run(&mut self) -> bool {
+        if !std::mem::take(&mut self.is_at_start_of_line) {
+            return false;
+        }
+        let Some(ready) = self.runs.as_mut().and_then(|runs| runs.take(self.pos)) else {
+            return false;
+        };
+        let mut flags = Flags::empty();
+        flags.set(Flags::ENDS_IN_TEXT, ready.ends_in_text);
+        flags.set(Flags::HAS_BROKEN_VOID_TAG, ready.has_broken_void_tag);
+        flags.set(Flags::IS_PRINTED_AS_WRITTEN, ready.is_printed_as_written);
+        let parts = Parts::Ready(ready.printed, ready.level, flags);
+        let Span { start, end } = ready.span;
+        self.pos = end as usize;
+        if ready.name_end == 0 {
+            self.tokens.push(Token {
+                kind: TokenType::Ready,
+                span: ready.span,
+                parts,
+            });
+            return true;
+        }
+        let (prefix, name) = (
+            Span::new(start + 1, start + 1),
+            Span::new(start + 1, ready.name_end),
+        );
+        self.tokens.extend([
+            Token {
+                kind: TokenType::TagOpenStart,
+                span: Span::new(start, ready.name_end),
+                parts: Parts::Name(prefix, name),
+            },
+            Token {
+                kind: TokenType::ReadyAttributes,
+                span: Span::new(ready.name_end, end - 1),
+                parts,
+            },
+            Token {
+                kind: TokenType::TagOpenEnd,
+                span: Span::new(end - 1, end),
+                parts: Parts::None,
+            },
+        ]);
+        self.note_open_tag(prefix, name);
+        true
+    }
+
+    /// `_handleFullNameStackForTagOpen`
+    fn note_open_tag(&mut self, prefix: Span, name: Span) {
+        if self
+            .full_name_stack
+            .last()
+            .is_none_or(|&last| self.is_same_name(last, (prefix, name)))
+        {
+            self.full_name_stack.push((prefix, name));
+        }
     }
 
     fn tokenize_one(&mut self) -> Result<()> {
@@ -1057,14 +1209,7 @@ impl<'a> Tokenizer<'a, '_> {
             !self.full_name_stack.is_empty(),
             &self.attributes,
         );
-        // `_handleFullNameStackForTagOpen`
-        if self
-            .full_name_stack
-            .last()
-            .is_none_or(|&last| self.is_same_name(last, (prefix, name)))
-        {
-            self.full_name_stack.push((prefix, name));
-        }
+        self.note_open_tag(prefix, name);
         if content_type == ContentType::ParsableData {
             return Ok(());
         }
@@ -1272,37 +1417,35 @@ fn trimmed(text: &[u8], span: Span) -> Span {
     )
 }
 
-/// `tokenize`, from `start` on. Returns the tokens and the errors.
-pub(crate) fn tokenize<'a>(
-    text: &'a [u8],
-    start: usize,
-    get_tag_content_type: GetTagContentType<'_>,
-    options: Options,
-) -> (Vec<Token>, Vec<SyntaxError<'a>>) {
-    let mut tokenizer = Tokenizer {
-        text,
-        pos: start,
-        get_tag_content_type,
-        options,
-        current: None,
-        expansion_case_stack: Vec::new(),
-        full_name_stack: Vec::new(),
-        attributes: Vec::new(),
-        // A token is typically about ten bytes.
-        tokens: Vec::with_capacity(text.len().saturating_sub(start) / 8),
-        errors: Vec::new(),
-        thrown: (ErrorKind::Other, Span::new(0, 0), false),
-    };
-    tokenizer.tokenize();
-    // `mergeTextTokens`
-    let mut tokens = tokenizer.tokens;
-    tokens.dedup_by(|token, last| {
-        let is_merged = last.kind == token.kind
-            && matches!(token.kind, TokenType::Text | TokenType::AttrValueText);
-        if is_merged {
-            last.span.end = token.span.end;
+impl<'a, 'f> Tokenizer<'a, 'f> {
+    /// `tokenize`, from `start` on, one [`step`](Tokenizer::step) at a time.
+    ///
+    /// `mergeTextTokens` has no counterpart: whoever takes a text token takes the ones right behind it too.
+    pub(crate) fn new(
+        text: &'a [u8],
+        start: usize,
+        get_tag_content_type: GetTagContentType<'f>,
+        options: Options,
+        runs: Option<Runs>,
+    ) -> Self {
+        Tokenizer {
+            text,
+            pos: start,
+            is_stuck: false,
+            is_done: false,
+            is_at_start_of_line: runs.is_some()
+                && super::runs::starts_at_start_of_line(text.get(start..).unwrap_or_default()),
+            runs,
+            get_tag_content_type,
+            options,
+            current: None,
+            expansion_case_stack: Vec::new(),
+            full_name_stack: Vec::new(),
+            attributes: Vec::new(),
+            tokens: Vec::with_capacity(64),
+            forgotten: TokenType::Eof,
+            errors: Vec::new(),
+            thrown: (ErrorKind::Other, Span::new(0, 0), false),
         }
-        is_merged
-    });
-    (tokens, tokenizer.errors)
+    }
 }

@@ -667,6 +667,19 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ["<p on:click={a // b\n}>c</p>\n", "<p\n  on:click={a // b\n  }\n>\n  c\n</p>\n", "<p on:click={a}>c</p>\n"],
   ];
   test.each([[{}], [{ ".prettierrc": prettierrc }], [{ ".oxfmtrc.json": oxfmtrc }]])(
+    "the line break that keeps a line comment from the `}` is followed by no empty line: %j",
+    async config => {
+      const text = "<input bind:value={a[0 // c\n]} />\n";
+      const expected = "<input\n  bind:value={\n    a[0] // c\n  }\n/>\n";
+      expect(await format({ ...config, "a.svelte": text }, ["a.svelte"])).toMatchObject({
+        stderr: "",
+        files: [expected],
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.each([[{}], [{ ".prettierrc": prettierrc }], [{ ".oxfmtrc.json": oxfmtrc }]])(
     "doesn't lose any comment: %j",
     async config => {
       const names = comments.map((_, index) => `${index}.svelte`);

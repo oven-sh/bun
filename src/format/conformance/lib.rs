@@ -92,6 +92,27 @@ pub enum Failure {
 pub type Format<'f> =
     &'f dyn Fn(&[u8], &[u8], &FormatOptions) -> Result<(Vec<u8>, Option<u32>), Failure>;
 
+/// `options` as they are, and for the long way. Most texts go one way only, so every check is made of both: a check
+/// passes if both pass.
+fn both_ways(options: &FormatOptions) -> [FormatOptions; 2] {
+    let long = FormatOptions {
+        no_short_cuts: true,
+        ..options.clone()
+    };
+    [options.clone(), long]
+}
+
+/// `None` if `passes` is true of what both [ways](both_ways) gave. Else what follows the name of the check in the line
+/// about the failure.
+fn failing_way<T>(results: &[T; 2], passes: impl Fn(&T) -> bool) -> Option<&'static str> {
+    match results.each_ref().map(passes) {
+        [true, true] => None,
+        [false, false] => Some(""),
+        [false, true] => Some(" (with the short cuts only)"),
+        [true, false] => Some(" (the long way only)"),
+    }
+}
+
 /// The command-line arguments after the bundle's path.
 #[derive(Default)]
 pub struct Flags<'a> {

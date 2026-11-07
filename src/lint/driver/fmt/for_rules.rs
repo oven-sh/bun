@@ -6,8 +6,9 @@
 
 use super::cli::Options;
 use super::config::{self, Configs, Flavor};
+use super::files::language_of;
 use super::files::{Ignored, Kind, Language};
-use super::{Failure, Scratches, format, language_of, tailwind};
+use super::{Failure, Scratches, format, tailwind};
 use crate::run::Environment;
 use crate::{fs, paths};
 use bun_core::strings;

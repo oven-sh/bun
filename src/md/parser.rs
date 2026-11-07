@@ -425,14 +425,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn set_extensions(&mut self, extensions: Extensions<'a>) {
+    fn set_extensions(&mut self, extensions: &Extensions<'a>) {
         for &c in extensions.span_bytes {
             self.mark_char_map[c as usize] |= MARK_HIDES | MARK_EXTENSION;
         }
         for &c in extensions.leaf_bytes {
             self.starts_extension_leaf.set(c as usize);
         }
-        self.extensions = Some(extensions);
+        self.extensions = Some(*extensions);
     }
 
     // ========================================
@@ -473,7 +473,7 @@ impl<'a> Parser<'a> {
     //   is_setext_underline, is_hr_line, is_atx_header_line,
     //   is_opening_code_fence, is_closing_code_fence,
     //   is_html_block_start_condition, is_html_block_end_condition,
-    //   html_tag_name, is_block_level_html_tag, is_complete_html_tag,
+    //   html_tag_name, is_complete_html_tag,
     //   is_table_underline, count_table_row_columns, is_container_mark
     //
     // ref_defs.rs — impl Parser:
@@ -516,7 +516,7 @@ pub(crate) fn render_with_renderer<'a>(
     flags: Flags,
     render_options: RenderOptions,
     rend: Renderer<'a>,
-    extensions: Option<Extensions<'a>>,
+    extensions: Option<&Extensions<'a>>,
 ) -> Result<(), ParserError> {
     let _ = render_options; // Available for renderer implementations; parse layer does not use these.
     // Who wants to know where things are is told places in `text`.

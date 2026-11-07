@@ -1,11 +1,11 @@
 //! Prettier's `language-html/embed.js` and `embed/*.js`: code in other languages.
 
 use super::ast::{Attribute, Flags, Id, Kind};
+use super::canonical::{self, Spelling};
 use super::js::{self, Hug, SourceType, Syntax};
-use super::map_strings::ends_with_line_suffix;
 use super::printer::Printer;
 use super::utilities::{
-    dedent_string, html_split, html_trim_preserve_indentation, is_script_like_tag,
+    dedent_string, html_split, html_trim_preserve_indentation, is_pre_like, is_script_like_tag,
     should_unquote_attribute_value, unescape_quote_entities,
 };
 use super::writer::Attempt;
@@ -185,23 +185,34 @@ fn parse_srcset(input: &[u8]) -> Option<Vec<Candidate<'_>>> {
     }
 }
 
+/// Returns the options for a formatter whose output gets the indentation of the place where it is printed, which is
+/// `indentation` columns wide, in a text with the options `format`.
+pub(crate) fn options_for_printed_text(
+    format: &FormatOptions,
+    indentation: usize,
+) -> FormatOptions {
+    let width = (format.line_width.value() as usize).saturating_sub(indentation);
+    FormatOptions {
+        line_width: LineWidth(width.clamp(1, u32::MAX as usize) as u32),
+        line_ending: LineEnding::Lf,
+        is_in_markdown: true,
+        // For code blocks in Markdown.
+        sort_imports: format.sort_imports.clone(),
+        jsdoc: format.jsdoc,
+        ..js::options_in_html(format, InHtml::default())
+    }
+}
+
 impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     // ───────────────────────────── `textToDoc` ─────────────────────────────
 
     /// Returns the options for a formatter whose output is written with `Writer::printed_text`, or `None` if the
     /// current indentation isn't known.
     fn options_for_printed_text(&self) -> Option<FormatOptions> {
-        let width = (self.options.format.line_width.value() as usize)
-            .saturating_sub(self.out.indentation_width()?);
-        Some(FormatOptions {
-            line_width: LineWidth(width.clamp(1, u32::MAX as usize) as u32),
-            line_ending: LineEnding::Lf,
-            is_in_markdown: true,
-            // For code blocks in Markdown.
-            sort_imports: self.options.format.sort_imports.clone(),
-            jsdoc: self.options.format.jsdoc,
-            ..js::options_in_html(self.options.format, InHtml::default())
-        })
+        Some(options_for_printed_text(
+            self.options.format,
+            self.out.indentation_width()?,
+        ))
     }
 
     /// Writes the output that `format` appends to its vector, without trailing line breaks.
@@ -244,10 +255,17 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             ..InHtml::default()
         };
         let program = |syntax: Syntax, printer: &mut Self| {
+            if printer.write_script_quickly(code, syntax, source_type) {
+                return true;
+            }
             let flavor = printer.options.script_flavor;
-            printer
-                .out
-                .foreign(|f| js::write_program(f, code, syntax, source_type, in_html, flavor))
+            let level = printer.out.indent_level();
+            printer.out.foreign(|f| {
+                f.context_mut().short_cuts.start_script_at(level);
+                let is_written = js::write_program(f, code, syntax, source_type, in_html, flavor);
+                f.context_mut().short_cuts.end_script();
+                is_written
+            })
         };
         if let Some(parser) = crate::css::Parser::from_name(parser)
             && self.out.indent_level().is_some()
@@ -274,8 +292,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             let options = js::options_in_html(self.options.format, in_html);
             return match crate::css::document(code, parser, &options) {
                 Ok(document) if !document.is_empty_text() => {
-                    self.out
-                        .foreign(|f| crate::css::embed::write_document(&document, f));
+                    self.out.style_sheet(&document);
                     true
                 }
                 _ => false,
@@ -315,9 +332,173 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         }
     }
 
+    /// Writes a script as the quick way for JavaScript formats it, which is a text. What is printed for a script depends
+    /// on nothing around it but the indentation if it starts a line and ends one. Returns false, with nothing written, if
+    /// it has to go the long way.
+    fn write_script_quickly(
+        &mut self,
+        code: &[u8],
+        syntax: Syntax,
+        source_type: SourceType,
+    ) -> bool {
+        let is_typescript = match syntax {
+            Syntax::Babel => false,
+            Syntax::TypeScript => true,
+            Syntax::BabelTs | Syntax::Ts | Syntax::Tsx => return false,
+        };
+        let Some(indentation) = self.out.indent_level() else {
+            return false;
+        };
+        if std::mem::take(&mut self.scripts.has_refused_next)
+            || self.out.f.context().short_cuts.mode == crate::js::flat::Mode::Off
+            || self.options.has_parent_parser
+            || self.options.script_flavor.is_oxfmt()
+            // What only a script can have is an error there.
+            || source_type == SourceType::Module
+            || !self.out.is_at_start_of_line()
+        {
+            return false;
+        }
+        let script = crate::js::quick::Script {
+            text: code,
+            name: (self.options.format.filepath.as_deref()).unwrap_or_default(),
+            is_typescript,
+            is_no_module: source_type == SourceType::Script,
+            indentation,
+        };
+        let mut formatted = std::mem::take(&mut self.scripts.formatted);
+        let quick = &mut self.scripts.quick;
+        let is_formatted =
+            crate::js::quick::format_script(script, self.options.format, quick, &mut formatted)
+                .is_ok();
+        let lines = formatted.strip_suffix(b"\n").unwrap_or(&formatted);
+        let is_written = is_formatted && !lines.is_empty();
+        if is_written {
+            self.out.lines(lines);
+        }
+        self.scripts.formatted = formatted;
+        is_written
+    }
+
+    /// Writes an attribute of Vue whose value is an expression as the quick way for JavaScript formats it. The start tag
+    /// is either on one line, with all that is in it, or the attribute is on a line of its own at the current
+    /// indentation: so what fits there on one line is printed like that, and what doesn't is printed as it is there.
+    /// Returns false, with nothing written, if it has to go the long way.
+    ///
+    /// `left`: the names on the left side of `v-for` and its operator. `value` is the right side then.
+    pub(crate) fn write_attribute_quickly(
+        &mut self,
+        element: Id,
+        attr: &Attribute<'_>,
+        left: Option<(&[&[u8]], &[u8])>,
+        value: &[u8],
+        is_typescript: bool,
+        has_filters: bool,
+    ) -> bool {
+        let Some(indentation) = self.out.indent_level() else {
+            return false;
+        };
+        if self.out.f.context().short_cuts.mode == crate::js::flat::Mode::Off
+            || self.options.has_parent_parser
+            || self.options.script_flavor.is_oxfmt()
+            || self.tree.is_vue_sfc_block(element, self.options)
+            || !self.has_room_on_line_of_its_own(element, 0)
+        {
+            return false;
+        }
+        let mut formatted = std::mem::take(&mut self.scripts.formatted);
+        let mut name = std::mem::take(&mut self.scripts.name);
+        name.clear();
+        let (namespace, local) = attr.raw_name();
+        if !namespace.is_empty() {
+            name.extend_from_slice(namespace);
+            name.push(b':');
+        }
+        name.extend_from_slice(local);
+        name.extend_from_slice(b"=\"");
+        if let Some((names, operator)) = left {
+            let in_parentheses = names.len() > 1;
+            name.extend_from_slice(if in_parentheses { b"(" } else { b"" });
+            for (index, it) in names.iter().enumerate() {
+                name.extend_from_slice(if index > 0 { b", " } else { b"" });
+                name.extend_from_slice(it);
+            }
+            name.extend_from_slice(if in_parentheses { b") " } else { b" " });
+            name.extend_from_slice(operator);
+            name.push(b' ');
+        }
+        let expression = crate::js::quick::Expression {
+            text: value,
+            is_typescript,
+            has_filters,
+            attribute: Some(&name),
+            hugs: left.is_some(),
+            indentation,
+        };
+        let quick = &mut self.scripts.quick;
+        let format = self.options.format;
+        let mut is_written =
+            crate::js::quick::format_expression(expression, format, quick, &mut formatted).is_ok();
+        // The parentheses around the names are broken if there is no room for what follows them up to the first place where
+        // the right side can be broken.
+        if left.is_some_and(|(names, _)| names.len() > 1) {
+            let first_line = strings::index_of_char_usize(&formatted, b'\n');
+            let width = first_line.unwrap_or(formatted.len());
+            is_written = is_written && self.has_room_on_line_of_its_own(element, width);
+        }
+        if is_written && strings::contains_char(&formatted, b'\n') {
+            // What has no room on a line of its own has none behind `<`, the name of the element and a blank either, if
+            // that is at least as wide as a level of indentation. So the start tag is broken.
+            let name = crate::ir::width::string_width(&self.tree[element].name);
+            is_written = format.indent_width.value() <= name + 2;
+            if is_written {
+                self.out.break_parent();
+                self.out.lines(&formatted);
+            }
+        } else if is_written {
+            self.out.text(&formatted);
+        }
+        (self.scripts.formatted, self.scripts.name) = (formatted, name);
+        is_written
+    }
+
+    /// The same for an expression between `{{` and `}}`, which is written only if it is on one line: it is either on one
+    /// line with its braces, or on a line of its own at the current indentation, given that a `line` follows it.
+    fn write_interpolation_quickly(&mut self, code: &[u8], is_typescript: bool) -> bool {
+        let Some(indentation) = self.out.indent_level() else {
+            return false;
+        };
+        if self.out.f.context().short_cuts.mode == crate::js::flat::Mode::Off
+            || self.options.has_parent_parser
+            || self.options.script_flavor.is_oxfmt()
+        {
+            return false;
+        }
+        let mut formatted = std::mem::take(&mut self.scripts.formatted);
+        let expression = crate::js::quick::Expression {
+            text: code,
+            is_typescript,
+            has_filters: true,
+            attribute: None,
+            hugs: false,
+            indentation,
+        };
+        let quick = &mut self.scripts.quick;
+        let format = self.options.format;
+        let is_written =
+            crate::js::quick::format_expression(expression, format, quick, &mut formatted).is_ok()
+                && !formatted.is_empty()
+                && !strings::contains_char(&formatted, b'\n');
+        if is_written {
+            self.out.text(&formatted);
+        }
+        self.scripts.formatted = formatted;
+        is_written
+    }
+
     /// HTML in HTML.
     fn print_embedded_html(&mut self, code: &[u8], parser: Parser) -> bool {
-        if strings::trim_js_whitespace(code).is_empty() {
+        if strings::trim_js_whitespace(code).is_empty() || self.out.gives_up_quick_way() {
             return false;
         }
         let (format, filepath) = (self.options.format, self.options.filepath);
@@ -376,7 +557,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     /// Prettier's `embed`. Returns true if it wrote the node.
     pub(crate) fn embed(&mut self, id: Id) -> bool {
         match self.tree[id].kind {
-            Kind::FrontMatter => self.embed_front_matter(id),
+            Kind::FrontMatter => {
+                self.embed_front_matter(self.tree[id].span.of(self.options.original_text))
+            }
             Kind::Element => self.embed_element(id),
             Kind::Text => self.embed_text(id),
             _ => false,
@@ -384,8 +567,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     }
 
     /// `printEmbedFrontMatter`
-    fn embed_front_matter(&mut self, id: Id) -> bool {
-        let raw = self.tree[id].span.of(self.options.original_text);
+    pub(super) fn embed_front_matter(&mut self, raw: &[u8]) -> bool {
         let (Some(first_line_end), Some(last_line_start)) = (
             strings::index_of_char_usize(raw, b'\n'),
             strings::last_index_of_char(raw, b'\n').map(|at| at + 1),
@@ -486,10 +668,24 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 }
                 _ => SourceType::Unknown,
             };
+            // `printLineAfterChildren` prints nothing then, so `</script` is on the last line of the code, which a short
+            // cut takes to end with the code.
+            let lends_end_of_closing_tag = match (tree.next(parent), tree.parent(parent)) {
+                (Some(next), _) => tags.needs_to_borrow_prev_closing_tag_end_marker(next),
+                (None, Some(outer)) => {
+                    tags.needs_to_borrow_last_child_closing_tag_end_marker(outer)
+                }
+                (None, None) => false,
+            };
             let attempt = self.out.start_attempt();
             self.out.break_parent();
             self.out.built_text(|out| tags.opening_tag_prefix(id, out));
+            let short_cuts = self.out.f.context_mut().short_cuts.mode;
+            if lends_end_of_closing_tag {
+                self.out.f.context_mut().short_cuts.mode = Default::default();
+            }
             let is_written = self.text_to_doc(value, parser, source_type);
+            self.out.f.context_mut().short_cuts.mode = short_cuts;
             self.out.built_text(|out| tags.closing_tag_suffix(id, out));
             return self.out.end_attempt(attempt, is_written);
         }
@@ -505,27 +701,93 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             is_in_interpolation: true,
             ..InHtml::default()
         };
+        let lends_closing_braces = tree
+            .next(parent)
+            .is_some_and(|next| tags.needs_to_borrow_prev_closing_tag_end_marker(next));
         let attempt = self.out.start_attempt();
         self.out.start_indent();
         self.out.line();
         let is_written = match self.options.parser {
             Parser::Angular => self.write_angular_expression(value, in_html, Hug::Bare),
+            Parser::Vue
+                if !lends_closing_braces && self.is_printed_as_written_between_braces(value) =>
+            {
+                self.out.text(value.trim_ascii());
+                true
+            }
+            Parser::Vue
+                if !lends_closing_braces
+                    && let Some(quote) = self.quote_printed_between_braces(value) =>
+            {
+                self.out.built_text(|out| {
+                    out.extend(value.trim_ascii().iter().map(|&byte| match byte {
+                        b'"' | b'\'' => quote,
+                        _ => byte,
+                    }));
+                });
+                true
+            }
             _ => {
                 let is_typescript =
                     self.options.parser == Parser::Vue && self.is_vue_sfc_with_typescript_script();
-                self.out
-                    .foreign(|f| js::write_expression(f, value, is_typescript, in_html, Hug::Bare))
+                (self.options.parser == Parser::Vue
+                    && !lends_closing_braces
+                    && self.write_interpolation_quickly(value, is_typescript))
+                    || self.out.foreign(|f| {
+                        js::write_expression(f, value, is_typescript, in_html, Hug::Bare)
+                    })
             }
         };
         self.out.end_indent();
-        match tree
-            .next(parent)
-            .is_some_and(|next| tags.needs_to_borrow_prev_closing_tag_end_marker(next))
-        {
+        match lends_closing_braces {
             true => self.out.token(" "),
             false => self.out.line(),
         }
         self.out.end_attempt(attempt, is_written)
+    }
+
+    /// True if short cuts can be taken, and an attribute of `element` that is `width` columns wide on one line is printed
+    /// on one line: the start tag is either on one line, with all that is in it, or the attribute is on a line of its own
+    /// at the current indentation, which has room for it.
+    pub(crate) fn has_room_on_line_of_its_own(&self, element: Id, width: usize) -> bool {
+        let format = self.options.format;
+        // The end of the tag can be on the line of the last attribute, and so can what is in a `<pre>`.
+        let ends_on_line_of_its_own = !format.bracket_same_line.value()
+            && !is_pre_like(&self.tree[element])
+            && !(self.tree[element].has(Flags::IS_SELF_CLOSING)
+                && self.tree.parent(element).is_some_and(|parent| {
+                    self.tags()
+                        .needs_to_borrow_last_child_closing_tag_end_marker(parent)
+                }));
+        !format.no_short_cuts
+            && ends_on_line_of_its_own
+            && (self.out.indentation_width()).is_some_and(|indentation| {
+                indentation + width <= format.line_width.value() as usize
+            })
+    }
+
+    /// True if the expression `code` is printed as it is written, so that nobody has to parse it. It is either on one
+    /// line with its braces, or on a line of its own at the current indentation, given that a `line` follows it.
+    fn is_printed_as_written_between_braces(&self, code: &[u8]) -> bool {
+        let (format, code) = (self.options.format, code.trim_ascii());
+        self.has_room_between_braces(code)
+            && canonical::expression_end(code, 0, Spelling::new(format)) == Some(code.len())
+    }
+
+    fn has_room_between_braces(&self, code: &[u8]) -> bool {
+        let format = self.options.format;
+        !format.no_short_cuts
+            && self.out.indentation_width().is_some_and(|indentation| {
+                indentation + code.len() <= format.line_width.value() as usize
+            })
+    }
+
+    /// The same for an expression that is printed as it is written but for its quotes: returns the quote that is printed.
+    fn quote_printed_between_braces(&self, code: &[u8]) -> Option<u8> {
+        let code = code.trim_ascii();
+        let spelling = Spelling::new(self.options.format);
+        let (end, quote) = canonical::expression_end_in_other_quotes(code, 0, spelling)?;
+        (end == code.len() && self.has_room_between_braces(code)).then_some(quote)
     }
 
     // ───────────────────────────── `embed/attribute.js` ─────────────────────────────
@@ -537,8 +799,11 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         attr: &Attribute<'_>,
         write_value: impl FnOnce(&mut Self) -> bool,
     ) -> bool {
-        let attempt = self.out.start_attempt_after_text();
+        let attempt = self.out.start_attribute_value();
+        // The quotes in the value are written as entities afterwards, so nothing in it is as wide as it's written.
+        let short_cuts = std::mem::take(&mut self.out.f.context_mut().short_cuts.mode);
         let is_written = write_value(self);
+        self.out.f.context_mut().short_cuts.mode = short_cuts;
         self.print_attribute_with_attempt(attr, attempt, is_written)
     }
 
@@ -549,19 +814,18 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         attempt: Attempt,
         is_written: bool,
     ) -> bool {
-        let Some(value) = self.out.end_attempt_as_content(attempt, is_written) else {
+        let Some(value) = self.out.end_attribute_value(attempt, is_written) else {
             return false;
         };
         // The comment would be printed after the closing quote, as Prettier does with `v-for="a in b // c"`. Leave the
         // value as is.
-        if ends_with_line_suffix(value, self.out.f) {
+        if self.out.ends_with_line_suffix(value) {
             return false;
         }
         self.write_raw_name(attr.raw_name());
         self.out.token("=\"");
         self.out.start_group();
-        self.out
-            .foreign(|f| js::write_with_quote_entities(value, f));
+        self.out.attribute_value(value);
         self.out.end_group();
         self.out.token("\"");
         true
@@ -602,6 +866,15 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             match &attr.name[..] {
                 b"srcset" if node.is_full_name(b"img") || node.is_full_name(b"source") => {
                     return self.print_attribute_with(attr, |printer| printer.print_srcset(value));
+                }
+                // What is printed as it is written needs no parser, as in `is_printed_as_written` for Vue.
+                b"style"
+                    if is_plain
+                        && value.len() == raw_value.len()
+                        && self.has_room_on_line_of_its_own(element, 5 + 3 + value.len())
+                        && canonical::is_style(value) =>
+                {
+                    return false;
                 }
                 b"style" if is_plain => {
                     return self.print_attribute_with(attr, |printer| printer.print_style(value));
@@ -738,9 +1011,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             return false;
         };
         self.print_expand(true, |printer| {
-            printer
-                .out
-                .foreign(|f| crate::css::embed::write_document(&document, f));
+            printer.out.style_sheet(&document);
             true
         })
     }

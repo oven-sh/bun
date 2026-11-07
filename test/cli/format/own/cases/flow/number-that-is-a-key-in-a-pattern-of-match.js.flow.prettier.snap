@@ -1,0 +1,29 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = match (b) {
+  {0.5: const c} => c,
+  {5: const c} => c,
+  {5.0: const c} => c,
+  {0xab: const c} => c,
+  {1e5: const c} => c,
+  {1_0: const c} => c,
+  {10n: const c} => c,
+  {0xabn: const c} => c,
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = match (b) {
+  {0.5: const c} => c,
+  {5: const c} => c,
+  {5.0: const c} => c,
+  {0xab: const c} => c,
+  {1e5: const c} => c,
+  {1_0: const c} => c,
+  {10n: const c} => c,
+  {0xabn: const c} => c,
+};
+
+===================== End =====================

@@ -1,0 +1,6 @@
+type A = {a: X} => Y;
+type B = ({a: X}) => Y;
+type C = {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: X, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: Y, cccccccccccccccccccccc: Z} => W;
+type D = {|a: X|} => Y;
+declare function e({a: X}): Y;
+type F = { m({a: X}): Y };

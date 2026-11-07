@@ -5,6 +5,7 @@ use super::parser::{self, Tree};
 use super::printer::Builder;
 use crate::ir::element::LineMode;
 use crate::js::print::template::write_embedded_template_expression;
+use crate::js::utils::typecast::is_cast_target_that_hides_its_kind;
 use crate::prelude::*;
 use smallvec::SmallVec;
 
@@ -45,30 +46,42 @@ pub(crate) fn has_language_comment<'a>(
     })
 }
 
-/// Prettier's `isEmbedGraphQL`. `e` is a template.
+/// Prettier's `isEmbedGraphQL`. `e` is a template. A type cast around the template, its tag or the callee hides it.
 pub(crate) fn is_embed_graphql<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let parent = e.ast_parent();
+    let is_cast = |e: Expr<'a>| is_cast_target_that_hides_its_kind(e, f);
     let is_marked = match parent {
         AstNodes::TaggedTemplateExpression(tagged) => match tagged.kind() {
             ExprKind::TaggedTemplate(call) if f.options().flavor.is_oxfmt() => matches!(
                 crate::css::embed::root_name_of_tag(call.callee()),
                 Some(b"gql" | b"graphql")
             ),
-            ExprKind::TaggedTemplate(call) => match call.callee().kind() {
-                ExprKind::Dot { obj, name, .. } => {
-                    matches!(
-                        call.callee().as_ast_nodes(),
-                        AstNodes::StaticMemberExpression(_)
-                    ) && is_identifier(obj, &[b"graphql"])
-                        && name.bytes() == b"experimental"
-                }
-                _ => is_identifier(call.callee(), &[b"gql", b"graphql"]),
-            },
+            ExprKind::TaggedTemplate(call) => {
+                let tag = call.callee();
+                // `graphql.experimental` and `graphql[experimental]` are the same `MemberExpression` to Prettier.
+                let is_tag = match (tag.as_ast_nodes(), tag.kind()) {
+                    (AstNodes::StaticMemberExpression(_), ExprKind::Dot { obj, name, .. }) => {
+                        is_identifier(obj, &[b"graphql"])
+                            && !is_cast(obj)
+                            && name.bytes() == b"experimental"
+                    }
+                    (AstNodes::ComputedMemberExpression(_), ExprKind::Index { obj, index, .. }) => {
+                        is_identifier(obj, &[b"graphql"])
+                            && !is_cast(obj)
+                            && is_identifier(index, &[b"experimental"])
+                            && !is_cast(index)
+                    }
+                    _ => is_identifier(tag, &[b"gql", b"graphql"]),
+                };
+                is_tag && !is_cast(tag)
+            }
             _ => false,
         },
-        AstNodes::CallExpression(call) => call
-            .callee()
-            .is_some_and(|callee| is_identifier(callee, &[b"graphql"])),
+        AstNodes::CallExpression(call) => {
+            !is_cast(e)
+                && (call.callee())
+                    .is_some_and(|callee| is_identifier(callee, &[b"graphql"]) && !is_cast(callee))
+        }
         _ => false,
     };
     is_marked || has_language_comment(e, parent, b" GraphQL ", f)
@@ -85,7 +98,40 @@ struct Part<'a> {
 enum Content {
     Nothing,
     Comments,
-    Document(Tree, Vec<Attached>),
+    Document(Scratch),
+}
+
+/// What has been read of a text.
+#[derive(Default)]
+pub(crate) struct Scratch {
+    tree: Tree,
+    attached: Vec<Attached>,
+}
+
+/// Reads `text`, which is more than comments. Returns false if it has a syntax error.
+pub(crate) fn parse_text(text: &[u8], scratch: &mut Scratch) -> bool {
+    let is_read = parser::parse(text, &mut scratch.tree).is_ok();
+    if is_read {
+        comments::attach(text, &mut scratch.tree, &mut scratch.attached);
+    }
+    is_read
+}
+
+/// Writes the document of `text`, which `parse_text` has read. `is_in_template`: with the escapes that a template needs.
+pub(crate) fn write_text(
+    text: &[u8],
+    scratch: &Scratch,
+    is_in_template: bool,
+    f: &mut Formatter<'_>,
+) {
+    let mut builder = Builder {
+        text,
+        tree: &scratch.tree,
+        attached: &scratch.attached,
+        f,
+        is_in_template,
+    };
+    builder.print_definitions();
 }
 
 fn lines(text: &[u8]) -> impl DoubleEndedIterator<Item = &[u8]> + Clone {
@@ -124,10 +170,11 @@ fn parse_part<'a>(template: Template<'a>, index: usize) -> Option<Part<'a>> {
         .clone()
         .all(|line| matches!(bun_core::strings::trim_js_whitespace(line), [] | [b'#', ..]));
     let content = if !has_only_comments {
-        let (mut tree, mut attached) = (Tree::default(), Vec::new());
-        parser::parse(text, &mut tree).ok()?;
-        comments::attach(text, &tree, &mut attached);
-        Content::Document(tree, attached)
+        let mut scratch = Scratch::default();
+        if !parse_text(text, &mut scratch) {
+            return None;
+        }
+        Content::Document(scratch)
     } else if bun_core::strings::is_all_js_whitespace(text) {
         Content::Nothing
     } else {
@@ -149,7 +196,7 @@ fn parse_part<'a>(template: Template<'a>, index: usize) -> Option<Part<'a>> {
     })
 }
 
-fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> bool {
+pub(crate) fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> bool {
     matches!(
         f.options().embedded_language_formatting,
         EmbeddedLanguageFormatting::Auto
@@ -231,25 +278,23 @@ pub(crate) fn write_template<'a>(
     let empty = Tree::default();
     for (index, part) in parts.iter().enumerate() {
         let (is_first, is_last) = (index == 0, index + 1 == parts.len());
-        let (tree, attached) = match &part.content {
-            Content::Document(tree, attached) => (tree, attached.as_slice()),
-            _ => (&empty, [].as_slice()),
-        };
         if matches!(part.content, Content::Nothing) {
             separator.has_blank_line |= !is_first && !is_last && part.starts_with_blank_line;
         } else {
             separator.has_blank_line |= !is_first && part.starts_with_blank_line;
             separator.write(f);
-            let mut builder = Builder {
-                text: part.text,
-                tree,
-                attached,
-                f,
-                is_in_template: true,
-            };
-            match part.content {
-                Content::Document(..) => builder.print_definitions(),
-                _ => builder.print_comment_lines(),
+            match &part.content {
+                Content::Document(scratch) => write_text(part.text, scratch, true, f),
+                _ => {
+                    let mut builder = Builder {
+                        text: part.text,
+                        tree: &empty,
+                        attached: &[],
+                        f,
+                        is_in_template: true,
+                    };
+                    builder.print_comment_lines();
+                }
             }
             separator.has_blank_line |= !is_last && part.ends_with_blank_line;
         }

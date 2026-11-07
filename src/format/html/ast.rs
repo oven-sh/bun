@@ -28,6 +28,8 @@ pub(crate) enum Kind {
     AngularLetDeclaration,
     AngularIcuExpression,
     AngularIcuCase,
+    /// Children in a row whose printed text is known. See `runs.rs`.
+    Ready,
 }
 
 pub(crate) type Id = u32;
@@ -59,6 +61,19 @@ bitflags::bitflags! {
         const PRESERVES_CONTENT = 1 << 15;
         /// Set on an element in a Vue file that has `v-pre` or an ancestor with `v-pre`.
         const IS_IN_V_PRE = 1 << 16;
+        /// `Kind::Ready`: the last descendant of the last child is a text or a comment.
+        const ENDS_IN_TEXT = 1 << 17;
+        /// `Kind::Ready`: what is printed is right only if the parent does not print the end of its last child.
+        const HAS_BROKEN_VOID_TAG = 1 << 18;
+        /// `printed` is a range of the source.
+        const IS_PRINTED_AS_WRITTEN = 1 << 19;
+        /// Element: `printed` is its start tag, and it has no `attrs`.
+        const HAS_READY_START_TAG = 1 << 20;
+        /// It is called `text` or `foreignObject`, or is in something that is. Set while the tree is built.
+        const IS_IN_TEXT_OR_FOREIGN_OBJECT = 1 << 21;
+        /// Element: `<!-- display: table -->` may be in front of it, so what is in it is not printed by its name. Set
+        /// while the tree is built.
+        const FOLLOWS_DISPLAY_COMMENT = 1 << 22;
     }
 }
 
@@ -81,6 +96,10 @@ pub(crate) struct Node<'a> {
     pub(crate) end_span: Span,
     /// Declaration: the span of the value.
     pub(crate) name_span: Span,
+    /// What `runs.rs` has found to be printed: a range of `Tree::printed`, or of the source.
+    pub(crate) printed: Span,
+    /// The number of `indent`s that `printed` is right for.
+    pub(crate) printed_level: u32,
     /// A range of `Tree::attrs`.
     pub(crate) attrs: (u32, u32),
     /// A range of `Tree::start_tag_comments`.
@@ -171,6 +190,8 @@ impl<'a> Node<'a> {
             start_span: Span::default(),
             end_span: Span::default(),
             name_span: Span::default(),
+            printed: Span::default(),
+            printed_level: 0,
             attrs: (0, 0),
             start_tag_comments: (0, 0),
             name: Cow::Borrowed(b""),
@@ -253,6 +274,16 @@ pub(crate) struct Tree<'a> {
     pub(crate) nodes: Vec<Node<'a>>,
     pub(crate) attrs: Vec<Attribute<'a>>,
     pub(crate) start_tag_comments: Vec<StartTagComment<'a>>,
+    /// What is printed for the nodes of `Kind::Ready`.
+    pub(crate) printed: Vec<u8>,
+    /// What has been found out about the text before it is parsed, for the lexer.
+    pub(crate) runs: Option<super::runs::Runs>,
+    /// One that has read another text, or this one in another way: its buffers are of use.
+    pub(crate) spare_runs: Option<super::runs::Runs>,
+    /// See `Runs::has_typescript_script`.
+    pub(crate) has_typescript_script_in_run: bool,
+    /// See `Runs::assumes_typescript`.
+    pub(crate) assumes_typescript: Option<bool>,
     pub(crate) root: Id,
 }
 

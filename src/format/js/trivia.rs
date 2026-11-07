@@ -345,12 +345,24 @@ impl<'a> Format<'a> for Comment<'a> {
             let is_jsdoc = content.starts_with(b"/**")
                 && (content.get(3) != Some(&b'*') || f.options().flavor.is_oxfmt())
                 && !is_printed_by_prettier_for_oxfmt(f);
+            // Prettier's `mergeNestledJsdocComments`: with the one that ends where it starts it's one comment, which is
+            // JSDoc if its start says so, and in which this line is not the first.
+            let (end_of_last, is_last_jsdoc) = f.context().last_indentable_comment;
+            let is_nestled = end_of_last == self.span().start && !f.options().flavor.is_oxfmt();
+            let is_jsdoc = match is_nestled {
+                true => is_last_jsdoc,
+                false => is_jsdoc,
+            };
+            f.context_mut().last_indentable_comment = (self.span().end, is_jsdoc);
             let mut lines = bun_core::strings::split_crlf_lines(content).peekable();
             let first = lines.next().unwrap_or_default();
             // A comment waiting in a line suffix would otherwise be printed at this comment's first line break.
             // Prettier prints `a; /**⏎// b⏎ * c⏎ */` for `a // b⏎; /**⏎ * c⏎ */`.
             write!(f, line_suffix_boundary());
             write!(f, text(bun_core::strings::trim_js_whitespace_end(first)));
+            if is_nestled && is_jsdoc && first.ends_with(b"  ") {
+                write!(f, text(b"  \n"));
+            }
             while let Some(line) = lines.next() {
                 let trimmed = bun_core::strings::trim_js_whitespace(line);
                 write!(f, [hard_line_break(), " ", text(trimmed)]);

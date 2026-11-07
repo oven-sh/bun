@@ -7,10 +7,22 @@
 /// ```
 macro_rules! format_args {
     ($($value:expr),+ $(,)?) => {
-        $crate::ir::formatter::Arguments(($(&$value,)+))
+        $crate::ir::formatter::Arguments(($(&$crate::ir::macros::argument!($value),)+))
     };
 }
 pub(crate) use format_args;
+
+/// An argument of `format_args!`. The element for a string literal is made at compile time, so code that only gets a
+/// reference to the argument has nothing to build.
+macro_rules! argument {
+    ($literal:literal) => {
+        const { $crate::ir::formatter::Literal::new($literal) }
+    };
+    ($value:expr) => {
+        $value
+    };
+}
+pub(crate) use argument;
 
 /// Writes the arguments to a [`Formatter`](crate::ir::formatter::Formatter). All of them are
 /// evaluated before the first is written.
@@ -24,7 +36,7 @@ macro_rules! write {
         $crate::ir::formatter::Format::fmt(&$crate::ir::macros::format_args!($($arg),+), $dst)
     };
     ($dst:expr, $arg:expr) => {
-        $crate::ir::formatter::Format::fmt(&$arg, $dst)
+        $crate::ir::formatter::Format::fmt(&$crate::ir::macros::argument!($arg), $dst)
     };
 }
 pub(crate) use write;

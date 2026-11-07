@@ -1,0 +1,37 @@
+------------------
+{ printWidth: 80 }
+------------------
+/** @type {A} */ (
+  e
+    .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa()
+    .cccccccccccccccccccccccccccccccccccccccccccccccc()
+);
+e.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa().cccccccccccccccccccccccccccccccccccccccccccccccc();
+/** @type {A} */ (
+  e
+    .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(bbbbbbbbbbbbbbbbbbbbb)
+    .cccccccccccccccccccccccccccccccccccccccccccc(ddddddddddd)
+);
+/** @type {A} */ (
+  this.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa().cccccccccccccccccccccccccccccccccccccccccccccccc()
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+/** @type {A} */ (
+  e
+    .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa()
+    .cccccccccccccccccccccccccccccccccccccccccccccccc()
+);
+e.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa().cccccccccccccccccccccccccccccccccccccccccccccccc();
+/** @type {A} */ (
+  e
+    .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(bbbbbbbbbbbbbbbbbbbbb)
+    .cccccccccccccccccccccccccccccccccccccccccccc(ddddddddddd)
+);
+/** @type {A} */ (
+  this.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa().cccccccccccccccccccccccccccccccccccccccccccccccc()
+);
+
+===================== End =====================

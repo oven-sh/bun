@@ -4,6 +4,7 @@ use super::parameters::FormatFormalParameters;
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::type_parameters::type_parameters;
+use crate::js::flat::{CertainIf, Deeper};
 use crate::js::format::{
     ExprOptions, FormatTypeAnnotation, format_node, identifier, write_expression,
 };
@@ -178,18 +179,21 @@ impl<'a> Format<'a> for FormatFunctionBody<'a> {
         let FnBody::Block(statements) = func.body() else {
             return;
         };
+        // A declaration and a member of a class start a line. Any other function is part of an expression.
+        let starts_line = match func.kind() {
+            _ if std::mem::take(&mut f.context_mut().short_cuts.follows_line) => true,
+            FnKind::Decl => true,
+            FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
+                matches!(func.owner(), Node::Member(_))
+            }
+            _ => false,
+        };
+        let format_statements = Deeper(&FormatStatements(statements));
+        let format_statements = CertainIf(starts_line, &format_statements);
         if f.is_quiet() {
             return match is_empty_block(statements) {
                 true => write!(f, [space(), "{}"]),
-                false => write!(
-                    f,
-                    [
-                        space(),
-                        "{",
-                        block_indent(&FormatStatements(statements)),
-                        "}"
-                    ]
-                ),
+                false => write!(f, [space(), "{", block_indent(&format_statements), "}"]),
             };
         }
         let node = AstNodes::FunctionBody(func);
@@ -200,7 +204,7 @@ impl<'a> Format<'a> for FormatFunctionBody<'a> {
         format_node(node, f, |f| match is_empty_block(statements) {
             true => write!(f, ["{", dangling_comments(node).with_block_indent(), "}"]),
             false if owned.dangling.is_empty() => {
-                write!(f, ["{", block_indent(&FormatStatements(statements)), "}"])
+                write!(f, ["{", block_indent(&format_statements), "}"])
             }
             // `function a() // comment⏎{ "use strict" }`: Babel's body has no statement for the comment to lead, so
             // Prettier's `printBlockBody` prints it after the directives.
@@ -208,7 +212,7 @@ impl<'a> Format<'a> for FormatFunctionBody<'a> {
                 let is_next_line_empty = (statements.last())
                     .is_some_and(|last| f.source_text().lines_after(last.span().end) > 1);
                 let content = format_args!(
-                    FormatStatements(statements),
+                    format_statements,
                     is_next_line_empty.then_some(empty_line()),
                     (!is_next_line_empty).then_some(hard_line_break()),
                     dangling_comments(node)
@@ -301,7 +305,7 @@ fn group_parameters_if_object_type_breaks<'a>(
 }
 
 /// The conditions of `shouldGroupFunctionParameters` that don't depend on how the return type prints.
-fn can_group_function_parameters(func: Func<'_>) -> bool {
+pub(crate) fn can_group_function_parameters(func: Func<'_>) -> bool {
     let type_parameters = func.type_params();
     match type_parameters.len() {
         0 => {}

@@ -403,7 +403,7 @@ pub(crate) fn write<'a>(mut doc: Doc<'a>, out: &mut Writer<'_, '_>, context: &mu
             // A comment in the code that's deferred to the end of the line must not move past the `}`:
             // `{a[0 // b\n]}`.
             if matches!(**code, Code::Js(_)) {
-                out.line_suffix_boundary();
+                out.own_line_suffix_boundary();
             }
         }
     }

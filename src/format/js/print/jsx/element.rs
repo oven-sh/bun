@@ -8,6 +8,7 @@ use crate::js::print::class::dangling_comments_with_marker;
 use crate::js::print::flow::is_match_expression_case;
 use crate::js::utils::jsx::WrapState;
 use crate::js::utils::suppressed::FormatSuppressedNode;
+use crate::js::utils::typecast::is_cast_target_that_hides_its_kind;
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
 
@@ -58,6 +59,17 @@ impl<'a> AnyJsxTagWithChildren<'a> {
     /// Prettier's `maybeWrapJsxElementInParens`.
     fn fmt_in_parentheses(&self, element: &impl Format<'a>, f: &mut Formatter<'a>) {
         let parent = self.parent();
+        // `/** @type {A} */ (<a>..</a>)`: the parent is the `ParenthesizedExpression`, which is no reason not to wrap.
+        if is_cast_target_that_hides_its_kind(self.expr, f) {
+            return write!(
+                f,
+                group(&format_args!(
+                    if_group_breaks(&"("),
+                    soft_block_indent(element),
+                    if_group_breaks(&")")
+                ))
+            );
+        }
         match self.get_wrap_state(parent) {
             WrapState::NoWrap => write!(f, element),
             WrapState::WrapOnBreak => {
@@ -69,7 +81,7 @@ impl<'a> AnyJsxTagWithChildren<'a> {
                         soft_block_indent(element),
                         (!needs_parentheses).then_some(if_group_breaks(&")"))
                     ))
-                    .should_expand(should_expand(parent))
+                    .should_expand(should_expand(parent, f))
                 );
             }
         }
@@ -100,7 +112,7 @@ impl<'a> AnyJsxTagWithChildren<'a> {
         }
     }
 
-    fn layout(&self) -> ElementLayout<'a> {
+    fn layout(&self, f: &Formatter<'a>) -> ElementLayout<'a> {
         let mut children = self.jsx.children_with_whitespace();
         match (children.next(), children.next()) {
             (None, _) if !self.jsx.is_fragment() => ElementLayout::NoChildren,
@@ -112,7 +124,8 @@ impl<'a> AnyJsxTagWithChildren<'a> {
                     && matches!(
                         child.kind(),
                         ExprKind::Template(_) | ExprKind::TaggedTemplate(_)
-                    ) =>
+                    )
+                    && !is_cast_target_that_hides_its_kind(child, f) =>
             {
                 ElementLayout::Template(child)
             }
@@ -127,7 +140,7 @@ impl<'a> AnyJsxTagWithChildren<'a> {
         let format_opening = format_with(|f| self.fmt_opening(f));
         let format_closing = format_with(|f| self.fmt_closing(f));
 
-        match self.layout() {
+        match self.layout(f) {
             ElementLayout::NoChildren => write!(f, [format_opening, format_closing]),
             ElementLayout::Template(expression) => {
                 write!(
@@ -215,6 +228,38 @@ impl<'a> Format<'a> for AnyJsxTagWithChildren<'a> {
     }
 }
 
+/// The parentheses that set an element apart from what's around it.
+#[derive(Copy, Clone)]
+pub(crate) enum Parentheses {
+    None,
+    IfItBreaks,
+    /// It breaks whether it fits or not.
+    Always,
+}
+
+pub(crate) fn parentheses_around<'a>(e: Expr<'a>, jsx: Jsx<'a>) -> Parentheses {
+    let parent = e.ast_parent();
+    match (AnyJsxTagWithChildren { expr: e, jsx }).get_wrap_state(parent) {
+        WrapState::NoWrap => Parentheses::None,
+        WrapState::WrapOnBreak if callback_and_call_in_braces(parent).is_some() => {
+            Parentheses::Always
+        }
+        WrapState::WrapOnBreak => Parentheses::IfItBreaks,
+    }
+}
+
+/// What's between the tags of `jsx`, which isn't on their line.
+pub(crate) fn write_children_on_lines<'a>(jsx: Jsx<'a>, f: &mut Formatter<'a>) {
+    match format_children(jsx, true, false, f) {
+        FormatChildrenResult::SingleChild(child) => child.fmt(f),
+        FormatChildrenResult::ForceMultiline(children)
+        | FormatChildrenResult::BestFitting {
+            expanded_children: children,
+            ..
+        } => children.fmt(f),
+    }
+}
+
 /// ```jsx
 /// a = (                      a =
 ///   // prettier-ignore         // prettier-ignore
@@ -228,26 +273,36 @@ pub(crate) fn ignored_jsx_gets_no_parentheses(f: &Formatter<'_>) -> bool {
 }
 
 /// `{items.map((item) => <a />)}`: the body of an arrow function that's an argument of a call, where the call is the
-/// only thing in the braces.
-fn should_expand(parent: AstNodes<'_>) -> bool {
+/// only thing in the braces. Not with a type cast around the function or the call.
+fn should_expand<'a>(parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
+    callback_and_call_in_braces(parent).is_some_and(|(arrow, call)| {
+        !is_cast_target_that_hides_its_kind(arrow, f)
+            && !is_cast_target_that_hides_its_kind(call, f)
+    })
+}
+
+/// The arrow function and the call of [`should_expand`], whatever parentheses they are in.
+fn callback_and_call_in_braces(parent: AstNodes<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
     let AstNodes::ExpressionStatement(statement) = parent else {
-        return false;
+        return None;
     };
     if !statement.is_arrow_function_body() {
-        return false;
+        return None;
     }
     // The `FunctionBody`, and then the arrow function.
     let arrow = parent.parent().parent();
     match arrow.parent() {
-        call @ AstNodes::CallExpression(e) => {
-            e.callee()
+        call @ AstNodes::CallExpression(e)
+            if e.callee()
                 .is_none_or(|callee| callee.span() != arrow.span())
                 && matches!(
                     call.parent().without_chain_expression(),
                     AstNodes::JSXExpressionContainer(_)
-                )
+                ) =>
+        {
+            Some((arrow.as_expression()?, e))
         }
-        _ => false,
+        _ => None,
     }
 }
 

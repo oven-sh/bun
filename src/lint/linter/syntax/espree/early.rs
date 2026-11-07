@@ -179,7 +179,7 @@ impl<'a> Checks<'a, '_> {
 
     /// `for (async of a)` is an error because it could be the start of `for (async of => {};;)`.
     fn async_before_of(&mut self) {
-        for it in self.file.stmts_of_kind(StmtTag::ForOf) {
+        for it in self.stmts_of(StmtTag::ForOf) {
             let StmtKind::ForOf {
                 left,
                 expr,
@@ -261,6 +261,9 @@ impl<'a> Checks<'a, '_> {
 
     /// acorn doesn't support decorators.
     fn decorators(&mut self) {
+        if self.is_quick_for_babel() {
+            return;
+        }
         let is_decorator = |it: &&hir::Modifier| matches!(it.kind, ModifierKind::Decorator(_));
         if let Some(first) = self
             .file
@@ -278,6 +281,9 @@ impl<'a> Checks<'a, '_> {
     // ───────────────────────────── assignment targets ─────────────────────────────
 
     fn assignment_targets(&mut self) {
+        if self.lacks(rare::ODD_TARGET) {
+            return;
+        }
         let file = self.file;
         // Fast path: almost every target is an identifier or a member access, which is always valid.
         let is_plain = |target: Expr<'a>| match target.tag() {
@@ -842,6 +848,9 @@ impl<'a> Checks<'a, '_> {
     }
 
     fn nested_module_syntax(&mut self) {
+        if self.is_quick_for_babel() {
+            return;
+        }
         let (hir, bound) = (&self.file.hir, &self.file.bound);
         for (i, raw) in hir.stmts.iter().enumerate() {
             let is_export = |it: &hir::Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
@@ -1281,8 +1290,7 @@ impl<'a> Checks<'a, '_> {
     }
 
     fn switches_and_throws(&mut self) {
-        let file = self.file;
-        for it in file.stmts_of_kind(StmtTag::Switch) {
+        for it in self.stmts_of(StmtTag::Switch) {
             let StmtKind::Switch { cases, .. } = it.kind() else {
                 continue;
             };
@@ -1290,7 +1298,7 @@ impl<'a> Checks<'a, '_> {
                 self.fail(second.span().start, "Multiple default clauses");
             }
         }
-        for it in file.stmts_of_kind(StmtTag::Throw) {
+        for it in self.stmts_of(StmtTag::Throw) {
             if matches!(it.kind(), StmtKind::Throw(thrown) if thrown.is_missing()) {
                 self.fail(
                     it.span().start + "throw".len() as u32,
@@ -1918,6 +1926,9 @@ impl<'a> Checks<'a, '_> {
 
     /// `canAwait`. Where it's false, `await` is an identifier.
     fn awaits(&mut self) {
+        if self.is_quick_for_babel() {
+            return;
+        }
         let file = self.file;
         for it in self.exprs_of(ExprTag::Await) {
             let ExprKind::Await(operand) = it.kind() else {

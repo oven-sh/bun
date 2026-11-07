@@ -79,10 +79,14 @@ impl<'a> ConditionalLike<'a> {
 ///     : c
 /// ).member;
 /// ```
-pub(super) fn should_extra_indent<'a>(conditional: Expr<'a>) -> bool {
+pub(super) fn should_extra_indent<'a>(conditional: Expr<'a>, f: &Formatter<'a>) -> bool {
     let mut expression = conditional;
     let mut parent = conditional.ast_parent();
     loop {
+        // `a = /** @type {A} */ ((b ? c : d).e)`: the chain is the whole of a `ParenthesizedExpression`.
+        if is_cast_target_that_hides_its_kind(expression, f) {
+            return false;
+        }
         let is = |head: Option<Expr<'a>>| head == Some(expression);
         match parent {
             AstNodes::ChainExpression(_) => {}
@@ -110,7 +114,7 @@ pub(super) fn should_extra_indent<'a>(conditional: Expr<'a>) -> bool {
         }
         parent = parent.parent();
     }
-    if expression == conditional {
+    if expression == conditional || is_cast_target_that_hides_its_kind(expression, f) {
         return false;
     }
 
@@ -189,7 +193,12 @@ impl ConditionalLayout {
 }
 
 pub(crate) fn is_jsx_conditional_chain(e: Expr<'_>) -> bool {
-    let mut pending = smallvec::SmallVec::<[Expr<'_>; 8]>::new();
+    is_jsx_chain_but_for(e, |_| false)
+}
+
+/// Prettier's `conditionalExpressionChainContainsJsx`. What `is_hidden` is neither an element nor a conditional.
+fn is_jsx_chain_but_for<'a>(e: Expr<'a>, is_hidden: impl Fn(Expr<'a>) -> bool) -> bool {
+    let mut pending = smallvec::SmallVec::<[Expr<'a>; 8]>::new();
     pending.push(e);
     while let Some(e) = pending.pop() {
         let ExprKind::Cond { test, yes, no } = e.kind() else {
@@ -197,13 +206,18 @@ pub(crate) fn is_jsx_conditional_chain(e: Expr<'_>) -> bool {
         };
         for operand in [test, yes, no] {
             match operand.tag() {
-                ExprTag::Jsx => return true,
-                ExprTag::Cond => pending.push(operand),
+                ExprTag::Jsx if !is_hidden(operand) => return true,
+                ExprTag::Cond if !is_hidden(operand) => pending.push(operand),
                 _ => {}
             }
         }
     }
     false
+}
+
+/// [`is_jsx_conditional_chain`] for the printer: `a ? /** @type {A} */ (<b />) : c` is none for Prettier.
+fn is_jsx_chain<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    is_jsx_chain_but_for(e, |operand| is_cast_target_that_hides_its_kind(operand, f))
 }
 
 impl<'a> FormatConditionalLike<'a> {
@@ -215,7 +229,7 @@ impl<'a> FormatConditionalLike<'a> {
                 AstNodes::ConditionalExpression(parent),
             ) if !is_cast_target_that_hides_its_kind(e, f) => match parent.kind() {
                 ExprKind::Cond { test, .. } if test == e => ConditionalLayout::NestedTest {
-                    jsx_chain: is_jsx_conditional_chain(e),
+                    jsx_chain: is_jsx_chain(e, f),
                 },
                 ExprKind::Cond { yes, .. } if yes == e => ConditionalLayout::NestedConsequent,
                 _ => ConditionalLayout::NestedAlternate,
@@ -230,7 +244,7 @@ impl<'a> FormatConditionalLike<'a> {
                 }
             }
             (ConditionalLike::ConditionalExpression(e), _) => ConditionalLayout::Root {
-                jsx_chain: is_jsx_conditional_chain(e),
+                jsx_chain: is_jsx_chain(e, f),
             },
             _ => ConditionalLayout::Root { jsx_chain: false },
         }
@@ -282,7 +296,8 @@ impl<'a> FormatConditionalLike<'a> {
             })
         };
         // `a ? (b ? c : d) : e`
-        let is_nested_consequent = consequent.is_conditional();
+        let is_nested_consequent = consequent.is_conditional()
+            && !matches!(consequent, Operand::Expr(e) if is_cast_target_that_hides_its_kind(e, f));
         write!(
             f,
             [
@@ -323,8 +338,11 @@ struct FormatConditionalLike<'a> {
 impl<'a> Format<'a> for FormatConditionalLike<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let layout = self.layout(f);
+        // `/** @type {A} */ (a ? b : c).d`: the parent is the `ParenthesizedExpression`, which indents what is in it.
+        let is_cast = matches!(self.conditional, ConditionalLike::ConditionalExpression(e) if is_cast_target_that_hides_its_kind(e, f));
         let should_extra_indent = layout.is_root()
-            && matches!(self.conditional, ConditionalLike::ConditionalExpression(e) if should_extra_indent(e));
+            && !is_cast
+            && matches!(self.conditional, ConditionalLike::ConditionalExpression(e) if should_extra_indent(e, f));
         let is_jsx_chain = self.jsx_chain || layout.is_jsx_chain();
 
         let format_inner = format_with(|f| {
@@ -374,6 +392,7 @@ impl<'a> Format<'a> for FormatConditionalLike<'a> {
             // ```
             if !should_extra_indent
                 && !is_jsx_chain
+                && !is_cast
                 && self.is_parent_static_member_expression(layout, f)
             {
                 write!(f, soft_line_break());
@@ -419,9 +438,10 @@ impl<'a> Format<'a> for FormatJsxChainExpression<'a> {
             return;
         }
         let expression = self.expression;
-        let is_conditional = matches!(expression.kind(), ExprKind::Cond { .. })
-            && !is_cast_target_that_hides_its_kind(expression, f);
+        let is_cast = is_cast_target_that_hides_its_kind(expression, f);
+        let is_conditional = matches!(expression.kind(), ExprKind::Cond { .. }) && !is_cast;
         let no_wrap = match expression.kind() {
+            _ if is_cast => false,
             ExprKind::Ident(name) => name.bytes() == b"undefined",
             ExprKind::Null => true,
             _ => is_conditional && self.is_alternate,

@@ -1,0 +1,91 @@
+------------------
+{ printWidth: 80 }
+------------------
+result = object.first(argument).second(() => {
+  effect();
+}, [
+  dependencyNumberOne,
+  dependencyNumberTwo,
+  dependencyNumberThree,
+  dependencyNumberFour,
+  dependencyFive,
+]);
+call(
+  object.first(argument).second(() => {
+    effect();
+  }, [
+    dependencyNumberOne,
+    dependencyNumberTwo,
+    dependencyNumberThree,
+    dependencyNumberFour,
+    dependencyFive,
+  ]),
+);
+object.first(argument).second(() => {
+  effect();
+}, [
+  dependencyNumberOne,
+  dependencyNumberTwo,
+  dependencyNumberThree,
+  dependencyNumberFour,
+  dependencyFive,
+]);
+result = object.first(argument).second(
+  function () {
+    effect();
+  },
+  [
+    dependencyNumberOne,
+    dependencyNumberTwo,
+    dependencyNumberThree,
+    dependencyNumberFour,
+    dependencyFive,
+  ],
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+result = object.first(argument).second(() => {
+  effect();
+}, [
+  dependencyNumberOne,
+  dependencyNumberTwo,
+  dependencyNumberThree,
+  dependencyNumberFour,
+  dependencyFive,
+]);
+call(
+  object.first(argument).second(() => {
+    effect();
+  }, [
+    dependencyNumberOne,
+    dependencyNumberTwo,
+    dependencyNumberThree,
+    dependencyNumberFour,
+    dependencyFive,
+  ]),
+);
+object.first(argument).second(() => {
+  effect();
+}, [
+  dependencyNumberOne,
+  dependencyNumberTwo,
+  dependencyNumberThree,
+  dependencyNumberFour,
+  dependencyFive,
+]);
+result = object.first(argument).second(
+  function () {
+    effect();
+  },
+  [
+    dependencyNumberOne,
+    dependencyNumberTwo,
+    dependencyNumberThree,
+    dependencyNumberFour,
+    dependencyFive,
+  ],
+);
+
+===================== End =====================

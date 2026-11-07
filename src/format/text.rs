@@ -125,7 +125,17 @@ pub(crate) fn has_newline_backwards(text: &[u8], end: usize) -> bool {
 pub(crate) fn is_next_line_empty(text: &[u8], at: usize) -> bool {
     match text.get(at..).unwrap_or_default() {
         // Fast paths: the line nearly always ends here or has more code on it.
-        [b'\n', ..] => has_newline(text, at + 1),
+        [b'\n', rest @ ..] => {
+            // Most lines start with at most seven blanks.
+            if let Some(start) = rest.first_chunk::<8>() {
+                let not_blank = u64::from_le_bytes(*start) ^ 0x2020_2020_2020_2020;
+                match start.get(not_blank.trailing_zeros() as usize / 8) {
+                    None | Some(b'\t' | b'\r' | 0xE2) => {}
+                    Some(first) => return *first == b'\n',
+                }
+            }
+            has_newline(text, at + 1)
+        }
         [b',', b' ', next, ..]
             if !matches!(
                 next,

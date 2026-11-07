@@ -6,6 +6,7 @@ use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::type_parameters::{FormatTSTypeParametersOptions, type_arguments, type_parameters};
 use crate::js::attach::Marker;
+use crate::js::flat::{CertainIf, Deeper, LongWay, Mode, write_class_member, write_signature};
 use crate::js::format::{
     FormatTypeAnnotation, format_name, format_node, identifier,
     ignored_node_terminator_follows_semi, name_without_comments,
@@ -18,7 +19,8 @@ use crate::js::utils::statement_body::write_space_before_body;
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typecast::{
-    comments_of_expression, has_comments_that_count, is_chain_expression_without_comments,
+    comments_of_expression, has_comments_that_count, is_cast_target_that_hides_its_kind,
+    is_chain_expression_without_comments,
 };
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -65,6 +67,9 @@ fn write_class_body<'a>(class: Class<'a>, f: &mut Formatter<'a>) {
             );
         }
     });
+    // A class that's an expression can be indented by what's around it.
+    let members = Deeper(&members);
+    let members = CertainIf(matches!(class.owner(), Node::Stmt(_)), &members);
     write!(f, ["{", block_indent(&members), "}"]);
 
     if is_consistent {
@@ -96,6 +101,14 @@ fn has_empty_line_before<'a>(element: Member<'a>, f: &Formatter<'a>) -> bool {
 
 /// A member of a class, an interface or a type literal.
 pub(crate) fn write_member<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
+    if f.context().short_cuts.mode != Mode::Off
+        && match member.parent() {
+            Node::Class(_) => write_class_member(member, f),
+            _ => f.context().short_cuts.properties_start_lines && write_signature(member, f),
+        }
+    {
+        return;
+    }
     match member.as_ast_nodes() {
         AstNodes::MethodDefinition(_) => write_method_definition(member, f),
         AstNodes::PropertyDefinition(_) => AssignmentLike::PropertyDefinition(member).fmt(f),
@@ -267,7 +280,16 @@ fn write_static_block<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
                 ]
             );
         }
-        Some(body) => write!(f, block_indent(&FormatStatements(body))),
+        // A comment before the `{` is printed before the first statement, which then starts after it.
+        Some(body)
+            if body.first().is_some_and(|first| {
+                let head = Span::new(member.span().start, first.span().start);
+                f.comments().has_comment_or_owner_in(head)
+            }) =>
+        {
+            write!(f, block_indent(&LongWay(&FormatStatements(body))))
+        }
+        Some(body) => write!(f, block_indent(&Deeper(&FormatStatements(body)))),
         None => write!(
             f,
             dangling_comments(AstNodes::StaticBlock(member)).with_block_indent()
@@ -552,11 +574,16 @@ impl<'a> Format<'a> for FormatClass<'a> {
             write!(f, [head, format_heritage_clauses]);
         }
 
-        write_space_before_body(AstNodes::ClassBody(class), f);
-        format_node(AstNodes::ClassBody(class), f, |f| {
-            write_class_body(class, f)
-        });
+        write_class_body_after_head(class, f);
     }
+}
+
+/// ` { .. }`
+pub(crate) fn write_class_body_after_head<'a>(class: Class<'a>, f: &mut Formatter<'a>) {
+    write_space_before_body(AstNodes::ClassBody(class), f);
+    format_node(AstNodes::ClassBody(class), f, |f| {
+        write_class_body(class, f)
+    });
 }
 
 /// `class A extends B /* comment */⏎<C> {}` is `B<C> /* comment */` for Prettier and `B /* comment */<C>` for oxfmt.
@@ -604,10 +631,7 @@ impl<'a> Format<'a> for FormatSuperClass<'a> {
             write!(f, FormatLeadingComments::Comments(leading_comments));
         }
         // Prettier's `printSuperClass`.
-        if matches!(
-            AstNodes::Class(class).parent(),
-            AstNodes::AssignmentExpression(_)
-        ) {
+        if is_right_side_of_assignment(class, AstNodes::Class(class).parent(), f) {
             let content = content.memoized();
             write!(
                 f,
@@ -658,6 +682,17 @@ fn write_comments_with_empty_lines<'a>(comments: CommentList<'a>, f: &mut Format
     }
 }
 
+/// `a = class extends B {}`, but not `a = /** @type {A} */ (class extends B {})`, whose parent is the
+/// `ParenthesizedExpression` for Prettier.
+fn is_right_side_of_assignment<'a>(
+    class: Class<'a>,
+    parent: AstNodes<'a>,
+    f: &Formatter<'a>,
+) -> bool {
+    matches!(parent, AstNodes::AssignmentExpression(_))
+        && !matches!(class.owner(), Node::Expr(e) if is_cast_target_that_hides_its_kind(e, f))
+}
+
 /// Prettier's `shouldPrintClassInGroupMode`: true if the class head is a group that can break before `extends` and
 /// `implements`.
 fn should_group<'a>(class: Class<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
@@ -685,7 +720,7 @@ fn should_group<'a>(class: Class<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -
     };
     match (super_class, implements.first()) {
         (Some(super_class), _) => {
-            !matches!(parent, AstNodes::AssignmentExpression(_))
+            !is_right_side_of_assignment(class, parent, f)
                 && class.extends_args().is_empty()
                 && is_member(super_class)
         }

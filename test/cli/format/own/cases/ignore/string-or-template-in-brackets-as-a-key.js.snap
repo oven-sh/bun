@@ -1,0 +1,29 @@
+------------------
+{ printWidth: 80 }
+------------------
+a = {
+  [/* prettier-ignore */ "\
+"]: `ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss`,
+  [/* prettier-ignore */ 'a\
+b']: `ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss`,
+};
+class A {
+  [/* prettier-ignore */ `x
+y`] = `ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss`;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a = {
+  [/* prettier-ignore */ "\
+"]: `ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss`,
+  [/* prettier-ignore */ 'a\
+b']: `ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss`,
+};
+class A {
+  [/* prettier-ignore */ `x
+y`] = `ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss`;
+}
+
+===================== End =====================

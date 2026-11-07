@@ -1,4 +1,5 @@
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use crate::js::flat::CertainIf;
 use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -51,7 +52,7 @@ impl<'a> Format<'a> for FormatStatementBody<'a> {
             StmtKind::Empty => write!(f, body),
             StmtKind::Block(_) => write!(f, [space(), body]),
             _ if self.force_space => write!(f, [space(), body]),
-            _ => write!(f, soft_line_indent_or_space(&body)),
+            _ => write!(f, soft_line_indent_or_space(&CertainIf(false, &body))),
         }
     }
 }
@@ -61,6 +62,8 @@ impl<'a> FormatStatementBody<'a> {
     #[inline(never)]
     fn fmt_with_comments(&self, f: &mut Formatter<'a>) {
         let body = self.body;
+        let is_on_line_of_head =
+            matches!(body.kind(), StmtKind::Empty | StmtKind::Block(_)) || self.force_space;
         let content = format_with(|f| {
             if f.is_quiet() || self.trailing_comments == TrailingComments::All {
                 return write!(f, body);
@@ -72,6 +75,7 @@ impl<'a> FormatStatementBody<'a> {
                 write!(f, FormatTrailingComments::Comments(same_line));
             }
         });
+        let content = CertainIf(is_on_line_of_head, &content);
         let first_leading_comment = match f.is_quiet() {
             true => None,
             false => f.comments().of_node(body.as_ast_nodes()).leading.first(),

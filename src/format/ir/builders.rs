@@ -27,8 +27,8 @@
 //! | `label(l, x)` | [`labelled`] |
 
 use super::element::{
-    self, Condition, DedentMode, Fallback, FormatElement, GroupId, GroupMode, LabelId, LineMode,
-    PrintMode, Tag, TextWidth,
+    self, Condition, DedentMode, Fallback, FormatElement, GroupId, GroupMode, JsLabels, LabelId,
+    LineMode, PrintMode, Tag, TextWidth,
 };
 use super::formatter::{Format, Formatter};
 use bun_lint::span::Span;
@@ -78,7 +78,7 @@ pub(crate) struct Line(LineMode);
 impl<'a> Format<'a> for Line {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        f.write_element(FormatElement::Line(self.0));
+        f.write_line_break(self.0);
     }
 
     #[inline(always)]
@@ -203,13 +203,17 @@ pub(crate) struct Space;
 impl<'a> Format<'a> for Space {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        f.write_element(FormatElement::Space);
+        f.write_space();
     }
+}
+
+fn write_tag(f: &mut Formatter<'_>, tag: Tag) {
+    f.write_element(FormatElement::Tag(tag));
 }
 
 /// Declares a builder that writes its content between two tags.
 macro_rules! tagged {
-    ($(#[$doc:meta])* $function:ident, $name:ident, $start:expr, $end:expr) => {
+    ($(#[$doc:meta])* $function:ident, $name:ident, $start:expr, $end:expr, $write:path) => {
         $(#[$doc])*
         #[inline]
         pub(crate) fn $function<Content: ?Sized>(content: &Content) -> $name<'_, Content> {
@@ -230,9 +234,9 @@ macro_rules! tagged {
         impl<'a, Content: Format<'a> + ?Sized> Format<'a> for $name<'_, Content> {
             #[inline]
             fn fmt(&self, f: &mut Formatter<'a>) {
-                f.write_element(FormatElement::Tag($start));
+                $write(f, $start);
                 self.content.fmt(f);
-                f.write_element(FormatElement::Tag($end));
+                $write(f, $end);
             }
 
             #[inline(always)]
@@ -248,19 +252,21 @@ macro_rules! tagged {
 
 tagged! {
     /// Content that's printed at the end of the line, right before the next line break. Used for comments.
-    line_suffix, LineSuffix, Tag::StartLineSuffix, Tag::EndLineSuffix
+    line_suffix, LineSuffix, Tag::StartLineSuffix, Tag::EndLineSuffix, write_tag
 }
 tagged! {
     /// Adds one level of indentation after each line break in the content.
-    indent, Indent, Tag::StartIndent, Tag::EndIndent
+    indent, Indent, Tag::StartIndent, Tag::EndIndent, Formatter::write_tag_without_content
 }
 tagged! {
     /// Undoes one level of indentation.
-    dedent, Dedent, Tag::StartDedent(DedentMode::Level), Tag::EndDedent(DedentMode::Level)
+    dedent, Dedent, Tag::StartDedent(DedentMode::Level), Tag::EndDedent(DedentMode::Level),
+    Formatter::write_tag_without_content
 }
 tagged! {
     /// Removes all indentation after each line break in the content.
-    dedent_to_root, DedentToRoot, Tag::StartDedent(DedentMode::Root), Tag::EndDedent(DedentMode::Root)
+    dedent_to_root, DedentToRoot, Tag::StartDedent(DedentMode::Root), Tag::EndDedent(DedentMode::Root),
+    Formatter::write_tag_without_content
 }
 
 /// Pending line suffixes are printed here at the latest, followed by a line break.
@@ -275,8 +281,16 @@ pub(crate) struct LineSuffixBoundary;
 impl<'a> Format<'a> for LineSuffixBoundary {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        f.write_element(FormatElement::LineSuffixBoundary);
+        f.write_line_suffix_boundary();
     }
+}
+
+/// A [`line_suffix_boundary`] where Prettier's document has none, and lets a comment move behind what follows. The line
+/// break that it forces is like any other: one that follows it on the empty line is skipped.
+pub(crate) fn own_line_suffix_boundary<'a>() -> impl Format<'a> {
+    format_with(|f| {
+        labelled(LabelId::of(JsLabels::OwnBoundary), &line_suffix_boundary()).fmt(f);
+    })
 }
 
 /// Labels the content so the code that writes the parent can check `elements.has_label(..)`.
@@ -295,9 +309,9 @@ pub(crate) struct FormatLabelled<'fmt, Content: ?Sized> {
 
 impl<'a, Content: Format<'a> + ?Sized> Format<'a> for FormatLabelled<'_, Content> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        f.write_element(FormatElement::Tag(Tag::StartLabelled(self.label_id)));
+        f.write_tag_without_content(Tag::StartLabelled(self.label_id));
         self.content.fmt(f);
-        f.write_element(FormatElement::Tag(Tag::EndLabelled));
+        f.write_tag_without_content(Tag::EndLabelled);
     }
 }
 
@@ -317,11 +331,9 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for Align<'_, Content> {
         if self.count == 0 {
             return self.content.fmt(f);
         }
-        f.write_element(FormatElement::Tag(Tag::StartAlign(element::Align(
-            self.count,
-        ))));
+        f.write_tag_without_content(Tag::StartAlign(element::Align(self.count)));
         self.content.fmt(f);
-        f.write_element(FormatElement::Tag(Tag::EndAlign));
+        f.write_tag_without_content(Tag::EndAlign);
     }
 }
 
@@ -330,7 +342,8 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for Align<'_, Content> {
 pub(crate) fn block_indent<Content: ?Sized>(content: &Content) -> BlockIndent<'_, Content> {
     BlockIndent {
         content,
-        mode: IndentMode::Block,
+        before: LineMode::Hard,
+        after: Some(LineMode::Hard),
     }
 }
 
@@ -339,7 +352,8 @@ pub(crate) fn block_indent<Content: ?Sized>(content: &Content) -> BlockIndent<'_
 pub(crate) fn soft_block_indent<Content: ?Sized>(content: &Content) -> BlockIndent<'_, Content> {
     BlockIndent {
         content,
-        mode: IndentMode::Soft,
+        before: LineMode::Soft,
+        after: Some(LineMode::Soft),
     }
 }
 
@@ -363,7 +377,8 @@ pub(crate) fn soft_line_indent_or_space<Content: ?Sized>(
 ) -> BlockIndent<'_, Content> {
     BlockIndent {
         content,
-        mode: IndentMode::SoftLineOrSpace,
+        before: LineMode::SoftOrSpace,
+        after: None,
     }
 }
 
@@ -375,13 +390,17 @@ pub(crate) fn soft_space_or_block_indent<Content: ?Sized>(
 ) -> BlockIndent<'_, Content> {
     BlockIndent {
         content,
-        mode: IndentMode::SoftSpace,
+        before: LineMode::SoftOrSpace,
+        after: Some(LineMode::SoftOrSpace),
     }
 }
 
 pub(crate) struct BlockIndent<'fmt, Content: ?Sized> {
     content: &'fmt Content,
-    mode: IndentMode,
+    /// The line break before the content.
+    before: LineMode,
+    /// The line break after it.
+    after: Option<LineMode>,
 }
 
 impl<Content: ?Sized> Copy for BlockIndent<'_, Content> {}
@@ -391,28 +410,11 @@ impl<Content: ?Sized> Clone for BlockIndent<'_, Content> {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-enum IndentMode {
-    Soft,
-    Block,
-    SoftSpace,
-    SoftLineOrSpace,
-}
-
 impl<'a, Content: Format<'a> + ?Sized> Format<'a> for BlockIndent<'_, Content> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let (before, after) = match self.mode {
-            IndentMode::Soft => (LineMode::Soft, Some(LineMode::Soft)),
-            IndentMode::Block => (LineMode::Hard, Some(LineMode::Hard)),
-            IndentMode::SoftSpace => (LineMode::SoftOrSpace, Some(LineMode::SoftOrSpace)),
-            IndentMode::SoftLineOrSpace => (LineMode::SoftOrSpace, None),
-        };
-        f.write_element(FormatElement::Tag(Tag::StartIndentWithLine(before)));
+        f.start_indent_with_line(self.before);
         self.content.fmt(f);
-        f.write_element(FormatElement::Tag(match after {
-            Some(after) => Tag::EndIndentWithLine(after),
-            None => Tag::EndIndent,
-        }));
+        f.end_indent_with_line(self.after);
     }
 }
 
@@ -472,17 +474,16 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for Group<'_, Content> {
             self.group_id,
             self.should_expand,
         ) {
-            return f.write_element(FormatElement::IndentedLineGroup(id));
+            return f.write_indented_line_group(id);
         }
         let mode = match (self.should_expand, self.stays_expanded) {
             (true, _) => GroupMode::Expand,
             (false, true) => GroupMode::StaysExpanded,
             (false, false) => GroupMode::Flat,
         };
-        let group = element::Group::new().with_id(self.group_id).with_mode(mode);
-        f.write_element(FormatElement::Tag(Tag::StartGroup(group)));
+        f.start_group(self.group_id, mode);
         self.content.fmt(f);
-        f.write_element(FormatElement::Tag(Tag::EndGroup));
+        f.end_group();
     }
 }
 
@@ -548,7 +549,7 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for IfGroupBreaks<'_, Content>
             (self.content.as_token(), self.group_id, self.mode)
             && let Some(token) = element::Token::new(text)
         {
-            return f.write_element(FormatElement::TokenIfBreaks(token));
+            return f.write_token_if_breaks(token);
         }
         self.write_conditional_content(f);
     }
@@ -583,13 +584,9 @@ pub(crate) struct IndentIfGroupBreaks<'fmt, Content: ?Sized> {
 
 impl<'a, Content: Format<'a> + ?Sized> Format<'a> for IndentIfGroupBreaks<'_, Content> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        f.write_element(FormatElement::Tag(Tag::StartIndentIfGroupBreaks(
-            self.group_id,
-        )));
+        f.write_tag_without_content(Tag::StartIndentIfGroupBreaks(self.group_id));
         self.content.fmt(f);
-        f.write_element(FormatElement::Tag(Tag::EndIndentIfGroupBreaks(
-            self.group_id,
-        )));
+        f.write_tag_without_content(Tag::EndIndentIfGroupBreaks(self.group_id));
     }
 }
 
@@ -621,9 +618,9 @@ impl<'a> Format<'a> for BestFitting<'_, 'a> {
         let mut formatted = smallvec::SmallVec::<[element::Interned; 4]>::new();
         for variant in self.variants {
             formatted.push(f.capture(&format_with(|f| {
-                f.write_element(FormatElement::Tag(Tag::StartEntry));
+                f.write_tag_without_content(Tag::StartEntry);
                 variant.fmt(f);
-                f.write_element(FormatElement::Tag(Tag::EndEntry));
+                f.write_tag_without_content(Tag::EndEntry);
             })));
         }
         let element = f.best_fitting_with(&formatted, self.fallback);
@@ -679,18 +676,18 @@ impl<'a> FillBuilder<'_, 'a> {
         if self.empty {
             self.empty = false;
         } else {
-            self.fmt.write_element(FormatElement::Tag(Tag::StartEntry));
+            self.fmt.write_tag_without_content(Tag::StartEntry);
             separator.fmt(self.fmt);
-            self.fmt.write_element(FormatElement::Tag(Tag::EndEntry));
+            self.fmt.write_tag_without_content(Tag::EndEntry);
         }
-        self.fmt.write_element(FormatElement::Tag(Tag::StartEntry));
+        self.fmt.write_tag_without_content(Tag::StartEntry);
         entry.fmt(self.fmt);
-        self.fmt.write_element(FormatElement::Tag(Tag::EndEntry));
+        self.fmt.write_tag_without_content(Tag::EndEntry);
         self
     }
 
     pub(crate) fn finish(&mut self) {
-        self.fmt.write_element(FormatElement::Tag(Tag::EndFill));
+        self.fmt.write_tag_without_content(Tag::EndFill);
     }
 }
 
@@ -715,7 +712,7 @@ impl<'a> Formatter<'a> {
     }
 
     pub(crate) fn fill<'fmt>(&'fmt mut self) -> FillBuilder<'fmt, 'a> {
-        self.write_element(FormatElement::Tag(Tag::StartFill));
+        self.write_tag_without_content(Tag::StartFill);
         FillBuilder {
             fmt: self,
             empty: true,

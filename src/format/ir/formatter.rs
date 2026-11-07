@@ -3,7 +3,7 @@
 use super::document::Tracker;
 use super::element::{
     BestFitting, Fallback, Flat, FlatFlags, FormatElement, Group, GroupId, GroupMode, Interned,
-    LabelId, LineMode, PrintMode, Skip, Tag, Text, TextWidth,
+    LabelId, LineMode, PrintMode, Skip, Tag, Text, TextWidth, Token,
 };
 use super::width::OddBlocks;
 use crate::js::comments::Comments;
@@ -86,6 +86,41 @@ impl<'a> Format<'a> for &'static str {
     #[inline(always)]
     fn as_token(&self) -> Option<&'static str> {
         Some(self)
+    }
+}
+
+/// A string literal among the arguments of `format_args!`: a keyword or punctuator.
+#[derive(Copy, Clone)]
+pub(crate) struct Literal {
+    text: &'static str,
+    /// [`Token::to_bits`]. `None` if `text` is too long for a token.
+    token: Option<u128>,
+}
+
+impl Literal {
+    pub(crate) const fn new(text: &'static str) -> Self {
+        Literal {
+            text,
+            token: match Token::new_const(text) {
+                Some(token) => Some(token.to_bits()),
+                None => None,
+            },
+        }
+    }
+}
+
+impl<'a> Format<'a> for Literal {
+    #[inline(always)]
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        match self.token {
+            Some(token) => f.write_token_of_bits(token),
+            None => f.write_long_token(self.text),
+        }
+    }
+
+    #[inline(always)]
+    fn as_token(&self) -> Option<&'static str> {
+        Some(self.text)
     }
 }
 
@@ -347,6 +382,14 @@ impl Storage {
                     {
                         return true;
                     }
+                    // A `literalline` in Prettier.
+                    FormatElement::SourceText(text) | FormatElement::OwnedText(text)
+                        if text.width.is_multiline()
+                            && !text.width.is_one_string()
+                            && !flavor.is_oxfmt() =>
+                    {
+                        return true;
+                    }
                     FormatElement::Interned(it) => rest.push(self.interned(*it)),
                     // oxfmt doesn't look into a `BestFitting`, and it has no `FlattestIfStable`.
                     FormatElement::BestFitting(it)
@@ -417,6 +460,16 @@ impl FormatElement {
     pub(crate) fn will_break(&self, f: &Formatter<'_>) -> bool {
         f.storage.will_break(std::slice::from_ref(self))
     }
+}
+
+/// The source text of `span`, which is as many columns wide as it has bytes.
+#[inline(always)]
+fn plain_source_text(span: Span) -> FormatElement {
+    FormatElement::SourceText(Text {
+        start: span.start,
+        len: span.len(),
+        width: TextWidth::single(span.len()),
+    })
 }
 
 /// A [`Formatter`]'s vectors, reused across files to keep their capacity.
@@ -643,18 +696,198 @@ impl<'a> Formatter<'a> {
 
     // ───────────────────────────── writing ─────────────────────────────
 
+    /// Writes any element. An element whose kind is known where it's written has a function below, which doesn't have
+    /// to find out what it is.
     #[inline(always)]
     pub(crate) fn write_element(&mut self, element: FormatElement) {
+        self.push(element);
+    }
+
+    #[inline(always)]
+    fn push(&mut self, element: FormatElement) {
         let index = self.storage.pool.len() as u32;
         self.storage.pool.push(element);
         self.tracker.note(element, index, &mut self.storage);
     }
 
+    /// Writes a keyword or punctuator that's only known at run time. A string literal in `write!` is a [`Literal`].
     #[inline(always)]
     pub(crate) fn write_token(&mut self, text: &'static str) {
-        match super::element::Token::new(text) {
-            Some(token) => self.write_element(FormatElement::Token(token)),
-            None => self.write_owned_text(text.as_bytes(), TextWidth::single(text.len() as u32)),
+        match Token::new(text) {
+            Some(token) => self.write_short_token(token),
+            None => self.write_long_token(text),
+        }
+    }
+
+    // The most frequent elements have functions of their own, which thousands of places inline. So they're short: what
+    // they usually do calls nothing, and the rest is in a second function, which isn't inlined.
+
+    #[inline(always)]
+    pub(crate) fn write_short_token(&mut self, token: Token) {
+        self.write_token_of_bits(token.to_bits());
+    }
+
+    /// `bits` is [`Token::to_bits`].
+    #[inline]
+    fn write_token_of_bits(&mut self, bits: u128) {
+        let token = Token::from_bits(bits);
+        self.write_text_element(
+            || FormatElement::Token(token),
+            token.len() as u32,
+            |f| f.write_first_token_of_bits(bits),
+        );
+    }
+
+    #[inline(never)]
+    fn write_first_token_of_bits(&mut self, bits: u128) {
+        let token = Token::from_bits(bits);
+        self.write_first_text_element(FormatElement::Token(token), token.len() as u32);
+    }
+
+    /// Writes the element that `make` returns, which is a text of `width` columns on one line. `write_first` does the
+    /// same with [`Formatter::write_first_text_element`]. It gets what the element is made of, in registers, so that
+    /// the element is only made where it's stored.
+    #[inline(always)]
+    fn write_text_element(
+        &mut self,
+        make: impl Fn() -> FormatElement,
+        width: u32,
+        write_first: impl Fn(&mut Self),
+    ) {
+        if self.tracker.waits_for_first_text() {
+            return write_first(self);
+        }
+        let index = self.storage.pool.len() as u32;
+        match self.storage.pool.push_within_capacity(make()) {
+            Ok(_) => self.tracker.text_after_first(width, index),
+            Err(_) => write_first(self),
+        }
+    }
+
+    /// Writes `element`, which is a text of `width` columns on one line and may be the first text in a group.
+    #[inline(always)]
+    fn write_first_text_element(&mut self, element: FormatElement, width: u32) {
+        let index = self.storage.pool.len() as u32;
+        self.storage.pool.push(element);
+        self.tracker.text(width, index);
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn write_long_token(&mut self, text: &'static str) {
+        self.write_owned_text(text.as_bytes(), TextWidth::single(text.len() as u32));
+    }
+
+    #[inline]
+    pub(crate) fn write_space(&mut self) {
+        let index = self.storage.pool.len() as u32;
+        match self.storage.pool.push_within_capacity(FormatElement::Space) {
+            Ok(_) => self.tracker.space(index),
+            Err(_) => self.write_element(FormatElement::Space),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn write_line_break(&mut self, mode: LineMode) {
+        self.write_element_with_line(|| FormatElement::Line(mode), mode);
+    }
+
+    /// Writes the element that `make` returns, which is or has a line break of `mode`.
+    #[inline(always)]
+    fn write_element_with_line(&mut self, make: impl Fn() -> FormatElement, mode: LineMode) {
+        let index = self.storage.pool.len() as u32;
+        match self.storage.pool.push_within_capacity(make()) {
+            Ok(_) => self.tracker.line(mode, index),
+            Err(_) => self.write_element(make()),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn start_group(&mut self, id: Option<GroupId>, mode: GroupMode) {
+        let make = || FormatElement::Tag(Tag::StartGroup(Group::new().with_id(id).with_mode(mode)));
+        let index = self.storage.pool.len() as u32;
+        match self.storage.pool.push_within_capacity(make()) {
+            Ok(_) => self.tracker.start_group(mode, index),
+            Err(_) => self.write_element(make()),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn end_group(&mut self) {
+        let index = self.storage.pool.len() as u32;
+        self.storage.pool.push(FormatElement::Tag(Tag::EndGroup));
+        self.tracker.end_group(index, &mut self.storage);
+    }
+
+    #[inline]
+    pub(crate) fn start_indent_with_line(&mut self, mode: LineMode) {
+        self.write_element_with_line(|| FormatElement::Tag(Tag::StartIndentWithLine(mode)), mode);
+    }
+
+    /// `mode` is the line break after the indented content, if there is one.
+    #[inline]
+    pub(crate) fn end_indent_with_line(&mut self, mode: Option<LineMode>) {
+        match mode {
+            Some(mode) => self
+                .write_element_with_line(|| FormatElement::Tag(Tag::EndIndentWithLine(mode)), mode),
+            None => self.write_tag_without_content(Tag::EndIndent),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn write_token_if_breaks(&mut self, token: Token) {
+        self.write_token_of_bits_if_breaks(token.to_bits());
+    }
+
+    /// `bits` is [`Token::to_bits`].
+    #[inline]
+    fn write_token_of_bits_if_breaks(&mut self, bits: u128) {
+        self.write_without_notes(|| FormatElement::TokenIfBreaks(Token::from_bits(bits)));
+    }
+
+    #[inline]
+    pub(crate) fn write_line_suffix_boundary(&mut self) {
+        self.push(FormatElement::LineSuffixBoundary);
+    }
+
+    #[inline]
+    pub(crate) fn write_indented_line_group(&mut self, id: GroupId) {
+        self.push(FormatElement::IndentedLineGroup(id));
+    }
+
+    #[inline]
+    pub(crate) fn write_interned(&mut self, interned: Interned) {
+        self.push(FormatElement::Interned(interned));
+    }
+
+    /// Writes a tag that only affects indentation, or nothing at all.
+    #[inline]
+    pub(crate) fn write_tag_without_content(&mut self, tag: Tag) {
+        debug_assert!(matches!(
+            tag,
+            Tag::StartIndent
+                | Tag::EndIndent
+                | Tag::StartAlign(_)
+                | Tag::EndAlign
+                | Tag::StartDedent(_)
+                | Tag::EndDedent(_)
+                | Tag::StartIndentIfGroupBreaks(_)
+                | Tag::EndIndentIfGroupBreaks(_)
+                | Tag::StartFill
+                | Tag::EndFill
+                | Tag::StartEntry
+                | Tag::EndEntry
+                | Tag::StartLabelled(_)
+                | Tag::EndLabelled
+        ));
+        self.write_without_notes(|| FormatElement::Tag(tag));
+    }
+
+    /// Writes the element that `make` returns, about which the tracker has nothing to note.
+    #[inline(always)]
+    fn write_without_notes(&mut self, make: impl Fn() -> FormatElement) {
+        if self.storage.pool.push_within_capacity(make()).is_err() {
+            self.write_element(make());
         }
     }
 
@@ -683,11 +916,17 @@ impl<'a> Formatter<'a> {
         if !self.is_plain_source(span) {
             return self.write_odd_source_token(span);
         }
-        self.write_element(FormatElement::SourceText(Text {
-            start: span.start,
-            len: span.len(),
-            width: TextWidth::single(span.len()),
-        }));
+        self.write_text_element(
+            || plain_source_text(span),
+            TextWidth::single(span.len()).value(),
+            |f| f.write_first_plain_source_token(span),
+        );
+    }
+
+    #[inline(never)]
+    fn write_first_plain_source_token(&mut self, span: Span) {
+        let width = TextWidth::single(span.len()).value();
+        self.write_first_text_element(plain_source_text(span), width);
     }
 
     #[inline(never)]
@@ -696,7 +935,7 @@ impl<'a> Formatter<'a> {
         if bun_core::strings::contains_char(text, b'\\') && self.write_name_without_escapes(text) {
             return;
         }
-        self.write_element(FormatElement::SourceText(Text {
+        self.push(FormatElement::SourceText(Text {
             start: span.start,
             len: span.len(),
             width: TextWidth::single(self.string_width(text)),
@@ -724,7 +963,7 @@ impl<'a> Formatter<'a> {
         let width = width.unwrap_or_else(|| self.text_width(text));
         let (source, part) = (self.source.as_ptr_range(), text.as_ptr_range());
         if source.start <= part.start && part.end <= source.end {
-            self.write_element(FormatElement::SourceText(Text {
+            self.push(FormatElement::SourceText(Text {
                 start: (part.start.addr() - source.start.addr()) as u32,
                 len: text.len() as u32,
                 width,
@@ -737,7 +976,7 @@ impl<'a> Formatter<'a> {
     fn write_owned_text(&mut self, text: &[u8], width: TextWidth) {
         let start = self.storage.text.len() as u32;
         self.storage.text.extend_from_slice(text);
-        self.write_element(FormatElement::OwnedText(Text {
+        self.push(FormatElement::OwnedText(Text {
             start,
             len: text.len() as u32,
             width,
@@ -751,12 +990,24 @@ impl<'a> Formatter<'a> {
         self.write_owned_text_from(start);
     }
 
+    /// Same, for a caller that only appends printable ASCII characters, so the width doesn't have to be measured.
+    pub(crate) fn write_built_printable_ascii(&mut self, build: impl FnOnce(&mut Vec<u8>)) {
+        let start = self.storage.text.len();
+        build(&mut self.storage.text);
+        let len = self.storage.text.len().saturating_sub(start) as u32;
+        self.push(FormatElement::OwnedText(Text {
+            start: start as u32,
+            len,
+            width: TextWidth::single(len),
+        }));
+    }
+
     /// Writes `storage.text[start..]` as one text.
     fn write_owned_text_from(&mut self, start: usize) {
         let text = self.storage.text.get(start..).unwrap_or_default();
         let width = self.text_width(text);
         let len = text.len() as u32;
-        self.write_element(FormatElement::OwnedText(Text {
+        self.push(FormatElement::OwnedText(Text {
             start: start as u32,
             len,
             width,
@@ -793,7 +1044,7 @@ impl<'a> Formatter<'a> {
 
     /// Starts content that isn't part of what's being written. Nothing gets moved. The content stays where it's
     /// written, after a [`FormatElement::Skip`] that tells readers of the pool to skip it.
-    #[inline]
+    #[inline(never)]
     pub(crate) fn start_capture(&mut self) -> usize {
         let slot = self.storage.pool.len();
         self.storage.pool.push(FormatElement::Skip(Skip::new(0)));
@@ -802,6 +1053,7 @@ impl<'a> Formatter<'a> {
     }
 
     /// Ends the capture that returned `slot`.
+    #[inline(never)]
     pub(crate) fn end_capture(&mut self, slot: usize) -> Interned {
         let len = self.storage.pool.len().saturating_sub(slot + 1) as u32;
         let (_, flat, will_break) = self.tracker.end_skipped().unwrap_or_default();
@@ -837,6 +1089,7 @@ impl<'a> Formatter<'a> {
     }
 
     /// Returns an element that represents everything written since `start_capture` returned `slot`.
+    #[inline(never)]
     fn end_intern(&mut self, slot: usize) -> Option<FormatElement> {
         if self.storage.pool.len() == slot + 2 {
             let only = self.storage.pool.pop();
@@ -900,14 +1153,20 @@ impl<'a> Formatter<'a> {
     /// spaces, content that's only printed when a group breaks is removed, and a `BestFitting` is replaced by its
     /// flattest variant.
     pub(crate) fn write_without_soft_lines(&mut self, content: &(impl Format<'a> + ?Sized)) {
-        let captured = self.capture(content);
+        let captured = self.capture_without_short_cuts(content);
         self.remove_soft_lines(captured, &mut Vec::new(), Variants::Flattest);
+    }
+
+    /// [`Formatter::capture`] for content that isn't printed where it's written, or not with its line breaks: what
+    /// starts a line in a group that's broken need not start one there.
+    fn capture_without_short_cuts(&mut self, content: &(impl Format<'a> + ?Sized)) -> Interned {
+        self.capture(&crate::js::flat::LongWay(content))
     }
 
     /// Prettier's `removeLines`. Same, but the printer still chooses among the variants and falls back to the most
     /// expanded one if none fits.
     pub(crate) fn write_with_lines_removed(&mut self, content: &(impl Format<'a> + ?Sized)) {
-        let captured = self.capture(content);
+        let captured = self.capture_without_short_cuts(content);
         self.remove_soft_lines(captured, &mut Vec::new(), Variants::All);
     }
 
@@ -1082,7 +1341,7 @@ impl<'a, F: Format<'a>> Format<'a> for Memoized<F> {
         match f.storage.interned(interned) {
             [] => {}
             &[one] => f.write_element(one),
-            _ => f.write_element(FormatElement::Interned(interned)),
+            _ => f.write_interned(interned),
         }
     }
 }
@@ -1102,7 +1361,7 @@ impl<'a, T: Format<'a>> MemoizeFormat<'a> for T {}
 impl Formatter<'_> {
     /// Reserves a slot for a start tag when the content, which is written first, decides whether the tag is needed and
     /// what it is. Pass the returned index to [`Formatter::group_from`]. The content starts at the next index.
-    #[inline]
+    #[inline(never)]
     pub(crate) fn reserve_tag(&mut self) -> usize {
         let reserved = self.storage.pool.len();
         self.storage.pool.push(FormatElement::Nop);
@@ -1111,6 +1370,7 @@ impl Formatter<'_> {
     }
 
     /// Turns everything written since `reserved` was reserved into a group.
+    #[inline(never)]
     pub(crate) fn group_from(&mut self, reserved: usize, should_expand: bool) {
         let mode = if should_expand {
             GroupMode::Expand
@@ -1120,7 +1380,7 @@ impl Formatter<'_> {
         if let Some(element @ FormatElement::Nop) = self.storage.pool.get_mut(reserved) {
             *element = FormatElement::Tag(Tag::StartGroup(Group::new().with_mode(mode)));
             self.tracker.use_reserved(reserved as u32, mode);
-            self.write_element(FormatElement::Tag(Tag::EndGroup));
+            self.end_group();
         }
     }
 }
@@ -1140,7 +1400,7 @@ impl<'a> Formatter<'a> {
     /// Prints `content` by itself, starting at column 0 with no indentation, and returns the text. For the rare case
     /// where layout depends on the printed text of a part.
     pub(crate) fn print_to_text(&mut self, content: &(impl Format<'a> + ?Sized)) -> Vec<u8> {
-        let document = self.capture(content);
+        let document = self.capture_without_short_cuts(content);
         self.print_document(document)
     }
 

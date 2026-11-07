@@ -56,9 +56,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     #[inline(always)]
-    pub(super) fn note_private_name(&mut self, dot: ExprId, name_pos: u32) {
+    pub(super) fn note_private_name(&mut self, dot: ExprId, obj: ExprId, name_pos: u32) {
         if self.lx.src.get(name_pos as usize) == Some(&b'#') {
             self.f.add_flags(dot, ExprFlags::PRIVATE_NAME);
+            if matches!(self.f.exprs.get(obj.idx()), Some(it) if matches!(it.kind, ExprKind::Super))
+            {
+                self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
+            }
         }
     }
 

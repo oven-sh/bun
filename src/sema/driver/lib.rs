@@ -53,6 +53,7 @@ use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
 use bun_sema::verify::verify_project_references;
 use bun_threading::Guarded;
+use bun_threading::thread_pool::spawn_detached_worker;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
@@ -79,12 +80,13 @@ type CachesOfThread = (
     bun_sema::bind::ThreadCaches,
 );
 
+thread_local! {
+    static HAS_ITS_SET: Cell<bool> = const { Cell::new(false) };
+}
+
 impl ThreadCaches {
     /// Lends the calling thread its set until the guard is dropped. A thread that has its set keeps it.
     pub fn lend(&self) -> impl Drop + '_ {
-        thread_local! {
-            static HAS_ITS_SET: Cell<bool> = const { Cell::new(false) };
-        }
         struct Lent<'a>(Option<&'a ThreadCaches>);
         impl Drop for Lent<'_> {
             fn drop(&mut self) {
@@ -657,6 +659,227 @@ impl JoinableRegion {
     }
 }
 
+/// What the thread that starts a region of [`StandingThreads`] does until the region is over.
+pub enum Meanwhile<'a> {
+    Waits,
+    /// It's one of the threads. For work that needs no more stack than it has.
+    Helps,
+    Does(&'a mut dyn FnMut()),
+}
+
+/// Threads that wait for one region after the other. A region that is scheduled on a pool starts on one thread, which
+/// wakes or starts the next, and so on: the last of thirty has its first run milliseconds after the first. These are
+/// started ahead of their first region, while the calling thread finds out what there is to do, and one call wakes all
+/// of them.
+///
+/// They have the stack of the dedicated pool's threads. They are never waited for: a thread that comes late finds
+/// nothing to do.
+///
+/// What one thread writes for another goes through `state`. `for_each` writes `region` and `wanted` and then opens
+/// `state` (`Release`). A thread joins by modifying `state` (`Acquire`), so it sees both, and leaves by modifying it again
+/// (`Release`), so `for_each`, which reads `state` until it counts nobody (`Acquire`), sees all that the thread has done.
+/// Every other access to `state` modifies the value that is there, which hands on what the writers before have
+/// published. `generation` only says when to look at `state` again. `called_up` and `started` are counts that nothing
+/// else depends on.
+pub struct StandingThreads {
+    /// What the threads are called, before their number.
+    name: &'static str,
+    /// Changes when there's a new region, and when the threads are dismissed.
+    generation: AtomicU32,
+    is_dismissed: AtomicBool,
+    /// Valid while `state` counts a thread: `for_each` returns when it counts none.
+    region: std::sync::atomic::AtomicPtr<Region<'static>>,
+    /// `StandingThreads::IS_CLOSED`, `StandingThreads::WAS_JOINED`, plus `StandingThreads::ONE_THREAD` for each thread
+    /// that is at work.
+    state: AtomicU32,
+    /// How many threads may be at work in the region.
+    wanted: AtomicU32,
+    /// How many threads there are to be.
+    called_up: AtomicUsize,
+    /// How many of them somebody has started, or is about to.
+    started: AtomicUsize,
+}
+
+thread_local! {
+    static IS_STANDING_THREAD: Cell<bool> = const { Cell::new(false) };
+}
+
+impl StandingThreads {
+    const IS_CLOSED: u32 = 1;
+    /// A thread has been at work in the region. Without it, threads that join, do everything and leave while the
+    /// calling thread is about to wait for the 0 it has seen would leave it a 0 to wait for, after their wake-up call.
+    const WAS_JOINED: u32 = 2;
+    const ONE_THREAD: u32 = 4;
+
+    pub fn new(name: &'static str) -> Arc<StandingThreads> {
+        Arc::new(StandingThreads {
+            name,
+            generation: AtomicU32::new(0),
+            is_dismissed: AtomicBool::new(false),
+            region: Default::default(),
+            state: AtomicU32::new(StandingThreads::IS_CLOSED),
+            wanted: AtomicU32::new(0),
+            called_up: AtomicUsize::new(0),
+            started: AtomicUsize::new(0),
+        })
+    }
+
+    /// Starts threads, unless there are `count` by now. Doesn't wait for them. As many may work in the region that is
+    /// under way, if there is one.
+    pub fn call_up(self: &Arc<StandingThreads>, count: usize) {
+        let wanted = u32::try_from(count).unwrap_or(u32::MAX);
+        if wanted > self.wanted.load(Ordering::Relaxed)
+            && self.wanted.fetch_max(wanted, Ordering::Relaxed) < wanted
+        {
+            // Those that were one too many for the region look again. `Release`: whoever sees this generation sees the
+            // new `wanted`.
+            self.generation.fetch_add(1, Ordering::Release);
+            bun_threading::Futex::wake(&self.generation, u32::MAX);
+        }
+        if count <= self.called_up.load(Ordering::Relaxed) {
+            return;
+        }
+        let count = count.min(region_pool().max_threads());
+        if self.called_up.fetch_max(count, Ordering::Relaxed) < count {
+            // It starts others, and each of those does the same.
+            self.starts_thread();
+        }
+    }
+
+    /// False if all have been started.
+    fn starts_thread(self: &Arc<StandingThreads>) -> bool {
+        // A thread sees what the one that started it had seen, so none of the chain takes `called_up` for less than it
+        // was when `call_up` started the first.
+        let count = self.called_up.load(Ordering::Relaxed);
+        let is_missing = |started: usize| (started < count).then_some(started + 1);
+        if (self.started)
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, is_missing)
+            .is_err()
+        {
+            return false;
+        }
+        let threads = Arc::clone(self);
+        let spawned = spawn_detached_worker(self.name, WORKER_STACK_SIZE, move || {
+            IS_STANDING_THREAD.set(true);
+            // It works for nobody else, so its caches stay with it. All threads enter and leave a region at the same
+            // time, and the lock of the caches would let them through one by one.
+            HAS_ITS_SET.set(true);
+            // Two each, so that it soon has time for what it was started for.
+            let _ = threads.starts_thread() && threads.starts_thread();
+            threads.serve();
+        });
+        if spawned.is_err() {
+            // The system has no more threads to give. Those that there are do the work.
+            let started = self.started.fetch_sub(1, Ordering::Relaxed) - 1;
+            self.called_up.fetch_min(started, Ordering::Relaxed);
+        }
+        spawned.is_ok()
+    }
+
+    fn serve(&self) {
+        let mut seen = 0;
+        while !self.is_dismissed.load(Ordering::Acquire) {
+            let generation = self.generation.load(Ordering::Acquire);
+            if generation == seen {
+                bun_threading::Futex::wait_forever(&self.generation, generation);
+                continue;
+            }
+            seen = generation;
+            // `state` is read with `Acquire` too: a thread can find it open before it sees the generation of the region,
+            // and it compares with `wanted` before it modifies `state`.
+            let joined = self
+                .state
+                .try_update(Ordering::Acquire, Ordering::Acquire, |state| {
+                    let is_open = state & StandingThreads::IS_CLOSED == 0;
+                    let wanted = self.wanted.load(Ordering::Relaxed);
+                    (is_open && state / StandingThreads::ONE_THREAD < wanted).then_some(
+                        (state + StandingThreads::ONE_THREAD) | StandingThreads::WAS_JOINED,
+                    )
+                });
+            if joined.is_err() {
+                continue;
+            }
+            // SAFETY: `state` counts this thread.
+            unsafe { (*self.region.load(Ordering::Relaxed)).work_off() };
+            let before = self
+                .state
+                .fetch_sub(StandingThreads::ONE_THREAD, Ordering::Release);
+            if before / StandingThreads::ONE_THREAD == 1 {
+                bun_threading::Futex::wake(&self.state, 1);
+            }
+        }
+    }
+
+    /// `for_each_parallel_in_runs` on at most `threads` threads: these, of which there are as many afterwards, and the
+    /// calling thread if it helps.
+    pub fn for_each(
+        self: &Arc<StandingThreads>,
+        caches: &ThreadCaches,
+        threads: usize,
+        count: usize,
+        run: usize,
+        work: &(dyn Fn(usize) + Sync),
+        meanwhile: Meanwhile<'_>,
+    ) {
+        // One of these threads can't wait for the others.
+        if count == 0 || runs_regions_inline() || IS_STANDING_THREAD.get() {
+            Region::new(caches, count, run, work).work_off_and_resume();
+            return match meanwhile {
+                Meanwhile::Does(something) => something(),
+                Meanwhile::Waits | Meanwhile::Helps => {}
+            };
+        }
+        let threads = threads.clamp(1, count.div_ceil(run));
+        let threads = threads - usize::from(matches!(meanwhile, Meanwhile::Helps));
+        let region = Region::new(caches, count, run, work);
+        let erased = std::ptr::from_ref(&region).cast::<Region<'static>>();
+        self.region.store(erased.cast_mut(), Ordering::Relaxed);
+        let wanted = u32::try_from(threads).unwrap_or(u32::MAX);
+        self.wanted.store(wanted, Ordering::Relaxed);
+        self.state.store(0, Ordering::Release);
+        self.generation.fetch_add(1, Ordering::Release);
+        bun_threading::Futex::wake(&self.generation, u32::MAX);
+        self.call_up(threads);
+        match meanwhile {
+            Meanwhile::Waits => {}
+            Meanwhile::Helps => region.work_off(),
+            Meanwhile::Does(something) => _ = region.panic.catch(something),
+        }
+        // Without a single thread, the pool is asked. If it can't start one either, it says what is wrong and ends the
+        // process: `exit_without_any_thread`. While there is no thread, this one alone writes `called_up`.
+        if threads > 0 && self.called_up.load(Ordering::Relaxed) == 0 {
+            region_pool().each((), |(), (), _| region.work_off(), &mut [()]);
+        }
+        // Every run is claimed by this thread, or by one that `state` counts until it has finished it.
+        loop {
+            let state = self.state.load(Ordering::Acquire);
+            if state / StandingThreads::ONE_THREAD == 0 && region.runs_left() == 0 {
+                break;
+            }
+            bun_threading::Futex::wait_forever(&self.state, state);
+        }
+        // One that joins now finds nothing to do, but looks at the region to find that out. The bit says nothing about
+        // anything else in memory.
+        self.state
+            .fetch_or(StandingThreads::IS_CLOSED, Ordering::Relaxed);
+        loop {
+            let state = self.state.load(Ordering::Acquire);
+            if state / StandingThreads::ONE_THREAD == 0 {
+                break;
+            }
+            bun_threading::Futex::wait_forever(&self.state, state);
+        }
+        region.panic.resume();
+    }
+
+    /// The threads end.
+    pub fn dismiss(&self) {
+        self.is_dismissed.store(true, Ordering::Release);
+        self.generation.fetch_add(1, Ordering::Release);
+        bun_threading::Futex::wake(&self.generation, u32::MAX);
+    }
+}
+
 impl<'a> Region<'a> {
     fn new(
         caches: &'a ThreadCaches,
@@ -742,6 +965,11 @@ impl<'a> Region<'a> {
     fn work_off(&self) {
         let _lent = self.caches.lend();
         while self.works_on_next_run() {}
+    }
+
+    fn work_off_and_resume(&self) {
+        self.work_off();
+        self.panic.resume();
     }
 
     /// False: no run is left.

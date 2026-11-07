@@ -5,6 +5,7 @@ use super::string::{
     FormatLiteralStringToken, StringLiteralParentKind, is_canonical_simple_number,
     is_name_without_quotes, is_simple_number,
 };
+use super::suppressed::FormatSuppressedNode;
 use super::tailwindcss::{
     context_of_string, has_white_space, sorted_string_literal, sorted_template_text,
 };
@@ -66,13 +67,15 @@ fn write_key<'a>(key: Key<'a>, parent: KeyParent<'a>, f: &mut Formatter<'a>) -> 
     // `prettier-ignore` comment applies to `0XAB` and `'a-b'`, and not to the `'a'` that is printed as `a`.
     let source = f.source_text().text_for(&span);
     let has_quotes = |text: &[u8]| matches!(text.first(), Some(b'"' | b'\''));
-    if !f.is_quiet()
+    let is_ignored = !f.is_quiet()
         && has_quotes(source) == has_quotes(&printed)
-        && f.comments().of_name(span.start).is_ignored
-    {
+        && f.comments().of_name(span.start).is_ignored;
+    if is_ignored {
         printed = Cow::Borrowed(source);
     }
     format_name(span, f, |f| match &printed {
+        // One string for Prettier, whatever is in it.
+        _ if is_ignored => write!(f, FormatSuppressedNode(span)),
         Cow::Borrowed(_) if is_name => write!(f, source_text(span)),
         _ => write!(f, text(&printed)),
     });
@@ -119,7 +122,7 @@ fn with_normalized_newlines(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
 }
 
 /// The printed form of `key`, which is at `span` and isn't an expression in brackets.
-fn printed_key<'a>(
+pub(crate) fn printed_key<'a>(
     key: Key<'a>,
     span: Span,
     parent: AstNodes<'a>,

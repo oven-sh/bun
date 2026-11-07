@@ -11,6 +11,8 @@
 #![forbid(unsafe_code)]
 // For code that only `--debug-check` runs: `#[optimize(size)]` roughly halves its size, and its speed doesn't matter.
 #![feature(optimize_attribute)]
+// For the functions that write the elements of a document, which are inlined: growing the vector is not in them.
+#![feature(vec_push_within_capacity)]
 
 pub mod css;
 pub mod cursor;
@@ -33,6 +35,7 @@ pub mod tailwind;
 mod text;
 pub mod toml;
 pub mod verify;
+pub mod whole_texts;
 pub mod yaml;
 
 /// Helpers for callers that handle Flow files.
@@ -40,6 +43,11 @@ pub mod flow {
     pub use crate::js::print::flow::{
         is_parsed_by_babel_flow, may_have_comment_types, uncommented,
     };
+}
+
+/// The quick way for JavaScript and TypeScript, which is tried before a file is parsed.
+pub mod quick {
+    pub use crate::js::quick::{Code, Count, Counts, Reason, Refused, Scratch, format};
 }
 
 /// Import sorting.

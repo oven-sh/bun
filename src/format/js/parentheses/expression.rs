@@ -3,7 +3,9 @@
 use crate::js::ast_nodes::ExpressionStatement;
 use crate::js::print::binary_like_expression::{is_angular_pipe, should_flatten};
 use crate::js::print::return_or_throw_statement::has_argument_leading_comments;
-use crate::js::utils::typecast::{has_comments, has_comments_that_count, is_cast_target};
+use crate::js::utils::typecast::{
+    has_comments, has_comments_that_count, is_cast_target, is_cast_target_that_hides_its_kind,
+};
 use crate::prelude::*;
 use AstNodes as N;
 
@@ -86,7 +88,7 @@ pub(crate) fn source_text_needs_its_parentheses<'a>(e: Expr<'a>, f: &Formatter<'
         }
         if match next.kind() {
             ExprKind::Ident(_) => needs_parentheses(next, f),
-            _ => would_start_statement(next, e),
+            _ => would_start_statement(next, e, f),
         } {
             return true;
         }
@@ -157,7 +159,7 @@ fn start_of_token_after<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<u8> {
 
 /// True if `first`, which the text of `e` starts with, would be parsed as the start of a block, a function declaration
 /// or a class declaration if `e` had no parentheses.
-fn would_start_statement<'a>(first: Expr<'a>, e: Expr<'a>) -> bool {
+fn would_start_statement<'a>(first: Expr<'a>, e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let (is_object, is_declaration) = match first.kind() {
         ExprKind::Object(_) => (true, false),
         ExprKind::Fn(func) => (false, !func.is_arrow()),
@@ -167,7 +169,7 @@ fn would_start_statement<'a>(first: Expr<'a>, e: Expr<'a>) -> bool {
     if !is_object && !is_declaration {
         return false;
     }
-    let (outermost, container) = left_edge_end(e, e.as_ast_nodes());
+    let (outermost, container) = left_edge_end(e, e.as_ast_nodes(), f);
     let is_sequence = outermost.binary_op() == Some(BinOp::Comma);
     match container {
         // A sequence gets parentheses there anyway.
@@ -363,7 +365,7 @@ fn needs_parentheses_in_position<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let parent = e.ast_parent();
 
     let starts_statement = match kind {
-        ExprKind::Object(_) => match left_edge_end(e, e.as_chain_element()) {
+        ExprKind::Object(_) => match left_edge_end(e, e.as_chain_element(), f) {
             (_, N::ExpressionStatement(ExpressionStatement::Stmt(_))) => true,
             // A sequence and an assignment get parentheses there anyway.
             (body, N::ExpressionStatement(ExpressionStatement::ArrowBody(_))) => !matches!(
@@ -379,7 +381,7 @@ fn needs_parentheses_in_position<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         ExprKind::Fn(func) if func.is_arrow() => false,
         ExprKind::Fn(_) | ExprKind::Class(_) => {
             matches!(
-                left_edge_end(e, e.as_chain_element()).1,
+                left_edge_end(e, e.as_chain_element(), f).1,
                 N::ExpressionStatement(ExpressionStatement::Stmt(_))
             )
         }
@@ -521,7 +523,7 @@ fn needs_parentheses_in_position<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         | ExprKind::ImportCall { .. } => {
             matches!(parent, N::NewExpression(_))
                 && parent.is_call_like_callee(e)
-                && has_call_on_left_edge(e)
+                && has_call_on_left_edge(e, f)
         }
         ExprKind::Instantiation { .. } => is_member_object(e, parent),
         ExprKind::Jsx(_) => jsx_needs_parentheses(e, parent, f),
@@ -587,6 +589,10 @@ fn should_wrap_function_for_export_default<'a>(declaration: Expr<'a>, f: &Format
     let mut current = declaration;
     loop {
         let is_declaration = current == declaration;
+        // `export default /** @type {A} */ (class {}).b` starts with a `ParenthesizedExpression`.
+        if !is_declaration && is_cast_target_that_hides_its_kind(current, f) {
+            return false;
+        }
         let is_function_or_class = match current.kind() {
             ExprKind::Fn(func) => !func.is_arrow(),
             ExprKind::Class(_) => true,
@@ -627,10 +633,18 @@ fn should_wrap_function_for_export_default<'a>(declaration: Expr<'a>, f: &Format
 }
 
 /// Prettier's `startsWithNoLookaheadToken`, bottom-up. Walks up from `e`, which is `node`, for as long as each
-/// expression is what its parent starts with. Returns the last expression reached and its parent.
-pub(crate) fn left_edge_end<'a>(e: Expr<'a>, node: AstNodes<'a>) -> (Expr<'a>, AstNodes<'a>) {
+/// expression is what its parent starts with. Returns the last expression reached and its parent. What is in the
+/// parentheses of a type cast is the last one for Prettier, and comes with its own node: there is none for its parent.
+pub(crate) fn left_edge_end<'a>(
+    e: Expr<'a>,
+    node: AstNodes<'a>,
+    f: &Formatter<'a>,
+) -> (Expr<'a>, AstNodes<'a>) {
     let (mut current, mut node) = (e, node);
     loop {
+        if is_cast_target_that_hides_its_kind(current, f) {
+            return (current, node);
+        }
         let parent = node.parent();
         let is = |child: Option<Expr<'a>>| child == Some(current);
         // An IIFE already has parentheses.
@@ -667,22 +681,37 @@ pub(crate) fn left_edge_end<'a>(e: Expr<'a>, node: AstNodes<'a>) -> (Expr<'a>, A
     }
 }
 
+/// False only if [`is_name_that_may_need_parentheses`] is false for every name of `len` bytes that starts with `first`.
 #[inline]
-fn is_name_that_may_need_parentheses(name: &[u8]) -> bool {
-    matches!(
-        name,
-        b"async"
-            | b"let"
-            | b"await"
-            | b"interface"
-            | b"module"
-            | b"using"
-            | b"yield"
-            | b"component"
-            | b"hook"
-            | b"type"
-    )
+pub(crate) fn starts_like_name_that_may_need_parentheses(len: u32, first: Option<u8>) -> bool {
+    match (FIRST_LETTERS.get(len as usize), first) {
+        (Some(letters), Some(first @ b'a'..=b'z')) => letters >> (first - b'a') & 1 != 0,
+        _ => false,
+    }
 }
+
+macro_rules! names_that_may_need_parentheses {
+    ($($name:literal)*) => {
+        #[inline]
+        pub(crate) fn is_name_that_may_need_parentheses(name: &[u8]) -> bool {
+            matches!(name, $($name)|*)
+        }
+
+        /// The first letters of the names, by their length. `format_expression` relies on 3 to 9 bytes.
+        const FIRST_LETTERS: [u32; 10] = {
+            let mut letters = [0; 10];
+            $(
+                assert!($name.len() >= 3);
+                letters[$name.len()] |= 1 << ($name[0] - b'a');
+            )*
+            letters
+        };
+    };
+}
+
+names_that_may_need_parentheses!(
+    b"async" b"let" b"await" b"interface" b"module" b"using" b"yield" b"component" b"hook" b"type"
+);
 
 /// Prettier's `shouldAddParenthesesToIdentifier`.
 fn identifier_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
@@ -707,7 +736,7 @@ fn identifier_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     }
 
     if name == b"let" {
-        let (top, end) = left_edge_end(e, N::IdentifierReference(e));
+        let (top, end) = left_edge_end(e, N::IdentifierReference(e), f);
         match end {
             // `for ((let) of []);`, `for ((let).a of []);`, `for ((let).a in []);`
             N::ForOfStatement(statement) | N::ForInStatement(statement)
@@ -784,6 +813,7 @@ fn assignment_needs_parentheses<'a>(
         // `for (a = 1, b = 2; ; a++, b++)`
         N::SequenceExpression(sequence) => {
             !matches!(parent.parent(), N::ForStatement(statement) if is_init_or_update(statement, sequence))
+                || is_cast_target_that_hides_its_kind(sequence, f)
         }
         // The statement prints parentheses around a comment and what follows it.
         N::ReturnStatement(_) | N::ThrowStatement(_) => !has_argument_leading_comments(e, f),
@@ -858,15 +888,24 @@ fn binary_or_cast_needs_parentheses<'a>(
             false => is_binary_cast || is_parent_bitwise,
         };
     };
-    let precedence = operator.precedence();
+    operand_needs_parentheses(parent_operator, operator, right == e)
+}
 
+/// True if `a operator b` needs parentheses as an operand of `parent_operator`. They aren't both logical operators.
+pub(crate) fn operand_needs_parentheses(
+    parent_operator: BinOp,
+    operator: BinOp,
+    is_right: bool,
+) -> bool {
+    let (parent_precedence, precedence) = (parent_operator.precedence(), operator.precedence());
     parent_precedence > precedence
         // `a ** (b ** c)`
-        || (parent_precedence == precedence && (right == e || !should_flatten(parent_operator, operator)))
+        || (parent_precedence == precedence && (is_right || !should_flatten(parent_operator, operator)))
         // `(a % 4) + 4`
         || (parent_precedence < precedence && operator.is_remainder() && parent_precedence.is_additive())
         // `(a * 3) >> 5`
-        || is_parent_bitwise
+        || parent_precedence.is_bitwise()
+        || parent_precedence.is_shift()
 }
 
 /// For Prettier's `NGPipeExpression`. A pipe that's an argument of another pipe gets its parentheses from that pipe.
@@ -972,11 +1011,13 @@ fn is_member_object<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool {
 }
 
 /// True if there's a call down the left edge of `e`: `new (a().b)()`.
-fn has_call_on_left_edge(e: Expr<'_>) -> bool {
+fn has_call_on_left_edge<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let mut current = e;
     loop {
-        // The content of a `ChainExpression` is parenthesized.
-        if current != e && current.is_chain_root() {
+        // The content of a `ChainExpression` is parenthesized, and so is that of a type cast.
+        if current != e
+            && (current.is_chain_root() || is_cast_target_that_hides_its_kind(current, f))
+        {
             return false;
         }
         current = match current.kind() {

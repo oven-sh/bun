@@ -31,6 +31,8 @@ extern "C" size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, 
 extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" void highway_scanner_run_stops(const uint8_t* text, size_t text_len, uint8_t* out, size_t plane_len);
+extern "C" void highway_yaml_marks(const uint8_t* text, size_t text_len, uint8_t* out, size_t plane_len);
+extern "C" void highway_html_marks(const uint8_t* text, size_t text_len, uint8_t* out, size_t plane_len);
 extern "C" void highway_odd_blocks(const uint8_t* text, size_t text_len, uint64_t* out);
 
 namespace Bun {
@@ -42,6 +44,7 @@ namespace Bun {
 // `haystack.length` meaning "not found" for the index_of family), a count, or
 // for memmem/memrmem the match offset with -1 for "not found". scannerRunStops
 // writes its three bitmaps into `arg`, a third of the view each, and returns 0.
+// yamlMarks does the same with its four bitmaps, htmlMarks with its seven.
 // lineStarts writes uint32 offsets into `arg` and returns how many.
 // oddBlocks writes its uint64 words into `arg` and returns 0.
 // The kernels that look for slashes ignore `arg`. commonPrefixLength compares `haystack` with `arg`.
@@ -127,6 +130,22 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * g
             return {};
         }
         highway_scanner_run_stops(haystack, len, const_cast<uint8_t*>(needle), plane_len);
+        result = 0;
+    } else if (op == "yamlMarks"_s) {
+        size_t plane_len = needle_len / 4;
+        if (plane_len < (len + 63) / 64 * 8) {
+            throwRangeError(globalObject, scope, "each bitmap needs 8 bytes per 64 bytes of text"_s);
+            return {};
+        }
+        highway_yaml_marks(haystack, len, const_cast<uint8_t*>(needle), plane_len);
+        result = 0;
+    } else if (op == "htmlMarks"_s) {
+        size_t plane_len = needle_len / 7;
+        if (plane_len < (len + 63) / 64 * 8) {
+            throwRangeError(globalObject, scope, "each bitmap needs 8 bytes per 64 bytes of text"_s);
+            return {};
+        }
+        highway_html_marks(haystack, len, const_cast<uint8_t*>(needle), plane_len);
         result = 0;
     } else if (op == "lineStarts"_s) {
         if (reinterpret_cast<uintptr_t>(needle) % alignof(uint32_t) || needle_len / sizeof(uint32_t) < highway_count_char(haystack, len, '\n')) {

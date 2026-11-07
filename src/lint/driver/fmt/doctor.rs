@@ -10,7 +10,6 @@ use crate::print_config::{object, text, write_indented};
 use crate::run::{Fatal, Pool};
 use bstr::BStr;
 use bun_lint::options::Json;
-use bun_threading::Guarded;
 use std::io::Write;
 
 macro_rules! pretty {
@@ -109,15 +108,19 @@ pub(super) fn report(
     (files.others.iter()).for_each(|it| not_formatted.add_ending(it.0, it.1));
 
     // Resolving each file's options is what fills in `unsupported_options`.
-    let mut failure = Guarded::new(None);
-    pool.for_each(files.formatted.len(), 16, &|at| {
+    let resolved = pool.map(files.formatted.len(), 20_000, &|at| {
         let target = files.formatted[at].1;
-        if let Err(error) = configs.options_for(&target.scope, &target.path) {
-            failure.lock().get_or_insert(error);
-        }
+        let mut failure = None;
+        let remarks = Configs::keeping_back(|| {
+            failure = configs.options_for(&target.scope, &target.path).err();
+        });
+        (remarks, failure)
     });
-    if let Some(error) = failure.get_mut().take() {
-        return Err(error);
+    for (remarks, failure) in resolved {
+        configs.pass_on(&remarks);
+        if let Some(error) = failure {
+            return Err(error);
+        }
     }
     let options = sorted(std::mem::take(&mut *configs.unsupported_options.lock()));
     let mut notes = std::mem::take(&mut *configs.warnings.lock());

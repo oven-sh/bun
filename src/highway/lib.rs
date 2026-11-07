@@ -59,6 +59,10 @@ unsafe extern "C" {
 
     fn highway_scanner_run_stops(text: *const u8, text_len: usize, out: *mut u8, plane_len: usize);
 
+    fn highway_yaml_marks(text: *const u8, text_len: usize, out: *mut u8, plane_len: usize);
+
+    fn highway_html_marks(text: *const u8, text_len: usize, out: *mut u8, plane_len: usize);
+
     fn highway_odd_blocks(text: *const u8, text_len: usize, out: *mut u64);
 
     fn highway_index_of_newline_or_non_ascii(haystack: *const u8, haystack_len: usize) -> usize;
@@ -614,10 +618,16 @@ impl ScannerStopsBuffer {
 #[derive(Copy, Clone)]
 pub struct Stops<'a>(&'a [u8]);
 
-impl Stops<'_> {
+impl<'a> Stops<'a> {
+    /// All the bits, eight to a byte. At least 8 bytes are past the end of the text.
+    #[inline(always)]
+    pub fn bytes(self) -> &'a [u8] {
+        self.0
+    }
+
     /// The bits from `pos` on. The upper 7 may be zeros that were shifted in.
     #[inline(always)]
-    fn window(self, pos: usize) -> u64 {
+    pub fn window(self, pos: usize) -> u64 {
         let at = pos >> 3;
         match self.0.get(at..at + 8) {
             Some(bits) => u64::from_le_bytes(bits.try_into().unwrap_or_default()) >> (pos & 7),
@@ -641,6 +651,121 @@ impl Stops<'_> {
                 return pos + window.trailing_zeros() as usize;
             }
             pos += 56;
+        }
+    }
+}
+
+/// Buffer for [`YamlMarks`]. Keep one per thread so the allocation is reused from text to text.
+#[derive(Default)]
+pub struct YamlMarksBuffer {
+    /// As long as the longest text so far needs.
+    planes: Vec<u8>,
+}
+
+/// What the lines of YAML are told apart by, with one bit per byte of a text. One kernel call finds them for the whole
+/// text. A position up to the length of the text can be asked about.
+#[derive(Copy, Clone)]
+pub struct YamlMarks<'a> {
+    /// Control characters. Everything past the end of the text counts as one.
+    pub control: Stops<'a>,
+    pub spaces: Stops<'a>,
+    /// `:` and `#`.
+    pub indicators: Stops<'a>,
+    /// `"`, `'` and `\`.
+    pub quotes: Stops<'a>,
+}
+
+impl YamlMarksBuffer {
+    pub fn find(&mut self, text: &[u8]) -> YamlMarks<'_> {
+        // 8 bytes more than the kernel writes, so that `Stops::window` can load a whole word at any position.
+        let plane_len = text.len().div_ceil(64) * 8 + 8;
+        if self.planes.len() < 4 * plane_len {
+            self.planes.resize(4 * plane_len, 0);
+        }
+        let planes = &mut self.planes[..4 * plane_len];
+        for (index, plane) in planes.chunks_exact_mut(plane_len).enumerate() {
+            plane[plane_len - 8..].fill(if index == 0 { 0xFF } else { 0 });
+        }
+        // SAFETY: `text` is readable, and the kernel writes `plane_len - 8` bytes to each of the four planes.
+        unsafe { highway_yaml_marks(text.as_ptr(), text.len(), planes.as_mut_ptr(), plane_len) };
+        let (control, rest) = planes.split_at(plane_len);
+        let (spaces, rest) = rest.split_at(plane_len);
+        let (indicators, quotes) = rest.split_at(plane_len);
+        YamlMarks {
+            control: Stops(control),
+            spaces: Stops(spaces),
+            indicators: Stops(indicators),
+            quotes: Stops(quotes),
+        }
+    }
+}
+
+/// Buffer for [`HtmlMarks`]. Keep one per thread so the allocation is reused from text to text.
+#[derive(Default)]
+pub struct HtmlMarksBuffer {
+    /// As long as the longest text so far needs.
+    planes: Vec<u8>,
+    /// Of the text that was looked at last.
+    plane_len: usize,
+}
+
+/// What the lines of HTML are told apart by, with one bit per byte of a text. One kernel call finds them for the whole
+/// text. A position up to 64 bytes past the end of the text can be asked about. What is there counts as NUL.
+#[derive(Copy, Clone)]
+pub struct HtmlMarks<'a> {
+    /// Anything but a printable character of ASCII and a line feed, `&` and `\`.
+    pub odd: Stops<'a>,
+    /// Spaces, tabs and line feeds.
+    pub blanks: Stops<'a>,
+    pub line_feeds: Stops<'a>,
+    /// `<`
+    pub tags: Stops<'a>,
+    /// `"`
+    pub quotes: Stops<'a>,
+    /// `{`
+    pub braces: Stops<'a>,
+    /// Anything but `a` to `z`, `0` to `9` and `-`.
+    pub after_name: Stops<'a>,
+}
+
+impl HtmlMarksBuffer {
+    const PLANES: usize = 7;
+
+    pub fn find(&mut self, text: &[u8]) -> HtmlMarks<'_> {
+        // 16 bytes more than the kernel writes, so that `Stops::window` can load a whole word past the end.
+        let plane_len = text.len().div_ceil(64) * 8 + 16;
+        if self.planes.len() < Self::PLANES * plane_len {
+            self.planes.resize(Self::PLANES * plane_len, 0);
+        }
+        self.plane_len = plane_len;
+        let planes = &mut self.planes[..Self::PLANES * plane_len];
+        for (index, plane) in planes.chunks_exact_mut(plane_len).enumerate() {
+            plane[plane_len - 16..].fill(if matches!(index, 0 | 6) { 0xFF } else { 0 });
+        }
+        // SAFETY: `text` is readable, and the kernel writes `plane_len - 16` bytes to each of the seven planes.
+        unsafe { highway_html_marks(text.as_ptr(), text.len(), planes.as_mut_ptr(), plane_len) };
+        self.found()
+    }
+
+    /// The marks of the text that [`HtmlMarksBuffer::find`] was called with last.
+    #[inline]
+    pub fn found(&self) -> HtmlMarks<'_> {
+        let plane = |index: usize| {
+            let start = index * self.plane_len;
+            Stops(
+                self.planes
+                    .get(start..start + self.plane_len)
+                    .unwrap_or_default(),
+            )
+        };
+        HtmlMarks {
+            odd: plane(0),
+            blanks: plane(1),
+            line_feeds: plane(2),
+            tags: plane(3),
+            quotes: plane(4),
+            braces: plane(5),
+            after_name: plane(6),
         }
     }
 }

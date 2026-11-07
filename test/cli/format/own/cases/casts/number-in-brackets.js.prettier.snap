@@ -1,0 +1,14 @@
+------------------
+{ printWidth: 80 }
+------------------
+someRatherLongVariableNameForTheObject.someRatherLongPropertyName
+  .anotherRatherLongPropertyName[/** @type {T} */ (1234567890)];
+
+-------------------
+{ printWidth: 100 }
+-------------------
+someRatherLongVariableNameForTheObject.someRatherLongPropertyName.anotherRatherLongPropertyName[
+  /** @type {T} */ (1234567890)
+];
+
+===================== End =====================

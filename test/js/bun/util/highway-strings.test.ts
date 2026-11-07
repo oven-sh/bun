@@ -556,6 +556,104 @@ describe("scannerRunStops", () => {
   });
 });
 
+describe("yamlMarks", () => {
+  // One per bitmap, in the kernel's order.
+  const MARKS = [
+    (b: number) => b < 0x20,
+    (b: number) => b === 0x20,
+    (b: number) => b === 0x3a || b === 0x23,
+    (b: number) => b === 0x22 || b === 0x27 || b === 0x5c,
+  ];
+
+  function compareMarks(text: Uint8Array, at: string) {
+    const planeLen = Math.ceil(text.length / 64) * 8;
+    const expected = new Uint8Array(planeLen * 4);
+    MARKS.forEach((isMark, plane) => {
+      for (let i = 0; i < planeLen * 8; i++) {
+        // What is past the end of the text counts as NUL.
+        if (isMark(i < text.length ? text[i] : 0)) expected[plane * planeLen + (i >> 3)] |= 1 << (i & 7);
+      }
+    });
+    const out = new Uint8Array(planeLen * 4).fill(0xaa);
+    compare("yamlMarks", hw("yamlMarks", text, out), 0, at);
+    compare("yamlMarks", out.toHex(), expected.toHex(), at);
+  }
+
+  it("classifies every byte value in every lane", () => {
+    for (let shift = 0; shift < 64; shift++) {
+      compareMarks(
+        Uint8Array.from({ length: 256 + shift }, (_, i) => (i + 256 - shift) & 0xff),
+        `shift=${shift}`,
+      );
+    }
+  });
+
+  it("every length and alignment", () => {
+    for (const len of LENGTHS) {
+      for (const off of OFFSETS) {
+        for (const byte of [0x61, 0x20, 0x3a, 0x23, 0x22, 0x0a, 0x00, 0xff]) {
+          compareMarks(new Uint8Array(len + off).fill(byte).subarray(off), `len=${len} off=${off} byte=${byte}`);
+        }
+      }
+    }
+  });
+
+  it("rejects a buffer that is too small", () => {
+    expect(() => hw("yamlMarks", new Uint8Array(65), new Uint8Array(4 * 8))).toThrow(RangeError);
+  });
+});
+
+describe("htmlMarks", () => {
+  const isPrintable = (b: number) => b >= 0x20 && b <= 0x7e;
+  // One per bitmap, in the kernel's order.
+  const MARKS = [
+    (b: number) => (!isPrintable(b) && b !== 0x0a) || b === 0x26 || b === 0x5c,
+    (b: number) => b === 0x20 || b === 0x09 || b === 0x0a,
+    (b: number) => b === 0x0a,
+    (b: number) => b === 0x3c,
+    (b: number) => b === 0x22,
+    (b: number) => b === 0x7b,
+    (b: number) => !((b >= 0x61 && b <= 0x7a) || (b >= 0x30 && b <= 0x39) || b === 0x2d),
+  ];
+
+  function compareMarks(text: Uint8Array, at: string) {
+    const planeLen = Math.ceil(text.length / 64) * 8;
+    const expected = new Uint8Array(planeLen * MARKS.length);
+    MARKS.forEach((isMark, plane) => {
+      for (let i = 0; i < planeLen * 8; i++) {
+        // What is past the end of the text counts as NUL.
+        if (isMark(i < text.length ? text[i] : 0)) expected[plane * planeLen + (i >> 3)] |= 1 << (i & 7);
+      }
+    });
+    const out = new Uint8Array(planeLen * MARKS.length).fill(0xaa);
+    compare("htmlMarks", hw("htmlMarks", text, out), 0, at);
+    compare("htmlMarks", out.toHex(), expected.toHex(), at);
+  }
+
+  it("classifies every byte value in every lane", () => {
+    for (let shift = 0; shift < 64; shift++) {
+      compareMarks(
+        Uint8Array.from({ length: 256 + shift }, (_, i) => (i + 256 - shift) & 0xff),
+        `shift=${shift}`,
+      );
+    }
+  });
+
+  it("every length and alignment", () => {
+    for (const len of LENGTHS) {
+      for (const off of OFFSETS) {
+        for (const byte of [0x61, 0x20, 0x3c, 0x22, 0x7b, 0x0a, 0x00, 0xff]) {
+          compareMarks(new Uint8Array(len + off).fill(byte).subarray(off), `len=${len} off=${off} byte=${byte}`);
+        }
+      }
+    }
+  });
+
+  it("rejects a buffer that is too small", () => {
+    expect(() => hw("htmlMarks", new Uint8Array(65), new Uint8Array(7 * 8))).toThrow(RangeError);
+  });
+});
+
 describe("lineStarts", () => {
   function compareLineStarts(text: Uint8Array, at: string) {
     const expected: number[] = [];

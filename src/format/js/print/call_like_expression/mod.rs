@@ -11,7 +11,9 @@ use crate::js::utils::call_expression::{
 };
 use crate::js::utils::member_chain::write_member_chain;
 use crate::js::utils::tailwindcss::{InTailwindContext, TailwindContext, context_of_function};
-use crate::js::utils::typecast::{comments_of_outermost_node, has_comments, is_cast_target};
+use crate::js::utils::typecast::{
+    comments_of_outermost_node, has_comments, is_cast_target, is_cast_target_that_hides_its_kind,
+};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -83,7 +85,11 @@ pub(crate) fn is_printed_as_member_chain<'a>(
     is_link_of_member_chain(call.callee(), f) && !keeps_arguments_on_one_line(e, call, f)
 }
 
-fn keeps_arguments_on_one_line<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a>) -> bool {
+pub(crate) fn keeps_arguments_on_one_line<'a>(
+    e: Expr<'a>,
+    call: Call<'a>,
+    f: &Formatter<'a>,
+) -> bool {
     // Each check below requires one of a few callee names, or a string or template as the first argument.
     let Some(first) = call.args().first() else {
         return false;
@@ -109,6 +115,16 @@ fn keeps_arguments_on_one_line<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a
     {
         return false;
     }
+    keeps_arguments_of_likely_call_on_one_line(e, call, f)
+}
+
+/// Not inlined, so that the check that every call makes stays small.
+#[inline(never)]
+fn keeps_arguments_of_likely_call_on_one_line<'a>(
+    e: Expr<'a>,
+    call: Call<'a>,
+    f: &Formatter<'a>,
+) -> bool {
     is_template_on_its_own_line_only_argument(call.args(), f)
         || is_simple_module_import(call, f)
         || is_commonjs_or_amd_module_definition(e, call, f)
@@ -176,11 +192,31 @@ impl<'a> Format<'a> for FormatArgumentsOnOneLine<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         write!(f, "(");
         f.join_with(space()).entries_with_trailing_separator(
-            self.0.iter(),
+            self.0.iter().map(FormatArgumentOnOneLine),
             ",",
             TrailingSeparator::Omit,
         );
         write!(f, ")");
+    }
+}
+
+struct FormatArgumentOnOneLine<'a>(Expr<'a>);
+
+impl Spanned for FormatArgumentOnOneLine<'_> {
+    fn span(&self) -> Span {
+        self.0.span()
+    }
+}
+
+impl<'a> Format<'a> for FormatArgumentOnOneLine<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        // An arrow function is a group for Prettier, so the line breaks of its body are printed in a group that breaks.
+        // Printed in flat mode, as in a chain of calls on one line, they would have what follows measured again:
+        // `a = b.c(d).e(() => {⏎  f;⏎}, [g, h])`, whose array stays as it is however wide.
+        match self.0.arrow_function().is_some() && !f.options().flavor.is_oxfmt() {
+            true => write!(f, group(&self.0)),
+            false => write!(f, self.0),
+        }
     }
 }
 
@@ -222,21 +258,23 @@ fn is_simple_module_import<'a>(call: Call<'a>, f: &Formatter<'a>) -> bool {
         return false;
     }
     let callee = call.callee();
+    let is_cast = |e: Expr<'a>| is_cast_target_that_hides_its_kind(e, f);
     let is_module_function = match callee.kind() {
         ExprKind::Ident(_) => callee.text() == b"require",
-        ExprKind::Dot { obj, name, .. } => match name.bytes() {
+        ExprKind::Dot { obj, name, .. } if !is_cast(obj) => match name.bytes() {
             b"resolve" => {
                 is_identifier(obj, b"require") || matches!(obj.kind(), ExprKind::ImportMeta)
             }
             b"paths" => matches!(
                 obj.kind(),
-                ExprKind::Dot { obj, name, .. } if is_identifier(obj, b"require") && name.bytes() == b"resolve"
+                ExprKind::Dot { obj, name, .. }
+                    if is_identifier(obj, b"require") && name.bytes() == b"resolve" && !is_cast(obj)
             ),
             _ => false,
         },
         _ => false,
     };
-    is_module_function && is_lone_string_without_comments(call.args(), f)
+    is_module_function && !is_cast(callee) && is_lone_string_without_comments(call.args(), f)
 }
 
 /// `require("a" // comment⏎)` is `require("a"); // comment` for oxfmt.
@@ -251,12 +289,18 @@ fn is_commonjs_or_amd_module_definition<'a>(
     f: &Formatter<'a>,
 ) -> bool {
     let callee = call.callee();
-    if callee.tag() != ExprTag::Ident || call.is_optional() {
+    if callee.tag() != ExprTag::Ident
+        || call.is_optional()
+        || is_cast_target_that_hides_its_kind(callee, f)
+    {
         return false;
     }
     let args = call.args();
-    let is_string = |e: Option<Expr<'a>>| e.is_some_and(|e| e.tag() == ExprTag::String);
-    let is_array = |e: Option<Expr<'a>>| e.is_some_and(|e| e.tag() == ExprTag::Array);
+    let is = |e: Option<Expr<'a>>, tag: ExprTag| {
+        e.is_some_and(|e| e.tag() == tag && !is_cast_target_that_hides_its_kind(e, f))
+    };
+    let is_string = |e: Option<Expr<'a>>| is(e, ExprTag::String);
+    let is_array = |e: Option<Expr<'a>>| is(e, ExprTag::Array);
     match callee.text() {
         // `require(path.join(__dirname, "a"))` can break.
         b"require" => {
@@ -271,6 +315,7 @@ fn is_commonjs_or_amd_module_definition<'a>(
         }
         b"define" => {
             matches!(e.as_chain_element().parent(), AstNodes::ExpressionStatement(statement) if !statement.is_arrow_function_body())
+                && !is_cast_target_that_hides_its_kind(e, f)
                 && match args.len() {
                     1 => true,
                     2 => is_array(args.first()),

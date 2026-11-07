@@ -1,0 +1,12 @@
+try {
+} catch ({
+  // comment
+}) {
+}
+try {
+} catch ({ /* comment */ }) {
+}
+try {
+} catch ({ a // comment
+}) {
+}

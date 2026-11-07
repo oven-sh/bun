@@ -16,7 +16,7 @@ mod tailwind;
 pub(crate) use files::Exclusions;
 
 use crate::doctor::{Modules, watching};
-use crate::run::{Environment, Fatal, Outcome, Pool};
+use crate::run::{Environment, Fatal, Meanwhile, Outcome, Pool};
 use crate::{fs, git, paths};
 use bstr::BStr;
 use bun_collections::index_sort::sort_slice_by;
@@ -34,7 +34,7 @@ use bun_lint::language::{LanguageOptions, ParseOptions, Parser, SourceType};
 use bun_lint::linter::TypesInJavaScript;
 use bun_lint::utils::text::ends_with_ignore_ascii_case as ends_in;
 use bun_sema::atom::{Intern, Interner, InternerPerThread};
-use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_for_format_in};
+use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_for_format_with};
 use bun_sema::hir::Diagnostic;
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
@@ -43,12 +43,15 @@ use bun_sema_parser::Summary;
 use bun_threading::Guarded;
 use cli::{LogLevel, Options};
 pub(crate) use config::duplicated_mapping_key;
-use config::{Configs, Flavor, Resolved};
+use config::{Configs, Flavor, KnownOptions, Remarks, Resolved};
 use files::{Expanded, Ignored, Kind, Language, Target};
 pub use for_rules::ForRules;
 use std::borrow::Cow;
+use std::cell::LazyCell;
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::mem::ManuallyDrop;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 macro_rules! pretty {
@@ -297,6 +300,8 @@ struct How<'h> {
     is_flow: bool,
     resolved: &'h Resolved,
     verifies: bool,
+    /// What the quick way has made of the text. It's what is written, so it's what is verified.
+    printed: Option<&'h [u8]>,
     /// Interns the names in a file with syntax errors. They're freed when the run ends.
     atoms: &'h dyn Intern,
     /// Allocations shared by all files, freed when the run ends.
@@ -305,13 +310,17 @@ struct How<'h> {
 
 impl How<'_> {
     /// Returns the language, dialect and parse options for the file.
-    fn language_and_dialect(&self) -> (LanguageOptions, Dialect, ParseOptions) {
+    fn language_and_dialect(&self) -> (&'static LanguageOptions, Dialect, ParseOptions) {
+        static LANGUAGES: [OnceLock<LanguageOptions>; 8] = [const { OnceLock::new() }; 8];
         let path = self.path;
         let is_typescript = [&b".ts"[..], b".tsx", b".mts", b".cts"]
             .iter()
             .any(|it| ends_in(path, it));
         let is_oxfmt = self.resolved.options.flavor.is_oxfmt();
-        let language = LanguageOptions {
+        let which = usize::from(is_typescript)
+            | usize::from(self.is_script) << 1
+            | usize::from(is_oxfmt) << 2;
+        let language = LANGUAGES[which].get_or_init(|| LanguageOptions {
             // oxfmt uses oxc's parser, like oxlint.
             rejects_what_parser_rejects: !is_oxfmt,
             parser: if is_typescript {
@@ -325,7 +334,7 @@ impl How<'_> {
                 SourceType::Module
             },
             ..LanguageOptions::default()
-        };
+        });
         let options = language.parse_options(path);
         let dialect = match self.is_flow {
             true if bun_format::flow::is_parsed_by_babel_flow(&self.resolved.options, path) => {
@@ -348,16 +357,16 @@ fn with_tree<'h, R>(
     let (language, dialect, options) = how.language_and_dialect();
     bun_sema_parser::with_summary_in_place(
         dialect,
-        (how.memory.arena(), how.memory),
+        how.memory,
         how.path,
         options.script_kind,
         text,
-        how.atoms.for_current_thread(),
+        how.atoms,
         options.experimental_decorators,
         options.every_file_is_a_module,
         true,
         // These atoms are local to the file and mean nothing in another file.
-        |summary, atoms| then(summary, atoms, &language),
+        |summary, atoms| then(summary, atoms, language),
     )
 }
 
@@ -368,7 +377,6 @@ fn with_file<R>(
     then: impl for<'a> FnOnce(&'a File<'a>, Option<&Program<'a>>, ParseErrors<'a>) -> R,
 ) -> R {
     let (path, session) = (how.path, how.memory);
-    let arena = session.arena();
     with_tree(how, text, |mut summary, atoms, language| {
         // Telling which imports are used needs symbols.
         let needs_symbols = how
@@ -380,10 +388,12 @@ fn with_file<R>(
         let mut recycled = Recycled::for_current_thread();
         // Use the tree in place, where the parser built it, if that's enough.
         if !needs_symbols
-            && let Summary::InPlace(hir) = &mut summary
-            && let Some(bound) = try_bind_for_format_in(&**hir, &mut recycled)
+            && let Summary::InPlace(hir, claims) = &mut summary
+            && let Some(bound) = try_bind_for_format_with(&**hir, claims, &mut recycled)
         {
-            let file = File::new(path, &**hir, bound, atoms, language, None).with_text(text);
+            let mut file = File::new(path, &**hir, bound, atoms, language, None);
+            file.set_text(text);
+            file.set_type_parents(claims.type_parents());
             let program = how.verifies.then(|| Program::new(&**hir, text, atoms));
             return then(
                 &file,
@@ -394,6 +404,7 @@ fn with_file<R>(
                 },
             );
         }
+        let arena = session.arena();
         let mut hir = summary.into_arena((arena, session));
         hir.text = Cow::Borrowed(text);
         let bind_options = BindOptions {
@@ -455,6 +466,7 @@ fn syntax_error_at(text: &[u8], SyntaxError(message, offset): SyntaxError) -> Pr
 #[derive(Default)]
 struct Scratches {
     js: Scratch,
+    quick: bun_format::quick::Scratch,
     json: bun_format::json::Scratch,
     css: bun_format::css::Scratch,
     graphql: bun_format::graphql::Scratch,
@@ -468,6 +480,47 @@ struct Scratches {
     blocks: Option<Box<Scratches>>,
     /// Warnings about the last formatted file. They don't stop it from being formatted.
     warnings: Vec<Problem>,
+    /// A formatted text that nobody needs any more. The next one is written over it.
+    spare: Vec<u8>,
+}
+
+impl Scratches {
+    /// Forgets what is known from the files that have been formatted, as at the start of a run.
+    fn forget_other_files(&mut self) {
+        self.css.forget_other_files();
+        self.markdown.forget_other_files();
+        if let Some(blocks) = &mut self.blocks {
+            blocks.forget_other_files();
+        }
+    }
+
+    /// Starts to count, from zero, which scripts go the quick way.
+    fn count_quick_way(&mut self) {
+        self.quick.counts = Some(Default::default());
+        self.html.quick_way_mut().counts = Some(Default::default());
+        self.blocks.get_or_insert_default().quick.counts = Some(Default::default());
+    }
+
+    /// What has been counted since.
+    fn quick_way_counts(&self) -> impl Iterator<Item = &bun_format::quick::Counts> {
+        let blocks = self.blocks.as_deref();
+        [
+            Some(&self.quick),
+            Some(self.html.quick_way()),
+            blocks.map(|it| &it.quick),
+        ]
+        .into_iter()
+        .flatten()
+        .filter_map(|it| it.counts.as_deref())
+    }
+
+    /// An empty buffer for what a text of `len` bytes is formatted to.
+    fn buffer_for(&mut self, len: usize) -> Vec<u8> {
+        let mut buffer = std::mem::take(&mut self.spare);
+        buffer.clear();
+        buffer.reserve(len + len / 8 + 16);
+        buffer
+    }
 }
 
 fn without_final_newline(out: &mut Vec<u8>) {
@@ -481,8 +534,8 @@ fn without_final_newline(out: &mut Vec<u8>) {
 /// Formats a code block in Markdown. Appends `code`, formatted as if it were the file at `path`. Returns `false` if it
 /// can't be formatted, so the block stays unchanged.
 fn format_block(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
-    let names = Session::new();
-    let names = (&Interner::new_in(&names) as &dyn Intern, &names);
+    let names = [Session::new()];
+    let names = (&InternerPerThread::new_in(&names) as &dyn Intern, &names[0]);
     format_block_in(path, code, options, out, names, &mut Scratches::default())
 }
 
@@ -495,24 +548,61 @@ fn format_block_in(
     names: (&dyn Intern, &Session),
     scratch: &mut Scratches,
 ) -> bool {
+    // The name only says which language it is.
+    let is_script = files::has_script_extension(path)
+        && options.filepath.is_none()
+        && options.parser.is_none()
+        && !matches!(code, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..]);
+    // A text has many small blocks, and the quick way needs nothing of what is made for the long way.
+    let is_as_written = !options.require_pragma
+        && !options.check_ignore_pragma
+        && !options.insert_pragma
+        && options.sort_imports.is_none();
+    if is_script && is_as_written {
+        let mut formatted = scratch.buffer_for(code.len());
+        let is_formatted =
+            format_script_quickly(path, path, code, options, scratch, &mut formatted);
+        if is_formatted {
+            out.extend_from_slice(&formatted);
+        }
+        scratch.spare = formatted;
+        if is_formatted {
+            return true;
+        }
+    }
     let sort_imports = options.sort_imports.clone();
     let resolved = Resolved {
         options: FormatOptions {
             sort_imports: sort_imports.filter(|it| it.applies_to_embedded_code()),
             ..options.clone()
         },
-        ..Resolved::default()
+        omits_final_newline: false,
+        has_unsupported_option: false,
+        formats_recoverable_errors: false,
+        depends_on_directory: false,
     };
-    let formatted = format(path, code, &resolved, names, scratch, false);
-    formatted
-        .map(|(formatted, _)| out.extend_from_slice(&formatted))
-        .is_ok()
+    let formatted = match is_script {
+        true => {
+            let way = match is_as_written {
+                true => Way::Long,
+                false => Way::QuickFirst,
+            };
+            format_script(path, path, code, &resolved, names, scratch, way)
+        }
+        false => format(path, code, &resolved, names, scratch, false),
+    };
+    let Ok((formatted, _)) = formatted else {
+        return false;
+    };
+    out.extend_from_slice(&formatted);
+    scratch.spare = formatted;
+    true
 }
 
 /// Parses scripts and expressions in HTML.
 fn parse_javascript(code: Code<'_>, then: Then<'_>) {
-    let names = Session::new();
-    let names = (&Interner::new_in(&names) as &dyn Intern, &names);
+    let names = [Session::new()];
+    let names = (&InternerPerThread::new_in(&names) as &dyn Intern, &names[0]);
     parse_code(code, &Resolved::default(), names, then);
 }
 
@@ -528,6 +618,7 @@ fn parse_code(
         is_flow: false,
         resolved,
         verifies: false,
+        printed: None,
         atoms,
         memory,
     };
@@ -536,16 +627,17 @@ fn parse_code(
 
 /// Parses the expressions in a Svelte component.
 fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
-    let names = Session::new();
-    let (atoms, plain) = (Interner::new_in(&names), Resolved::default());
+    let names = [Session::new()];
+    let (atoms, plain) = (InternerPerThread::new_in(&names), Resolved::default());
     let how = |path| How {
         path,
         is_script: false,
         is_flow: false,
         resolved: &plain,
         verifies: false,
+        printed: None,
         atoms: &atoms,
-        memory: &names,
+        memory: &names[0],
     };
     let [javascript, typescript] =
         [&b"dummy.js"[..], b"dummy.ts"].map(|path| (path, how(path).language_and_dialect()));
@@ -571,16 +663,16 @@ fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
             part,
             |summary, atoms, code, end| {
                 let mut recycled = Recycled::for_current_thread();
-                let Summary::InPlace(hir) = summary else {
+                let Summary::InPlace(hir, claims) = summary else {
                     return false;
                 };
-                let Some(bound) = try_bind_for_format_in(&*hir, &mut recycled) else {
+                let Some(bound) = try_bind_for_format_with(&*hir, claims, &mut recycled) else {
                     return false;
                 };
-                then(
-                    &File::new(path, &*hir, bound, atoms, language, None).with_text(code),
-                    end,
-                );
+                let mut file = File::new(path, &*hir, bound, atoms, language, None);
+                file.set_text(code);
+                file.set_type_parents(claims.type_parents());
+                then(&file, end);
                 true
             },
         );
@@ -652,13 +744,16 @@ fn format(
         Err(FormatError::TooLong) => Err(Failure::Syntax(Problem::new(TOO_LONG))),
         Err(FormatError::InvalidDocument) => Err(Failure::Bug),
     };
-    let mut out = Vec::new();
     let kind = Kind::with_options(name, options);
     if let (None, Some(parser)) = (kind, &options.parser) {
         return Err(Failure::Syntax(Problem::new(&cannot_resolve_parser(
             parser,
         ))));
     }
+    let mut out = match kind {
+        Some(Kind::Script) | None => Vec::new(),
+        Some(_) => scratch.buffer_for(text.len()),
+    };
     match kind {
         Some(Kind::Script) | None => {}
         Some(Kind::Json(parser)) => {
@@ -806,24 +901,100 @@ fn format(
             return finish(done.map(|_| ()), out, "HTML").map(|(out, _)| (out, cursor));
         }
     }
-    let text = match bun_format::pragma::before_parsing(text, options) {
-        BeforeParsing::LeaveUnchanged => return Ok((text.to_vec(), options.cursor_offset)),
-        BeforeParsing::Format(text) => text,
-    };
+    format_script(
+        path,
+        name,
+        text,
+        resolved,
+        (atoms, memory),
+        scratch,
+        match verifies {
+            true => Way::Verified,
+            false => Way::QuickFirst,
+        },
+    )
+}
+
+/// How a script is formatted.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Way {
+    /// The long way only if the quick way refuses.
+    QuickFirst,
+    /// The quick way has refused already.
+    Long,
+    /// The same as `QuickFirst`. What is printed, whichever way, is parsed and compared with the text.
+    Verified,
+}
+
+/// True if the text is Flow, and if it may have types in comments, which are code then.
+fn flow_in(path: &[u8], name: &[u8], text: &[u8], options: &FormatOptions) -> (bool, bool) {
     // `babel` hands a Flow file to `babel-flow`, which reads the contents of `/*:: */` and `/*: */` as code.
     let is_flow = match options.parser.as_deref() {
         Some(b"flow" | b"babel-flow") => true,
         // oxfmt doesn't parse Flow.
         Some(b"babel") | None => {
             !options.flavor.is_oxfmt()
-                && (bun_lint::linter::is_flow_file(&text, name)
+                && (bun_lint::linter::is_flow_file(text, name)
                     || (options.parser.is_none() && ends_in(name, b".js.flow")))
         }
         Some(_) => false,
     };
     let has_comment_types = is_flow
         && bun_format::flow::is_parsed_by_babel_flow(options, path)
-        && bun_format::flow::may_have_comment_types(&text);
+        && bun_format::flow::may_have_comment_types(text);
+    (is_flow, has_comment_types)
+}
+
+/// Puts `text`, which is what `pragma::before_parsing` has left, in `out`, formatted. Returns false, with `out` empty,
+/// if it has to go the long way.
+fn format_script_quickly(
+    path: &[u8],
+    name: &[u8],
+    text: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratches,
+    out: &mut Vec<u8>,
+) -> bool {
+    let (is_flow, has_comment_types) = flow_in(path, name, text, options);
+    let code = bun_format::quick::Code {
+        path,
+        text,
+        is_flow,
+    };
+    !has_comment_types && bun_format::quick::format(code, options, &mut scratch.quick, out).is_ok()
+}
+
+/// [`format`] for JavaScript and TypeScript. `name` is the name of the file if `filepath` says so, else `path`.
+fn format_script(
+    path: &[u8],
+    name: &[u8],
+    text: &[u8],
+    resolved: &Resolved,
+    (atoms, memory): (&dyn Intern, &Session),
+    scratch: &mut Scratches,
+    way: Way,
+) -> Result<Formatted, Failure> {
+    let options = &resolved.options;
+    let verifies = way == Way::Verified;
+    let text = match bun_format::pragma::before_parsing(text, options) {
+        BeforeParsing::LeaveUnchanged => return Ok((text.to_vec(), options.cursor_offset)),
+        BeforeParsing::Format(text) => text,
+    };
+    let mut printed = None;
+    if way != Way::Long {
+        let mut out = scratch.buffer_for(text.len());
+        match format_script_quickly(path, name, &text, options, scratch, &mut out) {
+            true if verifies => printed = Some(out),
+            true => {
+                if resolved.omits_final_newline {
+                    without_final_newline(&mut out);
+                }
+                return Ok((out, None));
+            }
+            false => scratch.spare = out,
+        }
+    }
+    let (is_flow, has_comment_types) = flow_in(path, name, &text, options);
     let text = match has_comment_types {
         true => {
             let how = How {
@@ -832,6 +1003,7 @@ fn format(
                 is_flow,
                 resolved,
                 verifies: false,
+                printed: None,
                 atoms,
                 memory,
             };
@@ -850,6 +1022,7 @@ fn format(
             is_flow,
             resolved,
             verifies,
+            printed: printed.as_deref(),
             atoms,
             memory,
         };
@@ -892,17 +1065,20 @@ fn print<'a>(
             why.at,
         )));
     }
-    let mut out = Vec::new();
+    let mut out = scratch.buffer_for(file.text().len());
     let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| {
         with_file(how, part, |file, _, _| then(file))
     };
-    let cursor = match bun_format::range::format_with_cursor(
-        file,
-        options,
-        &mut scratch.js,
-        &mut out,
-        parse,
-    ) {
+    let formatted = match how.printed {
+        Some(printed) => {
+            out.extend_from_slice(printed);
+            Ok(None)
+        }
+        None => {
+            bun_format::range::format_with_cursor(file, options, &mut scratch.js, &mut out, parse)
+        }
+    };
+    let cursor = match formatted {
         Ok(cursor) => cursor,
         Err(FormatError::SyntaxError) => {
             return Err(Failure::Syntax(syntax_error(
@@ -928,7 +1104,7 @@ fn print<'a>(
         let is_same = with_tree(how, &out, |after, atoms, _| {
             // The parser recovers from errors, so the tree can be the same even then: `a\n=> b`.
             let (has_parse_errors, after) = match &after {
-                Summary::InPlace(hir) => (
+                Summary::InPlace(hir, _) => (
                     hir.has_errors || hir.has_parse_diagnostics,
                     Program::new(&**hir, &out, atoms),
                 ),
@@ -1070,6 +1246,154 @@ enum Done {
     NotFormatted(Failure),
 }
 
+/// What a thread keeps to itself while it formats files, so that it shares nothing with the others from file to file.
+#[derive(Default)]
+struct Worker {
+    scratch: Scratches,
+    options: KnownOptions,
+    /// The text of the last file.
+    text: Vec<u8>,
+    /// Keyed by the file's index in the list of expanded arguments.
+    done: Vec<(usize, Done)>,
+    /// Same key.
+    warnings: Vec<(usize, Vec<Problem>)>,
+    /// Same key. What there is to say about the options of a file.
+    remarks: Vec<(usize, Arc<Remarks>)>,
+}
+
+/// Calls `work` with every index below `count`, in order, on at most `threads` threads. Each has one of `workers`, of
+/// which there are as many.
+/// The calling thread calls `meanwhile`.
+fn for_each_with_worker(
+    (pool, threads): (&Pool, usize),
+    workers: &[Guarded<Option<Box<Worker>>>],
+    count: usize,
+    work: &(dyn Fn(&mut Worker, usize) + Sync),
+    meanwhile: &mut dyn FnMut(),
+) {
+    let next = AtomicUsize::new(0);
+    // All threads start at the same time, and a lock that they share would let them through one by one.
+    let work_off = |which: usize| {
+        let mut at = next.fetch_add(1, Ordering::Relaxed);
+        if at >= count {
+            return;
+        }
+        let mut worker = workers[which].lock();
+        let worker = worker.get_or_insert_default();
+        while at < count {
+            work(worker, at);
+            at = next.fetch_add(1, Ordering::Relaxed);
+        }
+    };
+    let meanwhile = Meanwhile::Does(meanwhile);
+    let threads = threads.min(workers.len());
+    pool.for_each_while(threads, threads.min(count), 1, &work_off, meanwhile);
+}
+
+/// What is done with each of the files that were found. An index is one in the list of expanded arguments.
+#[derive(Default)]
+struct Plan<'t> {
+    /// Extensions of files in unsupported languages, with how many files have each.
+    others: Vec<(&'t [u8], usize)>,
+    /// How many files are skipped because of plugins that `bun fmt` doesn't include, and those plugins' names.
+    left_for_plugins: (usize, Vec<&'t [u8]>),
+    /// Files that are formatted here.
+    work: Vec<(usize, &'t Target)>,
+    /// Files handed to the project's own Prettier.
+    handed_over: Vec<(usize, &'t Target)>,
+    /// The packages that must be installed before more files can be handed over.
+    not_installed: Vec<&'t [u8]>,
+    /// What is known by now, by index.
+    done: Vec<Option<Done>>,
+}
+
+impl<'t> Plan<'t> {
+    fn of(
+        expanded: &'t [Expanded],
+        configs: &'t Configs,
+        ignored: &Ignored,
+        options: &Options,
+        cwd: &[u8],
+    ) -> Plan<'t> {
+        let mut plan = Plan {
+            done: Vec::with_capacity(expanded.len()),
+            ..Plan::default()
+        };
+        let is_included = |target: &Target| match target.is_named {
+            true => !ignored.ignores_file(&target.path, configs.config_ignores(&target.scope)),
+            // Without a Prettier or oxfmt config, minified code and lock files are only formatted when they're named.
+            false => !(files::is_generated(&target.path) && configs.is_native_in(&target.scope)),
+        };
+        let mut packages: Vec<(&[u8], bool)> = Vec::new();
+        let mut has_package = |name| match packages.iter().find(|it| it.0 == name) {
+            Some(known) => known.1,
+            None => {
+                packages.push((name, prettier::is_installed(cwd, name)));
+                packages.last().is_some_and(|it| it.1)
+            }
+        };
+        for (index, it) in expanded.iter().enumerate() {
+            plan.done.push(None);
+            let Expanded::File(target) = it else {
+                continue;
+            };
+            let missing_plugins = match options.allow_unsupported {
+                true => &[][..],
+                false => configs.missing_plugins(&target.scope, Some(&target.path)),
+            };
+            match target.language {
+                _ if !is_included(target) => {}
+                Language::Supported if !missing_plugins.is_empty() => {
+                    plan.left_for_plugins.0 += 1;
+                    for name in missing_plugins {
+                        if !plan.left_for_plugins.1.contains(&&name[..]) {
+                            plan.left_for_plugins.1.push(name);
+                        }
+                    }
+                }
+                Language::Supported => plan.work.push((index, target)),
+                Language::Other
+                    if configs.is_formatted_by_plugin(&target.scope, &target.path)
+                        && [&b"prettier"[..]]
+                            .into_iter()
+                            .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
+                            .all(&mut has_package) =>
+                {
+                    plan.handed_over.push((index, target));
+                }
+                Language::Other => {
+                    if configs.is_formatted_by_plugin(&target.scope, &target.path) {
+                        for package in [&b"prettier"[..]]
+                            .into_iter()
+                            .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
+                        {
+                            if !has_package(package) && !plan.not_installed.contains(&package) {
+                                plan.not_installed.push(package);
+                            }
+                        }
+                    }
+                    let kind = extension_or_name(&target.path);
+                    match plan.others.iter_mut().find(|it| it.0 == kind) {
+                        Some(entry) => entry.1 += 1,
+                        None => plan.others.push((kind, 1)),
+                    }
+                }
+                Language::Unknown if target.ignores_unknown || options.ignore_unknown => {}
+                Language::Unknown => {
+                    let path = target.path.clone();
+                    plan.done[index] = Some(Done::Failed(has_no_parser(configs, path)));
+                }
+            }
+        }
+        plan
+    }
+
+    /// True if names are collected that the user reads in the order in which their files come.
+    fn names_things_in_order(&self) -> bool {
+        self.left_for_plugins.1.len() > 1 || self.not_installed.len() > 1
+    }
+}
+
 struct Run<'r> {
     options: &'r Options,
     environment: &'r Environment<'r>,
@@ -1081,36 +1405,6 @@ struct Run<'r> {
     is_native: bool,
     /// Some matched files were skipped, so the summary can't claim anything about all files.
     has_skipped_files: bool,
-}
-
-/// Classifies the file at `path`, in `scope`, the way the tool this run emulates would.
-fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
-    // The `parser` option decides. A parser that Prettier doesn't have belongs to a plugin.
-    match configs.parser_for(scope, path) {
-        Some(parser) if &*parser == b"svelte" && !configs.formats_svelte(scope, Some(path)) => {
-            Language::Other
-        }
-        Some(parser) if Kind::from_parser(&parser).is_none() => Language::Other,
-        Some(_) => Language::Supported,
-        None if configs.is_oxfmt_for(scope) => {
-            files::language_for_oxfmt(path, configs.formats_svelte(scope, Some(path)))
-        }
-        None => match files::language_of(path) {
-            Language::Unknown
-                if path.ends_with(b".svelte") && configs.formats_svelte(scope, Some(path)) =>
-            {
-                Language::Supported
-            }
-            Language::Unknown if configs.is_formatted_by_plugin(scope, path) => Language::Other,
-            Language::Unknown if files::is_toml(path) && configs.is_native_in(scope) => {
-                Language::Supported
-            }
-            Language::Unknown if files::parser_by_interpreter(path).is_some() => {
-                Language::Supported
-            }
-            language => language,
-        },
-    }
 }
 
 impl Run<'_> {
@@ -1331,7 +1625,7 @@ impl Run<'_> {
             Ok(scope) => scope,
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
-        let language = language_of(configs, &scope, &path);
+        let language = files::language_of(configs, &scope, &path);
         let is_ignored = ignored.ignores_file(&path, configs.config_ignores(&scope));
         let is_plugin_language = configs.is_formatted_by_plugin(&scope, &path);
         let not_installed = match language == Language::Other && is_plugin_language {
@@ -1615,6 +1909,97 @@ impl Run<'_> {
         self.out
     }
 
+    /// `--bench`: formats `loaded`, which has the path, the options and the text of each file that could be read, as
+    /// often as the flag says. Prints how long each round took, and which way the scripts went in the last one.
+    fn measure(
+        mut self,
+        loaded: &[Option<(&[u8], Resolved, Vec<u8>)>],
+        on_threads: (&Pool, usize),
+        workers: &[Guarded<Option<Box<Worker>>>],
+        (atoms, memory): (&InternerPerThread, &Session),
+    ) -> Outcome {
+        let verifies = self.options.debug_check;
+        let mut best = f64::MAX;
+        let whole_texts = AtomicUsize::new(0);
+        for round in 0..self.options.bench {
+            // A round stands for a run.
+            whole_texts.store(0, Ordering::Relaxed);
+            for worker in workers {
+                let mut worker = worker.lock();
+                let worker = worker.get_or_insert_default();
+                worker.scratch.forget_other_files();
+                worker.scratch.count_quick_way();
+            }
+            let began = Instant::now();
+            let format_loaded = |worker: &mut Worker, at: usize| {
+                let Some((path, resolved, text)) = &loaded[at] else {
+                    return;
+                };
+                let names = (atoms as &dyn Intern, memory);
+                bun_format::whole_texts::take();
+                let formatted = format(path, text, resolved, names, &mut worker.scratch, verifies);
+                whole_texts.fetch_add(bun_format::whole_texts::take() as usize, Ordering::Relaxed);
+                if let Ok((formatted, _)) = std::hint::black_box(formatted) {
+                    worker.scratch.spare = formatted;
+                }
+            };
+            for_each_with_worker(
+                on_threads,
+                workers,
+                loaded.len(),
+                &format_loaded,
+                &mut || {},
+            );
+            let took = began.elapsed().as_secs_f64() * 1e3;
+            best = best.min(took);
+            let _ = writeln!(self.out.stderr, "round {round}: {took:.2} ms");
+        }
+        let _ = writeln!(self.out.stderr, "best round {best:.2} ms");
+        let mut counts = bun_format::quick::Counts::default();
+        for worker in workers {
+            let worker = worker.lock();
+            let scratch = worker.as_deref().map(|it| &it.scratch);
+            for it in scratch.into_iter().flat_map(Scratches::quick_way_counts) {
+                counts.printed.merge(it.printed);
+                for (sum, count) in counts.refused.iter_mut().zip(it.refused) {
+                    sum.merge(count);
+                }
+                for (sum, count) in counts.rare.iter_mut().zip(it.rare) {
+                    sum.merge(count);
+                }
+            }
+        }
+        let _ = writeln!(
+            self.out.stderr,
+            "the quick way: {} scripts, {} bytes",
+            counts.printed.texts, counts.printed.bytes
+        );
+        for (reason, count) in bun_format::quick::Reason::ALL.iter().zip(counts.refused) {
+            if count.texts > 0 {
+                let _ = writeln!(
+                    self.out.stderr,
+                    "  refused, {reason:?}: {} scripts, {} bytes",
+                    count.texts, count.bytes
+                );
+            }
+        }
+        for (which, count) in counts.rare.iter().enumerate() {
+            if count.texts > 0 {
+                let _ = writeln!(
+                    self.out.stderr,
+                    "    rare thing {which}: {} scripts, {} bytes",
+                    count.texts, count.bytes
+                );
+            }
+        }
+        let _ = writeln!(
+            self.out.stderr,
+            "other short cuts: {} texts from start to end",
+            whole_texts.into_inner()
+        );
+        self.out
+    }
+
     /// Prettier's `formatFiles`
     fn format_files(mut self, configs: &Configs, ignored: &mut Ignored) -> Outcome {
         let (options, cwd) = (self.options, &self.environment.cwd);
@@ -1637,34 +2022,51 @@ impl Run<'_> {
                 self.log(b"");
             }
         }
-        let pool = Pool::new(options.threads);
+        // Has to come before the first parallel region. The pool's threads have enough stack to walk a tree as deep as a parser
+        // allows.
+        bun_sema_driver::use_dedicated_pool("Bun Format");
+        bun_threading::thread_pool::exit_without_any_thread();
+        let pool = Pool::new(options.threads).with_standing_threads("Bun Format");
         let dot = [b".".to_vec()];
         let patterns = if options.patterns.is_empty() {
             &dot[..]
         } else {
             &options.patterns[..]
         };
+        // It takes a while to start threads, so they are started for what the arguments look like. Whatever is found is
+        // formatted on a thread of the pool.
+        pool.call_up(files::threads_for_arguments(&pool, patterns.len()));
         let started = Instant::now();
         let expand = match configs.flavor {
             Flavor::Prettier => files::expand,
             Flavor::Oxfmt => files::expand_as_oxfmt,
         };
-        let mut expanded = match expand(
+        let mut expansion = match expand(
             configs,
             &pool,
             ignored,
             patterns,
             options.error_on_unmatched_pattern,
         ) {
-            Ok(expanded) => expanded,
+            Ok(expansion) => expansion,
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
+        // Otherwise the files are put in order while they are formatted.
+        if only.is_some() || self.modules.is_some() || options.list_files {
+            expansion.put_in_order();
+        }
         if let Some(only) = &only {
-            expanded.retain(|it| match it {
-                Expanded::File(target) => only.has(&target.path),
+            expansion.all.retain_mut(|it| match it {
+                Expanded::File(target) => {
+                    let is_listed = only.has(&target.path);
+                    if is_listed {
+                        target.language = files::language_of(configs, &target.scope, &target.path);
+                    }
+                    is_listed
+                }
                 Expanded::Error(_) => true,
             });
-            if expanded.is_empty() {
+            if expansion.all.is_empty() {
                 if options.log_level >= LogLevel::Log {
                     let _ = writeln!(self.out.stderr, "{}", only.no_files_message("format"));
                 }
@@ -1673,84 +2075,27 @@ impl Run<'_> {
         }
         let finding = started.elapsed();
 
-        // Extensions of files in unsupported languages, with how many files have each.
-        let mut others: Vec<(&[u8], usize)> = Vec::new();
-        // How many files are skipped because of plugins that `bun fmt` doesn't include, and those plugins' names.
-        let mut left_for_plugins: (usize, Vec<&[u8]>) = (0, Vec::new());
-        let is_included = |target: &Target| match target.is_named {
-            true => !ignored.ignores_file(&target.path, configs.config_ignores(&target.scope)),
-            // Without a Prettier or oxfmt config, minified code and lock files are only formatted when they're named.
-            false => !(files::is_generated(&target.path) && configs.is_native_in(&target.scope)),
-        };
-        let mut work: Vec<(usize, &Target)> = Vec::new();
-        // Files handed to the project's own Prettier, and the packages that must be installed before more files can be.
-        let mut handed_over: Vec<(usize, &Target)> = Vec::new();
-        let mut not_installed: Vec<&[u8]> = Vec::new();
-        let mut packages: Vec<(&[u8], bool)> = Vec::new();
-        let mut has_package = |name| match packages.iter().find(|it| it.0 == name) {
-            Some(known) => known.1,
-            None => {
-                packages.push((name, prettier::is_installed(cwd, name)));
-                packages.last().is_some_and(|it| it.1)
+        let first_plan = Plan::of(&expansion.all, configs, ignored, options, cwd);
+        let plan = match !expansion.is_sorted() && first_plan.names_things_in_order() {
+            true => {
+                drop(first_plan);
+                expansion.put_in_order();
+                Plan::of(&expansion.all, configs, ignored, options, cwd)
             }
+            false => first_plan,
         };
-        let mut done: Vec<Option<Done>> = Vec::with_capacity(expanded.len());
-        for (index, it) in expanded.iter().enumerate() {
-            done.push(None);
-            let Expanded::File(target) = it else {
-                continue;
-            };
-            let missing_plugins = match options.allow_unsupported {
-                true => &[][..],
-                false => configs.missing_plugins(&target.scope, Some(&target.path)),
-            };
-            match language_of(configs, &target.scope, &target.path) {
-                _ if !is_included(target) => {}
-                Language::Supported if !missing_plugins.is_empty() => {
-                    left_for_plugins.0 += 1;
-                    for name in missing_plugins {
-                        if !left_for_plugins.1.contains(&&name[..]) {
-                            left_for_plugins.1.push(name);
-                        }
-                    }
-                }
-                Language::Supported => work.push((index, target)),
-                Language::Other
-                    if configs.is_formatted_by_plugin(&target.scope, &target.path)
-                        && [&b"prettier"[..]]
-                            .into_iter()
-                            .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
-                            .all(&mut has_package) =>
-                {
-                    handed_over.push((index, target));
-                }
-                Language::Other => {
-                    if configs.is_formatted_by_plugin(&target.scope, &target.path) {
-                        for package in [&b"prettier"[..]]
-                            .into_iter()
-                            .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
-                        {
-                            if !has_package(package) && !not_installed.contains(&package) {
-                                not_installed.push(package);
-                            }
-                        }
-                    }
-                    let kind = extension_or_name(&target.path);
-                    match others.iter_mut().find(|it| it.0 == kind) {
-                        Some(entry) => entry.1 += 1,
-                        None => others.push((kind, 1)),
-                    }
-                }
-                Language::Unknown if target.ignores_unknown || options.ignore_unknown => {}
-                Language::Unknown => {
-                    let path = target.path.clone();
-                    done[index] = Some(Done::Failed(has_no_parser(configs, path)));
-                }
-            }
-        }
+        let Plan {
+            mut others,
+            left_for_plugins,
+            work,
+            handed_over,
+            not_installed,
+            done,
+        } = plan;
+        let expanded = &expansion.all;
         if let Some(modules) = self.modules {
             let sorted = doctor::Sorted {
-                found: &expanded,
+                found: expanded,
                 formatted: &work,
                 handed_over: &handed_over,
                 others: &others,
@@ -1778,24 +2123,41 @@ impl Run<'_> {
             }
             return self.out;
         }
-        // Largest first, so no thread starts a big file when the others are nearly done.
+        // Largest first, so no thread starts a big file when the others are nearly done. A small one makes no difference.
+        let is_big = |it: &(usize, &Target)| it.1.size >= 16 << 10;
+        let (mut work, small): (Vec<_>, Vec<_>) = work.into_iter().partition(is_big);
         sort_slice_by(&mut work[..], |a, b| b.1.size.cmp(&a.1.size));
+        let threads =
+            files::threads_to_format(&pool, work.iter().chain(&small).map(|it| it.1.size));
+        match is_read_only {
+            true => work.extend(small),
+            // The files of a directory follow each other, and the system lets one thread at a time add a file to a
+            // directory or rename one in it. The threads take the files one after the other, so what follows each other
+            // here comes from as many parts of the list as there are threads.
+            false => {
+                let part = small.len().div_ceil(threads.max(1)).max(1);
+                let starts = (0..small.len()).step_by(part);
+                let nth_of_each = |at: usize| starts.clone().map(move |start| start + at);
+                work.extend(
+                    (0..part)
+                        .flat_map(nth_of_each)
+                        .filter_map(|at| small.get(at)),
+                );
+            }
+        }
         let started = Instant::now();
-        // Has to come before the first parallel region. The pool's threads have enough stack to walk a tree as deep as a parser
-        // allows.
-        bun_sema_driver::use_dedicated_pool("Bun Format");
         let bridge = (!handed_over.is_empty()).then(|| {
             let size: u64 = handed_over.iter().map(|it| it.1.size).sum();
             let size = (handed_over.len(), size);
             prettier::Prettier::new(self.environment, options, size, pool.threads())
         });
-        let scratches: Guarded<Vec<Scratches>> = Guarded::new(Vec::new());
-        let names: Vec<Session> = (0..pool.threads().max(1)).map(|_| Session::new()).collect();
+
+        let workers: Vec<Guarded<Option<Box<Worker>>>> =
+            (0..threads.max(1)).map(|_| Default::default()).collect();
+        let names: Vec<Session> = (0..threads.max(1)).map(|_| Session::new()).collect();
         let atoms = InternerPerThread::new_in(&names);
         let memory = Session::new();
-        let mut results = Guarded::new(done);
-        // Keyed by the file's index in `expanded`.
-        let mut warnings: Guarded<Vec<(usize, Vec<Problem>)>> = Guarded::new(Vec::new());
+        let mut results = done;
         // Tailwind can't be asked and `--allow-unsupported` permits that, so classes stay unsorted.
         let skips_class_sorting = AtomicBool::new(false);
         let written_files = fs::WrittenFiles::default();
@@ -1807,23 +2169,32 @@ impl Run<'_> {
             let linked = target.linked.filter(|_| !is_read_only);
             linked.map(|(_, inode)| link_locks[inode as usize % link_locks.len()].lock())
         };
-        let format_at = |at: usize| {
+        let format_at = |worker: &mut Worker, at: usize| {
             let (index, target) = work[at];
             let _link_lock = lock_for(target);
             let began = Instant::now();
-            let display_name = paths::relative(cwd, &target.path);
-            let mut scratch = scratches.lock().pop().unwrap_or_default();
+            let display_name = || paths::relative(cwd, &target.path);
+            let Worker {
+                scratch,
+                warnings,
+                remarks,
+                options: known,
+                text,
+                ..
+            } = worker;
             let result = (|| {
-                let mut options = configs
-                    .options_for(&target.scope, &target.path)
-                    .map_err(|error| error.0)?;
+                let (options, said) =
+                    configs.options_for_one_of_many(known, &target.scope, &target.path);
+                remarks.extend(said.map(|said| (index, said)));
+                let mut options = options.map_err(|error| error.0)?;
                 if skips_class_sorting.load(Ordering::Relaxed) {
                     options.options.tailwind = None;
                 }
-                let text = git::read(only.as_ref(), &target.path).map_err(|error| {
+                let read = git::read_file_of_size(only.as_ref(), &target.path, target.size, text);
+                read.map_err(|error| {
                     [
                         b"Unable to read file \"",
-                        &display_name[..],
+                        &display_name()[..],
                         b"\":\n",
                         &fs::describe(&error),
                     ]
@@ -1831,17 +2202,18 @@ impl Run<'_> {
                 })?;
                 let kind = Kind::with_options(&target.path, &options.options);
                 tailwind::only_where_sorted(&mut options.options, kind);
-                let formatted = match format(
+                match format(
                     &target.path,
-                    &text,
+                    text,
                     &options,
                     (&atoms, &memory),
-                    &mut scratch,
+                    scratch,
                     self.options.debug_check,
                 ) {
-                    Ok((formatted, _)) => formatted,
+                    Ok((formatted, _)) => scratch.spare = formatted,
                     Err(failure) => return Ok(Done::NotFormatted(failure)),
                 };
+                let formatted = &scratch.spare;
                 if options
                     .options
                     .tailwind
@@ -1852,7 +2224,7 @@ impl Run<'_> {
                 }
                 if !scratch.warnings.is_empty() {
                     let all = std::mem::take(&mut scratch.warnings);
-                    warnings.lock().push((index, all));
+                    warnings.push((index, all));
                 }
                 if formatted == text {
                     return Ok(Done::Unchanged);
@@ -1861,11 +2233,11 @@ impl Run<'_> {
                     return Ok(Done::PartlyStaged);
                 }
                 if !is_read_only {
-                    fs::write_atomically(&written_files, cwd, &target.path, &formatted).map_err(
+                    fs::write_atomically(&written_files, cwd, &target.path, formatted).map_err(
                         |why| {
                             [
                                 b"Unable to write file \"",
-                                &display_name[..],
+                                &display_name()[..],
                                 b"\":\n",
                                 &why,
                             ]
@@ -1875,23 +2247,50 @@ impl Run<'_> {
                 }
                 Ok(Done::Different(began.elapsed()))
             })();
-            scratches.lock().push(scratch);
-            results.lock()[index] = Some(result.unwrap_or_else(Done::Failed));
+            (worker.done).push((index, result.unwrap_or_else(Done::Failed)));
         };
-        pool.for_each(work.len(), 1, &format_at);
-        let deferred: Vec<usize> = (0..work.len())
-            .filter(|&at| matches!(results.lock()[work[at].0], Some(Done::Deferred)))
-            .collect();
+        let on_threads = (&pool, threads);
+        if cli::HAS_FLAGS_FOR_TESTS && options.bench > 0 {
+            let loaded: Vec<_> = (work.iter())
+                .map(|(_, target)| {
+                    let resolved = configs.options_for(&target.scope, &target.path).ok()?;
+                    let text = git::read(only.as_ref(), &target.path).ok()?;
+                    Some((&target.path[..], resolved, text))
+                })
+                .collect();
+            return self.measure(&loaded, on_threads, &workers, (&atoms, &memory));
+        }
+        // Keyed by the file's index in `expanded`.
+        let mut warnings: Vec<(usize, Vec<Problem>)> = Vec::new();
+        let mut remarks: Vec<(usize, Arc<Remarks>)> = Vec::new();
+        // Formats `work[at]` for each `at` in `which`, and returns those that are deferred.
+        let mut format_all = |which: &[usize], meanwhile: &mut dyn FnMut()| -> Vec<usize> {
+            let format_one = |worker: &mut Worker, at: usize| format_at(worker, which[at]);
+            for_each_with_worker(on_threads, &workers, which.len(), &format_one, meanwhile);
+            for worker in &workers {
+                let mut worker = worker.lock();
+                let Some(worker) = &mut *worker else {
+                    continue;
+                };
+                for (index, done) in worker.done.drain(..) {
+                    results[index] = Some(done);
+                }
+                warnings.append(&mut worker.warnings);
+                remarks.append(&mut worker.remarks);
+            }
+            let is_deferred = |&at: &usize| matches!(results[work[at].0], Some(Done::Deferred));
+            which.iter().copied().filter(is_deferred).collect()
+        };
+        let mut order = Vec::new();
+        let all = Vec::from_iter(0..work.len());
+        let deferred = format_all(&all, &mut || order = expansion.order());
         let mut classes_are_unknown = None;
         if !deferred.is_empty() {
             classes_are_unknown = configs.classes.ask(self.environment).err();
             // This second pass runs even if `ask` failed. A Tailwind that can't be asked fails only its own files, and
             // the other Tailwinds' answers are stored.
-            pool.for_each(deferred.len(), 1, &|at| format_at(deferred[at]));
+            let still_deferred = format_all(&deferred, &mut || {});
             if let Some(error) = &mut classes_are_unknown {
-                let still_deferred: Vec<usize> = (deferred.iter().copied())
-                    .filter(|&at| matches!(results.lock()[work[at].0], Some(Done::Deferred)))
-                    .collect();
                 let count = still_deferred.len();
                 let detail = match (options.allow_unsupported, count) {
                     (true, 1) => "\nClasses were not sorted in 1 file.".to_owned(),
@@ -1902,12 +2301,13 @@ impl Run<'_> {
                 error.extend_from_slice(detail.as_bytes());
                 if options.allow_unsupported {
                     skips_class_sorting.store(true, Ordering::Relaxed);
-                    pool.for_each(still_deferred.len(), 1, &|at| format_at(still_deferred[at]));
+                    format_all(&still_deferred, &mut || {});
                 }
             }
         }
         if let Some(bridge) = &bridge {
             let is_heavy = |at: usize| handed_over[at].1.size >= HEAVY as u64;
+            let mut answers: Guarded<Vec<(usize, Done)>> = Guarded::new(Vec::new());
             bridge.for_each(handed_over.len(), &is_heavy, &|at| {
                 let (index, target) = handed_over[at];
                 let _link_lock = lock_for(target);
@@ -1917,22 +2317,24 @@ impl Run<'_> {
                 let file = (&target.path[..], &display_name[..]);
                 let writes = !is_read_only && !is_partly_staged(target);
                 let formatted = bridge.format_file(file, config, writes, only.as_ref());
-                results.lock()[index] = Some(match formatted {
+                let done = match formatted {
                     Ok(true) if !is_read_only && !writes => Done::PartlyStaged,
                     Ok(true) => Done::Different(began.elapsed()),
                     Ok(false) => Done::Unchanged,
                     Err(error) => Done::Failed(error),
-                });
+                };
+                answers.lock().push((index, done));
             });
+            for (index, done) in std::mem::take(answers.get_mut()) {
+                results[index] = Some(done);
+            }
         }
         let formatting = started.elapsed();
 
         let (mut different, mut unchanged, mut failed) = (0usize, 0usize, 0usize);
         let (mut written_paths, mut partly_staged) = (Vec::new(), Vec::new());
-        let mut warnings = std::mem::take(warnings.get_mut());
-        sort_slice_by(&mut warnings[..], |a, b| a.0.cmp(&b.0));
-        let mut warnings = warnings.into_iter().peekable();
-        let mut results = std::mem::take(results.get_mut());
+        let mut warnings: FxHashMap<usize, Vec<Problem>> = warnings.into_iter().collect();
+        let remarks: FxHashMap<usize, Arc<Remarks>> = remarks.into_iter().collect();
         // It's a race which hard link gets formatted first and does the write, so report every link to a rewritten file
         // as changed.
         let linked = |it: &Expanded| match it {
@@ -1954,19 +2356,26 @@ impl Run<'_> {
                 }
             }
         }
-        for (index, (it, done)) in expanded.iter().zip(results).enumerate() {
-            let target = match it {
+        for index in order {
+            let target = match &expanded[index] {
                 Expanded::Error(error) => {
                     self.error(error);
                     continue;
                 }
                 Expanded::File(target) => target,
             };
-            let display_name = paths::relative(cwd, &target.path);
-            if let Some((_, all)) = warnings.next_if(|it| it.0 == index) {
+            if !remarks.is_empty()
+                && let Some(said) = remarks.get(&index)
+            {
+                configs.pass_on(said);
+            }
+            let display_name = LazyCell::new(|| paths::relative(cwd, &target.path));
+            if !warnings.is_empty()
+                && let Some(all) = warnings.remove(&index)
+            {
                 self.report_warnings(&display_name, &all);
             }
-            match done {
+            match results[index].take() {
                 None => {}
                 Some(Done::Unchanged) => {
                     unchanged += 1;
@@ -2154,6 +2563,11 @@ impl Run<'_> {
         // The emulated tool would have formatted or checked these files, so this is an error and is printed last.
         if !others.is_empty() {
             self.report_unsupported(&mut others, &not_installed);
+        }
+        // The process ends next, which gives back all memory at once.
+        if !bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
+            let _not_dropped = ManuallyDrop::new((workers, atoms, memory, pool, work));
+            let _not_dropped = ManuallyDrop::new((names, expansion));
         }
         self.out
     }

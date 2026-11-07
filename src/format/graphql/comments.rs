@@ -20,8 +20,8 @@ pub(crate) struct Attached {
     pub(crate) placement: Placement,
 }
 
-/// Fills `attached`, sorted by node and then by position.
-pub(crate) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
+/// Fills `attached`, sorted by node and then by position, and marks the nodes in it.
+pub(crate) fn attach(text: &[u8], tree: &mut Tree, attached: &mut Vec<Attached>) {
     attached.clear();
     // The nodes that contain the previous comment, outermost first. Comments are in source order, so the search for the
     // next one starts at the innermost of these nodes that contains it, not at the root.
@@ -74,6 +74,9 @@ pub(crate) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
             comment: index as u32,
             placement,
         });
+    }
+    for it in attached.iter() {
+        tree.mark_as_commented(it.node);
     }
     crate::sort::sort_by_key(&mut attached[..], |it| (it.node, it.comment));
 }

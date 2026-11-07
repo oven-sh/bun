@@ -32,10 +32,17 @@ casts/after-something-that-is-not-formatted.js
 119 135 L ParenthesizedExpression 136 145 -
 149 165 L ParenthesizedExpression 166 169 -
 182 198 L ParenthesizedExpression 199 221 -
+casts/argument-in-a-chain-of-calls.js
+10 26 L ParenthesizedExpression 27 30 -
+44 60 L ParenthesizedExpression 61 64 -
+78 94 L MemberExpression 95 100 -
+109 125 L ParenthesizedExpression 126 129 -
 casts/argument-of-return-that-breaks.js
 28 49 L ParenthesizedExpression 50 146 -
 178 198 L ParenthesizedExpression 199 295 -
 327 348 L ParenthesizedExpression 349 364 -
+casts/array-in-a-module-definition.js
+7 23 L ParenthesizedExpression 24 112 -
 casts/arrow-function-in-two-type-casts-in-an-arrow-function.js
 10 26 L ParenthesizedExpression 27 56 -
 28 44 L ParenthesizedExpression 45 55 -
@@ -73,6 +80,27 @@ casts/block-comment-in-the-parentheses-of-a-cast-that-is-assigned.js
 432 446 L Identifier 449 452 -
 467 489 L ParenthesizedExpression 490 510 -
 491 505 L Identifier 506 509 -
+casts/callee.js
+0 16 L ExpressionStatement 17 124 -
+126 142 L ExpressionStatement 143 274 -
+276 292 L ExpressionStatement 293 415 -
+417 433 L ExpressionStatement 434 550 -
+556 572 L MemberExpression 573 606 -
+615 631 L ParenthesizedExpression 632 738 -
+casts/chain-or-conditional-that-is-all-of-a-cast.js
+15 31 L ParenthesizedExpression 32 139 -
+165 181 L ParenthesizedExpression 182 288 -
+297 313 L ParenthesizedExpression 314 435 -
+casts/chain-that-starts-with-a-short-name-in-a-cast.js
+0 16 L ExpressionStatement 17 125 -
+252 268 L ExpressionStatement 269 384 -
+386 402 L ExpressionStatement 403 511 -
+casts/child-of-an-element.jsx
+16 32 L ParenthesizedExpression 33 134 -
+203 219 L ParenthesizedExpression 220 276 -
+303 319 L ParenthesizedExpression 320 427 -
+casts/class-that-is-assigned.js
+57 73 L ParenthesizedExpression 74 197 -
 casts/comment-before-the-parameters-of-an-arrow-function-in-parentheses.js
 2 18 L ArrowFunctionExpression 19 27 -
 38 45 L ArrowFunctionExpression 63 71 -
@@ -84,6 +112,46 @@ casts/conditional-in-a-branch-of-a-conditional.js
 291 312 L ParenthesizedExpression 313 474 -
 362 387 L MemberExpression 388 399 -
 412 453 L MemberExpression 454 466 -
+casts/conditional-in-a-cast-before-a-member-or-a-call.js
+29 45 L CallExpression 46 163 -
+171 187 L MemberExpression 188 308 -
+319 335 L MemberExpression 336 452 -
+456 472 L ExpressionStatement 473 597 -
+casts/default-value-of-the-only-parameter.js
+98 114 L ParenthesizedExpression 115 125 -
+237 253 L ParenthesizedExpression 254 258 -
+373 389 L ParenthesizedExpression 390 394 -
+494 510 L ParenthesizedExpression 511 521 -
+634 650 L ParenthesizedExpression 651 661 -
+casts/element-of-an-array.js
+11 27 L ParenthesizedExpression 28 39 -
+41 57 L ParenthesizedExpression 58 69 -
+83 99 L ParenthesizedExpression 100 116 -
+118 134 L ParenthesizedExpression 135 151 -
+165 181 L ParenthesizedExpression 182 189 -
+191 207 L ParenthesizedExpression 208 215 -
+217 233 L ParenthesizedExpression 234 241 -
+243 259 L ParenthesizedExpression 260 267 -
+269 285 L ParenthesizedExpression 286 289 -
+casts/element-that-breaks-in-a-cast.js
+4 20 L ParenthesizedExpression 21 136 -
+138 154 L ExpressionStatement 155 274 -
+278 294 L ParenthesizedExpression 295 412 -
+419 435 L ParenthesizedExpression 436 452 -
+casts/empty-line-behind-an-argument.js
+34 59 L ParenthesizedExpression 60 92 -
+115 131 L ParenthesizedExpression 132 135 -
+157 173 L ParenthesizedExpression 174 196 -
+175 191 L ParenthesizedExpression 192 195 -
+218 234 L ParenthesizedExpression 235 246 -
+267 283 L ParenthesizedExpression 284 287 -
+309 325 L ParenthesizedExpression 326 329 -
+casts/head-of-a-chain-of-calls.js
+0 28 L ExpressionStatement 29 145 -
+162 190 L CallExpression 191 298 -
+300 316 L ExpressionStatement 317 445 -
+447 463 L ExpressionStatement 464 589 -
+598 614 L ParenthesizedExpression 615 618 -
 casts/in-a-chain-of-operators.js
 9 25 L ParenthesizedExpression 26 34 -
 40 56 L BinaryExpression 57 68 -
@@ -91,6 +159,17 @@ casts/in-a-chain-of-operators.js
 108 124 L LogicalExpression 125 138 -
 149 165 L ParenthesizedExpression 166 174 -
 194 210 L ParenthesizedExpression 211 321 -
+casts/last-argument-behind-a-function-that-is-hugged.js
+97 134 L ParenthesizedExpression 135 139 -
+187 208 L ParenthesizedExpression 209 220 -
+261 277 L ParenthesizedExpression 278 293 -
+340 356 L ParenthesizedExpression 357 369 -
+409 425 L ParenthesizedExpression 426 452 -
+427 443 L ParenthesizedExpression 444 451 -
+492 508 L ParenthesizedExpression 509 523 -
+563 579 L ParenthesizedExpression 580 614 -
+654 670 L ParenthesizedExpression 671 693 -
+734 750 L ParenthesizedExpression 751 758 -
 casts/member-of-a-cast-in-a-cast.js
 62 102 L ParenthesizedExpression 103 206 -
 111 140 L MemberExpression 141 200 -
@@ -104,11 +183,21 @@ casts/member-of-a-name-in-the-parentheses-of-a-cast.js
 158 234 L MemberExpression 234 244 -
 269 285 L MemberExpression 286 380 -
 287 364 L OptionalMemberExpression 365 374 -
+casts/number-in-brackets.js
+96 112 L ParenthesizedExpression 113 125 -
 casts/object-in-a-cast-behind-a-logical-operator.js
 29 45 L ParenthesizedExpression 46 117 -
 142 158 L ParenthesizedExpression 159 247 -
 268 284 L ParenthesizedExpression 285 356 -
 374 390 L ParenthesizedExpression 391 395 -
+casts/operand-of-a-conditional-expression.jsx
+10 26 L ConditionalExpression 27 157 -
+199 215 L ParenthesizedExpression 216 267 -
+380 396 L ParenthesizedExpression 397 448 -
+467 483 L ParenthesizedExpression 484 490 -
+703 719 L ParenthesizedExpression 720 731 -
+750 766 L ParenthesizedExpression 767 789 -
+823 839 L ParenthesizedExpression 840 923 -
 casts/right-side-of-for-of.js
 20 42 L ParenthesizedExpression 43 81 -
 47 70 L ParenthesizedExpression 71 79 -
@@ -116,6 +205,17 @@ casts/right-side-of-for-of.js
 134 158 L ParenthesizedExpression 159 236 -
 271 291 L ParenthesizedExpression 292 328 -
 296 317 L ParenthesizedExpression 318 326 -
+casts/sequence.js
+0 16 L ExpressionStatement 17 121 -
+139 155 L ParenthesizedExpression 156 252 -
+259 275 L ParenthesizedExpression 276 295 -
+299 315 L ParenthesizedExpression 316 335 -
+casts/start-of-a-statement-or-of-a-body.js
+15 31 L MemberExpression 32 47 -
+65 81 L ConditionalExpression 82 94 -
+112 128 L MemberExpression 129 137 -
+139 155 L ExpressionStatement 156 164 -
+166 182 L ExpressionStatement 183 203 -
 casts/type-comment-without-parentheses-in-typescript.tsx
 39 65 L TSNonNullExpression 66 109 -
 127 153 L CallExpression 155 202 -
@@ -124,6 +224,12 @@ casts/type-comment-without-parentheses.js
 39 65 L CallExpression 66 109 -
 127 153 L ParenthesizedExpression 154 203 -
 221 247 L CallExpression 248 296 -
+casts/what-is-awaited-in-a-cast-before-a-member.js
+29 45 L MemberExpression 46 151 -
+155 171 L ExpressionStatement 172 283 -
+287 303 L ExpressionStatement 304 415 -
+419 435 L ExpressionStatement 436 548 -
+556 572 L MemberExpression 573 681 -
 classes/comment-before-a-stray-semicolon.js
 21 31 L ClassMethod 39 45 -
 49 59 L ClassMethod 66 72 -
@@ -671,6 +777,15 @@ comments/line-comment-behind-the-parenthesis-of-parameters.ts
 344 348 L Identifier 351 364 -
 417 449 T TSTypeParameterDeclaration 392 415 -
 476 480 L Identifier 483 493 -
+comments/line-comment-that-is-all-there-is-in-the-pattern-of-a-catch-clause.js
+19 29 D ObjectPattern 15 31 -
+54 67 D ObjectPattern 52 69 -
+94 104 T ObjectProperty 92 93 -
+comments/member-that-does-not-fit-behind-a-line-comment.js
+4 14 T CallExpression 0 3 -
+141 151 T ObjectPattern 130 138 -
+273 283 T CallExpression 269 272 -
+399 409 T CallExpression 395 398 -
 comments/next-to-the-holes-of-an-array.js
 10 14 L Identifier 26 27 -
 19 23 L Identifier 26 27 -
@@ -942,6 +1057,9 @@ comments/that-looks-like-a-type-cast-after-a-type.ts
 592 608 T TSTypeReference 590 591 -
 620 636 T Identifier 618 619 -
 651 667 T Identifier 649 650 -
+comments/two-blanks-behind-the-start-of-a-nestled-comment.js
+0 26 L ExpressionStatement 27 28 -
+30 62 L ExpressionStatement 63 64 -
 comments/two-in-member-accesses-and-calls.js
 2 6 L MemberExpression 0 9 -
 10 14 L MemberExpression 0 17 -
@@ -1223,6 +1341,10 @@ ignore/semicolon-behind-the-comment.js
 50 71 T ExpressionStatement 40 49 -
 91 109 T ExpressionStatement 83 90 -
 114 132 L ExportNamedDeclaration 133 155 -
+ignore/string-or-template-in-brackets-as-a-key.js
+9 30 L StringLiteral 31 35 -
+145 166 L StringLiteral 167 173 -
+296 317 L TemplateLiteral 318 323 -
 ignore/text-over-several-lines-breaks-nothing.ts
 9 30 L TSUnionType 31 51 -
 62 83 L TSUnionType 86 99 -
@@ -1355,6 +1477,12 @@ no-semicolons/ignored-exported-declaration-with-its-semicolon.ts
 201 222 L TSTypeAliasDeclaration 223 234 -
 242 263 L VariableDeclaration 264 276 -
 284 305 L TSDeclareFunction 306 334 -
+no-semicolons/type-cast-that-starts-a-statement.mjs
+7 23 L ExpressionStatement 24 37 -
+47 63 L ExpressionStatement 64 77 -
+86 102 L ExpressionStatement 103 114 -
+124 140 L ExpressionStatement 141 152 -
+181 197 L ExpressionStatement 198 207 -
 objects/computed-key-that-is-short.js
 11 54 T NumericLiteral 9 10 -
 474 481 L NumericLiteral 482 483 -
@@ -1413,6 +1541,13 @@ statements/file-with-a-directive-and-comments-without-empty-lines.js
 statements/file-with-a-directive-and-comments.js
 15 22 T Directive 0 12 -
 24 28 T Directive 0 12 -
+tab-width-8/computed-key-with-a-block-comment-that-is-short.js
+17 22 T Identifier 15 16 -
+138 143 L Identifier 144 145 -
+263 281 T Identifier 261 262 -
+399 403 L ObjectProperty 396 517 -
+tab-width-8/yield-as-a-computed-key-that-is-short.js
+765 772 L Identifier 773 774 -
 types/comment-after-the-bracket-of-a-mapped-type-without-a-type.ts
 20 27 T TSTypeReference 17 18 -
 51 55 T TSTypeReference 48 49 -

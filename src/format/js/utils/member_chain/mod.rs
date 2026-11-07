@@ -12,15 +12,15 @@ use self::groups::{FormatMemberChainGroup, should_insert_empty_line_after};
 use self::simple_argument::SimpleArgument;
 use super::call_expression::{is_call_expression, is_member_expression};
 use super::is_long_curried_call;
-use super::typecast::is_cast_target;
+use super::typecast::{is_cast_target, is_cast_target_that_hides_its_kind};
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::prelude::*;
 use crate::{best_fitting, write};
 use smallvec::SmallVec;
 
-type Members<'a> = SmallVec<[ChainMember<'a>; 8]>;
+pub(crate) type Members<'a> = SmallVec<[ChainMember<'a>; 8]>;
 
-struct MemberChain<'a, 'b> {
+pub(crate) struct MemberChain<'a, 'b> {
     root: Expr<'a>,
     /// The links, first to last.
     members: &'b [ChainMember<'a>],
@@ -87,7 +87,7 @@ fn has_single_group_after_head(has_inner_call: bool, f: &Formatter<'_>) -> bool 
 
 impl<'a, 'b> MemberChain<'a, 'b> {
     /// `members` are the links of the chain that ends with the call `root`, first to last.
-    fn new(root: Expr<'a>, members: &'b [ChainMember<'a>], f: &Formatter<'a>) -> Self {
+    pub(crate) fn new(root: Expr<'a>, members: &'b [ChainMember<'a>], f: &Formatter<'a>) -> Self {
         let head_end = get_split_index_of_head_and_tail_groups(members, f);
         let mut group_ends = SmallVec::new();
         group_ends.push(head_end as u32);
@@ -105,7 +105,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
         member_chain
     }
 
-    fn group(&self, index: usize) -> &[ChainMember<'a>] {
+    pub(crate) fn group(&self, index: usize) -> &'b [ChainMember<'a>] {
         let start = index
             .checked_sub(1)
             .and_then(|previous| self.group_ends.get(previous))
@@ -125,7 +125,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
         self.group(0)
     }
 
-    fn tail_len(&self) -> usize {
+    pub(crate) fn tail_len(&self) -> usize {
         self.group_ends.len().saturating_sub(1)
     }
 
@@ -143,13 +143,17 @@ impl<'a, 'b> MemberChain<'a, 'b> {
 
         if let [ChainMember::Node(node)] = self.head() {
             match node.tag() {
+                // `/** @type {A} */ (this).b().c()`
+                _ if is_cast_target_that_hides_its_kind(*node, f) => false,
                 ExprTag::Ident => {
                     let name = node.text();
                     has_computed_property
                         || is_factory(name)
                         // A name that's shorter than the indentation: the `.` wouldn't even be to the right of it.
-                        || (name.len() <= f.options().indent_width.value() as usize
+                        || (length_of_name(name, f) <= f.options().indent_width.value() as usize
                             && matches!(self.root.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Expr)
+                            // `/** @type {A} */ (a.b().c());`: the parent is the `ParenthesizedExpression`.
+                            && !is_cast_target_that_hides_its_kind(self.root, f)
                             && !is_whole_expression_in_html(f))
                 }
                 ExprTag::This => true,
@@ -450,9 +454,10 @@ fn is_followed_by_comment<'a>(
         .any(|comment| is_directly_after(comment, member.expr()))
 }
 
-fn is_computed_array_member_access(member: &ChainMember<'_>) -> bool {
+fn is_computed_array_member_access<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {
     matches!(member, ChainMember::ComputedMember(expression)
-        if matches!(expression.kind(), ExprKind::Index { index, .. } if matches!(index.kind(), ExprKind::Number(_))))
+        if matches!(expression.kind(), ExprKind::Index { index, .. }
+            if matches!(index.kind(), ExprKind::Number(_)) && !is_cast_target_that_hides_its_kind(index, f)))
 }
 
 /// The index where the head ends. The head is the first member, the calls and `[0]`s right after it, and, unless it
@@ -467,7 +472,7 @@ fn get_split_index_of_head_and_tail_groups<'a>(
         .skip(1)
         .position(|member| match member {
             ChainMember::CallExpression { .. } | ChainMember::TSNonNullExpression(_) => false,
-            ChainMember::ComputedMember(_) => !is_computed_array_member_access(member),
+            ChainMember::ComputedMember(_) => !is_computed_array_member_access(member, f),
             _ => true,
         })
         .map_or(members.len(), |index| index + 1);
@@ -510,7 +515,7 @@ fn push_ends_of_remaining_groups<'a>(
     for (index, member) in members.iter().enumerate().skip(start) {
         match member {
             // `[0]` belongs with what's before it.
-            ChainMember::ComputedMember(_) if is_computed_array_member_access(member) => {}
+            ChainMember::ComputedMember(_) if is_computed_array_member_access(member, f) => {}
             ChainMember::StaticMember(_) | ChainMember::ComputedMember(_)
                 if has_seen_call_expression =>
             {
@@ -534,6 +539,14 @@ fn push_ends_of_remaining_groups<'a>(
     }
 }
 
+/// Prettier uses a JavaScript string's `length`, oxfmt a Rust string's.
+fn length_of_name(name: &[u8], f: &Formatter<'_>) -> usize {
+    match f.options().flavor.is_oxfmt() {
+        true => name.len(),
+        false => bun_core::strings::wtf8_len_utf16(name) as usize,
+    }
+}
+
 /// A name that starts with a capital letter, or consists of `_` and `$`, is likely a factory or a namespace:
 /// `Object.keys(a)`, `_.map(a)`, `$.ajax()`.
 fn is_factory(name: &[u8]) -> bool {
@@ -545,7 +558,7 @@ fn is_factory(name: &[u8]) -> bool {
 }
 
 /// True if the call `expression` is printed as a member chain that can break before each group: it has more than one
-/// group after the head, or a comment between its links.
+/// group after the head, a comment between its links, or an empty line after a call.
 pub(crate) fn is_member_call_chain<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
     let mut members = Members::new();
     if has_single_group_after_head(push_chain_members(expression, &mut members, f), f) {
@@ -553,7 +566,9 @@ pub(crate) fn is_member_call_chain<'a>(expression: Expr<'a>, f: &Formatter<'a>) 
     }
     members.reverse();
     let chain = MemberChain::new(expression, &members, f);
-    chain.tail_len() > 1 || chain.has_comment(f)
+    chain.tail_len() > 1
+        || chain.has_comment(f)
+        || (!lays_out_by_comment_position(f) && chain.find_empty_lines(f).1)
 }
 
 /// `a.#b().c()`: in oxfmt `a.#b` isn't a link of the chain. It, or the call of it, is the head of the chain.
@@ -563,7 +578,11 @@ fn starts_chain(member: Expr<'_>, f: &Formatter<'_>) -> bool {
 
 /// Appends the links of the chain that ends with the call `root`, last to first. Returns true if there's another call
 /// among them. The chain starts where something needs parentheses.
-fn push_chain_members<'a>(root: Expr<'a>, members: &mut Members<'a>, f: &Formatter<'a>) -> bool {
+pub(crate) fn push_chain_members<'a>(
+    root: Expr<'a>,
+    members: &mut Members<'a>,
+    f: &Formatter<'a>,
+) -> bool {
     members.push(ChainMember::CallExpression {
         expression: root,
         position: CallExpressionPosition::End,

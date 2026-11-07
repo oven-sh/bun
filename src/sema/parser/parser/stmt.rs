@@ -69,13 +69,23 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `finishNode` for a statement that ends with the previous token.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn add_stmt(
         &mut self,
         kind: StmtKind,
         start: Start,
         modifiers: Span<ModifierId>,
     ) -> StmtId {
+        let id = self.push_stmt(kind, start, modifiers);
+        // Here, where the caller's `kind` is in sight.
+        if Self::CLAIMS {
+            self.claims.stmt(&self.f, id, &kind);
+        }
+        id
+    }
+
+    #[inline]
+    fn push_stmt(&mut self, kind: StmtKind, start: Start, modifiers: Span<ModifierId>) -> StmtId {
         let id = StmtId(self.f.stmts.len() as u32);
         self.finish_statement(id, &kind, start.pos, self.prev_end());
         self.f.stmts.push(Stmt {

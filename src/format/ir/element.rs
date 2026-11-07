@@ -136,9 +136,60 @@ impl Token {
     #[inline(always)]
     pub(crate) fn new(text: &str) -> Option<Token> {
         let mut bytes = [0; Token::MAX];
-        bytes
-            .get_mut(..text.len())?
-            .copy_from_slice(text.as_bytes());
+        match *text.as_bytes() {
+            // Most tokens, without a call to copy them.
+            [first] => bytes[0] = first,
+            [first, second] => (bytes[0], bytes[1]) = (first, second),
+            _ => bytes
+                .get_mut(..text.len())?
+                .copy_from_slice(text.as_bytes()),
+        }
+        Some(Token {
+            len: text.len() as u8,
+            bytes,
+        })
+    }
+
+    /// The token as a number, which a function takes in registers.
+    #[inline(always)]
+    pub(crate) const fn to_bits(self) -> u128 {
+        let mut bytes = [0; 16];
+        bytes[15] = self.len;
+        let mut index = 0;
+        while index < Token::MAX {
+            bytes[index + 1] = self.bytes[index];
+            index += 1;
+        }
+        u128::from_le_bytes(bytes)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_bits(bits: u128) -> Token {
+        let all = bits.to_le_bytes();
+        let mut bytes = [0; Token::MAX];
+        let mut index = 0;
+        while index < Token::MAX {
+            bytes[index] = all[index + 1];
+            index += 1;
+        }
+        Token {
+            len: all[15],
+            bytes,
+        }
+    }
+
+    /// Same, at compile time.
+    pub(crate) const fn new_const(text: &str) -> Option<Token> {
+        let text = text.as_bytes();
+        if text.len() > Token::MAX {
+            return None;
+        }
+        let mut bytes = [0; Token::MAX];
+        let mut index = 0;
+        while index < text.len() {
+            bytes[index] = text[index];
+            index += 1;
+        }
         Some(Token {
             len: text.len() as u8,
             bytes,
@@ -190,29 +241,75 @@ pub(crate) struct TextWidth(u32);
 impl TextWidth {
     const MULTILINE: u32 = 1 << 31;
     const ONE_STRING: u32 = 1 << 30;
-    const FLAGS: u32 = Self::MULTILINE | Self::ONE_STRING;
+    /// See [`TextWidth::short_cut`].
+    const SHORT_CUT: u32 = 1 << 29;
+    const AFTER_SHIFT: u32 = 26;
+    /// The widest text. What is printed is shorter than that: see `is_too_long`.
+    const WIDEST: u32 = Self::SHORT_CUT - 1;
+    /// The same for a [`TextWidth::short_cut`], which has fewer bits for it.
+    const WIDEST_SHORT_CUT: u32 = (1 << Self::AFTER_SHIFT) - 1;
+
+    /// A width that has no room counts as the widest one, not as what is left of its bits.
+    #[inline]
+    const fn at_most(width: u32, widest: u32) -> u32 {
+        if width > widest { widest } else { width }
+    }
 
     #[inline]
     pub(crate) const fn single(width: u32) -> Self {
-        Self(width & !Self::FLAGS)
+        Self(Self::at_most(width, Self::WIDEST))
+    }
+
+    /// A text that stands for a document that's printed like this only if it fits on the line, together with the
+    /// `after` (at most 7) columns that follow it. The printer checks that. See `js/flat.rs`.
+    #[inline]
+    pub(crate) const fn short_cut(width: u32, after: u32) -> Self {
+        let width = Self::at_most(width, Self::WIDEST_SHORT_CUT);
+        Self(width | Self::SHORT_CUT | (after & 7) << Self::AFTER_SHIFT)
+    }
+
+    /// For a [`TextWidth::short_cut`], the columns that have to be free after it.
+    #[inline]
+    pub(crate) const fn room_needed_after(self) -> Option<u32> {
+        match self.0 & Self::SHORT_CUT != 0 {
+            true => Some(self.0 >> Self::AFTER_SHIFT & 7),
+            false => None,
+        }
     }
 
     /// `width` is measured up to the first line break. Prettier sees the lines as strings joined by `literalline`.
     #[inline]
     pub(crate) const fn multiline(width: u32) -> Self {
-        Self(width & !Self::FLAGS | Self::MULTILINE)
+        Self(Self::at_most(width, Self::WIDEST) | Self::MULTILINE)
     }
 
     /// `width` is the total of all lines. Prettier sees one string in which a line break is just another zero-width
     /// character, so the fit check covers the whole string and what follows it.
     #[inline]
     pub(crate) const fn multiline_string(width: u32) -> Self {
-        Self(width & !Self::FLAGS | Self::FLAGS)
+        Self(Self::at_most(width, Self::WIDEST) | Self::MULTILINE | Self::ONE_STRING)
+    }
+
+    /// For a text of nothing but line breaks that stands for as many `hardline`s, of which the printer would print no more
+    /// than two. It's measured like [`TextWidth::multiline`], but its line breaks are in no text: see
+    /// `FormatOptions::is_in_markdown`.
+    #[inline]
+    pub(crate) const fn forced_line_breaks() -> Self {
+        Self(Self::MULTILINE | 1 << Self::AFTER_SHIFT)
+    }
+
+    #[inline]
+    pub(crate) const fn is_forced_line_breaks(self) -> bool {
+        self.0 == Self::forced_line_breaks().0
     }
 
     #[inline]
     pub(crate) const fn value(self) -> u32 {
-        self.0 & !Self::FLAGS
+        self.0
+            & match self.0 & Self::SHORT_CUT != 0 {
+                true => Self::WIDEST_SHORT_CUT,
+                false => Self::WIDEST,
+            }
     }
 
     /// See [`TextWidth::multiline_string`].
@@ -584,4 +681,7 @@ impl LabelId {
 pub(crate) enum JsLabels {
     /// A chain of calls and member accesses.
     MemberChain,
+    /// A [`FormatElement::LineSuffixBoundary`] that the document of Prettier does not have. See
+    /// `own_line_suffix_boundary`.
+    OwnBoundary,
 }

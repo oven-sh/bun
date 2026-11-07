@@ -16,21 +16,64 @@ struct Entry {
 }
 
 struct Context {
+    hash: u64,
     flags: u32,
     /// A range of `Memo::bytes`.
     at_rule: (u32, u32),
+}
+
+/// Finds the items of a list by their hashes: open addressing with linear probing from the hash's low bits. Each slot
+/// holds an index plus one, or 0. The length is a power of two.
+#[derive(Default)]
+struct Table(Vec<u32>);
+
+impl Table {
+    /// Returns the index with that hash for which `is_it` is true.
+    fn find(&self, hash: u64, is_it: impl Fn(usize) -> bool) -> Option<usize> {
+        let mask = self.0.len().checked_sub(1)?;
+        let mut at = hash as usize & mask;
+        loop {
+            let index = (*self.0.get(at)?).checked_sub(1)? as usize;
+            if is_it(index) {
+                return Some(index);
+            }
+            at = (at + 1) & mask;
+        }
+    }
+
+    /// There has to be a free slot.
+    fn insert(&mut self, hash: u64, index: usize) {
+        let mask = self.0.len() - 1;
+        let mut at = hash as usize & mask;
+        while self.0[at] != 0 {
+            at = (at + 1) & mask;
+        }
+        self.0[at] = index as u32 + 1;
+    }
+
+    /// Before an item is added to a list with these `hashes`: keeps half of the slots free.
+    fn make_room(&mut self, hashes: impl ExactSizeIterator<Item = u64>) {
+        if (hashes.len() + 1) * 2 <= self.0.len() {
+            return;
+        }
+        let len = (self.0.len() * 2).max(256);
+        self.0.clear();
+        self.0.resize(len, 0);
+        for (index, hash) in hashes.enumerate() {
+            self.insert(hash, index);
+        }
+    }
 }
 
 #[derive(Default)]
 pub(crate) struct Memo {
     bytes: Vec<u8>,
     contexts: Vec<Context>,
+    contexts_by_hash: Table,
     /// The id of `contexts[0]`. Ids are never reused, even after a reset.
     first_context: u32,
     entries: Vec<Entry>,
-    /// Open addressing with linear probing from the hash's low bits. Each slot holds an entry's index plus one, or 0.
-    /// The length is a power of two.
-    table: Vec<u32>,
+    entries_by_hash: Table,
 }
 
 /// The cache is reset when it grows past this.
@@ -61,7 +104,8 @@ impl Memo {
     pub(crate) fn context(&mut self, flags: u32, at_rule: &[u8]) -> u32 {
         if self.bytes.len()
             + self.entries.len() * size_of::<Entry>()
-            + self.table.len() * size_of::<u32>()
+            + self.contexts.len() * size_of::<Context>()
+            + (self.entries_by_hash.0.len() + self.contexts_by_hash.0.len()) * size_of::<u32>()
             > MAX_BYTES
         {
             *self = Memo {
@@ -69,13 +113,21 @@ impl Memo {
                 ..Memo::default()
             };
         }
-        let known = self
-            .contexts
-            .iter()
-            .position(|context| context.flags == flags && self.of(context.at_rule) == at_rule);
+        let hash = hash(flags, at_rule);
+        let known = self.contexts_by_hash.find(hash, |index| {
+            let context = &self.contexts[index];
+            context.hash == hash && context.flags == flags && self.of(context.at_rule) == at_rule
+        });
         let index = known.unwrap_or_else(|| {
+            self.contexts_by_hash
+                .make_room(self.contexts.iter().map(|it| it.hash));
             let at_rule = self.add(at_rule);
-            self.contexts.push(Context { flags, at_rule });
+            self.contexts.push(Context {
+                hash,
+                flags,
+                at_rule,
+            });
+            self.contexts_by_hash.insert(hash, self.contexts.len() - 1);
             self.contexts.len() - 1
         });
         self.first_context.wrapping_add(index as u32)
@@ -83,48 +135,28 @@ impl Memo {
 
     /// Returns the cached output for the declaration `text`, and whether it has a group in it.
     pub(crate) fn get(&self, context: u32, text: &[u8]) -> Option<(&[u8], bool)> {
-        let mask = self.table.len().checked_sub(1)?;
         let hash = hash(context, text);
-        let mut at = hash as usize & mask;
-        loop {
-            let entry = self
-                .entries
-                .get((*self.table.get(at)?).checked_sub(1)? as usize)?;
-            if entry.hash == hash && entry.context == context && self.of(entry.text) == text {
-                return Some((self.of(entry.output), entry.has_group));
-            }
-            at = (at + 1) & mask;
-        }
+        let index = self.entries_by_hash.find(hash, |index| {
+            let entry = &self.entries[index];
+            entry.hash == hash && entry.context == context && self.of(entry.text) == text
+        })?;
+        let entry = &self.entries[index];
+        Some((self.of(entry.output), entry.has_group))
     }
 
     /// `text` must not be cached yet.
     pub(crate) fn insert(&mut self, context: u32, text: &[u8], output: &[u8], has_group: bool) {
-        if (self.entries.len() + 1) * 2 > self.table.len() {
-            let len = (self.table.len() * 2).max(256);
-            self.table.clear();
-            self.table.resize(len, 0);
-            for index in 0..self.entries.len() {
-                self.insert_into_table(index);
-            }
-        }
+        self.entries_by_hash
+            .make_room(self.entries.iter().map(|it| it.hash));
         let (text_range, output) = (self.add(text), self.add(output));
+        let hash = hash(context, text);
         self.entries.push(Entry {
-            hash: hash(context, text),
+            hash,
             context,
             text: text_range,
             output,
             has_group,
         });
-        self.insert_into_table(self.entries.len() - 1);
-    }
-
-    /// Inserts entry `index` into the table, which must have a free slot.
-    fn insert_into_table(&mut self, index: usize) {
-        let mask = self.table.len() - 1;
-        let mut at = self.entries[index].hash as usize & mask;
-        while self.table[at] != 0 {
-            at = (at + 1) & mask;
-        }
-        self.table[at] = index as u32 + 1;
+        self.entries_by_hash.insert(hash, self.entries.len() - 1);
     }
 }

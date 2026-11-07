@@ -355,6 +355,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
         }
         self.leave_list(lists);
+        if self.s.type_params.len() == base {
+            self.f.rare_syntax |= rare::EMPTY_TYPE_PARAMETERS;
+        }
         if self.recovers() && self.s.type_params.len() == base {
             self.empty_type_parameters(less_than);
         }

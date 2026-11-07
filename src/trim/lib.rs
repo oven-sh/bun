@@ -19,6 +19,7 @@ pub use bun_removable_features::{
 };
 pub use decide::{decide, features_kept_only_when_named};
 pub use error::{TrimError, TrimInternalError, TrimRequestError, UnsupportedReason};
+pub use locales::CanonicalLocaleTag;
 pub use model::{
     Decision, EdgeStrength, ExecutableSettings, FeatureEdge, FeatureEdges, LocaleTag,
     OptionRequirement, RetainReason, Retained, TrimInput, TrimPlan, TrimSummary, UnseenCode,

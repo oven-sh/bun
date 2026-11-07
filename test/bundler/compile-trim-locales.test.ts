@@ -47,6 +47,23 @@ console.log(new Intl.NumberFormat("de").format(1234.5), new Intl.PluralRules("de
 console.log(new Intl.RelativeTimeFormat("de").format(-1, "day"), new Intl.ListFormat("de").format(["a", "b"]));`,
   // The locale comes with the command line: of a locale that the build can read, --aot makes the pattern itself, and the program asks for no data.
   "removed.ts": `console.log(new Date(0).toLocaleDateString(process.argv[2], { timeZone: "UTC" }));`,
+  // What Intl reads each tag of the command line as, and a number, a plural and a date in it.
+  "tags.ts": `
+for (const tag of process.argv.slice(2)) {
+  console.log(tag, new Intl.NumberFormat(tag).resolvedOptions().locale, new Intl.PluralRules(tag).select(1));
+  console.log(new Date(0).toLocaleDateString(tag, { timeZone: "UTC", dateStyle: "full" }));
+}`,
+  "build-tags.ts": `
+const built = await Bun.build({
+  entrypoints: ["./tags.ts"],
+  compile: {
+    aot: process.argv[2] === "aot",
+    outfile: process.argv[3],
+    trim: { locales: process.argv.slice(4) },
+    ...(process.env.STARTS_FROM && { executablePath: process.env.STARTS_FROM }),
+  },
+});
+if (!built.success) throw new AggregateError(built.logs);`,
 };
 
 (canTrim ? describe.concurrent : describe.skip)("--trim-locales", () => {
@@ -84,6 +101,42 @@ console.log(new Intl.RelativeTimeFormat("de").format(-1, "day"), new Intl.ListFo
           })),
         );
         expect(answers).toEqual(hosts.map(host => ({ host, ...expected })));
+      },
+    );
+
+    test.skipIf(flags.length > 0 && !!unsupported)(
+      `${how}: a locale is kept under the name that Intl gives its tag`,
+      async () => {
+        using dir = tempDir("compile-trim-locales-names", programs);
+        const folder = String(dir);
+        // Intl reads `in` as `id`, `iw` as `he` and `mo` as `ro`, and opens the data of those names.
+        const build = ["build", "--compile", ...flags, ...withoutDebugInformation, "--trim", "tags.ts"];
+        const listed = [...build, "--trim-locales=in,iw,mo,sh,tl_PH,en", "--outfile", "listed"];
+        // The command line is read before the engine starts, here with a locale of the host that ICU cannot read.
+        const host = { ...bunEnv, LANG: "abcdefghijkl", LC_ALL: "abcdefghijkl", LC_MESSAGES: "abcdefghijkl" };
+        expect(await run([bunExe(), ...listed], folder, host)).toMatchObject({ exitCode: 0 });
+        // The same languages through Bun.build: one as POSIX names a locale, and one as a tag whose canonical form
+        // is longer than the buffer that it is first written to.
+        const long = "mo-u-ca-gregory-co-standard-cu-mdl-fw-mon-hc-h23-ms-metric-nu-latn-tz-mdkiv";
+        const locales = ["in", "iw_IL.UTF-8", long, "sh", "tl_PH", "en"];
+        const api = ["build-tags.ts", flags.length > 0 ? "aot" : "bundle", join(folder, "api"), ...locales];
+        const startsFrom = { ...bunEnv, STARTS_FROM: copyWithoutDebugInformation };
+        expect(await run([bunExe(), ...api], folder, startsFrom)).toMatchObject({ exitCode: 0 });
+
+        const tags = ["in", "id", "iw", "he", "mo", "ro", "sh", "tl"];
+        const whole = await run([bunExe(), "tags.ts", ...tags], folder);
+        expect(whole).toMatchObject({ stderr: "", exitCode: 0 });
+        expect(await run([join(folder, "listed"), ...tags], folder)).toEqual(whole);
+        expect(await run([join(folder, "api"), ...tags], folder)).toEqual(whole);
+        // The system's ICU has every language.
+        if (isMacOS) return;
+        expect(await run([join(folder, "listed"), "de"], folder)).toMatchObject({ exitCode: 70 });
+        // Intl reads `hy-arevmda` as `hyw`, which has no data. The build says so of the tag as it is written.
+        const refused = [...build, "--trim-locales=hy-arevmda", "--outfile", "refused"];
+        expect(await run([bunExe(), ...refused], folder)).toMatchObject({
+          stderr: expect.stringContaining('has no data for the locale "hy-arevmda"'),
+          exitCode: 1,
+        });
       },
     );
 

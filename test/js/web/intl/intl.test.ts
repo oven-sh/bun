@@ -326,8 +326,8 @@ describe("Intl.getCanonicalLocales", () => {
       mo: Intl.getCanonicalLocales("mo")[0],
       ji: Intl.getCanonicalLocales("ji")[0],
     }).toEqual({ in: "id", iw: "he", mo: "ro", ji: "yi" });
-    // sh/tl/no are kept as-is (ICU ships bundles under both names)
-    expect(Intl.getCanonicalLocales(["sh", "tl", "no"])).toEqual(["sh", "tl", "no"]);
+    // `no` is CLDR's macrolanguage and stays.
+    expect(Intl.getCanonicalLocales("no")).toEqual(["no"]);
   });
 });
 

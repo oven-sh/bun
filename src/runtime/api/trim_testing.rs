@@ -91,6 +91,7 @@ fn trim_in_memory(
             len: bytes.len(),
             read: &mut image_over(bytes),
         },
+        crate::cli::compile_command::canonical_locale_tag,
     )
     .map_err(|error| throw_trim_error(global, &error))?;
     apply(bytes, &trim_plan).map_err(|error| throw_trim_error(global, &error))

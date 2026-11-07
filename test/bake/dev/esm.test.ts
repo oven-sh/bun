@@ -250,19 +250,21 @@ devTest("an `import a = b.c` that no value reads leaves no code", {
   framework: minimalFramework,
   files: {
     "types.ts": `
-      export namespace Types { export type T = string; }
+      export namespace Types { export type T = string; export namespace Inner { export type Deep = string; } }
       export const real = "real";
     `,
     "routes/index.ts": `
       import { Types, real } from '../types';
       import T = Types.T;
+      import Inner = Types.Inner;
+      import Deep = Inner.Deep;
       namespace Local { export type U = string; }
       namespace M {
         import U = Local.U;
         import text = Types.text;
         export const value: U = "value";
       }
-      const t: T = real;
+      const t: T & Deep = real;
       export default function (req, meta) {
         return new Response(t + " " + M.value);
       }

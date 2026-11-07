@@ -3726,7 +3726,7 @@ static JSValue failureKeptForImportsOf(Zig::GlobalObject* globalObject, const St
         if (stillKeepsFailureForImports(globalObject, mock) && mock->specifier->tryGetValue().data == specifier)
             return mock->errorOwedToImports.get();
     }
-    return { };
+    return {};
 }
 
 static void bringBackFactoriesSetAside(Zig::GlobalObject* globalObject, JSModuleMock* mock)
@@ -4140,7 +4140,8 @@ JSC::JSPromise* factoryOfCompiledMockThatWaits(Zig::GlobalObject* globalObject, 
         mock->isDetached = true;
         noLongerRunning.append(mock);
         return !factory.isWaitedFor && factory.wasStartedByRequire;
-    }, setAside);
+    },
+        setAside);
     for (auto* mock : noLongerRunning)
         mock->detach(globalObject);
     for (; setAside < factories.size(); ++setAside) {
@@ -4449,7 +4450,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     // The loader has fetched nothing for a compiled module.
     auto testFileOf = [&](JSC::AOT::LoadedBy loadedBy) {
         unsigned testFile = globalObject->onLoadPlugins.testFile;
-        return loadedBy == JSC::AOT::LoadedBy::ThisTestFile ? testFile : loadedBy == JSC::AOT::LoadedBy::EarlierTestFile ? testFile - 1 : 0;
+        return loadedBy == JSC::AOT::LoadedBy::ThisTestFile ? testFile : loadedBy == JSC::AOT::LoadedBy::EarlierTestFile ? testFile - 1
+                                                                                                                         : 0;
     };
     if (previous && loaded.compiledModule && !loadedByTestFile)
         loadedByTestFile = previous->testFileOfFirstLoad;

@@ -1201,14 +1201,14 @@ void JSCommonJSModule::setCompiledModuleThatAsks(uint32_t module)
 {
     WTF::Locker locker { recordsBesideModuleObjectsLock };
     hasRecordBesideCell = true;
-    recordsBesideModuleObjects().ensure(this, [] { return RecordBesideModuleObject { }; }).iterator->value.compiledModuleThatAsks = module;
+    recordsBesideModuleObjects().ensure(this, [] { return RecordBesideModuleObject {}; }).iterator->value.compiledModuleThatAsks = module;
 }
 
 bool JSCommonJSModule::listsCompiledModuleAsChild(uint32_t module)
 {
     WTF::Locker locker { recordsBesideModuleObjectsLock };
     hasRecordBesideCell = true;
-    return recordsBesideModuleObjects().ensure(this, [] { return RecordBesideModuleObject { }; }).iterator->value.compiledModulesAmongChildren.add(module).isNewEntry;
+    return recordsBesideModuleObjects().ensure(this, [] { return RecordBesideModuleObject {}; }).iterator->value.compiledModulesAmongChildren.add(module).isNewEntry;
 }
 
 void JSCommonJSModule::forgetCompiledModulesAmongChildren()

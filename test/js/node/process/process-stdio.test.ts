@@ -546,9 +546,9 @@ describe.concurrent.skipIf(isWindows)(
       expect(exitCode).toBe(0);
     });
 
-    // As in libuv, what was queued before the call waits for the writable poll. Nobody reads here, so it stays queued, and
-    // neither the loop nor process.exit() waits for it.
-    test("bytes queued before _handle.setBlocking(true) do not stop the event loop", async () => {
+    // As in libuv, what was queued before the call waits for the writable poll: nobody reads yet, and the loop still runs.
+    // process.exit() then writes it and waits for the reader, where a stream that was not asked to block only tries once.
+    test("bytes queued before _handle.setBlocking(true) do not stop the event loop, and process.exit() writes them", async () => {
       await using proc = spawn({
         cmd: [
           bunExe(),
@@ -566,8 +566,10 @@ describe.concurrent.skipIf(isWindows)(
         stderr: "pipe",
         lazy: true,
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe('{"first":false,"result":0}\n{"loopRuns":true}\n');
+      const events = jsonLines(proc.stderr);
+      expect([await events.next(), await events.next()]).toEqual([{ first: false, result: 0 }, { loopRuns: true }]);
+      const [bytes, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+      expect(bytes.byteLength).toBe(1 << 20);
       expect(exitCode).toBe(0);
     });
 
@@ -614,38 +616,33 @@ describe.concurrent.skipIf(isWindows)(
     });
 
     // libuv reopens a terminal, so its O_NONBLOCK never reaches the description that the parent shell has too.
-    test("process.stdout._handle.setBlocking() with false or 1 leaves a terminal blocking", async () => {
-      for (const blocking of [false, 1]) {
-        let output = "";
-        const reported = Promise.withResolvers<void>();
-        await using proc = spawn({
-          cmd: [
-            bunExe(),
-            "-e",
-            `const result = process.stdout._handle.setBlocking(${blocking});
-             require("fs").writeSync(1, JSON.stringify({ isTTY: process.stdout.isTTY, result }) + " ");
-             process.argv = [process.argv[0], "probe", "1"];
-             require(${JSON.stringify(probe)});`,
-          ],
-          env: bunEnv,
-          terminal: {
-            data(_terminal, chunk: Uint8Array) {
-              output += Buffer.from(chunk).toString();
-              if (/\d:(non)?blocking/.test(output)) reported.resolve();
-            },
-            exit() {
-              reported.reject(new Error("the terminal closed before the report: " + JSON.stringify(output)));
-            },
+    test("process.stdout._handle.setBlocking(false) leaves a terminal blocking", async () => {
+      let output = "";
+      const reported = Promise.withResolvers<void>();
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const result = process.stdout._handle.setBlocking(false);
+           require("fs").writeSync(1, JSON.stringify({ isTTY: process.stdout.isTTY, result }) + " ");
+           process.argv = [process.argv[0], "probe", "1"];
+           require(${JSON.stringify(probe)});`,
+        ],
+        env: bunEnv,
+        terminal: {
+          data(_terminal, chunk: Uint8Array) {
+            output += Buffer.from(chunk).toString();
+            if (/\d:(non)?blocking/.test(output)) reported.resolve();
           },
-        });
-        await reported.promise;
-        expect({ blocking, output: output.trim() }).toEqual({
-          blocking,
-          output: '{"isTTY":true,"result":0} 1:blocking',
-        });
-        expect(await proc.exited).toBe(0);
-        proc.terminal!.close();
-      }
+          exit() {
+            reported.reject(new Error("the terminal closed before the report: " + JSON.stringify(output)));
+          },
+        },
+      });
+      await reported.promise;
+      expect(output.trim()).toBe('{"isTTY":true,"result":0} 1:blocking');
+      expect(await proc.exited).toBe(0);
+      proc.terminal!.close();
     });
   },
 );

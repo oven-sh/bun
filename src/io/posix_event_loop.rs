@@ -319,6 +319,12 @@ impl FilePoll {
         FileType::Pipe
     }
 
+    /// Whether `set_blocking_writes(true)` holds: a terminal has `PlainWrite` too, and was never asked.
+    #[cfg(not(windows))]
+    pub(crate) fn has_blocking_writes(&self) -> bool {
+        self.flags.contains(Flags::PlainWrite) && !self.flags.contains(Flags::Tty)
+    }
+
     /// `uv_stream_set_blocking` for a writer's socket or pipe. In blocking mode a socket carries `PlainWrite` in place of `Socket`.
     #[cfg(not(windows))]
     pub(crate) fn set_blocking_writes(&mut self, blocking: bool) {

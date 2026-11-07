@@ -1950,6 +1950,11 @@ impl FilePollRef {
     pub fn set_blocking_writes(self, blocking: bool) {
         self.inner().set_blocking_writes(blocking);
     }
+    #[cfg(not(windows))]
+    #[inline]
+    pub fn has_blocking_writes(self) -> bool {
+        self.inner().has_blocking_writes()
+    }
     #[inline]
     pub(crate) fn file_type(self) -> crate::pipes::FileType {
         #[cfg(not(windows))]

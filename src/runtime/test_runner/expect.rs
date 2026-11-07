@@ -181,6 +181,15 @@ impl Flags {
     pub(crate) fn set_asymmetric_matcher_constructor_type(&mut self, t: AsymmetricMatcherConstructorType) {
         self.0 = (self.0 & !Self::AMCT_MASK) | ((t as u8) << Self::AMCT_SHIFT);
     }
+    /// What a printed asymmetric matcher of `expect.resolvesTo` or `expect.rejectsTo` starts with.
+    #[inline]
+    pub(crate) fn asymmetric_matcher_promise_prefix(self) -> &'static str {
+        match self.promise() {
+            Promise::Resolves => "promise resolved to ",
+            Promise::Rejects => "promise rejected to ",
+            Promise::None => "",
+        }
+    }
     /// `expect.poll()` can't be combined with `.resolves` / `.rejects`, so it reuses the spare promise bit pattern.
     #[inline]
     pub(crate) fn poll(self) -> bool {

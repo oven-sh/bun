@@ -1317,7 +1317,7 @@ const headers = {
 // Vitest 5.0.3 wrote formats/vitest and Jest 30.5.2 wrote formats/jest, both the .snap files and the inline snapshots.
 // To add a case, run it under that runner. Never update these with Bun.
 describe.concurrent("the fixtures and snapshot files that another runner wrote", () => {
-  const tests = { vitest: 971, jest: 601 };
+  const tests = { vitest: 1014, jest: 602 };
 
   function copyOf(runner: "vitest" | "jest") {
     const dir = tempDir(`snapshot-formats-${runner}`, {});
@@ -1908,6 +1908,296 @@ describe.concurrent("an inline snapshot does not say who wrote it", () => {
     expect(stderr).toContain("expect(received).toMatchInlineSnapshot(expected)");
     expect(exitCode).toBe(1);
   });
+});
+
+// Jest and Vitest have no expect.resolvesTo, expect.rejectsTo, expect.not.any() or expect.not.anything().
+describe.concurrent("asymmetric matchers that only Bun has", () => {
+  const snap = (dir: unknown) => readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8");
+  const toBeFoo = `expect.extend({ toBeFoo: () => ({ pass: true, message: () => "" }) });\n`;
+
+  test("Bun's format names the promise and the negation", async () => {
+    using dir = tempDir("snapshot-bun-only-matchers", {
+      "a.test.js": `${toBeFoo}
+        const matchers = [
+          expect.not.anything(),
+          expect.not.any(Number),
+          expect.resolvesTo.any(Number),
+          expect.rejectsTo.any(Number),
+          expect.not.resolvesTo.any(Number),
+          expect.resolvesTo.not.any(Number),
+          expect.rejectsTo.anything(),
+          expect.rejectsTo.closeTo(1, 2),
+          expect.resolvesTo.objectContaining({ a: 1 }),
+          expect.rejectsTo.not.stringContaining("a"),
+          expect.resolvesTo.stringMatching(/a/),
+          expect.resolvesTo.not.toBeFoo(1),
+        ];
+        test("t", () => {
+          expect(matchers).toMatchSnapshot();
+          console.log(matchers.map(matcher => Bun.inspect(matcher)).join("\\n"));
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: { ...bunEnv, CI: "false" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const printed = [
+      "NotAnything",
+      "NotAny<Number>",
+      "promise resolved to Any<Number>",
+      "promise rejected to Any<Number>",
+      "promise resolved to NotAny<Number>",
+      "promise resolved to NotAny<Number>",
+      "promise rejected to Anything",
+      "promise rejected to NumberCloseTo 1 (2 digits)",
+    ];
+    expect(stderr).toContain("+1 added");
+    expect(snap(dir)).toBe(
+      headers.bun +
+        "\nexports[`t 1`] = `\n[\n" +
+        printed.map(text => `  ${text},\n`).join("") +
+        '  promise resolved to ObjectContaining {\n    "a": 1,\n  },\n' +
+        '  promise rejected to StringNotContaining "a",\n' +
+        "  promise resolved to StringMatching /a/,\n" +
+        "  promise resolved to not toBeFoo [\n    1,\n  ],\n" +
+        "]\n`;\n",
+    );
+    expect(stdout.slice(stdout.indexOf("NotAnything"))).toBe(
+      printed.join("\n") +
+        "\npromise resolved to ObjectContaining {\n  a: 1,\n}" +
+        '\npromise rejected to StringNotContaining "a"' +
+        "\npromise resolved to StringMatching /a/" +
+        "\npromise resolved to not toBeFoo [ 1 ]\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // Each matcher, and what a file of Jest or Vitest holds for it and for its negation.
+  const kinds = [
+    ["anything()", "Anything", "NotAnything"],
+    ["any(Number)", "Any<Number>", "NotAny<Number>"],
+    ["arrayContaining([1])", "ArrayContaining [\n  1,\n]", "ArrayNotContaining [\n  1,\n]"],
+    ["closeTo(1, 2)", "NumberCloseTo 1 (2 digits)", "NumberNotCloseTo 1 (2 digits)"],
+    ["objectContaining({ a: 1 })", 'ObjectContaining {\n  "a": 1,\n}', 'ObjectNotContaining {\n  "a": 1,\n}'],
+    ['stringContaining("a")', 'StringContaining "a"', 'StringNotContaining "a"'],
+    ["stringMatching(/a/)", "StringMatching /a/", "StringNotMatching /a/"],
+    ["toBeFoo(1)", "toBeFoo<1>", "not.toBeFoo<1>"],
+  ] as const;
+  // Each way to the matcher, whether that negates it, and the words that stand before it.
+  const chains = [
+    ["expect.", false, ""],
+    ["expect.not.", true, ""],
+    ["expect.resolvesTo.", false, "promise resolved to "],
+    ["expect.rejectsTo.", false, "promise rejected to "],
+    ["expect.not.resolvesTo.", true, "promise resolved to "],
+    ["expect.rejectsTo.not.", true, "promise rejected to "],
+  ] as const;
+  const matchers = chains.flatMap(([chain, isNegated, words]) =>
+    kinds.map(([kind, printed, negated]) => ({
+      source: chain + kind,
+      printed: words + (isNegated ? negated : printed),
+    })),
+  );
+
+  test("the table has every matcher that expect.not has", async () => {
+    using dir = tempDir("snapshot-bun-only-matchers", {
+      "a.test.js": `
+        test("t", () => {
+          const prototype = Object.getPrototypeOf(expect.not);
+          const isMethod = name => typeof Object.getOwnPropertyDescriptor(prototype, name).value === "function";
+          console.log(JSON.stringify(Object.getOwnPropertyNames(prototype).filter(isMethod)));
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: { ...bunEnv, CI: "true" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // toBeFoo() is of the class that expect.extend() makes, and so is toSatisfy().
+    const inTheTable = kinds.map(([source]) => source.slice(0, source.indexOf("(")).replace("toBeFoo", "toSatisfy"));
+    expect(stderr).toContain("(pass) t");
+    expect(JSON.parse(stdout.slice(stdout.indexOf("[")))).toEqual(inTheTable.sort());
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["jest", "vitest"] as const)("a file of %s holds another text for each of the 48", async format => {
+    using dir = tempDir("snapshot-bun-only-matchers", {
+      "a.test.js": `${toBeFoo}
+        test("t", () => { expect([${matchers.map(({ source }) => source).join(", ")}]).toMatchSnapshot(); });
+      `,
+      "__snapshots__/a.test.js.snap": headers[format],
+    });
+    const { stderr, exitCode } = await runTests(String(dir), { CI: "false" });
+    expect(stderr).toContain("+1 added");
+    expect(snap(dir)).toBe(
+      headers[format] +
+        "\nexports[`t 1`] = `\n[\n" +
+        matchers.map(({ printed }) => `  ${printed.replaceAll("\n", "\n  ")},\n`).join("") +
+        "]\n`;\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["bun:test", "jest"],
+    ["vitest", "vitest"],
+  ] as const)("a test of %j fails on what %s prints for the matcher without its flags", async (module, format) => {
+    const stored = '\n{\n  "m": ObjectContaining {\n    "a": 1,\n  },\n  "n": Any<Number>,\n}\n';
+    using dir = tempDir("snapshot-bun-only-matchers", {
+      "a.test.js": `
+        import { test, expect } from ${JSON.stringify(module)};
+        const value = () => ({ m: expect.resolvesTo.objectContaining({ a: 1 }), n: expect.not.any(Number) });
+        test("in the file", () => { expect(value()).toMatchSnapshot(); });
+        test("inline", () => { expect(value()).toMatchInlineSnapshot(\`${stored}\`); });
+        test("a property matcher", async () => {
+          await expect({ p: Promise.resolve(1) }).toMatchSnapshot({ p: expect.resolvesTo.anything() });
+        });
+      `,
+      "__snapshots__/a.test.js.snap":
+        headers[format] +
+        '\nexports[`a property matcher 1`] = `\n{\n  "p": Anything,\n}\n`;\n' +
+        ("\nexports[`in the file 1`] = `" + stored + "`;\n"),
+    });
+    const { stderr, pass, fail, exitCode } = await runTests(String(dir), { CI: "true" });
+    const differences = (text: string) => stderr.split(text).length - 1;
+    expect({
+      pass,
+      fail,
+      ofTheValue: differences(
+        '-   "m": ObjectContaining {\n+   "m": promise resolved to ObjectContaining {\n      "a": 1,\n    },\n' +
+          '-   "n": Any<Number>,\n+   "n": NotAny<Number>,\n',
+      ),
+      ofThePropertyMatcher: differences('-   "p": Anything,\n+   "p": promise resolved to Anything,\n'),
+    }).toEqual({ pass: 0, fail: 3, ofTheValue: 2, ofThePropertyMatcher: 1 });
+    expect(exitCode).toBe(1);
+  });
+
+  test('a test of "vitest" writes its inline snapshot with the words', async () => {
+    const tests = (written: string) => `
+      import { test, expect } from "vitest";
+      test("t", () => {
+        expect({ m: expect.rejectsTo.any(Error), n: expect.not.anything() }).toMatchInlineSnapshot(${written});
+      });
+    `;
+    using dir = tempDir("snapshot-bun-only-matchers", { "a.test.js": tests("") });
+    const { exitCode } = await runTests(String(dir), { CI: "false" });
+    expect(readFileSync(join(String(dir), "a.test.js"), "utf8")).toBe(
+      tests(
+        '`\n          {\n            "m": promise rejected to Any<Error>,\n            "n": NotAnything,\n          }\n        `',
+      ),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // Bun 1.4 wrote its own format into every file. In a file whose keys are in Jest's order, as here, that text
+  // is not looked for. These entries pass because Jest's format has the same words for these matchers.
+  test("a file of Jest keeps what Bun 1.4 wrote for a property matcher, which is what Jest's format now has", async () => {
+    const written =
+      headers.jest +
+      '\nexports[`not.any() 1`] = `\n{\n  "n": 1,\n  "p": NotAny<Number>,\n}\n`;\n' +
+      '\nexports[`rejectsTo 1`] = `\n{\n  "n": 1,\n  "p": promise rejected to StringContaining "x",\n}\n`;\n';
+    const files = {
+      "a.test.js": `
+        test("not.any()", () => {
+          expect({ p: "x", n: 1 }).toMatchSnapshot({ p: expect.not.any(Number) });
+        });
+        test("rejectsTo", () => {
+          const p = Promise.reject("x");
+          p.catch(() => {});
+          expect({ p, n: 1 }).toMatchSnapshot({ p: expect.rejectsTo.stringContaining("x") });
+        });
+      `,
+      "__snapshots__/a.test.js.snap": written,
+    };
+    using read = tempDir("snapshot-bun-only-matchers", files);
+    using updated = tempDir("snapshot-bun-only-matchers", files);
+    const results = await Promise.all([
+      runTests(String(read), { CI: "true" }),
+      runTests(String(updated), { CI: "true" }, "--update-snapshots"),
+    ]);
+    expect(results.map(({ pass, fail, stderr }) => ({ pass, fail, stderr: fail ? stderr : "" }))).toEqual([
+      { pass: 2, fail: 0, stderr: "" },
+      { pass: 2, fail: 0, stderr: "" },
+    ]);
+    expect([snap(read), snap(updated)]).toEqual([written, written]);
+    expect(results.map(result => result.exitCode)).toEqual([0, 0]);
+  });
+
+  test("a test of bun:test: toMatchFileSnapshot(), a serializer's printer, and toSatisfy() in Bun's format", async () => {
+    using dir = tempDir("snapshot-bun-only-matchers", {
+      "a.test.js": `
+        import { test, expect } from "bun:test";
+        expect.addSnapshotSerializer({
+          test: value => value && value.wrapped !== undefined,
+          serialize: (value, config, indentation, depth, refs, printer) =>
+            "Wrapped(" + printer(value.wrapped, config, indentation, depth, refs) + ")",
+        });
+        function isOdd() {}
+        test("t", async () => {
+          expect({ wrapped: expect.not.any(Number) }).toMatchSnapshot();
+          await expect({ m: expect.rejectsTo.not.anything() }).toMatchFileSnapshot("./file.txt");
+          expect(expect.resolvesTo.toSatisfy(isOdd)).toMatchSnapshot();
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), { CI: "false" });
+    expect(stderr).toContain("+3 added");
+    expect({ snap: snap(dir), file: readFileSync(join(String(dir), "file.txt"), "utf8") }).toEqual({
+      snap:
+        headers.bun +
+        "\nexports[`t 1`] = `Wrapped(NotAny<Number>)`;\n" +
+        "\nexports[`t 3`] = `promise resolved to toSatisfy<[Function isOdd]>`;\n",
+      file: '{\n  "m": promise rejected to NotAnything,\n}',
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Jest prints String() of an argument, which is the name of a matcher. Vitest prints the argument like any value.
+  test.each([
+    [
+      "jest",
+      "`promise rejected to Any<Error>`",
+      "`toBeFoo<NotAny, promise resolved to not.toBeFoo>`",
+      "`promise rejected to not.toSatisfy<function isOdd() {}>`",
+    ],
+    [
+      "vitest",
+      '`\n{\n  "message": promise rejected to Any<Error>,\n}\n`',
+      "`toBeFoo<NotAny<Number>, promise resolved to not.toBeFoo<1>>`",
+      "`promise rejected to not.toSatisfy<[Function isOdd]>`",
+    ],
+  ] as const)(
+    "a file of %s: what is thrown, an argument of a matcher of expect.extend(), and toSatisfy()",
+    async (format, thrown, argument, toSatisfy) => {
+      using dir = tempDir("snapshot-bun-only-matchers", {
+        "a.test.js": `${toBeFoo}
+        function isOdd() {}
+        test("t", () => {
+          expect(() => { throw { message: expect.rejectsTo.any(Error) }; }).toThrowErrorMatchingSnapshot();
+          expect(expect.toBeFoo(expect.not.any(Number), expect.resolvesTo.not.toBeFoo(1))).toMatchSnapshot();
+          expect(expect.rejectsTo.not.toSatisfy(isOdd)).toMatchSnapshot();
+        });
+      `,
+        "__snapshots__/a.test.js.snap": headers[format],
+      });
+      const { stderr, exitCode } = await runTests(String(dir), { CI: "false" });
+      expect(stderr).toContain("+3 added");
+      expect(snap(dir)).toBe(
+        headers[format] +
+          `\nexports[\`t 1\`] = ${thrown};\n\nexports[\`t 2\`] = ${argument};\n\nexports[\`t 3\`] = ${toSatisfy};\n`,
+      );
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 describe.concurrent("toMatchFileSnapshot()", () => {

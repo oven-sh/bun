@@ -290,6 +290,8 @@ Bun reads and writes each snapshot file in the format of the runner that created
 
 Bun's format and `pretty-format` print most values the same way. They differ on functions (`[Function: name]` in Bun's format, `[Function]` in Jest's and Vitest's), classes, mock functions, regular expressions, symbol keys, React elements and a few others.
 
+Jest and Vitest have no `expect.resolvesTo` or `expect.rejectsTo`, and their `expect.not` has no `any()` or `anything()`. In a file in Jest's or Vitest's format, Bun prints these matchers with the words of its own format: `promise resolved to Any<Number>`, `promise rejected to Any<Number>`, `NotAny<Number>` and `NotAnything`. A test that uses one of them runs only in Bun.
+
 A new snapshot file uses Vitest's format if `test` is imported from `"vitest"`, and Bun's format otherwise.
 
 Inline snapshots don't record which runner wrote them, so Bun accepts a match in any runner's format. It writes and updates them in the format of the runner that `test` is imported from.

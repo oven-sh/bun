@@ -936,6 +936,61 @@ describe.concurrent("each and for", () => {
     expect([vitest.exitCode, bun.exitCode, jest.exitCode]).toEqual([0, 0, 0]);
   });
 
+  // Vitest has no expect.resolvesTo, expect.rejectsTo, expect.not.any() or expect.not.anything().
+  test("titles: a matcher that only Bun has prints the words of Bun's format for it", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, expect } from "vitest";
+        expect.extend({ toBeFoo: () => ({ pass: true, message: () => "" }) });
+        const title = (title, ...rows) => test.each(rows)(title, () => console.log(expect.getState().currentTestName));
+        title("%o", [expect.any(Number)], [expect.not.any(Number)], [expect.resolvesTo.any(Number)], [expect.rejectsTo.not.any(Number)]);
+        title("%o", [expect.not.anything()], [expect.resolvesTo.not.toBeFoo(1)], [{ row: expect.not.any(Number) }]);
+        title("%s", [expect.any(Number)], [expect.not.any(Number)], [expect.resolvesTo.any(Number)], [expect.rejectsTo.not.any(Number)]);
+        title("%s", [expect.not.anything()], [expect.resolvesTo.not.toBeFoo(1)], [expect.rejectsTo.not.objectContaining({})]);
+        title("$matcher", { matcher: expect.rejectsTo.anything() });
+        // %j prints the object that a matcher is in Vitest, which has no member for the promise.
+        title("%j", [expect.not.any(Number)], [expect.resolvesTo.stringContaining("a")]);
+        // The words are not part of the 40 characters of a matcher, so it is cut as it is without them.
+        const numbers = Array.from({ length: 40 }, (_, i) => i);
+        title("%o", [expect.resolvesTo.objectContaining({ a: 1 })], [expect.resolvesTo.objectContaining({ b: 2 })]);
+        title("%o", [expect.arrayContaining(numbers)], [expect.rejectsTo.arrayContaining(numbers)]);
+        // In another value they are part of its 40 characters.
+        title("%o", [{ row: expect.resolvesTo.any(Number), other: 1 }]);
+        // At the depth where a value that is longer than 40 is cut, a matcher is its name in brackets.
+        const long = Buffer.alloc(60, "x").toString();
+        const element = { $$typeof: Symbol.for("react.transitional.element"), type: "a", props: { p: expect.resolvesTo.objectContaining({ long }) } };
+        title("%o", [element], [{ toJSON: () => expect.rejectsTo.not.arrayContaining([long]) }]);
+      `,
+    });
+    expect(log).toEqual([
+      "Any<Number>",
+      "NotAny<Number>",
+      "promise resolved to Any<Number>",
+      "promise rejected to NotAny<Number>",
+      "NotAnything",
+      "promise resolved to not.toBeFoo<1>",
+      "{ row: NotAny<Number> }",
+      "Any",
+      "NotAny",
+      "promise resolved to Any",
+      "promise rejected to NotAny",
+      "NotAnything",
+      "promise resolved to not.toBeFoo",
+      "promise rejected to ObjectNotContaining",
+      "promise rejected to Anything",
+      '{"inverse":true}',
+      '{"sample":"a","inverse":false}',
+      "promise resolved to ObjectContaining { a: 1 }",
+      "promise resolved to ObjectContaining { b: 2 }",
+      "ArrayContaining [ 0, 1, 2, 3, 4, …(35) ]",
+      "promise rejected to ArrayContaining [ 0, 1, 2, 3, 4, …(35) ]",
+      "{ …(2) }",
+      "<a p={[promise resolved to ObjectContaining]}  />",
+      "[promise rejected to ArrayNotContaining]",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("titles: -t finds them, and every reporter prints them", async () => {
     const files = {
       "a.test.js": `

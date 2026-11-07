@@ -998,11 +998,11 @@ export { after };
   expect(await proc.exited).toBe(0);
 });
 
-// JSC's Debugger.scriptParsed classifies a script with scriptType ("program",
-// "module" or "webassembly"); V8 clients read isModule and scriptLanguage. The
-// fixture is its own CDP client: it enables the Debugger domain, then loads one
-// script of each kind and prints what the adapter reported for them.
-const scriptParsedFixture = `
+// The start of a fixture that is its own CDP client over the inspector.open()
+// server: `send` resolves with the reply to a command, `scripts` collects
+// Debugger.scriptParsed, and `closeInspector` ends the session. A socket that
+// fails before that ends the fixture with exit code 1.
+const cdpClientPrelude = `
 import inspector from "node:inspector";
 
 inspector.open(0, "127.0.0.1", false);
@@ -1010,6 +1010,14 @@ const ws = new WebSocket(inspector.url());
 const pending = new Map();
 const scripts = [];
 let nextId = 1;
+let closed = false;
+const abandon = why => {
+  if (closed) return;
+  console.error(why);
+  process.exit(1);
+};
+ws.onerror = () => abandon("the inspector WebSocket had an error");
+ws.onclose = () => abandon("the inspector WebSocket closed");
 ws.onmessage = event => {
   const message = JSON.parse(event.data);
   if (message.id) {
@@ -1025,8 +1033,18 @@ const send = (method, params) =>
     pending.set(id, resolve);
     ws.send(JSON.stringify({ id, method, params }));
   });
+const closeInspector = () => {
+  closed = true;
+  inspector.close();
+};
 await new Promise(resolve => (ws.onopen = resolve));
+`;
 
+// JSC's Debugger.scriptParsed classifies a script with scriptType ("program",
+// "module" or "webassembly"); V8 clients read isModule and scriptLanguage. The
+// fixture is its own CDP client: it enables the Debugger domain, then loads one
+// script of each kind and prints what the adapter reported for them.
+const scriptParsedFixture = `${cdpClientPrelude}
 await send("Debugger.enable", {});
 await import("./esm.mjs");
 await import("./lib.cjs");
@@ -1036,7 +1054,7 @@ new WebAssembly.Module(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00,
 // on, so this reply arriving proves the scriptParsed events for the three
 // scripts above have arrived too.
 await send("Debugger.setBreakpointsActive", { active: true });
-inspector.close();
+closeInspector();
 
 console.log(
   JSON.stringify(
@@ -1069,6 +1087,48 @@ test("Debugger.scriptParsed reports isModule and scriptLanguage from JSC's scrip
     // JSC names a WebAssembly.Module compiled from bytes <n>.wasm itself.
     { url: expect.stringMatching(/\.wasm$/), isModule: false, scriptLanguage: "WebAssembly" },
   ]);
+});
+
+// https://github.com/oven-sh/bun/issues/15035
+// The fixture is its own CDP client. It sets the breakpoint after the module is
+// parsed, so the reply lists where the breakpoint resolved.
+const nonAsciiUrlFixture = `${cdpClientPrelude}
+await send("Debugger.enable", {});
+const { url } = await import("./sub-é-中/target.mjs");
+const breakpoint = await send("Debugger.setBreakpointByUrl", { url, lineNumber: 0 });
+closeInspector();
+
+const script = scripts.find(script => script.url.endsWith("/target.mjs"));
+console.log(
+  JSON.stringify({
+    url,
+    scriptParsedUrl: script?.url,
+    breakpointLocations: breakpoint.result.locations.map(({ scriptId, lineNumber }) => ({
+      inTarget: scriptId === script?.scriptId,
+      lineNumber,
+    })),
+  }),
+);
+`;
+
+test("Debugger.scriptParsed gives the file URL of a module in a non-ASCII directory, and a breakpoint set by that URL resolves", async () => {
+  using dir = tempDir("inspector-non-ascii-url", {
+    "fixture.mjs": nonAsciiUrlFixture,
+    "sub-é-中/target.mjs": `export const url = import.meta.url;\n`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+
+  const { url, ...reported } = JSON.parse(stdout.trim().split("\n").at(-1)!);
+  expect(url).toEndWith("/sub-%C3%A9-%E4%B8%AD/target.mjs");
+  expect(reported).toEqual({ scriptParsedUrl: url, breakpointLocations: [{ inTarget: true, lineNumber: 0 }] });
 });
 
 test("disconnect does not clobber a console method reassigned by user code", () => {

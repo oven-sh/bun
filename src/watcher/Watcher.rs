@@ -172,6 +172,13 @@ impl Watcher {
     /// // To integrate a started watcher into bundle_v2:
     /// bundle_v2.bun_watcher = watcher;
     /// ```
+    #[cfg_attr(
+        windows,
+        expect(
+            clippy::large_stack_frames,
+            reason = "builds the `Watcher`, with the 160 KiB `WindowsWatcher` inside, before boxing it"
+        )
+    )]
     pub fn init<T: WatcherContext>(
         ctx: *mut T,
         top_level_dir: &'static [u8],

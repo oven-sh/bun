@@ -220,7 +220,7 @@ impl PathWatcher {
         if let Some(err) = status.to_error(sys::Tag::watch) {
             me.emit_in_progress.set(true);
 
-            let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
+            let keys: Vec<_> = me.handlers.get().keys().to_vec();
             for ctx in keys {
                 if !me.handlers.get().contains_key(&ctx) {
                     continue;
@@ -252,7 +252,7 @@ impl PathWatcher {
             // UV_CHANGE), or libuv could not convert the name to UTF-8.
             // Forward `(event, null)` to every handler like node, unsuppressed.
             me.emit_in_progress.set(true);
-            let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
+            let keys: Vec<_> = me.handlers.get().keys().to_vec();
             for ctx in keys {
                 if !me.handlers.get().contains_key(&ctx) {
                     continue;
@@ -289,7 +289,7 @@ impl PathWatcher {
             #[cfg(debug_assertions)]
             let mut debug_count: usize = 0;
 
-            let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
+            let keys: Vec<_> = me.handlers.get().keys().to_vec();
             for key in keys {
                 let Some(fire) = me
                     .handlers
@@ -453,9 +453,9 @@ impl PathWatcher {
     }
 
     fn maybe_deinit(this: *mut PathWatcher) {
-        // SAFETY: `this` is the live heap pointer from `init`; the borrow ends
-        // before `deinit` may free it.
         let should_deinit = {
+            // SAFETY: `this` is the live heap pointer from `init`; the borrow ends
+            // before `deinit` may free it.
             let me = unsafe { &*this };
             me.handlers.get().len() == 0 && !me.emit_in_progress.get()
         };
@@ -535,10 +535,7 @@ pub(crate) fn watch(
         existing
     };
 
-    let watcher = match PathWatcher::init(manager, path, recursive) {
-        sys::Result::Err(err) => return sys::Result::Err(err),
-        sys::Result::Ok(w) => w,
-    };
+    let watcher = PathWatcher::init(manager, path, recursive)?;
     // SAFETY: watcher is a valid freshly-returned heap pointer.
     unsafe { &*watcher }.handlers.with_mut(|h| {
         h.insert(ctx, ChangeEvent::default());

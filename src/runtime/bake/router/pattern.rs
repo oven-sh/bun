@@ -7,8 +7,6 @@ use core::mem::size_of;
 use bun_alloc::{AllocError, Arena};
 use bun_collections::array_hash_map::ArrayHashContext;
 use bun_core::Output;
-use bun_paths::MAX_PATH_BYTES;
-
 use bun_paths::PathBuffer;
 
 use super::*;
@@ -64,15 +62,8 @@ impl EncodedPattern {
     }
 
     pub(crate) fn effective_url_hash(&self) -> usize {
-        // The strategy is to write all bytes, then hash them. Avoiding
-        // multiple hash calls on small chunks. Allocation is not needed
-        // since the upper bound is known (file path limits)
-        let mut stack_space = [0u8; MAX_PATH_BYTES * 2];
-        let mut pos: usize = 0;
-        let mut push = |s: &[u8]| {
-            stack_space[pos..pos + s.len()].copy_from_slice(s);
-            pos += s.len();
-        };
+        let mut hasher = bun_wyhash::Wyhash::init(0);
+        let mut push = |s: &[u8]| hasher.update(s);
         let mut it = self.iterate();
         while let Some(item) = it.next() {
             match item {
@@ -88,7 +79,7 @@ impl EncodedPattern {
                 Part::Group(_) => continue,
             }
         }
-        bun_wyhash::hash(&stack_space[..pos]) as usize
+        hasher.final_() as usize
     }
 
     pub(super) fn matches(&self, path: &[u8], params: &mut MatchedParams) -> bool {

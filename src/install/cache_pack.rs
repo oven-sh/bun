@@ -484,7 +484,7 @@ fn pack_entry(
                     0,
                 )?);
                 let stat = file.stat()?;
-                let size = u64::try_from(stat.st_size).unwrap_or(0);
+                let size = bun_sys::stat_size(&stat);
                 w.header(KIND_FILE, rel, stat.st_mode as u32 & 0o777, size)?;
                 if !w.copy_from(&file, size)? {
                     return Err(refuse("file changed while packing", rel));

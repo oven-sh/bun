@@ -213,6 +213,7 @@ mod windows_impl {
     // concurrent access from multiple threads; all access goes through kernel32
     // calls which provide their own synchronization.
     unsafe impl Sync for WindowsImpl {}
+    // SAFETY: as for `Sync` above.
     unsafe impl Send for WindowsImpl {}
 
     impl Default for WindowsImpl {

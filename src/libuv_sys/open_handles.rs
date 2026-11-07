@@ -21,7 +21,8 @@
 use super::*;
 
 use core::cell::RefCell;
-use std::collections::HashMap;
+
+type HashMap<K, V> = bun_collections::hashbrown::HashMap<K, V, bun_wyhash::BuildHasher>;
 
 /// How a teardown closes a handle that has an owner: `close(owner)`.
 pub type CloseViaOwner = unsafe fn(owner: *mut c_void);

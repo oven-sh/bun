@@ -78,7 +78,11 @@ impl User {
         let mut token: HANDLE = null_mut();
         // SAFETY: the pseudo-handle of this process; `token` is a valid out-param.
         if unsafe {
-            win32::OpenProcessToken(win32::GetCurrentProcess(), win32::TOKEN_QUERY, &mut token)
+            win32::OpenProcessToken(
+                win32::GetCurrentProcess(),
+                win32::TOKEN_QUERY,
+                &raw mut token,
+            )
         } == 0
         {
             return None;
@@ -92,7 +96,7 @@ impl User {
                 TOKEN_USER,
                 user.as_mut_ptr().cast(),
                 size_of_val(&*user) as DWORD,
-                &mut length,
+                &raw mut length,
             )
         };
         // SAFETY: `token` is open and not used again.
@@ -116,7 +120,7 @@ impl User {
     fn has_exclusive_access(&self, handle: HANDLE) -> bool {
         let mut needed: DWORD = 0;
         // SAFETY: a length of 0 asks for the length only.
-        unsafe { GetKernelObjectSecurity(handle, OWNER_AND_DACL, null_mut(), 0, &mut needed) };
+        unsafe { GetKernelObjectSecurity(handle, OWNER_AND_DACL, null_mut(), 0, &raw mut needed) };
         let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
         let descriptor: *mut c_void = buffer.as_mut_ptr().cast();
         let (mut owner, mut dacl, mut is_present, mut is_defaulted): (
@@ -127,13 +131,15 @@ impl User {
         ) = (null_mut(), null_mut(), 0, 0);
         // SAFETY: `buffer` holds `needed` bytes; what the two getters hand out points into it, and it lives to the end of this function.
         let is_read = unsafe {
-            GetKernelObjectSecurity(handle, OWNER_AND_DACL, descriptor, needed, &mut needed) != 0
-                && GetSecurityDescriptorOwner(descriptor, &mut owner, &mut is_defaulted) != 0
+            GetKernelObjectSecurity(handle, OWNER_AND_DACL, descriptor, needed, &raw mut needed)
+                != 0
+                && GetSecurityDescriptorOwner(descriptor, &raw mut owner, &raw mut is_defaulted)
+                    != 0
                 && GetSecurityDescriptorDacl(
                     descriptor,
-                    &mut is_present,
-                    &mut dacl,
-                    &mut is_defaulted,
+                    &raw mut is_present,
+                    &raw mut dacl,
+                    &raw mut is_defaulted,
                 ) != 0
         };
         if !is_read || owner.is_null() || is_present == 0 || dacl.is_null() || !self.trusts(owner) {
@@ -144,7 +150,7 @@ impl User {
         (0..count).all(|index| {
             let mut ace: *mut Ace = null_mut();
             // SAFETY: `dacl` is a valid ACL and `ace` a valid out-param.
-            if unsafe { GetAce(dacl, index.into(), &mut ace) } == 0 {
+            if unsafe { GetAce(dacl, index.into(), &raw mut ace) } == 0 {
                 return false;
             }
             // SAFETY: an entry of either kind that is let through is a header, a mask and a SID.
@@ -156,7 +162,7 @@ impl User {
     fn create(&self, path: *const u16) {
         let mut sid: *mut u16 = null_mut();
         // SAFETY: a valid SID and a valid out-param.
-        if unsafe { ConvertSidToStringSidW(self.sid(), &mut sid) } == 0 {
+        if unsafe { ConvertSidToStringSidW(self.sid(), &raw mut sid) } == 0 {
             return;
         }
         // SAFETY: the system wrote a NUL-terminated string, which is freed once it is copied.
@@ -173,7 +179,7 @@ impl User {
             ConvertStringSecurityDescriptorToSecurityDescriptorW(
                 text.as_ptr(),
                 SDDL_REVISION_1,
-                &mut descriptor,
+                &raw mut descriptor,
                 null_mut(),
             )
         } == 0
@@ -187,7 +193,7 @@ impl User {
         };
         // SAFETY: `path` is NUL-terminated; the descriptor lives until it is freed on the next line.
         unsafe {
-            win32::CreateDirectoryW(path, &mut attributes);
+            win32::CreateDirectoryW(path, &raw mut attributes);
             LocalFree(descriptor);
         }
     }
@@ -195,10 +201,8 @@ impl User {
 
 /// Makes the folder unless there is something at `path`.
 pub fn make_or_find(path: &[u8]) -> bool {
-    static VERIFIED_FOLDERS: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
-    let Ok(mut verified_folders) = VERIFIED_FOLDERS.lock() else {
-        return false;
-    };
+    static VERIFIED_FOLDERS: bun_core::Mutex<Vec<Vec<u8>>> = bun_core::Mutex::new(Vec::new());
+    let mut verified_folders = VERIFIED_FOLDERS.lock();
     if verified_folders.iter().any(|folder| folder == path) {
         return true;
     }
@@ -225,7 +229,7 @@ pub fn make_or_find(path: &[u8]) -> bool {
     }
     let mut found: win32::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
     // SAFETY: `handle` is open and `found` is a valid out-param.
-    let is_read = unsafe { win32::GetFileInformationByHandle(handle, &mut found) };
+    let is_read = unsafe { win32::GetFileInformationByHandle(handle, &raw mut found) };
     let is_folder = is_read != 0
         && found.dwFileAttributes
             & (win32::FILE_ATTRIBUTE_DIRECTORY | win32::FILE_ATTRIBUTE_REPARSE_POINT)

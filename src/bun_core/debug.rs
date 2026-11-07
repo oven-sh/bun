@@ -569,7 +569,11 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
             // SAFETY: `control_pc` is a code address from the fault context;
             // `image_base` is valid for write; history table may be null.
             let rf = unsafe {
-                ntdll::RtlLookupFunctionEntry(control_pc, &mut image_base, core::ptr::null_mut())
+                ntdll::RtlLookupFunctionEntry(
+                    control_pc,
+                    &raw mut image_base,
+                    core::ptr::null_mut(),
+                )
             };
             let compiled_frame = if rf.is_null() {
                 compiled_frame_at_return_address(control_pc as usize)
@@ -582,7 +586,9 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                 #[cfg(target_arch = "aarch64")]
                 let frame_pointer = ctx.Fp;
                 let load = |address: usize| {
-                    if address % core::mem::size_of::<usize>() != 0 || !is_valid_memory(address) {
+                    if !address.is_multiple_of(core::mem::size_of::<usize>())
+                        || !is_valid_memory(address)
+                    {
                         return None;
                     }
                     // SAFETY: the word is aligned, so it lies in the one page that is_valid_memory found committed and readable.
@@ -645,9 +651,9 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                         image_base,
                         control_pc,
                         rf,
-                        &mut ctx,
-                        &mut handler_data,
-                        &mut establisher_frame,
+                        &raw mut ctx,
+                        &raw mut handler_data,
+                        &raw mut establisher_frame,
                         core::ptr::null_mut(),
                     );
                 }

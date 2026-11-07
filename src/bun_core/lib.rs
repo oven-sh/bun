@@ -220,11 +220,13 @@ pub mod os {
     pub unsafe fn take_environ() -> (*mut *mut c_char, usize) {
         // `&raw mut` (no intermediate `&mut`) — `static_mut_refs` is hard-denied
         // under rust_2024_compatibility, and we never need a borrow here.
+        // SAFETY: the caller guarantees no other thread can touch `ENVIRON`.
         unsafe { core::ptr::replace(&raw mut ENVIRON, (core::ptr::null_mut(), 0)) }
     }
     /// SAFETY: single-threaded startup only; `ptr` must be valid for `len`
     /// elements for the process lifetime (leaked allocation).
     pub unsafe fn set_environ(ptr: *mut *mut c_char, len: usize) {
+        // SAFETY: the caller guarantees no other thread can touch `ENVIRON`.
         unsafe {
             core::ptr::write(&raw mut ENVIRON, (ptr, len));
         }
@@ -232,6 +234,8 @@ pub mod os {
     /// Borrowed view of the current envp slice (read side of the `ENVIRON` global).
     /// SAFETY: caller must not race with `set_environ`.
     pub unsafe fn environ() -> &'static [*mut c_char] {
+        // SAFETY: the caller guarantees no concurrent `set_environ`, whose contract makes a
+        // non-null `p` valid for `n` elements for the rest of the process.
         unsafe {
             let (p, n) = core::ptr::read(&raw const ENVIRON);
             if p.is_null() {
@@ -1328,6 +1332,7 @@ pub(crate) mod strings_impl {
             libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0
         }
         // Windows MSVC libc has no `strncasecmp`; `_strnicmp` is the equivalent.
+        // SAFETY: a.len() <= b.len() here; _strnicmp reads at most a.len() bytes from each.
         #[cfg(all(not(miri), windows))]
         unsafe {
             unsafe extern "C" {

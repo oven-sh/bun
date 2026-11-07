@@ -143,7 +143,7 @@ mod windows_impl {
         let timeout_ptr: *const windows::LARGE_INTEGER = match timeout {
             Some(delay) => {
                 timeout_value = -windows::LARGE_INTEGER::try_from(delay / 100).unwrap();
-                &timeout_value
+                &raw const timeout_value
             }
             None => core::ptr::null(),
         };
@@ -153,7 +153,7 @@ mod windows_impl {
         let rc = unsafe {
             windows::ntdll::RtlWaitOnAddress(
                 ptr.as_ptr().cast::<c_void>(),
-                (&expect as *const u32).cast::<c_void>(),
+                (&raw const expect).cast::<c_void>(),
                 core::mem::size_of::<u32>(),
                 timeout_ptr,
             )

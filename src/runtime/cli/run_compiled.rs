@@ -786,6 +786,13 @@ pub(crate) fn images_below_test_part() -> Vec<&'static [u8]> {
     below.iter().map(|&(image, _)| image).collect()
 }
 
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::needless_bool,
+        reason = "the second answer is a constant on this target only"
+    )
+)]
 pub(crate) fn is_module_below_test_part(path: &[u8]) -> bool {
     if is_module_of_program_that_is_there(path) {
         return true;
@@ -1750,7 +1757,7 @@ fn list_inherited_extra_descriptors() -> Box<[bool]> {
     let mut startup_info: bun_sys::windows::STARTUPINFOW =
         unsafe { bun_core::ffi::zeroed_unchecked() };
     // SAFETY: the call fills the structure it is given.
-    unsafe { GetStartupInfoW(&mut startup_info) };
+    unsafe { GetStartupInfoW(&raw mut startup_info) };
     if startup_info.lpReserved2.is_null() {
         return Box::default();
     }

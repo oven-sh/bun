@@ -962,7 +962,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let mut json_fds: [uv::uv_file; 2] = [0; 2];
         // SAFETY: FFI — `json_fds` is a 2-element out-array; flags are valid.
-        let pipe_rc = unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
+        let pipe_rc = unsafe { uv::uv_pipe(&raw mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
         if let Some(e) = pipe_rc.errno() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
@@ -1009,6 +1009,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         if let Some(e) = unsafe { (**pipe).init(uv_loop, false) }.to_error(bun_sys::Tag::pipe) {
             return Err(e.into());
         }
+        // SAFETY: as above.
         if let Some(e) = unsafe { (**pipe).open(fds.1.unwrap().uv()) }.to_error(bun_sys::Tag::open)
         {
             return Err(e.into());

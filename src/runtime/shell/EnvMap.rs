@@ -20,7 +20,7 @@ impl ArrayHashContext<EnvStr> for EnvMapContext {
         #[cfg(windows)]
         {
             return <array_hash_map::CaseInsensitiveAsciiStringContext as ArrayHashContext<[u8]>>::hash(
-                &array_hash_map::CaseInsensitiveAsciiStringContext::default(),
+                &array_hash_map::CaseInsensitiveAsciiStringContext,
                 s.slice(),
             );
         }

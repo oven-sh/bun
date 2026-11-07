@@ -217,8 +217,11 @@ pub struct WindowsImpl {
 }
 
 #[cfg(windows)]
+// SAFETY: SRWLOCK is an OS-managed lock designed for concurrent access from multiple threads; all
+// access goes through kernel32 calls.
 unsafe impl Sync for WindowsImpl {}
 #[cfg(windows)]
+// SAFETY: as for `Sync` above; an SRWLOCK is one word with no thread affinity.
 unsafe impl Send for WindowsImpl {}
 
 // `&UnsafeCell<SRWLOCK>` is ABI-identical to kernel32's `PSRWLOCK` (thin

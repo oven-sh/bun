@@ -196,7 +196,7 @@ pub(crate) mod lib_uv_backend {
     }
 
     impl LibuvCompleteHolder {
-        pub(crate) fn run(self: Box<Self>) {
+        pub(crate) fn run(self) {
             GetAddrInfoRequest::on_libuv_complete(self.uv_info);
         }
     }
@@ -238,17 +238,18 @@ pub(crate) mod lib_uv_backend {
 
     pub(crate) fn lookup(
         this: &Resolver,
-        query: GetAddrInfo,
+        query: &GetAddrInfo,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) -> JsResult<JSValue> {
-        let key = get_addr_info_request::PendingCacheKey::init(&query);
+        let key = get_addr_info_request::PendingCacheKey::init(query);
 
         let cache =
             this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
         if let CacheHit::Inflight(inflight) = cache {
             let dns_lookup = DNSLookup::init(this, global_this, context);
             let promise = dns_lookup.promise.value();
+            // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(dns_lookup) };
             return Ok(promise);
         }
@@ -292,7 +293,7 @@ pub(crate) mod lib_uv_backend {
                 port_z.as_ptr().cast::<c_char>(),
                 hints
                     .as_ref()
-                    .map_or(ptr::null(), |h| (h as *const AddrInfo).cast()),
+                    .map_or(ptr::null(), |h| std::ptr::from_ref::<AddrInfo>(h).cast()),
             );
             if rc.int() < 0 {
                 // uv_getaddrinfo can fail synchronously before it queues any work
@@ -1084,6 +1085,13 @@ pub(crate) mod get_addr_info_request {
             }
         }
     }
+    #[cfg_attr(
+        windows,
+        expect(
+            clippy::large_enum_variant,
+            reason = "libuv keeps the address of the `uv_getaddrinfo_t`, so it lives inline in the heap-allocated request"
+        )
+    )]
     pub(crate) enum Backend {
         CAres,
         #[cfg(target_os = "macos")]
@@ -1296,6 +1304,9 @@ impl GetAddrInfoRequest {
 
     #[cfg(windows)]
     pub(crate) fn on_libuv_complete(uv_info: *mut libuv::uv_getaddrinfo_t) {
+        // SAFETY: `uv_info` is the request's own `uv_getaddrinfo_t`, handed back by libuv on
+        // completion, and its `data` is the live heap `GetAddrInfoRequest` set when it was queued.
+        // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
         unsafe {
             let retcode = (*uv_info).retcode.int();
             bun_output::scoped_log!(GetAddrInfoRequest, "onLibUVComplete: status={}", retcode);
@@ -2227,7 +2238,9 @@ pub(crate) mod internal {
                 }
                 match (*info).ai_family {
                     netc::AF_INET => {
-                        let octets = (*addr.cast::<netc::sockaddr_in>())
+                        let octets = addr
+                            .cast::<netc::sockaddr_in>()
+                            .read_unaligned()
                             .sin_addr
                             .s_addr
                             .to_ne_bytes();
@@ -2237,7 +2250,11 @@ pub(crate) mod internal {
                         saw_v4 = true;
                     }
                     netc::AF_INET6 => {
-                        let octets = (*addr.cast::<netc::sockaddr_in6>()).sin6_addr.s6_addr;
+                        let octets = addr
+                            .cast::<netc::sockaddr_in6>()
+                            .read_unaligned()
+                            .sin6_addr
+                            .s6_addr;
                         if !Ipv6Addr::from(octets).is_loopback() {
                             return false;
                         }
@@ -2384,11 +2401,17 @@ pub(crate) mod internal {
                 if !(*info_).ai_addr.is_null() && (*info_).ai_family == netc::AF_INET {
                     (*entry).addr = bun_core::ffi::zeroed();
                     let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in>();
-                    *addr_in = *(*info_).ai_addr.cast::<netc::sockaddr_in>();
+                    *addr_in = (*info_)
+                        .ai_addr
+                        .cast::<netc::sockaddr_in>()
+                        .read_unaligned();
                 } else if !(*info_).ai_addr.is_null() && (*info_).ai_family == netc::AF_INET6 {
                     (*entry).addr = bun_core::ffi::zeroed();
                     let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in6>();
-                    *addr_in = *(*info_).ai_addr.cast::<netc::sockaddr_in6>();
+                    *addr_in = (*info_)
+                        .ai_addr
+                        .cast::<netc::sockaddr_in6>()
+                        .read_unaligned();
                 } else {
                     (*entry).addr = bun_core::ffi::zeroed();
                 }
@@ -2493,6 +2516,8 @@ pub(crate) mod internal {
         };
 
         #[cfg(windows)]
+        // SAFETY: FFI getaddrinfo; `req.key.host` is the owned NUL-terminated host set at
+        // construction, `wsa_hints`/`addrinfo` are stack locals.
         unsafe {
             use bun_sys::windows::ws2_32 as wsa;
             libuv::uv__winsock_ensure();
@@ -2509,8 +2534,8 @@ pub(crate) mod internal {
                     .map(|h| h.as_ptr().cast::<c_char>())
                     .unwrap_or(ptr::null()),
                 service,
-                &wsa_hints,
-                &mut addrinfo,
+                &raw const wsa_hints,
+                &raw mut addrinfo,
             );
             after_result(req, addrinfo.cast(), err);
         }
@@ -4512,7 +4537,7 @@ impl Resolver {
                 if unsafe {
                     uv::uv_poll_init_socket(
                         (*Loop::get()).uv_loop(),
-                        &mut (*new_poll).poll,
+                        &raw mut (*new_poll).poll,
                         fd as _,
                     )
                 } < 0
@@ -4528,7 +4553,7 @@ impl Resolver {
                 | (if writable { uv::UV_WRITABLE } else { 0 });
             // SAFETY: `poll` is the live entry just inserted/looked up above.
             if unsafe {
-                uv::uv_poll_start(&mut (*poll).poll, uv_events, Some(Self::on_dns_poll_uv))
+                uv::uv_poll_start(&raw mut (*poll).poll, uv_events, Some(Self::on_dns_poll_uv))
             } < 0
             {
                 let _ = polls.swap_remove(&fd);
@@ -4824,7 +4849,7 @@ impl Resolver {
             GetAddrInfoBackend::Libc => {
                 #[cfg(windows)]
                 {
-                    lib_uv_backend::lookup(self, query, global_this, context)?
+                    lib_uv_backend::lookup(self, &query, global_this, context)?
                 }
                 #[cfg(not(windows))]
                 {
@@ -4838,7 +4863,7 @@ impl Resolver {
                 }
                 #[cfg(windows)]
                 {
-                    lib_uv_backend::lookup(self, query, global_this, context)?
+                    lib_uv_backend::lookup(self, &query, global_this, context)?
                 }
                 #[cfg(all(not(target_os = "macos"), not(windows)))]
                 {

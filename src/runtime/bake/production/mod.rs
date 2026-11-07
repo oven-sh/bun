@@ -284,6 +284,13 @@ fn write_sourcemap_to_disk(
     Ok(())
 }
 
+#[cfg_attr(
+    windows,
+    expect(
+        clippy::large_stack_frames,
+        reason = "`PatternBuffer` embeds a `PathBuffer`, 96 KiB on Windows"
+    )
+)]
 fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
     // SAFETY: `pt.vm` is the live per-thread VM set in `build_command`;
     // exclusive access on this thread for the duration of the call.

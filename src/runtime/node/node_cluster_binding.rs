@@ -317,7 +317,7 @@ pub(crate) fn cluster_raw_bind<'a>(
         let _ = cx;
         match address_type {
             BindAddressType::Udp(_) => return Ok(BindResult::Errno(-bun_sys::UV_E::NOTSUP)),
-            BindAddressType::Family(family) if family == -1.0 => {
+            BindAddressType::Family(-1.0) => {
                 return Ok(BindResult::Errno(-bun_sys::UV_E::NOTSUP));
             }
             BindAddressType::Family(_) | BindAddressType::Ignored(_) => {}
@@ -346,8 +346,8 @@ pub(crate) fn cluster_raw_bind<'a>(
                 host_owned.as_ptr().cast(),
                 if port >= 0 { port } else { 0 },
                 options,
-                &mut out_port,
-                &mut err,
+                &raw mut out_port,
+                &raw mut err,
             )
         };
         const WSAEADDRINUSE: core::ffi::c_int = 10048;
@@ -360,8 +360,8 @@ pub(crate) fn cluster_raw_bind<'a>(
                         v4.as_ptr().cast(),
                         if port >= 0 { port } else { 0 },
                         options,
-                        &mut out_port,
-                        &mut err2,
+                        &raw mut out_port,
+                        &raw mut err2,
                     )
                 };
                 if retry != bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {

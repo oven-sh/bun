@@ -2794,6 +2794,52 @@ export const after = { a: 1 };
     });
   });
 
+  // A define value and an exports.replace value do not come from the lexer: they are stored as
+  // 8-bit WTF-8. `U[0]`, `.length`, `.charCodeAt(n)`, `+D` and the `.length` of a template have
+  // to fold per UTF-16 code unit. Run in a subprocess: a debug build that folds per byte aborts.
+  it("non-ascii define and exports.replace values fold per UTF-16 code unit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const t = new Bun.Transpiler({
+            loader: "ts",
+            target: "bun",
+            define: { U: JSON.stringify("é😀"), E: '"\\\\u00e9"', D: JSON.stringify("\\u2028 12 ") },
+          });
+          const code = t.transformSync("globalThis.out = [U, U[0], U[1], \`\${U}\`.length, U.length, (U + '')[0], U.charCodeAt(2), E, E[0], +D, ~D];");
+          (0, eval)(code);
+          const replaced = new Bun.Transpiler({
+            loader: "ts",
+            target: "bun",
+            minify: { syntax: true },
+            inline: true,
+            exports: { replace: { foo: "é😀" } },
+          }).transformSync("export const foo = 1; export const first = foo[0]; export const len = foo.length; export const code = foo.charCodeAt(0); export const tpl = \`\${foo}\`.length;");
+          process.stdout.write(JSON.stringify(globalThis.out) + "\\n" + replaced);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      [
+        '["é😀","é","\\ud83d",3,3,"é",56832,"é","é",12,-13]',
+        'export const foo = "\\xE9\\uD83D\\uDE00";',
+        'export const first = "\\xE9";',
+        "export const len = 3;",
+        "export const code = 233;",
+        "export const tpl = 3;",
+        "",
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(0);
+  });
+
   it("JSX keys", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

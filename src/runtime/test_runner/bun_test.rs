@@ -1128,6 +1128,17 @@ impl BunTest {
         let _ = self.result_queue.write_item(result); // OOM/capacity: fire-and-forget
     }
 
+    /// Retain error attribution while closing a file, including an abandoned load.
+    /// Close callbacks must not resume its tests or hooks.
+    pub(crate) fn begin_file_teardown(&mut self) {
+        debug_assert!(!self.in_run_loop);
+        self.phase = Phase::Done;
+        self.wants_wakeup = false;
+        if self.timer.state == EventLoopTimerState::ACTIVE {
+            vm_timer().remove(&raw mut self.timer);
+        }
+    }
+
     pub(crate) fn run(this_strong: &BunTestPtr, global_this: &JSGlobalObject) -> JsResult<()> {
         let _g = group_begin!();
         // `Collection::step` / `Execution::step` re-enter and call `.get()` on

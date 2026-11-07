@@ -3,6 +3,7 @@ import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, normalizeBunSnapshot,
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
+import { parseStringPromise } from "xml2js";
 import { mysqlHandshakeV10, mysqlOkPacket, pgAuthenticationOk, pgReadyForQuery } from "../../js/sql/wire-frames";
 
 // Every case spawns at least one full `bun test --isolate` child; the heavy
@@ -73,6 +74,295 @@ describe.concurrent("bun test --isolate", () => {
     expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
     expect(exitCode).toBe(0);
+  });
+
+  describe.each([
+    {
+      label: "serial non-last file",
+      mode: "--isolate",
+      owner: "a-owner.test.ts",
+      observer: "b-observer.test.ts",
+      scale: "0",
+    },
+    {
+      label: "serial module isolation",
+      mode: "--isolate=modules",
+      owner: "a-owner.test.ts",
+      observer: "b-observer.test.ts",
+      scale: "0",
+    },
+    {
+      label: "parallel module isolation",
+      mode: "--parallel=2 --isolate=modules",
+      owner: "a-owner.test.ts",
+      observer: "b-observer.test.ts",
+      scale: "0",
+    },
+    {
+      label: "parallel file",
+      mode: "--parallel=2",
+      owner: "a-owner.test.ts",
+      observer: "b-observer.test.ts",
+      scale: "0",
+    },
+    {
+      label: "last file on a worker",
+      mode: "--parallel=2",
+      owner: "z-owner.test.ts",
+      observer: "a-observer.test.ts",
+      scale: "60000",
+    },
+  ])("file teardown errors: $label", ({ label, mode, owner, observer, scale }) => {
+    test.each(["throw", "handled"] as const)("%s during cleanup follows the file's isolation mode", async outcome => {
+      // Disposed module graphs close resources without calling their script again.
+      const callbacksRun = !mode.includes("--isolate=modules");
+      using dir = tempDir("isolate-teardown-error", {
+        [owner]: `
+          import { test } from "bun:test";
+          import { appendFileSync } from "node:fs";
+          import { Socket } from "node:net";
+          const record = message => appendFileSync("events.txt", message + "\\n");
+          const worker = process.env.BUN_TEST_WORKER_ID ?? "serial";
+          test("owner passes", async () => {
+            record("start owner " + worker);
+            const { promise: accepted, resolve } = Promise.withResolvers();
+            const listener = Bun.listen({
+              hostname: "127.0.0.1", port: 0,
+              socket: {
+                open() { resolve(); },
+                data() {},
+                close() {
+                  record("close owner " + worker);
+                  const reason = new Error("file teardown sentinel");
+                  ${
+                    outcome === "throw"
+                      ? "throw reason;"
+                      : `
+                        const socket = new Socket();
+                        socket.on("error", error => record("handled socket " + (error === reason)));
+                        socket.destroy(reason);
+                        Promise.reject(reason).catch(error => record("caught rejection " + (error === reason)));
+                      `
+                  }
+                },
+              },
+            });
+            await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
+            await accepted;
+          });
+        `,
+        [observer]: `
+          import { test } from "bun:test";
+          import { appendFileSync } from "node:fs";
+          test("observer passes", () => {
+            appendFileSync("events.txt", "start observer " + (process.env.BUN_TEST_WORKER_ID ?? "serial") + "\\n");
+          });
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runTests(
+        String(dir),
+        [...mode.split(" "), "--reporter=junit", "--reporter-outfile=out.xml"],
+        [`./${owner}`, `./${observer}`],
+        { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: scale },
+      );
+      const events = fs
+        .readFileSync(join(String(dir), "events.txt"), "utf8")
+        .trim()
+        .split("\n");
+      expect(events.filter(event => event.startsWith("close owner "))).toHaveLength(callbacksRun ? 1 : 0);
+      expect(stderr).toContain("2 pass");
+      expect(stderr).toContain("0 fail");
+      if (mode.startsWith("--parallel")) {
+        expect(stdout).toContain("PARALLEL");
+        expect(events.find(event => event.startsWith("start owner "))).toMatch(/^start owner \d+$/);
+      }
+      if (label === "last file on a worker") {
+        const starts = events.filter(event => event.startsWith("start ")).map(event => event.split(" "));
+        expect(starts.map(([, name]) => name)).toEqual(["observer", "owner"]);
+        expect(starts[0][2]).toBe(starts[1][2]);
+      }
+      const report = await parseStringPromise(fs.readFileSync(join(String(dir), "out.xml"), "utf8"), {
+        strict: true,
+      });
+      const ownerSuite = report.testsuites.testsuite.find(suite => suite.$.file === owner);
+      const observerSuite = report.testsuites.testsuite.find(suite => suite.$.file === observer);
+      const failures = ownerSuite.testcase.filter(testcase => testcase.failure);
+      expect(observerSuite.$.failures).toBe("0");
+      expect(ownerSuite.testcase.find(testcase => testcase.$.name === "owner passes").failure).toBeUndefined();
+      if (outcome === "throw" && callbacksRun) {
+        expect(exitCode).toBe(1);
+        expect(stderr).toContain("1 error");
+        expect(ownerSuite.$.failures).toBe("1");
+        expect(failures).toHaveLength(1);
+        expect(failures[0].$).toMatchObject({ name: "(unhandled error)", file: owner, assertions: "0" });
+        expect(failures[0].failure[0].$).toEqual({ type: "Error", message: "file teardown sentinel" });
+        expect(failures[0].failure[0]._).toContain(owner);
+      } else {
+        expect(exitCode).toBe(0);
+        expect(stderr).not.toContain("Unhandled error");
+        expect(ownerSuite.$.failures).toBe("0");
+        expect(failures).toEqual([]);
+        expect(events.filter(event => event === "handled socket true")).toHaveLength(callbacksRun ? 1 : 0);
+        expect(events.filter(event => event === "caught rejection true")).toHaveLength(callbacksRun ? 1 : 0);
+      }
+    });
+  });
+
+  test.each(["--isolate", "--isolate=modules", "--parallel=2", "--parallel=2 --isolate=modules"])(
+    "%s retains ownership after a failed file load",
+    async mode => {
+      const callbacksRun = !mode.includes("--isolate=modules");
+      using dir = tempDir("isolate-failed-load-teardown", {
+        "preload.ts": `
+        import { beforeAll, afterAll } from "bun:test";
+        import { appendFileSync } from "node:fs";
+        beforeAll(() => {
+          if (globalThis.isOwner) {
+            appendFileSync("events.txt", "beforeAll owner\\n");
+          }
+        });
+        afterAll(() => appendFileSync("events.txt", "afterAll " + (globalThis.isOwner ? "owner" : "observer") + "\\n"));
+      `,
+        "a-owner.test.ts": `
+        import { test } from "bun:test";
+        import { appendFileSync } from "node:fs";
+        const record = message => appendFileSync("events.txt", message + "\\n");
+        globalThis.isOwner = true;
+        test("must not run", () => record("unexpected test"));
+        const { promise: accepted, resolve } = Promise.withResolvers();
+        const listener = Bun.listen({
+          hostname: "127.0.0.1", port: 0,
+          socket: {
+            open() { resolve(); },
+            data() {},
+            close() {
+              record("close owner");
+              throw new Error("failed-load teardown sentinel");
+            },
+          },
+        });
+        await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
+        await accepted;
+        throw new Error("module load sentinel");
+      `,
+        "b-observer.test.ts": `
+        import { test } from "bun:test";
+        import { appendFileSync } from "node:fs";
+        globalThis.isOwner = false;
+        test("observer passes", () => appendFileSync("events.txt", "observer\\n"));
+      `,
+      });
+      const { stdout, stderr, exitCode } = await runTests(
+        String(dir),
+        [...mode.split(" "), "--preload=./preload.ts", "--reporter=junit", "--reporter-outfile=out.xml"],
+        ["./a-owner.test.ts", "./b-observer.test.ts"],
+        { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      );
+      expect(exitCode).toBe(1);
+      if (mode.startsWith("--parallel")) expect(stdout).toContain("PARALLEL");
+      expect(stderr).toContain("module load sentinel");
+      if (callbacksRun) expect(stderr).toContain("failed-load teardown sentinel");
+      else expect(stderr).not.toContain("failed-load teardown sentinel");
+      const events = fs
+        .readFileSync(join(String(dir), "events.txt"), "utf8")
+        .trim()
+        .split("\n");
+      expect(events.filter(event => event === "beforeAll owner")).toHaveLength(1);
+      expect(events.filter(event => event === "close owner")).toHaveLength(callbacksRun ? 1 : 0);
+      if (callbacksRun) expect(events.indexOf("beforeAll owner")).toBeLessThan(events.indexOf("close owner"));
+      expect(events.filter(event => event === "observer")).toHaveLength(1);
+      expect(events.filter(event => event === "afterAll observer")).toHaveLength(1);
+      expect(events.filter(event => event === "afterAll owner")).toHaveLength(1);
+      expect(events).not.toContain("unexpected test");
+      const report = await parseStringPromise(fs.readFileSync(join(String(dir), "out.xml"), "utf8"), {
+        strict: true,
+      });
+      const ownerSuite = report.testsuites.testsuite.find(suite => suite.$.file === "a-owner.test.ts");
+      const observerSuite = report.testsuites.testsuite.find(suite => suite.$.file === "b-observer.test.ts");
+      expect(observerSuite.$.failures).toBe("0");
+      const failures = ownerSuite.testcase.filter(testcase => testcase.failure);
+      expect(ownerSuite.$.failures).toBe(callbacksRun ? "2" : "1");
+      expect(failures).toHaveLength(callbacksRun ? 2 : 1);
+      expect(failures.map(testcase => testcase.failure[0].$.message).sort()).toEqual(
+        callbacksRun ? ["failed-load teardown sentinel", "module load sentinel"] : ["module load sentinel"],
+      );
+      for (const failure of failures) {
+        expect(failure.$).toMatchObject({ name: "(unhandled error)", file: "a-owner.test.ts" });
+      }
+    },
+  );
+
+  // Windows counts a parallel worker's IPC pipe as work, so only serial runs
+  // can abandon this timeout-free hook when the event loop becomes empty.
+  test.each(
+    ["--isolate", "--isolate=modules", "--parallel=2", "--parallel=2 --isolate=modules"].filter(
+      mode => !isWindows || !mode.startsWith("--parallel"),
+    ),
+  )("%s does not resume an abandoned hook during teardown", async mode => {
+    using dir = tempDir("isolate-abandoned-hook", {
+      "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
+      "node_modules/happy-dom/index.js": `
+          exports.Window = class Window {
+            document = {};
+            happyDOM = { async abort() {} };
+            close() {}
+          };
+        `,
+      "a-owner.test.ts": `
+          import { afterAll, afterEach, test } from "bun:test";
+          import { appendFileSync } from "node:fs";
+          const record = message => appendFileSync("events.txt", message + "\\n");
+          const pendingHook = Promise.withResolvers();
+          // Resources appear only after the empty event loop has abandoned the hook.
+          happyDOM.abort = async () => {
+            record("environment teardown");
+            const accepted = Promise.withResolvers();
+            const listener = Bun.listen({
+              hostname: "127.0.0.1", port: 0,
+              socket: {
+                open() { accepted.resolve(); },
+                data() {},
+                close() {
+                  record("close owner");
+                  pendingHook.resolve();
+                },
+              },
+            });
+            await Bun.connect({
+              hostname: "127.0.0.1", port: listener.port, socket: { data() {} },
+            });
+            await accepted.promise;
+          };
+          afterEach(() => pendingHook.promise, 0);
+          afterAll(() => record("unexpected afterAll"));
+          test("first", () => record("first owner"));
+          test("must not resume", () => record("unexpected test"));
+        `,
+      "b-observer.test.ts": `
+          import { test } from "bun:test";
+          import { appendFileSync } from "node:fs";
+          test("observer passes", () => appendFileSync("events.txt", "observer\\n"));
+        `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      [...mode.split(" "), "--environment=happy-dom"],
+      ["./a-owner.test.ts", "./b-observer.test.ts"],
+      { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    );
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("A test or hook with no timeout never settled");
+    const events = fs
+      .readFileSync(join(String(dir), "events.txt"), "utf8")
+      .trim()
+      .split("\n");
+    expect(events.filter(event => event === "first owner")).toHaveLength(1);
+    expect(events.filter(event => event === "environment teardown")).toHaveLength(1);
+    expect(events.filter(event => event === "close owner")).toHaveLength(1);
+    expect(events.indexOf("environment teardown")).toBeLessThan(events.indexOf("close owner"));
+    expect(events.filter(event => event === "observer")).toHaveLength(1);
+    expect(events).not.toContain("unexpected test");
+    expect(events).not.toContain("unexpected afterAll");
   });
 
   test.each(isolateFlags)("with %s, a file's process.chdir() is undone before the next file", async isolate => {

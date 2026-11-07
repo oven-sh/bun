@@ -878,6 +878,12 @@ impl<'a> WorkerLoop<'a> {
                 resident_at_start: start_measuring_growth(),
             });
 
+            let isolation = if vm.test_isolation_enabled {
+                test_command::FileIsolation::SwapGlobal
+            } else {
+                test_command::FileIsolation::KeepGlobal
+            };
+
             // A worker never knows which file is its last, so preload-level hooks wrap every file (with or without --isolate).
             if let Err(err) = TestCommand::run(
                 self.reporter,
@@ -887,18 +893,11 @@ impl<'a> WorkerLoop<'a> {
                     first: true,
                     last: true,
                 },
+                isolation,
             ) {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
-            if vm.test_isolation_enabled {
-                crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-                vm.swap_global_for_test_isolation();
-                self.reporter
-                    .jest
-                    .bun_test_root
-                    .reset_hook_scope_for_test_isolation();
-                crate::test_runner::Expect::reset_for_test_isolation(vm.global());
-            } else {
+            if !vm.test_isolation_enabled {
                 Global::mimalloc_cleanup(false);
             }
             self.reporter.jest.default_timeout_override = u32::MAX;

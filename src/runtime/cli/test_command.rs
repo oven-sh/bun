@@ -3954,6 +3954,12 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     true
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileIsolation {
+    KeepGlobal,
+    SwapGlobal,
+}
+
 pub(crate) struct TestCommand;
 
 impl TestCommand {
@@ -5180,6 +5186,11 @@ impl TestCommand {
                                 first: isolate || i == 0,
                                 last: isolate,
                             },
+                            if isolate {
+                                FileIsolation::SwapGlobal
+                            } else {
+                                FileIsolation::KeepGlobal
+                            },
                         ) {
                             handle_top_level_test_error_before_javascript_start(&err);
                         }
@@ -5188,15 +5199,6 @@ impl TestCommand {
                         }
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
-                        if isolate {
-                            crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-                            vm.swap_global_for_test_isolation();
-                            reporter
-                                .jest
-                                .bun_test_root
-                                .reset_hook_scope_for_test_isolation();
-                            crate::test_runner::Expect::reset_for_test_isolation(vm.global());
-                        }
                     }
                 }
 
@@ -5210,6 +5212,7 @@ impl TestCommand {
                         first: isolate || files.len() == 1,
                         last: true,
                     },
+                    FileIsolation::KeepGlobal,
                 ) {
                     handle_top_level_test_error_before_javascript_start(&err);
                 }
@@ -5330,6 +5333,7 @@ impl TestCommand {
         vm: &mut VirtualMachine,
         file_name: &[u8],
         first_last: bun_test::FirstLast,
+        isolation: FileIsolation,
     ) -> crate::Result<()> {
         let _print_log = PrintLogAfterFile(vm.log);
         let restore_only = RestoreOnlyAfterFile {
@@ -5393,10 +5397,16 @@ impl TestCommand {
             let next_load_shares_global = !vm.test_isolation_enabled
                 || vm.test_isolation_state.shares_global
                 || repeat_index + 1 < repeat_count;
-            let _entered_file = EnteredFile {
+            let mut entered_file = EnteredFile {
                 bun_test_root: bun_test_root_ptr,
                 global,
                 next_load_shares_global,
+                isolation,
+                // Early returns finalize too; only successful intermediate repeats retain the global.
+                finalize_file: true,
+                end_output_group: Output::is_github_action()
+                    && (reporter.worker_ipc_file_idx.is_none()
+                        || reporter.worker_stands_for_one_process),
             };
 
             // Recompute on every repeat because the reporters overwrite `relative`'s buffer while the file runs.
@@ -5590,14 +5600,6 @@ impl TestCommand {
             // Must run after the cleanup above, so rejections from JS it runs are reported in this file.
             let _ = vm.global().handle_rejected_promises();
 
-            if Output::is_github_action()
-                && (reporter.worker_ipc_file_idx.is_none()
-                    || reporter.worker_stands_for_one_process)
-            {
-                pretty_errorln!("<r>\n::endgroup::\n");
-                Output::flush();
-            }
-
             if !vm.test_isolation_enabled {
                 // Ensure these never linger across files. Under --isolate this
                 // is done by swapGlobalForTestIsolation() (kill+clear) and we
@@ -5615,6 +5617,7 @@ impl TestCommand {
             if repeat_index == repeat_count {
                 environment.teardown(vm);
             }
+            entered_file.finalize_file = repeat_index == repeat_count;
         }
         if let Some(junit) = reporter.reporters.junit.as_mut() {
             let _ = junit.end_file(Some(junit_file_name(file_path)), None);
@@ -5661,15 +5664,49 @@ struct EnteredFile<'a> {
     bun_test_root: *mut bun_test::BunTestRoot,
     global: &'a jsc::JSGlobalObject,
     next_load_shares_global: bool,
+    isolation: FileIsolation,
+    finalize_file: bool,
+    end_output_group: bool,
 }
 
 impl Drop for EnteredFile<'_> {
     fn drop(&mut self) {
-        // SAFETY: `bun_test_root` belongs to `Jest::runner()`, which lives as long as the process.
-        unsafe { (*self.bun_test_root).exit_file() };
-        // A mock.module() patch still pending must not hold up the next file.
+        let swap = self.finalize_file && self.isolation == FileIsolation::SwapGlobal;
+        if swap {
+            // SAFETY: the root and active file outlive this guard. End scheduling before
+            // close callbacks can settle promises from an abandoned test or hook.
+            if let Some(active) = unsafe { (*self.bun_test_root).clone_active_file() } {
+                active.get().begin_file_teardown();
+            }
+        }
+        // Pending patches and mocks belong to the outgoing global, before it is retired.
         bun_jsc::cpp::JSMock__forgetPendingModulePatches(self.global);
         bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(self.global, self.next_load_shares_global);
+        if swap {
+            let vm = self.global.bun_vm().as_mut();
+            // Keep the active file and its reporter through close callbacks and the
+            // final microtask drain so teardown errors retain their file attribution.
+            crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
+            vm.swap_global_for_test_isolation();
+        }
+        // SAFETY: the process-owned root is live; all local BunTest clones have dropped.
+        unsafe { (*self.bun_test_root).exit_file() };
+        if swap {
+            // SAFETY: exit_file releases the old BunTest before its preload scopes.
+            unsafe { (*self.bun_test_root).reset_hook_scope_for_test_isolation() };
+            crate::test_runner::Expect::reset_for_test_isolation(
+                self.global.bun_vm().as_mut().global(),
+            );
+        }
+        if self.end_output_group
+            && jest::Jest::runner()
+                .unwrap()
+                .current_file
+                .has_printed_header()
+        {
+            pretty_errorln!("<r>\n::endgroup::\n");
+            Output::flush();
+        }
     }
 }
 

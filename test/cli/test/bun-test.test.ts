@@ -467,6 +467,66 @@ describe("bun test", () => {
     }, 10000);
   });
   describe("support for Github Actions", () => {
+    test.concurrent.each(
+      ["--reporter=dots", "--only-failures"].flatMap(reporter =>
+        [
+          { mode: "serial", args: ["--isolate"], repeats: 1 },
+          { mode: "repeated", args: ["--isolate", "--rerun-each", "2"], repeats: 2 },
+          { mode: "worker", args: ["--parallel=2"], repeats: 1 },
+        ].flatMap(mode =>
+          ["pass", "fail", "load error", "teardown error"].map(outcome => ({ reporter, ...mode, outcome })),
+        ),
+      ),
+    )("balances quiet file groups: $reporter, $mode, $outcome", async ({ reporter, args, repeats, outcome }) => {
+      using dir = tempDir("test-quiet-groups", {
+        "a.test.ts":
+          outcome === "teardown error"
+            ? `import { test } from "bun:test";
+             test("owner", async () => {
+               const { promise, resolve } = Promise.withResolvers();
+               const listener = Bun.listen({
+                 hostname: "127.0.0.1", port: 0,
+                 socket: {
+                   open() { resolve(); }, data() {},
+                   close() { throw new Error("group teardown sentinel"); },
+                 },
+               });
+               await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
+               await promise;
+             });`
+            : outcome === "load error"
+              ? `throw new Error("group load sentinel");`
+              : `import { test, expect } from "bun:test";
+             test("owner", () => expect(1).toBe(${outcome === "pass" ? 1 : 2}));`,
+        "b.test.ts": `import { test } from "bun:test"; test("observer", () => {});`,
+      });
+      await using child = Bun.spawn({
+        cmd: [bunExe(), "test", ...args, reporter, "./a.test.ts", "./b.test.ts"],
+        cwd: String(dir),
+        env: { ...bunEnv, AGENT: "0", GITHUB_ACTIONS: "true", BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      const groups = outcome === "pass" ? 0 : outcome === "fail" ? repeats : 1;
+      expect(stderr.match(/::(?:endgroup|group)::/g) ?? []).toEqual(
+        Array.from({ length: groups }, () => ["::group::", "::endgroup::"]).flat(),
+      );
+      if (outcome === "load error" || outcome === "teardown error") {
+        const sentinel = outcome === "load error" ? "group load sentinel" : "group teardown sentinel";
+        const sentinelAt = stderr.indexOf(sentinel);
+        expect(sentinelAt).toBeGreaterThan(stderr.indexOf("::group::"));
+        expect(sentinelAt).toBeLessThan(stderr.indexOf("::endgroup::"));
+        // Load failure stops repeats; global teardown follows the final repeat.
+        const run = outcome === "load error" ? 1 : repeats;
+        expect(stderr.split("\n").filter(line => line.startsWith("::group::"))).toEqual([
+          `::group::a.test.ts:${repeats > 1 ? ` (run #${run})` : ""}`,
+        ]);
+      }
+      if (args.includes("--parallel=2")) expect(stdout).toContain("PARALLEL");
+      expect(exitCode).toBe(outcome === "pass" ? 0 : 1);
+    });
+
     test("should not group logs by default", () => {
       const stderr = runTest({
         env: {

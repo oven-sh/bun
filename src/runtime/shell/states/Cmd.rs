@@ -41,8 +41,18 @@ pub enum CmdState {
         idx: u32,
     },
     Exec,
+    /// A `ShellReadFileRangeTask` reads the window of a `Bun.file()` slice at `<`.
+    ReadingStdinSlice,
     WaitingWriteErr,
     Done,
+}
+
+/// What the redirect of a command reads from or writes to.
+pub(crate) enum RedirectTarget {
+    /// The file that `redirection_file` names.
+    Path,
+    /// A JS object of the script.
+    Object(ast::JSBuf),
 }
 
 #[derive(Default)]
@@ -62,6 +72,16 @@ impl Cmd {
     #[inline]
     pub(crate) fn ast_node(&self) -> &ast::Cmd {
         self.node.get()
+    }
+
+    /// `None` when the command has no redirect to a file or an object (`2>&1` is a flag).
+    pub(crate) fn redirect_target(&self) -> Option<RedirectTarget> {
+        Some(match self.ast_node().redirect_file.as_ref()? {
+            ast::Redirect::Atom(_) => RedirectTarget::Path,
+            // A `Bun.file(path)` slice that `resolve_file_slice` left to its path.
+            ast::Redirect::JsBuf(_) if !self.redirection_file.is_empty() => RedirectTarget::Path,
+            ast::Redirect::JsBuf(object) => RedirectTarget::Object(*object),
+        })
     }
 }
 
@@ -238,7 +258,7 @@ impl Cmd {
             if interp.failed()
                 && !matches!(
                     interp.as_cmd(this).state,
-                    CmdState::WaitingWriteErr | CmdState::Done
+                    CmdState::ReadingStdinSlice | CmdState::WaitingWriteErr | CmdState::Done
                 )
             {
                 // The script failed: expand nothing more and do not spawn.
@@ -288,9 +308,16 @@ impl Cmd {
                     return Expansion::start(interp, child);
                 }
                 CmdState::Exec => {
-                    return Self::transition_to_exec(interp, this);
+                    if let Some(ast::Redirect::JsBuf(object)) = &n.redirect_file {
+                        if let Some(yield_) = Self::resolve_file_slice(interp, this, *object) {
+                            return yield_;
+                        }
+                    }
+                    return Self::transition_to_exec(interp, this, None);
                 }
-                CmdState::WaitingWriteErr => return Yield::suspended(),
+                CmdState::ReadingStdinSlice | CmdState::WaitingWriteErr => {
+                    return Yield::suspended();
+                }
                 CmdState::Done => {
                     let exit = interp.as_cmd(this).exit_code.unwrap_or(0);
                     let parent = interp.as_cmd(this).base.parent;
@@ -420,9 +447,144 @@ impl Cmd {
         Yield::Next(this)
     }
 
+    /// A redirect to a `Bun.file()` slice. The slice is a JS object of the script, because the
+    /// path of its file does not say which bytes it selects.
+    ///
+    /// At `<` the command gets the slice and no other byte of the file. Only a regular file has
+    /// such a window: the work pool reads it, and the command gets the bytes as it gets a Blob
+    /// that is in memory. Every other redirect to a `Bun.file(path)` slice is one to its path.
+    ///
+    /// `Some` when the command waits for the read, or failed.
+    fn resolve_file_slice(interp: &Interpreter, this: NodeId, object: ast::JSBuf) -> Option<Yield> {
+        use crate::node::PathOrFileDescriptor;
+        use crate::shell::dispatch_tasks::{FileRangeSource, ShellReadFileRangeTask};
+        use crate::webcore::blob::store;
+        use crate::webcore::{Blob, Response, body};
+
+        enum File {
+            Path(bun_core::ZBox),
+            Fd(bun_sys::Fd),
+        }
+
+        let me = interp.as_cmd(this);
+        let is_stdin = me.ast_node().redirect.stdin();
+        let cwd_fd = me.base.shell().cwd_fd;
+        let global = interp.global_this_ref()?;
+        let Ok(jsval) = interp.jsobj(global, object.idx) else {
+            return Some(Yield::Failed(this));
+        };
+
+        let response = jsval.as_class_ref::<Response>().filter(|_| is_stdin);
+        let blob: &Blob = match response {
+            Some(response) => match response.get_body_value() {
+                body::Value::Blob(blob) => blob,
+                _ => return None,
+            },
+            None => jsval.as_class_ref::<Blob>()?,
+        };
+        let (offset, size) = blob.file_window()?;
+        let store::Data::File(file) = &blob.store()?.data else {
+            return None;
+        };
+
+        let (file, stat) = match &file.pathlike {
+            PathOrFileDescriptor::Path(path) => {
+                let path = bun_core::ZBox::from_bytes(path.slice());
+                if !is_stdin {
+                    interp.as_cmd_mut(this).redirection_file = path.into_vec_with_nul();
+                    return None;
+                }
+                match crate::shell::interpreter::shell_statat(cwd_fd, path.as_zstr()) {
+                    Ok(stat) => (File::Path(path), stat),
+                    Err(err) => {
+                        return Some(Self::fail_stdin_slice(interp, this, &err, Some(&path)));
+                    }
+                }
+            }
+            PathOrFileDescriptor::Fd(fd) => {
+                if !is_stdin {
+                    return None;
+                }
+                // The redirect to the object reports a descriptor that is not open.
+                let Ok(stat) = bun_sys::fstat(*fd) else {
+                    return None;
+                };
+                (File::Fd(*fd), stat)
+            }
+        };
+        if !bun_sys::S::ISREG(stat.st_mode as _) {
+            if let (File::Path(path), None) = (file, response) {
+                interp.as_cmd_mut(this).redirection_file = path.into_vec_with_nul();
+            }
+            return None;
+        }
+        let file_size = stat.st_size.max(0) as u64;
+        let offset = offset.min(file_size);
+        let len = usize::try_from(size.min(file_size - offset)).unwrap_or(usize::MAX);
+
+        let source = match file {
+            File::Path(path) => FileRangeSource::Path { cwd_fd, path },
+            // The script can close its descriptor while the work pool reads.
+            File::Fd(fd) => match bun_sys::dup(fd) {
+                Ok(dup) => FileRangeSource::Dup(bun_sys::File::from_fd(dup)),
+                Err(err) => return Some(Self::fail_stdin_slice(interp, this, &err, None)),
+            },
+        };
+        // The redirect uses the body of a Response, as it does when the body is in memory.
+        if let Some(response) = response {
+            drop(response.get_body_value().use_());
+        }
+        interp.as_cmd_mut(this).state = CmdState::ReadingStdinSlice;
+        ShellReadFileRangeTask::create_and_schedule(interp, this, source, offset, len);
+        Some(Yield::suspended())
+    }
+
+    /// Main thread: the `ShellReadFileRangeTask` of `resolve_file_slice` ended.
+    pub(crate) fn on_stdin_slice_read(
+        interp: &Interpreter,
+        this: NodeId,
+        bytes: bun_sys::Result<Vec<u8>>,
+        source: &crate::shell::dispatch_tasks::FileRangeSource,
+    ) {
+        debug_assert!(matches!(
+            interp.as_cmd(this).state,
+            CmdState::ReadingStdinSlice
+        ));
+        interp.as_cmd_mut(this).state = CmdState::Exec;
+        match bytes {
+            // `next` ends the command of a script that failed during the read.
+            Ok(_) if interp.failed() => Yield::Next(this),
+            Ok(bytes) => Self::transition_to_exec(interp, this, Some(bytes)),
+            Err(err) => Self::fail_stdin_slice(interp, this, &err, source.path()),
+        }
+        .run(interp);
+    }
+
+    /// The report of a `< path` redirect that does not open. A slice of `Bun.file(fd)` has no path.
+    fn fail_stdin_slice(
+        interp: &Interpreter,
+        this: NodeId,
+        err: &bun_sys::Error,
+        path: Option<&bun_core::ZBox>,
+    ) -> Yield {
+        let message = err.to_shell_system_error().message;
+        match path {
+            Some(path) => Builtin::cmd_write_failing_error(
+                interp,
+                this,
+                format_args!("bun: {}: {}", message, bstr::BStr::new(path.as_bytes())),
+            ),
+            None => Builtin::cmd_write_failing_error(interp, this, format_args!("bun: {message}")),
+        }
+    }
+
     /// Resolves argv[0] to a builtin or falls through to subprocess spawn
-    /// (still gated).
-    fn transition_to_exec(interp: &Interpreter, this: NodeId) -> Yield {
+    /// (still gated). `stdin_slice` is the window that `resolve_file_slice` read.
+    fn transition_to_exec(
+        interp: &Interpreter,
+        this: NodeId,
+        stdin_slice: Option<Vec<u8>>,
+    ) -> Yield {
         // NUL-terminate every arg so builtins can borrow them as `*const c_char`.
         for a in &mut interp.as_cmd_mut(this).args {
             if a.last() != Some(&0) {
@@ -450,7 +612,7 @@ impl Cmd {
 
         if let Some(kind) = BuiltinKind::from_argv0(&first_arg) {
             log!("Cmd {} exec builtin={:?}", this, kind);
-            if let Some(y) = Builtin::init(interp, this, kind) {
+            if let Some(y) = Builtin::init(interp, this, kind, stdin_slice) {
                 return y;
             }
             debug_assert!(matches!(interp.as_cmd(this).exec, Exec::Builtin(_)));
@@ -542,6 +704,7 @@ impl Cmd {
             &mut spawn_args.stdio,
             &mut spawn_args.redirect_stdout,
             &mut spawn_args.redirect_stderr,
+            stdin_slice,
         ) {
             Ok(None) => {}
             Ok(Some(y)) => {
@@ -678,15 +841,21 @@ impl Cmd {
         stdio: &mut [Stdio; 3],
         redirect_stdout: &mut Option<crate::jsc::PinnedArrayBuffer>,
         redirect_stderr: &mut Option<crate::jsc::PinnedArrayBuffer>,
+        stdin_slice: Option<Vec<u8>>,
     ) -> crate::jsc::JsResult<Option<Yield>> {
         const STDIN_NO: usize = 0;
         const STDOUT_NO: usize = 1;
         const STDERR_NO: usize = 2;
 
+        if let Some(bytes) = stdin_slice {
+            stdio[STDIN_NO] = stdin_from_bytes(bytes);
+            return Ok(None);
+        }
+
         let node: &ast::Cmd = interp.as_cmd(this).ast_node();
         let flags = node.redirect;
 
-        let Some(redirect) = &node.redirect_file else {
+        let Some(target) = interp.as_cmd(this).redirect_target() else {
             if flags.duplicate_out() {
                 if flags.stdout() {
                     stdio[STDERR_NO] = Stdio::Dup2(crate::api::bun_spawn::stdio::Dup2 {
@@ -704,8 +873,8 @@ impl Cmd {
             return Ok(None);
         };
 
-        match redirect {
-            ast::Redirect::JsBuf(val) => {
+        match target {
+            RedirectTarget::Object(val) => {
                 // Safe accessor — single `unsafe` deref lives in
                 // `Interpreter::global_this_ref`.
                 let global = interp
@@ -715,14 +884,7 @@ impl Cmd {
 
                 if let Some(buf) = jsval.as_array_buffer(global) {
                     if flags.stdin() {
-                        let bytes = buf.byte_slice();
-                        // An empty buffer delivers EOF immediately; `Stdio::Ignore`
-                        // matches what `Stdio::extract`/`extract_blob` already do.
-                        stdio[STDIN_NO] = if bytes.is_empty() {
-                            Stdio::Ignore
-                        } else {
-                            Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(bytes.to_vec()))
-                        };
+                        stdio[STDIN_NO] = stdin_from_bytes(buf.byte_slice().to_vec());
                     }
                     let mut redirect_out =
                         |fd: usize, slot: &mut Option<crate::jsc::PinnedArrayBuffer>| {
@@ -782,7 +944,7 @@ impl Cmd {
                     )));
                 }
             }
-            ast::Redirect::Atom(_) => {
+            RedirectTarget::Path => {
                 if interp.as_cmd(this).redirection_file.is_empty() {
                     let argv0 = interp
                         .as_cmd(this)
@@ -1103,6 +1265,16 @@ fn is_assignment_word(atom: &ast::Atom) -> bool {
         && name[1..]
             .iter()
             .all(|&b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+/// Stdin that is `bytes`. Empty bytes are EOF at once: `Stdio::Ignore`, as in
+/// `Stdio::extract` and `Stdio::extract_blob`.
+fn stdin_from_bytes(bytes: Vec<u8>) -> Stdio {
+    if bytes.is_empty() {
+        Stdio::Ignore
+    } else {
+        Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(bytes))
+    }
 }
 
 fn set_stdio_from_redirect(stdio: &mut [Stdio; 3], flags: ast::RedirectFlags, fd: bun_sys::Fd) {

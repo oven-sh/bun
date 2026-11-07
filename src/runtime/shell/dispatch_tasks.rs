@@ -156,6 +156,149 @@ impl ShellGlobTask {
     }
 }
 
+/// The file a [`ShellReadFileRangeTask`] reads.
+pub(crate) enum FileRangeSource {
+    /// Opened against the shell's cwd, as a `< path` redirect is.
+    Path {
+        cwd_fd: bun_sys::Fd,
+        path: bun_core::ZBox,
+    },
+    /// A dup of the descriptor of a `Bun.file(fd)`.
+    Dup(bun_sys::File),
+}
+
+impl FileRangeSource {
+    pub(crate) fn path(&self) -> Option<&bun_core::ZBox> {
+        match self {
+            Self::Path { path, .. } => Some(path),
+            Self::Dup(_) => None,
+        }
+    }
+}
+
+/// Reads a range of a file off the JS thread. It is the window of a
+/// `Bun.file()` slice that is a command's stdin (`cmd < ${file.slice(a, b)}`).
+#[repr(C)]
+pub(crate) struct ShellReadFileRangeTask {
+    pub task: ShellTask,
+    cmd: NodeId,
+    source: FileRangeSource,
+    offset: u64,
+    len: usize,
+    bytes: bun_sys::Result<Vec<u8>>,
+}
+
+impl bun_event_loop::Taskable for ShellReadFileRangeTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellReadFileRangeTask;
+    /// A pool completion that will not run: drop the keep-alive and the box
+    /// (nothing else frees an unrun one).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `create_and_schedule` made.
+        unsafe {
+            (*this).task.unref_unrun();
+            drop(bun_core::heap::take(this));
+        }
+    }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
+impl crate::shell::interpreter::ShellTaskCtx for ShellReadFileRangeTask {
+    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
+    fn run_from_thread_pool(this: &mut Self) {
+        this.bytes = this.read();
+    }
+    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+        // SAFETY: paired with `heap::alloc` in `create_and_schedule`.
+        let mut me = unsafe { bun_core::heap::take(this) };
+        crate::shell::states::cmd::Cmd::on_stdin_slice_read(
+            interp,
+            me.cmd,
+            core::mem::replace(&mut me.bytes, Ok(Vec::new())),
+            &me.source,
+        );
+    }
+}
+
+impl ShellReadFileRangeTask {
+    /// Heap-allocate the task for `cmd` and schedule it on the work pool; the
+    /// allocation is freed in `run_from_main_thread`.
+    pub(crate) fn create_and_schedule(
+        interp: &Interpreter,
+        cmd: NodeId,
+        source: FileRangeSource,
+        offset: u64,
+        len: usize,
+    ) {
+        let mut task = ShellTask::new(interp.event_loop);
+        task.interp = interp.as_ctx_ptr();
+        let this = bun_core::heap::alloc(ShellReadFileRangeTask {
+            task,
+            cmd,
+            source,
+            offset,
+            len,
+            bytes: Ok(Vec::new()),
+        });
+        // SAFETY: `this` is a fresh heap allocation embedding `ShellTask` at
+        // `TASK_OFFSET`; freed in `run_from_main_thread`.
+        unsafe { ShellTask::schedule::<ShellReadFileRangeTask>(this) };
+    }
+
+    fn read(&self) -> bun_sys::Result<Vec<u8>> {
+        match &self.source {
+            FileRangeSource::Path { cwd_fd, path } => {
+                let file = bun_sys::File::from_fd(crate::shell::interpreter::shell_openat(
+                    *cwd_fd,
+                    path.as_zstr(),
+                    bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
+                    0,
+                )?);
+                read_file_range(&file, self.offset, self.len)
+            }
+            FileRangeSource::Dup(file) => {
+                // A Windows `pread` moves the file position, and the dup shares it with the script's descriptor.
+                #[cfg(windows)]
+                let position = file.get_pos();
+                let bytes = read_file_range(file, self.offset, self.len);
+                #[cfg(windows)]
+                if let Ok(position) = position {
+                    let _ = file.seek_to(position);
+                }
+                bytes
+            }
+        }
+    }
+}
+
+/// `len` bytes of `file` from `offset`, or fewer when the file ends before that.
+fn read_file_range(file: &bun_sys::File, offset: u64, len: usize) -> bun_sys::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    if bytes.try_reserve_exact(len).is_err() {
+        return Err(bun_sys::Error::oom());
+    }
+    while bytes.len() < len {
+        let want = len - bytes.len();
+        let at = offset + bytes.len() as u64;
+        // SAFETY: `pread` only writes to the spare capacity, which holds `want` bytes or more,
+        // and reports how many bytes it wrote.
+        let read = unsafe {
+            bun_core::vec::fill_spare(&mut bytes, 0, |spare| {
+                match bun_sys::pread(file.handle(), &mut spare[..want], at as i64) {
+                    Ok(read) => (read, Ok(read)),
+                    Err(err) => (0, Err(err)),
+                }
+            })
+        }?;
+        if read == 0 {
+            break;
+        }
+    }
+    Ok(bytes)
+}
+
 /// A child node in the
 /// recursive rm tree-walk; posts back to main when its subtree is empty.
 /// Re-export: the real DirTask lives in `builtins::rm` (full recursive

@@ -14,7 +14,7 @@ use crate::shell::interpreter::{
 use crate::shell::io::{InKind, OutFd, OutKind};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};
-use crate::shell::states::cmd::{Cmd, CmdState};
+use crate::shell::states::cmd::{Cmd, CmdState, RedirectTarget};
 use crate::shell::yield_::Yield;
 
 pub(crate) struct Builtin {
@@ -259,6 +259,7 @@ pub(crate) enum BuiltinInput {
     Fd(Rc<IOReader>),
     ArrayBuf { buf: PinnedArrayBuffer },
     Blob(Rc<BuiltinBlob>),
+    Bytes(Vec<u8>),
     Ignore,
 }
 
@@ -471,7 +472,15 @@ impl Builtin {
     /// `None` (meaning: caller should now call `Builtin::start`). A
     /// `Some(yield)` return means setup wrote a failing error (or threw) and
     /// the caller should propagate that yield instead.
-    pub(crate) fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
+    ///
+    /// `stdin_slice` is the window of a `Bun.file()` slice at `<`, which the
+    /// Cmd read before: it is the redirect.
+    pub(crate) fn init(
+        interp: &Interpreter,
+        cmd: NodeId,
+        kind: Kind,
+        stdin_slice: Option<Vec<u8>>,
+    ) -> Option<Yield> {
         use crate::shell::states::cmd::Exec;
 
         // Borrow argv[1..] as `*const c_char` into the Cmd's `args` storage.
@@ -504,6 +513,10 @@ impl Builtin {
             impl_: Self::make_impl(kind),
         }));
 
+        if let Some(bytes) = stdin_slice {
+            Self::of_mut(interp, cmd).stdin = BuiltinInput::Bytes(bytes);
+            return None;
+        }
         Self::init_redirections(interp, cmd, kind)
     }
 
@@ -514,8 +527,8 @@ impl Builtin {
         let node: &ast::Cmd = &*interp.as_cmd(cmd).node;
         let redirect = node.redirect;
 
-        match &node.redirect_file {
-            Some(ast::Redirect::Atom(_)) => {
+        match interp.as_cmd(cmd).redirect_target() {
+            Some(RedirectTarget::Path) => {
                 // ── File redirect (`> path` / `< path` / `>> path` / `&> path`).
                 if interp.as_cmd(cmd).redirection_file.is_empty() {
                     return Some(Self::cmd_write_failing_error(
@@ -635,7 +648,7 @@ impl Builtin {
                     });
                 }
             }
-            Some(ast::Redirect::JsBuf(jsbuf)) => {
+            Some(RedirectTarget::Object(jsbuf)) => {
                 // ── JS object redirect (`> ${arraybuf}` / `> ${blob}`).
                 // Safe accessor — single `unsafe` deref lives in
                 // `Interpreter::global_this_ref`.
@@ -833,6 +846,7 @@ impl Builtin {
         match &Self::of(interp, cmd).stdin {
             BuiltinInput::ArrayBuf { buf, .. } => buf.slice(),
             BuiltinInput::Blob(b) => b.blob.shared_view(),
+            BuiltinInput::Bytes(bytes) => bytes,
             BuiltinInput::Fd(_) | BuiltinInput::Ignore => b"",
         }
     }

@@ -672,10 +672,14 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
-                // Version 4: a file-backed slice's window end. Written before
-                // resolve_size() so an unresolved blob stays MAX_SIZE (unknown)
-                // on the wire and the receiver stats it locally, like v3.
-                writer.write_int_le::<u64>(self.size.get())?;
+                // Version 4: a file-backed slice's window end. A whole file is
+                // MAX_SIZE (unknown) on the wire, also after `.size` cached its
+                // length, and the receiver stats it locally, like v3.
+                writer.write_int_le::<u64>(if self.size_is_explicit.get() {
+                    self.size.get()
+                } else {
+                    MAX_SIZE
+                })?;
                 self.resolve_size();
                 store.serialize(writer)?;
             }
@@ -1652,6 +1656,10 @@ impl BlobExt for Blob {
         let blob = self.dupe();
         blob.offset.set(offset);
         blob.size.set(len);
+        // A slice that selects all of its Blob is that Blob: `file.slice()` is still the whole file.
+        if relative_start != 0 || len != self.size.get() {
+            blob.size_is_explicit.set(true);
+        }
 
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
@@ -2895,6 +2903,7 @@ impl BlobExt for Blob {
                                     ),
                                     charset: Cell::new(blob.charset.get()),
                                     is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    size_is_explicit: Cell::new(blob.size_is_explicit.get()),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
@@ -3688,6 +3697,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         // A size of MAX_SIZE or more means the size is unknown.
         if size < MAX_SIZE {
             blob.size.set(size as SizeType);
+            blob.size_is_explicit.set(true);
         }
     }
     if let Some(store) = blob.store.get() {

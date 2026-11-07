@@ -176,7 +176,10 @@ You can redirect from these JavaScript objects:
 
 - `Buffer`, `Uint8Array`, `Uint16Array`, `Uint32Array`, `Int8Array`, `Int16Array`, `Int32Array`, `Float32Array`, `Float64Array`, `ArrayBuffer`, `SharedArrayBuffer` (reads from the underlying buffer)
 - `Bun.file(path)`, `Bun.file(fd)` (reads from the file)
+- `Bun.file(path).slice(begin, end)`, `Bun.file(fd).slice(begin, end)` (reads only the slice of the file)
 - `Response` (reads from the body)
+
+Bun reads a slice of a file into memory before the command starts. A slice is an object, like a `Buffer`: use it as the target of a redirect. To pass the path of the file as an argument, interpolate `Bun.file(path)` or the path string.
 
 ### Example: Redirect stdin -> file
 

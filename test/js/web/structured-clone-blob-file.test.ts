@@ -574,6 +574,20 @@ describe("structuredClone with Blob and File", () => {
       });
     });
 
+    test("a clone of a whole Bun.file() is the whole file, and a clone of a slice is the slice", async () => {
+      using dir = tempDir("blob-clone-whole-file", { "grow.txt": "0123456789" });
+      const path = join(String(dir), "grow.txt");
+      const file = Bun.file(path);
+      // `.size` caches the length in the Blob. It is not a window.
+      expect(file.size).toBe(10);
+      const whole = structuredClone(file);
+      const slice = structuredClone(file.slice(2, 5));
+
+      await Bun.write(path, "0123456789abcdefghij");
+      expect({ size: whole.size, text: await whole.text() }).toEqual({ size: 20, text: "0123456789abcdefghij" });
+      expect({ size: slice.size, text: await slice.text() }).toEqual({ size: 3, text: "234" });
+    });
+
     test("file-backed Blob path longer than PATH_MAX is rejected at deserialize", () => {
       const probe = Buffer.alloc(16, 0x5a);
       const good = Buffer.from(serialize(Bun.file(probe.toString("latin1"))));

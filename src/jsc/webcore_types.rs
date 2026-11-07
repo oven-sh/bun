@@ -162,6 +162,8 @@ pub struct Blob {
     pub charset: Cell<AsciiStatus>,
     /// Was it created via the `File` constructor?
     pub is_jsdom_file: Cell<bool>,
+    /// `slice()` set `offset` and `size`. If not, a `size` below `MAX_SIZE` is the length that `.size` cached.
+    pub size_is_explicit: Cell<bool>,
     /// Zero for a by-value `Blob`. On a heap one, the JS wrapper, `BlobRefPtr`s and `ExternalShared`s each hold a ref.
     ///
     /// Public so `bun_runtime` can construct `Blob { ref_count: …, .. }`
@@ -196,6 +198,7 @@ impl Default for Blob {
             content_type_was_set: Cell::new(false),
             charset: Cell::new(AsciiStatus::Unknown),
             is_jsdom_file: Cell::new(false),
+            size_is_explicit: Cell::new(false),
             ref_count: bun_ptr::RawRefCount::init(0),
             global_this: Cell::new(core::ptr::null()),
             last_modified: Cell::new(0.0),
@@ -388,6 +391,7 @@ impl Blob {
             content_type_was_set: Cell::new(self.content_type_was_set.get()),
             charset: Cell::new(self.charset.get()),
             is_jsdom_file: Cell::new(self.is_jsdom_file.get()),
+            size_is_explicit: Cell::new(self.size_is_explicit.get()),
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
             global_this: Cell::new(self.global_this.get()),
             last_modified: Cell::new(self.last_modified.get()),
@@ -440,6 +444,14 @@ impl Blob {
     #[inline]
     pub fn needs_to_read_file(&self) -> bool {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
+    }
+
+    /// The `(offset, length)` that `slice()` set on a `Bun.file()`. `None` for a whole file, also
+    /// after `.size` cached its length, and for a Blob that is not a file.
+    #[inline]
+    pub fn file_window(&self) -> Option<(SizeType, SizeType)> {
+        (self.size_is_explicit.get() && self.needs_to_read_file())
+            .then(|| (self.offset.get(), self.size.get()))
     }
 
     /// A usable filename: a non-empty `name`, else [`store_path`]. (`file.name`

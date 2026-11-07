@@ -84,7 +84,9 @@ use crate::shell::builtins::{
     touch::ShellTouchTask,
     yes::YesTask as ShellYesTask,
 };
-use crate::shell::dispatch_tasks::{ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask};
+use crate::shell::dispatch_tasks::{
+    ShellCondExprStatTask, ShellGlobTask, ShellReadFileRangeTask, ShellRmDirTask,
+};
 use crate::shell::interpreter::ShellTask;
 #[cfg(not(windows))]
 use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
@@ -543,6 +545,7 @@ pub(crate) fn run_task(
         | task_tag::ShellLsTask
         | task_tag::ShellMvBatchedTask
         | task_tag::ShellMvCheckTargetTask
+        | task_tag::ShellReadFileRangeTask
         | task_tag::ShellRmTask
         | task_tag::ShellRmDirTask
         | task_tag::ShellGlobTask
@@ -861,6 +864,7 @@ fn run_task_cold(task: Task) {
         task_tag::ShellLsTask => shell_dispatch!(ShellLsTask),
         task_tag::ShellMvBatchedTask => shell_dispatch!(ShellMvBatchedTask),
         task_tag::ShellMvCheckTargetTask => shell_dispatch!(ShellMvCheckTargetTask),
+        task_tag::ShellReadFileRangeTask => shell_dispatch!(ShellReadFileRangeTask),
         task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
         task_tag::ShellRmDirTask => {
             let t = cast_ptr!(ShellRmDirTask);
@@ -883,7 +887,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 86,
+    task_tag::COUNT == 87,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1805,6 +1809,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ShellMkdirTask => release_in!([Shell], ShellMkdirTask),
         task_tag::ShellMvBatchedTask => release_in!([Shell], ShellMvBatchedTask),
         task_tag::ShellMvCheckTargetTask => release_in!([Shell], ShellMvCheckTargetTask),
+        task_tag::ShellReadFileRangeTask => release_in!([Shell], ShellReadFileRangeTask),
         task_tag::ShellRmDirTask => release_in!([Shell], ShellRmDirTask),
         task_tag::ShellRmTask => release_in!([Shell], ShellRmTask),
         task_tag::ShellTouchTask => release_in!([Shell], ShellTouchTask),

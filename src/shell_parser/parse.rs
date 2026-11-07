@@ -2613,7 +2613,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             if self.in_subshell == Some(SubShellKind::Backtick) {
                                 self.break_word(AddDelimiter::AfterWord)?;
                                 if let Some(toktag) = self.last_tok_tag() {
-                                    if toktag != TokenTag::Delimit {
+                                    // A JS object ref (`cmd < ${buffer}`) is not a word: no delimiter ends it.
+                                    if toktag != TokenTag::Delimit && toktag != TokenTag::JSObjRef {
                                         self.tokens.push(Token::Delimit);
                                     }
                                 }
@@ -2697,7 +2698,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             if self.in_subshell == Some(SubShellKind::Dollar) {
                                 if let Some(toktag) = self.last_tok_tag() {
                                     match toktag {
-                                        TokenTag::Delimit
+                                        // A JS object ref (`cmd < ${buffer}`) is not a word: no delimiter ends it.
+                                        TokenTag::JSObjRef
+                                        | TokenTag::Delimit
                                         | TokenTag::Semicolon
                                         | TokenTag::Eof
                                         | TokenTag::Newline => {}

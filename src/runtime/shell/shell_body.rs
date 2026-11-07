@@ -348,12 +348,15 @@ pub(crate) fn handle_template_value(
                                 .throw());
                         }
 
-                        if !builder.append_utf8::<true>(path)? {
-                            return Err(global.throw(format_args!(
-                                "Shell script string contains invalid UTF-16"
-                            )));
+                        // The path names the whole file. A slice stays an object: a redirect reads only its window.
+                        if blob.file_window().is_none() {
+                            if !builder.append_utf8::<true>(path)? {
+                                return Err(global.throw(format_args!(
+                                    "Shell script string contains invalid UTF-16"
+                                )));
+                            }
+                            return Ok(());
                         }
-                        return Ok(());
                     }
                 }
             }

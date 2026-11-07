@@ -3821,3 +3821,133 @@ test.if(isWindows)("operands longer than the path buffer fail with ENAMETOOLONG"
   expect(await Bun.file(join(String(dir), "out.txt")).text()).toBe("hi\n");
   expect(exitCode).toBe(0);
 });
+
+describe("redirect to a Bun.file() slice", () => {
+  // Each 4 KiB block has its own byte, so a window that is off by one byte does not compare equal.
+  const big = Buffer.alloc(1024 * 1024);
+  for (let block = 0; block < 256; block++) big.fill(block, block * 4096, (block + 1) * 4096);
+  const bigWindow = [1000, 1000 + 700 * 1024] as const;
+
+  const stdin = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
+  const missingFile = { stdout: "", stderr: "bun: No such file or directory: <cwd>/missing.txt", exitCode: 1 };
+
+  // The fixture reads every form of a slice at `<` with `cat`, which is a spawned
+  // command on POSIX and a builtin on Windows. The flag makes it a builtin
+  // everywhere, so both redirect setups run on every platform.
+  test.concurrent.each([
+    ["cat as the platform has it", bunEnv],
+    ["builtin cat", { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" }],
+  ])("stdin of %s is the slice", async (_name, env) => {
+    using dir = tempDir("shell-file-slice", {
+      "f.txt": "abcdefghij",
+      "sub/rel.txt": "0123456789",
+      "big.bin": big,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "file-slice-redirect-fixture.ts")],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "slice(2, 5)": stdin("cde"),
+      "slice(2)": stdin("cdefghij"),
+      "slice(0, 3)": stdin("abc"),
+      "slice(0, 0)": stdin(""),
+      "slice(20, 30)": stdin(""),
+      "slice(2, 5).slice(1, 2)": stdin("d"),
+      "slice(-3) after .size": stdin("hij"),
+      "slice(2) after .size": stdin("cdefghij"),
+      "echo of a whole file after .size": true,
+      "echo of .slice() after .size": true,
+      "echo of .slice()": true,
+      // A slice is an object, like a Blob: it is valid only as the target of a redirect.
+      "echo of a slice": { thrown: 'expected a command or assignment but got: "JSObjRef"' },
+      "Response": stdin("cde"),
+      "Response: bodyUsed": true,
+      "structuredClone": stdin("cde"),
+      "in an array": stdin("cde"),
+      "second use of a slice": stdin("cde"),
+      "relative path and .cwd()": stdin("234"),
+      "file written after the tag": stdin("CDE"),
+      "pipeline": stdin("abcd"),
+      "&& list": stdin("abij"),
+      "command substitution": stdin("cde\n"),
+      "command substitution, Buffer": stdin("xyz\n"),
+      "backtick substitution, Buffer": stdin("xyz\n"),
+      "a window larger than a pipe buffer": { length: bigWindow[1] - bigWindow[0], equal: true, exitCode: 0 },
+      "fd slice": stdin("cde"),
+      "second use of an fd slice": stdin("cde"),
+      "Response over an fd slice": stdin("cde"),
+      "next read of the fd": "abcd",
+      "missing file": missingFile,
+      "Response over a missing file": missingFile,
+      "Response over a missing file: bodyUsed": false,
+      "missing file exists": false,
+      "script that fails during the read": {
+        thrown: "Cannot redirect stdout/stderr to an immutable blob. Expected a file",
+      },
+      "slice after a failed script": stdin("cde"),
+      "> slice": stdin(""),
+      "> slice: file": "hi\n",
+      ">> slice": stdin(""),
+      ">> slice: file": "hi\nmore\n",
+      ...(isWindows
+        ? {}
+        : {
+            "FIFO slice": stdin("fifodata"),
+            "slice of a write-only fd": { stdout: "", stderr: "bun: Bad file descriptor", exitCode: 1 },
+          }),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // `cat` is not a spawned command on Windows: a spawned `bun` reads the slice on every platform.
+  test.concurrent("stdin of a spawned command is the slice", async () => {
+    using dir = tempDir("shell-file-slice-spawned", { "big.bin": big });
+    const slice = Bun.file(join(String(dir), "big.bin")).slice(...bigWindow);
+    const echoStdin = "process.stdout.write(Buffer.from(await Bun.stdin.arrayBuffer()))";
+    const { stdout, stderr, exitCode } = await $`${BUN} -e ${echoStdin} < ${slice}`.env(bunEnv).quiet().nothrow();
+    expect({
+      length: stdout.length,
+      equal: big.subarray(...bigWindow).equals(stdout),
+      stderr: stderr.toString(),
+      exitCode,
+    }).toEqual({ length: bigWindow[1] - bigWindow[0], equal: true, stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("a spawned command writes the file of a slice at `>`", async () => {
+    using dir = tempDir("shell-file-slice-output", { "out.txt": "abcdefghij" });
+    const out = join(String(dir), "out.txt");
+    const { stdout, stderr, exitCode } = await $`${BUN} -e ${"console.log('hi')"} > ${Bun.file(out).slice(2, 5)}`
+      .env(bunEnv)
+      .quiet()
+      .nothrow();
+    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual(stdin(""));
+    expect(await Bun.file(out).text()).toBe("hi\n");
+  });
+
+  test.skipIf(isWindows || isRoot)("a slice of a file that cannot be read fails the command", async () => {
+    using dir = tempDir("shell-file-slice-unreadable", { "secret.txt": "abcdefghij" });
+    const secret = join(String(dir), "secret.txt");
+    chmodSync(secret, 0o000);
+    const { stdout, stderr, exitCode } = await $`cat < ${Bun.file(secret).slice(2, 5)}`.quiet().nothrow();
+    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+      stdout: "",
+      stderr: `bun: Permission denied: ${secret}`,
+      exitCode: 1,
+    });
+  });
+
+  // `slice(-3)` of a file whose size is not known yet does not select the last 3 bytes:
+  // `await Bun.file(path).slice(-3).text()` gives the first 3 bytes or none. The shell then
+  // gets an empty window. https://github.com/oven-sh/bun/pull/41257 changes `slice()`.
+  test.todo("slice(-3) of a file whose size was not read", async () => {
+    using dir = tempDir("shell-file-slice-negative", { "f.txt": "abcdefghij" });
+    const file = Bun.file(join(String(dir), "f.txt"));
+    expect(await $`${BUN} -e ${"process.stdout.write(await Bun.stdin.text())"} < ${file.slice(-3)}`.text()).toBe("hij");
+  });
+});

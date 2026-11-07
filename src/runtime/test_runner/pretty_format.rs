@@ -608,10 +608,37 @@ impl JestPrettyFormat {
     ) -> JsResult<bool> {
         use console_object::TagPayload as Tag;
         let global = formatter.global_this;
-        // Vitest's `maxOutputLength`. A React fiber or `window` would print hundreds of megabytes.
-        if !tag.is_primitive() && formatter.snapshot.output_length.is_some_and(|length| length.get() > 1_000_000) {
-            let _ = writer.write_all(if matches!(tag, Tag::Array) { b"[Array]" } else { b"[Object]" });
-            return Ok(true);
+        if !tag.is_primitive() && let Some(length) = formatter.snapshot.output_length {
+            // Vitest's `maxOutputLength`. A React fiber or `window` would print hundreds of megabytes.
+            if length.get() > 1_000_000 {
+                let _ = writer.write_all(if matches!(tag, Tag::Array) { b"[Array]" } else { b"[Object]" });
+                return Ok(true);
+            }
+            // Where another value holds the global object, it prints as `console.log` prints it there. It holds `process.env`.
+            if formatter.indent > 0 && matches!(value.js_type(), JSType::GlobalObject | JSType::GlobalProxy) {
+                let global_object = if value.js_type() == JSType::GlobalProxy { value.get_proxy_target() } else { value };
+                if global_object == global.to_js_value() {
+                    *tag = Tag::GlobalObject;
+                    return Ok(false);
+                }
+            }
+            if value == formatter.snapshot.dispatcher {
+                let _ = writer.write_fmt(format_args!("[{}]", value.get_class_name(global)?));
+                return Ok(true);
+            }
+            // In a failure message the walk of the Object arm prints what `toEqual` reads of an event.
+            if matches!(tag, Tag::Event) {
+                let dispatcher = match value.get(global, "target") {
+                    Ok(target) => target.unwrap_or(JSValue::ZERO),
+                    Err(JsError::Thrown) if global.clear_exception_except_termination() => JSValue::ZERO,
+                    Err(error) => return Err(error),
+                };
+                let outer = core::mem::replace(&mut formatter.snapshot.dispatcher, dispatcher);
+                let event = console_object::TagResult { tag: Tag::Object, cell: JSType::Event };
+                let printed = formatter.format::<false>(event, writer, value, global);
+                formatter.snapshot.dispatcher = outer;
+                return printed.map(|()| true);
+            }
         }
         if matches!(tag, Tag::JSX)
             && value.get_own_truthy(global, "$$typeof")? == Some(JSValue::symbol_for(global, b"react.transitional.element"))

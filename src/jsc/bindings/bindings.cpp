@@ -6291,6 +6291,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    const bool isEventWithAttributes = withEventAttributes && object->type() == JSC::JSType(JSEventType);
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     {
 
@@ -6301,9 +6302,11 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
         else
             object->methodTable()->getOwnPropertyNames(object, globalObject, properties, withNonEnumerable ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, );
-        if (withEventAttributes && object->type() == JSC::JSType(JSEventType)) [[unlikely]] {
+        if (isEventWithAttributes) [[unlikely]] {
             Bun::addEventAttributeNames(globalObject, object, properties);
-            RETURN_IF_EXCEPTION(scope, );
+            // A trap of a Proxy in the prototype chain can throw. The names behind it are not printed then.
+            if (scope.exception() && !scope.tryClearException())
+                return;
         }
     }
 
@@ -6329,9 +6332,8 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
             continue;
 
         JSC::JSValue propertyValue = jsUndefined();
-        // getPureResult() is null for an accessor that is not cacheable: one of a compiled object, or with --aot one that an event inherits.
         auto pureResult = [&] {
-            return !slot.isCacheableGetter() && (slot.slotBase() != object || object->structure()->isCompiledStructure()) ? JSValue(slot.getterSetter()) : slot.getPureResult();
+            return !slot.isCacheableGetter() && object->structure()->isCompiledStructure() ? JSValue(slot.getterSetter()) : slot.getPureResult();
         };
         if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
             if (callGetters) {
@@ -6339,7 +6341,9 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
                 if (scope.exception()) [[unlikely]] {
                     if (!scope.tryClearException())
                         return;
-                    propertyValue = pureResult();
+                    // getPureResult() is null for a getter that is not cacheable. With --aot that is one that an event inherits.
+                    bool isInheritedByEvent = isEventWithAttributes && slot.slotBase() != object;
+                    propertyValue = isInheritedByEvent && !slot.isCacheableGetter() ? JSValue(slot.getterSetter()) : pureResult();
                 }
             } else {
                 propertyValue = pureResult();

@@ -1569,6 +1569,8 @@ pub mod formatter {
         pub same_as_older_bun: bool,
         /// Bytes written so far. Only failure messages track it.
         pub output_length: Option<&'a core::cell::Cell<usize>>,
+        /// The `target` of the event that a failure message prints. It prints as `[Class]`.
+        pub dispatcher: JSValue,
     }
 
     impl Default for Snapshot<'_> {
@@ -1581,6 +1583,7 @@ pub mod formatter {
                 like_older_bun: None,
                 same_as_older_bun: true,
                 output_length: None,
+                dispatcher: JSValue::ZERO,
             }
         }
     }
@@ -5113,15 +5116,6 @@ pub mod formatter {
                 ($s:literal) => {
                     pfmt!($s, C)
                 };
-            }
-
-            // In a failure message the walk of the Object arm prints what `deepEquals` reads of an event.
-            if self.is_snapshot && self.snapshot.output_length.is_some() {
-                if *remove_before_recurse {
-                    self.visited_remove(value);
-                }
-                *remove_before_recurse = true;
-                return self.print_as::<C>(Tag::Object, writer_, value, jsc::JSType::Event);
             }
 
             let event_type_value: JSValue = 'brk: {

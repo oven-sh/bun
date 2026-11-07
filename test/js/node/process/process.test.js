@@ -129,7 +129,6 @@ it("each function of process has the length that Node gives it", async () => {
     hrtime: 1,
     "hrtime.bigint": 0,
     kill: 2,
-    listenerCount: 2,
     listeners: 1,
     loadEnvFile: 0,
     memoryUsage: 0,
@@ -174,6 +173,9 @@ it("each function of process has the length that Node gives it", async () => {
   };
   // Node v26.3.0 has no process.assert.
   const notInNode = { assert: 1 };
+  // Node gives 2. Bun's listenerCount ignores the `listener` argument, and tsx reads this length to learn that:
+  // https://github.com/privatenumber/tsx/blob/2afc7bbcbd0bb77623737550aefdf816e4bf0a66/src/preflight.cts#L43-L48
+  const missingParameter = { listenerCount: 1 };
 
   const src = `
     const lengths = {};
@@ -204,7 +206,7 @@ it("each function of process has the length that Node gives it", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ lengths: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-    lengths: { ...lengths, ...(isWindows ? {} : posixOnly), ...notInNode },
+    lengths: { ...lengths, ...(isWindows ? {} : posixOnly), ...notInNode, ...missingParameter },
     stderr: "",
     exitCode: 0,
   });

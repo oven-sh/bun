@@ -198,6 +198,8 @@ fn crash_on_missing_patch(
     patch: &CalcPatchHash,
     log_level: LogLevel,
 ) -> Result<(), crate::Error> {
+    // First, because the two calls below print and exit when they fail.
+    manager.end_progress_bar();
     // A `bun patch --commit` of another package still writes its patch file before the exit.
     // Otherwise that patch could be lost too.
     let committed = package_manager::patch_package::write_pending_patch(manager)?;
@@ -334,6 +336,7 @@ impl PatchTask {
                 crash_on_missing_patch(manager, calc_hash, log_level)?;
             }
             None => {
+                manager.end_progress_bar();
                 if log_level != LogLevel::Silent {
                     if calc_hash.logger.has_errors() {
                         let _ = calc_hash

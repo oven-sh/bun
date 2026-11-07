@@ -3,6 +3,7 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { zstdCompressSync } from "node:zlib";
 import { BuildError } from "../../../scripts/build/error.ts";
 import {
   coffRecordSectionName,
@@ -17,7 +18,7 @@ import { builtinModulesHeaderBytes, createLinker, parseArguments } from "../../.
 import { peImage } from "../../../scripts/build/trim/linked-image.ts";
 import { coff } from "../../../scripts/build/trim/linker-coff.ts";
 import { foldedEntryPointsHeading } from "../../../scripts/build/trim/report.ts";
-import { packageOf } from "../icu-data-package.ts";
+import { bundleOf, packageOf, type BundleTable } from "../icu-data-package.ts";
 import {
   baseRelocationDirectory,
   bigObjectMagic,
@@ -1345,6 +1346,38 @@ extern "C" int unreferenced(int x) { return GUARDED(Extra, entered, x); }
       const names = left.map(({ name }) => name);
       expect(names).not.toContain("coll/de.res");
       expect(names).toContain("coll/root.res");
+    },
+  );
+
+  testLink(
+    "reads the zstd frames of ICU's data package with the dictionary that the map names, and joins the language of an %%ALIAS",
+    async () => {
+      // The frames copy from the dictionary, so other bytes in its place give no bundle.
+      const dictionary = bundleOf({ "%%ALIAS": "de" });
+      const frameOf = (table: BundleTable) => zstdCompressSync(bundleOf(table), { dictionary });
+      using dir = tempDir("trim-coff-freestanding-icu-frames", {
+        ...smallSources,
+        "package.dat": packageOf([
+          ["icudt99l/coll/de.res", frameOf({})],
+          ["icudt99l/coll/nds.res", frameOf({ "%%ALIAS": "de" })],
+          ["icudt99l/coll/sv.res", frameOf({})],
+        ]),
+        "dictionary.dat": dictionary,
+        "data.c": String.raw`__asm__(".section .rdata,\"dr\"\n.balign 16\n.globl icudt99_dat\nicudt99_dat:\n.incbin \"package.dat\"\n.balign 16\n.globl bun_icu_zstd_dict\nbun_icu_zstd_dict:\n.incbin \"dictionary.dat\"\n.balign 4\n.globl bun_icu_zstd_dict_size\nbun_icu_zstd_dict_size:\n.long ${dictionary.length}\n.text\n");`,
+        "main.c": mainReturning(
+          "extern const unsigned char icudt99_dat[], bun_icu_zstd_dict[]; extern const unsigned bun_icu_zstd_dict_size;",
+          "icudt99_dat[argc + 1] == 0xda && bun_icu_zstd_dict[argc] == bun_icu_zstd_dict_size ? 0 : 1",
+        ),
+      });
+      const { table } = await linked(
+        String(dir),
+        optionsWith({ objects: ["feature_code", "entry", "embedder", "data", "main"] }),
+      );
+      expect(table.icuLanguages).toEqual([
+        { name: "de", group: 0 },
+        { name: "nds", group: 0 },
+        { name: "sv", group: 1 },
+      ]);
     },
   );
 

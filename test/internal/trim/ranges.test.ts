@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { join } from "node:path";
+import { constants, zstdCompressSync } from "node:zlib";
 import { BuildError } from "../../../scripts/build/error.ts";
 import { readArchive } from "../../../scripts/build/trim/archive.ts";
 import type { Feature, FeatureModel, IcuDataLine } from "../../../scripts/build/trim/features.ts";
@@ -19,7 +20,8 @@ import {
   type IcuItemClass,
   type NamedBytes,
 } from "../../../scripts/build/trim/icu-data.ts";
-import { groupLanguages, languageOfIcuItem } from "../../../scripts/build/trim/icu-locales.ts";
+import { icuLinksOf, type IcuLink, type StoredIcuItem } from "../../../scripts/build/trim/icu-links.ts";
+import { groupLanguages, joinLanguages, languageOfIcuItem } from "../../../scripts/build/trim/icu-locales.ts";
 import { imageOfParts, type LinkedImage } from "../../../scripts/build/trim/linked-image.ts";
 import type { Partition } from "../../../scripts/build/trim/partition.ts";
 import {
@@ -36,7 +38,7 @@ import {
   type RemovableRange,
 } from "../../../scripts/build/trim/ranges.ts";
 import { xxh3 } from "../../../scripts/build/trim/xxh3.ts";
-import { packageOf } from "../icu-data-package.ts";
+import { aliasTo, bundleOf, packageOf, realBundles, realPools } from "../icu-data-package.ts";
 import { A, feature, modelOf, partitioned, tableOutput } from "./toy-graph.ts";
 
 type Section = [
@@ -590,16 +592,17 @@ describe("the texts of the built-in modules", () => {
 describe("the items of ICU's data package", () => {
   const createItems = (...names: string[]) => names.map(name => ({ name, size: 16 }));
 
-  test("an item's name follows the first slash, and its size reaches the next item or the end of the package", () => {
-    const items: [string, number][] = [
-      ["icudt75l/af.res", 48],
-      ["icudt75l/coll/de.res", 40],
-      ["icudt75l/zoneinfo64.res", 33],
+  test("an item's name follows the first slash, and its bytes reach the next item or the end of the package", () => {
+    const items: [string, Buffer][] = [
+      ["icudt75l/af.res", Buffer.alloc(48, 1)],
+      ["icudt75l/coll/de.res", Buffer.alloc(40, 2)],
+      ["icudt75l/zoneinfo64.res", Buffer.alloc(33, 3)],
     ];
     expect(itemsOf(packageOf(items))).toEqual([
-      { name: "af.res", size: 48 },
-      { name: "coll/de.res", size: 48 },
-      { name: "zoneinfo64.res", size: 33 },
+      { name: "af.res", size: 48, bytes: Buffer.alloc(48, 1) },
+      // With the 8 bytes of 0xaa that align the next item.
+      { name: "coll/de.res", size: 48, bytes: Buffer.concat([Buffer.alloc(40, 2), Buffer.alloc(8, 0xaa)]) },
+      { name: "zoneinfo64.res", size: 33, bytes: Buffer.alloc(33, 3) },
     ]);
     expect(itemsOf(packageOf(items, 144)).map(item => item.name)).toEqual(["af.res", "coll/de.res", "zoneinfo64.res"]);
     expect(itemsOf(packageOf([]))).toEqual([]);
@@ -777,6 +780,25 @@ describe("the items of ICU's data package", () => {
         inGroup(0, 3, undefined),
       ]);
     });
+
+    // ICU opens the bundles of its default locale for other locales too, and that is en_US where the host's is removed.
+    test("the bundles of en and en_US have no group, and the other bundles of en have its group", () => {
+      const withEnglish = new Map([...groupOfLanguage, ["en", 3]]);
+      const items = createItems(
+        "unit/de.res",
+        "unit/en.res",
+        "unit/en_001.res",
+        "unit/en_US.res",
+        "unit/en_US_POSIX.res",
+      );
+      expect(runsOf(items, classes, withEnglish)).toStrictEqual([
+        inGroup(0, 1, 0),
+        inGroup(1, 1, undefined),
+        inGroup(2, 1, 3),
+        inGroup(3, 1, undefined),
+        inGroup(4, 1, 3),
+      ]);
+    });
   });
 
   describe("icuPackagesOf", () => {
@@ -806,11 +828,10 @@ describe("the items of ICU's data package", () => {
       minimumBytes: {},
       exports: false,
     });
-    const modelOf = (icuData: IcuDataLine[], icuLanguageGroups: string[][] = []): FeatureModel => ({
+    const modelOf = (icuData: IcuDataLine[]): FeatureModel => ({
       features: [featureOf("Collation", 5), featureOf("Zones", 6)],
       trimFeatures: [],
       icuData,
-      icuLanguageGroups,
       hash: 0n,
     });
     const graphOf = (format: ObjectFormat, size = data.length) =>
@@ -851,39 +872,118 @@ describe("the items of ICU's data package", () => {
       expect(icuPackagesOf(linkedOf([entrySymbol]), graphOf("elf"), modelOf([]))).toEqual(nothing);
     });
 
-    test("with Bun's hook in ICU, the items of a class that is removed by locale get the group of their language", () => {
-      const { packages, languages } = icuPackagesOf(
-        linkedOf([entrySymbol, hookSymbol]),
-        graphOf("elf"),
-        modelOf(icuLinesByLocale, [["de", "nds"]]),
+    // With Bun's hook in ICU, a language can be removed, and which languages share data is read from the bundles.
+    const empty = bundleOf({});
+    const bundles = packageOf([
+      ["icudt99l/coll/de.res", empty],
+      ["icudt99l/coll/nds.res", bundleOf({ "%%ALIAS": "de" })],
+      ["icudt99l/coll/sv.res", empty],
+      ["icudt99l/zone/de.res", empty],
+      ["icudt99l/zone/fy.res", bundleOf({ "%%Parent": "nl" })],
+      ["icudt99l/zone/nl.res", empty],
+      ["icudt99l/zoneinfo64.res", 16],
+    ]);
+    const withHook = (format: ObjectFormat, lines: IcuDataLine[], bytes = bundles) => {
+      const linked = linkedOf([entrySymbol, hookSymbol], bytes);
+      const { packages, languages } = icuPackagesOf(linked, graphOf(format, bytes.length), modelOf(lines));
+      const runs = packages.flatMap(({ runs }) => runs);
+      return {
+        languages: languages.map(({ name, group }) => `${name} ${group}`),
+        runs: runs.map(run => `${run.firstItem}+${run.itemCount} ${run.features} ${run.localeGroup}`),
+      };
+    };
+
+    test("an item that is removed by locale gets the group of its language, which the language of its %%ALIAS or %%Parent shares", () => {
+      expect(withHook("elf", icuLinesByLocale)).toEqual({
+        languages: ["de 0", "fy 1", "nds 0", "nl 1", "sv 2"],
+        runs: ["0+2 5 0", "2+1 5 2", "3+1 6 0", "4+2 6 1"],
+      });
+    });
+
+    test("a link into an item that is not removed by locale joins no languages", () => {
+      expect(withHook("coff", icuLinesByLocale)).toEqual({
+        languages: ["de 0", "nds 0", "sv 1"],
+        runs: ["0+2 5 0", "2+1 5 1"],
+      });
+      expect(withHook("elf", [icuLines[0]!, icuLinesByLocale[1]!])).toEqual({
+        languages: ["de 0", "fy 1", "nl 1"],
+        runs: ["0+3 5 undefined", "3+1 6 0", "4+2 6 1"],
+      });
+      expect(withHook("coff", [icuLines[0]!, icuLinesByLocale[1]!]).languages).toEqual([]);
+      expect(withHook("elf", icuLines).languages).toEqual([]);
+    });
+
+    test("the language of an item that a bundle's %%DEPENDENCY names shares the group too", () => {
+      const depending = packageOf([
+        ["icudt99l/coll/de.res", empty],
+        ["icudt99l/coll/fo.res", bundleOf({ "%%DEPENDENCY": ["ucadata.icu", "sv.res"] })],
+        ["icudt99l/coll/sv.res", empty],
+        ["icudt99l/coll/ucadata.icu", 16],
+      ]);
+      expect(withHook("elf", icuLinesByLocale, depending)).toEqual({
+        languages: ["de 0", "fo 1", "sv 1"],
+        runs: ["0+1 5 0", "1+2 5 1"],
+      });
+    });
+
+    test("a bundle of en is not removed by locale, so a link into it joins no languages", () => {
+      const currencies: IcuDataLine[] = [
+        { itemClass: "currency", exceptWindows: false, byLocale: true, features: ["Zones"] },
+      ];
+      const english = packageOf([
+        ["icudt99l/curr/en.res", empty],
+        ["icudt99l/curr/en_IN.res", empty],
+        ["icudt99l/curr/hi_Latn.res", bundleOf({ "%%Parent": "en_IN" })],
+        ["icudt99l/curr/sco.res", bundleOf({ "%%Parent": "en" })],
+      ]);
+      expect(withHook("elf", currencies, english)).toEqual({
+        languages: ["en 0", "hi 0", "sco 1"],
+        runs: ["0+1 6 undefined", "1+2 6 0", "3+1 6 1"],
+      });
+    });
+
+    test("an item that is not removed by locale and needs one that is fails the link", () => {
+      const needing = packageOf([
+        ["icudt99l/coll/de.res", empty],
+        ["icudt99l/coll/en.res", bundleOf({ "%%Parent": "de" })],
+      ]);
+      expect(() => withHook("elf", icuLinesByLocale, needing)).toThrow(
+        "ICU's coll/en.res is not removed with a language, and its %%Parent coll/de.res is removed with the language de",
+      );
+    });
+
+    test("the items that are zstd frames are read with the dictionary at bun_icu_zstd_dict", () => {
+      const dictionary = Buffer.from(empty);
+      const frames = packageOf([
+        ["icudt99l/coll/de.res", zstdCompressSync(empty, { dictionary })],
+        ["icudt99l/coll/nds.res", zstdCompressSync(bundleOf({ "%%ALIAS": "de" }), { dictionary })],
+      ]);
+      const dictionaryAt = 16 * Math.ceil(frames.length / 16);
+      const size = Buffer.alloc(4);
+      size.writeUInt32LE(dictionary.length);
+      const bytes = Buffer.concat([frames, Buffer.alloc(dictionaryAt - frames.length), dictionary, size]);
+      const symbols: [string, number][] = [
+        entrySymbol,
+        ["bun_icu_zstd_dict", packageStart + dictionaryAt],
+        ["bun_icu_zstd_dict_size", packageStart + dictionaryAt + dictionary.length],
+      ];
+      const { languages } = icuPackagesOf(
+        linkedOf(symbols, bytes),
+        graphOf("elf", bytes.length),
+        modelOf(icuLinesByLocale),
       );
       expect(languages).toEqual([
         { name: "de", group: 0 },
         { name: "nds", group: 0 },
       ]);
-      expect(packages.map(({ runs }) => runs)).toEqual([
-        [
-          { ...collationRun, localeGroup: 0 },
-          { ...zoneRun, localeGroup: 0 },
-        ],
-      ]);
-    });
-
-    test("only the languages of classes that are removed by locale are listed", () => {
-      const lines = [icuLines[0]!, icuLinesByLocale[1]!];
-      const elf = icuPackagesOf(linkedOf([entrySymbol, hookSymbol]), graphOf("elf"), modelOf(lines));
-      expect(elf.languages).toEqual([{ name: "de", group: 0 }]);
-      expect(elf.packages.map(({ runs }) => runs)).toEqual([[collationRun, { ...zoneRun, localeGroup: 0 }]]);
-      expect(icuPackagesOf(linkedOf([entrySymbol, hookSymbol]), graphOf("coff"), modelOf(lines)).languages).toEqual([]);
-      expect(icuPackagesOf(linkedOf([entrySymbol, hookSymbol]), graphOf("elf"), modelOf(icuLines)).languages).toEqual(
-        [],
+      const withoutSize = linkedOf(symbols.slice(0, 2), bytes);
+      expect(() => icuPackagesOf(withoutSize, graphOf("elf", bytes.length), modelOf(icuLinesByLocale))).toThrow(
+        "ICU's coll/de.res is a zstd frame, and the executable has no dictionary for it",
       );
     });
 
     test("without the hook a removed language would be a silent fallback, so there are no languages and no groups", () => {
-      expect(
-        icuPackagesOf(linkedOf([entrySymbol]), graphOf("elf"), modelOf(icuLinesByLocale, [["de", "nds"]])),
-      ).toEqual({
+      expect(icuPackagesOf(linkedOf([entrySymbol]), graphOf("elf"), modelOf(icuLinesByLocale))).toEqual({
         packages: [{ start: packageStart, end: packageStart + data.length, items: 3, runs: [collationRun, zoneRun] }],
         languages: [],
       });
@@ -973,6 +1073,391 @@ describe("icu-locales", () => {
       { name: "nb", group: 0 },
       { name: "no", group: 0 },
     ]);
+  });
+
+  test("the languages that pairs join are one sorted set, and the sets are in the order of their first language", () => {
+    expect(joinLanguages([])).toEqual([]);
+    expect(
+      joinLanguages([
+        ["nb", "no"],
+        ["sh", "sr"],
+        ["nn", "no"],
+        ["no", "nn"],
+        ["ars", "ar"],
+      ]),
+    ).toEqual([
+      ["ar", "ars"],
+      ["nb", "nn", "no"],
+      ["sh", "sr"],
+    ]);
+    expect(
+      joinLanguages([
+        ["hr", "bs"],
+        ["sh", "sr"],
+        ["bs", "sh"],
+      ]),
+    ).toEqual([["bs", "hr", "sh", "sr"]]);
+  });
+});
+
+describe("icu-links", () => {
+  const itemsOf = (bundles: Record<string, Buffer>): StoredIcuItem[] =>
+    Object.entries(bundles).map(([name, bytes]) => ({ name, bytes }));
+  const empty = bundleOf({});
+  const patched = (bytes: Buffer, at: number, ...patch: number[]) => {
+    const copy = Buffer.from(bytes);
+    copy.set(patch, at);
+    return copy;
+  };
+
+  test("the bundles that these tests write are the bundles that ICU's genrb writes", () => {
+    const written = {
+      "coll/dz.res": empty,
+      "coll/ar_SA.res": bundleOf({ ___: "" }),
+      "coll/in.res": bundleOf({ "%%ALIAS": "id" }),
+      "coll/nb.res": bundleOf({ "%%Parent": "no" }),
+    };
+    for (const [name, bytes] of Object.entries(written)) {
+      expect({ name, hex: bytes.toString("hex") }).toEqual({
+        name,
+        hex: realBundles[name as "coll/dz.res"].toString("hex"),
+      });
+    }
+  });
+
+  test("reads the %%ALIAS, the %%Parent and the %%DEPENDENCY of bundles of ICU 79.1, with keys and strings in the bundle or in its pool bundle", () => {
+    const targets = [
+      "coll/id.res",
+      "coll/no.res",
+      "ar_SA.res",
+      "curr/he.res",
+      "curr/en_150.res",
+      "unit/ro.res",
+      "pt_PT.res",
+      "brkitr/sent_el.brk",
+    ];
+    const items = itemsOf({ ...realBundles, ...realPools, ...Object.fromEntries(targets.map(name => [name, empty])) });
+    expect(icuLinksOf(items, undefined)).toEqual([
+      { from: "coll/in.res", to: "coll/id.res", key: "%%ALIAS" },
+      { from: "coll/nb.res", to: "coll/no.res", key: "%%Parent" },
+      { from: "ars.res", to: "ar_SA.res", key: "%%ALIAS" },
+      { from: "curr/iw.res", to: "curr/he.res", key: "%%ALIAS" },
+      { from: "curr/en_BE.res", to: "curr/en_150.res", key: "%%Parent" },
+      { from: "unit/mo.res", to: "unit/ro.res", key: "%%ALIAS" },
+      { from: "pt_AO.res", to: "pt_PT.res", key: "%%Parent" },
+      { from: "brkitr/el.res", to: "brkitr/sent_el.brk", key: "%%DEPENDENCY" },
+    ]);
+  });
+
+  test("reads each file of a %%DEPENDENCY", () => {
+    const files = { "brkitr/line.brk": empty, "brkitr/thaidict.dict": empty };
+    const read = (dependency: string[]) => {
+      const bundle = bundleOf({ "%%DEPENDENCY": dependency, boundaries: { line: "line.brk" } });
+      return icuLinksOf(itemsOf({ "brkitr/th.res": bundle, ...files }), undefined);
+    };
+    expect(read(["line.brk", "thaidict.dict"])).toEqual([
+      { from: "brkitr/th.res", to: "brkitr/line.brk", key: "%%DEPENDENCY" },
+      { from: "brkitr/th.res", to: "brkitr/thaidict.dict", key: "%%DEPENDENCY" },
+    ]);
+    expect(read([])).toEqual([]);
+  });
+
+  // Offsets in `nested`: the value of the table `a` at 88, the value of the root table at 96.
+  const nested = bundleOf({ a: { b: { c: "x" } } });
+
+  test("what takes ICU to no other bundle is no link", () => {
+    const bundle = bundleOf({
+      "%%ParentIsRoot": 1,
+      calendar: {
+        buddhist: aliasTo("/LOCALE/calendar/gregorian"),
+        gregorian: { eras: ["BC", ["AD", 1], { wide: aliasTo("/LOCALE/calendar/gregorian/eras/abbreviated") }] },
+      },
+    });
+    expect(icuLinksOf(itemsOf({ "de.res": bundle, "de_AT.res": nested }), undefined)).toEqual([]);
+    const tableInItself = patched(nested, 88, 0x0d, 0, 0, 0x20);
+    expect(icuLinksOf(itemsOf({ "de.res": tableInItself }), undefined)).toEqual([]);
+  });
+
+  describe("an item that is a zstd frame", () => {
+    const dictionary = Buffer.from(realBundles["coll/nb.res"]);
+    const stub = realBundles["coll/in.res"];
+    const links: IcuLink[] = [{ from: "coll/in.res", to: "coll/id.res", key: "%%ALIAS" }];
+    // An item ends with its own padding, and what aligns the next item follows its frame.
+    const paddedTo = (size: number) => Buffer.concat([stub, Buffer.alloc(size - stub.length, 0xaa)]);
+    const read = (frame: Buffer) => {
+      const stored = Buffer.concat([frame, Buffer.alloc(9, 0xaa)]);
+      return icuLinksOf(itemsOf({ "coll/in.res": stored, "coll/id.res": empty }), dictionary);
+    };
+
+    test("is read with the dictionary", () => {
+      const frame = zstdCompressSync(stub, { dictionary });
+      expect(frame.subarray(0, 4).toString("hex")).toBe("28b52ffd");
+      expect(icuLinksOf(itemsOf({ "coll/in.res": frame, "coll/id.res": empty }), dictionary)).toEqual(links);
+    });
+
+    // The decoder of node:zlib takes what follows a frame for one more frame where the content ends with a buffer of 16,384 bytes.
+    test.each([88, 16_384, 32_768, 262_144])("of %d bytes is read up to the end of the frame", size => {
+      const withChecksum = { dictionary, params: { [constants.ZSTD_c_checksumFlag]: 1 } };
+      expect(read(zstdCompressSync(paddedTo(size), { dictionary }))).toEqual(links);
+      expect(read(zstdCompressSync(paddedTo(size), withChecksum))).toEqual(links);
+    });
+
+    test("without the size of its content is read block by block", () => {
+      // RFC 8878: a window of 16,384 bytes, a block as it is, a block of one repeated byte, the checksum of the content.
+      const blockHeader = (size: number, type: number, isLast: boolean) => {
+        const header = Buffer.alloc(3);
+        header.writeUIntLE((size << 3) | (type << 1) | Number(isLast), 0, 3);
+        return header;
+      };
+      const content = paddedTo(16_384);
+      const first = stub.subarray(0, stub.length - 2);
+      const checksum = Buffer.alloc(4);
+      checksum.writeUInt32LE(Number(Bun.hash.xxHash64(content) & 0xffffffffn));
+      const frame = Buffer.concat([
+        Buffer.from("28b52ffd0420", "hex"),
+        blockHeader(first.length, 0, false),
+        first,
+        blockHeader(content.length - first.length, 1, true),
+        Buffer.from([0xaa]),
+        checksum,
+      ]);
+      expect(read(frame)).toEqual(links);
+    });
+  });
+
+  test("only reads the items that are a locale's bundle, and the res_index.res of their tree", () => {
+    const other = Buffer.alloc(48, 0xaa);
+    const names = ["root.res", "pool.res", "supplementalData.res", "coll/ucadata.icu", "brkitr/word.brk", "de.txt"];
+    expect(icuLinksOf(itemsOf(Object.fromEntries(names.map(name => [name, other]))), undefined)).toEqual([]);
+  });
+
+  describe("the aliases that a tree's res_index.res lists", () => {
+    const alias = bundleOf({ "%%ALIAS": "de" });
+    const indexOf = (aliases: string[] | undefined) => {
+      const locales = (names: string[]) => Object.fromEntries(names.map(name => [name, ""]));
+      const installed = { InstalledLocales: locales(["de", "sv"]) };
+      const table = aliases === undefined ? installed : { ...installed, AliasLocales: locales(aliases) };
+      return bundleOf(table, { noFallback: true });
+    };
+    const tree = (index: Buffer, more: Record<string, Buffer> = {}) =>
+      itemsOf({ "coll/de.res": empty, "coll/res_index.res": index, "coll/sv.res": empty, ...more });
+
+    test("are the bundles with an %%ALIAS, and a listed name may have no item", () => {
+      const links: IcuLink[] = [{ from: "coll/nds.res", to: "coll/de.res", key: "%%ALIAS" }];
+      expect(icuLinksOf(tree(indexOf(["nds", "gsw"]), { "coll/nds.res": alias }), undefined)).toEqual(links);
+      expect(icuLinksOf(tree(indexOf([])), undefined)).toEqual([]);
+      expect(icuLinksOf(tree(indexOf(undefined)), undefined)).toEqual([]);
+      expect(icuLinksOf(itemsOf({ "brkitr/res_index.res": realBundles["brkitr/res_index.res"] }), undefined)).toEqual(
+        [],
+      );
+    });
+
+    test.each([
+      ["a bundle with an %%ALIAS that is not listed", indexOf([]), { "coll/nds.res": alias }, "coll/nds.res"],
+      ["a bundle with an %%ALIAS and no list", indexOf(undefined), { "coll/nds.res": alias }, "coll/nds.res"],
+      ["a listed bundle without an %%ALIAS", indexOf(["sv"]), {}, "coll/sv.res"],
+      ["one of each", indexOf(["sv"]), { "coll/nds.res": alias }, "coll/nds.res, coll/sv.res"],
+    ])("%s fails", (_name, index, more, differing) => {
+      expect(() => icuLinksOf(tree(index, more), undefined)).toThrow(
+        new BuildError(`ICU's coll/res_index.res lists other aliases than the bundles with an %%ALIAS: ${differing}`),
+      );
+    });
+  });
+
+  // Offsets in `coll/in.res`: the root resource at 32, seven indexes from 36, the key from 64, the 16-bit units from 72.
+  const stub = realBundles["coll/in.res"];
+  const frame = Buffer.from("28b52ffd00112233445566", "hex");
+  const unknown: [what: string, items: Record<string, Buffer>, dictionary: Buffer | undefined, message: string][] = [
+    [
+      "a zstd frame without a dictionary",
+      { "de.res": frame },
+      undefined,
+      "de.res is a zstd frame, and the executable has no dictionary for it",
+    ],
+    [
+      "bytes that are no zstd frame",
+      { "de.res": frame },
+      empty,
+      "de.res is no zstd frame of the executable's dictionary (",
+    ],
+    ["other bytes", { "de.res": Buffer.alloc(48, 0xaa) }, undefined, "de.res is no resource bundle"],
+    [
+      "a bundle that is shorter than its header",
+      { "de.res": stub.subarray(0, 20) },
+      undefined,
+      "de.res is no resource bundle",
+    ],
+    ["a big-endian bundle", { "de.res": patched(stub, 8, 1) }, undefined, "de.res is no resource bundle"],
+    ["another data format", { "de.res": patched(stub, 12, 0x43) }, undefined, "de.res is no resource bundle"],
+    ["format version 1", { "de.res": patched(stub, 16, 1) }, undefined, "de.res has format version 1"],
+    ["format version 4", { "de.res": patched(stub, 16, 4) }, undefined, "de.res has format version 4"],
+    [
+      "four indexes",
+      { "de.res": patched(stub, 36, 4) },
+      undefined,
+      "de.res has indexes that are too few or not in order",
+    ],
+    [
+      "a top above the item",
+      { "de.res": patched(stub, 48, 0x40) },
+      undefined,
+      "de.res has indexes that are too few or not in order",
+    ],
+    [
+      "key strings above the top",
+      { "de.res": patched(stub, 40, 0x10) },
+      undefined,
+      "de.res has indexes that are too few or not in order",
+    ],
+    [
+      "a pool bundle without a checksum",
+      { "de.res": patched(stub, 56, 4) },
+      undefined,
+      "de.res is or uses a pool bundle and has no checksum of it",
+    ],
+    [
+      "a key below the key strings",
+      { "de.res": patched(stub, 82, 0) },
+      undefined,
+      "de.res has a key outside the key strings",
+    ],
+    [
+      "a key without an end",
+      { "de.res": patched(stub, 71, 0x61) },
+      undefined,
+      "de.res has a key outside the key strings",
+    ],
+    [
+      "a key of a pool bundle in a bundle that uses none",
+      { "de.res": patched(stub, 82, 0x40) },
+      undefined,
+      "de.res refers to a pool bundle and uses none",
+    ],
+    [
+      "a root that is a table of 32-bit keys",
+      { "de.res": patched(stub, 35, 0x40) },
+      undefined,
+      "de.res has the resource 40000004 for a table of 16-bit keys",
+    ],
+    [
+      "a table above the 16-bit units",
+      { "de.res": patched(stub, 32, 0xff, 0x0f) },
+      undefined,
+      "de.res has an offset outside the bundle",
+    ],
+    [
+      "a string without an end",
+      { "de.res": patched(stub, 84, 7) },
+      undefined,
+      "de.res has an offset outside the bundle",
+    ],
+    [
+      "a string with its length before it",
+      { "de.res": patched(stub, 74, 0x02, 0xdc) },
+      undefined,
+      "de.res has a link of more than 40 characters",
+    ],
+    [
+      "a target that is no item",
+      { "coll/in.res": stub },
+      undefined,
+      "coll/in.res has the %%ALIAS coll/id.res, which is no item",
+    ],
+    [
+      "a link that is no string",
+      { "unit/mo.res": patched(realBundles["unit/mo.res"], 79, 0x70), "unit/pool.res": realPools["unit/pool.res"] },
+      undefined,
+      "unit/mo.res has the resource 70010acc for a string of 16-bit units",
+    ],
+    [
+      "a bundle without its pool bundle",
+      { "ars.res": realBundles["ars.res"] },
+      undefined,
+      "ars.res uses a pool bundle, and there is no pool.res",
+    ],
+    [
+      "the pool bundle of another tree",
+      { "ars.res": realBundles["ars.res"], "pool.res": realPools["curr/pool.res"] },
+      undefined,
+      "ars.res uses another pool bundle than pool.res",
+    ],
+    [
+      "a pool bundle that is none",
+      { "ars.res": realBundles["ars.res"], "pool.res": patched(realPools["pool.res"], 56, 1) },
+      undefined,
+      "ars.res uses another pool bundle than pool.res",
+    ],
+    [
+      "a pool bundle that cannot be read",
+      { "ars.res": realBundles["ars.res"], "pool.res": patched(realPools["pool.res"], 16, 4) },
+      undefined,
+      "pool.res has format version 4",
+    ],
+    [
+      "another key of ICU's own",
+      { "de.res": bundleOf({ "%%NewLink": "he" }) },
+      undefined,
+      "de.res has the key %%NewLink",
+    ],
+    [
+      "an alias to a resource of another locale",
+      { "de.res": bundleOf({ Currencies: aliasTo("he/Currencies") }) },
+      undefined,
+      'de.res has the alias "he/Currencies" to a resource of another bundle',
+    ],
+    [
+      "an alias to a resource of another tree",
+      { "de.res": bundleOf({ Currencies: aliasTo("/ICUDATA-curr/he/Currencies") }) },
+      undefined,
+      'de.res has the alias "/ICUDATA-curr/he/Currencies" to a resource of another bundle',
+    ],
+    [
+      "an alias in a table of a table",
+      { "de.res": bundleOf({ a: { b: aliasTo("he") } }) },
+      undefined,
+      'de.res has the alias "he" to a resource of another bundle',
+    ],
+    [
+      "an alias in an array of an array",
+      { "de.res": bundleOf({ a: ["x", [aliasTo("he/x")]] }) },
+      undefined,
+      'de.res has the alias "he/x" to a resource of another bundle',
+    ],
+    [
+      "an alias without a path",
+      { "de.res": patched(nested, 88, 0, 0, 0, 0x30) },
+      undefined,
+      'de.res has the alias "" to a resource of another bundle',
+    ],
+    [
+      "a table of 32-bit keys below the root",
+      { "de.res": patched(nested, 99, 0x40) },
+      undefined,
+      "de.res has a table of 32-bit keys",
+    ],
+    [
+      "a %%DEPENDENCY that is no item",
+      { "brkitr/el.res": realBundles["brkitr/el.res"] },
+      undefined,
+      "brkitr/el.res has the %%DEPENDENCY brkitr/sent_el.brk, which is no item",
+    ],
+    [
+      "a %%DEPENDENCY that is no array",
+      { "brkitr/el.res": bundleOf({ "%%DEPENDENCY": "sent_el.brk" }) },
+      undefined,
+      "brkitr/el.res has the resource 60000001 for an array",
+    ],
+    [
+      "a %%DEPENDENCY on what is no string",
+      { "brkitr/el.res": bundleOf({ "%%DEPENDENCY": ["sent_el.brk", 7] }), "brkitr/sent_el.brk": empty },
+      undefined,
+      "brkitr/el.res has the resource 70000007 for a string of 16-bit units",
+    ],
+  ];
+
+  test.each(unknown)("%s fails", (_what, items, dictionary, message) => {
+    expect(() => icuLinksOf(itemsOf(items), dictionary)).toThrow(`ICU's ${message}`);
+    expect(() => icuLinksOf(itemsOf(items), dictionary)).toThrow(BuildError);
   });
 });
 

@@ -1,12 +1,16 @@
 import { builtinFeatureUses } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { globSync, readFileSync } from "node:fs";
+import { closeSync, globSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { type Toolchain } from "../../../scripts/build/config.ts";
+import { readAt } from "../../../scripts/build/trim/binary-reader.ts";
 import { checkBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";
+import { openElf } from "../../../scripts/build/trim/elf-file.ts";
 import { featureNamed, loadFeatures } from "../../../scripts/build/trim/features.ts";
-import { icuItemClasses } from "../../../scripts/build/trim/icu-data.ts";
+import { icuItemClasses, itemsOf } from "../../../scripts/build/trim/icu-data.ts";
+import { icuLinksOf } from "../../../scripts/build/trim/icu-links.ts";
+import { joinLanguages, languageOfIcuItem } from "../../../scripts/build/trim/icu-locales.ts";
 import { type BuiltinUses } from "../../../scripts/build/trim/types.ts";
 import { guardHeader } from "./toy-program.ts";
 
@@ -55,6 +59,91 @@ test("the feature files load", () => {
   const classes = new Set<string>(icuItemClasses);
   expect(model.icuData.map(line => line.itemClass).filter(itemClass => !classes.has(itemClass))).toEqual([]);
 });
+
+// ICU's data package in this Bun and the dictionary of its items, by the names of their symbols. namedBytesOfElf lists
+// every symbol, and a debug build has 2.7 million. A stripped Bun has none, and macOS and Windows have no ELF file.
+function icuDataOfThisBun(): { dataPackage: Buffer; dictionary: Buffer } | undefined {
+  const elf = openElf(process.execPath, "r");
+  if (elf === undefined) return undefined;
+  try {
+    const table = elf.sections.find(section => section.type === 2);
+    if (table === undefined) return undefined;
+    const symbols = readAt(elf.fd, table.offset, table.size);
+    const strings = elf.sections[table.link]!;
+    const names = [`icudt${process.versions.icu!.split(".")[0]}_dat`, "bun_icu_zstd_dict", "bun_icu_zstd_dict_size"];
+    const texts = names.map(name => Buffer.from(name + "\0", "latin1"));
+    const addresses: (number | undefined)[] = names.map(() => undefined);
+    const chunkSize = 1 << 24;
+    for (let at = 0; at < strings.size && addresses.includes(undefined); at += chunkSize) {
+      const chunk = readAt(elf.fd, strings.offset + at, Math.min(chunkSize + 32, strings.size - at));
+      texts.forEach((text, index) => {
+        for (let found = chunk.indexOf(text); found >= 0 && found < chunkSize; found = chunk.indexOf(text, found + 1)) {
+          const nameOffset = Buffer.alloc(4);
+          nameOffset.writeUInt32LE(at + found);
+          for (let entry = symbols.indexOf(nameOffset); entry >= 0; entry = symbols.indexOf(nameOffset, entry + 1)) {
+            if (entry % 24 === 0) addresses[index] = Number(symbols.readBigUInt64LE(entry + 8));
+          }
+        }
+      });
+    }
+    const [start, dictionary, dictionarySize] = addresses;
+    if (start === undefined || dictionary === undefined || dictionarySize === undefined) return undefined;
+    const read = (address: number, length: number) => {
+      const section = elf.sections.find(
+        section => (section.flags & 2) !== 0 && section.address <= address && address < section.address + section.size,
+      )!;
+      return readAt(elf.fd, section.offset + address - section.address, length);
+    };
+    return {
+      dataPackage: read(start, dictionary - start),
+      dictionary: read(dictionary, read(dictionarySize, 4).readUInt32LE(0)),
+    };
+  } finally {
+    closeSync(elf.fd);
+  }
+}
+
+const icuData = icuDataOfThisBun();
+
+test.skipIf(icuData === undefined)(
+  "the ICU data of this Bun has an %%ALIAS or a %%Parent between these languages",
+  () => {
+    const { dataPackage, dictionary } = icuData!;
+    // The other trees repeat the links of these. Their 2,800 bundles are 2 seconds more in a debug build.
+    const items = itemsOf(dataPackage).filter(({ name }) => /^(coll\/|brkitr\/|[^/]+$)/.test(name));
+    const links = icuLinksOf(items, dictionary);
+    const dependencies = links.filter(({ key }) => key === "%%DEPENDENCY");
+    const languages = new Set(items.flatMap(({ name }) => languageOfIcuItem(name) ?? []));
+    const joined = joinLanguages(
+      links.flatMap(({ from, to }) => {
+        const [language, needed] = [languageOfIcuItem(from)!, languageOfIcuItem(to)];
+        return needed !== undefined && needed !== language ? [[language, needed] as const] : [];
+      }),
+    );
+    // Intl reads some languages as another one. ICU has only an %%ALIAS for them.
+    const renamed = [...languages].flatMap(language => {
+      const canonical = new Intl.Locale(Intl.getCanonicalLocales(language)[0]!).language;
+      return canonical !== language && languages.has(canonical) ? [[language, canonical] as const] : [];
+    });
+    expect({
+      // An ICU with a new bundle whose %%ALIAS or %%Parent is in another language changes this list.
+      joined: joined.map(set => set.join(" ")),
+      renamed: renamed.map(pair => pair.join(" ")),
+      renamedAndNotJoined: renamed.filter(
+        ([language, canonical]) => !joined.some(set => set.includes(language) && set.includes(canonical)),
+      ),
+      // The rules and the dictionaries of the break iterators belong to no language.
+      hasDependencies: dependencies.length > 0,
+      dependenciesOfALanguage: dependencies.filter(({ to }) => languageOfIcuItem(to) !== undefined),
+    }).toEqual({
+      joined: ["ar ars", "en hi", "fil tl", "he iw", "id in", "mo ro", "nb nn no", "sh sr", "yue zh"],
+      renamed: expect.arrayContaining(["in id", "iw he", "mo ro"]),
+      renamedAndNotJoined: [],
+      hasDependencies: true,
+      dependenciesOfALanguage: [],
+    });
+  },
+);
 
 test.skipIf(!guardHeader)("the engine's header lists the engine features in order", () => {
   const text = readFileSync(guardHeader!.featureListPath, "utf8");

@@ -12,6 +12,17 @@ export function languageOfIcuItem(name: string): string | undefined {
   return underscore < 0 ? stem : stem.slice(0, underscore);
 }
 
+/** The disjoint sets that the pairs make: each set sorted, and the sets in the order of their first language. */
+export function joinLanguages(pairs: Iterable<readonly [string, string]>): string[][] {
+  const setOf = new Map<string, Set<string>>();
+  for (const [one, other] of pairs) {
+    const joined = setOf.get(one) ?? new Set([one]);
+    for (const language of setOf.get(other) ?? [other]) setOf.set(language, joined.add(language));
+    setOf.set(one, joined);
+  }
+  return [...new Set(setOf.values())].map(set => [...set].sort()).sort(([a], [b]) => (a! < b! ? -1 : 1));
+}
+
 export function groupLanguages(languages: Iterable<string>, groups: readonly string[][]): IcuLanguage[] {
   const lineOfLanguage = new Map<string, number>();
   groups.forEach((line, index) => {

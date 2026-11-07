@@ -49,7 +49,6 @@ export interface FeatureModel {
   features: Feature[];
   trimFeatures: TrimFeature[];
   icuData: IcuDataLine[];
-  icuLanguageGroups: string[][];
   hash: bigint;
 }
 

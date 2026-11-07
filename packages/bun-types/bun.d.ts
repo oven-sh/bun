@@ -3882,7 +3882,8 @@ declare module "bun" {
      */
     remove?: Bun.Build.TrimFeature[];
     /**
-     * The only locales to keep, such as `"en"` or `"de-AT"`.
+     * The only locales to keep, such as `"en"` or `"de-AT"`. Bun always keeps `en-US`, its default
+     * locale.
      *
      * Without it, Bun keeps the locales your code passes to `Intl` as constants, and every locale
      * if one of them isn't a constant. If the program asks for a locale that was removed, the

@@ -4,7 +4,8 @@ import { fail, readAt, stringAt } from "./binary-reader.ts";
 import { openElf } from "./elf-file.ts";
 import { featureNamed, type FeatureModel } from "./features.ts";
 import { nodeAt, type ObjectFormat, type SectionGraph } from "./graph.ts";
-import { groupLanguages, languageOfIcuItem } from "./icu-locales.ts";
+import { icuLinksOf, type StoredIcuItem } from "./icu-links.ts";
+import { groupLanguages, joinLanguages, languageOfIcuItem } from "./icu-locales.ts";
 import { elfImage, type LinkedImage } from "./linked-image.ts";
 import type { IcuLanguage } from "./types.ts";
 
@@ -115,7 +116,7 @@ export interface IcuItem {
   size: number;
 }
 
-export function itemsOf(dataPackage: Buffer): IcuItem[] {
+export function itemsOf(dataPackage: Buffer): (IcuItem & StoredIcuItem)[] {
   const malformed = (): never => {
     throw new BuildError("ICU's data package is malformed");
   };
@@ -135,7 +136,8 @@ export function itemsOf(dataPackage: Buffer): IcuItem[] {
     const size = startOf(index + 1) - startOf(index);
     if (end < 0 || size < 0 || startOf(index + 1) > contents.length) malformed();
     const path = contents.toString("latin1", name, end);
-    return { name: path.slice(path.indexOf("/") + 1), size };
+    const bytes = contents.subarray(startOf(index), startOf(index + 1));
+    return { name: path.slice(path.indexOf("/") + 1), size, bytes };
   });
 }
 
@@ -149,6 +151,12 @@ export interface IcuRun {
 
 type RemovableClasses = Map<IcuItemClass, { features: number[]; byLocale: boolean }>;
 
+// en_US is ICU's default locale where the top-level bundle of the host's locale is removed (bun_icu_default_locale.cpp),
+// and the engine's locale for a tag that it has no data for (tl, ars, sh). ICU opens the bundles of its default locale for
+// other locales too: each number format that it makes from a pattern starts with the symbols and the currency of the
+// default locale (decimfmt.cpp), and the spelled-out numbers of a calendar (ja-JP-u-ca-japanese) need one.
+const bundleOfDefaultLocale = /^([a-z]+\/)?en(_US)?\.res$/;
+
 function removalOf(
   name: string,
   classes: RemovableClasses,
@@ -156,7 +164,8 @@ function removalOf(
   const itemClass = classOfIcuItem(name);
   const removal = itemClass === undefined ? undefined : classes.get(itemClass);
   if (removal === undefined) return undefined;
-  return { features: removal.features, language: removal.byLocale ? languageOfIcuItem(name) : undefined };
+  const isOfLanguage = removal.byLocale && !bundleOfDefaultLocale.test(name);
+  return { features: removal.features, language: isOfLanguage ? languageOfIcuItem(name) : undefined };
 }
 
 export function runsOf(
@@ -232,7 +241,10 @@ function collectClassFeatures(model: FeatureModel, format: ObjectFormat): Remova
   return classes;
 }
 
-function findPackages(linked: NamedBytes, graph: SectionGraph): { start: number; end: number; items: IcuItem[] }[] {
+function findPackages(
+  linked: NamedBytes,
+  graph: SectionGraph,
+): { start: number; end: number; items: (IcuItem & StoredIcuItem)[] }[] {
   const starts = linked.symbols.filter(([name]) => /^icudt\d+_dat$/.test(name)).map(([, address]) => address);
   return [...new Set(starts)].map(start => {
     const node = nodeAt(graph, start);
@@ -241,13 +253,47 @@ function findPackages(linked: NamedBytes, graph: SectionGraph): { start: number;
       (end, [, address]) => (address > start && address < end ? address : end),
       graph.address[node]! + graph.size[node]!,
     );
-    const items = itemsOf(linked.image.bytes(start, end - start) ?? fail("ICU's data package lies in no section"));
-    return { start, end, items };
+    const bytes = linked.image.bytes(start, end - start) ?? fail("ICU's data package lies in no section");
+    return { start, end, items: itemsOf(bytes) };
   });
 }
 
 // The step that builds the archive defining this symbol also patches ICU's udata.cpp to call Bun's hook, which reports a tombstone.
 const hookMarkerSymbol = "bun_icu_zstd_dict";
+
+function dictionaryOf({ symbols, image }: NamedBytes): Buffer | undefined {
+  const addressOf = (name: string) => symbols.find(([symbol]) => symbol === name)?.[1];
+  const start = addressOf(hookMarkerSymbol);
+  const size = addressOf(`${hookMarkerSymbol}_size`);
+  const length = size === undefined ? undefined : image.bytes(size, 4)?.readUInt32LE(0);
+  return start === undefined || length === undefined ? undefined : image.bytes(start, length);
+}
+
+/**
+ * Where `--trim-locales` removes an item by its language, it has to keep it for the language of a bundle that takes ICU to
+ * it too: `ars.res` is only an alias of `ar_SA.res`.
+ */
+function joinedLanguagesOf(
+  items: StoredIcuItem[],
+  classes: RemovableClasses,
+  dictionary: Buffer | undefined,
+): [string, string][] {
+  const languageOf = (name: string) => removalOf(name, classes)?.language;
+  const joined: [string, string][] = [];
+  for (const { from, to, key } of icuLinksOf(items, dictionary)) {
+    const needed = languageOf(to);
+    if (needed === undefined) continue;
+    const language = languageOf(from);
+    if (language === undefined) {
+      throw new BuildError(
+        `ICU's ${from} is not removed with a language, and its ${key} ${to} is removed with the language ${needed}`,
+        { hint: "removalOf in scripts/build/trim/icu-data.ts decides what is removed with a language" },
+      );
+    }
+    if (language !== needed) joined.push([language, needed]);
+  }
+  return joined;
+}
 
 export function icuPackagesOf(
   linked: NamedBytes | undefined,
@@ -259,12 +305,14 @@ export function icuPackagesOf(
   const found = findPackages(linked, graph);
   const hasHook = linked.symbols.some(([name]) => name === hookMarkerSymbol);
   const names = found.flatMap(({ items }) => items.map(({ name }) => name));
-  const languages = hasHook
-    ? groupLanguages(
-        names.flatMap(name => removalOf(name, classes)?.language ?? []),
-        model.icuLanguageGroups,
-      )
-    : [];
+  const removedByLocale = hasHook ? names.flatMap(name => removalOf(name, classes)?.language ?? []) : [];
+  const languages =
+    removedByLocale.length > 0
+      ? groupLanguages(
+          removedByLocale,
+          joinLanguages(found.flatMap(({ items }) => joinedLanguagesOf(items, classes, dictionaryOf(linked)))),
+        )
+      : [];
   const groupOfLanguage = hasHook ? new Map(languages.map(({ name, group }) => [name, group])) : undefined;
   const packages = found.map(({ start, end, items }) => ({
     start,

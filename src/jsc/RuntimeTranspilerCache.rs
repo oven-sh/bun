@@ -85,8 +85,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 50: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
-/// Version 52: The React Compiler leaves a function as it is written if it declares `using`, or
-/// `var` in the head of a for-in or for-of loop. Older entries can hold either one as `let`.
+/// Version 52: The React Compiler leaves a function with `using`, or with `var` in a for-in/of head, as it is written.
 const EXPECTED_VERSION: u32 = 52;
 
 /// Source files smaller than this are not written to / read from the on-disk

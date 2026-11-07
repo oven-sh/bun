@@ -641,8 +641,7 @@ fn lower_statement(
                     description: None,
                     suggestions: None,
                 })?;
-                // Treat `var` as `let` and `using`/`await using` as `const` so
-                // references to the variable don't break while the error unwinds
+                // Treat `var` as `let` and `using`/`await using` as `const` so references to the variable don't break while the error unwinds
             }
             let kind = match var_decl.kind {
                 s::Kind::KLet | s::Kind::KVar => InstructionKind::Let,
@@ -1714,8 +1713,7 @@ fn lower_for_in_of_left(
 ) -> Result<Option<Place>, CompilerDiagnostic> {
     match init.data {
         Data::SLocal(var_decl) => {
-            // Upstream reads no kind here and lowers every head as `let`: a `using` is never disposed, and a `var` is
-            // out of scope after the loop. `bun lint` reports what upstream's lowering reports, so not a `var` head.
+            // Not in upstream, which lowers every head as `let`. `bun lint` reports what upstream reports, so no `var` head.
             let unsupported_node_kind = match var_decl.kind {
                 s::Kind::KVar if builder.environment().output_mode != OutputMode::Lint => {
                     Some("var")

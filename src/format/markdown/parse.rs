@@ -7,6 +7,7 @@
 use super::ast::{Align, Kind, NONE, Node, NodeId, ReferenceType, Str, Tree};
 use super::spans::{self, push_without_nul};
 use super::strings::{normalize_identifier, push_lowercase, unescape};
+use bun_md::helpers::indentation_start;
 use bun_md::root::{Options, render_with_extensions};
 use bun_md::types::{
     BLOCK_CLOSED, BLOCK_DIRECTIVE, BLOCK_EXTENSION, BLOCK_FENCED_CODE, BLOCK_FOOTNOTE,
@@ -680,27 +681,8 @@ impl Builder<'_> {
     /// The start of the `indent` columns of whitespace before `beg`, and how many of those columns are the rest of a
     /// tab that starts before that position.
     fn indentation_start(&self, beg: u32, indent: u32) -> (u32, u8) {
-        if indent == 0 {
-            return (beg, 0);
-        }
-        if let Some(start) = beg.checked_sub(indent)
-            && self
-                .text
-                .get(start as usize..beg as usize)
-                .is_some_and(|it| it.iter().all(|&byte| byte == b' '))
-        {
-            return (start, 0);
-        }
-        let target = self.column(beg).saturating_sub(indent);
-        let (mut offset, mut column) = (self.tree.line_start(beg), 0);
-        while offset < beg && column < target {
-            column = match self.text.get(offset as usize) {
-                Some(b'\t') => (column + 4) / 4 * 4,
-                _ => column + 1,
-            };
-            offset += 1;
-        }
-        (offset, (column - target.min(column)).min(3) as u8)
+        let (start, spaces) = indentation_start(self.text, beg, indent, 0);
+        (start, spaces as u8)
     }
 
     fn segment(&self, line: &VerbatimLine) -> Segment {

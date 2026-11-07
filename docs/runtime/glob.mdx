@@ -145,6 +145,8 @@ glob.match("d.ts"); // => false
 
 You can nest these patterns to any depth, and they can contain any of the other wildcards.
 
+An alternative can contain a `/`. `src/{a,b/c}/index.ts` matches `src/a/index.ts` and `src/b/c/index.ts`, and `scan()` lists both.
+
 ### `{1..3}` - Match a range of numbers or letters
 
 ```ts

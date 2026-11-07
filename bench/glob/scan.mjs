@@ -6,6 +6,12 @@ const normalPattern = "*.ts";
 const recursivePattern = "**/*.ts";
 const nodeModulesPattern = "**/node_modules/**/*.js";
 const multiLevelPattern = "node_modules/*/lib/*.js";
+const crossingGroupPattern = "{node_modules/*/lib,src}/*.js";
+// A name after the group: one lookup in each directory that the group ends at, as for the written-out patterns.
+const crossingGroupThenNamePattern = "{node_modules/*,src}/package.json";
+// A list joined into one group, longer than the 255 bytes that the matcher keeps a cache for.
+const joinedList = Array.from({ length: 40 }, (_, i) => `node_modules/${"abcdefghij"[i % 10]}*/lib/*${i}.js`);
+const joinedPattern = `{${joinedList.join(",")}}`;
 
 const benchFdir = false;
 const cwd = undefined;
@@ -135,6 +141,49 @@ group({ name: `sync multi-level pattern="${multiLevelPattern}"`, summary: true }
     bench("fdir", () => {
       const entries = new fdir().withFullPaths().glob(multiLevelPattern).crawl(process.cwd()).sync();
     });
+});
+
+group({ name: `sync crossing-group pattern="${crossingGroupPattern}"`, summary: true }, () => {
+  bench("fast-glob", () => {
+    const entries = fg.globSync([crossingGroupPattern], fgOpts);
+  });
+
+  if (Glob)
+    bench("Bun.Glob", () => {
+      const entries = [...new Glob(crossingGroupPattern).scanSync(bunOpts)];
+    });
+});
+
+group({ name: `sync crossing-group pattern="${crossingGroupThenNamePattern}"`, summary: true }, () => {
+  bench("fast-glob", () => {
+    const entries = fg.globSync([crossingGroupThenNamePattern], fgOpts);
+  });
+
+  if (Glob) {
+    bench("Bun.Glob", () => {
+      const entries = [...new Glob(crossingGroupThenNamePattern).scanSync(bunOpts)];
+    });
+    bench("Bun.Glob, one scan for each alternative", () => {
+      const entries = ["node_modules/*/package.json", "src/package.json"].flatMap(pattern => [
+        ...new Glob(pattern).scanSync(bunOpts),
+      ]);
+    });
+  }
+});
+
+group({ name: `sync ${joinedList.length} patterns joined into one group`, summary: true }, () => {
+  bench("fast-glob", () => {
+    const entries = fg.globSync(joinedList, fgOpts);
+  });
+
+  if (Glob) {
+    bench("Bun.Glob", () => {
+      const entries = [...new Glob(joinedPattern).scanSync(bunOpts)];
+    });
+    bench("Bun.Glob, one scan for each pattern", () => {
+      const entries = joinedList.flatMap(pattern => [...new Glob(pattern).scanSync(bunOpts)]);
+    });
+  }
 });
 
 await run({

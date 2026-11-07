@@ -427,6 +427,12 @@ const comparedDeeply = [
   b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", b.named()),
 ];
 
+// Bun.deepMatch hands what the value holds, at any depth, to `has` and `get` of a Proxy around a Set or a Map in the subset. The table writes what is handed to code as kept, as b.handedOver does.
+const matchedDeeply = {
+  subset: comparedDeeply,
+  value: [...comparedDeeply, b.reachableValuesStoredIn(b.nativeMemory)],
+};
+
 const deepComparison = (args: Contents, uses: UsesByOperand) =>
   ({
     ...operandCodeOnly,
@@ -1534,10 +1540,7 @@ export default b.declarations(
         { left: b.any.optional, right: b.any.optional, strict: b.any.optional, skipsPrototypes: b.any.optional },
         { left: comparedDeeply, right: comparedDeeply, strict: b.inspected, skipsPrototypes: b.inspected },
       ),
-      deepMatch: deepComparison(
-        { subset: b.object, value: b.object },
-        { subset: comparedDeeply, value: comparedDeeply },
-      ),
+      deepMatch: deepComparison({ subset: b.object, value: b.object }, matchedDeeply),
       concatArrayBuffers,
       readableStreamToArray: streamConsumer(newArrayOf(b.any)),
       // A stream whose only chunk is a string settles with a Uint8Array.

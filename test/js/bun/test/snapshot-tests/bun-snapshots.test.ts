@@ -33,6 +33,34 @@ test("ArrayBuffer values are serialized like typed arrays", () => {
   `);
 });
 
+test("property matchers leave out the private fields of a class", () => {
+  class Counter {
+    #n;
+    name = "c";
+    constructor(n: number) {
+      this.#n = n;
+    }
+    get n() {
+      return this.#n;
+    }
+  }
+  expect({ k: new Counter(1), id: 5 }).toMatchInlineSnapshot(
+    { k: new Counter(2), id: expect.any(Number) },
+    `
+    {
+      "id": Any<Number>,
+      "k": Counter {
+        "name": "c",
+      },
+    }
+  `,
+  );
+  // the other properties of the instance are still compared
+  expect(() => {
+    expect({ k: new Counter(1) }).toMatchSnapshot({ k: Object.assign(new Counter(1), { name: "x" }) });
+  }).toThrow("to match properties from received object");
+});
+
 describe("toMatchSnapshot errors", () => {
   it("should throw if property matchers exist and received is not an object", () => {
     expect(() => {
@@ -55,6 +83,18 @@ describe("toMatchSnapshot errors", () => {
     expect(() => {
       expect({ a: 3 }).toMatchSnapshot({ a: expect.any(BigInt) });
     }).toThrow();
+    expect(() => {
+      expect({ a: new Date(5) }).toMatchSnapshot({ a: new Date(6) });
+    }).toThrow("to match properties from received object");
+    expect(() => {
+      expect({ a: new Error("x") }).toMatchSnapshot({ a: new Error("y") });
+    }).toThrow("to match properties from received object");
+    expect(() => {
+      expect({ a: new Set([1]) }).toMatchSnapshot({ a: new Set([2]) });
+    }).toThrow("to match properties from received object");
+    expect(() => {
+      expect({ a: new Map([["k", 1]]) }).toMatchSnapshot({ a: new Map([["k", 2]]) });
+    }).toThrow("to match properties from received object");
   });
   it("should throw if arguments are in the wrong order", () => {
     expect(() => {

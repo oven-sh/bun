@@ -3127,7 +3127,7 @@ pub(crate) fn to_number(global: &JSGlobalObject, value: JSValue) -> JsResult<f64
 }
 
 /// `Array.isArray(value)`, which sees through a Proxy.
-fn is_array(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+pub(crate) fn is_array(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
     unsafe extern "C" {
         safe fn SnapshotFormat__isArray(global: &JSGlobalObject, value: JSValue) -> bool;
     }

@@ -77,6 +77,23 @@ describe("Bun.deepMatch", () => {
       new Set(["a", "b", "c"]),
       new Set(["a", "b", "c"]),
     ],
+    // a member or a value of `b` may be a superset of the one in `a`
+    [{ m: new Map([ ["foo", { a: 1 }] ]) }, { m: new Map([ ["foo", { a: 1, b: 2 }] ]) }],
+    [{ s: new Set([{ a: 1 }]) }, { s: new Set([{ a: 1, b: 2 }]) }],
+    [{ m: new Map([ ["foo", 1], ["bar", 2] ]) }, { m: new Map([ ["bar", 2], ["foo", 1] ]) }],
+
+    // Dates and Errors
+    [new Date(1), new Date(1)],
+    [{ d: new Date(1) }, { d: new Date(1), other: 1 }],
+    [{ d: [new Date(1)] }, { d: [new Date(1)] }],
+    [new Error("a"), new Error("a")],
+    [{ e: new Error("a") }, { e: new Error("a", { cause: 1 }) }],
+    [{ e: new Error("a") }, { e: Object.assign(new Error("a"), { code: 1 }) }],
+    // a plain object in the subset matches the properties of any object
+    [{ message: "a" }, new Error("a")],
+    [{ d: {} }, { d: new Date() }],
+    [{ m: {} }, { m: new Map([ ["foo", 1] ]) }],
+    [{ s: { size: 1 } }, { s: new Set([1]) }],
   ])("Bun.deepMatch(%p, %p) === true", (a, b) => {
     expect(Bun.deepMatch(a, b)).toBe(true);
   });
@@ -100,39 +117,56 @@ describe("Bun.deepMatch", () => {
     [[], [undefined]],
     [["a", "b", "c"], ["a", "b", "d"]],
 
-    // Maps
-    // FIXME: I assume this is incorrect but I need confirmation on expected behavior.
-    // [
-    //   new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
-    //   new Map<number, number>([ [1, 2], [2, 3] ]),
-    // ],
-    // [
-    //   new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
-    //   new Map<number, number>([ [1, 2], [2, 3], [3, 4], [4, 5] ]),
-    // ],
-    // [
-    //   new Map<number, number>([ [1, 2], [2, 3], [3, 4], [4, 5] ]),
-    //   new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
-    // ],
+    // Maps: the same size, and each entry of `b` matches an entry of `a`
+    [
+      new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
+      new Map<number, number>([ [1, 2], [2, 3] ]),
+    ],
+    [
+      new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
+      new Map<number, number>([ [1, 2], [2, 3], [3, 4], [4, 5] ]),
+    ],
+    [
+      new Map<number, number>([ [1, 2], [2, 3], [3, 4], [4, 5] ]),
+      new Map<number, number>([ [1, 2], [2, 3], [3, 4] ]),
+    ],
+    [new Map([ ["foo", 1] ]), new Map([ ["foo", 2] ])],
+    [new Map([ ["foo", 1] ]), new Map([ ["bar", 1] ])],
+    [{ m: new Map([ ["foo", { a: 1, b: 2 }] ]) }, { m: new Map([ ["foo", { a: 1 }] ]) }],
+    [{ m: new Map() }, { m: {} }],
+    [{ m: new Map() }, { m: new Set() }],
 
-    // Sets
-    // FIXME: I assume this is incorrect but I need confirmation on expected behavior.
-    // [
-    //   new Set([1, 2, 3]),
-    //   new Set([4, 5, 6]),
-    // ],
-    // [
-    //   new Set([1, 2, 3]),
-    //   new Set([1, 2]),
-    // ],
-    // [
-    //   new Set([1, 2]),
-    //   new Set([1, 2, 3]),
-    // ],
-    // [
-    //   new Set(["a", "b", "c"]),
-    //   new Set(["a", "b", "d"]),
-    // ],
+    // Sets: the same size, and each member of `b` matches a member of `a`
+    [
+      new Set([1, 2, 3]),
+      new Set([4, 5, 6]),
+    ],
+    [
+      new Set([1, 2, 3]),
+      new Set([1, 2]),
+    ],
+    [
+      new Set([1, 2]),
+      new Set([1, 2, 3]),
+    ],
+    [
+      new Set(["a", "b", "c"]),
+      new Set(["a", "b", "d"]),
+    ],
+    [{ s: new Set([{ a: 1, b: 2 }]) }, { s: new Set([{ a: 1 }]) }],
+    [{ s: new Set() }, { s: {} }],
+    [{ s: new Set([1]) }, { s: [1] }],
+
+    // A Date is compared by its time value, an Error by its message
+    [new Date(1), new Date(2)],
+    [{ d: new Date(1) }, { d: new Date(2) }],
+    [{ d: new Date() }, { d: {} }],
+    [{ d: new Date(1) }, { d: [new Date(1)] }],
+    [new Error("a"), new Error("b")],
+    [{ e: new Error("a") }, { e: new Error("b") }],
+    [{ e: new Error("a") }, { e: { message: "a" } }],
+    [{ e: new Error("a") }, { e: {} }],
+    [{ e: Object.assign(new Error("a"), { code: 1 }) }, { e: new Error("a") }],
   ])("Bun.deepMatch(%p, %p) === false", (a, b) => {
     expect(Bun.deepMatch(a, b)).toBe(false);
   });
@@ -190,6 +224,101 @@ describe("Bun.deepMatch", () => {
       [[1, 2, 3], [1, 2, 3], true],
     ] as [any[], any[], boolean][])("Bun.deepMatch(%p, %p) === %p", (a, b, expected) => {
       expect(Bun.deepMatch(a, b)).toBe(expected);
+    });
+
+    // https://github.com/oven-sh/bun/issues/9103
+    it("reads a Proxy of an array through the Proxy, as the subset and as the value", () => {
+      const P = <T extends object>(target: T) => new Proxy(target, {});
+      expect(Bun.deepMatch([{ a: 1 }], P([{ a: 1, b: 2 }]))).toBe(true);
+      expect(Bun.deepMatch(P([{ a: 1 }]), [{ a: 1, b: 2 }])).toBe(true);
+      expect(Bun.deepMatch(P([{ a: 1 }]), P([{ a: 1, b: 2 }]))).toBe(true);
+      expect(Bun.deepMatch({ list: [1, 2] }, { list: P([1, 2]), more: true })).toBe(true);
+      expect(Bun.deepMatch({ 0: 1 }, P([1]))).toBe(true);
+      expect(Bun.deepMatch([{ a: 1, b: 2 }], P([{ a: 1 }]))).toBe(false);
+      expect(Bun.deepMatch([1, 2], P([1, 2, 3]))).toBe(false);
+      expect(Bun.deepMatch(P([1, 2, 3]), [1, 2])).toBe(false);
+      expect(Bun.deepMatch(P([1, 2]), [1, 3])).toBe(false);
+      expect(Bun.deepMatch(P([1]), { 0: 1, length: 1 })).toBe(false);
+
+      // the `get` trap decides what the length is: this Proxy serves [1, <hole>]
+      const served = new Proxy([1], {
+        get: (target, key, receiver) => (key === "length" ? 2 : Reflect.get(target, key, receiver)),
+      });
+      const holed = () => Object.assign([1], { length: 2 });
+      expect(Bun.deepMatch(holed(), served)).toBe(true);
+      expect(Bun.deepMatch(served, holed())).toBe(true);
+      expect(Bun.deepMatch([1], served)).toBe(Bun.deepMatch([1], holed()));
+      expect(Bun.deepMatch(served, [1])).toBe(Bun.deepMatch(holed(), [1]));
+
+      const throws = new Proxy([1], {
+        get(target, key, receiver) {
+          if (key === "length") throw new RangeError("no length");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      expect(() => Bun.deepMatch(throws, [1])).toThrow(RangeError);
+      expect(() => Bun.deepMatch([1], throws)).toThrow(RangeError);
+    });
+  });
+
+  describe("a Proxy around a Set or a Map", () => {
+    // Hands each read on to its target, so it serves what the target holds.
+    const handingOn = <T extends object>(target: T): T =>
+      new Proxy(target, {
+        get(target, key) {
+          const value = Reflect.get(target, key, target);
+          return typeof value === "function" && key !== "constructor" ? value.bind(target) : value;
+        },
+      });
+
+    // prettier-ignore
+    it.each<TestCase>([
+      [new Set([1]), handingOn(new Set([1]))],
+      [handingOn(new Set([1])), new Set([1])],
+      [{ s: new Set([{ a: 1 }]) }, { s: handingOn(new Set([{ a: 1, b: 2 }])) }],
+      [{ s: handingOn(new Set([{ a: 1 }])) }, { s: new Set([{ a: 1, b: 2 }]) }],
+      [new Map([ ["foo", 1] ]), handingOn(new Map([ ["foo", 1] ]))],
+      [handingOn(new Map([ ["foo", { a: 1 }] ])), new Map([ ["foo", { a: 1, b: 2 }] ])],
+      [handingOn(new Map([ [{ id: 1 }, 1] ])), handingOn(new Map([ [{ id: 1, more: true }, 1] ]))],
+    ])("returns `true` when what the Proxy serves matches (%#)", (a, b) => {
+      expect(Bun.deepMatch(a, b)).toBe(true);
+    });
+
+    // prettier-ignore
+    it.each<TestCase>([
+      [new Set([2]), handingOn(new Set([1]))],
+      [handingOn(new Set([2])), new Set([1])],
+      [new Set([1]), handingOn(new Set([1, 2]))],
+      [{ s: new Set([{ a: 1, b: 2 }]) }, { s: handingOn(new Set([{ a: 1 }])) }],
+      [{ s: handingOn(new Set([{ a: 1, b: 2 }])) }, { s: new Set([{ a: 1 }]) }],
+      [new Map([ ["foo", 2] ]), handingOn(new Map([ ["foo", 1] ]))],
+      [handingOn(new Map([ ["bar", 1] ])), new Map([ ["foo", 1] ])],
+      [handingOn(new Map([ [{ id: 1 }, 1] ])), handingOn(new Map([ [{ id: 2 }, 1] ]))],
+      [new Set(), handingOn(new Map())],
+      [handingOn(new Set()), new Map()],
+      [new Set(), new Proxy({}, {})],
+    ])("returns `false` when what the Proxy serves does not match (%#)", (a, b) => {
+      expect(Bun.deepMatch(a, b)).toBe(false);
+    });
+
+    it("throws the TypeError of a Proxy that serves no members", () => {
+      expect(() => Bun.deepMatch(new Set([1]), new Proxy(new Set([1]), {}))).toThrow(TypeError);
+      expect(() => Bun.deepMatch(new Proxy(new Map(), {}), new Map())).toThrow(TypeError);
+    });
+
+    it("takes two sizes that are undefined for the same size", () => {
+      const unsized = <T extends object>(target: T): T =>
+        new Proxy(target, {
+          get(target, key) {
+            if (key === "size") return undefined;
+            const value = Reflect.get(target, key, target);
+            return typeof value === "function" && key !== "constructor" ? value.bind(target) : value;
+          },
+        });
+      expect(Bun.deepMatch(unsized(new Set([1])), unsized(new Set([1])))).toBe(true);
+      expect(Bun.deepMatch(unsized(new Set([{ a: 1 }])), unsized(new Set([{ a: 1, b: 2 }])))).toBe(true);
+      expect(Bun.deepMatch(unsized(new Set([1])), unsized(new Set([1, 2])))).toBe(false);
+      expect(Bun.deepMatch(unsized(new Map([["k", 1]])), unsized(new Map([["k", 2]])))).toBe(false);
     });
   });
 

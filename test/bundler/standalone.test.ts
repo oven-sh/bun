@@ -74,6 +74,42 @@ console.log(data);`,
     expect(html).toContain("await");
   });
 
+  // A script that bun classifies as CommonJS (UMD header with top-level `this`,
+  // or a guarded `module.exports`) is wrapped in `__commonJS`. The inlined
+  // module must still run it, in document order.
+  test("runs CommonJS scripts in document order", async () => {
+    using dir = tempDir("compile-browser-cjs-script", {
+      "index.html": `<!DOCTYPE html><html><body><script src="./umd.js"></script><script src="./guarded.js"></script><script src="./plain.js"></script></body></html>`,
+      "umd.js": `(function (root, factory) { root.LIB = factory(); })(this, function () { return { v: 1 }; });
+console.log("umd");`,
+      "guarded.js": `console.log("guarded");
+if (typeof module === "object") module.exports = { guarded: true };`,
+      "plain.js": `console.log("plain");`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      compile: true,
+      target: "browser",
+    });
+
+    expect(result.success).toBe(true);
+    const html = await result.outputs[0].text();
+    const script = html.match(/<script type="module">([\s\S]*)<\/script>/)![1];
+    await Bun.write(`${dir}/inlined.mjs`, script);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), `${dir}/inlined.mjs`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("umd\nguarded\nplain\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("escapes </script> in inlined JS", async () => {
     using dir = tempDir("compile-browser-escape-script", {
       "index.html": `<!DOCTYPE html><html><body><script src="./app.js"></script></body></html>`,

@@ -15,7 +15,9 @@
 
 // RUN(INFERRED): lower
 // INFERRED-NOT: name="A"{{*}}HasExplicitName
-// INFERRED-NOT: name="default"{{*}}HasExplicitName
+
+// RUN(DECLARED): lower
+// DECLARED: name="default"{{*}}HasExplicitName
 
 declare const k: string;
 

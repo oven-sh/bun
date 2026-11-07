@@ -111,3 +111,51 @@ test("v8 heap snapshot labels Web Streams internal edges", async () => {
     expect.arrayContaining(["source", "destination", "reader", "writer", "promise"]),
   );
 });
+
+// JavaScriptCore binds an anonymous default export to the private name `*default*`, whose text is
+// "starDefault". A snapshot of either format names the class and its instances "default".
+test("heap snapshots name an anonymous default class and its instances default", async () => {
+  using dir = tempDir("heap-snapshot-default-export", {
+    "class.mjs": `export default class {}`,
+    "main.mjs": `
+      import Class from "./class.mjs";
+      const instance = new Class();
+
+      const { nodeClassNames } = Bun.generateHeapSnapshot();
+
+      // A node of the V8 format is a run of numbers. Two of them index its type and its name.
+      const v8 = JSON.parse(Bun.generateHeapSnapshot("v8"));
+      const { node_fields: fields, node_types: types } = v8.snapshot.meta;
+      const namesOfV8Nodes = type => {
+        const names = new Set();
+        for (let i = 0; i < v8.nodes.length; i += fields.length) {
+          if (types[0][v8.nodes[i + fields.indexOf("type")]] === type) names.add(v8.strings[v8.nodes[i + fields.indexOf("name")]]);
+        }
+        return names;
+      };
+      const found = names => ["default", "starDefault"].filter(name => names.has(name));
+
+      console.log(
+        JSON.stringify({
+          jsc: found(new Set(nodeClassNames)),
+          v8Objects: found(namesOfV8Nodes("object")),
+          v8Closures: found(namesOfV8Nodes("closure")),
+        }),
+      );
+      if (!(instance instanceof Class)) throw new Error("the instance is gone");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ names: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    names: { jsc: ["default"], v8Objects: ["default"], v8Closures: ["default"] },
+    stderr: "",
+    exitCode: 0,
+  });
+});

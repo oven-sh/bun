@@ -2,6 +2,7 @@
 import arrow from "./arrow.mjs";
 import asyncFunction from "./async-function.mjs";
 import asyncGenerator from "./async-generator.mjs";
+import DerivedClass from "./derived-class.mjs";
 import index from "./folder/index.mjs";
 import generator from "./generator.mjs";
 import named from "./named.mjs";
@@ -15,6 +16,21 @@ console.log("async function |", asyncFunction.name, "|", await asyncFunction());
 console.log("generator |", generator.name, "|", generator().next().value);
 console.log("async generator |", asyncGenerator.name, "|", (await asyncGenerator().next()).value);
 console.log("class |", SomeClass.name, "|", new SomeClass().place);
+const messageOf = run => {
+  try {
+    run();
+  } catch (error) {
+    return error.message;
+  }
+};
+console.log(
+  "class that is called without new |",
+  messageOf(() => SomeClass()),
+);
+console.log(
+  "derived class whose constructor returns a number |",
+  messageOf(() => new DerivedClass()),
+);
 console.log("arrow function |", arrow.name, "|", arrow());
 console.log("function in parentheses |", parenthesized.name, "|", parenthesized());
 console.log("function in a TypeScript file |", typed.name, "|", typed());
@@ -32,6 +48,8 @@ async function | default | at default (async-function.mjs:3:14)
 generator | default | at default (generator.mjs:2:13)
 async generator | default | at default (async-generator.mjs:3:13)
 class | default | at new default (some-class.mjs:3:22)
+class that is called without new | Cannot call a class constructor default without |new|
+derived class whose constructor returns a number | Cannot return a non-object type in the constructor of a derived class default.
 arrow function | default | at default (arrow.mjs:2:7)
 function in parentheses | default | at default (parenthesized.mjs:2:14)
 function in a TypeScript file | default | at default (typed.ts:2:14)

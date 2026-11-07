@@ -118,3 +118,38 @@ test("test snapshots with Boolean and Number", () => {
     },
   });
 });
+
+// JavaScriptCore binds an anonymous default export to the private name `*default*`, whose text is
+// "starDefault". The name of the class or function is "default", and a snapshot has that name.
+test("an anonymous default export is named default in a snapshot", async () => {
+  const { default: Class } = await import("data:text/javascript,export default class {}");
+  const { default: ClassWithField } = await import("data:text/javascript,export default class { a = 1 }");
+  const { default: arrow } = await import("data:text/javascript,export default () => {}");
+  // The text of a SourceTextModule reaches JavaScriptCore as it is written.
+  const { SourceTextModule } = await import("node:vm");
+  const module = new SourceTextModule("export default function () {}");
+  await module.link(() => {});
+  await module.evaluate();
+
+  expect({
+    class: Class,
+    instance: new Class(),
+    instanceWithField: new ClassWithField(),
+    arrow,
+    declaration: module.namespace.default,
+    element: { $$typeof: Symbol.for("react.element"), type: Class, props: {}, key: null, ref: null },
+    any: expect.any(Class),
+  }).toMatchInlineSnapshot(`
+    {
+      "any": Any<default>,
+      "arrow": [Function],
+      "class": [class default],
+      "declaration": [Function: default],
+      "element": <default />,
+      "instance": default {},
+      "instanceWithField": default {
+        "a": 1,
+      },
+    }
+  `);
+});

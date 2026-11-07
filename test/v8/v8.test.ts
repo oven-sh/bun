@@ -297,6 +297,12 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       await checkSameOutput("call_function_with_weird_this_values");
     });
 
+    // JavaScriptCore binds an anonymous default export to the private name `*default*`. Its name is "default".
+    it("GetName of an anonymous default class is default", async () => {
+      const out = await checkSameOutput("print_values_from_js", "[require('./anonymous-default-class.mjs').default]");
+      expect(out).toContain("argument 0 = function default()");
+    });
+
     it("receives globalThis as this when called bare through a closure", async () => {
       const output = await checkSameOutput("call_function_bare_through_closure");
       expect(output).toContain("bare call returned globalThis: true");

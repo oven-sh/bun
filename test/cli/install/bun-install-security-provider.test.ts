@@ -1041,6 +1041,71 @@ describe("Dependencies that do not come from a registry", () => {
       },
     );
   });
+
+  // bun.lockb stores the ref from package.json next to the commit that it pins. The download requested that ref, but
+  // the scanner got the 7 digits of the commit, so one package had two URLs.
+  const fullSha = "abc1234" + Buffer.alloc(33, "0").toString();
+  it.concurrent.each([
+    ["a branch", "main", "abc1234"],
+    ["a full sha", fullSha, fullSha],
+  ])("gets the URL that a github package on %s is downloaded from when bun.lockb pins it", async (_, ref, asked) => {
+    const repoTarball = await githubTarball("user-repo-abc1234", depFiles);
+    const requests: string[] = [];
+    await using github = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(req.url);
+        return new Response(repoTarball);
+      },
+    });
+    const githubUrl = `http://localhost:${github.port}`;
+    using dir = tempDir("scanner-lockb-github", {
+      "package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: { dep: `github:user/repo#${ref}` },
+      }),
+      "bunfig.toml": `[install]\nsaveTextLockfile = false\n\n[install.security]\nscanner = "./scanner.ts"\n`,
+      "scanner.ts": `export const scanner = {
+  version: "1",
+  scan: async ({ packages }) => {
+    console.log("PACKAGES:" + JSON.stringify(packages));
+    return [];
+  },
+};`,
+    });
+    const install = async (cache: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: { ...bunEnv, GITHUB_API_URL: githubUrl, BUN_INSTALL_CACHE_DIR: join(String(dir), cache) },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const line = out.split("\n").find(l => l.startsWith("PACKAGES:"));
+      expect(line, err).toBeDefined();
+      return { packages: JSON.parse(line!.slice("PACKAGES:".length)) as Bun.Security.Package[], exitCode };
+    };
+    expect(await install(".cache-first")).toMatchObject({ exitCode: 0 });
+    expect(existsSync(join(String(dir), "bun.lockb"))).toBe(true);
+
+    // Simulate a fresh machine.
+    rmSync(join(String(dir), "node_modules"), { recursive: true });
+    requests.length = 0;
+    const { packages, exitCode } = await install(".cache-second");
+    expect(packages).toEqual([
+      {
+        name: "dep",
+        requestedRange: `github:user/repo#${ref}`,
+        version: "github:user/repo#abc1234",
+        tarball: `${githubUrl}/repos/user/repo/tarball/${asked}`,
+      },
+    ]);
+    expect(requests).toEqual(packages.map(pkg => pkg.tarball));
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("Large payload via ipc pipe", () => {

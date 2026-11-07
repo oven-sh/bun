@@ -1,4 +1,4 @@
-import { describe, expect, jest, setSystemTime, test } from "bun:test";
+import { describe, expect, jest, setSystemTime, spyOn, test } from "bun:test";
 
 describe("Bun.Cookie and Bun.CookieMap", () => {
   // Basic Cookie tests
@@ -166,6 +166,24 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
       jest.useRealTimers();
     }
     expect(answers).toEqual([false, true, true]);
+  });
+
+  test("Cookie.isExpired() does not follow a spy on Date.now", () => {
+    const realNow = Date.now();
+    // Expired on the real clock, live on the mocked clock, expired again for the spy.
+    const cookie = new Bun.Cookie("name", "value", { expires: new Date(realNow - day) });
+    const dateNow = spyOn(Date, "now");
+    try {
+      setSystemTime(realNow - 2 * day);
+      dateNow.mockReturnValue(realNow + day);
+      expect({ dateNow: Date.now(), isExpired: cookie.isExpired() }).toEqual({
+        dateNow: realNow + day,
+        isExpired: false,
+      });
+    } finally {
+      dateNow.mockRestore();
+      setSystemTime();
+    }
   });
 
   test("Cookie.isExpired() under setSystemTime() still gives Max-Age precedence over Expires", () => {

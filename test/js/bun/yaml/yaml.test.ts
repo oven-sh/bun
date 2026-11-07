@@ -2873,6 +2873,54 @@ config:
           },
         });
       });
+
+      test.each<[string, Record<string, number>]>([
+        // A key of the mapping wins over a merged one, wherever the `<<` stands.
+        ["a: {.nan: 1, <<: {.nan: 2}}", { NaN: 1 }],
+        ["a: {<<: {.nan: 2}, .nan: 1}", { NaN: 1 }],
+        ["a: {.NaN: 1, <<: {.NAN: 2}}", { NaN: 1 }],
+        ["k: &k .nan\na: {*k : 1, <<: {.nan: 2}}", { NaN: 1 }],
+        // The last of the duplicates in one source wins, as in `{<<: {x: 1, x: 2}}`.
+        ["a: {<<: {.nan: 1, .nan: 2}}", { NaN: 2 }],
+        // The first source of a list wins, as in `{<<: [{x: 1}, {x: 2}]}`.
+        ["a: {<<: [{.nan: 1}, {.nan: 2}]}", { NaN: 1 }],
+        ["s: &s {.nan: 1}\nt: &t {.nan: 2}\na: {<<: [*s, *t, *s]}", { NaN: 1 }],
+        // `0.0` and `-0.0` are one key too, and not the NaN one.
+        ["a: {-0.0: 1, <<: {0: 2, .nan: 3}}", { 0: 1, NaN: 3 }],
+      ])("a NaN key is one key: %j", (input, expected) => {
+        expect((YAML.parse(input) as { a: unknown }).a).toEqual(expected);
+      });
+
+      test("a NaN key is one key in a file that is imported, required or bundled", async () => {
+        using dir = tempDir("yaml-nan-merge-key", {
+          "nan.yaml": "a: {.nan: 1, <<: {.nan: 2}}\nb: {<<: {.nan: 1, .nan: 2}}\nc: {<<: [{.nan: 1}, {.nan: 2}]}\n",
+          "index.cjs": `
+            const { a, b, c } = require("./nan.yaml");
+            import("./nan.yaml").then(imported =>
+              console.log(JSON.stringify({ imported: imported.default, required: { a, b, c } })),
+            );
+          `,
+        });
+        const expected = { a: { NaN: 1 }, b: { NaN: 2 }, c: { NaN: 1 } };
+
+        const bundled = await Bun.build({ entrypoints: [join(String(dir), "nan.yaml")] });
+        expect((await bundled.outputs[0].text()).match(/NaN: \d/g)).toEqual(["NaN: 1", "NaN: 2", "NaN: 1"]);
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.cjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+          stdout: JSON.stringify({ imported: expected, required: expected }),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
     });
   });
 
@@ -5475,6 +5523,24 @@ test("merging the same large anchor many times completes quickly", () => {
   // Repeated alias merges must be near-linear in the document size.
   expect(elapsed).toBeLessThan(isDebug || isASAN ? 15_000 : 4_000);
 }, 30_000);
+
+test.each<[string, (count: number) => string]>([
+  ["many NaN keys of one source", count => `a: {<<: {${Buffer.alloc(8 * count, ".nan: 1,").toString()}}}\n`],
+  ["one NaN key many times", count => `s: &s {.nan: 1}\na: {<<: [${Buffer.alloc(3 * count, "*s,").toString()}]}\n`],
+])("merging %s completes quickly", (_, text) => {
+  // A merge that compares each NaN key with every NaN key before it takes
+  // more than three times the bound below at these counts.
+  const slow = isDebug || isASAN;
+  const input = text(slow ? 20_000 : 70_000);
+
+  // The CPU time of this process, which a busy machine does not add to.
+  const before = process.cpuUsage();
+  const parsed = YAML.parse(input) as { a: Record<string, number> };
+  const { user, system } = process.cpuUsage(before);
+
+  expect(parsed.a).toEqual({ NaN: 1 });
+  expect((user + system) / 1000).toBeLessThan(slow ? 4_000 : 1_000);
+});
 
 test("limits how many properties merge keys can materialize from a small document", () => {
   // A normal merge-key document still resolves.

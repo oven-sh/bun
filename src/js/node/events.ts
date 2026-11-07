@@ -34,7 +34,7 @@ const {
 } = require("internal/validators");
 const { addAbortListener } = require("internal/abort_listener");
 const shared = require("internal/shared");
-const { resistStopPropagation } = shared;
+const { isError, resistStopPropagation } = shared;
 
 const types = require("node:util/types");
 let inspect: ((value: unknown, opts?: object) => string) | undefined;
@@ -320,7 +320,8 @@ function emitError(emitter: $Node.EventEmitter, args: unknown[]) {
   let er: unknown;
   if (args.length > 0) er = args[0];
 
-  if (Error.isError(er)) {
+  // Node asks `er instanceof Error` (lib/events.js). isError also accepts a native error of another realm.
+  if (isError(er)) {
     throw er; // Unhandled 'error' event
   }
 

@@ -221,12 +221,18 @@ pub fn remove_unnecessary_try_catch(hir: &mut HIR) {
         }
 
         // Clean up fallthrough predecessor info
-        if let Some(fallthrough) = hir.blocks.get_mut(&fallthrough_id) {
+        if let Some(fallthrough) = hir.blocks.get(&fallthrough_id) {
             if fallthrough.preds.len() == 1 && fallthrough.preds.contains(&handler_id) {
                 // The handler was the only predecessor: remove the fallthrough block
                 hir.blocks.shift_remove(&fallthrough_id);
             } else {
-                fallthrough.preds.shift_remove(&handler_id);
+                // Upstream removes only `handler_id`, but a longer handler ends in another block.
+                let is_gone = |pred: &&BlockId| !hir.blocks.contains_key(*pred);
+                let gone: Blocks = fallthrough.preds.iter().filter(is_gone).copied().collect();
+                let fallthrough = hir.blocks.get_mut(&fallthrough_id).unwrap();
+                for pred in &gone {
+                    fallthrough.preds.shift_remove(pred);
+                }
             }
         }
     }

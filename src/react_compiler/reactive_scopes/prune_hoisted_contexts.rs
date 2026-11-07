@@ -168,6 +168,8 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                             // References to hoisted functions are now "safe" as
                             // variable assignments have finished.
                             state.uninitialized.remove(lvalue_id);
+                            // facebook/react#37834, not merged: the scope's `let` must be assigned.
+                            lvalue.kind = InstructionKind::Reassign;
                         }
                     } else {
                         return Err(cold_todo(

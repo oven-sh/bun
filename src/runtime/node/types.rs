@@ -16,7 +16,7 @@ use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
 use crate::node::util::validators;
-use crate::webcore::{Blob, Request, Response};
+use crate::webcore::{Blob, BlobExt as _, Request, Response};
 
 pub(crate) use jsc::MarkedArrayBuffer as Buffer;
 use jsc::PinnedArrayBuffer;
@@ -123,6 +123,14 @@ impl BlobOrStringOrBuffer {
         match self {
             Self::Blob(blob) => blob.shared_view(),
             Self::StringOrBuffer(str) => str.slice(),
+        }
+    }
+
+    /// [`Self::slice`], or `None` for a file- or S3-backed Blob, which has to be read first.
+    pub(crate) fn in_memory_view(&self) -> Option<&[u8]> {
+        match self {
+            Self::Blob(blob) => blob.in_memory_view(),
+            Self::StringOrBuffer(str) => Some(str.slice()),
         }
     }
 

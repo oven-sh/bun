@@ -679,9 +679,7 @@ bool appendNewChildrenOfCompiledModule(JSGlobalObject* realm, JSCommonJSModule* 
             pushObservableChild(realm, parent, child);
             return;
         }
-        WTF::Locker locker { parent->cellLock() };
-        parent->m_children.append(WriteBarrier<Unknown>());
-        parent->m_children.last().set(vm, parent, child);
+        parent->addChild(vm, child);
     });
 }
 

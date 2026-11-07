@@ -4845,10 +4845,25 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             // ArrayStorage / Undecided / holes forwarding → fall through to normal serialization path
         }
 
+        unsigned simplePropertyCount = 0;
+        if (canUseObjectFastPath) {
+            // Reject nested values before allocating cross-thread string copies.
+            structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                JSValue propertyValue = object->getDirect(entry.offset());
+                if (propertyValue.isCell() && !propertyValue.isString()) {
+                    canUseObjectFastPath = false;
+                    return false;
+                }
+                ++simplePropertyCount;
+                return true;
+            });
+        }
+
         if (canUseObjectFastPath) {
             ASSERT(object != nullptr);
 
             WTF::Vector<SimpleInMemoryPropertyTableEntry> properties;
+            properties.reserveInitialCapacity(simplePropertyCount);
 
             structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 // Only enumerable, data properties

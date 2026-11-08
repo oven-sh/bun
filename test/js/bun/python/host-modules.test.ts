@@ -544,7 +544,8 @@ for name in "shake_128", "shake_256":
   );
 });
 
-test.concurrent("the memory of a typed array is taken away while another argument is converted", async () => {
+// A function that has the memory of a typed array holds it: JS gets a copy where it asks for the memory itself.
+test.concurrent("the memory of a typed array stays while another argument is converted", async () => {
   const result = await run({
     "helper.js": `
       export function make(size) {
@@ -553,14 +554,17 @@ test.concurrent("the memory of a typed array is taken away while another argumen
       export function detach(array) {
         array.buffer.transfer(0);
         Bun.gc(true);
+        // Where the memory was, if it has been freed.
+        later.push(new Uint8Array(array.length || 1 << 16).fill(0x5a));
       }
+      const later = [];
     `,
     "main.py": `
 import zlib, _blake2, _hashlib, _hmac, _zstd
 import helper
 
 class Detaches:
-    "Stands for a number, or for bytes, and detaches the array when it is asked for them."
+    "Stands for a number, or for bytes, and tries to detach the array when it is asked for them."
     def __init__(self, array, value): self.array, self.value = array, value
     def __index__(self):
         helper.detach(self.array)
@@ -575,10 +579,17 @@ def case(f, data=None, size=1 << 16):
     array = helper.make(len(data) if data else size)
     if data:
         memoryview(array)[:] = data
-    try:
-        print(type(f(array, lambda value: Detaches(array, value))).__name__)
-    except BufferError as e:
-        print(e)
+    # What the function makes of bytes that hold the same; whether the array is as long as it was; and afterwards it can be detached.
+    plain = bytes(array)
+    result = f(array, lambda value: Detaches(array, value))
+    same = shown(result) == shown(f(plain, lambda value: value))
+    attached = len(array) == len(plain)
+    helper.detach(array)
+    print(type(result).__name__, same, attached, len(array))
+
+def shown(result):
+    if isinstance(result, _zstd.ZstdDict): return result.dict_content
+    return result.hexdigest() if hasattr(result, "hexdigest") else result
 
 deflated = zlib.compress(bytes(1 << 16))
 case(lambda a, d: zlib.compress(a, d(6)))
@@ -606,7 +617,21 @@ case(lambda a, d: _blake2.blake2b(salt=a, last_node=d(0)), size=16)
 case(lambda a, d: _blake2.blake2s(person=a, depth=d(1)), size=8)
 `,
   });
-  expect(result).toEqual(printed(...Array(23).fill("the ArrayBuffer was detached or shrunk")));
+  expect(result).toEqual(
+    printed(
+      ...[
+        ...Array(4).fill("bytes"),
+        ...Array(2).fill("int"),
+        ...Array(4).fill("bytes"),
+        "ZstdDict",
+        ...Array(6).fill("bytes"),
+        "bool",
+        ...Array(2).fill("bytes"),
+        ...Array(2).fill("blake2b"),
+        "blake2s",
+      ].map(type => type + " True True 0"),
+    ),
+  );
 });
 
 test.concurrent("zlib: the dictionary comes back to the object that asks for its buffer", async () => {

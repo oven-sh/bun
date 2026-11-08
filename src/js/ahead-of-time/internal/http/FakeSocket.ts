@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http/FakeSocket.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d93d41b56254446c0d11f40b311ed02bf9cfaa57ccb434b01ead3347bc42ae05.
+// Written against that file with the SHA-256 55ebc3ff272f5d0435bcb10a81592f5f33009a63f0e0d0a3c9cedf8fb56d30ea.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const http = require("internal/http");
@@ -7,9 +7,10 @@ const { kAutoDestroyed } = require("internal/shared");
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
 const kInternalSocketData: typeof http.kInternalSocketData = http.kInternalSocketData;
 const serverSymbol: typeof http.serverSymbol = http.serverSymbol;
+// The other text takes what lies under `Duplex` on node:stream when it is loaded, where the program has loaded node:stream. Here the class above the socket is written into the compiled program.
+const duplexOfProgram = $getByIdDirect(require("internal/streams/legacy").Stream, "Duplex") as unknown;
 const Duplex = require("internal/streams/duplex");
-// The other text takes what lies under `Duplex` on node:stream when it is loaded. Here the class above the socket is written into the compiled program.
-if (require("internal/stream").Duplex !== Duplex)
+if (duplexOfProgram !== undefined && duplexOfProgram !== Duplex)
   throw new TypeError(
     "stream.Duplex was replaced before node:http was loaded. In a compiled executable the classes of node:http extend the one that Bun made: add to stream.Duplex.prototype instead, or load node:http first.",
   );

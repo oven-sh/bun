@@ -1,6 +1,8 @@
 // Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
-const { Stream } = require("node:stream");
+const { Stream: StreamOfLibrary } = require("internal/streams/legacy");
+// node:stream is this function with its members: what a program has stored under `Stream` there, where node:stream is loaded.
+const Stream: $Node.StreamConstructor = $getByIdDirect(StreamOfLibrary, "Stream") ?? StreamOfLibrary;
 const { isIP } = require("internal/net/isIP");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,

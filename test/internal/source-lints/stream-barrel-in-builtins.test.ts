@@ -10,19 +10,12 @@ import path from "node:path";
 // load (oven-sh/bun#48005).
 //
 // A require at the top level of a module starts its line in column 0. One inside a function is indented, and runs on
-// first use. Known: the modules that are node:stream, and node:http, whose classes extend what a program has laid on
-// node:stream when it loads (test/aot/parallel/what-node-http-takes-off-node-stream).
+// first use. Known: the modules that are node:stream.
 test("built-in modules do not require the node:stream barrel at load", async () => {
   const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
   const barrel = /^\S.*\brequire\("(?:node:stream|internal\/stream)"\)/;
 
   const known = new Map([
-    ["src/js/ahead-of-time/internal/http/FakeSocket.ts", 1],
-    ["src/js/ahead-of-time/node/_http_outgoing.ts", 1],
-    ["src/js/ahead-of-time/node/_http_server.ts", 1],
-    ["src/js/internal/http/FakeSocket.ts", 1],
-    ["src/js/node/_http_outgoing.ts", 1],
-    ["src/js/node/_http_server.ts", 1],
     ["src/js/node/_stream_wrap.ts", 1],
     ["src/js/node/stream.promises.ts", 1],
     ["src/js/node/stream.ts", 1],

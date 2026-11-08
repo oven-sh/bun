@@ -3878,6 +3878,30 @@ console.log(typeof outmost.inner);
         `  return sum;\n}\nconsole.log(run(JSON.parse("21")));\n`,
     }),
   },
+  // Half of the files start a Worker from a name that goes through Bun.fileURLToPath(), the other half hand a name that goes through URL.parse() to the
+  // function of another file. Each name is read where it is written: no file asks about the names of another.
+  {
+    name: "files that name the file of a Worker through a function of the library",
+    counted: "files",
+    size: 600,
+    entry: "main.js",
+    write: size => {
+      const files: Record<string, string> = { "pool.js": `export const spawn = file => new Worker(file);\n` };
+      for (let index = 0; index < size; index++) {
+        files[`p/w${index}.js`] = `postMessage(${index});\n`;
+        files[`p/p${index}.js`] =
+          index % 2 === 0
+            ? `export const start${index} = () => new Worker(Bun.fileURLToPath(new URL("./w${index}.js", import.meta.url)));\n`
+            : `import { spawn } from "../pool.js";\nexport const start${index} = () => spawn(URL.parse("./w${index}.js", import.meta.url));\n`;
+      }
+      files["main.js"] =
+        lines(size, index => `import { start${index} } from "./p/p${index}.js";`) +
+        `const all = [${upTo(size, index => `start${index}`).join(", ")}];\n` +
+        `if (process.argv.length > 9) all[0]();\n` +
+        `console.log(all.length);\n`;
+      return files;
+    },
+  },
 ];
 
 if (import.meta.main) {

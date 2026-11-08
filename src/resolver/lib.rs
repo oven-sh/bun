@@ -1126,7 +1126,7 @@ pub mod fs {
             crate::Resolver::assert_valid_cache_key(dir);
 
             let mut in_place: Option<*mut DirEntry> = None;
-            let mut unlisted: Option<Unlisted> = None;
+            let mut unlisted: Option<(*mut EntriesOption, Unlisted)> = None;
 
             let mut cache_result = self.entries.get_or_put(dir)?;
             if cache_result.has_checked_if_exists() {
@@ -1142,7 +1142,7 @@ pub mod fs {
                         EntriesOption::Entries(e) if e.generation < generation => {
                             in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                         }
-                        EntriesOption::Unlisted(u) => unlisted = Some(*u),
+                        EntriesOption::Unlisted(u) => unlisted = Some((cached_ptr, *u)),
                         cached => return Ok(cached),
                     }
                 } else if cache_result.status == bun_alloc::ItemStatus::NotFound
@@ -1164,7 +1164,7 @@ pub mod fs {
                 None => match self.open_dir(dir) {
                     Ok(h) => h,
                     Err(err) => {
-                        Self::close_unlisted_fd(unlisted);
+                        Self::fail_unlisted(unlisted, err);
                         return self.read_directory_error(dir, err);
                     }
                 },
@@ -1172,7 +1172,7 @@ pub mod fs {
 
             // Close the handle on every exit path. Use
             // scopeguard so close happens even if `readdir`/`put` early-return with `?`.
-            let keeps_unlisted_fd = unlisted.is_some_and(|u| u.fd.is_valid());
+            let keeps_unlisted_fd = unlisted.is_some_and(|(_, u)| u.fd.is_valid());
             let should_close_handle =
                 !had_handle && (!store_fd || keeps_unlisted_fd || self.need_to_close_files());
             let _close_guard = scopeguard::guard(handle, move |h| {
@@ -1189,7 +1189,7 @@ pub mod fs {
                 // SAFETY: `in_place` points to a `DirEntry` inside the BSSMap singleton;
                 // its `dir` field is DirnameStore-interned (&'static).
                 unsafe { (*existing).dir }
-            } else if let Some(unlisted) = unlisted {
+            } else if let Some((_, unlisted)) = unlisted {
                 unlisted.dir
             } else {
                 DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
@@ -1204,7 +1204,7 @@ pub mod fs {
             {
                 Ok(e) => e,
                 Err(err) => {
-                    Self::close_unlisted_fd(unlisted);
+                    Self::fail_unlisted(unlisted, err);
                     if let Some(existing) = in_place {
                         // SAFETY: see above.
                         unsafe { (*existing).data.clear() };
@@ -1227,7 +1227,7 @@ pub mod fs {
             if store_fd && !entries.fd.is_valid() {
                 entries.fd = handle;
             }
-            if let Some(unlisted) = unlisted
+            if let Some((_, unlisted)) = unlisted
                 && unlisted.fd.is_valid()
             {
                 entries.fd = unlisted.fd;
@@ -1528,8 +1528,9 @@ pub mod fs {
                     let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), unlisted.dir) {
                         Ok(h) => h,
                         Err(err) => {
-                            Self::close_unlisted_fd(Some(unlisted));
-                            return self.read_directory_error(unlisted.dir, err.into()).ok();
+                            let err = err.into();
+                            Self::fail_unlisted(Some((result_ptr, unlisted)), err);
+                            return self.read_directory_error(unlisted.dir, err).ok();
                         }
                     };
                     let _close_guard = scopeguard::guard(handle, |h| {
@@ -1545,7 +1546,7 @@ pub mod fs {
                     ) {
                         Ok(e) => e,
                         Err(err) => {
-                            Self::close_unlisted_fd(Some(unlisted));
+                            Self::fail_unlisted(Some((result_ptr, unlisted)), err);
                             return self.read_directory_error(unlisted.dir, err).ok();
                         }
                     };
@@ -1596,12 +1597,21 @@ pub mod fs {
             Some(unsafe { &*result_ptr })
         }
 
-        /// The fd a placeholder kept open, when its slot becomes an error.
-        fn close_unlisted_fd(unlisted: Option<Unlisted>) {
-            if let Some(unlisted) = unlisted
-                && unlisted.fd.is_valid()
-            {
+        /// A placeholder whose listing failed: its slot, still indexed by a
+        /// `DirInfo`, becomes the error, and the fd it kept open is closed once.
+        fn fail_unlisted(unlisted: Option<(*mut EntriesOption, Unlisted)>, err: crate::Error) {
+            let Some((slot, unlisted)) = unlisted else {
+                return;
+            };
+            if unlisted.fd.is_valid() {
                 let _ = bun_sys::close(unlisted.fd);
+            }
+            // SAFETY: `slot` is a live BSSMap slot, exclusively held under `entries_mutex`.
+            unsafe {
+                *slot = EntriesOption::Err(dir_entry::Err {
+                    original_err: err,
+                    canonical_error: err,
+                });
             }
         }
 

@@ -1880,9 +1880,13 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         }
         // A case-insensitive filesystem matched the path as typed. The module
-        // key is the spelling on disk, the one every other resolve gives.
+        // key is the spelling on disk, the one every other resolve gives. A
+        // path that differs in more than case (a symlinked directory, a
+        // mapped drive) stays as typed, like `load_as_file` keeps it.
         let mut on_disk = bun_paths::path_buffer_pool::get();
-        let abs_path: &[u8] = if cfg!(any(target_os = "macos", windows)) && cache.symlink.is_empty()
+        let abs_path: &[u8] = if cfg!(any(target_os = "macos", windows))
+            && cache.symlink.is_empty()
+            && !self.opts.preserve_symlinks
         {
             let mut z = bun_paths::path_buffer_pool::get();
             let len = abs_path.len();
@@ -1901,7 +1905,15 @@ impl<'a> Resolver<'a> {
             let real = bun_sys::get_fd_path(file, &mut on_disk).map(|p| p.len());
             let _ = bun_sys::close(file);
             match real {
-                Ok(n) => &on_disk[..n],
+                Ok(n)
+                    if strings::eql_case_insensitive_ascii_check_length(
+                        &on_disk[..n],
+                        abs_path,
+                    ) =>
+                {
+                    &on_disk[..n]
+                }
+                Ok(_) => abs_path,
                 Err(_) => return ResultUnion::NotFound,
             }
         } else {

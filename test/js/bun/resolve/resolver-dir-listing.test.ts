@@ -117,7 +117,8 @@ describe("startup does not list directories", () => {
       "x/y.js": `console.log(import.meta.path);`,
       "other/.keep": "",
     });
-    const { stdout, stderr, exitCode } = await run([bunExe(), join(dir, "other/../x//y.js")], String(dir));
+    // Not `join`: it would normalize the argument before bun sees it.
+    const { stdout, stderr, exitCode } = await run([bunExe(), `${dir}/other/../x//y.js`], String(dir));
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: join(dir, "x/y.js") + "\n", stderr: "", exitCode: 0 });
   });
 });
@@ -240,7 +241,8 @@ describe("entry point resolved by stat", () => {
       cmd = ["runuser", "-u", "nobody", "--", ...cmd];
     }
     // Searchable, not listable: `stat` of a file inside works, `readdir` fails.
-    chmodSync(join(root, "locked"), 0o711);
+    // As the owner, the owner's read bit has to go too.
+    chmodSync(join(root, "locked"), canUseRunuser ? 0o711 : 0o111);
     try {
       const { stdout, stderr, exitCode } = await run(cmd, join(root, "work"), { HOME: join(root, "work") });
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: `RAN ${script}\n`, stderr: "", exitCode: 0 });

@@ -221,7 +221,7 @@ impl<'a> Scanner<'a> {
         &mut self,
         name: &[u8],
         handle: Option<Fd>,
-    ) -> crate::Result<&'static mut EntriesOption> {
+    ) -> crate::Result<&'static EntriesOption> {
         let fs_ptr = self.fs;
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
         unsafe { &mut (*fs_ptr).fs }

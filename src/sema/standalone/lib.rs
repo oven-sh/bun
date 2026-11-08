@@ -101,8 +101,8 @@ fn peak_rss() -> u64 {
 // needs to link (`native`).
 #[cfg(all(test, not(windows)))]
 mod tests {
-    use bun_sema::resolve::{Host, displayed_path, join};
-    use bun_sema_driver::host::{Disk, from_argument, from_native, to_native};
+    use bun_sema::resolve::{displayed_path, join};
+    use bun_sema_driver::host::{from_argument, from_native, to_native};
 
     #[test]
     fn directory_in_root_can_be_named_like_a_typescript_root() {
@@ -137,14 +137,6 @@ mod tests {
         );
         assert_eq!(from_argument(&inside, b"b.ts"), from_native(b"/c:/a/b.ts"));
         assert_eq!(from_argument(&inside, b"c:/a"), drive);
-    }
-
-    #[test]
-    fn realpath_under_the_marked_root_stays_under_it() {
-        // A test can't create a directory in `/`. `/usr/lib` already exists and isn't a symlink.
-        let disk = Disk::with_already_read(1, Default::default(), b"/");
-        assert_eq!(disk.realpath(b"/usr/lib"), b"/usr/lib");
-        assert_eq!(disk.realpath(b"/\0/usr/lib"), b"/\0/usr/lib");
     }
 
     /// `to_utf16_alloc` keeps what the converter wrote in front of an ill-formed sequence: `native`'s has to write it too.

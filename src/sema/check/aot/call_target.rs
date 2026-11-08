@@ -1,11 +1,16 @@
 use super::answers::{
     CallTarget, CheckedType, FunctionRef, GaveUp, PositionTypes, SignatureParameter,
-    SignatureShape, WrittenType,
+    SignatureShape, WrittenParameter, WrittenType,
 };
 use super::queries::Queries;
-use crate::hir::{CallId, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, TypeNodeId};
+use super::written_type::declares_type_alone;
+use crate::bind::Decl;
+use crate::check::symbols::AliasTarget;
+use crate::hir::{
+    CallId, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, JsDocTypeOwner, TypeNodeId,
+};
 use crate::program::{FileId, Sym};
-use crate::types::{MapperId, SigData, SigId, TypeId};
+use crate::types::{MapperId, SigData, SigId, SynthSig, TypeId};
 use smallvec::SmallVec;
 
 const UNTYPED: PositionTypes = PositionTypes {
@@ -65,13 +70,67 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     ..self.class_result(class)
                 }
             }
-            SigData::Synth { .. } | SigData::WithReturn { .. } => PositionTypes::unwritten(checked),
+            SigData::Synth(_) | SigData::WithReturn { .. } => PositionTypes::unwritten(checked),
         };
         Ok(Some(CallTarget {
             signature,
             declaration,
             result,
         }))
+    }
+
+    pub(super) fn compute_only_declaration_called(&mut self, call: ExprId) -> Option<FunctionRef> {
+        let hir = self.hir();
+        let ExprKind::Call(site) = hir[call].kind else {
+            return None;
+        };
+        if let Some(function) = self.find_function_named_by(hir[site].callee) {
+            return Some(function);
+        }
+        let only = self.c.only_candidate_of_call(self.file, site)?;
+        let (file, function, _) = self.c.sig_decl(only)?;
+        Some(FunctionRef { file, function })
+    }
+
+    fn find_function_named_by(&mut self, callee: ExprId) -> Option<FunctionRef> {
+        let ExprKind::Ident(name) = self.hir()[callee].kind else {
+            return None;
+        };
+        let named = self.c.symbol_of_identifier(self.file, callee, name)?;
+        let AliasTarget::Symbol(symbol) = self.c.resolve_symbol(named) else {
+            return None;
+        };
+        let files = self.files();
+        let mut only = None;
+        for &(file, declaration) in files.decls_of(symbol).iter() {
+            match declaration {
+                Decl::Fn(function) if only.is_none() => only = Some(FunctionRef { file, function }),
+                _ if declares_type_alone(declaration) => {}
+                _ => return None,
+            }
+        }
+        let only = only?;
+        let hir = files.hir(only.file);
+        let has_body = !matches!(hir[only.function].body, FnBody::None);
+        let has_signature_of_a_type = hir.jsdoc_type(JsDocTypeOwner::Fn(only.function)).is_some();
+        (has_body && !has_signature_of_a_type).then_some(only)
+    }
+
+    pub(super) fn compute_written_parameters(
+        &mut self,
+        function: FunctionRef,
+    ) -> &'c [WrittenParameter] {
+        let FunctionRef { file: of, function } = function;
+        let hir = self.c.hir(of);
+        let mut parameters: SmallVec<[WrittenParameter; 8]> = SmallVec::new();
+        for id in hir[function].params.iter() {
+            let parameter = &hir[id];
+            parameters.push(WrittenParameter {
+                written: self.ask_written(|queries| queries.compute_written_type(of, parameter.ty)),
+                is_rest: parameter.flags.contains(Flags::REST),
+            });
+        }
+        self.list(&parameters)
     }
 
     pub(super) fn compute_signature(&mut self, signature: SigId) -> SignatureShape<'c> {
@@ -81,17 +140,17 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 file, func, mapper, ..
             } => {
                 let outer = self.outer_mapper(file, func, mapper);
-                self.declaration_shape(file, func, outer, mapper)
+                self.declaration_shape(file, func, outer, mapper, true)
             }
             SigData::DefaultConstruct { class, .. } => {
                 self.default_constructor_shape(signature, class)
             }
-            SigData::Synth {
+            SigData::Synth(&SynthSig {
                 ref type_params,
                 ref params,
                 this,
                 ..
-            } => {
+            }) => {
                 let parameters: SmallVec<[SignatureParameter; 8]> = params
                     .iter()
                     .map(|parameter| SignatureParameter {
@@ -139,7 +198,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 None => self.checked_result(file, func, mapper),
             },
             SigData::DefaultConstruct { class, .. } => self.class_instance_type(class),
-            SigData::Synth { .. } => self.ask(|queries| {
+            SigData::Synth(_) => self.ask(|queries| {
                 let ty = queries.c.sig_return(signature);
                 queries.resolved(ty)
             }),
@@ -152,12 +211,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// The file of the function that the parameters of the signature are written in.
     pub(super) fn find_file_of_signature(&self, signature: SigId) -> Option<FileId> {
         match *self.c.types().sig(signature) {
             SigData::Decl { file, .. } | SigData::Construct { file, .. } => Some(file),
             SigData::DefaultConstruct { base, .. } => self.find_file_of_signature(base?),
-            SigData::Synth { .. } => None,
+            SigData::Synth(_) => None,
             SigData::WithReturn { sig: inner, .. } => self.find_file_of_signature(inner),
         }
     }
@@ -180,7 +238,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             function.function,
             MapperId::IDENTITY,
             MapperId::IDENTITY,
+            false,
         )
+    }
+
+    pub(super) fn compute_function_result(&mut self, function: FunctionRef) -> CheckedType {
+        self.checked_result(function.file, function.function, MapperId::IDENTITY)
     }
 
     fn skip_optional_call_clone(&self, signature: SigId) -> SigId {
@@ -230,6 +293,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn explicit_arguments_mapper(&mut self, of: FileId, func: FnId, site: CallId) -> MapperId {
         let hir = self.hir();
         let arguments = hir.list_at(hir[site].type_args);
+        if arguments.is_empty() {
+            return MapperId::IDENTITY;
+        }
         let parameters = self.c.hir(of)[func].type_params;
         let mut pairs: SmallVec<[(TypeId, TypeId); 4]> = SmallVec::new();
         for (parameter, argument) in parameters.iter().zip(hir.ids(arguments)) {
@@ -245,6 +311,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn instantiate_signature_type(&mut self, declared: TypeId, mapper: MapperId) -> CheckedType {
         let declared = self.resolved(declared)?;
         let ty = self.c.instantiate(declared, mapper);
+        if ty == declared {
+            return Ok(ty);
+        }
         self.resolved(ty)
     }
 
@@ -308,6 +377,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         func: FnId,
         written_mapper: MapperId,
         checked_mapper: MapperId,
+        infers_result: bool,
     ) -> SignatureShape<'c> {
         let hir = self.c.hir(of);
         let constructor_class = self.find_constructor_class(of, func);
@@ -319,8 +389,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 self.class_result(symbol)
             }
             None => {
-                let checked = self.checked_result(of, func, checked_mapper);
-                self.annotated_position(of, hir[func].ret, written_mapper, checked)
+                let unasked = Err(GaveUp::Unresolved);
+                let result = self.annotated_position(of, hir[func].ret, written_mapper, unasked);
+                match infers_result || result.written != WrittenType::Unwritten {
+                    true => PositionTypes {
+                        checked: self.checked_result(of, func, checked_mapper),
+                        ..result
+                    },
+                    false => result,
+                }
             }
         };
         let has_class_type_parameters =

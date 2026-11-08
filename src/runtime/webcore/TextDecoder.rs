@@ -4,6 +4,7 @@ use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSString, JSValue};
 use bun_core::strings;
 use bun_jsc::HostReturn as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
+use core::mem::MaybeUninit;
 use std::collections::TryReserveError;
 
 use jsc::StringJsc as _;
@@ -493,11 +494,10 @@ pub(crate) extern "C" fn TextDecoder__createForStream(
     label: JSValue,
     fatal: bool,
     ignore_bom: bool,
-    out_utf8_fast_path: *mut bool,
-    out_encoding: *mut EncodingLabel,
+    out_utf8_fast_path: &mut MaybeUninit<bool>,
+    out_encoding: &mut MaybeUninit<EncodingLabel>,
 ) -> *mut TextDecoder {
-    // SAFETY: both out-params are stack locals on the caller's frame.
-    unsafe { *out_utf8_fast_path = false };
+    out_utf8_fast_path.write(false);
     let encoding = if label.is_undefined() {
         EncodingLabel::Utf8
     } else {
@@ -522,11 +522,9 @@ pub(crate) extern "C" fn TextDecoder__createForStream(
             }
         }
     };
-    // SAFETY: as above.
-    unsafe { out_encoding.write(encoding) };
+    out_encoding.write(encoding);
     if matches!(encoding, EncodingLabel::Utf8) && !fatal {
-        // SAFETY: as above.
-        unsafe { *out_utf8_fast_path = true };
+        out_utf8_fast_path.write(true);
         return core::ptr::null_mut();
     }
     bun_core::heap::into_raw(Box::new(TextDecoder {
@@ -548,12 +546,8 @@ pub(crate) extern "C" fn TextDecoder__encodingToJS(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
-    if !this.is_null() {
-        // SAFETY: `this` was returned by `TextDecoder__createForStream` and has not been
-        // freed (the C++ cell clears its pointer before calling).
-        unsafe { bun_core::heap::destroy(this) };
-    }
+pub(crate) extern "C" fn TextDecoder__destroyForStream(this: Option<Box<TextDecoder>>) {
+    drop(this);
 }
 
 /// The TextDecoderStream transform/flush step. `stream = true` for a mid-

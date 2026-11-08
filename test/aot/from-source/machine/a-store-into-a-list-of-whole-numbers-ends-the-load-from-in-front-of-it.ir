@@ -1,0 +1,18 @@
+# -- source: main.js
+# const a = []; for (let i = 0; i < 8; i++) a.push(i);
+# function sweep(a, n) { let s = 0;
+#   for (let k = 0; k < n; k++) { const i = k & 7, j = (k >> 1) & 7; const x = a[i] | 0; a[j] = (x + k) & 1023; s = (s + (a[i] | 0) - x) | 0; }
+#   return s; }
+# const b = []; for (let i = 0; i < 8; i++) b.push(i);
+# function swap(a, n) { let s = 0;
+#   for (let k = 0; k < n; k++) { const i = k & 7, j = 7 - i; const x = a[i] | 0, y = a[j] | 0; a[i] = y; a[j] = x; s = (s + (a[i] | 0) * 3 - x) | 0; }
+#   return s; }
+# print(sweep(a, 17), a.join(), swap(b, 4), b.join());
+# -- end of source
+# f1 = sweep, f2 = swap. `const x = a[i]; a[j] = ..; .. a[i] - x`, where i and j may meet. A typed turn over a list of whole numbers reads its elements as Int32 storage and stores by PutContiguousIndex: a boxed whole number is
+# the same word in both kinds of storage. But the load named the heap of Int32 elements and the store the heap of contiguous ones: TWO SIBLINGS OVER ONE MEMORY: the machine's numbering of loads took the load from in front of the
+# store to hold behind it, and `a[i] - x` was 0 in every turn: plain 31 | compiled 0, no stop, the list itself right. The store of a boxed word in bounds names the heap of the elements of every form.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 31 18,6,10,14,15,25,38,67 60 7,6,5,4,3,2,1,0
+# ANSWERS-NEXT: exited with 0
+# ANSWERS-NEXT: the source prints the same

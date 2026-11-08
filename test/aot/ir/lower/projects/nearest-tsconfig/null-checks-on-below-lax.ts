@@ -1,6 +1,6 @@
 // RUN: lower
 // ENTRY: lax/main.ts
-// DIAGNOSTIC: TS2322 strict/none.ts:1
+// STATISTIC: SourceFilesDemoted = 1
 
 // FILE: strict/tsconfig.json
 {"compilerOptions":{"target":"ESNext","module":"Preserve","moduleResolution":"bundler","noEmit":true,"types":[],"strict":true}}

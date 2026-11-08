@@ -1,5 +1,7 @@
 mod analysis;
 mod bindings;
+mod called_declarations;
+mod called_initializers;
 mod dead_zone;
 mod dynamic;
 mod enter;
@@ -17,11 +19,10 @@ mod walk;
 
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Bound, CommonJsVariable, ScopeId, SymbolId};
-use bun_sema::hir::{self};
+use bun_sema::hir::{self, MemberId};
 use bun_sema::program::{CompiledModule, FileId};
 
 use super::FunctionLowering;
-use super::transpiled::TranspiledFile;
 use crate::builtins::ResolvedBuiltins;
 use crate::ir::{ClassSlot, DeclaredType, ValueId};
 use crate::modules::ModuleGraph;
@@ -30,7 +31,13 @@ pub(crate) use self::analysis::ScopeAnalysis;
 pub(in crate::lower) use self::analysis::{
     ArgumentsObject, BindingForm, BindingRef, Placement, Storage,
 };
+pub(in crate::lower) use self::called_declarations::{
+    CalledByName, find_declaration_called_by_name, find_declaration_made_at_first_read,
+};
+pub(in crate::lower) use self::called_initializers::find_function_that_initializes;
+pub(in crate::lower) use self::enter::MakerOfScope;
 pub(in crate::lower) use self::environments::environment_layout;
+pub(in crate::lower) use self::eval::NamesOfFileForEvals;
 pub(crate) use self::eval::lower_direct_eval;
 pub(crate) use self::identifiers::find_tested_local;
 pub(in crate::lower) use self::plan::is_let_declaration;
@@ -44,17 +51,12 @@ pub(crate) struct ScopeInput<'x, 's> {
     pub(crate) hir: &'x hir::File<'s>,
     pub(crate) bound: &'x Bound<'s>,
     pub(crate) compiled: &'x CompiledModule<'s>,
-    pub(in crate::lower) transpiled: Option<&'x TranspiledFile>,
     pub(crate) modules: &'x ModuleGraph,
     pub(crate) builtins: &'x ResolvedBuiltins,
-    /// Whether the name is one for a FinalizationRegistry.
+    pub(crate) fields_under_signed_members: &'x [MemberId],
     pub(crate) holds_registry: &'x dyn Fn(SymbolId) -> bool,
-    /// What a closure has room for in this build.
     pub(crate) max_captures: usize,
-    /// How many values the blocks of one `try` may hand to its handler in this build.
-    pub(crate) max_handler_arguments: usize,
-    /// How many values each of those blocks may hand over however many blocks there are.
-    pub(crate) max_handler_arguments_per_block: usize,
+    pub(crate) names_lie_on_object_prototype: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -67,9 +69,7 @@ pub(crate) enum ScopeSlot {
     ArgumentsBinding,
     CommonJs(CommonJsVariable),
     WithObject,
-    /// The variables of text evaluated in the scope. In a function: of text evaluated in its body.
     EvalVariables,
-    /// The variables of text evaluated among the parameters of the function.
     ParameterEvalVariables,
     Class(ClassSlot),
 }
@@ -86,11 +86,44 @@ pub(crate) enum IdentifierTarget {
         name: Atom,
         holder: ValueId,
     },
+    MemberOf {
+        binding: Binding,
+        name: Atom,
+        container: ValueId,
+    },
 }
 
 fn find_entry<K: Copy + PartialEq, V: Copy>(entries: &[(K, V)], key: K) -> Option<V> {
     let entry = entries.iter().find(|entry| entry.0 == key)?;
     Some(entry.1)
+}
+
+fn sum_counts(counts: &mut [u32]) {
+    for number in 1..counts.len() {
+        counts[number] += counts[number - 1];
+    }
+}
+
+fn order_by_number<T: Copy>(
+    list: impl ExactSizeIterator<Item = T> + Clone,
+    number_count: usize,
+    number_of: impl Fn(T) -> usize,
+) -> Vec<T> {
+    let Some(first) = list.clone().next() else {
+        return Vec::new();
+    };
+    let mut places = vec![0u32; number_count + 1];
+    for entry in list.clone() {
+        places[number_of(entry) + 1] += 1;
+    }
+    sum_counts(&mut places);
+    let mut ordered = vec![first; list.len()];
+    for entry in list {
+        let place = &mut places[number_of(entry)];
+        ordered[*place as usize] = entry;
+        *place += 1;
+    }
+    ordered
 }
 
 pub(crate) fn analyze_scopes(input: &ScopeInput<'_, '_>) -> ScopeAnalysis {

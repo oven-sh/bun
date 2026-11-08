@@ -1,4 +1,3 @@
-// Alone: what an executable leaves out goes by all that it holds
 const Module = require("node:module");
 const original = Module._resolveFilename;
 const name = process.env.NO_SUCH_VARIABLE ?? "node:path";

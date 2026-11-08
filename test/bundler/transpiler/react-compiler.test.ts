@@ -5360,3 +5360,48 @@ describe("react-compiler does not overflow the stack on a component that is nest
     expect(exitCode).toBe(0);
   });
 });
+
+// `bun test --react-compiler` compiles in the runtime transpiler, which keeps its output in a cache on disk. The
+// component is `UnusedClosure` of react-compiler/HoistedFunctionThatAMemoBlockDeclaresIsAssigned.
+test("react-compiler under bun test assigns a hoisted function that a memo block declares", async () => {
+  using dir = tempDir("react-compiler-bun-test-hoisted", {
+    "node_modules/react/package.json": JSON.stringify({
+      name: "react",
+      version: "19.0.0",
+      exports: {
+        "./compiler-runtime": "./compiler-runtime.js",
+        "./jsx-runtime": "./jsx.js",
+        "./jsx-dev-runtime": "./jsx.js",
+      },
+    }),
+    "node_modules/react/compiler-runtime.js": `export const c = size => Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    "node_modules/react/jsx.js": `export const jsxDEV = (type, props) => ({ type, props }), jsx = jsxDEV, jsxs = jsxDEV;`,
+    "Hoisted.jsx": `
+      export function Hoisted({ a }) {
+        const unused = () => helper();
+        function helper() {
+          return a;
+        }
+        return <button onClick={helper}>{a}</button>;
+      }
+    `,
+    "hoisted.test.jsx": `
+      import { test } from "bun:test";
+      import { Hoisted } from "./Hoisted";
+      test("the handler", () => {
+        const compiled = /\\$\\[\\d+\\]/.test(String(Hoisted));
+        console.log("compiled: " + compiled + ", onClick: " + typeof Hoisted({ a: 1 }).props.onClick);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--react-compiler", "./hoisted.test.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.match(/compiled: .*/)?.[0] ?? stderr).toBe("compiled: true, onClick: function");
+  expect(exitCode).toBe(0);
+});

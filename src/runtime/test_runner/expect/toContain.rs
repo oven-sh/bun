@@ -1,38 +1,39 @@
 use core::ffi::c_void;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
 use super::Expect;
 use super::get_signature;
 use super::throw;
 
+/// Vitest's check.
+fn is_dom_node(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+    match global.to_js_value().get(global, "Node")? {
+        Some(node) if node.is_callable() => value.is_instance_of(global, node),
+        _ => Ok(false),
+    }
+}
+
 impl Expect {
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn to_contain(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
         let (this, value, not) =
-            self.matcher_prelude(global, frame.this(), "toContain", "<green>expected<r>")?;
+            self.matcher_prelude(global, this_value.to_js(), "toContain", "<green>expected<r>")?;
 
-        let arguments = frame.arguments();
-
-        if arguments.len() < 1 {
-            return Err(global.throw_invalid_arguments(format_args!("toContain() takes 1 argument")));
-        }
-
-        let expected = arguments[0];
-        expected.ensure_still_alive();
+        let expected = expected.to_js();
         let mut pass = false;
 
-        // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs
-        // avoid a struct lifetime param.
-        struct ExpectedEntry {
-            global: *const JSGlobalObject,
+        struct ExpectedEntry<'a> {
+            global: &'a JSGlobalObject,
             expected: JSValue,
-            pass: *mut bool,
+            pass: &'a mut bool,
         }
 
         // Jest's toContain uses `===` (Array.prototype.indexOf), not Object.is:
@@ -45,8 +46,9 @@ impl Expect {
                     break;
                 }
             }
-        } else if value.is_string_literal() && expected.is_string_literal() {
+        } else if value.is_string_literal() && (expected.is_string_literal() || this.is_vitest()) {
             let value_string = value.to_utf8(global)?;
+            // Vitest searches with `indexOf()`, which converts `expected` to a string. Jest refuses a non-string.
             let expected_string = expected.to_utf8(global)?;
 
             if expected_string.slice().is_empty() {
@@ -58,11 +60,20 @@ impl Expect {
                 // edge case two empty strings are true
                 pass = true;
             }
+        } else if this.is_vitest() && is_dom_node(global, value)? {
+            if !is_dom_node(global, expected)? {
+                return Err(global.throw_type_error(format_args!(
+                    "toContain() expected a DOM node as the argument, but got {}",
+                    expected.js_type_string(global)
+                )));
+            }
+            let contains = value.get(global, "contains")?.unwrap_or(JSValue::UNDEFINED);
+            pass = contains.call(global, value, &[expected])?.to_boolean();
         } else if value.is_iterable(global)? {
             let mut expected_entry = ExpectedEntry {
-                global: std::ptr::from_ref(global),
+                global,
                 expected,
-                pass: &raw mut pass,
+                pass: &mut pass,
             };
 
             extern "C" fn strict_equal_iterator(
@@ -71,20 +82,14 @@ impl Expect {
                 entry_: *mut c_void,
                 item: JSValue,
             ) {
-                debug_assert!(!entry_.is_null());
                 // SAFETY: entry_ is &mut ExpectedEntry on the caller's stack, threaded through
-                // for_each as opaque userdata; non-null asserted above.
-                let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry>(entry_) };
-                // SAFETY: entry.global was set from `std::ptr::from_ref(global)` on the caller's
-                // stack frame, which outlives the synchronous for_each this callback runs inside.
-                let global = unsafe { &*entry.global };
-                let Ok(same) = item.is_strict_equal(entry.expected, global) else {
+                // for_each as opaque userdata.
+                let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry<'_>>(entry_) };
+                let Ok(same) = item.is_strict_equal(entry.expected, entry.global) else {
                     return;
                 };
                 if same {
-                    // SAFETY: entry.pass is `&raw mut pass` on the caller's stack, live for the
-                    // duration of for_each; this callback is the sole writer (no aliasing &mut).
-                    unsafe { *entry.pass = true };
+                    *entry.pass = true;
                     // TODO(perf): break out of the `forEach` when a match is found
                 }
             }

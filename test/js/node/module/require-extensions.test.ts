@@ -1,6 +1,6 @@
 import assert from "assert";
 import { describe, expect, mock, test } from "bun:test";
-import { bunRun, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import path from "path";
 
 test("require.extensions shape makes sense", () => {
@@ -161,6 +161,45 @@ test("wrapping an existing extension but it's secretly sync esm", () => {
   } finally {
     require.extensions[".cjs"] = original;
   }
+});
+test.concurrent("default loader throws when module._compile was replaced with a non-function", async () => {
+  using dir = tempDir("extensions-bad-compile", {
+    "plain.js": `module.exports = "plain";`,
+    "run.cjs": `
+      const Module = require("module");
+      const file = require("path").join(__dirname, "plain.js");
+      const original = Module._extensions[".js"];
+      const messages = [undefined, null, 42, true, "not a function", {}].map(value => {
+        Module._extensions[".js"] = function (module, filename) {
+          module._compile = value;
+          return original(module, filename);
+        };
+        try {
+          require(file);
+          return "did not throw";
+        } catch (e) {
+          return e.name + ": " + e.message;
+        }
+      });
+      Module._extensions[".js"] = original;
+      console.log(JSON.stringify({ messages: [...new Set(messages)], afterwards: require(file) }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.cjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    messages: ["TypeError: module._compile is not a function"],
+    afterwards: "plain",
+  });
+  expect(exitCode).toBe(0);
 });
 test("mutating extensions is banned by some files", () => {
   // vercel is not allowed to mutate require.extensions

@@ -1,0 +1,70 @@
+# -- source: main.js
+# const told = [];
+# function say(ask) {
+#   try {
+#     told.push(String(ask()));
+#   } catch (error) {
+#     told.push(error.constructor.name);
+#   }
+# }
+# function makeVault(mark) {
+#   return class Vault {
+#     #held = mark;
+#     #weigh() {
+#       return "weighed" + mark;
+#     }
+#     get #label() {
+#       return "label" + mark;
+#     }
+#     set #label(text) {
+#       this.#held = text + mark;
+#     }
+#     hasMethod(other) {
+#       return eval("#weigh in other");
+#     }
+#     hasField(other) {
+#       return eval("#held in other");
+#     }
+#     read(other) {
+#       return eval("other.#held");
+#     }
+#     store(other, value) {
+#       return eval("other.#held = value");
+#     }
+#     call(other) {
+#       return eval("other.#weigh()");
+#     }
+#     label(other) {
+#       return eval("other.#label");
+#     }
+#     relabel(other, text) {
+#       return eval("other.#label = text");
+#     }
+#     compiledRead(other) {
+#       return other.#held;
+#     }
+#   };
+# }
+# const First = makeVault(1);
+# const Second = makeVault(2);
+# const first = new First();
+# const second = new Second();
+# for (const [asker, asked] of [[first, first], [first, second], [second, first], [second, second], [first, {}]]) {
+#   say(() => asker.hasMethod(asked));
+#   say(() => asker.hasField(asked));
+#   say(() => asker.read(asked));
+#   say(() => asker.call(asked));
+#   say(() => asker.label(asked));
+#   say(() => asker.store(asked, 7));
+#   say(() => asker.relabel(asked, "new"));
+#   say(() => asker.compiledRead(asked));
+# }
+# print(told.join(" "));
+# -- end of source
+# One text of a class is evaluated twice. Compiled code tells the private names of the two evaluations apart by the token of each; the text of a direct eval asked by the symbol of the key, which is one for both: `#weigh in other` was true for an object of the other evaluation, its field was read and stored, its method and accessors ran. A text is handed the symbols of its own evaluation; a compiled object answers them by its brand.
+# RUN: run-in-shell
+# CHECK: true true 1 weighed1 label1 7 new new1 false false TypeError TypeError TypeError TypeError TypeError TypeError false false TypeError TypeError TypeError TypeError TypeError TypeError true true 2 weighed2 label2 7 new new2 false false TypeError TypeError TypeError TypeError TypeError TypeError
+# CHECK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: true true 1 weighed1 label1 7 new new1 false false TypeError TypeError TypeError TypeError TypeError TypeError false false TypeError TypeError TypeError TypeError TypeError TypeError true true 2 weighed2 label2 7 new new2 false false TypeError TypeError TypeError TypeError TypeError TypeError
+# CHECKED-NEXT: exited with 0

@@ -1,0 +1,13 @@
+# without guesses nothing is tested for, and the method is called by its name
+# f1 = visit
+# -- source: method-called-in-tail-position-is-found-behind-a-look-withheld.ts
+# declare function sink(...values: unknown[]): void;
+# class Leaf { size: number; constructor(size: number) { this.size = size; } weigh(scale: number): number { return this.size * scale; } }
+# function visit(node: Leaf, scale: number): number { return node.weigh(scale); }
+# sink(visit, new Leaf(1));
+# -- end of source
+# RUN: walk f1 mechanisms=none+DirectCalls+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: ReturnCall
+# RUN(NEVER): walk f1 mechanisms=none+DirectCalls+TypedOperations
+# NEVER-NOT: = CallDirect

@@ -232,6 +232,17 @@ export const shapes: Record<string, Shape> = {
         c.close(new Error("source failed"));
       }),
   },
+  // The consumer's rejection is the only report: a stray unhandled rejection fails the test run.
+  "sync pull: close(error), then throws it": {
+    expect: { error: "source failed" },
+    make: t =>
+      direct(t, c => {
+        const error = new Error("source failed");
+        c.write("partial");
+        c.close(error);
+        throw error;
+      }),
+  },
 };
 
 // Each falsy argument as the first close(): a clean close, not close(error).
@@ -253,7 +264,7 @@ for (const [label, arg] of [
 }
 
 const decoder = new TextDecoder();
-const text = (v: unknown) => (typeof v === "string" ? v : decoder.decode(v as ArrayBufferView));
+const text = (v: unknown) => (typeof v === "string" ? v : decoder.decode(v as NodeJS.ArrayBufferView));
 
 /** In-process consumers: each takes a stream and resolves to its full text (or rejects). */
 export const consumers: Record<string, (s: ReadableStream) => Promise<string>> = {

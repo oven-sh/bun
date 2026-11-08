@@ -1,0 +1,45 @@
+A test stores a loader function, and from then on plain Bun asks it at every require(), also where the name is a constant that the build has bound to a file: Module._resolveFilename, stored by a preload.
+preload: setup.cjs
+#### behind-a-preload.test.cjs
+
+const { test } = require("bun:test");
+const Module = require("node:module");
+const path = require("node:path");
+const say = (...words) => console.error("| CASE " + words.join(" "));
+const short = value => String(value).replace(/^.*[\\/]/, "");
+
+test("a resolver that a preload stores", () => {
+  if (Module._resolveFilename.name !== "") return;
+  say("in the test file:", require("@app/late-a").name);
+  say("in a file of the project:", require("./src/user.js").viaAlias());
+});
+#### package.json
+{ "name": "loader-functions-of-a-test" }
+#### setup.cjs
+
+const Module = require("node:module");
+const path = require("node:path");
+const original = Module._resolveFilename;
+Module._resolveFilename = function (request, ...rest) { return original.call(this, request.startsWith("@app/") ? path.join(__dirname, "src", request.slice(5) + ".js") : request, ...rest); };
+#### src/late-a.js
+exports.name = "late-a";
+#### src/late-b.js
+exports.name = "late-b";
+#### src/late-c.js
+exports.name = "late-c";
+#### src/late-d.js
+exports.name = "late-d";
+#### src/late-h.js
+exports.name = "late-h";
+#### src/late-i.js
+exports.name = "late-i";
+#### src/late-j.js
+exports.name = "late-j";
+#### src/typed.ts
+export const name: string = "typed";
+#### src/user.js
+
+exports.load = () => require("./late-h.js").name;
+exports.loadOther = () => require("./late-i.js").name;
+exports.viaAlias = () => require("@app/late-d").name;
+exports.http = () => Object.keys(require("node:http")).includes("patched") + " " + Object.keys(require("http")).includes("patched");

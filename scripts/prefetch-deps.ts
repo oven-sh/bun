@@ -199,7 +199,7 @@ async function fetchOne(item: Item): Promise<void> {
 // that 8× ~200MB WebKit tarballs in flight at once exhaust memory/disk.
 const queue = [...items.values()];
 const workers = Array.from({ length: 4 }, async () => {
-  for (let item; (item = queue.shift()); ) await fetchOne(item);
+  for (let item; (item = queue.shift());) await fetchOne(item);
 });
 await Promise.all(workers);
 

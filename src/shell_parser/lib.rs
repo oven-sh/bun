@@ -1,6 +1,5 @@
-#![feature(adt_const_params, generic_const_exprs, allocator_api)]
+#![feature(adt_const_params, allocator_api)]
 #![warn(unused_must_use)]
-#![allow(incomplete_features)]
 
 pub mod error;
 pub use error::{Error, Result};
@@ -18,6 +17,6 @@ pub mod parse;
 pub mod json_fmt;
 
 pub use parse::{
-    JSValueRaw, LexResult, LexerError, ParseError, Parser, ast, escape_8bit, escape_bun_str,
+    LexResult, LexerError, ParseError, Parser, ast, escape_8bit, escape_bun_str,
     needs_escape_bunstr, needs_escape_utf8_ascii_latin1,
 };

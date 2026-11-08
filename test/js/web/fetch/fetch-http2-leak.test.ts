@@ -7,7 +7,7 @@ import { join } from "node:path";
 // leaves a few streams unanswered under load (macOS 14 / aarch64 Linux). That's
 // a node:http2-server-side issue unrelated to the H2 client lifetimes this test
 // is measuring; isolating the server removes it.
-let serverProc: ReturnType<typeof Bun.spawn>;
+let serverProc: Bun.Subprocess<"pipe", "pipe", "inherit">;
 let url: string;
 
 beforeAll(async () => {

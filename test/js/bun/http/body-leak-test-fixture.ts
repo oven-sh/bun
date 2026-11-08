@@ -38,7 +38,7 @@ const server = Bun.serve({
       req.body;
       await req.text();
     } else if (url.endsWith("/streaming")) {
-      const reader = req.body.getReader();
+      const reader = req.body!.getReader();
       while (reader) {
         const { done, value } = await reader?.read();
         if (done) {

@@ -1,0 +1,84 @@
+status: 0
+oracle: none
+---
+--- as things are
+nothing 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+nothing 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+clear() 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: ValueError: list modified during sort [70, 0] 0 False
+clear() 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: ValueError: list modified during sort [70, 0] 0 False
+x[:] = [] 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: ValueError: list modified during sort [70, 0] 0 False
+x[:] = [] 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: ValueError: list modified during sort [70, 0] 0 False
+pop() 1 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 69] 69 False
+pop() 70 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 69] 69 False
+del x[0] 1 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+del x[0] 70 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+x *= 2 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 140] 140 False
+x *= 2 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 140] 140 False
+append(1) 1 | ValueError: list modified during sort [0, 1] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 71] 71 False
+append(1) 70 | ValueError: list modified during sort [0, 1] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 71] 71 False
+extend([1, 2]) 1 | ValueError: list modified during sort [0, 2] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 72] 72 False
+extend([1, 2]) 70 | ValueError: list modified during sort [0, 2] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 72] 72 False
+insert(0, 1) 1 | ValueError: list modified during sort [0, 1] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 71] 71 False
+insert(0, 1) 70 | ValueError: list modified during sort [0, 1] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 71] 71 False
+x[0] = 1 1 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+x[0] = 1 70 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+reverse() 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+reverse() 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+sort() 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+sort() 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+append(1), pop() 1 | ValueError: list modified during sort [0, 0] 70 True | unlike a list: ['read-only and writable again', 'a getter and a value again', 'hidden and shown again', 'the item with the attribute deleted and set again'] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+append(1), pop() 70 | ValueError: list modified during sort [0, 0] 70 True | unlike a list: ['read-only and writable again', 'a getter and a value again', 'hidden and shown again', 'the item with the attribute deleted and set again'] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+--- a prototype has an accessor for an index
+nothing 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+nothing 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+clear() 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: ValueError: list modified during sort [70, 0] 0 False
+clear() 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: ValueError: list modified during sort [70, 0] 0 False
+x[:] = [] 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: ValueError: list modified during sort [70, 0] 0 False
+x[:] = [] 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: ValueError: list modified during sort [70, 0] 0 False
+pop() 1 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 69] 69 False
+pop() 70 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 69] 69 False
+del x[0] 1 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+del x[0] 70 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+x *= 2 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 140] 140 False
+x *= 2 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 140] 140 False
+append(1) 1 | ValueError: list modified during sort [0, 1] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 71] 71 False
+append(1) 70 | ValueError: list modified during sort [0, 1] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 71] 71 False
+extend([1, 2]) 1 | ValueError: list modified during sort [0, 2] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 72] 72 False
+extend([1, 2]) 70 | ValueError: list modified during sort [0, 2] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 72] 72 False
+insert(0, 1) 1 | ValueError: list modified during sort [0, 1] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 71] 71 False
+insert(0, 1) 70 | ValueError: list modified during sort [0, 1] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 71] 71 False
+x[0] = 1 1 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+x[0] = 1 70 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+reverse() 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+reverse() 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+sort() 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+sort() 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+append(1), pop() 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+append(1), pop() 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+--- and has it no more
+nothing 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+nothing 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+clear() 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: ValueError: list modified during sort [70, 0] 0 False
+clear() 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: ValueError: list modified during sort [70, 0] 0 False
+x[:] = [] 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: ValueError: list modified during sort [70, 0] 0 False
+x[:] = [] 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: ValueError: list modified during sort [70, 0] 0 False
+pop() 1 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 69] 69 False
+pop() 70 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 69] 69 False
+del x[0] 1 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+del x[0] 70 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+x *= 2 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 140] 140 False
+x *= 2 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 140] 140 False
+append(1) 1 | ValueError: list modified during sort [0, 1] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 71] 71 False
+append(1) 70 | ValueError: list modified during sort [0, 1] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 71] 71 False
+extend([1, 2]) 1 | ValueError: list modified during sort [0, 2] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 72] 72 False
+extend([1, 2]) 70 | ValueError: list modified during sort [0, 2] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 72] 72 False
+insert(0, 1) 1 | ValueError: list modified during sort [0, 1] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 71] 71 False
+insert(0, 1) 70 | ValueError: list modified during sort [0, 1] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 71] 71 False
+x[0] = 1 1 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+x[0] = 1 70 | sorted [0, 'IndexError', 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+reverse() 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+reverse() 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+sort() 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+sort() 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 'JSTypeError', 70] 70 False
+append(1), pop() 1 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False
+append(1), pop() 70 | sorted [0, 0] 70 True | unlike a list: [] | still read-only: JSTypeError: TypeError: Attempted to assign to readonly property. [70, 70] 70 False

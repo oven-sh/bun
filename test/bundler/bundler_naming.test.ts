@@ -707,7 +707,7 @@ describe("bundler", () => {
   });
 
   // The chunk does not take the path of its entry point, and it is in the same directory.
-  test("naming/SplitChunkBesideItsEntryPoint", async () => {
+  test.concurrent("naming/SplitChunkBesideItsEntryPoint", async () => {
     using dir = tempDir("naming-split-chunk-beside-entry", {
       "src/api/index.js": `import { shared } from "./shared.js"; console.log("index", shared); await import("./lazy.js");`,
       "src/api/shared.js": `import { local } from "./local.js"; export const shared = "shared " + local;`,
@@ -741,7 +741,7 @@ describe("bundler", () => {
   });
 
   // Two entry points in one directory: their chunk is in that directory in both orders.
-  test("naming/SplitChunkBesideItsEntryPoints", async () => {
+  test.concurrent("naming/SplitChunkBesideItsEntryPoints", async () => {
     using dir = tempDir("naming-split-chunk-beside-entries", {
       "src/api/a.js": `import { shared } from "./shared.js"; console.log("a", shared);`,
       "src/api/b.js": `import { shared } from "./shared.js"; console.log("b", shared);`,
@@ -776,28 +776,8 @@ describe("bundler", () => {
     }
   });
 
-  test("naming/SplitChunkNameWithoutHash", async () => {
-    using dir = tempDir("naming-split-chunk-no-hash", {
-      "a.js": `import { h } from "./helper.js"; console.log("a", h);`,
-      "b.js": `import { h } from "./helper.js"; console.log("b", h);`,
-      "helper.js": `export const h = "H";`,
-    });
-    const outputs = await buildSplit(String(dir), ["a.js", "b.js"], "[name].[ext]");
-    expect(Object.keys(outputs).sort()).toEqual(["./a.js", "./b.js", "./shared.js"]);
-  });
-
-  test.each(["browser", "bun", "node"] as const)("naming/SplitChunkTarget %s", async target => {
-    using dir = tempDir("naming-split-chunk-target", {
-      "a.js": `import { h } from "./helper.js"; console.log("a", h);`,
-      "b.js": `import { h } from "./helper.js"; console.log("b", h);`,
-      "helper.js": `export const h = "H";`,
-    });
-    const outputs = await buildSplit(String(dir), ["a.js", "b.js"], "[target]/[name]-[hash].[ext]", { target });
-    expect(names(outputs)).toEqual(["./a.js", "./b.js", `./${target}/shared-[hash].js`]);
-  });
-
   // The default `--chunk-naming` of the CLI is `[name]-[hash].[ext]`.
-  test("naming/SplitChunkNameCLI", async () => {
+  test.concurrent("naming/SplitChunkNameCLI", async () => {
     using dir = tempDir("naming-split-chunk-cli", {
       "a.js": `import { h } from "./helper.js"; console.log("a", h);`,
       "b.js": `import { h } from "./helper.js"; console.log("b", h);`,
@@ -827,6 +807,26 @@ describe("bundler", () => {
     expect(names(outputs[0])).toEqual(["a.js", "b.js", "shared-[hash].js"]);
     expect(names(outputs[1])).toEqual(names(outputs[0]));
     expect(outputs[1]).toEqual(outputs[0]);
+  });
+
+  test("naming/SplitChunkNameWithoutHash", async () => {
+    using dir = tempDir("naming-split-chunk-no-hash", {
+      "a.js": `import { h } from "./helper.js"; console.log("a", h);`,
+      "b.js": `import { h } from "./helper.js"; console.log("b", h);`,
+      "helper.js": `export const h = "H";`,
+    });
+    const outputs = await buildSplit(String(dir), ["a.js", "b.js"], "[name].[ext]");
+    expect(Object.keys(outputs).sort()).toEqual(["./a.js", "./b.js", "./shared.js"]);
+  });
+
+  test.each(["browser", "bun", "node"] as const)("naming/SplitChunkTarget %s", async target => {
+    using dir = tempDir("naming-split-chunk-target", {
+      "a.js": `import { h } from "./helper.js"; console.log("a", h);`,
+      "b.js": `import { h } from "./helper.js"; console.log("b", h);`,
+      "helper.js": `export const h = "H";`,
+    });
+    const outputs = await buildSplit(String(dir), ["a.js", "b.js"], "[target]/[name]-[hash].[ext]", { target });
+    expect(names(outputs)).toEqual(["./a.js", "./b.js", `./${target}/shared-[hash].js`]);
   });
 
   // In an executable `import.meta.path` of a module is the path of its chunk.

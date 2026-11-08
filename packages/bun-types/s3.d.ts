@@ -413,6 +413,8 @@ declare module "bun" {
      * caller of the URL must send them. The key itself is never put in a URL.
      *
      * `key` is the 256-bit key, as 32 bytes or as the base64 of 32 bytes.
+     * A file or a `presign()` call inherits the key of its client. Pass
+     * `sse: null` to read or write a plain object through such a client.
      * Amazon S3 only accepts SSE-C over HTTPS.
      *
      * @see https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerSideEncryptionCustomerKeys.html
@@ -427,7 +429,7 @@ declare module "bun" {
      * const text = await client.file("secret.txt").text();
      * ```
      */
-    sse?: S3CustomerEncryptionOptions;
+    sse?: S3CustomerEncryptionOptions | null;
 
     /**
      * @deprecated The size of the internal buffer in bytes. Defaults to 5 MiB. Use `partSize` and `queueSize` instead.
@@ -445,7 +447,9 @@ declare module "bun" {
      */
     algorithm?: "AES256";
     /**
-     * The 256-bit key: 32 bytes, or the base64 of 32 bytes.
+     * The 256-bit key. `Uint8Array` or `ArrayBuffer`: the 32 raw bytes.
+     * `string`: the standard base64 of those bytes, 44 characters with
+     * padding, which is the value of the `x-amz-server-side-encryption-customer-key` header.
      */
     key: Uint8Array | ArrayBuffer | string;
   }

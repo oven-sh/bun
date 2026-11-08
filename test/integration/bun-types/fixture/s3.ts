@@ -37,6 +37,7 @@ const sseClient = new Bun.S3Client({
 });
 doFileOps(sseClient.file("secret.bin", { sse: { type: "customer", key: "base64" } }));
 sseClient.presign("secret.bin", { sse: { type: "customer", key: sseKey.buffer } });
+sseClient.file("plain.bin", { sse: null });
 // @ts-expect-error only "customer" exists
 sseClient.file("x", { sse: { type: "kms", key: sseKey } });
 // @ts-expect-error only AES256 exists

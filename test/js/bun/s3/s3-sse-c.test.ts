@@ -8,7 +8,8 @@ const KEY = "x-amz-server-side-encryption-customer-key";
 const KEY_MD5 = "x-amz-server-side-encryption-customer-key-md5";
 const SIGNED = `${ALGORITHM};${KEY};${KEY_MD5}`;
 
-const key = new Uint8Array(32).map((_, i) => i * 7 + 1);
+// Bytes whose base64 has `+`, `/` and padding, so each spelling check below means something.
+const key = new Uint8Array(32).map((_, i) => (i + 251) & 0xff);
 const keyBase64 = Buffer.from(key).toString("base64");
 const keyMd5Base64 = new Bun.CryptoHasher("md5").update(key).digest("base64");
 const sse = { type: "customer", algorithm: "AES256", key } as const;
@@ -84,6 +85,18 @@ describe("s3 - SSE-C", () => {
       expectNoSseHeaders(capture.requests[1].headers);
     });
 
+    it("not per file with sse: null, over a client with the option", async () => {
+      using capture = captureServer();
+      const client = new S3Client({ ...s3Options, endpoint: capture.server.url.href, sessionToken: "tok", sse });
+      await client.file("plain.txt", { sse: null }).text();
+      await client.file("file.txt", { sse: undefined }).text();
+      await client.stat("plain.txt", { sse: null });
+      expect(capture.requests).toHaveLength(3);
+      expectNoSseHeaders(capture.requests[0].headers);
+      expectSseHeaders(capture.requests[1].headers);
+      expectNoSseHeaders(capture.requests[2].headers);
+    });
+
     it("with the key as base64", async () => {
       using capture = captureServer();
       await S3Client.file("file.txt", {
@@ -122,13 +135,19 @@ describe("s3 - SSE-C", () => {
 
   describe("presign", () => {
     it("signs the three headers and keeps the key out of the URL", () => {
-      const client = new S3Client({ ...s3Options, endpoint: "https://s3.example.com", sse });
+      const client = new S3Client({ ...s3Options, endpoint: "https://s3.example.com", sessionToken: "tok", sse });
       for (const method of ["GET", "PUT", "HEAD"] as const) {
-        const url = new URL(client.presign("file.txt", { method }));
+        const href = client.presign("file.txt", { method });
+        const url = new URL(href);
         expect(url.searchParams.get("X-Amz-SignedHeaders")).toBe(`host;${SIGNED}`);
-        expect(url.href).not.toInclude(keyBase64);
-        expect(url.href).not.toInclude("customer-key=");
+        expect(href).toInclude(`&X-Amz-Security-Token=tok&X-Amz-Signature=`);
+        expect(href).toInclude(`&X-Amz-SignedHeaders=host%3B${SIGNED.replaceAll(";", "%3B")}`);
+        expect(href).not.toInclude(keyBase64);
+        expect(href).not.toInclude("customer-key=");
       }
+      // DeleteObject does not take the headers.
+      const url = new URL(client.presign("file.txt", { method: "DELETE" }));
+      expect(url.searchParams.get("X-Amz-SignedHeaders")).toBe("host");
     });
 
     it("per call", () => {
@@ -148,12 +167,26 @@ describe("s3 - SSE-C", () => {
     const make = (sse: unknown) => () => new S3Client({ ...s3Options, sse: sse as any });
 
     it("rejects a key that is not 32 bytes", () => {
-      expect(make({ type: "customer", key: new Uint8Array(31) })).toThrow("sse.key must be 32 bytes");
-      expect(make({ type: "customer", key: new Uint8Array(33) })).toThrow("sse.key must be 32 bytes");
-      expect(make({ type: "customer", key: Buffer.from(new Uint8Array(16)).toString("base64") })).toThrow(
-        "sse.key must be 32 bytes",
-      );
-      expect(make({ type: "customer", key: "not base64 at all!" })).toThrow("sse.key must be 32 bytes");
+      expect(make({ type: "customer", key: new Uint8Array(31) })).toThrow("sse.key must be 32 bytes, got 31");
+      expect(make({ type: "customer", key: new Uint8Array(33) })).toThrow("sse.key must be 32 bytes, got 33");
+    });
+
+    it("rejects a string that is not the padded standard base64 of 32 bytes", () => {
+      const message = "sse.key as a string must be the standard base64 of 32 bytes (44 characters, with padding)";
+      expect(make({ type: "customer", key: Buffer.from(new Uint8Array(16)).toString("base64") })).toThrow(message);
+      expect(make({ type: "customer", key: "not base64 at all!" })).toThrow(message);
+      // 32 characters are not 32 bytes.
+      expect(make({ type: "customer", key: "01234567890123456789012345678901" })).toThrow(message);
+      // 64 hex characters are not 32 bytes either.
+      expect(make({ type: "customer", key: Buffer.from(key).toString("hex") })).toThrow(message);
+      // The value Bun signs is the padded standard spelling. Any other spelling
+      // would not be what a presign caller sends.
+      expect(make({ type: "customer", key: keyBase64.replace(/=+$/, "") })).toThrow(message);
+      expect(make({ type: "customer", key: keyBase64.replaceAll("+", "-").replaceAll("/", "_") })).toThrow(message);
+      expect(make({ type: "customer", key: `${keyBase64.slice(0, 10)} ${keyBase64.slice(10)}` })).toThrow(message);
+      expect(keyBase64).toMatch(/^[^=]*[+][^=]*=$/);
+      expect(keyBase64).toMatch(/\//);
+      expect(make({ type: "customer", key: keyBase64 })).not.toThrow();
     });
 
     it("rejects a key of another type", () => {
@@ -164,7 +197,11 @@ describe("s3 - SSE-C", () => {
     it("rejects another type or algorithm", () => {
       expect(make({ type: "kms", key })).toThrow('sse.type must be "customer"');
       expect(make({ key })).toThrow('sse.type must be "customer"');
+      expect(make({ type: 42, key })).toThrow('The "sse.type" argument must be of type string');
       expect(make({ type: "customer", algorithm: "AES128", key })).toThrow('sse.algorithm must be "AES256"');
+      expect(make({ type: "customer", algorithm: 5, key })).toThrow(
+        'The "sse.algorithm" argument must be of type string',
+      );
       expect(make("customer")).toThrow('The "sse" argument must be of type object');
     });
 
@@ -192,7 +229,11 @@ describe("s3 - SSE-C", () => {
     // needs TLS. The client runs in a child process that accepts the test
     // certificate.
     async function run(script: string) {
-      await using server = serve({ tls, buckets: ["buntest"] });
+      await using server = serve({
+        tls,
+        buckets: ["buntest"],
+        credentials: { accessKeyId: "AKIATEST", secretAccessKey: "secret", sessionToken: "session-token" },
+      });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", script, JSON.stringify(server.clientOptions("buntest")), keyBase64],
         env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
@@ -244,6 +285,46 @@ describe("s3 - SSE-C", () => {
         ["GetObject", 403, "AccessDenied"],
         ["GetObject", 400, "InvalidRequest"],
         ["HeadObject", 400, "InvalidRequest"],
+      ]);
+    });
+
+    it("presigned URLs work with the headers and fail without them", async () => {
+      const { output, requests } = await run(`${prelude}
+        const headers = {
+          "${ALGORITHM}": "AES256",
+          "${KEY}": process.argv[2],
+          "${KEY_MD5}": new Bun.CryptoHasher("md5").update(key).digest("base64"),
+        };
+        const status = (url, init) => fetch(url, init).then(r => r.status);
+        const put = client.presign("presigned.txt", { method: "PUT" });
+        const putWithHeaders = await status(put, { method: "PUT", body: "via presign", headers });
+        const get = client.presign("presigned.txt");
+        const getWithHeaders = await fetch(get, { headers }).then(r => r.text());
+        const getWithoutHeaders = await status(get);
+        const otherKey = Buffer.from(key); otherKey[0] ^= 1;
+        const getWithOtherKey = await status(get, { headers: {
+          ...headers,
+          "${KEY}": otherKey.toString("base64"),
+          "${KEY_MD5}": new Bun.CryptoHasher("md5").update(otherKey).digest("base64"),
+        } });
+        const del = client.presign("presigned.txt", { method: "DELETE" });
+        const deleteWithoutHeaders = await status(del, { method: "DELETE" });
+        console.log(JSON.stringify({ putWithHeaders, getWithHeaders, getWithoutHeaders, getWithOtherKey, deleteWithoutHeaders }));
+      `);
+      expect(output).toEqual({
+        putWithHeaders: 200,
+        getWithHeaders: "via presign",
+        getWithoutHeaders: 403,
+        getWithOtherKey: 403,
+        deleteWithoutHeaders: 204,
+      });
+      // The server names no operation for a request it refuses before routing.
+      expect(requests.map(r => [r.method, r.status, r.errorCode])).toEqual([
+        ["PUT", 200, undefined],
+        ["GET", 200, undefined],
+        ["GET", 403, "SignatureDoesNotMatch"],
+        ["GET", 403, "SignatureDoesNotMatch"],
+        ["DELETE", 204, undefined],
       ]);
     });
 

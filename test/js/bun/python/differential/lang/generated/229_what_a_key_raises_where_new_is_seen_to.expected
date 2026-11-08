@@ -1,0 +1,26 @@
+status: 0
+script: 4cac28df66688802
+source: f2c1a95d3c38032f
+---
+set | SystemError <slot wrapper '__setattr__' of 'type' objects> returned a result with an exception set | cause KeyError('from the key') | context KeyError('from the key') True
+True
+delete | SystemError <slot wrapper '__delattr__' of 'type' objects> returned a result with an exception set | cause KeyError('from the key') | context KeyError('from the key') True
+False
+__bases__ | SystemError <slot wrapper '__setattr__' of 'type' objects> returned a result with an exception set | cause KeyError('from the key') | context KeyError('from the key') True
+Root.__bases__ => (<class '__main__.B'>,)
+Sub.__mro__ => (<class '__main__.Sub'>, <class '__main__.Root'>, <class '__main__.B'>, <class 'object'>)
+set | went through
+['Root', 'Before', 'Sub', 'After', 'Under']
+limit [limit=0] => 0
+went through
+limit [limit=1] => 1
+went through
+limit [limit=2] => 2
+went through
+limit [limit=5] => 5
+went through
+limit [limit=18] => 18
+went through
+limit [limit=1000000000] => 1000000000
+SystemError depth > 100 [limit=1000000000] => True
+type(e).__name__ [limit=1000000000] => RecursionError

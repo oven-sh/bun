@@ -1,0 +1,503 @@
+status: 0
+script: ce7318a0d61547ea
+source: fbc0f0739ab4f468
+---
+levels [levels=1] => 1
+len(classes) [levels=1] => 3
+set(asked(classes, 'x')) [levels=1] => {'none'}
+set(asked(instances, 'x')) [levels=1] => {'none'}
+levels [levels=1] => 1
+set(asked(classes, 'x')) [levels=1] => {1}
+set(asked(instances, 'x')) [levels=1] => {1}
+levels [levels=1] => 1
+set(asked(classes, 'x')) [levels=1] => {2}
+set(asked(instances, 'x')) [levels=1] => {2}
+levels [levels=1] => 1
+middle.__name__ [levels=1] => A0
+sorted(set(asked(classes, 'x'))) [levels=1] => [2, 3]
+asked(classes, 'x').count(3) [levels=1] => 1
+asked(instances, 'x').count(3) [levels=1] => 1
+levels [levels=1] => 1
+set(asked(classes, 'x')) [levels=1] => {2}
+levels [levels=1] => 1
+set(asked(classes, 'x')) [levels=1] => {'none'}
+set(asked(instances, 'x')) [levels=1] => {'none'}
+e [levels=1] => object of type 'B0' has no len()
+levels [levels=1] => 1
+{len(o) for o in instances} [levels=1] => {7}
+{bool(o) for o in instances} [levels=1] => {True}
+levels [levels=1] => 1
+{len(o) for o in instances} [levels=1] => {0}
+{bool(o) for o in instances} [levels=1] => {False}
+levels [levels=1] => 1
+{bool(o) for o in instances} [levels=1] => {True}
+levels [levels=1] => 1
+{bool(o) for o in instances} [levels=1] => {True}
+{hasattr(o, '__len__') for o in instances} [levels=1] => {False}
+levels [levels=1] => 1
+{o.y for o in instances} [levels=1] => {'Y'}
+levels [levels=1] => 1
+set(asked(instances, 'y')) [levels=1] => {'none'}
+levels [levels=1] => 1
+{c(1, 2).made for c in classes} [levels=1] => {2}
+levels [levels=1] => 1
+{o() for o in instances} [levels=1] => {'called'}
+{callable(o) for o in instances} [levels=1] => {True}
+levels [levels=1] => 1
+{callable(o) for o in instances} [levels=1] => {False}
+levels [levels=2] => 2
+len(classes) [levels=2] => 5
+set(asked(classes, 'x')) [levels=2] => {'none'}
+set(asked(instances, 'x')) [levels=2] => {'none'}
+levels [levels=2] => 2
+set(asked(classes, 'x')) [levels=2] => {1}
+set(asked(instances, 'x')) [levels=2] => {1}
+levels [levels=2] => 2
+set(asked(classes, 'x')) [levels=2] => {2}
+set(asked(instances, 'x')) [levels=2] => {2}
+levels [levels=2] => 2
+middle.__name__ [levels=2] => B0
+sorted(set(asked(classes, 'x'))) [levels=2] => [2, 3]
+asked(classes, 'x').count(3) [levels=2] => 3
+asked(instances, 'x').count(3) [levels=2] => 3
+levels [levels=2] => 2
+set(asked(classes, 'x')) [levels=2] => {2}
+levels [levels=2] => 2
+set(asked(classes, 'x')) [levels=2] => {'none'}
+set(asked(instances, 'x')) [levels=2] => {'none'}
+e [levels=2] => object of type 'B1' has no len()
+levels [levels=2] => 2
+{len(o) for o in instances} [levels=2] => {7}
+{bool(o) for o in instances} [levels=2] => {True}
+levels [levels=2] => 2
+{len(o) for o in instances} [levels=2] => {0}
+{bool(o) for o in instances} [levels=2] => {False}
+levels [levels=2] => 2
+{bool(o) for o in instances} [levels=2] => {True}
+levels [levels=2] => 2
+{bool(o) for o in instances} [levels=2] => {True}
+{hasattr(o, '__len__') for o in instances} [levels=2] => {False}
+levels [levels=2] => 2
+{o.y for o in instances} [levels=2] => {'Y'}
+levels [levels=2] => 2
+set(asked(instances, 'y')) [levels=2] => {'none'}
+levels [levels=2] => 2
+{c(1, 2).made for c in classes} [levels=2] => {2}
+levels [levels=2] => 2
+{o() for o in instances} [levels=2] => {'called'}
+{callable(o) for o in instances} [levels=2] => {True}
+levels [levels=2] => 2
+{callable(o) for o in instances} [levels=2] => {False}
+levels [levels=5] => 5
+len(classes) [levels=5] => 11
+set(asked(classes, 'x')) [levels=5] => {'none'}
+set(asked(instances, 'x')) [levels=5] => {'none'}
+levels [levels=5] => 5
+set(asked(classes, 'x')) [levels=5] => {1}
+set(asked(instances, 'x')) [levels=5] => {1}
+levels [levels=5] => 5
+set(asked(classes, 'x')) [levels=5] => {2}
+set(asked(instances, 'x')) [levels=5] => {2}
+levels [levels=5] => 5
+middle.__name__ [levels=5] => A2
+sorted(set(asked(classes, 'x'))) [levels=5] => [2, 3]
+asked(classes, 'x').count(3) [levels=5] => 5
+asked(instances, 'x').count(3) [levels=5] => 5
+levels [levels=5] => 5
+set(asked(classes, 'x')) [levels=5] => {2}
+levels [levels=5] => 5
+set(asked(classes, 'x')) [levels=5] => {'none'}
+set(asked(instances, 'x')) [levels=5] => {'none'}
+e [levels=5] => object of type 'B4' has no len()
+levels [levels=5] => 5
+{len(o) for o in instances} [levels=5] => {7}
+{bool(o) for o in instances} [levels=5] => {True}
+levels [levels=5] => 5
+{len(o) for o in instances} [levels=5] => {0}
+{bool(o) for o in instances} [levels=5] => {False}
+levels [levels=5] => 5
+{bool(o) for o in instances} [levels=5] => {True}
+levels [levels=5] => 5
+{bool(o) for o in instances} [levels=5] => {True}
+{hasattr(o, '__len__') for o in instances} [levels=5] => {False}
+levels [levels=5] => 5
+{o.y for o in instances} [levels=5] => {'Y'}
+levels [levels=5] => 5
+set(asked(instances, 'y')) [levels=5] => {'none'}
+levels [levels=5] => 5
+{c(1, 2).made for c in classes} [levels=5] => {2}
+levels [levels=5] => 5
+{o() for o in instances} [levels=5] => {'called'}
+{callable(o) for o in instances} [levels=5] => {True}
+levels [levels=5] => 5
+{callable(o) for o in instances} [levels=5] => {False}
+levels [levels=30] => 30
+len(classes) [levels=30] => 61
+set(asked(classes, 'x')) [levels=30] => {'none'}
+set(asked(instances, 'x')) [levels=30] => {'none'}
+levels [levels=30] => 30
+set(asked(classes, 'x')) [levels=30] => {1}
+set(asked(instances, 'x')) [levels=30] => {1}
+levels [levels=30] => 30
+set(asked(classes, 'x')) [levels=30] => {2}
+set(asked(instances, 'x')) [levels=30] => {2}
+levels [levels=30] => 30
+middle.__name__ [levels=30] => B14
+sorted(set(asked(classes, 'x'))) [levels=30] => [2, 3]
+asked(classes, 'x').count(3) [levels=30] => 31
+asked(instances, 'x').count(3) [levels=30] => 31
+levels [levels=30] => 30
+set(asked(classes, 'x')) [levels=30] => {2}
+levels [levels=30] => 30
+set(asked(classes, 'x')) [levels=30] => {'none'}
+set(asked(instances, 'x')) [levels=30] => {'none'}
+levels [levels=200] => 200
+len(classes) [levels=200] => 401
+set(asked(classes, 'x')) [levels=200] => {'none'}
+set(asked(instances, 'x')) [levels=200] => {'none'}
+levels [levels=200] => 200
+set(asked(classes, 'x')) [levels=200] => {1}
+set(asked(instances, 'x')) [levels=200] => {1}
+levels [levels=200] => 200
+set(asked(classes, 'x')) [levels=200] => {2}
+set(asked(instances, 'x')) [levels=200] => {2}
+levels [levels=200] => 200
+middle.__name__ [levels=200] => B99
+sorted(set(asked(classes, 'x'))) [levels=200] => [2, 3]
+asked(classes, 'x').count(3) [levels=200] => 201
+asked(instances, 'x').count(3) [levels=200] => 201
+levels [levels=200] => 200
+set(asked(classes, 'x')) [levels=200] => {2}
+levels [levels=200] => 200
+set(asked(classes, 'x')) [levels=200] => {'none'}
+set(asked(instances, 'x')) [levels=200] => {'none'}
+depth [depth=10] => 10
+getattr(c, 'x', 'none') [depth=10] => none
+getattr(Root, 'x', 'none') [depth=10] => none
+depth [depth=10] => 10
+getattr(c, 'x', 'none') [depth=10] => none
+Root.x [depth=10] => 1
+depth [depth=10] => 10
+len(Root()) [depth=10] => 3
+hasattr(c(), '__len__') [depth=10] => False
+depth [depth=10] => 10
+getattr(Root, 'x', 'none') [depth=10] => none
+depth [depth=3000] => 3000
+getattr(c, 'x', 'none') [depth=3000] => none
+getattr(Root, 'x', 'none') [depth=3000] => none
+depth [depth=3000] => 3000
+getattr(c, 'x', 'none') [depth=3000] => none
+Root.x [depth=3000] => 1
+depth [depth=3000] => 3000
+len(Root()) [depth=3000] => 3
+hasattr(c(), '__len__') [depth=3000] => False
+depth [depth=3000] => 3000
+getattr(Root, 'x', 'none') [depth=3000] => none
+{'none'}
+{1}
+asked(chain, 'x').count(1) => 200
+asked(chain, 'x').count(2) => 201
+{1}
+[c.__name__ for c in P.__mro__] => ['P', 'Q', 'object']
+[c.__name__ for c in Q.__mro__] => ['Q', 'P', 'object']
+getattr(P, 'x', 'none') => none
+getattr(Q, 'x', 'none') => none
+getattr(P, 'x', 'none') => 1
+getattr(Q, 'x', 'none') => 1
+getattr(P, 'x', 'none') => 2
+getattr(Q, 'x', 'none') => 1
+getattr(P, 'x', 'none') => 2
+getattr(Q, 'x', 'none') => 2
+getattr(P, 'x', 'none') => none
+getattr(Q, 'x', 'none') => none
+set(asked(kept, 'x')) => {1}
+len(Base.__subclasses__()) => 2
+1
+late.x => 2
+set(asked(kept, 'x')) => {2}
+{'base'}
+sorted(set(asked(classes, 'x'))) => ['base', 'other']
+asked(classes, 'x').count('other') => 15
+sorted(set(asked(classes, 'x'))) => ['base again', 'other']
+asked(classes, 'x').count('other') => 15
+sorted(set(asked(classes, 'x'))) => ['base again', 'other again']
+asked(classes, 'x').count('other again') => 15
+['AXo', 'BAXo', 'CAXo', 'DBCAXo', 'EDBCAXo', 'FCAXo', 'GEDBFCAXo']
+Log.calls => ['A', 'B', 'D', 'E', 'G', 'C', 'D', 'E', 'G', 'F', 'G']
+names() => ['AYo', 'BAYo', 'CAYo', 'DBCAYo', 'EDBCAYo', 'FCAYo', 'GEDBFCAYo']
+fails [fails=('A', 1)] => ('A', 1)
+e [fails=('A', 1)] => no MRO for A
+Log.calls [fails=('A', 1)] => ['A']
+A.__bases__ [fails=('A', 1)] => (<class '__main__.Y'>,)
+names() [fails=('A', 1)] => ['AYo', 'BAYo', 'CAYo', 'DBCAYo', 'EDBCAYo', 'FCAYo', 'GEDBFCAYo']
+fails [fails=('D', 1)] => ('D', 1)
+e [fails=('D', 1)] => no MRO for D
+Log.calls [fails=('D', 1)] => ['A', 'B', 'D']
+A.__bases__ [fails=('D', 1)] => (<class '__main__.Y'>,)
+names() [fails=('D', 1)] => ['AYo', 'BAYo', 'CAYo', 'DBCAYo', 'EDBCAYo', 'FCAYo', 'GEDBFCAYo']
+fails [fails=('D', 2)] => ('D', 2)
+e [fails=('D', 2)] => no MRO for D
+Log.calls [fails=('D', 2)] => ['A', 'B', 'D', 'E', 'G', 'C', 'D']
+A.__bases__ [fails=('D', 2)] => (<class '__main__.Y'>,)
+names() [fails=('D', 2)] => ['AYo', 'BAYo', 'CAYo', 'DBCAYo', 'EDBCAYo', 'FCAYo', 'GEDBFCAYo']
+fails [fails=('G', 1)] => ('G', 1)
+e [fails=('G', 1)] => no MRO for G
+Log.calls [fails=('G', 1)] => ['A', 'B', 'D', 'E', 'G']
+A.__bases__ [fails=('G', 1)] => (<class '__main__.Y'>,)
+names() [fails=('G', 1)] => ['AYo', 'BAYo', 'CAYo', 'DBCAYo', 'EDBCAYo', 'FCAYo', 'GEDBFCAYo']
+fails [fails=('G', 3)] => ('G', 3)
+e [fails=('G', 3)] => no MRO for G
+Log.calls [fails=('G', 3)] => ['A', 'B', 'D', 'E', 'G', 'C', 'D', 'E', 'G', 'F', 'G']
+A.__bases__ [fails=('G', 3)] => (<class '__main__.Y'>,)
+names() [fails=('G', 3)] => ['AYo', 'BAYo', 'CAYo', 'DBCAYo', 'EDBCAYo', 'FCAYo', 'GEDBFCAYo']
+fails [fails=('F', 1)] => ('F', 1)
+e [fails=('F', 1)] => no MRO for F
+Log.calls [fails=('F', 1)] => ['A', 'B', 'D', 'E', 'G', 'C', 'D', 'E', 'G', 'F']
+A.__bases__ [fails=('F', 1)] => (<class '__main__.Y'>,)
+names() [fails=('F', 1)] => ['AYo', 'BAYo', 'CAYo', 'DBCAYo', 'EDBCAYo', 'FCAYo', 'GEDBFCAYo']
+fails [fails=('G', 4)] => ('G', 4)
+assigned
+Log.calls [fails=('G', 4)] => ['A', 'B', 'D', 'E', 'G', 'C', 'D', 'E', 'G', 'F', 'G', 'A', 'B', 'D', 'E', 'G', 'C', 'D', 'E', 'G', 'F', 'G']
+A.__bases__ [fails=('G', 4)] => (<class '__main__.Y'>,)
+names() [fails=('G', 4)] => ['AYo', 'BAYo', 'CAYo', 'DBCAYo', 'EDBCAYo', 'FCAYo', 'GEDBFCAYo']
+fails [fails=('G', 5)] => ('G', 5)
+assigned
+Log.calls [fails=('G', 5)] => ['A', 'B', 'D', 'E', 'G', 'C', 'D', 'E', 'G', 'F', 'G', 'A', 'B', 'D', 'E', 'G', 'C', 'D', 'E', 'G', 'F', 'G']
+A.__bases__ [fails=('G', 5)] => (<class '__main__.Y'>,)
+names() [fails=('G', 5)] => ['AYo', 'BAYo', 'CAYo', 'DBCAYo', 'EDBCAYo', 'FCAYo', 'GEDBFCAYo']
+Log.calls => ['C', 'D', 'E', 'G', 'F', 'G']
+names() => ['AYo', 'BAYo', 'CAYXo', 'DBCAYXo', 'EDBCAYXo', 'FCAYXo', 'GEDBFCAYXo']
+c.__name__ [c=Mid] => Mid
+derive(c, S1) [c=Mid] => fits
+| derive(c, S2) [c=Mid] => multiple bases have instance lay-out conflict
+c.__name__ [c=Low] => Low
+derive(c, S1) [c=Low] => fits
+| derive(c, S2) [c=Low] => multiple bases have instance lay-out conflict
+c.__name__ [c=Lower] => Lower
+derive(c, S1) [c=Lower] => fits
+| derive(c, S2) [c=Lower] => multiple bases have instance lay-out conflict
+c.__name__ [c=Own] => Own
+derive(c, S1) [c=Own] => fits
+| derive(c, S2) [c=Own] => multiple bases have instance lay-out conflict
+c.__name__ [c=UnderOwn] => UnderOwn
+derive(c, S1) [c=UnderOwn] => fits
+| derive(c, S2) [c=UnderOwn] => multiple bases have instance lay-out conflict
+c.__name__ [c=Both] => Both
+derive(c, S1) [c=Both] => fits
+| derive(c, S2) [c=Both] => multiple bases have instance lay-out conflict
+c.__name__ [c=Mid] => Mid
+c.__base__.__name__ [c=Mid] => S2
+derive(c, S1) [c=Mid] => multiple bases have instance lay-out conflict
+| derive(c, S2) [c=Mid] => fits
+c.__name__ [c=Low] => Low
+c.__base__.__name__ [c=Low] => Mid
+derive(c, S1) [c=Low] => multiple bases have instance lay-out conflict
+| derive(c, S2) [c=Low] => fits
+c.__name__ [c=Lower] => Lower
+c.__base__.__name__ [c=Lower] => Low
+derive(c, S1) [c=Lower] => multiple bases have instance lay-out conflict
+| derive(c, S2) [c=Lower] => fits
+c.__name__ [c=Own] => Own
+c.__base__.__name__ [c=Own] => Low
+derive(c, S1) [c=Own] => multiple bases have instance lay-out conflict
+| derive(c, S2) [c=Own] => fits
+c.__name__ [c=UnderOwn] => UnderOwn
+c.__base__.__name__ [c=UnderOwn] => Own
+derive(c, S1) [c=UnderOwn] => multiple bases have instance lay-out conflict
+| derive(c, S2) [c=UnderOwn] => fits
+c.__name__ [c=Both] => Both
+c.__base__.__name__ [c=Both] => Lower
+derive(c, S1) [c=Both] => multiple bases have instance lay-out conflict
+| derive(c, S2) [c=Both] => fits
+O2.__bases__ = (U,): assigned
+U.__bases__ = (O3,): assigned
+T.__bases__ = (O2,): assign(T, (O2,)) => assigned
+c.__name__ [c=Hooked] => T
+short(c.__bases__) [c=Hooked] => ['O2']
+short(c.__mro__) [c=Hooked] => ['T', 'O2', 'U', 'O3', 'object']
+short(c.__subclasses__()) [c=Hooked] => []
+c.__name__ [c=Hooked] => U
+short(c.__bases__) [c=Hooked] => ['O3']
+short(c.__mro__) [c=Hooked] => ['U', 'O3', 'object']
+short(c.__subclasses__()) [c=Hooked] => ['O2']
+c.__name__ [c=Hooked] => O1
+short(c.__bases__) [c=Hooked] => ['object']
+short(c.__mro__) [c=Hooked] => ['O1', 'object']
+short(c.__subclasses__()) [c=Hooked] => []
+c.__name__ [c=Hooked] => O2
+short(c.__bases__) [c=Hooked] => ['U']
+short(c.__mro__) [c=Hooked] => ['O2', 'U', 'O3', 'object']
+short(c.__subclasses__()) [c=Hooked] => ['T']
+c.__name__ [c=Hooked] => O3
+short(c.__bases__) [c=Hooked] => ['object']
+short(c.__mro__) [c=Hooked] => ['O3', 'object']
+short(c.__subclasses__()) [c=Hooked] => ['U']
+['neither', 'neither', 'neither', 'neither', 'neither']
+['neither', 'sequence', 'neither', 'sequence', 'sequence']
+['mapping', 'mapping', 'mapping', 'mapping', 'mapping']
+['mapping', 'mapping', 'mapping', 'mapping', 'mapping']
+Q2.__bases__ = (Q3,): assigned
+V.__bases__ = (Q2,): assign(V, (Q2,)) => assigned
+short(V.__mro__) => ['V', 'Q2', 'P', 'object']
+short(W.__mro__) => ['W', 'V', 'Q2', 'P', 'object']
+short(Q2.__mro__) => ['Q2', 'Q3', 'object']
+short(P.__subclasses__()) => []
+short(Q2.__subclasses__()) => ['V']
+read() => ['first', 'first', 'first', 'first']
+read() => ['first', 'first', 'first', 'first']
+['second', 'second', 'second', 'second']
+[None, None, None, None]
+['third', 'third']
+Q1.__bases__ = (Q3,): assigned
+V.__bases__ = (Q2,): assign(V, (Q2,)) => KeyError: 'the outer one fails'
+short(V.__bases__) => ['Q1']
+short(V.__mro__) => ['V', 'Q2', 'object']
+short(W.__mro__) => ['W', 'V', 'Q2', 'object']
+short(Q1.__mro__) => ['Q1', 'Q3', 'object']
+short(P.__subclasses__()) => []
+short(Q1.__subclasses__()) => ['V']
+short(Q2.__subclasses__()) => []
+read() => [None, None, None, None]
+read() => [None, None, None, None]
+['of Q2', 'of Q2', 'of Q2', 'of Q2']
+[None, None, None, None]
+from inside, KB.__bases__ = (KA,): TypeError: a __bases__ item causes an inheritance cycle
+KA.__bases__ = (KB,): assign(KA, (KB,)) => assigned
+short(KA.__bases__) => ['KB']
+short(KB.__bases__) => ['K2']
+short(KA.__mro__) => ['KA', 'KB', 'K2', 'object']
+short(KB.__mro__) => ['KB', 'K2', 'object']
+short(Root.__subclasses__()) => ['C0']
+short(last.__bases__) => ['C10', 'C10']
+Twice.calls => 13
+short(last.__mro__[-3:]) => ['Root', 'Second', 'object']
+Twice.calls => 2
+short(Root.__subclasses__()) => ['C0', 'C10']
+short(Second.__subclasses__()) => ['Root', 'C10']
+E1 TypeError: a __bases__ item causes an inheritance cycle
+short(N.__mro__) [target=Early] => ['N', 'E1', 'E2', 'object']
+short(target.__bases__) [target=Early] => ['object']
+E2 TypeError: Cannot extend an incomplete type 'N'
+short(N.__mro__) [target=Early] => ['N', 'E1', 'E2', 'object']
+short(target.__bases__) [target=Early] => ['object']
+R2.__bases__ = (R3,): assigned
+the key reads first first ['T', 'R2', 'P', 'object']
+the key reads second second
+T.__bases__ = (R2,): assign(T, (R2,)) => assigned
+short(T.__mro__) => ['T', 'R2', 'P', 'object']
+short(U.__mro__) => ['U', 'T', 'R2', 'P', 'object']
+T.x => second
+U.x => second
+T().x => second
+T.x => third
+U.x => third
+T().x => third
+A.__bases__ = others: assigned
+A.__bases__ = (B,): assigned
+A.__bases__ = others: assign(A, others) => KeyError: 'the first one fails'
+short(A.__bases__) => ['B']
+short(A.__mro__) => ['A', 'G1', 'object']
+short(S.__mro__) => ['S', 'A', 'G1', 'object']
+['none', 'none', 'none']
+['of G1', 'of G1', 'of G1']
+['of G1 again', 'of G1 again', 'of G1 again']
+['none', 'none', 'none']
+A.__bases__ = (B, G2): assign(A, (B, G2)) => assigned
+short(A.__mro__) => ['A', 'B', 'G2', 'object']
+short(S.__mro__) => ['S', 'A', 'B', 'G2', 'object']
+read() => ['second', 'second', 'second']
+['third', 'third', 'third']
+['none', 'none', 'none']
+A.__bases__ = others: assigned
+A.__bases__ = (B,): assigned
+A.__bases__ = others: assign(A, others) => KeyError: 'the first one fails'
+G1.__bases__ = (G2,): assign(G1, (G2,)) => assigned
+short(A.__bases__) => ['B']
+short(A.__mro__) => ['A', 'B', 'E', 'object']
+short(S.__mro__) => ['S', 'A', 'B', 'E', 'object']
+short(B.__subclasses__()) => []
+short(G1.__subclasses__()) => ['A']
+B.__bases__ = (F,): assign(B, (F,)) => assigned
+short(A.__mro__) => ['A', 'B', 'E', 'object']
+short(B.__mro__) => ['B', 'F', 'object']
+short(E.__subclasses__()) => []
+['first', 'first', 'first']
+['second', 'second', 'second']
+['none', 'none', 'none']
+short(Top.__subclasses__()) => ['L0']
+short(chain[1].__bases__) => ['Top']
+short(H2.__subclasses__()) => []
+Counted.calls => 15
+short(chain[-1].__mro__[-4:]) => ['L0', 'Top', 'H2', 'object']
+another from inside
+  from inside, ['G2'] assigned
+assigned
+  A ['G2'] ['A', 'G2', 'object'] ['S']
+  B ['object'] ['B', 'object'] ['A']
+  G1 ['object'] ['G1', 'object'] []
+  G2 ['object'] ['G2', 'object'] ['A']
+  S ['A'] ['S', 'A', 'G2', 'object'] []
+another from inside, and the outer one fails
+  from inside, ['G2'] assigned
+KeyError: 'fails'
+  A ['G2'] ['A', 'G2', 'object'] ['S']
+  B ['object'] ['B', 'object'] ['A']
+  G1 ['object'] ['G1', 'object'] []
+  G2 ['object'] ['G2', 'object'] ['A']
+  S ['A'] ['S', 'A', 'G2', 'object'] []
+the old base again from inside
+  from inside, ['B'] assigned
+assigned
+  A ['B'] ['A', 'B', 'object'] ['S']
+  B ['object'] ['B', 'object'] ['A']
+  G1 ['object'] ['G1', 'object'] []
+  G2 ['object'] ['G2', 'object'] []
+  S ['A'] ['S', 'A', 'B', 'object'] []
+the old base again from inside, and the outer one fails
+  from inside, ['B'] assigned
+KeyError: 'fails'
+  A ['B'] ['A', 'B', 'object'] ['S']
+  B ['object'] ['B', 'object'] ['A']
+  G1 ['object'] ['G1', 'object'] []
+  G2 ['object'] ['G2', 'object'] []
+  S ['A'] ['S', 'A', 'B', 'object'] []
+the one from inside fails
+  from inside, ['G2'] KeyError: 'fails'
+assigned
+  A ['G1'] ['A', 'G1', 'object'] ['S']
+  B ['object'] ['B', 'object'] []
+  G1 ['object'] ['G1', 'object'] ['A']
+  G2 ['object'] ['G2', 'object'] []
+  S ['A'] ['S', 'A', 'G1', 'object'] []
+three deep, the third by the tuple of the first, and the first fails
+  from inside, ['G1'] assigned
+  from inside, ['B'] assigned
+KeyError: 'fails'
+  A ['B'] ['A', 'G1', 'object'] ['S']
+  B ['object'] ['B', 'object'] []
+  G1 ['object'] ['G1', 'object'] ['A']
+  G2 ['object'] ['G2', 'object'] []
+  S ['A'] ['S', 'A', 'G1', 'object'] []
+three deep, the third by the tuple of the first
+  from inside, ['G1'] assigned
+  from inside, ['B', 'G2'] assigned
+assigned
+  A ['G1'] ['A', 'G1', 'object'] ['S']
+  B ['object'] ['B', 'object'] []
+  G1 ['object'] ['G1', 'object'] ['A']
+  G2 ['object'] ['G2', 'object'] []
+  S ['A'] ['S', 'A', 'G1', 'object'] []
+bases that are kept, dropped and new at once
+assigned
+  from inside, ['G2', 'B'] assigned
+KeyError: 'fails'
+  A ['G2', 'B'] ['A', 'G2', 'B', 'object'] ['S']
+  B ['object'] ['B', 'object'] ['A']
+  G1 ['object'] ['G1', 'object'] []
+  G2 ['object'] ['G2', 'object'] ['A']
+  S ['A'] ['S', 'A', 'G2', 'B', 'object'] []
+an assignment that fails leaves the class in its place
+assign(A, (G1,)) => KeyError: 'fails'
+short(B.__subclasses__()) => ['A', 'Later']
+assign(A, (B, G1)) => assigned
+short(B.__subclasses__()) => ['Later', 'A']

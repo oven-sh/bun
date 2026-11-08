@@ -1,19 +1,19 @@
 status: 0
 oracle: none
 ---
-the key in C1 | Root.__new__ = f | set |
+the key in C1 | Root.__new__ = f | SystemError: <slot wrapper '__setattr__' of 'type' objects> returned a result with an exception set |
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | ['Root', 'Before', 'Mid', 'Later']
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | ['Root', 'Before', 'Mid', 'Later']
     Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid']
     Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
     del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
-the key in C1 | Root.__new__ = object.__new__ | set |
+the key in C1 | Root.__new__ = object.__new__ | SystemError: <slot wrapper '__setattr__' of 'type' objects> returned a result with an exception set |
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
     Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
     Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
     del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
-the key in C1 | Mid.__new__ = f | set |
+the key in C1 | Mid.__new__ = f | SystemError: <slot wrapper '__setattr__' of 'type' objects> returned a result with an exception set |
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | ['Mid', 'Later']
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | ['Mid', 'Later']
     Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Mid']
@@ -31,13 +31,13 @@ the key in C1 | C1.__new__ = object.__new__ | KeyError: 'once' |
     Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
     Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
     del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
-the key in C1 | Root.__bases__ = (object,) | assigned |
+the key in C1 | Root.__bases__ = (object,) | SystemError: <slot wrapper '__setattr__' of 'type' objects> returned a result with an exception set |
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
     Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
     Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
     del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
-the key in C1 | Mid.__bases__ = (Root,) | assigned |
+the key in C1 | Mid.__bases__ = (Root,) | SystemError: <slot wrapper '__setattr__' of 'type' objects> returned a result with an exception set |
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
     Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
@@ -67,13 +67,13 @@ the key in C1 | Root.x = 1 | set | not asked
     Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
     Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
     del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
-the key in Mid | Root.__new__ = f | set |
+the key in Mid | Root.__new__ = f | SystemError: <slot wrapper '__setattr__' of 'type' objects> returned a result with an exception set |
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | ['Root', 'Before', 'Later']
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | ['Root', 'Before', 'Later']
     Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before']
     Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
     del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
-the key in Mid | Root.__new__ = object.__new__ | set |
+the key in Mid | Root.__new__ = object.__new__ | SystemError: <slot wrapper '__setattr__' of 'type' objects> returned a result with an exception set |
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
     Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
@@ -97,7 +97,7 @@ the key in Mid | C1.__new__ = object.__new__ | set | not asked
     Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
     Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'Beside', 'After']
     del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
-the key in Mid | Root.__bases__ = (object,) | assigned |
+the key in Mid | Root.__bases__ = (object,) | SystemError: <slot wrapper '__setattr__' of 'type' objects> returned a result with an exception set |
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
     ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
     Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
@@ -133,7 +133,7 @@ the key in Mid | Root.x = 1 | set | not asked
     Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
     Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
     del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
-two ways, the key in D | it raises | set |
+two ways, the key in D | it raises | SystemError: <slot wrapper '__setattr__' of 'type' objects> returned a result with an exception set |
     ['Root', 'A', 'B', 'D', 'E'] | ['Root', 'A', 'TypeError: B() takes no arguments', 'TypeError: D() takes no arguments', 'TypeError: E() takes no arguments'] | ['Root', 'A', 'Root', 'A']
 two ways, the key in D | it says yes | set |
     ['Root', 'A', 'B', 'D', 'E'] | ['Root', 'A', 'B', 'D', 'E'] | ['Root', 'A', 'B', 'D', 'E', 'Root', 'A', 'B', 'D', 'E']

@@ -1,0 +1,45 @@
+status: 0
+oracle: none
+---
+Root.x = 1 1 none
+Root.__len__ = f 3 False
+Root.__new__ = f Root C
+del False False C
+before neither
+Sequence.register(Root) sequence
+Mapping.register(Root) mapping
+Root.__bases__ = (Second,) (<class '__main__.Second'>,) <class '__main__.Second'> 2001 [<class '__main__.chain.<locals>.Root'>]
+Root.__bases__ = (First,) no MRO (<class '__main__.Second'>,) <class '__main__.Second'> 301 [] [<class '__main__.chain.<locals>.Root'>]
+A ['B'] a __bases__ item causes an inheritance cycle
+A ['C'] a __bases__ item causes an inheritance cycle
+A ['X', 'C'] a __bases__ item causes an inheritance cycle
+X ['B'] a __bases__ item causes an inheritance cycle
+A ['A'] a __bases__ item causes an inheritance cycle
+A ['X'] assigned
+A ['object'] assigned
+['object'] ['X', 'A'] ['object']
+from inside, B.__bases__ = (A,): TypeError: a __bases__ item causes an inheritance cycle
+A.__bases__ = (B,): assigned
+['B'] ['O2'] ['A', 'B', 'O2', 'object'] ['B', 'O2', 'object']
+A.__bases__ = (O1,): assigned ['A', 'O1', 'object'] ['B', 'O2', 'object']
+from inside, B.__bases__ = (A,): assigned
+A.__bases__ = (X,): KeyError: 'the outer one fails'
+['X'] ['A'] ['A', 'X', 'object'] ['B', 'A', 'X', 'object'] ['S', 'B'] []
+X.__del__ of A
+X.__del__ of S
+A.__bases__ = (X,): assigned ['S', 'A', 'X', 'object']
+B.__bases__ = (A,): assigned ['B', 'A', 'X', 'object']
+from inside that, C5.__bases__ = (C3,): assigned
+from inside, C6.__bases__ = (C4,): KeyError: 'the second fails'
+C6.__bases__ = (C5,): assigned
+C2 ['object'] ['C2', 'object'] [] object
+C3 ['C6'] ['C3', 'C6', 'C4', 'object'] ['C5'] C6
+C4 ['object'] ['C4', 'object'] ['C6'] object
+C5 ['C3'] ['C5', 'C3', 'C6', 'C4', 'object'] [] C3
+C6 ['C4'] ['C6', 'C4', 'object'] ['C3'] C4
+[None, 'C4', 'C4', 'C5', 'C4'] [True, True, True, True, True]
+[None, 'C4 changed', 'C4 changed', 'C5 changed', 'C4 changed'] [True, True, True, True, True]
+[None, 'C4 changed', 'C4 changed', 'C4 changed', 'C4 changed'] [True, True, True, True, True]
+[None, None, None, None, None] [True, True, True, True, True]
+['C2', None, None, None, None] [True, True, True, True, True]
+END

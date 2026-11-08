@@ -1200,8 +1200,6 @@ void JSMockFunction::didInstall(JSObject* target, const Identifier& key, JSValue
     m_spyAttributes = attributes;
     if (original)
         m_spyOriginal.set(vm(), this, original);
-    else
-        m_spyOriginal.clear();
 }
 
 static bool holds(SlotContent content, JSMockFunction* spy)

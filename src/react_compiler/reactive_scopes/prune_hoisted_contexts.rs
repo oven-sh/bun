@@ -177,15 +177,14 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                             // References to hoisted functions are now "safe" as
                             // variable assignments have finished.
                             state.uninitialized.remove(lvalue_id);
-                            // Not in upstream (facebook/react#37834, open, has the assignment only): the
-                            // scope's `let` must be assigned. An assignment isn't hoisted, so a function
-                            // that is declared below this one and called above it would call `undefined`.
+                            // Not in upstream: a function declared below could run above this assignment.
                             if !state.pending_functions.is_empty() {
                                 return Err(cold_todo(
                                     "[PruneHoistedContexts] Rewrite hoisted function references",
                                     instruction.loc,
                                 ));
                             }
+                            // Not in upstream (facebook/react#37834, open): the scope's `let` must be assigned.
                             lvalue.kind = InstructionKind::Reassign;
                         }
                     } else {

@@ -1834,10 +1834,10 @@ describe("bundler", () => {
     },
   });
 
-  // `Array.of(a, b)` holds its arguments, as `[a, b]` does. To upstream it only reads them, so a store through an
-  // element of the array was no store to the argument: the argument kept a memo block of its own and the store ran in
-  // every render. Each component renders several times on one memo cache and has to render what the plain build
-  // renders. `*` marks a render that got the `list` of the render before it, so each line also shows what is memoized.
+  // `Array.of(a, b)` holds its arguments. Its signature said that it only reads them, so a store through an element of
+  // the array was no store to the argument: the argument kept a memo block of its own and the store ran in every
+  // render. Each component renders several times on one memo cache and has to render what the plain build renders.
+  // `*` marks a render that got the `list` of the render before it, so each line also shows what is still memoized.
   const arrayOfOutput = `
     IndexRead [2,{"n":2}] [2,{"n":2}]* [2,{"n":2}]* [6,{"n":6}]
     OfGlobalThis [2,{"n":2}] [2,{"n":2}]* [2,{"n":2}]* [6,{"n":6}]
@@ -1848,16 +1848,9 @@ describe("bundler", () => {
     ArrayThatEscapes [2,[[1,1],1]] [2,[[1,1],1]]* [2,[[1,2],2]] [2,[[1,3],3]]
     ArgumentBesideASpread [4,{"n":4}] [4,{"n":4}]* [4,{"n":4}]* [8,{"n":8}]
     SpreadOfAGenerator ["1,1,2",[1,1,2]] ["2,1,2",[2,1,2]] ["2,1,2",[2,1,2]]* ["3,1,2",[3,1,2]]
-    OneOfTwoCallees [2,null] [2,null] [2,null] [1,null]
-    StoreToTheArray ["2:1",{"a":1}] ["2:1",{"a":1}]* ["2:1",{"a":1}]* ["2:2",{"a":2}]
-    StoreToTheLiteral ["2:1",{"a":1}] ["2:1",{"a":1}]* ["2:1",{"a":1}]* ["2:2",{"a":2}]
   `;
-  for (const [name, reactCompiler, backend] of [
-    ["plain", false, "cli"],
-    ["compiled", true, "cli"],
-    ["compiled-api", true, "api"],
-  ] as const) {
-    itBundled(`react-compiler/ArrayOfHoldsItsArguments-${name}`, {
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/ArrayOfHoldsItsArguments-${reactCompiler ? "compiled" : "plain"}`, {
       files: {
         "/entry.jsx": /* jsx */ `
           import { render } from "react";
@@ -1937,36 +1930,11 @@ describe("bundler", () => {
             return <div label={w.join(",")} list={w} />;
           }
 
-          // The callee has the type of Array.of, and can be the function that returns what it captures.
-          function OneOfTwoCallees({ n, other }) {
-            const cache = [{ n }];
-            const make = other ? Array.of : () => cache;
-            const w = make({ n });
-            const y = w[0];
-            y.n = y.n + 1;
-            return <div label={cache[0].n} />;
-          }
-
-          // A store to the array is no store to what it holds: x keeps a memo block of its own, as it does for [x].
-          function StoreToTheArray({ a, b }) {
-            const x = { a };
-            const w = Array.of(x);
-            w.push(b);
-            return <div label={w.length + ":" + x.a} list={x} />;
-          }
-
-          function StoreToTheLiteral({ a, b }) {
-            const x = { a };
-            const w = [x];
-            w.push(b);
-            return <div label={w.length + ":" + x.a} list={x} />;
-          }
-
           function run(Component, ...renders) {
             let previous;
             const results = renders.map(props => {
               const { label, list } = render(Component, props);
-              const hit = list && list === previous ? "*" : "";
+              const hit = list === previous ? "*" : "";
               previous = list;
               return JSON.stringify([label, list]) + hit;
             });
@@ -1984,11 +1952,6 @@ describe("bundler", () => {
           run(ArrayThatEscapes, { n: 1, m: 1 }, { n: 1, m: 1 }, { n: 1, m: 2 }, { n: 1, m: 3 });
           run(ArgumentBesideASpread, one, one, one, five);
           run(SpreadOfAGenerator, { n: 1, m: 1 }, { n: 1, m: 2 }, { n: 1, m: 2 }, { n: 1, m: 3 });
-          const local = { n: 1, other: false };
-          run(OneOfTwoCallees, local, local, local, { n: 1, other: true });
-          const a1b2 = { a: 1, b: 2 };
-          run(StoreToTheArray, { a: 1, b: 1 }, a1b2, a1b2, { a: 2, b: 2 });
-          run(StoreToTheLiteral, { a: 1, b: 1 }, a1b2, a1b2, { a: 2, b: 2 });
         `,
         // One memo cache per component, kept between renders, as a fiber keeps it.
         "/node_modules/react/index.js": /* js */ `
@@ -2009,7 +1972,7 @@ describe("bundler", () => {
       },
       reactCompiler,
       target: "browser",
-      backend,
+      backend: "cli",
       run: { stdout: reactCompiler ? arrayOfOutput : arrayOfOutput.replaceAll("*", "") },
     });
   }

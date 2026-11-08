@@ -2388,7 +2388,7 @@ impl Data {
                             break 'brk PrimitiveType::String;
                         }
 
-                        if left == PrimitiveType::Bigint || right == PrimitiveType::Bigint {
+                        if left == PrimitiveType::Bigint && right == PrimitiveType::Bigint {
                             break 'brk PrimitiveType::Bigint;
                         }
 

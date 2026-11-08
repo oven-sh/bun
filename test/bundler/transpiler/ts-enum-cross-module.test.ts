@@ -11,7 +11,7 @@ describe.concurrent("enum member referencing an enum from another module", () =>
       "enum1.ts": `export enum Enum1 { K1 = "V", K2 = "W" }`,
       "main.ts": `
         import { Enum1 } from "./enum1";
-        enum Enum2 { K2 = Enum1.K1, K3 = Enum1.K1 + Enum1.K2 }
+        enum Enum2 { K2 = Enum1.K1, K3 = Enum1.K1 + Enum1.K2, K4 = 1n + Enum1.K1 }
         console.log(JSON.stringify({
           entries: Object.entries(Enum2),
           keys: Object.keys(Enum2),
@@ -31,9 +31,10 @@ describe.concurrent("enum member referencing an enum from another module", () =>
       entries: [
         ["K2", "V"],
         ["K3", "VW"],
+        ["K4", "1V"],
       ],
-      keys: ["K2", "K3"],
-      values: ["V", "VW"],
+      keys: ["K2", "K3", "K4"],
+      values: ["V", "VW", "1V"],
     });
     expect(exitCode).toBe(0);
   });

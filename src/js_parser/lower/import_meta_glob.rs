@@ -282,8 +282,7 @@ pub(crate) struct Literals<'a> {
     options: Options<'a>,
 }
 
-/// What a call is in the source. Only the call as written tells: `bun run` and `bun build` fold and inline different
-/// things, and after the visit `import.meta["glob"]()` and `Object["keys"]()` can look the same.
+/// A call as it is written. The visit folds `import.meta["glob"]` and `Object["keys"]` only in some modes.
 #[derive(Clone, Copy)]
 pub(crate) enum CallAsWritten<'a> {
     Other,
@@ -978,8 +977,7 @@ fn is_import_meta_glob(expr: Expr) -> bool {
     )
 }
 
-/// Whether the `Object` of an `Object.keys()` call is the global. `call.target` must already be visited, and was
-/// `CallAsWritten::ObjectKeys` before that.
+/// Confirms after the visit that a `CallAsWritten::ObjectKeys` call is on the global `Object`.
 pub(crate) fn is_object_keys_call(symbols: &[js_ast::Symbol], call: &E::Call) -> bool {
     let ExprData::EDot(dot) = call.target.data else {
         return false;

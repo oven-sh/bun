@@ -329,7 +329,10 @@ describe.concurrent("WriteStream destroy()", () => {
         await once(warmup, "close");
         // On Linux the FileSink closes its descriptor on another thread, after "close". A close that
         // came after the loop below would free a descriptor, and one of the streams would get a FileSink.
-        while (sinkFds.some(isOpen)) await new Promise(resolve => setImmediate(resolve));
+        for (const deadline = performance.now() + 10_000; sinkFds.some(isOpen); ) {
+          if (performance.now() > deadline) throw new Error("open after 'close': fd " + sinkFds.filter(isOpen));
+          await new Promise(resolve => setImmediate(resolve));
+        }
 
         const held = [];
         let code;

@@ -1652,7 +1652,6 @@ class TestNode {
     const next = new TestNode(this.name, this.parent, kDefaultOptions, false, false);
     next.options = this.options;
     next.ownTags = this.ownTags;
-    next.filePath = this.filePath;
     next.expectFailure = this.expectFailure;
     if (todo !== false) next.todoFlag = true;
     if (typeof todo === "string") next.message = todo;
@@ -2570,7 +2569,7 @@ function currentCollectionParent(): TestNode {
   return getRootNode();
 }
 
-// `todo`: the todo directive of the declaration (its message, or true), which t.todo() and t.skip() overwrite.
+// `todo`: the todo directive that a run() child reports (its message, or true). t.todo() and t.skip() overwrite it.
 function createTopLevelTestRunner(current: TestNode, fn: TestFn, declaredTodo = false, todo: string | boolean = false) {
   // bun:test invokes this with a `done` callback because the function declares
   // one parameter.
@@ -2677,8 +2676,7 @@ function addTest(
     }
     const register = effectiveMode === "todo" ? test.todo : test.skip;
     // Node runs todo bodies; bun:test only does so under --todo.
-    const body =
-      effectiveMode === "todo" ? createTopLevelTestRunner(node, fn, true, node.message ?? true) : kDefaultFunction;
+    const body = effectiveMode === "todo" ? createTopLevelTestRunner(node, fn, true) : kDefaultFunction;
     if (passOptions !== undefined) {
       register(name, body, passOptions);
     } else {

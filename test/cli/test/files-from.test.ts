@@ -161,12 +161,15 @@ test("--files-from: a list that holds only a byte order mark lists no test files
   expect(exitCode).toBe(1);
 });
 
-test("--files-from: U+FEFF after the start of the list is a character of the name", async () => {
+test.each([
+  ["on a later line", `${mark}a.test.js\n${mark}b.test.js\n`],
+  ["after ./ on the first line", `./${mark}b.test.js\na.test.js\n`],
+])("--files-from: U+FEFF after the start of the list is a character of the name: %s", async (_, list) => {
   using dir = tempDir("files-from-mark-in-name", {
     "a.test.js": passes("alpha"),
     [`${mark}b.test.js`]: passes("bravo"),
     "c.test.js": passes("charlie"),
-    "list.txt": `${mark}a.test.js\n${mark}b.test.js\n`,
+    "list.txt": list,
   });
   const { out, exitCode } = await run(String(dir), "--files-from", "list.txt");
   expect(out).toContain("(pass) alpha");

@@ -1068,7 +1068,7 @@ impl TestFailure {
     /// Fold in a `ZigException` that `print_error_instance_body` has already
     /// populated. A test can throw more than once (body, then `afterEach`);
     /// the first name/message win and every stack is appended.
-    /// `names_failure`: this exception may give the name and the message, where they are still empty.
+    /// With `names_failure` false the name and message stay as they are.
     fn record(
         slot: &mut Option<TestFailure>,
         exception: &jsc::ZigException<'_>,
@@ -1148,8 +1148,7 @@ impl TestFailure {
         }
     }
 
-    /// A module that can't be found or parsed throws a `ResolveMessage` or a `BuildMessage`, alone or as members of an
-    /// `AggregateError`. They are printed as log messages, with no `ZigException`. `names_failure`: as for `record`.
+    /// A `ResolveMessage` or a `BuildMessage` is printed as a log message, with no `ZigException`.
     #[optimize(size)]
     fn record_log_message(
         slot: &mut Option<TestFailure>,
@@ -1172,9 +1171,7 @@ impl TestFailure {
     }
 }
 
-/// What a printed error is, by how strongly it holds the name and message of a failure. One report can print several
-/// errors (an `AggregateError`). The name and message are those of its first exception. With no exception they are
-/// those of its first build or resolve error, and with neither, of its first warning.
+/// Which error of one report names the failure: an exception before a build or resolve error, and that before a warning.
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 enum Headline {
     Warning,
@@ -1191,9 +1188,7 @@ pub(crate) struct FailureCapture {
 }
 
 impl FailureCapture {
-    /// # Safety
-    /// `slot` must be valid until the capture is dropped, with no reference to it held across a call of the error
-    /// printer.
+    /// Safety: `slot` outlives the capture, and no reference to it is held while the error printer runs.
     pub(crate) unsafe fn new(slot: *mut Option<TestFailure>) -> Self {
         Self {
             slot,
@@ -1212,11 +1207,9 @@ impl FailureCapture {
     /// `VirtualMachine::on_print_error` thunk.
     #[optimize(size)]
     pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, printed: PrintedError<'_, '_>) {
-        // SAFETY: `ctx` is the `FailureCapture` that `on_uncaught_exception` installed for the duration of one
-        // `print_error` call; single-threaded, no other borrow live.
+        // SAFETY: `ctx` is the capture that `on_uncaught_exception` installed for this print; nothing else borrows it.
         let this = unsafe { &mut *ctx.cast::<FailureCapture>() };
-        // SAFETY: per `new`. This `&mut` ends with the call, which runs no JS. A report that starts inside this
-        // print has its own capture, which can write the same slot between two calls of this one.
+        // SAFETY: per `new`. This call runs no JS, so the `&mut` ends before a nested report writes the same slot.
         let slot = unsafe { &mut *this.slot };
         let rank = match printed {
             PrintedError::Exception(_) => Headline::Exception,

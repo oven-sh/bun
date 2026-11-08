@@ -64,9 +64,9 @@ pub type ExceptionList = Vec<crate::exception_list::JsException>;
 #[derive(Clone, Copy)]
 pub enum PrintedError<'a, 'e> {
     Exception(&'a ZigException<'e>),
-    /// A `BuildMessage` prints from its `Msg`, so it has no `ZigException`.
+    /// Prints from its `Msg`, so it has no `ZigException`.
     BuildMessage(&'a bun_ast::Msg),
-    /// A `ResolveMessage` prints from its `Msg`, so it has no `ZigException`.
+    /// As `BuildMessage`.
     ResolveMessage(&'a bun_ast::Msg),
 }
 
@@ -363,11 +363,7 @@ pub struct VirtualMachine {
     /// `bun test`: what is running is a test or a hook of Vitest's. There, an error that a `process` listener takes is
     /// not the runner's, and arrays of different lengths are never equal.
     pub is_running_vitest_entry: bool,
-    /// When set, the error printer calls this with each error it reports while
-    /// side effects are allowed, whether or not it writes the error, so
-    /// observers can read name/message/stack without re-running the formatter.
-    /// Every leaf of the printer reports through `report_printed_error`.
-    /// Installed by `bun test --reporter=junit` around `run_error_handler`.
+    /// `report_printed_error` calls this with each error the printer reports. `bun test --reporter=junit` sets it.
     pub on_print_error: Option<fn(*mut c_void, PrintedError<'_, '_>)>,
     pub on_print_error_ctx: *mut c_void,
     pub(crate) is_handling_uncaught_exception: bool,

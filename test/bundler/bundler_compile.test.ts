@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { rmSync } from "fs";
+import { rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
@@ -2128,6 +2128,61 @@ describe("compile warns for a native addon that the executable loads from disk",
     });
     const output = await build(String(dir));
     expect(output).not.toContain("warn:");
+  }, 30_000);
+
+  test("a package behind a symlink is one package, and its own string literal load counts", async () => {
+    // The isolated linker and pnpm install into a store and link `node_modules/<name>` to it. The entry of the
+    // package resolves through the link, the files it imports resolve under the real path.
+    using dir = tempDir("compile-addon-symlink", {
+      "node_modules/.store/fakeaddon/package.json": fakeaddon["node_modules/fakeaddon/package.json"],
+      "node_modules/.store/fakeaddon/index.js": fakeaddon["node_modules/fakeaddon/index.js"],
+      "node_modules/.store/fakeaddon/lib/a.js": fakeaddon["node_modules/fakeaddon/lib/a.js"],
+      "node_modules/.store/fakeaddon/lib/b.js": fakeaddon["node_modules/fakeaddon/lib/b.js"],
+      "node_modules/.store/fakeaddon/prebuilds/linux-x64/node.napi.node": "not a real addon",
+      "node_modules/.store/embedded/package.json": JSON.stringify({
+        name: "embedded",
+        version: "1.0.0",
+        main: "index.js",
+      }),
+      "node_modules/.store/embedded/index.js": /* js */ `
+        require("./lib/a.js");
+        try {
+          module.exports = require("./prebuilds/linux-x64/node.napi.node");
+        } catch {
+          ${loaderJs}
+        }
+      `,
+      "node_modules/.store/embedded/lib/a.js": `module.exports = 1;`,
+      "node_modules/.store/embedded/prebuilds/linux-x64/node.napi.node": "not a real addon",
+      "index.js": `console.log(typeof require("fakeaddon"), typeof require("embedded"));`,
+    });
+    symlinkSync(join(".store", "fakeaddon"), join(String(dir), "node_modules", "fakeaddon"), "junction");
+    symlinkSync(join(".store", "embedded"), join(String(dir), "node_modules", "embedded"), "junction");
+    const output = await build(String(dir));
+    expect(output).toContain("warn: fakeaddon ships a native addon");
+    expect(output).toContain(`--asset ${join("node_modules", "fakeaddon", "prebuilds")} (needs --aot)`);
+    expect(output).not.toContain("embedded ships");
+    expect(output.match(/warn: /g)).toHaveLength(1);
+  }, 30_000);
+
+  test("no warning for the project's own build files", async () => {
+    using dir = tempDir("compile-addon-own-project", {
+      "package.json": JSON.stringify({ name: "myapp", version: "1.0.0" }),
+      "CMakeLists.txt": `project(myapp)`,
+      "binding.gyp": `{ "targets": [] }`,
+      "src/index.js": `console.log(require("./lib.js"));`,
+      "src/lib.js": `module.exports = 1;`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "src/index.js", "--outfile", "app"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).not.toContain("warn:");
+    expect(exitCode).toBe(0);
   }, 30_000);
 
   test("no warning for a package without a native addon", async () => {

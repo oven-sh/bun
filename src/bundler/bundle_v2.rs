@@ -4322,16 +4322,41 @@ pub mod bv2_impl {
             let loaders = self.graph.input_files.items_loader();
             let package_jsons = self.graph.input_files.items_package_json();
             let import_records = self.graph.ast.items_import_records();
-            let package_key =
-                |index: usize| package_jsons[index].map(|pj| core::ptr::from_ref(pj).addr());
+            let generation = self.transpiler.resolver.generation;
+            let top_level_dir = Fs::FileSystem::get().top_level_dir();
 
-            let mut packages: ArrayHashMap<usize, Package> = ArrayHashMap::new();
+            // The resolver parses one `PackageJSON` per spelling of a directory. A package reached
+            // through a symlink (pnpm, the isolated linker, a workspace) has one for the link and
+            // one for its target, so the real path of the package directory is the key.
+            let mut package_key = |index: usize| -> Option<&'static [u8]> {
+                let package_json = package_jsons[index]?;
+                let dir = self
+                    .transpiler
+                    .resolver
+                    .read_dir_info_ignore_error(package_json.source.path.source_dir())?;
+                let real = if dir.abs_real_path.is_empty() {
+                    dir.abs_path
+                } else {
+                    dir.abs_real_path
+                };
+                Some(bun_paths::string_paths::without_trailing_slash(real))
+            };
+
+            let mut packages: ArrayHashMap<&'static [u8], Package> = ArrayHashMap::new();
             for source_index in reachable_files {
                 let index = source_index.get() as usize;
                 let Some(package_json) = package_jsons[index] else {
                     continue;
                 };
-                let key = core::ptr::from_ref(package_json).addr();
+                let Some(key) = package_key(index) else {
+                    continue;
+                };
+                // The project itself is not a dependency: its own build files are the user's.
+                if bun_paths::resolve_path::is_parent_or_equal(key, top_level_dir)
+                    != bun_paths::resolve_path::ParentEqual::Unrelated
+                {
+                    continue;
+                }
                 let has_code = loaders[index].is_javascript_like();
                 let embedded = has_code
                     && import_records[index].iter().any(|record| {
@@ -4343,6 +4368,13 @@ pub mod bv2_impl {
                     Some(package) => {
                         package.has_code |= has_code;
                         package.embedded |= embedded;
+                        // Name the package by the path `node_modules` uses, not by the store
+                        // directory a link points at.
+                        if package.package_json.source.path.name().dir == key
+                            && package_json.source.path.name().dir != key
+                        {
+                            package.package_json = package_json;
+                        }
                     }
                     None => packages.put(
                         key,
@@ -4355,8 +4387,6 @@ pub mod bv2_impl {
                 }
             }
 
-            let generation = self.transpiler.resolver.generation;
-            let top_level_dir = Fs::FileSystem::get().top_level_dir();
             for package in packages.values() {
                 if !package.has_code || package.embedded {
                     continue;

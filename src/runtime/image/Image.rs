@@ -987,10 +987,8 @@ impl Image {
         )
     }
 
-    /// `.pixels()` — the post-pipeline RGBA8 plane as `{data: Uint8Array,
-    /// width, height, channels: 4}`, no encode. Sharp's
-    /// `.ensureAlpha().raw().toBuffer({resolveWithObject: true})`. A chained
-    /// format setter is ignored because nothing is encoded.
+    /// `.pixels()` — `{data, width, height, channels: 4}` with no encode, so
+    /// a chained format setter has no effect.
     pub(crate) fn pixels<'a>(
         &self,
         this_value: JsWrapper<'a, Self>,
@@ -1486,8 +1484,7 @@ pub(crate) enum Kind {
     /// `None` ⇒ re-encode in the source format (resolved after decode).
     Encode(Option<codecs::EncodeOptions>),
     Metadata,
-    /// `.pixels()` — decode → apply pipeline → hand the RGBA8 plane to JS
-    /// as `{data, width, height, channels: 4}`. No encode.
+    /// `.pixels()` — stop after the pipeline; the RGBA8 plane is the output.
     Pixels,
     /// `.placeholder()` — decode → box-resize ≤100 → ThumbHash → render
     /// → PNG → `data:` URL. The whole chain runs on the worker; the
@@ -1508,8 +1505,7 @@ pub(crate) enum TaskResult {
         h: u32,
         format: codecs::Format,
     },
-    /// Post-pipeline RGBA8 plane taken out of `codecs::Decoded` (global
-    /// allocator). `rgba.len() == w * h * 4`.
+    /// Post-pipeline RGBA8 plane, `rgba.len() == w * h * 4`.
     Pixels {
         rgba: Box<[u8]>,
         w: u32,
@@ -1699,10 +1695,8 @@ impl PipelineTask {
         // default Sharp uses for the same case.
         let enc_opt = match &self.kind {
             Kind::Encode(enc_opt) => enc_opt,
-            // The plane IS the output: no encode. Shrink to `len` here, on the
-            // thread that allocated it: only the PNG decoder over-reserves (by
-            // less than a row), and `mi_realloc` keeps a block in place only for
-            // its own heap.
+            // Shrink on the allocating thread: `mi_realloc` keeps a block in
+            // place only for its own heap.
             Kind::Pixels => {
                 self.result = TaskResult::Pixels {
                     rgba: mem::take(&mut decoded.rgba).into_boxed_slice(),
@@ -1920,10 +1914,7 @@ impl PipelineTask {
                 promise.resolve(global, obj)?;
             }
             TaskResult::Pixels { rgba, w, h } => {
-                // The plane's allocation becomes the Uint8Array's backing store
-                // (byteOffset 0, byteLength == w*h*4); JSC frees it with the
-                // global allocator. Over the ArrayBuffer limit the C++ side
-                // frees the bytes and throws, so the promise still settles.
+                // Over the ArrayBuffer limit `from_bytes` frees and throws.
                 let data = match jsc::JSUint8Array::from_bytes(global, rgba) {
                     Ok(v) => v,
                     Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),

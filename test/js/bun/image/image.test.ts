@@ -402,7 +402,11 @@ describe("Bun.Image", () => {
       // Concurrent calls each chain their own read; later calls reuse the
       // bytes the first read stored on the instance.
       const planes = await Promise.all([file.pixels(), file.pixels(), file.pixels()]);
-      expect(planes.map(px => [...px.data])).toEqual([ref, ref, ref]);
+      expect(planes.map(px => [px.width, px.height, px.channels, ...px.data])).toEqual([
+        [4, 3, 4, ...ref],
+        [4, 3, 4, ...ref],
+        [4, 3, 4, ...ref],
+      ]);
       expect([...(await file.pixels()).data]).toEqual(ref);
       expect(await file.metadata()).toEqual({ width: 4, height: 3, format: "png" });
       expect([...(await new Blob([cornersPng]).image().pixels()).data]).toEqual(ref);

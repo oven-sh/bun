@@ -427,6 +427,19 @@ describe("zlib", () => {
       for (const windowBits of [15, 31, undefined]) expect(gzipSync(data, { windowBits })).toEqual(gzipSync(data));
     });
 
+    it("the window is the one asked for at the fastest and at the default level too", () => {
+      for (const level of [1, 6]) {
+        for (const bits of windowSizes) {
+          const zlibStream = Buffer.from(deflateSync(data, { level, windowBits: bits }));
+          expect(zlibStream).toEqual(zlib.deflateSync(data, { level, windowBits: bits, chunkSize }));
+          // A reader refuses a stream that needs a larger window than its own.
+          expect(Buffer.compare(inflateSync(zlibStream, { windowBits: bits }), data)).toBe(0);
+          const rawStream = deflateSync(data, { level, windowBits: -bits });
+          expect(Buffer.compare(inflateSync(rawStream, { windowBits: -bits }), data)).toBe(0);
+        }
+      }
+    });
+
     it("deflateSync: 8 is a window of 9 bits, which is what zlib makes of it", () => {
       const compressed = Buffer.from(deflateSync(data, { level, windowBits: 8 }));
       expect(compressed).toEqual(zlib.deflateSync(data, { level, windowBits: 9, chunkSize }));

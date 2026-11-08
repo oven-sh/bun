@@ -1,0 +1,7 @@
+status: 0
+script: 79a073299cebc669
+---
+deep, nothing that is kept track of at the bottom: there is an answer: True; all objects: True; the referrers of its item: True
+deep, a list at the bottom: kept track of: True; among all objects: True; the referrers of its item: 1, it among them: True
+wide, nothing that is kept track of at the bottom: there is an answer: True; all objects: True; the referrers of its item: True
+wide, a list at the bottom: kept track of: True; among all objects: True; the referrers of its item: 1, it among them: True

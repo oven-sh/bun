@@ -849,8 +849,14 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     // Page.loadEventFired — not on any response in this chain.
     case Method::TargetCreateBrowserContext: {
         // {"browserContextId":"<hex>"}
-        auto cid = jsonString(jsonField(result, { "browserContextId", 16 }));
-        view->m_browserContextId = WTF::String::fromUTF8(cid);
+        auto cid = WTF::String::fromUTF8(jsonString(jsonField(result, { "browserContextId", 16 })));
+        if (cid.isEmpty()) {
+            // Without an id, createTarget would put the tab in the default context. A retry restarts the chain.
+            settleFailure(g, view, entry.slot, entry.method,
+                createError(g, "malformed browser context response"_s));
+            return;
+        }
+        view->m_browserContextId = WTF::move(cid);
         uint32_t tid = nextId();
         m_pending.add(tid, Pending { Method::TargetCreateTarget, entry.slot, entry.viewId });
         send(tid, createTargetCommand(tid, view));
@@ -1853,15 +1859,18 @@ void close(JSWebView* view)
         }
         return true;
     });
-    // Target.closeTarget — fire-and-forget. targetId is stashed at
-    // TargetCreateTarget's reply (before sessionId) so it's populated
-    // earlier in the chain. Chrome tears down the tab; we ignore the
+    // Fire-and-forget teardown. Chrome tears down the tab; we ignore the
     // Target.targetDestroyed event. Erase sessionId so late events drop.
-    if (!view->m_targetId.isEmpty()) {
+    // A view with a context of its own only disposes the context: that
+    // closes its tab too, even one whose createTarget reply is still on
+    // the wire. A view in the default context closes its tab. targetId
+    // is stashed at TargetCreateTarget's reply (before sessionId) so it
+    // is populated earlier in the chain.
+    if (!view->m_browserContextId.isEmpty()) {
+        disposeBrowserContext(t, std::exchange(view->m_browserContextId, WTF::String()));
+    } else if (!view->m_targetId.isEmpty()) {
         t.send(0, Command(t.nextId(), "Target.closeTarget"_s).str("targetId"_s, view->m_targetId));
     }
-    if (!view->m_browserContextId.isEmpty())
-        disposeBrowserContext(t, std::exchange(view->m_browserContextId, WTF::String()));
     if (!view->m_sessionId.isEmpty()) t.m_sessions.remove(view->m_sessionId);
     t.m_views.remove(view->m_viewId);
     t.updateKeepAlive();

@@ -129,8 +129,10 @@ test.concurrent("many views interleave their commands on the one transport", asy
 // Chrome has one default browser context (one cookie jar) per process. An
 // ephemeral view (the default) gets a context of its own:
 // Target.createBrowserContext precedes its Target.createTarget, the tab is
-// created inside that context, and close() disposes it. A proxy rides on
-// that context. A view with dataStore.directory lands in the default context.
+// created inside that context, and close() disposes the context (which takes
+// the tab with it, so no Target.closeTarget). A proxy rides on that context.
+// A view with dataStore.directory lands in the default context and close()
+// closes its tab.
 test.concurrent("an ephemeral or proxied view gets its own browser context", async () => {
   const result = await runScenario(`
     const shared = new Bun.WebView({ backend, width: 100, height: 100, dataStore: { directory: "/tmp/unused" } });
@@ -149,8 +151,11 @@ test.concurrent("an ephemeral or proxied view gets its own browser context", asy
     own.close();
     proxied.close();
     asString.close();
-    print(await shared.evaluate("__fake_targets()"));
     shared.close();
+    const probe = new Bun.WebView({ backend, width: 100, height: 100, dataStore: { directory: "/tmp/unused" } });
+    await probe.navigate("http://fake/probe");
+    print(await probe.evaluate("__fake_targets()"));
+    probe.close();
   `);
   const tab = { url: "about:blank", newWindow: true, width: 100, height: 100 };
   expect(result).toEqual([
@@ -167,7 +172,39 @@ test.concurrent("an ephemeral or proxied view gets its own browser context", asy
     { method: "Target.disposeBrowserContext", params: { browserContextId: "C1" } },
     { method: "Target.disposeBrowserContext", params: { browserContextId: "C2" } },
     { method: "Target.disposeBrowserContext", params: { browserContextId: "C3" } },
+    { method: "Target.closeTarget", params: { targetId: "T1" } },
+    { method: "Target.createTarget", params: tab },
   ]);
+});
+
+// A Target.createBrowserContext reply without an id: createTarget without a
+// browserContextId would put the tab in the default context, the very thing an
+// ephemeral view must not share. The navigation fails instead, and the retry
+// starts the chain over.
+test.concurrent("a browser context reply without an id fails the navigation", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--malformed=context-no-id"] },
+      width: 100,
+      height: 100,
+    });
+    const first = await outcome(view.navigate("http://fake/first"));
+    const second = await outcome(view.navigate("http://fake/second"));
+    view.close();
+    const shared = new Bun.WebView({ backend, width: 100, height: 100, dataStore: { directory: "/tmp/unused" } });
+    await shared.navigate("http://fake/shared");
+    print({ first, second, targets: await shared.evaluate("__fake_targets()") });
+    shared.close();
+  `);
+  expect(result).toEqual({
+    first: { rejected: "malformed browser context response" },
+    second: { rejected: "malformed browser context response" },
+    targets: [
+      { method: "Target.createBrowserContext", params: { disposeOnDetach: true } },
+      { method: "Target.createBrowserContext", params: { disposeOnDetach: true } },
+      { method: "Target.createTarget", params: { url: "about:blank", newWindow: true, width: 100, height: 100 } },
+    ],
+  });
 });
 
 // close() while Target.createBrowserContext is still in flight: the reply is

@@ -42,6 +42,7 @@ let cdpErrorsLeft = cdpErrorTimesText ? Number(cdpErrorTimesText) : Infinity;
 //   attach-bad-utf8        ... replies with a sessionId that isn't valid UTF-8
 //   attach-non-ascii       ... replies with a sessionId that's valid UTF-8 but not ASCII
 //   click-no-value         the click(selector) check replies without result.value
+//   context-no-id          Target.createBrowserContext replies with {}
 //   click-huge-value       ... replies with a position too large for a double (1e999)
 //   detach-no-session-id   Target.detachedFromTarget arrives with params {}
 //   event-bad-utf8         a page event arrives with an invalid UTF-8 sessionId
@@ -55,14 +56,14 @@ const BAD_UTF8 = "not-utf8";
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
 
-// Every Target.createBrowserContext, Target.createTarget and
-// Target.disposeBrowserContext seen so far, in order, for __fake_targets().
+// Every Target.createBrowserContext, Target.createTarget, Target.closeTarget
+// and Target.disposeBrowserContext seen so far, in order, for __fake_targets().
 const targetLog: { method: string; params: any }[] = [];
 
 Object.assign(globalThis, {
   // What the runtime asked of the Target domain: which contexts it created
-  // (and with what params), which context each tab went into, which contexts
-  // it disposed.
+  // (and with what params), which context each tab went into, which tabs it
+  // closed, which contexts it disposed.
   __fake_targets() {
     return targetLog;
   },
@@ -122,6 +123,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
   if (
     method === "Target.createBrowserContext" ||
     method === "Target.createTarget" ||
+    method === "Target.closeTarget" ||
     method === "Target.disposeBrowserContext"
   ) {
     targetLog.push({ method, params });
@@ -134,6 +136,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
 
   switch (method) {
     case "Target.createBrowserContext":
+      if (malformed === "context-no-id") return reply({});
       return reply({ browserContextId: "C" + ++contexts });
     case "Target.disposeBrowserContext":
       return reply({});

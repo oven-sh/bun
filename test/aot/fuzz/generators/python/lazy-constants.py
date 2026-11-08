@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""lazy-constants.py <seed>: random strict TypeScript programs about top-level constants whose initializers only make something (made at their first read):
-each constant is read for the first time at one random place, in the middle of a computation that has many doubles, integers, strings and objects alive: in loops, leaf functions, closures,
-methods, getters, callbacks of built-ins, async functions, generators, under try | finally, in default parameters; initializers that read other such constants, chains and diamonds of them."""
+"""lazy-constants.py <seed>: Random strict TypeScript programs about top-level constants with side-effect-free
+initializers, which may be created on first read. Each constant is first read at a random place, in the middle of
+other work.
+"""
 import random, sys, os
 
 HEAD = r'''const G: any = globalThis;

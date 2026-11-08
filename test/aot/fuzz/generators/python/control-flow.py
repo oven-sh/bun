@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""control-flow.py <seed>: random strict TypeScript programs about control flow and the order of evaluation: try | catch | finally nested in loops, switches and labelled blocks, left by return, break,
-continue and throw from every part; for-of over arrays, strings, Maps, Sets, generators and hand-made iterators that log next() and return(); generators with try | finally that are returned from, thrown into, delegated to;
-closures made in loops that capture the loop's variables; destructuring with defaults, rests, holes and nested patterns over logging iterators and getters; compound assignments, ++ and -- on members and elements whose object, key and value log;
-optional chains and ?? || && and their assignments that must not evaluate what they skip; arguments evaluated left to right."""
+"""control-flow.py <seed>: Random strict TypeScript programs about control flow and evaluation order: try/catch/finally
+nested in loops, switches and labeled blocks, exited by return, break, continue and throw from every part.
+"""
 import random, sys, os
 
 HEAD = r'''const log: string[] = [];

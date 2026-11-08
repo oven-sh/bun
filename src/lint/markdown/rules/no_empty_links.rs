@@ -3,7 +3,7 @@ use crate::prelude::*;
 /// Disallow empty links
 pub struct NoEmptyLinks;
 
-const EMPTY_LINK: Message = Message::new("emptyLink", "Unexpected empty link found.");
+const EMPTY_LINK: &Message = &Message::new("emptyLink", "Unexpected empty link found.");
 
 impl Rule for NoEmptyLinks {
     const META: Meta = meta("no-empty-links").recommended();

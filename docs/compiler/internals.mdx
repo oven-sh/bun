@@ -15,7 +15,7 @@ You don't need this page to [use `bun compile`](/compiler/aot). Read it if you w
 1. Bun follows the imports from your entry point with the same resolver, loaders and plugins as `bun build`. npm packages are compiled along with your code. So are the `node:` and `bun:` modules you import, because much of `node:fs`, `node:http` and `node:stream` is written in TypeScript.
 2. It type checks your TypeScript with the checker behind [`bun check`](/runtime/check). A type error stops the build.
 3. It tracks values through the whole program. For each variable, parameter and property it works out which objects can end up there, and for each call, which functions it can reach.
-4. It optimizes each function and generates machine code with the backend of JavaScriptCore's fastest JIT.
+4. It optimizes each function and generates machine code with its own backend.
 5. It copies the `bun` that runs the build, leaves out the parts a compiled program can't use, and adds the machine code. You don't need a linker or a C toolchain.
 
 Your code is never bundled or printed back out as JavaScript, so stack traces point at your original source without a source map.
@@ -52,7 +52,7 @@ bun compile ./dot.ts && ./dot '{"x":2,"y":4}'
 
 The same rule applies everywhere. A type is a fact about values your program creates. It's a guess about values your program receives, such as parsed data, the result of a function that only has a `.d.ts` file, or anything that went through `any` or `as`. A fact costs nothing at run time. A guess costs one check where the value arrives.
 
-The check compares layouts and doesn't look inside the object. Nothing here tells `JSON.parse` about `Vec`, so `input` fails the check even when it has the right properties. To avoid that, [declare the type where you parse](/compiler/types#declare-the-type-where-you-parse).
+The check compares layouts and doesn't look inside the object. `JSON.parse` makes ordinary objects, so `input` fails the check even when it has the right properties. To avoid that, [build a `Vec` from what you parse](/compiler/types#build-your-own-objects-from-what-you-parse).
 
 ## When a type is wrong
 
@@ -70,7 +70,7 @@ Where it can't tell which objects reach a property access, the compiled code loo
 
 Strings passed to `eval`, `new Function` and `node:vm` run in JavaScriptCore's interpreter, in the same process and on the same objects. There's no JIT above it, so a library that generates its hot code this way runs slower compiled.
 
-The compiler finds these calls at build time and assumes less about whatever they can reach. If it finds none, it assumes it has seen all the code there is, and a call that gets to `eval` anyway throws an `EvalError`. See [Code from strings](/compiler/compatibility#code-from-strings).
+The compiler finds these calls at build time and assumes less about whatever they can reach. A read that it can't follow, like `globalThis[name]`, counts as one. If it finds none, it assumes it has seen all the code there is and turns `eval` off. See [Code from strings](/compiler/compatibility#code-from-strings).
 
 ## Read-only built-ins
 
@@ -89,11 +89,11 @@ The machine code and its tables are read-only and mapped straight from the file,
 ## What it doesn't do
 
 - No profile or training run.
-- None of your code runs during the build, apart from [macros](/bundler/macros). There's no heap snapshot.
+- None of your code runs during the build. There's no heap snapshot.
 - No cache between builds.
 - No new syntax, pragmas or restricted subset. What's fast under `bun compile` is ordinary TypeScript.
 - No cross-compilation yet. Build on the platform you deploy to.
 
 ## How it's tested
 
-Each test program runs three ways: with `bun run`, compiled, and compiled with every type annotation erased. All three have to print the same thing and exit the same way. The programs are also compiled with every guess forced to fail, which exercises the slow paths, and in a mode where the executable checks every fact it relies on while it runs. The same comparison runs over test262, the test suites of Node.js and Bun, and apps built on the common web frameworks.
+Each test program runs three ways: with `bun run`, compiled, and compiled with every type annotation erased. All three have to print the same thing and exit the same way. The same comparison runs over test262, the test suites of Node.js and Bun, and apps built on the common web frameworks.

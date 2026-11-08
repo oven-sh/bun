@@ -46,9 +46,10 @@ const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
 const optionsSymbol = Symbol("options");
 const tlsSymbol = Symbol("tls");
-const serverSymbol = Symbol.for("::bunternal::");
-// One symbol under two names.
-const kInternalSocketData: typeof serverSymbol = serverSymbol;
+const kAbortController = Symbol.for("kAbortController");
+const kInternalSocketData = Symbol.for("::bunternal::");
+// One symbol under two names. Asked for twice, as in the other text: a test may have replaced Symbol.for.
+const serverSymbol: typeof kInternalSocketData = Symbol.for("::bunternal::") as typeof kInternalSocketData;
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 // IncomingMessage slot for the request's native response. null if the request was parsed in JS.
@@ -77,7 +78,8 @@ const requestRoad: {
   continueDump?: (request: $Node.IncomingMessage, state: $Node.ReadableState) => void;
   queueDump?: (request: $Node.IncomingMessage, state: $Node.ReadableState) => void;
   mayDumpInPlace?: (request: $Node.IncomingMessage) => boolean;
-  beginDump?: (request: $Node.IncomingMessage) => void;
+  beginDump?: (request: $Node.IncomingMessage) => boolean;
+  readsUnseen?: (request: $Node.IncomingMessage) => boolean;
   readsDestroyedUnseen?: (socket: $Node.HttpSocket) => boolean;
 } = {};
 const responseRoad: {
@@ -88,16 +90,18 @@ const responseRoad: {
     requestState: $Node.ReadableState | null,
   ) => $Node.HttpExchange;
   storeHeader?: (exchange: $Node.HttpExchange, name: string, value: $Node.HttpHeaderValue) => void;
+  settleLeniency?: (exchange: $Node.HttpExchange, name: string) => void;
   spillHeaders?: (exchange: $Node.HttpExchange) => void;
   spillHeadersReachedThrough?: (receiver: $Node.OutgoingMessage) => void;
+  spillStateReachedThrough?: (receiver: $Node.OutgoingMessage) => void;
   hasHeaderUnderKey?: (
     exchange: $Node.HttpExchange,
     message: $Node.OutgoingMessage,
     key: string,
     bit: number,
   ) => boolean;
-  flatHeadersOf?: (exchange: $Node.HttpExchange) => unknown[];
-  headerEntriesOf?: (exchange: $Node.HttpExchange | undefined, message: $Node.OutgoingMessage) => unknown[] | undefined;
+  flatHeadersOf?: (exchange: $Node.HttpExchange) => unknown[] | null;
+  headerEntriesOf?: (exchange: $Node.HttpExchange | undefined) => unknown[] | null;
   pushRenderedHeader?: (
     flat: unknown[],
     message: $Node.OutgoingMessage,
@@ -107,6 +111,7 @@ const responseRoad: {
   ) => void;
   outgoingSetHeader?: $Node.OutgoingMessage["setHeader"];
   flushSocketHeldChunk?: (socket: object | null | undefined) => void;
+  noChunks?: (string | $Node.HttpChunk | $Node.HttpWriteCallback | null | undefined)[];
 } = {};
 
 // node:_http_server registers its pipelined-response machinery here at module
@@ -536,8 +541,8 @@ declare global {
       [kHandle]: NodeHTTPServerSocket | null | undefined;
       [kOnReadParsed]: ((socket: HttpSocket) => void) | undefined;
       [kHandoffResponse]: NodeHTTPResponse | undefined;
-      [kRequest]?: IncomingMessage;
-      [kCloseCallback]?: (this: HttpServerSocket) => void;
+      [kRequest]: IncomingMessage | undefined;
+      [kCloseCallback]: ((this: HttpServerSocket) => void) | undefined;
       [kClosedWithUnsentData]: boolean | undefined;
       readonly [kInternalSocketData]: NodeHTTPResponse | null | undefined;
       readonly [kHasQueuedReads]: boolean;
@@ -571,9 +576,9 @@ declare global {
     interface ServerResponse {
       [kHandle]: NodeHTTPResponse | Http1ResponseHandle | undefined;
       [kPendingCallbacks]: HttpWriteCallback[] | undefined;
-      [fakeSocketSymbol]?: HttpSocket | null;
+      [fakeSocketSymbol]: HttpSocket | null | undefined;
       [headerStateSymbol]: number;
-      [kCloseCallback]?: () => void;
+      [kCloseCallback]: (() => void) | undefined;
     }
 
     interface HttpServer {
@@ -783,6 +788,7 @@ export {
   headerStateSymbol,
   http1ServerPipeline,
   isTlsSymbol,
+  kAbortController,
   kBytesWritten,
   kChunkedBuffer,
   kChunkedLength,

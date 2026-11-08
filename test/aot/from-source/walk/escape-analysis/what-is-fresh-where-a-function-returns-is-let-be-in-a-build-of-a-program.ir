@@ -1,0 +1,8 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# function dead(i: number) { const o = { lid: i, spout: i + 1 }; return o.lid + o.spout; }
+# sink(dead);
+# -- end of source
+# RUN: walk f1 mechanisms=-Inlining
+# CHECK-NOT: EndLifeOfCell
+# CHECK-NOT: NewObject

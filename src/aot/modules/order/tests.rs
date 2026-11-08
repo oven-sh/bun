@@ -17,7 +17,6 @@ fn with_order<R>(
     })
 }
 
-// What `read` says of each site of the first file.
 fn sites_of_first<T>(files: &Sources<'_>, read: impl Fn(&PlannedSite) -> T) -> Vec<T> {
     with_order(files, |input, _, sites| {
         let sites = sites.of(file_named(input, files[0].0)).iter();
@@ -39,10 +38,6 @@ fn files_that<'n>(
 
 fn half<'n>(files: &Sources<'n>) -> Vec<&'n str> {
     files_that(files, EvaluationOrder::half)
-}
-
-fn exposed<'n>(files: &Sources<'n>) -> Vec<&'n str> {
-    files_that(files, EvaluationOrder::exposed)
 }
 
 const LEAF: (&str, &str) = ("leaf.cjs", "exports.x = 1;");
@@ -148,7 +143,6 @@ fn a_chain_of_requires_is_seen_whole() {
         ("c.cjs", "exports.x = 1;"),
     ];
     assert!(half(&files).is_empty());
-    assert!(exposed(&files).is_empty());
 }
 
 #[test]
@@ -166,7 +160,6 @@ fn the_modules_of_a_cycle_are_seen_half_done() {
         ("c.cjs", "exports.x = 1;"),
     ];
     assert_eq!(half(&files), ["a.cjs", "b.cjs"]);
-    assert!(exposed(&files).is_empty());
 }
 
 #[test]
@@ -198,7 +191,6 @@ fn a_cycle_of_imports_and_requires_counts() {
     assert_eq!(half(&files), ["a.mjs", "b.cjs"]);
 }
 
-// A callback may run the function while the body of any module runs, also of one that the target asks for.
 #[test]
 fn what_a_late_site_may_run_is_exposed() {
     let files = [
@@ -210,7 +202,6 @@ fn what_a_late_site_may_run_is_exposed() {
         ("b.cjs", "exports.x = 1;"),
         ("c.cjs", "exports.x = 1;"),
     ];
-    assert_eq!(exposed(&files), ["a.cjs", "b.cjs"]);
     assert_eq!(half(&files), ["a.cjs", "b.cjs"]);
 }
 
@@ -221,7 +212,7 @@ fn what_an_import_call_names_is_exposed() {
         ("a.cjs", "require('./b.cjs');"),
         ("b.cjs", "exports.x = 1;"),
     ];
-    assert_eq!(exposed(&files), ["a.cjs", "b.cjs"]);
+    assert_eq!(half(&files), ["a.cjs", "b.cjs"]);
 }
 
 #[test]
@@ -233,7 +224,190 @@ fn what_a_computed_require_may_name_is_exposed() {
         ),
         ("pages/home.js", "exports.x = 1;"),
     ];
-    assert_eq!(exposed(&files), ["pages/home.js"]);
+    assert_eq!(half(&files), ["pages/home.js"]);
+}
+
+#[test]
+fn what_a_load_by_an_unknown_name_may_find_is_exposed() {
+    let main = (
+        "main.cjs",
+        "require('./served.cjs'); require('./asker.cjs');",
+    );
+    let asker = (
+        "asker.cjs",
+        "exports.seen = typeof require('./served.cjs');",
+    );
+    let loads_by_unknown_name = [
+        main,
+        (
+            "served.cjs",
+            "console.log('./asker.cjs'); require(process.env.PLUG); module.exports = function () {};",
+        ),
+        asker,
+    ];
+    assert_eq!(
+        half(&loads_by_unknown_name),
+        ["main.cjs", "served.cjs", "asker.cjs"]
+    );
+    let only_spells = [
+        main,
+        (
+            "served.cjs",
+            "console.log('./asker.cjs'); module.exports = function () {};",
+        ),
+        asker,
+    ];
+    assert!(half(&only_spells).is_empty());
+}
+
+#[test]
+fn the_main_entry_point_that_an_unknown_name_may_find_is_seen_half_done() {
+    let main = (
+        "main.cjs",
+        "require('./asker.cjs'); module.exports = function () {};",
+    );
+    let page = ("pages/home.js", "exports.x = 1;");
+    let rows: [(&str, &[&str]); 4] = [
+        ("require(process.argv[1]);", &["main.cjs"]),
+        (
+            "require(require('node:path').resolve(process.argv[1]));",
+            &["main.cjs"],
+        ),
+        (
+            "require(`./pages/${process.argv[2]}.js`);",
+            &["pages/home.js"],
+        ),
+        ("console.log(process.argv[1]);", &[]),
+    ];
+    for (asker, seen_half_done) in rows {
+        let files = [main, ("asker.cjs", asker), page];
+        assert_eq!(half(&files), seen_half_done, "{asker}");
+    }
+}
+
+#[test]
+fn the_main_entry_point_is_seen_half_done_where_a_package_is_left_out() {
+    let files = [
+        (
+            "main.cjs",
+            "require('./asker.cjs'); module.exports = function () {};",
+        ),
+        ("asker.cjs", "exports.x = 1;"),
+    ];
+    let packages = [b"left-out".to_vec()];
+    let rows: [(&[Vec<u8>], bool, &[&str]); 3] = [
+        (&packages, false, &["main.cjs"]),
+        (&packages, true, &[]),
+        (&[], false, &[]),
+    ];
+    for (external_packages, runs_tests, seen_half_done) in rows {
+        with_graph(&files, |_, input| {
+            let input = &BindInput {
+                external_packages,
+                runs_tests,
+                ..*input
+            };
+            let scans = scan_files(input);
+            let modules = collect_modules(input, &scans);
+            let (order, _) = compute_order(input, &scans, &modules);
+            let is_half = |name: &&str| order.half(ModuleRef::File(file_named(input, name)));
+            let half: Vec<&str> = files.iter().map(|file| file.0).filter(is_half).collect();
+            assert_eq!(half, seen_half_done, "in a test run: {runs_tests}");
+        });
+    }
+}
+
+#[test]
+fn an_es_module_that_a_made_name_may_require_during_its_load_is_left_to_the_loader() {
+    let all: &[&str] = &["main.cjs", "root.mjs", "asker.cjs", "asked.mjs"];
+    let rows: [(&str, &[&str]); 3] = [
+        ("require('./asked.mjs');", all),
+        ("require(process.env.NONE || './asked.mjs');", all),
+        ("require(process.env.NONE);", &[]),
+    ];
+    for (asker, left_to_loader) in rows {
+        let files = [
+            ("main.cjs", "require('./root.mjs');"),
+            ("root.mjs", "import './asker.cjs'; import './asked.mjs';"),
+            ("asker.cjs", asker),
+            ("asked.mjs", "import asker from './asker.cjs'; asker;"),
+        ];
+        let found = with_order(&files, |input, order, _| {
+            let marks = &order.parts.is_loaded_by_loader;
+            let is_left = |name: &&str| marks[file_named(input, name).idx()];
+            let names = files.iter().map(|file| file.0);
+            names.filter(is_left).collect::<Vec<_>>()
+        });
+        assert_eq!(found, left_to_loader, "{asker}");
+    }
+}
+
+#[test]
+fn a_require_in_the_body_of_a_file_may_find_what_another_file_has_written() {
+    let text = "globalThis.wanted = './asked.mjs';";
+    let no_text = "globalThis.wanted = process.env.NONE;";
+    let in_body = "require(globalThis.wanted);";
+    let under_try = "try { require(globalThis.wanted); } catch {}";
+    let in_function = "exports.load = name => require(name);";
+    let rows = [
+        (text, in_body, true),
+        (text, under_try, true),
+        (text, in_function, false),
+        (no_text, in_body, false),
+    ];
+    for (lays_name, asker, expected) in rows {
+        let main = format!("{lays_name} require('./root.mjs');");
+        let files = [
+            ("main.cjs", main.as_str()),
+            ("root.mjs", "import './asker.cjs'; import './asked.mjs';"),
+            ("asker.cjs", asker),
+            ("asked.mjs", "import asker from './asker.cjs'; asker;"),
+        ];
+        with_order(&files, |input, order, _| {
+            let marks = &order.parts.is_loaded_by_loader;
+            for file in &files {
+                let is_left = marks[file_named(input, file.0).idx()];
+                assert_eq!(is_left, expected, "{}: {main} {asker}", file.0);
+            }
+        });
+    }
+}
+
+#[test]
+fn a_made_name_leaves_the_cycle_to_the_loader_where_every_file_is_found_by_name() {
+    let files = [
+        ("main.cjs", "require('./root.mjs');"),
+        ("root.mjs", "import './asker.cjs'; import './asked.mjs';"),
+        ("asker.cjs", "require(process.env.NONE || './asked.mjs');"),
+        ("asked.mjs", "import asker from './asker.cjs'; asker;"),
+    ];
+    let packages = [b"left-out".to_vec()];
+    let (text, no_text) = (files[2].1, "require(process.env.NONE);");
+    let rows: [(&[Vec<u8>], bool, &str); 4] = [
+        (&[], true, text),
+        (&packages, false, text),
+        (&[], true, no_text),
+        (&packages, false, no_text),
+    ];
+    for (external_packages, runs_tests, asker) in rows {
+        let files = [files[0], files[1], ("asker.cjs", asker), files[3]];
+        with_graph(&files, |_, input| {
+            let input = &BindInput {
+                external_packages,
+                files_are_named_out_of_sight: !runs_tests,
+                runs_tests,
+                helpers_of_tests_name_files: runs_tests,
+                ..*input
+            };
+            let scans = scan_files(input);
+            let modules = collect_modules(input, &scans);
+            let (order, _) = compute_order(input, &scans, &modules);
+            assert!(order.parts.texts_that_spell_files.is_none());
+            let marks = &order.parts.is_loaded_by_loader;
+            let is_left = |file: &(&str, &str)| marks[file_named(input, file.0).idx()];
+            assert!(files.iter().all(is_left), "{asker}, tests: {runs_tests}");
+        });
+    }
 }
 
 #[test]
@@ -269,7 +443,6 @@ fn the_loader_keeps_what_it_alone_can_load() {
     assert_eq!(evaluates(&plain), [true, true]);
 }
 
-// Whoever requires an ES module while its body runs gets an object without keys. The requests say where that happens, late ones too.
 #[test]
 fn the_loader_keeps_an_es_module_that_may_be_seen_half_done() {
     let cycle = [

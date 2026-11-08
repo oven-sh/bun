@@ -87,8 +87,10 @@ struct ParseSettings<'a> {
     attach_comments: bool,
     /// `Options::compiles`
     compiles: bool,
-    /// `Options::keeps_function_directives`
-    keeps_function_directives: bool,
+    /// `Options::reads_as_bun_run`
+    reads_as_bun_run: bool,
+    /// `Options::ignores_pure_comments`
+    ignores_pure_comments: bool,
     /// `Options::skips_function_blocks`
     skips_function_blocks: bool,
     /// `Options::reads_module_statements_alone`
@@ -266,7 +268,8 @@ fn parse_file_as(
         part: None,
         attach_comments: how.attach_comments,
         compiles: how.compiles,
-        keeps_function_directives: how.keeps_function_directives,
+        reads_as_bun_run: how.reads_as_bun_run,
+        ignores_pure_comments: how.ignores_pure_comments,
         skips_function_blocks: how.skips_function_blocks,
         reads_module_statements_alone: how.reads_module_statements_alone,
     };
@@ -437,6 +440,7 @@ pub fn summarize<'s>(
     atoms: &Interner<'s>,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    reads_as_bun_run: bool,
 ) -> File<'s> {
     let how = ParseSettings {
         dialect: Dialect::default(),
@@ -447,7 +451,8 @@ pub fn summarize<'s>(
         jsdoc: JsDoc::Read,
         attach_comments: false,
         compiles: false,
-        keeps_function_directives: false,
+        reads_as_bun_run,
+        ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
     };
@@ -466,6 +471,7 @@ pub fn summarize_top_level<'s>(
     atoms: &Interner<'s>,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    reads_as_bun_run: bool,
 ) -> Option<File<'s>> {
     let kind = script_kind.or_else(|| ScriptKind::from_file_name(path))?;
     if kind.is_javascript()
@@ -484,7 +490,8 @@ pub fn summarize_top_level<'s>(
             jsdoc: JsDoc::Read,
             attach_comments: false,
             compiles: false,
-            keeps_function_directives: false,
+            reads_as_bun_run,
+            ignores_pure_comments: false,
             skips_function_blocks: true,
             reads_module_statements_alone,
         };
@@ -546,7 +553,8 @@ pub fn summarize_in<'s>(
         jsdoc: JsDoc::Ignored,
         attach_comments: false,
         compiles: false,
-        keeps_function_directives: false,
+        reads_as_bun_run: false,
+        ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
     };
@@ -568,8 +576,7 @@ impl<'s> Summary<'_, 's> {
         match self {
             Summary::InArena(file) => *file,
             Summary::InPlace(file) => {
-                let (mut in_arena, emptied) = core::mem::take(file).into_arena(arena, session);
-                *file = emptied;
+                let mut in_arena = file.move_to_arena(arena, session);
                 in_arena.finish_nodes();
                 in_arena
             }
@@ -640,7 +647,8 @@ pub fn with_summary_in_place<'s, R>(
         jsdoc: JsDoc::Ignored,
         attach_comments,
         compiles: false,
-        keeps_function_directives: false,
+        reads_as_bun_run: false,
+        ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
     };

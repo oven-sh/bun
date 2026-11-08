@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""values-at-the-edge-of-the-type-of-a-field.py <n>: a value that satisfies its type is never refused, by the type of one field.
-(holder: interface | class) x (type of the field and a value at the edge of it that still fits) x (door). Untyped code of the same file builds `{ f: <value> }`; typed code holds it to the holder and uses `v.f` in the ordinary ways
-of that type. `names` lists the programs; a name does in place of the number.
-As plain Bun, line by line."""
+"""field-type-boundary-values.py <n>: (holder: interface or class) x (a field type and a boundary value that still
+satisfies it) x (entry path). A value that satisfies its type must be accepted.
+"""
 import sys, json
 N = ['v.f + 1', 'v.f * 2', 'v.f | 0', 'v.f >>> 0', '-v.f', 'Object.is(v.f, -0)', 'v.f === v.f', 'v.f < 1', 'String(v.f)', '`${v.f}`', 'Math.floor(v.f)', 'Math.max(v.f, 0)', 'v.f.toFixed(1)', '[1, 2, 3][v.f]', 'JSON.stringify(v)', '(v.f += 1, v.f)', '(v.f++, v.f)', 'typeof v.f']
 S = ['v.f.length', 'v.f + "!"', 'v.f.toUpperCase()', 'v.f.charCodeAt(0)', 'v.f[0]', 'v.f === "a"', 'v.f < "b"', '`${v.f}`', 'v.f.split("").length', '[...v.f].length', 'JSON.stringify(v)', '({ a: 1 } as Record<string, number>)[v.f]', '(v.f += "x", v.f.length)', 'v.f.slice(1)', 'v.f.indexOf("a")', 'typeof v.f']

@@ -16,15 +16,15 @@ async function bun(cwd: string | { cwd: string; BUN_OPTIONS: string }, ...args: 
   return { stdout, stderr, exitCode };
 }
 
-const ofBuild = "--aot, --aot-allow-code-from-disk, --aot-huge-heap, --aot-log-type-mismatches";
-const ofRun = "--aot, --aot-log-type-mismatches";
+const ofBuild = "--aot, --aot-allow-code-from-disk, --aot-huge-heap";
+const ofRun = "--aot, --aot-allow-code-from-disk";
 
 describe.concurrent("an unknown flag that starts with --aot is an error", () => {
   test.each([
     [
-      ["build", "--compile", "--aot", "--aot-log-type-mismatch", "app.ts", "--outfile", "out"],
-      "--aot-log-type-mismatch",
-      "--aot-log-type-mismatches",
+      ["build", "--compile", "--aot", "--aot-huge-heaps", "app.ts", "--outfile", "out"],
+      "--aot-huge-heaps",
+      "--aot-huge-heap",
       ofBuild,
     ],
     [
@@ -41,7 +41,7 @@ describe.concurrent("an unknown flag that starts with --aot is an error", () => 
       "bun run and bun test",
       ofBuild,
     ],
-    [["--aot-log-type-mismatch", "app.ts"], "--aot-log-type-mismatch", "--aot-log-type-mismatches", ofRun],
+    [["--aot-allow-code-from-disc", "app.ts"], "--aot-allow-code-from-disc", "--aot-allow-code-from-disk", ofRun],
     [["run", "--aot", "--aot-type-errors=log", "app.ts"], "--aot-type-errors", null, ofRun],
     [["run", "--aott", "app.ts"], "--aott", "--aot", ofRun],
     [["test", "--aot-nothing-like-it"], "--aot-nothing-like-it", null, ofRun],
@@ -49,12 +49,12 @@ describe.concurrent("an unknown flag that starts with --aot is an error", () => 
     [["test", "app.test.ts", "--aot-type-errors=log"], "--aot-type-errors", null, ofRun],
     [["--aot-stamp"], "--aot-stamp", null, ofRun],
     [
-      ["build", "--compile", "--aot", "--aot-disabled=flow-results", "app.ts", "--outfile", "out"],
-      "--aot-disabled",
+      ["build", "--compile", "--aot", "--aot-erases-types", "app.ts", "--outfile", "out"],
+      "--aot-erases-types",
       null,
       ofBuild,
     ],
-    [["run", "--aot", "--aot-validate", "app.ts"], "--aot-validate", "bun build", ofRun],
+    [["run", "--aot", "--aot-erase-types", "app.ts"], "--aot-erase-types", "bun build", ofRun],
   ])("bun %j", async (args, written, meant, all) => {
     using dir = tempDir("aot-unknown-flag", files);
     const { stdout, stderr, exitCode } = await bun(String(dir), ...args);
@@ -113,12 +113,9 @@ describe.concurrent("an unknown flag that starts with --aot is an error", () => 
   });
 
   test.each([
-    ["aotLogTypeMismatch", "true", "aotLogTypeMismatches"],
     ["aotExplains", '"guards"', "aotExplain"],
-    ["aotDisabled", '"flow-results"', "aotDisable"],
-    ["aotHeats", '"everything-is-cold"', "aotHeat"],
     ["aott", "true", "aot"],
-    ["aot_log_type_mismatches", "true", "aotLogTypeMismatches"],
+    ["aot_explain", '"guards"', "aotExplain"],
     ["aotSomethingElse", "1", null],
   ])("Bun.build: compile.%s", async (key, value, meant) => {
     using dir = tempDir("aot-unknown-option", {
@@ -132,17 +129,16 @@ describe.concurrent("an unknown flag that starts with --aot is an error", () => 
 `,
     });
     expect((await bun(String(dir), "build.ts")).stdout).toBe(
-      `compile.${key} is not a valid option.${meant ? ` Did you mean compile.${meant}?` : ""} Options that start with "aot": aot, aotDisable, aotExplain, aotHeat, aotLogTypeMismatches\n`,
+      `compile.${key} is not a valid option.${meant ? ` Did you mean compile.${meant}?` : ""} Options that start with "aot": aot, aotCheck, aotExplain, aotHarden, aotOut, aotTesting\n`,
     );
   });
 
   test.each([
     ["aot", "true", '{ outfile: "./out" }'],
     ["aot", "false", "true"],
-    ["aotLogTypeMismatches", "true", '{ outfile: "./out", aot: true }'],
     ["aotExplain", '"guards"', "undefined"],
-    ["aotDisable", '["flow-results"]', '{ outfile: "./out", aot: true }'],
-    ["aotHeat", '"everything-is-cold"', '{ outfile: "./out", aot: true }'],
+    ["aotCheck", '"Validate"', '{ outfile: "./out", aot: true }'],
+    ["aotHarden", '["proof-checks"]', '{ outfile: "./out", aot: true }'],
   ])("Bun.build: %s: %s beside compile: %s", async (key, value, compile) => {
     using dir = tempDir("aot-option-beside-compile", {
       ...files,

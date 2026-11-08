@@ -1,0 +1,3 @@
+import { unit } from "./outer.mjs";
+export const sides = 4;
+export function area(w, h) { return w * h + unit; }

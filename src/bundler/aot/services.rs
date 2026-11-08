@@ -1,30 +1,30 @@
 use super::assets::EmbeddedFiles;
-use super::macros::MacroThread;
 use super::plugins::PluginRequests;
-use super::{assets, data_loaders, defines, native_plugins, page_bundles};
+use super::{assets, components, data_loaders, defines, native_plugins, page_bundles};
 use crate::options_impl::BundleOptions;
 use crate::{BundleV2, OutputFile, Transpiler, Worker};
 use bun_alloc::Arena;
 use bun_aot::load::source_provider::{
-    DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, ModuleName, Resolution, ResolveRequest,
-    SourceFile,
+    ComponentFile, DataFailure, DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution,
+    ResolveRequest, SourceFile,
 };
 use bun_aot::{SourceProvider, WithoutServices};
 use bun_ast::{ASTMemoryAllocator, Loader, Log};
-use bun_js_parser::Define;
+use bun_js_parser::{Define, ExpandedImportMetaGlob};
 use bun_paths::resolve_path::posix_to_platform_in_place;
+use bun_react_compiler::Observer;
 use bun_resolver::options::{ExternalModules, Packages};
 use bun_resolver::package_json::Status;
+use bun_resolver::package_names::RefusedName;
 use bun_resolver::{DataURL, GlobalCache, Resolver, ResultUnion};
 use bun_sema::atom::Interner;
 use bun_sema::fold::FoldOptions;
-use bun_sema::hir_from_data::{DataModule, DataValue};
+use bun_sema::hir_from_data::DataModule;
 use bun_sema::resolve::{AOT_CONDITION, CodeFailure, CodeImportKind, FileSearch, FoundCode, Host};
 use bun_sema_driver::host::{from_native, to_native};
 use bun_threading::Guarded;
 use core::ptr::NonNull;
 
-#[derive(Clone)]
 pub(crate) struct BuildContext {
     bundle: NonNull<BundleV2<'static>>,
     pub module_prefix: Box<[u8]>,
@@ -217,15 +217,20 @@ pub(crate) fn with_test_context<R>(
 
 pub(crate) struct BundlerServices {
     context: BuildContext,
+    user_defined_names: Box<[Box<[u8]>]>,
     plugins: Option<PluginRequests>,
     embedded: EmbeddedFiles,
-    macros: MacroThread,
     /// Those that no thread holds.
     file_finders: Guarded<Vec<FileFinder>>,
+    refused_names: Guarded<Vec<RefusedName>>,
 }
 
 impl BundlerServices {
-    pub(crate) fn new(bundle: NonNull<BundleV2<'static>>, module_prefix: &[u8]) -> BundlerServices {
+    pub(crate) fn new(
+        bundle: NonNull<BundleV2<'static>>,
+        module_prefix: &[u8],
+        user_defined_names: &[Box<[u8]>],
+    ) -> BundlerServices {
         let context = BuildContext {
             bundle,
             module_prefix: Box::from(module_prefix),
@@ -237,15 +242,19 @@ impl BundlerServices {
             .then(|| PluginRequests::new(bundle));
         BundlerServices {
             context,
+            user_defined_names: Box::from(user_defined_names),
             plugins,
             embedded: EmbeddedFiles::default(),
-            macros: MacroThread::new(),
             file_finders: Guarded::new(Vec::new()),
+            refused_names: Guarded::new(Vec::new()),
         }
     }
 
+    pub(crate) fn take_refused_names(&self) -> Vec<RefusedName> {
+        core::mem::take(&mut *self.refused_names.lock())
+    }
+
     pub(crate) fn shut_down(self) -> Vec<OutputFile> {
-        self.macros.shut_down();
         if let Some(plugins) = self.plugins {
             plugins.shut_down();
         }
@@ -260,19 +269,17 @@ impl SourceProvider for BundlerServices {
         atoms: &Interner<'s>,
         log: &mut Log,
     ) -> FoldOptions<'s> {
-        defines::fold_options(self.context.options(), arena, atoms, log)
+        let options = self.context.options();
+        defines::fold_options(options, &self.user_defined_names, arena, atoms, log)
     }
 
     fn define(&self) -> Option<&Define> {
         Some(&*self.context.options().define)
     }
 
-    fn enabled_features(&self) -> Vec<&[u8]> {
-        let flags = self.context.options().bundler_feature_flags.iter();
-        flags
-            .flat_map(|flags| flags.keys())
-            .map(|name| &**name)
-            .collect()
+    fn outfile(&self) -> Option<&[u8]> {
+        let resolver = &self.context.bundle().transpiler().resolver;
+        resolver.outfile_of_build()
     }
 
     fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
@@ -296,6 +303,18 @@ impl SourceProvider for BundlerServices {
         let mut finder = idle.unwrap_or_else(create);
         let found = finder.find(search);
         self.file_finders.lock().push(finder);
+        if let FoundCode::NotFound(failure) = found
+            && failure.is_refusal_of_package_json()
+            && search.kind != CodeImportKind::EntryPoint
+        {
+            let mut directory = to_native(search.directory).to_vec();
+            posix_to_platform_in_place(&mut directory);
+            self.refused_names.lock().push(RefusedName {
+                directory,
+                specifier: search.specifier.to_vec(),
+                is_require: search.kind == CodeImportKind::Require,
+            });
+        }
         found
     }
 
@@ -305,38 +324,6 @@ impl SourceProvider for BundlerServices {
             None => WithoutServices.load(request, log)?,
         };
         native_plugins::run_before_parse(&self.context, request.module, loaded, log)
-    }
-
-    fn decode_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
-        DataURL::parse(url).ok()??.decode_data().ok()
-    }
-
-    // As `Blob::constructor` takes the type and `Blob::get_loader` reads it.
-    fn loader_of_blob(&self, r#type: Option<&[u8]>) -> Option<Loader> {
-        use crate::options::LoaderExt as _;
-        use bun_http_types::MimeType;
-        let is_taken = |written: &&[u8]| {
-            !written.is_empty() && written.iter().all(|&byte| matches!(byte, 0x20..=0x7E))
-        };
-        let Some(written) = r#type.filter(is_taken) else {
-            return Some(Loader::from_mime_type(MimeType::NONE));
-        };
-        let kept = match MimeType::by_name_static(written) {
-            Some(known) => known.value.to_vec(),
-            None => written.to_ascii_lowercase(),
-        };
-        Some(Loader::from_mime_type(MimeType::MimeType::init(
-            &kept, false, None,
-        )))
-    }
-
-    fn write_url(&self, text: &[u8], base: Option<&[u8]>) -> Option<Vec<u8>> {
-        let text = bun_core::StringView::borrow_utf8(text);
-        let href = match base {
-            None => bun_url::href_from_string(&text),
-            Some(base) => bun_url::join(&bun_core::StringView::borrow_utf8(base), &text),
-        };
-        (!href.is_dead()).then(|| href.to_owned_slice())
     }
 
     fn has_load_plugin(&self, module: ModuleName<'_>) -> bool {
@@ -370,6 +357,38 @@ impl SourceProvider for BundlerServices {
             .collect()
     }
 
+    fn decode_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
+        let url = DataURL::parse(url).ok().flatten()?;
+        url.decode_data().ok()
+    }
+
+    fn loader_of_blob(&self, r#type: Option<&[u8]>) -> Option<Loader> {
+        use crate::options::LoaderExt as _;
+        use bun_http_types::MimeType;
+        // The constructor takes no type that is empty or holds more than printable ASCII. It keeps what goes with a name that it knows, and any other in lower case.
+        let is_taken = |written: &&[u8]| {
+            !written.is_empty() && written.iter().all(|&byte| matches!(byte, 0x20..=0x7E))
+        };
+        let Some(written) = r#type.filter(is_taken) else {
+            return Some(Loader::from_mime_type(MimeType::NONE));
+        };
+        let kept = match MimeType::by_name_static(written) {
+            Some(known) => known.value.into_owned(),
+            None => written.to_ascii_lowercase(),
+        };
+        let kept = MimeType::MimeType::init(&kept, false, None);
+        Some(Loader::from_mime_type(kept))
+    }
+
+    fn write_url(&self, text: &[u8], base: Option<&[u8]>) -> Option<Vec<u8>> {
+        let text = bun_core::StringView::borrow_utf8(text);
+        let href = match base {
+            None => bun_url::href_from_string(&text),
+            Some(base) => bun_url::join(&bun_core::StringView::borrow_utf8(base), &text),
+        };
+        (!href.is_dead()).then(|| href.to_owned_slice())
+    }
+
     fn asset_paths_ignore_contents(&self) -> bool {
         assets::asset_paths_ignore_contents(&self.context)
     }
@@ -378,39 +397,26 @@ impl SourceProvider for BundlerServices {
         self.embedded.set_contents(&self.context, file, log)
     }
 
-    fn clear_embedded_files(&self) {
-        self.embedded.clear();
-    }
-
     fn parse_data<'s>(
         &self,
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
         log: &mut Log,
-    ) -> Result<DataModule<'s>, Failed> {
+    ) -> Result<DataModule<'s>, DataFailure> {
         data_loaders::parse_data(&self.context, &self.embedded, file, arena, atoms, log)
     }
 
-    fn run_macro<'s>(
-        &self,
-        call: &MacroCall<'_, 's>,
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<&'s DataValue<'s>, Failed> {
-        self.macros
-            .run_macro(&self.context, call, arena, atoms, log)
+    fn bundle_pages(&self, pages: &[&[u8]], log: &mut Log) -> Result<Vec<Vec<u8>>, Failed> {
+        page_bundles::bundle_pages(&self.context, &self.embedded, pages, log)
     }
 
-    fn bundle_pages<'s>(
-        &self,
-        pages: &[&[u8]],
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<Vec<&'s DataValue<'s>>, Failed> {
-        page_bundles::bundle_pages(&self.context, &self.embedded, pages, arena, atoms, log)
+    fn compile_components(&self, file: &ComponentFile<'_>, observer: &mut dyn Observer) -> bool {
+        components::compile_components(&self.context, file, observer, None, &mut Log::init())
+    }
+
+    fn expand_globs(&self, file: &ComponentFile<'_>) -> Vec<ExpandedImportMetaGlob> {
+        components::expand_globs(&self.context, file, &mut Log::init())
     }
 
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
@@ -436,7 +442,7 @@ mod tests {
             |_| {},
             |context| {
                 let services =
-                    BundlerServices::new(context.bundle_pointer(), &context.module_prefix);
+                    BundlerServices::new(context.bundle_pointer(), &context.module_prefix, &[]);
                 for namespace in [&b"file"[..], b"virtual"] {
                     assert!(!services.has_load_plugin(ModuleName {
                         namespace,

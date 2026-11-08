@@ -327,8 +327,8 @@ describe("Bun.build", () => {
 
   // A pool thread holds a build's ASTs until it tears its worker down; macOS and Windows read files on a second pool.
   // The 250ms load outlasts an idle pool thread's first park (100ms, timed), so they are all parked for good at the end.
-  // With `aot` the compiler's own front end loads the files and runs the React Compiler on them. It takes no worker of the bundler,
-  // so none is alive during the load either.
+  // With `aot` the compiler's own front end loads the files. It parses each file that may hold components on a worker of the bundler,
+  // which runs the React Compiler as a bundle does.
   test.concurrent.each([
     { env: {}, options: {} },
     { env: { BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" }, options: {} },
@@ -371,7 +371,7 @@ describe("Bun.build", () => {
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("compile" in options ? "false 0\n" : "true 0\n");
+      expect(stdout).toBe("true 0\n");
       expect(exitCode).toBe(0);
     },
     60_000,

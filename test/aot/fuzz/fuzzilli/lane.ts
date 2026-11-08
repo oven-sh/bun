@@ -14,20 +14,35 @@
 // The programs are drawn here, so nothing is needed but Bun. Where `unshare` can make a network of its own, the drivers run in one that reaches nothing: a drawn program may name any host.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { writeProgram, type Program } from "../beds";
+import { writeProgram, type Program } from "../runners";
 
-const drawn = "--group 1 --ordinary-scenes 100 --milliseconds 1000 --ends-early 100";
+const drawn = "--group 1 --ordinary-scenes 100 --milliseconds 1000 --ends-early 100 --minifies 25";
 const rewritten =
   "--hands-over-built-ins 50 --prints-into-a-text 60 --prints-members 70 --one-scene 25 --hooks-fail 30 --names-of-globals 15 --unwraps-try-blocks 35";
 /** What a build proves of a small program it doesn't prove beside many others, and a build of many judges four times as many programs in the same time. Each kind has found what the others missed. */
 const kinds: Record<string, string> = {
-  few: `${drawn} --count 1 --together 50 --few-to-a-build 100 --families 25 --slow 10 --ignores-type-errors 100 --compares-errors --options-of-the-project 30`,
-  many: `${drawn} ${rewritten} --count 400 --together 32 --scenes-of-every-size 50 --families 50 --validates 25 --collects 100`,
-  packages: `${drawn} ${rewritten} --count 4,12,40 --splits 100 --validates 50 --collects 100`,
+  // Each program is built as a user builds it, by run-alone.ts: what a build proves or leaves out only where a program is its own entry point shows there alone.
+  deeds: `alone --scene ${"sceneOfASingleDeed,".repeat(18)}sceneOfAGraphOfModules,sceneOfAGraphOfModules,sceneOfADeepVisitor --checks-proofs 50 --writes-straight 25 --as-a-test 25 --shuffles-costs 50`,
+  places: `alone --scene sceneOfTypedPlaces,sceneOfHiddenEffects --checks-proofs 100 --as-a-test 25 --shuffles-costs 50`,
+  alone: `alone --families 30 --checks-proofs 25 --writes-straight 25 --as-a-test 25 --shuffles-costs 50`,
+  kin: `alone --kin 100 --together 10 --checks-proofs 25 --shuffles-costs 25`,
+  // Kin of programs that lie outside the tree, such as those that a reader of a change wrote to try it. FUZZ_MORE_STORED_PROGRAMS names their folder.
+  "more-kin": `alone --kin 100 --stored ${process.env.FUZZ_MORE_STORED_PROGRAMS ?? join(import.meta.dir, "..", "..", "parallel")} --together 10 --checks-proofs 25 --shuffles-costs 25`,
+  hands: `alone --scene sceneOfAHand --draws js --checks-proofs 25 --shuffles-costs 25`,
+  calls: `alone --scene sceneOfUnlikeCallSites --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
+  changes: `alone --scene sceneOfAChange --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
+  loops: `alone --scene sceneOfALoop --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
+  // How one file loads another: rows of two or three deeds as test runs, by run-loads.ts. The test files are the worlds, and each is held against `bun test` by itself.
+  loads: `loads --rows 2,3 --in-company 50`,
+  crowds: `alone --scene sceneOfASingleDeed,sceneOfASingleDeed,sceneOfALoop,sceneOfALoop,sceneOfALoop,sceneOfTypedPlaces,sceneOfHiddenEffects --together 10 --changes-draws 30 --checks-proofs 25 --writes-straight 10 --shuffles-costs 50`,
+  few: `${drawn} --count 1 --together 50 --few-to-a-build 100 --families 25 --slow 10 --ignores-type-errors 100 --compares-errors --options-of-the-project 30 --writes-straight 50`,
+  many: `${drawn} ${rewritten} --count 400 --together 32 --scenes-of-every-size 50 --families 50 --collects 100 --writes-straight 50`,
+  packages: `${drawn} ${rewritten} --count 4,12,40 --splits 100 --collects 100`,
   external: `${drawn} ${rewritten} --count 400 --together 32 --scenes-of-every-size 50 --families 60 --beside-an-external 100 --collects 100`,
 };
-/** Kept for a list of their own, not as finds: what an executable built without --aot does too, the end of a time or memory limit, an answer that changes from run to run, and what shows in a validating build alone. */
-const quiet = /^(?:as-an-executable-without---aot|limit|unsteady|validation|validating-build-stopped)-/;
+const driverOf: Record<string, string> = { alone: "run-alone.ts", loads: "run-loads.ts" };
+/** Kept for a list of their own, not as finds: what an executable built without --aot does too, the end of a time or memory limit, and an answer that changes from run to run. */
+const quiet = /^(?:as-an-executable-without---aot|limit|unsteady)-/;
 
 const words = process.argv.slice(2);
 function taken(name: string): string | undefined {
@@ -47,14 +62,16 @@ if (!out || !(kind in kinds)) {
 }
 
 for (const folder of ["finds", "logs", "work"]) mkdirSync(join(out, folder), { recursive: true });
+// Each driver gets a network of its own, so that no drawn program reaches anything and no two meet on a port. The loopback of a new network is down: a program that serves itself would be refused
+// in both ways of running it, and that is the same answer.
 const alone =
   process.platform === "linux" &&
   Bun.spawnSync({ cmd: ["unshare", "-Urn", "true"], stdio: ["ignore", "ignore", "ignore"] }).exitCode === 0
-    ? ["unshare", "-Urn"]
+    ? ["unshare", "-Urn", "sh", "-c", 'ip link set lo up 2> /dev/null; exec "$@"', "sh"]
     : [];
 const drivers = Array.from({ length: jobs }, (_, index) =>
   Bun.spawn({
-    cmd: [...alone, process.execPath, join(import.meta.dir, "run-batch.ts"), "--bun", bun, "--work", join(out, "work", String(index)), "--finds", join(out, "finds"), "--batches", "0", "--seconds", String(minutes * 60), "--flags=--aot-threads=1", "--draws", index % 2 ? "js" : "ts", ...kinds[kind].split(" "), ...words], // prettier-ignore
+    cmd: [...alone, process.execPath, join(import.meta.dir, driverOf[kinds[kind].split(" ")[0]] ?? "run-batch.ts"), "--bun", bun, "--work", join(out, "work", String(index)), "--finds", join(out, "finds"), "--batches", "0", "--seconds", String(minutes * 60), "--flags=--aot-threads=1", "--draws", index % 2 ? "js" : "ts", ...kinds[kind].replace(/^(?:alone|loads) /, "").split(" "), ...words], // prettier-ignore
     cwd: join(out, "work"),
     env: {
       ...process.env,

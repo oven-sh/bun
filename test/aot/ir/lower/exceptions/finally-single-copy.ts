@@ -15,8 +15,7 @@
 // CHECK: [[onFallThrough]]():
 // CHECK: integer=2
 // CHECK: [[onReturn]]():
-// CHECK-NEXT: [[result]] = Convert [[returned]] declared={type=int[1, 2] site=w{{*}}}
-// CHECK-NEXT: Return [[result]]
+// CHECK-NEXT: Return [[returned]]
 // CHECK: [[onThrow]]():
 // CHECK-NEXT: Throw [[thrown]]
 

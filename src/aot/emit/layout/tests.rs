@@ -1,4 +1,5 @@
 use super::*;
+use crate::ir::StringTable;
 
 const NO_RECORDS: ListCounts = [0; ProgramList::COUNT];
 const HEADER_SIZE: u64 = HEADER_SIZE_IN_BYTES as u64;
@@ -160,7 +161,7 @@ fn plan_of_counts_past_64_bits_saturates() {
 #[test]
 fn first_indices_are_prefix_sums_in_task_order() {
     let (words, code) = (ProgramList::Words, ProgramList::Code);
-    let no_functions = || Source::Functions(Vec::new());
+    let no_functions = || Source::SharedFunctions(Vec::new());
     let mut tasks = [
         create_task(no_functions(), &[(words, 3), (code, 10)]),
         create_task(no_functions(), &[(code, 5)]),
@@ -182,7 +183,7 @@ fn string_task_measures_strings_and_bytes() {
     for text in [&b"ab"[..], b"", b"cde"] {
         strings.intern(text);
     }
-    let mut task = create_task(Source::Strings(&strings), &[]);
+    let mut task = create_task(Source::Strings(StringsOfTask::all_of(&strings)), &[]);
     task.measure();
     let expected = [(ProgramList::Strings, 3), (ProgramList::Bytes, 5)];
     assert_eq!(task.counts, counts_of(&expected));
@@ -194,7 +195,7 @@ fn task_is_written_once_outputs_are_full() {
     let mut records = [MaybeUninit::new(0u8); ProgramList::Strings.element_size()];
     let mut strings = StringTable::default();
     strings.intern(b"ab");
-    let mut task = create_task(Source::Strings(&strings), &[]);
+    let mut task = create_task(Source::Strings(StringsOfTask::all_of(&strings)), &[]);
     task.measure();
     task.outputs = create_empty_outputs();
     task.outputs[ProgramList::Bytes as usize] = OutputSlice::new(&mut bytes);
@@ -209,32 +210,11 @@ fn task_is_written_once_outputs_are_full() {
 }
 
 #[test]
-fn function_task_frees_functions_when_written() {
-    let functions = vec![Function::default()];
-    let mut counts = NO_RECORDS;
-    functions::measure(functions.iter(), &mut counts);
-    assert_eq!(counts[ProgramList::Functions as usize], 1);
-    let sizes = ProgramList::ALL.map(|list| byte_count(list, counts[list as usize]));
-    let mut space = vec![MaybeUninit::<u8>::uninit(); sizes.iter().sum()];
-    let mut output = OutputSlice::new(&mut space);
-    let mut task = create_task(Source::Functions(functions), &[]);
-    task.measure();
-    assert_eq!(task.counts, counts);
-    task.outputs = sizes.into_iter().map(|size| output.take(size)).collect();
-    task.write();
-    assert!(task.is_written());
-    let Source::Functions(functions) = &task.source else {
-        panic!("the task holds functions");
-    };
-    assert_eq!(functions.capacity(), 0);
-}
-
-#[test]
 #[should_panic(expected = "the task writes as many records of Bytes as it measured")]
 fn writing_more_than_measured_panics() {
     let mut strings = StringTable::default();
     strings.intern(b"ab");
-    let mut task = create_task(Source::Strings(&strings), &[]);
+    let mut task = create_task(Source::Strings(StringsOfTask::all_of(&strings)), &[]);
     task.outputs = create_empty_outputs();
     task.write();
 }
@@ -245,7 +225,7 @@ fn reserving_more_space_than_measured_panics() {
     let mut space = [MaybeUninit::<u8>::uninit(); 3];
     let mut strings = StringTable::default();
     strings.intern(b"ab");
-    let mut task = create_task(Source::Strings(&strings), &[]);
+    let mut task = create_task(Source::Strings(StringsOfTask::all_of(&strings)), &[]);
     task.measure();
     task.outputs = create_empty_outputs();
     task.outputs[ProgramList::Bytes as usize] = OutputSlice::new(&mut space);

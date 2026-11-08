@@ -1,11 +1,12 @@
 // libraries-known-not-to-work.md: a table of packages, what each does, and what you see in an executable. docs/compiler/libraries.mdx names the same packages.
 // Here each row has a small program that does what the package does. The program runs under plain Bun, is built with `bun compile`, and the
 // executable has to print the messages of the row, letter for letter. A row without a program fails, and so does a program without a row.
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { slot, unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 import { run } from "./harness/run";
 
 const read = (path: string) => readFileSync(join(import.meta.dir, path), "utf8");
@@ -25,7 +26,7 @@ const anchors = new Set(
 );
 
 // Where the table cuts a TypeError short with `...`, it ends like the one that the section prints in full.
-const whole = /```txt\n(TypeError: Cannot assign to Function\.prototype\.call\$0)( because .*)\n```/.exec(section)!;
+const whole = /```txt\n(TypeError: Cannot assign to Promise\.prototype\.then)( because .*)\n```/.exec(section)!;
 const ending = whole[2];
 
 const codeIn = (cell: string) => Array.from(cell.matchAll(/`([^`]+)`/g), ([, code]) => code.replaceAll("\\|", "|"));
@@ -59,13 +60,6 @@ type Program = {
 };
 
 const programs: Record<string, Program> = {
-  "sass": {
-    files: {
-      "main.js":
-        inSteps("Function.prototype.call$0 = function () { return this(); };") + `console.log((() => 1).call$0());`,
-    },
-    plain: "1\n",
-  },
   "private": {
     files: {
       "main.js": `
@@ -166,9 +160,12 @@ const programs: Record<string, Program> = {
         function hide(object, key, value) { return Object.defineProperty(object, key, { configurable: true, writable: true, value }); }
         function $export(name, source) { for (const key in source) hide(globalThis[name].prototype, key, source[key]); }
         $export("Function", { part() { return this.bind(undefined, ...arguments); } });
-        console.log(Math.max.part(2)(1));`,
+        console.log(Math.max.part(2)(1));
+        function define(Base, next) { hide(Base.prototype, Symbol.iterator, function () { return { i: 0, l: +this, next }; }); }
+        define(Number, function () { return this.i < this.l ? { done: false, value: this.i++ } : { done: true, value: undefined }; });
+        console.log([...3].join());`,
     },
-    plain: "2\n",
+    plain: "2\n0,1,2\n",
   },
   "harmony-reflect": {
     files: {
@@ -206,15 +203,6 @@ const programs: Record<string, Program> = {
     },
     plain: "[ 1 ]\n",
   },
-  "url-polyfill": {
-    files: {
-      "main.js": `
-        const proto = URLSearchParams.prototype;
-        if (typeof proto._fromString !== "function") Object.defineProperty(proto, "_fromString", { value(text) { return text; } });
-        console.log(new URLSearchParams()._fromString("a"));`,
-    },
-    plain: "a\n",
-  },
   "array.prototype.map": {
     files: {
       "main.js": `
@@ -244,14 +232,6 @@ const programs: Record<string, Program> = {
     },
     plain: "true\n",
   },
-  "promise": {
-    files: {
-      "main.js":
-        inSteps("Promise.prototype.done = function (a, b) { this.then(a, b); };") +
-        `Promise.resolve(1).done(console.log);`,
-    },
-    plain: "1\n",
-  },
   "timezone-mock": {
     files: {
       "main.js": `
@@ -261,63 +241,6 @@ const programs: Record<string, Program> = {
         console.log(String({}));`,
     },
     plain: "[object Object]\n",
-  },
-  // As in the package: shimmer exports a function with the wrappers as members, and one of the objects it wraps is a prototype found at run time.
-  "async-listener": {
-    files: {
-      "main.js": `
-        const shimmer = require("./shimmer.js"), wrap = shimmer.wrap, massWrap = shimmer.massWrap;
-        function activator(original) {
-          return function () { console.log("wrapped"); return original.apply(this, arguments); };
-        }
-        wrap(process, "nextTick", activator);
-        const asynchronizers = ["setTimeout", "setInterval"];
-        if (global.setImmediate) asynchronizers.push("setImmediate");
-        massWrap(global, asynchronizers, activator);
-        massWrap(require("node:dns"), ["lookup", "resolve"], activator);
-        massWrap(require("node:fs"), ["stat", "readdir"], activator);
-        const proto = Object.getPrototypeOf(require("node:zlib").Deflate.prototype);
-        if (proto._transform) wrap(proto, "_transform", activator);
-        else if (proto.write && proto.flush && proto.end) massWrap(proto, ["write", "flush", "end"], activator);
-        setTimeout(() => console.log("ran"), 1);`,
-      "shimmer.js": `
-        function defineProperty(obj, name, value) {
-          const enumerable = !!obj[name] && obj.propertyIsEnumerable(name);
-          Object.defineProperty(obj, name, { configurable: true, enumerable, writable: true, value });
-        }
-        function shimmer() {}
-        function wrap(nodule, name, wrapper) {
-          if (!nodule || !nodule[name]) return;
-          const original = nodule[name], wrapped = wrapper(original, name);
-          defineProperty(wrapped, "__original", original);
-          defineProperty(nodule, name, wrapped);
-          return wrapped;
-        }
-        function massWrap(nodules, names, wrapper) {
-          if (!nodules) return;
-          else if (!Array.isArray(nodules)) nodules = [nodules];
-          nodules.forEach(function (nodule) {
-            names.forEach(function (name) {
-              wrap(nodule, name, wrapper);
-            });
-          });
-        }
-        shimmer.wrap = wrap;
-        shimmer.massWrap = massWrap;
-        module.exports = shimmer;`,
-    },
-    plain: "wrapped\nran\n",
-  },
-  "pirates": {
-    files: {
-      "main.js": `
-        const Module = require("node:module");
-        const oldLoader = Module._extensions[".js"];
-        Module._extensions[".js"] = function newLoader(mod, filename) { return oldLoader(mod, filename); };
-        console.log(require("./other.js"));`,
-      "other.js": `module.exports = "one";`,
-    },
-    plain: "one\n",
   },
   "module-alias": {
     files: {
@@ -453,8 +376,7 @@ describe.skipIf(!!unsupported)("libraries that are known not to work", () => {
       // Under `bun run --aot` the program runs from its source, with the built-in objects read-only as in an executable. Asked of the first row of each rule.
       if (rows.find(row => row.rule === rule && row.name in programs)!.name !== name) return;
       const fromSource = await slot(() => run([bunExe(), "run", "--aot", "main.js"], cwd, env));
-      if (rule === "#loader-hooks-and-the-module-cache" || name === "async-listener")
-        expect(fromSource.stdout).toBe(plain);
+      if (rule === "#loader-hooks-and-the-module-cache") expect(fromSource.stdout).toBe(plain);
       else if (name !== "should")
         expect({ missing: missingIn(fromSource.stderr, atRunTime), said: fromSource.stderr }).toEqual({
           missing: [],

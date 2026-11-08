@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""one-property-two-spellings.py <seed>: ONE (Structure, name) PAIR REACHED BY TWO KINDS OF WRITE, THROUGH TWO SITES. Objects of ONE Structure, with `x` in one of twelve states beforehand (absent . plain . not enumerable . read-only . not configurable . frozen in all three . an accessor . a getter alone . absent with a setter | a read-only property | a getter alone | a proxy up the chain); kind A through site 1, kind B through site 2 (each site a function of its own in the text), on two objects and on one; five rounds (a table that is entered at the second miss serves from the third on), both orders. Kinds: a plain store . by a written key . by a computed key . a class field (defined over whatever is there) . defineProperty whole | value alone | not enumerable | an accessor . an arrow | a function that captures the object it is stored on . Reflect.set . Object.assign . ??= . += . delete and store . Reflect.defineProperty. LOOKED AT: the descriptor, the order of the keys, the value by name and by key, what it returns if it is a function (is it the object?), what setters and traps up the chain have seen. As plain Bun or a throw."""
+"""one-property-two-spellings.py <seed>: One (shape, name) pair is written in two different ways through two sites.
+Objects of one shape, with `x` in one of twelve prior states (absent, plain, non-enumerable, read-only,
+non-configurable, an accessor ..).
+"""
 import random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 R = random.Random(seed)

@@ -312,6 +312,21 @@ function turn(i: number): number {
   const value = values[i & 3];
   return value instanceof Error ? value.message.length : 0;
 }
+//// message-of-type-errors
+const values = [new TypeError("x"), new TypeError("text"), new TypeError("y"), new TypeError("five")];
+function turn(i: number): number {
+  return values[i & 3]!.message.length;
+}
+//// message-of-errors-of-two-classes
+const values: Error[] = [new Error("x"), new Error("text"), new TypeError("y"), new TypeError("five")];
+function turn(i: number): number {
+  return values[i & 3]!.message.length;
+}
+//// message-of-errors-of-four-classes
+const values: Error[] = [new Error("x"), new TypeError("text"), new RangeError("y"), new SyntaxError("five")];
+function turn(i: number): number {
+  return values[i & 3]!.message.length;
+}
 //// constructor-name
 class Alpha {}
 class Beta {}

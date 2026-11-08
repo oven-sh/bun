@@ -185,8 +185,11 @@ function streamFileHandleClose(this: FileHandle, fd: FD, cb: ErrorCallback) {
 }
 
 function getValidatedPath(p: string | URL | null | undefined): string {
-  if (p instanceof URL) return Bun.fileURLToPath(p);
-  if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
+  if (typeof p !== "string") {
+    const path = require("internal/url").toPathIfFileURL(p);
+    if (typeof path !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
+    return path;
+  }
   return require("node:path").resolve(p);
 }
 
@@ -644,6 +647,12 @@ const writeStreamPrototype = WriteStream.prototype;
 writeStreamPrototype.open = streamNoop;
 writeStreamPrototype._construct = streamConstruct;
 
+// In the words that the engine has for `this[kFs].write(..)` in the text that `bun run` evaluates.
+function fileSystemOrThrow<T>(fs: T): NonNullable<T> {
+  if (fs == null) throw new TypeError(`${fs} is not an object (evaluating 'size')`);
+  return fs;
+}
+
 function writeAll(
   this: $Node.WriteStream,
   data: Buffer,
@@ -652,33 +661,40 @@ function writeAll(
   cb: ErrorCallback,
   retries = 0,
 ) {
-  this[kFs].write!(this.fd, data, 0, size, pos, (er, bytesWritten, buffer) => {
-    // No data currently available and operation should be retried later.
-    if (er?.code === "EAGAIN") {
-      er = null;
-      bytesWritten = 0;
-    }
+  (IS_COMPILED_AHEAD_OF_TIME ? fileSystemOrThrow(this[kFs]) : this[kFs]).write!(
+    this.fd,
+    data,
+    0,
+    size,
+    pos,
+    (er, bytesWritten, buffer) => {
+      // No data currently available and operation should be retried later.
+      if (er?.code === "EAGAIN") {
+        er = null;
+        bytesWritten = 0;
+      }
 
-    if (this.destroyed || er) {
-      return cb(er || $ERR_STREAM_DESTROYED("write"));
-    }
+      if (this.destroyed || er) {
+        return cb(er || $ERR_STREAM_DESTROYED("write"));
+      }
 
-    this.bytesWritten += bytesWritten!;
+      this.bytesWritten += bytesWritten!;
 
-    retries = bytesWritten ? 0 : retries + 1;
-    size -= bytesWritten!;
-    if (pos !== undefined) pos += bytesWritten!;
+      retries = bytesWritten ? 0 : retries + 1;
+      size -= bytesWritten!;
+      if (pos !== undefined) pos += bytesWritten!;
 
-    // Try writing non-zero number of bytes up to 5 times.
-    if (retries > 5) {
-      // cb($ERR_SYSTEM_ERROR('write failed'));
-      cb(new Error("write failed"));
-    } else if (size) {
-      writeAll.$call(this, buffer!.slice(bytesWritten), size, pos, cb, retries);
-    } else {
-      cb();
-    }
-  });
+      // Try writing non-zero number of bytes up to 5 times.
+      if (retries > 5) {
+        // cb($ERR_SYSTEM_ERROR('write failed'));
+        cb(new Error("write failed"));
+      } else if (size) {
+        writeAll.$call(this, buffer!.slice(bytesWritten), size, pos, cb, retries);
+      } else {
+        cb();
+      }
+    },
+  );
 }
 
 function writevAll(
@@ -826,11 +842,16 @@ function writeFast(
   encoding?: string | null | ErrorCallback,
   cb?: ErrorCallback,
 ): boolean {
+  // The engine's errors quote the source of the expression that failed. A compiled frame has none, so what they say of a receiver that is no stream is written out.
+  if (IS_COMPILED_AHEAD_OF_TIME && this == null)
+    throw new TypeError(`${this} is not an object (evaluating 'kWriteMonkeyPatchDefense')`);
   if (this[kWriteMonkeyPatchDefense]) return writablePrototypeWrite.$call(this, data, encoding as string, cb);
 
   // After end()/destroy() the Writable contract requires write() to fail with
   // ERR_STREAM_WRITE_AFTER_END / ERR_STREAM_DESTROYED and not reach the sink.
   const state = this._writableState;
+  if (IS_COMPILED_AHEAD_OF_TIME && state === null)
+    throw new TypeError("null is not an object (evaluating 'kWriteMonkeyPatchDefense')");
   if (state !== undefined && (state.ending || state.destroyed)) {
     return writablePrototypeWrite.$call(this, data, encoding as string, cb);
   }
@@ -867,7 +888,8 @@ function writeFast(
       return true; // No backpressure
     }
   } else {
-    const result: any = this._write(data, encoding!, cb);
+    let result: any;
+    result = this._write(data, encoding!, cb);
     if (this.write === writeFast) {
       this.write = writablePrototypeWrite;
     } else {

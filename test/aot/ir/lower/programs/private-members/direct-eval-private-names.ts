@@ -144,100 +144,87 @@ export {};
 
 // GENERATED: #a #s runInArrow hasCompiled SafeBox
 // CHECK-LABEL: function {{*}}name="#a"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_1]] site=[[w_2]]} results=[{type=number site=[[w_3]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_1]]} results=[{type=number}] {
 // CHECK-NEXT: b0(v0: [[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_1]] field=1
 // CHECK-NEXT: v3 = Integer integer=10
 // CHECK-NEXT: v4 = Mul v2, v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number site=[[w_3]]}
+// CHECK-NEXT: v5 = Convert v4 declared={type=number}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#a"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_1]] site=[[w_5]]} parameters=[{type=number site=[[w_6]]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_1]]} parameters=[{type=number}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: [[L_1]], v1: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v2 = Integer integer=10
 // CHECK-NEXT: v3 = Div v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_7]]}
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v4 = Convert v3 declared={type=number}
+// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: PrivateSet v0, v5, v4 layout=[[L_1]] field=1
 // CHECK-NEXT: v7 = Undefined
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#s"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = String string="s sees "
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_9]]
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="Vault"
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_10]]
+// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_4]]
 // CHECK-NEXT: v4 = StrictEq v2, v3
-// CHECK-NEXT: Branch v4 -> taken b2(), notTaken b5()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_11]]
+// CHECK-NEXT: Branch v4 -> taken b1(), notTaken b4()
+// CHECK-NEXT: b1():
+// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_5]]
 // CHECK-NEXT: v6 = TypeTest v5 testedType=absent
-// CHECK-NEXT: Branch v6 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v7) frequency=Unlikely:
+// CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3(| 0)
+// CHECK-NEXT: b2(v7):
 // CHECK-NEXT: v8 = NewRuntimeError runtimeError=InvalidPrivateRead
 // CHECK-NEXT: Throw v8
-// CHECK-NEXT: b4(v9):
-// CHECK-NEXT: v10 = Convert v9 declared={type=number} illTypedCause=Assertion
-// CHECK-NEXT: v11 = Add v0, v10
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: b5() frequency=Unlikely:
-// CHECK-NEXT: v13 = TypeTest v2 testedType=undefined|null
-// CHECK-NEXT: Branch v13 -> taken b6(| 0), notTaken b7(| 0)
-// CHECK-NEXT: b6(v14):
-// CHECK-NEXT: v15 = PropGet v14 key="#count"
+// CHECK-NEXT: b3(v9):
+// CHECK-NEXT: v10 = Add v0, v9
+// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: Return v11
+// CHECK-NEXT: b4():
+// CHECK-NEXT: v12 = TypeTest v2 testedType=undefined|null
+// CHECK-NEXT: Branch v12 -> taken b5(| 0), notTaken b6(| 0)
+// CHECK-NEXT: b5(v13):
+// CHECK-NEXT: v14 = PropGet v13 key="#count"
 // CHECK-NEXT: Unreachable
-// CHECK-NEXT: b7(v16):
-// CHECK-NEXT: v17 = NewRuntimeError runtimeError=InvalidPrivateRead
-// CHECK-NEXT: Throw v17
+// CHECK-NEXT: b6(v15):
+// CHECK-NEXT: v16 = NewRuntimeError runtimeError=InvalidPrivateRead
+// CHECK-NEXT: Throw v16
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="runInArrow"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=3 thisType={type=[[L_1]] site=[[w_12]]} parameters=[{type=undefined|null|string site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}, {type=anything}, {type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=3 thisType={type=[[L_1]]} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: [[L_1]], v1: int[0, 4294967295], v2: undefined|null|string, v3: anything, v4: anything, v5: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v6 = CreateUnmappedArguments v1, v5, v2, v3, v4
-// CHECK-NEXT: v7 = NewObject -, v2, v3, v4 layout=[[L_14]] fields=[0, 1, 2]
-// CHECK-NEXT: v8 = NewClosure v7, v0, v6, v6 function=[[f_15]]
+// CHECK-NEXT: v7 = NewObject -, v2, v3, v4 layout=[[L_7]] fields=[0, 1, 2]
+// CHECK-NEXT: v8 = NewClosure v7, v0, v6, v6 function=[[f_8]]
 // CHECK-NEXT: v9 = Call v8
 // CHECK-NEXT: ReturnCall v9
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="hasCompiled"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_17]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v2 = PrivateHas v0, v1 layout=[[L_1]] field=1
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v4 = PrivateHas v0, v3 layout=[[L_1]] field=2
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v6 = PrivateHas v0, v5 layout=[[L_1]]
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v8 = PrivateHas v0, v7 layout=[[L_1]]
-// CHECK-NEXT: v9 = NewArray v2, v4, v6, v8 contents=boolean
+// CHECK-NEXT: v9 = NewArray v2, v4, v6, v8 contents=anything
 // CHECK-NEXT: v10 = PropGet v9 key="join"
 // CHECK-NEXT: v11 = Call v10, v9 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v11 casts=[{declared={type=undefined|null|string site=[[w_18]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_17]] flags=[OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: ReturnCall v11 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="SafeBox"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_19]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_9]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_20]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_20]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_21]]
+// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_10]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_10]]}
+// CHECK-NEXT: v6 = CallDirect v5 function=[[f_11]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }

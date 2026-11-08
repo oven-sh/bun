@@ -414,7 +414,7 @@ test.skipIf(isDebug)(
     expect(deltaMB).toBeLessThan(35);
     expect(exitCode).toBe(0);
   },
-  15_000,
+  isASAN ? 45_000 : 15_000,
 );
 
 // `fail()` / `cancel_from_output()` on a native ByteStream/FileReader input

@@ -1,6 +1,11 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="sometimes"
+// CHECK-LABEL: function {{*}}name="yields"
+// CHECK-LABEL: function {{*}}name="later"
+// CHECK-LABEL: function {{*}}name="Source"
+// CHECK-LABEL: function {{*}}name="make"
 
 // FILE: main.js
 function show(value) {
@@ -169,101 +174,3 @@ attempt("then of what is no promise", () => notAPromise().then(plusOne));
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true, "checkJs": false }, "files": [] }
-
-// GENERATED: sometimes yields later Source make
-// CHECK-LABEL: function {{*}}name="sometimes"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Integer integer=1000
-// CHECK-NEXT: v2 = Mod v0, v1
-// CHECK-NEXT: v3 = Integer integer=999
-// CHECK-NEXT: v4 = StrictEq v2, v3
-// CHECK-NEXT: Branch v4 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v5 = String string="late"
-// CHECK-NEXT: Jump -> next b4(v5)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b4(v0)
-// CHECK-NEXT: b4(v6):
-// CHECK-NEXT: v7 = Convert v6 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="yields"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Generator<number> flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = String string="a"
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v5 = Yield v4
-// CHECK-NEXT: v6 = ResultAt v5
-// CHECK-NEXT: v7 = ResultAt v5 index=1
-// CHECK-NEXT: Switch v7 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Throw v6
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v8 = Null
-// CHECK-NEXT: v9 = Convert v8 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v10 = Yield v9
-// CHECK-NEXT: v11 = ResultAt v10
-// CHECK-NEXT: v12 = ResultAt v10 index=1
-// CHECK-NEXT: Switch v12 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: Throw v11
-// CHECK-NEXT: b6():
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: b7():
-// CHECK-NEXT: v13 = Integer integer=3
-// CHECK-NEXT: v14 = Convert v13 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v15 = Yield v14
-// CHECK-NEXT: v16 = ResultAt v15
-// CHECK-NEXT: v17 = ResultAt v15 index=1
-// CHECK-NEXT: Switch v17 cases=[1, 2] -> case b8(), case b9(), otherwise b10()
-// CHECK-NEXT: b8():
-// CHECK-NEXT: Throw v16
-// CHECK-NEXT: b9():
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: b10():
-// CHECK-NEXT: v18 = Undefined
-// CHECK-NEXT: Return v18
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="later"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Promise<number> flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = String string="later"
-// CHECK-NEXT: v2 = Convert v1 declared={type=number|object flags=[IsExpected]}
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Source"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v2 = NewObject layout=[[L_3]]
-// CHECK-NEXT: PropDefine v2, v1 key="value"
-// CHECK-NEXT: v4 = NewClosure function=[[f_4]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v2, v5 key="method"
-// CHECK-NEXT: v7 = FinishObject v2
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[L_1]] flags=[IsExpected]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }

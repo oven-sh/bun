@@ -27,7 +27,6 @@ fn find_instance_layout<'a>(program: &'a Program, name: &str) -> &'a Layout {
     found.expect(name)
 }
 
-// The names of the layouts above `name`, each of which has to be a constructor function of Bun's own modules.
 fn names_above<'a>(linked: &'a Linked, name: &str) -> Vec<&'a [u8]> {
     let program = &linked.program;
     let mut names = Vec::new();

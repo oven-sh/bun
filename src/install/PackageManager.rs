@@ -1110,7 +1110,7 @@ impl PackageManager {
     ) -> Result<&mut transpiler::Transpiler<'static>, Error> {
         // Compute once and return the cached value on
         // subsequent calls. `Transpiler` is non-`Copy` (and self-referential via
-        // `linker.options = &options`), so cache by pointer in a process-static.
+        // `macro_context`), so cache by pointer in a process-static.
         // SAFETY: `PackageManager` is a leaked singleton; main-thread-only call site.
         let mut ptr = CONFIGURE_ENV_FOR_SCRIPTS_ONCE.load(core::sync::atomic::Ordering::Acquire);
         if ptr.is_null() {
@@ -2734,7 +2734,7 @@ pub fn init(
         let uws_loop = manager.event_loop.r#loop();
         // SAFETY: `uws_loop` is the live process-global `uws::Loop` (`r#loop()` above);
         // the handle's backref is `manager.event_loop`, owned by the singleton.
-        let uws_loop = unsafe { &mut *uws_loop };
+        let uws_loop = unsafe { &*uws_loop };
         EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
     }
     {

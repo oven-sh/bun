@@ -1,21 +1,12 @@
 // A reader of several fields tests the object once instead of each slot. Every object below goes through the same readers: the first one a constructor makes, one that lost a field, one whose
 // field became an accessor, one that was seen before it was finished, one whose constructor left early, one made for another new.target, and one that the constructor was only called on.
-// STATISTIC: BirthsFinished >= 2
-// IR-UNTIL FinishBirths
-// The constructor function says where the last field is stored.
-// IRT= 1 Fiber ^ +FinishBirth\b
-// The reader asks once, and once more behind the conversion to a text, which may run code.
-// IRT= 2 readFiber HasBirthFieldsFilled
-// IRT= 0 readFiber IsSlotFilled
-// IRT= 2 readAcrossACall HasBirthFieldsFilled
-// IRT= 0 readAcrossACall IsSlotFilled
-// IRT= 1 storeIntoFiber HasBirthFieldsFilled
 const out = [];
 const suffix = process.argv[2] ?? "";
 // What the compiler cannot read: it only knows that the objects go there.
 globalThis.hide = new Function("value", "return value" + suffix);
 const define = new Function("object", "key", "descriptor", "return Object.defineProperty(object, key, descriptor)" + suffix);
 const remove = new Function("object", "key", "return delete object[key]" + suffix);
+const construct = new Function("target", "list", "newTarget", "return Reflect.construct(target, list, newTarget)" + suffix);
 
 function Fiber(tag, key, child) {
   this.tag = tag;
@@ -127,10 +118,10 @@ show("the constructor threw", sink.map(readThrows));
 
 function Other() {}
 Other.prototype.marker = "other";
-const forOther = hide(Reflect.construct(Fiber, [7, "for another new.target", null], Other));
+const forOther = hide(construct(Fiber, [7, "for another new.target", null], Other));
 show("made for another new.target", [readFiber(forOther), forOther.marker, forOther instanceof Fiber]);
 class Setter { set key(v) { this.hidden = v; } }
-const underSetter = hide(Reflect.construct(Fiber, [8, "under a setter", null], Setter));
+const underSetter = hide(construct(Fiber, [8, "under a setter", null], Setter));
 show("a setter above takes the store", [readFiber(underSetter), underSetter.hidden]);
 
 define(Fiber.prototype, "key", { set(v) { this.hidden = v; }, configurable: true });

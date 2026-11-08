@@ -3,15 +3,17 @@ use super::code_imports::resolve_code_imports;
 use super::code_load::{Analyzed, CodeTarget, LoadKey, LoadedCode, ParsedCodeFile};
 use super::*;
 use crate::bind::{BindOptions, RuntimeBindOptions};
-use crate::file_analysis::{FileAnalysis, FileInputs, FoldedAgain, analyze_file, fold_file_again};
-use crate::fold::FoldInputs;
+use crate::file_analysis::{
+    AnalyzedAgain, AnalyzedAgainFrom, FileAnalysis, FileInputs, analyze_file, analyze_file_again,
+};
+use crate::fold::{FoldInputs, StoredByMocks};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{AutomaticJsx, JsxMode, find_exported_requires};
-use crate::module_format::{DeclaredModuleType, ModuleFormat};
+use crate::module_format::{DeclaredModuleType, ModuleFormat, find_format_by_syntax};
 use crate::resolve::{
-    CodeImportForm, CodeImportKind, CodeParseRequest, CodeRequest, CodeResolution, HostPayload,
-    HostResolution, JsxRuntime, JsxSettings, MacroRequest, ParsedCode, TransformRequest,
-    TranspileSettings, TreeChange,
+    CodeImportForm, CodeImportKind, CodeParseRequest, CodeRequest, CodeResolution,
+    EarlyTransformRequest, HostPayload, HostResolution, JsxRuntime, JsxSettings, MacroRequest,
+    ParsedCode, TransformRequest, TranspileSettings, TreeChange,
 };
 use std::cmp::Ordering;
 
@@ -44,13 +46,15 @@ impl<'s> AcceptedTree<'s, '_> {
     }
 }
 
-/// What the rest of the program says about a file.
 #[derive(Copy, Clone, Default)]
-pub(super) struct LoadInputs<'a> {
-    pub(super) is_called_before_it_runs: bool,
+pub(super) struct LoadInputs<'a, 's> {
+    pub(super) stored_by_mocks: StoredByMocks<'s>,
     pub(super) is_only_imported: bool,
     pub(super) imported_requires: &'a [ImportedRequire],
     pub(super) imported_constants: &'a [ImportedConstant],
+    pub(super) texts_of_data_files: &'a [TextOfDataFile],
+    pub(super) imported_file_changers: &'a [ImportedFileChanger],
+    pub(super) texts_of_other_files: &'a [TextOfOtherFile],
 }
 
 pub(super) fn load_code_file<'s, 'r>(
@@ -58,7 +62,7 @@ pub(super) fn load_code_file<'s, 'r>(
     arena: &'s Arena,
     target: CodeTarget<'r>,
     text: Cow<'static, [u8]>,
-    inputs: LoadInputs<'_>,
+    inputs: &LoadInputs<'_, 's>,
 ) -> ParsedCodeFile<'s, 'r> {
     let &CodeLoadContext {
         resolver,
@@ -66,11 +70,10 @@ pub(super) fn load_code_file<'s, 'r>(
         ref atoms,
         ..
     } = context;
-    let LoadInputs {
-        is_called_before_it_runs,
+    let &LoadInputs {
+        stored_by_mocks,
         is_only_imported,
-        imported_requires,
-        imported_constants,
+        ..
     } = inputs;
     let key = target.key;
     let path = key.path;
@@ -78,8 +81,8 @@ pub(super) fn load_code_file<'s, 'r>(
     let settings = resolver.transpile_settings(path);
     let mut tree = accept_tree(context, arena, key, settings, is_only_imported, text);
     debug_assert!(tree.hir.kind != FileKind::Declaration);
-    tree.hir.imported_requires = ArenaFew::from_iter_in(imported_requires.iter().copied(), arena);
-    tree.hir.imported_constants = ArenaFew::from_iter_in(imported_constants.iter().copied(), arena);
+    write_what_other_files_say(&mut tree.hir, inputs, arena);
+    tree.hir.runs_beside_loader = context.host.has_loader_at_run_time();
     let is_script_for_project = match tree.request.options.written_module_detection {
         ModuleDetection::Force => false,
         ModuleDetection::Legacy => true,
@@ -95,23 +98,16 @@ pub(super) fn load_code_file<'s, 'r>(
         let was_script =
             is_script_for_project && !tree.hir.has_module_syntax && !imports_jsx_factory;
         mark_as_module(&mut tree.hir);
+        tree.hir.is_script_for_project = was_script && tree.hir.is_forced_module;
         tree.hir.is_script_with_code =
-            was_script && tree.hir.is_forced_module && tree.hir.declares_beside_code();
+            tree.hir.is_script_for_project && tree.hir.declares_beside_code();
     }
     if tree.hir.text.is_empty() && tree.hir.source_len as usize == tree.text.len() {
         tree.hir.text = std::mem::take(&mut tree.text);
     }
-    let (bound, analyzed) = analyze(
-        context,
-        arena,
-        key,
-        settings,
-        is_called_before_it_runs,
-        is_only_imported,
-        &mut tree,
-    );
+    let (bound, analyzed) = analyze(context, arena, key, settings, stored_by_mocks, &mut tree);
     if !tree.request.options.keeps_comments {
-        tree.hir.comments = Default::default();
+        crate::erasure::keep_only_comments_beside_types(&mut tree.hir, arena);
     }
     rename_private_names_with(&mut tree.hir, &bound, atoms, path, |reference, _| {
         bound.runtime.private_class(reference)
@@ -124,15 +120,41 @@ pub(super) fn load_code_file<'s, 'r>(
     resolve_analyzed_file(context, key, parse, analyzed, specifies_esm, tree.payload)
 }
 
+fn write_what_other_files_say<'s>(
+    hir: &mut hir::File<'s>,
+    inputs: &LoadInputs<'_, 's>,
+    arena: &'s Arena,
+) {
+    hir.imported_requires = ArenaFew::from_iter_in(inputs.imported_requires.iter().copied(), arena);
+    let places = match inputs.imported_requires.is_empty() {
+        true => Vec::new(),
+        false => ImportedRequire::hash_by_names(inputs.imported_requires),
+    };
+    hir.places_of_imported_requires = ArenaFew::from_iter_in(places.into_iter(), arena);
+    hir.imported_constants =
+        ArenaFew::from_iter_in(inputs.imported_constants.iter().copied(), arena);
+    hir.texts_of_data_files =
+        ArenaFew::from_iter_in(inputs.texts_of_data_files.iter().copied(), arena);
+    hir.imported_file_changers =
+        ArenaFew::from_iter_in(inputs.imported_file_changers.iter().copied(), arena);
+    hir.texts_of_other_files =
+        ArenaFew::from_iter_in(inputs.texts_of_other_files.iter().copied(), arena);
+}
+
 fn fold_inputs_of<'c, 's: 'c>(
     context: &'c CodeLoadContext<'_, 's, '_>,
     arena: &'s Arena,
-    is_called_before_it_runs: bool,
+    stored_by_mocks: StoredByMocks<'s>,
 ) -> &'c FoldInputs<'s> {
-    match is_called_before_it_runs {
-        true => &*arena.alloc(context.inputs.fold.for_file_called_before_it_runs()),
-        false => context.inputs.fold,
+    if stored_by_mocks == StoredByMocks::Nothing {
+        return context.inputs.fold;
     }
+    arena.alloc(
+        context
+            .inputs
+            .fold
+            .for_file_stored_by_mocks(stored_by_mocks),
+    )
 }
 
 fn resolve_analyzed_file<'s, 'r>(
@@ -143,7 +165,8 @@ fn resolve_analyzed_file<'s, 'r>(
     specifies_esm: bool,
     payload: Option<HostPayload>,
 ) -> ParsedCodeFile<'s, 'r> {
-    let code = Box::new(resolve_code_imports(context, key, &parse.hir, analyzed));
+    let code = resolve_code_imports(context, key, &parse.hir, &parse.bound, analyzed);
+    let code = Box::new(code);
     summarize_resolved_file(context, key, parse, code, specifies_esm, payload)
 }
 
@@ -171,12 +194,10 @@ fn summarize_resolved_file<'s, 'r>(
     }
 }
 
-/// What the names hold that a file reads of other files may fold it once more. The host looks at such a file when they have been looked up.
 pub(super) fn is_finished_later(analysis: &FileAnalysis<'_>) -> bool {
     analysis.module_format == ModuleFormat::Esm && !analysis.imported_names.is_empty()
 }
 
-/// Returns whether the host implied more files to load.
 pub(super) fn finish_code_file<'s, 'r>(
     context: &CodeLoadContext<'_, 's, 'r>,
     target: CodeTarget<'r>,
@@ -194,14 +215,13 @@ pub(super) fn finish_code_file<'s, 'r>(
     true
 }
 
-/// The tree and its bindings stay. `None`: the file is to be loaded anew.
-pub(super) fn fold_code_file_again<'s, 'r>(
+pub(super) fn analyze_code_file_again<'s, 'r>(
     context: &CodeLoadContext<'_, 's, 'r>,
     arena: &'s Arena,
     target: CodeTarget<'r>,
     loaded: ParsedCodeFile<'s, 'r>,
-    is_called_before_it_runs: bool,
-    imported_constants: &[ImportedConstant],
+    inputs: &LoadInputs<'_, 's>,
+    from: AnalyzedAgainFrom,
 ) -> Option<ParsedCodeFile<'s, 'r>> {
     let key = target.key;
     let ParsedCodeFile {
@@ -210,8 +230,8 @@ pub(super) fn fold_code_file_again<'s, 'r>(
         mut code,
         payload,
     } = loaded;
-    parse.hir.imported_constants =
-        ArenaFew::from_iter_in(imported_constants.iter().copied(), arena);
+    write_what_other_files_say(&mut parse.hir, inputs, arena);
+    parse.hir.runs_beside_loader = context.host.has_loader_at_run_time();
     let previous = &code.analyzed;
     let file = FileInputs {
         declared_module_type: previous.declared_module_type,
@@ -219,25 +239,27 @@ pub(super) fn fold_code_file_again<'s, 'r>(
         is_library: context.host.is_library_file(key.path),
         host_values: previous.host_values,
         jsx: previous.jsx_mode,
+        own_name: arena.alloc_slice_copy(bun_paths::basename_posix(key.path)),
     };
-    let FoldedAgain {
+    let AnalyzedAgain {
         analysis,
         has_same_import_sites,
-    } = fold_file_again(
+    } = analyze_file_again(
         &parse.hir,
         &parse.bound,
-        fold_inputs_of(context, arena, is_called_before_it_runs),
+        fold_inputs_of(context, arena, inputs.stored_by_mocks),
         file,
         &previous.analysis,
+        from,
         &context.atoms,
         arena,
     )?;
     code.analyzed.analysis = analysis;
-    code.analyzed.is_called_before_it_runs = is_called_before_it_runs;
-    // The same sites lead where they led. What the host implied comes again when it looks at the file.
     match has_same_import_sites {
         true => code.forget_implied(),
-        false => *code = resolve_code_imports(context, key, &parse.hir, code.analyzed),
+        false => {
+            *code = resolve_code_imports(context, key, &parse.hir, &parse.bound, code.analyzed)
+        }
     }
     Some(summarize_resolved_file(
         context,
@@ -283,6 +305,7 @@ fn accept_tree<'s, 'r>(
     } = context;
     let path = key.path;
     let request = CodeParseRequest {
+        package_module_type: context.resolver.package_module_type(path),
         path,
         loader: key.loader,
         options: parse_options_of(context, path, settings),
@@ -304,7 +327,6 @@ fn accept_tree<'s, 'r>(
     }
 }
 
-/// `bun run` reads the type off the extension where `require` loads the file and where the file is an entry point. Where an `import` loads it, it asks the package alone.
 fn declared_module_type_of(
     context: &CodeLoadContext<'_, '_, '_>,
     path: &[u8],
@@ -314,7 +336,7 @@ fn declared_module_type_of(
         return DeclaredModuleType::Unknown;
     }
     match is_only_imported {
-        true => context.resolver.package_module_type(path),
+        true => context.resolver.module_type_where_imported(path),
         false => context.resolver.declared_module_type(path),
     }
 }
@@ -364,8 +386,7 @@ fn analyze<'s, 'r>(
     arena: &'s Arena,
     key: LoadKey<'r>,
     settings: &'r TranspileSettings,
-    is_called_before_it_runs: bool,
-    is_only_imported: bool,
+    stored_by_mocks: StoredByMocks<'s>,
     tree: &mut AcceptedTree<'s, 'r>,
 ) -> (Bound<'s>, Analyzed<'s, 'r>) {
     let &CodeLoadContext {
@@ -381,11 +402,17 @@ fn analyze<'s, 'r>(
         JsxRuntime::Classic => names.first().map(|name| atoms.intern(name)),
         JsxRuntime::Automatic => None,
     };
+    let written = |names: &[Vec<u8>]| match file_jsx.runtime {
+        JsxRuntime::Classic => Some(atoms.intern(&names.join(&b'.'))),
+        JsxRuntime::Automatic => None,
+    };
     let runtime = RuntimeBindOptions {
         jsx_factory_root: root(&file_jsx.factory),
         jsx_fragment_root: root(&file_jsx.fragment),
+        jsx_paths: [written(&file_jsx.factory), written(&file_jsx.fragment)],
         emits_decorator_metadata: settings.emits_decorator_metadata,
         hoists_top_level_variables: host.hoists_top_level_variables(path),
+        object_prototype_takes_names: host.object_prototype_takes_names(),
     };
     let declared_module_type = tree.request.declared_module_type;
     let jsx_mode = jsx_mode_of(file_jsx, atoms);
@@ -400,8 +427,9 @@ fn analyze<'s, 'r>(
         is_library: host.is_library_file(path),
         host_values: tree.host_values,
         jsx: jsx_mode,
+        own_name: arena.alloc_slice_copy(bun_paths::basename_posix(path)),
     };
-    let fold = fold_inputs_of(context, arena, is_called_before_it_runs);
+    let fold = fold_inputs_of(context, arena, stored_by_mocks);
     let (bound, analysis, host_values) =
         analyze_with_host(context, arena, path, bind, fold, file, tree);
     let analyzed = Analyzed {
@@ -411,13 +439,13 @@ fn analyze<'s, 'r>(
         jsx,
         jsx_mode,
         declared_module_type,
+        type_where_imported: declared_module_type_of(context, path, true),
+        runs_inside_require: false,
         is_package_type_module: resolver.is_package_type_module(path),
         package: resolver.enclosing_package(path),
         side_effects: resolver.declared_side_effects(path),
         is_aot_source: !is_javascript_file(host, path) && resolver.is_in_aot_package(path),
         import_meta_main,
-        is_called_before_it_runs,
-        is_only_imported,
     };
     (bound, analyzed)
 }
@@ -437,6 +465,18 @@ fn analyze_with_host<'s>(
     let settings = tree.request.settings;
     let resolve = |specifier: &[u8]| resolve_macro_import(context, path, specifier);
     let mut is_transformed = false;
+    if let Some(module_format) = find_format_by_syntax(&tree.hir) {
+        let mut request = EarlyTransformRequest {
+            path,
+            hir: &mut tree.hir,
+            module_format,
+            takes_import_statements: module_format == ModuleFormat::Esm,
+            settings,
+            import_meta_main: file.import_meta_main,
+        };
+        is_transformed =
+            host.transform_tree_before_binding(arena, atoms, &mut request, &mut tree.payload);
+    }
     loop {
         let (bound, analysis) = analyze_file(&mut tree.hir, bind, fold, file, atoms, arena);
         if bound.ran_out_of_stack {
@@ -468,9 +508,14 @@ fn analyze_with_host<'s>(
                 bound: &bound,
                 analysis: &analysis,
                 settings,
+                import_meta_main: file.import_meta_main,
             };
             match host.transform_tree(arena, atoms, &mut request, &mut tree.payload) {
                 TreeChange::Changed => continue,
+                TreeChange::ChangedAndUnfinished => {
+                    is_transformed = false;
+                    continue;
+                }
                 TreeChange::Unchanged => {}
             }
         }
@@ -489,15 +534,21 @@ fn jsx_mode_of(jsx: &JsxSettings, atoms: &Interner<'_>) -> JsxMode {
     }
 }
 
-fn import_meta_main(context: &CodeLoadContext<'_, '_, '_>, key: LoadKey<'_>) -> Option<bool> {
-    if let Some(known) = context.find_loaded_before(key) {
-        return known.compiled.import_meta_main;
-    }
-    let (is_entry_point, count) = (context.is_entry_point(key), context.entry_points.len());
-    match (is_entry_point, context.inputs.main_module, count) {
-        (false, ..) | (true, MainModule::Elsewhere, _) => Some(false),
-        (true, MainModule::EntryPoint, 1) => Some(true),
-        (true, MainModule::EntryPoint | MainModule::EntryPointOfProcessOrWorker, _) => None,
+pub(super) fn import_meta_main(
+    context: &CodeLoadContext<'_, '_, '_>,
+    key: LoadKey<'_>,
+) -> Option<bool> {
+    let file = LoadKey {
+        path: context.host.file_of_module(key.path),
+        ..key
+    };
+    let (is_entry_point, count) = (context.is_entry_point(file), context.entry_point_count());
+    match (is_entry_point, count) {
+        _ if context.host.may_any_file_become_main_module() => None,
+        (false, _) => Some(false),
+        (true, 1) if file.path.len() != key.path.len() => None,
+        (true, 1) => Some(true),
+        (true, _) => None,
     }
 }
 

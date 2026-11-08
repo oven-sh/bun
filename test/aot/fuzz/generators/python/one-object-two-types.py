@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""one-object-two-types.py <seed>: random strict TypeScript programs about ONE OBJECT SEEN TWO WAYS: an object that was made without a type (JSON.parse, a literal held as any, Object.assign, structuredClone, an element of any[],
-what a function hands back as any | unknown) enters typed code (an annotated variable, a parameter, a result, `as`, a member, an array, a Map, a generic function, a destructured parameter, a callback), nested records, arrays, optional members and unions below
-it. Then both holders act in turn: typed stores and reads, untyped stores and reads (always with values the type allows), members added beyond the type, nested objects replaced. After every step both views are printed and identity is asked:
-the typed and the untyped holder must still hold the same object, at every level. No value ever contradicts its type: whatever departs from plain Bun is a fault."""
+"""one-object-two-types.py <seed>: Random strict TypeScript programs about one object seen two ways: an object created
+without a type (JSON.parse, a literal held as any, Object.assign, structuredClone, an element of any[]) is also held
+under a declared type.
+"""
 import random, sys, os
 
 HEAD = r'''const G: any = globalThis;

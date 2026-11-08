@@ -5,12 +5,12 @@
 
 // RUN(DECLARED): lower
 // DECLARED: function [[f]] name="f"
-// DECLARED: function {{*}}kind=Arrow {{*}}captures=[{type=[[f]] flags=[IsFromCompiler]}]
+// DECLARED: function {{*}}kind=Arrow {{*}}captures=[{type=[[f]] flags=[IsFromCompiler] variableName="f"}]
 
 export function declared() {
   var f;
   function f() {}
-  return () => f;
+  return [f, () => f];
 }
 
 export function initialized() {

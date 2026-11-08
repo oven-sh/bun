@@ -1,9 +1,12 @@
 import * as b from "bun-builtins-table";
+import lightStreams from "../../../js/internal/streams/load_all.ts";
 import { pathOfNativeFunction } from "../paths.ts";
 import {
   asyncContextCell,
+  callbacksOfFsCell,
   closesChannelCell,
   coercesEnvironmentValueCell,
+  disabledWarningsCell,
   drainMicrotasksCell,
   editsWindowsEnvironmentCell,
   emitsProcessEventCell,
@@ -15,14 +18,23 @@ import {
   inspectCell,
   inspectOptionsCell,
   madeWarningsCell,
+  needsWholeInputStreamCell,
+  needsWholeOutputStreamCell,
   nextTickQueueCell,
   onWarningCell,
+  randomIntCallbackCell,
+  readsWindowSizeCell,
   releaseCell,
   reportsExceptionCell,
   resetsEnvironmentValueCell,
   sendsOverChannelCell,
+  sentHandlesCell,
+  sentMessagesCell,
+  sentOptionsCell,
   setModuleWrapperCell,
   standardErrorCell,
+  standardInputCell,
+  standardOutputCell,
   stylizeWithColorCell,
   stylizeWithNoColorCell,
   throwsWarningCell,
@@ -31,6 +43,7 @@ import {
   windowsEnvironmentNamesCell,
   windowsEnvironmentStorageCell,
   writeWarningCell,
+  writesToStandardSinkCell,
 } from "./native-cells.ts";
 
 const functionsIn = (file: string, ...names: readonly string[]): b.FunctionRef[] =>
@@ -48,11 +61,12 @@ const channelModules = evaluates(
 );
 
 const standardStreamModules = evaluates("node:tty", "node:fs", "internal/fs/streams");
+const standardStreamModulesThatTestsCanWatch = standardStreamModules.map(load => ({
+  ...load,
+  when: b.whenTestsReplaceBuiltins,
+}));
 
 const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadSpec[]>> = {
-  "console._stderr": standardStreamModules,
-  "console._stdout": standardStreamModules,
-  "node:child_process": channelModules,
   "node:fs/promises": evaluates("internal/fifo"),
   "node:repl": standardStreamModules,
   "node:worker_threads": evaluates("internal/worker/stdio"),
@@ -62,24 +76,32 @@ const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadS
       module: "internal/process/next_tick_queue",
       exports: [
         b.exportRead("nextTick", b.isValueOf("process.nextTick")),
-        b.exportRead("ring", b.memberOfValue("pushWithInitHooks", b.keptIn(tickShownToHooksCell))),
+        b.exportRead("whileHooked", b.memberOfValue("push", b.keptIn(tickShownToHooksCell))),
       ],
     },
   ],
   "process.openStdin": standardStreamModules,
-  "process.stderr": standardStreamModules,
-  "process.stdin": standardStreamModules,
-  "process.stdout": standardStreamModules,
+  "console._stderr": standardStreamModulesThatTestsCanWatch,
+  "console._stdout": standardStreamModulesThatTestsCanWatch,
+  "process.stderr": standardStreamModulesThatTestsCanWatch,
+  "process.stdin": [
+    ...standardStreamModulesThatTestsCanWatch,
+    ...standardStreamModules.map(load => ({ ...load, when: b.whenProgramStores("process.nextTick") })),
+  ],
+  "process.stdout": standardStreamModulesThatTestsCanWatch,
 };
 
-const bundlerPluginFunctions = functionsIn(
+const pluginFunctionsOfBuild = functionsIn(
   "builtins/BundlerPlugin",
-  "loadAndResolvePluginsForServe",
   "runOnEndCallbacks",
   "runOnLoadPlugins",
   "runOnResolvePlugins",
   "runSetupFunction",
 );
+const bundlerPluginFunctions = [
+  ...functionsIn("builtins/BundlerPlugin", "loadAndResolvePluginsForServe"),
+  ...pluginFunctionsOfBuild,
+];
 
 // A server runs the plugins that bunfig names, which are code from outside the executable.
 const pluginFunctionsOfServer = bundlerPluginFunctions.map(called => ({
@@ -87,13 +109,20 @@ const pluginFunctionsOfServer = bundlerPluginFunctions.map(called => ({
   when: b.whenBuildAdmitsRuntimeCode,
 }));
 
-const channelFunctions = functionsIn(
-  "builtins/Ipc",
-  "parseHandle",
-  "restoreAdvancedBuffers",
-  "serialize",
-  "tagAdvancedBuffers",
-);
+// ipc_host.rs do_send: serialize() gets the message, the handle and the options of the send() that is under way, and nothing else.
+const channelFunctions: readonly { function: b.FunctionRef; uses?: readonly b.HostUseSpec[] }[] = [
+  ...functionsIn("builtins/Ipc", "parseHandle", "restoreAdvancedBuffers", "tagAdvancedBuffers").map(called => ({
+    function: called,
+  })),
+  b.functionUsed(
+    b.functionIn("builtins/Ipc", "serialize"),
+    b.calledByHost({
+      times: "Repeatedly",
+      this: b.undefined,
+      args: [sentMessagesCell, sentHandlesCell, sentOptionsCell].map(cell => b.nativeCell(cell)),
+    }),
+  ),
+];
 
 const whenChannelEvent = b.whenOperandOfCallOn("process", "event", "message", "disconnect");
 
@@ -103,7 +132,7 @@ const functionsOfChannel = [
   pathOfNativeFunction("BunProcess.cpp", "Bun__Process__disconnect"),
 ];
 
-// js_bun_spawn_bindings.rs: the child has a channel where `ipc` of the options is a function. Without one, send() and disconnect() of the Subprocess find no channel and run nothing of the library.
+// js_bun_spawn_bindings.rs: the child has a channel where `ipc` of the options is a function. Without one, disconnect() of the Subprocess finds no channel and runs nothing of the library, and send() queues its callback with the error.
 const spawnsWithChannel = ["commandOrOptions", "options"].map(operand => ({
   path: "Bun.spawn",
   when: b.whenOperandHasProperty(operand, "ipc"),
@@ -111,9 +140,9 @@ const spawnsWithChannel = ["commandOrOptions", "options"].map(operand => ({
 
 // Not process.connected: its getter answers a flag of native code and its setter does nothing (BunProcess.cpp processConnected, setProcessConnected): neither opens the channel.
 // Not process.channel: its ref() and unref() say whether the channel keeps the process alive (node_cluster_binding.rs set_ref), open or not.
+// Not node:child_process: its code is compiled with the program, and the one channel it opens is that of its own Bun.spawn with `ipc`.
 const channelUsers: readonly b.CallingEntrySpec[] = [
   ...spawnsWithChannel,
-  "node:child_process",
   "node:cluster",
   ...functionsOfChannel.map(path => ({ path, when: b.whenCallRunsOtherCode })),
   ...["addListener", "on", "once", "prependListener", "prependOnceListener"].map(name => ({
@@ -130,55 +159,120 @@ const processInternal = (name: string) => b.functionIn("builtins/ProcessObjectIn
 const kindOfDescriptor = b.int(0, 2);
 
 // In a worker of node:worker_threads the stream goes to a port of the parent, which native code has from the Worker's options.
-const streamOfWorker = (descriptor: number, stream: b.BuiltinPath, ...otherUses: readonly b.HostUseSpec[]) =>
+// Once the program has the stream, the function that prints a warning writes through it.
+const writtenByWarnings = b.memberOfValue(
+  "write",
+  b.calledByHost({ times: "Repeatedly", this: b.nativeCell(standardErrorCell), args: [b.string], result: b.dropped }),
+);
+
+// Whatever makes a standard stream, the property of `process` holds it from then on, and so does the one of `console`.
+const usesOfStandardStream: readonly (readonly b.HostUseSpec[])[] = [
+  [b.keptIn(standardInputCell)],
+  [b.keptIn(standardOutputCell), b.isValueOf("console._stdout")],
+  [b.keptIn(standardErrorCell), b.isValueOf("console._stderr"), writtenByWarnings],
+];
+
+const streamOfWorker = (descriptor: number) =>
   b.functionUsed(
     processInternal("getNodeWorkerStdioStream"),
     b.calledByHost({
       times: "Once",
       this: globalObject,
       args: [processObject, b.int(descriptor, descriptor), b.nativeMemory],
-      result: [b.isValueOf(stream), ...otherUses],
+      result: usesOfStandardStream[descriptor],
     }),
   );
 
-const standardInputFunctionsOf = (stream: b.BuiltinPath) => [
-  streamOfWorker(0, stream),
-  b.functionUsed(
-    processInternal("getStdinStream"),
-    b.calledByHost({
-      times: "Once",
-      this: globalObject,
-      args: [processObject, b.int(0, 0), b.bool, kindOfDescriptor],
-      result: [b.isValueOf(stream)],
-    }),
-  ),
-];
+const wholeInputStream = b.functionUsed(
+  processInternal("getStdinStream"),
+  b.calledByHost({
+    times: "Once",
+    this: globalObject,
+    args: [processObject, b.int(0, 0), b.bool, kindOfDescriptor],
+    result: usesOfStandardStream[0],
+  }),
+);
 
 // The function answers the stream and its sink, in which native code sets a flag.
-const standardOutputFunctionsOf = (
-  descriptor: 1 | 2,
-  stream: b.BuiltinPath,
-  ...otherUses: readonly b.HostUseSpec[]
-) => [
-  streamOfWorker(descriptor, stream, ...otherUses),
+const wholeOutputStream = (descriptor: 1 | 2) =>
   b.functionUsed(
     processInternal("getStdioWriteStream"),
     b.calledByHost({
       times: "Once",
       this: globalObject,
       args: [processObject, b.int(descriptor, descriptor), b.bool, kindOfDescriptor],
-      result: [b.memberOfValue(0, b.isValueOf(stream), ...otherUses), b.memberOfValue(1, b.inspectedByHost)],
+      result: [b.memberOfValue(0, ...usesOfStandardStream[descriptor]), b.memberOfValue(1, b.inspectedByHost)],
     }),
-  ),
+  );
+
+// BunProcess.cpp constructStdioWriteStream() and constructStdin(): where the function above is not in the executable, native code makes the stream with one of these.
+// Each hands out proxies that answer a few members by themselves. Every other trap of it calls the function in the cell, and on that call hangs what makes the whole stream.
+const lightInputStream = b.functionUsed(
+  b.functionIn("builtins/stdio", "getLightStdinStream"),
+  b.calledByHost({
+    times: "Once",
+    this: globalObject,
+    args: [b.bool, b.nativeCell(needsWholeInputStreamCell)],
+    result: usesOfStandardStream[0],
+  }),
+);
+
+// The first read of either output makes both.
+const lightOutputStreams = b.functionUsed(
+  b.functionIn("builtins/stdio", "getLightStdioWriteStreams"),
+  b.calledByHost({
+    times: "Once",
+    this: globalObject,
+    args: [
+      b.bool,
+      b.bool,
+      b.bool,
+      b.bool,
+      b.nativeCell(needsWholeOutputStreamCell),
+      b.nativeCell(writesToStandardSinkCell),
+      b.nativeCell(readsWindowSizeCell),
+    ],
+    result: [
+      b.memberOfValue("stdout", ...usesOfStandardStream[1]),
+      b.memberOfValue("stderr", ...usesOfStandardStream[2]),
+      b.memberOfValue(
+        "listenForSizeOfTerminal",
+        b.calledByHost({ times: "Repeatedly", this: b.any, args: [b.int(1, 2)], result: b.dropped }),
+      ),
+    ],
+  }),
+);
+
+// The modules of the whole stream call built-in functions as they load, so a test that has replaced one can tell a light stream from the whole one.
+// The whole stream for input queues a tick when it is made.
+const inputStream = [
+  lightInputStream,
+  { ...wholeInputStream, when: b.whenTestsReplaceBuiltins },
+  { ...wholeInputStream, when: b.whenProgramStores("process.nextTick") },
+];
+const outputStreams = [
+  lightOutputStreams,
+  { ...wholeOutputStream(1), when: b.whenTestsReplaceBuiltins },
+  { ...wholeOutputStream(2), when: b.whenTestsReplaceBuiltins },
 ];
 
-// Once the program has the stream, the function that prints a warning writes through it.
-const writtenByWarnings = [
-  b.keptIn(standardErrorCell),
-  b.memberOfValue(
-    "write",
-    b.calledByHost({ times: "Repeatedly", this: b.nativeCell(standardErrorCell), args: [b.string], result: b.dropped }),
-  ),
+const needsWholeInputStream = pathOfNativeFunction("BunProcess.cpp", "Process_functionNeedsWholeInputStream");
+const needsWholeOutputStream = pathOfNativeFunction("BunProcess.cpp", "Process_functionNeedsWholeOutputStream");
+// One function makes both outputs, so an executable has it for both or for neither.
+// The traps of a light stream call the function whatever they are asked, and go by the same lists: so it is called only where a stream is asked for more than they name.
+const madeWholeBy = [
+  {
+    path: needsWholeInputStream,
+    functions: [wholeInputStream],
+    whenAskedForMore: [b.whenAskedForOtherNames("process.stdin", lightStreams.servedByLightInput)],
+  },
+  {
+    path: needsWholeOutputStream,
+    functions: [wholeOutputStream(1), wholeOutputStream(2)],
+    whenAskedForMore: ["process.stdout", "process.stderr", "console._stdout", "console._stderr"].map(stream =>
+      b.whenAskedForOtherNames(stream, lightStreams.servedByLightOutputs),
+    ),
+  },
 ];
 
 // Native code makes the value of the property by a call without operands, or with `process`.
@@ -192,13 +286,6 @@ const builtBy = (name: string, property: b.BuiltinPath, ...args: readonly b.Tabl
 // The object of the function is what the property holds.
 const heldAs = (called: b.FunctionRef, property: b.BuiltinPath) => b.functionUsed(called, b.isValueOf(property));
 
-// Nothing says yet which native code makes these streams and what it does with them.
-const standardInputFunctions = functionsIn(
-  "builtins/ProcessObjectInternals",
-  "getNodeWorkerStdioStream",
-  "getStdinStream",
-);
-
 // The host brings the list behind `module.children` up to date: (list, child). What the program has stored in the list's place is out of sight from the store on, and the analysis lets the children go with it.
 const moduleChildrenFunctions = [
   b.functionUsed(
@@ -211,9 +298,13 @@ const moduleChildrenFunctions = [
   ),
 ];
 
-const requireCacheFunctions = [...functionsIn("builtins/CommonJS", "createRequireCache"), ...moduleChildrenFunctions];
+const requireCacheFunctions = [
+  ...functionsIn("builtins/CommonJS", "createRequireCacheOverCompiledProgram"),
+  ...moduleChildrenFunctions,
+];
 
-const fusedTraversalFunctions = functionsIn("prelude/array-traversal", "traverseArray");
+// JSCommonJSExtensions.cpp builtinLoader(): the functions under ".js", ".ts" and ".json" call it for a file that turns out to be an ES module. Nobody has one of them but from the table of loaders.
+const functionsOfDefaultLoaders = functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension");
 
 const streamedModuleFunctions = functionsIn("builtins/WasmStreaming", "consumeStream");
 
@@ -221,12 +312,20 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "%ModuleObject%.children": moduleChildrenFunctions,
   "%ModuleObject%.parent": moduleChildrenFunctions,
   "%ModuleRequire%.cache": requireCacheFunctions,
+  "%ModuleRequire%.extensions": functionsOfDefaultLoaders,
   "%ModuleRequire%.main": [...functionsIn("builtins/CommonJS", "main"), ...moduleChildrenFunctions],
   "%ModuleRequire%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
-  "Array.prototype.filter": fusedTraversalFunctions,
-  "Array.prototype.flatMap": fusedTraversalFunctions,
-  "Array.prototype.map": fusedTraversalFunctions,
-  "Array.prototype.slice": fusedTraversalFunctions,
+  "%ModuleRequirePrototype%.cache": requireCacheFunctions,
+  "%ModuleRequirePrototype%.extensions": functionsOfDefaultLoaders,
+  // In an executable the getter is native code.
+  "%ModuleRequirePrototype%.main": moduleChildrenFunctions,
+  "%ModuleRequirePrototype%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
+  "Array.prototype.sort": functionsIn("prelude/array-sort", "sortByDifference", "sortByReversedDifference").map(
+    called => ({
+      ...called,
+      when: b.whenCallRunsOtherCode,
+    }),
+  ),
   "Buffer.from": functionsIn("builtins/JSBufferConstructor", "from"),
   "Buffer.isBuffer": functionsIn("builtins/JSBufferConstructor", "isBuffer"),
   "Buffer.prototype.offset": functionsIn("builtins/JSBufferPrototype", "offset"),
@@ -234,7 +333,7 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "Buffer.prototype.toJSON": functionsIn("builtins/JSBufferPrototype", "toJSON"),
   "Bun.$": functionsIn("builtins/shell", "createBunShellTemplateFunction"),
   "Bun.Glob": functionsIn("builtins/Glob", "scan", "scanSync"),
-  "Bun.build": bundlerPluginFunctions,
+  "Bun.build": pluginFunctionsOfBuild,
   "Bun.peek": [heldAs(b.functionIn("builtins/Peek", "peek"), "Bun.peek"), b.functionIn("builtins/Peek", "peekStatus")],
   "Bun.plugin": bundlerPluginFunctions,
   "Bun.serve": pluginFunctionsOfServer,
@@ -253,10 +352,11 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
     ),
   ],
   // They read process.stderr and process.stdout, and hold what they find.
-  "console._stderr": standardOutputFunctionsOf(2, "console._stderr", ...writtenByWarnings),
-  "console._stdout": standardOutputFunctionsOf(1, "console._stdout"),
+  "console._stderr": outputStreams,
+  "console._stdout": outputStreams,
+  // Worker.cpp jsFunctionSetNodeWorkerStdioPorts(), which the binding holds: from that call on the three properties are made of the ports.
+  "native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding": [streamOfWorker(0), streamOfWorker(1), streamOfWorker(2)],
   "node:fs/promises": functionsIn("builtins/Fifo", "createFIFO"),
-  "node:module": functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension"),
   "node:module.wrapper": [
     b.functionUsed(
       b.functionIn("builtins/CommonJS", "getWrapperArrayProxy"),
@@ -270,6 +370,7 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   ],
   "node:module._initPaths": [heldAs(b.functionIn("builtins/NodeModuleObject", "_initPaths"), "node:module._initPaths")],
   "node:module._cache": requireCacheFunctions,
+  "node:module._extensions": functionsOfDefaultLoaders,
   "process._rawDebug": [heldAs(processInternal("rawDebug"), "process._rawDebug")],
   "process.allowedNodeEnvironmentFlags": builtBy(
     "buildAllowedNodeEnvironmentFlags",
@@ -279,16 +380,17 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "process.finalization": builtBy("createProcessFinalization", "process.finalization", processObject),
   "process.loadEnvFile": [heldAs(processInternal("loadEnvFile"), "process.loadEnvFile")],
   "process.mainModule": moduleChildrenFunctions,
-  "process.openStdin": standardInputFunctions,
-  "process.stderr": standardOutputFunctionsOf(2, "process.stderr", ...writtenByWarnings),
-  "process.stdin": standardInputFunctionsOf("process.stdin"),
-  "process.stdout": standardOutputFunctionsOf(1, "process.stdout"),
+  // It reads process.stdin and calls resume() of it. What says that the stream was left out names every entry that makes it.
+  "process.openStdin": [wholeInputStream, lightInputStream],
+  "process.stderr": outputStreams,
+  "process.stdin": inputStream,
+  "process.stdout": outputStreams,
 };
 
 const inBindings = (file: string): string => `src/jsc/bindings/${file}`;
 
-// The object warns about a value that is stored into it and is no string, number or boolean. A read of it runs nothing.
-const environmentObjects = ["%ImportMeta%.env", "Bun.env", "process.env"].map(path => ({
+// The object warns about a value that is stored into it and is no string, number or boolean. A read of it runs nothing. A report hands out the very object, under `environmentVariables`.
+const environmentObjects = ["%ImportMeta%.env", "Bun.env", "process.env", "process.report.getReport"].map(path => ({
   path,
   when: b.whenObjectNobodyKnowsIsWritten,
 }));
@@ -323,8 +425,9 @@ const eventTargetSources = [
 
 const nodeCryptoBinding = ["native:Cpp:node_crypto_binding.cpp:createNodeCryptoBinding"];
 
-// The run time reports a promise that is rejected without a handler, and one that gets its handler afterwards.
-const promises = ["Promise"];
+// The run time warns of a promise that is rejected without a handler, and of one that gets its handler afterwards, only where `--unhandled-rejections` is set. No text can name this entry: the build names it for the option.
+const warningsOfRejections = "%WarningsOfRejections%";
+const promises = [warningsOfRejections];
 
 // The overload for a delay that fits a timer says that it runs no code.
 const timersWithOtherDelays = ["setInterval", "setTimeout"].map(path => ({ path, when: b.whenCallRunsOtherCode }));
@@ -405,23 +508,21 @@ const queuedByNativeCode = (cell: string, ...args: readonly b.PlaceLike[]) =>
   );
 
 // What it answers prints a warning. The listener that is on `process` from the start hands it what the listener is called with, and answers what it answers.
+// It gets the list of --disable-warning where there is one.
 const warningPrinterCalledWith = (...warnings: readonly b.PlaceLike[]) => [
   b.functionUsed(
     processInternal("createOnWarning"),
-    b.calledByHost({
-      times: "Once",
-      this: b.undefined,
-      args: [
-        processObject,
-        b.string.or(b.undefined),
-        b.instance("Array").holding({ element: b.string }).fresh.or(b.undefined),
-        b.nativeCell(writeWarningCell),
-      ],
-      result: [
-        b.keptIn(onWarningCell),
-        ...warnings.map(warning => b.calledByHost({ times: "PerEvent", this: processObject, args: [warning] })),
-      ],
-    }),
+    ...[b.undefined, b.nativeCell(disabledWarningsCell)].map(disabledWarnings =>
+      b.calledByHost({
+        times: "Once",
+        this: b.undefined,
+        args: [processObject, b.string.or(b.undefined), disabledWarnings, b.nativeCell(writeWarningCell)],
+        result: [
+          b.keptIn(onWarningCell),
+          ...warnings.map(warning => b.calledByHost({ times: "PerEvent", this: processObject, args: [warning] })),
+        ],
+      }),
+    ),
   ),
 ];
 // A program that emits the event by itself, or takes the listener out of the list and calls it, passes what it likes.
@@ -519,12 +620,6 @@ const nativeCalls = [
       },
       { file: inBindings("ProcessBindingUV.cpp"), caller: "jsErrname", onBehalfOf: ["process.binding"] },
       {
-        file: inBindings("node/crypto/CryptoGenRsaKeyPair.cpp"),
-        caller: "RsaKeyPairJobCtx::fromJS",
-        times: 2,
-        onBehalfOf: nodeCryptoBinding,
-      },
-      {
         file: inBindings("node/crypto/JSKeyObjectConstructor.cpp"),
         caller: "jsKeyObjectConstructor_from",
         onBehalfOf: nodeCryptoBinding,
@@ -574,6 +669,19 @@ const nativeCalls = [
       { file: "src/runtime/node/node_crypto_binding.rs", times: 4 },
     ],
     callers: [
+      // These two queue the operands of the program, as process.nextTick does. The second stands in its place under fake timers: whoever calls it has read that name.
+      {
+        file: inBindings("BunProcess.cpp"),
+        caller: "jsFunctionNextTickInDefaultRealm",
+        onBehalfOf: ["process.nextTick"],
+        calls: nextTickMaker,
+      },
+      {
+        file: inBindings("node/NodeTimers.cpp"),
+        caller: "functionFakeNextTick",
+        onBehalfOf: ["process.nextTick"],
+        calls: nextTickMaker,
+      },
       {
         file: inBindings("webcore/JSEventListener.cpp"),
         caller: "jsFunctionEmitUncaughtExceptionNextTick",
@@ -596,16 +704,23 @@ const nativeCalls = [
       { file: "src/runtime/ipc.rs", caller: "call_next_tick", times: 2, onBehalfOf: channelUsers },
       { file: "src/runtime/ipc.rs", caller: "complete", onBehalfOf: channelUsers },
       { file: "src/runtime/ipc.rs", caller: "on_ack_nack", onBehalfOf: channelUsers },
-      { file: "src/runtime/ipc_host.rs", caller: "do_send_err", times: 2, onBehalfOf: channelUsers },
+      {
+        file: "src/runtime/ipc_host.rs",
+        caller: "do_send_err",
+        times: 2,
+        onBehalfOf: [...channelUsers, "%Subprocess%.prototype.send"],
+      },
       {
         file: "src/runtime/node/node_crypto_binding.rs",
         caller: "random_int",
         onBehalfOf: ["native:Bindgen:node_crypto_binding.bind.ts:crypto"],
+        calls: queuedByNativeCode(randomIntCallbackCell, b.undefined, b.f64),
       },
       {
         file: "src/runtime/node/node_fs_binding.rs",
         caller: "reject_before_schedule",
         onBehalfOf: fsMethodsTakingCallback,
+        calls: queuedByNativeCode(callbacksOfFsCell, b.nativeMemory),
       },
     ],
   }),
@@ -640,6 +755,7 @@ const nativeCalls = [
         onBehalfOf: ["process.report.getReport"],
         calls: environmentObjectHandedOut,
       },
+      { file: inBindings("ImportMetaEnv.cpp"), caller: "ImportMetaEnv::processEnv", onBehalfOf: ["%ImportMeta%.env"] },
       {
         file: inBindings("ImportMetaObject.cpp"),
         caller: "jsImportMetaObjectGetter_env",
@@ -658,6 +774,8 @@ const nativeCalls = [
         onBehalfOf: startedWorkers,
         calls: environmentObjectMade(listedWithValues),
       },
+      // vi.stubEnv stores into the object. Whoever sees it has read one of the names above.
+      { file: inBindings("ViUtils.cpp"), caller: "processEnv", onBehalfOf: ["process.env"] },
     ],
   }),
 ];
@@ -686,10 +804,51 @@ const undeclaredNativeCode = "%UndeclaredNativeCode%";
 
 export default b.declarations(
   b.namespace(undeclaredNativeCode, {}, { callsFunctions: warningFunctionsOfUndeclaredCode }),
+  b.namespace(warningsOfRejections, {}, { listsAllMembers: true }),
   ...nativeCalls,
   callsOfInspect,
   Object.entries(loadedModulesByPath).flatMap(([path, loads]) => b.extend(path, { loads })),
   Object.entries(calledFunctionsByPath).flatMap(([path, callsFunctions]) => b.extend(path, { callsFunctions })),
+  madeWholeBy.flatMap(({ path, functions, whenAskedForMore }) =>
+    b.extend(path, {
+      loads: whenAskedForMore.flatMap(when => standardStreamModules.map(load => ({ ...load, when }))),
+      callsFunctions: whenAskedForMore.flatMap(when => functions.map(called => ({ ...called, when }))),
+    }),
+  ),
+  // getWindowSize of the functions that node:tty has from ProcessBindingTTYWrap.cpp: what native-bindings.builtins.ts says of it.
+  b.hostFunction(readsWindowSizeCell, "BunProcess.cpp", "Process_functionInternalGetWindowSize", {
+    args: { fd: b.any, size: b.any },
+    returns: b.bool,
+    capability: "js",
+    runsOnlyOperandCode: true,
+    throws: true,
+    uses: {
+      fd: [b.readsContents(), b.runs("ToPrimitive")],
+      size: [b.readsContents(), b.writesContents(), b.storedByKey(b.indexKeys, b.f64)],
+    },
+    reads: ["ExternalState"],
+    implementation: b.hostCall,
+  }),
+  // write() of the FileSink of the descriptor: what the row of %FileSink%.prototype.write says.
+  b.hostFunction(writesToStandardSinkCell, "BunProcess.cpp", "Process_functionWriteToStandardSink", {
+    args: { descriptor: b.any, data: b.any },
+    returns: b.union(b.bool, b.f64, b.instance("Promise").holding({ value: b.f64, reason: b.any })).fresh,
+    capability: "js",
+    throws: true,
+    uses: { descriptor: b.inspected, data: [b.retained, b.runs("ToPrimitive")] },
+    implementation: b.hostCall,
+  }),
+  [
+    [needsWholeInputStreamCell, "Process_functionNeedsWholeInputStream"],
+    [needsWholeOutputStreamCell, "Process_functionNeedsWholeOutputStream"],
+  ].flatMap(([cell, symbol]) =>
+    b.hostFunction(cell, "BunProcess.cpp", symbol, {
+      returns: b.never,
+      capability: "js",
+      throws: true,
+      implementation: b.hostCall,
+    }),
+  ),
   [...functionsOfChannel.map(path => ({ path, when: b.whenCallRunsOtherCode })), ...spawnsWithChannel].flatMap(
     ({ path, when }) => b.extend(path, { loads: channelModules.map(load => ({ ...load, when })) }),
   ),
@@ -697,11 +856,16 @@ export default b.declarations(
     typeof user === "string"
       ? b.extend(user, { callsFunctions: channelFunctions })
       : b.extend(user.path, {
-          callsFunctions: channelFunctions.map(called => ({ function: called, when: user.when })),
+          callsFunctions: channelFunctions.map(called => ({ ...called, when: user.when })),
         }),
   ),
-  // JSEnvironmentVariableMap.cpp: the object never holds anything but strings, whatever is stored.
-  b.hostObject(environmentCell, { otherNames: b.string, keepsStringsOfStoredValues: true }),
+  // JSEnvironmentVariableMap.cpp: the object never holds anything but strings, whatever is stored. On Windows windowsEnv() makes what lies in the cell.
+  b.hostObject(environmentCell, {
+    otherNames: b.string,
+    keepsStringsOfStoredValues: true,
+    nativeAccessors: ["TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH"],
+    platforms: ["Darwin", "Linux", "FreeBSD", "Android"],
+  }),
   b.hostObject(windowsEnvironmentStorageCell, { otherNames: b.string }),
   b.hostObject(windowsEnvironmentNamesCell, {
     prototype: "Array.prototype",
@@ -732,8 +896,11 @@ export default b.declarations(
     implementation: b.hostCall,
   }),
   // BunProcess.cpp constructVersions, constructProcessReleaseObject, constructFeatures: ordinary objects. Which versions and features there are differs between platforms and builds.
-  b.hostObject(versionsCell, { otherNames: b.string }),
-  b.hostObject(releaseCell, { fields: { name: b.string, sourceUrl: b.string, headersUrl: b.string } }),
+  b.hostObject(versionsCell, { otherNames: b.string, locked: { holder: "process.versions", names: ["node", "bun"] } }),
+  b.hostObject(releaseCell, {
+    fields: { name: b.string, sourceUrl: b.string, headersUrl: b.string },
+    locked: { holder: "process.release", names: ["name"] },
+  }),
   b.hostObject(featuresCell, { otherNames: [b.bool, b.string] }),
   // `$asyncContext`: its field holds the frame of AsyncLocalStorage that is current, undefined from the start.
   b.hostObject(asyncContextCell, { prototype: null, internalFields: { 0: [b.inspectedByHost] } }),
@@ -746,6 +913,12 @@ export default b.declarations(
     capability: "js",
     throws: true,
     implementation: b.hostCall,
+  }),
+  // Process::ensureOnWarning makes an array of them.
+  b.hostObject(disabledWarningsCell, {
+    prototype: "Array.prototype",
+    fields: { length: b.int(0, 2 ** 32 - 1) },
+    otherNames: b.string,
   }),
   // Process::emitWarning makes an Error and defines the name, and the code and the detail where it has them.
   b.hostObject(madeWarningsCell, {
@@ -773,7 +946,7 @@ export default b.declarations(
     "jsWebStreamsHandler_onDirectEndOfTickFlush",
     {
       args: { ignored: b.any.optional, controller: b.any.optional },
-      returns: b.any,
+      returns: b.undefined,
       capability: "js",
       throws: true,
       uses: { ignored: b.inspected, controller: [b.retained] },
@@ -795,7 +968,12 @@ export default b.declarations(
     returns: b.bool,
     capability: "js",
     throws: true,
-    uses: { message: [b.retained], handle: [b.retained], options: [b.retained], callback: [b.retained] },
+    uses: {
+      message: [b.retained, b.storedIn(b.nativeCell(sentMessagesCell))],
+      handle: [b.retained, b.storedIn(b.nativeCell(sentHandlesCell))],
+      options: [b.retained, b.storedIn(b.nativeCell(sentOptionsCell))],
+      callback: [b.retained],
+    },
     implementation: b.hostCall,
   }),
   // It opens the channel to close it, or emits an error on process where the channel is closed already.
@@ -822,13 +1000,13 @@ export default b.declarations(
     uses: { warning: [b.retained] },
     implementation: b.hostCall,
   }),
-  // Until the program has read or replaced process.stderr it writes to the descriptor itself.
+  // Where it is handed the name of a file it appends to that. Else, until the program has read or replaced process.stderr, it writes to the descriptor itself.
   b.hostFunction(writeWarningCell, "BunProcess.cpp", "Process_functionWriteWarning", {
-    args: { text: b.any.optional },
-    returns: b.undefined,
+    args: { text: b.any.optional, file: b.any.optional },
+    returns: b.union(b.bool, b.undefined),
     capability: "js",
     throws: true,
-    uses: { text: [b.retained, b.runs("ToPrimitive")] },
+    uses: { text: [b.retained, b.runs("ToPrimitive")], file: b.inspected },
     implementation: b.hostCall,
   }),
   b.hostFunction(setModuleWrapperCell, "NodeModuleModule.cpp", "jsFunctionSetCJSWrapperItem", {
@@ -847,24 +1025,6 @@ export default b.declarations(
       colors: b.bool,
     },
   }),
-  b.namedMemberCall(customInspect, [b.f64, b.nativeCell(inspectOptionsCell), b.nativeCell(inspectCell)]),
-  // ConsoleObject.rs print_to_json and the printer of FormData: the formatter passes nothing.
-  b.namedMemberCall("toJSON", []),
-  // It prints an object that it makes, or a string, with a copy of the options that it was called with.
-  b.hostMethodCall(customInspect, inspectCell, {
-    times: "Once",
-    this: b.nativeMemory,
-    args: [b.nativeMemory, b.nativeMemory],
-    result: [b.inspectedByHost],
-  }),
-  // Below the depth that is printed, the method of URLSearchParams answers what `stylize` of its options answers. The formatter calls the method with its own options.
-  [stylizeWithColorCell, stylizeWithNoColorCell].flatMap(cell =>
-    b.hostMethodCall(customInspect, cell, {
-      times: "Once",
-      this: b.nativeCell(inspectOptionsCell),
-      args: [b.string, b.string],
-    }),
-  ),
   b.startup({
     loads: [{ module: "internal/util/inspect", exports: [b.exportRead("inspect", b.keptIn(inspectCell))] }],
     functionsCalledWithLoads: [
@@ -880,6 +1040,8 @@ export default b.declarations(
       b.functionUsed(b.functionIn("builtins/UtilInspect", "stylizeWithNoColor"), b.keptIn(stylizeWithNoColorCell)),
     ],
     namesOfMethodsCallingLoads: [customInspect],
+    // The object behind `require.cache` prints a copy of itself.
+    functionsLayingSuchMethods: functionsIn("builtins/CommonJS", "createRequireCacheOverCompiledProgram"),
     moduleLoaderFunctions: functionsIn(
       "builtins/CommonJS",
       "internalRequire",
@@ -890,4 +1052,7 @@ export default b.declarations(
     ),
   }),
   b.excluded("builtins/Bake", "renderRoutesForProdStatic"),
+  b.excluded("builtins/CommonJS", "createRequireCache"),
+  // The test runner's own. In the program it would be compiled with the files under test, which are to come out as in an executable.
+  b.excluded("builtins/useFakeTimers", "createPerformance"),
 );

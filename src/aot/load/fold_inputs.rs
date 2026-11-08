@@ -1,5 +1,9 @@
 use bun_builtin_sources::Manifest;
 use bun_core::strings;
+use bun_js_parser::defines_table::{
+    GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING,
+    GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES, is_pure_global_identifier,
+};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::fold::{
     Constant, Define, DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions,
@@ -11,32 +15,95 @@ use crate::builtins::Platforms;
 use crate::diagnostics::LoadMessages;
 use crate::load::data_modules::parse_json;
 use crate::load::locked_builtin_defines::{locked_builtin_defines, runtime_identity_defines};
-use crate::statistics::{LimitId, LimitValues};
 
-// What the build tells Bun's own sources about the program. They are read after the program.
+pub(crate) const MAX_FOLDED_STRING_BYTES: usize = 1 << 16;
+const MAX_FOLDED_PATTERN_BYTES: usize = 1 << 20;
+
 #[derive(Copy, Clone)]
 pub(crate) struct ProgramFacts {
     pub can_load_code_at_run_time: bool,
+    pub can_load_addons_at_run_time: bool,
     pub can_be_cluster_worker: bool,
+    pub can_replace_builtins: bool,
+    pub process_reaches_code_on_its_prototypes: bool,
+    pub warnings_load_events: bool,
+    pub takes_first_texts: bool,
 }
 
-fn max_string_bytes(limits: &LimitValues) -> usize {
-    usize::try_from(limits.get(LimitId::MaxFoldedStringBytes)).unwrap_or(usize::MAX)
+fn is_read_left_out_where_unused(path: &[&[u8]]) -> bool {
+    match path {
+        [name] => is_pure_global_identifier(name),
+        _ => GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES
+            .iter()
+            .chain(GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING)
+            .any(|listed| *listed == path),
+    }
+}
+
+const HOT_RELOADING_CALLS: [&[u8]; 8] = [
+    b"accept",
+    b"decline",
+    b"dispose",
+    b"prune",
+    b"invalidate",
+    b"on",
+    b"off",
+    b"send",
+];
+
+fn path_below_hot<'s>(name: &[u8], arena: &'s Arena, atoms: &Interner<'s>) -> DefinePath<'s> {
+    DefinePath {
+        root: DefineRoot::ImportMeta,
+        members: arena.alloc_slice_copy(&[atoms.intern(b"hot"), atoms.intern(name)]),
+    }
+}
+
+fn defines_without_hot_reloading<'s>(arena: &'s Arena, atoms: &Interner<'s>) -> Vec<Define<'s>> {
+    let mut defines: Vec<Define<'s>> = HOT_RELOADING_CALLS
+        .iter()
+        .map(|name| Define {
+            path: path_below_hot(name, arena, atoms),
+            value: DefineValue::Constant(Constant::Undefined),
+        })
+        .collect();
+    defines.push(Define {
+        path: path_below_hot(b"data", arena, atoms),
+        value: DefineValue::Data(arena.alloc(DataValue::Object(&[]))),
+    });
+    defines
 }
 
 pub(crate) fn create_application_fold_inputs<'s>(
     provided: &FoldOptions<'s>,
     arena: &'s Arena,
     atoms: &Interner<'s>,
-    limits: &LimitValues,
     platform: Platforms,
+    runs_in_place: bool,
 ) -> FoldInputs<'s> {
+    let held_in_every_run = match runs_in_place {
+        true => Vec::new(),
+        false => collect_defines_held_in_every_run(platform, arena, atoms),
+    };
+    let mut defines = defines_without_hot_reloading(arena, atoms);
+    let mut replaced_by_bun_run: Vec<DefinePath<'s>> = defines.iter().map(|it| it.path).collect();
+    defines.extend_from_slice(provided.defines);
+    replaced_by_bun_run.extend_from_slice(provided.user_defined);
+    let mut dropped_calls = provided.dropped_calls.to_vec();
+    dropped_calls.extend(HOT_RELOADING_CALLS.map(|name| path_below_hot(name, arena, atoms)));
     let options = FoldOptions {
-        defines: after_constant_globals(provided.defines, platform, arena, atoms),
-        max_string_bytes: max_string_bytes(limits),
+        defines: after_constant_globals(&defines, held_in_every_run, arena),
+        user_defined: arena.alloc_slice_copy(&replaced_by_bun_run),
+        dropped_calls: arena.alloc_slice_copy(&dropped_calls),
+        is_read_left_out_where_unused: Some(is_read_left_out_where_unused),
+        max_string_bytes: MAX_FOLDED_STRING_BYTES,
+        max_pattern_bytes: MAX_FOLDED_PATTERN_BYTES,
         ..*provided
     };
-    FoldInputs::new(options, arena)
+    let inputs = FoldInputs::new(options, arena);
+    match runs_in_place {
+        true => inputs.for_program_that_runs_in_place(),
+        false => inputs,
+    }
 }
 
 pub(crate) fn create_runtime_fold_inputs<'s>(
@@ -44,7 +111,6 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
     messages: &LoadMessages,
-    limits: &LimitValues,
     platform: Platforms,
     facts: ProgramFacts,
 ) -> FoldInputs<'s> {
@@ -58,24 +124,44 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
             b"CAN_LOAD_CODE_AT_RUN_TIME",
             facts.can_load_code_at_run_time,
         ),
+        define_fact(
+            b"CAN_LOAD_ADDONS_AT_RUN_TIME",
+            facts.can_load_addons_at_run_time,
+        ),
         define_fact(b"CAN_BE_CLUSTER_WORKER", facts.can_be_cluster_worker),
-        define_fact(b"IS_COMPILED_AHEAD_OF_TIME", true),
+        define_fact(b"CAN_REPLACE_BUILT_INS", facts.can_replace_builtins),
+        define_fact(
+            b"PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES",
+            facts.process_reaches_code_on_its_prototypes,
+        ),
+        define_fact(b"WARNINGS_LOAD_NODE_EVENTS", facts.warnings_load_events),
+        define_fact(b"IS_COMPILED_AHEAD_OF_TIME", !facts.takes_first_texts),
     ]);
+    let held_in_every_run = collect_defines_held_in_every_run(platform, arena, atoms);
     let options = FoldOptions {
-        defines: after_constant_globals(&defines, platform, arena, atoms),
+        defines: after_constant_globals(&defines, held_in_every_run, arena),
         minifies_syntax: true,
-        max_string_bytes: max_string_bytes(limits),
+        max_string_bytes: MAX_FOLDED_STRING_BYTES,
+        max_pattern_bytes: MAX_FOLDED_PATTERN_BYTES,
         ..FoldOptions::default()
     };
     FoldInputs::new(options, arena)
 }
 
-/// `bun run` replaces these three names where nothing declares them.
-fn after_constant_globals<'s>(
-    defines: &[Define<'s>],
+fn collect_defines_held_in_every_run<'s>(
     platform: Platforms,
     arena: &'s Arena,
     atoms: &Interner<'s>,
+) -> Vec<Define<'s>> {
+    let mut held_in_every_run = locked_builtin_defines(platform, arena, atoms);
+    held_in_every_run.extend(runtime_identity_defines(arena, atoms));
+    held_in_every_run
+}
+
+fn after_constant_globals<'s>(
+    defines: &[Define<'s>],
+    mut held_in_every_run: Vec<Define<'s>>,
+    arena: &'s Arena,
 ) -> &'s [Define<'s>] {
     let constant_globals = [
         (known::undefined, Constant::Undefined),
@@ -89,9 +175,6 @@ fn after_constant_globals<'s>(
         },
         value: DefineValue::Constant(value),
     });
-    let mut held_in_every_run = locked_builtin_defines(platform, arena, atoms);
-    held_in_every_run.extend(runtime_identity_defines(arena, atoms));
-    // A define replaces what is written, so it says nothing about the object of the run, and neither does this list from there on.
     held_in_every_run.retain(|held| {
         defines
             .iter()
@@ -110,7 +193,6 @@ fn is_at_or_under(path: DefinePath<'_>, holder: DefinePath<'_>) -> bool {
     path.root == holder.root && path.members.starts_with(holder.members)
 }
 
-// `bun build --compile` defines `process.versions.bun` as the text that the run has there.
 fn is_same_constant(define: &Define<'_>, held: &Define<'_>) -> bool {
     define.path == held.path
         && matches!(
@@ -155,7 +237,7 @@ fn define_value<'s>(value: &'s DataValue<'s>) -> Option<DefineValue<'s>> {
         DataValue::Number(number) => Constant::Number(number),
         DataValue::String(text) => Constant::String(text),
         DataValue::Array(_) | DataValue::Object(_) => return Some(DefineValue::Data(value)),
-        DataValue::Undefined | DataValue::BigInt(_) => return None,
+        DataValue::Undefined | DataValue::BigInt(_) | DataValue::Temporal { .. } => return None,
     };
     Some(DefineValue::Constant(constant))
 }
@@ -204,13 +286,17 @@ mod tests {
 
     const NO_FACTS: ProgramFacts = ProgramFacts {
         can_load_code_at_run_time: false,
+        can_load_addons_at_run_time: false,
         can_be_cluster_worker: false,
+        can_replace_builtins: false,
+        process_reaches_code_on_its_prototypes: false,
+        warnings_load_events: false,
+        takes_first_texts: false,
     };
 
     fn fold_inputs_with_facts<'s>(
         sessions: &'s PerProject<Session>,
         atoms: &Interner<'s>,
-        limits: &LimitValues,
         facts: ProgramFacts,
     ) -> PerProject<FoldInputs<'s>> {
         let messages = LoadMessages::default();
@@ -219,15 +305,14 @@ mod tests {
                 &FoldOptions::default(),
                 sessions.application.arena(),
                 atoms,
-                limits,
                 Platforms::LINUX,
+                false,
             ),
             runtime: create_runtime_fold_inputs(
                 Archive::embedded().manifest(),
                 sessions.runtime.arena(),
                 atoms,
                 &messages,
-                limits,
                 Platforms::LINUX,
                 facts,
             ),
@@ -248,7 +333,7 @@ mod tests {
             experimental_decorators: false,
             every_file_is_a_module: false,
             reads_jsdoc: false,
-            keeps_function_directives: false,
+            ignores_pure_comments: false,
         };
         let mut hir = parse_for_compile(arena, &parse_options, source.as_bytes(), atoms);
         hir.text = Cow::Borrowed(source.as_bytes());
@@ -262,6 +347,7 @@ mod tests {
             is_library: false,
             host_values: &[],
             jsx: JsxMode::Classic,
+            own_name: b"",
         };
         analyze_file(&mut hir, bind_options, fold, file, atoms, arena).1
     }
@@ -363,8 +449,7 @@ mod tests {
         for holds in [false, true] {
             let sessions = create_sessions();
             let atoms = Interner::new_in(&sessions.application);
-            let limits = LimitValues::for_host();
-            let fold = fold_inputs_with_facts(&sessions, &atoms, &limits, facts_where(holds));
+            let fold = fold_inputs_with_facts(&sessions, &atoms, facts_where(holds));
             let count_import_sites = |project: ProjectId| {
                 let arena = sessions.get(project).arena();
                 analyze(source, fold.get(project), arena, &atoms)
@@ -374,6 +459,17 @@ mod tests {
             assert_eq!(count_import_sites(ProjectId::Runtime), usize::from(holds));
             assert_eq!(count_import_sites(ProjectId::Application), 1);
         }
+    }
+
+    #[test]
+    fn testing_word_decides_whether_runtime_sources_take_arms_of_plain_run() {
+        assert_fact_decides_import(
+            "if (!IS_COMPILED_AHEAD_OF_TIME) import('./addon');",
+            |takes_first_texts| ProgramFacts {
+                takes_first_texts,
+                ..NO_FACTS
+            },
+        );
     }
 
     #[test]
@@ -398,10 +494,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn build_decides_whether_runtime_sources_make_the_calls_that_only_a_replaced_builtin_sees() {
+        assert_fact_decides_import(
+            "if (CAN_REPLACE_BUILT_INS) import('./calls');",
+            |can_replace_builtins| ProgramFacts {
+                can_replace_builtins,
+                ..NO_FACTS
+            },
+        );
+    }
+
+    #[test]
+    fn build_decides_whether_runtime_sources_let_process_go_where_they_lay_something_above_it() {
+        assert_fact_decides_import(
+            "if (PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES) import('./process');",
+            |process_reaches_code_on_its_prototypes| ProgramFacts {
+                process_reaches_code_on_its_prototypes,
+                ..NO_FACTS
+            },
+        );
+    }
+
+    #[test]
+    fn build_decides_whether_runtime_sources_load_node_events_where_they_print_a_warning() {
+        assert_fact_decides_import(
+            "if (WARNINGS_LOAD_NODE_EVENTS) import('./events');",
+            |warnings_load_events| ProgramFacts {
+                warnings_load_events,
+                ..NO_FACTS
+            },
+        );
+    }
+
     fn count_import_sites(source: &'static str) -> usize {
         let sessions = create_sessions();
         let atoms = Interner::new_in(&sessions.application);
-        let fold = fold_inputs_with_facts(&sessions, &atoms, &LimitValues::for_host(), NO_FACTS);
+        let fold = fold_inputs_with_facts(&sessions, &atoms, NO_FACTS);
         let arena = sessions.application.arena();
         analyze(source, &fold.application, arena, &atoms)
             .import_sites
@@ -420,6 +549,8 @@ mod tests {
             "if (Object.setPrototypeOf == null) import('./polyfill');",
             "export const keys = Object.keys || import('./polyfill');",
             "export const from = typeof Array.from === 'function' ? Array.from : import('./polyfill');",
+            "if ('a'.replace(/$/, 'b') !== 'ab') import('./polyfill');",
+            "if (['a', 'b'].join('') !== 'ab') import('./polyfill');",
         ] {
             assert_eq!(count_import_sites(source), 0, "{source}");
         }
@@ -529,21 +660,31 @@ mod tests {
         }
     }
 
-    const READS_BEHIND_INITIALIZER: [&str; 8] = [
-        "var isBun = typeof Bun === 'object'; if (!isBun) import('./other');",
-        "var isBun = typeof Bun === 'object', other = isBun || import('./other'); export { other };",
-        "let isBun = typeof Bun === 'object'; export function load() { if (!isBun) return import('./other'); }",
-        "var isBun = typeof Bun === 'object'; function load() { if (!isBun) return import('./other'); } export { load };",
-        "var isBun = typeof Bun === 'object'; export function load() { if (!isBun) return import('./other'); }",
-        "var isBun = typeof Bun === 'object'; const load = () => isBun || import('./other'); load();",
-        "var isBun = typeof Bun === 'object'; class Loader { load() { return isBun || import('./other'); } } new Loader().load();",
-        "function outer() { return load(); } var isBun = typeof Bun === 'object'; function load() { if (!isBun) return import('./other'); } outer();",
-    ];
-
     #[test]
     fn variable_initialized_once_is_its_value_behind_the_initializer() {
-        for source in READS_BEHIND_INITIALIZER {
+        for source in [
+            "var isBun = typeof Bun === 'object'; if (!isBun) import('./other');",
+            "var isBun = typeof Bun === 'object', other = isBun || import('./other'); export { other };",
+            "var isBun = typeof Bun === 'object'; class Loader { static other = isBun || import('./other'); }",
+            "var isBun = typeof Bun === 'object'; namespace late { export const other = isBun || import('./other'); }",
+            "let isBun = typeof Bun === 'object'; export function load() { if (!isBun) return import('./other'); }",
+        ] {
             assert_eq!(count_import_sites(source), 0, "{source}");
+        }
+    }
+
+    #[test]
+    fn variable_is_read_in_what_runs_when_somebody_calls_it() {
+        for source in [
+            "var isBun = typeof Bun === 'object'; function load() { if (!isBun) return import('./other'); } export { load };",
+            "var isBun = typeof Bun === 'object'; const load = () => isBun || import('./other'); load();",
+            "var isBun = typeof Bun === 'object'; class Loader { load() { return isBun || import('./other'); } } new Loader().load();",
+            "function outer() { return load(); } var isBun = typeof Bun === 'object'; function load() { if (!isBun) return import('./other'); } outer();",
+            "new Loader().load(); var isBun = typeof Bun === 'object'; class Loader { load() { return isBun || import('./other'); } }",
+            "var isBun = typeof Bun === 'object'; export class Loader { other = isBun || import('./other'); }",
+            "globalThis.hook(); var isBun = typeof Bun === 'object'; export function load() { if (!isBun) return import('./other'); }",
+        ] {
+            assert_eq!(count_import_sites(source), 1, "{source}");
         }
     }
 
@@ -560,33 +701,9 @@ mod tests {
             "var isBun = typeof Bun === 'object'; function load() { if (!isBun) import('./other'); } eval('load()');",
             "var isBun = typeof Bun === 'object', loaded = (function () { if (!isBun) return import('./other'); })(); export { loaded };",
             "function load() { if (!isBun) import('./other'); } var isBun = typeof Bun === 'object'; load();",
-            "namespace early { export function load() { if (!isBun) import('./other'); } } early.load(); var isBun = typeof Bun === 'object'; namespace late { export function load() { if (!isBun) import('./other'); } }",
+            "namespace early { export function load() { if (!isBun) import('./other'); } } early.load(); var isBun = typeof Bun === 'object';",
         ] {
             assert_eq!(count_import_sites(source), 1, "{source}");
-        }
-    }
-
-    #[test]
-    fn file_on_cycle_of_imports_reads_variables_in_its_functions() {
-        let sessions = create_sessions();
-        let atoms = Interner::new_in(&sessions.application);
-        let fold = fold_inputs_with_facts(&sessions, &atoms, &LimitValues::for_host(), NO_FACTS);
-        let arena = sessions.application.arena();
-        let on_cycle = fold.application.for_file_called_before_it_runs();
-        for (index, source) in (0..).zip(READS_BEHIND_INITIALIZER) {
-            let is_variable_read_in_function = index >= 3;
-            let alone = analyze(source, &fold.application, arena, &atoms);
-            assert_eq!(
-                alone.relies_on_running_before_calls, is_variable_read_in_function,
-                "{source}"
-            );
-            let analysis = analyze(source, &on_cycle, arena, &atoms);
-            assert!(!analysis.relies_on_running_before_calls, "{source}");
-            assert_eq!(
-                analysis.import_sites.len(),
-                usize::from(is_variable_read_in_function),
-                "{source}"
-            );
         }
     }
 
@@ -594,7 +711,7 @@ mod tests {
     fn store_and_delete_are_left_as_written() {
         let sessions = create_sessions();
         let atoms = Interner::new_in(&sessions.application);
-        let fold = fold_inputs_with_facts(&sessions, &atoms, &LimitValues::for_host(), NO_FACTS);
+        let fold = fold_inputs_with_facts(&sessions, &atoms, NO_FACTS);
         let arena = sessions.application.arena();
         let source = "Bun = false; globalThis.Bun = false; delete globalThis.Bun; process.isBun = false; delete process.versions.bun; delete process.isBun;";
         let analysis = analyze(source, &fold.application, arena, &atoms);
@@ -612,7 +729,8 @@ mod tests {
         atoms: &Interner<'s>,
     ) -> Option<DefineValue<'s>> {
         let path = global_path(names, arena, atoms);
-        after_constant_globals(&[provided], Platforms::LINUX, arena, atoms)
+        let held_in_every_run = collect_defines_held_in_every_run(Platforms::LINUX, arena, atoms);
+        after_constant_globals(&[provided], held_in_every_run, arena)
             .iter()
             .rfind(|define| define.path == path)
             .map(|define| define.value)
@@ -680,7 +798,8 @@ mod tests {
             path: global_path(&[b"Object"], arena, &atoms),
             value: DefineValue::GlobalPath(arena.alloc_slice_copy(&[atoms.intern(b"Mine")])),
         }];
-        let defines = after_constant_globals(&renamed, Platforms::LINUX, arena, &atoms);
+        let held_in_every_run = collect_defines_held_in_every_run(Platforms::LINUX, arena, &atoms);
+        let defines = after_constant_globals(&renamed, held_in_every_run, arena);
         let below = |root: &[u8]| {
             let root = DefineRoot::Global(atoms.intern(root));
             defines
@@ -693,10 +812,168 @@ mod tests {
     }
 
     #[test]
+    fn program_that_runs_in_place_asks_the_run_for_what_a_test_may_replace() {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let fold = create_application_fold_inputs(
+            &FoldOptions::default(),
+            arena,
+            &atoms,
+            Platforms::LINUX,
+            true,
+        );
+        let count_import_sites = |source| analyze(source, &fold, arena, &atoms).import_sites.len();
+        for test in [
+            "!Object.assign",
+            "typeof Symbol !== 'function'",
+            "typeof Array.prototype.includes === 'undefined'",
+            "typeof Symbol.iterator !== 'symbol'",
+            "!globalThis.Map",
+            "typeof Bun === 'undefined'",
+            "!globalThis.Bun",
+            "!('Bun' in globalThis)",
+            "typeof process === 'undefined'",
+            "!process.isBun",
+            "typeof process.versions !== 'object'",
+            "!process.versions.bun",
+            "!('bun' in process.versions)",
+            "typeof process.versions.node !== 'string'",
+            "process.release.name !== 'node'",
+            "'a'.replace(/$/, 'b') !== 'ab'",
+            "'a'.replace(/^/, 'b') !== 'ba'",
+            "['a', 'b'].join('') !== 'ab'",
+        ] {
+            let source: &'static str = format!("if ({test}) import('./other');").leak();
+            assert_eq!(count_import_sites(source), 1, "{test}");
+        }
+        assert_eq!(count_import_sites("if (undefined) import('./other');"), 0);
+    }
+
+    #[test]
+    fn define_holds_in_program_that_runs_in_place() {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let provided = FoldOptions {
+            defines: arena.alloc_slice_copy(&[Define {
+                path: global_path(&[b"process", b"isBun"], arena, &atoms),
+                value: DefineValue::Constant(Constant::Boolean(false)),
+            }]),
+            ..FoldOptions::default()
+        };
+        let fold = create_application_fold_inputs(&provided, arena, &atoms, Platforms::LINUX, true);
+        let count_import_sites = |source| analyze(source, &fold, arena, &atoms).import_sites.len();
+        assert_eq!(
+            count_import_sites("if (process.isBun) import('./for-bun');"),
+            0
+        );
+        assert_eq!(
+            count_import_sites("if (!process.isBun) import('./other');"),
+            1
+        );
+    }
+
+    #[test]
+    fn define_and_drop_hold_behind_brackets_in_program_that_runs_in_place() {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let provided = FoldOptions {
+            defines: arena.alloc_slice_copy(&[Define {
+                path: global_path(&[b"config", b"flat"], arena, &atoms),
+                value: DefineValue::Constant(Constant::Boolean(false)),
+            }]),
+            dropped_calls: arena.alloc_slice_copy(&[global_path(
+                &[b"tools", b"trace"],
+                arena,
+                &atoms,
+            )]),
+            ..FoldOptions::default()
+        };
+        for (runs_in_place, sites_behind_brackets) in [(true, 0), (false, 1)] {
+            let fold = create_application_fold_inputs(
+                &provided,
+                arena,
+                &atoms,
+                Platforms::LINUX,
+                runs_in_place,
+            );
+            let count_import_sites =
+                |source| analyze(source, &fold, arena, &atoms).import_sites.len();
+            for (source, sites) in [
+                ("if (config.flat) import('./other');", 0),
+                ("tools.trace(import('./other'));", 0),
+                (
+                    "if (config['flat']) import('./other');",
+                    sites_behind_brackets,
+                ),
+                ("tools['trace'](import('./other'));", sites_behind_brackets),
+                ("if (config?.flat) import('./other');", 1),
+            ] {
+                assert_eq!(
+                    count_import_sites(source),
+                    sites,
+                    "{runs_in_place} {source}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hot_reloading_is_off() {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let defined_by_user = FoldOptions {
+            defines: arena.alloc_slice_copy(&[Define {
+                path: path_below_hot(b"data", arena, &atoms),
+                value: DefineValue::Constant(Constant::Boolean(false)),
+            }]),
+            ..FoldOptions::default()
+        };
+        for (provided, sites_below_data) in [(FoldOptions::default(), 1), (defined_by_user, 0)] {
+            let platform = Platforms::LINUX;
+            let fold = create_application_fold_inputs(&provided, arena, &atoms, platform, false);
+            let count_import_sites =
+                |source| analyze(source, &fold, arena, &atoms).import_sites.len();
+            for name in HOT_RELOADING_CALLS {
+                let name = str::from_utf8(name).unwrap();
+                for source in [
+                    format!("import.meta.hot.{name}(import('./other'));"),
+                    format!("if (import.meta.hot.{name}) import('./other');"),
+                ] {
+                    assert_eq!(count_import_sites(source.leak()), 0, "{name}");
+                }
+            }
+            let source = "if (import.meta.hot.data) import('./other');";
+            assert_eq!(count_import_sites(source), sites_below_data);
+        }
+    }
+
+    #[test]
+    fn runtime_sources_are_told_what_every_run_has_whatever_tests_replace() {
+        for can_replace_builtins in [false, true] {
+            let sessions = create_sessions();
+            let atoms = Interner::new_in(&sessions.application);
+            let facts = ProgramFacts {
+                can_replace_builtins,
+                ..NO_FACTS
+            };
+            let fold = fold_inputs_with_facts(&sessions, &atoms, facts);
+            let arena = sessions.runtime.arena();
+            for source in [
+                "if (!Object.assign) import('./polyfill');",
+                "if (typeof Bun === 'undefined') import('./other');",
+                "if (!process.isBun) import('./other');",
+            ] {
+                let analysis = analyze(source, &fold.runtime, arena, &atoms);
+                assert_eq!(analysis.import_sites.len(), 0, "{source}");
+            }
+        }
+    }
+
+    #[test]
     fn other_bundle_export_is_unknown() {
         let sessions = create_sessions();
         let atoms = Interner::new_in(&sessions.application);
-        let fold = fold_inputs_with_facts(&sessions, &atoms, &LimitValues::for_host(), NO_FACTS);
+        let fold = fold_inputs_with_facts(&sessions, &atoms, NO_FACTS);
         let source = "import { nope } from 'bun:bundle'; nope();";
         let analysis = analyze(
             source,
@@ -715,9 +992,10 @@ mod tests {
     fn string_limit_reaches_both_projects() {
         let sessions = create_sessions();
         let atoms = Interner::new_in(&sessions.application);
-        let mut limits = LimitValues::for_host();
-        limits.lower(LimitId::MaxFoldedStringBytes, 4);
-        let fold = fold_inputs_with_facts(&sessions, &atoms, &limits, NO_FACTS);
+        let fold = fold_inputs_with_facts(&sessions, &atoms, NO_FACTS);
+        let half = "a".repeat(MAX_FOLDED_STRING_BYTES / 2);
+        let longest: &'static str = format!("export const text = '{half}' + '{half}';").leak();
+        let too_long: &'static str = format!("export const text = '{half}' + '{half}b';").leak();
         for (project, inputs) in fold.iter() {
             let arena = sessions.get(project).arena();
             let count_over_limit = |source| {
@@ -725,16 +1003,8 @@ mod tests {
                     .strings_over_limit
                     .len()
             };
-            assert_eq!(
-                count_over_limit("export const text = 'abc' + 'def';"),
-                1,
-                "{project:?}"
-            );
-            assert_eq!(
-                count_over_limit("export const text = 'ab' + 'cd';"),
-                0,
-                "{project:?}"
-            );
+            assert_eq!(count_over_limit(too_long), 1, "{project:?}");
+            assert_eq!(count_over_limit(longest), 0, "{project:?}");
         }
     }
 }

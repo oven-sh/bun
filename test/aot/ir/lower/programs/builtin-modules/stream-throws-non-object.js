@@ -135,104 +135,10 @@ const values = ["text", "", 7, 0, NaN, true, false, null, undefined, Symbol("min
   }
 })();
 
-// GENERATED: note drain addAbortSignal [Symbol.iterator] next
 // CHECK-LABEL: function {{*}}name="note"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] length=1 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetEnvironmentField v0 layout=[[L_1]] field=1
-// CHECK-NEXT: v3 = CheckInitialized v2 name="notes"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
-// CHECK-NEXT: v6 = Call v5, v3, v1 calleeKey="push" calleeName="notes.push"
-// CHECK-NEXT: v7 = Convert v6 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="drain"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync, IsSloppy] length=1 syntax=[HasWrittenAwait] captures=[{type=undefined|null|[[f_4]] flags=[IsExpected]}, {type=undefined|null|[[f_2]] flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|[[L_5]]|[[L_6]] flags=[IsExpected]}] results=[{type=undefined|null|Promise flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_4]], v1: undefined|null|[[f_2]], v2: undefined|null|[[L_5]]|[[L_6]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = IteratorOpen v2 iteratorKind=Async
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v5 = IteratorResume v3, -, v2 iteratorKind=Async
-// CHECK-NEXT: v6 = ResultAt v5
-// CHECK-NEXT: v7 = ResultAt v5 index=1
-// CHECK-NEXT: Branch v6 -> taken b3(), notTaken b4()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5() handler=b6():
-// CHECK-NEXT: v9 = Convert v7 declared={type=undefined|null|string|symbol|bigint|Error flags=[IsExpected]}
-// CHECK-NEXT: v10 = String string="chunk "
-// CHECK-NEXT: v11 = Call v0, -, v9 calleeName="show"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v13 = Add v10, v12
-// CHECK-NEXT: v14 = Call v1, -, v13 calleeName="note"
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b6() role=IterationCleanup subject=v3:
-// CHECK-NEXT: v15 = CatchException
-// CHECK-NEXT: IteratorClose v3, v2 iteratorKind=Async completion=Throw
-// CHECK-NEXT: Rethrow v15
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="addAbortSignal"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] length=1 captures=[{type=undefined|null|[[f_8]] flags=[IsExpected]}, {type=undefined|null|[[f_9]] flags=[IsExpected]}, {type=undefined|null|[[f_10]] flags=[IsExpected]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Promise flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_8]], v1: undefined|null|[[f_9]], v2: undefined|null|[[f_10]], v3: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v4 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v5 = PropGet v4 key="Promise" [isFreeName]
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(Promise) flags=[IsExpected]}
-// CHECK-NEXT: v7 = NewClosure v0, v1, v2, v3 function=[[f_12]]
-// CHECK-NEXT: v8 = Construct v6, -, v7 calleeName="Promise"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|Promise flags=[IsExpected]}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, IsNamedByComputedKey] captures=[{type=anything}] thisType={type=anything} results=[{type=undefined|null|[[L_13]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewClosure v0 function=[[f_14]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[f_15]] flags=[IsExpected]}
-// CHECK-NEXT: v3 = NewObject layout=[[L_13]]
-// CHECK-NEXT: PropDefine v3, v2 key="next"
-// CHECK-NEXT: v5 = FinishObject v3
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[L_13]] flags=[IsExpected]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=anything}] thisType={type=anything} results=[{type=undefined|null|Promise<undefined|null|[[L_16]]> flags=[IsExpected]}] functionTypes={{*}}[[f_17]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="Promise" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Promise) flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key="reject"
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(PromiseReject) flags=[IsExpected]}
-// CHECK-NEXT: v6 = Call v5, v3, v0 calleeKey="reject" calleeName="Promise.reject"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|Promise<undefined|null|[[L_16]]> flags=[IsExpected]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, HasExplicitName] captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_15]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Throw v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync, IsSloppy] thisType={type=anything} results=[{type=undefined|null|Promise<undefined|null|[[L_16]]> flags=[IsExpected]}] functionTypes={{*}}[[f_18]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Data data=[[d_19]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

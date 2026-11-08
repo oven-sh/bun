@@ -109,7 +109,7 @@ pub struct ParseTask<'a> {
     pub(crate) experimental_decorators: bool,
     pub(crate) use_define_for_class_fields: bool,
     // BACKREF; `None` only before enqueue (`Default`, runtime source).
-    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
+    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'a>, bun_ptr::Mut>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
@@ -227,24 +227,24 @@ pub enum Step {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl<'a> ParseTask<'a> {
-    /// Shared borrow of the owning `BundleV2`. `ctx` is a BACKREF
-    /// (LIFETIMES.tsv) into the arena-allocated bundle, set at `init` time and
-    /// valid until `BundleV2::deinit`. Prefer this over open-coded
-    /// `unsafe { &*task.ctx }`; sites that mutate the bundle (e.g.
-    /// `on_complete`) must continue to deref the raw `ctx` field directly.
+    /// Shared borrow of the owning `BundleV2`. Use a copy of `ctx` where a
+    /// function-local borrow is enough.
     ///
     /// # Safety
     ///
-    /// The returned lifetime `'r` is **decoupled** from `&self`: callers in
-    /// `get_code_for_parse_task_*` stash slices borrowed from `ctx` into
-    /// out-params whose lifetime is independent of `task`, so we cannot tie
+    /// The returned lifetime `'r` is **decoupled** from `&self`:
+    /// `get_code_for_parse_task_without_plugins` stores a path borrowed from `ctx`
+    /// in an out-param whose lifetime is independent of `task`, so we cannot tie
     /// `'r` to the `ParseTask` borrow. The caller must ensure the bundle
-    /// outlives `'r` — true for every site, since the bundle drives the parse
-    /// tasks and outlives all of them. Also requires `ctx` to be initialized
-    /// (`init()` was called); debug-asserted.
+    /// outlives `'r`. It does, since the bundle drives the parse tasks and
+    /// outlives all of them.
+    ///
+    /// # Panics
+    ///
+    /// If `ctx` is `None`.
     #[inline]
-    pub(crate) unsafe fn ctx<'r>(&self) -> &'r BundleV2<'static> {
-        // SAFETY: caller upholds: bundle outlives `'r`. `expect` enforces init().
+    pub(crate) unsafe fn ctx<'r>(&self) -> &'r BundleV2<'a> {
+        // SAFETY: caller upholds: bundle outlives `'r`.
         unsafe { bun_ptr::detach_lifetime_ref(self.ctx.expect("ParseTask.ctx unset").get()) }
     }
 
@@ -252,28 +252,19 @@ impl<'a> ParseTask<'a> {
         resolve_result: &_resolver::Result<'_>,
         path: Fs::Path<'a>,
         source_index: Index,
-        // Take `*mut` so the stored BACKREF retains
+        // Take `&mut` so the stored BACKREF retains
         // write provenance for `on_complete` (a `&BundleV2` param would shrink
         // provenance to read-only, making the later `&mut *ctx` UB).
-        ctx: *mut BundleV2<'a>,
+        ctx: &mut BundleV2<'a>,
     ) -> ParseTask<'a> {
         let (package_name, package_version) = match resolve_result.package_json {
-            // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
-            // arena outlives the bundle pass, so deref'ing the raw pointer here to
-            // borrow `name`/`version` is sound.
-            Some(pj) => unsafe {
-                let pj = &*pj;
-                (
-                    ast::StoreStr::new(&pj.name[..]),
-                    ast::StoreStr::new(&pj.version[..]),
-                )
-            },
+            Some(pj) => (
+                ast::StoreStr::new(&pj.name[..]),
+                ast::StoreStr::new(&pj.version[..]),
+            ),
             None => (ast::StoreStr::EMPTY, ast::StoreStr::EMPTY),
         };
-        // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
-        // write provenance from the `*mut BundleV2` parameter; caller passes a
-        // live `&mut BundleV2` coerced to `*mut`.
-        let ctx_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) };
+        let ctx_ref = bun_ptr::ParentRef::from_ref_mut(ctx);
         let known_target = ctx_ref.get().transpiler().options.target;
         ParseTask {
             ctx: Some(ctx_ref),
@@ -316,7 +307,7 @@ impl<'a> ParseTask<'a> {
     /// Re-export of `parse_worker::get_runtime_source` as an associated fn so
     /// callers can spell it `ParseTask::get_runtime_source`.
     #[inline]
-    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
+    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource<'a> {
         parse_worker::get_runtime_source(target)
     }
 }
@@ -383,8 +374,9 @@ unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
         unsafe { &mut *bun_core::from_field_ptr!(ParseTask<'static>, io_task, task) };
     // Read the pool first. `run_from_thread_pool` can reschedule `*parse_task` onto a worker
     // thread, which then owns it.
-    // SAFETY: teardown waits for this callback (`wait_for_io_tasks`), so the bundle is live.
-    let pool: *const crate::ThreadPool = unsafe { parse_task.ctx() }.graph.pool();
+    // Teardown waits for this callback (`wait_for_io_tasks`), so the bundle is live.
+    let ctx = parse_task.ctx.expect("ParseTask.ctx unset");
+    let pool: *const crate::ThreadPool = ctx.graph.pool();
     parse_worker::run_from_thread_pool(parse_task);
     // SAFETY: `pool` scheduled this task, and this is the last access to the bundle.
     unsafe { crate::ThreadPool::finish_io_task(pool) };
@@ -409,8 +401,8 @@ unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
 // RuntimeSource
 // ───────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct RuntimeSource {
-    pub(crate) parse_task: ParseTask<'static>,
+pub(crate) struct RuntimeSource<'a> {
+    pub(crate) parse_task: ParseTask<'a>,
     pub(crate) source: Source<'static>,
 }
 
@@ -569,7 +561,7 @@ export var __callDispose = (stack, error, hasError) => {
 pub mod parse_worker {
     use super::*;
 
-    fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
+    fn get_runtime_source_comptime<'a>(target: options::Target) -> RuntimeSource<'a> {
         // The runtime module is the shared `runtime.js` body plus a per-target
         // `__require`/`__using` tail. Concatenating at compile time would embed
         // four copies of the 13 KB body, so each variant is assembled once on
@@ -660,7 +652,7 @@ pub mod parse_worker {
         RuntimeSource { parse_task, source }
     }
 
-    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
+    pub(crate) fn get_runtime_source<'a>(target: options::Target) -> RuntimeSource<'a> {
         get_runtime_source_comptime(target)
     }
 
@@ -1129,10 +1121,7 @@ pub mod parse_worker {
                     },
                     Loc { start: 0 },
                 );
-                let require_args = bump.alloc_slice_fill_default::<Expr>(2);
-                require_args[0] = import_path;
-                let object_properties = bump.alloc_slice_fill_default::<G::Property>(1);
-                object_properties[0] = G::Property {
+                let object_property = G::Property {
                     key: Some(Expr::init(
                         E::String {
                             data: b"type".into(),
@@ -1149,10 +1138,9 @@ pub mod parse_worker {
                     )),
                     ..Default::default()
                 };
-                require_args[1] = Expr::init(
+                let object = Expr::init(
                     E::Object {
-                        // SAFETY: bump-owned slice; never grown via this Vec.
-                        properties: unsafe { G::PropertyList::from_bump_slice(object_properties) },
+                        properties: G::PropertyList::init_one(object_property),
                         is_single_line: true,
                         ..Default::default()
                     },
@@ -1161,8 +1149,7 @@ pub mod parse_worker {
                 let require_call = Expr::init(
                     E::Call {
                         target: require_property,
-                        // SAFETY: bump-owned slice; never grown via this Vec.
-                        args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
+                        args: bun_ast::ExprNodeList::from_arena_slice(&[import_path, object]),
                         ..Default::default()
                     },
                     Loc { start: 0 },
@@ -1615,8 +1602,7 @@ pub mod parse_worker {
             if task.source_index.is_runtime() {
                 break 'brk false;
             }
-            // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
-            let ctx = unsafe { task.ctx() };
+            let ctx = task.ctx.expect("ParseTask.ctx unset");
             let Some(plugin) = ctx.plugins_ref() else {
                 break 'brk false;
             };
@@ -1649,10 +1635,8 @@ pub mod parse_worker {
             original_contents: None,
         };
 
-        // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
-        let plugins = unsafe { ctx.task.ctx() }
-            .plugins_ref()
-            .expect("unreachable");
+        let bundle = ctx.task.ctx.expect("ParseTask.ctx unset");
+        let plugins = bundle.plugins_ref().expect("unreachable");
         ctx.run(plugins, from_plugin)
     }
 
@@ -2257,7 +2241,7 @@ pub mod parse_worker {
     // runWithSourceCode
     // ───────────────────────────────────────────────────────────────────────────
 
-    fn run_with_source_code(
+    pub(crate) fn run_with_source_code(
         task: &mut ParseTask<'static>,
         this: &mut crate::Worker,
         step: &mut Step,
@@ -2458,6 +2442,8 @@ pub mod parse_worker {
             ))
         };
         opts.package_version = task.package_version.slice();
+        // SAFETY: the resolver outlives the parse, which only calls it from this thread.
+        opts.import_meta_glob = Some(unsafe { Resolver::import_meta_glob_host(resolver) });
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
         opts.features.unwrap_commonjs_to_esm =
@@ -2502,14 +2488,20 @@ pub mod parse_worker {
         // JavaScriptCore implements `using` / `await using` natively, so when
         // targeting Bun there is no need to lower them.
         opts.features.lower_using = !target.is_bun();
+        opts.features.ascii_only = target.is_bun();
         opts.features.hot_module_reloading =
             output_format == options::Format::InternalBakeDev && !task.source_index.is_runtime();
         opts.features.auto_polyfill_require =
             output_format == options::Format::Esm && !opts.features.hot_module_reloading;
         opts.features.react_fast_refresh =
             topts.react_fast_refresh && loader.is_jsx() && !source.path.is_node_module();
+        // Only `bun test` has a filter, and it compiles a hook in a `.ts` file too.
+        let is_wanted_by_react_compiler = match topts.react_compiler_filter {
+            Some(is_compiled) => loader.is_javascript_like() && is_compiled(source.path.text),
+            None => loader.is_jsx(),
+        };
         opts.features.react_compiler = if topts.react_compiler.is_enabled()
-            && loader.is_jsx()
+            && is_wanted_by_react_compiler
             && !source.path.is_node_module()
         {
             topts.react_compiler
@@ -2596,11 +2588,7 @@ pub mod parse_worker {
                     }
                 }),
             };
-            // SAFETY: ARENA — `bump: &'static Bump` (worker arena pinned for the
-            // bundle pass), so `bump.alloc(..)` already yields a `&'static` borrow.
-            unsafe {
-                bun_collections::detach_ref::<js_parser::options::Framework>(bump.alloc(projected))
-            }
+            &*bump.alloc(projected)
         });
 
         // The browser copy of a page of a `clientPages` router drops the exports that its router
@@ -2653,8 +2641,7 @@ pub mod parse_worker {
             key: ast::StoreStr::EMPTY,
             content_hash: 0,
         };
-        // SAFETY: task.ctx backref valid for the bundle pass (outlives `'r`).
-        let task_ctx = unsafe { task.ctx() };
+        let task_ctx = task.ctx.expect("ParseTask.ctx unset");
         let module_type = opts.module_type;
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
@@ -2750,9 +2737,8 @@ pub mod parse_worker {
     }
 
     fn run_from_thread_pool_impl(this: &mut ParseTask<'static>) {
-        // SAFETY: ctx backref valid for the bundle pass (outlives this task).
-        let ctx = unsafe { this.ctx() };
-        let worker: &mut crate::Worker = crate::Worker::get(ctx);
+        let ctx = this.ctx.expect("ParseTask.ctx unset");
+        let worker: &mut crate::Worker = crate::Worker::get(ctx.get());
         // `defer worker.unget()` — handled at function exit (scopeguard
         // would alias the `&mut worker` borrows below).
         scoped_log!(
@@ -2850,7 +2836,7 @@ pub mod parse_worker {
         };
 
         let result = Box::new(Result {
-            ctx: this.ctx.expect("ParseTask.ctx unset"),
+            ctx,
             task: EventLoop::Task::default(),
             value,
             // `ExternalFreeFunction`
@@ -2956,7 +2942,7 @@ pub mod parse_worker {
         let r = unsafe { &mut *result };
         let ctx = r.ctx;
         // SAFETY: `ctx` is a ParentRef<BundleV2> stored with write provenance
-        // (`from_raw_mut` in `ParseTask::init`); the BundleV2 outlives the bundle
+        // (`from_ref_mut` in `ParseTask::init`); the BundleV2 outlives the bundle
         // pass and no other `&mut BundleV2` is live on this (main) thread when the
         // event-loop callback fires. `r` and `*ctx` are disjoint allocations.
         BundleV2::on_parse_task_complete(r, unsafe { ctx.assume_mut() });

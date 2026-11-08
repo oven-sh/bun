@@ -158,6 +158,23 @@ fn unnamed_use_keeps_only_what_needs_no_name() {
 }
 
 #[test]
+fn use_named_at_run_time_keeps_nothing() {
+    let named_at_run_time = |feature| FeatureUseRecord {
+        kind: FeatureUseKind::NamedAtRunTime,
+        ..use_of(feature)
+    };
+    let records = [
+        named_at_run_time(Feature::RegExp),
+        named_at_run_time(Feature::ShadowRealm),
+        use_of(Feature::ShadowRealm),
+    ];
+    assert_eq!(
+        features_of(&records).features,
+        [used(Feature::ShadowRealm, 2)]
+    );
+}
+
+#[test]
 fn one_named_use_names_the_feature() {
     let records = [
         unnamed_use_of(Feature::ShadowRealm),
@@ -224,7 +241,6 @@ fn every_engine_cause_maps() {
             EngineCause::OptionAdmitsCode,
             UnseenCodeCause::OptionAdmitsCode,
         ),
-        (EngineCause::LimitReached, UnseenCodeCause::FlowGaveUp),
         (
             EngineCause::FlowResultDisabled,
             UnseenCodeCause::FlowResultDisabled,
@@ -250,9 +266,9 @@ fn every_engine_cause_maps() {
 #[test]
 fn causes_follow_section() {
     let records = [
-        unseen_code(EngineCause::LimitReached),
+        unseen_code(EngineCause::FlowResultDisabled),
         unseen_code(EngineCause::EvaluatesText),
-        unseen_code(EngineCause::LimitReached),
+        unseen_code(EngineCause::FlowResultDisabled),
     ];
     let cause = |cause, index| UnseenCode {
         cause,
@@ -261,9 +277,9 @@ fn causes_follow_section() {
     assert_eq!(
         from_records(&[], &records, &[], &text_of).causes,
         [
-            cause(UnseenCodeCause::FlowGaveUp, 0),
+            cause(UnseenCodeCause::FlowResultDisabled, 0),
             cause(UnseenCodeCause::EvaluatesText, 1),
-            cause(UnseenCodeCause::FlowGaveUp, 2),
+            cause(UnseenCodeCause::FlowResultDisabled, 2),
         ]
     );
 }

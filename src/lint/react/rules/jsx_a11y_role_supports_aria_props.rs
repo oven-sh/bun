@@ -11,8 +11,8 @@ use bun_lint::rule::Plugin;
 /// Enforce that elements only contain `aria-*` properties supported by their explicit or implicit role.
 pub struct RoleSupportsAriaProps;
 
-const DEFAULT: Message = Message::new("", "The attribute `{{attr_name}}` is not supported by the role `{{role}}`.");
-const IS_IMPLICIT: Message = Message::new(
+const DEFAULT: &Message = &Message::new("", "The attribute `{{attr_name}}` is not supported by the role `{{role}}`.");
+const IS_IMPLICIT: &Message = &Message::new(
     "",
     "The attribute `{{attr_name}}` is not supported by the role `{{role}}`. This role is implicit on the element `{{el_name}}`.",
 );

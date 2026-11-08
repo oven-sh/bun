@@ -31,7 +31,6 @@ fn is_unmodified_import_meta_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprI
         && !bound.import_meta_may_be_modified()
 }
 
-// Follows esbuild's `var __require = (x => typeof require !== "undefined" ? require : ..)(function (x) { .. })`.
 pub(crate) fn resolve_loader_alias(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -77,8 +76,7 @@ pub(crate) fn resolve_exported_loader_alias(
     decisions: &Decisions<'_>,
     export_name: Atom,
 ) -> Option<LoaderAlias> {
-    let exports = bound.table(bound.symbol(bound.file_symbol).exports);
-    let &(_, export) = exports.iter().find(|entry| entry.0 == export_name)?;
+    let export = bound.lookup(bound.symbol(bound.file_symbol).exports, export_name)?;
     let local = bound
         .symbol(export)
         .decls

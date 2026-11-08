@@ -1,0 +1,6 @@
+{
+  "flags": ["--isolate"],
+  "ways": {
+    "one program": "TestRunLayers:0"
+  }
+}

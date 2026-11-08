@@ -8,49 +8,44 @@ use bun_sema::resolve::{
 };
 use bun_sema::util::SharedSort;
 
+use crate::builtins::table::{ModuleFlags, module_data};
 use crate::builtins::{
     BuiltinNames, ImportTargets, Platforms, ResolveInput, ResolvedBuiltins, RuntimeFunction,
     RuntimeModule, SourceDialect, resolve_file,
 };
-use crate::load::evaluated_texts::{EvaluatedTexts, find_evaluated_function};
 use crate::load::react_compiler;
-use crate::load::runtime_modules::RuntimeModules;
-use crate::load::sources::{EvaluatedTextSite, ParsedSource, SourceKind};
+use crate::load::runtime_modules::{RuntimeModules, find_module_named};
+use crate::load::sources::ParsedSource;
 
 pub(crate) struct BuiltinUseInput<'a> {
     pub names: &'a BuiltinNames,
     pub platform: Platforms,
+    pub replaced: &'a [u32],
+    pub runs_tests: bool,
+    pub holds_language: bool,
+    pub is_text_asked: bool,
 }
 
 pub(crate) fn finish_application_file(
     input: &BuiltinUseInput<'_>,
-    texts: Option<&EvaluatedTexts>,
     needs_react_declarations: bool,
     request: &FinishedFile<'_, '_>,
     source: &mut ParsedSource,
 ) -> Vec<HostResolution> {
-    source.evaluated_text_sites.clear();
-    if source.kind == SourceKind::EvaluatedText {
-        source.evaluated_function = find_evaluated_function(request);
-    }
+    source
+        .library_modules_named_in_text_left_to_run_time
+        .clear();
     let resolved = resolve_builtins(input, request, SourceDialect::Program);
     let mut answers: Vec<HostResolution> = collect_host_module_ids(resolved.loaded_modules())
         .into_iter()
         .map(HostResolution::Module)
         .collect();
-    // Where the executable forbids the evaluation of text, a call with constant text stays a call, which throws.
-    let compiled_texts = texts.map_or(&[][..], |_| resolved.evaluated_texts());
-    for (index, text) in compiled_texts.iter().enumerate() {
-        let Some(path) =
-            texts.and_then(|texts| texts.add(request.path, index, text, request.atoms))
-        else {
-            continue;
-        };
-        source.evaluated_text_sites.push(EvaluatedTextSite {
-            call: text.call,
-            implied_answer: answers.len() as u32,
-        });
-        answers.push(HostResolution::Path(path));
+    for text in resolved.evaluated_texts() {
+        for part in text.texts.iter().map(|&part| request.atoms.bytes(part)) {
+            let quoted = bun_core::strings::split_any(part, b"\"'`");
+            (source.library_modules_named_in_text_left_to_run_time)
+                .extend(quoted.filter_map(find_module_named));
+        }
     }
     if needs_react_declarations {
         answers.push(HostResolution::Path(
@@ -59,6 +54,29 @@ pub(crate) fn finish_application_file(
     }
     source.builtins = resolved;
     answers
+}
+
+pub(crate) fn is_module_with_source(resolution: &HostResolution) -> bool {
+    let module = match *resolution {
+        HostResolution::Module(id) => RuntimeModule::from_registry_id(id.0),
+        _ => None,
+    };
+    module.is_some_and(|module| (module_data(module).flags).contains(ModuleFlags::HAS_SOURCE))
+}
+
+pub(crate) fn asks_for_what_unseen_code_finds(
+    request: &FinishedFile<'_, '_>,
+    source: &ParsedSource,
+) -> bool {
+    let has_source =
+        |module: RuntimeModule| (module_data(module).flags).contains(ModuleFlags::HAS_SOURCE);
+    let uses = source.builtins.uses();
+    let mut imported = request
+        .resolutions
+        .iter()
+        .copied()
+        .filter_map(target_module);
+    uses.lets_in_what_nobody_names || uses.has_module_of_host() || imported.any(has_source)
 }
 
 pub(crate) fn finish_runtime_file(
@@ -90,11 +108,16 @@ fn resolve_builtins(
         hir: request.hir,
         bound: request.bound,
         decisions: &request.analysis.decisions,
+        atoms: request.atoms,
         module_format: request.analysis.module_format,
         targets: &ImportTargets::new(&targets),
         names: input.names,
         platform: input.platform,
         dialect,
+        replaced: input.replaced,
+        runs_tests: input.runs_tests,
+        holds_language: input.holds_language,
+        is_text_asked: input.is_text_asked,
     })
 }
 
@@ -116,7 +139,6 @@ fn target_module(resolution: SiteResolution<'_>) -> Option<RuntimeModule> {
     let id = match resolution {
         SiteResolution::Constant(CodeResolution::HostModule(id)) => id,
         SiteResolution::Constant(CodeResolution::File(file)) => file.host_module?,
-        // With --no-builtin-modules. The exports of "bun" are the members of the global `Bun`, which needs no module.
         SiteResolution::Constant(CodeResolution::External {
             specifier: b"bun",
             kind: ExternalKind::HostValue,

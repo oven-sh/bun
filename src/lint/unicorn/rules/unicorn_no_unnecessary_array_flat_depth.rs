@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// Disallows passing `1` to `Array.prototype.flat`.
 pub struct NoUnnecessaryArrayFlatDepth;
 
-const UNNECESSARY_DEPTH: Message = Message::new("", "Passing `1` as the `depth` argument is unnecessary.");
-const REMOVE_ARGUMENT: Message = Message::new("", "Remove the argument");
+const UNNECESSARY_DEPTH: &Message = &Message::new("", "Passing `1` as the `depth` argument is unnecessary.");
+const REMOVE_ARGUMENT: &Message = &Message::new("", "Remove the argument");
 
 impl Rule for NoUnnecessaryArrayFlatDepth {
     const META: Meta =

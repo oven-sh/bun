@@ -1,6 +1,6 @@
 use super::{
-    CodeFailure, CodeImportKind, CodeRequest, ExternalKind, Host, ParseOptions, SiteResolution,
-    TranspileSettings, find_file_plainly,
+    CodeFailure, CodeImportKind, CodeRequest, ComputedCodeRequest, ExternalKind, Host,
+    ParseOptions, SiteResolution, TranspileSettings, find_file_plainly,
 };
 use crate::atom::Interner;
 use crate::bind::Bound;
@@ -8,7 +8,7 @@ use crate::file_analysis::FileAnalysis;
 use crate::hir::{ExprId, File};
 use crate::hir_from_data::HostValue;
 use crate::json::Json;
-use crate::module_format::DeclaredModuleType;
+use crate::module_format::{DeclaredModuleType, ModuleFormat};
 use crate::program::{HostLoader, HostModuleId};
 use crate::session::Arena;
 use bun_paths::platform::Posix;
@@ -31,7 +31,6 @@ pub trait CodeHost: Host {
         HostResolution::Unclaimed
     }
 
-    /// Which file runs for an import that nothing has claimed.
     fn find_code_file(&self, search: &FileSearch<'_>) -> FoundCode {
         find_file_plainly(self, search)
     }
@@ -40,17 +39,76 @@ pub trait CodeHost: Host {
         HostResolution::Unclaimed
     }
 
-    /// The path of a file with what a `data:` URL holds, if `type_attribute` loads it as data. Such a module has nothing to run, so it is a file of the program like any other.
+    fn is_name_for_transpiler_alone(&self, _specifier: &[u8]) -> bool {
+        false
+    }
+
+    fn leaves_to_run_time(&self, _path: &[u8]) -> bool {
+        false
+    }
+
+    fn leaves_packages_outside(&self) -> bool {
+        false
+    }
+
+    fn is_data_file(
+        &self,
+        _path: &[u8],
+        _kind: CodeImportKind,
+        _type_attribute: Option<&[u8]>,
+    ) -> bool {
+        false
+    }
+
+    fn note_file_left_out(
+        &self,
+        _request: &ComputedCodeRequest<'_>,
+        _path: &[u8],
+        _needs_extension: bool,
+    ) {
+    }
+
+    fn kind_of_file_missing_at_build(&self) -> Option<ExternalKind> {
+        None
+    }
+
     fn create_file_from_data_url(&self, _url: &[u8], _type_attribute: &[u8]) -> Option<Vec<u8>> {
         None
     }
 
-    /// The directory that the imports of a file are resolved from, and whose `tsconfig.json` says how the file is transpiled.
+    fn create_file_of_database(&self, _specifier: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn holds_modules_with_queries(&self) -> bool {
+        false
+    }
+
+    fn has_loader_at_run_time(&self) -> bool {
+        false
+    }
+
+    fn add_module_with_query(
+        &self,
+        _path: &[u8],
+        _query: &[u8],
+        _kind: CodeImportKind,
+    ) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn file_of_module<'p>(&'p self, path: &'p [u8]) -> &'p [u8] {
+        path
+    }
+
     fn directory_of<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
         Cow::Borrowed(dirname::<Posix>(path))
     }
 
-    /// The directory that what the file hands to `import()` is resolved from.
+    fn is_given_in_memory(&self, _path: &[u8]) -> bool {
+        false
+    }
+
     fn directory_of_dynamic_imports<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
         self.directory_of(path)
     }
@@ -63,18 +121,19 @@ pub trait CodeHost: Host {
         Vec::new()
     }
 
-    /// Declaration files that rest on `@types/bun`, for where it is installed.
     fn declarations_beside_bun_types(&self, _are_installed: bool) -> Vec<Vec<u8>> {
         Vec::new()
     }
 
-    /// The declaration file that stands in for `@types/bun` where it is not installed.
     fn declarations_in_place_of_bun_types(&self) -> Option<Vec<u8>> {
         None
     }
 
-    /// Where the host has `@types/bun` itself, for where it is not installed. It comes before `declarations_in_place_of_bun_types`.
     fn type_root_in_place_of_bun_types(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn errors_with_bun_types(&self) -> Option<&[(Vec<u8>, u32)]> {
         None
     }
 
@@ -82,7 +141,6 @@ pub trait CodeHost: Host {
         HostLoader::default()
     }
 
-    /// False if `loader` makes a module out of the file without reading it as code: an asset, a text, data. What such a module exports is all that an importer sees of the file.
     fn loads_as_code(&self, _path: &[u8], _loader: HostLoader) -> bool {
         true
     }
@@ -99,17 +157,14 @@ pub trait CodeHost: Host {
         Vec::new()
     }
 
-    /// True if `parse_code` produces the same module for `path` whatever its contents are, as for an embedded asset.
     fn can_read_in_background(&self, _path: &[u8], _loader: HostLoader) -> bool {
         false
     }
 
-    /// Called once every other file is read.
     fn start_background_reads(&self, _paths: &[&[u8]]) -> bool {
         false
     }
 
-    /// True if whoever made the host calls `read_in_background` after the load, in place of the load.
     fn reads_in_background_after_load(&self) -> bool {
         false
     }
@@ -120,7 +175,6 @@ pub trait CodeHost: Host {
         false
     }
 
-    /// `Some` once `read_code` has answered JavaScript for a TypeScript file: the loader of what runs. The file is still what its importers see as types, `read_source` answers its own text, and nobody has held the one against the other.
     fn loader_of_code_in_place_of_typed_file(&self, _path: &[u8]) -> Option<HostLoader> {
         None
     }
@@ -129,8 +183,15 @@ pub trait CodeHost: Host {
         false
     }
 
-    /// True for a file of the project whose declarations only the files that name it can see. It is read once a file that is read names it.
+    fn may_any_file_become_main_module(&self) -> bool {
+        false
+    }
+
     fn is_seen_only_by_name(&self, _path: &[u8]) -> bool {
+        false
+    }
+
+    fn object_prototype_takes_names(&self) -> bool {
         false
     }
 
@@ -166,6 +227,16 @@ pub trait CodeHost: Host {
         &[]
     }
 
+    fn transform_tree_before_binding<'s>(
+        &self,
+        _arena: &'s Arena,
+        _atoms: &Interner<'s>,
+        _request: &mut EarlyTransformRequest<'_, 's>,
+        _payload: &mut Option<HostPayload>,
+    ) -> bool {
+        false
+    }
+
     fn transform_tree<'s>(
         &self,
         _arena: &'s Arena,
@@ -184,12 +255,10 @@ pub trait CodeHost: Host {
         Vec::new()
     }
 
-    /// True: an import of a file is followed once `choose_imports_to_follow` names it. What no code asks for is not read.
     fn follows_imports_on_request(&self) -> bool {
         false
     }
 
-    /// Called each time every file that was found is parsed, until it names nothing new. Each answer is the position of a file in `files` and the path of a file that it imports.
     fn choose_imports_to_follow(&self, _files: &[ParsedFile<'_, '_>]) -> Vec<(u32, Vec<u8>)> {
         Vec::new()
     }
@@ -233,7 +302,6 @@ pub struct FileSearch<'a> {
     pub directory: &'a [u8],
     pub specifier: &'a [u8],
     pub kind: CodeImportKind,
-    /// Whether an import of a package takes "module" where the package has "main" too.
     pub prefers_module_field: bool,
 }
 
@@ -241,9 +309,7 @@ pub struct FileSearch<'a> {
 pub enum FoundCode {
     File {
         path: Vec<u8>,
-        /// The file that `require` of the same package finds, where "module" named `path`.
         required: Option<Vec<u8>>,
-        /// Whether both paths are the ones the modules run under. Otherwise the resolver follows the links in them.
         links_followed: bool,
     },
     External(Vec<u8>),
@@ -276,6 +342,7 @@ pub enum HostResolution {
 pub struct LoaderRequest<'a> {
     pub path: &'a [u8],
     pub kind: CodeImportKind,
+    pub is_linked_by_bundler: bool,
     pub type_attribute: Option<&'a [u8]>,
     pub embed_attribute: Option<&'a [u8]>,
     pub settings: &'a TranspileSettings,
@@ -284,6 +351,7 @@ pub struct LoaderRequest<'a> {
 
 #[derive(Copy, Clone)]
 pub struct CodeParseRequest<'a> {
+    pub package_module_type: DeclaredModuleType,
     pub path: &'a [u8],
     pub loader: HostLoader,
     pub options: ParseOptions,
@@ -306,18 +374,29 @@ pub struct MacroRequest<'a, 's> {
     pub resolve: &'a dyn Fn(&[u8]) -> Option<Vec<u8>>,
 }
 
+pub struct EarlyTransformRequest<'a, 's> {
+    pub path: &'a [u8],
+    pub hir: &'a mut File<'s>,
+    pub module_format: ModuleFormat,
+    pub takes_import_statements: bool,
+    pub settings: &'a TranspileSettings,
+    pub import_meta_main: Option<bool>,
+}
+
 pub struct TransformRequest<'a, 's> {
     pub path: &'a [u8],
     pub hir: &'a mut File<'s>,
     pub bound: &'a Bound<'s>,
     pub analysis: &'a FileAnalysis<'s>,
     pub settings: &'a TranspileSettings,
+    pub import_meta_main: Option<bool>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TreeChange {
     Unchanged,
     Changed,
+    ChangedAndUnfinished,
 }
 
 pub struct FinishedFile<'a, 's> {
@@ -330,11 +409,9 @@ pub struct FinishedFile<'a, 's> {
     pub resolutions: &'a [SiteResolution<'a>],
 }
 
-/// A file that `CodeHost::finish_file` has seen.
 pub struct ParsedFile<'a, 's> {
     pub file: FinishedFile<'a, 's>,
     pub payload: Option<&'a HostPayload>,
-    /// It rises when the file is parsed or folded again.
     pub version: u32,
 }
 

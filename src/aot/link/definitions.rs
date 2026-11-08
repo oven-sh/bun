@@ -1,49 +1,44 @@
 #[cfg(test)]
 mod family_tests;
 #[cfg(test)]
-mod late_answer_tests;
-#[cfg(test)]
 mod library_base_tests;
 #[cfg(test)]
 mod tests;
 
 use bun_sema::util::SharedSort;
+use bun_sort_by_number::number_of_pair;
 
-use super::beside::{Beside, run_beside};
-use super::keys::MergedKeys;
+use super::beside::{Beside, run_steps_beside};
+use super::grouped::Grouped;
+use super::merged_keys::{Merged, MergedKeys};
 use super::program_keys::{
-    InProject, KeyContext, ProgramFunctionKey, ProgramKey, ProgramLayoutKey, ProgramModule,
-    ProgramVariableKey,
+    InProject, KeyContext, ProgramFunctionKey, ProgramLayoutKey, ProgramModule, ProgramVariableKey,
 };
 use super::state::{
-    DefinitionSite, Definitions, ExportWriter, ModuleTable, RuntimeFunctionRoot, SupertypeEdges,
+    DefinitionSite, Definitions, ExportWriter, RuntimeFunctionRoot, SupertypeEdges,
     VariableDefinition,
 };
-use super::unit::{KeyList, LinkUnit};
-use super::{LinkError, Projects, key_context};
+use super::tables::LinkTables;
+use super::unit::LinkUnit;
+use super::unused_records::{set_mark, unmarked};
+use super::{Projects, key_context};
+use crate::builtins::RuntimeModule;
 use crate::builtins::id::BuiltinId;
-use crate::ir::generated::{Layout, LayoutFlags, LayoutKind, Variable, VariableInitialization};
+use crate::ir::generated::{Layout, LayoutKind, Variable, VariableFlags, VariableInitialization};
+use crate::ir::parallel::map_each;
 use crate::ir::{
-    DeclaredType, FunctionId, FunctionKey, Id, InParallel, LayoutId, LayoutKey, ModuleId, StringId,
-    TypeFlags, TypeTable, VariableKey, for_each_mut,
+    DeclaredType, FunctionKey, Id, InParallel, LayoutId, LayoutKey, ModuleId, StringId, TypeFlags,
+    TypeTable, VariableKey, for_each_mut,
 };
 use crate::load::{ProgramFile, ProjectId};
 use crate::lower::ObjectTypeKey;
-use crate::modules::{ModuleKind, SyntheticExport, SyntheticExportId};
+use crate::modules::{ModuleKind, ModuleRef, SyntheticExport, SyntheticExportId};
+use crate::statistics::{Stage, StepClock};
 use core::mem::replace;
+use core::ops::Range;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
-
-/// The units in the order of their files, and what their keys were merged into.
-#[derive(Copy, Clone)]
-pub(super) struct MergedUnits<'a> {
-    pub units: &'a [LinkUnit],
-    pub modules: &'a ModuleTable,
-    pub functions: &'a MergedKeys<ProgramFunctionKey>,
-    pub layouts: &'a MergedKeys<ProgramLayoutKey>,
-    pub variables: &'a MergedKeys<ProgramVariableKey>,
-    pub in_parallel: InParallel<'a>,
-}
+use std::sync::atomic::{AtomicU64, Ordering};
 
 fn numbered_synthetic_exports<'a>(
     context: &KeyContext<'a>,
@@ -60,7 +55,6 @@ fn is_common_js_file(projects: &Projects<'_, '_>, file: ProgramFile) -> bool {
         && !graph.is_library(file.file)
 }
 
-// ES importers hold copies of the names of a CommonJS file alone.
 fn find_file_with_copies(
     projects: &Projects<'_, '_>,
     exporter: ProgramModule,
@@ -83,8 +77,7 @@ fn find_writer(projects: &Projects<'_, '_>, exporter: ProgramModule) -> ExportWr
     }
 }
 
-// The variables that link defines: every synthetic export, then the copy of each that can have one.
-pub(super) fn synthetic_export_keys(projects: &Projects<'_, '_>) -> KeyList<ProgramVariableKey> {
+pub(super) fn synthetic_export_keys(projects: &Projects<'_, '_>) -> Vec<ProgramVariableKey> {
     let mut keys = Vec::new();
     for project in ProjectId::ALL {
         let context = key_context(projects, project);
@@ -98,237 +91,361 @@ pub(super) fn synthetic_export_keys(projects: &Projects<'_, '_>) -> KeyList<Prog
         });
         keys.extend(exports.map(|(id, _)| context.variable_key(VariableKey::Copy(id))));
     }
-    KeyList::new(keys)
+    let named_by_mocks = runtime_modules_named_by_mocks(projects).into_iter();
+    keys.extend(named_by_mocks.map(ProgramVariableKey::MockOfRuntimeModule));
+    keys
 }
 
-// A file of the application names a class or a function of Bun's own modules as what a class of its own inherits from.
 pub(super) fn forget_library_layouts_without_definition(
     units: &mut [LinkUnit],
-    layouts: &MergedKeys<ProgramLayoutKey>,
+    tables: &[LinkTables],
+    layouts: &MergedKeys<'_, ProgramLayoutKey>,
+    in_parallel: InParallel<'_>,
 ) {
-    let mut is_defined = vec![false; layouts.keys.len()];
-    for (unit, local_to_merged) in units.iter().zip(&layouts.local_to_merged) {
-        for (layout, _) in &unit.layout_definitions {
-            is_defined[local_to_merged[layout.index()] as usize] = true;
+    let is_defined = unmarked(layouts.keys.len());
+    let tasks: Vec<&[LinkUnit]> = units.chunks(UNITS_IN_A_TASK).collect();
+    in_parallel(tasks.len(), &|task| {
+        for unit in tasks[task] {
+            let local_to_merged = &layouts.local_to_merged[unit.tables as usize];
+            for (layout, _) in &unit.layout_definitions {
+                set_mark(&is_defined[local_to_merged[layout.index()] as usize]);
+            }
         }
-    }
-    for (unit, local_to_merged) in units.iter_mut().zip(&layouts.local_to_merged) {
-        let project = unit.file.project;
-        let has_layout = |layout: LayoutId| {
-            let merged = local_to_merged[layout.index()] as usize;
-            layouts.keys[merged].project == project || is_defined[merged]
-        };
-        for (_, definition) in &mut unit.layout_definitions {
-            definition.base = definition.base.filter(|&base| has_layout(base));
+    });
+    let mut tasks: Vec<&mut [LinkUnit]> = units.chunks_mut(UNITS_IN_A_TASK).collect();
+    for_each_mut(&mut tasks, in_parallel, &|units| {
+        for unit in units.iter_mut() {
+            let project = unit.file.project;
+            let keys = &tables[unit.tables as usize].layouts;
+            let local_to_merged = &layouts.local_to_merged[unit.tables as usize];
+            let has_layout = |layout: LayoutId| {
+                keys[layout.index()].project == project
+                    || is_defined[local_to_merged[layout.index()] as usize].load(Ordering::Relaxed)
+            };
+            for (_, definition) in &mut unit.layout_definitions {
+                definition.base = definition.base.filter(|&base| has_layout(base));
+            }
+            unit.supertype_edges
+                .retain(|&(layout, supertype)| has_layout(layout) && has_layout(supertype));
         }
-        unit.supertype_edges
-            .retain(|&(layout, supertype)| has_layout(layout) && has_layout(supertype));
+    });
+}
+
+fn order_definitions_of_layout(
+    definitions: &mut [(LayoutId, Layout)],
+    start: u32,
+    types: &mut [(u32, ObjectTypeKey)],
+) {
+    let mut types_of_definitions = types.iter().peekable();
+    let mut order: SmallVec<[(Option<ObjectTypeKey>, u32, u32); 8]> = SmallVec::new();
+    for (index, (_, definition)) in (0..).zip(definitions.iter()) {
+        let ty =
+            types_of_definitions.next_if(|&&(of_definition, _)| of_definition == start + index);
+        order.push((ty.map(|&(_, ty)| ty), definition.position, index));
     }
+    if order.is_sorted() {
+        return;
+    }
+    order.sort_unstable();
+    let mut taken: SmallVec<[Layout; 8]> = SmallVec::new();
+    taken.extend(definitions.iter_mut().map(|it| core::mem::take(&mut it.1)));
+    for (definition, &(.., from)) in definitions.iter_mut().zip(&order) {
+        definition.1 = core::mem::take(&mut taken[from as usize]);
+    }
+    let in_order = (start..).zip(&order);
+    let in_order = in_order.filter_map(|(index, &(ty, ..))| Some((index, ty?)));
+    for (ty, in_order) in types.iter_mut().zip(in_order) {
+        *ty = in_order;
+    }
+}
+
+pub(super) fn order_layout_definitions(units: &mut [LinkUnit], in_parallel: InParallel<'_>) {
+    let mut tasks: Vec<&mut [LinkUnit]> = units.chunks_mut(UNITS_IN_A_TASK).collect();
+    for_each_mut(&mut tasks, in_parallel, &|units| {
+        for unit in units.iter_mut() {
+            let (mut start, mut first_type) = (0, 0);
+            for of_layout in unit
+                .layout_definitions
+                .chunk_by_mut(|one, next| one.0 == next.0)
+            {
+                let end = start + of_layout.len() as u32;
+                let types = &mut unit.object_types[first_type..];
+                let type_count = types.partition_point(|&(of_definition, _)| of_definition < end);
+                if of_layout.len() > 1 {
+                    order_definitions_of_layout(of_layout, start, &mut types[..type_count]);
+                }
+                (start, first_type) = (end, first_type + type_count);
+            }
+        }
+    });
 }
 
 pub(super) fn choose_definitions(
-    input: &MergedUnits<'_>,
+    merged: &Merged<'_>,
     projects: &Projects<'_, '_>,
     beside: Beside<'_>,
-    errors: &mut Vec<LinkError>,
 ) -> Definitions {
-    debug_assert!(input.units.is_sorted_by_key(|unit| unit.file));
-    let units = 0..input.units.len() as u32;
-    // Each kind of key has its own definitions. An error stands where one walk over the units would have put it.
-    let (of_layouts, (of_functions, of_variables)) = run_beside(
+    debug_assert!(merged.units.is_sorted_by_key(|unit| unit.file));
+    let unit_count = merged.units.len() as u32;
+    let mut steps = StepClock::new(Stage::LinkAndEmit);
+    let ((functions, variables), chosen_layouts) = run_steps_beside(
         beside,
+        &mut steps,
+        ["definitions of functions and variables", "of layouts"],
         || {
-            let mut layouts = vec![None; input.layouts.keys.len()];
-            let mut other_layout_definitions = Vec::new();
-            let mut object_types = FxHashSet::default();
-            for unit in units.clone() {
-                let others = &mut other_layout_definitions;
-                choose_layouts(input, unit, &mut layouts, others, &mut object_types);
+            let functions = choose_functions(merged);
+            let mut variables = vec![None; merged.variables.keys.len()];
+            for unit in 0..unit_count {
+                choose_variables(merged, unit, &mut variables);
             }
-            other_layout_definitions.sort_unstable();
-            let families = close_families(input, &layouts, merge_supertype_edges(input));
-            (layouts, other_layout_definitions, families)
-        },
-        || {
-            run_beside(
-                beside,
-                || {
-                    let mut functions = vec![None; input.functions.keys.len()];
-                    let mut errors_by_unit = Vec::new();
-                    for unit in units.clone() {
-                        choose_functions(input, unit, &mut functions, &mut errors_by_unit);
-                    }
-                    let function_types = merge_function_type_edges(input);
-                    let function_types =
-                        create_supertype_edges(input.functions.keys.len(), &function_types);
-                    (
-                        functions,
-                        function_types,
-                        merge_builtin_members(input),
-                        errors_by_unit,
-                    )
-                },
-                || {
-                    let mut variables = vec![None; input.variables.keys.len()];
-                    let mut errors_by_unit = Vec::new();
-                    for unit in units.clone() {
-                        choose_variables(input, unit, &mut variables, &mut errors_by_unit);
-                    }
-                    (
-                        add_synthetic_exports(input, projects, variables),
-                        errors_by_unit,
-                    )
-                },
+            (
+                functions,
+                add_synthetic_exports(merged, projects, variables),
             )
         },
+        || choose_layouts(merged),
     );
-    let (layouts, other_layout_definitions, families) = of_layouts;
-    let (functions, function_types, builtin_members, mut errors_by_unit) = of_functions;
-    let (variables, errors_of_variables) = of_variables;
-    errors_by_unit.extend(errors_of_variables);
-    errors_by_unit.shared_sort_by_key(|&(unit, kind, _)| (unit, kind));
-    errors.extend(errors_by_unit.into_iter().map(|(_, _, error)| error));
     Definitions {
         functions,
-        layouts,
-        other_layout_definitions,
+        layouts: chosen_layouts.sites,
+        bases_of_layouts: chosen_layouts.bases,
+        other_layout_definitions: chosen_layouts.others,
         variables,
-        supertypes: families.supertypes,
-        function_types,
-        builtin_members,
-        has_members_without_layout: families.has_members_without_layout,
-        conversions_outside_family: families.conversions_outside_family,
-        runtime_functions: collect_runtime_functions(input, errors),
+        runtime_functions: collect_runtime_functions(merged),
+        supertypes: SupertypeEdges::default(),
+        has_members_without_layout: Vec::new(),
+        function_types: SupertypeEdges::default(),
+        builtin_members: Vec::new(),
     }
 }
 
-fn file_of(units: &[LinkUnit], site: DefinitionSite) -> ProgramFile {
-    units[site.unit as usize].file
+pub(super) struct RelatedLayouts(ClosedFamilies);
+
+pub(super) fn relate_layouts(
+    merged: &Merged<'_>,
+    bases_of_layouts: &[Option<u32>],
+) -> RelatedLayouts {
+    let mut steps = StepClock::new(Stage::LinkAndEmit);
+    let supertypes = merge_supertype_edges(merged);
+    steps.end("families: supertype edges of the units");
+    RelatedLayouts(close_families(merged, bases_of_layouts, supertypes))
 }
 
-fn merged_definitions<K: Copy, I: Id, T>(
-    keys: &MergedKeys<K>,
-    unit: u32,
-    definitions: &[(I, T)],
-) -> impl Iterator<Item = (usize, K, DefinitionSite)> {
-    let local_to_merged = &keys.local_to_merged[unit as usize];
-    (0..).zip(definitions).map(move |(index, (id, _))| {
-        let merged = local_to_merged[id.index()] as usize;
-        let site = DefinitionSite { unit, index };
-        (merged, keys.keys[merged], site)
-    })
+pub(super) struct RelatedFunctions {
+    function_types: SupertypeEdges,
+    builtin_members: Vec<(u32, BuiltinId)>,
 }
 
-fn try_define_at_home(
-    units: &[LinkUnit],
-    home: ProgramFile,
+pub(super) fn relate_functions(merged: &Merged<'_>) -> RelatedFunctions {
+    let function_types = merge_function_type_edges(merged);
+    RelatedFunctions {
+        function_types: create_supertype_edges(merged.functions.keys.len(), &function_types),
+        builtin_members: merge_builtin_members(merged),
+    }
+}
+
+impl Definitions {
+    pub(super) fn add_related_layouts(&mut self, related: RelatedLayouts) {
+        let RelatedLayouts(families) = related;
+        self.supertypes = families.supertypes;
+        self.has_members_without_layout = families.has_members_without_layout;
+    }
+
+    pub(super) fn add_related_functions(&mut self, related: RelatedFunctions) {
+        self.function_types = related.function_types;
+        self.builtin_members = related.builtin_members;
+    }
+}
+
+#[cfg(test)]
+pub(super) fn choose_and_relate_definitions(
+    merged: &Merged<'_>,
+    projects: &Projects<'_, '_>,
+    beside: Beside<'_>,
+) -> Definitions {
+    let mut definitions = choose_definitions(merged, projects, beside);
+    let layouts = relate_layouts(merged, &definitions.bases_of_layouts);
+    definitions.add_related_layouts(layouts);
+    definitions.add_related_functions(relate_functions(merged));
+    definitions
+}
+
+fn choose_functions(merged: &Merged<'_>) -> Vec<Option<DefinitionSite>> {
+    const WITHOUT_PARAMETERS: u64 = 1 << 63;
+    const NO_DEFINITION: u64 = u64::MAX;
+    assert!(
+        merged.units.len() < i32::MAX as usize,
+        "the highest bit of the number of a unit is free"
+    );
+    let keys = &merged.functions.keys;
+    let chosen: Vec<AtomicU64> = keys.iter().map(|_| AtomicU64::new(NO_DEFINITION)).collect();
+    (merged.in_parallel)(merged.units.len(), &|unit| {
+        let link_unit = &merged.units[unit];
+        for (index, (id, definition)) in (0u32..).zip(&link_unit.function_definitions) {
+            let function = merged.function(link_unit, *id) as usize;
+            let key = keys[function].key;
+            let is_function_type = matches!(
+                key,
+                FunctionKey::Signature(_) | FunctionKey::ClassSignature(_)
+            );
+            let number = match is_function_type && definition.parameters.is_empty() {
+                true => WITHOUT_PARAMETERS | number_of_pair(unit as u32, index),
+                false => number_of_pair(unit as u32, index),
+            };
+            let other = chosen[function].fetch_min(number, Ordering::Relaxed);
+            debug_assert!(
+                is_function_type || other == NO_DEFINITION,
+                "two definitions of {key:?}"
+            );
+        }
+    });
+    let chosen = chosen.into_iter().map(AtomicU64::into_inner);
+    chosen
+        .map(|number| {
+            (number != NO_DEFINITION).then_some(DefinitionSite {
+                unit: ((number & !WITHOUT_PARAMETERS) >> 32) as u32,
+                index: number as u32,
+            })
+        })
+        .collect()
+}
+
+#[derive(Copy, Clone)]
+struct DefinedLayout {
+    layout: u32,
     site: DefinitionSite,
-    chosen: &mut Option<DefinitionSite>,
-) -> Result<(), [ProgramFile; 2]> {
-    let here = file_of(units, site);
-    if home != here {
-        return Err([home, here]);
-    }
-    if let Some(first) = *chosen {
-        return Err([file_of(units, first), here]);
-    }
-    *chosen = Some(site);
-    Ok(())
+    object_type: Option<ObjectTypeKey>,
+    is_mentioned_by_code: bool,
+    has_place: bool,
+    base: Option<u32>,
 }
 
-fn choose_functions(
-    input: &MergedUnits<'_>,
-    unit: u32,
-    sites: &mut [Option<DefinitionSite>],
-    errors: &mut Vec<(u32, u8, LinkError)>,
-) {
-    let definitions = &input.units[unit as usize].function_definitions;
-    for (merged, key, site) in merged_definitions(input.functions, unit, definitions) {
-        if let FunctionKey::Signature(_) | FunctionKey::ClassSignature(_) = key.key {
-            sites[merged].get_or_insert(site);
-            continue;
-        }
-        let home = ProgramFile {
-            project: key.project,
-            file: key.key.home_file(),
-        };
-        if let Err(files) = try_define_at_home(input.units, home, site, &mut sites[merged]) {
-            let key = ProgramKey::Function(key);
-            errors.push((unit, 0, LinkError::ConflictingDefinitions { key, files }));
+const UNITS_IN_A_TASK: usize = if cfg!(test) { 2 } else { 64 };
+const KEYS_IN_A_TASK: usize = if cfg!(test) { 8 } else { 1 << 12 };
+const MAX_PARTS_OF_LAYOUTS: u32 = if cfg!(test) { 4 } else { 256 };
+
+fn list_defined_layouts(
+    merged: &Merged<'_>,
+    first_unit: u32,
+    units: &[LinkUnit],
+    layouts_in_a_part: u32,
+    part_count: usize,
+) -> Grouped<DefinedLayout> {
+    let mut defined = Vec::new();
+    for (unit, link_unit) in (first_unit..).zip(units) {
+        let mut types_of_definitions = link_unit.object_types.iter().peekable();
+        for (index, (id, definition)) in (0..).zip(&link_unit.layout_definitions) {
+            let ty = types_of_definitions.next_if(|&&(of_definition, _)| of_definition == index);
+            defined.push(DefinedLayout {
+                layout: merged.layout(link_unit, *id),
+                site: DefinitionSite { unit, index },
+                object_type: ty.map(|&(_, ty)| ty),
+                is_mentioned_by_code: link_unit.layouts_named_by_code.binary_search(id).is_ok(),
+                has_place: definition.module.is_some(),
+                base: definition.base.map(|base| merged.layout(link_unit, base)),
+            });
         }
     }
+    let parts = defined.iter().map(|it| it.layout / layouts_in_a_part);
+    let parts: Vec<u32> = parts.collect();
+    Grouped::new(&defined, &parts, part_count)
 }
 
-// A plain layout is shown under the name, and at the place, of its first definition by a type that is declared in a file of the program.
-fn choose_layouts(
-    input: &MergedUnits<'_>,
-    unit: u32,
-    sites: &mut [Option<DefinitionSite>],
-    others: &mut Vec<(u32, DefinitionSite)>,
-    object_types: &mut FxHashSet<(u32, ObjectTypeKey)>,
-) {
-    let here = input.units[unit as usize].file;
-    let code_layout_count = input.units[unit as usize].code_layout_count;
-    let definitions = &input.units[unit as usize].layout_definitions;
-    let mut types_of_definitions = input.units[unit as usize].object_types.iter().peekable();
-    for (merged, key, site) in merged_definitions(input.layouts, unit, definitions) {
-        // Which files say again what an earlier file has said of a type differs from one build to the next.
-        let ty = types_of_definitions.next_if(|&&(index, _)| index == site.index);
-        if ty.is_some_and(|&(_, ty)| !object_types.insert((merged as u32, ty))) {
+struct ChosenLayouts {
+    sites: Vec<Option<DefinitionSite>>,
+    bases: Vec<Option<u32>>,
+    others: Vec<(u32, DefinitionSite)>,
+}
+
+fn choose_layouts_of_part(
+    merged: &Merged<'_>,
+    defined: &[Grouped<DefinedLayout>],
+    part: usize,
+    layouts: Range<u32>,
+) -> ChosenLayouts {
+    let mut chosen_definitions: Vec<Option<DefinedLayout>> = vec![None; layouts.len()];
+    let mut others = Vec::new();
+    let mut object_types = FxHashSet::default();
+    for definition in defined.iter().flat_map(|of_units| of_units.in_group(part)) {
+        let DefinedLayout { layout, site, .. } = *definition;
+        let ty = definition.object_type;
+        if ty.is_some_and(|ty| !object_types.insert((layout, ty))) {
             continue;
         }
+        let key = merged.layouts.keys[layout as usize];
         let home = key.key.home_file().map(|file| ProgramFile {
             project: key.project,
             file,
         });
-        let is_mentioned_by_code = definitions[site.index as usize].0.index() < code_layout_count;
-        let has_place = |site: DefinitionSite| {
-            let definitions = &input.units[site.unit as usize].layout_definitions;
-            definitions[site.index as usize].1.module.is_some()
-        };
-        match sites[merged] {
-            None => sites[merged] = Some(site),
-            Some(_) if home == Some(here) && is_mentioned_by_code => sites[merged] = Some(site),
-            Some(_) if !key.key.has_united_definitions() => {}
-            Some(first) if has_place(site) && !has_place(first) => {
-                others.push((merged as u32, first));
-                sites[merged] = Some(site);
+        let here = merged.units[site.unit as usize].file;
+        let chosen = &mut chosen_definitions[(layout - layouts.start) as usize];
+        match *chosen {
+            None => *chosen = Some(*definition),
+            Some(_) if home == Some(here) && definition.is_mentioned_by_code => {
+                *chosen = Some(*definition);
             }
-            Some(_) => others.push((merged as u32, site)),
+            Some(_) if !key.key.has_united_definitions() => {}
+            Some(first) if definition.has_place && !first.has_place => {
+                others.push((layout, first.site));
+                *chosen = Some(*definition);
+            }
+            Some(_) => others.push((layout, site)),
         }
+    }
+    others.sort_unstable();
+    let chosen = chosen_definitions.iter();
+    ChosenLayouts {
+        sites: chosen.clone().map(|it| it.map(|it| it.site)).collect(),
+        bases: chosen.map(|it| it.and_then(|it| it.base)).collect(),
+        others,
     }
 }
 
-fn choose_variables(
-    input: &MergedUnits<'_>,
-    unit: u32,
-    sites: &mut [Option<DefinitionSite>],
-    errors: &mut Vec<(u32, u8, LinkError)>,
-) {
-    let definitions = &input.units[unit as usize].variable_definitions;
-    for (merged, key, site) in merged_definitions(input.variables, unit, definitions) {
-        let home = match key {
-            ProgramVariableKey::Declared(declared) => {
-                declared.key.home_file().map(|file| ProgramFile {
-                    project: declared.project,
-                    file,
-                })
-            }
-            ProgramVariableKey::SyntheticExport { .. } | ProgramVariableKey::Copy { .. } => None,
-        };
-        let result = match home {
-            Some(home) => try_define_at_home(input.units, home, site, &mut sites[merged]),
-            None => Err([file_of(input.units, site); 2]),
-        };
-        if let Err(files) = result {
-            let key = ProgramKey::Variable(key);
-            errors.push((unit, 1, LinkError::ConflictingDefinitions { key, files }));
-        }
+fn choose_layouts(merged: &Merged<'_>) -> ChosenLayouts {
+    let layout_count = merged.layouts.keys.len() as u32;
+    let layouts_in_a_part = layout_count.div_ceil(MAX_PARTS_OF_LAYOUTS).max(1);
+    let part_count = layout_count.div_ceil(layouts_in_a_part) as usize;
+    let first_units = (0u32..).step_by(UNITS_IN_A_TASK);
+    let tasks: Vec<(u32, &[LinkUnit])> = first_units
+        .zip(merged.units.chunks(UNITS_IN_A_TASK))
+        .collect();
+    let defined = map_each(tasks, merged.in_parallel, &|(first_unit, units)| {
+        list_defined_layouts(merged, first_unit, units, layouts_in_a_part, part_count)
+    });
+    let parts: Vec<usize> = (0..part_count).collect();
+    let parts = map_each(parts, merged.in_parallel, &|part| {
+        let start = part as u32 * layouts_in_a_part;
+        let end = layout_count.min(start + layouts_in_a_part);
+        choose_layouts_of_part(merged, &defined, part, start..end)
+    });
+    let mut chosen = ChosenLayouts {
+        sites: Vec::with_capacity(layout_count as usize),
+        bases: Vec::with_capacity(layout_count as usize),
+        others: Vec::new(),
+    };
+    for part in parts {
+        chosen.sites.extend(part.sites);
+        chosen.bases.extend(part.bases);
+        chosen.others.extend(part.others);
+    }
+    chosen
+}
+
+fn choose_variables(merged: &Merged<'_>, unit: u32, sites: &mut [Option<DefinitionSite>]) {
+    let link_unit = &merged.units[unit as usize];
+    for (index, (id, _)) in (0..).zip(&link_unit.variable_definitions) {
+        let variable = merged.variable(link_unit, *id) as usize;
+        debug_assert!(
+            sites[variable].is_none(),
+            "two definitions of {:?}",
+            merged.variables.keys[variable]
+        );
+        sites[variable] = Some(DefinitionSite { unit, index });
     }
 }
 
 fn add_synthetic_exports(
-    input: &MergedUnits<'_>,
+    merged: &Merged<'_>,
     projects: &Projects<'_, '_>,
     sites: Vec<Option<DefinitionSite>>,
 ) -> Vec<Option<VariableDefinition>> {
@@ -336,54 +453,98 @@ fn add_synthetic_exports(
         .into_iter()
         .map(|site| site.map(VariableDefinition::Unit))
         .collect();
-    let mut define = |key: ProgramVariableKey, module, export: &SyntheticExport, writer| {
-        let merged = input.variables.find(&key);
-        let merged = merged.expect("link declares every synthetic export and every copy");
-        let definition = &mut variables[merged as usize];
-        // A name that either project requires is tested when the module is linked.
-        let is_known_elsewhere = match *definition {
+    let listed = &merged.variables.local_to_merged[merged.tables.len()];
+    let graphs = ProjectId::ALL.map(|project| projects.get(project).graph);
+    let export_counts = graphs.map(|graph| graph.synthetic_exports().len());
+    let (mut next_export, mut next_copy) = (0, export_counts.iter().sum::<usize>());
+    let has_key =
+        |variable: u32, key: ProgramVariableKey| merged.variables.keys[variable as usize] == key;
+    let mut define = |variable: u32, module, export: &SyntheticExport, writer| {
+        let definition = &mut variables[variable as usize];
+        let (is_known_elsewhere, is_replaceable_elsewhere) = match *definition {
             Some(VariableDefinition::SyntheticExport {
-                is_known_member, ..
-            }) => is_known_member,
-            Some(VariableDefinition::Unit(_)) | None => true,
+                is_known_member,
+                is_replaceable,
+                ..
+            }) => (is_known_member, is_replaceable),
+            Some(VariableDefinition::MockOfRuntimeModule { .. } | VariableDefinition::Unit(_))
+            | None => (true, false),
         };
         *definition = Some(VariableDefinition::SyntheticExport {
             module,
             name: export.name,
             is_known_member: export.is_known_member && is_known_elsewhere,
+            is_replaceable: export.is_replaceable || is_replaceable_elsewhere,
             writer,
         });
     };
-    let index_by_module = &input.modules.index_by_module;
+    let index_by_module = &merged.modules.index_by_module;
     for project in ProjectId::ALL {
         let context = key_context(projects, project);
         for (id, export) in numbered_synthetic_exports(&context) {
             let exporter = context.module(export.module);
-            // The program does not reach the module.
+            let variable = listed[next_export];
+            next_export += 1;
+            let with_copies = find_file_with_copies(projects, exporter).map(|file| {
+                next_copy += 1;
+                (file, listed[next_copy - 1])
+            });
             let Some(&module) = index_by_module.get(&exporter) else {
                 continue;
             };
-            let key = context.variable_key(VariableKey::SyntheticExport(id));
-            define(key, module, export, find_writer(projects, exporter));
-            let Some(file) = find_file_with_copies(projects, exporter) else {
+            debug_assert!(has_key(
+                variable,
+                context.variable_key(VariableKey::SyntheticExport(id))
+            ));
+            define(variable, module, export, find_writer(projects, exporter));
+            let Some((file, copy)) = with_copies else {
                 continue;
             };
-            // A file that no ES module imports has no face.
             let Some(&face) = index_by_module.get(&ProgramModule::Face(file)) else {
                 continue;
             };
-            let key = context.variable_key(VariableKey::Copy(id));
+            debug_assert!(has_key(copy, context.variable_key(VariableKey::Copy(id))));
             let captures = projects.get(file.project).graph.commonjs();
             let captures = captures.face_captures(file.file);
-            // Whatever a CommonJS file exports, its importers find a `default`.
             let writer = match captures && export.name != bun_sema::atom::known::default {
                 true => ExportWriter::Capture,
                 false => ExportWriter::Face,
             };
-            define(key, face, export, writer);
+            define(copy, face, export, writer);
+        }
+    }
+    let context = key_context(projects, ProjectId::Application);
+    let named_by_mocks = runtime_modules_named_by_mocks(projects).into_iter();
+    debug_assert_eq!(listed.len(), next_copy + named_by_mocks.len());
+    for (named, &variable) in named_by_mocks.zip(&listed[next_copy..]) {
+        debug_assert!(has_key(
+            variable,
+            ProgramVariableKey::MockOfRuntimeModule(named)
+        ));
+        let exporter = context.module(ModuleRef::Runtime(named));
+        if let Some(&module) = index_by_module.get(&exporter) {
+            variables[variable as usize] = Some(VariableDefinition::MockOfRuntimeModule { module });
         }
     }
     variables
+}
+
+fn runtime_modules_named_by_mocks(projects: &Projects<'_, '_>) -> Vec<RuntimeModule> {
+    let graph = projects.get(ProjectId::Application).graph;
+    graph.runtime_modules_named_by_mocks().to_vec()
+}
+
+pub(super) fn variable_that_holds_mock(module: ModuleId) -> Variable {
+    let mut declared = DeclaredType::untyped();
+    declared.ty = TypeTable::ANYTHING_OR_ABSENT;
+    Variable {
+        name: None,
+        module,
+        declared,
+        initialization: VariableInitialization::Uninitialized,
+        flags: VariableFlags::IS_REPLACEABLE | VariableFlags::HOLDS_MOCK,
+        ..Variable::default()
+    }
 }
 
 fn create_supertype_edges(layout_count: usize, sorted_edges: &[(u32, u32)]) -> SupertypeEdges {
@@ -405,14 +566,14 @@ fn create_supertype_edges(layout_count: usize, sorted_edges: &[(u32, u32)]) -> S
     }
 }
 
-fn merge_supertype_edges(input: &MergedUnits<'_>) -> Vec<(u32, u32)> {
-    let (units, local_to_merged) = (input.units, &input.layouts.local_to_merged);
-    let mut slots: Vec<(usize, Vec<(u32, u32)>)> =
-        (0..units.len()).map(|unit| (unit, Vec::new())).collect();
-    for_each_mut(&mut slots, input.in_parallel, &|(unit, edges)| {
-        let to_merged = |layout: LayoutId| local_to_merged[*unit][layout.index()];
-        for &(layout, supertype) in &units[*unit].supertype_edges {
-            let edge = (to_merged(layout), to_merged(supertype));
+fn merge_supertype_edges(merged: &Merged<'_>) -> Vec<(u32, u32)> {
+    let mut slots: Vec<(usize, Vec<(u32, u32)>)> = (0..merged.units.len())
+        .map(|unit| (unit, Vec::new()))
+        .collect();
+    for_each_mut(&mut slots, merged.in_parallel, &|(unit, edges)| {
+        let unit = &merged.units[*unit];
+        for &(layout, supertype) in &unit.supertype_edges {
+            let edge = (merged.layout(unit, layout), merged.layout(unit, supertype));
             if edge.0 != edge.1 {
                 edges.push(edge);
             }
@@ -427,55 +588,107 @@ fn merge_supertype_edges(input: &MergedUnits<'_>) -> Vec<(u32, u32)> {
     edges
 }
 
-fn merge_function_type_edges(input: &MergedUnits<'_>) -> Vec<(u32, u32)> {
+fn merge_function_type_edges(merged: &Merged<'_>) -> Vec<(u32, u32)> {
     let mut edges: Vec<(u32, u32)> = Vec::new();
-    for (unit, local_to_merged) in input.units.iter().zip(&input.functions.local_to_merged) {
-        let to_merged = |function: FunctionId| local_to_merged[function.index()];
+    for unit in merged.units {
         let unit_edges = unit.function_type_edges.iter();
-        edges.extend(unit_edges.map(|&(source, target)| (to_merged(source), to_merged(target))));
+        edges.extend(unit_edges.map(|&(source, target)| {
+            (merged.function(unit, source), merged.function(unit, target))
+        }));
     }
-    for (signature, key) in (0u32..).zip(&input.functions.keys) {
-        let definition = match key.key {
-            FunctionKey::Signature(declaration) => FunctionKey::Source(declaration),
-            FunctionKey::ClassSignature(class) => FunctionKey::ImplicitConstructor(class),
-            _ => continue,
-        };
-        let definition = InProject {
-            project: key.project,
-            key: definition,
-        };
-        if let Some(definition) = input.functions.find(&definition) {
-            edges.push((definition, signature));
+    let first_keys = (0u32..).step_by(KEYS_IN_A_TASK);
+    let tasks: Vec<(u32, &[ProgramFunctionKey])> = first_keys
+        .zip(merged.functions.keys.chunks(KEYS_IN_A_TASK))
+        .collect();
+    let edges_of_keys = map_each(tasks, merged.in_parallel, &|(first_key, keys)| {
+        let mut edges: Vec<(u32, u32)> = Vec::new();
+        for (signature, key) in (first_key..).zip(keys) {
+            let definition = match key.key {
+                FunctionKey::Signature(declaration) => FunctionKey::Source(declaration),
+                FunctionKey::ClassSignature(class) => FunctionKey::ImplicitConstructor(class),
+                _ => continue,
+            };
+            let definition: ProgramFunctionKey = InProject {
+                project: key.project,
+                key: definition,
+            };
+            if let Some(definition) = merged.functions.find(&definition) {
+                edges.push((definition, signature));
+            }
         }
-    }
+        edges
+    });
+    edges.extend(edges_of_keys.into_iter().flatten());
     edges.sort_unstable();
     edges.dedup();
     edges
 }
 
-fn merge_builtin_members(input: &MergedUnits<'_>) -> Vec<(u32, BuiltinId)> {
+fn merge_builtin_members(merged: &Merged<'_>) -> Vec<(u32, BuiltinId)> {
     let mut members: Vec<(u32, BuiltinId)> = Vec::new();
-    for (unit, local_to_merged) in input.units.iter().zip(&input.functions.local_to_merged) {
+    for unit in merged.units {
         let unit_members = unit.builtin_members.iter();
-        members
-            .extend(unit_members.map(|&(function_type, builtin)| {
-                (local_to_merged[function_type.index()], builtin)
-            }));
+        members.extend(
+            unit_members
+                .map(|&(function_type, builtin)| (merged.function(unit, function_type), builtin)),
+        );
     }
     members.sort_unstable();
     members.dedup();
     members
 }
 
+fn collect_merged_layouts(
+    merged: &Merged<'_>,
+    unit: &LinkUnit,
+    layouts: &[LayoutId],
+) -> SmallVec<[u32; 4]> {
+    let layouts = layouts.iter().map(|&layout| merged.layout(unit, layout));
+    let mut layouts: SmallVec<[u32; 4]> = layouts.collect();
+    layouts.sort_unstable();
+    layouts
+}
+
 struct ClosedFamilies {
     supertypes: SupertypeEdges,
     has_members_without_layout: Vec<bool>,
-    conversions_outside_family: Vec<(u32, u32)>,
 }
 
-struct FamilyCloser<'a> {
-    units: &'a [LinkUnit],
-    merged_layouts: &'a [Vec<u32>],
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Conversion {
+    sources: SmallVec<[u32; 4]>,
+    targets: SmallVec<[u32; 4]>,
+}
+
+fn list_conversions(merged: &Merged<'_>) -> Vec<Vec<Conversion>> {
+    let tasks: Vec<&[LinkUnit]> = merged.units.chunks(UNITS_IN_A_TASK).collect();
+    map_each(tasks, merged.in_parallel, &|units| {
+        let mut conversions = Vec::new();
+        let mut listed = FxHashSet::default();
+        for unit in units {
+            let types = merged.types_of(unit);
+            for &(source, target) in &unit.family_facts.conversions {
+                let (source, target) = (types.get(source), types.get(target));
+                if source.layouts.is_empty()
+                    || target.layouts.is_empty()
+                    || target.flags.contains(TypeFlags::ANY_OBJECT)
+                {
+                    continue;
+                }
+                let conversion = Conversion {
+                    sources: collect_merged_layouts(merged, unit, source.layouts),
+                    targets: collect_merged_layouts(merged, unit, target.layouts),
+                };
+                if listed.insert(conversion.clone()) {
+                    conversions.push(conversion);
+                }
+            }
+        }
+        conversions
+    })
+}
+
+struct FamilyCloser {
     above: Vec<Vec<u32>>,
     added_supertypes: Vec<(u32, u32)>,
     has_members_without_layout: Vec<bool>,
@@ -483,11 +696,7 @@ struct FamilyCloser<'a> {
     visit: u32,
 }
 
-impl FamilyCloser<'_> {
-    fn layout(&self, unit: u32, layout: LayoutId) -> u32 {
-        self.merged_layouts[unit as usize][layout.index()]
-    }
-
+impl FamilyCloser {
     fn connect(&mut self, layout: u32, supertype: u32) -> bool {
         if layout == supertype || self.above[layout as usize].contains(&supertype) {
             return false;
@@ -523,36 +732,17 @@ impl FamilyCloser<'_> {
         false
     }
 
-    // A conversion whose parts the lowering could not follow leaves a layout outside the family it flows into.
-    fn widen_families(&mut self) -> Vec<(u32, u32)> {
-        let units = self.units;
-        let mut outside = Vec::new();
-        for (unit, link_unit) in (0u32..).zip(units) {
-            for &(source, target) in &link_unit.family_facts.conversions {
-                let (source, target) = (link_unit.types.get(source), link_unit.types.get(target));
-                if target.layouts.is_empty() || target.flags.contains(TypeFlags::ANY_OBJECT) {
+    fn widen_families(&mut self, conversions: &[Vec<Conversion>]) {
+        for conversion in conversions.iter().flatten() {
+            for &layout in &conversion.sources {
+                if self.reaches_any(layout, &conversion.targets) {
                     continue;
                 }
-                let targets: SmallVec<[u32; 4]> = target
-                    .layouts
-                    .iter()
-                    .map(|&layout| self.layout(unit, layout))
-                    .collect();
-                for &layout in &source.layouts {
-                    let layout = self.layout(unit, layout);
-                    if self.reaches_any(layout, &targets) {
-                        continue;
-                    }
-                    for &supertype in &targets {
-                        outside.push((layout, supertype));
-                        self.add_supertype(layout, supertype);
-                    }
+                for &supertype in &conversion.targets {
+                    self.add_supertype(layout, supertype);
                 }
             }
         }
-        outside.sort_unstable();
-        outside.dedup();
-        outside
     }
 
     fn spread_members_without_layout(&mut self) {
@@ -573,16 +763,14 @@ impl FamilyCloser<'_> {
     }
 }
 
-// The family of a type is what reaches it over the conversions that the program performs, each in the direction the checker allows, and over the base of each class.
 fn close_families(
-    input: &MergedUnits<'_>,
-    layouts: &[Option<DefinitionSite>],
+    merged: &Merged<'_>,
+    bases_of_layouts: &[Option<u32>],
     mut supertypes: Vec<(u32, u32)>,
 ) -> ClosedFamilies {
-    let layout_count = input.layouts.keys.len();
+    let layout_count = bases_of_layouts.len();
+    let mut steps = StepClock::new(Stage::LinkAndEmit);
     let mut closer = FamilyCloser {
-        units: input.units,
-        merged_layouts: &input.layouts.local_to_merged,
         above: vec![Vec::new(); layout_count],
         added_supertypes: Vec::new(),
         has_members_without_layout: vec![false; layout_count],
@@ -592,24 +780,38 @@ fn close_families(
     for &(layout, supertype) in &supertypes {
         closer.connect(layout, supertype);
     }
-    for (layout, site) in (0u32..).zip(layouts) {
-        let Some(site) = *site else {
-            continue;
-        };
-        let definitions = &input.units[site.unit as usize].layout_definitions;
-        let (_, definition) = &definitions[site.index as usize];
-        if let Some(base) = definition.base {
-            let base = closer.layout(site.unit, base);
+    if steps.logs() {
+        steps.end(&format!(
+            "families: {layout_count} layouts, {} supertype edges",
+            supertypes.len()
+        ));
+    }
+    for (layout, &base) in (0u32..).zip(bases_of_layouts) {
+        if let Some(base) = base {
             closer.connect(layout, base);
         }
     }
-    for (unit, link_unit) in (0u32..).zip(input.units) {
-        for &layout in &link_unit.family_facts.layouts_with_members_without_layout {
-            let layout = closer.layout(unit, layout);
-            closer.has_members_without_layout[layout as usize] = true;
+    for unit in merged.units {
+        for &layout in &unit.family_facts.layouts_with_members_without_layout {
+            closer.has_members_without_layout[merged.layout(unit, layout) as usize] = true;
         }
     }
-    let conversions_outside_family = closer.widen_families();
+    steps.end("families: bases, members without layout");
+    let conversions = list_conversions(merged);
+    steps.end("families: list conversions");
+    closer.widen_families(&conversions);
+    if steps.logs() {
+        let written = merged
+            .units
+            .iter()
+            .map(|unit| unit.family_facts.conversions.len());
+        steps.end(&format!(
+            "families: {} of {} conversions, which add {} edges",
+            conversions.iter().map(Vec::len).sum::<usize>(),
+            written.sum::<usize>(),
+            closer.added_supertypes.len()
+        ));
+    }
     closer.spread_members_without_layout();
     supertypes.extend(closer.added_supertypes);
     supertypes.sort_unstable();
@@ -617,54 +819,36 @@ fn close_families(
     ClosedFamilies {
         supertypes: create_supertype_edges(layout_count, &supertypes),
         has_members_without_layout: closer.has_members_without_layout,
-        conversions_outside_family,
     }
 }
 
-fn collect_runtime_functions(
-    input: &MergedUnits<'_>,
-    errors: &mut Vec<LinkError>,
-) -> Vec<RuntimeFunctionRoot> {
+fn collect_runtime_functions(merged: &Merged<'_>) -> Vec<RuntimeFunctionRoot> {
     let mut roots = Vec::new();
-    for (unit, local_to_merged) in input.units.iter().zip(&input.functions.local_to_merged) {
+    for unit in merged.units {
         for &entry in &unit.runtime_functions {
             roots.push(RuntimeFunctionRoot {
-                function: local_to_merged[entry.function.index()],
+                function: merged.function(unit, entry.function),
                 entry,
                 file: unit.file,
             });
         }
     }
     roots.shared_sort_by_key(|root| (root.entry.id, root.file));
-    roots.dedup_by(|later, earlier| {
-        let is_conflict = later.entry.id == earlier.entry.id;
-        if is_conflict {
-            errors.push(LinkError::ConflictingRuntimeFunctions {
-                function: later.entry.id,
-                files: [earlier.file, later.file],
-            });
-        }
-        is_conflict
-    });
     roots
 }
 
 pub(super) fn empty_layout(key: &LayoutKey) -> Layout {
     let kind = match key {
         LayoutKey::Container(_) => LayoutKind::Container,
-        LayoutKey::Class(_) | LayoutKey::ConstructorFunction(_) | LayoutKey::Library(_) => {
-            LayoutKind::Instance
-        }
+        LayoutKey::Class(_)
+        | LayoutKey::ConstructorFunction(_)
+        | LayoutKey::Library(_)
+        | LayoutKey::CreatedObject { .. } => LayoutKind::Instance,
         LayoutKey::Environment { .. } => LayoutKind::Environment,
         _ => LayoutKind::Record,
     };
-    let flags = match key {
-        LayoutKey::TypeParameter(_) => LayoutFlags::IS_TYPE_PARAMETER,
-        _ => LayoutFlags::default(),
-    };
     Layout {
         kind,
-        flags,
         ..Layout::default()
     }
 }
@@ -682,9 +866,6 @@ pub(super) fn synthetic_export_variable(
         ExportWriter::Body => VariableInitialization::Undefined,
     };
     let mut declared = DeclaredType::untyped();
-    // The object may lack the name when the copies are taken: the copy stays empty, and the check of the importer tests for that.
-    // An importer that the CommonJS file itself requires runs before the face has taken anything.
-    // A module of the library may lack a name that some file binds. That file fails to link, and a file that reads the name off the namespace tests for the empty variable.
     let may_stay_empty = match writer {
         ExportWriter::Capture | ExportWriter::Face => true,
         ExportWriter::Loader => !is_known_member,

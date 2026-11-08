@@ -36,6 +36,15 @@ const RUNS_FILES_FROM_DISK: [Feature; 4] = [
     Feature::BuiltinSourceText,
 ];
 
+pub(crate) const STARTS_WORKERS: Feature = Feature::WorkerConstructor;
+
+// How a Worker talks to the thread that started it. The code of that thread names none of it.
+const ENTERED_BY_EACH_WORKER: [Feature; 3] = [
+    Feature::PostMessage,
+    Feature::MessageChannel,
+    Feature::StructuredClone,
+];
+
 // A realm that the program creates holds nothing compiled: it runs the built-in modules from their text.
 pub(crate) const CREATES_REALMS: Feature = Feature::ShadowRealm;
 const RUNS_BUILTIN_MODULES_FROM_TEXT: Feature = Feature::RuntimeTranspiler;
@@ -76,7 +85,7 @@ pub fn decide(input: &TrimInput<'_>, edges: &FeatureEdges) -> Decision {
     let mut retained = compute_seed(input, &requirements);
     retain_what_allowed_builtins_need(&mut retained, edges);
     if !request.removes_unused {
-        retain_all_a_program_can_enter(&mut retained);
+        retain_all_a_program_can_enter(&mut retained, request.is_template);
     }
     close(&mut retained, edges);
 
@@ -129,6 +138,16 @@ fn compute_seed(input: &TrimInput<'_>, requirements: &[OptionRequirement]) -> Re
         };
         seed.insert(RUNS_BUILTIN_MODULES_FROM_TEXT, reason);
     }
+    // Such a Worker runs its code like a file that is loaded by a computed path.
+    if input.used.can_start_worker_from_unseen_code() {
+        let reason = RetainReason::NeededBy {
+            feature: STARTS_WORKERS,
+            strength: EdgeStrength::RecoverableGuard,
+        };
+        let features = features_reachable_by(UnseenCodeCause::LoadsCodeByName);
+        seed.insert_set(&features, reason);
+        seed.insert_set(&FeatureSet::from_features(&ENTERED_BY_EACH_WORKER), reason);
+    }
     for (index, option) in requirements.iter().enumerate() {
         let features = option.requirement.required_features();
         seed.insert_set(&features, RetainReason::RequiredByOption(index));
@@ -160,7 +179,7 @@ fn retain_what_allowed_builtins_need(retained: &mut RetainedFeatures, edges: &Fe
     }
 }
 
-fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures) {
+fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures, is_template: bool) {
     if retained.set.contains(Feature::Bundler) {
         let reason = RetainReason::NeededBy {
             feature: Feature::Bundler,
@@ -172,6 +191,10 @@ fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures) {
     }
     let mut features = FeatureSet::all();
     features.subtract(&Feature::all_outside_compiled_programs());
+    // The image lists all of it that the program can enter, and those uses are kept already. A template gets its program later.
+    if !is_template {
+        features.subtract(&Feature::all_entered_from(EnteredFrom::CompiledCode));
+    }
     retained.insert_set(&features, RetainReason::NotRequested);
 }
 
@@ -191,9 +214,13 @@ fn features_reachable_by(cause: UnseenCodeCause) -> FeatureSet {
             features.insert(Feature::Jit);
             features
         }
-        UnseenCodeCause::ReportMissing => program_features,
+        // Nothing says what the image lists either.
+        UnseenCodeCause::ReportMissing => {
+            let mut features = program_features;
+            features.union_with(&Feature::all_entered_from(EnteredFrom::CompiledCode));
+            features
+        }
         UnseenCodeCause::FlowResultDisabled => program_features,
-        UnseenCodeCause::FlowGaveUp => language_features(),
         UnseenCodeCause::EvaluatesText => features_reachable_by_text(),
         UnseenCodeCause::ImportsUncompiledCode => program_features,
         UnseenCodeCause::LoadsModuleByName => FeatureSet::from_features(&[LOADS_FILES_FROM_DISK]),
@@ -266,7 +293,7 @@ fn collect_retained(present: &FeatureSet, mut reasons: Vec<Retained>) -> Vec<Ret
 #[cfg(test)]
 mod tests {
     use bun_options_types::trim::TrimRequest;
-    use bun_removable_features::{Removal, RuntimeRequirement};
+    use bun_removable_features::{Removal, RuntimeRequirement, features_running_uncompiled_code};
 
     use super::*;
     use crate::model::EdgeStrength::{self, AbortingGuard, RecoverableGuard, Reference};
@@ -412,6 +439,11 @@ mod tests {
                 match feature.entered_from() {
                     EnteredFrom::Program => assert!(!is_removed, "{cause:?} {feature:?}"),
                     EnteredFrom::CommandLine => assert!(is_removed, "{cause:?} {feature:?}"),
+                    EnteredFrom::CompiledCode => assert_eq!(
+                        is_removed,
+                        cause != UnseenCodeCause::ReportMissing,
+                        "{cause:?} {feature:?}"
+                    ),
                     EnteredFrom::Startup => {}
                 }
             }
@@ -445,10 +477,10 @@ mod tests {
     }
 
     #[test]
-    fn analysis_that_gave_up_retains_whole_language() {
+    fn analysis_that_is_disabled_retains_whole_language() {
         let text = UsedFeatures::with_cause(UnseenCodeCause::EvaluatesText);
         let text = decide_request(&text, &removing_unused()).unused;
-        let gave_up = UsedFeatures::with_cause(UnseenCodeCause::FlowGaveUp);
+        let gave_up = UsedFeatures::with_cause(UnseenCodeCause::FlowResultDisabled);
         let gave_up = decide_request(&gave_up, &removing_unused()).unused;
         assert!(gave_up.is_subset_of(&text));
         for feature in [Feature::IntlCollation, Feature::Temporal] {
@@ -502,7 +534,7 @@ mod tests {
             let decision = decide_request(&used, &removing_unused());
             if CAUSES_OPENING_WHOLE_RUNTIME.contains(&cause) {
                 assert!(!decision.unused.intersects(&only_when_named), "{cause:?}");
-            } else if cause != UnseenCodeCause::FlowGaveUp {
+            } else {
                 assert!(only_when_named.is_subset_of(&decision.unused), "{cause:?}");
             }
         }
@@ -559,6 +591,37 @@ mod tests {
         assert!(!by_name.unused.contains(Feature::DataFileLoaders));
         assert!(by_name.unused.contains(Feature::RuntimeTranspiler));
         assert!(by_name.unused.contains(Feature::Interpreter));
+    }
+
+    #[test]
+    fn worker_of_unseen_code_keeps_what_runs_it() {
+        let unseen = using(&[Feature::WorkerConstructor]);
+        let unused = decide_request(&unseen, &removing_unused()).unused;
+        for feature in features_running_uncompiled_code().iter() {
+            assert!(!unused.contains(feature), "{feature:?}");
+        }
+        for feature in ENTERED_BY_EACH_WORKER {
+            assert!(!unused.contains(feature), "{feature:?}");
+        }
+        assert!(!unused.contains(Feature::RegExp));
+        // Of Bun's APIs it finds what the program uses.
+        assert!(unused.contains(Feature::Sql));
+        assert!(unused.contains(Feature::IntlCollation));
+    }
+
+    #[test]
+    fn program_that_starts_no_worker_of_unseen_code_keeps_nothing_for_one() {
+        let compiled = UsedFeatures {
+            starts_workers_from_unseen_code: false,
+            ..using(&[Feature::WorkerConstructor])
+        };
+        for used in [compiled, using(&[Feature::Sql])] {
+            let unused = decide_request(&used, &removing_unused()).unused;
+            for feature in features_running_uncompiled_code().iter() {
+                assert!(unused.contains(feature), "{feature:?}");
+            }
+            assert!(unused.contains(Feature::PostMessage));
+        }
     }
 
     #[test]
@@ -687,6 +750,9 @@ mod tests {
             for &feature in Feature::ALL {
                 let is_expected = match cause {
                     UnseenCodeCause::ProgramNotCompiled => false,
+                    _ if feature.entered_from() == EnteredFrom::CompiledCode => {
+                        cause != UnseenCodeCause::ReportMissing
+                    }
                     _ => {
                         outside.contains(feature)
                             && !(opens_whole_runtime && ENTERED_BY_BUNDLER.contains(&feature))
@@ -701,7 +767,25 @@ mod tests {
         }
         assert_eq!(
             decide_request(&using(&[Feature::Sql]), &TrimRequest::default()).unused,
-            outside
+            Feature::all_that_leave_unasked()
+        );
+    }
+
+    #[test]
+    fn what_compiled_code_enters_stays_where_the_image_lists_it() {
+        let used = using(&[Feature::OperationsOnMapsAndSets]);
+        for request in [TrimRequest::default(), removing_unused()] {
+            let decision = decide_request(&used, &request);
+            assert!(!decision.unused.contains(Feature::OperationsOnMapsAndSets));
+            assert!(decision.unused.contains(Feature::OperationsOnProxies));
+        }
+        let template = TrimRequest {
+            is_template: true,
+            ..TrimRequest::default()
+        };
+        assert_eq!(
+            decide_request(&used, &template).unused,
+            Feature::all_outside_compiled_programs()
         );
     }
 
@@ -760,7 +844,7 @@ mod tests {
             ..TrimRequest::default()
         };
         let internal_only = decide_request(&used, &request);
-        let mut removed = Feature::all_outside_compiled_programs();
+        let mut removed = Feature::all_that_leave_unasked();
         removed.insert(Feature::Ffi);
         assert_eq!(internal_only.unused, removed);
         let expected = [

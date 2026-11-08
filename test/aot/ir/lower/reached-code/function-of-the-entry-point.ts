@@ -10,12 +10,16 @@
 // CHECK: [[errorOfNeverNamed]] = NewRuntimeError runtimeError=LeftOutOfExecutable
 // CHECK-NEXT: Throw [[errorOfNeverNamed]]
 
-// RUN(ABSENT): link
-// ABSENT-NOT: name="namedOnlyThere"
-// ABSENT-NOT: name="namesItself"
+// RUN(ALSO): link
+// ALSO-LABEL: function {{*}}name="namedOnlyThere"
+// ALSO-NOT: Return
+// ALSO: NewRuntimeError runtimeError=LeftOutOfExecutable
+// ALSO-LABEL: function {{*}}name="namesItself"
+// ALSO-NOT: Return
+// ALSO: NewRuntimeError runtimeError=LeftOutOfExecutable
 
 // What an entry point exports is in the program. A reference from a function that is itself left out does not count, nor does a function's
-// reference to itself.
+// reference to itself: such a function has no body either.
 export function exported(): number {
   return 1;
 }

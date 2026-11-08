@@ -1,9 +1,11 @@
+use bun_sema::atom::Atom;
 use bun_sema::bind::{
-    BindingKind, CommonJsVariable, InitialState, ScopeId, ScopeKind, SymbolId,
+    Binding, BindingKind, CommonJsVariable, InitialState, ScopeId, ScopeKind, SymbolId,
     has_simple_parameter_list,
 };
 use bun_sema::check::aot::ClassRef;
 use bun_sema::hir::Flags;
+use bun_sema::program::Sym;
 use smallvec::SmallVec;
 
 use super::{BindingRef, ScopeSlot, dead_zone};
@@ -12,7 +14,7 @@ use crate::builtins::{BuiltinPath, Mutability};
 use crate::ir::generated::{Field, FieldFlags, Layout, LayoutKind};
 use crate::ir::{
     ClassSlot, DeclaredType, LayoutId, LayoutKey, Mapped, OpaqueKind, PositionFlags, Primitives,
-    PropertyKey, Type, TypeTable,
+    PropertyKey, StringId, Type, TypeTable,
 };
 use crate::lower::{FileLowering, class};
 
@@ -51,8 +53,10 @@ impl FileLowering<'_, '_, '_, '_> {
             BindingRef::Symbol(symbol) => symbol,
             BindingRef::Slot(scope, slot) => return self.slot_position(scope, slot),
         };
-        // A name that stands for a module holds `true`, whatever type is written behind it.
         if self.inputs.modules.holder(self.file, symbol).is_some() {
+            return DeclaredType::untyped();
+        }
+        if self.is_replaceable(symbol) {
             return DeclaredType::untyped();
         }
         let position = self.binding_position(symbol);
@@ -62,6 +66,15 @@ impl FileLowering<'_, '_, '_, '_> {
 
     pub(super) fn location_position(&mut self, binding: BindingRef) -> DeclaredType {
         let mut position = self.stored_position(binding);
+        if let BindingRef::Symbol(id) = binding {
+            let file = self.file;
+            if self.is_checked()
+                && position.ty == TypeTable::ANYTHING
+                && self.inputs.modules.holder(file, id).is_none()
+            {
+                position = self.compute_inferred_position(Sym { file, id });
+            }
+        }
         if dead_zone::has_dead_zone(self, binding) {
             position.ty = self.fragment.types.union(position.ty, TypeTable::ABSENT);
         }
@@ -94,7 +107,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn create_environment_field(&mut self, binding: BindingRef, index: usize) -> Field {
-        let label = format!("{}.{index}", slot_label(binding));
+        let label = format!("{index}");
         let label = self.intern_bytes(label.as_bytes());
         let key = PropertyKey::from_engine_private_name(label);
         let key = self.fragment.property_keys.intern(key);
@@ -110,7 +123,23 @@ impl FileLowering<'_, '_, '_, '_> {
             key: Some(key),
             declared: self.location_position(binding),
             flags,
+            variable_name: self.written_name(binding),
             ..Field::default()
+        }
+    }
+
+    pub(in crate::lower) fn written_name(&mut self, binding: BindingRef) -> Option<StringId> {
+        match binding {
+            BindingRef::Symbol(symbol) => {
+                let name = self.bound.symbol(symbol).name;
+                (name != Atom::NONE).then(|| {
+                    self.short_binding_name(Binding::Symbol(symbol))
+                        .unwrap_or_else(|| self.intern_atom(name))
+                })
+            }
+            BindingRef::Slot(_, ScopeSlot::This) => Some(self.intern_bytes(b"this")),
+            BindingRef::Slot(_, ScopeSlot::Arguments) => Some(self.intern_bytes(b"arguments")),
+            BindingRef::Slot(..) => None,
         }
     }
 
@@ -154,11 +183,10 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn own_exports_position(&mut self) -> Option<DeclaredType> {
         let layout = self.module_exports_layout(self.file)?;
-        let exports = Mapped::expected(self.fragment.types.intern(Type::layout(layout)));
+        let exports = Mapped::expected(self.fragment.types.intern_layout(layout));
         Some(DeclaredType::new(exports, None, PositionFlags::default()))
     }
 
-    // `ToThis` gives an object, so of the type of the entry value only the object part holds.
     fn converted_this_position(&mut self, entry: DeclaredType) -> DeclaredType {
         let types = &mut self.fragment.types;
         let objects = types.without_primitives(entry.ty, Primitives::ALL);
@@ -172,7 +200,6 @@ impl FileLowering<'_, '_, '_, '_> {
         DeclaredType::new(mapped, entry.site, PositionFlags::default())
     }
 
-    // Every store is checked against a checked type, so that type stays as it is.
     fn expect_builtin_path(
         &mut self,
         position: DeclaredType,
@@ -220,7 +247,9 @@ fn this_position(file: &mut FileLowering<'_, '_, '_, '_>, scope: ScopeId) -> Dec
             let class = bound.member_class(member);
             let class = class.expect("a field initializer belongs to a member of a class");
             let is_static = file.hir[member].flags.contains(Flags::STATIC);
-            if !is_static && class::is_called_by_evaluated_text(file, class) {
+            if (!is_static && class::is_called_by_evaluated_text(file, class))
+                || bound.is_field_assigned_behind_class(member)
+            {
                 return DeclaredType::untyped();
             }
             let class = ClassRef {
@@ -233,29 +262,5 @@ fn this_position(file: &mut FileLowering<'_, '_, '_, '_>, scope: ScopeId) -> Dec
             .own_exports_position()
             .unwrap_or_else(DeclaredType::untyped),
         _ => DeclaredType::untyped(),
-    }
-}
-
-fn slot_label(binding: BindingRef) -> &'static str {
-    match binding {
-        BindingRef::Symbol(_) => "binding",
-        BindingRef::Slot(_, slot) => match slot {
-            ScopeSlot::This => "this",
-            ScopeSlot::NewTarget => "newTarget",
-            ScopeSlot::Callee => "callee",
-            ScopeSlot::HomeObject => "homeObject",
-            ScopeSlot::Arguments => "arguments",
-            ScopeSlot::ArgumentsBinding => "argumentsBinding",
-            ScopeSlot::CommonJs(_) => "commonJs",
-            ScopeSlot::WithObject => "withObject",
-            ScopeSlot::EvalVariables => "evalVariables",
-            ScopeSlot::ParameterEvalVariables => "parameterEvalVariables",
-            ScopeSlot::Class(ClassSlot::ClassObject) => "classObject",
-            ScopeSlot::Class(ClassSlot::ClassToken) => "classToken",
-            ScopeSlot::Class(ClassSlot::ComputedKey(_)) => "computedKey",
-            ScopeSlot::Class(ClassSlot::StaticField(_)) => "staticField",
-            ScopeSlot::Class(ClassSlot::DecoratorState) => "decoratorState",
-            ScopeSlot::Class(ClassSlot::PrivateMethod(_)) => "privateMethod",
-        },
     }
 }

@@ -1573,7 +1573,7 @@ void LintTokenState::reset()
 void addLintTokenFunctions(JSGlobalObject* globalObject, JSObject* native)
 {
     VM& vm = globalObject->vm();
-    native->putDirect(vm, Identifier::fromString(vm, "TokenStore"_s), LintHost::from(globalObject)->tokens.constructor.get());
+    Bun::putDirectNamed(vm, native, "TokenStore"_s, LintHost::from(globalObject)->tokens.constructor.get());
 }
 
 } // namespace Bun

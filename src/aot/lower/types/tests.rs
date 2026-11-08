@@ -1,16 +1,38 @@
 use std::fmt::Write;
+use std::rc::Rc;
+use std::sync::Arc;
 
-use bun_core::strings::index_of;
+use bun_sema::program::FileId;
+use bun_sema_driver::{check_and_lower, decide_roles};
 
 use crate::builtins::id::BuiltinClass;
-use crate::compile::testing::lower_program_with_limits;
+use crate::compile::testing::{default_settings, lower_program_with_limits, with_loaded_build};
 use crate::ir::generated::{DataNode, Function};
-use crate::ir::{DeclaredType, Opcode, Primitives, TypeFlags, TypeId, TypeTable};
-use crate::lower::{Fragment, LoweredFile};
-use crate::statistics::{LimitId, LimitValues, Loss};
+use crate::ir::{DeclaredType, LayoutId, Mapped, Opcode, Primitives, TypeFlags, TypeId, TypeTable};
+use crate::load::ProjectId;
+use crate::lower::scope::testing::symbol_named;
+use crate::lower::tables::{put_back_task_state, take_task_state};
+use crate::lower::{
+    CheckerTypeId, FileLowering, Fragment, LoweredFile, ModuleFragment, SharedTables, UnitTables,
+};
+use crate::statistics::{LimitId, LimitValues};
 
 const EXPANDING_ALIAS: &str = "type G<T> = Map<G<T[]>, G<[T]>>;";
 const LOWERED_LIMIT: Option<u64> = Some(64);
+
+const TYPES_OF_VARIABLES: [&str; 6] = [
+    "number | string",
+    "Shape",
+    "Shape[]",
+    "Json",
+    "Map<string, number[]>",
+    "Map<string, G<number>>",
+];
+
+struct Lowered {
+    fragment: Fragment,
+    tables: Rc<UnitTables>,
+}
 
 #[derive(PartialEq, Eq, Debug)]
 struct TypeTree {
@@ -28,6 +50,14 @@ struct PositionTree {
     is_expected: bool,
 }
 
+struct Probe {
+    prefix: &'static str,
+    visit: u32,
+    types: [CheckerTypeId; 2],
+    known: [Option<Mapped>; 2],
+    mapped: [Mapped; 2],
+}
+
 impl TypeTree {
     fn is_anything(&self) -> bool {
         self.primitives.contains(Primitives::OBSERVABLE)
@@ -38,7 +68,6 @@ impl TypeTree {
         matches!(self.classes[..], [(BuiltinClass::Map, _)])
     }
 
-    // A variable that has a dead zone also holds `absent`.
     fn value_primitives(&self) -> Primitives {
         self.primitives.without(Primitives::ABSENT)
     }
@@ -52,15 +81,15 @@ fn contents_of(ty: &TypeTree, class: BuiltinClass) -> &[TypeTree] {
     }
 }
 
-fn expand_types(fragment: &Fragment, types: &[TypeId]) -> Vec<TypeTree> {
-    types.iter().map(|&ty| expand_type(fragment, ty)).collect()
+fn expand_types(tables: &UnitTables, types: &[TypeId]) -> Vec<TypeTree> {
+    types.iter().map(|&ty| expand_type(tables, ty)).collect()
 }
 
-fn expand_type(fragment: &Fragment, id: TypeId) -> TypeTree {
-    let ty = fragment.types.get(id);
+fn expand_type(tables: &UnitTables, id: TypeId) -> TypeTree {
+    let ty = tables.types.get(id);
     let literals = ty.strings.iter();
     let mut strings: Vec<Vec<u8>> = literals
-        .map(|&literal| fragment.strings.get(literal).to_vec())
+        .map(|&literal| tables.strings.get(literal).to_vec())
         .collect();
     strings.sort_unstable();
     let classes = ty.classes.iter();
@@ -71,73 +100,129 @@ fn expand_type(fragment: &Fragment, id: TypeId) -> TypeTree {
         strings,
         layout_count: ty.layouts.len(),
         classes: classes
-            .map(|part| (part.builtin_class, expand_types(fragment, &part.contents)))
+            .map(|part| (part.builtin_class, expand_types(tables, &part.contents)))
             .collect(),
     }
 }
 
+fn take_tables(lowered: Vec<(FileId, LoweredFile)>) -> Vec<Lowered> {
+    let mut taken: Vec<(Arc<SharedTables>, Rc<UnitTables>)> = Vec::new();
+    let files = lowered.into_iter().map(|(_, file)| {
+        let shared = &file.fragment.tables;
+        let known = taken.iter().find(|(other, _)| Arc::ptr_eq(other, shared));
+        let tables = match known {
+            Some((_, tables)) => Rc::clone(tables),
+            None => {
+                let tables: Rc<UnitTables> = Rc::from(shared.take());
+                taken.push((Arc::clone(shared), Rc::clone(&tables)));
+                tables
+            }
+        };
+        Lowered {
+            fragment: file.fragment,
+            tables,
+        }
+    });
+    files.collect()
+}
+
 #[track_caller]
-fn lower_file(path: &str, source: &str, max_type_nodes: Option<u64>) -> LoweredFile {
+fn lower_files(files: &[(&str, &str)], max_type_nodes: Option<u64>) -> Vec<Lowered> {
     let mut limits = LimitValues::for_host();
     if let Some(maximum) = max_type_nodes {
         limits.lower(LimitId::MaxTypeNodes, maximum);
     }
-    let mut lowered = lower_program_with_limits(&[(path, source)], limits);
-    assert_eq!(lowered.len(), 1);
-    lowered.remove(0).1
+    take_tables(lower_program_with_limits(files, limits))
 }
 
 #[track_caller]
-fn lower(source: &str, max_type_nodes: Option<u64>) -> LoweredFile {
+fn lower_file(path: &str, source: &str, max_type_nodes: Option<u64>) -> Lowered {
+    let mut lowered = lower_files(&[(path, source)], max_type_nodes);
+    assert_eq!(lowered.len(), 1);
+    lowered.remove(0)
+}
+
+#[track_caller]
+fn lower(source: &str, max_type_nodes: Option<u64>) -> Lowered {
     lower_file("main.ts", source, max_type_nodes)
 }
 
-fn expand_position(fragment: &Fragment, declared: DeclaredType) -> PositionTree {
+fn expand_position(tables: &UnitTables, declared: DeclaredType) -> PositionTree {
     PositionTree {
-        ty: expand_type(fragment, declared.ty),
+        ty: expand_type(tables, declared.ty),
         is_expected: declared.is_expected(),
     }
 }
 
-#[track_caller]
-fn expand_variable(lowered: &LoweredFile, name: &str) -> PositionTree {
-    let fragment = &lowered.fragment;
-    let mut variables = fragment.variables.iter().map(|(_, variable)| variable);
+fn find_variable(lowered: &Lowered, name: &str) -> Option<DeclaredType> {
+    let variables = lowered.fragment.variables.iter();
+    let mut variables = variables.map(|(_, variable)| variable);
     let variable = variables.find(|variable| {
-        let text = variable.name.map(|name| fragment.strings.get(name));
+        let text = variable.name.map(|name| lowered.tables.strings.get(name));
         text == Some(name.as_bytes())
     });
-    let declared = variable
-        .expect("the fragment defines the variable")
-        .declared;
-    expand_position(fragment, declared)
-}
-
-/// The declared types of the fields called `name`, in every definition of a layout of the file.
-fn declared_types_of_fields(lowered: &LoweredFile, name: &str) -> Vec<DeclaredType> {
-    let fragment = &lowered.fragment;
-    let fields = fragment
-        .layouts
-        .iter()
-        .flat_map(|(_, layout)| layout.fields.iter());
-    let named = fields.filter(|field| {
-        let text = field
-            .key
-            .and_then(|key| fragment.property_keys.get(key).text);
-        text.map(|text| fragment.strings.get(text)) == Some(name.as_bytes())
-    });
-    named.map(|field| field.declared).collect()
+    variable.map(|variable| variable.declared)
 }
 
 #[track_caller]
-fn find_function<'f>(lowered: &'f LoweredFile, name: &str) -> &'f Function {
-    let fragment = &lowered.fragment;
-    let mut functions = fragment.functions.iter().map(|(_, function)| function);
+fn expand_variable(lowered: &Lowered, name: &str) -> PositionTree {
+    let declared = find_variable(lowered, name).expect("the fragment defines the variable");
+    expand_position(&lowered.tables, declared)
+}
+
+#[track_caller]
+fn find_file<'l>(lowered: &'l [Lowered], variable: &str) -> &'l Lowered {
+    let mut files = lowered.iter();
+    let file = files.find(|file| find_variable(file, variable).is_some());
+    file.expect("a file defines the variable")
+}
+
+fn fields_named(lowered: &Lowered, name: &str) -> Vec<(LayoutId, DeclaredType)> {
+    let tables = &lowered.tables;
+    let layouts = lowered.fragment.layouts.iter();
+    let fields =
+        layouts.flat_map(|(id, layout)| layout.fields.iter().map(move |field| (*id, field)));
+    let named = fields.filter(|(_, field)| {
+        let text = field.key.and_then(|key| tables.property_keys.get(key).text);
+        text.map(|text| tables.strings.get(text)) == Some(name.as_bytes())
+    });
+    named.map(|(id, field)| (id, field.declared)).collect()
+}
+
+fn declared_types_of_fields(lowered: &Lowered, name: &str) -> Vec<DeclaredType> {
+    let fields = fields_named(lowered, name).into_iter();
+    fields.map(|(_, declared)| declared).collect()
+}
+
+#[track_caller]
+fn find_function<'f>(lowered: &'f Lowered, name: &str) -> &'f Function {
+    let functions = lowered.fragment.functions.iter();
+    let mut functions = functions.map(|(_, function)| function);
     let function = functions.find(|function| {
-        let text = function.name.map(|name| fragment.strings.get(name));
+        let text = function.name.map(|name| lowered.tables.strings.get(name));
         text == Some(name.as_bytes())
     });
     function.expect("the fragment defines the function")
+}
+
+fn positions_stated_of_stepped_values(lowered: &Lowered, name: &str) -> Vec<PositionTree> {
+    let blocks = find_function(lowered, name).body.blocks();
+    let values: Vec<_> = blocks.flat_map(|block| block.values()).collect();
+    let find = |word: u32, opcode: Opcode| {
+        let mut defined = values.iter();
+        defined.find(|value| value.id.to_word() == word && value.opcode == opcode)
+    };
+    let conversions = values
+        .iter()
+        .filter(|value| value.opcode == Opcode::Convert);
+    let of_steps = conversions.filter(|conversion| {
+        let read = find(conversion.fields[0], Opcode::ResultAt);
+        read.is_some_and(|read| find(read.fields[0], Opcode::IteratorResume).is_some())
+    });
+    of_steps
+        .filter_map(|conversion| DeclaredType::from_words(&conversion.fields[1..]))
+        .map(|stated| expand_position(&lowered.tables, stated))
+        .collect()
 }
 
 fn collect_array_literal_contents(source: &str) -> Vec<TypeId> {
@@ -148,22 +233,14 @@ fn collect_array_literal_contents(source: &str) -> Vec<TypeId> {
     let created = values
         .filter(|value| value.opcode == Opcode::NewArray)
         .map(|value| TypeId::from_word(value.fields[0]));
-    // A literal of constants alone is data.
-    let constant = fragment.data.iter().filter_map(|data| match &data.root {
-        DataNode::Array { contents, .. } => Some(*contents),
-        _ => None,
-    });
+    let constant = fragment
+        .data
+        .iter()
+        .filter_map(|(_, data)| match &data.root {
+            DataNode::Array { contents, .. } => Some(*contents),
+            _ => None,
+        });
     created.chain(constant).collect()
-}
-
-fn find_type_node_loss(lowered: &LoweredFile) -> Option<Loss> {
-    let mut losses = lowered.counters.losses().iter();
-    let loss = losses.find(|loss| loss.limit == LimitId::MaxTypeNodes);
-    loss.copied()
-}
-
-fn count_type_node_losses(lowered: &LoweredFile) -> u32 {
-    find_type_node_loss(lowered).map_or(0, |loss| loss.count)
 }
 
 #[track_caller]
@@ -211,6 +288,118 @@ fn map_aliases_sharing_union(literal_count: usize, alias_count: usize) -> String
     source
 }
 
+fn names_of_variables(prefix: &str) -> Vec<String> {
+    let indexes = 0..TYPES_OF_VARIABLES.len();
+    indexes.map(|index| format!("{prefix}{index}")).collect()
+}
+
+fn declare_variables(prefix: &str) -> String {
+    let mut source = String::new();
+    for (name, ty) in names_of_variables(prefix).iter().zip(TYPES_OF_VARIABLES) {
+        let _ = writeln!(source, "export let {name}: {ty} = JSON.parse(\"null\");");
+    }
+    source
+}
+
+fn files_that_share_types(has_long_entry_point: bool) -> [(&'static str, String); 3] {
+    let mut main = String::new();
+    for prefix in ["first", "second"] {
+        let names = names_of_variables(prefix);
+        let _ = writeln!(
+            main,
+            "import {{ {} }} from \"./{prefix}\";",
+            names.join(", ")
+        );
+        for name in names {
+            let _ = writeln!(main, "export const kept_{name} = {name};");
+        }
+    }
+    if has_long_entry_point {
+        let statements = "x;\n".repeat(1 << 15);
+        let _ = writeln!(main, "export function filler(x: number) {{\n{statements}}}");
+    }
+    let types = format!(
+        "export interface Shape {{ side: number }}\n\
+         export type Json = string | Json[];\n\
+         export {EXPANDING_ALIAS}\n"
+    );
+    let imports = "import type { G, Json, Shape } from \"./first\";\n";
+    [
+        ("main.ts", main),
+        ("first.ts", types + &declare_variables("first")),
+        (
+            "second.ts",
+            imports.to_owned() + &declare_variables("second"),
+        ),
+    ]
+}
+
+fn as_texts<'f>(files: &'f [(&'static str, String); 3]) -> [(&'f str, &'f str); 3] {
+    files.each_ref().map(|(name, text)| (*name, &text[..]))
+}
+
+fn look_at_files<R: Send>(
+    files: &[(&str, &str)],
+    look: &(dyn Fn(&mut FileLowering<'_, '_, '_, '_>) -> R + Sync),
+) -> Vec<R> {
+    with_loaded_build(files, &default_settings(), |build, loaded| {
+        let bound = build.bind_modules(loaded).expect("the modules are bound");
+        let project = loaded.project(ProjectId::Application);
+        let compiled_files = project.loaded.files().compiled_files();
+        let roles = decide_roles(
+            project.loaded,
+            project.host,
+            project.request,
+            compiled_files,
+        );
+        build.with_lowering_inputs(loaded, &bound, ProjectId::Application, &roles, |inputs| {
+            let checked = check_and_lower(
+                project.loaded,
+                project.host,
+                project.request,
+                &roles,
+                compiled_files,
+                &|checker, file| {
+                    let mut task = take_task_state(checker);
+                    let seen = checker.with_queries(file, &inputs.query_inputs(), |queries| {
+                        let mut lowering = FileLowering::new(inputs, queries, file, &mut task);
+                        let seen = look(&mut lowering);
+                        drop(lowering.finish(ModuleFragment::default()));
+                        seen
+                    });
+                    put_back_task_state(checker, task);
+                    Some(seen)
+                },
+            );
+            let seen = checked.lowered.into_iter();
+            seen.map(|(_, seen)| seen).collect()
+        })
+    })
+}
+
+fn written_type_of(file: &mut FileLowering<'_, '_, '_, '_>, name: &str) -> CheckerTypeId {
+    let symbol = symbol_named(file.hir, file.bound, name);
+    let symbol = file.queries.canonical_symbol(file.file, symbol);
+    let written = file.queries.written_variable_type(symbol).written();
+    written.expect("the variable has an annotation")
+}
+
+fn probe_memo(file: &mut FileLowering<'_, '_, '_, '_>) -> Option<Probe> {
+    let path = file.queries.files().module(file.file).file_name();
+    let mut prefixes = ["first", "second"].into_iter();
+    let prefix = prefixes.find(|prefix| path.ends_with(format!("{prefix}.ts").as_bytes()))?;
+    let types = [0, 1].map(|index| written_type_of(file, &format!("{prefix}{index}")));
+    let known = types.map(|ty| file.find_mapped(ty).map(|entry| entry.mapped));
+    let mapped = types.map(|ty| file.map_type_at(ty));
+    Some(Probe {
+        prefix,
+        visit: file.task.visit,
+        types,
+        known,
+        mapped,
+    })
+}
+
 #[test]
 fn recursive_and_oversized_types_are_order_independent() {
     assert_order_independent("type Json = string | Json[];", ["Json", "Json[]"], None);
@@ -222,7 +411,6 @@ fn recursive_and_oversized_types_are_order_independent() {
 #[test]
 fn recursive_alias_is_cut_to_shallow_form() {
     let lowered = lower("type Json = string | Json[];\nexport let v: Json;\n", None);
-    assert_eq!(count_type_node_losses(&lowered), 0);
     let ty = expand_variable(&lowered, "v").ty;
     assert_eq!(
         ty.value_primitives(),
@@ -240,13 +428,13 @@ fn recursive_alias_is_cut_to_shallow_form() {
 #[test]
 fn dense_cycle_is_one_component_and_below_limit() {
     let source = format!(
-        "{}export let v: F0;\n",
+        "{}export let v: F0[];\n",
         mutually_recursive_tuple_aliases(12)
     );
     let lowered = lower(&source, None);
-    assert_eq!(count_type_node_losses(&lowered), 0);
     let ty = expand_variable(&lowered, "v").ty;
-    let elements = contents_of(&ty, BuiltinClass::Array);
+    let tuples = contents_of(&ty, BuiltinClass::Array);
+    let elements = contents_of(&tuples[0], BuiltinClass::Array);
     assert_eq!(elements[0].primitives, Primitives::NULLISH);
     let cut_elements = contents_of(&elements[0], BuiltinClass::Array);
     assert!(cut_elements[0].is_anything(), "{ty:?}");
@@ -256,7 +444,6 @@ fn dense_cycle_is_one_component_and_below_limit() {
 fn expanding_alias_is_exhausted() {
     let source = format!("{EXPANDING_ALIAS}\nexport let v: G<number>;\n");
     let lowered = lower(&source, LOWERED_LIMIT);
-    assert!(count_type_node_losses(&lowered) > 0);
     let ty = expand_variable(&lowered, "v").ty;
     assert!(!ty.is_anything(), "{ty:?}");
     let contents = contents_of(&ty, BuiltinClass::Map);
@@ -267,6 +454,16 @@ fn expanding_alias_is_exhausted() {
             "{part:?}"
         );
     }
+}
+
+#[test]
+fn member_whose_type_has_no_end_is_lowered() {
+    let source = "type Endless<T> = T extends unknown ? [Endless<[T]>] : never;
+interface Holder { member: Endless<1>; other: Endless<2>[] }
+export let v: Holder = JSON.parse(\"{}\");
+";
+    let lowered = lower(source, LOWERED_LIMIT);
+    assert!(!expand_variable(&lowered, "v").ty.is_anything());
 }
 
 #[test]
@@ -297,6 +494,7 @@ interface B { next: Holder<C> }
 interface C { next: Holder<D> }
 interface D { last: number }
 export let v: Holder<A> | undefined;
+export let w: List<D> | undefined;
 export function read(): number | undefined { return v?.list.first.next.list.first.next.list.first.next.list.count; }
 ";
     for (source, name) in [(written_out, "value"), (of_one_height, "count")] {
@@ -313,7 +511,6 @@ export function read(): number | undefined { return v?.list.first.next.list.firs
 fn part_beside_oversized_part_stays() {
     let source = format!("{EXPANDING_ALIAS}\nexport let v: Map<string, G<number>>;\n");
     let lowered = lower(&source, LOWERED_LIMIT);
-    assert!(count_type_node_losses(&lowered) > 0);
     let ty = expand_variable(&lowered, "v").ty;
     let contents = contents_of(&ty, BuiltinClass::Map);
     assert_eq!(contents.len(), 2);
@@ -327,42 +524,25 @@ fn part_beside_oversized_part_stays() {
 
 #[test]
 fn shared_union_is_counted_once() {
-    let source = format!("{}export let v: H;\n", map_aliases_sharing_union(40, 8));
+    let source = format!("{}export let v: H[];\n", map_aliases_sharing_union(40, 8));
     let lowered = lower(&source, LOWERED_LIMIT);
-    assert_eq!(count_type_node_losses(&lowered), 0);
     let ty = expand_variable(&lowered, "v").ty;
-    let elements = contents_of(&ty, BuiltinClass::Array);
+    let tuples = contents_of(&ty, BuiltinClass::Array);
+    let elements = contents_of(&tuples[0], BuiltinClass::Array);
     let contents = contents_of(&elements[0], BuiltinClass::Map);
     assert_eq!(contents[0].strings.len(), 40);
 }
 
 #[test]
 fn limit_counts_distinct_types() {
-    let source = "export let v: [1, 2, 3, 4];\n";
-    assert!(count_type_node_losses(&lower(source, Some(4))) > 0);
-    assert_eq!(count_type_node_losses(&lower(source, Some(5))), 0);
-}
-
-#[test]
-fn hit_is_charged_to_annotation() {
-    let source = format!("{EXPANDING_ALIAS}\nexport let v: G<number>;\n");
-    let loss = find_type_node_loss(&lower(&source, LOWERED_LIMIT));
-    let subject = loss.and_then(|loss| loss.subject);
-    let variable = index_of(source.as_bytes(), b"v: G<number>");
-    assert!(variable.is_some());
-    assert_eq!(subject.map(|subject| subject.start as usize), variable);
-}
-
-#[test]
-fn type_mapped_twice_is_charged_once() {
-    let once = format!("{EXPANDING_ALIAS}\nexport let v: G<number>;\n");
-    let twice = format!("{once}export let w: G<number>;\n");
-    let expected = count_type_node_losses(&lower(&once, LOWERED_LIMIT));
-    assert!(expected > 0);
-    assert_eq!(
-        count_type_node_losses(&lower(&twice, LOWERED_LIMIT)),
-        expected
-    );
+    for (max_type_nodes, integers) in [(4, None), (5, Some((1, 4)))] {
+        let lowered = lower("export let v: [1, 2, 3, 4][];\n", Some(max_type_nodes));
+        let ty = expand_variable(&lowered, "v").ty;
+        let tuples = contents_of(&ty, BuiltinClass::Array);
+        let elements = contents_of(&tuples[0], BuiltinClass::Array);
+        assert_eq!(elements[0].integers, integers, "{max_type_nodes}: {ty:?}");
+        assert_eq!(elements[0].is_anything(), integers.is_none(), "{ty:?}");
+    }
 }
 
 #[test]
@@ -439,23 +619,284 @@ fn one_enum_member_is_a_tag_and_several_take_every_int32() {
 }
 
 #[test]
-fn inferred_type_is_checked_in_checked_file() {
+fn variable_without_an_annotation_is_expected_to_hold_what_the_checker_infers_of_a_call() {
     let source = "function g() { return 1; }\nexport let v = g();\n";
-    let position = expand_variable(&lower(source, None), "v");
+    let position = expand_variable(&lower_file("main.ts", source, None), "v");
+    assert!(position.is_expected, "{position:?}");
+    let primitives = position.ty.primitives;
+    assert!(primitives.contains(Primitives::NUMBER), "{position:?}");
+    assert!(!primitives.contains(Primitives::STRING), "{position:?}");
+}
+
+#[test]
+fn variable_without_an_annotation_is_untyped_where_the_file_is_not_checked() {
+    let source = "function g() { return 1; }\nexport let v = g();\n";
+    let position = expand_variable(&lower_file("main.js", source, None), "v");
+    assert!(position.ty.is_anything(), "{position:?}");
     assert!(!position.is_expected, "{position:?}");
-    assert_eq!(position.ty.value_primitives(), Primitives::NUMBER);
-    assert!(
-        !position.ty.flags.contains(TypeFlags::ANY_OBJECT),
-        "{position:?}"
+}
+
+#[test]
+fn variable_that_is_stored_to_again_has_the_type_of_the_checker() {
+    let source =
+        "function g() { return 1; }\nexport let v = g();\nexport function next() { v = g(); }\n";
+    let position = expand_variable(&lower_file("main.ts", source, None), "v");
+    assert!(!position.ty.is_anything(), "{position:?}");
+    let primitives = position.ty.primitives;
+    assert!(primitives.contains(Primitives::NUMBER), "{position:?}");
+    assert!(!primitives.contains(Primitives::STRING), "{position:?}");
+}
+
+#[test]
+fn result_without_an_annotation_is_untyped() {
+    let source = "export function make(first: boolean) { return first ? { a: 1 } : { b: \"x\" }; }
+export async function wait() { return 1; }
+export function* count() { yield 1; }
+export function written(): number { return 1; }
+";
+    let lowered = lower(source, None);
+    for name in ["make", "wait", "count"] {
+        let results = &find_function(&lowered, name).results;
+        assert_eq!(results[..], [DeclaredType::untyped()], "{name}");
+    }
+    assert_eq!(
+        find_function(&lowered, "written").results[0].ty,
+        TypeTable::NUMBER
     );
 }
 
 #[test]
-fn unchecked_file_sends_expected_positions() {
-    let source = "function g() { return 1; }\nexport let v = g();\n";
-    let position = expand_variable(&lower_file("main.js", source, None), "v");
-    assert!(position.is_expected, "{position:?}");
-    assert_eq!(position.ty.value_primitives(), Primitives::NUMBER);
+fn receiver_that_nobody_wrote_is_untyped() {
+    let source = "export function probe() { return this.size; }\n";
+    let lowered = lower_file("main.js", source, None);
+    assert_eq!(
+        find_function(&lowered, "probe").this_type,
+        DeclaredType::untyped()
+    );
+}
+
+#[test]
+fn field_without_an_annotation_takes_the_type_of_the_checker() {
+    let source =
+        "export class C { box = { a: 1 }; label = \"\"; open = false; count: number = 1; }\n";
+    let lowered = lower(source, None);
+    let untyped = DeclaredType::untyped();
+    for name in ["box", "label"] {
+        let [field] = declared_types_of_fields(&lowered, name)[..] else {
+            panic!("{name}");
+        };
+        assert_ne!(field, untyped, "{name}");
+        assert!(!field.is_expected(), "{name}");
+    }
+    for (name, ty) in [("open", TypeTable::BOOLEAN), ("count", TypeTable::NUMBER)] {
+        let fields = declared_types_of_fields(&lowered, name);
+        let fields: Vec<TypeId> = fields.iter().map(|field| field.ty).collect();
+        assert_eq!(fields, [ty], "{name}");
+    }
+}
+
+#[test]
+fn field_without_a_useful_inferred_type_is_untyped() {
+    let checked = "export class C {
+  socket = null;
+  later = undefined;
+  constructor() { (this as any).found = 1; }
+}
+";
+    let files = [
+        ("main.ts", checked, &["socket", "later", "found"][..]),
+        (
+            "main.js",
+            "export class C { open = false; }\n",
+            &["open"][..],
+        ),
+    ];
+    let mut typed = Vec::new();
+    for (path, source, names) in files {
+        let lowered = lower_file(path, source, None);
+        let is_typed =
+            |name: &&&str| declared_types_of_fields(&lowered, name) != [DeclaredType::untyped()];
+        typed.extend(
+            names
+                .iter()
+                .filter(is_typed)
+                .map(|name| format!("{path}: {name}")),
+        );
+    }
+    assert_eq!(typed, Vec::<String>::new());
+}
+
+#[test]
+fn empty_array_has_the_result_that_its_constructor_declares() {
+    let source = "export function probe() { const v = new Array<number>(); return v; }\n";
+    let lowered = lower(source, None);
+    let blocks = find_function(&lowered, "probe").body.blocks();
+    let claimed: Vec<DeclaredType> = blocks
+        .flat_map(|block| block.values())
+        .filter(|value| value.opcode == Opcode::Convert)
+        .filter_map(|value| DeclaredType::from_words(&value.fields[1..]))
+        .collect();
+    let [claimed] = claimed[..] else {
+        panic!("one conversion: {claimed:?}");
+    };
+    let ty = expand_type(&lowered.tables, claimed.ty);
+    let contents = contents_of(&ty, BuiltinClass::Array);
+    assert_eq!(contents[0].primitives, Primitives::NUMBER);
+}
+
+#[test]
+fn inferred_type_of_a_parameter_is_checked_in_a_checked_file_and_expected_in_any_other() {
+    let source = "export function probe(a = 1) { return a; }\n";
+    for (path, is_expected) in [("main.ts", false), ("main.js", true)] {
+        let lowered = lower_file(path, source, None);
+        let parameter = find_function(&lowered, "probe").parameters[0];
+        let position = expand_position(&lowered.tables, parameter);
+        assert_eq!(position.is_expected, is_expected, "{path}: {position:?}");
+        let primitives = position.ty.primitives;
+        assert!(
+            primitives.contains(Primitives::NUMBER),
+            "{path}: {position:?}"
+        );
+    }
+}
+
+#[test]
+fn declared_head_of_for_of_is_expected_to_hold_the_type_of_its_binding() {
+    for declaration in ["const", "let", "var"] {
+        let source = format!(
+            "interface Row {{ id: number }}
+export function probe(rows: Row[]) {{
+  let sum = 0;
+  for ({declaration} row of rows) sum += row.id;
+  return sum;
+}}
+"
+        );
+        let stated = positions_stated_of_stepped_values(&lower(&source, None), "probe");
+        let [row] = &stated[..] else {
+            panic!("{declaration}: {stated:?}");
+        };
+        assert!(row.is_expected, "{declaration}: {row:?}");
+        assert_eq!(row.ty.layout_count, 1, "{declaration}: {row:?}");
+    }
+}
+
+#[test]
+fn declared_head_of_for_await_is_expected_to_hold_the_type_of_its_binding() {
+    let source = "interface Row { id: number }
+async function* pages(): AsyncGenerator<Row[]> { yield [{ id: 1 }]; }
+export async function probe() {
+  let sum = 0;
+  for await (const page of pages()) for (const row of page) sum += row.id;
+  return sum;
+}
+";
+    let stated = positions_stated_of_stepped_values(&lower(source, None), "probe");
+    let [page, row] = &stated[..] else {
+        panic!("{stated:?}");
+    };
+    assert!(page.is_expected && row.is_expected, "{stated:?}");
+    let rows = contents_of(&page.ty, BuiltinClass::Array);
+    assert_eq!(rows[0].layout_count, 1, "{page:?}");
+    assert_eq!(row.ty.layout_count, 1, "{row:?}");
+}
+
+#[test]
+fn object_pattern_in_the_head_of_for_of_is_expected_to_take_apart_the_type_of_the_pattern() {
+    let source = "interface Row { id: number }
+export function probe(rows: Row[]) {
+  let sum = 0;
+  for (const { id } of rows) sum += id;
+  return sum;
+}
+";
+    let stated = positions_stated_of_stepped_values(&lower(source, None), "probe");
+    let [row] = &stated[..] else {
+        panic!("{stated:?}");
+    };
+    assert!(row.is_expected, "{row:?}");
+    assert_eq!(row.ty.layout_count, 1, "{row:?}");
+}
+
+#[test]
+fn array_pattern_in_the_head_of_for_of_is_expected_to_take_apart_the_type_of_the_pattern() {
+    let source = "class Key { id = 1; }
+class Held { id = \"one\"; }
+export function probe(table: Map<string, number>, pairs: [Key, Held][]) {
+  let text = \"\";
+  for (const [key, value] of table) text += key + value;
+  for (const [key, held] of pairs) text += key.id + held.id;
+  return text;
+}
+";
+    let stated = positions_stated_of_stepped_values(&lower(source, None), "probe");
+    let [entry, pair] = &stated[..] else {
+        panic!("{stated:?}");
+    };
+    assert!(entry.is_expected && pair.is_expected, "{stated:?}");
+}
+
+#[test]
+fn declared_head_of_for_of_is_expected_to_hold_what_is_inferred_where_the_file_is_not_checked() {
+    let source = "class Row { id = 1; }
+export function probe() {
+  let sum = 0;
+  for (const row of [new Row(), new Row()]) sum += row.id;
+  return sum;
+}
+";
+    let stated = positions_stated_of_stepped_values(&lower_file("main.js", source, None), "probe");
+    let [row] = &stated[..] else {
+        panic!("{stated:?}");
+    };
+    assert!(row.is_expected, "{row:?}");
+    assert_eq!(row.ty.layout_count, 1, "{row:?}");
+}
+
+#[test]
+fn nothing_is_expected_of_a_head_of_for_of_that_is_an_expression() {
+    let source = "interface Row { id: number }
+export function probe(rows: Row[], holder: { row: Row }) {
+  let row: Row | undefined;
+  for (holder.row of rows);
+  for (row of rows);
+  return row;
+}
+";
+    let stated = positions_stated_of_stepped_values(&lower(source, None), "probe");
+    assert!(
+        stated.iter().all(|target| !target.is_expected),
+        "{stated:?}"
+    );
+}
+
+#[test]
+fn nothing_is_expected_of_a_head_of_for_of_whose_binding_has_no_type() {
+    let files = [
+        (
+            "main.ts",
+            "export function probe(list: any[], none: never[]) {
+  let last;
+  for (const each of list) last = each;
+  for (const each of none) last = each;
+  return last;
+}
+",
+        ),
+        (
+            "main.js",
+            "export function probe(list) {
+  let last;
+  for (const each of list) last = each;
+  return last;
+}
+",
+        ),
+    ];
+    for (path, source) in files {
+        let stated = positions_stated_of_stepped_values(&lower_file(path, source, None), "probe");
+        assert!(stated.is_empty(), "{path}: {stated:?}");
+    }
 }
 
 #[test]
@@ -465,7 +906,7 @@ fn argument_that_may_be_left_out_arrives_as_undefined() {
     let parameters = &find_function(&lowered, "probe").parameters;
     let primitives: Vec<Primitives> = parameters
         .iter()
-        .map(|&parameter| expand_position(&lowered.fragment, parameter).ty.primitives)
+        .map(|&parameter| expand_position(&lowered.tables, parameter).ty.primitives)
         .collect();
     let optional = Primitives::NUMBER | Primitives::UNDEFINED;
     assert_eq!(primitives, [Primitives::NUMBER, optional, optional]);
@@ -475,22 +916,21 @@ fn argument_that_may_be_left_out_arrives_as_undefined() {
 fn receiver_of_method_is_tested_at_entry() {
     let lowered = lower("export class C { x = 1; m() { return this.x; } }\n", None);
     let this_type = find_function(&lowered, "m").this_type;
-    assert!(this_type.site.is_some());
-    let position = expand_position(&lowered.fragment, this_type);
+    let position = expand_position(&lowered.tables, this_type);
     assert!(!position.is_expected, "{position:?}");
     assert_eq!(position.ty.layout_count, 1);
     assert!(position.ty.primitives.is_empty(), "{position:?}");
 }
 
 #[test]
-fn array_literal_holds_the_declared_elements_or_else_the_checked_ones() {
+fn array_literal_holds_the_declared_elements_or_else_anything() {
     let numbers = [
         "(a: number) { const v: number[] = [a]; return v; }",
-        "(a: number) { const v = [a]; return v; }",
         "() { const v: number[] = []; return v; }",
         "(a: number) { const v: [number, number] = [a, a]; return v; }",
     ];
     let anything = [
+        "(a: number) { const v = [a]; return v; }",
         "() { const v = []; v.push(1); return v; }",
         "<T extends unknown[]>(a: number, rest: T) { const v: [number, ...T] = [a, ...rest]; return v; }",
     ];
@@ -500,5 +940,63 @@ fn array_literal_holds_the_declared_elements_or_else_the_checked_ones() {
         let source = format!("export function probe{function}\n");
         let found = collect_array_literal_contents(&source);
         assert_eq!(found, [contents], "{function}");
+    }
+}
+
+#[test]
+fn next_file_of_a_task_knows_a_plain_type_and_has_to_meet_an_interface() {
+    let files = files_that_share_types(true);
+    let probes = look_at_files(&as_texts(&files), &probe_memo);
+    let mut probes: Vec<Probe> = probes.into_iter().flatten().collect();
+    probes.sort_by_key(|probe| probe.visit);
+    let [first, second] = &probes[..] else {
+        panic!("two files declare the variables");
+    };
+    assert_eq!(second.visit, first.visit + 1, "one task visits both files");
+    assert_eq!([first.prefix, second.prefix], ["first", "second"]);
+    assert_eq!(first.types, second.types);
+    assert_eq!(first.known, [None, None]);
+    assert_eq!(second.known, [Some(first.mapped[0]), None]);
+    assert_eq!(first.mapped, second.mapped);
+}
+
+#[test]
+fn of_the_files_of_a_task_the_first_says_what_the_fields_of_an_interface_hold() {
+    let files = files_that_share_types(true);
+    let lowered = lower_files(&as_texts(&files), LOWERED_LIMIT);
+    let [first, second] = ["first1", "second1"].map(|name| find_file(&lowered, name));
+    assert!(
+        Rc::ptr_eq(&first.tables, &second.tables),
+        "one task lowers both files"
+    );
+    assert_eq!(
+        find_variable(first, "first1"),
+        find_variable(second, "second1")
+    );
+    assert!(first.fragment.file < second.fragment.file);
+    let [of_first, of_second] = [first, second].map(|file| fields_named(file, "side"));
+    assert!(!of_first.is_empty() && of_second.is_empty());
+}
+
+#[test]
+fn file_is_mapped_in_a_shared_task_as_in_a_task_of_its_own() {
+    let [shared, own] = [true, false].map(|has_long_entry_point| {
+        let files = files_that_share_types(has_long_entry_point);
+        lower_files(&as_texts(&files), LOWERED_LIMIT)
+    });
+    let is_one_task = |lowered: &[Lowered]| {
+        let [first, second] = ["first0", "second0"].map(|name| find_file(lowered, name));
+        Rc::ptr_eq(&first.tables, &second.tables)
+    };
+    assert!(is_one_task(&shared), "one task lowers both files");
+    assert!(!is_one_task(&own), "each file has a task of its own");
+    for prefix in ["first", "second"] {
+        for (name, ty) in names_of_variables(prefix).iter().zip(TYPES_OF_VARIABLES) {
+            assert_eq!(
+                expand_variable(find_file(&shared, name), name),
+                expand_variable(find_file(&own, name), name),
+                "{name}: {ty}"
+            );
+        }
     }
 }

@@ -1,10 +1,11 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { callbacksOfFsCell } from "../../codegen/builtins/host/native-cells.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::node::node_fs_binding" });
 
 /** Arguments are parsed in `node_fs.rs`, which throws Node's errors. */
-const operation = (length: number, ...returns: readonly string[]) =>
+const operation = (length: number, ...returns: readonly (string | table.TableType["spec"])[]) =>
   ({
     args: { args: b.any.variadic },
     returns: b.any.returning(...returns),
@@ -13,11 +14,15 @@ const operation = (length: number, ...returns: readonly string[]) =>
     length,
   }) as const;
 
+/** `x` and `xSync` run what an argument names while they parse it, and nothing else: `NodeFS::dispatch` never enters JavaScript. */
+const parsesArguments = (length: number, returns: table.TableType) =>
+  ({ ...operation(length, returns.spec), runsOnlyOperandCode: true, uses }) as const;
+
 /** What `x` and `xSync` do with an argument (`args::*::from_js` in node_fs.rs): they keep none and return none. */
 const uses = {
   this: table.inspected,
   args: [
-    ...table.hostOptionBag([
+    ...table.optionBag([
       "bigint",
       "encoding",
       "flag",
@@ -36,6 +41,35 @@ const uses = {
     table.printedByFormatter("constructor"),
   ],
 };
+
+/** `FsCompletion::reject` (node_fs.rs) and `reject_before_schedule`: an error of the system, that of a signal that has aborted, or that of a result that cannot be made. */
+const error = table.union(table.instance("Error"), table.instance("RangeError"));
+const calledLaterWith = (...args: table.TableType[]) =>
+  table.called({
+    afterwards: "TouchesOnlyWhatRowNames",
+    times: "Later",
+    this: table.undefined,
+    args,
+    result: "Ignored",
+  });
+
+/**
+ * `xCb` keeps its callback (`FsCompletion::Callback`) and calls it once the operation is done: with the error and nothing else, or with `null` and the result.
+ * Where it fails before anything is scheduled it queues the callback with the error, and for that it calls process.nextTick.
+ */
+const callsBack = (length: number, value: table.TableType) =>
+  ({
+    ...operation(length, table.undefined.spec),
+    uses: {
+      this: table.inspected,
+      args: [
+        ...uses.args,
+        table.storedIn(table.nativeCell(callbacksOfFsCell)),
+        calledLaterWith(error),
+        calledLaterWith(table.strictNull, value),
+      ],
+    },
+  }) as const;
 
 /** `[length of x, length of xSync]`. `xCb` is `x` with a leading callback. */
 const operations: Record<string, readonly [number, number]> = {
@@ -82,29 +116,41 @@ const operations: Record<string, readonly [number, number]> = {
   writev: [4, 3],
 };
 
-/** What `xSync` returns, where that is not `undefined`. */
-const syncResults: Record<string, readonly string[]> = {
-  access: ["null"],
-  exists: ["boolean"],
-  fstat: ["object"],
-  lstat: ["object", "undefined"],
-  mkdir: ["string", "undefined"],
-  mkdtemp: ["string", "object"],
-  open: ["number"],
-  read: ["number"],
-  readdir: ["Array"],
-  readFile: ["string", "object"],
-  readlink: ["string", "object"],
-  readv: ["number"],
-  realpath: ["string", "object"],
-  realpathNative: ["string", "object"],
-  stat: ["object", "undefined"],
-  statfs: ["object"],
-  write: ["number"],
-  writev: ["number"],
-};
+/** `StringOrBuffer::into_js` of bytes that the operation owns. */
+const textOrBytes = table.union(table.string, table.instance("Buffer")).fresh;
+const stats = table.union(table.instance("Stats"), table.instance("BigIntStats")).fresh;
+const statsIfFound = table.union(table.instance("Stats"), table.instance("BigIntStats"), table.undefined).fresh;
 
-const getter = { getter: b.any.returning("object"), capability: "js" } as const;
+/** What `FsReturn::fs_to_js` makes of the `ret::*` of the operation (node_fs.rs), where that is not `undefined`. */
+const results: Record<string, table.TableType> = {
+  access: table.strictNull,
+  exists: table.bool,
+  fstat: stats,
+  lstat: statsIfFound,
+  mkdir: table.union(table.string, table.undefined),
+  mkdtemp: textOrBytes,
+  open: table.i32,
+  read: table.f64,
+  readdir: table
+    .instance("Array")
+    .holding({ element: table.union(table.string, table.instance("Buffer"), table.instance("Dirent")).fresh }).fresh,
+  readFile: textOrBytes,
+  readlink: textOrBytes,
+  readv: table.f64,
+  realpath: textOrBytes,
+  realpathNative: textOrBytes,
+  stat: statsIfFound,
+  // NodeFSStatFSBinding.cpp: an ordinary object with eight numbers or bigints. Its prototype is an object that nothing else leads to.
+  statfs: table.instance("Object"),
+  write: table.f64,
+  writev: table.f64,
+};
+const resultOf = (name: string) => results[name] ?? table.undefined;
+/** `FsCompletion::Promise`: a promise of its own for each call. */
+const promiseOf = (value: table.TableType) => table.instance("Promise").holding({ value, reason: error }).fresh;
+
+const constructorOf = (path: string) =>
+  ({ getter: b.any.returning(table.builtin(path).spec), capability: "js" }) as const;
 
 /** The default export of `src/js/internal/fs/binding.ts`. */
 export const NodeJSFS = b.class({
@@ -113,21 +159,24 @@ export const NodeJSFS = b.class({
   proto: Object.fromEntries(
     [
       ...Object.entries(operations).flatMap(([name, [length, syncLength]]) => [
-        [name, { ...operation(length, "Promise"), uses }] as const,
-        [`${name}Cb`, operation(length + 1, "undefined")] as const,
-        [`${name}Sync`, { ...operation(syncLength, ...(syncResults[name] ?? ["undefined"])), uses }] as const,
+        [name, parsesArguments(length, promiseOf(resultOf(name)))] as const,
+        [`${name}Cb`, callsBack(length + 1, resultOf(name))] as const,
+        [`${name}Sync`, parsesArguments(syncLength, resultOf(name))] as const,
       ]),
-      ["cp", { ...operation(2, "Promise"), uses }] as const,
-      ["cpSync", { ...operation(2, "undefined"), uses }] as const,
+      ["cp", parsesArguments(2, promiseOf(table.undefined))] as const,
+      ["cpSync", parsesArguments(2, table.undefined)] as const,
       ["watch", operation(3, "FSWatcher", "undefined")] as const,
       ["watchFile", operation(3, "StatWatcher", "undefined")] as const,
-      ["Dirent", getter] as const,
-      ["Stats", { getter: b.any.returning(table.builtin("%Stats%").spec), capability: "js" }] as const,
+      ["Dirent", constructorOf("%Dirent%")] as const,
+      ["Stats", constructorOf("%Stats%")] as const,
     ].sort(([x], [y]) => x.localeCompare(y)),
   ),
 });
 
 export const binding = b.value({ returns: NodeJSFS, capability: "js" });
+
+/** `fs.createReadStream` / `fs.createWriteStream`'s `windowsHandle`. Windows only. */
+export const windowsHandleToFd = b.fn({ args: { handle: b.any }, returns: b.i32, capability: "js", throws: true });
 
 export const RmOptions = b.dictionary({
   retryDelay: b.u32,

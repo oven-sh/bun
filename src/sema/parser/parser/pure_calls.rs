@@ -1,26 +1,11 @@
-use bun_core::strings;
+use crate::pragmas::{CommentMark, comment_marks};
 use bun_sema::hir::*;
 
 #[cfg(test)]
 mod tests;
 
 fn has_annotation(comment: &Comment, text: &[u8]) -> bool {
-    let closing = if comment.is_block { 2 } else { 0 };
-    let (from, to) = (comment.pos as usize + 2, comment.end as usize);
-    let mut rest = text
-        .get(from..to.saturating_sub(closing))
-        .unwrap_or_default();
-    while let Some(sign) = strings::index_of_any(rest, b"@#") {
-        let (before, after) = (&rest[..sign], &rest[sign + 1..]);
-        if strings::has_prefix_with_word_boundary(after, b"__PURE__") {
-            return comment.is_block || strings::is_all_whitespace(before);
-        }
-        if !comment.is_block {
-            return false;
-        }
-        rest = after;
-    }
-    false
+    comment_marks(text, comment).any(|mark| mark == CommentMark::Pure)
 }
 
 fn annotated_token_starts(comments: &[Comment], text: &[u8]) -> Vec<u32> {
@@ -87,50 +72,20 @@ fn mark_chain(file: &mut FileBuilder, chain_end: ExprId) {
     }
 }
 
-fn skip_opening_parentheses(text: &[u8], mut at: usize) -> usize {
-    loop {
-        let rest = text.get(at..).unwrap_or_default();
-        at += match rest {
-            [b'(' | b' ' | b'\t' | b'\n' | b'\r', ..] => 1,
-            [b'/', b'*', ..] => match bun_core::strings::index_of(rest, b"*/") {
-                Some(end) => end + 2,
-                None => return at,
-            },
-            [b'/', b'/', ..] => match bun_core::strings::index_of_char_usize(rest, b'\n') {
-                Some(end) => end,
-                None => return at,
-            },
-            _ => return at,
-        };
+fn start_with_parentheses(file: &FileBuilder, e: ExprId) -> u32 {
+    match parentheses_around(file, e).last() {
+        Some(outermost) => outermost.1,
+        None => file.exprs.get(e.idx()).map_or(0, |it| it.pos),
     }
 }
 
-fn find_chains_in_parentheses(
-    file: &FileBuilder,
-    text: &[u8],
-    starts: &[u32],
-    chain_ends: &mut [ExprId],
-) {
-    let mut inner_starts = Vec::new();
-    for (at, &start) in starts.iter().enumerate() {
-        if chain_ends[at].is_none() && text.get(start as usize) == Some(&b'(') {
-            inner_starts.push((skip_opening_parentheses(text, start as usize) as u32, at));
-        }
-    }
-    if inner_starts.is_empty() {
-        return;
-    }
-    for (index, expr) in file.exprs.iter().enumerate() {
-        let chain_end = ExprId(index as u32);
-        if is_chain_link(&expr.kind)
-            && file
-                .expr_flags(chain_end)
-                .contains(ExprFlags::PARENTHESIZED)
-            && let Ok(found) = inner_starts.binary_search_by_key(&expr.pos, |it| it.0)
-        {
-            chain_ends[inner_starts[found].1] = chain_end;
-        }
-    }
+fn operand_of_leading_cast(file: &FileBuilder, text: &[u8], cast: &Expr) -> Option<ExprId> {
+    let (ExprKind::As { expr: operand, .. } | ExprKind::AsConst(operand)) = cast.kind else {
+        return None;
+    };
+    let is_leading = text.get(cast.pos as usize) == Some(&b'<')
+        && cast.pos < start_with_parentheses(file, operand);
+    is_leading.then_some(operand)
 }
 
 pub(super) fn mark_pure_calls(file: &mut FileBuilder, text: &[u8]) {
@@ -139,14 +94,31 @@ pub(super) fn mark_pure_calls(file: &mut FileBuilder, text: &[u8]) {
         return;
     }
     let mut chain_ends = vec![ExprId::NONE; starts.len()];
+    let mut starts_behind_casts = Vec::new();
     for (index, expr) in file.exprs.iter().enumerate() {
-        if is_chain_link(&expr.kind)
-            && let Ok(at) = starts.binary_search(&expr.pos)
-        {
-            chain_ends[at] = ExprId(index as u32);
+        if is_chain_link(&expr.kind) {
+            if let Ok(at) = starts.binary_search(&expr.pos) {
+                chain_ends[at] = ExprId(index as u32);
+            }
+        } else if let Some(operand) = operand_of_leading_cast(file, text, expr) {
+            starts_behind_casts.push(start_with_parentheses(file, operand));
+            if let Ok(at) = starts.binary_search(&expr.pos) {
+                chain_ends[at] = file.skip_type_assertions(operand);
+            }
         }
     }
-    find_chains_in_parentheses(file, text, &starts, &mut chain_ends);
+    for &(inner, open, _) in &file.parens {
+        if let Ok(at) = starts.binary_search(&open)
+            && chain_ends[at].is_none()
+        {
+            chain_ends[at] = file.skip_type_assertions(inner);
+        }
+    }
+    for start in starts_behind_casts {
+        if let Ok(at) = starts.binary_search(&start) {
+            chain_ends[at] = ExprId::NONE;
+        }
+    }
     for chain_end in chain_ends {
         mark_chain(file, chain_end);
     }

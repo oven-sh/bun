@@ -8,11 +8,11 @@ use bun_lint_oxlint::ast_util::{is_global_reference, is_import_from_module, is_i
 /// See `fc.property()`, `fc.asyncProperty()` and `fc.sample()` in the fast-check documentation.
 pub struct FastCheckNoUnseededRandom;
 
-const SAMPLE: Message = Message::new(
+const SAMPLE: &Message = &Message::new(
     "sample",
     "`sample()` ignores the seed of the run, so a failure cannot be replayed or shrunk. Make the value a parameter of the property.",
 );
-const RANDOM: Message = Message::new(
+const RANDOM: &Message = &Message::new(
     "random",
     "`Math.random()` ignores the seed of the run, so a failure cannot be replayed or shrunk. Make the value a parameter of the property.",
 );

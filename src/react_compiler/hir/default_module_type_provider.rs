@@ -379,8 +379,7 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
                         ),
                     }),
                 ),
-                // `useWindowVirtualizer()` wraps the same virtualizer instance as `useVirtualizer()`,
-                // so its return value is incompatible for the same reason.
+                // `useWindowVirtualizer()` wraps the same virtualizer instance as `useVirtualizer()`, so its return value is incompatible for the same reason.
                 (
                     "useWindowVirtualizer",
                     TypeConfig::Hook(HookTypeConfig {

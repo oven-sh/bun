@@ -103,8 +103,7 @@ pub struct EnvironmentConfig {
     /// `React.useMemo` is React's if `React` is imported from React, under whatever name. To upstream it is if the name
     /// is `React`, wherever that comes from.
     pub react_is_known_by_its_module: bool,
-    /// `useWindowVirtualizer` of `@tanstack/react-virtual` is a known incompatible library, as upstream since
-    /// facebook/react#36912. To the compiler of eslint-plugin-react-hooks 7.1.1, which is older, it is any custom hook.
+    /// facebook/react#36912 made `useWindowVirtualizer` a known incompatible library. eslint-plugin-react-hooks 7.1.1 is older.
     pub window_virtualizer_is_incompatible: bool,
     /// For `validate_exhaustive_*_dependencies`: the dependencies that are inferred are in the order of their bytes.
     /// Upstream's are in that of `localeCompare`: `a`, `A`, `b`.

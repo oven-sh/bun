@@ -689,8 +689,7 @@ impl Environment {
             })
             .or_else(|| {
                 let mut config = module_str.and_then(default_module_type_provider)?;
-                // Without its row the hook is a custom hook, which freezes its arguments. A row without the message
-                // does not.
+                // With no row it is a custom hook, which freezes its arguments. A row without the message would not.
                 if !self.config.window_virtualizer_is_incompatible
                     && module_name.slice() == b"@tanstack/react-virtual"
                     && let TypeConfig::Object(object) = &mut config

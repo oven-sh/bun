@@ -56,6 +56,8 @@ flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a d
   (`tj3Free`/`WebPFree`/`mi_free`); `then()` hands that buffer
   straight to JS via `ArrayBuffer.toJSWithContext(..., free)` — no dupe. New
   codecs return `Encoded` with the right `free`, not a default_allocator slice.
+  `pixels()` skips encode and hands the decode buffer itself to JS through
+  `JSUint8Array::from_bytes` (default-allocator free), also without a dupe.
 - The `max_pixels` guard fires **after the header read, before the RGBA alloc**
   in every codec. New codecs must do the same.
 - `image_resize.cpp` must stay in `noUnify` (see `scripts/build/unified.ts`) —

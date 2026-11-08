@@ -1511,7 +1511,7 @@ pub(crate) enum TaskResult {
     /// Post-pipeline RGBA8 plane taken out of `codecs::Decoded` (global
     /// allocator). `rgba.len() == w * h * 4`.
     Pixels {
-        rgba: Vec<u8>,
+        rgba: Box<[u8]>,
         w: u32,
         h: u32,
     },
@@ -1699,10 +1699,13 @@ impl PipelineTask {
         // default Sharp uses for the same case.
         let enc_opt = match &self.kind {
             Kind::Encode(enc_opt) => enc_opt,
-            // The plane IS the output: no encode, no copy.
+            // The plane IS the output: no encode. Shrink to `len` here, on the
+            // thread that allocated it: only the PNG decoder over-reserves (by
+            // less than a row), and `mi_realloc` keeps a block in place only for
+            // its own heap.
             Kind::Pixels => {
                 self.result = TaskResult::Pixels {
-                    rgba: mem::take(&mut decoded.rgba),
+                    rgba: mem::take(&mut decoded.rgba).into_boxed_slice(),
                     w: decoded.width,
                     h: decoded.height,
                 };
@@ -1917,11 +1920,11 @@ impl PipelineTask {
                 promise.resolve(global, obj)?;
             }
             TaskResult::Pixels { rgba, w, h } => {
-                // The Vec's allocation becomes the Uint8Array's backing store
+                // The plane's allocation becomes the Uint8Array's backing store
                 // (byteOffset 0, byteLength == w*h*4); JSC frees it with the
                 // global allocator. Over the ArrayBuffer limit the C++ side
                 // frees the bytes and throws, so the promise still settles.
-                let data = match jsc::JSUint8Array::from_bytes(global, rgba.into_boxed_slice()) {
+                let data = match jsc::JSUint8Array::from_bytes(global, rgba) {
                     Ok(v) => v,
                     Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
                 };

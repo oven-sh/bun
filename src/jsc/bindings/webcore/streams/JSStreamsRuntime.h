@@ -295,10 +295,12 @@ namespace WebCore {
 
 // owner: BunAsyncIterableSource.cpp — the async-iterable direct source's pull(controller) /
 // cancel(reason) / close(). `this` = the JSAsyncIteratorSourceOperation.
+// owner: TransformStreamOperations.cpp — the pull of a failed transform's readable that still holds output. `this` = the error.
 #define FOR_EACH_WEB_STREAMS_METHOD_HANDLER(V) \
     V(asyncIterableSourcePull)                 \
     V(asyncIterableSourceCancel)               \
-    V(asyncIterableSourceClose)
+    V(asyncIterableSourceClose)                \
+    V(failedTransformSourcePull)
 
 // The native trampolines behind every handler. Each is DEFINED (JSC_DEFINE_HOST_FUNCTION)
 // in its owner .cpp above; JSStreamsRuntime.cpp only wraps them in shared JSFunctions.

@@ -125,7 +125,7 @@ void initializeTransformStream(JSGlobalObject* globalObject, JSTransformStream* 
     stream->m_controller.clear();
 }
 
-// Errors the readable side of a failed transform or flush. A stream that reads ahead keeps the chunks it queued: the pull after them rejects.
+// Errors the readable side of a failed transform or flush. A stream that reads ahead keeps the chunks it queued: the pull after them throws `error`.
 static void transformStreamErrorReadable(JSGlobalObject* globalObject, JSTransformStream* stream, JSValue error)
 {
     auto& vm = getVM(globalObject);
@@ -133,13 +133,16 @@ static void transformStreamErrorReadable(JSGlobalObject* globalObject, JSTransfo
     auto* readableController = transformReadableController(stream);
     if (!readableController)
         return;
-    if (stream->m_readsAhead && !readableController->m_queue.isEmpty()) {
-        ASSERT(readableController->m_algorithms.kind == SourceKind::Transform && !readableController->m_closeRequested);
-        readableController->m_algorithms.kind = SourceKind::TransformErrorWhenDrained;
-        readableController->m_algorithms.underlyingObject.set(vm, readableController, error);
-        return;
-    }
-    RELEASE_AND_RETURN(scope, readableStreamDefaultControllerError(globalObject, readableController, error));
+    auto& source = readableController->m_algorithms;
+    // An abort() that waits for the failed write discards the output, as it does for every chunk behind it.
+    bool keepsQueuedOutput = stream->m_readsAhead && !readableController->m_queue.isEmpty() && !readableController->m_closeRequested
+        && source.kind == SourceKind::Transform && !stream->m_writable->m_pendingAbortRequest.promise;
+    if (!keepsQueuedOutput)
+        RELEASE_AND_RETURN(scope, readableStreamDefaultControllerError(globalObject, readableController, error));
+    source.kind = SourceKind::JavaScript;
+    source.underlyingObject.set(vm, readableController, error);
+    source.method1.set(vm, readableController, JSStreamsRuntime::from(globalObject)->failedTransformSourcePull());
+    source.algorithmContext.clear();
 }
 
 void transformStreamError(JSGlobalObject* globalObject, JSTransformStream* stream, JSValue error)
@@ -317,6 +320,14 @@ namespace WebCore {
 
 using namespace JSC;
 using namespace Bun::WebStreams;
+
+// [method-convention]: the pull of a readable that transformStreamErrorReadable left with its queued output. `this` = the error.
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_failedTransformSourcePull, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    throwException(globalObject, scope, callFrame->thisValue());
+    return {};
+}
 
 // [reaction-convention]: handler(resolutionValue, contextCell).
 

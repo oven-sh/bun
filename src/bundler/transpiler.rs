@@ -632,19 +632,16 @@ impl<'a> Transpiler<'a> {
                     self.resolver.opts.set_production(true);
                 }
 
-                // The walk serves the cwd's tsconfig. If the cwd (or a parent)
-                // is unreadable, readDirInfo returns null; skip .env file
-                // loading, process env vars are loaded.
-                if self.resolver.opts.load_tsconfig_json {
-                    let top_level_dir = Fs::FileSystem::get().top_level_dir();
-                    let dir_info = match self.resolver.read_dir_info(top_level_dir) {
-                        Ok(Some(d)) => d,
-                        _ => return Ok(()),
-                    };
+                // If the cwd (or a parent) is unreadable, readDirInfo returns
+                // null; skip .env file loading, process env vars are loaded.
+                let top_level_dir = Fs::FileSystem::get().top_level_dir();
+                let dir_info = match self.resolver.read_dir_info(top_level_dir) {
+                    Ok(Some(d)) => d,
+                    _ => return Ok(()),
+                };
 
-                    if let Some(tsconfig) = self.resolver.tsconfig_json(&dir_info) {
-                        merge_tsconfig_jsx_into(&tsconfig, &mut self.options.jsx);
-                    }
+                if let Some(tsconfig) = self.resolver.tsconfig_json(&dir_info) {
+                    merge_tsconfig_jsx_into(&tsconfig, &mut self.options.jsx);
                 }
 
                 // `Env.files: Box<[Box<[u8]>]>` but `Loader::load`

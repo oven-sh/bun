@@ -2209,8 +2209,7 @@ pub(crate) struct DescribeScope {
     /// What `test_context_around::capture_async_context()` returned when an `around_all` hook last called `runSuite()`.
     pub(crate) async_context: Option<Strong>,
 
-    /// if true, do not run any tests declared in this scope: the describe callback threw an error, or this is the
-    /// scope of a file that failed to load or that follows a failed preload set-up.
+    /// if true, no test declared in this scope runs: its describe callback threw, or its file failed to load or follows a failed preload set-up.
     pub(crate) failed: bool,
 
     pub(crate) task: Option<Strong>,

@@ -430,6 +430,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] __attribute__((minsize)) JSC::EncodedJS
 // Maps each fake to the function it replaced, for when a jest.spyOn() restored after jest.useRealTimers() puts a fake back.
 extern "C" JSC::EncodedJSValue Bun__FakeTimers__createOriginals(Zig::GlobalObject* globalObject)
 {
+    globalObject->mockModule.hasUsedFakeTimers = true;
     return JSValue::encode(JSWeakMap::create(JSC::getVM(globalObject), globalObject->weakMapStructure()));
 }
 

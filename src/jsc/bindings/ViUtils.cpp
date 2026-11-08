@@ -6,6 +6,7 @@
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include <JavaScriptCore/IdentifierInlines.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -90,10 +91,13 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
 
     auto name = propertyKeyOf(globalObject, key);
     RETURN_IF_EXCEPTION(scope, );
-    bool isDone = removeStubbedGlobalFromLayers(defaultGlobalObject(globalObject), name, original);
-    RETURN_IF_EXCEPTION(scope, );
-    if (isDone)
-        return;
+    auto& mocks = defaultGlobalObject(globalObject)->mockModule;
+    if (original.inherits<InternalFieldTuple>() || mocks.activeSpies) {
+        bool isDone = removeStubbedGlobalFromLayers(defaultGlobalObject(globalObject), name, original);
+        RETURN_IF_EXCEPTION(scope, );
+        if (isDone)
+            return;
+    }
     if (original.isUndefined()) {
         scope.release();
         JSCell::deleteProperty(target, globalObject, name);
@@ -126,13 +130,17 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
     JSMap* originals = ensureMap(vm, globalObject, globalObject->mockModule.stubbedGlobals);
     bool isRemembered = hasOriginal(globalObject, originals, key);
     RETURN_IF_EXCEPTION(scope, );
-    JSValue remembered;
-    if (isRemembered) {
-        remembered = originals->get(globalObject, key);
+    JSValue original;
+    // Only a spy or a fake timer can share the global with the stub.
+    if (globalObject->mockModule.activeSpies || globalObject->mockModule.hasUsedFakeTimers) {
+        JSValue remembered;
+        if (isRemembered) {
+            remembered = originals->get(globalObject, key);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        original = layersOfStubbedGlobal(globalObject, name, remembered);
         RETURN_IF_EXCEPTION(scope, );
     }
-    JSValue original = layersOfStubbedGlobal(globalObject, name, remembered);
-    RETURN_IF_EXCEPTION(scope, );
     if (!isRemembered) {
         PropertyDescriptor descriptor;
         bool exists = !original && target->getOwnPropertyDescriptor(globalObject, name, descriptor);

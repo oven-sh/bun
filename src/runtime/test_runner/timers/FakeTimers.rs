@@ -27,8 +27,10 @@ unsafe extern "C" {
         fake: JSValue,
         original: JSValue,
         was_layered: bool,
+        is_stubbed: bool,
         base: &mut JSValue,
     ) -> JSValue;
+    safe fn JSMock__sharersOfFakes(global: &JSGlobalObject) -> u32;
     safe fn JSMock__valueUnderFake(layers: JSValue, fake: JSValue) -> JSValue;
     safe fn JSMock__removeFakeFromLayers(
         global: &JSGlobalObject,
@@ -67,6 +69,9 @@ unsafe extern "C" {
         name: &bun_core::String,
     ) -> JSValue;
 }
+
+/// The bit of `JSMock__sharersOfFakes` that is no `Api`: a spy may be on one of the functions.
+const LIVE_SPIES: u32 = 1 << 31;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
@@ -379,6 +384,8 @@ struct Replaced {
     fake: Strong,
     /// The `PropertyLayers` record (JSMockFunction.cpp) while a spy or `vi.stubGlobal()` shares the property. `original` is then what was under them all.
     layers: StrongOptional,
+    /// True from when `layers` is first set. The end of a test file then puts `original` back, whatever the property holds.
+    was_shared: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -601,16 +608,51 @@ extern "C" fn Bun__FakeTimers__fakeOf(
     replaced.fake.get()
 }
 
+/// For `JSMock__sharersOfFakes`: the bit of the function whose property has this name, or 0.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__FakeTimers__setLayers(global: &JSGlobalObject, fake: JSValue, layers: JSValue) {
+extern "C" fn Bun__FakeTimers__apiOfGlobal(name: &bun_core::String) -> u32 {
+    Api::FUNCTIONS
+        .iter()
+        .find(|api| name.eq_ascii(api.property().as_bytes()))
+        .map_or(0, |api| 1 << *api as u32)
+}
+
+/// `fake` shares `layers` from now on, or is alone again if there is none. `base` is what was there before any of them.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__FakeTimers__setLayers(
+    global: &JSGlobalObject,
+    fake: JSValue,
+    layers: JSValue,
+    base: JSValue,
+) {
     // SAFETY: per-thread `timer::All`; nothing below re-enters it.
     let this = unsafe { &mut (*timer_all()).fake_timers };
-    if let Some(replaced) = this
+    let originals = this.originals(global);
+    let Some(replaced) = this
         .replaced
         .iter_mut()
         .find(|replaced| replaced.fake.get() == fake)
-    {
+    else {
+        return;
+    };
+    replaced.original = Strong::create(base, global);
+    replaced.was_shared = true;
+    Bun__FakeTimers__setOriginal(global, originals, fake, base);
+    if !layers.is_empty() {
         replaced.layers.set(global, layers);
+        return;
+    }
+    replaced.layers.deinit();
+    // As in `fakes`: the builtin `now` is faked below, so it takes the place of its fake.
+    if matches!(replaced.api, Api::Date | Api::Performance)
+        && Bun__FakeTimers__isNativeFunction(base)
+    {
+        let owner = replaced.api.owner(global);
+        let name = bun_core::String::static_(replaced.api.property());
+        if owner.is_object() && Bun__FakeTimers__getDirect(global, owner, &name) == fake {
+            replaced.api.put(global, base);
+        }
+        replaced.fake = Strong::create(base, global);
     }
 }
 
@@ -923,7 +965,7 @@ impl FakeTimers {
                 if !owner.is_object() {
                     return false;
                 }
-                if replaced.layers.has() {
+                if replaced.was_shared {
                     return true;
                 }
                 match owner.get(global, replaced.api.property()) {
@@ -940,6 +982,7 @@ impl FakeTimers {
             original,
             fake,
             layers,
+            ..
         } in deactivated.replaced
         {
             let Some(layers) = layers.get() else {
@@ -976,17 +1019,20 @@ impl FakeTimers {
                 .fake_timers
                 .activate(global, options, date_now)
         };
-        // SAFETY: as above.
-        let originals = unsafe { (*timer_all()).fake_timers.originals(global) };
+        let sharers = JSMock__sharersOfFakes(global);
         for Replaced {
             api,
             fake,
             original,
             layers,
+            was_shared,
         } in &mut replaced
         {
+            let is_stubbed = sharers & (1 << *api as u32) != 0;
             // `fakes` left these two alone if the builtin `now` was there.
-            if fake.get() != original.get() {
+            if fake.get() != original.get()
+                && (layers.has() || is_stubbed || sharers & LIVE_SPIES != 0)
+            {
                 let mut base = JSValue::ZERO;
                 let shared = JSMock__layersOfFake(
                     global,
@@ -995,12 +1041,16 @@ impl FakeTimers {
                     fake.get(),
                     original.get(),
                     layers.has(),
+                    is_stubbed,
                     &mut base,
                 );
                 layers.deinit();
                 if !shared.is_empty() {
                     layers.set(global, shared);
+                    *was_shared = true;
                     *original = Strong::create(base, global);
+                    // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
+                    let originals = unsafe { (*timer_all()).fake_timers.originals(global) };
                     Bun__FakeTimers__setOriginal(global, originals, fake.get(), base);
                 }
             }
@@ -1069,6 +1119,7 @@ impl FakeTimers {
                     original: Strong::create(original, global),
                     fake: Strong::create(original, global),
                     layers: StrongOptional::empty(),
+                    was_shared: false,
                 });
                 continue;
             }
@@ -1085,6 +1136,7 @@ impl FakeTimers {
                 original: Strong::create(original, global),
                 fake: Strong::create(fake, global),
                 layers,
+                was_shared: false,
             });
         }
         Ok(fakes)

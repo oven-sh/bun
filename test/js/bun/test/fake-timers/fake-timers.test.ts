@@ -1307,6 +1307,8 @@ describe.each([
     api.spyOn(performance, "now").mockReturnValue(7);
     api.useFakeTimers({ now: 50_000 });
     api.restoreAllMocks();
+    // The builtin reads the fake clock, so it is what the clock leaves there.
+    expect([Date.now, realPerformance.now]).toEqual(builtins);
     expect([Date.now(), performance.now()]).toEqual([50_000, 0]);
     api.useRealTimers();
     expect([Date.now, performance.now]).toEqual(builtins);
@@ -3246,6 +3248,23 @@ describe("a spy or stub that is undone under the fake clock", () => {
     expect(setTimeout).toBe(saved.setTimeout);
   });
 
+  test("a function assigned over the fake stays when the spy under the fake is restored", () => {
+    const dateNow = Date.now;
+    const spies = [jest.spyOn(globalThis, "setTimeout"), jest.spyOn(Date, "now")];
+    jest.useFakeTimers();
+    const assigned = { setTimeout: (() => 0) as unknown as typeof setTimeout, now: () => 5 };
+    globalThis.setTimeout = assigned.setTimeout;
+    Date.now = assigned.now;
+    try {
+      for (const spy of spies) spy.mockRestore();
+      expect({ setTimeout, now: Date.now }).toEqual(assigned);
+      jest.useRealTimers();
+      expect({ setTimeout, now: Date.now }).toEqual({ setTimeout: saved.setTimeout, now: dateNow });
+    } finally {
+      Date.now = dateNow;
+    }
+  });
+
   const orders = [
     ["spy", "stub", "fake"],
     ["spy", "fake", "stub"],
@@ -3349,6 +3368,10 @@ describe("a spy or stub that is undone under the fake clock", () => {
     [
       "a spy and a stub left on, without a clock",
       `test("leaves two", () => { jest.spyOn(globalThis, "setTimeout"); vi.stubGlobal("setTimeout", () => {}); });`,
+    ],
+    [
+      "a spy, the clock and a function that the test assigned left on",
+      `test("leaves three", () => { jest.spyOn(globalThis, "setTimeout"); jest.useFakeTimers(); globalThis.setTimeout = () => {}; });`,
     ],
     [
       "an uninstalled fake that a spy over it put back, with the spy under it restored",

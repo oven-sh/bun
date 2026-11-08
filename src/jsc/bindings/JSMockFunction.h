@@ -74,6 +74,8 @@ public:
 
     // True until the first test starts. A preload, or a beforeAll() of one, can only run before that.
     bool preloadMayBeRunning { true };
+    // useFakeTimers() has run in this global. Until then vi.stubGlobal() has no fake timer to look for.
+    bool hasUsedFakeTimers { false };
 
     // Called by GlobalObject::visitChildren
     template<typename Visitor>

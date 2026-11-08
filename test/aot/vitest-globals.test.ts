@@ -69,16 +69,19 @@ describe.concurrent("the globals of vitest", () => {
     expect(await printedBy(files, "--globals=vitest", "--aot")).toEqual(findsNoFileOfTheRun);
   });
 
+  const besideFileThatAsksForWindow = {
+    "a.test.js": "/** @vitest-environment happy-dom */" + looksForFilesOfTheRun,
+    "b.test.js": anotherTestFile,
+  };
+
+  test("nor beside a test file that asks for a DOM", async () => {
+    expect(await printedBy(besideFileThatAsksForWindow, "--globals=vitest")).toEqual(findsNoFileOfTheRun);
+  });
+
   // For the window of a DOM the build reads a file of its own from memory, node_modules/.cache/bun-test-window.ts, and the program answers for that name.
-  test.failing(
-    "nor beside a test file that asks for a DOM: the file that stands in for the window is found",
-    async () => {
-      const asksForWindow = "/** @vitest-environment happy-dom */" + looksForFilesOfTheRun;
-      const files = { "a.test.js": asksForWindow, "b.test.js": anotherTestFile };
-      expect(await printedBy(files, "--globals=vitest")).toEqual(findsNoFileOfTheRun);
-      expect(await printedBy(files, "--globals=vitest", "--aot")).toEqual(findsNoFileOfTheRun);
-    },
-  );
+  test.failing("nor there in a compiled run: the file that stands in for the window is found", async () => {
+    expect(await printedBy(besideFileThatAsksForWindow, "--globals=vitest", "--aot")).toEqual(findsNoFileOfTheRun);
+  });
 
   const comparesNames = (name: string) => `
     console.log(">", "${name}", vitest === vi, suite === describe, test === it);

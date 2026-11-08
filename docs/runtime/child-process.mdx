@@ -32,11 +32,11 @@ By default, the input stream of the subprocess is undefined; configure it with t
 
 ```ts
 const proc = Bun.spawn(["cat"], {
-  stdin: await fetch("https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js"),
+  stdin: await fetch("https://raw.githubusercontent.com/oven-sh/bun/main/package.json"),
 });
 
 const text = await proc.stdout.text();
-console.log(text); // "const input = "hello world".repeat(400); ..."
+console.log(text); // prints the fetched file contents
 ```
 
 | Value                    | Description                                      |

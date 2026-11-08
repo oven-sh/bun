@@ -1,0 +1,20 @@
+status: 0
+oracle: none
+---
+--- the conversion of an argument stores another function where the one that is being called was
+2 1001
+as an argument: 2 1001
+by from_param(): 2
+--- the callback stores another function where it was called through
+8 0
+--- declared as c_void_p
+CFunctionType None [1, 2, 3, 4] 0
+c_void_p None [1, 2, 3, 4] 0
+an argument that is kept: 2
+--- what a finalizer saves goes on working
+1 2
+--- code of a library, a null pointer, an address given as an int
+3 ValueError: NULL pointer access 4
+--- a value that is read and stored again leaves what is written down for the place
+22
+5

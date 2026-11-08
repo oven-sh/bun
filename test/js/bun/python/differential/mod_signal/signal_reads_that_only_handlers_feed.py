@@ -16,13 +16,15 @@ while count < 3000:
 signal.setitimer(signal.ITIMER_REAL, 0, 0)
 print(count, handled >= count)
 
-# The same with a handler that raises, now and then.
+# The same with a handler that raises, now and then: only while the loop is in its `try`, or nobody would catch it.
 class Now(Exception): pass
 def raises(number, frame):
-    global handled
+    global handled, may_raise
     handled += 1
     os.write(w, b".")
-    if handled % 7 == 0: raise Now
+    if may_raise and handled % 7 == 0:
+        may_raise = False
+        raise Now
 signal.signal(signal.SIGALRM, raises)
 os.set_blocking(r, False)
 try:
@@ -30,9 +32,11 @@ try:
 except BlockingIOError: pass
 os.set_blocking(r, True)
 handled = count = raised = 0
+may_raise = False
 signal.setitimer(signal.ITIMER_REAL, 0.0002, 0.0002)
 while raised < 200:
     try:
+        may_raise = True
         while True: count += len(os.read(r, 1))
     except Now: raised += 1
 signal.setitimer(signal.ITIMER_REAL, 0, 0)

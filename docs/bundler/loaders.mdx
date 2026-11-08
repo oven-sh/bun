@@ -81,7 +81,7 @@ const pkg = {
 pkg.name;
 ```
 
-If you pass a `.json` file as an entrypoint to the bundler, Bun converts it to a `.js` module. The default export is the parsed object. Each top-level key that is a valid identifier is also a named export.
+If you pass a `.json` file as an entrypoint to the bundler, Bun converts it to a `.js` module. The default export is the parsed object. Each top-level key that is a valid identifier is also a named export, except `__esModule`.
 
 <CodeGroup>
 
@@ -159,7 +159,7 @@ var config = {
 config.logLevel;
 ```
 
-If you pass a `.toml` file as an entrypoint, Bun converts it to a `.js` module. The default export is the parsed object. Each top-level key that is a valid identifier is also a named export.
+If you pass a `.toml` file as an entrypoint, Bun converts it to a `.js` module. The default export is the parsed object. Each top-level key that is a valid identifier is also a named export, except `__esModule`.
 
 <CodeGroup>
 
@@ -210,7 +210,7 @@ var config = {
 };
 ```
 
-If you pass a `.yaml` or `.yml` file as an entrypoint, Bun converts it to a `.js` module. The default export is the parsed object. Each top-level key that is a valid identifier is also a named export.
+If you pass a `.yaml` or `.yml` file as an entrypoint, Bun converts it to a `.js` module. The default export is the parsed object. Each top-level key that is a valid identifier is also a named export, except `__esModule`.
 
 <CodeGroup>
 
@@ -268,7 +268,7 @@ var doc = {
 };
 ```
 
-If you pass a `.xml` file as an entrypoint, Bun converts it to a `.js` module. The default export is the parsed object. The root element's name is also a named export when it is a valid identifier.
+If you pass a `.xml` file as an entrypoint, Bun converts it to a `.js` module. The default export is the parsed object. The root element's name is also a named export when it is a valid identifier other than `__esModule`.
 
 <CodeGroup>
 

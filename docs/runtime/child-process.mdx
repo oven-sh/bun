@@ -469,12 +469,12 @@ console.log(proc.stdout.toString());
 
 `Bun.spawnSync` blocks until the process exits. The options that depend on callbacks or streams while the process runs work only with `Bun.spawn`:
 
-| Option                        | With `Bun.spawnSync`                                                           |
-| ----------------------------- | ------------------------------------------------------------------------------ |
-| `onExit`                      | Bun never calls it. Read `exitCode` and `signalCode` from the returned object. |
-| `ipc`                         | Bun never calls it, and the subprocess gets no IPC channel.                    |
-| A `ReadableStream` as `stdin` | `Bun.spawnSync` throws a `TypeError`.                                          |
-| `terminal`                    | `Bun.spawnSync` throws a `TypeError`.                                          |
+| Option                        | With `Bun.spawnSync`                                                                                                                                             |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `onExit`                      | Bun never calls it. Read `exitCode` and `signalCode` from the returned object.                                                                                   |
+| `ipc`                         | Bun never calls it, and the subprocess gets no IPC channel.                                                                                                      |
+| A `ReadableStream` as `stdin` | `Bun.spawnSync` throws a `TypeError`, unless Bun can read the whole stream without running JavaScript. An unread `blob.stream()` or `Bun.file().stream()` works. |
+| `terminal`                    | `Bun.spawnSync` throws a `TypeError`.                                                                                                                            |
 
 As a rule of thumb, the asynchronous `Bun.spawn` API is better for HTTP servers and apps, and `Bun.spawnSync` is better for building command-line tools.
 
@@ -575,7 +575,7 @@ namespace SpawnOptions {
     | BunFile
     | ArrayBufferView
     | number
-    | ReadableStream // Bun.spawn only (spawnSync throws)
+    | ReadableStream // spawnSync throws unless Bun can read the whole stream without running JavaScript
     | Blob
     | Response
     | Request;

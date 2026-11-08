@@ -67,7 +67,7 @@ import { hello } from "./hello";
 import { hello } from "./hello.ts"; // this works
 ```
 
-There's one additional rule for TypeScript compatibility. If you import `from "*.js"` or `from "*.jsx"`, Bun also checks for a matching `*.ts` or `*.tsx` file. Outside `node_modules`, `from "*.mjs"` also matches `*.mts`, and `from "*.cjs"` also matches `*.cts`. This rule follows the TypeScript compiler's [file extension substitution](https://www.typescriptlang.org/docs/handbook/modules/reference.html#file-extension-substitution), which lets source files reference each other by their compiled output paths.
+There's one additional rule for TypeScript compatibility. If you import `from "*.js"` or `from "*.jsx"`, Bun also checks for a matching `*.ts`, `*.tsx` or `*.mts` file, in that order. Outside `node_modules`, `from "*.mjs"` also matches `*.mts`, and `from "*.cjs"` also matches `*.cts`. This rule is based on the TypeScript compiler's [file extension substitution](https://www.typescriptlang.org/docs/handbook/modules/reference.html#file-extension-substitution), which lets source files reference each other by their compiled output paths.
 
 ```ts index.ts icon="/icons/typescript.svg"
 import { hello } from "./hello";

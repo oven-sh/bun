@@ -1,5 +1,5 @@
 status: 0
-script: 6a1435809b5e5e9e
+script: 71d3a1bb8ee3f954
 ---
 --- constructor
 date(2000, 1, 1) => datetime.date(2000, 1, 1)
@@ -1873,10 +1873,6 @@ date(b'\x07\xd0\x01\x01') => datetime.date(2000, 1, 1)
 date(b'\x07\xd0\x0c\x1f') => datetime.date(2000, 12, 31)
 date(b'\x07\xd0\x0d\x01') !! TypeError date() missing required argument 'month' (pos 2)
 date(b'\x07\xd0\x00\x01') !! TypeError date() missing required argument 'month' (pos 2)
-date(b'\x07\xd0\x01\x00') => datetime.date(2000, 1, 0)
-type(date(b'\x07\xd0\x01\x35')) => <class 'datetime.date'>
-date(b'\x00\x00\x01\x01') => datetime.date(0, 1, 1)
-date(b'\xff\xff\x01\x01') => datetime.date(65535, 1, 1)
 date(b'\x07\xd0\x01') !! TypeError date() missing required argument 'month' (pos 2)
 date(b'\x07\xd0\x01\x01\x01') !! TypeError date() missing required argument 'month' (pos 2)
 date(b'') !! TypeError date() missing required argument 'month' (pos 2)

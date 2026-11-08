@@ -1,0 +1,150 @@
+status: 0
+oracle: none
+---
+date, as it is written => datetime.date(2000, 2, 29)
+date, a str, as it is written => datetime.date(2000, 2, 29)
+a class derived from date, as it is written => D(2000, 2, 29)
+datetime, as it is written => datetime.datetime(2000, 2, 29, 0, 0)
+datetime, with the fold, as it is written => 1
+pickle, as it is written => datetime.date(2000, 2, 29)
+date, the first => datetime.date(1, 1, 1)
+date, a str, the first => datetime.date(1, 1, 1)
+a class derived from date, the first => D(1, 1, 1)
+datetime, the first => datetime.datetime(1, 1, 1, 0, 0)
+datetime, with the fold, the first => 1
+pickle, the first => datetime.date(1, 1, 1)
+date, the last => datetime.date(9999, 12, 31)
+date, a str, the last => datetime.date(9999, 12, 31)
+a class derived from date, the last => D(9999, 12, 31)
+datetime, the last => datetime.datetime(9999, 12, 31, 0, 0)
+datetime, with the fold, the last => 1
+pickle, the last => datetime.date(9999, 12, 31)
+date, year 0 !! ValueError year must be in 1..9999, not 0
+date, a str, year 0 !! ValueError year must be in 1..9999, not 0
+a class derived from date, year 0 !! ValueError year must be in 1..9999, not 0
+datetime, year 0 !! ValueError year must be in 1..9999, not 0
+datetime, with the fold, year 0 !! ValueError year must be in 1..9999, not 0
+pickle, year 0 !! ValueError year must be in 1..9999, not 0
+date, year 10000 !! ValueError year must be in 1..9999, not 10000
+date, a str, year 10000 !! ValueError year must be in 1..9999, not 10000
+a class derived from date, year 10000 !! ValueError year must be in 1..9999, not 10000
+datetime, year 10000 !! ValueError year must be in 1..9999, not 10000
+datetime, with the fold, year 10000 !! ValueError year must be in 1..9999, not 10000
+pickle, year 10000 !! ValueError year must be in 1..9999, not 10000
+date, year 65535 !! ValueError year must be in 1..9999, not 65535
+date, a str, year 65535 !! ValueError year must be in 1..9999, not 65535
+a class derived from date, year 65535 !! ValueError year must be in 1..9999, not 65535
+datetime, year 65535 !! ValueError year must be in 1..9999, not 65535
+datetime, with the fold, year 65535 !! ValueError year must be in 1..9999, not 65535
+pickle, year 65535 !! ValueError year must be in 1..9999, not 65535
+date, day 0 !! ValueError day 0 must be in range 1..31 for month 1 in year 2000
+date, a str, day 0 !! ValueError day 0 must be in range 1..31 for month 1 in year 2000
+a class derived from date, day 0 !! ValueError day 0 must be in range 1..31 for month 1 in year 2000
+datetime, day 0 !! ValueError day 0 must be in range 1..31 for month 1 in year 2000
+datetime, with the fold, day 0 !! ValueError day 0 must be in range 1..31 for month 1 in year 2000
+pickle, day 0 !! ValueError day 0 must be in range 1..31 for month 1 in year 2000
+date, 30 February !! ValueError day 30 must be in range 1..29 for month 2 in year 2000
+date, a str, 30 February !! ValueError day 30 must be in range 1..29 for month 2 in year 2000
+a class derived from date, 30 February !! ValueError day 30 must be in range 1..29 for month 2 in year 2000
+datetime, 30 February !! ValueError day 30 must be in range 1..29 for month 2 in year 2000
+datetime, with the fold, 30 February !! ValueError day 30 must be in range 1..29 for month 2 in year 2000
+pickle, 30 February !! ValueError day 30 must be in range 1..29 for month 2 in year 2000
+date, 29 February 1900 !! ValueError day 29 must be in range 1..28 for month 2 in year 1900
+date, a str, 29 February 1900 !! ValueError day 29 must be in range 1..28 for month 2 in year 1900
+a class derived from date, 29 February 1900 !! ValueError day 29 must be in range 1..28 for month 2 in year 1900
+datetime, 29 February 1900 !! ValueError day 29 must be in range 1..28 for month 2 in year 1900
+datetime, with the fold, 29 February 1900 !! ValueError day 29 must be in range 1..28 for month 2 in year 1900
+pickle, 29 February 1900 !! ValueError day 29 must be in range 1..28 for month 2 in year 1900
+date, day 32 !! ValueError day 32 must be in range 1..31 for month 1 in year 2000
+date, a str, day 32 !! ValueError day 32 must be in range 1..31 for month 1 in year 2000
+a class derived from date, day 32 !! ValueError day 32 must be in range 1..31 for month 1 in year 2000
+datetime, day 32 !! ValueError day 32 must be in range 1..31 for month 1 in year 2000
+datetime, with the fold, day 32 !! ValueError day 32 must be in range 1..31 for month 1 in year 2000
+pickle, day 32 !! ValueError day 32 must be in range 1..31 for month 1 in year 2000
+date, day 53 !! ValueError day 53 must be in range 1..31 for month 1 in year 2000
+date, a str, day 53 !! ValueError day 53 must be in range 1..31 for month 1 in year 2000
+a class derived from date, day 53 !! ValueError day 53 must be in range 1..31 for month 1 in year 2000
+datetime, day 53 !! ValueError day 53 must be in range 1..31 for month 1 in year 2000
+datetime, with the fold, day 53 !! ValueError day 53 must be in range 1..31 for month 1 in year 2000
+pickle, day 53 !! ValueError day 53 must be in range 1..31 for month 1 in year 2000
+date, day 255 !! ValueError day 255 must be in range 1..31 for month 1 in year 2000
+date, a str, day 255 !! ValueError day 255 must be in range 1..31 for month 1 in year 2000
+a class derived from date, day 255 !! ValueError day 255 must be in range 1..31 for month 1 in year 2000
+datetime, day 255 !! ValueError day 255 must be in range 1..31 for month 1 in year 2000
+datetime, with the fold, day 255 !! ValueError day 255 must be in range 1..31 for month 1 in year 2000
+pickle, day 255 !! ValueError day 255 must be in range 1..31 for month 1 in year 2000
+time, as it is written => datetime.time(23, 59, 59, 999999)
+time, a str, as it is written => datetime.time(23, 59, 59, 999999)
+time, a zone, as it is written => datetime.time(23, 59, 59, 999999, tzinfo=datetime.timezone.utc)
+a class derived from time, as it is written => T(23, 59, 59, 999999)
+datetime, as it is written => datetime.datetime(2000, 1, 1, 23, 59, 59, 999999)
+a class derived from datetime, as it is written => DT(2000, 1, 1, 23, 59, 59, 999999, tzinfo=datetime.timezone.utc)
+time, with the fold => datetime.time(23, 59, 59, 999999, fold=1)
+time, a str, with the fold => datetime.time(23, 59, 59, 999999, fold=1)
+time, a zone, with the fold => datetime.time(23, 59, 59, 999999, tzinfo=datetime.timezone.utc, fold=1)
+a class derived from time, with the fold => T(23, 59, 59, 999999, fold=1)
+datetime, with the fold => datetime.datetime(2000, 1, 1, 23, 59, 59, 999999)
+a class derived from datetime, with the fold => DT(2000, 1, 1, 23, 59, 59, 999999, tzinfo=datetime.timezone.utc)
+time, minute 60 !! ValueError minute must be in 0..59, not 60
+time, a str, minute 60 !! ValueError minute must be in 0..59, not 60
+time, a zone, minute 60 !! ValueError minute must be in 0..59, not 60
+a class derived from time, minute 60 !! ValueError minute must be in 0..59, not 60
+datetime, minute 60 !! ValueError minute must be in 0..59, not 60
+a class derived from datetime, minute 60 !! ValueError minute must be in 0..59, not 60
+time, minute 64 !! ValueError minute must be in 0..59, not 64
+time, a str, minute 64 !! ValueError minute must be in 0..59, not 64
+time, a zone, minute 64 !! ValueError minute must be in 0..59, not 64
+a class derived from time, minute 64 !! ValueError minute must be in 0..59, not 64
+datetime, minute 64 !! ValueError minute must be in 0..59, not 64
+a class derived from datetime, minute 64 !! ValueError minute must be in 0..59, not 64
+time, minute 255 !! ValueError minute must be in 0..59, not 255
+time, a str, minute 255 !! ValueError minute must be in 0..59, not 255
+time, a zone, minute 255 !! ValueError minute must be in 0..59, not 255
+a class derived from time, minute 255 !! ValueError minute must be in 0..59, not 255
+datetime, minute 255 !! ValueError minute must be in 0..59, not 255
+a class derived from datetime, minute 255 !! ValueError minute must be in 0..59, not 255
+time, second 60 !! ValueError second must be in 0..59, not 60
+time, a str, second 60 !! ValueError second must be in 0..59, not 60
+time, a zone, second 60 !! ValueError second must be in 0..59, not 60
+a class derived from time, second 60 !! ValueError second must be in 0..59, not 60
+datetime, second 60 !! ValueError second must be in 0..59, not 60
+a class derived from datetime, second 60 !! ValueError second must be in 0..59, not 60
+time, second 255 !! ValueError second must be in 0..59, not 255
+time, a str, second 255 !! ValueError second must be in 0..59, not 255
+time, a zone, second 255 !! ValueError second must be in 0..59, not 255
+a class derived from time, second 255 !! ValueError second must be in 0..59, not 255
+datetime, second 255 !! ValueError second must be in 0..59, not 255
+a class derived from datetime, second 255 !! ValueError second must be in 0..59, not 255
+time, microsecond 1000000 !! ValueError microsecond must be in 0..999999, not 1000000
+time, a str, microsecond 1000000 !! ValueError microsecond must be in 0..999999, not 1000000
+time, a zone, microsecond 1000000 !! ValueError microsecond must be in 0..999999, not 1000000
+a class derived from time, microsecond 1000000 !! ValueError microsecond must be in 0..999999, not 1000000
+datetime, microsecond 1000000 !! ValueError microsecond must be in 0..999999, not 1000000
+a class derived from datetime, microsecond 1000000 !! ValueError microsecond must be in 0..999999, not 1000000
+time, microsecond 1048576 !! ValueError microsecond must be in 0..999999, not 1048576
+time, a str, microsecond 1048576 !! ValueError microsecond must be in 0..999999, not 1048576
+time, a zone, microsecond 1048576 !! ValueError microsecond must be in 0..999999, not 1048576
+a class derived from time, microsecond 1048576 !! ValueError microsecond must be in 0..999999, not 1048576
+datetime, microsecond 1048576 !! ValueError microsecond must be in 0..999999, not 1048576
+a class derived from datetime, microsecond 1048576 !! ValueError microsecond must be in 0..999999, not 1048576
+time, microsecond 16777215 !! ValueError microsecond must be in 0..999999, not 16777215
+time, a str, microsecond 16777215 !! ValueError microsecond must be in 0..999999, not 16777215
+time, a zone, microsecond 16777215 !! ValueError microsecond must be in 0..999999, not 16777215
+a class derived from time, microsecond 16777215 !! ValueError microsecond must be in 0..999999, not 16777215
+datetime, microsecond 16777215 !! ValueError microsecond must be in 0..999999, not 16777215
+a class derived from datetime, microsecond 16777215 !! ValueError microsecond must be in 0..999999, not 16777215
+time, all of them !! ValueError minute must be in 0..59, not 127
+time, a str, all of them !! ValueError minute must be in 0..59, not 127
+time, a zone, all of them !! ValueError minute must be in 0..59, not 127
+a class derived from time, all of them !! ValueError minute must be in 0..59, not 127
+datetime, all of them !! ValueError minute must be in 0..59, not 127
+a class derived from datetime, all of them !! ValueError minute must be in 0..59, not 127
+datetime, hour 23 => datetime.datetime(2000, 1, 1, 23, 0)
+datetime, hour 24 !! ValueError hour must be in 0..23, not 24
+datetime, hour 31 !! ValueError hour must be in 0..23, not 31
+datetime, hour 32 !! ValueError hour must be in 0..23, not 32
+datetime, hour 127 !! ValueError hour must be in 0..23, not 127
+datetime, hour 128 !! ValueError hour must be in 0..23, not 128
+datetime, hour 255 !! ValueError hour must be in 0..23, not 255
+a zone that is none, and a day that is none !! TypeError bad tzinfo state arg
+a year and a minute !! ValueError year must be in 1..9999, not 0

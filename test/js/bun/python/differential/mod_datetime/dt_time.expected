@@ -1,5 +1,5 @@
 status: 0
-script: 8adc698156bb2430
+script: df0c23825a82e298
 ---
 --- constructor
 time() => datetime.time(0, 0)
@@ -4158,4 +4158,3 @@ time('\x18\x02\x03\x00\x00\x04') !! TypeError 'str' object cannot be interpreted
 time('abcdef') !! TypeError 'str' object cannot be interpreted as an integer
 time(bytearray(b'\x01\x02\x03\x00\x00\x04')) !! TypeError 'bytearray' object cannot be interpreted as an integer
 T(b'\x01\x02\x03\x00\x00\x04', utc) => T(1, 2, 3, 4, tzinfo=datetime.timezone.utc)
-time(b'\x01\x7f\x7f\xff\xff\xff').hour => 1

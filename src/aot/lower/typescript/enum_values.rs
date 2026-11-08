@@ -18,8 +18,7 @@ pub(super) enum EnumMemberValue {
     String(Atom),
     /// A run-time value that is known not to be a string.
     Computed(ExprId),
-    /// A run-time value whose type is not known. Whether it gets a reverse
-    /// mapping is decided at run time.
+    /// A run-time value of a type the build does not know.
     ComputedUnknown(ExprId),
     ComputedNumber(ExprId),
     ComputedString(ExprId),
@@ -250,8 +249,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    /// What the checker knows about the initializer, when its type comes from
-    /// checked code. tsc decides the reverse mapping from this type.
+    /// The primitive of the initializer's checked type, as tsc decides it.
     fn find_typed_primitive(&mut self, initializer: ExprId) -> KnownPrimitive {
         match self.queries.expression_type(initializer) {
             Ok(ty) => self.find_primitive_of_type(ty, 0),

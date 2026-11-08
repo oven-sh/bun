@@ -523,6 +523,20 @@ describe("Bun.Image", () => {
       const small = await new Bun.Image(jpeg).resize(8, 8, { fit: "fill" }).pixels();
       expect([small.width, small.height, small.data.length]).toEqual([8, 8, 8 * 8 * 4]);
       expect(small.data.filter((_, i) => i % 4 === 3).every(a => a === 255)).toBe(true);
+      // Each output pixel is the mean of one 8×8 block of the gradient: R runs
+      // with x (block mean 32·bx + 14), G with y. JPEG at q90 moves a block
+      // mean by a few levels, so allow ±24.
+      for (const [bx, by] of [
+        [0, 0],
+        [7, 0],
+        [0, 7],
+        [7, 7],
+        [3, 4],
+      ]) {
+        const [r, g] = rgbaAt(small.data, 8, bx, by);
+        expect(Math.abs(r - (32 * bx + 14))).toBeLessThanOrEqual(24);
+        expect(Math.abs(g - (32 * by + 14))).toBeLessThanOrEqual(24);
+      }
 
       const one = await new Bun.Image(makePng(1, 1, () => [1, 2, 3, 4])).pixels();
       expect([one.width, one.height, [...one.data]]).toEqual([1, 1, [1, 2, 3, 4]]);

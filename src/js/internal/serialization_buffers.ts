@@ -40,6 +40,8 @@ function tagBuffers(value: unknown): [unknown, unknown[]] | null {
       current.$forEach(entry => $arrayPush(stack, entry));
       continue;
     }
+    // The serializer refuses a Proxy and runs none of its traps, as node does.
+    if ($isProxyObject(current)) continue;
     // Objects, arrays and errors: the serializer walks own enumerable
     // properties. Only data properties are descended so no getter runs here.
     const keys = ObjectKeys(current);

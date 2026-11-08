@@ -2156,56 +2156,6 @@ struct SerializedScriptValueExternal {
     bytes: *const u8,
     size: usize,
     handle: *mut c_void,
-    status: SerializeStatus,
-}
-const _: () = assert!(
-    core::mem::size_of::<SerializedScriptValueExternal>() == 4 * core::mem::size_of::<usize>()
-);
-
-/// Must be synced with `SerializeStatus` in src/jsc/bindings/Serialization.cpp.
-#[repr(u8)]
-#[derive(Clone, Copy)]
-#[expect(dead_code, reason = "C++ makes the values")]
-enum SerializeStatus {
-    Ok = 0,
-    Thrown = 1,
-    Uncloneable = 2,
-}
-
-/// Why [`JSValue::serialize`] gave no bytes.
-#[derive(Debug)]
-pub enum SerializeError {
-    /// A JS exception is pending.
-    Js(JsError),
-    /// The value cannot be cloned and nothing was thrown: the caller throws
-    /// the error of its API with [`CloneErrorClass::throw`].
-    Uncloneable,
-}
-impl From<JsError> for SerializeError {
-    fn from(error: JsError) -> Self {
-        Self::Js(error)
-    }
-}
-
-/// What an API throws for a value that cannot be cloned. Must be synced with
-/// `CloneErrorClass` in src/jsc/bindings/Serialization.cpp.
-#[repr(u8)]
-#[derive(Clone, Copy)]
-pub enum CloneErrorClass {
-    /// The `DataCloneError` DOMException of structured clone.
-    DataCloneError = 0,
-    /// The `Error` of node's `v8.Serializer`, which node's IPC serializes with.
-    NodeError = 1,
-}
-impl CloneErrorClass {
-    #[cold]
-    pub fn throw(self, global: &JSGlobalObject) -> JsError {
-        // See `JSGlobalObject::throw_stack_overflow` for the validation-scope rationale.
-        crate::validation_scope!(scope, global);
-        Bun__throwCloneError(global, self);
-        scope.assert_exception_presence_matches(true);
-        JsError::Thrown
-    }
 }
 
 /// Callback signature for [`JSValue::for_each`] / [`JSValue::for_each_with_context`].
@@ -2716,7 +2666,7 @@ impl JSValue {
         self,
         global: &JSGlobalObject,
         flags: SerializedFlags,
-    ) -> Result<SerializedScriptValue, SerializeError> {
+    ) -> JsResult<SerializedScriptValue> {
         let mut bits: u8 = 0;
         if flags.for_cross_process_transfer {
             bits |= 1 << 0;
@@ -2727,15 +2677,14 @@ impl JSValue {
         let ext = host_fn::from_js_host_call_generic(global, || {
             Bun__serializeJSValue(global, self, bits)
         })?;
-        match ext.status {
-            SerializeStatus::Ok => Ok(SerializedScriptValue {
-                bytes: ext.bytes,
-                size: ext.size,
-                handle: ext.handle,
-            }),
-            SerializeStatus::Thrown => Err(SerializeError::Js(JsError::Thrown)),
-            SerializeStatus::Uncloneable => Err(SerializeError::Uncloneable),
+        if ext.bytes.is_null() || ext.handle.is_null() {
+            return Err(JsError::Thrown);
         }
+        Ok(SerializedScriptValue {
+            bytes: ext.bytes,
+            size: ext.size,
+            handle: ext.handle,
+        })
     }
 }
 
@@ -2797,7 +2746,6 @@ unsafe extern "C" {
         value: JSValue,
         flags: u8,
     ) -> SerializedScriptValueExternal;
-    safe fn Bun__throwCloneError(global: &JSGlobalObject, class: CloneErrorClass);
     fn Bun__SerializedScriptSlice__free(handle: *mut c_void);
 }
 

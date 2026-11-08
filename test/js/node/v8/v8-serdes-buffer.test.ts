@@ -1,6 +1,6 @@
 import { serialize as jscSerialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { types } from "node:util";
 import v8 from "node:v8";
 
@@ -132,6 +132,8 @@ describe("v8 serialize/deserialize Buffer identity", () => {
 // structured clone throws a DataCloneError DOMException:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/v8.js#L379
 describe("v8.serialize of a value that cannot be cloned", () => {
+  const needsTransfer = "Object that needs transfer was found in message but not listed in transferList";
+
   function thrownBy(fn: () => unknown): any {
     try {
       fn();
@@ -141,7 +143,8 @@ describe("v8.serialize of a value that cannot be cloned", () => {
     throw new Error("expected a throw");
   }
 
-  function expectPlainError(error: any) {
+  // node names the value: "#<Object> could not be cloned."
+  function expectPlainError(error: any, message: string | RegExp = /could not be cloned\.$/) {
     expect(Object.getPrototypeOf(error)).toBe(Error.prototype);
     expect({
       name: error.name,
@@ -149,8 +152,7 @@ describe("v8.serialize of a value that cannot be cloned", () => {
       isError: Error.isError(error),
       isNativeError: types.isNativeError(error),
     }).toEqual({ name: "Error", code: undefined, isError: true, isNativeError: true });
-    // node names the value: "#<Object> could not be cloned."
-    expect(error.message).toMatch(/could not be cloned\.$/);
+    expect(error.message).toMatch(message);
   }
 
   function detachedArrayBuffer() {
@@ -159,8 +161,15 @@ describe("v8.serialize of a value that cannot be cloned", () => {
     return buffer;
   }
 
+  function revokedProxy() {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    return proxy;
+  }
+
   test.each([
     ["a Proxy", () => new Proxy({}, {})],
+    ["a revoked Proxy", revokedProxy],
     ["a function", () => () => {}],
     ["a symbol", () => Symbol("s")],
     ["a nested function", () => ({ list: [function named() {}] })],
@@ -175,12 +184,36 @@ describe("v8.serialize of a value that cannot be cloned", () => {
   test("a MessagePort throws an Error", () => {
     const { port1, port2 } = new MessageChannel();
     try {
-      expectPlainError(thrownBy(() => v8.serialize({ port: port1 })));
-      expectPlainError(thrownBy(() => v8.serialize({ port: port1, buffer: Buffer.from("x") })));
+      expectPlainError(
+        thrownBy(() => v8.serialize({ port: port1 })),
+        needsTransfer,
+      );
+      expectPlainError(
+        thrownBy(() => v8.serialize({ port: port1, buffer: Buffer.from("x") })),
+        needsTransfer,
+      );
     } finally {
       port1.close();
       port2.close();
     }
+  });
+
+  test("no trap of a Proxy runs", () => {
+    const trapsRun: string[] = [];
+    const handler = Object.fromEntries(
+      ["ownKeys", "getOwnPropertyDescriptor", "get", "has", "getPrototypeOf"].map(trap => [
+        trap,
+        () => {
+          trapsRun.push(trap);
+          throw new RangeError(`the ${trap} trap ran`);
+        },
+      ]),
+    ) as ProxyHandler<object>;
+    expectPlainError(thrownBy(() => v8.serialize(new Proxy({ key: 1 }, handler))));
+    expectPlainError(
+      thrownBy(() => v8.serialize({ nested: new Proxy({ key: 1 }, handler), buffer: Buffer.from("x") })),
+    );
+    expect(trapsRun).toEqual([]);
   });
 
   test("what a getter throws passes through", () => {
@@ -195,10 +228,22 @@ describe("v8.serialize of a value that cannot be cloned", () => {
     expect(thrownBy(() => v8.serialize({ value, buffer: Buffer.from("x") }))).toBe(own);
   });
 
-  test("a value that nests too deep throws a RangeError", () => {
-    const root: { next?: object } = {};
-    for (let i = 0, object = root; i < 50_000; i++) object = object.next = {};
-    expect(() => v8.serialize(root)).toThrow(RangeError);
+  test(
+    "a value that nests too deep throws a RangeError",
+    () => {
+      const root: { next?: object } = {};
+      for (let i = 0, object = root; i < 50_000; i++) object = object.next = {};
+      expect(() => v8.serialize(root)).toThrow(RangeError);
+    },
+    // The walk of 40,000 levels takes about two seconds in a debug build.
+    isDebug || isASAN ? 30_000 : undefined,
+  );
+
+  test("a CryptoKey that is not extractable throws an Error", async () => {
+    const secret = new TextEncoder().encode("THIS-IS-SECRET-KEY-MATERIAL-32B!");
+    const key = await crypto.subtle.importKey("raw", secret, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    expectPlainError(thrownBy(() => v8.serialize(key)));
+    expectPlainError(thrownBy(() => v8.serialize({ key, buffer: Buffer.from("x") })));
   });
 
   test("structured clone still throws a DataCloneError", () => {
@@ -216,12 +261,9 @@ describe("v8.serialize of a value that cannot be cloned", () => {
       ]) {
         const error = thrownBy(clone);
         expect(error).toBeInstanceOf(DOMException);
-        expect({ name: error.name, code: error.code, message: error.message }).toEqual({
-          name: "DataCloneError",
-          code: 25,
-          message: "The object can not be cloned.",
-        });
+        expect({ name: error.name, code: error.code }).toEqual({ name: "DataCloneError", code: 25 });
       }
+      // The serializer reports a port that no transfer list names. Each of these callers throws it with node's text.
       for (const clone of [
         () => structuredClone({ port: port2 }),
         () => jscSerialize({ port: port2 }),
@@ -232,7 +274,7 @@ describe("v8.serialize of a value that cannot be cloned", () => {
         expect({ name: error.name, code: error.code, message: error.message }).toEqual({
           name: "DataCloneError",
           code: 25,
-          message: "Object that needs transfer was found in message but not listed in transferList",
+          message: needsTransfer,
         });
       }
     } finally {

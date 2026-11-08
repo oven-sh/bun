@@ -685,14 +685,6 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
 const enobufsErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");
-type ChildProcessSend = (
-  subprocess: $Bindgen.Subprocess,
-  message: unknown,
-  handle: unknown,
-  options: unknown,
-  callback: (err: Error | null) => void,
-) => boolean | null;
-let childProcessSend: ChildProcessSend | undefined;
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1618,8 +1610,8 @@ class ChildProcess extends EventEmitter {
       return false;
     }
 
-    const subprocess = this.#handle;
-    const onSent = (err: Error | null) => {
+    // We still need this send function because
+    return this.#handle.send(message, handle, options, err => {
       // node does process.nextTick() to emit or call the callback
       // we don't need to because the native IPC layer calls the send callback on nextTick
       if (callback) {
@@ -1627,12 +1619,7 @@ class ChildProcess extends EventEmitter {
       } else if (err) {
         this.emit("error", err);
       }
-    };
-    // Not `subprocess.send()`: a message that cannot be cloned throws node's Error here, and a DataCloneError there.
-    childProcessSend ??= $bindgen("ipc_host.bind.ts", "childProcessSend") as ChildProcessSend;
-    const sent = childProcessSend(subprocess, message, handle, options, onSent);
-    // A `Bun.spawn` that the program replaced can answer something that is not a Subprocess.
-    return sent === null ? subprocess.send(message, handle, options, onSent) : sent;
+    });
   }
 
   #onDisconnect(firstTime: boolean) {

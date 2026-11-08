@@ -31,11 +31,3 @@ export const send = b.fn({
   capability: "js",
   throws: true,
 });
-
-/** `ChildProcess#send()` of node:child_process. `null` when the handle is not a `Subprocess`. */
-export const childProcessSend = b.fn({
-  args: { subprocess: Subprocess.otherAsNull, message: b.any, handle: b.any, options: b.any, callback: b.any },
-  returns: b.bool.nullable,
-  capability: "js",
-  throws: true,
-});

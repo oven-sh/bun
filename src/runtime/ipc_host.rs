@@ -9,10 +9,9 @@ use crate::ipc::{
 use bun_jsc::bindgen::{JsLocal, JsScope};
 #[cfg(windows)]
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CloneErrorClass, JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_ptr::RefPtr;
 
-use crate::api::bun::subprocess::Subprocess;
 use crate::generated_bindgen::ipc_host::{MessageTarget, ReceivedMessage};
 use crate::socket::Listener;
 
@@ -80,13 +79,11 @@ fn do_send_err(
     Err(global_object.throw_value(ex))
 }
 
-/// `clone_error` is what the caller's API throws for a message that cannot be cloned.
 pub(crate) fn do_send(
     ipc: Option<&SendQueue>,
     global_object: &JSGlobalObject,
     [mut message, mut handle, options_, mut callback]: [JSValue; 4],
     from: FromEnum,
-    clone_error: CloneErrorClass,
     peer_pid: u32,
 ) -> JsResult<bool> {
     #[cfg(not(windows))]
@@ -274,32 +271,27 @@ pub(crate) fn do_send(
     let status =
         ipc_data.serialize_and_send(global_object, message, is_internal, callback, zig_handle);
 
-    match status {
-        SerializeAndSendResult::Success | SerializeAndSendResult::Backoff => {
-            call_handle_method(global_object, pause_target, "pause")?;
-            // in the success or backoff case, serializeAndSend will handle calling the callback
-            Ok(status == SerializeAndSendResult::Success)
-        }
-        SerializeAndSendResult::Uncloneable => {
-            close_detached(global_object, pause_target)?;
-            Err(clone_error.throw(global_object))
-        }
-        SerializeAndSendResult::Failure => {
-            close_detached(global_object, pause_target)?;
-            // The serializer threw (cyclic JSON, a getter of the message): that is the error.
-            if global_object.has_exception() {
-                return Err(bun_jsc::JsError::Thrown);
-            }
-            let ex =
-                global_object.create_type_error_instance(format_args!("process.send() failed"));
-            ex.put(
-                global_object,
-                b"syscall",
-                global_object.common_strings().write(),
-            );
-            do_send_err(global_object, callback, ex, from)
-        }
+    if status != SerializeAndSendResult::Failure {
+        call_handle_method(global_object, pause_target, "pause")?;
     }
+
+    if status == SerializeAndSendResult::Failure {
+        close_detached(global_object, pause_target)?;
+        // The serializer rejected the message (cyclic JSON, uncloneable value): that is the error.
+        if global_object.has_exception() {
+            return Err(bun_jsc::JsError::Thrown);
+        }
+        let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
+        ex.put(
+            global_object,
+            b"syscall",
+            global_object.common_strings().write(),
+        );
+        return do_send_err(global_object, callback, ex, from);
+    }
+
+    // in the success or backoff case, serializeAndSend will handle calling the callback
+    Ok(status == SerializeAndSendResult::Success)
 }
 
 pub(crate) fn emit_handle_ipc_message<'a>(
@@ -384,36 +376,8 @@ pub(crate) fn send<'a>(
             callback.to_js(),
         ],
         FromEnum::Process,
-        CloneErrorClass::NodeError,
         peer_pid,
     )
-}
-
-/// `Subprocess#send()` with node's error for a message that cannot be cloned.
-/// `None`: the handle is not a `Subprocess`.
-pub(crate) fn child_process_send<'a>(
-    cx: &mut JsScope<'a>,
-    subprocess: Option<&Subprocess>,
-    message: JsLocal<'a>,
-    handle: JsLocal<'a>,
-    options: JsLocal<'a>,
-    callback: JsLocal<'a>,
-) -> JsResult<Option<bool>> {
-    let Some(subprocess) = subprocess else {
-        return Ok(None);
-    };
-    subprocess
-        .send_with(
-            cx.global(),
-            [
-                message.to_js(),
-                handle.to_js(),
-                options.to_js(),
-                callback.to_js(),
-            ],
-            CloneErrorClass::NodeError,
-        )
-        .map(Some)
 }
 
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so

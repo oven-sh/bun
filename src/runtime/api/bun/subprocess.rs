@@ -714,25 +714,6 @@ impl Subprocess<'_> {
         options: JsLocal<'_>,
         callback: JsLocal<'_>,
     ) -> JsResult<bool> {
-        self.send_with(
-            cx.global(),
-            [
-                message.to_js(),
-                handle.to_js(),
-                options.to_js(),
-                callback.to_js(),
-            ],
-            jsc::CloneErrorClass::DataCloneError,
-        )
-    }
-
-    /// `clone_error` is what the caller's API throws for a message that cannot be cloned.
-    pub(crate) fn send_with(
-        &self,
-        global: &JSGlobalObject,
-        args: [JSValue; 4],
-        clone_error: jsc::CloneErrorClass,
-    ) -> JsResult<bool> {
         bun_output::scoped_log!(IPC, "Subprocess#doSend");
 
         let context = if self.has_exited() {
@@ -744,10 +725,14 @@ impl Subprocess<'_> {
         // re-enter JS, but only the SendQueue is borrowed, not `*self`.
         crate::ipc_host::do_send(
             self.ipc(),
-            global,
-            args,
+            cx.global(),
+            [
+                message.to_js(),
+                handle.to_js(),
+                options.to_js(),
+                callback.to_js(),
+            ],
             context,
-            clone_error,
             self.pid() as u32,
         )
     }

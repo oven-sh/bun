@@ -511,13 +511,14 @@ it("getProtectedObjects returns only objects", async () => {
   expect({ stdout, exitCode }).toEqual({ stdout: "ok true\n", exitCode: 0 });
 });
 
-it("serialize rejects a CryptoKey created with extractable set to false", async () => {
-  // bun:jsc serialize() (and node:v8 serialize(), which wraps it) hands the raw
-  // structured-clone buffer to the caller, so a key imported with
-  // extractable: false must not be serializable through it. Keys marked
-  // extractable still serialize, and the non-extractable key remains usable.
+it.each(["bun:jsc", "node:v8"])("%s serialize rejects a CryptoKey that is not extractable", async module => {
+  // bun:jsc serialize() and node:v8 serialize() each hand the raw
+  // structured-clone buffer to the caller from a native entry of their own, so
+  // a key imported with extractable: false must not be serializable through
+  // either. Keys marked extractable still serialize, and the non-extractable
+  // key remains usable.
   const script = `
-    import { serialize } from "bun:jsc";
+    import { serialize } from "${module}";
     const secret = "THIS-IS-SECRET-KEY-MATERIAL-32B!";
     const secretBytes = new TextEncoder().encode(secret);
     const nonExtractable = await crypto.subtle.importKey(

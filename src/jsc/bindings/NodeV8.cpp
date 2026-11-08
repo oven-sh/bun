@@ -98,9 +98,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStopGCProfiler, (JSGlobalObject * globalObject,
     return JSValue::encode(result);
 }
 
-// v8.serialize(): the bytes of bun:jsc's serialize() in a Buffer. The two differ in what a value
-// that cannot be cloned throws: bun:jsc a DataCloneError DOMException, node:v8 the Error that
-// node's DefaultSerializer throws.
+// v8.serialize(): bun:jsc's serialize() into a Buffer, except that a value that cannot be cloned throws node's Error, not a DataCloneError.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeV8_serialize, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(StructuredClone, jsFunctionNodeV8_serialize);
@@ -113,9 +111,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeV8_serialize, (JSGlobalObject * lexicalGl
     EXCEPTION_ASSERT(!scope.exception() || serialized.hasException());
     if (serialized.hasException()) {
         auto exception = serialized.releaseException();
-        if (!scope.exception() && exception.code() == WebCore::ExceptionCode::DataCloneError)
-            WebCore::throwNodeDataCloneError(*lexicalGlobalObject, scope);
-        else
+        if (!scope.exception() && exception.code() == WebCore::ExceptionCode::DataCloneError) {
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/v8.js#L379
+            String message = exception.releaseMessage();
+            if (message.isEmpty())
+                message = "The object could not be cloned."_s;
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, message));
+        } else
             WebCore::propagateException(*lexicalGlobalObject, scope, WTF::move(exception));
         RELEASE_AND_RETURN(scope, {});
     }

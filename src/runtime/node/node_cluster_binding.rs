@@ -175,14 +175,11 @@ pub(crate) fn send_helper_primary<'a>(
         JSValue::NULL,
         native_handle,
     );
-    match success {
-        SerializeAndSendResult::Success => Ok(Some(true)),
-        SerializeAndSendResult::Backoff => Ok(Some(false)),
-        SerializeAndSendResult::Failure => Ok(None),
-        SerializeAndSendResult::Uncloneable => {
-            Err(bun_jsc::CloneErrorClass::NodeError.throw(global))
-        }
-    }
+    Ok(match success {
+        SerializeAndSendResult::Success => Some(true),
+        SerializeAndSendResult::Backoff => Some(false),
+        SerializeAndSendResult::Failure => None,
+    })
 }
 
 pub(crate) fn on_internal_message_primary<'a>(

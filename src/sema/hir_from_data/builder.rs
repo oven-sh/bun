@@ -1,4 +1,4 @@
-use super::{DataModule, DataModuleTree, DataValue, HostValue};
+use super::{DataModule, DataModuleTree, DataValue, DatabasePlace, HostValue};
 use crate::atom::{Atom, Interner, known};
 use crate::fold::slice_in;
 use crate::hir::{
@@ -19,6 +19,7 @@ pub(super) fn build<'s>(
         file: javascript_module_file(),
         atoms,
         host_values: Vec::new(),
+        has_written_temporal: false,
     };
     let statements = builder.statements(module);
     builder.finish(&statements, arena)
@@ -94,6 +95,7 @@ struct Builder<'a, 's> {
     file: FileBuilder,
     atoms: &'a Interner<'s>,
     host_values: Vec<(ExprId, HostValue<'s>)>,
+    has_written_temporal: bool,
 }
 
 impl<'s> Builder<'_, 's> {
@@ -113,6 +115,7 @@ impl<'s> Builder<'_, 's> {
                 DataValue::Object(properties) => self.object_exports(default, properties),
                 _ => self.default_export_with_marker(default),
             },
+            DataModule::MarkedDefault(default) => self.default_export_with_marker(default),
             DataModule::RuntimeRequire {
                 specifier,
                 loader_type,
@@ -127,11 +130,10 @@ impl<'s> Builder<'_, 's> {
                 self.file.add_flags(path, ExprFlags::RESOLVED_AT_RUNTIME);
                 vec![self.export_default(path)]
             }
-            // `import { db } from "./data.sqlite" with { type: "sqlite" }`: one object under two names.
-            DataModule::Database { path, is_embedded } => {
+            DataModule::Database { path, place } => {
                 let names = self.local_names(&[], 2);
                 let (database_name, marker_name) = (names[0], names[1]);
-                let database = self.database(path, is_embedded);
+                let database = self.database(path, place);
                 let marker = self.expr(ExprKind::True);
                 let constants = [(database_name, database), (marker_name, marker)];
                 let exports = [
@@ -161,8 +163,11 @@ impl<'s> Builder<'_, 's> {
     }
 
     fn host_value(&mut self, value: &'s DataValue<'s>) -> ExprId {
+        self.has_written_temporal = false;
         let root = self.value(value);
-        self.host_values.push((root, HostValue::Data(value)));
+        if !self.has_written_temporal {
+            self.host_values.push((root, HostValue::Data(value)));
+        }
         root
     }
 
@@ -258,6 +263,14 @@ impl<'s> Builder<'_, 's> {
             DataValue::Number(number) => ExprKind::Number(self.file.number(number)),
             DataValue::String(text) => ExprKind::String(text),
             DataValue::BigInt(digits) => ExprKind::BigInt(digits),
+            DataValue::Temporal { class, text } => {
+                self.has_written_temporal = true;
+                let temporal = self.expr(ExprKind::Ident(self.atoms.intern(b"Temporal")));
+                let class = self.member(temporal, class);
+                let from = self.member(class, self.atoms.intern(b"from"));
+                let text = self.expr(ExprKind::String(text));
+                ExprKind::Call(self.call(from, &[text]))
+            }
             DataValue::Array(elements) => {
                 frames.push(Frame::new(Composite::Array(elements), child_ids.len()));
                 return;
@@ -334,15 +347,25 @@ impl<'s> Builder<'_, 's> {
         vec![declaration, load, self.export_default(value)]
     }
 
-    fn database(&mut self, path: Atom, is_embedded: bool) -> ExprId {
+    fn database(&mut self, path: Atom, place: DatabasePlace) -> ExprId {
         let path = self.expr(ExprKind::String(path));
-        let source = match is_embedded {
-            true => {
+        let source = match place {
+            DatabasePlace::Executable => {
                 let read_file = self.member_of_required_module(b"node:fs", b"readFileSync");
                 let call = self.call(read_file, &[path]);
                 self.expr(ExprKind::Call(call))
             }
-            false => path,
+            DatabasePlace::Disk => path,
+            DatabasePlace::WorkingDirectory => {
+                let process = self.expr(ExprKind::Ident(known::process));
+                let cwd = self.member(process, self.atoms.intern(b"cwd"));
+                let cwd = self.call(cwd, &[]);
+                let cwd = self.expr(ExprKind::Call(cwd));
+                let bun = self.expr(ExprKind::Ident(self.atoms.intern(b"Bun")));
+                let resolve = self.member(bun, self.atoms.intern(b"resolveSync"));
+                let call = self.call(resolve, &[path, cwd]);
+                self.expr(ExprKind::Call(call))
+            }
         };
         let constructor = self.member_of_required_module(b"bun:sqlite", b"Database");
         let call = self.call(constructor, &[source]);

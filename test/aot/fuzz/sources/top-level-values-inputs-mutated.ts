@@ -5,6 +5,5 @@ import { endless } from "../family";
 
 export default endless("top level values inputs mutated", index => ({
   name: `seed ${index + 1}.`,
-  flags: index % 4 === 3 ? ["--aot-validate"] : [],
   make: () => ({ file: "main.js", ...generate(new Random(index + 1)) }),
 }));

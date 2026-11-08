@@ -1,0 +1,30 @@
+# -- source: registered-symbol-is-a-name.ts
+# declare function report(value: unknown): void;
+# const kState = Symbol.for("registered.state");
+# interface Holder { [kState]: number; name: string; }
+# function Holder(this: Holder, name: string) { this.name = name; this[kState] = 1; }
+# export function make(name: string) { return new (Holder as any)(name); }
+# export function read(holder: Holder) { return holder[kState]; }
+# export function inLoop(holder: Holder, n: number) { let sum = 0; for (let i = 0; i < n; i++) { const key = Symbol.for("registered.state"); sum += (holder as any)[key]; } return sum; }
+# export function unknownText(holder: Holder, text: string) { return (holder as any)[Symbol.for(text)]; }
+# report(read(make("a")) + inLoop(make("b"), 2));
+# -- end of source
+# `Symbol.for("text")` finds the one symbol that is registered under the text, wherever the call stands and however often it runs. The front end names the field of `[kState]: ..` by the text,
+# Link lets the symbol go along with its key as it does for a symbol that is made once, and an access under it is an access under a name. A text that nobody knows stays a call and an access under a key.
+# RUN: link accesses mechanisms=all
+# CHECK: access f1 v15 under Symbol.for("registered.state")
+# CHECK: access f3 v3 under Symbol.for("registered.state")
+# CHECK: access f5 v6 under Symbol.for("registered.state")
+# RUN(NONE): link accesses mechanisms=all
+# NONE-NOT: access f4
+# RUN(STORE): walk f5 mechanisms=-Inlining
+# STORE-LABEL: code f5:Body
+# STORE: PutSlotOrAdd {{*}}key=Symbol.for("registered.state") {{*}}orderWordAfter=
+# RUN(LOOP): walk f1 mechanisms=-Inlining
+# LOOP-LABEL: code f1:Body
+# LOOP-NOT: CallBuiltin
+# LOOP: = GetSlotOrUndefined {{*}}key=Symbol.for("registered.state")
+# RUN(UNKNOWN): walk f4 mechanisms=-Inlining
+# UNKNOWN-LABEL: code f4:Body
+# UNKNOWN: = CallBuiltin {{*}}overload=SymbolFor
+# UNKNOWN: = ElemGet

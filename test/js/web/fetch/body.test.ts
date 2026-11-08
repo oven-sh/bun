@@ -1,6 +1,6 @@
 import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, exampleSite, isASAN, isDebug, tempDir, withoutAsanQuarantine } from "harness";
 import net from "net";
 import { join } from "node:path";
 // @ts-expect-error missing in @types/node
@@ -1347,7 +1347,7 @@ describe.concurrent("string body consumption does not leak", () => {
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", src],
-        env: bunEnv,
+        env: withoutAsanQuarantine(bunEnv),
         stdout: "pipe",
         stderr: "pipe",
       });

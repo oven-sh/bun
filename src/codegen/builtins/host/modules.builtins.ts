@@ -78,7 +78,8 @@ const spyOn = {
 } satisfies b.FunctionField;
 
 const stubbedName = b.keyFrom("name");
-// JSMock__jsReplaceProperty (jsJestReplaceProperty) keeps what the data property holds, weakly, and defines or assigns `value` under the name on the object itself.
+// jsJestReplaceProperty keeps what the data property holds, weakly, and defines or assigns `value` under the name on the object itself.
+// An assignment to process.env or a typed array converts the value.
 const replacedName = b.keyFrom("name");
 const replaceProperty = {
   args: { object: b.object, name: b.propertyKey.loose, value: b.any },
@@ -86,7 +87,7 @@ const replaceProperty = {
   capability: "js",
   throws: true,
   uses: {
-    value: b.inspected,
+    value: [b.runs("ToPrimitive")],
     object: [
       b.readByKey(replacedName, b.nativeMemory),
       b.definesName(replacedName, b.operand("value")),

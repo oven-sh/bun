@@ -109,9 +109,10 @@ pub(super) fn writes_on_first_operand(function: BuiltinId) -> bool {
 
 fn find_writer(function: BuiltinId) -> Option<Writer> {
     let writer = match function {
-        BuiltinId::BunTestSpyOn | BuiltinId::BunTestJestSpyOn | BuiltinId::BunTestViSpyOn => {
-            Writer::Spy
-        }
+        BuiltinId::BunTestSpyOn
+        | BuiltinId::BunTestJestSpyOn
+        | BuiltinId::BunTestViSpyOn
+        | BuiltinId::BunTestJestReplaceProperty => Writer::Spy,
         BuiltinId::ObjectDefineProperty
         | BuiltinId::ReflectDefineProperty
         | BuiltinId::ReflectDeleteProperty

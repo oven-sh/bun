@@ -36,7 +36,13 @@
 # (Verified still failing on every Linux lane, build 87834.)
 [ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
 
-# `bun lint` is a command in canary builds only (IS_ENABLED in
-# src/runtime/cli/lint_command.rs), so nothing in this directory can run on a
-# release build. Remove when a release has `bun lint`.
-[ STABLE ] test/cli/lint/ [ SKIP ] # a release build has no `bun lint`
+# Programs under test/aot/parallel that a build with a sanitizer, or one platform, leaves out.
+[ ASAN ] test/aot/parallel/errors/traces-of-many-places-asked-round-round.js [ SKIP ] # TODO: with AddressSanitizer and assertions a frame of a built-in that is written in JavaScript has the position 1:11 in the executable, and its own (17:41) in plain Bun
+[ ASAN ] test/aot/parallel/modules/reassigned-functions-in-cycles/main.js [ SKIP ] # with assertions on, plain Bun and `jsc -m` abort at the link of star-b.js: getModuleNamespace() asserts that a module named by `export * as` is linked, and across a cycle it is not yet
+[ ASAN ] test/aot/parallel/object-footprint/instances-constructed-in-a-loop.ts [ SKIP ] # the bound is for a build without the red zones and the shadow memory of AddressSanitizer
+[ ASAN ] test/aot/parallel/object-footprint/pool-keys-https-agent-many-certificates.js [ SKIP ] # the bound is for a build without the red zones and the shadow memory of AddressSanitizer
+[ ASAN ] test/aot/parallel/object-footprint/records-made-in-a-loop.ts [ SKIP ] # the bound is for a build without the red zones and the shadow memory of AddressSanitizer
+[ ASAN ] test/aot/parallel/strings/search-unicode-mode-passes-ascii-many.ts [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/keys-object-counted-no-more-twice-time.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/listener-added-counted-removed-vs-class.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/product-fields-merged-object-vs-literal.cjs [ SKIP ] # it compares two times of a release build

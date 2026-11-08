@@ -40,6 +40,75 @@ declare function $isPromiseRejected(promise: Promise<any>): boolean;
 declare function $isPromisePending(promise: Promise<any>): boolean;
 
 declare const IS_BUN_DEVELOPMENT: boolean;
+/** False in an executable that was compiled ahead of time without `--compile-inspector` and without `--external`. */
+declare const CAN_LOAD_CODE_AT_RUN_TIME: boolean;
+/** Or it is a test run, which loads a native addon wherever the call stands. */
+declare const CAN_LOAD_ADDONS_AT_RUN_TIME: boolean;
+/** False in an executable that was compiled ahead of time from a program that never names `node:cluster`. */
+declare const CAN_BE_CLUSTER_WORKER: boolean;
+/** False in what was compiled ahead of time, but for a test run one of whose tests replaces a built-in function or adds a name to `Object.prototype` or `Function.prototype`. Where it is false no program can tell which built-in functions Bun's own code calls, or which names it reads off its own objects. */
+declare const CAN_REPLACE_BUILT_INS: boolean;
+/** False in what was compiled ahead of time from a program that asks `process` only for what Bun gives it. Another name, or a conversion to a text or a number, is answered by what the program has laid on `EventEmitter.prototype`, with `process` as `this`. */
+declare const PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES: boolean;
+/** False in what was compiled ahead of time from a program that cannot tell whether `node:events` was loaded: nothing in it loads the module or may hand `process` on, and it does not look at the prototype chain of `process`. */
+declare const WARNINGS_LOAD_NODE_EVENTS: boolean;
+/** True in an executable that was compiled ahead of time, false in `bun run`. Only for a choice between two ways that a program cannot tell apart. */
+declare const IS_COMPILED_AHEAD_OF_TIME: boolean;
+/** Calls `callee`. A compiled executable never inlines the call. Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`. */
+declare function $callNoInline<This, Arguments extends unknown[], Result>(
+  callee: (this: This, ...args: Arguments) => Result,
+  thisValue: This,
+  ...args: Arguments
+): Result;
+
+/**
+ * True only where a lookup of `name` on `object` finds the method or accessor that the class of `object` declares or inherits, as the source text defines it.
+ * That class may be an heir of the one you mean: name the one you mean as `Class`: then it is true only where the member found is declared by `Class` or by a class above it,
+ * and an heir that declares the name itself gets a no. False says nothing: ask the object and its prototypes then.
+ * Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`.
+ */
+declare function $findsDeclaredMember(object: object, name: string, Class?: Function): boolean;
+
+/**
+ * True only where a lookup of `name` on `object` finds nothing: the object holds no property beside the fields that its class declares, and nothing above it holds the name.
+ * Ask it behind a yes of `$isPlainInstanceOf`: it goes by what is proven of `object`, not by the written type.
+ * Behind the yes a plain read of `object[name]` is `undefined` and costs nothing: leave the reads in the text as they stand in plain Bun.
+ * It holds until code of the program runs again. False says nothing: any other property of its own on the object makes it false too.
+ * Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`.
+ */
+declare function $findsNoMember(object: object, name: string): boolean;
+
+/**
+ * True only where `object` was made by `Class` itself, not by an heir, no field that `Class` declares was made an accessor or defined anew under other attributes,
+ * and above the object stands the prototype of `Class`, with at most plain objects in between that hide no member of it.
+ * Then a read of a declared field runs no code of the program: read the fields in any order, as often as you like, or not at all.
+ * Stores into the fields and properties under other names leave it true. A deleted field is like one that was never stored: it is absent, and the answer stays true.
+ * A yes also says that `object instanceof Class` is true and runs no code.
+ * It says nothing about methods: ask `$findsDeclaredMember` for each one that you count on. It says nothing about frozen objects.
+ * A name under which `Class` or a class above it declares an accessor is a member, not a field, though a constructor stores under it.
+ * Lay such an accessor where the compiler sees it: a field over an accessor that it does not see makes the answer false for every object.
+ * It holds until code of the program runs again. False says nothing: take the road that reads everything then.
+ * `Class` is the binding of a class or constructor function that is evaluated once. Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`.
+ */
+declare function $isPlainInstanceOf(object: unknown, Class: Function): boolean;
+
+/**
+ * `$isPlainInstanceOf` for a method that `Class` hands down: true also for an object that a class below `Class` has made, the library's or the program's,
+ * by `extends` or by `$toClass(Below, name, Class)`. All that a yes of `$isPlainInstanceOf` says holds of the fields that the object's own class declares or inherits.
+ * A class below that declares an accessor of the program under the name of such a field gets a no. It says nothing about methods: an heir may declare its own:
+ * ask `$findsDeclaredMember(object, name, Class)` for each one that you count on.
+ * One count answers for all the classes: what ends the yes for the objects of one of them ends it for all.
+ * `Class` is the file's own binding of the class or constructor function: one taken out of `require()` makes the answer false.
+ */
+declare function $isPlainHeirOf(object: unknown, Class: Function): boolean;
+
+/**
+ * True while no name was added to `Object.prototype`: then a name that an object of the library's own making does not hold is found nowhere.
+ * A compiled executable lets nobody add one, so there it is true and costs nothing. A compiled test run lets a test add one: from then on it is false for good.
+ * A member of `Object.prototype` that a test replaces does not make it false.
+ * It holds until code of the program runs again. Only compiled code has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`.
+ */
+declare function $isObjectPrototypeWithoutAddedNames(): boolean;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;
@@ -155,6 +224,13 @@ type $NotAny<T> = 0 extends 1 & T ? never : unknown;
 /** Keeps the members of `T` that can be a `U`. */
 type $GuardNarrow<T, U> = T extends U ? T : U extends T ? U : never;
 type $AnyObject = Record<PropertyKey, any>;
+/** `x.$$iterator` is `x[Symbol.iterator]` without a look at `Symbol`. Any value may be asked for it. */
+declare interface Object {
+  $$asyncDispose: any;
+  $$asyncIterator: any;
+  $$dispose: any;
+  $$iterator: any;
+}
 type $AnyCallable = ((...args: any[]) => any) & $AnyObject;
 /**
  * True for object-like `JSCell`s. That is, this is roughly equivalent to this
@@ -178,7 +254,7 @@ declare function $isArray(obj: any): obj is any[];
 declare function $isCallable<T>(fn: T & $NotAny<T>): fn is $GuardNarrow<T, CallableFunction> & $NotAny<T>;
 declare function $isCallable(fn: any): fn is $AnyCallable;
 declare function $isJSArray(obj: unknown): obj is any[];
-declare function $isProxyObject(obj: unknown): obj is Proxy;
+declare function $isProxyObject(obj: unknown): boolean;
 declare function $isRegExpObject(obj: unknown): obj is RegExp;
 declare function $isMap<K, V>(obj: unknown): obj is Map<K, V>;
 declare function $isSet<V>(obj: unknown): obj is Set<V>;
@@ -260,6 +336,11 @@ declare function $esmNamespaceForCjs(key: string, requirer?: JSCommonJSModule): 
 declare function $esmRegistryDelete(key: string, requirer?: JSCommonJSModule): boolean;
 declare function $esmRegistryEvaluatedKeys(requirer?: JSCommonJSModule): string[];
 declare function $esmRegistryHasEvaluated(key: string, requirer?: JSCommonJSModule): boolean;
+declare function $requireCacheCompiledEntry(key: string, requirer?: JSCommonJSModule, onlyAsks?: boolean): any;
+declare function $requireCacheDidDelete(key: string, requirer?: JSCommonJSModule): void;
+declare function $requireCacheWillSet(key: string, value: unknown, requirer?: JSCommonJSModule): void;
+/** Without a key: does this process hide any file from require.cache? */
+declare function $isHiddenFromRequireCache(key?: string | symbol): boolean | undefined;
 declare function $esmLoadSync(key: string, requirer?: JSCommonJSModule): any;
 declare function $get(): TODO;
 declare function $handleEvent(): TODO;
@@ -349,14 +430,36 @@ interface InternalFieldObject<T extends any[]> {
   [__internal]: T;
 }
 
-// You can also `@` on any method on a classes to avoid prototype pollution and secret internals
-type ClassWithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? `$${K}` : never]: T[K] };
-
-declare interface Map<K, V> extends ClassWithIntrinsics<Map<K, V>> {}
-declare interface CallableFunction extends ClassWithIntrinsics<CallableFunction> {}
-declare interface Promise<T> extends ClassWithIntrinsics<Promise<T>> {}
-declare interface ArrayBufferConstructor extends ClassWithIntrinsics<ArrayBufferConstructor> {}
-declare interface PromiseConstructor extends ClassWithIntrinsics<PromiseConstructor> {}
+// You can also `@` on any method on a classes to avoid prototype pollution and secret internals.
+declare interface CallableFunction {
+  $call: CallableFunction["call"];
+  $bind: CallableFunction["bind"];
+  $toString: CallableFunction["toString"];
+}
+// `apply` takes any array-like list; the standard library's declaration leaves out `arguments`.
+declare interface CallableFunction {
+  $apply<T, R>(this: (this: T) => R, thisArg: T): R;
+  $apply<T, A extends any[], R>(this: (this: T, ...args: A) => R, thisArg: T, args: A): R;
+  $apply<T, R>(this: (this: T, ...args: any[]) => R, thisArg: T, args: IArguments | $AnyObject): R;
+}
+declare interface Promise<T> {
+  $then: Promise<T>["then"];
+  $catch: Promise<T>["catch"];
+  $finally: Promise<T>["finally"];
+}
+declare interface ArrayBufferConstructor {
+  $isView: ArrayBufferConstructor["isView"];
+}
+declare interface PromiseConstructor {
+  $all: PromiseConstructor["all"];
+  $allSettled: PromiseConstructor["allSettled"];
+  $any: PromiseConstructor["any"];
+  $race: PromiseConstructor["race"];
+  $reject: PromiseConstructor["reject"];
+  $resolve: PromiseConstructor["resolve"];
+  $try: PromiseConstructor["try"];
+  $withResolvers: PromiseConstructor["withResolvers"];
+}
 
 declare interface UnderlyingSource {
   $lazy?: boolean;
@@ -408,19 +511,24 @@ interface String {
   // add others as needed
 }
 
-interface Set {
-  $add: Set["add"];
-  $clear: Set["clear"];
-  $delete: Set["delete"];
-  $has: Set["has"];
+interface Set<T> {
+  $add: Set<T>["add"];
+  $clear: Set<T>["clear"];
+  $delete: Set<T>["delete"];
+  $has: Set<T>["has"];
 }
 
-interface Map {
-  $clear: Map["clear"];
-  $delete: Map["delete"];
-  $has: Map["has"];
-  $set: Map["set"];
-  $get: Map["get"];
+interface Map<K, V> {
+  $clear: Map<K, V>["clear"];
+  $delete: Map<K, V>["delete"];
+  $has: Map<K, V>["has"];
+  $set: Map<K, V>["set"];
+  $get: Map<K, V>["get"];
+  $forEach: Map<K, V>["forEach"];
+  $entries: Map<K, V>["entries"];
+  $keys: Map<K, V>["keys"];
+  $values: Map<K, V>["values"];
+  readonly $size: Map<K, V>["size"];
 }
 
 declare var $Array: ArrayConstructor;
@@ -475,6 +583,7 @@ declare function $ERR_HTTP2_STATUS_INVALID(code: number): RangeError;
 declare function $ERR_HTTP2_INVALID_PSEUDOHEADER(name: string): TypeError;
 declare function $ERR_HTTP2_STREAM_ERROR(code): Error;
 declare function $ERR_HTTP2_SESSION_ERROR(code): Error;
+declare function $ERR_HTTP2_TOO_MANY_ORIGINS(max: number): Error;
 declare function $ERR_HTTP2_PAYLOAD_FORBIDDEN(status): Error;
 declare function $ERR_HTTP2_INVALID_INFO_STATUS(code): RangeError;
 declare function $ERR_INVALID_URL(input, base?): TypeError;
@@ -599,22 +708,27 @@ declare function $toClass(fn: Function, name: string, base?: Function | undefine
 
 declare function $min(a: number, b: number): number;
 
-interface Map<K, V> {
-  $get: typeof Map.prototype.get;
-  $set: typeof Map.prototype.set;
-}
-
 interface Set<T> {
   $forEach: Set<T>["forEach"];
 }
 
 interface ObjectConstructor {
+  $create: typeof Object.create;
+  $getPrototypeOf: typeof Object.getPrototypeOf;
   $defineProperty: typeof Object.defineProperty;
   $defineProperties: typeof Object.defineProperties;
+  $getOwnPropertyDescriptor: typeof Object.getOwnPropertyDescriptor;
+  $getOwnPropertyNames: typeof Object.getOwnPropertyNames;
+  $getOwnPropertySymbols: typeof Object.getOwnPropertySymbols;
 }
+
+declare var $Map: MapConstructor;
+declare var $Object: ObjectConstructor;
 
 /** gets a property on an object */
 declare function $getByIdDirect<T, K extends keyof T>(obj: T, key: K): T[K];
+
+declare function $getPrototypeOf(value: unknown): object | null;
 
 /**
  * Gets a private property on an object.

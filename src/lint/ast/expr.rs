@@ -152,8 +152,9 @@ impl<'a> Expr<'a> {
                 Some(b'"' | b'\'') if file.hir.jsx.is_empty() => ExprKind::String(file.name(text)),
                 _ => self.kind_of_string(raw, text),
             },
+            hir::ExprKind::JsxText(text) => ExprKind::String(file.name(text)),
             hir::ExprKind::BigInt(text) => ExprKind::BigInt(file.name(text)),
-            hir::ExprKind::Regex => ExprKind::Regex(Regex { expr: self }),
+            hir::ExprKind::Regex { .. } => ExprKind::Regex(Regex { expr: self }),
             hir::ExprKind::Template { exprs } => ExprKind::Template(Template {
                 expr: self,
                 exprs,
@@ -506,6 +507,7 @@ impl<'a> Expr<'a> {
                 Some(b'"' | b'\'') if file.hir.jsx.is_empty() => Some(file.name(text)),
                 _ => self.as_string_slow(raw, text),
             },
+            hir::ExprKind::JsxText(text) => Some(file.name(text)),
             _ => None,
         }
     }
@@ -692,7 +694,7 @@ impl<'a> Expr<'a> {
     #[inline]
     pub fn as_regex(self) -> Option<Regex<'a>> {
         match self.try_raw()?.kind {
-            hir::ExprKind::Regex => Some(Regex { expr: self }),
+            hir::ExprKind::Regex { .. } => Some(Regex { expr: self }),
             _ => None,
         }
     }
@@ -1240,38 +1242,13 @@ impl File<'_> {
 
     #[inline(never)]
     fn is_jsx_text(&self, id: hir::ExprId) -> bool {
-        if self.hir.jsx.is_empty()
-            || !matches!(
-                self.hir.exprs.get(id.idx()),
-                Some(hir::Expr {
-                    kind: hir::ExprKind::String(_),
-                    ..
-                })
-            )
-        {
-            return false;
-        }
-        let bun_sema::bind::Parent::Expr(parent) = self.bound.parent_of_expr(id) else {
-            return false;
-        };
-        let Some(&hir::Expr {
-            kind: hir::ExprKind::Jsx(jsx),
-            ..
-        }) = self.hir.exprs.get(parent.idx())
-        else {
-            return false;
-        };
-        let is_name = self
-            .hir
-            .jsx
-            .get(jsx.idx())
-            .is_some_and(|it| it.tag == id || it.close_tag == id);
-        !is_name
-            && self
-                .hir
-                .jsx_expressions
-                .binary_search_by_key(&id.0, |it| it.0.0)
-                .is_err()
+        matches!(
+            self.hir.exprs.get(id.idx()),
+            Some(hir::Expr {
+                kind: hir::ExprKind::JsxText(_),
+                ..
+            })
+        )
     }
 }
 

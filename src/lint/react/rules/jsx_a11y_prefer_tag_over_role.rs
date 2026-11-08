@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 /// Enforces using semantic HTML tags over `role` attribute.
 pub struct PreferTagOverRole;
 
-const PREFER_TAG_OVER_ROLE: Message = Message::new("", "Prefer `{{tag}}` over `role` attribute `{{role}}`.");
+const PREFER_TAG_OVER_ROLE: &Message = &Message::new("", "Prefer `{{tag}}` over `role` attribute `{{role}}`.");
 
 impl Rule for PreferTagOverRole {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "prefer-tag-over-role", Kind::Problem);

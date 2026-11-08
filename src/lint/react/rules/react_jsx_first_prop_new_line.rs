@@ -15,9 +15,9 @@ enum Configuration {
     Multiprop,
 }
 
-const PROP_ON_NEW_LINE: Message = Message::new("propOnNewLine", "Property should be placed on a new line");
-const PROP_ON_SAME_LINE: Message =
-    Message::new("propOnSameLine", "Property should be placed on the same line as the component declaration");
+const PROP_ON_NEW_LINE: &Message = &Message::new("propOnNewLine", "Property should be placed on a new line");
+const PROP_ON_SAME_LINE: &Message =
+    &Message::new("propOnSameLine", "Property should be placed on the same line as the component declaration");
 
 impl Rule for JsxFirstPropNewLine {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-first-prop-new-line", Kind::None).fixable(Fixable::Code);

@@ -48,6 +48,7 @@ pub(super) enum Arg {
 
 impl Arg {
     /// The node where an error about it is reported.
+    #[inline]
     pub(super) fn node(self) -> ExprId {
         match self {
             Arg::Expr(e)
@@ -58,6 +59,7 @@ impl Arg {
     }
 
     /// `isSpreadArgument`
+    #[inline]
     pub(super) fn is_spread(self) -> bool {
         matches!(self, Arg::Spread(..) | Arg::SpreadElement(..))
     }
@@ -152,6 +154,22 @@ enum SigParent {
     Lone(FileId, FnId),
 }
 
+/// An entry of `Checker::resolved_meanwhile`.
+#[derive(Copy, Clone)]
+pub(super) struct ResolvedMeanwhile {
+    pub(super) file: FileId,
+    pub(super) call: ExprId,
+    resolved: ResolvedCall,
+    /// What `Checker::resolved_meanwhile_of_class` held for the class of the call when this was pushed.
+    next_of_class: u32,
+}
+
+/// The index of a call in `Checker::resolved_meanwhile_of_class`.
+#[inline]
+fn class_of_call(file: FileId, call: ExprId) -> usize {
+    (crate::util::fx_hash(&(file, call)) >> 56) as usize
+}
+
 impl<'p, 's> Checker<'p, 's> {
     /// `isContextSensitive`. For `JsxAttributes`, see `is_jsx_attributes_context_sensitive`.
     pub fn is_context_sensitive(&self, file: FileId, e: ExprId) -> bool {
@@ -163,18 +181,12 @@ impl<'p, 's> Checker<'p, 's> {
             // There is no case for an accessor.
             ExprKind::Fn(f) => {
                 !matches!(hir[f].kind, FnKind::Getter | FnKind::Setter)
-                    && self.is_context_sensitive_function_like_declaration(file, f)
+                    && self.is_context_sensitive_function_like_declaration(hir, file, f)
             }
             ExprKind::Yield { value, .. } => {
                 value.is_some() && self.is_context_sensitive(file, value)
             }
-            // There is no case for a `SpreadAssignment` or a `ShorthandPropertyAssignment`.
-            ExprKind::Object(props) => props.iter().any(|p| {
-                matches!(hir[p].kind, PropKind::Init | PropKind::Method)
-                    && hir[p].value.is_some()
-                    && self.is_context_sensitive(file, hir[p].value)
-            }),
-            ExprKind::Array(items) => hir.ids(items).any(|i| self.is_context_sensitive(file, i)),
+            ExprKind::Object(_) | ExprKind::Array(_) => self.is_context_sensitive_literal(file, e),
             ExprKind::Cond { branches, .. } => {
                 let Branches { yes, no } = hir.branches(branches);
                 self.is_context_sensitive(file, yes) || self.is_context_sensitive(file, no)
@@ -188,10 +200,50 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    fn is_context_sensitive_literal(&self, file: FileId, e: ExprId) -> bool {
+        /// Results aren't cached for literals fewer levels inside the one that was asked about.
+        const MANY: u32 = 8;
+        let recent = &self.recent_context_sensitive_literals;
+        let depth = self.context_sensitivity_depth.get();
+        if depth >= MANY
+            && let Some(known) = recent.borrow().get(file.0 + 1, e.0)
+        {
+            return known != 0;
+        }
+        let hir = self.hir(file);
+        let times_cut_short = self.times_cut_short.get();
+        self.context_sensitivity_depth.set(depth + 1);
+        let answer = match hir[e].kind {
+            // There is no case for a `SpreadAssignment` or a `ShorthandPropertyAssignment`.
+            ExprKind::Object(props) => props.iter().any(|p| {
+                matches!(hir[p].kind, PropKind::Init | PropKind::Method)
+                    && hir[p].value.is_some()
+                    && self.is_context_sensitive(file, hir[p].value)
+            }),
+            ExprKind::Array(items) => hir.ids(items).any(|i| self.is_context_sensitive(file, i)),
+            _ => false,
+        };
+        self.context_sensitivity_depth.set(depth);
+        // An answer that was cut short by a low stack depends on the caller, so it isn't cached.
+        if depth >= MANY && self.times_cut_short.get() == times_cut_short {
+            recent.borrow_mut().put(file.0 + 1, e.0, u32::from(answer));
+        }
+        answer
+    }
+
     /// `isContextSensitiveFunctionLikeDeclaration`
-    fn is_context_sensitive_function_like_declaration(&self, file: FileId, f: FnId) -> bool {
+    fn is_context_sensitive_function_like_declaration(
+        &self,
+        hir: &hir::File<'s>,
+        file: FileId,
+        f: FnId,
+    ) -> bool {
         /// Results aren't cached for fewer nested functions than this.
         const MANY: u64 = 8;
+        let info = self.bound(file).fns.get(f.idx());
+        if let Some(known) = info.and_then(|info| info.is_context_sensitive) {
+            return known;
+        }
         // Every enclosing function asks this about each function nested in it, each time down to
         // the innermost one, so the answer for a deep nest is cached. It only depends on the syntax
         // tree. A function that only returns another function has that function's answer, unless
@@ -204,12 +256,12 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some(&known) = self.context_sensitive_functions.borrow().get(&(file, at)) {
                 break known;
             }
-            if self.has_context_sensitive_parameters(file, at) {
+            if self.has_context_sensitive_parameters_in(hir, file, at) {
                 break true;
             }
-            let Some(returned) = self.sole_returned_function(file, at) else {
-                break self.has_context_sensitive_return_expression(file, at)
-                    || self.has_context_sensitive_yield_expression(file, at);
+            let Some(returned) = self.sole_returned_function(hir, file, at) else {
+                break self.has_context_sensitive_return_expression(hir, file, at)
+                    || self.has_context_sensitive_yield_expression(hir, file, at);
             };
             (at, passed) = (returned, passed + 1);
         };
@@ -222,7 +274,7 @@ impl<'p, 's> Checker<'p, 's> {
             for _ in 0..=passed {
                 let Some(it) = at else { break };
                 known.insert((file, it), answer);
-                at = self.sole_returned_function(file, it);
+                at = self.sole_returned_function(hir, file, it);
             }
         }
         answer
@@ -231,8 +283,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns the function expression that's the only thing `f` returns, if
     /// `hasContextSensitiveReturnExpression` and `hasContextSensitiveYieldExpression` look at
     /// nothing else.
-    fn sole_returned_function(&self, file: FileId, f: FnId) -> Option<FnId> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+    fn sole_returned_function(&self, hir: &hir::File<'s>, file: FileId, f: FnId) -> Option<FnId> {
         let func = &hir[f];
         if !func.type_params.is_empty()
             || func.ret.is_some()
@@ -244,6 +295,7 @@ impl<'p, 's> Checker<'p, 's> {
             FnBody::None => return None,
             FnBody::Expr(body) => body,
             FnBody::Block(_) => {
+                let bound = self.bound(file);
                 let mut returns = bound.ids(bound.fns[f.idx()].returns);
                 match (returns.next().map(|s| hir[s].kind), returns.next()) {
                     (Some(StmtKind::Return(value)), None) if value.is_some() => value,
@@ -263,16 +315,28 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `HasContextSensitiveParameters`
     pub(super) fn has_context_sensitive_parameters(&self, file: FileId, f: FnId) -> bool {
-        let hir = self.hir(file);
+        self.has_context_sensitive_parameters_in(self.hir(file), file, f)
+    }
+
+    #[inline]
+    fn has_context_sensitive_parameters_in(
+        &self,
+        hir: &hir::File<'s>,
+        file: FileId,
+        f: FnId,
+    ) -> bool {
         let func = &hir[f];
         if !func.type_params.is_empty() {
             return false;
         }
         // `node.Parameters()`, of which the `this` parameter is the first.
-        if func.this_param.is_some() && func.this_ty(hir).is_none()
-            || func.params.iter().any(|p| hir[p].ty.is_none())
-        {
+        if func.this_param.is_some() && func.this_ty(hir).is_none() {
             return true;
+        }
+        for p in func.params.iter() {
+            if hir[p].ty.is_none() {
+                return true;
+            }
         }
         func.kind != FnKind::Arrow
             && func.this_param.is_none()
@@ -280,8 +344,12 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `hasContextSensitiveReturnExpression`
-    fn has_context_sensitive_return_expression(&self, file: FileId, f: FnId) -> bool {
-        let hir = self.hir(file);
+    fn has_context_sensitive_return_expression(
+        &self,
+        hir: &hir::File<'s>,
+        file: FileId,
+        f: FnId,
+    ) -> bool {
         let func = &hir[f];
         if !func.type_params.is_empty() || func.ret.is_some() {
             return false;
@@ -300,12 +368,19 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `hasContextSensitiveYieldExpression`
-    fn has_context_sensitive_yield_expression(&self, file: FileId, f: FnId) -> bool {
+    fn has_context_sensitive_yield_expression(
+        &self,
+        hir: &hir::File<'s>,
+        file: FileId,
+        f: FnId,
+    ) -> bool {
+        if !hir[f].flags.contains(Flags::GENERATOR) {
+            return false;
+        }
         let bound = self.bound(file);
-        self.hir(file)[f].flags.contains(Flags::GENERATOR)
-            && bound
-                .ids(bound.fns[f.idx()].yields)
-                .any(|y| self.is_context_sensitive(file, y))
+        bound
+            .ids(bound.fns[f.idx()].yields)
+            .any(|y| self.is_context_sensitive(file, y))
     }
 
     /// `links.resolvedSignature` of `call`, if it's cached, with the signature's return type.
@@ -363,6 +438,41 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    pub(super) fn push_resolved_meanwhile(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        resolved: ResolvedCall,
+    ) {
+        let innermost = &mut self.resolved_meanwhile_of_class[class_of_call(file, call)];
+        self.resolved_meanwhile.push(ResolvedMeanwhile {
+            file,
+            call,
+            resolved,
+            next_of_class: *innermost,
+        });
+        *innermost = self.resolved_meanwhile.len() as u32;
+    }
+
+    pub(super) fn pop_resolved_meanwhile(&mut self) {
+        let entry = self.resolved_meanwhile.pop().unwrap();
+        self.resolved_meanwhile_of_class[class_of_call(entry.file, entry.call)] =
+            entry.next_of_class;
+    }
+
+    /// Returns what the innermost entry of `resolved_meanwhile` for the call holds.
+    fn find_resolved_meanwhile(&self, file: FileId, call: ExprId) -> Option<ResolvedCall> {
+        let mut next = self.resolved_meanwhile_of_class[class_of_call(file, call)];
+        while next != 0 {
+            let entry = self.resolved_meanwhile[next as usize - 1];
+            if entry.file == file && entry.call == call {
+                return Some(entry.resolved);
+            }
+            next = entry.next_of_class;
+        }
+        None
+    }
+
     pub fn resolved_signature(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
         if !self.iife_resolving.is_empty() && self.iife_resolving.contains(&(file, call)) {
             return self.any_signature_while_arguments_are_checked();
@@ -375,12 +485,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.cached_resolved_signature(file, call) {
             return known;
         }
-        if let Some(&(.., resolved)) = self
-            .resolved_meanwhile
-            .iter()
-            .rev()
-            .find(|r| r.0 == file && r.1 == call)
-        {
+        if let Some(resolved) = self.find_resolved_meanwhile(file, call) {
             return resolved;
         }
         if let Some(raw) = self.provisional(Query::Call(file, call)) {
@@ -392,10 +497,10 @@ impl<'p, 's> Checker<'p, 's> {
             return known;
         }
         // `resolvingSignature`
-        let in_progress_at = self
-            .stack
-            .iter()
-            .rposition(|&q| q == Query::Call(file, call));
+        let in_progress_at = match self.may_be_in_flight(Query::Call(file, call)) {
+            true => self.position_in_progress(Query::Call(file, call), 0),
+            false => None,
+        };
         let is_in_progress = in_progress_at.is_some();
         let resolution_start = self.resolution_start;
         // There's no re-entrancy guard. A call that a back edge of a loop reaches while it's being
@@ -436,9 +541,9 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_call_re_resolved = is_re_resolved;
         let reported = std::mem::replace(&mut self.call_resolution_errors, outer_errors);
         self.resolution_start = resolution_start;
-        self.resolved_meanwhile.push((file, call, resolved));
+        self.push_resolved_meanwhile(file, call, resolved);
         let resolved = self.with_return_type(resolved);
-        self.resolved_meanwhile.pop();
+        self.pop_resolved_meanwhile();
         // `getResolvedSignature`: `links.resolvedSignature != c.resolvingSignature`, "this inner
         // resolution sets the resolvedSignature first", and `result = links.resolvedSignature`.
         let assigned_within = (self.signatures_resolved_within.iter())
@@ -448,6 +553,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !is_in_progress {
             self.signatures_resolved_within
                 .retain(|r| !(r.0 == file && r.1 == call));
+            self.store_errors_of_nested_resolutions(file, call);
         }
         // tsgo stores `links.resolvedSignature` even while `contextualBindingPatterns` is
         // non-empty.
@@ -462,16 +568,20 @@ impl<'p, 's> Checker<'p, 's> {
             && self.taints == self.taints_before_patterns;
         let stored = (left.ok()).or_else(|| is_tainted_by_patterns_only.then(Stored::new));
         // A call that's requested while it's being resolved is resolved again, and `resolveCall`
-        // reports its errors in the state at that time. Only the first resolution is retained.
+        // reports its errors in the state at that time.
         if is_in_progress {
-            if let Some(reported) = reported
-                && (self.p.diagnostics_of_re_resolved_calls)
-                    .get_ref(&self.task, &(file, call))
-                    .is_none()
-            {
-                let (key, stored) = ((file, call), Stored::new());
-                (self.p.diagnostics_of_re_resolved_calls)
-                    .insert_ref(&self.task, key, reported, stored);
+            if let Some(reported) = reported {
+                let all = &mut self.errors_of_nested_resolutions;
+                match all.iter_mut().find(|r| r.0 == file && r.1 == call) {
+                    Some((.., known)) => {
+                        for diagnostic in reported {
+                            if !known.contains(&diagnostic) {
+                                known.push(diagnostic);
+                            }
+                        }
+                    }
+                    None => all.push((file, call, reported)),
+                }
             }
             // The enclosing resolution takes the result from `Program::calls` or, if it depends on
             // a frame in progress, from `signatures_resolved_within`. It doesn't take a result that
@@ -506,6 +616,19 @@ impl<'p, 's> Checker<'p, 's> {
         resolved
     }
 
+    fn store_errors_of_nested_resolutions(&mut self, file: FileId, call: ExprId) {
+        let all = &mut self.errors_of_nested_resolutions;
+        if let Some(at) = all.iter().position(|r| r.0 == file && r.1 == call) {
+            let (.., reported) = all.swap_remove(at);
+            (self.p.diagnostics_of_re_resolved_calls).insert_ref(
+                &self.task,
+                (file, call),
+                reported,
+                Stored::new(),
+            );
+        }
+    }
+
     /// `resolved_signature` for one of `calls_to_resolve_afresh`, run once for each. What's stored and what was
     /// reported for the call stay unchanged. Returns `None` if `call` isn't one of them, or if it's requested while
     /// it's being resolved this way. Then the stored result is used.
@@ -529,28 +652,31 @@ impl<'p, 's> Checker<'p, 's> {
         let resolved = self.resolve_signature(file, call);
         self.call_resolution_errors = outer_errors;
         self.resolution_start = resolution_start;
-        self.resolved_meanwhile.push((file, call, resolved));
+        self.push_resolved_meanwhile(file, call, resolved);
         let resolved = self.with_return_type(resolved);
-        self.resolved_meanwhile.pop();
+        self.pop_resolved_meanwhile();
         let _ = self.leave(Query::Call(file, call));
+        self.store_errors_of_nested_resolutions(file, call);
         self.calls_resolved_afresh[at].1 = Some(resolved);
         Some(resolved)
     }
 
     fn effective_args(&mut self, file: FileId, args: IdList<ExprId>) -> Args {
-        let hir = self.hir(file);
         let mut out = Args::new();
-        if hir
-            .ids(args)
-            .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
-        {
-            for a in hir.ids(args) {
-                self.each_effective_arg(file, a, |arg| out.push(arg));
-            }
-        } else {
-            out.extend(hir.ids(args).map(Arg::Expr));
-        }
+        self.add_effective_args(file, args, &mut out);
         out
+    }
+
+    fn add_effective_args(&mut self, file: FileId, args: IdList<ExprId>, out: &mut Args) {
+        let hir = self.hir(file);
+        for a in hir.ids(args) {
+            match hir[a].kind {
+                ExprKind::Spread(inner) => {
+                    self.each_spread_arg(file, a, inner, |arg| out.push(arg))
+                }
+                _ => out.push(Arg::Expr(a)),
+            }
+        }
     }
 
     /// Calls `push` with what the argument `a` expands to: itself, or the elements it spreads.
@@ -865,6 +991,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// Anything there that re-enters a resolution in progress is a cycle. The result is
     /// `anySignature`.
     fn resolve_untyped_call(&mut self, file: FileId, args: IdList<ExprId>) -> ResolvedCall {
+        // The look at the arguments finds mistakes and changes no answer. Whoever lowers reports none.
+        if self.answers_lowering {
+            return ResolvedCall {
+                sig: None,
+                ret: TypeId::ANY,
+            };
+        }
         // `getResolvedSignature` resets `resolutionStart` only the first time. When the call is
         // resolved again, the arguments are already being checked, and they're checked again,
         // uncached (`checkExpression`), with no re-entrancy guard.
@@ -1012,15 +1145,21 @@ impl<'p, 's> Checker<'p, 's> {
                 self.resolve_error_call(file, data.args)
             };
         }
-        if !matches!(hir[data.callee].kind, ExprKind::Super) {
-            self.precheck_type_nodes(file, hir.list_at(data.type_args));
-        }
-        let type_args = self.types_from_nodes(file, hir.list_at(data.type_args));
-        let args = self.effective_args(file, data.args);
+        let type_args = if data.type_args.is_empty() {
+            Vec::new()
+        } else {
+            let type_args = hir.list_at(data.type_args);
+            if !matches!(hir[data.callee].kind, ExprKind::Super) {
+                self.precheck_type_nodes(file, type_args);
+            }
+            self.types_from_nodes(file, type_args)
+        };
+        let mut args = Args::new();
+        self.add_effective_args(file, data.args, &mut args);
         let node = CallLike::Call(id);
         let this_arg = self.this_argument_of_call(file, call, node);
         // `resolveNewExpression` reads the return type of a call signature invoked with `new` only without `noImplicitAny` (2350).
-        let expects_return = if is_call_by_new && self.p.files.options.no_implicit_any {
+        let expects_return = if is_call_by_new && self.module_options(file).no_implicit_any {
             ExpectsReturn::No
         } else {
             ExpectsReturn::Yes
@@ -1038,12 +1177,36 @@ impl<'p, 's> Checker<'p, 's> {
         );
         // `checkCallExpression`: `new` on something that isn't a constructor yields `any`.
         if is_call_by_new {
+            let constructed = self.type_constructed_by_function(file, data.callee, resolved.sig);
             ResolvedCall {
-                ret: TypeId::ANY,
+                ret: constructed.unwrap_or(TypeId::ANY),
                 ..resolved
             }
         } else {
             resolved
+        }
+    }
+
+    /// The signature that `resolve_call_or_new` hands to `resolve_call` as the only candidate of the call `id`, found as it finds it.
+    /// Whatever the arguments are, the call resolves to that signature or to an instantiation of it. `None`: it hands on none, or several.
+    pub(super) fn only_candidate_of_call(&mut self, file: FileId, id: CallId) -> Option<SigId> {
+        let hir = self.hir(file);
+        let data = &hir[id];
+        if matches!(hir[data.callee].kind, ExprKind::Super) {
+            return None;
+        }
+        let callee = self.chain_receiver(file, data.callee, data.chain).0;
+        let callee = self.non_null_type(callee);
+        if callee == TypeId::SILENT_NEVER {
+            return None;
+        }
+        let apparent = self.apparent_type(callee);
+        if self.is_error_type(apparent) || self.is_any(callee) {
+            return None;
+        }
+        match *self.signatures(callee, false) {
+            [only] => Some(only),
+            _ => None,
         }
     }
 
@@ -1232,6 +1395,13 @@ impl<'p, 's> Checker<'p, 's> {
                 ret: TypeId::ERROR,
             };
         }
+        let is_single_non_generic_candidate =
+            candidates.len() == 1 && self.sig_type_params(candidates[0]).is_empty();
+        // Where the arguments don't fit, `candidate_for_overload_failure` answers with the candidate too, and the mistake is
+        // reported. Whoever lowers reports none.
+        if is_single_non_generic_candidate && self.answers_lowering {
+            return self.resolved_to(file, call, candidates[0], expects_return);
+        }
         let mut s = CallState {
             file,
             call,
@@ -1241,14 +1411,13 @@ impl<'p, 's> Checker<'p, 's> {
             this_arg,
             candidates: SmallVec::from_slice(&candidates),
             arg_check_mode: CheckMode::empty(),
-            is_single_non_generic_candidate: false,
+            is_single_non_generic_candidate,
             checks_arguments_once: false,
             candidates_for_argument_error: Sigs::new(),
             candidate_for_argument_arity_error: None,
             candidate_for_type_argument_error: None,
         };
-        s.is_single_non_generic_candidate =
-            s.candidates.len() == 1 && self.sig_type_params(s.candidates[0]).is_empty();
+
         s.checks_arguments_once = s.is_single_non_generic_candidate
             && matches!(node, CallLike::Call(_) | CallLike::Jsx(_))
             // `getResolvedSignature` resets `resolutionStart` only the first time.
@@ -1276,24 +1445,13 @@ impl<'p, 's> Checker<'p, 's> {
             Some(sig) => sig,
             None => self.candidate_for_overload_failure(&s),
         };
-        // `reorderCandidates`: with `callChainFlags` a candidate is its `getOptionalCallSignature`.
-        // Only the return type of the clone differs, so the chosen signature is cloned.
-        let sig = self.optional_call_signature_in_chain(file, call, sig);
-        let resolved = ResolvedCall {
-            sig: Some(sig),
-            // Not requested yet. See `with_return_type`.
-            ret: if expects_return == ExpectsReturn::Yes {
-                TypeId::UNRESOLVED
-            } else {
-                TypeId::ANY
-            },
-        };
+        let resolved = self.resolved_to(file, call, sig, expects_return);
         if !is_chosen {
             // `resolvedSignature = result`, before the errors are reported.
-            self.resolved_meanwhile.push((file, call, resolved));
+            self.push_resolved_meanwhile(file, call, resolved);
             let since = self.reported.len();
             self.report_call_resolution_errors(&s, signatures, head_message);
-            self.resolved_meanwhile.pop();
+            self.pop_resolved_meanwhile();
             // Another checker may be the one to report it.
             let reported = self.take_reported_from(since);
             // If `addDiagnostic` discarded them, the entry still records that
@@ -1305,6 +1463,28 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         resolved
+    }
+
+    #[inline]
+    fn resolved_to(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        sig: SigId,
+        expects_return: ExpectsReturn,
+    ) -> ResolvedCall {
+        // `reorderCandidates`: with `callChainFlags` a candidate is its `getOptionalCallSignature`.
+        // Only the return type of the clone differs, so the chosen signature is cloned.
+        let sig = self.optional_call_signature_in_chain(file, call, sig);
+        ResolvedCall {
+            sig: Some(sig),
+            // Not requested yet. See `with_return_type`.
+            ret: if expects_return == ExpectsReturn::Yes {
+                TypeId::UNRESOLVED
+            } else {
+                TypeId::ANY
+            },
+        }
     }
 
     /// `checkCallExpression`: `getReturnTypeOfSignature(signature)`. It runs after
@@ -1330,6 +1510,7 @@ impl<'p, 's> Checker<'p, 's> {
         s.candidate_for_type_argument_error = None;
         if s.is_single_non_generic_candidate {
             let candidate = s.candidates[0];
+
             let params = self.sig_params_with_first(candidate, 0);
             if !s.type_args.is_empty() || !self.has_correct_arity(s, candidate, &params) {
                 return None;
@@ -1527,8 +1708,9 @@ impl<'p, 's> Checker<'p, 's> {
             let this_argument_type = self.this_argument_type(file, s.this_arg);
             self.infer(context, this_argument_type, this_type, 0);
         }
+        let hir = self.hir(file);
         for (i, &arg) in args.iter().enumerate().take(arg_count) {
-            if matches!(self.hir(file)[arg.node()].kind, ExprKind::Missing) {
+            if matches!(hir[arg.node()].kind, ExprKind::Missing) {
                 continue;
             }
             if let Some(param_type) = self.param_type_at(&params, i)
@@ -1605,7 +1787,7 @@ impl<'p, 's> Checker<'p, 's> {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
-            | ExprKind::Regex => true,
+            | ExprKind::Regex { .. } => true,
             ExprKind::Template { exprs } => exprs.is_empty(),
             // `checkIdentifier` returns the declared type of a variable that's being assigned. A
             // declaration that comes earlier has been checked, so that type is resolved.
@@ -1717,7 +1899,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.sig_return(generic),
             self.sig_this_type(generic),
         );
-        self.types().intern_sig(SigData::Synth {
+        self.types().intern_synth_sig(SynthSig {
             type_params: ArenaBox::empty(),
             params: self.list(&params),
             ret,
@@ -1804,7 +1986,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.sig_this_type(returned),
         );
         // `cloneSignature`: it has the same declaration as `returned`.
-        let generalized = self.types().intern_sig(SigData::Synth {
+        let generalized = self.types().intern_synth_sig(SynthSig {
             type_params: self.list(inferred_type_params),
             params: self.list(&params),
             ret,
@@ -2041,7 +2223,7 @@ impl<'p, 's> Checker<'p, 's> {
         let returns: Vec<TypeId> = sigs.iter().map(|&sig| self.sig_return(sig)).collect();
         let ret = self.intersection(&returns);
         // It has the first signature's declaration.
-        self.types().intern_sig(SigData::Synth {
+        self.types().intern_synth_sig(SynthSig {
             type_params: ArenaBox::empty(),
             params: self.list(&params),
             ret,
@@ -2615,10 +2797,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// may have short-circuited before the call (`nonOptionalType != funcType`), it includes
     /// `undefined`.
     fn return_type_in_chain(&mut self, file: FileId, call: ExprId, sig: SigId) -> TypeId {
-        let ExprKind::Call(c) = self.hir(file)[call].kind else {
+        let hir = self.hir(file);
+        let ExprKind::Call(c) = hir[call].kind else {
             return self.sig_return(sig);
         };
-        let Call { callee, chain, .. } = self.hir(file)[c];
+        let Call { callee, chain, .. } = hir[c];
         if !self.chain_receiver(file, callee, chain).1 {
             return self.sig_return(sig);
         }
@@ -2635,10 +2818,11 @@ impl<'p, 's> Checker<'p, 's> {
         call: ExprId,
         sig: SigId,
     ) -> SigId {
-        let ExprKind::Call(c) = self.hir(file)[call].kind else {
+        let hir = self.hir(file);
+        let ExprKind::Call(c) = hir[call].kind else {
             return sig;
         };
-        let Call { callee, chain, .. } = self.hir(file)[c];
+        let Call { callee, chain, .. } = hir[c];
         if chain == Chain::No {
             return sig;
         }
@@ -2658,7 +2842,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::VOID;
         };
         let chain = match self.bound(file).parent_of_expr(this_arg) {
-            Parent::Expr(access) => match self.hir(file)[access].kind {
+            Parent::Expr(access) => match self.hir(file).checked_kind(access) {
                 ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain,
                 _ => Chain::No,
             },
@@ -3214,7 +3398,7 @@ impl<'p, 's> Checker<'p, 's> {
         call: ExprId,
         arg: ExprId,
     ) -> Option<TypeId> {
-        if self.iife_resolving.contains(&(file, call)) {
+        if !self.iife_resolving.is_empty() && self.iife_resolving.contains(&(file, call)) {
             // `anySignature`: the contextual type is `any`.
             self.note_state_was_read();
             return Some(TypeId::ANY);
@@ -3243,7 +3427,6 @@ impl<'p, 's> Checker<'p, 's> {
                 return None;
             }
         }
-        let hir = self.hir(file);
         // The pieces of text come first.
         let (id, offset) = match hir[call].kind {
             ExprKind::Call(id) | ExprKind::New(id) => (id, 0),
@@ -3268,11 +3451,10 @@ impl<'p, 's> Checker<'p, 's> {
         // never re-entered.
         let is_cached = self.p.calls.get(&self.task, &(file, call)).is_some();
         if !is_cached
-            && !self
-                .resolved_meanwhile
-                .iter()
-                .any(|r| r.0 == file && r.1 == call)
-            && self.stack.contains(&Query::Call(file, call))
+            && self.find_resolved_meanwhile(file, call).is_none()
+            && self
+                .position_in_progress(Query::Call(file, call), 0)
+                .is_some()
         {
             self.note_state_was_read();
             return Some(TypeId::ANY);

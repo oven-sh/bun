@@ -47,6 +47,7 @@ template<> struct ExternTraits<uint32_t> : TrivialExtern<uint32_t> {};
 template<> struct ExternTraits<uint64_t> : TrivialExtern<uint64_t> {};
 template<> struct ExternTraits<double> : TrivialExtern<double> {};
 template<> struct ExternTraits<void*> : TrivialExtern<void*> {};
+template<> struct ExternTraits<JSC::JSString*> : TrivialExtern<JSC::JSString*> {};
 
 enum ExternNullPtr : uint8_t {};
 
@@ -186,6 +187,7 @@ inline JSC::ArgList variadicArguments(JSC::CallFrame* callFrame, unsigned startI
 
 // What `$bindgen` returns for a function.
 JSC::EncodedJSValue createFunction(JSC::JSGlobalObject*, unsigned length, ASCIILiteral name, JSC::NativeFunction);
+JSC::EncodedJSValue createFunctionNamedAsBound(JSC::JSGlobalObject*, unsigned length, ASCIILiteral name, JSC::NativeFunction);
 
 // A converted argument and the argument itself.
 template<typename T>

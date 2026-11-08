@@ -10,9 +10,9 @@ use crate::{
     RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
 };
 
-pub(crate) fn compute_cross_chunk_dependencies(
-    c: &mut LinkerContext,
-    chunks: &mut [Chunk],
+pub(crate) fn compute_cross_chunk_dependencies<'a>(
+    c: &mut LinkerContext<'a>,
+    chunks: &mut [Chunk<'a>],
 ) -> Result<(), bun_alloc::AllocError> {
     if !c.graph.code_splitting {
         // No need to compute cross-chunk dependencies if there can't be any
@@ -89,7 +89,7 @@ struct CrossChunkDependencies<'a, 'bump> {
     // the caller's sequential `walk` loop; `walk` only reads `chunks[other].unique_key`
     // (disjoint from the per-iteration `&mut Chunk`). The slice outlives the struct
     // (caller stack frame).
-    chunks: bun_ptr::BackRef<[Chunk]>,
+    chunks: bun_ptr::BackRef<[Chunk<'bump>]>,
     parts: &'a [bun_ast::PartList<'bump>],
     import_records: &'a mut [bun_ast::import_record::List<'bump>],
     flags: &'a [js_meta::Flags],
@@ -555,9 +555,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             index_sort::sort_slice_unstable_by(lazy_chunk_indices, |a, b| a.cmp(b));
 
             let chunk = &mut chunks[chunk_index];
-            // `ChunkImport.import_kind` is a `#[repr(u8)]` enum (validity
-            // invariant), so `writable_slice` would form `&mut [T]` over
-            // invalid bit patterns. Push into reserved capacity instead.
+            // Pushed, not written into an uninitialised `&mut [T]`: `import_kind` is an enum.
             chunk.cross_chunk_imports.reserve(lazy_chunk_indices.len());
             for &lazy_chunk_index in lazy_chunk_indices.iter() {
                 chunk.cross_chunk_imports.push(chunk::ChunkImport {

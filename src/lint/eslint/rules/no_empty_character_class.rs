@@ -5,7 +5,7 @@ use bun_lint::regex::{self, ast::Kind as RegexKind};
 /// Disallow empty character classes in regular expressions.
 pub struct NoEmptyCharacterClass;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Empty class.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Empty class.");
 
 impl Rule for NoEmptyCharacterClass {
     const META: Meta = Meta::eslint("no-empty-character-class", Kind::Problem).recommended().hints();
@@ -38,7 +38,7 @@ impl Rule for NoEmptyCharacterClass {
                     true => Span::new(pattern_start + node.start(), pattern_start + node.end()),
                     false => e.span(),
                 };
-                cx.report(report_span, UNEXPECTED).hint("[] in a regular expression matches nothing.");
+                cx.report(report_span, UNEXPECTED).hint("[] matches nothing.");
             }
         }
     }

@@ -16,25 +16,25 @@ enum Generics {
     Only(Vec<Box<[u8]>>),
 }
 
-const INVALID_VOID_FOR_GENERIC: Message = Message::new(
+const INVALID_VOID_FOR_GENERIC: &Message = &Message::new(
     "invalidVoidForGeneric",
     "{{ generic }} may not have void as a type argument.",
 );
-const INVALID_VOID_NOT_RETURN: Message =
-    Message::new("invalidVoidNotReturn", "void is only valid as a return type.");
-const INVALID_VOID_NOT_RETURN_OR_GENERIC: Message = Message::new(
+const INVALID_VOID_NOT_RETURN: &Message =
+    &Message::new("invalidVoidNotReturn", "void is only valid as a return type.");
+const INVALID_VOID_NOT_RETURN_OR_GENERIC: &Message = &Message::new(
     "invalidVoidNotReturnOrGeneric",
     "void is only valid as a return type or generic type argument.",
 );
-const INVALID_VOID_NOT_RETURN_OR_THIS_PARAM: Message = Message::new(
+const INVALID_VOID_NOT_RETURN_OR_THIS_PARAM: &Message = &Message::new(
     "invalidVoidNotReturnOrThisParam",
     "void is only valid as return type or type of `this` parameter.",
 );
-const INVALID_VOID_NOT_RETURN_OR_THIS_PARAM_OR_GENERIC: Message = Message::new(
+const INVALID_VOID_NOT_RETURN_OR_THIS_PARAM_OR_GENERIC: &Message = &Message::new(
     "invalidVoidNotReturnOrThisParamOrGeneric",
     "void is only valid as a return type or generic type argument or the type of a `this` parameter.",
 );
-const INVALID_VOID_UNION_CONSTITUENT: Message = Message::new(
+const INVALID_VOID_UNION_CONSTITUENT: &Message = &Message::new(
     "invalidVoidUnionConstituent",
     "void is not valid as a constituent in a union type",
 );

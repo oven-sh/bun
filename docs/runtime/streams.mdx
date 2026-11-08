@@ -275,6 +275,10 @@ export class ArrayBufferSink {
   constructor();
 
   start(options?: {
+    /**
+     * On {@link ArrayBufferSink.end}, return the data as a `Uint8Array` instead of an `ArrayBuffer`.
+     * With `stream`, {@link ArrayBufferSink.flush} also returns a `Uint8Array`.
+     */
     asUint8Array?: boolean;
     /**
      * Preallocate an internal buffer of this size
@@ -282,21 +286,22 @@ export class ArrayBufferSink {
      */
     highWaterMark?: number;
     /**
-     * On {@link ArrayBufferSink.flush}, return the written data as a `Uint8Array`.
-     * Writes will restart from the beginning of the buffer.
+     * On {@link ArrayBufferSink.flush}, return the written data as an `ArrayBuffer`.
+     * If `asUint8Array` is also set, return it as a `Uint8Array`.
+     * Writes restart from the beginning of the buffer.
      */
     stream?: boolean;
   }): void;
 
   write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
   /**
-   * Flush the internal buffer
+   * Flush the internal buffer.
    *
-   * If {@link ArrayBufferSink.start} was passed a `stream` option, this will return a `ArrayBuffer`
-   * If {@link ArrayBufferSink.start} was passed a `stream` option and `asUint8Array`, this will return a `Uint8Array`
-   * Otherwise, this will return the number of bytes written since the last flush
+   * - If {@link ArrayBufferSink.start} was passed a `stream` option, this returns an `ArrayBuffer`.
+   * - If it was passed a `stream` option and `asUint8Array`, this returns a `Uint8Array`.
+   * - Otherwise, this returns `0` and leaves the data in the buffer.
    *
-   * This API might change later to separate Uint8ArraySink and ArrayBufferSink
+   * This API might change later to separate Uint8ArraySink and ArrayBufferSink.
    */
   flush(): number | Uint8Array<ArrayBuffer> | ArrayBuffer;
   end(): ArrayBuffer | Uint8Array<ArrayBuffer>;

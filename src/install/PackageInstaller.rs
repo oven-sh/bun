@@ -2489,12 +2489,10 @@ impl<'a> PackageInstaller<'a> {
                         resolution,
                     );
 
-                if !is_trusted
-                    && matches!(
-                        resolution.tag,
-                        resolution::Tag::Git | resolution::Tag::Github
-                    )
-                    && let Ok(package_dir) = Dir::borrow(&destination_fd).open_dir(
+                if matches!(
+                    resolution.tag,
+                    resolution::Tag::Git | resolution::Tag::Github
+                ) && let Ok(package_dir) = Dir::borrow(&destination_fd).open_dir(
                         alias.slice(string_buf!()),
                         bun_sys::OpenDirOptions {
                             iterate: true,
@@ -2502,7 +2500,8 @@ impl<'a> PackageInstaller<'a> {
                         },
                     )
                 {
-                    let _ = crate::published_files::prune_installed_package(&package_dir);
+                    let _ =
+                        crate::published_files::prune_installed_package(&package_dir, is_trusted);
                     package_dir.close();
                 }
 

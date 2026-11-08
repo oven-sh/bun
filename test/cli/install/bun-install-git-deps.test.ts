@@ -1614,7 +1614,7 @@ test.concurrent.each(["hoisted", "isolated"])(
 );
 
 test.concurrent(
-  'a git dependency follows the last duplicate "files" and prunes a cache entry from an older Bun',
+  'a git dependency follows the last duplicate "files" and prunes the copy of a cache entry from an older Bun',
   async () => {
     using dir = tempDir("git-dep-published-files-cache", {});
     const root = String(dir);
@@ -1649,14 +1649,14 @@ test.concurrent(
     expect(installOutput(second.stdout).at(-1)).toBe("1 package installed");
     expect(second.exitCode).toBe(0);
     expect(tree()).toEqual(expected);
-    expect(readdirSync(join(cache, entry))).toContain(".bun-tag");
-    expect(existsSync(join(cache, entry, "src", "a.js"))).toBe(false);
-    expect(existsSync(join(cache, entry, "docs", "guide.md"))).toBe(false);
+    // The shared cache entry is not changed while other installs may be reading it.
+    expect(existsSync(join(cache, entry, "src", "a.js"))).toBe(true);
+    expect(existsSync(join(cache, entry, "docs", "guide.md"))).toBe(true);
   },
 );
 
 // Older versions of Bun checked symlinks out as links, and `main` can be one.
-test.concurrent.skipIf(isWindows)("a cache entry from an older Bun that has symlinks is not pruned", async () => {
+test.concurrent.skipIf(isWindows)("the copy of a cache entry from an older Bun that has symlinks is not pruned", async () => {
   using dir = tempDir("git-dep-published-files-cache-link", {});
   const root = String(dir);
   const bare = await makeSharedRepo(root, [
@@ -1680,9 +1680,43 @@ test.concurrent.skipIf(isWindows)("a cache entry from an older Bun that has syml
   const second = await runInstall(project, cache, {});
   expect(installOutput(second.stdout).at(-1)).toBe("1 package installed");
   expect(second.exitCode).toBe(0);
-  expect(readdirSync(join(cache, entry)).sort()).toEqual([".bun-tag", "dist", "entry.js", "package.json", "src"]);
-  expect(readFileSync(join(project, "node_modules", "demo-lib", "entry.js"), "utf8")).toBe("module.exports = 'b';\n");
+  const installed = join(project, "node_modules", "demo-lib");
+  expect(readdirSync(installed).sort()).toEqual([".bun-tag", "dist", "entry.js", "package.json", "src"]);
+  expect(readFileSync(join(installed, "entry.js"), "utf8")).toBe("module.exports = 'b';\n");
 });
+
+// That backend links each file of the copy, package.json included, to the cache.
+test.concurrent.skipIf(isWindows)(
+  "a git dependency with a prepare script installed with the symlink backend keeps its files",
+  async () => {
+    using dir = tempDir("git-dep-published-files-symlink-backend", {});
+    const root = String(dir);
+    const bare = await makeSharedRepo(root, [
+      {
+        branch: "prepare",
+        files: {
+          "package.json": JSON.stringify({
+            name: "demo-lib",
+            version: "1.0.0",
+            main: "dist/a.js",
+            files: ["dist"],
+            scripts: { prepare: "exit 1" },
+          }),
+          "src/a.js": "a\n",
+          "dist/a.js": "module.exports = 'a';\n",
+        },
+      },
+    ]);
+    const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#prepare` });
+    const { stdout, exitCode } = await runInstall(project, join(root, "cache"), {}, "--backend", "symlink");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    const installed = join(project, "node_modules", "demo-lib");
+    const links = treeOf(installed).map(path => path.replace(/ -> .*$/, ""));
+    expect(links).toEqual([".bun-tag", "dist", "dist/a.js", "index.js", "package.json", "src", "src/a.js"]);
+    expect(readFileSync(join(installed, "dist", "a.js"), "utf8")).toBe("module.exports = 'a';\n");
+  },
+);
 
 test.concurrent("a git dependency keeps a normalized extensionless TypeScript main that files leaves out", async () => {
   using dir = tempDir("git-dep-published-files-main", {});

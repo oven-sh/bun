@@ -8,6 +8,7 @@ import {
   bunEnv as env,
   hostedGitRepository,
   isWindows,
+  normalizeBunSnapshot,
   readdirSorted,
   tempDir,
   tmpdirSync,
@@ -1352,7 +1353,11 @@ for (const streaming of [true, false]) {
       env: { ...githubEnv(), ...(streaming ? {} : { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }) },
     });
     const err = await stderr.text();
-    expect(err).not.toContain("error:");
+    expect(normalizeBunSnapshot(err)).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Resolved, downloaded and extracted [2]
+      Saved lockfile"
+    `);
     expect(await exited).toBe(0);
     const installed = join(package_dir, "node_modules", "files-demo");
     const tree = async (dir: string): Promise<string[]> =>

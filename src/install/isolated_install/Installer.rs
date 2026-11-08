@@ -1890,7 +1890,7 @@ impl<'a> Installer<'a> {
                 return Err(TaskError::LinkPackage(err));
             }
 
-            self.prune_without_scripts(entry_id, uses_global_store, link_in_place, staging);
+            self.prune_installed_copy(entry_id, uses_global_store, link_in_place, staging);
 
             if uses_global_store
                 || link_in_place
@@ -1903,9 +1903,9 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Applies `files` and `.npmignore` to a Git or GitHub dependency whose `prepare` scripts
-    /// cannot run, because it is not trusted. A trusted one keeps the checkout that they build from.
-    fn prune_without_scripts(
+    /// Applies `files` and `.npmignore` to the copy of a Git or GitHub dependency. A trusted one
+    /// with `prepare` scripts keeps the checkout that they build from.
+    fn prune_installed_copy(
         &self,
         entry_id: StoreEntryId,
         uses_global_store: bool,
@@ -1915,8 +1915,7 @@ impl<'a> Installer<'a> {
         if !matches!(
             self.resolution(entry_id).tag,
             ResolutionTag::Git | ResolutionTag::Github
-        ) || self.is_trusted(entry_id)
-        {
+        ) {
             return;
         }
         let opened = if uses_global_store {
@@ -1934,7 +1933,7 @@ impl<'a> Installer<'a> {
         };
         if let Ok(fd) = opened {
             let dir = sys::Dir::from_fd(fd);
-            let _ = crate::published_files::prune_installed_package(&dir);
+            let _ = crate::published_files::prune_installed_package(&dir, self.is_trusted(entry_id));
             dir.close();
         }
     }

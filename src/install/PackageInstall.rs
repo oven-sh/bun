@@ -2424,15 +2424,6 @@ impl<'a> PackageInstall<'a> {
                     resolution_tag,
                 );
                 if exists {
-                    if matches!(
-                        resolution_tag,
-                        resolution::Tag::Git | resolution::Tag::Github
-                    ) {
-                        crate::published_files::prune_cached_entry(
-                            self.cache_dir,
-                            entry.as_bytes(),
-                        );
-                    }
                     manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
                 }
                 !exists

@@ -1182,18 +1182,26 @@ fn bundles_dependencies(json: &Expr) -> bool {
 /// package.json is missing or invalid. `node_modules` is kept, because it is only there when the
 /// package bundles its dependencies.
 pub fn prune_to_published_files(root_dir: &Dir) -> bun_sys::Maybe<()> {
-    prune(root_dir, false)
+    prune(root_dir, Target::Cache)
 }
 
-/// For a Git or GitHub dependency installed without its `prepare` scripts running, such as one
-/// that is not in `trustedDependencies`. The cache keeps whole the checkout of a package that has
-/// them, so that a project that trusts the package can still build it. Does nothing to a package
-/// without such scripts, which the cache already holds pruned.
-pub fn prune_installed_package(root_dir: &Dir) -> bun_sys::Maybe<()> {
-    prune(root_dir, true)
+/// For the copy of a Git or GitHub dependency in `node_modules` or the store. The cache keeps whole
+/// the checkout of a package that has `prepare` scripts, so that a project that trusts the package
+/// can still build it, and an older Bun cached every checkout whole. The copy of a `trusted`
+/// package with such scripts stays whole. A copy with symlinks, which the symlink backend makes
+/// and older caches can hold, also stays whole, and so does its `node_modules`, which holds the
+/// package's nested dependencies.
+pub fn prune_installed_package(root_dir: &Dir, trusted: bool) -> bun_sys::Maybe<()> {
+    prune(root_dir, Target::Installed { trusted })
 }
 
-fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> {
+#[derive(Clone, Copy)]
+enum Target {
+    Cache,
+    Installed { trusted: bool },
+}
+
+fn prune(root_dir: &Dir, target: Target) -> bun_sys::Maybe<()> {
     use std::collections::HashSet;
     crate::initialize_mini_store();
     let Ok(contents) = root_dir
@@ -1219,7 +1227,7 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
     }
     drop_shadowed_properties(root);
 
-    if !bundles_dependencies(json) {
+    if matches!(target, Target::Cache) && !bundles_dependencies(json) {
         match root_dir.delete_file_z(bun_core::zstr!("node_modules")) {
             Ok(()) => {}
             Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
@@ -1234,8 +1242,26 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
             .iter()
             .any(|name| scripts.get(name).is_some())
     });
-    if has_prepare != installed_without_scripts {
+    let keep_whole = match target {
+        Target::Cache => has_prepare,
+        Target::Installed { trusted } => trusted && has_prepare,
+    };
+    if keep_whole {
         return Ok(());
+    }
+    if matches!(target, Target::Installed { .. }) {
+        let check = root_dir.open_dir(
+            b".",
+            bun_sys::OpenDirOptions {
+                iterate: true,
+                no_follow: false,
+            },
+        )?;
+        let has_no_links = crate::git_runner::has_no_links(&check);
+        check.close();
+        if !has_no_links {
+            return Ok(());
+        }
     }
 
     let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -1277,80 +1303,21 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
     let mut keep_files: HashSet<Vec<u8>> = HashSet::new();
     let mut keep_dirs: HashSet<Vec<u8>> = HashSet::new();
     // The entry point stays even if `files` or an ignore file leaves it out.
-    if let Some(main) = json.get(b"main").and_then(|main| main.as_string(bump)) {
-        // `lib\\entry.js` and `lib/./entry.js` name the same file as `lib/entry.js`.
-        let main: &[u8] = main.as_ref();
-        let raw: Vec<u8> = main
-            .iter()
-            .map(|&c| if cfg!(windows) && c == b'\\' { b'/' } else { c })
-            .collect();
-        let mut parts: Vec<&[u8]> = Vec::new();
-        let mut inside = !raw.starts_with(b"/");
-        for part in strings::split(&raw, b"/") {
-            match part {
-                b"" | b"." => {}
-                b".." => inside = parts.pop().is_some() && inside,
-                part => parts.push(part),
+    if let Some(main) = json
+        .get(b"main")
+        .and_then(|main| main.as_string(bump))
+        .and_then(|main| normalize_main(main.as_ref()))
+    {
+        for entry in main_candidates(&main) {
+            if bin_kind_without_following_symlinks(root_path, &entry) != bun_sys::FileKind::File {
+                continue;
             }
-        }
-        let main = parts.join(&b'/');
-        if inside && !main.is_empty() {
-            // Every file the resolver may pick for an extensionless or directory `main`.
-            const SUFFIXES: [&[u8]; 22] = [
-                b"",
-                b".js",
-                b".mjs",
-                b".cjs",
-                b".jsx",
-                b".ts",
-                b".mts",
-                b".cts",
-                b".tsx",
-                b".json",
-                b".node",
-                b"/index.js",
-                b"/index.mjs",
-                b"/index.cjs",
-                b"/index.jsx",
-                b"/index.ts",
-                b"/index.mts",
-                b"/index.cts",
-                b"/index.tsx",
-                b"/index.json",
-                b"/index.node",
-                b"/package.json",
-            ];
-            let mut candidates: Vec<Vec<u8>> = SUFFIXES
-                .iter()
-                .map(|suffix| [&main[..], suffix].concat())
-                .collect();
-            // `main: "src/index.js"` can be served by `src/index.ts`, as in the resolver's
-            // `rewritten_file_extensions`.
-            const SUBSTITUTES: [(&[u8], &[&[u8]]); 4] = [
-                (b".js", &[b".ts", b".tsx", b".mts"]),
-                (b".jsx", &[b".ts", b".tsx", b".mts"]),
-                (b".mjs", &[b".mts"]),
-                (b".cjs", &[b".cts"]),
-            ];
-            for (from, tos) in SUBSTITUTES {
-                if let Some(stem) = main.strip_suffix(from) {
-                    for to in tos {
-                        candidates.push([stem, to].concat());
-                    }
+            for (i, &c) in entry.iter().enumerate() {
+                if c == b'/' {
+                    keep_dirs.insert(entry[..i].to_vec());
                 }
             }
-            for entry in candidates {
-                if bin_kind_without_following_symlinks(root_path, &entry) != bun_sys::FileKind::File
-                {
-                    continue;
-                }
-                for (i, &c) in entry.iter().enumerate() {
-                    if c == b'/' {
-                        keep_dirs.insert(entry[..i].to_vec());
-                    }
-                }
-                keep_files.insert(entry);
-            }
+            keep_files.insert(entry);
         }
     }
     for path in queue.into_paths() {
@@ -1392,7 +1359,10 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
         while let Some(entry) = try_next_dir_entry(&mut iter)? {
             let name = entry.name.slice_u8();
             if dir_subpath.is_empty()
-                && (name == b"package.json" || name == b"node_modules" || name == b".bun-tag")
+                && (name == b"package.json"
+                    || name == b"node_modules"
+                    || name.starts_with(crate::bun_hash_tag)
+                    || name == b".bun-tag")
             {
                 continue;
             }
@@ -1443,33 +1413,45 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
     result
 }
 
-/// Applies `prune_to_published_files` to a Git or GitHub cache entry that an older Bun stored
-/// whole. Pruning an entry that is already pruned changes nothing. An entry with symlinks, which
-/// older versions checked out as links, stays whole: pruning would remove a link that `main` or a
-/// kept file is reached through.
-pub fn prune_cached_entry(cache_dir: Fd, entry: &[u8]) {
-    let open = || {
-        Dir::borrow(&cache_dir).open_dir(
-            entry,
-            bun_sys::OpenDirOptions {
-                iterate: true,
-                no_follow: cfg!(not(windows)),
-            },
-        )
-    };
-    let Ok(check) = open() else {
-        return;
-    };
-    let has_no_links = crate::git_runner::has_no_links(&check);
-    check.close();
-    if !has_no_links {
-        return;
+/// `main` relative to the package root, without `.` and `..` segments. `None` if it is empty or
+/// leaves the package. `lib\\entry.js` and `lib/./entry.js` name the same file as `lib/entry.js`.
+fn normalize_main(main: &[u8]) -> Option<Vec<u8>> {
+    let raw: Vec<u8> = main
+        .iter()
+        .map(|&c| if cfg!(windows) && c == b'\\' { b'/' } else { c })
+        .collect();
+    let mut parts: Vec<&[u8]> = Vec::new();
+    let mut inside = !raw.starts_with(b"/");
+    for part in strings::split(&raw, b"/") {
+        match part {
+            b"" | b"." => {}
+            b".." => inside = parts.pop().is_some() && inside,
+            part => parts.push(part),
+        }
     }
-    let Ok(dir) = open() else {
-        return;
-    };
-    let _ = prune_to_published_files(&dir);
-    dir.close();
+    let main = parts.join(&b'/');
+    (inside && !main.is_empty()).then_some(main)
+}
+
+/// Every file the resolver may load for `main`, extensionless or a directory.
+fn main_candidates(main: &[u8]) -> Vec<Vec<u8>> {
+    const EXTENSIONS: [&[u8]; 10] = [
+        b".js", b".mjs", b".cjs", b".jsx", b".ts", b".mts", b".cts", b".tsx", b".json", b".node",
+    ];
+    let mut candidates: Vec<Vec<u8>> = vec![main.to_vec()];
+    for ext in EXTENSIONS {
+        candidates.push([main, ext].concat());
+        candidates.push([main, b"/index", ext].concat());
+    }
+    candidates.push([main, b"/package.json"].concat());
+    // `main: "src/index.js"` can be served by `src/index.ts`.
+    let ext = bun_paths::extension(main);
+    if let Some(stem) = main.strip_suffix(ext) {
+        for to in bun_resolver::resolver::rewritten_file_extensions(ext, || false) {
+            candidates.push([stem, to].concat());
+        }
+    }
+    candidates
 }
 
 /// When an object has several properties with the same key, `JSON.parse` keeps the last one. This

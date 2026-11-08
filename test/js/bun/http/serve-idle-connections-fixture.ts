@@ -77,14 +77,18 @@ async function run(options: Options) {
             type: "direct",
             pull(controller) {
               const chunk = Buffer.alloc(1024 * 1024, "x");
-              // write() returns a promise once the kernel takes no more. The stream ends with those bytes not sent.
-              let written: number | Promise<number>;
-              do {
-                written = controller.write(chunk);
+              const write = () => {
                 responseBytes += chunk.length;
-              } while (typeof written === "number" && responseBytes < 256 * chunk.length);
+                return controller.write(chunk);
+              };
+              // write() returns a promise once the kernel takes no more. One more chunk follows, so the stream
+              // ends with at least that much not sent.
+              while (typeof write() === "number" && responseBytes < 256 * chunk.length);
+              write();
               controller.close();
-              held.resolve();
+              // An immediate runs before the server polls its sockets again. Until then the kernel takes no more
+              // of the response, and the client reads nothing.
+              setImmediate(held.resolve);
             },
           }),
         );
@@ -244,24 +248,22 @@ async function run(options: Options) {
       return { swept, servedNext, stopped, closed: stopped ? await until(() => conn.closed) : conn.closed };
     },
 
-    // The response has ended for the server, and the client has not read it.
+    // The response has ended for the server, and the server still holds a part of it.
     async unsentResponse() {
       const chunks: Buffer[] = [];
       const conn = await dial(chunk => chunks.push(chunk));
-      conn.socket.pause();
-      await send(conn, "GET /stream HTTP/1.1\r\nHost: x\r\n\r\n");
-      await settles(held.promise);
-      await until(() => server.pendingRequests === 0);
+      conn.socket.write("GET /stream HTTP/1.1\r\nHost: x\r\n\r\n");
+      // This continues inside the immediate of the /stream handler. Nothing between here and the two calls may
+      // wait for a turn of the event loop: the server sends more of the response in each turn.
+      await held.promise;
+      const ended = server.pendingRequests === 0;
       const swept = server.closeIdleConnections();
-      let stoppedBeforeRead = false;
-      const stopping = server.stop().then(() => (stoppedBeforeRead = true));
-      await tick();
-      const result = { swept, stoppedBeforeRead };
-      conn.socket.resume();
+      const stopping = server.stop();
       await until(() => conn.closed);
       const received = bodyBytes(Buffer.concat(chunks));
       return {
-        ...result,
+        ended,
+        swept,
         received: received === responseBytes ? "all" : `${received} of ${responseBytes}`,
         stopped: await settles(stopping),
       };

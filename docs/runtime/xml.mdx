@@ -196,12 +196,18 @@ You can import XML files directly. Bun decodes the file like bytes passed to `XM
 
 #### Default Import
 
+TypeScript types the default import as `XML.Document`, which describes any XML document. Before you read from the import, give it the shape you expect. Write the shape as a type literal or a `type` alias: TypeScript reports `TS2352` for the same shape written as an `interface`. A child element that occurs once is a single value, not an array. See [One or many](#one-or-many).
+
 ```ts app.ts icon="/icons/typescript.svg"
 import doc from "./config.xml";
 
-console.log(doc.config["@env"]); // "production"
-console.log(doc.config.database["@host"]); // "localhost"
-console.log(doc.config.feature.map(f => f["@name"])); // ["auth", "rateLimit"]
+const { config } = doc as {
+  config: { "@env": string; database: { "@host": string }; feature: { "@name": string }[] };
+};
+
+console.log(config["@env"]); // "production"
+console.log(config.database["@host"]); // "localhost"
+console.log(config.feature.map(f => f["@name"])); // ["auth", "rateLimit"]
 ```
 
 #### Named Import

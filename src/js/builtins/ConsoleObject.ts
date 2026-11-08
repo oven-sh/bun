@@ -4,99 +4,80 @@ export function asyncIterator(this: Console) {
 
   var decoder = new TextDecoder("utf-8", { fatal: false });
   var indexOf: (buffer: Uint8Array, offset: number) => number = Bun.indexOfLine;
-  var actualChunk: Uint8Array;
+  // Shared by all iterators. Not taken yet: `chunk` after the line feed at `i`, then `value` from `idx`.
+  var chunk: Uint8Array | undefined;
   var i: number = -1;
-  var idx: number;
+  var idx: number = 0;
   var last: number;
   var done: boolean;
   var value: Uint8Array[];
-  var value_len: number;
+  var value_len: number = 0;
   var pendingChunk: Uint8Array | undefined;
+  // A loop ended inside `chunk`, and the next loop continues in it.
+  var inherited: boolean = false;
 
   async function* ConsoleAsyncIterator() {
     var reader = stream.getReader();
     var deferredError: Error | undefined;
+    // Only a chunk that threw before its first line feed was found, or in its rest, has -1 here. It is not read again.
+    if (i === -1) chunk = undefined;
+    inherited = chunk !== undefined;
     try {
-      if (i !== -1) {
-        last = i + 1;
-        i = indexOf(actualChunk, last);
+      while (true) {
+        if (chunk !== undefined) {
+          // The line that ends at `i` is taken: a loop got it, or it threw.
+          last = i + 1;
+          i = indexOf(chunk, last);
+        } else {
+          if (idx === value_len) {
+            const firstResult = reader.readMany();
+            if ($isPromise(firstResult)) {
+              ({ done, value } = await firstResult);
+            } else {
+              ({ done, value } = firstResult);
+            }
+            idx = 0;
+
+            if (done) {
+              value_len = 0;
+              // Only one loop gets the line that the input ends in.
+              const rest = pendingChunk;
+              if (rest !== undefined) {
+                pendingChunk = undefined;
+                yield decoder.decode(rest);
+              }
+              return;
+            }
+            value_len = value.length;
+            if (value_len === 0) continue;
+          }
+
+          const next = value[idx];
+          idx++;
+          const bytes: Uint8Array = pendingChunk !== undefined ? Buffer.concat([pendingChunk, next]) : next;
+          pendingChunk = undefined;
+          chunk = bytes;
+          last = 0;
+          // TODO: "\r", 0x4048, 0x4049, 0x404A, 0x404B, 0x404C, 0x404D, 0x404E, 0x404F
+          i = indexOf(bytes, 0);
+        }
 
         while (i !== -1) {
-          yield decoder.decode(actualChunk.subarray(last, i));
+          yield decoder.decode(
+            chunk.subarray(last, process.platform === "win32" ? (chunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i),
+          );
           last = i + 1;
-          i = indexOf(actualChunk, last);
+          i = indexOf(chunk, last);
         }
 
-        for (idx++; idx < value_len; idx++) {
-          actualChunk = value[idx];
-          if (pendingChunk) {
-            actualChunk = Buffer.concat([pendingChunk, actualChunk]);
-            pendingChunk = undefined;
-          }
-
-          last = 0;
-          // TODO: "\r", 0x4048, 0x4049, 0x404A, 0x404B, 0x404C, 0x404D, 0x404E, 0x404F
-          i = indexOf(actualChunk, last);
-          while (i !== -1) {
-            yield decoder.decode(
-              actualChunk.subarray(
-                last,
-                process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
-              ),
-            );
-            last = i + 1;
-            i = indexOf(actualChunk, last);
-          }
-          i = -1;
-
-          pendingChunk = actualChunk.subarray(last);
-        }
-        actualChunk = undefined!;
-      }
-
-      while (true) {
-        const firstResult = reader.readMany();
-        if ($isPromise(firstResult)) {
-          ({ done, value } = await firstResult);
+        // An empty rest gives the "" after a final line feed, but not for a chunk that an earlier loop ended in.
+        if (!inherited) {
+          pendingChunk = chunk.subarray(last);
         } else {
-          ({ done, value } = firstResult);
+          inherited = false;
+          if (last < chunk.length) pendingChunk = chunk.subarray(last);
         }
-
-        if (done) {
-          if (pendingChunk) {
-            yield decoder.decode(pendingChunk);
-          }
-          return;
-        }
-
-        // we assume it was given line-by-line
-        for (idx = 0, value_len = value.length; idx < value_len; idx++) {
-          actualChunk = value[idx];
-          if (pendingChunk) {
-            actualChunk = Buffer.concat([pendingChunk, actualChunk]);
-            pendingChunk = undefined;
-          }
-
-          last = 0;
-          // TODO: "\r", 0x4048, 0x4049, 0x404A, 0x404B, 0x404C, 0x404D, 0x404E, 0x404F
-          i = indexOf(actualChunk, last);
-          while (i !== -1) {
-            // This yield may end the function, in that case we need to be able to recover state
-            // if the iterator was fired up again.
-            yield decoder.decode(
-              actualChunk.subarray(
-                last,
-                process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
-              ),
-            );
-            last = i + 1;
-            i = indexOf(actualChunk, last);
-          }
-          i = -1;
-
-          pendingChunk = actualChunk.subarray(last);
-        }
-        actualChunk = undefined!;
+        chunk = undefined;
       }
     } catch (e) {
       deferredError = e as Error;

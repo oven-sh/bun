@@ -9,6 +9,11 @@
 #include <JavaScriptCore/PropertySlot.h>
 #include <wtf/ScopedLambda.h>
 
+namespace JSC {
+class JSMap;
+class JSSet;
+}
+
 // What node's strict deep equality reads of a pair of objects, in node's order. #L: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js
 namespace Bun::NodeObjEquiv {
 
@@ -157,6 +162,10 @@ ALWAYS_INLINE bool ownsIndex(JSC::JSGlobalObject* globalObject, JSC::JSObject* a
 {
     return array->canGetIndexQuickly(index) || ownsIndexSlow(globalObject, array, index);
 }
+
+// Two Sets or two Maps of one size, as objEquiv has them (#L1002-L1055): their own enumerable keys, then setEquiv (#L757-L790) or mapEquiv (#L896-L939) in strict mode. Every comparison is (entry of the first, entry of the second), and an entry of the second is the partner of one entry of the first. Not as node in two places, each marked there: a member that both Sets hold is its own partner in a Set of two also, and so is a key that both Maps hold with equal values.
+bool setsEqual(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSSet* set1, JSC::JSSet* set2, const CompareValues&);
+bool mapsEqual(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSMap* map1, JSC::JSMap* map2, const CompareValues&);
 
 // slowHasUnequalTag (#L274-L279) for a pair that holds a Proxy. False for an array: node compares its tag after its length.
 bool hasUnequalTagSlow(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* o1, JSC::JSObject* o2);

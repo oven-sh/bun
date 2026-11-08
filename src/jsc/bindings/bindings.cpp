@@ -2030,6 +2030,29 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 }
             }
 
+            if (mode.checkPrototypes) {
+                // node answers false for a key of the right Error that is no own enumerable key of the left one (#L1022-L1024). The walk above takes its names from the left Error, and finds a name on the right one also where that one does not enumerate it. The lists are equally long, so such a pair has an own name that only the right Error enumerates.
+                const auto& list1 = a1.data()->propertyNameVector();
+                const auto& list2 = a2.data()->propertyNameVector();
+                UncheckedKeyHashSet<UniquedStringImpl*> names1;
+                for (size_t j = 0; j < propertyArrayLength2; j++) {
+                    const Identifier& i2 = list2[j];
+                    if (j < propertyArrayLength1 && list1[j] == i2) continue;
+                    if (names1.isEmpty()) {
+                        for (const Identifier& i1 : list1) {
+                            names1.add(i1.impl());
+                        }
+                    }
+                    if (names1.contains(i2.impl())) continue;
+
+                    bool isOwnName = right->hasOwnProperty(globalObject, PropertyName(i2));
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (isOwnName) {
+                        return false;
+                    }
+                }
+            }
+
             return true;
         }
         break;
@@ -2398,6 +2421,13 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
+        if constexpr (checkPrototypes) {
+            // node compares the own keys of a Set, then each pair of its members once, as (member of the first, member of the second). This answers for all of it: an answer of std::nullopt would have the arm asked again with the operands exchanged.
+            return Bun::NodeObjEquiv::setsEqual(globalObject, scope, set1, set2, [&](JSValue left, JSValue right) {
+                return Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+            });
+        }
+
         auto iter1 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
         JSValue key1;
         while (iter1->next(globalObject, key1)) {
@@ -2426,10 +2456,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             }
         }
 
-        if constexpr (checkPrototypes) {
-            // node also compares own enumerable properties of Sets.
-            break;
-        }
         return true;
     }
     case JSMapType: {
@@ -2443,6 +2469,13 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 
         if (leftSize != map2->size()) {
             return false;
+        }
+
+        if constexpr (checkPrototypes) {
+            // As for a Set: the own keys, then each pair of entries once, as (entry of the first, entry of the second).
+            return Bun::NodeObjEquiv::mapsEqual(globalObject, scope, map1, map2, [&](JSValue left, JSValue right) {
+                return Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+            });
         }
 
         auto iter1 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
@@ -2480,10 +2513,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             }
         }
 
-        if constexpr (checkPrototypes) {
-            // node also compares own enumerable properties of Maps.
-            break;
-        }
         return true;
     }
     case ArrayBufferType:

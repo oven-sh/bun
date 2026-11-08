@@ -2,12 +2,15 @@
 // getter and Proxy trap that ran, in order. deep-equal.test.ts runs this file under Bun and under Node.js and compares
 // the two outputs.
 //
-//   <runtime> deep-equal-differential-fixture.cjs <seed> <pairs>
+//   <runtime> deep-equal-differential-fixture.cjs <seed> <pairs> [collections]
 //
 // A value is made from a recipe, so every comparison gets operands of its own. The recipes hold:
 //   - plain objects, objects with no prototype or a shared one, class instances, an instance with a string tag;
 //   - arrays with holes, elements that are getters, and other keys; typed arrays, Dates and boxed numbers with keys;
 //   - functions, and Proxies of them;
+//   - with `collections` only: Sets and Maps of such values, in any order, with keys of their own. The first value of
+//     a pair is then a Set or a Map. One pair in four is a Set or a Map of 5 to 12 entries that are a few objects and
+//     changed copies of them, so that an entry is equal to more than one entry of the other value;
 //   - string keys, index keys, symbol keys, keys that are not enumerable;
 //   - getters that answer the same value or a new one each time, and getters that first delete, add, set or hide a
 //     key of their own object, change the length of their own array, or throw;
@@ -19,7 +22,8 @@
 //
 // Left out, because Bun and Node.js are known to differ there (the tests in deep-equal.test.ts that are expected
 // failures on Bun say how):
-//   - Map, Set and Error objects;
+//   - Error objects;
+//   - a member or a key that both values of a pair hold: each value is made on its own;
 //   - a value that holds itself;
 //   - a getter or a trap that changes the object that holds its own object;
 //   - a Symbol.toStringTag that is not a string, on anything but a Proxy.
@@ -37,6 +41,8 @@ const show = key => (typeof key === "symbol" ? `@${key.description}` : String(ke
 const PRIMITIVES = [0, -0, NaN, 1, 2, "x", "", true, null, undefined, 1n];
 const OBJECT_KEYS = ["a", "b", "c", "d", "e", "0", "1", "S1", "S2"];
 const NAMED_KEYS = ["a", "b", "c", "d", "e", "S1", "S2"];
+
+const COLLECTIONS = process.argv[4] === "collections";
 
 const sharedPrototype = { inherited: 1 };
 class Base {}
@@ -57,6 +63,15 @@ function makeRandom(seed) {
   };
   const int = n => Math.floor(next() * n);
   return { int, chance: p => next() < p, pick: list => list[int(list.length)] };
+}
+
+const copyOf = recipe => JSON.parse(JSON.stringify(recipe));
+
+function shuffle(random, list) {
+  for (let i = list.length - 1; i > 0; i--) {
+    const j = random.int(i + 1);
+    [list[i], list[j]] = [list[j], list[i]];
+  }
 }
 
 // Recipes.
@@ -136,6 +151,16 @@ function container(random, depth) {
   return { type: "function", properties: rest };
 }
 
+const entry = (random, depth) => ({ key: value(random, depth), value: value(random, depth) });
+
+function collection(random, depth) {
+  const made = { type: random.pick(["set", "map"]), entries: [], properties: [] };
+  for (let size = random.int(5); size > 0; size--)
+    made.entries.push(made.type === "set" ? value(random, depth - 1) : entry(random, depth - 1));
+  if (random.chance(0.2)) made.properties = properties(random, depth - 1, NAMED_KEYS, 2);
+  return made;
+}
+
 function proxy(random, target) {
   return {
     type: "proxy",
@@ -151,7 +176,7 @@ function proxy(random, target) {
 
 function value(random, depth) {
   if (depth <= 0 || random.chance(0.4)) return primitive(random);
-  const made = container(random, depth);
+  const made = COLLECTIONS && random.chance(0.2) ? collection(random, depth) : container(random, depth);
   return random.chance(0.12) ? proxy(random, made) : made;
 }
 
@@ -163,7 +188,26 @@ function places(recipe, replace, found) {
   if (recipe.type === "proxy") places(recipe.target, made => (recipe.target = made), found);
   for (const item of recipe.properties ?? []) places(item.value, made => (item.value = made), found);
   (recipe.elements ?? []).forEach((element, i) => places(element, made => (recipe.elements[i] = made), found));
+  (recipe.entries ?? []).forEach((item, i) => {
+    if (recipe.type === "set") return places(item, made => (recipe.entries[i] = made), found);
+    places(item.key, made => (item.key = made), found);
+    places(item.value, made => (item.value = made), found);
+  });
   return found;
+}
+
+// Another order of the entries of a Set or a Map, or an entry added, removed or replaced.
+function changeEntries(random, recipe) {
+  const entries = recipe.entries;
+  const fresh = () => (recipe.type === "set" ? value(random, 1) : entry(random, 1));
+  const how = random.int(7);
+  if (how < 2) shuffle(random, entries);
+  else if (how === 2) entries.reverse();
+  else if (how === 3) entries.splice(random.int(entries.length + 1), 0, fresh());
+  else if (entries.length === 0) return;
+  else if (how === 4) entries.splice(random.int(entries.length), 1);
+  else if (how === 5 || recipe.type === "set") entries[random.int(entries.length)] = fresh();
+  else random.pick(entries).value = value(random, 1);
 }
 
 function change(random, root) {
@@ -178,12 +222,9 @@ function change(random, root) {
   }
   const keys = recipe.type === "object" ? OBJECT_KEYS : NAMED_KEYS;
   const own = recipe.properties;
-  if (roll < 22 && own.length > 1) {
-    for (let i = own.length - 1; i > 0; i--) {
-      const j = random.int(i + 1);
-      [own[i], own[j]] = [own[j], own[i]];
-    }
-  } else if (roll < 38) replace(proxy(random, recipe));
+  if (recipe.entries && roll < 70) changeEntries(random, recipe);
+  else if (roll < 22 && own.length > 1) shuffle(random, own);
+  else if (roll < 38) replace(proxy(random, recipe));
   else if (roll < 48 && own.length > 0) random.pick(own).value = value(random, 1);
   else if (roll < 56 && own.length > 0) {
     const item = random.pick(own);
@@ -211,10 +252,34 @@ function change(random, root) {
   return holder.root;
 }
 
+// A Set or a Map of 5 to 12 entries that are a few objects and changed copies of them, against its copy in another
+// order. In two of five pairs the copy has another entry in place of one, or another value under a key.
+function crowdedPair(random) {
+  const type = random.pick(["set", "map"]);
+  const pool = [];
+  for (let kinds = 2 + random.int(3); kinds > 0; kinds--) {
+    const made = container(random, 1);
+    pool.push(made, change(random, copyOf(made)));
+  }
+  const entries = [];
+  for (let size = 5 + random.int(8); size > 0; size--) {
+    const drawn = copyOf(random.pick(pool));
+    entries.push(type === "set" ? drawn : { key: drawn, value: { type: "primitive", index: random.int(2) } });
+  }
+  const first = { type, entries, properties: [] };
+  const second = copyOf(first);
+  shuffle(random, second.entries);
+  const how = random.int(5);
+  if (how === 0) second.entries[random.int(entries.length)] = copyOf(random.pick(entries));
+  else if (how === 1 && type === "map") random.pick(second.entries).value = { type: "primitive", index: random.int(2) };
+  return { first, second, skipPrototype: random.chance(0.2) };
+}
+
 function pair(seed) {
   const random = makeRandom(seed);
-  let first = container(random, 2);
-  let second = JSON.parse(JSON.stringify(first));
+  if (COLLECTIONS && random.chance(0.25)) return crowdedPair(random);
+  let first = COLLECTIONS ? collection(random, 2) : container(random, 2);
+  let second = copyOf(first);
   for (let changes = random.pick([0, 1, 1, 1, 2, 2, 3]); changes > 0; changes--) second = change(random, second);
   if (random.chance(0.25)) first = change(random, first);
   if (random.chance(0.1)) first = proxy(random, first);
@@ -314,6 +379,18 @@ function build(recipe, name, log) {
       return define(new Number(recipe.number), recipe.properties, name, log);
     case "function":
       return define(function () {}, recipe.properties, name, log);
+    case "set": {
+      const set = new Set();
+      recipe.entries.forEach((member, i) => set.add(build(member, `${name}{${i}}`, log)));
+      return define(set, recipe.properties, name, log);
+    }
+    case "map": {
+      const map = new Map();
+      recipe.entries.forEach((item, i) =>
+        map.set(build(item.key, `${name}{${i}}.key`, log), build(item.value, `${name}{${i}}`, log)),
+      );
+      return define(map, recipe.properties, name, log);
+    }
     case "proxy": {
       const target = build(recipe.target, name, log);
       const otherKey = keyOf(recipe.other.key);

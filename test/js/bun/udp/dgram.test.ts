@@ -273,7 +273,7 @@ describe.skipIf(isWindows)("cluster", () => {
       "port + 2 ** 32": "port",
       "String(port - 65536)": "port",
       "a port that the primary holds": "EADDRINUSE",
-      "1n": "a port that the system picks",
+      "that port as a BigInt": "a port that the system picks",
     };
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${JSON.stringify(bound)}\n`, stderr: "", exitCode: 0 });
   });

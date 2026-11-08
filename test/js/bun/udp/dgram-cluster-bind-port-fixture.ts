@@ -51,8 +51,10 @@ if (cluster.isPrimary) {
   }
   // A port that another socket holds is an error, not a bind of some other port.
   bound["a port that the primary holds"] = await bind(process.env.HELD_PORT, false);
-  // Node converts this port in the primary and throws there. Here the primary
-  // converts no port that can throw, so nothing that a worker sends ends it.
-  bound["1n"] = typeof (await bind(1n, false)) === "number" ? "a port that the system picks" : "no bind";
+  // Node converts a BigInt port in the primary and throws there. Here the primary
+  // converts no port that can throw, so nothing that a worker sends ends it: the
+  // port reads as 0. A primary that converted this one would find the port taken.
+  const got = await bind(BigInt(process.env.HELD_PORT!), false);
+  bound["that port as a BigInt"] = typeof got === "number" ? "a port that the system picks" : got;
   process.send!(JSON.stringify(bound));
 }

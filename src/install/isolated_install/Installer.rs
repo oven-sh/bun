@@ -1890,6 +1890,8 @@ impl<'a> Installer<'a> {
                 return Err(TaskError::LinkPackage(err));
             }
 
+            self.prune_without_scripts(entry_id, uses_global_store, link_in_place, staging);
+
             if uses_global_store
                 || link_in_place
                 || self.commit_local_store_package(entry_id, staging)
@@ -1898,6 +1900,42 @@ impl<'a> Installer<'a> {
             }
             // The rename was refused: link again, in place.
             link_in_place = true;
+        }
+    }
+
+    /// Applies `files` and `.npmignore` to a Git or GitHub dependency whose `prepare` scripts
+    /// cannot run, because it is not trusted. A trusted one keeps the checkout that they build from.
+    fn prune_without_scripts(
+        &self,
+        entry_id: StoreEntryId,
+        uses_global_store: bool,
+        link_in_place: bool,
+        staging: Staging,
+    ) {
+        if !matches!(
+            self.resolution(entry_id).tag,
+            ResolutionTag::Git | ResolutionTag::Github
+        ) || self.is_trusted(entry_id)
+        {
+            return;
+        }
+        let opened = if uses_global_store {
+            let mut path = AutoAbsPath::init();
+            self.append_real_store_path(&mut path, entry_id, Which::Staging)
+                .and_then(|()| sys::open_dir_for_iteration(Fd::cwd(), path.slice()))
+        } else {
+            let mut path = AutoPath::init();
+            let appended = if link_in_place {
+                self.append_real_store_path(&mut path, entry_id, Which::Staging)
+            } else {
+                self.append_local_staging_path(&mut path, entry_id, staging)
+            };
+            appended.and_then(|()| sys::open_dir_for_iteration(Fd::cwd(), path.slice()))
+        };
+        if let Ok(fd) = opened {
+            let dir = sys::Dir::from_fd(fd);
+            let _ = crate::published_files::prune_installed_package(&dir);
+            dir.close();
         }
     }
 

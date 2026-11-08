@@ -1541,53 +1541,77 @@ test.concurrent('a git dependency installs only what "files" and .npmignore sele
   });
 });
 
-test.concurrent('a git dependency keeps its "main" and the sources of its prepare script', async () => {
-  using dir = tempDir("git-dep-published-files-main", {});
-  const root = String(dir);
-  const pkg = (extra: object) => JSON.stringify({ name: "demo-lib", version: "1.0.0", ...extra });
-  const bare = await makeSharedRepo(root, [
-    {
-      branch: "main-not-in-files",
-      files: { "package.json": pkg({ main: "lib/main.js", files: ["src"] }), "lib/main.js": "m\n", "src/a.js": "a\n" },
-    },
-    {
-      branch: "main-extensionless",
-      files: { "package.json": pkg({ main: "lib/entry", files: ["src"] }), "lib/entry.js": "m\n", "src/a.js": "a\n" },
-    },
-    {
-      branch: "main-directory",
-      files: { "package.json": pkg({ main: "lib", files: ["src"] }), "lib/index.js": "m\n", "src/a.js": "a\n" },
-    },
-    {
-      branch: "main-npmignored",
-      files: { "package.json": pkg({ main: "./lib/main.js" }), "lib/main.js": "m\n", ".npmignore": "lib\n" },
-    },
-    {
-      branch: "prepare",
-      files: {
-        "package.json": pkg({ files: ["dist"], scripts: { prepare: "echo build" } }),
-        "src/a.js": "a\n",
-        "dist/a.js": "a\n",
+test.concurrent.each(["hoisted", "isolated"])(
+  'a %s git dependency keeps its "main" and the sources of a trusted prepare script',
+  async linker => {
+    using dir = tempDir("git-dep-published-files-main", {});
+    const root = String(dir);
+    const pkg = (extra: object) => JSON.stringify({ name: "demo-lib", version: "1.0.0", ...extra });
+    const bare = await makeSharedRepo(root, [
+      {
+        branch: "main-not-in-files",
+        files: {
+          "package.json": pkg({ main: "lib/main.js", files: ["src"] }),
+          "lib/main.js": "m\n",
+          "src/a.js": "a\n",
+        },
       },
-    },
-  ]);
-  const url = `git+${pathToFileURL(bare)}`;
+      {
+        branch: "main-extensionless",
+        files: { "package.json": pkg({ main: "lib/entry", files: ["src"] }), "lib/entry.js": "m\n", "src/a.js": "a\n" },
+      },
+      {
+        branch: "main-directory",
+        files: { "package.json": pkg({ main: "lib", files: ["src"] }), "lib/index.js": "m\n", "src/a.js": "a\n" },
+      },
+      {
+        branch: "main-npmignored",
+        files: { "package.json": pkg({ main: "./lib/main.js" }), "lib/main.js": "m\n", ".npmignore": "lib\n" },
+      },
+      {
+        branch: "prepare",
+        files: {
+          "package.json": pkg({
+            files: ["dist"],
+            scripts: { prepare: `"${bunExe()}" -e "require('fs').cpSync('src/a.js', 'dist/built.js')"` },
+          }),
+          "src/a.js": "a\n",
+          "dist/a.js": "a\n",
+        },
+      },
+    ]);
+    const url = `git+${pathToFileURL(bare)}`;
 
-  const results: Record<string, string[]> = {};
-  for (const branch of ["main-not-in-files", "main-extensionless", "main-directory", "main-npmignored", "prepare"]) {
-    const project = writeProject(join(root, branch), { "demo-lib": `${url}#${branch}` });
-    expect((await runInstall(project, join(root, `cache-${branch}`), {})).exitCode).toBe(0);
-    results[branch] = treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag");
-  }
+    const results: Record<string, string[]> = {};
+    for (const branch of [
+      "main-not-in-files",
+      "main-extensionless",
+      "main-directory",
+      "main-npmignored",
+      "prepare",
+      "trusted",
+    ]) {
+      const project = writeProject(join(root, branch), {
+        "demo-lib": `${url}#${branch === "trusted" ? "prepare" : branch}`,
+      });
+      if (branch === "trusted") {
+        const json = JSON.parse(readFileSync(join(project, "package.json"), "utf8"));
+        writeFileSync(join(project, "package.json"), JSON.stringify({ ...json, trustedDependencies: ["demo-lib"] }));
+      }
+      expect((await runInstall(project, join(root, `cache-${branch}`), {}, "--linker", linker)).exitCode).toBe(0);
+      results[branch] = treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag");
+    }
 
-  expect(results).toEqual({
-    "main-not-in-files": ["lib", "lib/main.js", "package.json", "src", "src/a.js"],
-    "main-extensionless": ["lib", "lib/entry.js", "package.json", "src", "src/a.js"],
-    "main-directory": ["lib", "lib/index.js", "package.json", "src", "src/a.js"],
-    "main-npmignored": ["index.js", "lib", "lib/main.js", "package.json"],
-    prepare: ["dist", "dist/a.js", "index.js", "package.json", "src", "src/a.js"],
-  });
-});
+    expect(results).toEqual({
+      "main-not-in-files": ["lib", "lib/main.js", "package.json", "src", "src/a.js"],
+      "main-extensionless": ["lib", "lib/entry.js", "package.json", "src", "src/a.js"],
+      "main-directory": ["lib", "lib/index.js", "package.json", "src", "src/a.js"],
+      "main-npmignored": ["index.js", "lib", "lib/main.js", "package.json"],
+      prepare: ["dist", "dist/a.js", "package.json"],
+      trusted: ["dist", "dist/a.js", "dist/built.js", "index.js", "package.json", "src", "src/a.js"],
+    });
+  },
+);
 
 test.concurrent(
   'a git dependency follows the last duplicate "files" and prunes a cache entry from an older Bun',

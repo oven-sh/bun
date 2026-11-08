@@ -2489,6 +2489,23 @@ impl<'a> PackageInstaller<'a> {
                         resolution,
                     );
 
+                if !is_trusted
+                    && matches!(
+                        resolution.tag,
+                        resolution::Tag::Git | resolution::Tag::Github
+                    )
+                    && let Ok(package_dir) = Dir::borrow(&destination_fd).open_dir(
+                        alias.slice(string_buf!()),
+                        bun_sys::OpenDirOptions {
+                            iterate: true,
+                            no_follow: cfg!(not(windows)),
+                        },
+                    )
+                {
+                    let _ = crate::published_files::prune_installed_package(&package_dir);
+                    package_dir.close();
+                }
+
                 if resolution.tag != resolution::Tag::Root
                     && (resolution.tag == resolution::Tag::Workspace || is_trusted)
                 {

@@ -1050,6 +1050,18 @@ fn bundles_dependencies(json: &Expr) -> bool {
 /// package.json is missing or invalid. `node_modules` is kept, because it is only there when the
 /// package bundles its dependencies.
 pub fn prune_to_published_files(root_dir: &Dir) -> bun_sys::Maybe<()> {
+    prune(root_dir, false)
+}
+
+/// For a Git or GitHub dependency installed without its `prepare` scripts running, such as one
+/// that is not in `trustedDependencies`. The cache keeps whole the checkout of a package that has
+/// them, so that a project that trusts the package can still build it. Does nothing to a package
+/// without such scripts, which the cache already holds pruned.
+pub fn prune_installed_package(root_dir: &Dir) -> bun_sys::Maybe<()> {
+    prune(root_dir, true)
+}
+
+fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> {
     use std::collections::HashSet;
     crate::initialize_mini_store();
     let Ok(contents) = root_dir
@@ -1083,15 +1095,15 @@ pub fn prune_to_published_files(root_dir: &Dir) -> bun_sys::Maybe<()> {
         }
     }
 
-    // A trusted git dependency's `prepare` script runs after this and may build the published
-    // files from the ones this would remove.
-    if let Some(scripts) = json.get(b"scripts") {
-        if [&b"preprepare"[..], b"prepare", b"postprepare"]
+    // A trusted git dependency's `prepare` script runs after the checkout and may build the
+    // published files from the ones this would remove.
+    let has_prepare = json.get(b"scripts").is_some_and(|scripts| {
+        [&b"preprepare"[..], b"prepare", b"postprepare"]
             .iter()
             .any(|name| scripts.get(name).is_some())
-        {
-            return Ok(());
-        }
+    });
+    if has_prepare != installed_without_scripts {
+        return Ok(());
     }
 
     let mut path_buf = bun_paths::path_buffer_pool::get();

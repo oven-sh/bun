@@ -268,6 +268,29 @@ test("spy on a getter", () => {
 
 This also works on plain properties, such as `spyOn(process, "platform", "get")`, and on accessors inherited from a class.
 
+### Replacing a Property with jest.replaceProperty()
+
+Use `jest.replaceProperty()` to give a data property another value for a while. It returns a handle with `replaceValue()` to change the value again and `restore()` to put the original back. `jest.restoreAllMocks()`, the `restoreMocks` option and the end of the test file restore it too.
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, jest } from "bun:test";
+
+const config = { mode: "production", retries: 1 };
+
+test("replace a property", () => {
+  const mode = jest.replaceProperty(config, "mode", "test");
+  expect(config.mode).toBe("test");
+
+  mode.replaceValue("staging");
+  expect(config.mode).toBe("staging");
+
+  mode.restore();
+  expect(config.mode).toBe("production");
+});
+```
+
+As in Jest, the property must exist and be configurable. For a method use `spyOn(object, "method")`, and for a getter or setter use `spyOn(object, "property", "get")` or `"set"`. Unlike Jest, Bun also replaces a property that is not writable, and keeps its attributes.
+
 ### Classes
 
 Calling a mock with `new` constructs its implementation, so you can mock or spy on a class the same way as a function.
@@ -728,7 +751,7 @@ Call `mock.restore()` in an `afterEach` block, or in your test preload script, i
 
 ### Cleanup After Each Test File
 
-When a test file ends, Bun restores any spies that are still active and clears every mock's recorded calls. Return values and implementations set with `mockReturnValue()`, `mockImplementation()` and similar methods stay until you reset the mock. A mock in a module that several test files import keeps them from one file to the next.
+When a test file ends, Bun restores any spies and replaced properties that are still active and clears every mock's recorded calls. Return values and implementations set with `mockReturnValue()`, `mockImplementation()` and similar methods stay until you reset the mock. A mock in a module that several test files import keeps them from one file to the next.
 
 Spies and mocks made in a `--preload` script, or in one of its `beforeAll()` hooks, aren't restored or cleared. They stay the same for every test file.
 

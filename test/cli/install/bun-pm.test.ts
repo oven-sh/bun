@@ -1138,6 +1138,7 @@ it("should remove all cache", async () => {
   expect(await new Response(stdout1).text()).toBe(cache_dir);
   expect(await exited1).toBe(0);
 
+  using side = tempDir("pm-cache-rm-side", { "tmp/.keep": "", ...oldBunxTree.files });
   const {
     stdout: stdout2,
     stderr: stderr2,
@@ -1148,15 +1149,13 @@ it("should remove all cache", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env: {
-      ...env,
-      BUN_INSTALL_CACHE_DIR: cache_dir,
-    },
+    env: cacheEnv(String(side), { BUN_INSTALL_CACHE_DIR: cache_dir }),
   });
   expect(await new Response(stderr2).text()).toBe("");
-  expect(await new Response(stdout2).text()).toInclude("Cleared 'bun install' cache\n");
+  expect(await new Response(stdout2).text()).toBe("Cleared 'bun install' cache\n" + oldBunxTree.cleared);
   expect(await exited2).toBe(0);
   expect(await readdirSorted(cache_dir)).toEqual([]);
+  expect(await readdirSorted(join(String(side), "tmp"))).toEqual([".keep"]);
 });
 
 it("bun pm migrate", async () => {
@@ -1543,6 +1542,8 @@ test("bun pm cache rm resolves the cache directory from the process environment,
     "package.json": JSON.stringify({ name: "cache-rm-project-env", version: "1.0.0" }),
     "unrelated/keep.txt": "do not delete",
     "bun-install/install/cache/cached-package.txt": "cached artifact",
+    "tmp/.keep": "",
+    ...oldBunxTree.files,
   });
   const dirStr = String(dir);
   const unrelatedDir = join(dirStr, "unrelated");
@@ -1554,13 +1555,7 @@ test("bun pm cache rm resolves the cache directory from the process environment,
 
   // The process environment derives the cache location from BUN_INSTALL only;
   // BUN_INSTALL_CACHE_DIR is intentionally absent so only the project .env names one.
-  const spawnEnv: NodeJS.Dict<string> = {
-    ...env,
-    BUN_INSTALL: bunInstallDir,
-    XDG_CACHE_HOME: join(dirStr, "xdg-cache"),
-    HOME: dirStr,
-  };
-  delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+  const spawnEnv = cacheEnv(dirStr);
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "pm", "cache", "rm"],
@@ -1575,7 +1570,8 @@ test("bun pm cache rm resolves the cache directory from the process environment,
   expect(await exists(join(unrelatedDir, "keep.txt"))).toBeTrue();
   // The cache derived from the process environment (BUN_INSTALL/install/cache) is what gets cleared.
   expect(await exists(join(realCacheDir, "cached-package.txt"))).toBeFalse();
-  expect(stdout).toInclude("Cleared 'bun install' cache");
+  expect(stdout).toBe("Cleared 'bun install' cache\n" + oldBunxTree.cleared);
+  expect(await readdirSorted(join(dirStr, "tmp"))).toEqual([".keep"]);
   expect(exitCode).toBe(0);
 });
 
@@ -1583,6 +1579,8 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   using dir = tempDir("pm-cache-rm-no-create", {
     "package.json": JSON.stringify({ name: "cache-rm-no-create", version: "1.0.0" }),
     "bun-install/install/cache/cached-package.txt": "cached artifact",
+    "tmp/.keep": "",
+    ...oldBunxTree.files,
   });
   const dirStr = String(dir);
   const bunInstallDir = join(dirStr, "bun-install");
@@ -1591,13 +1589,7 @@ test("bun pm cache rm does not create the directory named by a project-local .en
 
   await writeFile(join(dirStr, ".env"), `BUN_INSTALL_CACHE_DIR=${overrideDir}\n`);
 
-  const spawnEnv: NodeJS.Dict<string> = {
-    ...env,
-    BUN_INSTALL: bunInstallDir,
-    XDG_CACHE_HOME: join(dirStr, "xdg-cache"),
-    HOME: dirStr,
-  };
-  delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+  const spawnEnv = cacheEnv(dirStr);
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "pm", "cache", "rm"],
@@ -1610,13 +1602,14 @@ test("bun pm cache rm does not create the directory named by a project-local .en
 
   expect(await exists(overrideDir)).toBeFalse();
   expect(await exists(join(realCacheDir, "cached-package.txt"))).toBeFalse();
-  expect(stdout).toInclude("Cleared 'bun install' cache");
+  expect(stdout).toBe("Cleared 'bun install' cache\n" + oldBunxTree.cleared);
+  expect(await readdirSorted(join(dirStr, "tmp"))).toEqual([".keep"]);
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
 
 /**
- * Every directory the cache directory resolution can fall back to, and the temp directory that
+ * Every directory the cache directory resolution can fall back to or read a setting from, and the temp directory that
  * `bun pm cache rm` sweeps for bunx entries, is inside `side`: neither the fixed nor the unfixed
  * behavior can reach anything outside the test's own temp directories. `BUN_INSTALL_CACHE_DIR` is
  * unset unless the test sets it; an override of `undefined` unsets the variable.
@@ -1627,6 +1620,8 @@ function cacheEnv(side: string, overrides: Record<string, string | undefined> = 
     HOME: join(side, "home"),
     USERPROFILE: join(side, "home"),
     XDG_CACHE_HOME: join(side, "xdg-cache"),
+    // Bun reads ~/.bunfig.toml and ~/.npmrc, which can name a cache directory, here before HOME.
+    XDG_CONFIG_HOME: join(side, "xdg-config"),
     BUN_INSTALL: join(side, "bun-install"),
     BUN_INSTALL_CACHE_DIR: undefined,
     TMPDIR: join(side, "tmp"),
@@ -1639,6 +1634,14 @@ function cacheEnv(side: string, overrides: Record<string, string | undefined> = 
   }
   return spawnEnv;
 }
+
+/** A bunx tree that an older version left in `tmp/`, and the line in which `bun pm cache rm` counts it. None on Windows, where the id in its name is a hash of the user name. */
+const oldBunxTree = isWindows
+  ? { files: {}, cleared: "Cleared 0 cached 'bunx' packages\n" }
+  : {
+      files: { [`tmp/bunx-${process.getuid!()}-cowsay@latest/package.json`]: "{}" },
+      cleared: "Cleared 1 cached 'bunx' packages\n",
+    };
 
 async function pmCache(args: string[], cwd: string, spawnEnv: NodeJS.Dict<string>, exe: string = bunExe()) {
   await using proc = Bun.spawn({
@@ -1671,7 +1674,7 @@ const projectFiles = {
 const projectEntries = [".git", "package.json", "src"];
 const envCacheEntries = ["0123456789abcdef.npm", "bar@0.0.2@@@1"];
 
-// The bunx count is always 0: `cacheEnv` points the temp directory at an empty one.
+// The bunx count is always 0: the `tmp/` of `sideFiles` is empty.
 const cleared = {
   stdout: "Cleared 'bun install' cache\nCleared 0 cached 'bunx' packages\n",
   stderr: "",
@@ -3056,21 +3059,23 @@ describe.concurrent("without a package.json", () => {
   function fresh(name: string) {
     const dir = tempDir(name, {
       "cwd/.keep": "",
+      "tmp/.keep": "",
+      ...oldBunxTree.files,
       "pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
     });
     const root = String(dir);
     const bunInstall = join(root, "bun-install");
-    const spawnEnv: NodeJS.Dict<string> = {
-      ...env,
-      BUN_INSTALL: bunInstall,
-      XDG_CACHE_HOME: join(root, "xdg-cache"),
+    const tmp = join(root, "tmp");
+    const spawnEnv = cacheEnv(root, {
       HOME: root,
       USERPROFILE: root,
-    };
-    for (const key of ["BUN_INSTALL_GLOBAL_DIR", "BUN_INSTALL_BIN", "BUN_INSTALL_CACHE_DIR"]) delete spawnEnv[key];
+      BUN_INSTALL_GLOBAL_DIR: undefined,
+      BUN_INSTALL_BIN: undefined,
+    });
     return {
       root,
       bunInstall,
+      tmp,
       globalDir: join(bunInstall, "install", "global"),
       async run(...args: string[]) {
         await using proc = Bun.spawn({
@@ -3150,11 +3155,12 @@ describe.concurrent("without a package.json", () => {
     using project = fresh("pm-no-project");
     const cache = join(project.bunInstall, "install", "cache");
     expect(await project.run("pm", "cache")).toEqual({ stdout: cache, stderr: "", exitCode: 0 });
-    expect(await project.run("pm", "cache", "rm")).toMatchObject({
-      stdout: expect.stringContaining("Cleared 'bun install' cache\n"),
+    expect(await project.run("pm", "cache", "rm")).toEqual({
+      stdout: "Cleared 'bun install' cache\n" + oldBunxTree.cleared,
       stderr: "",
       exitCode: 0,
     });
+    expect(await readdirSorted(project.tmp)).toEqual([".keep"]);
     expect(await project.run("pm", "default-trusted")).toMatchObject({
       stdout: expect.stringMatching(/^Default trusted dependencies \(\d+\):\n/),
       stderr: "",

@@ -4,6 +4,30 @@
 // CHECK-LABEL: function {{*}}name="hasMethod"
 // CHECK: = PrivateHas {{*}}layout=[[layout]] @
 
+// The getter and the setter of an `accessor` field are on the object before its value, as a method is. A read is one operation on the value.
+// So is a store, and an update is one of each.
+// CHECK-LABEL: function {{*}}name="hasAccessorField"
+// CHECK: = PrivateHas {{*}}layout=[[layout]] @
+// CHECK-LABEL: function {{*}}name="readAccessorField"
+// CHECK-NOT: PrivateGet
+// CHECK: = PrivateGet {{*}}layout=[[layout]] field=2 @
+// CHECK-NOT: PrivateGet
+// CHECK-LABEL: function {{*}}name="storeAccessorField"
+// CHECK-NOT: PrivateGet
+// CHECK-NOT: PrivateSet
+// CHECK: PrivateSet {{*}}layout=[[layout]] field=2 @
+// CHECK-NOT: PrivateGet
+// CHECK-NOT: PrivateSet
+// CHECK-LABEL: function {{*}}name="updateAccessorField"
+// CHECK-NOT: PrivateGet
+// CHECK-NOT: PrivateSet
+// CHECK: = PrivateGet {{*}}layout=[[layout]] field=2 @
+// CHECK-NOT: PrivateGet
+// CHECK-NOT: PrivateSet
+// CHECK: PrivateSet {{*}}layout=[[layout]] field=2 @
+// CHECK-NOT: PrivateGet
+// CHECK-NOT: PrivateSet
+
 // An operand that is not an object is reported as the `in` operator reports it for any other key.
 // RUN(FIELD): lower
 // FIELD-LABEL: function {{*}}name="hasStaticField"
@@ -14,10 +38,6 @@
 // FIELD: [[objectBlock]]([[object]]):
 // FIELD: = StrictEq [[object]],
 // FIELD: = TypeTest {{*}}testedType=absent
-// FIELD-LABEL: function {{*}}name="hasStaticAccessorField"
-// FIELD-NOT: RequireObject
-// FIELD: = TypeTest {{*}}testedType=object
-// FIELD: = TypeTest {{*}}testedType=absent
 
 // RUN(THROWS): lower
 // THROWS-LABEL: function {{*}}name="hasStaticField"
@@ -25,14 +45,14 @@
 // THROWS: [[otherBlock]]([[other]]):
 // THROWS-NEXT: = PropHas [[other]] key="#s"
 // THROWS-NEXT: Unreachable
-// THROWS-LABEL: function {{*}}name="hasStaticAccessorField"
-// THROWS: Branch {{*}}notTaken [[accessorOtherBlock]](| 0)
-// THROWS: [[accessorOtherBlock]]([[accessorOther]]):
-// THROWS-NEXT: = PropHas [[accessorOther]] key="#a"
-// THROWS-NEXT: Unreachable
 
-// A static method or accessor has a message of its own, and is there as soon as the class is.
+// A static method or accessor has a message of its own, and is there as soon as the class is. So is an `accessor` field.
 // RUN(BRAND): lower
+// BRAND-LABEL: function {{*}}name="hasStaticAccessorField"
+// BRAND-NOT: TypeTest
+// BRAND: [[accessorField]] = RequireObject {{*}}runtimeError=PrivateStaticTestOfNonObject
+// BRAND: = StrictEq [[accessorField]],
+// BRAND-NOT: TypeTest
 // BRAND-LABEL: function {{*}}name="hasStaticMethod"
 // BRAND-NOT: TypeTest
 // BRAND: [[method]] = RequireObject {{*}}runtimeError=PrivateStaticTestOfNonObject
@@ -74,7 +94,33 @@ export class C {
   static hasStaticGetter(o: object) {
     return #sg in o;
   }
+  accessor #v = 5;
+  static hasAccessorField(o: object) {
+    return #v in o;
+  }
+  static readAccessorField(o: C) {
+    return o.#v;
+  }
+  static storeAccessorField(o: C) {
+    o.#v = 6;
+  }
+  static updateAccessorField(o: C) {
+    ++o.#v;
+  }
 }
 
 // A method has its body once reached code reads its name.
-export function readsTheNames(o: any) { return [o.hasField, o.hasMethod, o.hasStaticAccessorField, o.hasStaticField, o.hasStaticGetter, o.hasStaticMethod]; }
+export function readsTheNames(o: any) {
+  return [
+    o.hasField,
+    o.hasMethod,
+    o.hasStaticAccessorField,
+    o.hasStaticField,
+    o.hasStaticGetter,
+    o.hasStaticMethod,
+    o.hasAccessorField,
+    o.readAccessorField,
+    o.storeAccessorField,
+    o.updateAccessorField,
+  ];
+}

@@ -412,6 +412,10 @@ pub mod fs {
         /// `DirnameStore` or a process-lifetime buffer like `cwd_buf`).
         #[inline]
         pub fn set_top_level_dir(&self, dir: &'static [u8]) {
+            // As in `bust_dir_cache`: the check of a memo hit on another thread must not see `dir` with the old epoch.
+            if bun_core::Environment::CI_ASSERT {
+                crate::resolution_epoch::bump();
+            }
             bun_core::set_top_level_dir(dir);
             crate::resolution_epoch::bump();
         }

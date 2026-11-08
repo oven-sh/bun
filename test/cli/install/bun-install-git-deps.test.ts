@@ -1680,6 +1680,26 @@ test.concurrent("a git dependency keeps a normalized extensionless TypeScript ma
   ]);
 });
 
+test.concurrent("a git dependency with a directory named .npmignore installs whole instead of crashing", async () => {
+  using dir = tempDir("git-dep-npmignore-dir", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "ignore-dir",
+      files: {
+        "package.json": JSON.stringify({ name: "demo-lib", version: "1.0.0" }),
+        "sub/.npmignore/keep.txt": "x\n",
+        "index.js": "module.exports = 1;\n",
+      },
+    },
+  ]);
+  const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#ignore-dir` });
+  const { stdout, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(installOutput(stdout).at(-1)).toBe("1 package installed");
+  expect(exitCode).toBe(0);
+  expect(treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag")).toContain("index.js");
+});
+
 test.concurrent(
   "a failed prepare script of a git dependency explains that its devDependencies aren't installed",
   async () => {

@@ -1061,6 +1061,41 @@ pub fn prune_installed_package(root_dir: &Dir) -> bun_sys::Maybe<()> {
     prune(root_dir, true)
 }
 
+/// `published_files` exits on an ignore file it cannot read, which is right for `bun pm pack` but
+/// not for an install, so pruning checks first and leaves such a package whole.
+fn has_unreadable_ignore_file(dir: &Dir, dir_subpath: &[u8]) -> bool {
+    let mut subdirs: Vec<Vec<u8>> = Vec::new();
+    let mut iter = DirIterator::iterate(Fd::from_std_dir(dir));
+    while let Some(entry) = next_dir_entry(&mut iter, dir_subpath) {
+        let name = entry.name.slice_u8();
+        match entry.kind {
+            bun_sys::FileKind::File => {}
+            _ if name == b".npmignore" || name == b".gitignore" => return true,
+            bun_sys::FileKind::Directory => {
+                if name != b"node_modules" {
+                    subdirs.push(name.to_vec());
+                }
+            }
+            _ => {}
+        }
+    }
+    subdirs.into_iter().any(|name| {
+        let subpath = [dir_subpath, b"/", &name[..]].concat();
+        dir.open_dir(
+            &name,
+            bun_sys::OpenDirOptions {
+                iterate: true,
+                no_follow: cfg!(not(windows)),
+            },
+        )
+        .is_ok_and(|subdir| {
+            let found = has_unreadable_ignore_file(&subdir, &subpath);
+            subdir.close();
+            found
+        })
+    })
+}
+
 fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> {
     use std::collections::HashSet;
     crate::initialize_mini_store();
@@ -1119,6 +1154,19 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
                 return Ok(());
             }
         }
+    }
+
+    let walk_check = root_dir.open_dir(
+        b".",
+        bun_sys::OpenDirOptions {
+            iterate: true,
+            no_follow: false,
+        },
+    )?;
+    let unreadable = has_unreadable_ignore_file(&walk_check, b"");
+    walk_check.close();
+    if unreadable {
+        return Ok(());
     }
 
     let select_dir = root_dir.open_dir(

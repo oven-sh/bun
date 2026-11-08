@@ -371,7 +371,7 @@ test("mock.module", async () => {
 });
 ```
 
-Bun updates the imported module in place: it copies each export the factory returned into the module once. [Getters and Missing Exports](#getters-and-missing-exports) lists what that changes for getters, for writes and for names the factory doesn't return.
+`./module` was imported before it was mocked, so Bun updates it in place: it copies the value of each export the factory returned into the module's export of the same name, once. [Getters and Missing Exports](#getters-and-missing-exports) lists what that means for getters, for writes, and for names that only the module or only the factory has.
 
 When the factory returns a promise that is still pending, Bun updates the already-imported module once the promise settles. In that case `mock.module()` returns a promise that resolves after the update, and otherwise it returns `undefined`. `await mock.module(...)` inside a test or hook covers both. At the top level of a test file, Bun waits for pending module mocks before it runs the file's tests.
 
@@ -454,11 +454,14 @@ A mock made by a `--preload` script is shared by every test file, so a write to 
 
 If a module imports a name the factory didn't return, the module still loads. With `vi.mock()` and `vi.doMock()`, using that name throws an error that says which export is missing from which mock, as in Vitest. With `mock.module()`, `jest.mock()` and `jest.doMock()`, the name is `undefined`. As in Jest, a default import of a `jest.mock()` or `jest.doMock()` factory's object is the object itself, unless it has `__esModule: true`. A name that reaches the module through another module's `export * from` or `export { name } from` is `undefined` instead, as in Vitest.
 
-When Bun updates a module that's already imported in place (see [Overriding Already Imported Modules](#overriding-already-imported-modules)), it copies each export the factory returned into the module once. Then the rules above change:
+A module that was loaded as a mock keeps these rules when you mock it again.
+
+A module that was imported before it was mocked is the original module. When Bun updates it in place (see [Overriding Already Imported Modules](#overriding-already-imported-modules)), it copies the value of each export the factory returned into the module's export of the same name, once. Then the rules are different:
 
 - Bun reads a getter once, when it updates the module. The module's export keeps that value.
 - The module's namespace object stays read-only. A write to it throws a `TypeError`.
-- A name the factory didn't return keeps its original value.
+- A name the factory didn't return keeps its current value.
+- A name that only the factory has isn't added.
 
 ### Mocking a Package
 

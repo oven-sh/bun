@@ -3011,42 +3011,73 @@ describe.concurrent("a mocked module's exports are read from the object the fact
   });
 
   // Its importers are linked to the module's own variables, so the exports of the mock are copied into those.
-  test.each(["mock.module", "jest.mock", "jest.doMock", "vi.mock"])(
-    "unless the module is already imported: %s() copies each export into it once",
-    async call => {
-      await expectFixturesToPass(
-        {
-          ...dep,
-          "imported.test.ts": `
-            import { expect, jest, mock, test, vi } from "bun:test";
-            import def, { flag, plain } from "./dep";
-            import * as ns from "./dep";
-            import { read } from "./reader";
-
-            test("the module is updated in place", () => {
-              const state = { value: "first", reads: 0 };
-              ${call}("./dep", () => ({
-                get flag() {
-                  state.reads++;
-                  return state.value;
-                },
-              }));
-              state.value = "second";
-
-              // The getter ran when the module was updated. The names that the factory left out keep their values.
-              expect([flag, ns.flag, def, plain]).toEqual(["first", "first", "real-default", "real-plain"]);
-              expect(read()).toEqual(["first", "first", "real-default", "real-plain", "real-fn"]);
-              expect(state.reads).toBe(1);
-
-              expect(() => { ns.flag = "written"; }).toThrow(TypeError);
-              expect(flag).toBe("first");
-            });
-          `,
+  test("unless the module was imported before it was mocked: the update copies each export into it once", async () => {
+    const mockWithGetter = (call: string) => `
+      globalThis.state = { value: "first", reads: 0 };
+      ${call}("./dep", () => ({
+        get flag() {
+          state.reads++;
+          return state.value;
         },
-        1,
-      );
-    },
-  );
+        added: "only in the mock",
+      }));
+    `;
+    const updatedInPlace = `
+      state.value = "second";
+
+      // The getter ran when the module was updated. The names that the factory left out keep their values.
+      expect([flag, ns.flag, def, plain]).toEqual(["first", "first", "real-default", "real-plain"]);
+      expect(read()).toEqual(["first", "first", "real-default", "real-plain", "real-fn"]);
+      expect((await import("./dep")).flag).toBe("first");
+      expect(state.reads).toBe(1);
+
+      // The name that only the factory has isn't added.
+      expect(Object.keys(ns)).toEqual(["default", "flag", "fn", "plain"]);
+      expect(() => { ns.flag = "written"; }).toThrow(TypeError);
+      expect(flag).toBe("first");
+    `;
+    const imports = `
+      import def, { flag, plain } from "./dep";
+      import * as ns from "./dep";
+      import { read } from "./reader";
+    `;
+
+    // Each directory has its own "./dep", so the files share no module.
+    const files: Record<string, string> = {};
+    const calls = ["mock.module", "jest.mock", "jest.doMock", "vi.mock"];
+    for (const directory of [...calls, "vi.doMock"]) {
+      for (const [name, source] of Object.entries(dep)) files[`${directory}/${name}`] = source;
+    }
+    for (const call of calls) {
+      files[`${call}/imported.test.ts`] = `
+        import { expect, jest, mock, test, vi } from "bun:test";
+        ${imports}
+        test("${call}() in a test", async () => {
+          ${mockWithGetter(call)}
+          ${updatedInPlace}
+
+          // The next update leaves a name that its factory doesn't return as this one left it.
+          ${call}("./dep", () => ({ plain: "mocked-plain" }));
+          expect([flag, plain, state.reads]).toEqual(["first", "mocked-plain", 1]);
+        });
+      `;
+    }
+    // As in Vitest, a module that has yet to run gets the mock. The test file is linked to "./dep" before "./mocks" runs,
+    // so vi.doMock() can't leave the module for a later import, and updates it in place too.
+    files["vi.doMock/mocks.ts"] = `
+      import { vi } from "bun:test";
+      ${mockWithGetter("vi.doMock")}
+    `;
+    files["vi.doMock/imported.test.ts"] = `
+      import "./mocks";
+      import { expect, test } from "bun:test";
+      ${imports}
+      test("vi.doMock() in a module that the test file imports", async () => {
+        ${updatedInPlace}
+      });
+    `;
+    await expectFixturesToPass(files, 5);
+  });
 });
 
 describe.concurrent("a factory that returns a module namespace object", () => {

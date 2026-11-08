@@ -1,5 +1,6 @@
 // With node:net alone, Readable.prototype has map(), filter() and so on: the module of the class defines them. They do not wait for node:stream, which
-// the first pipe() that looks at process.stdout loads. Each way is a process of its own.
+// the first pipe() that looks at process.stdout loads. The last word of a row says whether the way loaded it: node:stream sets Stream.finished, and
+// net.Socket inherits it. Each way is a process of its own.
 const ways = {
   "nothing"() {},
   "console.log"() {
@@ -61,8 +62,14 @@ if (way === undefined) {
   const names = Object.getOwnPropertyNames(prototype);
   require("node:fs").writeSync(
     1,
-    [before, typeof prototype.map, typeof new net.Socket().toArray, names.length, names.slice(-11).join()].join(" ") +
-      "\n",
+    [
+      before,
+      typeof prototype.map,
+      typeof new net.Socket().toArray,
+      names.length,
+      names.slice(-11).join(),
+      "finished=" + typeof net.Socket.finished,
+    ].join(" ") + "\n",
   );
   process.exit(0);
 }

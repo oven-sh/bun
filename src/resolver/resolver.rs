@@ -3943,7 +3943,7 @@ impl<'a> Resolver<'a> {
         // its `path` argument directly as `DirInfo.abs_path` in the permanent `dir_cache`, so
         // pass the interned copy from `DirEntry.dir` (always backed by `DirnameStore`) instead.
         let dir_entries_dir = dir_entries.dir;
-        self.dir_info_uncached(
+        let result = self.dir_info_uncached(
             dir_info_ptr,
             dir_entries_dir,
             Some(std::ptr::from_ref(dir_entries)),
@@ -3955,10 +3955,11 @@ impl<'a> Resolver<'a> {
             allocators::NOT_FOUND,
             open_dir,
             Some(package_id),
-        )?;
+        );
         if dir_entries.fd != open_dir {
             let _ = bun_sys::close(open_dir);
         }
+        result?;
         // SAFETY: `dir_info_ptr` is the BSSMap slot just filled by `dir_info_uncached`.
         Ok(Some(unsafe { DirInfoRef::from_raw(dir_info_ptr) }))
     }

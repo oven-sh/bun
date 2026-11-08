@@ -2,10 +2,12 @@
 # A line goes out with the fix that makes its test pass. `~ ` before a line: that test fails in some runs and passes in others.
 # Most of it is what an executable refuses on purpose, as `bun build --compile` does too:
 #   a query string in an import path (?raw ?url, ?worker in a require(), import.meta.glob's `query`) . code that a path computed at run time names . plugins of the run time . a fixture in TypeScript with a type error
-#   (one such fixture stands behind the 110 lines of "ES decorators lowering matrix > .ts") . the words of a syntax error or of a failed resolution, which are the checker's.
+#   (one such fixture stands behind the 110 lines of "ES decorators lowering matrix > .ts") . the words of a syntax error or of a failed resolution, which are the checker's
+#   . a file the plain run resolved from disk before it was deleted: the executable holds that file, lists the directory only for the second import, and finds it gone.
 # The faults among them: CSS modules . hoisted mocks and coverage with import.meta.glob . `.cjs` for `.cts` inside node_modules . import.meta.glob as a value (plain's --compile too).
 test/js/bun/css/css-loader.test.ts: css module exports > :local and :global
 test/js/bun/css/css-loader.test.ts: css module exports > CSS the bundler only warns about doesn't throw
+test/js/bun/css/css-loader.test.ts: css module exports > a file that was deleted after it was resolved
 test/js/bun/css/css-loader.test.ts: css module exports > a module without classes or ids
 test/js/bun/css/css-loader.test.ts: css module exports > classes and ids, wherever they appear
 test/js/bun/css/css-loader.test.ts: css module exports > composes

@@ -767,8 +767,6 @@ pub(crate) struct BunTest {
     pub(crate) timer: EventLoopTimer,
     /// The clock of the last fire of `timer`. A fire has found every deadline before it passed.
     pub(crate) judged_at: Timespec,
-    /// The deadline that the last fire left to arm `timer` for. In the timer's own callback, a fire that came a moment early would repeat at once.
-    arm_after_fire: Timespec,
     pub(crate) result_queue: ResultQueue,
     /// Whether tests in this file should default to concurrent execution
     pub(crate) default_concurrent: bool,
@@ -825,7 +823,6 @@ impl BunTest {
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             judged_at: Timespec::EPOCH,
-            arm_after_fire: Timespec::EPOCH,
             wants_wakeup: false,
             pending_phase: RefDataValue::Start,
             is_reporting_uncaught: false,
@@ -1063,7 +1060,7 @@ impl BunTest {
         Ok(())
     }
 
-    fn handle_timeout(&mut self, global_this: &JSGlobalObject, now: &Timespec) {
+    fn handle_timeout(&mut self, global_this: &JSGlobalObject, now: &Timespec, pass: &Timespec) {
         let _g = group_begin!();
         self.judged_at = *now;
         let judged = Execution::Execution::judge(self, global_this, now);
@@ -1071,21 +1068,17 @@ impl BunTest {
         if !judged.timed_out {
             self.add_result(RefDataValue::Start);
         }
-        self.arm_after_fire = judged.next;
-    }
-
-    /// Runs before a step, and under JS, where no step runs.
-    fn after_fire(&mut self, global_this: &JSGlobalObject) {
-        if !self.arm_after_fire.eql(&Timespec::EPOCH) {
-            let next = core::mem::replace(&mut self.arm_after_fire, Timespec::EPOCH);
-            self.update_min_timeout(global_this, &next);
+        if !judged.next.eql(&Timespec::EPOCH) {
+            // No step runs under JS, so the timer is armed here. A timer pass can fire this timer a moment early, and a deadline inside that pass would fire again at once.
+            let after_pass = pass.add_ms(1);
+            self.update_min_timeout(global_this, if judged.next.greater(&after_pass) { &judged.next } else { &after_pass });
         }
     }
 
-    /// `in_timer_pass` is false when `Bun.spawnSync()` reports a deadline that passed inside it.
+    /// `pass` is the clock of the timer pass. `in_timer_pass` is false when `Bun.spawnSync()` reports a deadline that passed inside it, and `pass` is that deadline.
     pub(crate) fn bun_test_timeout_callback(
         this_strong: &BunTestPtr,
-        _ts: &Timespec,
+        pass: &Timespec,
         vm: &VirtualMachine,
         in_timer_pass: bool,
     ) {
@@ -1107,7 +1100,7 @@ impl BunTest {
         unsafe {
             match (*this).phase {
                 Phase::Collection => {}
-                Phase::Execution => (*this).handle_timeout(global, &now),
+                Phase::Execution => (*this).handle_timeout(global, &now, pass),
                 Phase::Done => {}
             }
         }
@@ -1167,7 +1160,6 @@ impl BunTest {
         // each `(*this)` deref below is a short-lived reborrow that does not
         // span a re-entrant `.get()` call.
         unsafe {
-            (*this).after_fire(global_this);
             if (*this).in_run_loop {
                 return Ok(());
             }
@@ -1914,7 +1906,6 @@ impl RunTestsTask {
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
         // Never run tests under JS or while the file loads. `TestCommand::run` drains the queue later.
         if this.global_this.vm().is_entered() || strong.get().is_loading {
-            strong.get().after_fire(&this.global_this);
             return Ok(());
         }
         if let Err(e) = BunTest::run(&strong, &this.global_this) {

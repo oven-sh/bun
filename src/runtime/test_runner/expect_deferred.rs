@@ -543,6 +543,9 @@ impl Pass {
 pub(crate) struct ExpectDeferred {
     held: JsCell<Option<RunningEntry>>,
     replays: Cell<u32>,
+    /// The turn of the event loop in which the call last ran again.
+    turn: Cell<u64>,
+    replays_in_turn: Cell<u32>,
     is_abandoned: Cell<bool>,
 }
 
@@ -551,13 +554,15 @@ pub(crate) use crate::generated_bindgen::expect_deferred::js_ExpectDeferred as j
 impl ExpectDeferred {
     /// Each replay gets one promise further, so this caps how many promises a single matcher call can wait for.
     const MAX_REPLAYS: u32 = 2_000;
-    /// A call waits for its subject, for the matcher, and for a few promises inside them. One that finds more than these can be a chain without end.
+    /// The runner's timer cannot fire inside one turn of the event loop. A call that runs again more often than this in one turn can be a chain of promises without end.
     const REPLAYS_WITHOUT_CLOCK: u32 = 8;
 
     fn waiting(global: &JSGlobalObject) -> JSValue {
         ExpectDeferred {
             held: JsCell::new(None),
             replays: Cell::new(0),
+            turn: Cell::new(0),
+            replays_in_turn: Cell::new(0),
             is_abandoned: Cell::new(false),
         }
         .to_js(global)
@@ -648,10 +653,15 @@ impl ExpectDeferred {
                 let buntest = held.buntest.upgrade();
                 return this.abandon(global, deferred, buntest.as_ref());
             }
+            let turn = global.bun_vm().uws_loop_ref().iteration_number();
+            if this.turn.replace(turn) != turn {
+                this.replays_in_turn.set(0);
+            }
             // The runner is about to time the entry out, and `settle_ended` will then abandon this call. A chain of promises without end never lets the runner's timer fire, so the clock stops it.
-            if held.has_timed_out(this.replays.get() >= Self::REPLAYS_WITHOUT_CLOCK) {
+            if held.has_timed_out(this.replays_in_turn.get() >= Self::REPLAYS_WITHOUT_CLOCK) {
                 return Ok(());
             }
+            this.replays_in_turn.set(this.replays_in_turn.get() + 1);
         }
 
         this.replays.set(this.replays.get() + 1);

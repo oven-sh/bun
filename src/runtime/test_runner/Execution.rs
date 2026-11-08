@@ -515,8 +515,8 @@ impl Execution {
                 entry: core::ptr::from_ref(entry).cast::<()>(),
                 attempt: sequence.attempt,
             };
-            // Its completion comes first. If pending matchers then keep the entry open (`waits_for_matchers`), a later fire times it out.
-            if has_queued_completion(&buntest.result_queue, queued, group_index, entry_data) {
+            // Its completion comes first, or an earlier fire has queued its verdict. If pending matchers then keep the entry open (`waits_for_matchers`), a later fire times it out.
+            if has_queued_result(&buntest.result_queue, queued, group_index, entry_data) {
                 continue;
             }
             let _ = buntest.result_queue.write_item(RefDataValue::TimedOut { group_index, entry_data });
@@ -531,7 +531,7 @@ impl Execution {
         Judged { timed_out, next }
     }
 
-    /// The deadline of a running entry of the active group that `now` is past, and that no queued completion ends.
+    /// The deadline of a running entry of the active group that `now` is past, and that no queued result ends.
     fn overdue_deadline(buntest: &BunTest, now: &Timespec) -> Option<Timespec> {
         let this = &buntest.execution;
         let queue = &buntest.result_queue;
@@ -543,7 +543,7 @@ impl Execution {
                 entry: core::ptr::from_ref(entry).cast::<()>(),
                 attempt: sequence.attempt,
             };
-            (!has_queued_completion(queue, queue.readable_length(), this.group_index, entry_data)).then_some(entry.timespec)
+            (!has_queued_result(queue, queue.readable_length(), this.group_index, entry_data)).then_some(entry.timespec)
         })
     }
 
@@ -1172,12 +1172,15 @@ fn step_group(
     }
 }
 
-/// Whether one of the first `queued` results is the completion of the entry.
-fn has_queued_completion(queue: &ResultQueue, queued: usize, group_index: usize, entry_data: EntryData) -> bool {
-    let is_its_completion = |result| {
-        matches!(result, RefDataValue::Execution { group_index: group, entry_data: Some(data) } if group == group_index && data == entry_data)
+/// Whether one of the first `queued` results is the completion of the entry, or a verdict for it.
+fn has_queued_result(queue: &ResultQueue, queued: usize, group_index: usize, entry_data: EntryData) -> bool {
+    let ends_it = |result| match result {
+        RefDataValue::Execution { group_index: group, entry_data: Some(data) } | RefDataValue::TimedOut { group_index: group, entry_data: data } => {
+            group == group_index && data == entry_data
+        }
+        _ => false,
     };
-    (0..queued).any(|i| is_its_completion(queue.peek_item(i)))
+    (0..queued).any(|i| ends_it(queue.peek_item(i)))
 }
 
 /// Whether a `TimedOut` of the group waits for its step.
@@ -1236,7 +1239,7 @@ fn step_group_one(
     Ok(final_status)
 }
 
-/// `evaluate_timeout` leaves the failure of an around hook that timed out to this error, which says what the reporter can't.
+/// `fail_timed_out` leaves the failure of an around hook that timed out to this error, which says what the reporter can't.
 fn report_around_timeout(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,

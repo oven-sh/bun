@@ -1185,6 +1185,36 @@ describe.concurrent("a matcher that settles does not time out what still runs", 
     await passes(["(pass) t"], source);
   });
 
+  // The promises settle a turn of the event loop apart. The callback that settles the last one holds the thread.
+  test("a test that awaits a matcher call which waits nine times", async () => {
+    await passes(
+      ["(pass) t"],
+      `
+      expect.extend({
+        async toSettle(received, promise) {
+          await promise;
+          return { pass: true, message: () => "toSettle" };
+        },
+      });
+      test("t", async () => {
+        start = performance.now();
+        await later();
+        const settle = [], actual = {}, expected = {};
+        for (let i = 0; i < 9; i++) {
+          actual["k" + i] = 1;
+          expected["k" + i] = expect.toSettle(new Promise(resolve => settle.push(resolve)));
+        }
+        const settleNext = i => setTimeout(() => {
+          settle[i](1);
+          if (i + 1 < 9) settleNext(i + 1);
+          else holdUntil(start + ${over});
+        }, 10);
+        settleNext(0);
+        await expect(actual).toEqual(expected);
+      }, ${limit});`,
+    );
+  });
+
   test("a concurrent test whose own code holds the thread after it awaited the matcher", async () => {
     await passes(
       ["(pass) other", "(pass) a"],
@@ -1345,19 +1375,19 @@ describe.concurrent("a matcher of a test that the runner's timer has timed out",
     await timesOut(
       ["(pass) first", "(fail) t", "(pass) next"],
       `
-      test("first", () => {}, 100);
+      test("first", () => {}, 300);
       test("t", done => {
         expect(settles).resolves.toBe(1);
         setTimeout(() => {
           done();
           setTimeout(() => {
-            Promise.resolve().then(() => Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(${limit + 500})"] }));
-          }, 10);
-          setTimeout(() => resolve(1), 120);
-          hold(150);
+            Promise.resolve().then(() => Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(1500)"] }));
+          }, 20);
+          setTimeout(() => resolve(1), 400);
+          hold(450);
           Bun.build({ entrypoints: ["./entry.ts"], plugins: [{ name: "slow", setup: () => later(0, 50) }] });
         });
-      }, ${limit});
+      }, 1000);
       test("next", () => {});`,
     );
   });

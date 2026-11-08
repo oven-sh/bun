@@ -5674,11 +5674,18 @@ static NEVER_INLINE size_t runGC(JSC::VM* vm, bool sync)
 }
 }
 
+// The sizes of clearStackBelowCaller() are measured for the frame of runGC<false>. The frame of runGC<true> is another, and nothing writes every slot of it. So it is built over zeroes: the collection then finds no word of an earlier call in it.
+static NEVER_INLINE size_t runGCWithPerformanceEntry(JSC::VM* vm)
+{
+    clearStackBelowCaller();
+    return runGC<true>(vm, true);
+}
+
 size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 {
     if (sync) {
         if (auto* gcPerformanceEntries = WebCore::clientData(*vm)->gcPerformanceEntries.get(); gcPerformanceEntries && gcPerformanceEntries->recordsCollections()) [[unlikely]]
-            return runGC<true>(vm, true);
+            return runGCWithPerformanceEntry(vm);
     }
     // A tail call, so that runGC<false> has the frame of this function: clearStackBelowCaller() is sized for the frames from here on.
     MUST_TAIL_CALL return runGC<false>(vm, sync);

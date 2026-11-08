@@ -1138,32 +1138,53 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
     let mut keep_dirs: HashSet<Vec<u8>> = HashSet::new();
     // The entry point stays even if `files` or an ignore file leaves it out.
     if let Some(main) = json.get(b"main").and_then(|main| main.as_string(bump)) {
-        let mut main: &[u8] = main.as_ref();
-        while let Some(rest) = main.strip_prefix(b"./") {
-            main = rest;
+        // `lib\\entry.js` and `lib/./entry.js` name the same file as `lib/entry.js`.
+        let main: &[u8] = main.as_ref();
+        let raw: Vec<u8> = main
+            .iter()
+            .map(|&c| if cfg!(windows) && c == b'\\' { b'/' } else { c })
+            .collect();
+        let mut parts: Vec<&[u8]> = Vec::new();
+        let mut inside = !raw.starts_with(b"/");
+        for part in raw.split(|&c| c == b'/') {
+            match part {
+                b"" | b"." => {}
+                b".." => inside = false,
+                part => parts.push(part),
+            }
         }
-        let main = strings::without_trailing_slash(main);
-        if !main.is_empty()
-            && !main.starts_with(b"/")
-            && !strings::contains_char(main, b'\\')
-            && !strings::split(main, b"/").any(|part| part == b".." || part.is_empty())
-        {
-            const SUFFIXES: [&[u8]; 7] = [
+        let main = parts.join(&b'/');
+        if inside && !main.is_empty() {
+            // Every file the resolver may pick for an extensionless or directory `main`.
+            const SUFFIXES: [&[u8]; 22] = [
                 b"",
                 b".js",
+                b".mjs",
+                b".cjs",
+                b".jsx",
+                b".ts",
+                b".mts",
+                b".cts",
+                b".tsx",
                 b".json",
                 b".node",
                 b"/index.js",
+                b"/index.mjs",
+                b"/index.cjs",
+                b"/index.jsx",
+                b"/index.ts",
+                b"/index.mts",
+                b"/index.cts",
+                b"/index.tsx",
                 b"/index.json",
                 b"/index.node",
+                b"/package.json",
             ];
-            let resolved = SUFFIXES.iter().find_map(|suffix| {
-                let candidate = [main, suffix].concat();
-                (bin_kind_without_following_symlinks(root_path, &candidate)
-                    == bun_sys::FileKind::File)
-                    .then_some(candidate)
-            });
-            if let Some(entry) = resolved {
+            for suffix in SUFFIXES {
+                let entry = [&main[..], suffix].concat();
+                if bin_kind_without_following_symlinks(root_path, &entry) != bun_sys::FileKind::File {
+                    continue;
+                }
                 for (i, &c) in entry.iter().enumerate() {
                     if c == b'/' {
                         keep_dirs.insert(entry[..i].to_vec());
@@ -1211,7 +1232,9 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(dir));
         while let Some(entry) = next_dir_entry(&mut iter, dir_subpath) {
             let name = entry.name.slice_u8();
-            if dir_subpath.is_empty() && (name == b"package.json" || name == b"node_modules") {
+            if dir_subpath.is_empty()
+                && (name == b"package.json" || name == b"node_modules" || name == b".bun-tag")
+            {
                 continue;
             }
             let subpath = if dir_subpath.is_empty() {

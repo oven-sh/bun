@@ -1631,7 +1631,9 @@ test.concurrent(
     ]);
     const project = writeProject(join(root, "dup"), { "demo-lib": `git+${pathToFileURL(bare)}#dup` });
     const cache = join(root, "cache");
-    expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+    const first = await runInstall(project, cache, {});
+    expect(installOutput(first.stdout).at(-1)).toBe("1 package installed");
+    expect(first.exitCode).toBe(0);
     const installed = join(project, "node_modules", "demo-lib");
     const tree = () => treeOf(installed).filter(path => path !== ".bun-tag");
     const expected = ["README", "dist", "dist/b.js", "package.json"];
@@ -1643,10 +1645,40 @@ test.concurrent(
     mkdirSync(join(cache, entry, "docs"), { recursive: true });
     writeFileSync(join(cache, entry, "docs", "guide.md"), "docs\n");
     rmSync(join(project, "node_modules"), { recursive: true });
-    expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+    const second = await runInstall(project, cache, {});
+    expect(installOutput(second.stdout).at(-1)).toBe("1 package installed");
+    expect(second.exitCode).toBe(0);
     expect(tree()).toEqual(expected);
+    expect(readdirSync(join(cache, entry))).toContain(".bun-tag");
   },
 );
+
+test.concurrent("a git dependency keeps a normalized extensionless TypeScript main that files leaves out", async () => {
+  using dir = tempDir("git-dep-published-files-main", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "ts-main",
+      files: {
+        "package.json": JSON.stringify({ name: "demo-lib", version: "1.0.0", main: "./lib/./entry", files: ["dist"] }),
+        "lib/entry.ts": "export {};\n",
+        "lib/other.ts": "export {};\n",
+        "dist/b.js": "b\n",
+      },
+    },
+  ]);
+  const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#ts-main` });
+  const { stdout, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(installOutput(stdout).at(-1)).toBe("1 package installed");
+  expect(exitCode).toBe(0);
+  expect(treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag")).toEqual([
+    "dist",
+    "dist/b.js",
+    "lib",
+    "lib/entry.ts",
+    "package.json",
+  ]);
+});
 
 test.concurrent(
   "a failed prepare script of a git dependency explains that its devDependencies aren't installed",

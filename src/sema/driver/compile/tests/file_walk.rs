@@ -1,4 +1,4 @@
-use super::support::{TestProgram, check_only, from_bun_check, with_program};
+use super::support::{TestProgram, check_whole_files, from_bun_check, with_program};
 use bstr::BString;
 use bun_sema::hir::ResolutionMode;
 use bun_sema::program::{CodeAnswer, ComputedTargets, FileId, FileRole, Files, HostModuleId};
@@ -348,7 +348,52 @@ fn untyped_package_stays_untyped() {
         assert!(files.module(main).edges.contains(&own));
         assert!(files.module(own).is_in_types_program);
 
-        assert_eq!(check_only(program).codes(), [0; 0]);
+        assert_eq!(check_whole_files(program).codes(), [0; 0]);
+    });
+}
+
+#[test]
+fn global_opens_what_its_file_imports_but_not_the_code_it_loads() {
+    let config = r#"{
+        "compilerOptions": {
+            "strict": true, "noImplicitAny": false, "noLib": true, "types": [], "allowJs": true,
+            "module": "preserve", "moduleResolution": "bundler"
+        },
+        "files": ["main.ts", "globals.d.ts"]
+    }"#;
+    let files = [
+        ("tsconfig.json", config),
+        (
+            "main.ts",
+            r#"import { f } from "dep";
+            import { g } from "./own.js";
+            declare global {
+                var shared: typeof g;
+            }
+            f();"#,
+        ),
+        ("own.js", "export function g() {}"),
+        (
+            "node_modules/dep/package.json",
+            r#"{ "name": "dep", "version": "1.0.0" }"#,
+        ),
+        (
+            "node_modules/dep/index.js",
+            r#"import { h } from "./inner.js";
+            export function f() { return h(); }"#,
+        ),
+        ("node_modules/dep/inner.js", "export function h() {}"),
+    ];
+    with_program(&files, &["./main.ts"], 1, |program| {
+        let files = program.files();
+        for open in ["main.ts", "own.js"] {
+            assert!(!files.is_closed(program.file(open)), "{open}");
+        }
+        for closed in ["node_modules/dep/index.js", "node_modules/dep/inner.js"] {
+            let file = program.file(closed);
+            assert!(!files.module(file).is_in_types_program, "{closed}");
+            assert!(files.is_closed(file), "{closed}");
+        }
     });
 }
 
@@ -383,7 +428,7 @@ fn javascript_with_type_task_stays_typed() {
         assert!(files.module(util).is_in_types_program);
         assert!(files.is_compiled(util));
         assert_eq!(count_files_named(files, "/util.js"), 1);
-        assert_eq!(check_only(program).codes(), [0; 0]);
+        assert_eq!(check_whole_files(program).codes(), [0; 0]);
     });
 }
 

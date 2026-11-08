@@ -29,6 +29,8 @@ export const settingsOfEngine = {
   BUN_JSC_maxNumWasmFastMemories: "1024",
   // The last tier costs more time than is left to win it back in.
   BUN_JSC_useFTLJIT: "0",
+  // A stack recorded at every simulated throw costs more than the call. Exception scopes are still verified.
+  BUN_JSC_dumpSimulatedThrows: "0",
 };
 
 const maxAttempts = 60;

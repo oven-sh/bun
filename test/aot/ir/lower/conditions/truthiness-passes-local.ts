@@ -2,36 +2,33 @@
 // CHECK-LABEL: function {{*}}name="conditional"
 // CHECK: [[conditionalTest]] = ToBoolean [[c]]
 // CHECK-NEXT: Branch [[conditionalTest]] -> taken [[truthy]](| 0), notTaken {{*}}(| 0)
-// CHECK: [[truthy]]([[object]]):
-// CHECK: [[convertedObject]] = Convert [[object]] declared={type=undefined|null|number|string|symbol|bigint|L{{*}} flags=[IsExpected]}
-// CHECK: = PropGet [[convertedObject]] key="a"
+// CHECK: [[truthy]]({{*}}):
+// CHECK: = PropGet [[c]] key="a"
 // CHECK-LABEL: function {{*}}name="loop"
 // CHECK: [[header]]([[node]]):
 // CHECK-NEXT: LoopHint
 // CHECK-NEXT: [[loopTest]] = ToBoolean [[node]]
 // CHECK-NEXT: Branch [[loopTest]] -> taken [[body]](| 0), notTaken {{*}}(| 0)
-// CHECK: [[body]]([[current]]):
-// CHECK: [[convertedCurrent]] = Convert [[current]] declared={type=undefined|null|number|string|symbol|bigint|L{{*}} flags=[IsExpected]}
-// CHECK: [[next]] = PropGet [[convertedCurrent]] key="next"
+// CHECK: [[body]]({{*}}):
+// CHECK: [[next]] = PropGet [[node]] key="next"
 // CHECK: Jump -> next [[header]]([[next]])
 // CHECK-LABEL: function {{*}}name="statement"
 // CHECK: [[test]] = ToBoolean [[x]]
 // CHECK-NEXT: Branch [[test]] -> taken [[taken]](| 0), notTaken {{*}}(| 0)
-// CHECK-NOT: Return [[x]]
-// CHECK: [[taken]]([[truthyValue]]):
-// CHECK-NOT: Return [[x]]
-// CHECK: Return [[truthyValue]]
-// CHECK-NOT: Return [[x]]
+// CHECK: [[taken]]({{*}}):
+// CHECK: Return [[x]]
 
 // RUN(OTHER): lower
 // OTHER-LABEL: function {{*}}name="loop"
+// OTHER: = ToBoolean [[node]]
 // OTHER: Branch {{*}}notTaken [[exit]](| 0)
-// OTHER: [[exit]]([[last]]):
-// OTHER: Return [[last]]
+// OTHER: [[exit]]({{*}}):
+// OTHER: Return [[node]]
 // OTHER-LABEL: function {{*}}name="statement"
+// OTHER: = ToBoolean [[x]]
 // OTHER: Branch {{*}}notTaken [[other]](| 0)
-// OTHER: [[other]]([[falsyValue]]):
-// OTHER: Return [[falsyValue]]
+// OTHER: [[other]]({{*}}):
+// OTHER: Return [[x]]
 
 export function conditional(x: any): any {
   return x ? x.a : 0;

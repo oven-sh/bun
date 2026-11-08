@@ -10,8 +10,10 @@
 // CHECK: [[errorOfUnused]] = NewRuntimeError runtimeError=LeftOutOfExecutable
 // CHECK-NEXT: Throw [[errorOfUnused]]
 
-// RUN(ABSENT): link
-// ABSENT-NOT: name="helperOfUnused"
+// RUN(ALSO): link
+// ALSO-LABEL: function {{*}}name="helperOfUnused"
+// ALSO-NOT: Return
+// ALSO: NewRuntimeError runtimeError=LeftOutOfExecutable
 
 // A member that is only read from a namespace object refers to that export alone. The function that is called here never mentions `this`,
 // so it cannot find the other members in the object.

@@ -681,7 +681,7 @@ describe("gc entries", () => {
   concurrent("an entry has the shape and the times of Node's", async () => {
     const { result, exitCode } = await run(`
       const seen = {};
-      let before, after;
+      let after;
       for (const [form, options] of [["entryTypes", { entryTypes: ["gc"] }], ["type", { type: "gc" }]]) {
         new PerformanceObserver((list, observer) => {
           const entry = list.getEntries().find(isForced);
@@ -697,16 +697,14 @@ describe("gc entries", () => {
             json: entry.toJSON(),
             startTime: entry.startTime,
             duration: entry.duration,
-            // The collection started and ended inside Bun.gc(true). The start is put on the timeline of
-            // performance.now() when the entry reaches JS, from two clocks that are read one after the other: the time
-            // between the two reads can only move the entry to an earlier time. So the end of the entry is what is
-            // compared with both ends of the call.
+            // The forced flag tells that the entry is the one of this call. Its start is put on the timeline of
+            // performance.now() when the entry reaches JS, from two clocks that are read one after the other. The time
+            // between the two reads can only move the entry to an earlier time, so only its end has a bound here.
             lasts: entry.duration > 0,
-            endsInsideTheCall: entry.startTime + entry.duration > before && entry.startTime + entry.duration <= after,
+            endsBeforeTheCallReturns: entry.startTime + entry.duration <= after,
           });
         }).observe(options);
       }
-      before = performance.now();
       Bun.gc(true);
       after = performance.now();
     `);
@@ -729,7 +727,7 @@ describe("gc entries", () => {
       startTime: expect.any(Number),
       duration: expect.any(Number),
       lasts: true,
-      endsInsideTheCall: true,
+      endsBeforeTheCallReturns: true,
     });
     expect(exitCode).toBe(0);
   });

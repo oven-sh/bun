@@ -274,8 +274,6 @@ pub(crate) fn get_credentials_with_options(
             }
         }
     }
-    // The key is a request header. Over plain HTTP it would cross the wire in
-    // clear text before the server can refuse it.
     if new_credentials.credentials.sse_customer_key.is_some()
         && new_credentials.credentials.insecure_http
     {

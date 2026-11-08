@@ -169,8 +169,6 @@ impl SseCustomerKey {
     pub const KEY_B64_LEN: usize = bun_base64::encode_len_from_size(Self::KEY_LEN);
     const KEY_MD5_B64_LEN: usize = bun_base64::encode_len_from_size(bun_sha_hmac::MD5::DIGEST);
 
-    /// Boxed so the encoded key is written once, into the heap copy that
-    /// `Drop` zeroes.
     pub fn new(key: &[u8; Self::KEY_LEN]) -> Box<Self> {
         let mut this = Box::new(Self {
             key_b64: [0; Self::KEY_B64_LEN],
@@ -1378,8 +1376,7 @@ const SSE_CUSTOMER_ALGORITHM_HEADER: &[u8] = b"x-amz-server-side-encryption-cust
 const SSE_CUSTOMER_KEY_HEADER: &[u8] = b"x-amz-server-side-encryption-customer-key";
 const SSE_CUSTOMER_KEY_MD5_HEADER: &[u8] = b"x-amz-server-side-encryption-customer-key-md5";
 
-/// The 4096 bytes the canonical request had before SSE-C, plus what its three
-/// header lines and signed header names add.
+/// 4096 plus what the SSE-C header lines and names add.
 const CANONICAL_REQUEST_BUFFER_LEN: usize = 4096
     + SSE_CANONICAL_HEADERS_MAX_LEN
     + 3

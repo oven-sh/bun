@@ -59,7 +59,7 @@ mmap       PickleBuffer(c).raw()  [None, 'BufferError: memoryview has 2 exported
     when it has been let go of: None None ValueError: operation forbidden on released memoryview object
 mmap       a slice                [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot close exported pointers exist', b'\x00\x00']
     when it has been let go of: None None ValueError: operation forbidden on released memoryview object
-mmap       of a part              [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot close exported pointers exist', b'']
+mmap       of a part              [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot close exported pointers exist', b'\x00\x00']
     when it has been let go of: None None ValueError: operation forbidden on released memoryview object
 mmap       of a part of c         [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot close exported pointers exist', b'\x00\x00']
     when it has been let go of: None None ValueError: operation forbidden on released memoryview object

@@ -16,7 +16,7 @@ def shrink(o):
     if isinstance(o, mmap.mmap): return attempt(o.close)
     return (list(o.log), attempt(o.ba.clear))
 MAKERS = (('bytearray', lambda: bytearray(b'x' * 64)), ('array', lambda: array.array('b', b'x' * 64)), ('BytesIO', lambda: io.BytesIO(b'x' * 64)), ('mmap', lambda: mmap.mmap(-1, 64)), ('Exporter', Exporter))
-class S(Structure): _fields_ = [('a', c_char * 8), ('b', c_int)]
+class S(Structure): _fields_ = [('a', c_ubyte * 8), ('b', c_int)]
 TAKERS = (('memoryview(c)', lambda c: memoryview(c)), ('from_buffer(c)', lambda c: (c_ubyte * 2).from_buffer(c)), ('PickleBuffer(c)', lambda c: pickle.PickleBuffer(c)), ('PickleBuffer(c).raw()', lambda c: pickle.PickleBuffer(c).raw()),
           ('a slice', lambda c: memoryview(c)[1:3]), ('of a part', lambda c: memoryview(S.from_buffer(c, 8).a)), ('of a part of c', lambda c: memoryview((c_char * 8 * 8).from_buffer(c)[2])), ('twice over', lambda c: memoryview((c_char * 4).from_buffer((c_char * 8).from_buffer(c, 8), 2))))
 def read(m):

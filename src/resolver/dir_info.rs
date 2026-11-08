@@ -225,7 +225,6 @@ impl DirInfo {
 
     pub fn get_file_descriptor(&self) -> Fd {
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
-            // Scalar field read, no lock needed.
             return fs::FileSystem::instance()
                 .fs
                 .entries
@@ -235,9 +234,7 @@ impl DirInfo {
         Fd::INVALID
     }
 
-    /// Is this directory's slot a listing (or a read error), as opposed to the
-    /// placeholder the `DirInfo` walk leaves for a directory it only opened?
-    /// Caller holds `entries_mutex`.
+    /// False for the `Unlisted` placeholder. Caller holds `entries_mutex`.
     pub(crate) fn is_listed_locked(&self) -> bool {
         !matches!(
             fs::FileSystem::instance().fs.entries.at_index(self.entries),
@@ -282,9 +279,8 @@ impl DirInfo {
             .get(query)
     }
 
-    /// [`get_entry`](Self::get_entry) that does not list a directory the
-    /// walk only opened: the outer `None` is that directory, the inner one a
-    /// name that is not in the listing.
+    /// [`get_entry`](Self::get_entry) without listing an `Unlisted` directory:
+    /// the outer `None` is that directory, the inner one a missing name.
     pub(crate) fn get_entry_if_listed(
         &self,
         generation: Generation,
@@ -302,8 +298,7 @@ impl DirInfo {
         )
     }
 
-    /// The listing as cached, with no generation check, read now when the
-    /// `DirInfo` walk only opened this directory. Caller holds `entries_mutex`.
+    /// The listing as cached, read now if `Unlisted`. Caller holds `entries_mutex`.
     pub fn get_entries_listed_locked(&self) -> Option<&'static fs::DirEntry> {
         self.get_entries_ref_locked(0)
     }

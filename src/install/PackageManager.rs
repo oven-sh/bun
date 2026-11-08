@@ -457,10 +457,9 @@ bun_output::declare_scope!(PackageManager, hidden);
 pub struct PackageManager {
     pub(crate) cache_directory: Option<bun_sys::Dir>,
     pub(crate) cache_directory_path: ZBox, // owned; process lifetime via the leaked singleton
-    /// The project directory, interned in `DirnameStore`, with a trailing separator.
+    /// The project directory, interned in `DirnameStore`.
     pub root_dir: &'static [u8],
-    /// Whether `root_dir` had a `node_modules` entry when the manager was created, before
-    /// any install created one.
+    /// `root_dir` had a `node_modules` entry when the manager was created.
     pub root_dir_has_node_modules: bool,
     // allocator dropped per §Allocators (was `bun.default_allocator`). For the
     // handful of sites that allocated AST nodes via `Expr.allocate(manager.allocator, …)`

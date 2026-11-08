@@ -125,9 +125,6 @@ impl<'a> Scanner<'a> {
             return Err(ScanError::DoesNotExist);
         };
 
-        // The root is read without the scanner as its iterator, then visited
-        // in name order below: hash-map iteration order is not stable, and
-        // `readdir` order is not either.
         let fs_ptr = self.fs;
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
         let root = unsafe { &mut (*fs_ptr).fs }
@@ -158,11 +155,8 @@ impl<'a> Scanner<'a> {
         }
 
         if let EntriesOption::Entries(entries) = root {
-            // Collect first so `self.next(…)` doesn't overlap the
-            // `entries.data` borrow. Sort by (lowercased) base name so
-            // test-file discovery order is deterministic —
-            // regression/issue/26851 relies on `a_*.test` running before
-            // `b_*.test` under `--bail`.
+            // Name order: regression/issue/26851 relies on `a_*.test` running
+            // before `b_*.test` under `--bail`.
             let mut entry_ptrs: Vec<*mut fs::Entry> = {
                 let _entries_lock = self.fs().fs.entries_mutex.lock_guard();
                 entries.data.values().copied().collect()

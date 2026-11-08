@@ -603,9 +603,7 @@ impl Loader {
         Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer)
     }
 
-    /// Load the `--env-file` list, or else the default `.env*` files of the
-    /// working directory. A default file that does not exist is one failed
-    /// `open`, not an error.
+    /// Load the `--env-file` list, or else the default `.env*` files of the cwd.
     pub fn load(
         &mut self,
         env_files: &[&[u8]],
@@ -756,8 +754,7 @@ impl Loader {
         Output::flush();
     }
 
-    /// Returns whether a file of that name exists. Only a file that exists
-    /// counts as loaded, even when it cannot be read.
+    /// Returns whether a file of that name exists.
     pub(crate) fn load_env_file<const OVERRIDE: bool>(
         &mut self,
         dir: bun_sys::Fd,

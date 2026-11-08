@@ -740,9 +740,8 @@ pub mod fs {
     pub enum EntriesOption {
         Entries(&'static mut DirEntry),
         Err(dir_entry::Err),
-        /// A directory the resolver opened for its `DirInfo` markers and did
-        /// not list. `entries_at_locked` and `read_directory_with_iterator`
-        /// replace it with `Entries` the first time a caller needs the names.
+        /// Opened for its `DirInfo` markers, not listed. `entries_at_locked` and
+        /// `read_directory_with_iterator` list it on the first request for names.
         Unlisted(Unlisted),
     }
 
@@ -758,8 +757,7 @@ pub mod fs {
         // Payload is `&'static mut DirEntry`; auto-deref coerces to `&DirEntry` / `&mut DirEntry`.
         bun_core::enum_unwrap!(pub EntriesOption, Entries => fn entries / entries_mut -> DirEntry);
 
-        /// The listing, or the error that reading the directory gave. Only
-        /// valid on a slot that `read_directory` or `entries_at_locked` returned.
+        /// The listing, or the error that reading the directory gave.
         pub fn try_entries(&self) -> crate::CrateResult<&DirEntry> {
             match self {
                 EntriesOption::Entries(entries) => Ok(&**entries),
@@ -1113,9 +1111,7 @@ pub mod fs {
             )
         }
 
-        /// [`read_directory_with_iterator`](Self::read_directory_with_iterator)
-        /// for a caller that already holds `entries_mutex`. Never returns an
-        /// `Unlisted` slot.
+        /// Caller holds `entries_mutex`. Never returns an `Unlisted` slot.
         pub(crate) fn read_directory_locked<I: DirEntryIterator>(
             &mut self,
             dir_maybe_trail_slash: &[u8],
@@ -1174,8 +1170,6 @@ pub mod fs {
 
             // Close the handle on every exit path. Use
             // scopeguard so close happens even if `readdir`/`put` early-return with `?`.
-            // A placeholder that already keeps the directory open keeps that
-            // fd; the handle opened here for the read is closed.
             let keeps_unlisted_fd = unlisted.is_some_and(|u| u.fd.is_valid());
             let should_close_handle =
                 !had_handle && (!store_fd || keeps_unlisted_fd || self.need_to_close_files());
@@ -1553,9 +1547,7 @@ pub mod fs {
                         Err(err) => return self.read_directory_error(unlisted.dir, err).ok(),
                     };
                     new_entry.fd = unlisted.fd;
-                    // SAFETY: slot is exclusively owned under `entries_mutex`; the
-                    // `DirEntry` is leaked for the life of the process like every
-                    // other listing in this map.
+                    // SAFETY: slot is exclusively owned under `entries_mutex`.
                     unsafe {
                         *result_ptr = EntriesOption::Entries(&mut *bun_core::heap::into_raw(
                             Box::new(new_entry),
@@ -1601,9 +1593,7 @@ pub mod fs {
             Some(unsafe { &*result_ptr })
         }
 
-        /// Kind of `name` inside the directory at `dir` (open as `fd`), following
-        /// symlinks. `None` for a missing or dangling entry, or when the
-        /// directory could not be opened.
+        /// Kind of `name` in the directory open as `fd`, following symlinks.
         pub(crate) fn kind_at(&self, dir: &[u8], fd: Fd, name: &'static ZStr) -> Option<EntryKind> {
             if !fd.is_valid() {
                 return None;

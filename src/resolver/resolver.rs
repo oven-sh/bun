@@ -2022,10 +2022,7 @@ impl<'a> Resolver<'a> {
             // Probe the listing in one `entries_mutex` critical section: a
             // concurrent resolver at a newer generation rewrites this `DirEntry`'s
             // map in place under that lock. The entry pointer stays valid after
-            // unlock (EntryStore-owned). A directory the walk only opened (the
-            // entry point's) has no listing; `resolve_entry_point` already
-            // resolved the file's own symlink, so only a symlinked directory is
-            // left to apply.
+            // unlock (EntryStore-owned).
             let query = dir.get_entry_if_listed(self.generation, name.filename);
             if query.is_none() {
                 if !path.is_symlink
@@ -3860,8 +3857,6 @@ impl<'a> Resolver<'a> {
             }
         };
 
-        // A package directory is listed: `load_as_file_or_directory` probes
-        // its entries right after this.
         let dir_entries_option: *const Fs::file_system::real_fs::EntriesOption =
             rfs!().read_directory(dir_path, Some(open_dir), self.generation, self.store_fd)?;
         // SAFETY: `read_directory` returned a live slot in `rfs.entries` (or the
@@ -4980,10 +4975,8 @@ impl<'a> Resolver<'a> {
             let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
                 .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
-            // The markers `dir_info_uncached` asks for are fixed names, so a
-            // directory is not listed here. A package directory is the
-            // exception: the resolve that follows probes its entries anyway,
-            // and the open fd makes that listing free of extra syscalls.
+            // Only a package directory is listed here: the resolve that follows
+            // probes its entries anyway.
             let in_node_modules = open_dir.is_valid()
                 && (strings::without_trailing_slash(bun_paths::basename(dir_path))
                     == b"node_modules"
@@ -5018,7 +5011,6 @@ impl<'a> Resolver<'a> {
                     cached_dir_entry_result =
                         rfs!().entries.get_or_put(dir_path).expect("unreachable");
                 } else if !has_stale_listing {
-                    // A stale listing stays until a reader asks for it again.
                     rfs!().entries.put(
                         &mut cached_dir_entry_result,
                         Fs::file_system::real_fs::EntriesOption::Unlisted(
@@ -6365,11 +6357,8 @@ impl<'a> Resolver<'a> {
         let result = _result;
 
         // SAFETY: `listing` is the payload of a live `rfs.entries` slot (caller
-        // contract), a separate process-lifetime allocation, read under
-        // `entries_mutex`.
+        // contract), read under `entries_mutex`.
         let listing = listing.map(|p| bun_ptr::BackRef::new(unsafe { &*p }));
-        // Kind of a marker file in this directory: from the cached listing
-        // when there is one, else one `stat` on the open directory.
         macro_rules! marker_kind {
             ($name:literal) => {
                 match listing {
@@ -6519,8 +6508,6 @@ impl<'a> Resolver<'a> {
                 // The only caller that reaches this with `parent` set
                 // (`dir_info_cached_miss`) already holds `entries_mutex`, and that
                 // mutex is non-recursive, so go through the `_locked` accessor.
-                // A parent the walk only opened is asked with one `lstat`
-                // instead of a listing.
                 let found: Option<(&'static [u8], Option<crate::fs::EntryLookup>)> =
                     if parent_.is_listed_locked() {
                         parent_

@@ -632,10 +632,8 @@ impl<'a> Transpiler<'a> {
                     self.resolver.opts.set_production(true);
                 }
 
-                // The project root's tsconfig decides the JSX pragma. If the
-                // cwd (or a parent) is unreadable, readDirInfo returns null;
-                // skip .env file loading in that case, but process env vars
-                // were already loaded above.
+                // If the cwd (or a parent) is unreadable, readDirInfo returns
+                // null; skip .env file loading, process env vars are loaded.
                 let top_level_dir = Fs::FileSystem::get().top_level_dir();
                 let dir_info = match self.resolver.read_dir_info(top_level_dir) {
                     Ok(Some(d)) => d,

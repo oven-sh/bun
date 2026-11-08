@@ -5557,8 +5557,6 @@ impl VirtualMachine {
             bun_ast::ImportKind::Require
         };
 
-        // The entry point is a file the CLI already found: one `stat` resolves
-        // it. Anything else goes through the full resolver below.
         let mut entry_point = None;
         if source == MAIN_FILE_NAME && bun_paths::is_absolute(normalized_specifier) {
             entry_point = match self

@@ -2519,7 +2519,7 @@ describe.concurrent("a built-in module uses what a program stored on node:stream
             nodeFs.createWriteStream(require("node:os").devNull).destroy();
             whileStubbed = "a stream";
           } catch (error) {
-            whileStubbed = error.name;
+            whileStubbed = error.name + ": " + error.message;
           }
           stream.Readable = Readable;
           const readStream = nodeFs.createReadStream(process.execPath);
@@ -2533,7 +2533,9 @@ describe.concurrent("a built-in module uses what a program stored on node:stream
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr }).toEqual({
-      stdout: JSON.stringify({ whileStubbed: "TypeError", afterwards: true }) + "\n",
+      stdout:
+        JSON.stringify({ whileStubbed: "TypeError: Base class must have a prototype property", afterwards: true }) +
+        "\n",
       stderr: "",
     });
     expect(exitCode).toBe(0);

@@ -640,7 +640,7 @@ function WriteStream(
       this[kFs] = fsOf();
     }
   }
-  $assert(fastPath || this[kFs]!.write, "assuming user does not delete fs.write!");
+  $assert(fastPath || customFs || this[kFs]!.write, "assuming user does not delete fs.write!");
 
   // Enable fast path
   if (fastPath) {

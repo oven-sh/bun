@@ -35,6 +35,24 @@ test("asymmetric matchers against typed objects", () => {
   ];
   for (const [name, f] of rows) console.log("ROW asymmetric:", name + ":", ok(f));
 });
+test("the constructor of a Set that a Proxy serves", () => {
+  const serving = (constructor: Function) =>
+    new Proxy(new Set([1]), {
+      get(target, key) {
+        if (key === "constructor") return constructor;
+        const value = Reflect.get(target, key, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  const rows: [string, Function, Function][] = [
+    ["two bound functions of one name", Set.bind(null), Set.bind(null)],
+    ["two classes of one name", class X {}, class X {}],
+    ["two bound classes of one name", (class X {}).bind(null), (class X {}).bind(null)],
+    ["a class of the name Set and Set", { Set: class {} }.Set, Set],
+    ["a bound function and a function of its name", Set.bind(null), { "bound Set": function () {} }["bound Set"]],
+  ];
+  for (const [name, a, b] of rows) console.log("ROW constructor:", name + ":", ok(() => expect(serving(a)).toEqual(serving(b))));
+});
 `,
 };
 
@@ -50,7 +68,15 @@ test("under bun test --aot, matchers that compare deeply answer for typed object
   using expectedDir = tempDir("test-aot-deep-equality", files);
   using actualDir = tempDir("test-aot-deep-equality", files);
   const [expected, actual] = await Promise.all([rowsOf(String(expectedDir), false), rowsOf(String(actualDir), true)]);
-  expect(expected.rows.length).toBe(88);
+  // For two Proxies around a Set, toEqual() takes two constructors for one only if both print as `[native code]` under one name.
+  expect(expected.rows.filter(row => row.startsWith("ROW constructor: "))).toEqual([
+    "ROW constructor: two bound functions of one name: T",
+    "ROW constructor: two classes of one name: f",
+    "ROW constructor: two bound classes of one name: T",
+    "ROW constructor: a class of the name Set and Set: f",
+    "ROW constructor: a bound function and a function of its name: f",
+  ]);
+  expect(expected.rows.length).toBe(93);
   expect(actual).toEqual(expected);
   expect(actual.exitCode).toBe(0);
 });

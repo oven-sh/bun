@@ -36,7 +36,7 @@ pub(crate) struct ReactCompilerCandidate {
 }
 
 // A copy of this is in the frame of `visit_func` and of `e_arrow`, which recurse.
-const _: () = assert!(core::mem::size_of::<ReactCompilerCandidate>() == 16);
+const _: () = assert!(core::mem::size_of::<Option<ReactCompilerCandidate>>() == 16);
 
 pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool> {
     p: &'p mut P<'a, TS, SCAN_ONLY>,
@@ -234,6 +234,8 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
     ///
     /// Consumes `react_compiler_candidate_name`, so that a function in a default argument can't pick it up, and sets
     /// `react_compiler_search` for the visit.
+    ///
+    /// `None` without the compiler: nothing sets the name, the `memo()` flag or the search state then.
     #[inline]
     pub(crate) fn enter_react_compiler_candidate(
         &mut self,
@@ -243,25 +245,17 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         args: &[js_ast::G::Arg],
         has_rest_arg: bool,
         body: &[js_ast::Stmt],
-    ) -> ReactCompilerCandidate {
-        // Without the compiler nothing sets the name, the `memo()` flag or the search state.
-        if self.react_compiler.is_none() {
-            return ReactCompilerCandidate {
-                prev_search: ReactCompilerSearch::Search,
-                is_taken: false,
-                binding: None,
-                in_react_hoc: false,
+    ) -> Option<ReactCompilerCandidate> {
+        self.react_compiler.is_some().then(|| {
+            self.discover_react_compiler_candidate(
+                is_method,
                 is_top_level,
-            };
-        }
-        self.discover_react_compiler_candidate(
-            is_method,
-            is_top_level,
-            has_react_hooks_suppression,
-            args,
-            has_rest_arg,
-            body,
-        )
+                has_react_hooks_suppression,
+                args,
+                has_rest_arg,
+                body,
+            )
+        })
     }
 
     #[inline(never)]

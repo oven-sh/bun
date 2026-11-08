@@ -147,16 +147,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut temp_opts = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
         };
-        if rc_candidate.is_taken {
+        if let Some(candidate) = rc_candidate
+            && candidate.is_taken
+        {
             self.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
                 args: func.args,
                 flags: func.flags,
                 body_loc,
                 args_loc: func.open_parens_loc,
-                binding: rc_candidate.binding,
+                binding: candidate.binding,
                 own_name: func.name.map(|n| n.ref_).filter(|r| r.is_valid()),
-                in_react_hoc: rc_candidate.in_react_hoc,
-                is_top_level: rc_candidate.is_top_level,
+                in_react_hoc: candidate.in_react_hoc,
+                is_top_level: candidate.is_top_level,
             });
         }
         self.visit_stmts_and_prepend_temp_refs(&mut stmts, &mut temp_opts)
@@ -165,7 +167,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(result) = self.react_compiler_result.take() {
             func.args = result.args;
             func.flags = result.flags;
-            if let Some(b) = rc_candidate.binding {
+            if let Some(b) = rc_candidate.and_then(|candidate| candidate.binding) {
                 self.record_usage(b);
             }
         }
@@ -213,7 +215,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.pop_scope();
         self.pop_scope();
 
-        self.react_compiler_search = rc_candidate.prev_search;
+        if let Some(candidate) = rc_candidate {
+            self.react_compiler_search = candidate.prev_search;
+        }
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
 

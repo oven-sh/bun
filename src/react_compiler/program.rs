@@ -1427,7 +1427,8 @@ impl ReactCompilerState {
         };
         // Upstream compiles these for their diagnostics and applies nothing. Nothing reports them here.
         if has_react_hooks_suppression
-            || find_directive_disabling_memoization(&directives).is_some()
+            || (!self.options.ignore_use_no_forget
+                && find_directive_disabling_memoization(&directives).is_some())
         {
             return Discovery::Skip;
         }

@@ -4523,7 +4523,7 @@ describe("bundler", () => {
           import { test } from "bun:test";
           import * as all from "./entry.jsx";
           test("which functions have a memo cache", () => {
-            console.log("compiled: " + Object.keys(all).filter(name => /\\$\\[\\d+\\]/.test(String(all[name]))).join(" "));
+            console.log("compiled: " + Object.keys(all).filter(name => /\\$\\d*\\[\\d+\\]/.test(String(all[name]))).join(" "));
           });
         `,
       });
@@ -4601,8 +4601,9 @@ describe("bundler", () => {
       [wrapped("MemoReturnsAnObject", "memo", "{ a, b }", "", `{ v: ${unit} }`), [5]],
       [wrapped("MemoThreeParameters", "memo", "{ a, b }, x, y", "", `[x, y, ${unit}]`), []],
       [wrapped("MemoThreeParametersNotRead", "memo", "{ a, b }, x, y"), []],
-      // Upstream does not ask if the property is computed.
+      // Upstream does not ask if the property is computed. It asks that the property is an identifier.
       [`const ReactIndexMemo = (memo => React[memo](({ a, b }, r) => { ${cell} return ${unit}; }))("memo");`, [5]],
+      [`const ReactStringMemo = React["memo"](({ a, b }) => { ${cell} return ${unit}; });`, [2]],
       // The arguments of import() were not read either.
       [fn("ImportArgument", `const load = a > 5 ? import(useState("./x.js")[0]) : null;`), []],
       [fn("ImportOptions", `const load = a > 5 ? import(a, useState({})[0]) : null;`), []],
@@ -4701,21 +4702,15 @@ describe("bundler", () => {
     // `react-hooks/immutability` reports the write to `p` where `Cell` is a component on its own, so it says for each
     // row what upstream claims. A row that is in the wrong list above fails here. The plugin reports nothing for a
     // file that has a decorator, so those rows are not in the file.
-    //
-    // The first `bun lint` of a debug build reads the code of the linter from the disk, which can take longer than the
-    // default timeout.
-    const slow = isDebug || isASAN ? 120_000 : undefined;
-    test(
-      "react-compiler/WhereAHookCallOrJsxMakesAComponent, as bun lint claims",
-      async () => {
-        const marked = `const Cell = p => {\n p.marker = 2;\n return <i x={p.x}>{b}</i>; };`;
-        const linted = rows.filter(([row]) => !row.includes("@d("));
-        const source = [prelude.trim().replaceAll("\n", " "), ...linted.map(([row]) => row.replace(cell, marked))].join(
-          "\n",
-        );
-        using dir = tempDir("react-compiler-lint-claims", {
-          "rows.tsx": source,
-          "eslint.config.js": `
+    test("react-compiler/WhereAHookCallOrJsxMakesAComponent, as bun lint claims", async () => {
+      const marked = `const Cell = p => {\n p.marker = 2;\n return <i x={p.x}>{b}</i>; };`;
+      const linted = rows.filter(([row]) => !row.includes("@d("));
+      const source = [prelude.trim().replaceAll("\n", " "), ...linted.map(([row]) => row.replace(cell, marked))].join(
+        "\n",
+      );
+      using dir = tempDir("react-compiler-lint-claims", {
+        "rows.tsx": source,
+        "eslint.config.js": `
           export default [{
             files: ["**/*.tsx"],
             plugins: { "react-hooks": { meta: { name: "eslint-plugin-react-hooks" } } },
@@ -4723,28 +4718,26 @@ describe("bundler", () => {
             languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
           }];
         `,
-        });
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "lint", "-f", "json", "rows.tsx"],
-          cwd: String(dir),
-          env: { ...bunEnv, AGENT: "0" },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        if (!stdout.startsWith("[")) throw new Error(`No report (exit ${exitCode}): ${stderr}`);
-        const [{ messages }] = JSON.parse(stdout) as [{ messages: { ruleId: string; line: number }[] }];
-        // Each row is three lines after the one line of the prelude, and the write to `p` is on the second.
-        const alone = new Set(
-          messages.filter(it => it.ruleId === "react-hooks/immutability").map(it => (it.line - 3) / 3),
-        );
-        expect({ cellAlone: linted.filter((_, row) => alone.has(row)).map(nameOf), exitCode }).toEqual({
-          cellAlone: [...asUpstream.filter(([, sizes]) => String(sizes) === "2"), ...onlyBunClaims].map(nameOf),
-          exitCode: 1,
-        });
-      },
-      slow,
-    );
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "lint", "-f", "json", "rows.tsx"],
+        cwd: String(dir),
+        env: { ...bunEnv, AGENT: "0" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (!stdout.startsWith("[")) throw new Error(`No report (exit ${exitCode}): ${stderr}`);
+      const [{ messages }] = JSON.parse(stdout) as [{ messages: { ruleId: string; line: number }[] }];
+      // Each row is three lines after the one line of the prelude, and the write to `p` is on the second.
+      const alone = new Set(
+        messages.filter(it => it.ruleId === "react-hooks/immutability").map(it => (it.line - 3) / 3),
+      );
+      expect({ cellAlone: linted.filter((_, row) => alone.has(row)).map(nameOf), exitCode }).toEqual({
+        cellAlone: [...asUpstream.filter(([, sizes]) => String(sizes) === "2"), ...onlyBunClaims].map(nameOf),
+        exitCode: 1,
+      });
+    });
   }
 
   // A callback that uses nothing from its component is moved out of it. It can still use variables of the function that

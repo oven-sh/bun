@@ -1121,19 +1121,23 @@ test.each<[string, () => unknown]>([
 
 test("the note appears exactly when the output budget hides the difference", () => {
   // `meta` differs. It prints in full until the text before it is longer than 1,000,000 bytes.
-  const message = (length: number) => {
-    const body = Buffer.alloc(length, "x").toString();
+  const message = (body: string) => {
     return messageOf(() => expect({ body, meta: { a: 1 } }).toEqual({ body, meta: { a: 2 } }));
   };
   // Each side prints `\n{\n  "body": "<body>",\n  "meta": ` before the value of `meta`.
   // The diff trims the leading newline later, but it counts toward the budget.
   const before = `\n{\n  "body": "`.length + `",\n  "meta": `.length;
-  const shown = message(1_000_000 - before);
+  const shown = message(Buffer.alloc(1_000_000 - before, "x").toString());
   expect(shown).toContain(`\n-     "a": 2,\n+     "a": 1,\n`);
   expect(shown).toEndWith("\n\n- Expected  - 1\n+ Received  + 1\n");
   expect(shown).not.toContain("note:");
-  const hidden = message(1_000_000 - before + 1);
+  const hidden = message(Buffer.alloc(1_000_000 - before + 1, "x").toString());
   expect(hidden).toBe(`expect(received).toEqual(expected)\n\n${sentence}\n${cutNote}\n`);
+  // The budget counts UTF-8 bytes, not UTF-16 units: `é` is one unit and two bytes.
+  const accented = "x" + Buffer.alloc(1_000_000 - before - 1, "é").toString();
+  expect(accented.length).toBe((1_000_000 - before - 1) / 2 + 1);
+  expect(message(accented)).not.toContain("note:");
+  expect(message(accented + "x")).toEndWith(`\n\n${sentence}\n${cutNote}\n`);
 });
 
 test("a diff of values that were cut short has the note above the footer", () => {

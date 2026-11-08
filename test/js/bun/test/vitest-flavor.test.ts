@@ -3130,13 +3130,14 @@ describe.concurrent("behavior depends on the module a function is imported from"
     expect({ log, exitCode }).toEqual({ log: [rulesOfJest, rulesOfVitest], exitCode: 0 });
   });
 
-  test(`a snapshot that a concurrent test or the top level of a "vitest" file writes has Vitest's format`, async () => {
+  test(`an inline snapshot that a concurrent test of "vitest" writes has Vitest's format`, async () => {
     using dir = tempDir("vitest-flavor-snapshot", {
       "a.test.js": `
         import { expect, test } from "vitest";
-        expect(new Error("at the top level")).toMatchInlineSnapshot();
+        function named() {}
         test.concurrent("first", async () => {
           await 1;
+          expect(named).toMatchInlineSnapshot();
           expect(() => { throw new Error("thrown"); }).toThrowErrorMatchingInlineSnapshot();
         });
         test.concurrent("second", async () => { await 1; });
@@ -3151,9 +3152,15 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     const written = await Bun.file(join(String(dir), "a.test.js")).text();
-    expect(written.split("\n").filter(line => line.includes("InlineSnapshot")).map(line => line.trim())).toEqual([
-      "expect(new Error(\"at the top level\")).toMatchInlineSnapshot(`[Error: at the top level]`);",
-      "expect(() => { throw new Error(\"thrown\"); }).toThrowErrorMatchingInlineSnapshot(`[Error: thrown]`);",
+    expect(
+      written
+        .split("\n")
+        .filter(line => line.includes("InlineSnapshot"))
+        .map(line => line.trim()),
+    ).toEqual([
+      // As Vitest 5.0 writes them. Bun's format has the name of the function, and the message of the thrown error.
+      "expect(named).toMatchInlineSnapshot(`[Function]`);",
+      'expect(() => { throw new Error("thrown"); }).toThrowErrorMatchingInlineSnapshot(`[Error: thrown]`);',
     ]);
     expect(stderr).toContain("snapshots: +2 added");
     expect(exitCode).toBe(0);

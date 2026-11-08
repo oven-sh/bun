@@ -4050,13 +4050,14 @@ declare module "bun" {
     /**
      * With `aot`: reports to add to `BuildOutput.logs`, at level `"verbose"`.
      *
-     * - `"text"`: the code that compiled to a slow path, one entry per cause with a fix, worst first
+     * - `"text"`: the places whose code is a slow path, worst first. An entry names a cause and a fix
+     *   where the compiler recorded one
      * - `"json"`: the same, one JSON object per line
-     * - `"guards"`: every type guard that can fail at run time, why the compiler couldn't remove it,
-     *   and how to fix it
+     * - `"guards"`: every type guard that can fail at run time, with a cause and a fix where the
+     *   compiler recorded one
      * - `"guards-json"`: the same, one JSON object per line
      * - `"trim"`: which Bun and Node.js APIs the program uses, and why `trim` kept or removed each feature
-     * - `"allocations"`: where each object is allocated (stack, heap or removed), and why
+     * - `"allocations"`: where each object is allocated (stack, heap or removed)
      * - `"forms"`: how many operations of each kind compiled to inline code, to a call of shared code, or to a call into the runtime
      * - `"statistics"`: what the build counted, one name and number per line
      *

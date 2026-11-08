@@ -261,7 +261,7 @@ fn headings_count_classes_in_their_order() {
     assert_headings(
         &text_report(&records),
         "3 type guards",
-        "1 on a value of the wrong type, 2 on a value from untyped code",
+        "2 on a value whose type isn't proven, 1 with no recorded reason",
     );
 }
 
@@ -281,7 +281,7 @@ fn counts_have_digit_groups() {
     assert_headings(
         &report,
         "1,204 type guards",
-        "1,204 on a value from untyped code",
+        "1,204 on a value whose type isn't proven",
     );
     assert_eq!(last_line(&report), format!("1,004 more guards{NOT_SHOWN}"));
 }
@@ -336,7 +336,11 @@ fn guards_in_modules_of_bun_are_left_out() {
     ];
     assert_eq!(listed_places(&records), [2, 3]);
     let report = text_report(&records);
-    assert_headings(&report, "2 type guards", "2 on a value from untyped code");
+    assert_headings(
+        &report,
+        "2 type guards",
+        "2 on a value whose type isn't proven",
+    );
     let listed = [at(PROGRAM, 10), at(DEPENDENCY, 10)];
     assert_eq!(positions_of(&report), listed);
     assert_eq!(texts_of(&text_report(&records[..1])), [NO_GUARD]);
@@ -382,7 +386,7 @@ fn guards_sort_by_position_then_function() {
             None,
         ]
     );
-    let headline = guard_wording(GuardClass::OtherType).headline;
+    let headline = guard_wording(GuardClass::NotRecorded).headline;
     assert_eq!(text_of(&report[HEADINGS + 1]), format!("2. {headline}"));
 }
 
@@ -465,12 +469,12 @@ fn text_shows_at_most_200_guards_of_a_class() {
     assert_headings(
         &report,
         "208 type guards",
-        "205 on a value of the wrong type, 3 on a value from untyped code",
+        "3 on a value whose type isn't proven, 205 with no recorded reason",
     );
     assert_eq!(report.len(), HEADINGS + MAX_SHOWN + 3 + 1);
     for (number, entry) in (1..=MAX_SHOWN + 3).zip(&report[HEADINGS..]) {
         let class = if number <= MAX_SHOWN {
-            GuardClass::OtherType
+            GuardClass::NotRecorded
         } else {
             GuardClass::UnknownObject
         };

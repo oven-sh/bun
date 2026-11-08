@@ -74,7 +74,7 @@ const { id, name } = JSON.parse(text); // [!code ++]
 const user: User = { id, name }; // [!code ++]
 ```
 
-`JSON.parse` returns ordinary objects, whatever type you declare for the result. So do `response.json()` and `request.json()`. They have the right properties but not the fixed layout of `User`, so the guard fails and every read looks the property up. An object that your own code creates has the layout. Nothing is validated either way. To reject bad data, take the value as `unknown`, check it, and [build a new object from it](/compiler/explain#unknown-object).
+`JSON.parse` returns ordinary objects, whatever type you declare for the result. So do `response.json()` and `request.json()`. They have the right properties but not the fixed layout of `User`, so the guard fails and every read looks the property up. An object that your own code creates has the layout. Nothing is validated either way. To reject bad data, take the value as `unknown`, check it, and [build a new object from it](/compiler/explain#untyped-collection).
 
 ### Declare every property
 

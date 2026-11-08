@@ -1,6 +1,7 @@
 // `bun compile --explain`, `bun check --aot --explain` and `aotExplain` give one report. Its text, its JSON and its closing
-// lines say the same, an entry stands at the line that an untyped value comes from, and asking for it changes nothing of
-// what is built. The wording of single entries is tested beside the code that writes it: src/aot/report.
+// lines say the same, an entry stands at the line that uses an untyped value and names a cause only where the compiled code
+// shows one, and asking for it changes nothing of what is built. The wording of single entries is tested beside the code
+// that writes it: src/aot/report.
 import { expect } from "bun:test";
 import { mkdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
@@ -142,6 +143,229 @@ const withDependency: Files = {
   "node_modules/reads-config/index.js": `export function portOf(text) {\n  return JSON.parse(text).port;\n}\n`,
   "node_modules/reads-config/index.d.ts": `export declare function portOf(text: string): number;\n`,
 };
+
+// One program for each cause that the compiled code can show, with every entry of its report: the line, the cause and
+// the `why` where there is one. An entry is one place that uses a value, so a value that is read in three places has
+// three. A value that is read out of another value has the cause of that value.
+const programsWithCauses: Record<string, { source: string; entries: string[] }> = {
+  "an element read at an index that nothing proves": {
+    source: `console.log(process.argv[2]);\n`,
+    entries: ["1 element-access element-may-be-missing"],
+  },
+  // The read of `code` and the sum that takes it both hang on the caught value.
+  "a caught value": {
+    source: `let total = 0;
+try {
+  JSON.parse(process.argv[2]!);
+} catch (error) {
+  total += (error as { code: number }).code;
+}
+console.log(total);
+`,
+    entries: ["3 element-access element-may-be-missing", "5 caught-value", "5 caught-value"],
+  },
+  "the result of JSON.parse, read three times": {
+    source: `const parsed: any = JSON.parse(process.argv[2]!);
+let sum = 0;
+sum += parsed.a;
+sum += parsed.b;
+sum += parsed.c;
+console.log(sum);
+`,
+    entries: ["1 element-access element-may-be-missing", "3 builtin-result", "4 builtin-result", "5 builtin-result"],
+  },
+  // A function that calls itself is never inlined, so its parameter is what its own entry brings.
+  "a parameter of unknown type": {
+    source: `function depth(node: any): number {
+  return node.next ? 1 + depth(node.next) : 0;
+}
+console.log(depth(JSON.parse(process.argv[2]!)));
+`,
+    entries: ["2 incoming-value", "2 incoming-value", "4 element-access element-may-be-missing"],
+  },
+  // And so is what it returns: the read of `name` hangs on the result of a call of a function that the compiler knows.
+  "the result of a function that calls itself": {
+    source: `function pick(list: any[], i: number): any {
+  return i > 0 ? pick(list, i - 1) : list[0];
+}
+console.log(pick(JSON.parse(process.argv[2]!), 2).name);
+`,
+    entries: ["2 incoming-value", "4 call-result", "4 element-access element-may-be-missing"],
+  },
+  "the result of a call by value": {
+    source: `function run(handler: any): number {
+  return handler().count;
+}
+console.log(run(eval(process.argv[2]!)));
+`,
+    entries: [
+      "2 unknown-callee",
+      "2 unknown-callee-result",
+      "4 element-access element-may-be-missing",
+      "4 unknown-callee",
+    ],
+  },
+  "the result of a direct eval": {
+    source: `const made = eval(process.argv[2]!);
+console.log(made.size);
+`,
+    entries: ["1 element-access element-may-be-missing", "2 runtime-code"],
+  },
+  "a variable that holds a value of unknown type": {
+    source: `const saved: any = (globalThis as any).saved;
+function next(): number {
+  return saved + 1;
+}
+console.log(next());
+`,
+    entries: ["3 stored-value"],
+  },
+  // The constructor of `Base` also runs for `Sub`, so the object that it fills has no one layout.
+  "a constructor of a class that another class extends": {
+    source: `class Base {
+  x: number;
+  constructor() {
+    this.x = 1;
+  }
+}
+class Sub extends Base {
+  y = 2;
+}
+console.log(new Base().x + new Sub().y);
+`,
+    entries: ["2 no-fixed-layout", "4 no-fixed-layout", "7 unknown-callee"],
+  },
+  // The types are proven. The read of `ids` gives `undefined` where the list has a hole, and with that as its index
+  // the access of `counts` is a lookup by name. The read, the store and the `++` are one entry.
+  "an index that is read from an array": {
+    source: `function count(n: number, ids: number[]): number {
+  const counts = new Uint32Array(n);
+  for (let i = 0; i < ids.length; i++) counts[ids[i]]++;
+  return counts[0];
+}
+console.log(count(4, [0, 1, 1, 3]));
+`,
+    entries: ["3 index-may-be-undefined"],
+  },
+  // The read of `price` hangs on the element, which may be missing. No entry says that the array holds other types.
+  "an object that is read out of an element": {
+    source: `type Item = { price: number };
+function total(items: Item[], order: number[]): number {
+  let sum = 0;
+  for (let i = 0; i < order.length; i++) sum += items[order[i]].price;
+  return sum;
+}
+console.log(total([{ price: 1 }, { price: 2 }], [0, 1, 1]));
+`,
+    entries: ["4 element-access element-may-be-missing", "4 element-access element-may-be-missing"],
+  },
+  // Every value is a typed array or a number. What is tested where the loops run is that the arrays are as they were
+  // built. The entries without a cause are sums of what the slow paths of those tests give.
+  "typed arrays whose state is tested": {
+    source: `function concat(parts: Uint8Array[]): Uint8Array {
+  let total = 0;
+  for (const part of parts) total += part.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const part of parts) {
+    out.set(part, off);
+    off += part.length;
+  }
+  return out;
+}
+console.log(concat([new Uint8Array(2), new Uint8Array(3)]).length);
+`,
+    entries: [
+      "12 not-a-plain-object",
+      "3 object-state",
+      "4 unknown",
+      "7 object-state",
+      "7 unknown",
+      "7 unknown-callee",
+      "8 object-state",
+    ],
+  },
+  // The loop reads what a join of two kinds of values brings, so the compiled code shows no cause for it. No entry
+  // names a loose type: the program has none.
+  "a loop behind a direct eval": {
+    source: `interface Item { sku: string; price: number }
+const n = Number(process.argv[2]);
+let total = 0;
+const items: Item[] = [{ sku: "a", price: n }];
+eval(process.argv[3]);
+for (const item of items) total += item.price;
+console.log(total);
+`,
+    entries: [
+      "2 element-access element-may-be-missing",
+      "5 element-access element-may-be-missing",
+      "6 call-result",
+      "6 stored-value",
+      "6 unknown",
+    ],
+  },
+};
+
+// A program that has an entry, the cause of the entry, and the same program with the fix that the entry suggests. The
+// fix removes every entry of that cause.
+const fixes: Record<string, { cause: string; before: string; after: string }> = {
+  "a check of the index against undefined": {
+    cause: "index-may-be-undefined",
+    before: programsWithCauses["an index that is read from an array"].source,
+    after: `function count(n: number, ids: number[]): number {
+  const counts = new Uint32Array(n);
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    if (id !== undefined) counts[id]++;
+  }
+  return counts[0];
+}
+console.log(count(4, [0, 1, 1, 3]));
+`,
+  },
+  "indexes in a typed array": {
+    cause: "index-may-be-undefined",
+    before: programsWithCauses["an index that is read from an array"].source,
+    after: `function count(n: number, ids: Int32Array): number {
+  const counts = new Uint32Array(n);
+  for (let i = 0; i < ids.length; i++) counts[ids[i]]++;
+  return counts[0];
+}
+console.log(count(4, new Int32Array([0, 1, 1, 3])));
+`,
+  },
+  "a local variable that is narrowed": {
+    cause: "stored-value",
+    before: programsWithCauses["a variable that holds a value of unknown type"].source,
+    after: `const saved: any = (globalThis as any).saved;
+function next(): number {
+  const value = saved;
+  return typeof value === "number" ? value + 1 : 0;
+}
+console.log(next());
+`,
+  },
+};
+
+// A declared type is what the compiler expects of a parameter, not what it has proven. The entries of `depth` go when
+// its caller passes an object that typed code builds.
+const declaredParameter = `interface Link { next: Link | null }
+function depth(node: Link): number {
+  return node.next ? 1 + depth(node.next) : 0;
+}
+console.log(depth(JSON.parse(process.argv[2]!)));
+`;
+const builtArgument = `interface Link { next: Link | null }
+function readLink(value: unknown): Link {
+  if (typeof value !== "object" || value === null) throw new Error("not an object");
+  const { next } = value as Record<string, unknown>;
+  return { next: next == null ? null : readLink(next) };
+}
+function depth(node: Link): number {
+  return node.next ? 1 + depth(node.next) : 0;
+}
+console.log(depth(readLink(JSON.parse(process.argv[2]!))));
+`;
 
 const buildScript = `const result = await Bun.build({
   entrypoints: ["./main.ts"],
@@ -303,6 +527,74 @@ describe.concurrent("--explain", () => {
         expect(Object.keys(numbers.calls)).toEqual(["unknown", "guarded", "proven"]);
         expect(causes).not.toBeEmpty();
         for (const cause of causes) expect(Object.keys(cause).join(" ")).toBe(membersOfCause);
+      }),
+    buildTimeout,
+  );
+
+  for (const [name, { source, entries }] of Object.entries(programsWithCauses)) {
+    test(
+      `an entry names the cause that the compiled code shows: ${name}`,
+      () =>
+        slot(async () => {
+          const { causes } = await explain({ "main.ts": source });
+          const shown = causes.map(({ line, reason, why }) => [line, reason, ...(why ? [why.reason] : [])].join(" "));
+          expect(shown.sort()).toEqual(entries);
+        }),
+      buildTimeout,
+    );
+  }
+
+  for (const [name, { cause, before, after }] of Object.entries(fixes)) {
+    test(
+      `the fix that an entry suggests removes the entry: ${name}`,
+      () =>
+        slot(async () => {
+          const reasons = async (source: string) => (await explain({ "main.ts": source })).causes.map(c => c.reason);
+          expect(await reasons(before)).toContain(cause);
+          expect(await reasons(after)).toEqual([]);
+        }),
+      buildTimeout,
+    );
+  }
+
+  test(
+    "a value that is used in one place is one entry, and one that is read in three places is three",
+    () =>
+      slot(async () => {
+        const ofCause = async (name: string, reason: string) =>
+          (await explain({ "main.ts": programsWithCauses[name].source })).causes
+            .filter(cause => cause.reason === reason)
+            .map(({ accesses, operators }) => ({ accesses, operators }));
+        // The read of `counts`, the store into it and the `++` stand at one place.
+        expect(await ofCause("an index that is read from an array", "index-may-be-undefined")).toEqual([
+          { accesses: 2, operators: 1 },
+        ]);
+        // Each line reads a property and adds it.
+        expect(await ofCause("the result of JSON.parse, read three times", "builtin-result")).toEqual([
+          { accesses: 1, operators: 1 },
+          { accesses: 1, operators: 1 },
+          { accesses: 1, operators: 1 },
+        ]);
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "a declared type of a parameter leaves its entries, and an argument that typed code builds removes them",
+    () =>
+      slot(async () => {
+        const entriesOf = async (source: string) =>
+          (await explain({ "main.ts": source })).causes.map(({ reason, function: name, family }) => ({
+            reason,
+            function: name,
+            family,
+          }));
+        const inDepth = { reason: "incoming-value", function: "depth", family: "unproven-type" };
+        expect((await entriesOf(declaredParameter)).filter(entry => entry.function === "depth")).toEqual([
+          inDepth,
+          inDepth,
+        ]);
+        expect((await entriesOf(builtArgument)).filter(entry => entry.function === "depth")).toEqual([]);
       }),
     buildTimeout,
   );

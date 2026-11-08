@@ -2,8 +2,15 @@ use super::*;
 
 const EXPLAIN_PAGE: &str = include_str!("../../../../docs/compiler/explain.mdx");
 
-const CAUSES_WITH_OWN_CLASS: [(UnprovenCause, GuardClass); 5] = [
-    (UnprovenCause::Unknown, GuardClass::OtherType),
+const CAUSES_WITH_OWN_CLASS: [(UnprovenCause, GuardClass); 9] = [
+    (UnprovenCause::Unknown, GuardClass::NotRecorded),
+    (UnprovenCause::LayoutOutsideFamily, GuardClass::OtherType),
+    (UnprovenCause::PlaceOfElement, GuardClass::ElementAccess),
+    (
+        UnprovenCause::IndexMayBeUndefined,
+        GuardClass::ElementAccess,
+    ),
+    (UnprovenCause::UnprovenState, GuardClass::ObjectState),
     (UnprovenCause::ResultDisabled, GuardClass::ProofWithheld),
     (UnprovenCause::UnknownCallee, GuardClass::UnknownCallee),
     (

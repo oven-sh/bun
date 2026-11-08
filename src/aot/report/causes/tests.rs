@@ -440,8 +440,8 @@ fn what_the_program_cannot_fix_ranks_last() {
     assert_eq!(
         found,
         [
-            (UnprovenCause::UnknownObject, at(PROGRAM, 200), false),
             (UnprovenCause::Unknown, at(PROGRAM, 100), false),
+            (UnprovenCause::UnknownObject, at(PROGRAM, 200), false),
             (UnprovenCause::ResultDisabled, at(PROGRAM, 100), false),
             (UnprovenCause::UnknownObject, at(RUNTIME, 7), true),
         ]

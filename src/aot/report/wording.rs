@@ -33,10 +33,13 @@ pub(super) enum GuardClass {
     UnprovenContents,
     ProofWithheld,
     ReadBeforeInitialized,
+    ElementAccess,
+    ObjectState,
+    NotRecorded,
 }
 
 impl GuardClass {
-    pub(super) const COUNT: usize = 6;
+    pub(super) const COUNT: usize = 9;
     pub(super) const ALL: [GuardClass; GuardClass::COUNT] = [
         GuardClass::OtherType,
         GuardClass::UnknownObject,
@@ -44,6 +47,9 @@ impl GuardClass {
         GuardClass::UnprovenContents,
         GuardClass::ProofWithheld,
         GuardClass::ReadBeforeInitialized,
+        GuardClass::ElementAccess,
+        GuardClass::ObjectState,
+        GuardClass::NotRecorded,
     ];
 }
 
@@ -81,7 +87,7 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
     let (message, fix) = match cause {
         UnprovenCause::Unknown => (
             "The compiler recorded no reason for this slow path.",
-            "this is a bug in Bun: please report it.",
+            "the compiler recorded nothing to suggest here.",
         ),
         UnprovenCause::ResultDisabled => (
             "The part of the analysis that proves this was left out of the build.",
@@ -92,8 +98,8 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
             "build a new object of this type from it where it enters typed code.",
         ),
         UnprovenCause::NonLayoutObject => (
-            "An array, a function or a built-in object is used as this type here.",
-            "pass an object literal or a class instance, or declare the parameter with the type that is actually passed.",
+            "The object is an array, a function or another built-in object, and the compiler has no direct load for this property of it. The property is looked up by name.",
+            "the compiler recorded nothing to suggest here.",
         ),
         UnprovenCause::BuiltinBase => (
             "This class extends a built-in class. The built-in constructor allocates the instances, so their fields can't be at fixed offsets.",
@@ -132,7 +138,7 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
             "construct it with new.",
         ),
         UnprovenCause::UndescribedNativeResult => (
-            "The value is the result of a built-in function whose result type the compiler doesn't know.",
+            "The value is the result of a built-in function whose result type the compiler doesn't know, or it is read out of such a result.",
             "narrow the result.",
         ),
         UnprovenCause::UnseenCode => (
@@ -148,7 +154,7 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
             "check its fields, and build a new object of this type from them.",
         ),
         UnprovenCause::ThrownByRunTime => (
-            "The value was caught, and anything can be thrown.",
+            "The value was caught, or it is read out of a caught value, and anything can be thrown.",
             "narrow it first, for example with instanceof Error.",
         ),
         UnprovenCause::ParameterOfEscapedFunction => (
@@ -160,12 +166,12 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
             "hand over a copy, or only the fields that code needs.",
         ),
         UnprovenCause::ResultOfUnknownCallee => (
-            "The value is returned by a call whose callee isn't known at build time.",
+            "The value is returned by a call whose callee isn't known at build time, or it is read out of such a result.",
             "give the callee a function type.",
         ),
         UnprovenCause::ObjectWithoutLayout => (
-            "The object is made by a function that the compiler found no fixed layout for.",
-            "use a class or an object literal.",
+            "The compiler found no fixed layout for the object where it is built.",
+            "the compiler recorded nothing to suggest here.",
         ),
         UnprovenCause::Untracked => (
             "The compiler stopped tracking the objects that reach this access.",
@@ -175,13 +181,42 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
             "An object reaches this access with a shape its declared type doesn't include.",
             "trace the object back from here. An unsound cast hides it from TypeScript.",
         ),
+        UnprovenCause::UnprovenEntryValue => (
+            "The value comes into this function from outside, as an argument or as 'this', or it is read out of such a value. The compiler didn't prove the type of what comes in.",
+            "pass a value whose type the compiler can prove. For data from outside the program, check its fields and build a new object of the type from them.",
+        ),
+        UnprovenCause::UnprovenStoredValue => (
+            "The value is read from a property or a variable, or out of such a value. The compiler didn't prove what is stored there.",
+            "read the value into a local variable, and narrow that before you use it.",
+        ),
+        UnprovenCause::UnprovenResultOfCall => (
+            "The value is returned by a function that the compiler knows, or it is read out of such a value. The compiler didn't prove the type of the result.",
+            "the compiler recorded nothing to suggest here.",
+        ),
+        UnprovenCause::UnprovenState => (
+            "The compiler didn't prove that an object is still as it was built: that no code added, removed or redefined a property, replaced a prototype or froze it. The access of the object tests that where it runs, here or where the value that is used here is read, and takes a slower path when the test fails.",
+            "the compiler recorded nothing to suggest here.",
+        ),
+        UnprovenCause::PlaceOfElement => (
+            "An element of an array or a typed array is read or written here, or the value that is used here comes from such a read. The access of the element tests the index and how the array stores its elements where it runs.",
+            "the compiler recorded nothing to suggest here.",
+        ),
+        UnprovenCause::IndexMayBeUndefined => (
+            "An element is read or written here with an index that can be 'undefined', or the value that is used here comes from such a read. The index is 'undefined' for example when it is read from an array that has a hole. With 'undefined' as the index, the access looks the element up by name.",
+            "read the index into a variable and check it against 'undefined' before the access, or keep the indexes in a typed array.",
+        ),
     };
     CauseWording { message, fix }
 }
 
 pub(super) fn guard_class(cause: UnprovenCause) -> GuardClass {
     match cause {
-        UnprovenCause::Unknown => GuardClass::OtherType,
+        UnprovenCause::Unknown => GuardClass::NotRecorded,
+        UnprovenCause::LayoutOutsideFamily => GuardClass::OtherType,
+        UnprovenCause::PlaceOfElement | UnprovenCause::IndexMayBeUndefined => {
+            GuardClass::ElementAccess
+        }
+        UnprovenCause::UnprovenState => GuardClass::ObjectState,
         UnprovenCause::ResultDisabled => GuardClass::ProofWithheld,
         UnprovenCause::UnknownCallee | UnprovenCause::ResultOfUnknownCallee => {
             GuardClass::UnknownCallee
@@ -205,7 +240,9 @@ pub(super) fn guard_class(cause: UnprovenCause) -> GuardClass {
         | UnprovenCause::ContentsOfEscapedObject
         | UnprovenCause::ObjectWithoutLayout
         | UnprovenCause::Untracked
-        | UnprovenCause::LayoutOutsideFamily => GuardClass::UnknownObject,
+        | UnprovenCause::UnprovenEntryValue
+        | UnprovenCause::UnprovenStoredValue
+        | UnprovenCause::UnprovenResultOfCall => GuardClass::UnknownObject,
     }
 }
 
@@ -217,8 +254,8 @@ pub(super) fn guard_wording(class: GuardClass) -> GuardWording {
             fix: "trace the value back from here: an unsound cast ('as', 'any' or '!') hides the mismatch from TypeScript",
         },
         GuardClass::UnknownObject => GuardWording {
-            counted_as: "on a value from untyped code",
-            headline: "the value may come from untyped code",
+            counted_as: "on a value whose type isn't proven",
+            headline: "the type of the value isn't proven",
             fix: "narrow it first: typeof for a primitive. For an object, check its fields and build a new object of the type from them",
         },
         GuardClass::UnknownCallee => GuardWording {
@@ -240,6 +277,21 @@ pub(super) fn guard_wording(class: GuardClass) -> GuardWording {
             counted_as: "on a variable that may be read too early",
             headline: "the variable may be read before it's initialized",
             fix: "initialize it before the code that reads it can run",
+        },
+        GuardClass::ElementAccess => GuardWording {
+            counted_as: "on the place of an element",
+            headline: "the access tests the index and how the array stores its elements where it runs",
+            fix: "the compiler recorded nothing to suggest here",
+        },
+        GuardClass::ObjectState => GuardWording {
+            counted_as: "on the state of an object",
+            headline: "the compiler didn't prove that the object is still as it was built",
+            fix: "the compiler recorded nothing to suggest here",
+        },
+        GuardClass::NotRecorded => GuardWording {
+            counted_as: "with no recorded reason",
+            headline: "the compiler recorded no reason for this guard",
+            fix: "the compiler recorded nothing to suggest here",
         },
     }
 }
@@ -325,7 +377,7 @@ pub(super) fn ill_typed_cause_wording(cause: IllTypedCause) -> Option<IllTypedWo
         IllTypedCause::ElementMayBeAbsent => (
             "element-may-be-missing",
             "The index may be out of bounds, or the array may have holes, so the read can produce undefined.",
-            "check the index, or loop with for...of.",
+            "the compiler recorded nothing to suggest here.",
         ),
         IllTypedCause::ScopeOpenedByEval => (
             "direct-eval",
@@ -481,6 +533,12 @@ pub(super) fn cause_code(cause: UnprovenCause) -> &'static str {
         UnprovenCause::ObjectWithoutLayout => "no-fixed-layout",
         UnprovenCause::Untracked => "lost-track",
         UnprovenCause::LayoutOutsideFamily => "unexpected-shape",
+        UnprovenCause::UnprovenEntryValue => "incoming-value",
+        UnprovenCause::UnprovenStoredValue => "stored-value",
+        UnprovenCause::UnprovenResultOfCall => "call-result",
+        UnprovenCause::UnprovenState => "object-state",
+        UnprovenCause::PlaceOfElement => "element-access",
+        UnprovenCause::IndexMayBeUndefined => "index-may-be-undefined",
     }
 }
 
@@ -492,6 +550,9 @@ pub(super) fn guard_cause_code(class: GuardClass) -> &'static str {
         GuardClass::UnprovenContents => "untyped-collection",
         GuardClass::ProofWithheld => "analysis-disabled",
         GuardClass::ReadBeforeInitialized => "read-before-init",
+        GuardClass::ElementAccess => "element-access",
+        GuardClass::ObjectState => "object-state",
+        GuardClass::NotRecorded => "unknown",
     }
 }
 

@@ -154,7 +154,7 @@ bun check --aot --explain=guards ./app.ts
 
 A [guard](/compiler/types#when-a-value-doesnt-match-its-type) that fails doesn't change what your program does. It sends the rest of the call to the function's slow version, or slows down one operation, so look here when a hot function is slower than you expected.
 
-The command reads your source and lists each guard that the compiler couldn't remove, with the reason, what happens when it fails and a fix.
+The command reads your source and lists each guard that the compiler couldn't remove. An entry says what the guard tests, where the tested value is made if the compiled code shows it, what happens when the guard fails, and a fix if the compiler has one to suggest.
 
 ## Profiles
 

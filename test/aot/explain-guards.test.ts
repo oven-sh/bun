@@ -44,6 +44,9 @@ const causes = [
   "untyped-collection",
   "analysis-disabled",
   "read-before-init",
+  "element-access",
+  "object-state",
+  "unknown",
 ];
 const costOfFailure = {
   leaves: "when it fails, the rest of the call runs in the function's slow version",
@@ -118,6 +121,38 @@ function shorten(key: string, held: any) {
 }
 
 console.log(JSON.stringify({ crate: new Crate("a", 3) }, shorten));
+`,
+};
+
+// The read of an element tests its place by itself, and the list that it reads is made on the same line.
+const withElementRead: Files = { "main.ts": `console.log(process.argv[2]);\n` };
+
+// The loop tests the array that the literal made, and each element that the loop reads out of it.
+const withLoopOverItems: Files = {
+  "main.ts": `interface Item {
+  sku: string;
+  price: number;
+}
+
+const items: Item[] = [{ sku: "A-1", price: 2.5 }];
+const saved: any = JSON.parse('{ "sku": "B-2", "price": 10 }');
+items.push(saved);
+
+let total = 0;
+for (const item of items) total += item.price;
+console.log(total);
+`,
+};
+
+// The types are proven: every part is a typed array. What the loop tests is that each one is as it was built.
+const withLengthsOfTypedArrays: Files = {
+  "main.ts": `function total(parts: Uint8Array[]): number {
+  let sum = 0;
+  for (let i = 0; i < parts.length; i++) sum += parts[i]!.length;
+  return sum;
+}
+const encoder = new TextEncoder();
+console.log(total([encoder.encode(process.argv[2]!), encoder.encode(process.argv[3]!)]));
 `,
 };
 
@@ -226,6 +261,60 @@ describe.concurrent("--explain=guards", () => {
           .map(guard => guard.failure);
         expect(failures).toContain("rejoins");
         expect(failures).not.toContain("leaves");
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "a guard on the place of an element says so, and where the list is made",
+    () =>
+      slot(async () => {
+        const { guards } = await explain(withElementRead);
+        expect(guards).toEqual([
+          expect.objectContaining({
+            cause: "element-access",
+            file: "main.ts",
+            line: 1,
+            failure: "rejoins",
+            from: expect.objectContaining({ file: "main.ts", line: 1 }),
+          }),
+        ]);
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "a guard on an element of a list names the list, and says where the element is read",
+    () =>
+      slot(async () => {
+        const { guards } = await explain(withLoopOverItems);
+        const loop = lineWith(withLoopOverItems, "for (const item");
+        expect(guards).toContainEqual(
+          expect.objectContaining({
+            cause: "untyped-collection",
+            line: loop,
+            failure: "rejoins",
+            from: expect.objectContaining({ file: "main.ts", line: loop }),
+          }),
+        );
+        expect(guards.map(guard => guard.cause)).not.toContain("untyped-value");
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "a guard on the state of an object says so, and names no untyped value",
+    () =>
+      slot(async () => {
+        const { guards } = await explain(withLengthsOfTypedArrays);
+        const loop = lineWith(withLengthsOfTypedArrays, "for (let i");
+        expect(guards.filter(guard => guard.line === loop)).toEqual([
+          expect.objectContaining({
+            cause: "object-state",
+            failure: "rejoins",
+            from: expect.objectContaining({ file: "main.ts", line: loop }),
+          }),
+        ]);
       }),
     buildTimeout,
   );

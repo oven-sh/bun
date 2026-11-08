@@ -175,10 +175,7 @@ pub(super) fn collect_causes(
         })
         .collect();
     causes.shared_sort_unstable_by_key(|cause| {
-        let is_fixed_in_the_compiler = matches!(
-            cause.cause,
-            UnprovenCause::Unknown | UnprovenCause::ResultDisabled
-        );
+        let is_fixed_in_the_compiler = cause.cause == UnprovenCause::ResultDisabled;
         let operations = cause.operations();
         (
             is_fixed_in_the_compiler || cause.is_in_runtime,

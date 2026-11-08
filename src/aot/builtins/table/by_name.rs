@@ -29,7 +29,10 @@ fn found() -> &'static Found {
             test_runner,
             jest: member_of_bun(b"jest"),
             plugin: member_of_bun(b"plugin"),
-            expects: [expect_of(test_runner), expect_of(module_by_specifier(b"bun:test/vitest"))],
+            expects: [
+                expect_of(test_runner),
+                expect_of(module_by_specifier(b"bun:test/vitest")),
+            ],
         }
     })
 }

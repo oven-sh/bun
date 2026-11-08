@@ -545,8 +545,7 @@ impl Pass {
     }
 }
 
-/// Called by C++ deep equality where Vitest and Jest disagree. With no matcher on the stack (an `equals()` kept from a
-/// matcher, `asymmetricMatch()` called directly), the entry that runs decides.
+/// For C++ deep equality, where Vitest and Jest disagree. With no matcher on the stack (a kept `equals()`, a direct `asymmetricMatch()`) the running entry decides.
 #[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Expect__comparesLikeVitest(global: &JSGlobalObject) -> bool {

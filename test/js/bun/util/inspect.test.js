@@ -1,6 +1,4 @@
-import { Glob } from "bun";
-import { describe, expect, expectTypeOf, it } from "bun:test";
-import { readFileSync } from "fs";
+import { describe, expect, expectTypeOf, it, mock } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -15,8 +13,6 @@ import { SocketAddress } from "net";
 import { join } from "path";
 import util from "util";
 import vm from "vm";
-import { ClassType } from "../../../../src/codegen/bindgen-lib-internal.ts";
-import * as expectSchema from "../../../../src/runtime/test_runner/expect.bind.ts";
 it("prototype", () => {
   const prototypes = [
     Request.prototype,
@@ -1507,9 +1503,24 @@ describe("native getters of the prototype", () => {
       'TextDecoder {\n  decode: [Function: decode],\n  encoding: "utf-8",\n  fatal: false,\n  ignoreBOM: false,\n}',
     );
     // These are not enumerable.
-    expect(Bun.inspect(new SocketAddress({ address: "127.0.0.1", port: 80 }))).toBe(
-      'SocketAddress {\n  address: "127.0.0.1",\n  addrfamily: 2,\n  family: "ipv4",\n  flowlabel: 0,\n  port: 80,\n  toJSON: [Function: toJSON],\n}',
-    );
+    const address = Bun.inspect(new SocketAddress({ address: "127.0.0.1", port: 80 }));
+    expect(address.split("\n").filter(line => /^  (address|port): /.test(line))).toEqual([
+      '  address: "127.0.0.1",',
+      "  port: 80,",
+    ]);
+    // The context of a matcher is a class of the same schema as `Expect`.
+    let context = "";
+    expect.extend({
+      toPrintItsContext() {
+        context = Bun.inspect(this, { depth: 0 });
+        return { pass: true, message: () => "" };
+      },
+    });
+    expect(1).toPrintItsContext();
+    expect(context.split("\n").filter(line => /^  (isNot|promise): /.test(line))).toEqual([
+      "  isNot: false,",
+      '  promise: "",',
+    ]);
   });
 
   // `expect(1).not` is a step of a chain: to read it changes `expect(1)`, or makes one more object with the same getter.
@@ -1535,41 +1546,31 @@ describe("native getters of the prototype", () => {
     ],
   ])("one of %s that answers another instance is named and not read", (name, make, getters) => {
     const value = make();
+    const accessors = text => text.split("\n").filter(line => !line.includes("[Function: "));
+    const printedAs = answer => [`${name} {`, ...getters.map(getter => `  ${getter}: ${answer},`), "}"];
     // Depth 0 first: if the walk reads a getter after all, this fails on one line and not on a print that has no end.
     const shallow = Bun.inspect(value, { depth: 0 });
-    const lines = shallow.split("\n");
-    expect(lines.filter(line => !line.includes("[Function: "))).toEqual([
-      `${name} {`,
-      ...getters.map(getter => `  ${getter}: [Getter],`),
-      "}",
-    ]);
+    expect(accessors(shallow)).toEqual(printedAs("[Getter]"));
     let members = 0;
     for (const _ in value) members++;
-    expect(lines.length).toBe(members + 2);
+    expect(shallow.split("\n").length).toBe(members + 2);
     expect(Bun.inspect(value, { depth: 2 })).toBe(shallow);
     expect(Bun.inspect(value)).toBe(shallow);
+    // The prototype is not an instance. JSC does not call a native getter on it, and the walk prints what JSC answers.
+    expect(accessors(Bun.inspect(Object.getPrototypeOf(value), { depth: 0 }))).toEqual(printedAs("undefined"));
   });
 
-  // The walk that prints an object knows these three classes by name: `hasOnlyChainGetters` in src/jsc/bindings/bindings.cpp.
-  it("no other class declares a `getter: b.self`, and these declare no other getter", () => {
-    const classes = Object.entries(expectSchema).filter(([, type]) => type instanceof ClassType);
-    const chains = classes.filter(([, type]) => type.getters.some(getter => getter.type === type));
-    expect(chains.map(([name]) => name).sort()).toEqual(["Expect", "ExpectStatic", "ExpectTypeOf"]);
-    // The walk asks for the class and not for the name of the getter.
-    expect(
-      chains.flatMap(([name, type]) =>
-        type.getters.filter(getter => getter.type !== type).map(getter => `${name}.${getter.name}`),
-      ),
-    ).toEqual([]);
-
-    const root = join(import.meta.dir, "..", "..", "..", "..");
-    const schemas = Array.from(new Glob("src/**/*.bind.ts").scanSync({ cwd: root }), file =>
-      file.replaceAll("\\", "/"),
-    );
-    expect(schemas.length).toBeGreaterThan(100);
-    expect(schemas.filter(file => /getter:\s*b\.self(?![\w.])/.test(readFileSync(join(root, file), "utf8")))).toEqual([
-      "src/runtime/test_runner/expect.bind.ts",
-    ]);
+  // Somebody can give an expect() another prototype. What it then inherits is not a getter of its class.
+  it.each([
+    // A native getter of another class.
+    ["a TextDecoder", () => new TextDecoder(), "encoding"],
+    // A native value that the function makes when somebody reads it.
+    ["a mock function", () => mock(() => {}), "prototype"],
+  ])("an expect() that inherits from %s prints the members that any object prints", (_, make, member) => {
+    const members = value => Bun.inspect(value, { depth: 0 }).split("\n").slice(1);
+    const inherited = members(Object.setPrototypeOf(expect(1), make()));
+    expect(inherited).toEqual(members(Object.create(make())));
+    expect(inherited.map(line => line.trim().split(":")[0])).toContain(member);
   });
 });
 

@@ -6024,11 +6024,16 @@ static bool endsPrototypeWalk(JSC::JSGlobalObject* globalObject, JSC::JSObject* 
         || (prototype->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(prototype)->target() != globalObject);
 }
 
-// Each native getter of these classes is a step of a chain (`expect(x).not`), not data: a call can change the object, and answers one more object to walk.
-static bool hasOnlyChainGetters(JSC::JSObject* object)
+// A native getter of these classes is a step of a chain (`expect(x).not`), not data: the call can change `receiver`, and answers one more object to walk.
+static bool callsChainGetter(JSC::JSObject* receiver, const JSC::PropertySlot& slot)
 {
     using namespace Bun::Bindgen::Generated;
-    return object->inherits<JSExpect>() || object->inherits<JSExpectStatic>() || object->inherits<JSExpectTypeOf>();
+    // A getter of a bindgen class is a DOMAttribute of that class. JSC calls it only on an instance.
+    auto attribute = slot.domAttribute();
+    if (!attribute)
+        return false;
+    const JSC::ClassInfo* owner = attribute->classInfo;
+    return (owner == JSExpect::info() || owner == JSExpectStatic::info() || owner == JSExpectTypeOf::info()) && receiver->inherits(owner);
 }
 
 template<bool nonIndexedOnly>
@@ -6236,7 +6241,6 @@ restart:
     }
 
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    const bool namesNativeGetters = hasOnlyChainGetters(object);
 
     {
 
@@ -6290,11 +6294,10 @@ restart:
 
                 JSC::JSValue propertyValue = jsUndefined();
 
-                if (namesNativeGetters && slot.isCustom()) {
+                if (callsChainGetter(object, slot)) {
                     // The accessor itself, which prints as [Getter].
                     propertyValue = slot.slotBase()->getDirect(vm, property);
-                    if (!propertyValue)
-                        continue;
+                    ASSERT(propertyValue);
                 } else if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
                     if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
                         // If we can't use getPureResult, let's at least say it was a [Getter]

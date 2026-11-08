@@ -659,8 +659,7 @@ impl Loader {
         Ok(())
     }
 
-    /// How many env files this loader went through, whether or not it could read them.
-    pub fn loaded_count(&self) -> usize {
+    fn loaded_count(&self) -> usize {
         self.default_files_loaded.len() + self.custom_files_loaded.count()
     }
 

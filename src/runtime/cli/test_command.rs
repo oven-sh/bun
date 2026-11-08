@@ -1,7 +1,6 @@
 use bun_io::Write as _;
 
 use crate::cli::Command;
-use crate::cli::run_command::RunCommand;
 use crate::cli::run_compiled;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
@@ -2899,7 +2898,6 @@ impl TestCommand {
         }
 
         vm.transpiler.configure_defines()?;
-        RunCommand::seed_thread_count_from_env(vm.env_loader());
         if run_compiled::is_requested(ctx) {
             run_compiled::hand_on_environment(&env_loader.map);
         }

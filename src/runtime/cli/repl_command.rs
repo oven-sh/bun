@@ -26,7 +26,6 @@ use repl::Repl;
 
 use crate::Command;
 use crate::cli::Arguments;
-use crate::cli::run_command::RunCommand;
 
 pub(crate) struct ReplCommand;
 
@@ -121,7 +120,6 @@ impl ReplCommand {
             Global::exit(1);
         }
 
-        RunCommand::seed_thread_count_from_env(b.env());
         bun_http::async_http::load_env(VirtualMachine::get().log_mut().unwrap(), b.env());
         VirtualMachine::get()
             .as_mut()

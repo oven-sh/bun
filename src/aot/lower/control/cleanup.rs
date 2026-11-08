@@ -112,7 +112,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         for (exit, continuation) in exits.iter().zip(exit_paths) {
             self.continue_in(*continuation);
-            // The parameter of the shared block also takes the `undefined` of the paths that return nothing.
             let returned = exit.returned.and(shared_returned);
             let returned = returned.map(|returned| self.convert_to_result(returned));
             self.continue_exit(*exit, returned, after);

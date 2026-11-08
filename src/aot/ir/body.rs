@@ -85,60 +85,14 @@ impl Body {
         });
     }
 
-    /// Nothing reads the code between the end of lowering and the hand-over to the engine, while the code of the whole
-    /// program piles up beside the trees and the types. Most words are small numbers: until `unpack_code` each takes
-    /// seven bits a byte. The first word is the number of words.
-    pub fn pack_code(&mut self, scratch: &mut Vec<u8>) {
-        if self.code.is_empty() {
-            return;
-        }
-        scratch.clear();
-        for &word in &self.code {
-            let mut rest = word;
-            while rest >= 0x80 {
-                scratch.push(rest as u8 | 0x80);
-                rest >>= 7;
-            }
-            scratch.push(rest as u8);
-        }
-        let mut packed = Vec::with_capacity(1 + scratch.len().div_ceil(4));
-        packed.push(u32::try_from(self.code.len()).expect("a body fits 32 bits"));
-        let (words, last) = scratch.as_chunks::<4>();
-        packed.extend(words.iter().map(|&bytes| u32::from_le_bytes(bytes)));
-        if !last.is_empty() {
-            let mut bytes = [0; 4];
-            bytes[..last.len()].copy_from_slice(last);
-            packed.push(u32::from_le_bytes(bytes));
-        }
-        self.code = packed;
-    }
-
-    pub fn unpack_code(&mut self) {
-        let Some((&count, packed)) = self.code.split_first() else {
-            return;
-        };
-        let mut code = Vec::with_capacity(count as usize);
-        let mut bytes = packed.iter().flat_map(|word| word.to_le_bytes());
-        for _ in 0..count {
-            let (mut word, mut shift) = (0, 0);
-            loop {
-                let byte = bytes.next().expect(WELL_FORMED);
-                word |= u32::from(byte & 0x7f) << shift;
-                if byte < 0x80 {
-                    break;
-                }
-                shift += 7;
-            }
-            code.push(word);
-        }
-        self.code = code;
-    }
-
     pub fn remap_ids(&mut self, map: &IdMap<'_>) {
         let cells = Cell::from_mut(&mut *self.code).as_slice_of_cells();
         walk_body(cells, self.block_count, &mut |field, at| match field {
             FieldWord::Operand => {}
-            FieldWord::Reference(kind) => cells[at].set(map.remap_word(kind, cells[at].get())),
+            FieldWord::Reference(kind) => {
+                let cell = &cells[at];
+                cell.set(map.remap_word(kind, cell.get()));
+            }
         });
     }
 }
@@ -149,8 +103,8 @@ pub struct BlockView<'a> {
     pub id: BlockId,
     pub first_parameter: ValueId,
     pub role: BlockRole,
-    pub subject: Option<ValueId>,
     pub frequency: BlockFrequency,
+    pub subject: Option<ValueId>,
     pub(super) parameter_types: &'a [u32],
     pub(super) handler: &'a [u32],
     pub(super) value_count: u32,
@@ -209,8 +163,6 @@ pub struct ValueView<'a> {
     pub id: ValueId,
     pub opcode: Opcode,
     pub position: Option<u32>,
-    pub written_position: Option<u32>,
-    pub is_written_position_for_callers: bool,
     pub fields: &'a [u32],
 }
 

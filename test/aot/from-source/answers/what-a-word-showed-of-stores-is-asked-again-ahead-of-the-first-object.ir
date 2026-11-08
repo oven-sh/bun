@@ -1,0 +1,30 @@
+# -- source: main.js
+# function Wagon(n) { if (n > 1) this.seal = n; }
+# function Sledge(n) { this.seal = n; }
+# function stamp(carrier, n) { carrier.seal = n; carrier.note = n; var made = new Sledge(n + 1); last = made; return made.seal; }
+# var last;
+# publish(Wagon, Sledge, stamp);
+# var wagon = new Wagon(1);
+# print(stamp(wagon, 5));
+# if (pick()) print(stamp(new Sledge(1), 1));
+# print(stamp(wagon, 7));
+# print(report());
+# -- end of source
+# The two stores into the carrier ask in one test whether stores under `seal` and `note` pass what stands above a Wagon and above a Sledge. The carrier is a Wagon and no Sledge was ever made, so the word says nothing of Sledge.
+# The allocation behind it lists `seal`. What the walk remembers of that name speaks of the objects that there were, so the birth asks again until the guards of Sledge are known to have begun.
+# RUN: run-in-shell globalThis.hits = 0; globalThis.publish = () => { }; globalThis.pick = () => false; globalThis.report = () => globalThis.hits;
+# CHECK: 6
+# CHECK-NEXT: 8
+# CHECK-NEXT: 0
+# CHECK-NEXT: exited with 0
+# In the run SETTER an accessor lies under `seal` above every Sledge ahead of the first one.
+# RUN(SETTER): run-in-shell globalThis.hits = 0; globalThis.publish = (first, second) => { Object.defineProperty(second.prototype, "seal", { get() { return 70; }, set(value) { globalThis.hits++; }, configurable: true }); }; globalThis.pick = () => false; globalThis.report = () => globalThis.hits;
+# SETTER: 70
+# SETTER-NEXT: 70
+# SETTER-NEXT: 2
+# SETTER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.hits = 0; globalThis.publish = (first, second) => { Object.defineProperty(second.prototype, "seal", { get() { return 70; }, set(value) { globalThis.hits++; }, configurable: true }); }; globalThis.pick = () => false; globalThis.report = () => globalThis.hits;
+# CHECKED: 70
+# CHECKED-NEXT: 70
+# CHECKED-NEXT: 2
+# CHECKED-NEXT: exited with 0

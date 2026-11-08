@@ -1,0 +1,11 @@
+# -- source: main.js
+# function grow(n, ...rest) { if (n < 0) return -1; let sum = 0; for (let i = 0; i < n; i++) { rest.push(i); sum += rest.length; } return sum; }
+# function same(n, ...rest) { if (n < 0) return -1; let first = null, all = true; for (let i = 0; i < n; i++) { if (first === null) first = rest; all = all && first === rest; } return all; }
+# globalThis.fs = { grow, same };
+# const fs = globalThis.fs;
+# print(fs.grow(-1), fs.grow(3), fs.grow(3, "a", "b"), fs.same(-1), fs.same(3, 1));
+# -- end of source
+# Every mention of the list stands in a loop. The list is one object for the whole call: it is made in front of the loop, not in each turn.
+# RUN: run-in-shell
+# CHECK: -1 6 12 -1 true
+# CHECK-NEXT: exited with 0

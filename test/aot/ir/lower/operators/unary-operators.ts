@@ -1,17 +1,14 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="bitNot"
 // CHECK-NEXT: ([[a]]: anything):
-// CHECK: [[bits]] = Convert [[a]] declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: = BitNot [[bits]]
+// CHECK: = BitNot [[a]]
 // CHECK-LABEL: function {{*}}name="negate"
-// CHECK: [[negated]] = Convert [[a]] declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: = Negate [[negated]]
+// CHECK: = Negate [[a]]
 // CHECK-LABEL: function {{*}}name="not"
 // CHECK: [[truthy]] = ToBoolean [[a]]
 // CHECK-NEXT: = LogicalNot [[truthy]]
 // CHECK-LABEL: function {{*}}name="plus"
-// CHECK: [[number]] = Convert [[a]] declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: = ToNumber [[number]]
+// CHECK: = ToNumber [[a]]
 // CHECK-LABEL: function {{*}}name="typeOf"
 // CHECK: = TypeOf [[a]]
 // CHECK-LABEL: function {{*}}name="voidCall"

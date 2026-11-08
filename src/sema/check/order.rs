@@ -36,9 +36,16 @@ impl Checker<'_, '_> {
     pub(super) fn prepare_query_for_fn(&mut self, file: FileId, func: FnId) -> bool {
         let is_from_outside = self.is_top_level_query();
         if is_from_outside {
-            self.prepare_fn(file, func);
+            self.prepare_fn_unless_prepared_last(file, func);
         }
         is_from_outside
+    }
+
+    #[inline]
+    fn prepare_fn_unless_prepared_last(&mut self, file: FileId, func: FnId) {
+        if self.last_prepared != (file, func) {
+            self.prepare_fn(file, func);
+        }
     }
 
     #[inline]
@@ -49,7 +56,9 @@ impl Checker<'_, '_> {
         let bound = self.bound(file);
         let root = root_declaration(bound, pat);
         match root {
-            PatParent::Param(p) => self.prepare_fn(file, bound.param_fn[p.idx()]),
+            PatParent::Param(p) => {
+                self.prepare_fn_unless_prepared_last(file, bound.param_fn[p.idx()]);
+            }
             PatParent::Var(d) => {
                 let stmt = bound.var_stmt[d.idx()];
                 if stmt.is_some() {

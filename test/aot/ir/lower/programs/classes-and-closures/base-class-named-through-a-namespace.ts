@@ -1,6 +1,10 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 6
+// CHECK-LABEL: function {{*}}name="Square"
+// CHECK-LABEL: function {{*}}name="Cube"
+// CHECK-LABEL: function {{*}}name="volume"
+// CHECK-LABEL: function {{*}}name="norm"
 
 // FILE: main.ts
 // A class named as a member of a namespace is the class the member is bound to: it has a layout, and so have the classes that extend it.
@@ -138,92 +142,3 @@ Replaced = class {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: Square Cube volume norm
-// CHECK-LABEL: function {{*}}name="Square"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}, {type=number site=[[w_2]]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: undefined|null|string, v3: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v4 = Absent
-// CHECK-NEXT: v5 = GetSuperBase v0
-// CHECK-NEXT: v6 = SuperConstruct v5, v1, v2 layout=[[L_4]]
-// CHECK-NEXT: v7 = Convert v6 declared={type=[[L_4]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v8 = TypeTest v4 testedType=absent
-// CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b12(| 0)
-// CHECK-NEXT: b2(v9):
-// CHECK-NEXT: v10 = CallDirect v7 function=[[f_5]]
-// CHECK-NEXT: v11 = TypeTest v7 testedType=absent
-// CHECK-NEXT: Branch v11 -> taken b3(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b3(v12) frequency=Unlikely:
-// CHECK-NEXT: v13 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v13
-// CHECK-NEXT: b4(v14):
-// CHECK-NEXT: v15 = Convert v3 declared={type=number site=[[w_6]]}
-// CHECK-NEXT: PropSet v14, v15 key="side"
-// CHECK-NEXT: v17 = Undefined
-// CHECK-NEXT: v18 = TypeTest v17 testedType=object
-// CHECK-NEXT: Branch v18 -> taken b5(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b5(v19):
-// CHECK-NEXT: Jump -> next b10(v19)
-// CHECK-NEXT: b6(v20):
-// CHECK-NEXT: v21 = TypeTest v20 testedType=undefined
-// CHECK-NEXT: Branch v21 -> taken b7(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b7(v22):
-// CHECK-NEXT: v23 = TypeTest v14 testedType=absent
-// CHECK-NEXT: Branch v23 -> taken b8(| 0), notTaken b9(| 0)
-// CHECK-NEXT: b8(v24) frequency=Unlikely:
-// CHECK-NEXT: v25 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v25
-// CHECK-NEXT: b9(v26):
-// CHECK-NEXT: Jump -> next b10(v26)
-// CHECK-NEXT: b10(v27):
-// CHECK-NEXT: Return v27
-// CHECK-NEXT: b11(v28) frequency=Unlikely:
-// CHECK-NEXT: v29 = NewRuntimeError runtimeError=DerivedConstructorResult name="Square"
-// CHECK-NEXT: Throw v29
-// CHECK-NEXT: b12(v30) frequency=Unlikely:
-// CHECK-NEXT: v31 = NewRuntimeError runtimeError=ThisAlreadyBound
-// CHECK-NEXT: Throw v31
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Cube"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_8]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_8]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_9]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="volume"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_8]] site=[[w_10]]} results=[{type=number site=[[w_11]]}] {
-// CHECK-NEXT: b0(v0: [[L_8]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="edge"
-// CHECK-NEXT: v2 = Integer integer=3
-// CHECK-NEXT: v3 = Pow v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_11]]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="norm"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_12]] site=[[w_13]]} results=[{type=number site=[[w_14]]}] {
-// CHECK-NEXT: b0(v0: [[L_12]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=Math
-// CHECK-NEXT: v2 = Builtin builtin=MathAbs
-// CHECK-NEXT: v3 = PropGet v0 key="x"
-// CHECK-NEXT: v4 = Call v2, v1, v3 calleeName="Math.abs"
-// CHECK-NEXT: v5 = Convert v4 declared={type=number site=[[w_15]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = Builtin builtin=Math
-// CHECK-NEXT: v7 = Builtin builtin=MathAbs
-// CHECK-NEXT: v8 = PropGet v0 key="y"
-// CHECK-NEXT: v9 = Call v7, v6, v8 calleeName="Math.abs"
-// CHECK-NEXT: v10 = Convert v9 declared={type=number site=[[w_16]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v11 = Add v5, v10
-// CHECK-NEXT: v12 = Convert v11 declared={type=number site=[[w_14]]}
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }

@@ -9,6 +9,8 @@ const exe = (name: string) => name + (isWindows ? ".exe" : "");
 const COMPILED = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 // What process.nextTick implies and a program without it does not hold.
 const QUEUE = "module internal/process/next_tick_queue";
+// What Bun.sql implies: native code loads bun:sql, which no statement names, so the report has no line for it. It has one for each module that bun:sql asks for.
+const QUERIES = "module internal/sql/query";
 
 type Files = Record<string, string>;
 
@@ -63,8 +65,8 @@ describe.concurrent("compile/aot/load/implied-runtime-modules", () => {
       modulesOf(notIncluded),
       modulesOf(mainFile("console.log(typeof Bun.sql);\n")),
     ]);
-    expect([QUEUE, "module bun:sql"].filter(line => withoutUse.has(line))).toEqual([]);
-    expect(withUse).toContain("module bun:sql");
+    expect([QUEUE, QUERIES].filter(line => withoutUse.has(line))).toEqual([]);
+    expect(withUse).toContain(QUERIES);
   });
 
   test("native code finds an implied module", async () => {

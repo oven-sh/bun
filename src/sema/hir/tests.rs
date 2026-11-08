@@ -377,7 +377,8 @@ fn runtime_members() {
     let with_body = add_function(&mut file, FnBody::Block(IdList::EMPTY), true);
     let without_body = add_function(&mut file, FnBody::None, true);
     let (none, declare, is_abstract) = (Flags::empty(), Flags::AMBIENT, Flags::ABSTRACT);
-    let cases: [MemberCase; 20] = [
+    let accessor = Flags::ACCESSOR;
+    let cases: [MemberCase; 23] = [
         (MemberKind::Property, none, FnId::NONE, plain, true),
         (MemberKind::Property, none, FnId::NONE, decorated, true),
         (
@@ -395,6 +396,21 @@ fn runtime_members() {
             FnId::NONE,
             decorated,
             true,
+        ),
+        (MemberKind::Property, accessor, FnId::NONE, decorated, true),
+        (
+            MemberKind::Property,
+            accessor | declare,
+            FnId::NONE,
+            decorated,
+            false,
+        ),
+        (
+            MemberKind::Property,
+            accessor | is_abstract,
+            FnId::NONE,
+            decorated,
+            false,
         ),
         (MemberKind::Method, none, with_body, plain, true),
         (MemberKind::Getter, none, with_body, plain, true),
@@ -464,6 +480,32 @@ fn freed_long_lists_are_empty() {
 #[test]
 fn file_without_nodes_owns_no_block() {
     with_file(FileBuilder::default(), |hir| assert!(!hir.owns_its_lists()));
+}
+
+#[test]
+fn imported_require_is_found_by_its_names() {
+    let entry = |specifier: u32, export: u32, path: u32| ImportedRequire {
+        specifier: Atom(specifier),
+        export: Atom(export),
+        path: Atom(path),
+        is_made: true,
+        other_values: OtherValues::None,
+    };
+    let mut imported: Vec<ImportedRequire> =
+        (0..1000).map(|at| entry(at / 10, at % 10, at)).collect();
+    imported.push(entry(3, 4, 5000));
+    let places = ImportedRequire::hash_by_names(&imported);
+    for places in [&places[..], &[]] {
+        let find = |specifier: u32, export: u32| {
+            let names = (Atom(specifier), Atom(export));
+            ImportedRequire::find_by_names(&imported, places, names.0, names.1).map(|it| it.path.0)
+        };
+        for at in 0..1000 {
+            assert_eq!(find(at / 10, at % 10), Some(at));
+        }
+        assert_eq!(find(100, 0), None);
+        assert_eq!(find(0, 10), None);
+    }
 }
 
 #[test]

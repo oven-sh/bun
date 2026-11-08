@@ -188,13 +188,21 @@ impl Project {
     }
 
     pub fn roots(&self, host: &dyn Host) -> Roots {
+        self.roots_less(host, &self.exclude)
+    }
+
+    /// `roots`, as if the project wrote no `exclude`.
+    pub fn roots_with_what_is_excluded(&self, host: &dyn Host) -> Roots {
+        self.roots_less(host, &[])
+    }
+
+    fn roots_less(&self, host: &dyn Host, exclude: &[Vec<u8>]) -> Roots {
         let case_sensitive = host.is_case_sensitive();
         let specs = self.options.include_specs.iter();
         let include: Vec<Vec<u8>> = specs.map(|it| it.1.clone()).collect();
         let base = join(b"", &self.base);
         let extra_extensions = extra_supported_extensions(host, &self.options);
-        let patterns =
-            GlobMatcher::new(&include, &self.exclude, &base, case_sensitive, Usage::Files);
+        let patterns = GlobMatcher::new(&include, exclude, &base, case_sensitive, Usage::Files);
         let base: Vec<Vec<u8>> = (PathParts::split_directory(typescript_path(&base)).iter())
             .map(|it| it.to_vec())
             .collect();
@@ -366,6 +374,11 @@ pub fn find_config_file(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
 /// in its nearest ancestor directory that has either.
 pub fn find_config(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
     find_config_below(host, dir, &CONFIG_NAMES, |_| false)
+}
+
+/// The `tsconfig.json`, or else the `jsconfig.json`, in `dir` itself.
+pub fn find_config_in(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
+    find_config_below(host, dir, &CONFIG_NAMES, |_| true)
 }
 
 /// `find_config`, no further up than the directory that has the `package.json`. What's above it configures another
@@ -1385,14 +1398,19 @@ fn is_implicit_glob(last: &[u8]) -> bool {
     strings::index_of_any(last, b".*?").is_none()
 }
 
+#[inline]
 fn is_hidden(name: &[u8]) -> bool {
-    name.starts_with(b".")
+    name.first() == Some(&b'.')
 }
 
+#[inline]
 fn is_package_folder(name: &[u8]) -> bool {
-    name.eq_ignore_ascii_case(b"node_modules")
-        || name.eq_ignore_ascii_case(b"jspm_packages")
-        || name.eq_ignore_ascii_case(b"bower_components")
+    match name.len() {
+        12 => name.eq_ignore_ascii_case(b"node_modules"),
+        13 => name.eq_ignore_ascii_case(b"jspm_packages"),
+        16 => name.eq_ignore_ascii_case(b"bower_components"),
+        _ => false,
+    }
 }
 
 /// `nextPathPartParts`: the path components of `directory`, followed by `name`, which is a single component or empty.
@@ -1407,7 +1425,8 @@ impl<'a> PathParts<'a> {
     /// `""`. Called once per directory, not once per pattern and name in it.
     fn split_directory(directory: &[u8]) -> Vec<&[u8]> {
         let root = directory.starts_with(b"/").then_some(&b""[..]);
-        let names = strings::split(directory, b"/").filter(|p| !p.is_empty());
+        let names = strings::split(directory, b"/");
+        let names = names.filter(|p| !p.is_empty());
         root.into_iter().chain(names).collect()
     }
 
@@ -1537,10 +1556,9 @@ impl GlobPattern {
     /// How many parts of `directory` the literal components at the start match, one each: `match_parts` can start behind them, for every name in the directory.
     fn match_start(&self, directory: &[&[u8]]) -> Option<usize> {
         let mut matched = 0;
-        for (component, part) in self.components.iter().zip(directory) {
-            let Component::Literal(literal) = component else {
-                break;
-            };
+        while let (Some(Component::Literal(literal)), Some(part)) =
+            (self.components.get(matched), directory.get(matched))
+        {
             if !self.equal(literal, part) {
                 return None;
             }
@@ -1550,6 +1568,7 @@ impl GlobPattern {
     }
 
     /// `stringsEqual`
+    #[inline]
     fn equal(&self, a: &[u8], b: &[u8]) -> bool {
         a == b || !self.case_sensitive && equate_string_case_insensitive(a, b)
     }

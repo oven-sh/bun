@@ -1417,23 +1417,12 @@ impl Layers {
 
     /// Cow::Borrowed constructor.
     ///
-    /// Takes `NonNull` (not `&Vec`) because the sole caller in
-    /// `findImportedFilesInCSSOrder.rs` type-puns the lifetime-erased shadow
-    /// `crate::bun_css::LayerName` to the real `::bun_css::LayerName` via a
-    /// raw-pointer cast — that nominal-type erasure cannot go through `&`.
     /// The pointee is arena-owned storage that outlives the chunk pipeline
     /// (see the lifetime note on `Chunk`); `BackRef` encapsulates that
     /// invariant so `inner()`/`to_owned()` deref sites are safe.
     #[inline]
-    pub(crate) fn borrow(p: core::ptr::NonNull<Vec<bun_css::LayerName>>) -> Self {
-        Layers::Borrowed(bun_ptr::BackRef::from(p))
-    }
-
-    /// Drop owned (arena-backed, so no-op) and
-    /// install a fresh owned value.
-    #[inline]
-    pub(crate) fn replace(&mut self, new: Vec<bun_css::LayerName>) {
-        *self = Layers::Owned(new);
+    pub(crate) fn borrow(p: &Vec<bun_css::LayerName>) -> Self {
+        Layers::Borrowed(bun_ptr::BackRef::new(p))
     }
 
     /// If borrowed, deep-clone into an owned
@@ -1451,7 +1440,7 @@ impl Layers {
 
 impl CssImportOrder<'_> {
     pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
-        // TODO: conditions, condition_import_records
+        // Not an identity: it leaves out the conditions. `css_chunk_key` compares on a hit.
 
         // core::mem::Discriminant is opaque/pointer-sized; hash an explicit u8 tag instead.
         let tag: u8 = match &self.kind {

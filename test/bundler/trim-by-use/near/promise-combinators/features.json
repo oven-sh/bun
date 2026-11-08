@@ -1,1 +1,4 @@
-{ "features": ["PromiseAll", "PromiseAllSettled", "PromiseAny", "PromiseRace"], "keptToday": true }
+{
+  "features": ["PromiseAll", "PromiseAllSettled", "PromiseAny", "PromiseRace"],
+  "keptToday": ["PromiseAll", "PromiseAllSettled", "PromiseAny", "PromiseRace"]
+}

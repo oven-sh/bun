@@ -347,6 +347,9 @@ const json = cookie.toJSON();
 
 // Works with JSON.stringify
 const jsonString = JSON.stringify(cookie);
+
+// The constructor reads that JSON back, `expires` included
+const copy = new Bun.Cookie(JSON.parse(jsonString));
 ```
 
 ### Static methods
@@ -386,6 +389,7 @@ interface CookieInit {
   domain?: string;
   /** Defaults to '/'. To allow the browser to set the path, use an empty string. */
   path?: string;
+  /** A date string is an HTTP date (`date.toUTCString()`) or an ISO 8601 date (`date.toISOString()`). */
   expires?: number | Date | string;
   secure?: boolean;
   /** Defaults to `lax`. */

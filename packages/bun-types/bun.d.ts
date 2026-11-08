@@ -11077,6 +11077,10 @@ declare module "bun" {
     domain?: string;
     /** Defaults to '/'. To allow the browser to set the path, use an empty string. */
     path?: string;
+    /**
+     * A date string is an HTTP date, as `date.toUTCString()` returns, or an ISO 8601
+     * date, as `date.toISOString()` and `date.toJSON()` return.
+     */
     expires?: number | Date | string;
     secure?: boolean;
     /** Defaults to `lax`. */

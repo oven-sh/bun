@@ -1705,6 +1705,8 @@ describe("deno_task", () => {
         ["export a-b A", notValid("a-b"), 1, { A: "one" }],
         ["export B=1 -n A", notValid("-n"), 1, { A: "one", B: "1" }],
         ["X=5; export a-b X", notValid("a-b"), 1, { A: "one" }],
+        // Before a refused word it is stored, as it is without one.
+        ["export A a-b", notValid("a-b"), 1, { A: "" }],
 
         // `export` has no options. A leading option refuses the whole command.
         ["export -x", invalidOption("-x"), 1, { A: "one" }],

@@ -1692,10 +1692,11 @@ describe("[nodejs.util.inspect.custom] of a prototype object is not called", () 
   ])("when the constructor is %s", (_, constructorOf) => {
     calls = 0;
     class Class {}
+    Class.prototype.label = "own";
     Object.defineProperty(Class.prototype, Bun.inspect.custom, { value: hook });
     Class.prototype.constructor = constructorOf(Class);
     expect(Object.hasOwn(Class.prototype.constructor, "prototype")).toBe(false);
-    expect(Bun.inspect(Class.prototype)).not.toBe("from the hook");
+    expect(Bun.inspect(Class.prototype)).toBe('{\n  label: "own",\n}');
     expect(calls).toBe(0);
   });
 

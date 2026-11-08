@@ -2597,6 +2597,38 @@ describe.concurrent("a built-in module uses what a program stored on node:stream
     },
   );
 
+  // Where no class lies under the name, the fs streams stand below the library's own Readable.
+  it.each([
+    ["null", "stream.Readable = null"],
+    ["undefined", "stream.Readable = undefined"],
+    ["deleted", "delete stream.Readable"],
+  ])("stream.Readable %s: the fs streams stand below the library's own class", async (_, line) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `{
+          const stream = require("node:stream");
+          const nodeFs = require("node:fs");
+          const Readable = stream.Readable;
+          ${line};
+          const first = nodeFs.createReadStream(process.execPath);
+          stream.Readable = Readable;
+          const second = nodeFs.createReadStream(process.execPath);
+          console.log(JSON.stringify([first instanceof Readable, typeof first.on, second instanceof Readable]));
+          first.destroy();
+          second.destroy();
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify([true, "function", true]) + "\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   // node:stream sets its members on `Stream`, the function that every stream class stands on. node:http has loaded all
   // of node:stream, so a program that freezes the chain of its classes can still load node:stream.
   it("node:stream loads behind a frozen class chain of node:http", async () => {

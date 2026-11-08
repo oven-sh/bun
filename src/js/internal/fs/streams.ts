@@ -1,7 +1,7 @@
 // process.stdout is a WriteStream: the Writable class and finished() load here, not node:stream, Readable or node:fs.
 const { Stream } = require("internal/streams/legacy");
 // node:stream is `Stream` with its members: what a program has stored there, where node:stream is loaded. Else each loads alone.
-let ReadableOfProgram = $getByIdDirect(Stream, "Readable") as $Node.ReadableConstructor | undefined;
+let ReadableOfProgram: $Node.ReadableConstructor | undefined = $getByIdDirect(Stream, "Readable") ?? undefined;
 const Writable: $Node.WritableConstructor = $getByIdDirect(Stream, "Writable") ?? require("internal/streams/writable");
 const finished: typeof Stream.finished =
   $getByIdDirect(Stream, "finished") ?? require("internal/streams/end-of-stream");

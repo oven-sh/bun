@@ -4,9 +4,11 @@ use crate::load::source_provider::{
     Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest, SourceProvider,
 };
 use crate::load::{HOST_ROOT, is_host_path, read_file_bytes};
+use crate::module_keys::{DATABASE_NAMESPACE, name_of_database};
 use crate::options::EntryText;
 use bun_ast::{ImportKind, Loader};
 use bun_core::fmt::hex_byte_lower;
+use bun_core::strings::BOM;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::resolve::{CodeImportForm, CodeImportKind, CodeRequest, Host, to_path};
@@ -19,7 +21,6 @@ use std::cmp::Ordering;
 use std::sync::OnceLock;
 
 const FILE_NAMESPACE: &[u8] = b"file";
-pub(super) const DATA_URL_NAMESPACE: &[u8] = b"dataurl";
 pub(super) const ENTRY_TEXT_NAMESPACE: &[u8] = b"entrytext";
 const VIRTUAL_DIRECTORY: &[u8] = b"plugin/";
 const ENCODED_EMPTY_SEGMENT: &[u8] = b"%2f";
@@ -42,6 +43,7 @@ pub(crate) enum ModuleText {
 pub(crate) struct DeferredReads {
     pub texts: Vec<(Vec<u8>, Cow<'static, [u8]>)>,
     pub missing: Vec<Vec<u8>>,
+    pub still_deferred: Vec<Vec<u8>>,
 }
 
 enum ModuleLoad {
@@ -58,7 +60,7 @@ pub(crate) struct StoredModule {
 }
 
 impl StoredModule {
-    #[allow(clippy::ptr_arg)] // a borrowed text is kept without a copy
+    #[allow(clippy::ptr_arg)]
     fn new(contents: &Cow<'static, [u8]>, loader: Loader, is_from_plugin: bool) -> StoredModule {
         StoredModule {
             loader,
@@ -72,6 +74,7 @@ struct DeferredModule {
     host_path: Vec<u8>,
     namespace: Vec<u8>,
     path: Vec<u8>,
+    is_still_deferred: bool,
 }
 
 impl DeferredModule {
@@ -95,7 +98,6 @@ pub(crate) struct PluginModules<'a> {
 }
 
 impl<'a> PluginModules<'a> {
-    /// The tables, which take a while to free.
     pub(crate) fn into_leftovers(self) -> Box<dyn Send> {
         Box::new((
             self.resolutions,
@@ -168,25 +170,27 @@ impl<'a> PluginModules<'a> {
         cell.get_or_init(resolve).clone()
     }
 
-    /// Returns the path of a module with what the URL holds. Whoever imports it names the loader.
-    pub(crate) fn add_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
-        let contents = self.provider.decode_data_url(url)?;
-        let virtual_path = create_virtual_path(DATA_URL_NAMESPACE, url);
+    pub(crate) fn add_database(&self, specifier: &[u8]) -> Vec<u8> {
+        let name = name_of_database(specifier);
+        let virtual_path = create_virtual_path(DATABASE_NAMESPACE, &name);
         let module = StoredModule {
-            loader: Loader::Dataurl,
+            loader: Loader::Sqlite,
             is_from_plugin: false,
-            contents: Some(Cow::Owned(contents)),
+            contents: Some(Cow::Borrowed(b"")),
         };
         let load = OnceLock::from(ModuleLoad::Loaded(module));
         self.modules.insert_ref(virtual_path.clone(), load);
-        let name = (DATA_URL_NAMESPACE.to_vec(), url.to_vec());
+        let name = (DATABASE_NAMESPACE.to_vec(), name);
         self.virtual_modules.insert_ref(virtual_path.clone(), name);
-        Some(virtual_path)
+        virtual_path
     }
 
-    /// Returns the path of a module with the text.
-    pub(crate) fn add_entry_text(&self, text: &EntryText) -> Vec<u8> {
-        let virtual_path = create_virtual_path(ENTRY_TEXT_NAMESPACE, &text.name);
+    pub(crate) fn add_entry_text(&self, text: &EntryText, levels: Option<usize>) -> Vec<u8> {
+        let place = match levels {
+            None => text.name.clone(),
+            Some(levels) => [format!("levels-{levels}/").as_bytes(), &text.name].concat(),
+        };
+        let virtual_path = create_virtual_path(ENTRY_TEXT_NAMESPACE, &place);
         let module = StoredModule {
             loader: text.loader,
             is_from_plugin: false,
@@ -244,6 +248,7 @@ impl<'a> PluginModules<'a> {
                         host_path: path.to_vec(),
                         namespace: module.namespace.to_vec(),
                         path: module.path.to_vec(),
+                        is_still_deferred: false,
                     });
                     ModuleLoad::Deferred(OnceLock::new())
                 }
@@ -297,7 +302,7 @@ impl<'a> PluginModules<'a> {
                     cell.get_or_init(|| None);
                     reads.missing.push(host_path.clone());
                 }
-                Ok(Loaded::Deferred) => {}
+                Ok(Loaded::Deferred) => pending[index].is_still_deferred = true,
                 Err(Failed) => {
                     cell.get_or_init(|| None);
                 }
@@ -307,6 +312,10 @@ impl<'a> PluginModules<'a> {
             let Some(cell) = self.unanswered_read(&module.host_path) else {
                 continue;
             };
+            if module.is_still_deferred {
+                reads.still_deferred.push(module.host_path.clone());
+                continue;
+            }
             let message = [
                 &b"a deferred load was never answered: "[..],
                 module.namespace.as_slice(),
@@ -318,6 +327,7 @@ impl<'a> PluginModules<'a> {
         }
         reads.texts.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
         reads.missing.shared_sort_unstable();
+        reads.still_deferred.shared_sort_unstable();
         reads
     }
 
@@ -349,14 +359,12 @@ impl<'a> PluginModules<'a> {
         Some((namespace.as_slice(), plugin_path.as_slice()))
     }
 
-    // As the bundler has it: the directory in the path that the plugin gave the module, below the working directory if it is relative.
     pub(crate) fn directory_of_virtual_module(
         &self,
         path: &[u8],
         working_directory: &[u8],
     ) -> Option<Vec<u8>> {
         let (namespace, plugin_path) = self.virtual_module(path)?;
-        // `bun run` looks from the working directory for what such a text imports.
         if namespace == ENTRY_TEXT_NAMESPACE {
             return Some(working_directory.to_vec());
         }
@@ -393,7 +401,7 @@ impl<'a> PluginModules<'a> {
         if self.virtual_module(path).is_some() {
             return None;
         }
-        if !reads_raw_bytes(loader) {
+        if loader.is_javascript_like() {
             return self.disk.read(path);
         }
         let in_memory_path = to_path(path, self.disk.is_case_sensitive());
@@ -401,7 +409,12 @@ impl<'a> PluginModules<'a> {
             Some(contents) => contents.to_vec(),
             None => read_file_bytes(path)?,
         };
-        Some(Cow::Owned(bytes))
+        Some(Cow::Owned(match BOM::detect(&bytes) {
+            Some(mark) if !reads_raw_bytes(loader) => {
+                mark.remove_and_convert_to_utf8_and_free(bytes)
+            }
+            _ => bytes,
+        }))
     }
 
     fn unanswered_read(&self, host_path: &[u8]) -> Option<&OnceLock<Option<StoredModule>>> {
@@ -412,22 +425,13 @@ impl<'a> PluginModules<'a> {
     }
 }
 
-/// Whether a message names the text so: by its name, or by the path of its module.
-pub(crate) fn is_path_of_entry_text(path: &[u8], name: &[u8]) -> bool {
-    path == name || from_native(path) == create_virtual_path(ENTRY_TEXT_NAMESPACE, name)
-}
-
 fn import_kind(kind: CodeImportKind, form: CodeImportForm) -> ImportKind {
     match (kind, form) {
         (CodeImportKind::EntryPoint, _) => ImportKind::EntryPointBuild,
         (_, CodeImportForm::ResolveOnly) => ImportKind::RequireResolve,
         (_, CodeImportForm::Dynamic) => ImportKind::Dynamic,
-        (CodeImportKind::Import, CodeImportForm::Static | CodeImportForm::Macro) => {
-            ImportKind::Stmt
-        }
-        (CodeImportKind::Require, CodeImportForm::Static | CodeImportForm::Macro) => {
-            ImportKind::Require
-        }
+        (CodeImportKind::Import, _) => ImportKind::Stmt,
+        (CodeImportKind::Require, _) => ImportKind::Require,
     }
 }
 
@@ -441,7 +445,7 @@ fn create_virtual_path(namespace: &[u8], path: &[u8]) -> Vec<u8> {
     virtual_path
 }
 
-pub(crate) fn append_encoded_segment(target: &mut Vec<u8>, segment: &[u8]) {
+fn append_encoded_segment(target: &mut Vec<u8>, segment: &[u8]) {
     if segment.is_empty() {
         target.extend_from_slice(ENCODED_EMPTY_SEGMENT);
         return;

@@ -1,0 +1,14 @@
+// `x.f(swap())`: the language reads x.f, then the arguments. swap() stores another function under the name on the one receiver that holds it as a field of its own, stored onto it from outside its
+// constructor: what is called is the function that lay there before.
+"use strict";
+class A { constructor(n) { this.n = n; } f(x) { return this.n + x; } }
+class B { constructor(n) { this.n = n; } f(x) { return this.n * 2 + x; } }
+class H { constructor(n) { this.n = n; } }
+const held = new H(5);
+held.f = x => x + 1000;
+const all = [new A(1), new B(2), held];
+let count = 0;
+function swap() { const mine = ++count; held.f = x => mine * 100 + x; return 1; }
+function ask(turns) { let total = 0; for (let turn = 0; turn < turns; turn++) total += all[turn % 3].f(swap()); return total; }
+const byValue = [ask];
+console.log(byValue[0](Number(process.argv[2] ?? 3)));

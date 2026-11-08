@@ -2,7 +2,9 @@
 // on subjects with pairs of surrogates, lone surrogates, matches of nothing between the halves of a pair, and a lastIndex inside a pair.
 // COUNTER: RegExpMatchesInterpreted >= 100
 const out: string[] = [];
-const atRunTime = (text: string) => [...text].reverse().reverse().join("");
+// The build goes through the start of the program on real values, and both ways where a condition hangs on what only the run knows. So a text is the run's alone only where it hangs on a VALUE that only the run knows:
+// here, how much is cut off in front, which is nothing.
+const atRunTime = (text: string) => text.slice(Math.min(0, process.pid));
 
 const subjects = [
   "",

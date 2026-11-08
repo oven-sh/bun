@@ -1,0 +1,20 @@
+# the first read of the variable makes the RegExp and stores it, which no row and no look at a loop says: in front of the loop the read would hand the mark to every turn, and each turn would make a RegExp of its own
+# const pattern = /a+/;  function same(n) { .. for (..) { const now = pattern; .. } }
+# the loop calls nothing and stores nothing, so a plain read of a variable would be built in front of it
+# with Guesses the loop is built twice for the sake of the dead zone of `pattern`, and in front of it the read is built WITH the test for the mark and the making: walk/loops/object-that-its-first-read-makes-is-made-in-front-of-a-loop.ir
+# f1 = same
+# -- source: read-of-a-regexp-that-its-first-read-makes-stays-in-the-loop.ts
+# declare function sink(...values: unknown[]): void;
+# const pattern = /a+/;
+# function same(n: number) { let first: unknown = null; let count = 0; for (let i = 0; i < n; i++) { const now = pattern; if (first === null) first = now; if (first === now) count++; } return count; }
+# sink(same);
+# -- end of source
+# RUN: walk f1 mechanisms=all-Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = GetModuleVariable
+# CHECK: = NewRegExp
+# RUN(FRONT): walk f1 mechanisms=all-Guesses
+# FRONT-LABEL: code f1:Body
+# FRONT-NOT: = GetModuleVariable
+# FRONT: isLoopHead=true

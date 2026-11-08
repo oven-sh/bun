@@ -115,27 +115,6 @@ fn key_of_stand_in(path: &[u8]) -> Vec<u8> {
     key
 }
 
-// No file of the run spells what the runner does for `--globals=vitest`: `Jest::define_vitest_globals()` stores the names on `globalThis` before any file runs. This file
-// stands in for that, so that a name which nothing else stores isn't taken for absent.
-fn make_stand_in_for_globals_of_vitest() -> Box<[u8]> {
-    use bun_js_parser::Jest;
-    let mut text = b"const value = process.argv.at(-1)!;\nif (value === \"\\0never\") {\n".to_vec();
-    for name in (Jest::GLOBALS.iter()).filter(|name| !Jest::is_of_bun_only(name)) {
-        text.extend_from_slice(b"  (globalThis as any).");
-        text.extend_from_slice(name.as_bytes());
-        text.extend_from_slice(b" = JSON.parse(value);\n");
-    }
-    text.extend_from_slice(b"}\n");
-    // The name of the module. No file is there.
-    let path = bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(
-        bun_resolver::fs::FileSystem::get().top_level_dir(),
-        &[b"node_modules/.cache/bun-test-globals-of-vitest.ts"],
-    )
-    .to_vec();
-    set_stand_in(&path, &text);
-    path.into_boxed_slice()
-}
-
 pub(crate) fn files_in_memory() -> Option<&'static FileMap> {
     *STAND_IN.lock()
 }
@@ -177,10 +156,6 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, test_file_co
     // SAFETY: nothing else borrows the log in front of the build.
     unsafe { ctx.log_mut() }.append_to(&mut said_before_the_build);
 
-    let mut entry_points = entry_points;
-    if has_globals_of_vitest {
-        entry_points.push(make_stand_in_for_globals_of_vitest());
-    }
     ctx.args.entry_points = entry_points;
     ctx.bundler_options.compile = true;
     ctx.bundler_options.inline_entrypoint_import_meta_main = true;

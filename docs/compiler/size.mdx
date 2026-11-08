@@ -80,7 +80,7 @@ With `remove`, a name doesn't always answer and a call doesn't always throw. Aft
 
 ### Feature names
 
-`allow` and `remove` take these names. Your editor completes them from the type `Bun.Build.TrimFeature`, and `--explain=trim` prints them in parentheses after the feature that it kept or removed. `cli` and `native-code` never appear there: the report prints the names of their parts, such as `lint` and `ffi`. Each size is roughly what the feature adds to a trimmed executable.
+`allow` and `remove` take these names. Your editor completes them from the type `Bun.Build.TrimFeature`, and `--explain=trim` prints them in parentheses after the feature that it kept or removed. `cli` and `native-code` never appear there: the report prints the names of their parts, such as `lint` and `ffi`. Each size is roughly what the feature's own code adds. A feature keeps the features that it needs too, and a program that uses it can keep more. `--explain=trim` lists what was kept and why.
 
 <Accordion title="All feature names">
 

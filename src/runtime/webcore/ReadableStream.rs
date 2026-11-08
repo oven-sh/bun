@@ -35,15 +35,12 @@ pub enum NativeWireResult {
     EndedInline(Option<streams::StreamError>),
 }
 
-/// What the caller of [`ReadableStream::to_any_blob`] does with the Blob it gets in place of an
-/// unread stream. It decides for a stream over a file: a Blob over a file holds no bytes, and
-/// each read of it reads the file again.
+/// What the caller of [`ReadableStream::to_any_blob`] does with the Blob. A Blob over a file holds no bytes: each read of it reads the file again.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Lift {
     /// Reads the Blob once, or hands the file to a child process. Any file.
     Read,
-    /// Gives the Blob to JS, or to two bodies. A file by path that each read opens again: not a
-    /// descriptor, a FIFO or a socket.
+    /// Gives the Blob to JS, or to two bodies. A path that each read opens again: no descriptor, FIFO or socket.
     Keep,
     /// Uses the bytes where they are. No file.
     InMemory,
@@ -211,8 +208,7 @@ impl ReadableStream {
         });
     }
 
-    /// Lift the whole payload out of an unread stream, for what `lift` says the caller does with it.
-    /// On success the stream is spent (closed, disturbed, locked). On `None` it is untouched.
+    /// Lift the whole payload out of an unread stream, if `lift` allows it. On success the stream is spent (closed, disturbed, locked), on `None` untouched.
     pub fn to_any_blob(
         &mut self,
         global_this: &JSGlobalObject,

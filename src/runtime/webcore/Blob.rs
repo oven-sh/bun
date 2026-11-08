@@ -5587,8 +5587,7 @@ pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
     }
 }
 
-/// `st_mode` for a body's `clone()` or `blob()`. A path is stat'd once into `mode_seen_by_clone`, not through `resolve_file_stat`:
-/// the `Bun.file()` sharing the store answers from what that caches.
+/// `st_mode` for a body's `clone()` or `blob()`. Not through `resolve_file_stat`: the `Bun.file()` sharing the store answers from what that caches.
 fn mode_for_clone(file: &mut store::File) -> Option<bun_sys::Mode> {
     if file.seekable.is_some() {
         return Some(file.mode);
@@ -5619,16 +5618,14 @@ pub(crate) fn store_yields_bytes_once(store: &RefPtr<Store>) -> bool {
     mode.is_some_and(|mode| !bun_sys::S::ISDIR(mode) && (is_fd || !bun_sys::S::ISREG(mode)))
 }
 
-/// Whether a Blob over the file `store` can take the place of the unread stream over it, for what
-/// `lift` says the caller does with that Blob.
+/// Whether a Blob over the file `store` can replace the unread stream over it, for what `lift` says the caller does.
 pub(crate) fn file_store_lifts(store: &RefPtr<Store>, lift: Lift) -> bool {
     match lift {
         Lift::Read => true,
         Lift::InMemory => false,
         Lift::Keep => {
             let file = Store::data_mut(store).as_file_mut();
-            // A descriptor, a FIFO and a socket give their bytes once. On Windows a stat by path
-            // never says FIFO or socket, and it can open a named pipe as a client.
+            // On Windows a stat by path never says FIFO or socket, and it can open a named pipe as a client.
             !file.pathlike.is_fd()
                 && (cfg!(windows)
                     || !mode_for_clone(file)

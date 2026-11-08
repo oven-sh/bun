@@ -374,8 +374,7 @@ impl PendingValue {
                 | Action::GetArrayBuffer
                 | Action::GetBytes => {
                     let mut started = false;
-                    // A stream that cannot start throws here. The reader rejects with that, as it
-                    // does for a read that fails later.
+                    // A stream that cannot start throws here: the reader rejects, as for a read that fails later.
                     let promise = JSPromise::wrap(global_this, |global_this| {
                         let promise = match &mut self.action {
                             Action::GetJSON => global_this.readable_stream_to_json(readable.value),

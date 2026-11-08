@@ -4,6 +4,7 @@
 #include "JSDOMWrapper.h" // For JSDOMObject
 #include "JSMIMEParams.h" // Need JSMIMEParams
 #include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/LazyClassStructure.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -11,10 +12,16 @@
 
 namespace WebCore {
 
-class JSMIMEType final : public JSC::JSNonFinalObject {
+// Destructible so that m_type and m_subtype are released when the cell is swept.
+class JSMIMEType final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<JSMIMEType*>(cell)->JSMIMEType::~JSMIMEType();
+    }
 
     template<typename MyClassT, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

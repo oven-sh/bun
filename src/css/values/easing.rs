@@ -67,11 +67,6 @@ bun_core::comptime_string_map! {
 
 impl EasingFunction {
     pub fn parse(input: &mut css::Parser) -> Result<EasingFunction> {
-        // Reshaped for borrowck — `try_parse(|i| i.expect_ident())`
-        // ties the returned slice to the closure's `&mut Parser` borrow, so the
-        // ident can't escape. Read the next token by value (Token slices are
-        // `'static` placeholders for the not-yet-threaded `'bump`) and dispatch
-        // on Ident vs Function in one go; on any other token, error.
         let location = input.current_source_location();
         let tok = *input.next()?;
         if let Token::Ident(ident) = tok {
@@ -260,10 +255,7 @@ impl StepPosition {
 
     pub fn parse(input: &mut css::Parser) -> Result<StepPosition> {
         let location = input.current_source_location();
-        let tok = *input.next()?;
-        let Token::Ident(ident) = tok else {
-            return Err(location.new_unexpected_token_error(tok));
-        };
+        let ident = input.expect_ident()?;
         let keyword = if let Some(e) = STEP_POSITION_KEYWORDS.get_ascii_case_insensitive(ident) {
             match e {
                 StepPositionKeyword::Start => StepPosition::Start,

@@ -23,6 +23,37 @@ import {
   startFixture,
 } from "./serve-http2-helpers";
 
+/** One HTTP/1.1 request on the fixture's port, written byte-exact (no
+ * client-side URL normalization), so HTTP/1.1 can serve as the oracle for what
+ * the handler must see over h2. Resolves once `content-length` bytes of body
+ * have arrived; rejects with whatever was received if the server closes first
+ * (a 400, or a response without content-length). */
+async function h1Request(port: number, secure: boolean, raw: string): Promise<{ status: number; body: string }> {
+  const socket: net.Socket = secure
+    ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] })
+    : net.connect({ port, host: "127.0.0.1" });
+  const { promise, resolve, reject } = Promise.withResolvers<{ status: number; body: string }>();
+  let text = "";
+  socket.on("error", reject);
+  socket.on("close", () =>
+    reject(new Error("HTTP/1.1 oracle: connection closed before a complete response: " + JSON.stringify(text))),
+  );
+  socket.on("data", (chunk: Buffer) => {
+    text += chunk.toString("latin1");
+    const sep = text.indexOf("\r\n\r\n");
+    if (sep === -1) return;
+    const head = text.slice(0, sep);
+    const body = text.slice(sep + 4);
+    const length = Number(/\r\ncontent-length: (\d+)/i.exec(head)?.[1] ?? NaN);
+    if (body.length >= length) {
+      socket.destroy();
+      resolve({ status: Number(head.split(" ")[1]), body: body.slice(0, length) });
+    }
+  });
+  socket.on(secure ? "secureConnect" : "connect", () => socket.write(raw, "latin1"));
+  return promise;
+}
+
 for (const secure of [true, false]) {
   describe(`Bun.serve http2 (${secure ? "TLS + ALPN" : "cleartext prior-knowledge"})`, () => {
     let fx: Fixture;
@@ -141,6 +172,67 @@ for (const secure of [true, false]) {
       expect(json.headers["x-long"]).toHaveLength(6000);
       expect(json.headers["host"]).toBe("example.test:9");
       expect(json.headers["cookie"]).toBe("k=v");
+    });
+
+    // The HTTP/1 path builds req.url through the WHATWG parser (dot segments
+    // collapse, the path and query are percent-encoded). The h2 path used to
+    // paste :path in verbatim, so a guard or cache keyed on req.url saw a
+    // different string per transport for the same resource.
+    test("req.url is normalized the same way HTTP/1.1 normalizes it on the same port", async () => {
+      const scheme = secure ? "https" : "http";
+      const raw = await RawH2.connect(fx.port, secure);
+      let streamId = 1;
+      for (const [path, expected] of [
+        ["/a/../headers", "/headers"],
+        ["/./headers", "/headers"],
+        ["/%2e/headers", "/headers"],
+        ['/headers?q=a"b<c>', "/headers?q=a%22b%3Cc%3E"],
+      ]) {
+        raw.headers(streamId, baseHeaders(path));
+        const h2 = JSON.parse((await raw.body(streamId)).toString());
+        expect([path, h2.url]).toEqual([path, `${scheme}://localhost${expected}`]);
+        streamId += 2;
+        const h1 = await h1Request(fx.port, secure, `GET ${path} HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+        expect([path, JSON.parse(h1.body).url]).toEqual([path, h2.url]);
+      }
+      raw.close();
+    });
+
+    // HTTP/1 gives req.body === null for a request that promises no body (no
+    // Content-Length, no Transfer-Encoding, or content-length: 0). The h2
+    // path used to hand every non-GET/HEAD request an empty stream instead, so
+    // `if (req.body)` and `fetch(upstream, { body: req.body })` diverged.
+    test.each(["GET", "POST", "DELETE", "OPTIONS", "PURGE"])(
+      "req.body is null for a %s whose HEADERS frame carries END_STREAM",
+      async method => {
+        const res = await request(session, { ":path": "/body-null", ":method": method }, null, { endStream: true });
+        expect([res.headers["x-method"], res.body.toString()]).toEqual([method, "true"]);
+      },
+    );
+
+    test("req.body is null for content-length: 0 and a stream otherwise, as over HTTP/1.1", async () => {
+      const withBody = await request(session, { ":path": "/body-null", ":method": "POST" }, "x");
+      expect(withBody.body.toString()).toBe("false");
+
+      const raw = await RawH2.connect(fx.port, secure);
+      // content-length: 0 without END_STREAM: no byte can follow, the empty
+      // DATA frame only completes the stream.
+      raw.headers(1, [...baseHeaders("/body-null", "POST"), ["content-length", "0"]], F.END_HEADERS);
+      raw.write(frame(T.DATA, F.END_STREAM, 1, Buffer.alloc(0)));
+      expect((await raw.body(1)).toString()).toBe("true");
+      // No content-length and no END_STREAM: bytes may still follow, so the
+      // body is a stream (an empty one here).
+      raw.headers(3, baseHeaders("/body-null", "POST"), F.END_HEADERS);
+      raw.write(frame(T.DATA, F.END_STREAM, 3, Buffer.alloc(0)));
+      expect((await raw.body(3)).toString()).toBe("false");
+      raw.close();
+
+      // The HTTP/1.1 oracle on the same port.
+      const h1 = (headers: string, body = "") =>
+        h1Request(fx.port, secure, `POST /body-null HTTP/1.1\r\nHost: localhost\r\n${headers}\r\n${body}`);
+      expect((await h1("")).body).toBe("true");
+      expect((await h1("Content-Length: 0\r\n")).body).toBe("true");
+      expect((await h1("Content-Length: 1\r\n", "x")).body).toBe("false");
     });
 
     test("split cookie fields are joined with '; '", async () => {
@@ -597,8 +689,8 @@ describe("Bun.serve http2 with http1: false", () => {
     const got = await new Promise<string>(resolve => {
       let buf = Buffer.alloc(0);
       sock.on("data", d => {
-        buf = Buffer.concat([buf, d]);
-        for (let off = 0; off + 9 <= buf.length; ) {
+        buf = Buffer.concat([buf, d as Buffer]);
+        for (let off = 0; off + 9 <= buf.length;) {
           const len = buf.readUIntBE(off, 3);
           if (off + 9 + len > buf.length) break;
           if (buf[off + 3] === T.DATA && (buf.readUInt32BE(off + 5) & 0x7fffffff) === 1)
@@ -679,7 +771,7 @@ describe("Bun.serve http2 over a unix socket", () => {
     const sock = join(String(dir), "h2.sock");
     await using server = Bun.serve({
       unix: sock,
-      http2: true,
+      http2: true as any,
       fetch: req => new Response("unix:" + new URL(req.url).pathname),
     });
     const session = http2.connect("http://localhost", {
@@ -703,7 +795,7 @@ describe("Bun.serve http2 in-process", () => {
       routes: { "/r": new Response("route-v1") },
       fetch: () => new Response("fetch-v1"),
     });
-    const session = await connectH2(server.port, false);
+    const session = await connectH2(server.port!, false);
     expect((await request(session, { ":path": "/r" })).body.toString()).toBe("route-v1");
     expect((await request(session, { ":path": "/x" })).body.toString()).toBe("fetch-v1");
     server.reload({ routes: { "/r": new Response("route-v2") }, fetch: () => new Response("fetch-v2") });
@@ -727,7 +819,7 @@ describe("Bun.serve http2 in-process", () => {
         return new Response("handled", { status: 555 });
       },
     });
-    const session = await connectH2(server.port, false);
+    const session = await connectH2(server.port!, false);
     const res = await request(session, { ":path": "/" });
     expect(res.status).toBe(555);
     expect(res.body.toString()).toBe("handled");
@@ -748,7 +840,7 @@ describe("Bun.serve http2 in-process", () => {
         return new Response("late");
       },
     });
-    const session = await connectH2(server.port, false);
+    const session = await connectH2(server.port!, false);
     const req = session.request({ ":path": "/" });
     req.on("error", () => {});
     await gotRequest;
@@ -762,5 +854,120 @@ describe("Bun.serve http2 in-process", () => {
     await new Promise<void>((resolve, reject) => session.ping((err: any) => (err ? reject(err) : resolve())));
     expect(aborted).toBe(1);
     await new Promise<void>(r => session.close(() => r()));
+  });
+
+  // A 4-byte stream window stalls the body after its first bytes. One
+  // WINDOW_UPDATE then lets the writable callback send the rest and end the
+  // response, and the same socket event frees the finished stream, before the
+  // promise reaction of the body stream can run: the free has to end the request.
+  test("a streamed response body that ends from the writable callback ends its request", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      http2: true,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async pull(controller) {
+              controller.enqueue(new TextEncoder().encode("streamed-past-the-window"));
+              controller.close();
+            },
+          }),
+        ),
+    });
+
+    const SETTINGS_INITIAL_WINDOW_SIZE = 0x4;
+    const settings = Buffer.alloc(6);
+    settings.writeUInt16BE(SETTINGS_INITIAL_WINDOW_SIZE, 0);
+    settings.writeUInt32BE(4, 2);
+    const raw = await RawH2.connect(server.port!, false, { settings });
+    raw.headers(1, baseHeaders("/"));
+    const first = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1);
+    const increment = Buffer.alloc(4);
+    increment.writeUInt32BE(1024);
+    raw.write(frame(T.WINDOW_UPDATE, 0, 1, increment));
+    const body = await raw.body(1);
+
+    expect({ first: first.payload.toString(), body: body.toString(), pending: server.pendingRequests }).toEqual({
+      first: "stre",
+      body: "streamed-past-the-window",
+      pending: 0,
+    });
+    raw.close();
+    // A request that never ends keeps a graceful stop pending.
+    await server.stop();
+  });
+
+  // The request hears the controller close, so it does not wait for a pull()
+  // that never settles (the HTTP/1.1 cases are in
+  // serve-direct-readable-stream.test.ts). The end has to come from a later
+  // microtask: an end inside the first pull() leaves the response already
+  // finished when the stream is attached, which takes a different path.
+  test("a direct stream whose pull() never settles after it ended the response", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      http2: true,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("streamed");
+              await Promise.resolve();
+              controller.end();
+              await new Promise<never>(() => {});
+            },
+          }),
+        ),
+    });
+
+    const session = await connectH2(server.port!, false);
+    const bodies: string[] = [];
+    for (let i = 0; i < 3; i++) bodies.push((await request(session, { ":path": "/" })).body.toString());
+
+    expect({ bodies, pendingRequests: server.pendingRequests }).toEqual({
+      bodies: ["streamed", "streamed", "streamed"],
+      pendingRequests: 0,
+    });
+    await new Promise<void>(r => session.close(() => r()));
+    await server.stop();
+  });
+
+  // stop(true) inside pull() closes the socket at once, so the stream teardown
+  // reports while the response is still being attached. The request then ends
+  // from inside that attach, and the sink it leaves behind is cleaned up by the
+  // caller. A late write on the controller must still fail cleanly.
+  test("stop(true) inside pull() after the response ended", async () => {
+    let lateWriteFailed = false;
+    await using server = Bun.serve({
+      port: 0,
+      http2: true,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("streamed");
+              controller.end();
+              server.stop(true);
+              try {
+                controller.write("late");
+                await controller.flush();
+              } catch {
+                lateWriteFailed = true;
+              }
+            },
+          }),
+        ),
+    });
+
+    const session = await connectH2(server.port!, false);
+    // The abrupt stop races the response, so the client may or may not see it.
+    await request(session, { ":path": "/" }).catch(() => {});
+    session.destroy();
+
+    expect({ lateWriteFailed, pendingRequests: server.pendingRequests }).toEqual({
+      lateWriteFailed: true,
+      pendingRequests: 0,
+    });
   });
 });

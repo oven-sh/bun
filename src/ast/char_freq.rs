@@ -26,7 +26,8 @@ impl Default for CharFreq {
     }
 }
 
-const SCAN_BIG_CHUNK_SIZE: usize = 32;
+// Below this, zeroing `scan_big`'s count tables costs more than the scan.
+const SCAN_BIG_CHUNK_SIZE: usize = 1024;
 
 impl CharFreq {
     pub fn scan(&mut self, text: &[u8], delta: i32) {
@@ -109,41 +110,38 @@ impl CharFreq {
 }
 
 fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
-    // The field is naturally aligned, so operate on `out` directly.
-    let mut deltas: [i32; 256] = [0; 256];
-
-    debug_assert!(text.len() >= SCAN_BIG_CHUNK_SIZE);
-
-    let unrolled = text.len() - (text.len() % SCAN_BIG_CHUNK_SIZE);
-    let (chunks, remain) = text.split_at(unrolled);
-
-    for chunk in chunks.as_chunks::<SCAN_BIG_CHUNK_SIZE>().0 {
-        // PERF: candidate for unrolling — profile
-        for i in 0..SCAN_BIG_CHUNK_SIZE {
-            deltas[chunk[i] as usize] += delta;
-        }
+    // Four count tables fed round-robin so a run of the same byte does not
+    // serialize on one counter's store-to-load latency; summed at the end.
+    let mut counts = [[0u32; 256]; 4];
+    let (words, tail) = text.as_chunks::<8>();
+    for word in words {
+        counts[0][word[0] as usize] += 1;
+        counts[1][word[1] as usize] += 1;
+        counts[2][word[2] as usize] += 1;
+        counts[3][word[3] as usize] += 1;
+        counts[0][word[4] as usize] += 1;
+        counts[1][word[5] as usize] += 1;
+        counts[2][word[6] as usize] += 1;
+        counts[3][word[7] as usize] += 1;
     }
+    for &c in tail {
+        counts[0][c as usize] += 1;
+    }
+    let total = |c: u8| -> i32 {
+        let c = c as usize;
+        (counts[0][c] + counts[1][c] + counts[2][c] + counts[3][c]) as i32 * delta
+    };
 
-    for &c in remain {
-        deltas[c as usize] += delta;
+    // Accumulate (`+=`): `scan` is called once per text with mixed deltas.
+    for i in 0..26u8 {
+        out[i as usize] += total(b'a' + i);
+        out[26 + i as usize] += total(b'A' + i);
     }
-
-    // Accumulate (`+=`) — overwriting the accumulator instead would make
-    // every ≥32-byte scan discard all prior counts (last-big-scan-wins), and
-    // since `scope.members` is a RandomState-seeded map the result would be
-    // nondeterministic (an observed `OV`/`OU` flap on three.js). Accumulating
-    // keeps the freq table both correct and run-to-run stable.
-    for i in 0..26 {
-        out[i] += deltas[b'a' as usize + i];
+    for i in 0..10u8 {
+        out[52 + i as usize] += total(b'0' + i);
     }
-    for i in 0..26 {
-        out[26 + i] += deltas[b'A' as usize + i];
-    }
-    for i in 0..10 {
-        out[52 + i] += deltas[b'0' as usize + i];
-    }
-    out[62] += deltas[b'_' as usize];
-    out[63] += deltas[b'$' as usize];
+    out[62] += total(b'_');
+    out[63] += total(b'$');
 }
 
 fn scan_small(out: &mut Buffer, text: &[u8], delta: i32) {

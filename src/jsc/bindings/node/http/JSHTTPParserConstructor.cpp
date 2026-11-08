@@ -20,7 +20,8 @@ JSC_DEFINE_HOST_FUNCTION(constructHTTPParser, (JSGlobalObject * lexicalGlobalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    Structure* structure = globalObject->m_JSHTTPParserClassStructure.get(globalObject);
+    Structure* structure = structureForNewTarget(lexicalGlobalObject, callFrame->newTarget(), &Zig::GlobalObject::m_JSHTTPParserClassStructure);
+    RETURN_IF_EXCEPTION(scope, {});
     JSHTTPParser* HTTPParser = JSHTTPParser::create(vm, structure, globalObject);
 
     return JSValue::encode(HTTPParser);

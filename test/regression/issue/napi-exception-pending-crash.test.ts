@@ -44,7 +44,7 @@ test("napi_is_exception_pending crash fix and Node.js compatibility", async () =
       } else {
         console.log("Build failed:", stderr);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.log("Build error:", e.message);
     }
   } else {
@@ -127,7 +127,7 @@ test("napi_is_exception_pending crash fix and Node.js compatibility", async () =
         expect(line).toContain("0"); // napi_ok
       }
     }
-  } catch (nodeError) {
+  } catch (nodeError: any) {
     console.log("Node.js test failed (may not be available):", nodeError.message);
     // If Node.js is not available, that's OK - we verified Bun doesn't crash
   }

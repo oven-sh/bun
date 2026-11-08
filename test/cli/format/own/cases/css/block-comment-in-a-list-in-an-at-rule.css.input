@@ -1,0 +1,16 @@
+@utility scroll-shadows {
+  background:
+    /* Shadow Cover TOP */
+    linear-gradient(var(--color) 30%, transparent) center top,
+    /* Shadow Cover BOTTOM, which is long enough for the line not to fit */
+    linear-gradient(transparent, var(--color) 70%) center bottom,
+    /* Shadow TOP */
+    radial-gradient(farthest-side at 50% 0, color-mix(in oklab, var(--color), #777777 35%), 60%, transparent) center top;
+}
+a {
+  background:
+    /* Shadow Cover BOTTOM, which is long enough for the line not to fit */
+    linear-gradient(transparent, var(--color) 70%) center bottom,
+    /* Shadow Cover BOTTOM, which is long enough for the line not to fit */
+    linear-gradient(transparent, var(--color) 70%) center bottom;
+}

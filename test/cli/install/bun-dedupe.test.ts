@@ -1,10 +1,11 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { copyFile, exists, mkdir, realpath, rm } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, readdirSorted, runBunInstall } from "harness";
+import { bunExe, normalizeBunSnapshot, readdirSorted, runBunInstall } from "harness";
 import { dirname, join } from "path";
+import { installEnv, TestRegistry } from "registry";
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();
@@ -13,9 +14,6 @@ beforeAll(async () => {
 afterAll(() => {
   registry.stop();
 });
-
-// CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`; concurrent cases sharing one cache race on Windows.
-const installEnv = (dir: string) => ({ ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") });
 
 async function run(dir: string, ...cmd: string[]) {
   await using proc = Bun.spawn({
@@ -752,6 +750,53 @@ test.concurrent("workspace package edge is re-pointed when run from the workspac
   expect(after).not.toContain('"no-deps@1.1.0"');
   expect(await exists(join(workspaceDir, "bun.lock"))).toBeFalse();
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
+});
+
+// https://github.com/oven-sh/bun/issues/40393: each spec resolves to the sibling workspace;
+// reloading bun.lock and reparsing package.json must yield the same edge, or bun dedupe refuses.
+test.concurrent.each([
+  {
+    spec: "* on a versionless workspace",
+    app1: { dependencies: { package1: "*" } },
+    pkg1: {},
+  },
+  {
+    spec: "* on a prerelease workspace",
+    app1: { dependencies: { package1: "*" } },
+    pkg1: { version: "1.0.0-alpha" },
+  },
+  {
+    spec: "npm:@* on a versionless workspace",
+    app1: { dependencies: { aliased: "npm:package1@*" } },
+    pkg1: {},
+  },
+  {
+    spec: "catalog: on a workspace",
+    app1: { dependencies: { package1: "catalog:" } },
+    pkg1: { version: "1.0.0" },
+  },
+  {
+    spec: "workspace: alias of a workspace",
+    app1: { dependencies: { aliased: "workspace:package1@*" } },
+    pkg1: {},
+  },
+  {
+    spec: "workspace:* in dev and ^1 in peer",
+    app1: { devDependencies: { package1: "workspace:*" }, peerDependencies: { package1: "^1.0.0" } },
+    pkg1: { version: "1.0.0" },
+  },
+])("$spec is in sync", async ({ app1, pkg1 }) => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({ name: "root", workspaces: { packages: ["app1", "package1"], catalog: { package1: "^1.0.0" } } }),
+    ),
+    write(join(packageDir, "app1", "package.json"), JSON.stringify({ name: "app1", ...app1 })),
+    write(join(packageDir, "package1", "package.json"), JSON.stringify({ name: "package1", ...pkg1 })),
+  ]);
+  await runBunInstall(installEnv(packageDir), packageDir);
+  await expectAlreadyDeduplicated(packageDir, 3);
 });
 
 test.concurrent("corrupt bun.lock fails without rewriting it", async () => {
@@ -1780,7 +1825,7 @@ test.concurrent.each<[string, (packageDir: string) => Promise<string>, string]>(
   const after = await lock(packageDir);
   expect(after).toContain('"no-deps@1.0.0"');
   expect(after).not.toContain('"no-deps@1.1.0"');
-  expect(after.split("\n")).toContain(localEntry);
+  expect(after.split("\n")).toContain(localEntry!);
   expect(await nodeModulesVersion(packageDir, "nd-local")).toBe("2.0.0");
   expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.0.0");
   await expectAlreadyDeduplicated(packageDir, 4);

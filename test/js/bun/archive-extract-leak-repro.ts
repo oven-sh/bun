@@ -5,10 +5,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 
 const dir = mkdtempSync(join(tmpdir(), "archive-leak-"));
 
@@ -17,7 +14,7 @@ const files = {
   "b.txt": "world",
 };
 
-const archive = Bun.Archive.from(files);
+const archive = new Bun.Archive(files);
 
 function formatMB(bytes: number) {
   return (bytes / 1024 / 1024).toFixed(0) + " MB";

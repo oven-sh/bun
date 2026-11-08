@@ -18,10 +18,7 @@ import { once } from "events";
 
 const MB = 1024 * 1024;
 const CHUNK = 32768;
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 
 async function run(iters: number) {
   const proc = spawn("cat", [], { stdio: ["pipe", "pipe", "ignore"] });

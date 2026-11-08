@@ -22,7 +22,8 @@ import grpc from "@grpc/grpc-js";
 import * as fsPromises from "fs/promises";
 import * as os from "os";
 
-import { GrpcObject, ServiceClientConstructor, ServiceClient, loadPackageDefinition } from "@grpc/grpc-js";
+import { GrpcObject, ServiceClientConstructor, loadPackageDefinition } from "@grpc/grpc-js";
+import type { ServiceClient } from "@grpc/grpc-js/build/src/make-client";
 import { readFileSync } from "fs";
 import { HealthListener, SubchannelInterface } from "@grpc/grpc-js/build/src/subchannel-interface";
 import type { EntityTypes, SubchannelRef } from "@grpc/grpc-js/build/src/channelz";
@@ -213,7 +214,7 @@ export class MockSubchannel implements SubchannelInterface {
   unref(): void {}
   getChannelzRef(): SubchannelRef {
     return {
-      kind: "subchannel",
+      kind: "subchannel" as EntityTypes.subchannel,
       id: -1,
       name: this.address,
     };

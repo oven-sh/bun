@@ -1,6 +1,6 @@
 import fs from "node:fs";
 
-const scannerModuleName = "__SCANNER_MODULE__";
+const scannerModuleName = __SCANNER_MODULE__;
 const suppressError = __SUPPRESS_ERROR__;
 
 type IPCMessage =
@@ -17,7 +17,7 @@ const IPC_INPUT_FD = 4;
 
 function sendAndExit(message: IPCMessage): never {
   const data = JSON.stringify(message);
-  for (let remaining = data; remaining.length > 0; ) {
+  for (let remaining = data; remaining.length > 0;) {
     const written = fs.writeSync(IPC_OUTPUT_FD, remaining);
     if (written === 0) {
       console.error("Failed to write to IPC pipe");

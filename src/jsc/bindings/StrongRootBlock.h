@@ -75,6 +75,7 @@ public:
     }
 
     bool isFull() const { return m_occupiedCount == capacity; }
+    bool isEmpty() const { return !m_occupiedCount; }
 
     // Returns the lowest free slot index, or `capacity` if full.
     unsigned findFreeSlot() const

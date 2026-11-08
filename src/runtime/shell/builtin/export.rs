@@ -6,7 +6,7 @@ use crate::shell::{EnvStr, ExitCode, is_valid_var_name};
 use bun_collections::index_sort;
 
 #[derive(Default)]
-pub struct Export {
+pub(crate) struct Export {
     state: State,
 }
 
@@ -46,9 +46,12 @@ impl Export {
             // `init_slice` here would leave dangling EnvStr in `export_env`.
             let label = EnvStr::dupe_ref_counted(name);
             let val = EnvStr::dupe_ref_counted(value);
-            let shell = interp.as_cmd(cmd).base.shell;
-            // SAFETY: shell env outlives the Cmd node.
-            unsafe { (*shell).export_env.insert(label, val) };
+            interp
+                .as_cmd_mut(cmd)
+                .base
+                .shell_mut()
+                .export_env
+                .insert(label, val);
             label.deref();
             val.deref();
         }

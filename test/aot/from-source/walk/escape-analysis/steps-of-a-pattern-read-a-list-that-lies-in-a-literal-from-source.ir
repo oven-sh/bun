@@ -1,0 +1,14 @@
+# The list is stored into the literal that the call hands over, so it has left. Nothing has written a list since, and the state still holds its length and its element: the steps of the callee's pattern are answered by the state.
+# RUN: walk f2 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: GetArrayLength
+# CHECK-NOT: GetArrayElement
+# CHECK-NOT: NewArray
+# -- source: steps-of-a-pattern-read-a-list-that-lies-in-a-literal-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# type Point = { x: number; tags: number[] };
+# function norm({ x, tags: [first, second = 3] }: Point): number { return x + first + second; }
+# function run(n: number): number { let total = 0; for (let i = 0; i < n; i++) total += norm({ x: i & 7, tags: [i & 3] }); return total; }
+# sink(run);
+# -- end of source

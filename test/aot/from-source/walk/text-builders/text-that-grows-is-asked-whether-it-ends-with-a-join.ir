@@ -1,0 +1,9 @@
+# `if (line.endsWith("," + tail)) hits++; line += ..`: the test against a join looks ahead at the call, whose receiver is still bound to the builder. It passes the builder by, and the call gets a string.
+# f1 = gather
+# -- source: text-that-grows-is-asked-whether-it-ends-with-a-join.js
+# function gather(words, mark) { const tail = "" + mark; let line = ""; let hits = 0; for (let i = 0; i < words.length; i++) { if (line.endsWith("," + tail)) hits++; line += words[i] + "," + tail; } return line.length + ":" + hits; }
+# let last = ""; for (let turn = 0; turn < 30; turn++) last = gather(["a", "b", "c"], "-");
+# print(last);
+# -- end of source
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 9:2

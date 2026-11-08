@@ -10,9 +10,9 @@ use crate::{
     RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
 };
 
-pub(crate) fn compute_cross_chunk_dependencies(
-    c: &mut LinkerContext,
-    chunks: &mut [Chunk],
+pub(crate) fn compute_cross_chunk_dependencies<'a>(
+    c: &mut LinkerContext<'a>,
+    chunks: &mut [Chunk<'a>],
 ) -> Result<(), bun_alloc::AllocError> {
     if !c.graph.code_splitting {
         // No need to compute cross-chunk dependencies if there can't be any
@@ -64,6 +64,7 @@ pub(crate) fn compute_cross_chunk_dependencies(
             parts: ast.parts,
             import_records: ast.import_records,
             flags: meta.flags,
+            ast_flags: ast.flags,
             entry_point_chunk_indices: files.entry_point_chunk_index,
             imports_to_bind: meta.imports_to_bind,
             wrapper_refs: ast.wrapper_ref,
@@ -88,10 +89,11 @@ struct CrossChunkDependencies<'a, 'bump> {
     // the caller's sequential `walk` loop; `walk` only reads `chunks[other].unique_key`
     // (disjoint from the per-iteration `&mut Chunk`). The slice outlives the struct
     // (caller stack frame).
-    chunks: bun_ptr::BackRef<[Chunk]>,
+    chunks: bun_ptr::BackRef<[Chunk<'bump>]>,
     parts: &'a [bun_ast::PartList<'bump>],
     import_records: &'a mut [bun_ast::import_record::List<'bump>],
     flags: &'a [js_meta::Flags],
+    ast_flags: &'a [crate::bundled_ast::Flags],
     entry_point_chunk_indices: &'a [IndexInt],
     imports_to_bind: &'a [RefImportData],
     wrapper_refs: &'a [Ref],
@@ -174,7 +176,11 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         // `unique_key` backing buffer (`LinkerContext.unique_key_buf`),
                         // which outlives the link pass.
                         import_record.path.text = _chunks[other_chunk_index as usize].unique_key;
+                        import_record.path.pretty = _chunks[other_chunk_index as usize].id_key;
                         import_record.source_index = Index::INVALID;
+                        import_record
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::IMPORTS_CHUNK);
 
                         // Track this cross-chunk dynamic import so we make sure to
                         // include its hash when we're calculating the hashes of all
@@ -262,6 +268,10 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
         if matches!(chunk.content, chunk::Content::Javascript(_)) {
             if chunk.entry_point.is_entry_point() {
                 let flags = deps.flags[chunk.entry_point.source_index() as usize];
+                let default_is_namespace = LinkerContext::chunk_default_export_is_namespace(
+                    flags,
+                    deps.ast_flags[chunk.entry_point.source_index() as usize],
+                );
                 if flags.wrap != WrapKind::Cjs {
                     let resolved_exports =
                         &deps.resolved_exports[chunk.entry_point.source_index() as usize];
@@ -269,6 +279,9 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         .sorted_and_filtered_export_aliases
                         [chunk.entry_point.source_index() as usize];
                     for alias in sorted_and_filtered_export_aliases.iter() {
+                        if default_is_namespace && **alias == *b"default" {
+                            continue;
+                        }
                         let export_ = resolved_exports.get(alias).unwrap();
                         let mut target_ref = export_.data.import_ref;
 
@@ -300,9 +313,18 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                     }
                 }
 
+                if ctx.module_preload()
+                    && ctx
+                        .preload_entries
+                        .is_set(chunk.entry_point.source_index() as usize)
+                {
+                    let chunks_ref = symbols.follow(ctx.chunks_runtime_ref);
+                    let _ = chunk_meta.imports.put(chunks_ref, ()); // OOM-only Result
+                }
+
                 // Ensure "exports" is included if the current output format needs it
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
-                if flags.force_include_exports_for_entry_point {
+                if flags.force_include_exports_for_entry_point || default_is_namespace {
                     // result intentionally discarded
                     let _ = chunk_meta.imports.put(
                         deps.exports_refs[chunk.entry_point.source_index() as usize],
@@ -371,11 +393,9 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_a
                     continue;
                 }
                 for &i in part.import_record_indices.iter() {
-                    let record = &records[i as usize];
-                    if record.source_index.is_valid()
-                        && !c.is_external_dynamic_import(record, source_index)
+                    if let Some(other) = c.file_loaded_by_import(&records[i as usize], source_index)
                     {
-                        add(record.source_index.get());
+                        add(other);
                     }
                 }
                 for dep in part.dependencies.iter() {
@@ -535,9 +555,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             index_sort::sort_slice_unstable_by(lazy_chunk_indices, |a, b| a.cmp(b));
 
             let chunk = &mut chunks[chunk_index];
-            // `ChunkImport.import_kind` is a `#[repr(u8)]` enum (validity
-            // invariant), so `writable_slice` would form `&mut [T]` over
-            // invalid bit patterns. Push into reserved capacity instead.
+            // Pushed, not written into an uninitialised `&mut [T]`: `import_kind` is an enum.
             chunk.cross_chunk_imports.reserve(lazy_chunk_indices.len());
             for &lazy_chunk_index in lazy_chunk_indices.iter() {
                 chunk.cross_chunk_imports.push(chunk::ChunkImport {

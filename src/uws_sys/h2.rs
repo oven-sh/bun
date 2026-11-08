@@ -107,9 +107,6 @@ impl Response {
     pub(crate) fn reset_timeout(&mut self) {
         c::uws_h2_res_reset_timeout(self)
     }
-    pub fn override_write_offset(&mut self, off: u64) {
-        c::uws_h2_res_override_write_offset(self, off)
-    }
     pub(crate) fn get_buffered_amount(&mut self) -> u64 {
         c::uws_h2_res_get_buffered_amount(self)
     }
@@ -127,6 +124,10 @@ impl Response {
     /// armed yet; the handle stays valid until the current call unwinds.
     pub(crate) fn is_closed(&self) -> bool {
         c::uws_h2_res_is_closed(self)
+    }
+    /// END_STREAM on the HEADERS frame, or `content-length: 0`.
+    pub fn request_body_ended(&self) -> bool {
+        c::uws_h2_res_request_body_ended(self)
     }
     pub(crate) fn is_corked(&self) -> bool {
         false
@@ -268,19 +269,19 @@ impl Response {
         let mut f = core::mem::ManuallyDrop::new(f);
         c::uws_h2_res_cork(self, (&raw mut *f).cast::<c_void>(), handle::<F>);
     }
-    pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(*mut UD), ud: *mut UD) {
+    pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(&UD), ud: &UD) {
         // cork is synchronous, so we stack-allocate the (handler, ud) pair and
         // recover it inside the trampoline — same shape as H1's
         // `Response::run_corked_with_type` so `AnyResponse` can dispatch uniformly.
-        type Ctx<UD> = (fn(*mut UD), *mut UD);
+        type Ctx<'a, UD> = (fn(&UD), &'a UD);
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD>(p: *mut c_void) {
             // SAFETY: p points at a stack Ctx<UD> valid for this synchronous call.
-            let ctx = unsafe { &*p.cast::<Ctx<UD>>() };
+            let ctx = unsafe { &*p.cast::<Ctx<'_, UD>>() };
             (ctx.0)(ctx.1);
         }
-        let mut ctx: Ctx<UD> = (handler, ud);
+        let mut ctx: Ctx<'_, UD> = (handler, ud);
         c::uws_h2_res_cork(self, (&raw mut ctx).cast(), cb::<UD>)
     }
 }
@@ -331,7 +332,7 @@ macro_rules! h2_route_methods {
     ($($name:ident => $kind:ident),* $(,)?) => {$(
         pub fn $name<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
         where
-            H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+            H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
         {
             Self::route(RouteKind::$kind, self, p, ud, h);
         }
@@ -366,9 +367,6 @@ impl App {
         // SAFETY: caller contract above
         unsafe { c::uws_h2_app_destroy(this) }
     }
-    pub fn close(&mut self) {
-        c::uws_h2_app_close(self)
-    }
     /// Streams parked on backpressure need another drain pass outside the
     /// current call; `cb(user, ctx)` should arrange for [`drain`] to run soon.
     pub fn on_schedule_drain(
@@ -389,18 +387,18 @@ impl App {
 
     fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
     where
-        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+        H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
         where
-            H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+            H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
         {
             // SAFETY: uWS callback contract — `res`/`req` live disjoint handles,
             // `p` is the registered `*mut UD` (non-null by route registration).
             unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else {
+                let Some(ud) = p.cast::<UD>().as_ref() else {
                     return;
                 };
                 thunk::zst::<H>()(ud, thunk::handle_mut(req), thunk::handle_mut(res));
@@ -462,7 +460,7 @@ impl App {
 
     pub fn method<UD, H>(&mut self, m: bun_http_types::Method::Method, p: &[u8], ud: *mut UD, h: H)
     where
-        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+        H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
     {
         if let Some(kind) = RouteKind::from_method(m) {
             Self::route(kind, self, p, ud, h);
@@ -523,7 +521,6 @@ mod c {
             user: *mut c_void,
         );
         pub(super) safe fn uws_h2_app_drain(app: &mut App) -> bool;
-        pub(super) safe fn uws_h2_app_close(app: &mut App);
         pub(super) safe fn uws_h2_app_clear_routes(app: &mut App);
         pub(super) safe fn uws_h2_res_write_continue(res: &mut Response);
         pub(super) fn uws_h2_app_get(
@@ -601,6 +598,7 @@ mod c {
         pub(super) safe fn uws_h2_res_end_stream(res: &mut Response, close: bool);
         pub(super) safe fn uws_h2_res_force_close(res: &mut Response);
         pub(super) safe fn uws_h2_res_is_closed(res: &Response) -> bool;
+        pub(super) safe fn uws_h2_res_request_body_ended(res: &Response) -> bool;
         pub(super) fn uws_h2_res_try_end(
             res: *mut Response,
             p: *const u8,
@@ -631,7 +629,6 @@ mod c {
         pub(super) safe fn uws_h2_res_write_mark(res: &mut Response);
         pub(super) safe fn uws_h2_res_flush_headers(res: &mut Response, immediate: bool);
         pub(super) fn uws_h2_res_write(res: *mut Response, p: *const u8, len: *mut usize) -> bool;
-        pub(super) safe fn uws_h2_res_override_write_offset(res: &mut Response, off: u64);
         pub(super) safe fn uws_h2_res_has_responded(res: &mut Response) -> bool;
         pub(super) safe fn uws_h2_res_get_buffered_amount(res: &mut Response) -> u64;
         pub(super) safe fn uws_h2_res_reset_timeout(res: &mut Response);

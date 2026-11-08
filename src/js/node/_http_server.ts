@@ -1,6 +1,6 @@
 // Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
-const { Stream } = require("internal/streams/legacy");
+const { Stream } = require("node:stream");
 const { isIP } = require("internal/net/isIP");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,

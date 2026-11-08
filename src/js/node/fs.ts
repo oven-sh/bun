@@ -478,7 +478,7 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
   // https://github.com/nodejs/node/blob/c82f3c9e80f0eeec4ae5b7aedd1183127abda4ad/lib/fs.js#L275C1-L295C1
   existsSync = function existsSync(_path: string) {
     try {
-      return fs.existsSync.$apply(fs, arguments);
+      return IS_COMPILED_AHEAD_OF_TIME ? fs.existsSync(_path) : fs.existsSync.$apply(fs, arguments);
     } catch {
       return false;
     }
@@ -1464,8 +1464,8 @@ function setName(fn, value) {
     configurable: true,
   });
 }
-setName(Dirent, "Dirent");
-setName(Stats, "Stats");
+if (!IS_COMPILED_AHEAD_OF_TIME) setName(Dirent, "Dirent");
+if (!IS_COMPILED_AHEAD_OF_TIME) setName(Stats, "Stats");
 setName(_toUnixTimestamp, "_toUnixTimestamp");
 setName(access, "access");
 setName(accessSync, "accessSync");

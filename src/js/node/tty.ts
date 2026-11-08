@@ -67,7 +67,7 @@ function ReadStream(this: $Node.TTYReadStream, fd: number | null): void {
   this.isTTY = isatty(fd);
 }
 
-// The class stands below fs.ReadStream, and internal/fs/streams loads the stream classes. So it is put there when it is first read.
+// The class stands below fs.ReadStream, and internal/fs/streams loads node:stream. So it is put there when it is first read.
 function setUpReadStream() {
   $toClass(ReadStream, "ReadStream", require("internal/fs/streams").ReadStream);
   Object.defineProperty(ReadStream, "prototype", prototypeOfReadStream);

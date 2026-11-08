@@ -1,1 +1,0 @@
-exports.label = "walked two";

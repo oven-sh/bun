@@ -9,7 +9,7 @@ import { join } from "node:path";
 const programs = join(import.meta.dir, "../../../aot/parallel/library-modules");
 
 test.concurrent.each([
-  ["stream-reads-seen-without-proxy-receiver", { STREAM_MEMBERS: "all" }],
+  ["stream-reads-seen-without-proxy-receiver", { STREAM_MEMBERS: "all", STREAM_READS: "all" }],
   ["stream-members-replaced-by-not-function", { MESSAGES: "whole" }],
   ["stream-operators-come-with-the-readable-class", {}],
 ])(

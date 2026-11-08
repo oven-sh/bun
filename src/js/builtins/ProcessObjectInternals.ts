@@ -680,7 +680,7 @@ export function rawDebug() {
 // Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning.
 // The 'warning' listener itself is a native trampoline registered when `process` is created
 // (BunProcess.cpp); this builds the printer it forwards to on the first warning.
-type WriteWarning = (message: string, file: string | undefined) => void;
+type WriteWarning = (message: string, file: string | undefined) => boolean | undefined;
 
 export function createOnWarning(
   // Not `process`: the platform below is the one that this text was built for.
@@ -702,7 +702,10 @@ export function createOnWarning(
     // process.stderr.write, not console.error: under an inspector Session console.* emits
     // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning,
     // so console.error would re-enter and loop. writeWarning reads process.stderr per call, as Node does.
-    writeWarning(message + "\n", redirectPath);
+    const wroteInPlaceOfStream = writeWarning(message + "\n", redirectPath);
+    // The modules of the stream load node:events, which puts its EventEmitter.prototype above the prototype of `process`. Behind writeWarning(), which reads the members
+    // of built-in objects that they read, in their order. A program that cannot tell does without the module.
+    if (IS_COMPILED_AHEAD_OF_TIME && WARNINGS_LOAD_NODE_EVENTS && wroteInPlaceOfStream) require("node:events");
   }
 
   // path.basename() of a string, without node:path.

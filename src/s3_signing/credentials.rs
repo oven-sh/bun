@@ -222,8 +222,9 @@ pub struct S3Credentials {
     pub bucket: Box<[u8]>,
     pub session_token: Box<[u8]>,
     /// SSE-C key. Every object request signed with these credentials carries
-    /// the three `x-amz-server-side-encryption-customer-*` headers.
-    pub sse_customer_key: Option<SseCustomerKey>,
+    /// the three `x-amz-server-side-encryption-customer-*` headers. Boxed so
+    /// credentials without one stay small.
+    pub sse_customer_key: Option<Box<SseCustomerKey>>,
     /// Important for MinIO support.
     pub insecure_http: bool,
     /// indicates if the endpoint is a virtual hosted style bucket
@@ -477,9 +478,9 @@ impl S3Credentials {
         // S3 takes the SSE-C headers on requests that read or write an
         // object: GET, HEAD, PUT and the multipart POSTs. It does not take
         // them on DeleteObject, AbortMultipartUpload or ListObjectsV2.
-        let sse_customer_key = self
+        let sse_customer_key: Option<&SseCustomerKey> = self
             .sse_customer_key
-            .as_ref()
+            .as_deref()
             .filter(|_| !path.is_empty() && method != Method::DELETE);
         let values = if sign_query {
             // A presigned URL carries the credential, date and token as query

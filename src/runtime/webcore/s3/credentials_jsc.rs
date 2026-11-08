@@ -267,7 +267,7 @@ pub(crate) fn get_credentials_with_options(
                     );
                 }
                 new_credentials.credentials.sse_customer_key =
-                    Some(get_sse_customer_key(sse, global_object)?);
+                    Some(Box::new(get_sse_customer_key(sse, global_object)?));
                 new_credentials.changed_credentials = true;
             }
         }

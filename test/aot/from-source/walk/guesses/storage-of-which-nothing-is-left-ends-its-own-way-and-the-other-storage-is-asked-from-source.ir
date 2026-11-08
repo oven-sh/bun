@@ -1,0 +1,27 @@
+# `list[i] == 100.5` in a loop over what is written number[]. Link has proven of the elements fractions, and objects of which nothing is known: that says nothing, so the guess at an element of numbers opens.
+# Of what Int32 storage holds nothing is left beside that proof, so no run comes behind its two tests. That ends this one way: Double storage is asked in its turn, and the typed run reads a double.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[int32]]: boolean @Boolean = HasArrayStorage [[list]] arrayStorage=Int32
+# CHECK-NEXT: Branch [[int32]] -> taken [[present]](), notTaken [[other]]()
+# CHECK: [[other]]() isInLoop=true:
+# CHECK-NEXT: [[double]]: boolean @Boolean = HasArrayStorage [[list]] arrayStorage=Double
+# CHECK-NEXT: Branch [[double]] ->
+# CHECK: : never @Int32 = GetArrayElement [[list]], {{*}}arrayStorage=Int32
+# CHECK: Unreachable
+# CHECK: : fractional @Double = GetArrayElement [[list]], {{*}}arrayStorage=Double
+# -- source: storage-of-which-nothing-is-left-ends-its-own-way-and-the-other-storage-is-asked-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# function note(value: any): void {}
+# function count(list: number[]): number { let found = 0; for (let i = 0, n = list.length; i < n; i++) { if (list[i] == 100.5) found++; } return found; }
+# const fractions: any = [1.5, 2.5, 100.5];
+# sink(count(fractions));
+# note(fractions);
+# const first = { value: 100 }, second = { other: 1 }, third = { third: "x" }, fourth = { fourth: true }, fifth = { fifth: null };
+# sink(first, second, third, fourth, fifth);
+# note([first]);
+# note([second]);
+# note([third]);
+# note([fourth]);
+# note([fifth]);
+# -- end of source

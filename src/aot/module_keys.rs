@@ -1,11 +1,10 @@
-//! The path under which an executable holds a file of the program. The build names each module by these rules, and the run time looks a module up by them.
-
 use bun_ast::Loader;
 use bun_paths::fs::PathName;
+use bun_paths::platform::Posix;
+use bun_paths::resolve_path::normalize_string_buf;
+use core::cmp::Ordering;
 use std::hash::{DefaultHasher, Hasher};
 
-/// Differs where a file was written since: of when it was last written, and how long it is. The build makes one of each file that the run may read again
-/// from disk, and the run time another before it loads the compiled file for the first time. Never zero, which stands for no file.
 pub fn stamp_of_file(written_seconds: i64, written_nanoseconds: i64, size: u64) -> u64 {
     let written = (written_seconds as u64)
         .wrapping_mul(1_000_000_000)
@@ -18,7 +17,6 @@ pub const DEFAULT_LOADERS: &[(&[u8], Loader)] = &[
     (b".css", Loader::Css),
     (b".cts", Loader::Ts),
     (b".html", Loader::Html),
-    // Bun reads JSX in `.js` files.
     (b".js", Loader::Jsx),
     (b".json", Loader::Json),
     (b".json5", Loader::Json5),
@@ -37,17 +35,10 @@ pub const DEFAULT_LOADERS: &[(&[u8], Loader)] = &[
     (b".yml", Loader::Yaml),
 ];
 
-/// What an import without attributes gets.
 pub fn loader_by_name(path: &[u8]) -> Loader {
     loader_by_path_or(DEFAULT_LOADERS, path, Loader::File)
 }
 
-/// `bun run` reads `./a.ts?raw` as text unless a `type` attribute says otherwise. No other query names a loader.
-pub fn loader_by_query(query: &[u8]) -> Option<Loader> {
-    (query == b"?raw").then_some(Loader::Text)
-}
-
-/// `unnamed`: the loader of a file whose extension names none.
 pub fn loader_by_path_or<E: AsRef<[u8]>>(
     table: &[(E, Loader)],
     path: &[u8],
@@ -55,18 +46,42 @@ pub fn loader_by_path_or<E: AsRef<[u8]>>(
 ) -> Loader {
     match loader_named_by_path(table, path) {
         Some(loader) => loader,
-        None if PathName::init(path).ext.is_empty() => Loader::Tsx,
+        None if extension_of(path).is_empty() => Loader::Tsx,
         None => unnamed,
     }
 }
 
+#[inline]
+fn extension_of(path: &[u8]) -> &[u8] {
+    for (index, &byte) in path.iter().enumerate().rev() {
+        match byte {
+            b'.' => return &path[index..],
+            b'/' | b'\\' => break,
+            _ => {}
+        }
+    }
+    PathName::init(path).ext
+}
+
+#[inline]
+fn compare_bytes(first: &[u8], second: &[u8]) -> Ordering {
+    for (a, b) in first.iter().zip(second) {
+        if a != b {
+            return a.cmp(b);
+        }
+    }
+    first.len().cmp(&second.len())
+}
+
 pub fn loader_named_by_path<E: AsRef<[u8]>>(table: &[(E, Loader)], path: &[u8]) -> Option<Loader> {
-    let name = PathName::init(path);
-    let found = match table.binary_search_by(|(extension, _)| extension.as_ref().cmp(name.ext)) {
+    let extension = extension_of(path);
+    let place = table.binary_search_by(|(other, _)| compare_bytes(other.as_ref(), extension));
+    let found = match place {
         Ok(index) => Some(table[index].1),
-        Err(_) => Loader::from_string(name.ext),
+        Err(_) => Loader::from_string(extension),
     };
-    match matches!(found, None | Some(Loader::Json)) && is_jsonc_file_name(name.filename) {
+    let may_be_jsonc = matches!(found, None | Some(Loader::Json));
+    match may_be_jsonc && is_jsonc_file_name(PathName::init(path).filename) {
         true => Some(Loader::Jsonc),
         false => found,
     }
@@ -85,12 +100,15 @@ pub fn loader_name(loader: Loader) -> &'static str {
     loader.into()
 }
 
-/// A file stands under its path as what an import without attributes gets. As anything else it stands here.
 pub fn path_of_form(path: &[u8], loader: Loader) -> Vec<u8> {
     [path, b"?", loader_name(loader).as_bytes()].concat()
 }
 
-/// True if the module says what the text says, and nothing about where the text is.
+pub fn path_without_form(path: &[u8]) -> Option<&[u8]> {
+    let mark = bun_core::strings::last_index_of_char(path, b'?')?;
+    Some(&path[..mark])
+}
+
 pub fn parses_text_as_data(loader: Loader) -> bool {
     matches!(
         loader,
@@ -104,7 +122,6 @@ pub fn parses_text_as_data(loader: Loader) -> bool {
     )
 }
 
-/// True if `bun run` makes what the module exports when it loads the file. No code runs at the turn of such a module, and none of its names has a dead zone.
 pub fn makes_values_at_load(loader: Loader) -> bool {
     matches!(
         loader,
@@ -121,35 +138,52 @@ pub fn makes_values_at_load(loader: Loader) -> bool {
     )
 }
 
-/// Where the module stands that an import of `path` with `{ type: type_attribute }` gets.
 #[derive(PartialEq, Eq, Debug)]
 pub struct PlacesOfForm {
-    /// The first place to look in.
     pub path_of_form: Vec<u8>,
-    /// An import without attributes gets the same, unless an option of the build gave the file another loader.
     pub is_form_without_attributes: bool,
 }
 
-/// `None`: the loader of the run time makes the module, as it does in an executable that is not compiled ahead of time. With a type that makes code of the text it runs the text once more, and with one that answers where the file is it reads nothing.
+pub const DATABASE_NAMESPACE: &[u8] = b"database";
+
+pub fn name_of_database(specifier: &[u8]) -> Vec<u8> {
+    let mut buffer = vec![0; specifier.len() + 2];
+    let normalized = normalize_string_buf::<true, Posix, false>(specifier, &mut buffer);
+    match normalized.starts_with(b"../") {
+        true => normalized.to_vec(),
+        false => [b"./", &*normalized].concat(),
+    }
+}
+
 pub fn places_of_form(path: &[u8], type_attribute: &[u8]) -> Option<PlacesOfForm> {
-    let loader = Loader::from_string(type_attribute).filter(|&it| parses_text_as_data(it))?;
+    let has_form = |&it: &Loader| parses_text_as_data(it) || it == Loader::Sqlite;
+    let loader = Loader::from_string(type_attribute).filter(has_form)?;
+    if path.starts_with(b"./") || path.starts_with(b"../") {
+        return (loader == Loader::Sqlite).then(|| PlacesOfForm {
+            path_of_form: [DATABASE_NAMESPACE, b":", &name_of_database(path)].concat(),
+            is_form_without_attributes: false,
+        });
+    }
     Some(PlacesOfForm {
         path_of_form: path_of_form(path, loader),
         is_form_without_attributes: !is_url_with_text(path) && loader == loader_by_name(path),
     })
 }
 
-/// An import without attributes reads what the URL holds as code, whatever the URL ends in.
+pub fn path_of_default_form(path: &[u8]) -> Option<Vec<u8>> {
+    let loader = loader_by_name(path);
+    let has_form = !is_url_with_text(path) && parses_text_as_data(loader);
+    has_form.then(|| path_of_form(path, loader))
+}
+
 pub fn is_url_with_text(path: &[u8]) -> bool {
     path.starts_with(b"data:")
 }
 
-/// The path is no path: it is the name of a text that a Worker starts from.
 pub fn is_name_of_text(path: &[u8]) -> bool {
     path.starts_with(b"data:") || path.starts_with(b"blob:")
 }
 
-/// The name under which an executable holds the code that a Worker starts from through an object URL. It follows from the text and from how the text is read, and it has the form of such a URL.
 pub fn name_of_text(loader: Loader, text: &[u8]) -> Vec<u8> {
     let half = |which: u8| {
         let mut hasher = DefaultHasher::new();
@@ -179,7 +213,25 @@ mod tests {
     }
 
     #[test]
-    fn the_type_written_for_a_loader_names_the_loader() {
+    fn database_under_a_name_as_the_program_writes_it_has_the_module_made_for_that_name() {
+        let made = |path: &[u8]| Some((path.to_vec(), false));
+        assert_eq!(
+            places(b"./data.sqlite", b"sqlite"),
+            made(b"database:./data.sqlite")
+        );
+        assert_eq!(
+            places(b"./sub/../data.sqlite", b"sqlite"),
+            made(b"database:./data.sqlite")
+        );
+        assert_eq!(
+            places(b"../data.sqlite", b"sqlite"),
+            made(b"database:../data.sqlite")
+        );
+        assert_eq!(places(b"./data.json", b"json"), None);
+    }
+
+    #[test]
+    fn type_attribute_round_trips_to_its_loader() {
         for loader in [
             Loader::Jsx,
             Loader::Js,
@@ -210,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn the_type_that_the_name_of_a_file_says_chooses_what_no_attribute_chooses() {
+    fn type_that_matches_the_file_extension_is_the_default_form() {
         let path = b"/$bunfs/root/a.json";
         let as_json = b"/$bunfs/root/a.json?json".to_vec();
         let as_text = b"/$bunfs/root/a.json?text".to_vec();
@@ -220,7 +272,16 @@ mod tests {
     }
 
     #[test]
-    fn the_name_of_a_text_has_the_form_of_an_object_url() {
+    fn default_form_uses_the_loader_for_the_extension() {
+        let as_yaml = b"/$bunfs/root/a.yaml?yaml".to_vec();
+        assert_eq!(path_of_default_form(b"/$bunfs/root/a.yaml"), Some(as_yaml));
+        assert_eq!(path_of_default_form(b"/$bunfs/root/a.ts"), None);
+        assert_eq!(path_of_default_form(b"/$bunfs/root/a.png"), None);
+        assert_eq!(path_of_default_form(b"data:text/plain,a.json"), None);
+    }
+
+    #[test]
+    fn name_of_text_is_shaped_like_an_object_url() {
         let name = name_of_text(Loader::Tsx, b"postMessage(1)");
         assert_eq!(name.len(), b"blob:".len() + 36);
         assert_eq!(name, name_of_text(Loader::Tsx, b"postMessage(1)"));
@@ -229,16 +290,25 @@ mod tests {
     }
 
     #[test]
-    fn a_url_with_text_is_data_under_a_type_alone() {
+    fn data_url_is_data_only_with_a_type_attribute() {
         let url = b"data:text/plain,a.json";
         let as_json = b"data:text/plain,a.json?json".to_vec();
         assert_eq!(places(url, b"json"), Some((as_json, false)));
     }
 
     #[test]
-    fn a_type_that_makes_no_data_of_the_text_is_left_to_the_loader() {
-        for type_attribute in [&b"file"[..], b"js", b"ts", b"wasm", b"sqlite", b"no loader"] {
+    fn type_that_is_not_a_data_format_is_left_to_the_run_time_loader() {
+        for type_attribute in [&b"file"[..], b"js", b"ts", b"wasm", b"no loader"] {
             assert_eq!(places(b"/$bunfs/root/a.js", type_attribute), None);
         }
+    }
+
+    #[test]
+    fn database_is_keyed_by_its_type() {
+        let as_database = b"/$bunfs/root/a.sqlite?sqlite".to_vec();
+        assert_eq!(
+            places(b"/$bunfs/root/a.sqlite", b"sqlite"),
+            Some((as_database, true))
+        );
     }
 }

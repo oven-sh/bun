@@ -9,12 +9,13 @@ use super::{
 use crate::ir::generated::{ClassSide, MethodKind, RuntimeErrorKind};
 use crate::ir::{ClassSlot, Edge, LayoutId, TypeTable, ValueId};
 use crate::lower::member::{GivenName, PropertyName};
-use crate::lower::{FileLowering, FunctionLowering, layouts};
+use crate::lower::{FunctionLowering, layouts};
 
 #[derive(Default)]
 pub(super) struct MemberValues {
     pub(super) decorators: SmallVec<[(MemberId, ValueId); 4]>,
     pub(super) names: SmallVec<[(MemberId, PropertyName); 4]>,
+    pub(super) unconverted_keys: SmallVec<[(MemberId, ValueId); 4]>,
 }
 
 #[derive(Copy, Clone)]
@@ -40,16 +41,38 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut values = MemberValues::default();
         let mut next_method_index = 0;
         for member in runtime_members(hir, head.class) {
+            self.define_private_method(head, is_standard, member);
+        }
+        for member in runtime_members(hir, head.class) {
             let modifiers = hir[member].modifiers;
             if is_standard && has_decorators(hir, modifiers) {
                 let decorators = self.emit_decorator_array(modifiers);
                 values.decorators.push((member, decorators));
             }
             if let Some(name) = self.lower_member_name(head, member, &mut values) {
-                define_member(self, head, plan, member, name, &mut next_method_index);
+                define_member(self, head, member, name, &mut next_method_index);
             }
         }
         values
+    }
+
+    fn define_private_method(&mut self, head: ClassHead, is_standard: bool, member: MemberId) {
+        let hir = self.file.hir;
+        let node = hir[member];
+        let PropKey::Private(name) = hir.runtime_member_key(member) else {
+            return;
+        };
+        let is_method = matches!(
+            hir.runtime_member_kind(member),
+            MemberKind::Method | MemberKind::Getter | MemberKind::Setter
+        );
+        if !is_method || (is_standard && has_decorators(hir, node.modifiers)) {
+            return;
+        }
+        let key = layouts::private_key(self.file, head.layout, name);
+        self.set_position(node.name_pos);
+        let closure = self.lower_method(node.func, PropertyName::Constant(key), head.value);
+        self.set_class_slot(head.class, ClassSlot::PrivateMethod(member), closure);
     }
 
     fn lower_member_name(
@@ -64,9 +87,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let key = self.file.name_key(name);
                 Some(PropertyName::Constant(key))
             }
-            PropKey::Computed(_) => {
-                let name = self.lower_property_name(key);
+            PropKey::Computed(computed) => {
+                let (name, unconverted) = self.lower_computed_property_name(computed);
                 values.names.push((member, name));
+                let unconverted = unconverted.map(|value| (member, value));
+                values.unconverted_keys.extend(unconverted);
                 Some(name)
             }
             PropKey::Private(name) => {
@@ -88,7 +113,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let prototype = self.file.intern_atom(known::prototype);
                 let prototype = self.builder.string(prototype);
                 let is_prototype = self.builder.strict_eq(value, prototype);
-                let invalid = self.create_unlikely_block();
+                let invalid = self.create_block();
                 let valid = self.create_block();
                 self.builder
                     .branch(is_prototype, Edge::to(invalid), Edge::to(valid));
@@ -143,15 +168,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
         };
         self.set_position(node.name_pos);
-        let given = GivenName::under_member(&node, name);
+        let mut given = GivenName::under_member(&node, name);
+        if matches!(name, PropertyName::Computed(_)) {
+            given.name_that_key_spells = self.file.find_name_that_key_spells(member);
+        }
         let closure = self.lower_method(node.func, given, head.value);
         let side = class_side(node);
         self.emit_method_definition(head, side, kind, name, closure, next_method_index);
-        if kind == MethodKind::Method
-            && let Some(position) = self.file.find_first_element_position(head.class)
-        {
-            self.builder.record_position(position);
-        }
     }
 
     fn define_accessor_pair(
@@ -165,8 +188,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let node = hir[member];
         self.set_position(node.name_pos);
         let computed_name = match hir.runtime_member_key(member) {
-            PropKey::Computed(_) => Some(self.emit_name_value(name)),
-            PropKey::Name(_) | PropKey::Private(_) | PropKey::None => None,
+            PropKey::Computed(_) if self.file.names_functions_by_keys() => {
+                Some(self.emit_name_value(name))
+            }
+            PropKey::Computed(_) | PropKey::Name(_) | PropKey::Private(_) | PropKey::None => None,
         };
         let halves = [
             (AccessorFunction::Getter, MethodKind::Getter),
@@ -187,7 +212,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 fn define_member(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     head: ClassHead,
-    plan: &ClassPlan,
     member: MemberId,
     name: PropertyName,
     next_method_index: &mut u32,
@@ -197,7 +221,7 @@ fn define_member(
     let key = hir.runtime_member_key(member);
     let is_private = matches!(key, PropKey::Private(_));
     match hir.runtime_member_kind(member) {
-        MemberKind::Property if is_declaration_only(node) => {}
+        MemberKind::Property if is_declaration_only(hir, member) => {}
         MemberKind::Property if node.flags.contains(Flags::ACCESSOR) => {
             if !is_private {
                 lowering.define_accessor_pair(head, member, name, next_method_index);
@@ -205,9 +229,6 @@ fn define_member(
         }
         MemberKind::Property => {
             lowering.set_position(node.name_pos);
-            if is_private && !node.flags.contains(Flags::STATIC) {
-                lowering.builder.record_position(node.name_pos);
-            }
             if node.flags.contains(Flags::STATIC) {
                 lowering.check_static_field_key(name);
             }
@@ -223,13 +244,8 @@ fn define_member(
             }
         }
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
-            let is_standard = plan.transform == ClassTransform::Standard;
             if !is_private {
                 lowering.define_method(head, member, name, next_method_index);
-            } else if !(is_standard && has_decorators(hir, node.modifiers)) {
-                lowering.set_position(node.name_pos);
-                let closure = lowering.lower_method(node.func, name, head.value);
-                lowering.set_class_slot(head.class, ClassSlot::PrivateMethod(member), closure);
             }
         }
         MemberKind::Constructor
@@ -237,33 +253,6 @@ fn define_member(
         | MemberKind::CallSignature
         | MemberKind::ConstructSignature
         | MemberKind::IndexSignature => {}
-    }
-}
-
-impl FileLowering<'_, '_, '_, '_> {
-    // JSC records the definition of every method where the first element of the class starts, the constructor aside. The source map knows the key of an element
-    // and none of `static`, `async`, `*`, `get`, `set` and `[`, which it takes back to the token in front of them.
-    fn find_first_element_position(&self, class: ClassId) -> Option<u32> {
-        let hir = self.hir;
-        let is_constructor =
-            |member: MemberId| hir.runtime_member_kind(member) == MemberKind::Constructor;
-        let mut members = runtime_members(hir, class).peekable();
-        let constructor = members.next_if(|&member| is_constructor(member));
-        let first = hir[members.find(|&member| !is_constructor(member))?];
-        let starts_with_key = first.start == first.name_pos
-            && hir.text[first.start as usize] != b'['
-            && first.kind != MemberKind::StaticBlock;
-        if starts_with_key || self.is_shown_without_source_map() {
-            return Some(first.start);
-        }
-        if let Some(constructor) = constructor {
-            return self.last_mapped_function_position(hir[constructor].func);
-        }
-        let before = &hir.text[..first.start as usize];
-        let brace = before
-            .iter()
-            .rposition(|byte| !byte.is_ascii_whitespace())?;
-        (before[brace] == b'{').then_some(brace as u32)
     }
 }
 

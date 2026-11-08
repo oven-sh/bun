@@ -1,5 +1,4 @@
 // A method of a prototype object defines a getter under a name it is given, and the getter captures two outer names. The compiler copies the method for each name.
-// Flags: --aot-validate
 (() => {
   const table = new Map();
   const prefix = String(process.argv.length > 99 ? 1 : "p-");

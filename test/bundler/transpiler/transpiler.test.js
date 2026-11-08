@@ -5231,6 +5231,17 @@ console.log(foo, array);
       expect(out.includes("import")).toBe(false);
     });
 
+    it("macro remap of the default import keeps a namespace import of the same statement", () => {
+      const remapsDefault = new Bun.Transpiler({
+        loader: "js",
+        macro: { pkg: { default: `${import.meta.dir}/macro-check.js` } },
+      });
+      const code = `import d, * as ns from "pkg";\nconsole.log(ns.x);\n`;
+
+      expect(remapsDefault.transformSync(code)).toBe(`import * as ns from "pkg";\nconsole.log(ns.x);\n`);
+      expect(remapsDefault.scanImports(code)).toEqual([{ path: "pkg", kind: "import-statement" }]);
+    });
+
     it("removes types", () => {
       expect(code.includes("mod")).toBe(true);
       expect(code.includes("xx")).toBe(true);

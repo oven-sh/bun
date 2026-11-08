@@ -192,6 +192,7 @@ public:
 #if ENABLE(AOT)
             compiledMocksToRun.clear();
             factoriesOfCompiledMocks.clear();
+            newestCallsOfFactoriesOfCompiledMocks.clear();
             numberOfFactoriesSetAside = 0;
             fetchesThatStandForWaitingMocks.clear();
             compiledFetchesHeldBehindFactories.clear();
@@ -215,6 +216,10 @@ public:
             bool isWaitedForByFetch { false };
             // It could not wait, so nobody does.
             bool wasStartedByRequire { false };
+            // The load that such a require() left goes on under `bun test`, and fails with the factory.
+            bool isWaitedForByLoadThatRequireLeft { false };
+            // The newest earlier call of a factory for the module had not settled: under `bun test` the module's entry is still being fetched for that call, and nothing takes this one's promise.
+            bool cameToFetchInFlight { false };
             // An import() of the module itself waits for its factory and for nothing else. A load that comes to the module from another one goes on with what stands there once the mock has gone, and then so does whoever waits beside it.
             bool isWaitedForByImporter { false };
             // What the run time has noted of one call of a factory says nothing of the next.
@@ -236,6 +241,8 @@ public:
         };
         WTF::Vector<CompiledImporterLinkedAheadOfMock> compiledImportersLinkedAheadOfMocks;
         uint64_t callsOfFactoriesOfCompiledMocks { 0 };
+        // By module, whether or not the call is still in the list above.
+        WTF::Vector<std::pair<uint32_t, uint64_t>> newestCallsOfFactoriesOfCompiledMocks;
         // The calls of mock.module(), vi.mock() and the like that were made while the body of a compiled module ran, the test files' own apart. `bun test` runs such a
         // module again for the next test file that imports it. A compiled body runs once, so the calls are made again.
         struct MockLaidByBody {

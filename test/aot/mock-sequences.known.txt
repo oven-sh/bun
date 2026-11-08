@@ -88,7 +88,6 @@ require-of-importer one rejects+one+unmock.cjs.required 1 rejects names: SILENT 
 require-of-importer one rejects+one+unmock.cjs.required 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
 require-of-importer one rejects+one+unmock.cjs.required 2 one held: SILENT | late real,real,real top none
 require-of-importer one rejects+one+unmock.cjs.required 3 unmock held: SILENT | late real,real,real top none
-require-of-importer one rejects+one+unmock.js.required 1 rejects names: loud | import threw tardy boom 2 late threw tardy boom 3 top none
 require-of-importer one rejects+one+unmock.js.required 2 body the body: SILENT | nothing
 plains-accident one rejects+over+throws-over.cjs.late 2 over names: loud | import default+flag+plain late default+flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
 plains-accident one rejects+over+throws-over.cjs.late 2 over values: SILENT | import over2 require over2 late over2,real,over2 top none

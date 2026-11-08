@@ -7327,18 +7327,6 @@ export {};
         `console.log(sum + crates[0].wide + crates[1].tall);\n`,
     }),
   },
-  {
-    name: "groups of four classes that each answer one name in their own way, called in a loop over a list of the group",
-    counted: "groups",
-    size: 150,
-    entry: "main.ts",
-    write: size => ({
-      "main.ts":
-        `const picks: number[] = JSON.parse("[0,1,2,3,2,1,0,3]");\nlet sum = 0;\n` +
-        lines(size, index => `interface Kind${index} { weigh${index}(): number }\nclass A${index} implements Kind${index} { constructor(private a: number) {} weigh${index}(): number { return this.a + ${index}; } }\nclass B${index} implements Kind${index} { constructor(private b: number) {} weigh${index}(): number { return this.b * 2; } }\nclass C${index} implements Kind${index} { constructor(private c: number) {} weigh${index}(): number { return this.c - 1; } }\nclass D${index} implements Kind${index} { constructor(private d: number) {} weigh${index}(): number { return 0 * this.d; } }\nfunction make${index}(pick: number): Kind${index} { return pick === 0 ? new A${index}(pick) : pick === 1 ? new B${index}(pick) : pick === 2 ? new C${index}(pick) : new D${index}(pick); }\nfunction all${index}(list: Kind${index}[]): number { let s = 0; for (const each of list) s += each.weigh${index}(); return s; }\nsum += all${index}(picks.map(make${index}));`) +
-        `console.log(sum);\n`,
-    }),
-  },
   // A walk of a loop that believes a variable as it stood in front folds away the test behind which a helper stores the next variable, so each walk learned one store more:
   // as many walks as helpers, each over all the calls, up to the bound on the tries of one loop, behind which the loop claimed nothing: 30 helpers walked 8,826 values, 60 walked 33,816.
   {

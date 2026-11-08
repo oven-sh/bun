@@ -689,7 +689,8 @@ impl FileLowering<'_, '_, '_, '_> {
         &self,
         expression: ExprId,
     ) -> bool {
-        self.reads_only_what_is_left_out(expression, true, true)
+        let (names_below_top_level, is_below_void) = (true, true);
+        self.reads_only_what_is_left_out(expression, names_below_top_level, is_below_void)
     }
 
     pub(in crate::lower) fn reads_only_what_bun_run_leaves_out_of_empty_if(

@@ -4263,11 +4263,19 @@ bool runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
         // The job behind the factory settles its own promise whatever that holds, so what may be settled from two sides is another one.
         JSC::JSPromise* patched = JSC::JSPromise::create(vm, globalObject->promiseStructure());
         patchWhenFactorySettles(globalObject, mock, pendingFactory)->performPromiseThenWithContext(vm, globalObject, globalObject->thenable(jsFunctionFactoryOfCompiledMockSettled), globalObject->thenable(jsFunctionFactoryOfCompiledMockFailed), JSC::jsUndefined(), patched);
+        auto& newestCalls = plugins.newestCallsOfFactoriesOfCompiledMocks;
+        size_t newest = newestCalls.findIf([&](const auto& each) { return each.first == module.index(); });
+        bool cameToFetchInFlight = newest != notFound && plugins.factoriesOfCompiledMocks.containsIf([&](const auto& earlier) { return earlier.call == newestCalls[newest].second && earlier.patched->status() == JSC::JSPromise::Status::Pending; });
         plugins.factoriesOfCompiledMocks.append({ module.index(), false, JSC::Strong<JSC::JSObject> { vm, mock }, JSC::Strong<JSC::JSPromise> { vm, patched } });
+        plugins.factoriesOfCompiledMocks.last().cameToFetchInFlight = cameToFetchInFlight;
         plugins.factoriesOfCompiledMocks.last().wasStartedByRequire = JSC::AOT::requireRunsMocks(vm);
         mock->nobodyWaitsForFactory = JSC::AOT::requireRunsMocks(vm);
         plugins.factoriesOfCompiledMocks.last().isWaitedForByImporter = !JSC::AOT::importAsksFor(globalObject, module);
         plugins.factoriesOfCompiledMocks.last().call = ++plugins.callsOfFactoriesOfCompiledMocks;
+        if (newest == notFound)
+            newestCalls.append({ module.index(), plugins.callsOfFactoriesOfCompiledMocks });
+        else
+            newestCalls[newest].second = plugins.callsOfFactoriesOfCompiledMocks;
         mock->hasPendingPatch = false;
         mock->numberOfImportsThatWait = JSC::AOT::importAsksFor(globalObject, module);
         mock->isDetached = false;
@@ -4532,6 +4540,9 @@ JSC::JSPromise* factoryOfCompiledMockThatWaits(Zig::GlobalObject* globalObject, 
         factory.isWaitedFor = true;
         uncheckedDowncast<JSModuleMock>(factory.mock.get())->nobodyWaitsForFactory = false;
         factory.isWaitedForByFetch = askedBy == JSC::AOT::FactoryAskedForBy::Loader;
+        factory.isWaitedForByLoadThatRequireLeft = askedBy == JSC::AOT::FactoryAskedForBy::LoadThatRequireLeft;
+        if (factory.isWaitedForByLoadThatRequireLeft && factory.cameToFetchInFlight)
+            factory.patched->performPromiseThen(JSC::getVM(globalObject), globalObject, jsUndefined(), jsUndefined(), JSC::JSPromise::create(JSC::getVM(globalObject), globalObject->promiseStructure()));
         list->push(globalObject, factory.patched.get());
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
@@ -6894,17 +6905,19 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject, (JSC::JSGlobalObject
     // A load has called the factory: runCompiledMock(). Where mock.module() itself has called it, the promise is what the call returned: whoever made the call sees the failure.
     auto isFileOfProgram = [](JSC::AOT::ModuleID module) { return JSC::AOT::isESModule(module) || (!JSC::AOT::isOfLibrary(module) && !JSC::AOT::isDataFile(module)); };
     if (wasCalledByLoad && mock->compiledModuleThatNeverRan && isFileOfProgram(JSC::AOT::ModuleID(*mock->compiledModuleThatNeverRan))) {
-        if (mock->numberOfImportsThatWait) {
+        bool isOwedToImports = mock->numberOfImportsThatWait;
+        if (isOwedToImports) {
             mock->errorOwedToImports.set(vm, mock, callFrame->argument(0));
             mock->numberOfImportsOwedError = std::exchange(mock->numberOfImportsThatWait, 0);
-        } else if (!isWaitedForByNobody)
+        }
+        if (!isWaitedForByNobody && (!isOwedToImports || (started != notFound && factories[started].isWaitedForByLoadThatRequireLeft)))
             mock->errorOfLateFailure.set(vm, mock, callFrame->argument(0));
         uint32_t module = *mock->compiledModuleThatNeverRan;
         auto& waiting = globalObject->onLoadPlugins.compiledMocksToRun;
         waiting.removeAllMatching([&](const auto& entry) { return entry.first == module; });
         waiting.append({ module, JSC::Strong<JSC::JSObject> { vm, mock } });
         JSC::AOT::letMockWaitBehindLateFailure(globalObject, JSC::AOT::ModuleID(module));
-        if (isWaitedForByNobody)
+        if (isWaitedForByNobody || (started != notFound && factories[started].isWaitedForByLoadThatRequireLeft && factories[started].cameToFetchInFlight))
             scope.throwException(globalObject, callFrame->argument(0));
         return JSC::JSValue::encode(JSC::jsUndefined());
     }

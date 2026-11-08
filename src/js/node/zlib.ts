@@ -66,8 +66,12 @@ for (const ckey of ObjectKeys(codes)) {
 function zlibBuffer(engine: $Node.ZlibBase, buffer: ZlibInput, callback: ZlibCallback) {
   validateFunction(callback, "callback");
   // Streams do not support non-Uint8Array ArrayBufferViews yet. Convert it to a Buffer without copying.
-  if (isArrayBufferView(buffer) && !isUint8Array(buffer)) {
-    buffer = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  if (isArrayBufferView(buffer)) {
+    const byteLength = buffer.byteLength;
+    // The wrap gives the view an ArrayBuffer for the native write to pin. An empty Uint8Array has no bytes, and a detached one cannot be wrapped.
+    if (byteLength !== 0 || !isUint8Array(buffer)) {
+      buffer = Buffer.from(buffer.buffer, buffer.byteOffset, byteLength);
+    }
   } else if (isAnyArrayBuffer(buffer)) {
     buffer = Buffer.from(buffer);
   }

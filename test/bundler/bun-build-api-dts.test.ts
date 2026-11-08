@@ -188,6 +188,9 @@ export enum Unit {
   Px,
   Em,
 }
+export enum Color {
+  Red = "red",
+}
 export function useBoth(first: number = 1, second: number = 2): number {
   const [value] = useState(first);
   return value + second;
@@ -220,6 +223,10 @@ export function usePadded(first: number = 1, unit = Unit.Em, pad = 2, text: stri
   const [value] = useState(text);
   return value.padStart(pad + first) + Unit[unit];
 }
+export function useCast(first = 1, unit = Unit.Px as Unit | null, color = Color.Red as string): string {
+  const [value] = useState(first);
+  return value + String(unit) + color;
+}
 export function useNested(base: number): number {
   const [value] = useState(base);
   const add = (first: number = 0, right: number = 1): number => first + right;
@@ -250,7 +257,7 @@ export function plain(first: number = 1, second: number = 2): number {
   // What the sources accept. With these in the bundle, a typed file that asks for more is left out with a warning.
   const calls = `console.log(useBoth(), useBoth(5), useStep(), useRange(undefined, undefined, 5), useFormat(undefined, undefined, 1));
 console.log(useName(), usePoint(), useUnit(), usePadded(undefined, undefined, undefined, "a"), useNested(1));
-console.log(useStepper(2)(1), useStepper(2)(1, 2, 3), useLabel("a"), plain());
+console.log(useStepper(2)(1), useStepper(2)(1, 2, 3), useLabel("a"), plain(), useCast(), useCast(1, null, "blue"));
 `;
   // The parameters of each function, from the second one on where the first one is the compiler's. The first default
   // value of a list is where the `length` of the function ends, and how the compiler prints it is not the subject here.
@@ -288,6 +295,8 @@ console.log(useStepper(2)(1), useStepper(2)(1, 2, 3), useLabel("a"), plain());
     // `Unit.Px` is `0` in the bundle, and the parameter has the type of the enum.
     useUnit: expect.stringMatching(/^t1\?: Unit\d*$/),
     usePadded: expect.stringMatching(/^t1: Unit\d* \| undefined, t2: number \| undefined, text: string$/),
+    // Under a cast the default value has the type of the cast and not of its enum: the parameter has no type.
+    useCast: "t1?, t2?",
     useNested: "base: number",
     pad: "value: any",
     useStepper: "n: number",

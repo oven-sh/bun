@@ -3674,7 +3674,9 @@ impl<'a> Transfer<'_, 'a, '_> {
                         unannotated.get(&(index as u32, key)).copied()
                     });
                     if let Some(name) = linked.enum_names.get(&(index as u32, source_position)) {
-                        if let Some((parameter, written)) = moved {
+                        // Under a cast the default value has the type of the cast, and the parameter stays `any`.
+                        if let Some((parameter, written)) = moved.filter(|_| chain.casts.is_empty())
+                        {
                             let text = match written {
                                 Unannotated::Typed => Vec::new(),
                                 Unannotated::Required => {
@@ -4672,12 +4674,20 @@ pub fn module_types(
             parameter.default.is_some() && parameter.ty.is_none() && is_name(parameter.pat)
         });
         for (parameter, id) in unannotated {
+            // `copy_casts` names the enum of a default value that is a member of one, and no other type fits beside it.
+            let value = hir.skip_type_assertions(parameter.default);
+            let value = services.type_at_location(NodeRef {
+                file,
+                node: hir.node(value),
+            });
+            if services.type_flags(value).intersects(TypeFlags::ENUM_LIKE) {
+                continue;
+            }
             let ty = services.type_at_location(NodeRef {
                 file,
                 node: hir.node(ParamId(id)),
             });
             let flags = services.type_flags(ty);
-            // `copy_casts` names the enum of a default value that is a member of one.
             if flags.intersects(names_nothing) && !flags.contains(TypeFlags::ENUM_LITERAL) {
                 let format = TypeFormatFlags::DEFAULT | TypeFormatFlags::NO_TRUNCATION;
                 let text = services.type_to_string(ty, None, format);

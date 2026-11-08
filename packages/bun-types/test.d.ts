@@ -903,7 +903,7 @@ declare module "bun:test" {
    * ```
    *
    * @param fn the function to run around each test
-   * @param options the timeout in milliseconds. 0 means no timeout
+   * @param options the timeout in milliseconds. `0` and `Infinity` mean no timeout
    */
   export function aroundEach(
     fn: (runTest: () => Promise<void>, context: TestContext, suite: TestSuite) => unknown | Promise<unknown>,
@@ -926,7 +926,7 @@ declare module "bun:test" {
    * ```
    *
    * @param fn the function to run around the tests
-   * @param options the timeout in milliseconds. 0 means no timeout
+   * @param options the timeout in milliseconds. `0` and `Infinity` mean no timeout
    */
   export function aroundAll(
     fn: (runSuite: () => Promise<void>, context: object, suite: TestSuite) => unknown | Promise<unknown>,
@@ -957,12 +957,13 @@ declare module "bun:test" {
    * Sets the default timeout for all tests in the current file. A timeout set on an
    * individual test overrides this value. The default timeout is 5000ms (5 seconds).
    *
-   * @param milliseconds the default timeout in milliseconds
+   * @param milliseconds the default timeout in milliseconds. `0` and `Infinity` mean no timeout
    */
   export function setDefaultTimeout(milliseconds: number): void;
   export interface TestOptions {
     /**
-     * Sets the timeout for the test in milliseconds.
+     * Sets the timeout for the test in milliseconds. `0` and `Infinity` mean no timeout: the test then fails only
+     * when nothing left on the event loop could settle it.
      *
      * If the test does not complete within this time, it fails with:
      * ```ts

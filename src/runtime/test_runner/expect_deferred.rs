@@ -8,6 +8,7 @@ use core::ptr::NonNull;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::call_frame::CallerSrcLoc;
+use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::js_promise::{Status, UnwrapMode, Unwrapped};
 use bun_jsc::{
     AnyPromise, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsCell,
@@ -833,6 +834,33 @@ impl ExpectDeferred {
                 "An un-awaited matcher in a concurrent test timed out because its promise never settled"
             ),
         );
+    }
+
+    /// With nothing left on the event loop, gives up the calls that are all the active group still waits for, if any.
+    pub(crate) fn group_never_settles(buntest: &BunTestPtr, global: &JSGlobalObject) -> bool {
+        let this = buntest.get();
+        if this.phase != Phase::Execution {
+            return false;
+        }
+        let group_index = this.execution.group_index;
+        let Some(group) = this.execution.groups.get_mut(group_index) else {
+            return false;
+        };
+        if group.remaining_incomplete_entries > 0 || group.pending_matchers == 0 {
+            return false;
+        }
+        group.pending_matchers = 0;
+        Self::give_up(
+            buntest,
+            global,
+            Some(group_index),
+            format_args!(
+                "An un-awaited matcher in a concurrent test never settled\nnote: {}",
+                TopLevelWaitError::NothingLeft
+            ),
+        );
+        buntest.get().add_result(RefDataValue::Start);
+        true
     }
 
     /// After a file's tests have run, keeps the file open until the calls it holds finish or time out.

@@ -749,6 +749,7 @@ if (name === \"\\0never\") (globalThis as any)[name] = require(name);
 // usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
 // 2k-line body rewrite.
 use crate::test_runner::environment::Environment;
+use crate::test_runner::expect::expect_deferred::ExpectDeferred;
 use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
 use crate::test_runner::snapshot::Snapshots;
 use bun_collections::index_sort;
@@ -4113,11 +4114,21 @@ impl TestCommand {
                     if buntest.timer.state != crate::timer::EventLoopTimerState::ACTIVE
                         && !vm.has_work_left()
                     {
+                        // The matchers are reported where they were called, and the file goes on.
+                        if ExpectDeferred::group_never_settles(&buntest_strong, global) {
+                            continue;
+                        }
                         let (what, waits_for) = Self::what_runner_waits_for(buntest);
                         let p = jsc::JSPromise::opaque_mut(Self::never_settled(
                             global, what, file_path,
                         ));
-                        vm.unhandled_rejection(global, p.result(global.vm()), p.to_js());
+                        // The runner's own error: a `process` listener of a Vitest test doesn't get to take it.
+                        vm.unhandled_error_counter += 1;
+                        jest::on_unhandled_rejection::on_unhandled_rejection(
+                            vm,
+                            global,
+                            p.result(global.vm()),
+                        );
                         vm.event_loop_ref().tick();
                         // The error ends a describe() or a test. Anything else stays stuck, so abandon the file.
                         if waits_for.is_none()

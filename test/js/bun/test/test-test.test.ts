@@ -554,7 +554,7 @@ it("test timeouts when expected", () => {
   expect(err).not.toContain("unreachable code");
 });
 
-test("a completed deadline does not kill an unlimited test's child", async () => {
+test.each([0, Infinity])("a completed deadline does not kill the child of a test with timeout %p", async timeout => {
   using dir = tempDir("unlimited-test-child", {
     "child.test.js": `
       import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -575,7 +575,7 @@ test("a completed deadline does not kill an unlimited test's child", async () =>
         // Cross the completed test's deadline while this entry owns a live child.
         await Bun.sleep(100);
         expect(() => process.kill(child.pid, 0)).not.toThrow();
-      }, 0);
+      }, ${timeout});
     `,
   });
   await using proc = spawn({

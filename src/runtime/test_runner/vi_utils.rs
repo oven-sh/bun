@@ -2,6 +2,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
 use bun_options_types::context::RESETS_BEFORE_EACH_TEST;
 
+use super::bun_test;
 use super::jest::Jest;
 use crate::generated_bindgen::vi_utils as generated;
 
@@ -84,7 +85,7 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global:
     ViUtils__forgetDynamicImports(global);
 }
 
-/// Like Vitest's timeouts, anything that isn't a positive finite number becomes 0, which means none.
+/// `maxConcurrency` is stored like a timeout: 0 means none.
 fn number_option(
     global: &JSGlobalObject,
     config: JSValue,
@@ -100,12 +101,7 @@ fn number_option(
             value,
         ));
     }
-    let number = value.as_number();
-    Ok(Some(if number > 0.0 && number < f64::from(u32::MAX) {
-        (number as u32).max(1)
-    } else {
-        0
-    }))
+    Ok(Some(bun_test::timeout_ms(value.as_number())))
 }
 
 /// Config set by a preload applies to every test file, like config set by a Vitest setup file.

@@ -618,10 +618,9 @@ pub(crate) fn asked_by_compiled_test_file(own_globals: bool) -> u32 {
 
 /// `setDefaultTimeout(milliseconds)` and `jest.setTimeout(milliseconds)`
 pub(crate) fn set_default_timeout(milliseconds: f64) {
-    let timeout_ms: u32 = u32::try_from((milliseconds as i32).max(0)).unwrap();
-
     if let Some(test_runner) = Jest::runner() {
-        test_runner.default_timeout_override = timeout_ms;
+        // Never `u32::MAX`, which means that no override is set.
+        test_runner.default_timeout_override = bun_test::timeout_ms(milliseconds);
     }
 }
 

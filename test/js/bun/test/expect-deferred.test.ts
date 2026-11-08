@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, tempDir } from "harness";
 
 const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
 
@@ -10,7 +10,7 @@ const prelude = `
   const never = () => new Promise(() => {});
 `;
 
-async function run(cmd: string[], files: Record<string, string>, written: string[] = []) {
+async function run(cmd: string[], files: Record<string, string>, written: string[] = [], killedAfterMs = 60_000) {
   using dir = tempDir("expect-deferred", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
@@ -19,7 +19,7 @@ async function run(cmd: string[], files: Record<string, string>, written: string
     stdout: "pipe",
     stderr: "pipe",
     // A matcher that blocks on a never-settling promise can't be stopped by the child's own test timeout.
-    timeout: 60_000,
+    timeout: killedAfterMs,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const results = stderr
@@ -589,6 +589,93 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(report.at(-1)).toBe("(pass) next");
     expect(failingLines(stderr, source)).toEqual(['expect(never()).resolves.toBe("not awaited");']);
     expect(exitCode).toBe(1);
+  });
+
+  // A test with no timeout has no deadline, so the deadline of another test of its group doesn't end the wait.
+  describe.each([0, Infinity])("an un-awaited matcher in a concurrent test with a timeout of %p", timeout => {
+    // With a deadline for Infinity the run never ends. This kills it before the test that waits for it times out, which
+    // would leave it running. ASAN's leak check makes exit slow, and CI gives ASAN tests minutes.
+    const runToItsEnd = (source: string) =>
+      run(["test"], { "a.test.js": prelude + source }, [], isASAN && isCI ? 60_000 : 4000);
+
+    test("outlasts the timeout of another test", async () => {
+      const { report, exitCode, signalCode } = await runToItsEnd(`
+        describe("concurrent", () => {
+          test.concurrent("has a timeout", () => {}, 100);
+          test.concurrent("has none", async () => {
+            // The test above started first, so its deadline has passed when this timer fires.
+            await later(undefined, 150);
+            expect(later(1, 20)).resolves.toBe(1);
+          }, ${timeout});
+        });
+        test("next", () => {});
+      `);
+      expect({ report, exitCode, signalCode }).toEqual({
+        report: ["(pass) concurrent > has a timeout", "(pass) concurrent > has none", "(pass) next"],
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    test("is reported where it was called once it can never settle, and the file goes on", async () => {
+      const source = `
+        describe("concurrent", () => {
+          test.concurrent("has a timeout", () => {}, 100);
+          test.concurrent("has none", async () => {
+            await later();
+            expect(never()).resolves.toBe("not awaited");
+          }, ${timeout});
+        });
+        test("next", () => {});
+      `;
+      const { report, stderr, exitCode, signalCode } = await runToItsEnd(source);
+      expect({ report, failingLines: failingLines(stderr, source), exitCode, signalCode }).toEqual({
+        report: [
+          "(pass) concurrent > has a timeout",
+          "(pass) concurrent > has none",
+          "# Unhandled error between tests",
+          "error: An un-awaited matcher in a concurrent test never settled",
+          "(pass) next",
+        ],
+        failingLines: ['expect(never()).resolves.toBe("not awaited");'],
+        exitCode: 1,
+        signalCode: null,
+      });
+    });
+
+    // The test has called no matcher: a hook failed before it started.
+    test("of another test still ends at that test's timeout when the test with no timeout never started", async () => {
+      const source = `
+        describe("concurrent", () => {
+          let isFirst = true;
+          beforeEach(() => {
+            if (!isFirst) return;
+            isFirst = false;
+            throw new Error("the hook fails");
+          });
+          test.concurrent("has none", () => {}, ${timeout});
+          test.concurrent("has a timeout", async () => {
+            await later();
+            expect(never()).resolves.toBe("not awaited");
+          }, 100);
+        });
+        test("next", () => {});
+      `;
+      const { report, stderr, exitCode, signalCode } = await runToItsEnd(source);
+      expect({ report, failingLines: failingLines(stderr, source), exitCode, signalCode }).toEqual({
+        report: [
+          "error: the hook fails",
+          "(fail) concurrent > has none",
+          "(pass) concurrent > has a timeout",
+          "# Unhandled error between tests",
+          "error: An un-awaited matcher in a concurrent test timed out because its promise never settled",
+          "(pass) next",
+        ],
+        failingLines: ['throw new Error("the hook fails");', 'expect(never()).resolves.toBe("not awaited");'],
+        exitCode: 1,
+        signalCode: null,
+      });
+    });
   });
 
   describe.each(isolationFlags)("outside of a test: bun test %j", flags => {

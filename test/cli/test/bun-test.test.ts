@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
@@ -2594,7 +2594,16 @@ function runFiles(files: Record<string, string>, ...args: string[]) {
   return runFilesWithEnv({}, files, ...args);
 }
 
-async function runFilesWithEnv(env: Record<string, string>, files: Record<string, string>, ...args: string[]) {
+function runFilesWithEnv(env: Record<string, string>, files: Record<string, string>, ...args: string[]) {
+  return runFilesWith({ env }, files, ...args);
+}
+
+/** `killedAfterMs` ends a run that would never end. `signalCode` is then not null. */
+async function runFilesWith(
+  { env, killedAfterMs }: { env?: Record<string, string>; killedAfterMs?: number },
+  files: Record<string, string>,
+  ...args: string[]
+) {
   using dir = tempDir("bun-test-waits", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", ...args],
@@ -2602,6 +2611,7 @@ async function runFilesWithEnv(env: Record<string, string>, files: Record<string
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
+    ...(killedAfterMs === undefined ? {} : { timeout: killedAfterMs, killSignal: "SIGKILL" as const }),
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return {
@@ -2613,6 +2623,7 @@ async function runFilesWithEnv(env: Record<string, string>, files: Record<string
       .map(line => line.replace(/"[^"]*[\\/]([^"\\/]+)"/g, '"$1"')),
     counts: stderr.match(/^ \d+ (pass|fail)$/gm),
     exitCode,
+    signalCode: proc.signalCode,
   };
 }
 
@@ -3205,6 +3216,329 @@ describe.concurrent("a test file that can never finish running", () => {
       errors: ['error: A test or hook with no timeout never settled in "a.test.ts"', nothingLeft],
       counts: [" 1 pass", " 0 fail"],
       exitCode: 1,
+    });
+  });
+
+  const neverSettledIn = (file: string) => [
+    `error: A test or hook with no timeout never settled in "${file}"`,
+    nothingLeft,
+  ];
+  const results = (stderr: string) => stderr.match(/^\((pass|fail)\) [^[\r\n]+/gm)?.map(line => line.trimEnd());
+  // A run with a timer armed for a timeout of Infinity never ends. This kills it before the test that waits for it times
+  // out, which would leave it running. ASAN's leak check makes exit slow, and CI gives ASAN tests minutes.
+  const runToItsEnd = (files: Record<string, string>, ...args: string[]) =>
+    runFilesWith({ killedAfterMs: isASAN && isCI ? 60_000 : 4000 }, files, ...args);
+
+  test("a timeout of Infinity is no timeout: tests that never settle fail and the run continues", async () => {
+    const { stderr, errors, counts, exitCode, signalCode } = await runToItsEnd(
+      {
+        "test.test.ts": `
+          import { test } from "bun:test";
+          const neverSettles = () => new Promise(() => {});
+          test("number", neverSettles, Infinity);
+          test("options", neverSettles, { timeout: Infinity });
+          test("options first", { timeout: Infinity }, neverSettles);
+          test.each([1])("each %d", neverSettles, Infinity);
+          test("settles", () => {});
+        `,
+        "setDefaultTimeout.test.ts": `
+          import { setDefaultTimeout, test } from "bun:test";
+          setDefaultTimeout(Infinity);
+          test("default", () => new Promise(() => {}));
+        `,
+        "jest.test.ts": `
+          import { jest, test } from "bun:test";
+          jest.setTimeout(Infinity);
+          test("jest", () => new Promise(() => {}));
+        `,
+        "vitest.test.ts": `
+          import { describe, test } from "vitest";
+          describe("block", { timeout: Infinity }, () => {
+            test("inherits", () => new Promise(() => {}));
+          });
+        `,
+      },
+      "./test.test.ts",
+      "./setDefaultTimeout.test.ts",
+      "./jest.test.ts",
+      "./vitest.test.ts",
+    );
+    expect({ results: results(stderr), errors, counts, exitCode, signalCode }).toEqual({
+      results: [
+        "(fail) number",
+        "(fail) options",
+        "(fail) options first",
+        "(fail) each 1",
+        "(pass) settles",
+        "(fail) default",
+        "(fail) jest",
+        "(fail) block > inherits",
+      ],
+      errors: [
+        ...Array.from({ length: 4 }, () => neverSettledIn("test.test.ts")).flat(),
+        ...neverSettledIn("setDefaultTimeout.test.ts"),
+        ...neverSettledIn("jest.test.ts"),
+        ...neverSettledIn("vitest.test.ts"),
+      ],
+      counts: [" 1 pass", " 7 fail"],
+      exitCode: 1,
+      signalCode: null,
+    });
+  });
+
+  // Node.js keeps waiting for such a test. Not beside the others: node:test loads slowly on a debug build.
+  test.serial(
+    "a node:test test with a timeout of Infinity that never settles fails and the run continues",
+    async () => {
+      const { stderr, errors, counts, exitCode, signalCode } = await runToItsEnd({
+        "a.test.ts": `
+        import { test } from "node:test";
+        test("never settles", { timeout: Infinity }, () => new Promise(() => {}));
+        test("settles", () => {});
+      `,
+      });
+      expect({ results: results(stderr), errors, counts, exitCode, signalCode }).toEqual({
+        results: ["(fail) never settles", "(pass) settles"],
+        errors: neverSettledIn("a.test.ts"),
+        counts: [" 1 pass", " 1 fail"],
+        exitCode: 1,
+        signalCode: null,
+      });
+    },
+  );
+
+  test.each([
+    [
+      "a hook",
+      `
+        import { afterEach, test } from "bun:test";
+        afterEach(() => new Promise(() => {}), Infinity);
+        test("first", () => {}, Infinity);
+        test("second", () => {}, Infinity);
+      `,
+    ],
+    [
+      "an around hook",
+      `
+        import { aroundEach, test } from "bun:test";
+        aroundEach(async () => {
+          await new Promise(() => {});
+        }, Infinity);
+        test("first", () => {}, Infinity);
+      `,
+    ],
+    [
+      "a hook that a test registers",
+      `
+        import { test } from "vitest";
+        test("first", ({ onTestFinished }) => {
+          onTestFinished(() => new Promise(() => {}), Infinity);
+        }, Infinity);
+      `,
+    ],
+    [
+      "concurrent tests",
+      `
+        import { test } from "bun:test";
+        test.concurrent("first", () => new Promise(() => {}), Infinity);
+        test.concurrent("second", () => new Promise(() => {}), Infinity);
+      `,
+    ],
+  ])(
+    "the file stops at %s with a timeout of Infinity that can never settle, and the run continues",
+    async (_, contents) => {
+      const { errors, counts, exitCode, signalCode } = await runToItsEnd(
+        { "a.test.ts": contents, "b.test.ts": passes },
+        "./a.test.ts",
+        "./b.test.ts",
+      );
+      expect({ errors, counts, exitCode, signalCode }).toEqual({
+        errors: neverSettledIn("a.test.ts"),
+        counts: [" 1 pass", " 0 fail"],
+        exitCode: 1,
+        signalCode: null,
+      });
+    },
+  );
+
+  // After its tests have run, a file waits for such a matcher for as long as the default timeout.
+  test("a matcher outside a test that can never settle ends its file when the default timeout is Infinity", async () => {
+    const { stderr, errors, counts, exitCode, signalCode } = await runToItsEnd(
+      {
+        "a.test.ts": `
+          import { expect, setDefaultTimeout, test } from "bun:test";
+          setDefaultTimeout(Infinity);
+          expect(new Promise(() => {})).resolves.toBe(1);
+          test("first", () => {});
+        `,
+        "b.test.ts": passes,
+      },
+      "./a.test.ts",
+      "./b.test.ts",
+    );
+    expect({ results: results(stderr), errors, counts, exitCode, signalCode }).toEqual({
+      results: ["(pass) first", "(pass) passes"],
+      errors: [`error: An un-awaited matcher's promise never settled in "a.test.ts"`, nothingLeft],
+      counts: [" 2 pass", " 0 fail"],
+      exitCode: 1,
+      signalCode: null,
+    });
+  });
+
+  test("a test or hook with a timeout of Infinity that settles after the default timeout passes", async () => {
+    const { stderr, counts, exitCode, signalCode } = await runToItsEnd(
+      {
+        "a.test.ts": `
+          import { beforeAll, setDefaultTimeout, test } from "bun:test";
+          const later = () => new Promise(resolve => setTimeout(resolve, 50));
+          beforeAll(later, Infinity);
+          test("number", later, Infinity);
+          test("options", later, { timeout: Infinity });
+          setDefaultTimeout(Infinity);
+          test("default", later);
+        `,
+      },
+      "--timeout=10",
+    );
+    expect({ results: results(stderr), counts, exitCode, signalCode }).toEqual({
+      results: ["(pass) number", "(pass) options", "(pass) default"],
+      counts: [" 3 pass", " 0 fail"],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // A deadline keeps the timer of the file armed after its test or hook has settled.
+  test("a test or hook with a timeout of Infinity that has settled does not hide one that never settles", async () => {
+    const { stderr, errors, counts, exitCode, signalCode } = await runToItsEnd({
+      "a.test.ts": `
+        import { beforeAll, test } from "bun:test";
+        beforeAll(() => {}, Infinity);
+        test("settles", () => {}, Infinity);
+        test("never settles", () => new Promise(() => {}), 0);
+      `,
+    });
+    expect({ results: results(stderr), errors, counts, exitCode, signalCode }).toEqual({
+      results: ["(pass) settles", "(fail) never settles"],
+      errors: neverSettledIn("a.test.ts"),
+      counts: [" 1 pass", " 1 fail"],
+      exitCode: 1,
+      signalCode: null,
+    });
+  });
+
+  // A positive number below 4294967295 is a timeout of at least 1 ms. Anything else is no timeout.
+  test("test(), setDefaultTimeout() and vi.setConfig() store the same timeout for the same number", async () => {
+    const setters = ["test", "setDefaultTimeout", "vi.setConfig"];
+    const ended: [number, number][] = [
+      [0.5, 1],
+      [1, 1],
+      [4294967295, 0],
+      [1e10, 0],
+      [Infinity, 0],
+      [NaN, 0],
+      [-1, 0],
+    ];
+    const weeksAway = [2 ** 31, 4294967294];
+    const { stdout, counts, exitCode, signalCode } = await runToItsEnd({
+      "a.test.ts": `
+        import { setDefaultTimeout } from "bun:test";
+        import { test, vi } from "vitest";
+
+        function register(setter, number, callback) {
+          const name = setter + " " + number;
+          if (setter === "test") return test(name, callback, number);
+          // The timeout of vi.setConfig() comes before the one of setDefaultTimeout().
+          vi.resetConfig();
+          if (setter === "setDefaultTimeout") setDefaultTimeout(number);
+          else vi.setConfig({ testTimeout: number });
+          test(name, callback);
+        }
+        const print = ({ task }) => console.log(task.name + " = " + task.timeout);
+
+        // These never settle, so a timeout of 1 ms can't pass by being fast enough.
+        for (const setter of ${JSON.stringify(setters)}) {
+          for (const number of [${ended.map(([number]) => number).join(", ")}]) {
+            register(setter, number, ({ task }) => {
+              print({ task });
+              return new Promise(() => {});
+            });
+          }
+        }
+        // These pass. They come last, because their timers would keep the run from reporting the tests above.
+        for (const setter of ${JSON.stringify(setters)}) {
+          for (const number of [${weeksAway.join(", ")}]) register(setter, number, print);
+        }
+      `,
+    });
+    expect({
+      stored: stdout.split(/\r?\n/).filter(line => line.includes(" = ")),
+      counts,
+      exitCode,
+      signalCode,
+    }).toEqual({
+      stored: [
+        ...setters.flatMap(setter => ended.map(([number, stored]) => `${setter} ${number} = ${stored}`)),
+        ...setters.flatMap(setter => weeksAway.map(number => `${setter} ${number} = ${number}`)),
+      ],
+      counts: [` ${setters.length * weeksAway.length} pass`, ` ${setters.length * ended.length} fail`],
+      exitCode: 1,
+      signalCode: null,
+    });
+  });
+
+  // In a Vitest test, an error that a `process` listener takes does not fail the test. This error is the runner's.
+  test.each([0, Infinity])(
+    "a process listener in a Vitest test does not take the error of a test with a timeout of %p that never settles",
+    async timeout => {
+      const { stdout, stderr, errors, counts, exitCode, signalCode } = await runToItsEnd({
+        "a.test.ts": `
+          import { test } from "vitest";
+          process.on("unhandledRejection", () => console.log("the listener took it"));
+          test("never settles", () => new Promise(() => {}), ${timeout});
+          test("settles", () => {});
+        `,
+      });
+      expect({ stdout, results: results(stderr), errors, counts, exitCode, signalCode }).toEqual({
+        stdout: expect.not.stringContaining("the listener took it"),
+        results: ["(fail) never settles", "(pass) settles"],
+        errors: neverSettledIn("a.test.ts"),
+        counts: [" 1 pass", " 1 fail"],
+        exitCode: 1,
+        signalCode: null,
+      });
+    },
+  );
+
+  // The error ends the test, and what the test then leaves behind is the listener's to take, like before the error.
+  test("a process listener in a Vitest test takes the rejection that a test leaves after it never settled", async () => {
+    const { stdout, stderr, errors, counts, exitCode, signalCode } = await runToItsEnd({
+      "a.test.ts": `
+        import { expect, test } from "vitest";
+        process.on("unhandledRejection", error => console.log("the listener took: " + error.message));
+        test("never settles", async () => {
+          try {
+            await expect(new Promise(() => {})).resolves.toBe(1);
+          } finally {
+            Promise.reject(new Error("left by the test"));
+          }
+        }, 0);
+      `,
+    });
+    expect({
+      taken: stdout.match(/^the listener took: .*$/gm),
+      results: results(stderr),
+      errors,
+      counts,
+      exitCode,
+      signalCode,
+    }).toEqual({
+      taken: ["the listener took: left by the test"],
+      results: ["(fail) never settles"],
+      errors: neverSettledIn("a.test.ts"),
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+      signalCode: null,
     });
   });
 });

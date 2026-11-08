@@ -2539,7 +2539,7 @@ function bunTestOptions(options: TestOptions) {
   // about timeouts that extend past its 5s default.
   const { timeout } = options;
   if (timeout === Infinity) {
-    // Node's "no timeout" must override bun:test's default (bun saturates it).
+    // Overrides bun:test's default. Node waits for a test that nothing can settle, and `bun test` fails it.
     return { timeout };
   }
   if (typeof timeout === "number" && Number.isFinite(timeout)) {

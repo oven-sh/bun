@@ -118,13 +118,28 @@ describe("the length of the wait, on the fake clock", () => {
     },
   );
 
+  // The real clock ends a longer wait after 2^31-1 seconds. The fake clock ends no sleep early.
   test.each([MAX_SLEEP + 1, 2 ** 53 - 1, Number.MAX_VALUE, Infinity, new Date(8.64e15)])(
-    "Bun.sleep(%p) is over after 2^31-1 seconds",
+    "Bun.sleep(%p) never ends, and is not a pending timer",
     async wait => {
       jest.useFakeTimers({ now: 0 });
-      await expectToWakeAfter(MAX_SLEEP, Bun.sleep(wait));
+      const woke = jest.fn();
+      Bun.sleep(wait).then(woke);
+      expect(jest.getTimerCount()).toBe(0);
+      jest.runAllTimers();
+      await Promise.resolve();
+      expect({ now: Date.now(), woke: woke.mock.calls.length }).toEqual({ now: 0, woke: 0 });
     },
   );
+
+  test("runOnlyPendingTimers() beside an interval does not wait for a sleep that never ends", () => {
+    jest.useFakeTimers({ now: 0 });
+    const tick = jest.fn();
+    setInterval(tick, DAY);
+    Bun.sleep(Infinity);
+    jest.runOnlyPendingTimers();
+    expect({ ticks: tick.mock.calls.length, now: Date.now() }).toEqual({ ticks: 1, now: DAY });
+  });
 
   // The date is on the real clock, and the wait is on the fake one.
   test("Bun.sleep(date) is over on a date that is 30 days ahead", async () => {
@@ -165,7 +180,7 @@ describe("the length of the wait, on the fake clock", () => {
   test("a timer counts from the fake clock after sleeps moved it by 340 years", () => {
     jest.useFakeTimers({ now: 0 });
     for (let i = 0; i < 5; i++) {
-      Bun.sleep(Infinity);
+      Bun.sleep(MAX_SLEEP);
       jest.runAllTimers();
     }
     expect(Date.now()).toBe(5 * MAX_SLEEP);

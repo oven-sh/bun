@@ -162,6 +162,12 @@ impl All {
         let id = all.next_id();
 
         let ms = countdown.to_number(cx.global())?;
+        // The fake clock ends no sleep early: a wait that the real clock cuts short never ends on it.
+        if ms >= (Self::MAX_SLEEP_MS + 1) as f64
+            && all.fake_timers.set_timeout_clock() == Clock::Fake
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
         // A `TimeoutObject` takes a `u32` delay. `as` saturates and maps NaN to 0.
         let first_ms = ms as u32;
         let wrapped_promise = promise.with_async_context_if_needed(cx.global());

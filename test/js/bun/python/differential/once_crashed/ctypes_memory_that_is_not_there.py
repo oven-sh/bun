@@ -221,15 +221,12 @@ print(attempt(lambda: abstract[0]), '|', attempt(lambda: abstract.contents), '|'
 abstract = Abstract.from_buffer(bytearray(b'\1' * 8))
 print(attempt(lambda: abstract[0]), '|', attempt(lambda: abstract.contents), '|', attempt(lambda: abstract[0:1]))
 
-print('--- the memory has moved under a view that is good: an instance over an instance over a bytearray')
+print('--- an instance over an instance over a bytearray: the view of the first cannot be released under the second, so the memory does not move')
 memory = bytearray(64)
 over_it = (ctypes.c_char * 64).from_buffer(memory)
 over_that = (ctypes.c_int * 4).from_buffer(over_it)
 pointer = ctypes.cast(over_that, ctypes.POINTER(ctypes.c_int))
-for kept in over_it._objects.values():
-    kept.release()
-memory.clear()
-memory.extend(b'w' * 4096)
+print([attempt(kept.release) for kept in over_it._objects.values()], '|', attempt(memory.clear), '|', attempt(lambda: memory.extend(b'w' * 4096)))
 print(attempt(lambda: over_that[0]), '|', attempt(lambda: pointer[0]), '|', attempt(lambda: pointer.__setitem__(0, 1)), '|', attempt(lambda: ctypes.cast(over_that, ctypes.POINTER(ctypes.c_int))[0]))
 
 print('--- a hook releases the view that from_buffer() has just made')

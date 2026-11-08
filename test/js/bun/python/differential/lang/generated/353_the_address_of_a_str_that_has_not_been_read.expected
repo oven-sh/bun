@@ -1,0 +1,40 @@
+status: 0
+script: 251d5854289f88c8
+source: fde57b1c0edd51c3
+---
+hex(id(s)) in r => True
+r.startswith('<str object at 0x') => True
+hex(n) in r => True
+n == id(s) => True
+object.__repr__(s) == r => True
+True
+protocol [protocol=0] => 0
+id(s) in p.memo.copy() [protocol=0] => True
+sorted(type(v[1]).__name__ for v in p.memo.copy().values()) [protocol=0] => ['list', 'str', 'tuple']
+all(k == id(v[1]) for k, v in p.memo.copy().items()) [protocol=0] => True
+len(f.getvalue()) [protocol=0] => 166
+protocol [protocol=1] => 1
+id(s) in p.memo.copy() [protocol=1] => True
+sorted(type(v[1]).__name__ for v in p.memo.copy().values()) [protocol=1] => ['list', 'str', 'tuple']
+all(k == id(v[1]) for k, v in p.memo.copy().items()) [protocol=1] => True
+len(f.getvalue()) [protocol=1] => 161
+protocol [protocol=2] => 2
+id(s) in p.memo.copy() [protocol=2] => True
+sorted(type(v[1]).__name__ for v in p.memo.copy().values()) [protocol=2] => ['list', 'str', 'tuple']
+all(k == id(v[1]) for k, v in p.memo.copy().items()) [protocol=2] => True
+len(f.getvalue()) [protocol=2] => 162
+protocol [protocol=3] => 3
+id(s) in p.memo.copy() [protocol=3] => True
+sorted(type(v[1]).__name__ for v in p.memo.copy().values()) [protocol=3] => ['list', 'str', 'tuple']
+all(k == id(v[1]) for k, v in p.memo.copy().items()) [protocol=3] => True
+len(f.getvalue()) [protocol=3] => 162
+protocol [protocol=4] => 4
+id(s) in p.memo.copy() [protocol=4] => True
+sorted(type(v[1]).__name__ for v in p.memo.copy().values()) [protocol=4] => ['list', 'str', 'tuple']
+all(k == id(v[1]) for k, v in p.memo.copy().items()) [protocol=4] => True
+len(f.getvalue()) [protocol=4] => 165
+protocol [protocol=5] => 5
+id(s) in p.memo.copy() [protocol=5] => True
+sorted(type(v[1]).__name__ for v in p.memo.copy().values()) [protocol=5] => ['list', 'str', 'tuple']
+all(k == id(v[1]) for k, v in p.memo.copy().items()) [protocol=5] => True
+len(f.getvalue()) [protocol=5] => 165

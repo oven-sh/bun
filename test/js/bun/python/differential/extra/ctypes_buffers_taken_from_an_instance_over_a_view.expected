@@ -1,0 +1,101 @@
+status: 0
+oracle: none
+---
+bytearray  memoryview(c)          [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: Existing exports of data: object cannot be re-sized', b'xx']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+bytearray  from_buffer(c)         [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: Existing exports of data: object cannot be re-sized', 120]
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+bytearray  PickleBuffer(c)        [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: Existing exports of data: object cannot be re-sized', b'xx']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+bytearray  PickleBuffer(c).raw()  [None, 'BufferError: memoryview has 2 exported buffers', 'BufferError: Existing exports of data: object cannot be re-sized', b'xx']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+bytearray  a slice                [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: Existing exports of data: object cannot be re-sized', b'xx']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+bytearray  of a part              [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: Existing exports of data: object cannot be re-sized', b'xx']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+bytearray  of a part of c         [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: Existing exports of data: object cannot be re-sized', b'xx']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+bytearray  twice over             [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: Existing exports of data: object cannot be re-sized', b'xx']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+array      memoryview(c)          [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot resize an array that is exporting buffers', b'xx']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+array      from_buffer(c)         [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot resize an array that is exporting buffers', 120]
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+array      PickleBuffer(c)        [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot resize an array that is exporting buffers', b'xx']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+array      PickleBuffer(c).raw()  [None, 'BufferError: memoryview has 2 exported buffers', 'BufferError: cannot resize an array that is exporting buffers', b'xx']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+array      a slice                [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot resize an array that is exporting buffers', b'xx']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+array      of a part              [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot resize an array that is exporting buffers', b'xx']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+array      of a part of c         [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot resize an array that is exporting buffers', b'xx']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+array      twice over             [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot resize an array that is exporting buffers', b'xx']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+BytesIO    memoryview(c)          [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: Existing exports of data: object cannot be re-sized', b'xx']
+    when it has been let go of: None 0 ValueError: operation forbidden on released memoryview object
+BytesIO    from_buffer(c)         [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: Existing exports of data: object cannot be re-sized', 120]
+    when it has been let go of: None 0 ValueError: operation forbidden on released memoryview object
+BytesIO    PickleBuffer(c)        [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: Existing exports of data: object cannot be re-sized', b'xx']
+    when it has been let go of: None 0 ValueError: operation forbidden on released memoryview object
+BytesIO    PickleBuffer(c).raw()  [None, 'BufferError: memoryview has 2 exported buffers', 'BufferError: Existing exports of data: object cannot be re-sized', b'xx']
+    when it has been let go of: None 0 ValueError: operation forbidden on released memoryview object
+BytesIO    a slice                [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: Existing exports of data: object cannot be re-sized', b'xx']
+    when it has been let go of: None 0 ValueError: operation forbidden on released memoryview object
+BytesIO    of a part              [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: Existing exports of data: object cannot be re-sized', b'xx']
+    when it has been let go of: None 0 ValueError: operation forbidden on released memoryview object
+BytesIO    of a part of c         [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: Existing exports of data: object cannot be re-sized', b'xx']
+    when it has been let go of: None 0 ValueError: operation forbidden on released memoryview object
+BytesIO    twice over             [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: Existing exports of data: object cannot be re-sized', b'xx']
+    when it has been let go of: None 0 ValueError: operation forbidden on released memoryview object
+mmap       memoryview(c)          [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot close exported pointers exist', b'\x00\x00']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+mmap       from_buffer(c)         [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot close exported pointers exist', 0]
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+mmap       PickleBuffer(c)        [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot close exported pointers exist', b'\x00\x00']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+mmap       PickleBuffer(c).raw()  [None, 'BufferError: memoryview has 2 exported buffers', 'BufferError: cannot close exported pointers exist', b'\x00\x00']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+mmap       a slice                [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot close exported pointers exist', b'\x00\x00']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+mmap       of a part              [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot close exported pointers exist', b'']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+mmap       of a part of c         [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot close exported pointers exist', b'\x00\x00']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+mmap       twice over             [None, 'BufferError: memoryview has 1 exported buffer', 'BufferError: cannot close exported pointers exist', b'\x00\x00']
+    when it has been let go of: None None ValueError: operation forbidden on released memoryview object
+Exporter   memoryview(c)          [None, 'BufferError: memoryview has 1 exported buffer', (['get'], 'BufferError: Existing exports of data: object cannot be re-sized'), b'xx']
+    when it has been let go of: None (['get', 'release'], None) ValueError: operation forbidden on released memoryview object
+Exporter   from_buffer(c)         [None, 'BufferError: memoryview has 1 exported buffer', (['get'], 'BufferError: Existing exports of data: object cannot be re-sized'), 120]
+    when it has been let go of: None (['get', 'release'], None) ValueError: operation forbidden on released memoryview object
+Exporter   PickleBuffer(c)        [None, 'BufferError: memoryview has 1 exported buffer', (['get'], 'BufferError: Existing exports of data: object cannot be re-sized'), b'xx']
+    when it has been let go of: None (['get', 'release'], None) ValueError: operation forbidden on released memoryview object
+Exporter   PickleBuffer(c).raw()  [None, 'BufferError: memoryview has 2 exported buffers', (['get'], 'BufferError: Existing exports of data: object cannot be re-sized'), b'xx']
+    when it has been let go of: None (['get', 'release'], None) ValueError: operation forbidden on released memoryview object
+Exporter   a slice                [None, 'BufferError: memoryview has 1 exported buffer', (['get'], 'BufferError: Existing exports of data: object cannot be re-sized'), b'xx']
+    when it has been let go of: None (['get', 'release'], None) ValueError: operation forbidden on released memoryview object
+Exporter   of a part              [None, 'BufferError: memoryview has 1 exported buffer', (['get'], 'BufferError: Existing exports of data: object cannot be re-sized'), b'xx']
+    when it has been let go of: None (['get', 'release'], None) ValueError: operation forbidden on released memoryview object
+Exporter   of a part of c         [None, 'BufferError: memoryview has 1 exported buffer', (['get'], 'BufferError: Existing exports of data: object cannot be re-sized'), b'xx']
+    when it has been let go of: None (['get', 'release'], None) ValueError: operation forbidden on released memoryview object
+Exporter   twice over             [None, 'BufferError: memoryview has 1 exported buffer', (['get'], 'BufferError: Existing exports of data: object cannot be re-sized'), b'xx']
+    when it has been let go of: None (['get', 'release'], None) ValueError: operation forbidden on released memoryview object
+--- an export that fails gives back what it counted
+TypeError: 'str' object cannot be interpreted as an integer OverflowError: cannot fit 'int' into an index-sized integer None None
+--- all is dropped: the collector lets go in the right order
+memoryview(c)          BufferError: Existing exports of data: object cannot be re-sized | None
+from_buffer(c)         BufferError: Existing exports of data: object cannot be re-sized | None
+PickleBuffer(c)        BufferError: Existing exports of data: object cannot be re-sized | None
+PickleBuffer(c).raw()  BufferError: Existing exports of data: object cannot be re-sized | None
+a slice                BufferError: Existing exports of data: object cannot be re-sized | None
+of a part              BufferError: Existing exports of data: object cannot be re-sized | None
+of a part of c         BufferError: Existing exports of data: object cannot be re-sized | None
+twice over             BufferError: Existing exports of data: object cannot be re-sized | None
+--- many at once
+BufferError: memoryview has 5 exported buffers
+BufferError: memoryview has 4 exported buffers
+BufferError: memoryview has 3 exported buffers
+BufferError: memoryview has 2 exported buffers
+BufferError: memoryview has 1 exported buffer
+None None

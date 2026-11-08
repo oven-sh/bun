@@ -1,0 +1,55 @@
+status: 0
+script: 9b093e522d80b1d7
+---
+RecursionError | _as_parameter_: ArgumentError: argument 1: RecursionError
+    from_param(): ArgumentError: argument 1: RecursionError
+    _as_parameter_ under c_long: ArgumentError: argument 1: RecursionError
+MemoryError | _as_parameter_: ArgumentError: argument 1: MemoryError: m
+    from_param(): ArgumentError: argument 1: MemoryError: m
+    _as_parameter_ under c_long: ArgumentError: argument 1: MemoryError: m
+KeyboardInterrupt | _as_parameter_: ArgumentError: argument 1: KeyboardInterrupt: k
+    from_param(): ArgumentError: argument 1: KeyboardInterrupt: k
+    _as_parameter_ under c_long: ArgumentError: argument 1: KeyboardInterrupt: k
+SystemExit | _as_parameter_: ArgumentError: argument 1: SystemExit: 3
+    from_param(): ArgumentError: argument 1: SystemExit: 3
+    _as_parameter_ under c_long: ArgumentError: argument 1: SystemExit: 3
+ValueError | _as_parameter_: ArgumentError: argument 1: ValueError: v
+    from_param(): ArgumentError: argument 1: ValueError: v
+    _as_parameter_ under c_long: ArgumentError: argument 1: ValueError: v
+TypeError | _as_parameter_: ArgumentError: argument 1: TypeError: t
+    from_param(): ArgumentError: argument 1: TypeError: t
+    _as_parameter_ under c_long: ArgumentError: argument 1: TypeError: t
+OverflowError | _as_parameter_: ArgumentError: argument 1: OverflowError: o
+    from_param(): ArgumentError: argument 1: OverflowError: o
+    _as_parameter_ under c_long: ArgumentError: argument 1: OverflowError: o
+AttributeError | _as_parameter_: ArgumentError: argument 1: TypeError: Don't know how to convert parameter 1
+    from_param(): ArgumentError: argument 1: AttributeError: a
+    _as_parameter_ under c_long: ArgumentError: argument 1: TypeError: 'Raises' object cannot be interpreted as an integer
+GeneratorExit | _as_parameter_: ArgumentError: argument 1: GeneratorExit: g
+    from_param(): ArgumentError: argument 1: GeneratorExit: g
+    _as_parameter_ under c_long: ArgumentError: argument 1: GeneratorExit: g
+StopIteration | _as_parameter_: ArgumentError: argument 1: StopIteration: s
+    from_param(): ArgumentError: argument 1: StopIteration: s
+    _as_parameter_ under c_long: ArgumentError: argument 1: StopIteration: s
+ArgumentError | _as_parameter_: ArgumentError: argument 1: ArgumentError: x
+    from_param(): ArgumentError: argument 1: ArgumentError: x
+    _as_parameter_ under c_long: ArgumentError: argument 1: ArgumentError: x
+BaseException | _as_parameter_: ArgumentError: argument 1: BaseException: b
+    from_param(): ArgumentError: argument 1: BaseException: b
+    _as_parameter_ under c_long: ArgumentError: argument 1: BaseException: b
+None | a chain of _as_parameter_: ArgumentError: argument 1: RecursionError | one that never ends: ArgumentError: argument 1: RecursionError
+c_long | a chain of _as_parameter_: ArgumentError: argument 1: RecursionError | one that never ends: ArgumentError: argument 1: RecursionError
+c_void_p | a chain of _as_parameter_: ArgumentError: argument 1: RecursionError | one that never ends: ArgumentError: argument 1: RecursionError
+c_char_p | a chain of _as_parameter_: ArgumentError: argument 1: RecursionError | one that never ends: ArgumentError: argument 1: RecursionError
+LP_c_int | a chain of _as_parameter_: ArgumentError: argument 1: RecursionError | one that never ends: ArgumentError: argument 1: RecursionError
+--- at the end of the stack, and in the frames above that until the call goes through
+an int ([], 'ok')
+c_long ([], 'ok')
+an instance ([], 'ok')
+py_object ([], 'ok')
+c_void_p ([], 'ok')
+bytes ([], 'ok')
+c_char_p ([], 'ok')
+an array ([], 'ok')
+byref() ([], 'ok')
+a structure ([], 'ok')

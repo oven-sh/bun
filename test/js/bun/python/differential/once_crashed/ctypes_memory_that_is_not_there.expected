@@ -88,8 +88,9 @@ ValueError: the memory that the pointer was made to point into is no longer ther
 --- a pointer type that points to no type: the pointer is looked at first
 ValueError: NULL pointer access | ValueError: NULL pointer access | ValueError: NULL pointer access
 TypeError: abstract class | TypeError: abstract class | TypeError: abstract class
---- the memory has moved under a view that is good: an instance over an instance over a bytearray
-2004318071 | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there | 2004318071
+--- an instance over an instance over a bytearray: the view of the first cannot be released under the second, so the memory does not move
+['BufferError: memoryview has 1 exported buffer'] | BufferError: Existing exports of data: object cannot be re-sized | BufferError: Existing exports of data: object cannot be re-sized
+0 | 0 | None | 1
 --- a hook releases the view that from_buffer() has just made
 ctypes.cdata/buffer ValueError: operation forbidden on released memoryview object
 ctypes.cdata ValueError: operation forbidden on released memoryview object

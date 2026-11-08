@@ -1,6 +1,6 @@
 // RUN(METHOD): link
 // METHOD: layout [[layout]] kind=Instance name="WithMethod"
-// METHOD: function {{*}}kind=Initializer{{*}}thisType={type=[[layout]] flags=[IsFromCompiler]}
+// METHOD: function {{*}}kind=Initializer{{*}}thisType={type=[[layout]]}
 // METHOD: b0([[received]]
 // METHOD: [[this]] = Convert [[received]] declared={type=object flags=[IsFromCompiler, IsClaim]}
 // METHOD-NOT: PropDefine
@@ -11,7 +11,7 @@
 
 // RUN(FIELD): link
 // FIELD: layout [[layout]] kind=Instance name="WithField"
-// FIELD: function {{*}}kind=Initializer{{*}}thisType={type=[[layout]] flags=[IsFromCompiler]}
+// FIELD: function {{*}}kind=Initializer{{*}}thisType={type=[[layout]]}
 // FIELD-NOT: CompilerHelpersRunInitializers
 // FIELD: PropDefine {{*}}key="f"
 

@@ -1,0 +1,10 @@
+# an Intl.Locale is made of a written tag, which is asked for. What it hands the method nobody reads, and the record names the method that is handed it
+# -- source: object-that-stands-for-a-locale.ts
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink((1).toLocaleString(new Intl.Locale("de")));
+# -- end of source
+# RUN: locales
+# CHECK: locale unknown NumberPrototypeToLocaleString at f0
+# RUN(MADE): locales
+# MADE: locale constant "de" IntlLocale

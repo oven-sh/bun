@@ -1,0 +1,19 @@
+# `small.call(undefined, n)`, `small.apply(undefined, [n])`: behind a test of the callee the walk calls `small` directly, at a site where Link lists Function.prototype.call | apply and the plan has counted no call of `small`: the unit says so, and tests the stack for itself
+# the road of call-that-nobody-counted-makes-the-unit-test-the-stack.ir (a Convert of the compiler's under none+DirectCalls) is followed no longer: this one is from source.
+# f2 = viaCall, f3 = viaApply, f4 = counted
+# -- source: call-forwarded-by-call-and-by-apply-makes-the-unit-test-the-stack.ts
+# declare function sink(...values: unknown[]): void;
+# function small(n: number): number { return n + 1; }
+# function viaCall(n: number): number { return small.call(undefined, n) + 1; }
+# function viaApply(n: number): number { return small.apply(undefined, [n]) + 1; }
+# function counted(n: number): number { return small(n) + 1; }
+# sink(viaCall(1), viaApply(2), counted(3), viaCall, viaApply, counted);
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK: code f2:Body {{*}}holdsCallThatPlanHasNotCounted=true
+# CHECK: = CallDirect {{*}}function=
+# RUN(APPLY): walk f3 mechanisms=all
+# APPLY: code f3:Body {{*}}holdsCallThatPlanHasNotCounted=true
+# APPLY: = CallDirect {{*}}function=
+# RUN(COUNTED): walk f4 mechanisms=all
+# COUNTED-NOT: holdsCallThatPlanHasNotCounted

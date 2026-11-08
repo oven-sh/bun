@@ -131,7 +131,7 @@ JSC_DECLARE_HOST_FUNCTION(jsMockFunctionThrowThis);
 
 uint64_t JSMockModule::s_nextInvocationId = 0;
 
-// The mocks that a clearAllMocks(), resetAllMocks() or restoreAllMocks() has to visit, in the order they entered. It doesn't keep them alive: the collector takes out the dead ones.
+// The mocks that a clearAllMocks(), resetAllMocks() or restoreAllMocks() has to visit, in the order it visits them. It doesn't keep them alive: the collector takes out the dead ones.
 class WeakMockList final : public JSC::WeakGCHashTable {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(WeakMockList);
     WTF_MAKE_NONCOPYABLE(WeakMockList);
@@ -156,24 +156,23 @@ public:
         markDirty(m_vm);
     }
 
-    // For the list of spies, which also notes whether they entered in the order they were made.
-    void append(JSMockFunction* spy, uint64_t spyOrder)
+    // For a list that has an order of its own: `mock` goes in front of the entries at the end that `comesAfter` is true for.
+    template<typename Predicate> void insertBefore(JSMockFunction* mock, const Predicate& comesAfter)
     {
-        if (spyOrder < m_lastSpyOrder) [[unlikely]]
-            m_isInSpyOrder = false;
-        m_lastSpyOrder = spyOrder;
-        append(spy);
+        size_t index = m_mocks.size();
+        while (index && comesAfter(m_mocks[index - 1])) [[unlikely]]
+            --index;
+        m_mocks.insert(index, mock);
+        markDirty(m_vm);
     }
 
-    // Empties the list into `mocks`, which keeps them alive. Returns whether spies are in the order they were made.
-    NEVER_INLINE bool moveTo(MarkedVector<JSMockFunction*>& mocks)
+    // Empties the list into `mocks`, which keeps them alive.
+    NEVER_INLINE void moveTo(MarkedVector<JSMockFunction*>& mocks)
     {
         mocks.ensureCapacity(m_mocks.size());
         for (auto* mock : m_mocks)
             mocks.append(mock);
         m_mocks.shrink(0);
-        m_lastSpyOrder = 0;
-        return std::exchange(m_isInSpyOrder, true);
     }
 
 private:
@@ -188,8 +187,6 @@ private:
 
     Vector<JSMockFunction*> m_mocks;
     VM& m_vm;
-    uint64_t m_lastSpyOrder { 0 };
-    bool m_isInSpyOrder { true };
 };
 
 class JSMockImplementation final : public JSNonFinalObject {
@@ -958,7 +955,6 @@ private:
     static constexpr uint8_t hasEntryIn(List list) { return static_cast<uint8_t>(list) << 3; }
 
     template<typename Functor> static void forEachIn(Zig::GlobalObject*, List, const Functor&);
-    static void sortSpies(std::span<JSMockFunction*>);
     static void enterAgainAfterTermination(List, std::span<JSMockFunction*>);
 
     ALWAYS_INLINE void enter(List list)
@@ -981,8 +977,9 @@ private:
         auto& mocks = listOf(mockModule(), list);
         if (!mocks)
             mocks = makeUnique<WeakMockList>(vm());
+        // Only restores overwrite each other, so only spies are kept in the order they were made. One enters after a newer spy if script ran inside spyOn(), or if its restore failed.
         if (list == List::Spies)
-            mocks->append(this, m_spyOrder);
+            mocks->insertBefore(this, [this](JSMockFunction* spy) { return spy->m_spyOrder > m_spyOrder; });
         else
             mocks->append(this);
         m_lists |= hasEntryIn(list);
@@ -1203,7 +1200,9 @@ static SpyWeakHandleOwner& weakValueHandleOwner()
 
 void JSMockFunction::didInstall(JSObject* target, const Identifier& key, JSValue original, unsigned attributes)
 {
-    ASSERT(m_spyOrder);
+    // A spy whose maker did not call willInstall() takes its number here.
+    if (!m_spyOrder)
+        willInstall();
     enter(List::Spies);
     this->isSpy = true;
     m_spyTarget = JSC::Weak<JSObject>(target, &weakValueHandleOwner(), nullptr);
@@ -1214,11 +1213,6 @@ void JSMockFunction::didInstall(JSObject* target, const Identifier& key, JSValue
 }
 
 const ClassInfo JSMockFunctionPrototype::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockFunctionPrototype) };
-
-NEVER_INLINE void JSMockFunction::sortSpies(std::span<JSMockFunction*> spies)
-{
-    std::ranges::sort(spies, {}, &JSMockFunction::m_spyOrder);
-}
 
 // A termination ended a pass at the first of `mocks`. If that one is a spy that is still installed, it enters the list again, and so do the mocks the pass did not get to.
 NEVER_INLINE void JSMockFunction::enterAgainAfterTermination(List list, std::span<JSMockFunction*> mocks)
@@ -1242,12 +1236,9 @@ void JSMockFunction::forEachIn(Zig::GlobalObject* globalObject, List list, const
         return;
 
     MarkedVector<JSMockFunction*> mocks;
-    bool isInSpyOrder = entries->moveTo(mocks);
+    entries->moveTo(mocks);
     for (auto* mock : mocks)
         mock->m_lists &= ~hasEntryIn(list);
-    // Only restores overwrite each other, so only spies are put in the order they were made. They are out of it if script ran inside spyOn(), or a restore failed.
-    if (list == List::Spies && !isInSpyOrder) [[unlikely]]
-        sortSpies(mocks.mutableSpan());
     ASSERT(list != List::Spies || std::ranges::is_sorted(mocks.mutableSpan(), {}, &JSMockFunction::m_spyOrder));
     JSC::Exception* firstException = nullptr;
     for (size_t i = 0; i < mocks.size(); ++i) {

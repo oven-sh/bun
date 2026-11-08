@@ -5038,6 +5038,7 @@ if (isBun) {
       return mocked;
     };
 
+    // This is the order of Bun's list. @vitest/spy 5.1.0 resets a vi.fn() in this order too, and a vi.fn(implementation) in the order they were made.
     test("resetAllMocks() resets the mocks in the order they were configured", () => {
       const names = ["a", "b", "c", "d", "e", "f", "g", "h"];
       const configured = ["c", "a", "h", "b", "g", "d", "f", "e"];

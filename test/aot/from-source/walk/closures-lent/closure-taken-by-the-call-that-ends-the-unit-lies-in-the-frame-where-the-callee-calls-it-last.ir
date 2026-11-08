@@ -1,0 +1,33 @@
+# `each` returns at once what `visit` gives for the last element: nobody knows where that call of a value goes, so `each` by itself does not end its tail calls. It does if what arrives at `visit` does.
+# `plus` and `times` hand it arrows that make no tail call: their calls need not be jumps, they stay calls, and the arrows lie in the frame. Two arrows arrive, so Link lists no callee for `visit(..)`.
+# the arrow of `round` returns at once what `round` gives: round > each > arrow > round is a ring, every one of the three calls stays a jump, and the arrow is made in the heap.
+# f1 = each, f3 = plus, f4 = times, f2 = round
+# -- source: closure-taken-by-the-call-that-ends-the-unit-lies-in-the-frame-where-the-callee-calls-it-last.ts
+# declare function sink(...values: unknown[]): void;
+# function each(list: number[], visit: (x: number) => number): number { let i = 0; for (; i + 1 < list.length; i++) visit(list[i]); return visit(list[i]); }
+# function plus(list: number[], k: number) { return each(list, x => x + k); }
+# function times(list: number[], k: number) { return each(list, x => x * k); }
+# function round(list: number[], n: number): number { if (n <= 0) return 0; return each(list, x => round(list, n - x)); }
+# sink(plus([1, 2], 3), times([1, 2], 3), round([1, 2], 3));
+# -- end of source
+# RUN: bytes f3 mechanisms=all-Inlining
+# CHECK-NOT: NewSlimClosure.Plain
+# CHECK: NewSlimClosureInFrame.Plain
+# CHECK-NOT: NewSlimClosure.Plain
+# RUN(ALL): bytes f3 mechanisms=all
+# ALL-NOT: NewSlimClosure.Plain
+# RUN(WALK): walk f3 mechanisms=all-Inlining
+# WALK-NOT: ReturnCall
+# RUN(WORD): plan units mechanisms=all
+# WORD: unit f1:Body {{*}}ends-tail-calls-if-arguments-do=[1]
+# WORD: unit f3:Body {{*}}ends-its-tail-calls
+# WORD: unit f4:Body {{*}}ends-its-tail-calls
+# RUN(NOWORD): plan units mechanisms=all
+# NOWORD-NOT: unit f1:Body {{*}}ends-its-tail-calls
+# NOWORD-NOT: unit f2:Body {{*}}tail-calls
+# RUN(RING): walk f2 mechanisms=all-Inlining
+# RING: ReturnCall
+# RUN(HEAP): bytes f2 mechanisms=all-Inlining
+# HEAP: NewSlimClosure.Plain
+# RUN(WITHHELD): bytes f3 mechanisms=all-Inlining-CellsInFrames
+# WITHHELD: NewSlimClosure.Plain

@@ -1,0 +1,19 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# let kept: (() => number) | null = null;
+# function keep(callback: () => number): void { kept = callback; }
+# function make(start: number): number { let total = start; keep(() => total); total += 5; return total; }
+# print(make(3));
+# print(make(4));
+# print(kept!());
+# print("went on");
+# -- end of source
+# testing=CheckProofsAtRunTime: a scope that is handed back where its function returns is overwritten in place of going into the list, and is never taken again. Each read and store of a field of a scope looks at the cell's header first.
+# The lie, testing=NoCalleeKeepsWhatItIsHanded: Link says of keep() that it only calls what arrives, so the closure is lent and nobody marks the scope. The slot holds a number without a box: no check of a proof would see a zero.
+# OPTIONS: testing=CheckProofsAtRunTime,NoCalleeKeepsWhatItIsHanded
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: 8
+# CALL: 9
+# CALL: AOT: f{{*}} at {{*}}: a cell that the compiler took for dead where its function returned is still held. This is a bug in Bun.
+# CALL-NOT: went on
+# CALL: crashed with

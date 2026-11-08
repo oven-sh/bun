@@ -7,6 +7,7 @@
 //! `checkMemberForOverrideModifier`, `isValidBaseType`, `checkInterfaceDeclaration` and `checkConstructorDeclaration`
 //! in TypeScript 7.0.2's checker.go.
 
+use super::aot::DiagnosticSubject;
 use super::*;
 use crate::bind::MemberOwner;
 
@@ -86,7 +87,11 @@ impl<'p> Checker<'p, '_> {
                     .iter()
                     .all(|&returned| self.is_identical(returned, base));
                 if !all_the_same && let Some(at) = self.span_to_report_base_at(file, c) {
-                    self.error_at(at, 2510, &[]);
+                    let is_brought = self.is_expression_brought(file, class.extends);
+                    let diagnostic = self.error_at(at, 2510, &[]);
+                    if is_brought {
+                        diagnostic.subject = DiagnosticSubject::BroughtDeclaration;
+                    }
                 }
             }
         }
@@ -235,7 +240,7 @@ impl<'p> Checker<'p, '_> {
         let hir = self.hir(file);
         let class = &hir[c];
         // Otherwise only members with `override` are visited.
-        let visits_all = self.p.files.options.no_implicit_override;
+        let visits_all = self.module_options(file).no_implicit_override;
         for m in class.members.iter() {
             let member = &hir[m];
             // `ModifierFlags()`: the modifiers written before `static { }` are only in its list.
@@ -304,7 +309,7 @@ impl<'p> Checker<'p, '_> {
         let is_js = self.hir(file).is_js;
         let code = |code: u32| if is_js { js_override_code(code) } else { code };
         let has_override = member.flags.contains(Flags::OVERRIDE);
-        let no_implicit_override = self.p.files.options.no_implicit_override;
+        let no_implicit_override = self.module_options(file).no_implicit_override;
         let (constructor, base) = match base {
             ClassBase::Unknown => return,
             ClassBase::Nothing => {
@@ -349,7 +354,7 @@ impl<'p> Checker<'p, '_> {
                 .map(|found| found.0)
         };
         let Some(base_prop) = base_prop else {
-            if has_override {
+            if has_override && !self.stands_below_undeclared_class(sym) {
                 let at = self.span_of_overrider(file, member);
                 match self.suggested_member(base_type, name) {
                     Some(suggestion) => {
@@ -373,7 +378,12 @@ impl<'p> Checker<'p, '_> {
         let at = self.span_of_overrider(file, member);
         if !is_abstract {
             let must = if member.param.is_some() { 4115 } else { 4114 };
-            self.error_at(at, code(must), &[Arg::Type(base)]);
+            let declared = self.value_declaration_of_prop(base_prop);
+            let is_brought = declared.is_some_and(|(of, _)| self.files().is_brought(of));
+            let diagnostic = self.error_at(at, code(must), &[Arg::Type(base)]);
+            if is_brought {
+                diagnostic.subject = DiagnosticSubject::BroughtDeclaration;
+            }
         } else if member.flags.contains(Flags::ABSTRACT) {
             self.error_at(at, 4116, &[Arg::Type(base)]);
         }
@@ -506,7 +516,7 @@ impl<'p> Checker<'p, '_> {
         if class_extends_null {
             self.error(file, first, 17005, &[]);
         }
-        if self.p.files.options.emit_standard_class_fields {
+        if self.module_options(file).emit_standard_class_fields {
             return;
         }
         // `isInstancePropertyWithInitializerOrPrivateIdentifierProperty`, or a parameter property.

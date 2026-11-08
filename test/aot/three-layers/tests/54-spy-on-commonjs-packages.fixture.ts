@@ -1,0 +1,12 @@
+import { spyOn } from "bun:test";
+import * as cjs from "pkg-cjs";
+import cjsDefault from "pkg-cjs";
+import object from "pkg-cjs-object";
+import * as objectNamespace from "pkg-cjs-object";
+import { seenOfCjs } from "../src/spies/uses";
+import { say } from "../src/spies/say";
+const all = () => [cjs.add(1, 2), cjsDefault.add(1, 2), cjs.callsAdd(1, 2), require("pkg-cjs").add(1, 2), object.add(1, 2), objectNamespace.add(1, 2), object.callsAdd(1, 2), seenOfCjs()];
+say("54", "the namespace of a CommonJS package", () => { const before = all(); const spy = spyOn(cjs, "add").mockImplementation(() => 100); const during = all(); spy.mockRestore(); return [before, during, all()]; });
+say("54", "its default", () => { const before = all(); const spy = spyOn(cjsDefault, "add").mockImplementation(() => 200); const during = all(); spy.mockRestore(); return [before, during, all()]; });
+say("54", "what require answers", () => { const before = all(); const spy = spyOn(require("pkg-cjs"), "add").mockImplementation(() => 300); const during = all(); spy.mockRestore(); return [before, during, all()]; });
+say("54", "module.exports = object", () => { const before = all(); const spy = spyOn(object, "add").mockImplementation(() => 400); const during = all(); spy.mockRestore(); const spy2 = spyOn(objectNamespace, "add").mockImplementation(() => 500); const during2 = all(); spy2.mockRestore(); return [before, during, during2, all()]; });

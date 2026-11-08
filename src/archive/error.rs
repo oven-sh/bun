@@ -10,6 +10,9 @@ pub enum Error {
     MakeLibUvOwned(#[from] bun_sys::MakeLibUvOwnedError),
     #[error(transparent)]
     Paths(#[from] bun_paths::Error),
+    /// `EXDEV`, which only `bun_sys::beneath` answers to this crate: a symlink is absolute or leads out of the destination.
+    #[error("{0}")]
+    LeavesDestination(bun_sys::Error),
 }
 
 /// Why the contents of an entry did not reach the file.
@@ -35,6 +38,7 @@ impl Error {
             Self::Alloc(_) => "OutOfMemory",
             Self::MakeLibUvOwned(e) => <&'static str>::from(e),
             Self::Paths(e) => e.name(),
+            Self::LeavesDestination(_) => "EXDEV",
         }
     }
 }
@@ -56,7 +60,11 @@ impl From<bun_tar::Error> for Error {
 
 impl From<bun_sys::Error> for Error {
     fn from(e: bun_sys::Error) -> Self {
-        Self::Sys(e.into())
+        match e.get_errno() {
+            #[cfg(not(windows))]
+            bun_sys::E::EXDEV => Self::LeavesDestination(e),
+            _ => Self::Sys(e.into()),
+        }
     }
 }
 

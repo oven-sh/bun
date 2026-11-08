@@ -6,6 +6,7 @@
 //! `checkVariableLikeDeclaration` with `getBindingElementTypeFromParentType` for binding elements, in TypeScript
 //! 7.0.2's checker.go.
 
+use super::aot::DiagnosticSubject;
 use super::enclosing_declaration::Enclosing;
 use super::errors::is_close;
 use super::errors_names_and_exports::fully_qualified_name;
@@ -199,7 +200,7 @@ impl<'p> Checker<'p, '_> {
     /// node of the tree, whether or not the checker does. `parsePrivateIdentifier`: it's an expression, the name in
     /// `a.#x`, or the name of a member, an object literal property, the property a binding element reads, or an enum
     /// member.
-    fn check_private_identifiers(&mut self, file: FileId) {
+    pub(super) fn check_private_identifiers(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // "Report error only if there are no parse errors in file"
         if has_parse_diagnostics(hir) {
@@ -209,7 +210,7 @@ impl<'p> Checker<'p, '_> {
         let expressions = (index.of(ExprTag::PrivateIdentifier).iter())
             .chain(index.of(ExprTag::Dot))
             .map(|&e| {
-                let pos = match hir[e].kind {
+                let pos = match hir.checked_kind(e) {
                     ExprKind::Dot { .. } => hir.name_pos(e),
                     _ => hir[e].pos,
                 };
@@ -243,14 +244,14 @@ impl<'p> Checker<'p, '_> {
             .chain(enum_members);
         for (pos, is_bound) in names {
             if is_bound && is_private_constructor_name(&hir.text, pos) {
-                self.error_at((file, pos, 0), 18012, &[]);
+                self.early_error_at((file, pos, 0), 18012, &[]);
             }
         }
     }
 
     /// Reports misplaced private names: 18016 1451 (`checkGrammarPrivateIdentifierExpression`), 18024
     /// (`checkEnumMember`).
-    fn check_private_names(&mut self, file: FileId) {
+    pub(super) fn check_private_names(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `checkEnumMember`: a plain error.
         for (i, member) in hir.enum_members.iter().enumerate() {
@@ -269,7 +270,7 @@ impl<'p> Checker<'p, '_> {
                 continue;
             }
             if self.enclosing_classes(file, e).is_empty() {
-                self.error_at((file, pos, 0), 18016, &[]);
+                self.early_error_at((file, pos, 0), 18016, &[]);
                 continue;
             }
             // Parentheses count as a separate parent node.
@@ -291,7 +292,7 @@ impl<'p> Checker<'p, '_> {
                     _ => false,
                 };
             if !is_allowed {
-                self.error_at((file, pos, 0), 1451, &[]);
+                self.early_error_at((file, pos, 0), 1451, &[]);
             }
         }
     }
@@ -305,7 +306,7 @@ impl<'p> Checker<'p, '_> {
         (key, keys): (TypeId, TypeId),
         name: Option<Atom>,
     ) {
-        let ExprKind::Index { obj, index, .. } = self.hir(file)[e].kind else {
+        let ExprKind::Index { obj, index, .. } = self.hir(file).checked_kind(e) else {
             return;
         };
         let at_access = self.span_of_expr(file, e);
@@ -330,7 +331,8 @@ impl<'p> Checker<'p, '_> {
         {
             let suggestion = self.name_of_unread_property(suggestion);
             let args = [Arg::Atom(name), Arg::Type(object), Arg::Bytes(&suggestion)];
-            self.error_at(at_index, 2551, &args);
+            let subject = self.member_container_of_type(object);
+            self.error_at(at_index, 2551, &args).subject = subject;
         } else if self.has_accessor_method_for(object, key, is_target) {
             let method: &[u8] = if is_target { b"set" } else { b"get" };
             let call = match self.access_to_string(file, self.hir(file).child(obj)) {
@@ -405,7 +407,7 @@ impl<'p> Checker<'p, '_> {
             }
             (Kind::ElementAccessExpression, NodeData::Expr(access)) => {
                 let base = self.access_to_string(file, hir.expression(expr))?;
-                let ExprKind::Index { index, .. } = hir[access].kind else {
+                let ExprKind::Index { index, .. } = hir.checked_kind(access) else {
                     return None;
                 };
                 // `IsPropertyName`, `GetPropertyNameForPropertyNameNode`
@@ -431,7 +433,15 @@ impl<'p> Checker<'p, '_> {
     }
 
     /// `getReducedApparentType`
+    #[inline]
     pub(super) fn reduced_apparent_type(&mut self, ty: TypeId) -> TypeId {
+        if self.is_plain_object_type(ty) {
+            return ty;
+        }
+        self.reduced_apparent_type_of_other(ty)
+    }
+
+    pub(super) fn reduced_apparent_type_of_other(&mut self, ty: TypeId) -> TypeId {
         let ty = self.reduced(ty);
         let apparent = self.apparent_type(ty);
         if !self.never_in_progress.is_empty() {
@@ -581,7 +591,7 @@ impl<'p> Checker<'p, '_> {
         access: Option<(FileId, ExprId)>,
     ) -> Option<Atom> {
         let text = written_name(self.atoms().bytes(name));
-        let access = access.and_then(|(file, e)| match self.hir(file)[e].kind {
+        let access = access.and_then(|(file, e)| match self.hir(file).checked_kind(e) {
             ExprKind::Dot { obj, chain, .. } => Some((file, e, obj, chain)),
             _ => None,
         });
@@ -725,19 +735,37 @@ impl<'p> Checker<'p, '_> {
 
     /// `declareSymbol`: the type parameters of a class or an interface are among its `members`, so an instance member
     /// with the same name as one is a later declaration of the same symbol.
+    #[inline]
     pub(super) fn type_parameter_merged_with_member(
         &self,
         file: FileId,
         member: MemberId,
         name: Atom,
     ) -> Option<(FileId, u32)> {
-        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
-        let (type_params, symbol) = match bound.member_owner[member.idx()] {
-            MemberOwner::Class(c) => (hir[c].type_params, bound.class_symbol[c.idx()]),
-            MemberOwner::Interface(i) => (hir[i].type_params, bound.interface_symbol[i.idx()]),
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let type_params = match bound.member_owner[member.idx()] {
+            MemberOwner::Class(c) => hir[c].type_params,
+            MemberOwner::Interface(i) => hir[i].type_params,
             MemberOwner::None | MemberOwner::TypeLiteral(_) => return None,
         };
         let own = type_params.iter().find(|&it| hir[it].name == name)?;
+        self.first_type_parameter_merged_with_member(file, member, name, hir[own].pos)
+    }
+
+    #[inline(never)]
+    fn first_type_parameter_merged_with_member(
+        &self,
+        file: FileId,
+        member: MemberId,
+        name: Atom,
+        own_pos: u32,
+    ) -> Option<(FileId, u32)> {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        let symbol = match bound.member_owner[member.idx()] {
+            MemberOwner::Class(c) => bound.class_symbol[c.idx()],
+            MemberOwner::Interface(i) => bound.interface_symbol[i.idx()],
+            MemberOwner::None | MemberOwner::TypeLiteral(_) => return None,
+        };
         if hir[member].flags.contains(Flags::STATIC) {
             return None;
         }
@@ -750,7 +778,7 @@ impl<'p> Checker<'p, '_> {
                 Some((file, hir[found].pos))
             })
         });
-        Some(first.flatten().unwrap_or((file, hir[own].pos)))
+        Some(first.flatten().unwrap_or((file, own_pos)))
     }
 
     /// The position of `prop`'s first declaration, in `compareSymbols` order. A property without a declaration sorts
@@ -763,8 +791,10 @@ impl<'p> Checker<'p, '_> {
             )),
             PropSource::Symbol(symbol) => match self.files().value_declaration(*symbol) {
                 Some((file, Decl::Member(first))) => Some(
-                    self.type_parameter_merged_with_member(file, first, prop.name)
-                        .unwrap_or_else(|| (file, self.hir(file)[first].name_pos)),
+                    match self.type_parameter_merged_with_member(file, first, prop.name) {
+                        Some(merged) => merged,
+                        None => (file, self.hir(file)[first].name_pos),
+                    },
                 ),
                 Some((file, Decl::ParameterProperty(first))) => {
                     Some((file, self.hir(file)[first].pos))
@@ -911,11 +941,7 @@ impl<'p> Checker<'p, '_> {
             return;
         }
         self.reporting_nonexistent.push((file, e, self.stack.len()));
-        let dropped: Vec<bool> = self
-            .frames
-            .iter()
-            .map(|frame| frame.drops_reported)
-            .collect();
+        let dropped = self.save_drops_reported();
         // In tsgo printing a type can close a cycle, so the first time this message is built `with_printer` isn't a
         // barrier for cycle detection. If the message was dropped along with a result that wasn't cached, it's built
         // again here, which tsgo never has to do. That second time (`reprinting`) its types are printed behind the
@@ -938,12 +964,14 @@ impl<'p> Checker<'p, '_> {
             _ => false,
         };
         let mut chain = None;
+        let mut subject = self.member_container_of_type(containing);
         if !is_private && !self.is_boolean(containing) && !is_enum && self.is_union(containing) {
             for &subtype in self.parts(containing) {
                 let apparent = self.apparent_type(subtype);
                 if self.type_of_property(apparent, name).is_none() {
                     let args = [Arg::Bytes(&missing), Arg::Type(subtype)];
                     chain = Some(self.new_diagnostic_chain(None, at, 2339, &args));
+                    subject = self.member_container_of_type(subtype);
                     break;
                 }
             }
@@ -952,7 +980,7 @@ impl<'p> Checker<'p, '_> {
         let container = self.type_to_string(container);
         let args = [Arg::Bytes(&missing), Arg::Bytes(&container)];
         let apparent = self.apparent_type(containing);
-        let diagnostic = if !is_private && self.static_side_has(containing, name) {
+        let mut diagnostic = if !is_private && self.static_side_has(containing, name) {
             let member = cat!(container, b".", missing);
             let args = [args[0], args[1], Arg::Bytes(&member)];
             self.new_diagnostic_chain(chain, at, 2576, &args)
@@ -984,12 +1012,15 @@ impl<'p> Checker<'p, '_> {
             };
             self.new_diagnostic_chain(chain, at, code, &args)
         };
+        // What was made of a name that the brought declarations declare lacks the member by their word alone.
+        diagnostic.subject = match self.is_expression_brought(file, e) {
+            true => DiagnosticSubject::BroughtDeclaration,
+            false => subject,
+        };
         self.reporting_nonexistent.pop();
         self.reprinting = reprinting;
         // A query re-entered while building the message is no reason to roll back the message.
-        for (frame, dropped) in self.frames.iter_mut().zip(dropped) {
-            frame.drops_reported = dropped;
-        }
+        self.restore_drops_reported(dropped);
         let reported = self.reported.len();
         self.add_error_or_suggestion(!is_unchecked_js || diagnostic.code != 2568, diagnostic);
         // `NodeCheckFlagsTypeChecked`: tsgo reports once per node. If it reports while analyzing a loop, with the types
@@ -1010,7 +1041,7 @@ impl<'p> Checker<'p, '_> {
         name: Atom,
         apparent: TypeId,
     ) -> Option<(Atom, Option<(FileId, u32, u32)>)> {
-        let is_access = matches!(self.hir(file)[e].kind, ExprKind::Dot { .. })
+        let is_access = matches!(self.hir(file).checked_kind(e), ExprKind::Dot { .. })
             && !self.bound(file).is_in_type_query(e);
         let inspected = self.reduced(apparent);
         let suggestion =
@@ -1238,7 +1269,12 @@ impl<'p> Checker<'p, '_> {
             return true;
         }
         let class = self.class_sym(declared_in, type_class);
-        self.error_at(at, 18013, &[Arg::Bytes(&diag_name), Arg::Sym(class)]);
+        let args = [Arg::Bytes(&diag_name), Arg::Sym(class)];
+        if lexical.is_none() {
+            self.early_error_at(at, 18013, &args);
+        } else {
+            self.error_at(at, 18013, &args);
+        }
         true
     }
     /// `getContainingClassExcludingClassDecorators`, then `GetContainingClass` applied repeatedly: the classes in which
@@ -1363,6 +1399,28 @@ impl<'p> Checker<'p, '_> {
         );
     }
 
+    /// True if the property `name` of the union `containing` has been made of a property of each member, none of which
+    /// `MAY_BE_OUT_OF_REACH`. Each `x.m()` behind n assignments of n classes to `x` would look `m` up in all of them again.
+    fn has_union_property_within_reach(&self, containing: TypeId, name: Atom) -> bool {
+        let key = (containing, name);
+        let Some(Some(holder)) = self.p.union_properties.get(&self.task, &key) else {
+            return false;
+        };
+        let TypeData::Synth(shape) = self.data(holder) else {
+            return false;
+        };
+        let Some(PropSource::Intersected(whole, parts)) = shape.props.first().map(|it| &it.source)
+        else {
+            return false;
+        };
+        *whole == containing
+            && parts.len() == self.parts(containing).len()
+            && parts.iter().all(|part| {
+                !matches!(part.source, PropSource::Intersected(..))
+                    && !part.flags.intersects(PropFlags::MAY_BE_OUT_OF_REACH)
+            })
+    }
+
     /// `checkPropertyAccessibilityAtLocation` for the property `name` of `containing`, accessed at `location`, inside
     /// the node that `at` represents (`Parent::Expr(e)` means by `e` itself). `error_node` returns the error position
     /// and is only called if there's an error.
@@ -1377,6 +1435,9 @@ impl<'p> Checker<'p, '_> {
         error_node: Option<&dyn Fn(&Self) -> (FileId, u32, u32)>,
     ) -> bool {
         let PropertyAccess { is_super, writing } = access;
+        if !is_super && self.has_union_property_within_reach(containing, name) {
+            return true;
+        }
         // `forEachProperty`: a property of a union or an intersection is composed of the members' properties.
         let mut parts: SmallVec<[&Prop; 4]> = SmallVec::new();
         // The properties of the members themselves. An intersection inside a union contributes a single property.

@@ -1,0 +1,16 @@
+# `let at = 0` is never assigned again, so the front end decides `at === 0` and lowers one arm. What flows is read out of an int32, and the cast into the parameter bears no promise: nothing is reported.
+# Once the dead arm was asked too: the checker refuses a question about a dead expression, that counted as "any number", the promise stayed, and the engine, which does not see through a class with a getter under a symbol, reported it.
+# f3 = use
+# -- source: read-in-the-live-arm-of-a-decided-conditional-owes-no-proof.ts
+# declare function sink(...values: unknown[]): void;
+# class Point { x: Bun.int32 = 1; }
+# const mark: unique symbol = Symbol("mark");
+# class Factory { get point(): Point { return new Point(); } get [mark](): Point { return new Point(); } }
+# function take(n: Bun.int32): Bun.int32 { return n; }
+# function make(): Factory { return new Factory(); }
+# let at = 0;
+# function use(): number { return take(at === 0 ? new Factory().point.x : make().point.x); }
+# sink(use);
+# -- end of source
+# RUN: walk f3 mechanisms=all
+# CHECK: code f3:Body

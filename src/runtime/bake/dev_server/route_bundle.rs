@@ -49,14 +49,14 @@ pub(crate) enum Data {
     Html(Html),
 }
 
+/// What a route's client bundle is traced from.
+#[derive(Copy, Clone)]
+pub(crate) enum TraceRoot {
+    Framework(router::RouteIndex),
+    Html(incremental_graph::ClientFileIndex),
+}
+
 impl Data {
-    /// `Framework` payload accessor (asserts active variant).
-    pub(crate) fn framework(&self) -> &Framework {
-        match self {
-            Data::Framework(f) => f,
-            Data::Html(_) => unreachable!("expected .framework"),
-        }
-    }
     /// `Html` payload accessor (asserts active variant).
     pub(crate) fn html(&self) -> &Html {
         match self {

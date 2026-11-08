@@ -7,6 +7,7 @@
 //! reporting on. That second run produces the error's code, node and text (`relation_diagnostic`).
 //! If it succeeds, no error is reported. None of its results are written to the relation cache.
 
+use super::aot::DiagnosticSubject;
 use super::explain::Line;
 use super::explain::NOWHERE;
 use super::relate::{REC_BOTH, Relater, Relation, STATE_NONE, Ternary};
@@ -19,6 +20,8 @@ pub(super) struct ErrorChain {
     next: Chain,
     code: u32,
     args: Box<[Box<[u8]>]>,
+    /// What the arguments named while they still were types, symbols and signatures.
+    subject: DiagnosticSubject,
 }
 
 /// The most recently reported line comes first because it's the outermost.
@@ -56,6 +59,18 @@ impl Relater {
         at
     }
 
+    /// The subject of the first `count` lines of `errorChain`.
+    fn subject_of_first(&self, count: usize) -> DiagnosticSubject {
+        let mut subject = DiagnosticSubject::None;
+        let mut at = self.error_chain.as_ref();
+        for _ in 0..count {
+            let Some(entry) = at else { break };
+            subject = subject.or(entry.subject);
+            at = entry.next.as_ref();
+        }
+        subject
+    }
+
     /// `getChainMessage`
     fn get_chain_message(&self, index: usize) -> Option<u32> {
         self.chain_after(index).map(|entry| entry.code)
@@ -75,7 +90,22 @@ impl Relater {
 
 impl Checker<'_, '_> {
     /// `reportError`
-    pub(super) fn report_error(&mut self, r: &mut Relater, mut code: u32, args: &[Arg<'_>]) {
+    pub(super) fn report_error(&mut self, r: &mut Relater, code: u32, args: &[Arg<'_>]) {
+        self.report_error_about(r, code, args, &[]);
+    }
+
+    /// `reportError` for a message whose arguments are the names of `types`, printed ahead of it.
+    fn report_error_about(
+        &mut self,
+        r: &mut Relater,
+        mut code: u32,
+        args: &[Arg<'_>],
+        types: &[TypeId],
+    ) {
+        let mut subject = self.subject_of_arguments(args);
+        for &ty in types {
+            subject = subject.or(self.subject_of_arguments(&[Arg::Type(ty)]));
+        }
         let mut args = self.stringify_args(args);
         if code == 2326 {
             if matches!(r.get_chain_message(0), Some(2353 | 2561)) {
@@ -93,6 +123,7 @@ impl Checker<'_, '_> {
             if let Some(returned_by) = returned_by {
                 code = 2201;
                 args[0] = returned_by.concat().into();
+                subject = subject.or(r.subject_of_first(2));
                 r.error_chain = r.chain_after(2);
             }
             // 'x', some elaboration and 'y' become 'x.y'.
@@ -103,6 +134,7 @@ impl Checker<'_, '_> {
                     .and_then(|entry| entry.args.first().cloned())
                     .unwrap_or_default();
                 let tail = property_name_arg(&tail);
+                subject = subject.or(r.subject_of_first(2));
                 r.error_chain = r.chain_after(2);
                 if code == 2326 {
                     code = 2200;
@@ -114,6 +146,7 @@ impl Checker<'_, '_> {
             next: r.error_chain.take(),
             code,
             args,
+            subject,
         }));
     }
 }
@@ -155,6 +188,17 @@ fn lines_of(chain: &Chain, level: u32) -> Vec<Line> {
         at = entry.next.as_ref();
     }
     lines
+}
+
+/// The subject of the whole chain, the lines that are not shown among them.
+fn subject_of(chain: &Chain) -> DiagnosticSubject {
+    let mut subject = DiagnosticSubject::None;
+    let mut at = chain.as_ref();
+    while let Some(entry) = at {
+        subject = subject.or(entry.subject);
+        at = entry.next.as_ref();
+    }
+    subject
 }
 
 /// `getPropertyNameArg`
@@ -211,6 +255,7 @@ pub(super) struct RelationDiagnostic {
     /// The first line, at level 0, is the main message.
     pub(super) lines: Vec<Line>,
     pub(super) related: Vec<Reported>,
+    pub(super) subject: DiagnosticSubject,
 }
 
 impl RelationDiagnostic {
@@ -222,6 +267,7 @@ impl RelationDiagnostic {
             diagnostic = Some(outer);
         }
         let mut diagnostic = diagnostic?;
+        diagnostic.subject = self.subject;
         let related = self.related.into_iter();
         diagnostic.related_information = related
             .filter(|related| related.file != NOWHERE.0)
@@ -276,8 +322,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `checkTypeRelatedToEx`. Reports at most one diagnostic, to `diagnostic_output` if given,
     /// otherwise to the sink. Most pairs are related, so a non-reporting run comes first. tsgo has
-    /// no such run, so this one doesn't cache failures. Without an `error_node` it's the only run,
-    /// as in tsgo. An undetermined result counts as related and reports nothing.
+    /// no such run, so this one caches its failures only if it succeeds. Without an `error_node`
+    /// it's the only run, as in tsgo. An undetermined result counts as related and reports nothing.
     pub(super) fn check_type_related_to_ex(
         &mut self,
         source: TypeId,
@@ -406,21 +452,24 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.relation_too_complex = too_complex;
         self.reliability = reliability;
-        let lines = match overflow {
+        let (lines, subject) = match overflow {
             Some(code) => {
                 let types = vec![self.type_to_string(source), self.type_to_string(target)];
-                vec![Line {
+                let line = Line {
                     code,
                     args: super::sink::held(types),
                     level: 0,
-                }]
+                };
+                let subject = self.subject_of_arguments(&[Arg::Type(source), Arg::Type(target)]);
+                (vec![line], subject)
             }
-            None => lines_of(&r.error_chain, 0),
+            None => (lines_of(&r.error_chain, 0), subject_of(&r.error_chain)),
         };
         let diagnostic = (!result.holds() && !lines.is_empty()).then_some(RelationDiagnostic {
             at: r.error_node,
             lines,
             related: r.related_info,
+            subject,
         });
         self.end_comparison(is_outermost);
         (result.holds(), diagnostic)
@@ -439,6 +488,7 @@ impl<'p, 's> Checker<'p, 's> {
         RelationDiagnostic {
             at: error_node,
             lines: lines_of(&r.error_chain, 0),
+            subject: subject_of(&r.error_chain),
             related: r.related_info,
         }
     }
@@ -458,7 +508,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Returns every line of the error that
     /// `checkTypeRelatedToEx(source, target, assignableRelation, node, head)` reports, the first at `level`,
-    /// plus its `relatedInfo`. `head` is `headMessage`'s code. Returns nothing if the two are
+    /// plus its `relatedInfo` and what the lines name. `head` is `headMessage`'s code. Returns nothing if the two are
     /// related or the comparison overflows.
     pub(super) fn relation_lines_with_related(
         &mut self,
@@ -466,7 +516,7 @@ impl<'p, 's> Checker<'p, 's> {
         target: TypeId,
         head: Option<u32>,
         level: u32,
-    ) -> (Vec<Line>, Vec<Reported>) {
+    ) -> (Vec<Line>, Vec<Reported>, DiagnosticSubject) {
         // There's no node because the caller only wants the lines.
         let nowhere = (self.task.file.unwrap_or(FileId(0)), 0, 0);
         match self.relation_diagnostic(source, target, Relation::Assignable, nowhere, head) {
@@ -474,9 +524,9 @@ impl<'p, 's> Checker<'p, 's> {
                 for line in &mut diagnostic.lines {
                     line.level += level;
                 }
-                (diagnostic.lines, diagnostic.related)
+                (diagnostic.lines, diagnostic.related, diagnostic.subject)
             }
-            _ => (Vec::new(), Vec::new()),
+            _ => (Vec::new(), Vec::new(), DiagnosticSubject::None),
         }
     }
 }
@@ -507,7 +557,7 @@ impl<'p, 's> Checker<'p, 's> {
                 | SigData::DefaultConstruct {
                     base: Some(inner), ..
                 } => inner,
-                SigData::DefaultConstruct { base: None, .. } | SigData::Synth { .. } => break None,
+                SigData::DefaultConstruct { base: None, .. } | SigData::Synth(_) => break None,
             };
         };
         self.parameter_name_at(declaration, params, pos)
@@ -741,7 +791,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if class.extends.is_some() {
                         has_heritage_clause = true;
                         extends_entity_name = matches!(
-                            hir[class.extends].kind,
+                            hir.checked_kind(class.extends),
                             ExprKind::Ident(_) | ExprKind::Dot { .. }
                         ) && !is_parenthesized(hir, class.extends);
                     }
@@ -773,9 +823,7 @@ impl<'p, 's> Checker<'p, 's> {
             let is_repeated = was_resolving && self.are_base_types_resolved_by_check(target);
             // That file's task may not have reached this point yet. It would then read what this
             // task stores and never report 2310.
-            if is_repeated
-                && let Some(from) = self.stack.iter().position(|&q| q == Query::Bases(target))
-            {
+            if is_repeated && let Some(from) = self.outermost_in_flight(Query::Bases(target), 0) {
                 self.close_cycle(from);
             }
             let bases = if is_repeated {
@@ -861,7 +909,8 @@ impl<'p, 's> Checker<'p, 's> {
             && let Some((code, prop)) = self.why_never_intersection(original_target)
         {
             let intersection = self.type_to_string_without_reduction(original_target);
-            self.report_error(r, code, &[Arg::Bytes(&intersection), Arg::Prop(prop)]);
+            let args = [Arg::Bytes(&intersection), Arg::Prop(prop)];
+            self.report_error_about(r, code, &args, &[original_target]);
         }
         self.report_relation_error(r, head, source, target);
         if let TypeData::TypeParam(file, tp, _) = *self.data(source)
@@ -1067,15 +1116,17 @@ impl<'p, 's> Checker<'p, 's> {
             match self.base_constraint_of(target) {
                 Some(constraint) if self.is_assignable(generalized_source, constraint) => {
                     let args = [generalized_source_name, target_name, Arg::Type(constraint)];
-                    self.report_error(r, 5075, &args);
+                    self.report_error_about(r, 5075, &args, &[source, target]);
                 }
                 Some(constraint) if self.is_assignable(source, constraint) => {
-                    self.report_error(r, 5075, &[source_name, target_name, Arg::Type(constraint)]);
+                    let args = [source_name, target_name, Arg::Type(constraint)];
+                    self.report_error_about(r, 5075, &args, &[source, target]);
                 }
                 _ => {
                     // This replaces everything reported so far.
                     r.error_chain = None;
-                    self.report_error(r, 5082, &[target_name, generalized_source_name]);
+                    let args = [target_name, generalized_source_name];
+                    self.report_error_about(r, 5082, &args, &[source, target]);
                 }
             }
         }
@@ -1088,7 +1139,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && let Some(suggested) = self.suggested_string_literal_type(source, target)
                 {
                     let args = [generalized_source_name, target_name, Arg::Type(suggested)];
-                    self.report_error(r, 2820, &args);
+                    self.report_error_about(r, 2820, &args, &[source, target]);
                     return;
                 }
                 2322
@@ -1106,7 +1157,8 @@ impl<'p, 's> Checker<'p, 's> {
             _ => false,
         };
         if !is_already_reported {
-            self.report_error(r, message, &[generalized_source_name, target_name]);
+            let args = [generalized_source_name, target_name];
+            self.report_error_about(r, message, &args, &[source, target]);
         }
     }
 
@@ -1200,6 +1252,7 @@ impl<'p, 's> Checker<'p, 's> {
         unmatched: &[&Prop],
     ) {
         let first = unmatched[0];
+        let reported_before = chain_depth(&r.error_chain);
         // Two `#x` with the same spelling are distinct members.
         if self.atoms().is_private_name(first.name)
             && let TypeData::Ref { target: class, .. } = *self.data(source)
@@ -1230,7 +1283,7 @@ impl<'p, 's> Checker<'p, 's> {
             let (source_type, target_type) = self.type_names_for_error_display(source, target);
             let name = self.prop_to_string(only);
             let args = [&name, &source_type, &target_type].map(|arg| Arg::Bytes(arg));
-            self.report_error(r, 2741, &args);
+            self.report_error_about(r, 2741, &args, &[source, target]);
             if let Some(declaration_span) = self.span_of_first_prop_declaration(only) {
                 r.related_info
                     .push(self.declared_here(declaration_span, name));
@@ -1250,10 +1303,17 @@ impl<'p, 's> Checker<'p, 's> {
             let args = [&source_type, &target_type, &names].map(|arg| Arg::Bytes(arg));
             if unmatched.len() > 5 {
                 let more = Arg::Number(unmatched.len() - 4);
-                self.report_error(r, 2740, &[args[0], args[1], args[2], more]);
+                let args = [args[0], args[1], args[2], more];
+                self.report_error_about(r, 2740, &args, &[source, target]);
             } else {
-                self.report_error(r, 2739, &args);
+                self.report_error_about(r, 2739, &args, &[source, target]);
             }
+        }
+        if chain_depth(&r.error_chain) > reported_before
+            && unmatched.iter().all(|prop| self.is_prop_brought(prop))
+            && let Some(line) = r.error_chain.as_mut().and_then(Rc::get_mut)
+        {
+            line.subject = DiagnosticSubject::BroughtDeclaration;
         }
     }
 }

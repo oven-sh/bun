@@ -569,7 +569,6 @@ impl DirEntry {
         let &result_ptr = self.data.get(query_lower)?;
         Some(EntryLookup { entry: result_ptr })
     }
-
 }
 
 // `data` drops itself and `dir` is interned in DirnameStore (see the comment

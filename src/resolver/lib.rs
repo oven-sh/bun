@@ -442,7 +442,6 @@ pub mod fs {
         pub fn get_default_temp_dir() -> &'static [u8] {
             RealFS::get_default_temp_dir()
         }
-
     }
 
     // ── PathName / Path ──────────────────────────────────────────────────

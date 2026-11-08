@@ -142,6 +142,47 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
     RELEASE_AND_RETURN(scope, didStub(globalObject, globalObject->mockModule.globalsOfPreload, key, value));
 }
 
+// A stub that globalThis no longer has stays. The preload put something over it, and undoing the stub would take that off.
+static void unstubGlobalOfPreload(Zig::GlobalObject* globalObject, JSMap* originals, JSValue key, JSValue stub)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+
+    bool isRemembered = hasOriginal(globalObject, originals, key);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!isRemembered)
+        return;
+    auto name = propertyKeyOf(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, );
+    JSObject* target = globalObject->globalThis();
+    PropertyDescriptor current;
+    bool exists = target->getOwnPropertyDescriptor(globalObject, name, current);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!exists || !current.isDataDescriptor())
+        return;
+    bool isOnGlobal = sameValue(globalObject, current.value(), stub);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!isOnGlobal)
+        return;
+    JSValue original = JSValue::decode(JSC__JSMap__get(originals, globalObject, JSValue::encode(key)));
+    RETURN_IF_EXCEPTION(scope, );
+    JSC__JSMap__remove(originals, globalObject, JSValue::encode(key));
+    RETURN_IF_EXCEPTION(scope, );
+    RELEASE_AND_RETURN(scope, restoreGlobal(globalObject, target, key, original));
+}
+
+static void stubGlobalOfPreload(Zig::GlobalObject* globalObject, JSValue key, JSValue stub)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+
+    if (JSValue originals = globalObject->mockModule.stubbedGlobals.get()) {
+        bool isInPlace = hasOriginal(globalObject, uncheckedDowncast<JSMap>(originals), key);
+        RETURN_IF_EXCEPTION(scope, );
+        if (isInPlace)
+            return;
+    }
+    RELEASE_AND_RETURN(scope, stubGlobal(globalObject, key, stub));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsViStubGlobal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(lexicalGlobalObject));
@@ -434,6 +475,22 @@ extern "C" void ViUtils__stubWhatPreloadStubbed(Zig::GlobalObject* globalObject)
         scope.release();
         Bun::forEachEntry(globalObject, uncheckedDowncast<JSC::JSMap>(globals), [&](JSC::JSValue name, JSC::JSValue stub) { Bun::stubGlobal(globalObject, name, stub); });
     }
+}
+
+// The test environment is about to change the names that globalThis has. A name then moves with what the stub replaced.
+extern "C" void ViUtils__unstubGlobalsOfPreload(Zig::GlobalObject* globalObject)
+{
+    JSC::JSValue stubs = globalObject->mockModule.globalsOfPreload.get();
+    JSC::JSValue originals = globalObject->mockModule.stubbedGlobals.get();
+    if (stubs && originals)
+        Bun::forEachEntry(globalObject, uncheckedDowncast<JSC::JSMap>(stubs), [&](JSC::JSValue name, JSC::JSValue stub) { Bun::unstubGlobalOfPreload(globalObject, uncheckedDowncast<JSC::JSMap>(originals), name, stub); });
+}
+
+// Makes the stubs that ViUtils__unstubGlobalsOfPreload took off again, over what globalThis has now.
+extern "C" void ViUtils__stubGlobalsOfPreload(Zig::GlobalObject* globalObject)
+{
+    if (JSC::JSValue stubs = globalObject->mockModule.globalsOfPreload.get())
+        Bun::forEachEntry(globalObject, uncheckedDowncast<JSC::JSMap>(stubs), [&](JSC::JSValue name, JSC::JSValue stub) { Bun::stubGlobalOfPreload(globalObject, name, stub); });
 }
 
 extern "C" void ViUtils__forgetDynamicImports(Zig::GlobalObject* globalObject)

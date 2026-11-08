@@ -1285,6 +1285,251 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
+    describe("its vi.stubGlobal() stubs, when a file has another environment", () => {
+      const packages = {
+        ...fakePackages,
+        // Each window says which one its functions are of, and whether a stub was there when it opened.
+        "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+          const { Window } = exports;
+          exports.Window = class extends Window {
+            constructor(options) {
+              super(options);
+              const id = this.environment;
+              this.matchMedia = () => id + " media";
+              this.fetch = () => id + " fetch";
+              this.openedWithStubs = "ofThePreload" in globalThis;
+              this.close = () => (this.closed = true);
+            }
+          };`,
+      };
+      const stub = `import { vi } from "bun:test"; vi.stubGlobal("matchMedia", () => "stub");`;
+      const inNode = `// ${VITEST} node\n`;
+      const inWindow = `// ${VITEST} happy-dom\n`;
+      const file = (title: string, body: string) => `
+        import { afterAll, test, vi } from "bun:test";
+        const media = () => (typeof matchMedia === "function" ? matchMedia() : typeof matchMedia);
+        const fetched = () => (fetch.name === "fetch" ? "Bun's" : fetch());
+        const where = () => (typeof environment === "undefined" ? "node" : environment);
+        test("${title}", () => {
+          ${body}
+        });`;
+      const logs = (title: string, seen = "media()") => file(title, `console.log("${title}", ${seen});`);
+      /** Logs `seen`, undoes the stubs, and logs `seen` again. */
+      const unstubs = (title: string, seen = "media()") =>
+        file(title, `console.log("${title}", ${seen});\nvi.unstubAllGlobals();\nconsole.log("${title}", ${seen});`);
+      async function run(files: Record<string, string>, ...args: string[]) {
+        using dir = tempDir("test-environment", { ...packages, ...files });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir), "--preload=./preload.js", ...args);
+        // --parallel prints its workers' stdout on stderr.
+        const lines = [...stdout, ...stderr.split("\n")].filter(line => /^\d /.test(line));
+        return { stdout: lines, failed: summary(stderr)?.[1], exitCode };
+      }
+      const passed = (...stdout: string[]) => ({ stdout, failed: "0 fail", exitCode: 0 });
+
+      test.each([
+        [
+          [1, 2, 3, 4],
+          ["1 stub", "2 stub", "2 undefined", "3 stub", "3 happy-dom#1 media", "4 stub"],
+        ],
+        // The preload then runs in a window that the first file leaves.
+        [
+          [4, 3, 2, 1],
+          ["4 stub", "3 stub", "3 happy-dom#1 media", "2 stub", "2 undefined", "1 stub"],
+        ],
+      ])("a stub of a window's name is on every file, over what that file has: files %j", async (order, stdout) => {
+        const ran = await run(
+          {
+            "preload.js": stub,
+            "1.test.js": logs("1"),
+            "2.test.js": `${inNode}${unstubs("2")}`,
+            "3.test.js": unstubs("3"),
+            "4.test.js": `${inNode}${logs("4")}`,
+          },
+          "--environment=happy-dom",
+          ...order.map(number => `./${number}.test.js`),
+        );
+        expect(ran).toEqual(passed(...stdout));
+      });
+
+      test("a stub of a name that Bun has too is over Bun's own in a node file", async () => {
+        const ran = await run(
+          {
+            "preload.js": `import { vi } from "bun:test"; vi.stubGlobal("fetch", () => "stub");`,
+            "1.test.js": unstubs("1", "fetched()"),
+            "2.test.js": `${inNode}${unstubs("2", "fetched()")}`,
+          },
+          "--environment=happy-dom",
+        );
+        expect(ran).toEqual(passed("1 stub", "1 happy-dom#1 fetch", "2 stub", "2 Bun's"));
+      });
+
+      test.each([
+        [
+          "has other options",
+          `// ${VITEST}-options { "url": "https://example.com/" }\n`,
+          "",
+          "happy-dom#2 media",
+          "happy-dom#1 media",
+        ],
+        [
+          "opens after a file closed the last one",
+          "",
+          `afterAll(() => window.close());`,
+          "happy-dom#2 media",
+          "happy-dom#2 media",
+        ],
+        ["is of another package", `// ${VITEST} jsdom\n`, "", "undefined", "happy-dom#1 media"],
+      ])("a stub is on a window that %s, over what that window has", async (_, second, close, ofSecond, ofThird) => {
+        const ran = await run(
+          {
+            "preload.js": stub,
+            "1.test.js": `${unstubs("1")}\n${close}`,
+            "2.test.js": `${second}${unstubs("2")}`,
+            "3.test.js": unstubs("3"),
+          },
+          "--environment=happy-dom",
+        );
+        expect(ran).toEqual(
+          passed("1 stub", "1 happy-dom#1 media", "2 stub", `2 ${ofSecond}`, "3 stub", `3 ${ofThird}`),
+        );
+      });
+
+      test("a window that opens after the stubs is made without them, and still gives globalThis their names", async () => {
+        const ran = await run({
+          "preload.js": `${stub} vi.stubGlobal("environment", "stub"); vi.stubGlobal("ofThePreload", true);`,
+          "1.test.js": `${inWindow}${unstubs("1", "media(), environment, openedWithStubs")}`,
+          "2.test.js": unstubs("2", "media(), where()"),
+        });
+        expect(ran).toEqual(
+          passed("1 stub stub false", "1 happy-dom#1 media happy-dom#1 false", "2 stub stub", "2 undefined node"),
+        );
+      });
+
+      const documentStub = `import { vi } from "bun:test"; vi.stubGlobal("document", "stub");`;
+      test.each([
+        [
+          "after a node file",
+          ["--environment=happy-dom"],
+          { "1.test.js": logs("1", "where(), document"), "2.test.js": `${inNode}${logs("2", "where(), document")}` },
+          ["1 happy-dom#1 stub", "2 node stub", "3 happy-dom#1 stub"],
+        ],
+        ["in a project without one", [], {}, ["3 happy-dom#1 stub"]],
+        [
+          "after a window that can't stay until the next file",
+          ["--environment=happy-dom"],
+          {
+            "1.test.js": file("1", `Object.defineProperty(globalThis, "scrollTo", { value: 1, configurable: false });`),
+          },
+          ["3 happy-dom#1 stub"],
+        ],
+      ])("a stub of document doesn't keep a file from its window %s", async (_, args, files, stdout) => {
+        const ran = await run(
+          { "preload.js": documentStub, ...files, "3.test.js": `${inWindow}${logs("3", "where(), document")}` },
+          ...args,
+        );
+        expect(ran).toEqual(passed(...stdout));
+      });
+
+      test("a stub is on a node file after a window that can't stay until the next file", async () => {
+        const ran = await run(
+          {
+            "preload.js": stub,
+            "1.test.js": file(
+              "1",
+              `Object.defineProperty(globalThis, "scrollTo", { value: 1, configurable: false });
+              console.log("1", media());`,
+            ),
+            "2.test.js": `${inNode}${unstubs("2")}`,
+          },
+          "--environment=happy-dom",
+        );
+        expect(ran).toEqual(passed("1 stub", "2 stub", "2 undefined"));
+      });
+
+      const notJSON = `// ${VITEST}-options { url: 1 }\n`;
+      test.each([
+        ["comment only warns", `${inWindow}${notJSON}${unstubs("2")}`, ["2 stub", "2 undefined"], "0 fail", 0],
+        ["options fail the file", `${notJSON}${unstubs("2")}`, [], "1 fail", 1],
+      ])(
+        "a stub is on every file when an environment whose %s can't be set up",
+        async (_, second, ofSecond, failed, exitCode) => {
+          const ran = await run(
+            {
+              "preload.js": stub,
+              "1.test.js": logs("1"),
+              "2.test.js": second,
+              "3.test.js": unstubs("3"),
+              "4.test.js": `${inNode}${unstubs("4")}`,
+            },
+            "--environment=happy-dom",
+          );
+          expect(ran).toEqual({
+            stdout: ["1 stub", ...ofSecond, "3 stub", "3 happy-dom#1 media", "4 stub", "4 undefined"],
+            failed,
+            exitCode,
+          });
+        },
+      );
+
+      test("--rerun-each: a stub is on the window that opens for the second run", async () => {
+        const ran = await run(
+          { "preload.js": stub, "1.test.js": `${unstubs("1")}\nafterAll(() => window.close());` },
+          "--environment=happy-dom",
+          "--rerun-each=2",
+        );
+        expect(ran).toEqual(passed("1 stub", "1 happy-dom#1 media", "1 stub", "1 happy-dom#2 media"));
+      });
+
+      test("--parallel --no-isolate: a stub is on every file of a worker", async () => {
+        const ran = await run(
+          {
+            "preload.js": stub,
+            "1.test.js": logs("1"),
+            "2.test.js": `${inNode}${unstubs("2")}`,
+            "3.test.js": unstubs("3"),
+            "4.test.js": `${inNode}${logs("4")}`,
+          },
+          "--environment=happy-dom",
+          "--parallel=2",
+          "--no-isolate",
+        );
+        expect({ ...ran, stdout: ran.stdout.sort() }).toEqual(
+          passed("1 stub", "2 stub", "2 undefined", "3 happy-dom#1 media", "3 stub", "4 stub"),
+        );
+      });
+
+      test("a stub that the preload turned fake timers on over stays under them", async () => {
+        const ran = await run({
+          "preload.js": `import { vi } from "bun:test"; vi.stubGlobal("setTimeout", () => "stub"); vi.useFakeTimers();`,
+          "1.test.js": `${inWindow}${logs("1", `where(), Object.hasOwn(setTimeout, "clock")`)}`,
+        });
+        expect(ran).toEqual(passed("1 happy-dom#1 true"));
+      });
+
+      test("a stub that can't be made again is an error, and the file still gets its environment", async () => {
+        using dir = tempDir("test-environment", {
+          ...packages,
+          "preload.js": `import { vi } from "bun:test"; vi.stubGlobal("ofThePreload", "stub");`,
+          "1.test.js": file(
+            "1",
+            `Object.defineProperty(globalThis, "ofThePreload", { configurable: false });
+            console.log("1", where(), ofThePreload);`,
+          ),
+          "2.test.js": `${inNode}${logs("2", "where(), ofThePreload")}`,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(
+          String(dir),
+          "--preload=./preload.js",
+          "--environment=happy-dom",
+        );
+        expect(stderr).toContain("TypeError: Attempting to change configurable attribute of unconfigurable property.");
+        expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["1 happy-dom#1 stub", "2 node stub"]);
+        // One at the end of each file, as before, and one when the second file leaves the window.
+        expect(summary(stderr)).toEqual(["2 pass", "0 fail", "3 errors"]);
+        expect(exitCode).toBe(1);
+      });
+    });
+
     // The setup docs/test/dom.mdx has long recommended, in a project that kept its old runner's comments.
     test("that registers its own DOM wins over environment comments", async () => {
       using dir = tempDir("test-environment", {
@@ -1600,6 +1845,43 @@ describe.concurrent("test environment with the real", () => {
     expect(verdicts(stderr)).toEqual({ "throws in a frame callback": "fail", "throws in a listener": "fail" });
     expect(summary(stderr)).toEqual(["0 pass", "2 fail"]);
     expect(exitCode).toBe(1);
+  });
+
+  test("jsdom: a preload's vi.stubGlobal() of a window's name is on a node file too", async () => {
+    using dir = project({
+      "preload.js": `
+        import { vi } from "bun:test";
+        const stored = new Map();
+        vi.stubGlobal("localStorage", { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) });`,
+      "1.test.js": `
+        import { test, expect } from "bun:test";
+        test("a file with a window", () => {
+          localStorage.setItem("from", "a file with a window");
+          expect(localStorage.length).toBeUndefined();
+        });`,
+      "2.test.js": `// ${VITEST} node
+        import { test, expect, vi } from "bun:test";
+        test("a node file", () => {
+          expect(localStorage.getItem("from")).toBe("a file with a window");
+          vi.unstubAllGlobals();
+          expect(typeof localStorage).toBe("undefined");
+        });`,
+      "3.test.js": `
+        import { test, expect, vi } from "bun:test";
+        test("a file with the window again", () => {
+          expect(localStorage.getItem("from")).toBe("a file with a window");
+          vi.unstubAllGlobals();
+          expect(localStorage.length).toBe(0);
+        });`,
+    });
+    const { stderr, exitCode } = await bunTest(String(dir), "--environment=jsdom", "--preload=./preload.js");
+    expect(verdicts(stderr)).toEqual({
+      "a file with a window": "pass",
+      "a node file": "pass",
+      "a file with the window again": "pass",
+    });
+    expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
   });
 
   const throwInListener = `

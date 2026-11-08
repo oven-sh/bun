@@ -10,6 +10,8 @@ unsafe extern "C" {
     safe fn ViUtils__unstubAllEnvs(global: &JSGlobalObject);
     safe fn ViUtils__unstubAllGlobals(global: &JSGlobalObject);
     safe fn ViUtils__stubWhatPreloadStubbed(global: &JSGlobalObject);
+    safe fn ViUtils__unstubGlobalsOfPreload(global: &JSGlobalObject);
+    safe fn ViUtils__stubGlobalsOfPreload(global: &JSGlobalObject);
     safe fn ViUtils__forgetDynamicImports(global: &JSGlobalObject);
     safe fn JSMock__restoreAllMocks(global: &JSGlobalObject);
     safe fn JSMock__resetAllMocks(global: &JSGlobalObject);
@@ -82,6 +84,16 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global:
     run(global, ViUtils__unstubAllGlobals);
     run(global, ViUtils__stubWhatPreloadStubbed);
     ViUtils__forgetDynamicImports(global);
+}
+
+/// Takes the `vi.stubGlobal()` stubs of the preloads off the global, or makes them again over what it has now.
+pub(crate) fn move_stubs_of_preloads(global: &JSGlobalObject, on: bool) -> JsResult<()> {
+    let stub: Reset = if on {
+        ViUtils__stubGlobalsOfPreload
+    } else {
+        ViUtils__unstubGlobalsOfPreload
+    };
+    bun_jsc::from_js_host_call_generic(global, || stub(global))
 }
 
 /// Like Vitest's timeouts, anything that isn't a positive finite number becomes 0, which means none.

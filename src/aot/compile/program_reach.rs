@@ -1463,14 +1463,16 @@ impl<'a, 's> FileScan<'a, 's> {
                     graph.member_binding(self.file, access),
                     self.find_accessed_module(access),
                 ) {
-                    (Some(ImportBinding::Synthetic(export)), Some(accessed))
-                        if graph.shape(accessed) == Shape::EsModule =>
-                    {
-                        match self.is_called(access) {
-                            true => Interest::CalledName(export, accessed),
-                            false => Interest::Name(export, accessed),
-                        }
-                    }
+                    (
+                        Some(
+                            ImportBinding::Synthetic(export)
+                            | ImportBinding::CapturedBuiltin { export, .. },
+                        ),
+                        Some(accessed),
+                    ) if graph.shape(accessed) == Shape::EsModule => match self.is_called(access) {
+                        true => Interest::CalledName(export, accessed),
+                        false => Interest::Name(export, accessed),
+                    },
                     (
                         Some(
                             binding @ (ImportBinding::Namespace { .. }
@@ -2849,10 +2851,6 @@ impl Reacher<'_, '_, '_> {
             HandedOn::Namespace(module) => module,
         };
         self.note_statement_runs(importer, definer);
-        if let ModuleRef::Runtime(module) = definer {
-            let readers = &mut self.found.readers_of_built_in_modules;
-            readers.push((importer, module));
-        }
         if matches!(handed_on, HandedOn::Variable(defined) if defined.file == importer) {
             return;
         }
@@ -2862,11 +2860,13 @@ impl Reacher<'_, '_, '_> {
         if !walk.followed_imports.insert((importer, handed_on)) {
             return;
         }
+        let mut is_led_by_statement = find_exporter(exporters, importer).is_some();
         for request in graph.requests(importer) {
             let (ModuleRef::File(target) | ModuleRef::Face(target)) = request.target else {
                 continue;
             };
             if let Some(exporter) = find_exporter(exporters, target) {
+                is_led_by_statement |= request.kind == ModuleRequestKind::Import;
                 if !exporter.is_by_star
                     || !graph.has_no_side_effects(target)
                     || walk.is_run_by_call[target.idx()]
@@ -2878,6 +2878,23 @@ impl Reacher<'_, '_, '_> {
                 }
                 self.reach_files_between(target, handed_on);
             }
+        }
+        if let ModuleRef::Runtime(module) = definer
+            && is_led_by_statement
+            && graph.kind(importer) != ModuleKind::CommonJs
+        {
+            let readers = &mut self.found.readers_of_built_in_modules;
+            readers.push((importer, module));
+        }
+    }
+
+    fn reach_files_behind_file_read_from(
+        &mut self,
+        accessed: ModuleRef,
+        export: SyntheticExportId,
+    ) {
+        if let ModuleRef::File(accessed) | ModuleRef::Face(accessed) = accessed {
+            self.reach_files_between(accessed, HandedOn::Name(export));
         }
     }
 
@@ -3452,6 +3469,7 @@ impl Reacher<'_, '_, '_> {
             Interest::EveryExport(module) => self.reach_every_export(module),
             Interest::Name(export, accessed) => {
                 self.evaluate(accessed);
+                self.reach_files_behind_file_read_from(accessed, export);
                 self.reach_files_between(file, HandedOn::Name(export));
                 self.reach_name(export);
             }
@@ -3461,6 +3479,7 @@ impl Reacher<'_, '_, '_> {
             }
             Interest::CalledName(export, accessed) => {
                 self.evaluate(accessed);
+                self.reach_files_behind_file_read_from(accessed, export);
                 self.reach_files_between(file, HandedOn::Name(export));
                 let is_stored =
                     walk.has_stored_names(walk.input.graph.synthetic_export(export).module);

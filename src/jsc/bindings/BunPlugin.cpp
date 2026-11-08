@@ -1114,12 +1114,12 @@ static JSC::JSPromise* evaluationOfCompiledModuleThatMockLeftAlone(Zig::GlobalOb
     RELEASE_AND_RETURN(scope, JSC::AOT::evaluationOfModuleThatMockLeftAlone(globalObject, *loaded.compiledModule));
 }
 
-static JSValue errorOfCompiledModuleThatMockLeftAlone(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+static JSValue errorThrownByBodyOfCompiledModule(Zig::GlobalObject* globalObject, JSModuleMock* mock)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     LoadedModule loaded = findLoadedModule(globalObject, mock->specifier.get());
     RETURN_IF_EXCEPTION(scope, {});
-    return loaded.compiledModule ? JSC::AOT::errorOfModuleThatMockLeftAlone(globalObject, *loaded.compiledModule) : JSValue();
+    return loaded.compiledModule ? JSC::AOT::errorThrownByBodyOfMockedModule(globalObject, *loaded.compiledModule) : JSValue();
 }
 #endif
 
@@ -1622,7 +1622,7 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
 
 #if ENABLE(AOT)
     if (!factoryValue && globalObject->aotInstance()) {
-        JSValue thrownByBody = errorOfCompiledModuleThatMockLeftAlone(globalObject, this);
+        JSValue thrownByBody = errorThrownByBodyOfCompiledModule(globalObject, this);
         RETURN_IF_EXCEPTION(scope, {});
         if (thrownByBody) {
             throwException(globalObject, scope, thrownByBody);

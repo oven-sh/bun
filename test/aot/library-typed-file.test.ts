@@ -136,7 +136,10 @@ export function area(shape: Shape): Sizes.Size {
 class Sizes {
   first = #factor in this;
   accessor #factor: number;
-  static accessor #made: number = 0;
+  static accessor #made: number;
+  static {
+    Sizes.#made = 0;
+  }
   accessor #pick: () => "circle" | "square" = () => "circle";
   accessor #round: (size: number) => number = size => Math.round(size);
   constructor(factor: number) {

@@ -493,11 +493,14 @@ impl<'a, 's> Syntax<'a, 's> {
         key
     }
 
-    /// Whether `name` is the name of an `accessor #x` member. Its value is in a field of another name, and only its setter stores to that field.
-    fn is_private_accessor(&self, name: u32) -> bool {
-        self.byte(name) == b'#'
-            && (self.file.members.iter())
-                .any(|member| member.name_pos == name && member.flags.contains(Flags::ACCESSOR))
+    /// Whether `name` is the name of an `accessor #x` member of an object. Its value is in a field of another name, and only its setter stores to that field.
+    fn is_private_accessor_of_object(&self, name: u32) -> bool {
+        let is_it = |member: &Member| {
+            member.name_pos == name
+                && member.flags.contains(Flags::ACCESSOR)
+                && !member.flags.contains(Flags::STATIC)
+        };
+        self.byte(name) == b'#' && self.file.members.iter().any(is_it)
     }
 
     fn member_slots(&self, member: &Member, slots: &mut Vec<Slot>) {
@@ -3090,7 +3093,8 @@ impl<'a> Transfer<'_, 'a, '_> {
                 Place::MemberType
                     if text.starts_with(b":")
                         && output.byte(output.after_trivia(slot.start)) != b'='
-                        && (is_computed || module.syntax.is_private_accessor(found.key)) =>
+                        && (is_computed
+                            || module.syntax.is_private_accessor_of_object(found.key)) =>
                 {
                     (Order::Slot, [&b"!"[..], &text].concat())
                 }

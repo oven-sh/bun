@@ -180,8 +180,12 @@ export function join(first: string, second: string): string {
   accessor #pick: () => "idle" | "busy" = () => "idle";
   accessor #fixed: (size: number) => string = size => size.toFixed(2);
   accessor #late: string;
+  static accessor #made: number;
+  static {
+    Mode.#made = 0;
+  }
   constructor() {
-    this.#late = this.#pick() + this.#fixed(1);
+    this.#late = this.#pick() + this.#fixed(1) + ++Mode.#made;
   }
   get late(): string {
     return this.#late;
@@ -201,6 +205,8 @@ export function join(first: string, second: string): string {
     expect(typed).not.toContain(": any");
     // The constructor stores through the setter, so the checker sees no value for the field (TS2564).
     expect(typed).toContain("#late_accessor_storage!: string;");
+    // A static field takes no such mark (TS1255) and needs none.
+    expect(typed).toContain("static #made_accessor_storage: number;");
   });
 
   test("a build without it writes what it always did", async () => {

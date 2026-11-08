@@ -2282,6 +2282,23 @@ describe("an error with no frame has a stack of its header", () => {
     expect(stack).toMatch(/^Error\n    at f1 /);
   });
 
+  test("a read, then Error.captureStackTrace, then a new message: the stack has the new message", async () => {
+    // The read gives the error its header. The capture arms the lazy stack again, so the next read formats
+    // the new frames with the message of that moment, as in Node.
+    const { promise, resolve } = Promise.withResolvers();
+    require("fs").readFile("/nonexistent-path/x.txt", resolve);
+    const error = await promise;
+    void error.stack;
+    function capture() {
+      Error.captureStackTrace(error);
+    }
+    capture();
+    error.message = "while loading: " + error.message;
+    const lines = error.stack.split("\n");
+    expect(lines[0]).toBe("Error: while loading: ENOENT: no such file or directory, open '/nonexistent-path/x.txt'");
+    expect(lines[1]).toMatch(/^    at capture /);
+  });
+
   test("an error made on the event loop with no JavaScript running", async () => {
     // No async function awaits the rejected promise, so there is no async frame to attach: this is the error
     // as it is at the top level of a module, or in a callback.

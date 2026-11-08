@@ -309,6 +309,9 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
 }
 
+// Listener.rs: adds `name` under the key that a listener registers it under. False for a name that has no key.
+extern "C" bool Bun__addServerNameToSNITree(void* tree, const BunString* name, void* user);
+
 // (names: Map<string, T>, servername: string) => T | undefined, matched by the tree a listener keeps its names in.
 JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -331,14 +334,13 @@ JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, 
         auto view = string->view(globalObject);
         if (scope.exception()) [[unlikely]]
             break;
-        // No ClientHello can carry a NUL.
-        if (view->contains('\0')) continue;
+        BunString borrowedName = Bun::toStringView(view.data);
+        if (!Bun__addServerNameToSNITree(tree, &borrowedName, reinterpret_cast<void*>(static_cast<uintptr_t>(values.size() + 1)))) continue;
         values.append(value);
         if (values.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             break;
         }
-        sni_add(tree, view->utf8().legacyCStringPointer(), reinterpret_cast<void*>(static_cast<uintptr_t>(values.size())));
     }
     auto selected = reinterpret_cast<uintptr_t>(sni_find(tree, byteCast<char>(servername.spanIncludingNullTerminator()).data()));
     sni_free(tree, [](void*) {});

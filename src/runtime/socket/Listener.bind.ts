@@ -31,8 +31,9 @@ const fromOptions = { args: { options: b.any }, capability: "js", throws: true }
 export const connect = b.fn({ ...fromOptions, returns: b.any, rustPath: "crate::socket::Listener::connect" });
 export const listen = b.fn({ ...fromOptions, returns: Listener, rustPath: "crate::socket::Listener::listen" });
 
+/** `hostname` is a name of `tls.Server#addContext()`. It is registered as one byte per code unit, not as UTF-8. */
 export const addServerName = b.fn({
-  args: { listener: Listener, hostname: b.string.utf8, tls: b.any },
+  args: { listener: Listener, hostname: b.string, tls: b.any },
   capability: "js",
   throws: true,
   rustPath: "crate::socket::Listener::add_server_name",

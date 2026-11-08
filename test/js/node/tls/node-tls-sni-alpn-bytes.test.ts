@@ -4,6 +4,8 @@
  * Node makes a one-byte string from the bytes of each: one code unit for each byte, and no decoding.
  * https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1359-L1373 (servername)
  * https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L2100-L2124 (alpnProtocol)
+ * A name of tls.Server#addContext() is tested against that servername, so it selects by the same code units.
+ * https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1576-L1580
  *
  * The expected values are what Node.js v26.3.0 gives. All tests in this file run in both Bun and Node.js:
  * `bun test` runs them here, and the last test runs this same file under Node.js.
@@ -223,6 +225,89 @@ describe("servername of a tls.Server socket has one code unit for each byte of t
       server.close();
     }
   });
+});
+
+describe("tls.Server#addContext() selects by a name that has one code unit for each byte of the SNI name", () => {
+  const context = (agent: string) => ({
+    key: readFileSync(join(fixtures, `${agent}-key.pem`)),
+    cert: readFileSync(join(fixtures, `${agent}-cert.pem`)),
+  });
+
+  // The same code units, in a string for which the engine keeps two bytes for each code unit.
+  const inTwoByteStorage = (text: string) => Buffer.from(text, "utf16le").toString("utf16le");
+  // tls.connect() sends `sent` as UTF-8. `sameUnits` is the servername that the server reads from those bytes.
+  const clients = [
+    { sent: "\u00e9.example", sameUnits: "\u00c3\u00a9.example" },
+    { sent: "\u4e2d.example", sameUnits: inTwoByteStorage("\u00e4\u00b8\u00ad.example") },
+  ];
+
+  // The CN of the certificate that the server presents to a client that sends `sent`, and the servername that the server reads.
+  async function handshake(server: tls.Server, port: number, sent: string) {
+    const accepted = once(server, "secureConnection");
+    const client = tls.connect({ port, host: "127.0.0.1", servername: sent, rejectUnauthorized: false });
+    try {
+      const [[socket]] = await Promise.all([accepted, once(client, "secureConnect")]);
+      return { certificate: client.getPeerCertificate().subject.CN, servername: servername(socket) };
+    } finally {
+      client.destroy();
+    }
+  }
+
+  // Each way for a server to have its names when a ClientHello arrives: the server, the port to connect to, and what to close.
+  const orders: Record<string, (add: (server: tls.Server) => void) => Promise<[tls.Server, number, net.Server]>> = {
+    "added before listen()": async add => {
+      const server = tls.createServer(context("agent1"));
+      add(server);
+      return [server, await listen(server), server];
+    },
+    "added after listen()": async add => {
+      const server = tls.createServer(context("agent1"));
+      const port = await listen(server);
+      add(server);
+      return [server, port, server];
+    },
+    "of a server that does not listen and gets its sockets from emit('connection')": async add => {
+      const server = tls.createServer(context("agent1"));
+      add(server);
+      const front = net.createServer(socket => server.emit("connection", socket));
+      return [server, await listen(front), front];
+    },
+  };
+
+  for (const [order, start] of Object.entries(orders)) {
+    test(`a name ${order}`, async () => {
+      const [server, port, listener] = await start(server => {
+        for (const { sent, sameUnits } of clients) {
+          server.addContext(sameUnits, context("agent2"));
+          server.addContext(sent, context("agent3"));
+        }
+      });
+      try {
+        const seen: unknown[] = [];
+        for (const { sent } of clients) seen.push(await handshake(server, port, sent));
+        assert.deepStrictEqual(
+          seen,
+          clients.map(({ sameUnits }) => ({ certificate: "agent2", servername: units(sameUnits) })),
+        );
+      } finally {
+        listener.close();
+      }
+    });
+
+    // "-" is the low byte of U+4E2D, and "?" is what a conversion that loses a code unit writes for it.
+    test(`a name with a code unit above 0xFF, ${order}, selects for no client`, async () => {
+      const [server, port, listener] = await start(server => server.addContext("\u4e2d.example", context("agent2")));
+      try {
+        const certificates: unknown[] = [];
+        for (const sent of ["\u4e2d.example", "-.example", "?.example"]) {
+          certificates.push((await handshake(server, port, sent)).certificate);
+        }
+        assert.deepStrictEqual(certificates, ["agent1", "agent1", "agent1"]);
+      } finally {
+        listener.close();
+      }
+    });
+  }
 });
 
 describe("alpnProtocol of a TLS socket has one code unit for each byte of the protocol", () => {

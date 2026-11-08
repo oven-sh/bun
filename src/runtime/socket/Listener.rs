@@ -735,7 +735,7 @@ impl Listener {
     pub(crate) fn add_server_name<'a>(
         cx: &mut JsScope<'a>,
         this: &Self,
-        server_name_bytes: &[u8],
+        server_name: &BunString,
         tls: JsLocal<'a>,
     ) -> JsResult<()> {
         let global = cx.global();
@@ -745,16 +745,14 @@ impl Listener {
                 global.throw_invalid_arguments(format_args!("addServerName requires SSL support"))
             );
         }
-        if server_name_bytes.is_empty() {
+        if server_name.is_empty() {
             return Err(
                 global.throw_invalid_arguments(format_args!("hostname pattern cannot be empty"))
             );
         }
-        // No ClientHello can carry a NUL, so this pattern matches nothing, as in Node.
-        if bun_core::strings::contains_char(server_name_bytes, 0) {
+        let Some(server_name_z) = server_name_key(server_name) else {
             return Ok(());
-        }
-        let server_name_z = bun_core::ZBox::from_bytes(server_name_bytes);
+        };
         let server_name = server_name_z.as_zstr().as_cstr();
 
         let ListenerType::Uws(ls) = this.listener.get() else {
@@ -1587,6 +1585,50 @@ fn connect_finish<const IS_SSL: bool>(
         return Err(err);
     }
     Ok(promise_value)
+}
+
+/// The SNI tree key of an `addContext()` name. Node tests the name against the one-byte servername, so a code unit is a byte: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1576-L1580
+fn server_name_key(name: &BunString) -> Option<bun_core::ZBox> {
+    if !name.is_utf16() {
+        let bytes = name.latin1();
+        if bun_core::strings::contains_char(bytes, 0) {
+            return None;
+        }
+        return Some(bun_core::ZBox::from_bytes(bytes));
+    }
+    let units = name.utf16();
+    let mut key = Vec::with_capacity(units.len() + 1);
+    for &unit in units {
+        match u8::try_from(unit) {
+            Ok(0) | Err(_) => return None,
+            Ok(byte) => key.push(byte),
+        }
+    }
+    Some(bun_core::ZBox::from_vec(key))
+}
+
+unsafe extern "C" {
+    // packages/bun-usockets/src/crypto/sni_tree.cpp
+    fn sni_add(
+        tree: *mut c_void,
+        hostname: *const core::ffi::c_char,
+        user: *mut c_void,
+    ) -> *mut c_void;
+}
+
+/// `selectServerName` (NodeTLS.cpp) fills its `sni_new()` tree through this, so it keys a name as [`Listener::add_server_name`] does.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__addServerNameToSNITree(
+    tree: *mut c_void,
+    name: &BunString,
+    user: *mut c_void,
+) -> bool {
+    let Some(key) = server_name_key(name) else {
+        return false;
+    };
+    // SAFETY: the caller's `tree` is live, and it copies the NUL-terminated key.
+    unsafe { sni_add(tree, key.as_ptr(), user) };
+    true
 }
 
 /// `tls.Server#setSecureContext()` while listening. Accepted sockets keep their context.

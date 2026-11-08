@@ -1006,7 +1006,7 @@ describe("Bun.serve SNI", () => {
   });
 });
 
-// Node v26.3.0 compares addContext() names case-sensitively; v26.4.0 and later compile them into /.../i.
+// Node v26.3.0 compares addContext() names case-sensitively; v26.3.1 and later compile them into /.../i.
 describe("SNI matching is case-insensitive", () => {
   function servedCN(port: number, servername: string) {
     const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
@@ -1047,6 +1047,30 @@ describe("SNI matching is case-insensitive", () => {
         wildcardUpper: "agent3",
         lastOfTwoSpellings: "agent3",
         noMatch: "agent2",
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  // tls.connect() sends "\u00e9" as the bytes c3 a9. A name matches them as one byte for each code unit: "\u00c3\u00a9".
+  it("tls.Server addContext folds the ASCII letters of a name that has other bytes", async () => {
+    const server = tls.createServer({ key: agent2Key, cert: agent2Cert }, s => s.end());
+    server.addContext("\u00c3\u00a9.Example.com", SNIContexts["a.example.com"]); // agent1
+    server.addContext("\u00e3\u00a9.lower.com", SNIContexts["asterisk.test.com"]); // agent3
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, listening.resolve);
+      await listening.promise;
+      const port = (server.address() as AddressInfo).port;
+      expect({
+        upper: await servedCN(port, "\u00e9.EXAMPLE.COM"),
+        // Bun only: /.../i of Node also folds the letters above 0x7F, so Node serves agent3.
+        lowerAboveASCII: await servedCN(port, "\u00e9.lower.com"),
+      }).toEqual({
+        upper: "agent1",
+        lowerAboveASCII: "agent2",
       });
     } finally {
       server.close();

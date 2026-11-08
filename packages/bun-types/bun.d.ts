@@ -6363,7 +6363,8 @@ declare module "bun" {
    * except that `Bun.sleep` can wait for longer than `setTimeout`, which has a
    * limit of 2,147,483,647 milliseconds (about 24.8 days). The limit of
    * `Bun.sleep` is 2,147,483,647 seconds (about 68 years). A longer wait, such
-   * as `Infinity`, ends after that time.
+   * as `Infinity`, ends after that time. With the fake timers of `bun:test`, a
+   * longer wait never ends.
    *
    * `Bun.sleep` and the imported `sleep` function are interchangeable.
    */

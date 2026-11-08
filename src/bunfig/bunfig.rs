@@ -138,8 +138,7 @@ fn num_to_u32(n: f64) -> u32 {
     n as u32
 }
 
-/// The table that `key` made, if `key` is a part of a dotted key or of a table header. The TOML
-/// parser gives such a table the position of its key.
+/// The table of a dotted key or of a header: the TOML parser puts it at the position of its key.
 fn dotted_table(key: &Expr, value: &Expr) -> Option<bun_ast::StoreRef<E::Object>> {
     value.data.e_object().filter(|_| value.loc == key.loc)
 }
@@ -384,12 +383,10 @@ impl<'a> Parser<'a, '_> {
     fn warn_ignored_define(&mut self, table: &Expr, key: &Expr, value: &Expr) {
         use bun_core::fmt::escape_control_chars;
         let name = key.as_string(self.bump).unwrap_or(b"");
-        // No warning has an excerpt: the line can hold a secret that the redactor does not
-        // recognize.
+        // No excerpt in these warnings: the line can hold a secret the redactor does not know.
         let source = self.source;
 
-        // `process.env.NODE_ENV = "..."` without quotes is the table `process`, and each key
-        // below that table is a define that the file asks for.
+        // An unquoted `a.b.c = ".."` is the table `a`, and each key below it is a define.
         let mut path = name.to_vec();
         let mut tables = Vec::from_iter(dotted_table(key, value).map(|it| (it, 0, path.len())));
         let mut has_dotted = false;
@@ -425,8 +422,7 @@ impl<'a> Parser<'a, '_> {
             return;
         }
 
-        // A `[define]` header takes every key up to the next header. Of the lines that can name
-        // the table, only a header starts with `[`.
+        // Only a header line starts with `[`, and a header takes every key up to the next one.
         let below_header = usize::try_from(table.loc.start)
             .ok()
             .and_then(|at| source.contents.get(..at))

@@ -1,0 +1,18 @@
+status: 0
+oracle: none
+---
+byref(), resize(), then a call: 0x2222222222222222
+byref(), the view released, then a call: argument 1: ValueError: operation forbidden on released memoryview object
+resize() while a later argument is converted: 0x2222222222222222
+the same with the array itself: 0x2222222222222222
+the view released while a later argument is converted: argument 1: ValueError: operation forbidden on released memoryview object
+the last item: 0x2222222222222222
+just behind the end: let through
+513 argument 1: ValueError: byref() with an offset beyond the memory of the object
+1099511627776 argument 1: ValueError: byref() with an offset beyond the memory of the object
+-1 argument 1: ValueError: byref() with an offset beyond the memory of the object
+-1099511627776 argument 1: ValueError: byref() with an offset beyond the memory of the object
+from one item into the next, which is the same memory: 0x3333333333333333
+where nothing is known to own the memory nothing is said: 0x4444444444444444
+<cparam 'P'  c_ulong_Array_64
+an instance without memory: True

@@ -1,6 +1,20 @@
 status: 0
 oracle: none
 ---
+====== WhileTheArgumentsAreConverted
+--- a bytearray, the view released
+  0 c_void_p ArgumentError: argument 1: ValueError: operation forbidden on released memoryview object
+--- an mmap, the view released and the mmap closed
+  0 c_void_p ArgumentError: argument 1: ValueError: operation forbidden on released memoryview object
+--- memory of WebAssembly that grows
+  0 c_void_p ArgumentError: argument 1: BufferError: the ArrayBuffer was detached or shrunk
+--- a typed array, the view released: that is pinned, and stays
+  0 c_void_p dict True
+  '0x5151' | None | '0x1'
+--- nothing goes
+  0 c_void_p dict True
+  '0x5151' | None | '0x1'
+====== WhileTheResultIsMade
 --- a bytearray, the view released
   0 c_void_p dict True
   ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there

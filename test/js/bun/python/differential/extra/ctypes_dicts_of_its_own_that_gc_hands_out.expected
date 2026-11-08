@@ -1,0 +1,16 @@
+status: 0
+oracle: none
+---
+dicts that have the key: 1
+an object                                Item_Array_3 3 True 3
+an int                                   Item_Array_3 3 True 3
+None                                     Item_Array_3 3 True 3
+a str                                    Item_Array_3 3 True 3
+a weak reference to something else       Item_Array_3 3 True 3
+a weak reference to a class              Item_Array_3 3 True 3
+a weak reference to another array type   Item_Array_3 3 True 3
+a weak reference to a structure          Item_Array_3 3 True 3
+the type itself                          Item_Array_3 3 True 3
+and it is remembered again: True
+who refers to the object of three items: ['dict']
+lists of things that are no objects of Python: 0

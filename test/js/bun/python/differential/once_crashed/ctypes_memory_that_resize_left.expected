@@ -5,14 +5,14 @@ oracle: none
 None 1094795585 ValueError: access through a pointer beyond the memory of the object it points into b'\x00\x00\x00\x00' 0
 None 1094795585 ValueError: access through a pointer beyond the memory of the object it points into b'\x00\x00\x00\x00' 0
 0 ValueError: access through a pointer beyond the memory of the object it points into
---- an argument from before, 64
-b'\x00' 0
+--- an argument, resized while a later one is converted, 64
+b'A' 0
 --- a pointer from before, 4096
 None 1094795585 ValueError: access through a pointer beyond the memory of the object it points into b'\x00\x00\x00\x00' 0
 None 1094795585 ValueError: access through a pointer beyond the memory of the object it points into b'\x00\x00\x00\x00' 0
 0 ValueError: access through a pointer beyond the memory of the object it points into
---- an argument from before, 4096
-b'\x00' 0
+--- an argument, resized while a later one is converted, 4096
+b'A' 0
 --- what is kept is not for the program to see
 ['PyCArrayType']
 --- step by step

@@ -1,5 +1,5 @@
-# resize() gives an instance other memory if what it has is too short. There may be addresses of the old memory about: in pointers, which keep the instance alive
-# and not its memory, and in the arguments of a call that is being put together. (CPython writes to memory that it has freed.)
+# resize() gives an instance other memory if what it has is too short. There may be addresses of the old memory about, in pointers. (CPython writes to memory that it has freed.)
+# An argument of a call that is being put together is no address yet: where the memory of the array is, is looked at behind the conversion of the last argument.
 import ctypes, gc
 
 
@@ -22,7 +22,7 @@ for size in (64, 4096):
         print(attempt(lambda: pointer.__setitem__(0, 0x41414141)), attempt(lambda: pointer[0]), attempt(lambda: pointer[size // 4]), array[0:4], sum(1 for other in others if b'A' in bytes(other)))
     print(attempt(lambda: ctypes.cast(array, ctypes.POINTER(ctypes.c_int))[size * 1024 - 1]), attempt(lambda: ctypes.cast(array, ctypes.POINTER(ctypes.c_int))[size * 1024]))
 
-    print('--- an argument from before,', size)
+    print('--- an argument, resized while a later one is converted,', size)
     array = (ctypes.c_char * size)()
     others = []
     class Resizes:

@@ -1,0 +1,17 @@
+status: 0
+oracle: none
+---
+fields, _objects emptied: kept 42
+the structure stored into a field: kept 42
+50 items: True
+through a pointer: whole whole
+a callback by way of a c_void_p: 42
+an array of callbacks: [1, 2, 3]
+an array of JS: [1, 2, 3]
+in a field: [6]
+a small int over an object: 7
+8 bytes in front of the memory: the memory does not hold a reference to an object
+16 bytes in front of the memory: the memory does not hold a reference to an object
+24 bytes in front of the memory: the memory does not hold a reference to an object
+32 bytes in front of the memory: the memory does not hold a reference to an object
+nothing stored: PyObject is NULL

@@ -1,0 +1,24 @@
+status: 0
+oracle: none
+---
+an array of pointers, resized: the first                     0x1111111111111111; the one behind it: ValueError
+the last                                                     0x2222222222222222; the one behind it: ValueError
+a pointer, resized                                           0x1111111111111111; the one behind it: ValueError
+a part from before goes on with the memory from before       0x1111111111111111; the one behind it: ValueError
+and the array does not see it: False
+offsets: 1 10 18 26 3 29
+a packed structure: a pointer at 1                           0x1111111111111111; the one behind it: ValueError
+one at 18                                                    0x2222222222222222; the one behind it: ValueError
+a c_char_p at 10: 500 b'A'
+the structure stored into a field at 3                       0x1111111111111111; the one behind it: ValueError
+its other pointer                                            0x2222222222222222; the one behind it: ValueError
+stored into an item                                          0x2222222222222222; the one behind it: ValueError
+the array of them stored into a field                        0x1111111111111111; the one behind it: ValueError
+None stored: False
+from a multiple of eight to a place that is none             0x1111111111111111; the one behind it: ValueError
+and back                                                     0x1111111111111111; the one behind it: ValueError
+an array of 40 pointers sorted by qsort(): True
+memmove() over a pointer: 0x4444444444444444
+memset() over a pointer: False
+the pointer was overwritten by C: the bytearray is still exported
+stored to again: the bytearray can be emptied

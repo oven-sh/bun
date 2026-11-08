@@ -1,0 +1,12 @@
+status: 0
+oracle: none
+---
+stored and read by way of two typed arrays of one ArrayBuffer  0x1111111111111111; the one behind it: ValueError
+read by way of the ArrayBuffer itself                          0x1111111111111111; the one behind it: ValueError
+a typed array that begins further in                           0x2222222222222222; the one behind it: ValueError
+stored by way of a DataView                                    0x3333333333333333; the one behind it: ValueError
+a structure that has its pointer from its base, stored into a field 0x1111111111111111; the one behind it: ValueError
+and into an item                                               0x1111111111111111; the one behind it: ValueError
+a field of a class derived from c_char_p                       500 of b'A'
+the structure stored into a field                              500 of b'A'
+and into an item                                               500 of b'A'

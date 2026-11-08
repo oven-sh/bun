@@ -3505,6 +3505,40 @@ impl<'a> Transfer<'_, 'a, '_> {
                 let found = find_below(found, way, true)?;
                 is_printed_from(found, index as u32, &syntax.file[chain.operand]).then_some(found)
             };
+            // Whether the build printed each expression that the value of `expr` can be.
+            let is_whole = |expr: ExprId| {
+                let (mut at, mut others) = (Some(expr), Vec::new());
+                while let Some(expr) = at.or_else(|| others.pop()) {
+                    at = match syntax.file[expr].kind {
+                        ExprKind::Cond { branches, .. } => {
+                            let Branches { yes, no } = syntax.file.branches(branches);
+                            others.push(no);
+                            Some(yes)
+                        }
+                        ExprKind::Binary {
+                            op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                            left,
+                            right,
+                        } => {
+                            others.push(right);
+                            Some(left)
+                        }
+                        ExprKind::Binary {
+                            op: BinOp::Comma,
+                            right,
+                            ..
+                        } => Some(right),
+                        _ => match syntax.file.type_assertion_operand(expr) {
+                            Some(operand) => Some(operand),
+                            None if printed(index as u32, &syntax.file[expr]).next().is_some() => {
+                                None
+                            }
+                            None => return false,
+                        },
+                    };
+                }
+                true
+            };
             let file = syntax.file;
             let variables = file
                 .var_decls
@@ -3585,11 +3619,8 @@ impl<'a> Transfer<'_, 'a, '_> {
                             .filter(|&literal| is_literal(literal))
                     })
                 });
-                // An operand that the build removed is not missed.
-                let is_missed = found.is_none()
-                    && printed(index as u32, &syntax.file[chain.operand])
-                        .next()
-                        .is_some();
+                // A cast is for each value of its operand: it is not missed if the build removed one of them.
+                let is_missed = found.is_none() && is_whole(chain.operand);
                 let found = match is_missed {
                     true => find_via_owner(&chain),
                     false => found,

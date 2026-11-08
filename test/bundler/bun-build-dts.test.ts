@@ -139,6 +139,22 @@ console.log(pick(3), keep(4));
     expect(readFileSync(join(String(dir), "out/index.js"), "utf8")).toContain(`function pick(index = ${printed}) {`);
   });
 
+  test("a cast of a condition that the build folds is left out", async () => {
+    using dir = tempDir("build-dts-folded-cast", {
+      ...project,
+      "src/index.ts": `declare const process: { env: Record<string, string | undefined> };
+export function pick(p: unknown = (process.env.NODE_ENV === "production" ? "a" : 1) as string): unknown {
+  return p;
+}
+`,
+    });
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8").match(/^function .*$/gm)).toEqual([
+      "function pick(p: unknown = 1): unknown {",
+    ]);
+  });
+
   test("a statement that never runs is left out", async () => {
     using dir = tempDir("build-dts-dead", {
       ...project,

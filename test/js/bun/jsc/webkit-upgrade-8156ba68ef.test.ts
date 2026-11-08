@@ -8,8 +8,9 @@ import vm from "node:vm";
 // difference between the old and the new JavaScriptCore. The others pin what had to stay the same in code that the
 // sync rewrote: the microtask dispatcher, the cache of proxy traps, a store through a proxy onto a property with a
 // native setter, Object.freeze() and Object.seal() of arrays, the string cache of JSON.parse, calls with a spread
-// argument, what `bun build --bytecode` makes of such a call, the fast paths of JSON.stringify, Float16 numbers in
-// compiled code, and the hash tables behind sparse arrays, maps and sets.
+// argument, what `bun build --bytecode` makes of such a call, join() of a typed array that another thread writes,
+// the fast paths of JSON.stringify, Float16 numbers in compiled code, and the hash tables behind sparse arrays, maps
+// and sets.
 // The sources that depend on how JavaScriptCore compiles run in a process of their own, so that Bun's transpiler and
 // the other tests leave them alone.
 
@@ -1205,6 +1206,42 @@ describe.concurrent("WebKit 8156ba68ef upgrade", () => {
     expect(await Bun.file(path.join(String(dir), "out", "entry.js.jsc")).exists()).toBe(true);
     expect(await run(path.join("out", "entry.js"))).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
   });
+
+  // Upstream's join() of an integer typed array reads every element twice and stops the process when the second
+  // read differs (d336a98ee3). In Bun the thread pool fills the buffer of a pending fs.read() while JavaScript runs,
+  // so Bun's engine keeps to the path that reads every element once.
+  test("join() of a typed array that a pending fs.read() fills does not stop the process", async () => {
+    using dir = tempDir("webkit-upgrade-join", {
+      "join.js": `
+        const fs = require("fs");
+        const size = 4 << 20;
+        fs.writeFileSync("ff.bin", Buffer.alloc(size, 0xff));
+        const fd = fs.openSync("ff.bin", "r");
+        const count = size / 4;
+        let inRange = true;
+        for (let round = 0; round < 3; round++) {
+          const array = new Uint32Array(count);
+          fs.read(fd, array, 0, size, 0, () => {});
+          const length = array.join().length;
+          inRange &&= length >= 2 * count - 1 && length <= 11 * count - 1;
+        }
+        console.log(inRange ? "every element is 0 or 4294967295" : "a length that no mix of the two gives");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "join.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "every element is 0 or 4294967295\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 30_000);
 
   // Options::useSharedArrayBuffer is Options::alwaysUseSharedArrayBuffer now (9e3f76240a), so the name of the
   // environment variable changed with it.

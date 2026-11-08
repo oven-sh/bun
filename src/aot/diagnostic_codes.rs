@@ -65,6 +65,9 @@ diagnostic_codes! {
         TryRequireInstead = 100111, Note, "Try require({0}) instead";
         MacroInExportStar = 100113, Error, "cannot use macro in export statement";
         MacroInExportFrom = 100114, Error, "export from cannot be used with \"type\": \"macro\"";
+        BundleNamespaceImport = 100115, Error, "\"bun:bundle\" cannot be imported as a namespace";
+        BundleUseNamedImport = 100116, Note, "\"bun:bundle\" does not exist at runtime. Use a named import: import { feature } from \"bun:bundle\"";
+        BundleUseTypeImport = 100117, Note, "To use only its types, write: import type * as {0} from \"bun:bundle\"";
     }
     Resolve 100150..=100199 {
         ModuleNotFound = 100150, Error, "Could not resolve: \"{0}\"";

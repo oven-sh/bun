@@ -281,6 +281,10 @@ pub(super) fn fold_error_diagnostic(
         FoldErrorKind::UnknownBundleExport(name) => {
             Diagnostic::new(Code::UnknownBundleExport, span, &[atoms.bytes(name)])
         }
+        FoldErrorKind::BundleNamespaceImport => Diagnostic {
+            related: bundle_namespace_notes(hir, atoms, error.node),
+            ..Diagnostic::new(Code::BundleNamespaceImport, span, &[])
+        },
         FoldErrorKind::ImportStatementInCommonJs(evidence) => {
             let specifier = quoted_import_specifier(hir, atoms, error.node);
             Diagnostic {
@@ -301,6 +305,23 @@ fn quoted_import_specifier(hir: &File<'_>, atoms: &Interner<'_>, node: NodeData)
         return QuotedFormatter { text }.to_string().into_bytes();
     }
     b"\"..\"".to_vec()
+}
+
+fn bundle_namespace_notes(hir: &File<'_>, atoms: &Interner<'_>, node: NodeData) -> Vec<Diagnostic> {
+    let mut notes = vec![Diagnostic::new(Code::BundleUseNamedImport, None, &[])];
+    if !hir.is_js
+        && let NodeData::Part(_, statement) = node
+        && let NodeData::Stmt(statement) = hir.data(statement)
+        && let StmtKind::Import(import) = hir[statement].kind
+    {
+        let namespace = atoms.bytes(hir[import].namespace);
+        notes.push(Diagnostic::new(
+            Code::BundleUseTypeImport,
+            None,
+            &[namespace],
+        ));
+    }
+    notes
 }
 
 fn commonjs_notes(

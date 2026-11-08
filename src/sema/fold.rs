@@ -444,6 +444,7 @@ pub enum FoldErrorKind {
     FeatureOutsideCondition,
     FeatureImportedTwice,
     UnknownBundleExport(Atom),
+    BundleNamespaceImport,
     ImportStatementInCommonJs(CommonJsEvidence),
     MacroInExportStar,
     MacroInExportFrom,

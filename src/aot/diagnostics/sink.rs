@@ -186,6 +186,7 @@ fn is_found_at_load(diagnostic: &Diagnostic) -> bool {
                 | Code::MacroInExportStar
                 | Code::MacroInExportFrom
                 | Code::UnknownBundleExport
+                | Code::BundleNamespaceImport
                 | Code::FeatureArgumentCount
                 | Code::FeatureArgumentNotString
                 | Code::FeatureFlagNotAscii

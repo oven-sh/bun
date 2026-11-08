@@ -11,7 +11,7 @@ fn has_macro_type(hir: &File<'_>, attributes: ExprId) -> bool {
     hir.import_attribute(attributes, known::r#type) == Some(known::r#macro)
 }
 
-pub(super) fn is_macro_import(hir: &File<'_>, import: ImportId) -> bool {
+pub(crate) fn is_macro_import(hir: &File<'_>, import: ImportId) -> bool {
     hir[import].spec.is_some() && has_macro_type(hir, hir[import].attributes)
 }
 

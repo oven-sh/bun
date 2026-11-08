@@ -2,9 +2,10 @@ use super::{FoldError, FoldErrorKind};
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{Bound, ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, SymbolId};
 use crate::hir::{
-    ClassId, ExprId, ExprKind, File, FnId, ImportSpecId, MemberId, NodeData, PatId, StmtId,
+    ClassId, ExprId, ExprKind, File, FnId, ImportId, MemberId, NodeData, Part, PatId, StmtId,
     StmtKind,
 };
+use crate::import_sites::is_macro_import;
 
 pub(super) fn find_feature_import(
     hir: &File<'_>,
@@ -12,37 +13,44 @@ pub(super) fn find_feature_import(
     errors: &mut Vec<FoldError>,
 ) -> SymbolId {
     let mut feature_specifier = None;
-    for specifier in evaluated_bundle_specifiers(hir, bound) {
-        let imported = hir[specifier].imported;
-        let error = if imported == known::feature {
-            let first = *feature_specifier.get_or_insert(specifier);
-            (first != specifier).then_some(FoldErrorKind::FeatureImportedTwice)
-        } else {
-            Some(FoldErrorKind::UnknownBundleExport(imported))
-        };
-        if let Some(kind) = error {
-            let node = NodeData::ImportSpec(specifier);
-            errors.push(FoldError { kind, node });
+    for id in (0..hir.imports.len() as u32).map(ImportId) {
+        let import = &hir[id];
+        if import.spec != known::bun_bundle || import.type_only {
+            continue;
+        }
+        if !is_macro_import(hir, id) {
+            let statement = hir.node(import.stmt);
+            if import.default.is_some() {
+                let kind = FoldErrorKind::UnknownBundleExport(known::default);
+                let node = NodeData::Part(Part::Name, statement);
+                errors.push(FoldError { kind, node });
+            }
+            if import.namespace.is_some() {
+                let kind = FoldErrorKind::BundleNamespaceImport;
+                let node = NodeData::Part(Part::BindingsName, statement);
+                errors.push(FoldError { kind, node });
+            }
+        }
+        if bound.parent_of_stmt(import.stmt) != Parent::File {
+            continue;
+        }
+        for specifier in import.named.iter().filter(|&it| !hir[it].type_only) {
+            let imported = hir[specifier].imported;
+            let error = if imported == known::feature {
+                let first = *feature_specifier.get_or_insert(specifier);
+                (first != specifier).then_some(FoldErrorKind::FeatureImportedTwice)
+            } else {
+                Some(FoldErrorKind::UnknownBundleExport(imported))
+            };
+            if let Some(kind) = error {
+                let node = NodeData::ImportSpec(specifier);
+                errors.push(FoldError { kind, node });
+            }
         }
     }
     feature_specifier.map_or(SymbolId::NONE, |specifier| {
         bound.declared_symbol(Decl::ImportSpec(specifier))
     })
-}
-
-fn evaluated_bundle_specifiers(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-) -> impl Iterator<Item = ImportSpecId> {
-    hir.imports
-        .iter()
-        .filter(move |import| {
-            import.spec == known::bun_bundle
-                && !import.type_only
-                && bound.parent_of_stmt(import.stmt) == Parent::File
-        })
-        .flat_map(|import| import.named.iter())
-        .filter(move |&specifier| !hir[specifier].type_only)
 }
 
 pub(super) fn find_feature_flag(

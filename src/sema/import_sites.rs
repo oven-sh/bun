@@ -48,7 +48,7 @@ pub use parameters::{
     find_values_passed_for, is_exported,
 };
 pub(crate) use scan::collect_import_sites;
-pub(crate) use statements::is_runtime_import;
+pub(crate) use statements::{is_macro_import, is_runtime_import};
 pub use written_arms::{find_names_read_by_transpiler, find_written_arms};
 
 use crate::atom::{Atom, Interner};

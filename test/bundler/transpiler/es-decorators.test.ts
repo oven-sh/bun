@@ -2056,12 +2056,22 @@ describe("ES Decorators", () => {
             static accessor #s = class {};
             names() { return [this.#p.name, D.#s.name]; }
           }
-          console.log(JSON.stringify([...new C().names(), ...new D().names()]));
+          // The field behind an accessor is also where the work of the decorated members around it is put.
+          class E {
+            @dec first = 1;
+            accessor #p = () => {};
+            accessor pub = #q in this;
+            accessor #q = function () {};
+            @dec #low = 2;
+            accessor #r = class {};
+            names() { return [this.#p.name, this.#q.name, this.#r.name, this.pub]; }
+          }
+          console.log(JSON.stringify([...new C().names(), ...new D().names(), ...new E().names()]));
         `,
       });
       const plain = await runIn(String(dir), ["names.js"]);
       expect(filterStderr(plain.stderr)).toBe("");
-      expect(plain.stdout).toBe('["#p","#s","#q","#p","#s"]\n');
+      expect(plain.stdout).toBe('["#p","#s","#q","#p","#s","#p","#q","#r",true]\n');
       expect(plain.exitCode).toBe(0);
 
       // Bun does not parse a "--target=bun" bundle again when it runs it.
@@ -2069,7 +2079,7 @@ describe("ES Decorators", () => {
       expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
       const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
       expect(filterStderr(stderr)).toBe("");
-      expect(stdout).toBe('["#p","#s","#q","#p","#s"]\n');
+      expect(stdout).toBe('["#p","#s","#q","#p","#s","#p","#q","#r",true]\n');
       expect(exitCode).toBe(0);
     });
 

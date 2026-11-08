@@ -1,0 +1,14 @@
+# the looks at a loop have promised what a relation leaves of its operands in the block that its edge alone enters, and the walk keeps that only where the edge enters alone
+# so a block of a loop that ends in such a branch is walked once, though a block below it leans on the proof of a guess: walked twice, `k++` would come round as int[1, 33] where int[0, 32] was previewed, and the walk would fail
+# the function is handed to sink. f1 = fill
+# -- source: block-whose-branch-bounds-what-goes-round-a-loop-is-walked-once.ts
+# declare function sink(...values: unknown[]): void;
+# class Item { seen: boolean; v: number; constructor(v: number) { this.seen = false; this.v = v; } }
+# function fill(items: Item[]) { let k = 0; let last = 0; while (true) { const n = items[k]; n.seen = true; sink(); if (n.v & 1) { if (k < 32) { k++; last = n.v; continue; } } break; } return k + last; }
+# sink(fill, new Item(1));
+# -- end of source
+# RUN: walk f1 mechanisms=all-ParameterGuards
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: PutSlot {{*}}key="seen" {{*}}level=Expected
+# CHECK: int[1, 32] {{*}} = Increment

@@ -100,6 +100,36 @@ describe("self.postMessage transfer list", () => {
     expect(results[0]).toEqual(["TypeError", "TypeError", "TypeError", "TypeError"]);
   });
 
+  // Serializing the message runs the getter, which closes a port that is in the
+  // transfer list. The transfer then fails as a whole: DataCloneError, with the
+  // buffer listed ahead of the port still intact (it used to be detached before
+  // the port was rejected).
+  test("postMessage with a listed port closed during serialization detaches nothing", async () => {
+    const results = await roundtrip(
+      `
+        const { port1 } = new MessageChannel();
+        const buf = new ArrayBuffer(16);
+        const message = {
+          buf,
+          get closeIt() {
+            port1.close();
+            return 1;
+          },
+          port1,
+        };
+        let name = "no throw";
+        try {
+          self.postMessage(message, [buf, port1]);
+        } catch (err) {
+          name = err.name;
+        }
+        self.postMessage({ name, byteLength: buf.byteLength });
+      `,
+      1,
+    );
+    expect(results[0]).toEqual({ name: "DataCloneError", byteLength: 16 });
+  });
+
   test("postMessage(msg, [MessagePort]) transfers the port", async () => {
     // Don't reuse roundtrip() here: it terminates the worker as soon as the
     // first message lands, which can race the port-channel delivery. Keep the
@@ -134,6 +164,39 @@ describe("self.postMessage transfer list", () => {
     } finally {
       worker.terminate();
       URL.revokeObjectURL(url);
+    }
+  });
+});
+
+// Parent-side Worker#postMessage: same rule as above, observed directly on the caller's
+// buffer. The message is serialized (and the transfer list applied) whether or not the
+// worker has started, so the worker body can be empty.
+describe("Worker#postMessage transfer list", () => {
+  test("a listed port closed during serialization fails the transfer without detaching the buffer", () => {
+    const url = URL.createObjectURL(new Blob([""]));
+    const worker = new Worker(url);
+    const { port1, port2 } = new MessageChannel();
+    try {
+      const buf = new ArrayBuffer(16);
+      const message = {
+        buf,
+        get closeIt() {
+          port1.close();
+          return 1;
+        },
+        port1,
+      };
+      let name = "no throw";
+      try {
+        worker.postMessage(message, [buf, port1]);
+      } catch (err) {
+        name = (err as Error).name;
+      }
+      expect({ name, byteLength: buf.byteLength }).toEqual({ name: "DataCloneError", byteLength: 16 });
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(url);
+      port2.close();
     }
   });
 });

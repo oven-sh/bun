@@ -1,0 +1,6 @@
+# the tag says English, the options say French
+# -- source: options-of-a-locale-object-may-name-another-language.ts
+# new Intl.Locale("en", { language: "fr" });
+# -- end of source
+# RUN: locales
+# CHECK: locale unknown IntlLocale

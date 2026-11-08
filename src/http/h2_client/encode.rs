@@ -326,23 +326,21 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
         }
         HTTPRequestBody::Stream(body) => {
             let ended = body.ended;
-            let Some(sb) = body.buffer_mut() else {
+            let Some(sb) = body.buffer_ref() else {
                 return;
             };
-            let buffer = sb.acquire();
+            let mut locked = sb.lock();
+            let buffer = &mut locked.buffer;
             let data_ptr = buffer.list.as_ptr();
             let data_len = buffer.size();
             let cursor = buffer.cursor;
             if data_len == 0 && !ended {
-                sb.release();
+                drop(locked);
                 return;
             }
             // SAFETY: data_ptr[cursor..cursor+data_len] is the readable slice.
             let data = unsafe { bun_core::ffi::slice(data_ptr.add(cursor), data_len) };
             let sent = write_data_windowed(session, stream, data, ended, cap);
-            // We still hold the lock from `acquire()` above; `sb` is the sole
-            // live borrow, so reborrowing `&mut sb.buffer` is a child access.
-            let buffer = &mut sb.buffer;
             buffer.cursor += sent;
             let drained = buffer.is_empty();
             if drained {
@@ -352,9 +350,9 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
                 stream.sent_end_stream();
                 client.state.request_stage = HTTPStage::Done;
             } else if drained && data_len > 0 {
-                sb.report_drain();
+                locked.report_drain();
             }
-            sb.release();
+            drop(locked);
             if stream.local_closed() {
                 body.detach();
             }
@@ -363,12 +361,19 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
     }
 }
 
-pub(crate) fn drain_send_bodies(session: &mut ClientSession) {
+/// True if it stopped at `WRITE_BUFFER_HIGH_WATER` with body bytes still sendable.
+pub(crate) fn drain_send_bodies(session: &mut ClientSession) -> bool {
     // Round-robin: each pass gives every uploader at most one
     // remote_max_frame_size slice before the next stream gets a turn, so
     // the lowest-index stream can't monopolise conn_send_window.
     let slice: usize = session.remote_max_frame_size as usize;
-    while session.conn_send_window > 0 && session.write_buffer.size() < WRITE_BUFFER_HIGH_WATER {
+    loop {
+        if session.conn_send_window <= 0 {
+            return false;
+        }
+        if session.write_buffer.size() >= WRITE_BUFFER_HIGH_WATER {
+            return true;
+        }
         let mut progressed = false;
         // Iterating `session.streams.values()` while passing `session` mutably
         // to `drain_send_body` would conflict; iterate by index
@@ -388,7 +393,7 @@ pub(crate) fn drain_send_bodies(session: &mut ClientSession) {
             }
         }
         if !progressed {
-            break;
+            return false;
         }
     }
 }

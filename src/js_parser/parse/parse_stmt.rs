@@ -223,6 +223,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     test,
                     yes,
                     no: None,
+                    else_loc: bun_ast::Loc::EMPTY,
                 },
                 current_loc,
             );
@@ -249,6 +250,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Ok(root_if.unwrap());
             }
 
+            current_if.unwrap().else_loc = p.lexer.loc();
             p.lexer.next()?;
 
             // Handle final else
@@ -350,6 +352,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `value`/`stmt_opts` are reinitialized every iteration before any read, so
                 // declare per-iteration.
                 let mut value: Option<js_ast::Expr> = None;
+                let clause_loc = p.lexer.loc();
                 if p.lexer.token == T::TDefault {
                     if found_default {
                         p.log().add_range_error(
@@ -386,7 +389,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 cases.push(js_ast::Case {
                     value,
                     body: bun_ast::StoreSlice::from_bump(body),
-                    loc: bun_ast::Loc::EMPTY,
+                    loc: clause_loc,
                 });
             }
             p.lexer.expect(T::TCloseBrace)?;
@@ -465,12 +468,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let finally_loc = p.lexer.loc();
             let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, finally_loc)?;
             p.lexer.expect(T::TFinally)?;
+            let finally_body_loc = p.lexer.loc();
             p.lexer.expect(T::TOpenBrace)?;
             let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
             p.lexer.next()?;
             finally = Some(js_ast::Finally {
                 loc: finally_loc,
                 stmts: bun_ast::StoreSlice::from_bump(stmts),
+                body_loc: finally_body_loc,
             });
             p.pop_scope();
         }
@@ -912,7 +917,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     p.lexer.expect(T::TFunction)?;
                     opts.is_export = true;
-                    return p.parse_fn_stmt(loc, opts, Some(async_range));
+                    return p.parse_fn_stmt(async_range.loc, opts, Some(async_range));
                 }
 
                 if Self::IS_TYPESCRIPT_ENABLED {
@@ -923,7 +928,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "export type foo = ..."
                                 let type_range = p.lexer.range();
                                 p.lexer.next()?;
-                                if p.lexer.has_newline_before {
+                                // "export type\n{ foo }" and "export type\n* from 'bar'" are fine
+                                if p.lexer.has_newline_before
+                                    && p.lexer.token != T::TOpenBrace
+                                    && p.lexer.token != T::TAsterisk
+                                {
                                     p.log().add_error_fmt(
                                         Some(p.source),
                                         type_range.end(),
@@ -993,7 +1002,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             lexical_decl: LexicalDecl::AllowAll,
                             ..Default::default()
                         };
-                        let stmt = p.parse_fn_stmt(loc, &mut stmt_opts, Some(async_range))?;
+                        let stmt =
+                            p.parse_fn_stmt(async_range.loc, &mut stmt_opts, Some(async_range))?;
                         if matches!(stmt.data, js_ast::StmtData::STypeScript(_)) {
                             // This was just a type annotation
                             return Ok(stmt);
@@ -1024,7 +1034,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let default_name = p.create_default_name(loc);
 
-                    let mut expr = p.parse_async_prefix_expr(async_range, Level::Comma)?;
+                    let mut expr =
+                        p.parse_async_prefix_expr(async_range, Level::Comma, EFlags::None)?;
                     p.parse_suffix(&mut expr, Level::Comma, None, EFlags::None)?;
                     p.lexer.expect_or_insert_semicolon()?;
                     let value = js_ast::StmtOrExpr::Expr(expr);
@@ -1123,7 +1134,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         is_name_optional: true,
                         ..Default::default()
                     };
-                    let stmt: Stmt = p.parse_class_stmt(loc, &mut stmt_opts)?;
+                    let stmt: Stmt = p.parse_class_stmt(p.lexer.loc(), &mut stmt_opts)?;
 
                     // Use the statement name if present, since it's a better name
                     let default_name: LocRef = 'default_name_getter: {
@@ -1144,7 +1155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             js_ast::StmtData::SClass(class) => {
                                 if let Some(_name) = class.class.class_name {
                                     break 'default_name_getter LocRef {
-                                        loc: default_loc,
+                                        loc: _name.loc,
                                         ref_: _name.ref_,
                                     };
                                 }
@@ -1181,8 +1192,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 p.lexer.expect_or_insert_semicolon()?;
 
-                // Use the expression name if present, since it's a better name
-                let default_name = p.default_name_for_expr(expr, default_loc);
+                // A function or class expression binds its name in its own scope, so that name
+                // can't be the module's binding for the default export.
+                let default_name = match expr.data {
+                    // Not a symbol yet. The visit pass makes the default name for an identifier.
+                    js_ast::ExprData::EIdentifier(ident) => LocRef {
+                        loc: default_loc,
+                        ref_: ident.ref_,
+                    },
+                    _ => p.create_default_name(default_loc),
+                };
                 Ok(p.s(
                     S::ExportDefault {
                         default_name,
@@ -1485,7 +1504,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Err(crate::Error::SyntaxError);
                 }
 
-                let mut default_name = p.lexer.identifier;
+                let default_name = p.lexer.identifier;
                 let default_name_raw = p.lexer.raw();
                 stmt = S::Import {
                     namespace_ref: Ref::NONE,
@@ -1543,23 +1562,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if default_name == b"type" {
                         match p.lexer.token {
                             T::TIdentifier => {
-                                if p.lexer.identifier != b"from" {
-                                    default_name = p.lexer.identifier;
-                                    stmt.default_name.as_mut().unwrap().loc = p.lexer.loc();
+                                // A name of "from" is left to the code below when this is
+                                // "import type from 'bar';" (a value import named "type"), or
+                                // when only "import foo = bar" is valid here and the guard
+                                // below has to reject everything but "import type from = bar".
+                                let import_equals_only = opts.is_export
+                                    || (opts.scope.is_namespace() && !opts.is_typescript_declare);
+                                let leave_from = p.lexer.identifier == b"from"
+                                    && p.next_token_matches(|p| {
+                                        if import_equals_only {
+                                            p.lexer.token != T::TEquals
+                                        } else {
+                                            matches!(
+                                                p.lexer.token,
+                                                T::TStringLiteral
+                                                    | T::TNoSubstitutionTemplateLiteral
+                                            )
+                                        }
+                                    });
+                                if !leave_from {
+                                    let name = p.lexer.identifier;
+                                    let name_loc = p.lexer.loc();
                                     p.lexer.next()?;
 
                                     if p.lexer.token == T::TEquals {
-                                        // "import type foo = require('bar');"
-                                        // "import type foo = bar.baz;"
+                                        // "import type foo = require('bar');" (foo may be "from")
                                         opts.is_typescript_declare = true;
                                         return p.parse_type_script_import_equals_stmt(
-                                            loc,
-                                            opts,
-                                            stmt.default_name.unwrap().loc,
-                                            default_name,
+                                            loc, opts, name_loc, name,
                                         );
                                     } else {
-                                        // "import type foo from 'bar';"
+                                        // "import type foo from 'bar';" (foo may be "from")
                                         p.lexer.expect_contextual_keyword(b"from")?;
                                         let _ = p.parse_path()?;
                                         p.lexer.expect_or_insert_semicolon()?;
@@ -1703,7 +1736,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return p.parse_fn_stmt(async_range.loc, opts, Some(async_range));
             }
 
-            expr = p.parse_async_prefix_expr(async_range, Level::Lowest)?;
+            expr = p.parse_async_prefix_expr(async_range, Level::Lowest, EFlags::None)?;
             p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
         } else {
             let expr_or_let = p.parse_expr_or_let_stmt(opts)?;
@@ -1812,7 +1845,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !p.lexer.has_newline_before
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                 {
-                    return Ok(Some(p.parse_class_stmt(loc, opts)?));
+                    return Ok(Some(p.parse_class_stmt(p.lexer.loc(), opts)?));
                 }
                 if opts.ts_decorators.is_some() {
                     let r = js_lexer::range_of_identifier(p.source, loc);
@@ -1828,6 +1861,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && p.lexer.token == T::TOpenBrace
                 {
                     p.lexer.next()?;
+                    opts.ts_decorators = None;
                     let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
                     p.lexer.next()?;
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
@@ -1860,6 +1894,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     p.lexer.expect(T::TOpenBrace)?;
                     let scope_index = p.scopes_in_order.len();
+                    // The decorators belong to this statement, not to the statements in its body.
+                    opts.ts_decorators = None;
                     let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
                     p.lexer.next()?;
                     // The statements inside are dropped, so discard any scopes they

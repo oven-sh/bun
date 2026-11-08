@@ -1,0 +1,33 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = someLongNameOfAnObject
+  .createQueryBuilder(someArgumentThatIsLongEnough)
+  .from(parent.class)
+  // eslint-disable-next-line no-unexpected-multiline
+  [key === "size" ? "leftJoin" : "innerJoin"](this.key as string, alias)
+  .select(parent.primaryKeys);
+const b = someLongNameOfAnObject
+  .createQueryBuilder(someArgumentThatIsLongEnough)
+  .from(parent.class)
+  // comment
+  [key](this.key as string, alias)
+  .select(parent.primaryKeys);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = someLongNameOfAnObject
+  .createQueryBuilder(someArgumentThatIsLongEnough)
+  .from(parent.class)
+  // eslint-disable-next-line no-unexpected-multiline
+  [key === "size" ? "leftJoin" : "innerJoin"](this.key as string, alias)
+  .select(parent.primaryKeys);
+const b = someLongNameOfAnObject
+  .createQueryBuilder(someArgumentThatIsLongEnough)
+  .from(parent.class)
+  // comment
+  [key](this.key as string, alias)
+  .select(parent.primaryKeys);
+
+===================== End =====================

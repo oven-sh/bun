@@ -1,0 +1,30 @@
+# `"/home/me/file".startsWith(roots[i] + "/")`, where that `roots[i]` is a text is a guess: the stretch of the guess goes on to the test that alone takes the join, so that in the typed arm the join is never made:
+# the test is asked of the part, and the one code unit that is written is read beside it. With the stretch ended at the join, both arms made the text and the test behind their meeting called the run time to go through the rope
+# The list leaves the program, so that Link has seen nothing of what comes out of it (LinkTables::resultsOfReadsByKey).
+# f1 = below. Control: f2 = kept: the join has a name and is used again: it is made
+# -- source: below.js
+# function below(roots) {
+#   let found = 0;
+#   for (let i = 0; i < roots.length; i++) if ("/home/me/file".startsWith(roots[i] + "/")) found++;
+#   return found;
+# }
+# function kept(roots) {
+#   let last = "";
+#   for (let i = 0; i < roots.length; i++) { const prefix = roots[i] + "/"; if ("/home/me/file".startsWith(prefix)) last = prefix; }
+#   return last.length;
+# }
+# const roots = ["/usr", "/home/me", "/tmp"];
+# globalThis.roots = roots;
+# console.log(below(roots), kept(roots));
+# -- end of source
+# RUN(BELOW): walk f1 mechanisms=all-Inlining
+# REQUIRES(BELOW): entries-of-bun
+# BELOW-LABEL: code f1:Body
+# BELOW: = GetStringCodeUnit
+# RUN(KEPT): walk f2 mechanisms=all-Inlining
+# REQUIRES(KEPT): entries-of-bun
+# KEPT-LABEL: code f2:Body
+# KEPT: string @Cell = Add {{*}}form=Strings
+# RUN(NEVER): walk f2 mechanisms=all-Inlining
+# REQUIRES(NEVER): entries-of-bun
+# NEVER-NOT: = GetStringCodeUnit

@@ -20,7 +20,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSECDH* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, ncrypto::ECKeyPointer&& key, const EC_GROUP* group)
@@ -35,12 +35,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSECDH, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSECDH.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSECDH = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSECDH.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSECDH = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSECDH, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSECDH, m_subspaceForJSECDH));
     }
 
     ncrypto::ECKeyPointer m_key;

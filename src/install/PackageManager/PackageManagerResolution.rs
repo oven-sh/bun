@@ -1,45 +1,20 @@
 use crate::lockfile::package::PackageColumns as _;
-use core::mem::ManuallyDrop;
 
 use bun_core::Output;
 use bun_core::strings;
-use bun_paths::PathBuffer;
 use bun_semver as semver;
-use bun_semver::{SlicedString, String as SemverString};
 
-use crate::_folder_resolver::{self as folder_resolver, GlobalOrRelative};
 use crate::dependency;
 use crate::lockfile::{DependencyIDSlice, DependencySlice};
 use crate::npm;
 use crate::resolution::Tag as ResolutionTag;
-use crate::{DependencyID, PackageID, PackageNameHash, Resolution, invalid_package_id};
+use crate::{
+    DependencyID, GetJsonResult, PackageID, PackageNameHash, Resolution, invalid_package_id,
+};
 
 use super::PackageManager;
+use super::add_remove_with_filter::root_package_json_path;
 use super::options::LogLevel;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface. Thin shims over the
-// `impl PackageManager` bodies below so `pub use resolution::{...}` in
-// `PackageManager.rs` resolves (matching the directories/enqueue pattern).
-// ──────────────────────────────────────────────────────────────────────────
-
-#[inline]
-pub fn resolve_from_disk_cache(
-    this: &mut PackageManager,
-    package_name: &[u8],
-    version: &dependency::Version,
-) -> Option<PackageID> {
-    this.resolve_from_disk_cache(package_name, version)
-}
-
-#[inline]
-pub fn assign_root_resolution(
-    this: &mut PackageManager,
-    dependency_id: DependencyID,
-    package_id: PackageID,
-) {
-    this.assign_root_resolution(dependency_id, package_id)
-}
 
 impl PackageManager {
     pub(crate) fn format_later_version_in_cache(
@@ -96,164 +71,6 @@ impl PackageManager {
         self.options.scope_for_package_name(name)
     }
 
-    pub(crate) fn get_installed_versions_from_disk_cache(
-        &mut self,
-        tags_buf: &mut Vec<u8>,
-        package_name: &[u8],
-    ) -> crate::Result<Vec<semver::Version>> {
-        let mut list: Vec<semver::Version> = Vec::new();
-        let cache_dir = super::get_cache_directory(self);
-        let dir = match bun_sys::Dir::borrow(&cache_dir)
-            .open_at(package_name)
-            .map_err(crate::Error::from)
-        {
-            Ok(d) => d,
-            Err(
-                crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
-                | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
-                | crate::Error::DeviceBusy,
-            ) => {
-                return Ok(list);
-            }
-            Err(e) => return Err(e),
-        };
-        let mut iter = bun_sys::iterate_dir(dir.fd);
-
-        loop {
-            let entry = match iter.next() {
-                Ok(Some(e)) => e,
-                Ok(None) => break,
-                Err(e) => {
-                    return Err(e.into());
-                }
-            };
-            if entry.kind != bun_sys::EntryKind::Directory
-                && entry.kind != bun_sys::EntryKind::SymLink
-            {
-                continue;
-            }
-            let name: &[u8] = entry.name.slice_u8();
-            let sliced = SlicedString::init(name, name);
-            let parsed = semver::Version::parse(sliced);
-            if !parsed.valid || parsed.wildcard != semver::query::Wildcard::None {
-                continue;
-            }
-            // not handling OOM
-            // TODO: wildcard
-            let mut version = parsed.version.min();
-            let total = (version.tag.build.len() + version.tag.pre.len()) as usize;
-            if total > 0 {
-                let len_before = tags_buf.len();
-                // `clone_into` writes exactly `total` bytes (build.len + pre.len)
-                // into `available` and advances it; zero-fill the tail first so
-                // we can hand it out as a safe `&mut [u8]` instead of slicing
-                // raw spare capacity.
-                tags_buf.resize(len_before + total, 0);
-                let mut available = &mut tags_buf[len_before..];
-                let new_version = version.clone_into(name, &mut available);
-                version = new_version;
-            }
-
-            list.push(version);
-        }
-
-        Ok(list)
-    }
-
-    pub(crate) fn resolve_from_disk_cache(
-        &mut self,
-        package_name: &[u8],
-        version: &dependency::Version,
-    ) -> Option<PackageID> {
-        if version.tag != dependency::Tag::Npm {
-            // only npm supported right now
-            // tags are more ambiguous
-            return None;
-        }
-
-        let mut tags_buf: Vec<u8> = Vec::new();
-        let mut installed_versions =
-            match self.get_installed_versions_from_disk_cache(&mut tags_buf, package_name) {
-                Ok(v) => v,
-                Err(err) => {
-                    bun_core::debug!(
-                        "error getting installed versions from disk cache: {}",
-                        err.name()
-                    );
-                    return None;
-                }
-            };
-
-        // TODO: make this fewer passes
-        {
-            let tags_slice: &[u8] = tags_buf.as_slice();
-            // Sort descending. Use the total-order helper with swapped args
-            // (`b.order(a)`) so equal keys yield `Equal`; a two-way Less/Greater
-            // closure is not antisymmetric and may panic since Rust 1.81.
-            installed_versions.sort_by(|a, b| semver::Version::order_fn(tags_slice, *b, *a));
-        }
-        let npm_query = version.npm();
-        for installed_version in installed_versions.iter().copied() {
-            if npm_query.version.satisfies(
-                installed_version,
-                self.lockfile.buffers.string_bytes.as_slice(),
-                tags_buf.as_slice(),
-            ) {
-                let mut buf = PathBuffer::uninit();
-                let npm_package_path = match super::path_for_cached_npm_path(
-                    self,
-                    &mut buf,
-                    package_name,
-                    installed_version,
-                ) {
-                    Ok(p) => p,
-                    Err(err) => {
-                        bun_core::debug!("error getting path for cached npm path: {}", err.name());
-                        return None;
-                    }
-                };
-                let dep_version = dependency::Version {
-                    tag: dependency::Tag::Npm,
-                    literal: SemverString::default(),
-                    value: dependency::Value {
-                        npm: ManuallyDrop::new(dependency::NpmInfo {
-                            name: SemverString::init(package_name, package_name),
-                            version: semver::query::Group::from(installed_version),
-                            is_alias: false,
-                        }),
-                    },
-                };
-                match folder_resolver::get_or_put(
-                    GlobalOrRelative::CacheFolder(npm_package_path),
-                    &dep_version,
-                    b".",
-                    self,
-                ) {
-                    folder_resolver::FolderResolution::NewPackageId(id) => {
-                        let deps = self.lockfile.packages.items_dependencies()[id as usize];
-                        super::enqueue_dependency_list(self, deps);
-                        return Some(id);
-                    }
-                    folder_resolver::FolderResolution::PackageId(id) => {
-                        let deps = self.lockfile.packages.items_dependencies()[id as usize];
-                        super::enqueue_dependency_list(self, deps);
-                        return Some(id);
-                    }
-                    folder_resolver::FolderResolution::Err(err) => {
-                        bun_core::debug!(
-                            "error getting or putting folder resolution: {}",
-                            err.name()
-                        );
-                        return None;
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
     pub(crate) fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
         // reshaped for borrowck — capture lengths before mutable borrows.
         debug_assert!(
@@ -261,6 +78,7 @@ impl PackageManager {
         );
         debug_assert!((package_id as usize) < self.lockfile.packages.len());
         // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
+        self.lockfile.take_refreshing(dependency_id);
         let buffers = &mut self.lockfile.buffers;
         buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
         let string_buf = buffers.string_bytes.as_slice();
@@ -309,6 +127,8 @@ impl PackageManager {
         let end: PackageID = lockfile.packages.len() as PackageID;
 
         let mut any_failed = false;
+        // Read for the first `catalog:` row without an entry.
+        let mut root_has_workspaces: Option<bool> = None;
         let string_buf = lockfile.buffers.string_bytes.as_slice();
 
         debug_assert_eq!(resolutions_lists.len(), dependency_lists.len());
@@ -325,25 +145,87 @@ impl PackageManager {
                     continue;
                 }
 
-                // TODO lockfile rewrite: remove this and make non-optional peer dependencies error if they did not resolve.
-                //      Need to keep this for now because old lockfiles might have a peer dependency without the optional flag set.
+                // Unmet peers only warn (`warn_unmet_peer_dependency`).
                 if failed_dep.behavior.is_peer() {
                     continue;
                 }
 
-                let features = match pkg_resolutions[parent_id].tag {
-                    ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Folder => {
-                        self.options.local_package_features
-                    }
-                    _ => self.options.remote_package_features,
-                };
+                let features = (self.options).dependency_features(pkg_resolutions[parent_id].tag);
                 // even if optional dependencies are enabled, it's still allowed to fail
                 if failed_dep.behavior.is_optional() || !failed_dep.behavior.is_enabled(features) {
                     continue;
                 }
 
                 if log_level != LogLevel::Silent {
-                    if failed_dep.name.is_empty()
+                    if !any_failed {
+                        Output::flush();
+                    }
+                    // A row whose entry exists failed on the entry's version, not on the catalog.
+                    let missing_entry = failed_dep.version.tag == dependency::Tag::Catalog
+                        && lockfile
+                            .catalogs
+                            .get_ref(string_buf, *failed_dep.version.catalog(), failed_dep.name)
+                            .is_none();
+                    if missing_entry && root_has_workspaces.is_none() {
+                        let log = self.log_mut();
+                        root_has_workspaces = Some(
+                            match self.workspace_package_json_cache.get_with_path(
+                                log,
+                                &root_package_json_path(),
+                                Default::default(),
+                            ) {
+                                GetJsonResult::Entry(entry) => {
+                                    entry.root.get(b"workspaces").is_some()
+                                }
+                                _ => true,
+                            },
+                        );
+                    }
+                    if missing_entry && root_has_workspaces == Some(true) {
+                        // `bun add --catalog` refuses the name of the root and of a workspace.
+                        let can_add = failed_dep.name_hash
+                            != lockfile.packages.items_name_hash()[0]
+                            && !lockfile.workspace_paths.contains(&failed_dep.name_hash);
+                        let name = bstr::BStr::new(failed_dep.name.slice(string_buf));
+                        let literal =
+                            bun_core::fmt::for_terminal(failed_dep.version.literal.fmt(string_buf));
+                        let catalog_name = failed_dep.version.catalog().slice(string_buf);
+                        let is_default = catalog_name.is_empty() || catalog_name == b"default";
+                        let catalog_exists = is_default
+                            || lockfile
+                                .catalogs
+                                .groups
+                                .keys()
+                                .iter()
+                                .any(|k| k.slice(string_buf) == catalog_name);
+                        if !catalog_exists {
+                            Output::err_generic(
+                                "<b>{}@{}<r>: there is no catalog named \"{}\" in the root package.json",
+                                (
+                                    name,
+                                    literal,
+                                    bun_core::fmt::for_terminal(bstr::BStr::new(catalog_name)),
+                                ),
+                            );
+                        } else if is_default {
+                            Output::err_generic("<b>{}@{}<r> not in catalog", (name, literal));
+                            if can_add {
+                                bun_core::pretty_errorln!("  bun add --catalog {}", name);
+                            }
+                        } else {
+                            Output::err_generic(
+                                "<b>{}@{}<r> not in catalog \"{}\"",
+                                (name, literal, bstr::BStr::new(catalog_name)),
+                            );
+                            if can_add {
+                                bun_core::pretty_errorln!(
+                                    "  bun add --catalog={} {}",
+                                    bstr::BStr::new(catalog_name),
+                                    name
+                                );
+                            }
+                        }
+                    } else if failed_dep.name.is_empty()
                         || strings::eql_long(
                             failed_dep.name.slice(string_buf),
                             failed_dep.version.literal.slice(string_buf),
@@ -352,14 +234,20 @@ impl PackageManager {
                     {
                         Output::err_generic(
                             "<b>{}<r><d> failed to resolve<r>",
-                            (failed_dep.version.literal.fmt(string_buf),),
+                            (bun_core::fmt::for_terminal(
+                                failed_dep.version.literal.fmt(string_buf),
+                            ),),
                         );
                     } else {
                         Output::err_generic(
                             "<b>{}<r><d>@<b>{}<r><d> failed to resolve<r>",
                             (
-                                bstr::BStr::new(failed_dep.name.slice(string_buf)),
-                                failed_dep.version.literal.fmt(string_buf),
+                                bun_core::fmt::for_terminal(bstr::BStr::new(
+                                    failed_dep.name.slice(string_buf),
+                                )),
+                                bun_core::fmt::for_terminal(
+                                    failed_dep.version.literal.fmt(string_buf),
+                                ),
                             ),
                         );
                     }
@@ -370,6 +258,12 @@ impl PackageManager {
         }
 
         if any_failed {
+            if root_has_workspaces == Some(false) {
+                bun_core::note!(
+                    "catalogs require a \"workspaces\" field in the root package.json. {} was used as root and has none",
+                    bun_core::fmt::quote(&root_package_json_path()),
+                );
+            }
             self.crash();
         }
     }

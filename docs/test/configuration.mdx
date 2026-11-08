@@ -85,9 +85,86 @@ mock.module("./external-api", () => ({
 }));
 ```
 
+### Environment
+
+`environment` sets the DOM that test files run with. It can be `"happy-dom"`, `"jsdom"`, or `"node"` for no DOM (the default). The package has to be installed in your project. See [DOM testing](/test/dom#test-environments).
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+environment = "happy-dom"
+```
+
+The `--environment` flag does the same thing and overrides `bunfig.toml`:
+
+```bash terminal icon="terminal"
+bun test --environment=happy-dom
+```
+
+A `// @vitest-environment <name>` comment in a test file overrides both. So does a `/** @jest-environment <name> */` comment at the very top of the file.
+
+### Globals
+
+By default, `test`, `expect` and the other globals come from `"bun:test"`. A file that imports anything from `"vitest"` gets them from `"vitest"` instead. If that file is a test file or a preload script, so do the modules it loads.
+
+Set `globals = "vitest"` to get them from `"vitest"` in every file, like `globals: true` in a Vitest project. See [what differs](/test/writing-tests#importing-from-vitest).
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+globals = "vitest" # default "bun"
+```
+
+The `--globals` flag overrides `bunfig.toml`. Write it with `=`, as in `--globals=vitest`.
+
+- With `globals = "vitest"`, the names are also properties of `globalThis`, as in Vitest. Some packages look for `globalThis.afterEach` there.
+- Imports from `"bun:test"` and `"@jest/globals"` keep those modules' behavior.
+- `true` and `false`, the values Vitest takes, are accepted and change nothing. So is `--globals` without a value.
+- If a preload script sets one of these globals itself (`globalThis.expect = chai.expect`), files that import from `"bun:test"`, `"@jest/globals"` or `"vitest"` keep the preload's value.
+- As in Vitest, the `"vitest"` globals don't include `jest`, `xit`, `xtest` or `xdescribe`.
+- Vitest also defines `assert` and `chai` as globals. Bun doesn't, so import `assert` from `"vitest"`.
+- For their types, see [`bun-types/vitest-globals`](/test/writing-tests#types).
+- A module keeps the globals it was first loaded with. With `--isolate`, it keeps them until the next file. So a library loaded by a preload script sees `jest`, unless that script imports from `"vitest"` or `globals = "vitest"` is set.
+
+Libraries such as `@testing-library/dom` look for a global `jest` and use it to advance fake timers while they wait. Without one, they leave the clock alone. To make them advance it, use `vi.useFakeTimers({ shouldAdvanceTime: true })` or set `globalThis.jest = { advanceTimersByTime: ms => vi.advanceTimersByTime(ms) }`.
+
+### React Compiler
+
+`bun test` can compile your components and hooks with Bun's built-in [React Compiler](https://react.dev/learn/react-compiler), so that your tests run what your build ships. The compiled code imports `react/compiler-runtime`, which React 19 has. This option is experimental.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+reactCompiler = true # default false
+```
+
+Bun compiles every JavaScript and TypeScript file except test files, preload scripts and `node_modules`. It leaves alone a file or a function that has the `"use no memo"` directive, and a function that breaks the [Rules of React](https://react.dev/reference/rules).
+
+To compile part of a project, list folders or glob patterns. They are relative to the directory you run `bun test` in.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+reactCompiler = ["src", "packages/ui"]
+```
+
+Use a table to leave out some of what's in them:
+
+```toml title="bunfig.toml" icon="settings"
+[test.reactCompiler]
+include = ["src", "packages/ui"]
+exclude = ["**/*.stories.*", "**/__mocks__/**"]
+```
+
+- A folder includes everything inside it. `"."` is the directory you run `bun test` in, and `"../../packages/ui"` is a folder outside of it.
+- A glob pattern is matched against the file's path relative to that directory. `**` also matches `..`, so `**/*.stories.*` applies to the folders outside of it too.
+- A workspace package that is linked into `node_modules` is compiled. List it by its real path, like `"../../packages/ui"`.
+
+The `--react-compiler` flag turns the compiler on for one run. It compiles what `bunfig.toml` includes, or every file if `bunfig.toml` doesn't say.
+
+- What `importOriginal()` and `vi.importActual()` load is compiled like any other import of that file.
+- A module that isn't a file, like a `data:` URL, isn't compiled.
+- To check that a function was compiled, look for its cache in the source: `/\$\d*\[\d+\]/.test(String(Component))`.
+
 ### Path Ignore Patterns
 
-`pathIgnorePatterns` excludes files and directories from test discovery entirely, using glob patterns. Unlike `coveragePathIgnorePatterns`, which only affects coverage reports, `pathIgnorePatterns` prevents matching paths from being discovered and run as tests.
+`pathIgnorePatterns` excludes files and directories from test discovery entirely, using glob patterns. Unlike `coveragePathIgnorePatterns`, which only affects coverage reports, `pathIgnorePatterns` prevents Bun from discovering matching paths and running them as tests.
 
 Use it when your project contains submodules, vendored code, or other directories with `*.test.ts` files that you don't want `bun test` to pick up.
 
@@ -135,7 +212,7 @@ pathIgnorePatterns = [
 ```
 
 <Note>
-  Command-line `--path-ignore-patterns` flags override the `bunfig.toml` value entirely -- the two are not merged.
+  Command-line `--path-ignore-patterns` flags override the `bunfig.toml` value entirely. Bun does not merge the two.
 </Note>
 
 ## Reporters
@@ -213,7 +290,7 @@ Run test files matching a glob pattern with concurrent test execution enabled.
 concurrentTestGlob = "**/concurrent-*.test.ts"  # Run files matching this pattern concurrently
 ```
 
-Test files matching the pattern behave as if the `--concurrent` flag was passed: every test in those files runs concurrently. Use this to migrate a test suite to concurrent execution gradually, or to run one kind of test (say, integration tests) concurrently while the rest stay sequential.
+Test files matching the pattern behave as if you passed the `--concurrent` flag: every test in those files runs concurrently. Use this to migrate a test suite to concurrent execution gradually, or to run one kind of test (say, integration tests) concurrently while the rest stay sequential.
 
 The `--concurrent` CLI flag overrides this setting, forcing all tests to run concurrently regardless of the glob pattern.
 
@@ -256,6 +333,21 @@ Re-run each test file multiple times to identify flaky tests:
 rerunEach = 3
 ```
 
+#### clearMocks, mockReset, restoreMocks, unstubEnvs, unstubGlobals
+
+Clean up the previous test's mocks and stubs. The cleanup runs before each test and each retry, ahead of the `beforeEach` hooks. The option names and the order they run in are the same as Vitest's:
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+restoreMocks = true   # mock.restore() / vi.restoreAllMocks()
+mockReset = true      # vi.resetAllMocks()
+clearMocks = true     # mock.clearAllMocks()
+unstubEnvs = true     # vi.unstubAllEnvs()
+unstubGlobals = true  # vi.unstubAllGlobals()
+```
+
+They're all off by default, except that `clearMocks` is on for tests that use `test` from `"vitest"`, like in Vitest 5. Set `clearMocks = false` to turn that off. `vi.setConfig({ clearMocks: true })` changes an option for the rest of the test file.
+
 ## Coverage Options
 
 ### Basic Coverage Settings
@@ -287,14 +379,14 @@ Specify the coverage threshold as a single number or as an object with per-metri
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-# Simple threshold - applies to lines, functions, and statements
+# Simple threshold - applies to lines and functions
 coverageThreshold = 0.8
 
 # Detailed thresholds
-coverageThreshold = { lines = 0.9, functions = 0.8, statements = 0.85 }
+coverageThreshold = { lines = 0.9, functions = 0.8 }
 ```
 
-Setting any of these enables `fail_on_low_coverage`, causing the test run to fail if coverage is below the threshold.
+Setting a threshold makes `bun test` exit with code 1 when coverage is enabled and any file's line or function coverage is below it. Bun accepts the `statements` key but does not currently enforce it. The check applies with any coverage reporter.
 
 #### Threshold Examples
 
@@ -306,8 +398,7 @@ coverageThreshold = 0.9
 # Different requirements for different metrics
 coverageThreshold = {
   lines = 0.85,      # 85% line coverage
-  functions = 0.90,  # 90% function coverage
-  statements = 0.80  # 80% statement coverage
+  functions = 0.90   # 90% function coverage
 }
 ```
 
@@ -331,7 +422,7 @@ coveragePathIgnorePatterns = [
 ]
 ```
 
-Files matching any of these patterns are excluded from coverage calculation and reporting. See [Code coverage](/test/code-coverage).
+Bun excludes files matching any of these patterns from coverage calculation and reporting. See [Code coverage](/test/code-coverage).
 
 #### Common Ignore Patterns
 
@@ -370,7 +461,7 @@ coveragePathIgnorePatterns = [
 
 ### Sourcemap Handling
 
-Bun transpiles every file, so coverage results pass through sourcemaps before they're reported. `coverageIgnoreSourcemaps` opts out of this, but the results will be confusing: during transpilation, Bun may move code around and rename variables. The option is mostly useful for debugging coverage issues.
+Bun transpiles every file, so coverage results pass through sourcemaps before they're reported. `coverageIgnoreSourcemaps` opts out of this, but the results are confusing: during transpilation, Bun may move code around and rename variables. The option is mostly useful for debugging coverage issues.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -431,7 +522,7 @@ smol = true
 coverage = true
 coverageReporter = ["text", "lcov"]
 coverageDir = "./coverage"
-coverageThreshold = { lines = 0.85, functions = 0.90, statements = 0.80 }
+coverageThreshold = { lines = 0.85, functions = 0.90 }
 coverageSkipTestFiles = true
 coveragePathIgnorePatterns = [
   "**/*.spec.ts",

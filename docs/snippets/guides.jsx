@@ -160,7 +160,6 @@ export const GuidesList = () => {
             title: "Server-side render (SSR) a React component",
             href: "/guides/ecosystem/ssr-react",
           },
-          { title: "Build an HTTP server using StricJS and Bun", href: "/guides/ecosystem/stric" },
           {
             title: "Read and write data to MongoDB using Mongoose and Bun",
             href: "/guides/ecosystem/mongoose",
@@ -423,6 +422,17 @@ export const GuidesList = () => {
             title: "import, require, and test Svelte components with bun test",
             href: "/guides/test/svelte-test",
           },
+        ],
+      },
+      {
+        key: "lint-format",
+        title: "Linter & formatter",
+        icon: "sparkles",
+        items: [
+          { title: "Migrate from ESLint to bun lint", href: "/guides/lint/migrate-from-eslint" },
+          { title: "Migrate from oxlint to bun lint", href: "/guides/lint/migrate-from-oxlint" },
+          { title: "Migrate from Prettier to bun fmt", href: "/guides/format/migrate-from-prettier" },
+          { title: "Migrate from oxfmt to bun fmt", href: "/guides/format/migrate-from-oxfmt" },
         ],
       },
       {

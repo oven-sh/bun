@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { createBrotliCompress, createDeflate, createGzip } from "node:zlib";
 
 test.todo("content-encoding header is case-iNsENsITIve", async () => {
@@ -22,7 +23,7 @@ test.todo("content-encoding header is case-iNsENsITIve", async () => {
 
   await once(server, "listening");
 
-  const response = await fetch(`http://localhost:${server.address().port}`);
+  const response = await fetch(`http://localhost:${(server.address() as AddressInfo).port}`);
 
   expect(await response.text()).toBe(text);
   expect(response.headers.get("content-encoding")).toBe(contentCodings);
@@ -47,7 +48,7 @@ test.todo("response decompression according to content-encoding should be handle
 
   await once(server, "listening");
 
-  const response = await fetch(`http://localhost:${server.address().port}`);
+  const response = await fetch(`http://localhost:${(server.address() as AddressInfo).port}`);
 
   expect(await response.text()).toBe(text);
 });

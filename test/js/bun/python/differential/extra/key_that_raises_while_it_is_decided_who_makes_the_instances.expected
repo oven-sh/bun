@@ -1,0 +1,142 @@
+status: 0
+oracle: none
+---
+the key in C1 | Root.__new__ = f | set |
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | ['Root', 'Before', 'Mid', 'Later']
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | ['Root', 'Before', 'Mid', 'Later']
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid']
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in C1 | Root.__new__ = object.__new__ | set |
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in C1 | Mid.__new__ = f | set |
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | ['Mid', 'Later']
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | ['Mid', 'Later']
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Mid']
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Mid']
+the key in C1 | C1.__new__ = f | KeyError: 'once' |
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in C1 | C1.__new__ = object.__new__ | KeyError: 'once' |
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in C1 | Root.__bases__ = (object,) | assigned |
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in C1 | Mid.__bases__ = (Root,) | assigned |
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in C1 | C1.__bases__ = (Mid,) | assigned |
+    ['Root', 'Before', 'Mid', "TypeError: cannot create 'C1' instances", 'D1', 'Beside', 'After'] | TypeError: cannot create 'C1' instances | TypeError: cannot create 'Later' instances | []
+    ['Root', 'Before', 'Mid', "TypeError: cannot create 'C1' instances", 'D1', 'Beside', 'After'] | TypeError: cannot create 'C1' instances | TypeError: cannot create 'Later' instances | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', "TypeError: cannot create 'C1' instances", 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in C1 | class E(C1) | TypeError: cannot create 'E' instances |
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in C1 | C1() | C1 | not asked
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in C1 | Root.x = 1 | set | not asked
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in Mid | Root.__new__ = f | set |
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | ['Root', 'Before', 'Later']
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | ['Root', 'Before', 'Later']
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before']
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in Mid | Root.__new__ = object.__new__ | set |
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in Mid | Mid.__new__ = f | KeyError: 'once' |
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in Mid | C1.__new__ = f | set | not asked
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | C1 | Later | ['C1', 'D1', 'C1', 'Later']
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | C1 | Later | ['C1', 'D1', 'C1', 'Later']
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['C1', 'D1']
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['C1', 'D1']
+the key in Mid | C1.__new__ = object.__new__ | set | not asked
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in Mid | Root.__bases__ = (object,) | assigned |
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in Mid | Mid.__bases__ = (Root,) | assigned |
+    ['Root', 'Before', "TypeError: cannot create 'Mid' instances", 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', "TypeError: cannot create 'Mid' instances", 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', "TypeError: cannot create 'Mid' instances", 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in Mid | C1.__bases__ = (Mid,) | assigned |
+    ['Root', 'Before', 'Mid', "TypeError: cannot create 'C1' instances", 'D1', 'Beside', 'After'] | TypeError: cannot create 'C1' instances | TypeError: cannot create 'Later' instances | []
+    ['Root', 'Before', 'Mid', "TypeError: cannot create 'C1' instances", 'D1', 'Beside', 'After'] | TypeError: cannot create 'C1' instances | TypeError: cannot create 'Later' instances | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', "TypeError: cannot create 'C1' instances", 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in Mid | class E(C1) | TypeError: cannot create 'E' instances |
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in Mid | C1() | C1 | not asked
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+the key in Mid | Root.x = 1 | set | not asked
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] | TypeError: C1() takes no arguments | Later | []
+    Root.x = 1 | ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+    Root.__new__ = f | set ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After']
+    del Root.__new__ | deleted ['Root', 'Before', 'Mid', 'C1', 'D1', 'Beside', 'After'] []
+two ways, the key in D | it raises | set |
+    ['Root', 'A', 'B', 'D', 'E'] | ['Root', 'A', 'TypeError: B() takes no arguments', 'TypeError: D() takes no arguments', 'TypeError: E() takes no arguments'] | ['Root', 'A', 'Root', 'A']
+two ways, the key in D | it says yes | set |
+    ['Root', 'A', 'B', 'D', 'E'] | ['Root', 'A', 'B', 'D', 'E'] | ['Root', 'A', 'B', 'D', 'E', 'Root', 'A', 'B', 'D', 'E']
+two ways, the key in Side | it raises | set |
+    ['Root', 'A', 'B', 'D', 'E'] | ['Root', 'A', 'B', 'D', 'E'] | ['Root', 'A', 'B', 'D', 'E', 'Root', 'A', 'B', 'D', 'E']
+classes made on the way | 3000 | ['Made'] | Actor Later

@@ -117,6 +117,59 @@ describe("compile/aot/typed-packages", () => {
       expect(checked.exitCode).toBe(0);
     });
 
+  // Bun exports each top-level key of a data file by name, and the bun-types of this repository let those names through.
+  // The two constants are type errors unless every name is `any` and the default import of an XML file keeps its type.
+  const namedImportsOfDataFiles = () => ({
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        module: "Preserve",
+        moduleResolution: "bundler",
+        noEmit: true,
+        ...typesInstalled["the bun-types of this repository"](""),
+      },
+    }),
+    "config.toml": `[server]\nport = 3000\n`,
+    "config.yaml": `server:\n  port: 3000\n`,
+    "config.yml": `server:\n  port: 3000\n`,
+    "config.jsonc": `{ "server": { "port": 3000 } } // a comment\n`,
+    "config.json5": `{ server: { port: 3000 } }\n`,
+    "config.xml": `<server port="3000"/>\n`,
+    "main.ts": `import toml, { server as fromToml } from "./config.toml";
+import { server as fromYaml } from "./config.yaml";
+import { server as fromYml } from "./config.yml";
+import { server as fromJsonc } from "./config.jsonc";
+import { server as fromJson5 } from "./config.json5";
+import xml, { server as fromXml } from "./config.xml";
+type IsAny<T> = 0 extends 1 & T ? true : false;
+type Names = typeof fromToml | typeof fromYaml | typeof fromYml | typeof fromJsonc | typeof fromJson5 | typeof fromXml;
+const everyNameIsAny: IsAny<Names> = true;
+const xmlDefaultIsAny: IsAny<typeof xml> = false;
+console.log(toml.server.port, fromToml.port, fromYaml.port, fromYml.port, fromJsonc.port, fromJson5.port, fromXml["@port"]);
+console.log(everyNameIsAny, xmlDefaultIsAny);
+`,
+  });
+  const portsAndTypes = { stdout: "3000 3000 3000 3000 3000 3000 3000\ntrue false\n", exitCode: 0 };
+
+  test("named imports of data files type check with the bun-types of this repository", async () => {
+    const folder = String(tempDir("aot-named-imports-of-data-files-checked", namedImportsOfDataFiles()));
+    folders.push(folder);
+    const checked = await spawned([bunExe(), "check", "--no-pretty", "main.ts"], folder, bunEnv);
+    expect({ errors: checked.stdout.match(/^.*error TS\d+.*$/gm), exitCode: checked.exitCode }).toEqual({
+      errors: null,
+      exitCode: 0,
+    });
+  });
+
+  test("named imports of data files are built with the bun-types of this repository", async () => {
+    const folder = String(tempDir("aot-named-imports-of-data-files-built", namedImportsOfDataFiles()));
+    folders.push(folder);
+    const build = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "main.ts"], folder, bunEnv);
+    built(build);
+    expect(told(await spawned([join(folder, "app")], folder, bunEnv))).toEqual(portsAndTypes);
+    expect(told(await spawned([bunExe(), "run", "main.ts"], folder, bunEnv))).toEqual(portsAndTypes);
+  });
+
   test("the package runs as plain Bun beside look-alikes of its records", async () => {
     const folder = project("aot-typed-package-look-alikes");
     const build = await spawned(

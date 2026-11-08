@@ -95,6 +95,12 @@ declare module "bun" {
 
 The internal namespace is mostly used for declaring things that shouldn't be globally accessible on the `bun` namespace, but are still used in public apis. You can see a pretty good example of that in the [`./fetch.d.ts`](./fetch.d.ts) file.
 
+### File Imports
+
+`extensions.d.ts` declares what an import of a non-JavaScript file gives, by file extension. `ts7.1/import-attributes.d.ts` does the same by `type` attribute. Change both together.
+
+Declare the exports the loader makes. `export =` lets a named import through only if the type of the value declares that property. A loader whose named exports depend on the file's contents (TOML, YAML, JSONC, JSON5, XML) gets a declaration with no body, such as `declare module "*.toml";`, so that every named import type checks.
+
 ## Testing Types
 
 We test our type definitions using a special test file at `fixture/index.ts`. This file contains TypeScript code that exercises our type definitions, but is never actually executed - it's only used to verify that the types work correctly.

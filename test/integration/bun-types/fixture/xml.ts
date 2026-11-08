@@ -1,8 +1,12 @@
 import { XML } from "bun";
 import doc from "./data.xml";
+import whole, { root } from "./data.xml";
 import { expectType } from "./utilities";
 
 expectType(doc).is<XML.Document>();
+// Bun exports the root element by name. The name is `any`, and the default import keeps its type.
+expectType(whole).is<XML.Document>();
+expectType(root).is<any>();
 expectType(Bun.XML.parse("<a/>")).is<XML.Document>();
 expectType(XML.parse(new Uint8Array())).is<XML.Document>();
 expectType(XML.parse("<a/>", { compact: true })).is<XML.Document>();

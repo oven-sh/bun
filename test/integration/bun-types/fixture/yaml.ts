@@ -1,4 +1,11 @@
+import config, { database } from "./config.yaml";
+import { server } from "./config.yml";
 import { expectType } from "./utilities";
+
+// Bun exports each top-level key by name. A name is `any`, like the default import.
+expectType(config).is<any>();
+expectType(database).is<any>();
+expectType(server).is<any>();
 
 expectType(Bun.YAML.parse("")).is<unknown>();
 // @ts-expect-error

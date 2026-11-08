@@ -47,26 +47,24 @@ declare module "*" with { type: "markdown" } {
   export = html;
 }
 
-declare module "*" with { type: "toml" } {
-  var contents: any;
-  export = contents;
-}
+// The data-file loaders have no body, as in ../extensions.d.ts: Bun exports
+// each top-level key by name, and a body would reject those imports.
 
-declare module "*" with { type: "yaml" } {
-  var contents: any;
-  export = contents;
-}
+/** The default import and every named import are `any`. */
+declare module "*" with { type: "toml" };
 
-declare module "*" with { type: "jsonc" } {
-  var contents: any;
-  export = contents;
-}
+/** The default import and every named import are `any`. */
+declare module "*" with { type: "yaml" };
 
-declare module "*" with { type: "json5" } {
-  var contents: any;
-  export = contents;
-}
+/** The default import and every named import are `any`. */
+declare module "*" with { type: "jsonc" };
 
+/** The default import and every named import are `any`. */
+declare module "*" with { type: "json5" };
+
+// The bodiless declaration has to stay first. See `*.xml` in ../extensions.d.ts.
+/** The default import is an `XML.Document`. The root element, imported by name, is `any`. */
+declare module "*" with { type: "xml" };
 declare module "*" with { type: "xml" } {
   var contents: import("bun").XML.Document;
   export = contents;
@@ -75,10 +73,11 @@ declare module "*" with { type: "xml" } {
 declare module "*" with { type: "sqlite" } {
   /**
    * The database, opened with `bun:sqlite`. `embed: "true"` bundles the
-   * database file into the output and resolves here as well.
+   * database file into the output and resolves here as well. The default
+   * export is the same database.
    */
-  var db: import("bun:sqlite").Database;
-  export = db;
+  export const db: import("bun:sqlite").Database;
+  export default db;
 }
 
 declare module "*" with { type: "html" } {

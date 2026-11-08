@@ -1,8 +1,13 @@
 import { TOML } from "bun";
 import data from "./bunfig.toml";
+import whole, { install } from "./bunfig.toml";
 import { expectType } from "./utilities";
 
 expectType<any>(data);
+// Bun exports each top-level table by name. A name is `any`, like the default import.
+expectType(whole).is<any>();
+expectType(install).is<any>();
+export { install as installTable } from "./bunfig.toml";
 expectType(Bun.TOML.parse(data)).is<object>();
 expectType(TOML.parse(data)).is<object>();
 expectType(Bun.TOML.stringify({ abc: "def" })).is<string>();

@@ -34,8 +34,27 @@ expectType(json5).is<any>();
 import feed from "./feed.rss" with { type: "xml" };
 expectType(feed).is<XML.Document>();
 
+// Bun exports each top-level key of a data file by name. A name is `any`.
+import { server as tomlServer } from "./config" with { type: "toml" };
+import { server as yamlServer } from "./config.txt" with { type: "yaml" };
+import { server as jsoncServer } from "./config.txt" with { type: "jsonc" };
+import { server as json5Server } from "./config.txt" with { type: "json5" };
+expectType(tomlServer).is<any>();
+expectType(yamlServer).is<any>();
+expectType(jsoncServer).is<any>();
+expectType(json5Server).is<any>();
+
+// The root element of an XML file is a named export too, and the default import keeps its type.
+import wholeFeed, { rss } from "./feed.rss" with { type: "xml" };
+expectType(wholeFeed).is<XML.Document>();
+expectType(rss).is<any>();
+
 import db from "./app.db" with { type: "sqlite" };
 expectType(db).is<Database>();
+
+// The SQLite loader exports the database as `db` and as the default export.
+import { db as namedDb } from "./app.db" with { type: "sqlite" };
+expectType(namedDb).is<Database>();
 
 // `embed` narrows the attributes, so the `sqlite` declaration still matches.
 import embedded from "./app.db" with { type: "sqlite", embed: "true" };

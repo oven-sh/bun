@@ -1,4 +1,12 @@
+import settings, { editor } from "./settings.jsonc";
+import theme, { colors } from "./theme.json5";
 import { expectType } from "./utilities";
+
+// Bun exports each top-level key of a `.jsonc` or `.json5` file by name. A name is `any`, like the default import.
+expectType(settings).is<any>();
+expectType(editor).is<any>();
+expectType(theme).is<any>();
+expectType(colors).is<any>();
 
 interface User {
   id: number;

@@ -129,6 +129,7 @@ impl<'a> Compiler<'a> {
             &converted.import_bindings,
             wanted,
             converted.recorded.iter().any(is_wanted),
+            converted.has_spread_child,
         );
         logged.extend(findings(&converted, linted.logged));
         let recorded = converted.recorded.iter().map(|it| match *it {

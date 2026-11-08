@@ -172,6 +172,27 @@ describe.concurrent("React Compiler rules only match eslint-plugin-react-hooks w
       "2:45 react-hooks/capitalized-calls",
     ]);
   });
+
+  // ESLint 10.12.0 with eslint-plugin-react-hooks 7.1.1 reports nothing in a function with a JSX spread child, because
+  // the plugin's compiler fails on one.
+  test("a JSX spread child silences its function only with an ESLint config", async () => {
+    const list = `import { useRef } from "react";\nexport function List({ items }) {\n  const ref = useRef(null);\n  const first = ref.current;\n  return <ul>{...items}{first}</ul>;\n}\n`;
+    const bunfig = `[lint.rules]\n"react-hooks/refs" = "error"\n`;
+    const config = `export default [{
+      files: ["*.tsx"],
+      plugins: { "react-hooks": { meta: { name: "eslint-plugin-react-hooks" } } },
+      rules: { "react-hooks/refs": "error" },
+      languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+    }];`;
+    const [withoutConfig, withConfig] = await Promise.all([
+      lint({ "bunfig.toml": bunfig, "a.tsx": list }, "react-hooks/"),
+      lint({ "eslint.config.mjs": config, "a.tsx": list }, ""),
+    ]);
+    expect({ withoutConfig: briefly(withoutConfig), withConfig }).toEqual({
+      withoutConfig: ["4:17 react-hooks/refs"],
+      withConfig: [],
+    });
+  });
 });
 
 describe.concurrent("`import` rules without an ESLint or oxlint config", () => {

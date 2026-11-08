@@ -4957,6 +4957,84 @@
     ],
     "suppressed": []
    },
+   "spread-child.jsx": {
+    "messages": [
+     {
+      "ruleId": null,
+      "severity": 2,
+      "message": "Parsing error: Unexpected token ...",
+      "line": 6,
+      "column": 15,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "spread-child.tsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/refs",
+      "severity": 2,
+      "message": "Error: Cannot access refs during render\n\nReact refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected (https://react.dev/reference/react/useRef).\n\n<dir>/spread-child.tsx:11:17\n   9 | export function AfterReturn({ list }: { list: number[] }) {\n  10 |   const ref = useRef(null);\n> 11 |   const value = ref.current;\n     |                 ^^^^^^^^^^^ Cannot access ref value during render\n  12 |   return <ul>{value}</ul>;\n  13 |   <ul>{...list}</ul>;\n  14 | }",
+      "line": 11,
+      "column": 17,
+      "endLine": 11,
+      "endColumn": 28,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: (BuildHIR::lowerJsxElement) Unhandled JsxElement, got: JSXSpreadChild\n\n<dir>/spread-child.tsx:13:7\n  11 |   const value = ref.current;\n  12 |   return <ul>{value}</ul>;\n> 13 |   <ul>{...list}</ul>;\n     |       ^^^^^^^^^ (BuildHIR::lowerJsxElement) Unhandled JsxElement, got: JSXSpreadChild\n  14 | }\n  15 |\n  16 | export function InAnUnusedCallback({ list }: { list: number[] }) {\n\n",
+      "line": 13,
+      "column": 7,
+      "endLine": 13,
+      "endColumn": 16,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/refs",
+      "severity": 2,
+      "message": "Error: Cannot access refs during render\n\nReact refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected (https://react.dev/reference/react/useRef).\n\n<dir>/spread-child.tsx:18:17\n  16 | export function InAnUnusedCallback({ list }: { list: number[] }) {\n  17 |   const ref = useRef(null);\n> 18 |   const value = ref.current;\n     |                 ^^^^^^^^^^^ Cannot access ref value during render\n  19 |   const render = () => <ul>{...useMemo(() => list, [list])}</ul>;\n  20 |   return <ul>{value}</ul>;\n  21 | }",
+      "line": 18,
+      "column": 17,
+      "endLine": 18,
+      "endColumn": 28,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: (BuildHIR::lowerJsxElement) Unhandled JsxElement, got: JSXSpreadChild\n\n<dir>/spread-child.tsx:19:28\n  17 |   const ref = useRef(null);\n  18 |   const value = ref.current;\n> 19 |   const render = () => <ul>{...useMemo(() => list, [list])}</ul>;\n     |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ (BuildHIR::lowerJsxElement) Unhandled JsxElement, got: JSXSpreadChild\n  20 |   return <ul>{value}</ul>;\n  21 | }\n  22 |\n\n",
+      "line": 19,
+      "column": 28,
+      "endLine": 19,
+      "endColumn": 60,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/set-state-in-effect",
+      "severity": 2,
+      "message": "Error: Calling setState synchronously within an effect can trigger cascading renders\n\nEffects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:\n* Update external systems with the latest state from React.\n* Subscribe for updates from some external system, calling setState in a callback function when external state changes.\n\nCalling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).\n\n<dir>/spread-child.tsx:28:5\n  26 |   const [count, setCount] = useState(0);\n  27 |   useEffect(() => {\n> 28 |     setCount(1);\n     |     ^^^^^^^^ Avoid calling setState() directly within an effect\n  29 |   }, []);\n  30 |   return <ul>{...list}{count}{value}</ul>;\n  31 | }",
+      "line": 28,
+      "column": 5,
+      "endLine": 28,
+      "endColumn": 13,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/invariant",
+      "severity": 2,
+      "message": "Invariant: Expected consistent kind for destructuring\n\nOther places were `Const` but 'store b$54{reactive}' is reassigned.\n\n<dir>/spread-child.tsx:38:9\n  36 |   let a = [];\n  37 |   let b = [];\n> 38 |   ({ a, b } = props.q());\n     |         ^ Expected consistent kind for destructuring\n  39 |   const read = () => a;\n  40 |   return <ul onClick={read}>{...props.list}{b}{value}</ul>;\n  41 | }",
+      "line": 38,
+      "column": 9,
+      "endLine": 38,
+      "endColumn": 10,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
    "typescript.tsx": {
     "messages": [
      {

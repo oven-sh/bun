@@ -11,11 +11,13 @@ import {
   byEslintFile,
   byFile,
   eslintConfig,
+  eslintConfigOf,
   eslintSmall,
   type Files,
   long,
   rc,
   small,
+  spreadChildInLoop,
   twoLabels,
 } from "./oracle/react-compiler/inputs";
 
@@ -455,8 +457,8 @@ describe.concurrent(
   `bun lint: the React Compiler rules match eslint-plugin-react-hooks ${expected.eslint.plugin}`,
   () => {
     /** Lints with the ESLint config. Returns the `-f json` results for each file that has messages. */
-    async function messages(files: Files) {
-      const { raw, stderr, exitCode, directories } = await lint({ "eslint.config.js": eslintConfig, ...files }, [
+    async function messages(files: Files, config = eslintConfig) {
+      const { raw, stderr, exitCode, directories } = await lint({ "eslint.config.js": config, ...files }, [
         "-f",
         "json",
       ]);
@@ -619,6 +621,19 @@ describe.concurrent(
         "long.jsx": [
           "react-hooks/todo 3:3-15:4 Todo: (BuildHIR::lowerStatement) Handle TryStatement without a catch clause",
         ],
+        // ESLint's own parser doesn't parse a JSX spread child.
+        "spread-child.jsx": ["null 6:15-undefined:undefined Parsing error: Unexpected token ..."],
+        // `Live` has nothing: the plugin's code generation throws on the spread child, and what the function has
+        // recorded is lost. The next two never generate theirs, and get a Todo for it. A spread child doesn't silence
+        // what's reported before code generation, or an error that a pass throws.
+        "spread-child.tsx": [
+          "react-hooks/refs 11:17-11:28 Error: Cannot access refs during render",
+          "react-hooks/todo 13:7-13:16 Todo: (BuildHIR::lowerJsxElement) Unhandled JsxElement, got: JSXSpreadChild",
+          "react-hooks/refs 18:17-18:28 Error: Cannot access refs during render",
+          "react-hooks/todo 19:28-19:60 Todo: (BuildHIR::lowerJsxElement) Unhandled JsxElement, got: JSXSpreadChild",
+          "react-hooks/set-state-in-effect 28:5-28:13 Error: Calling setState synchronously within an effect can trigger cascading renders",
+          "react-hooks/invariant 38:9-38:10 Invariant: Expected consistent kind for destructuring",
+        ],
         "typescript.tsx": ["react-hooks/memo-dependencies 2:40-2:41 Error: Found extra memoization dependencies"],
       });
       expect(files["disabled.jsx"].suppressed.map(it => it.ruleId)).toEqual(["react-hooks/refs"]);
@@ -679,5 +694,27 @@ describe.concurrent(
       ]);
       expect(exitCode).toBe(1);
     });
+
+    // What ESLint 10.12.0 reports with the plugin's `refs` rule alone. The plugin's code generation leaves out a
+    // `for-of` loop whose head is more than one pattern without defaults, so it never gets to a spread child in it.
+    // With `react-hooks/todo` on it also has a Todo of its code generation for such a loop, which `bun lint` doesn't
+    // have.
+    test(
+      "a JSX spread child in a loop that the plugin doesn't generate doesn't silence the function",
+      async () => {
+        const { files, exitCode } = await messages(
+          {
+            "generated.tsx": spreadChildInLoop("const { cells }"),
+            "default.tsx": spreadChildInLoop("const { cells = [] }"),
+            "nested.tsx": spreadChildInLoop("const { row: { cells } }"),
+          },
+          eslintConfigOf(["react-hooks/refs"]),
+        );
+        const readsRef = ["react-hooks/refs 5:17-5:28 Error: Cannot access refs during render"];
+        expect(briefly(files)).toEqual({ "default.tsx": readsRef, "nested.tsx": readsRef });
+        expect(exitCode).toBe(1);
+      },
+      slow,
+    );
   },
 );

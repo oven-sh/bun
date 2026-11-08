@@ -68,6 +68,8 @@ pub(crate) struct Converted {
     pub(crate) wrapped_defaults: Vec<WrappedDefault>,
     /// Each `new Date()` and `Date()`, which the tree has as `Date.now()`. In source order.
     pub(crate) clock_reads: Vec<Span>,
+    /// A JSX spread child is in the tree as a spread. See [`Converter::leaves_spread_children`].
+    pub(crate) has_spread_child: bool,
 }
 
 /// A default value wrapped in parentheses or a cast. oxc's lowering names it after the outermost wrapper.
@@ -173,6 +175,7 @@ pub(crate) struct Converter<'a, 'x> {
     parentheses: Vec<(Loc, Loc)>,
     wrapped_defaults: Vec<WrappedDefault>,
     clock_reads: Vec<Span>,
+    has_spread_child: bool,
     stack: bun_core::StackCheck,
 }
 
@@ -203,6 +206,7 @@ pub(crate) fn convert<'a>(
         parentheses: Vec::new(),
         wrapped_defaults: Vec::new(),
         clock_reads: Vec::new(),
+        has_spread_child: false,
         stack,
     };
     converter.create_element = converter.new_symbol(b"createElement", SymbolKind::Unbound, true);
@@ -236,6 +240,7 @@ pub(crate) fn convert<'a>(
         fragment: converter.fragment,
         recorded: converter.recorded,
         clock_reads: converter.clock_reads,
+        has_spread_child: converter.has_spread_child,
     })
 }
 
@@ -1180,6 +1185,23 @@ impl<'a> Converter<'a, '_> {
         }
     }
 
+    /// The plugin's lowering doesn't take the operand of a spread child as the child. Without a config of ESLint there's
+    /// no plugin to match, and the rules say more with oxc's lowering.
+    fn leaves_spread_children(&self) -> bool {
+        self.flavor == Flavor::Eslint && !self.file.language().has_no_foreign_config
+    }
+
+    /// `{...a}` among the children of an element, as the spread that it is. The plugin's lowering records a Todo at its
+    /// braces and never looks at the operand, and so does Bun's with a spread. So nothing in the operand is recorded.
+    fn spread_child(&mut self, child: Expr<'a>) -> Converts<JsExpr> {
+        self.has_spread_child = true;
+        let braces = child.jsx_container_span().unwrap_or_else(|| child.span());
+        let recorded = self.recorded.len();
+        let converted = self.nested(|this| this.expr_at(child, braces))?;
+        self.recorded.truncate(recorded);
+        Ok(converted)
+    }
+
     fn jsx(&mut self, jsx: Jsx<'a>, whole: Expr<'a>, loc: Loc) -> Converts<JsExpr> {
         let name = jsx.tag().map(|tag| self.file.slice(tag.span()));
         let tag = ["fbt", "fbs"]
@@ -1232,9 +1254,13 @@ impl<'a> Converter<'a, '_> {
             }
         });
         for child in children {
-            // oxc's lowering takes the operand of a spread child as the child, and has no Todo for it
-            // (oxc-project/oxc#26013, "Unsupported JSX children").
             let child = match child.kind() {
+                ExprKind::Spread(_) if self.leaves_spread_children() => {
+                    args.push(self.spread_child(child)?);
+                    continue;
+                }
+                // oxc's lowering takes the operand of a spread child as the child, and has no Todo for it
+                // (oxc-project/oxc#26013, "Unsupported JSX children").
                 ExprKind::Spread(operand) => operand,
                 _ => child,
             };

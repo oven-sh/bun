@@ -206,6 +206,10 @@ fn plugin_reason<'a, 'f>(file: &'a File<'a>, finding: &'f Finding, at: Span) -> 
             ErrorCategory::Todo,
             "UpdateExpression where argument is a global is not yet supported",
         ) => "(BuildHIR::lowerExpression) Support UpdateExpression where argument is a global",
+        // Only a JSX spread child is lowered as a spread.
+        (ErrorCategory::Todo, "(BuildHIR::lowerExpression) Handle SpreadElement expressions") => {
+            "(BuildHIR::lowerJsxElement) Unhandled JsxElement, got: JSXSpreadChild"
+        }
         (_, reason) => reason,
     }
 }

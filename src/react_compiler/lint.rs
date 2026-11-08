@@ -13,7 +13,8 @@ use crate::diagnostics::{CompilerError, ErrorCategory};
 use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::environment_config::{EnvironmentConfig, ExhaustiveEffectDepsMode};
 use crate::hir::{
-    HirFunction, InstructionKind, InstructionValue, ReactFunctionType, VariableBinding,
+    BlockId, HirFunction, InstructionKind, InstructionValue, ReactFunctionType, Terminal,
+    VariableBinding,
 };
 use crate::imports::ProgramContext;
 use crate::lowering::{self, FunctionNode};
@@ -27,7 +28,9 @@ pub struct Linted {
     /// Upstream's `env.logErrors()`: what is reported whatever becomes of the function.
     pub logged: CompilerError,
     /// `Err`: why the function is not compiled. An error that a pass throws is alone in it: what
-    /// the passes before it have recorded is dropped, as upstream drops it.
+    /// the passes before it have recorded is dropped, as upstream drops it. One that is thrown and
+    /// has no details is an error of upstream's codegen that is not the compiler's, which upstream
+    /// logs as a `PipelineError` and no rule reports.
     pub result: Result<(), CompilerError>,
 }
 
@@ -92,6 +95,9 @@ impl LatePasses {
 ///
 /// `is_more_recorded`: the caller has errors of its own for the function that are wanted, which
 /// an error that a pass throws drops like those that the passes record.
+///
+/// `has_spread_child`: a JSX spread child is in the tree as a spread, which upstream's codegen
+/// fails on. See [`spread_child_reaches_codegen`].
 pub fn lint_function(
     func: &FunctionNode<'_>,
     host: &dyn Host,
@@ -100,6 +106,7 @@ pub fn lint_function(
     import_bindings: &[(bun_ast::Ref, VariableBinding)],
     wanted: Categories,
     is_more_recorded: bool,
+    has_spread_child: bool,
 ) -> Linted {
     let wants_thrown = wanted.has_thrown();
     let late_passes = match wants_thrown {
@@ -138,6 +145,7 @@ pub fn lint_function(
         &bindings,
         late_passes,
         wants_thrown,
+        has_spread_child,
     );
     Linted {
         logged: context.logged,
@@ -153,6 +161,7 @@ fn run(
     import_bindings: &IndexMap<bun_ast::Ref, VariableBinding>,
     late_passes: LatePasses,
     wants_thrown: bool,
+    has_spread_child: bool,
 ) -> Result<(), CompilerError> {
     let mut hir = lowering::lower(func, None, host, env, import_bindings)?;
     pipeline::dump_lowered(&hir, env);
@@ -169,12 +178,17 @@ fn run(
         false => Some(&is_followed),
     };
     pipeline::run_analysis_passes(&mut hir, env, context, is_followed)?;
+    // The passes that follow move functions out of the HIR.
+    let fails_in_codegen = has_spread_child && spread_child_reaches_codegen(&hir, env);
     if late_passes.run(&hir, env) {
         debug_assert!(
             was_followed.get(),
             "an error was recorded after the question"
         );
         pipeline::run_reactive_scope_passes(&mut hir, env, context)?;
+    }
+    if fails_in_codegen {
+        return Err(CompilerError::new());
     }
     match env.has_errors() {
         true => Err(env.take_errors()),
@@ -190,4 +204,99 @@ fn has_instruction(
 ) -> bool {
     (std::iter::once(hir).chain(&env.functions))
         .any(|function| function.instructions.iter().any(|it| is_one(&it.value)))
+}
+
+/// Whether upstream's codegen, which is its last pass in this mode too, comes to a JSX spread
+/// child. Its lowering keeps the node in an `UnsupportedNode`, and its codegen hands that node to
+/// Babel as an expression. It is none, so Babel throws an error that is not the compiler's, and
+/// what the function has recorded is never returned.
+///
+/// Here the node is the `SpreadElement` of `lower_expression`. Dead code elimination keeps such an
+/// instruction, so codegen comes to it if its block is still there and is generated.
+fn spread_child_reaches_codegen(hir: &HirFunction, env: &Environment) -> bool {
+    // Each function with whether codegen generates it. One that it does not generate can still
+    // have functions in it that are outlined.
+    let mut functions = vec![(hir, true)];
+    while let Some((function, is_function_generated)) = functions.pop() {
+        // The fallthrough of a loop that codegen leaves out. The blocks of a loop are before it.
+        let mut left_out_until = None;
+        for block in function.body.blocks.values() {
+            if left_out_until == Some(block.id) {
+                left_out_until = None;
+            }
+            let is_generated = is_function_generated && left_out_until.is_none();
+            for id in block.instructions.iter() {
+                match &function.instructions[id.0 as usize].value {
+                    InstructionValue::UnsupportedNode {
+                        node_type: Some("SpreadElement"),
+                        ..
+                    } if is_generated => return true,
+                    InstructionValue::FunctionExpression { lowered_func, .. } => {
+                        let inner = &env.functions[lowered_func.func.0 as usize];
+                        functions.push((inner, is_generated || is_outlined(inner)));
+                    }
+                    InstructionValue::ObjectMethod { lowered_func, .. } => {
+                        let inner = &env.functions[lowered_func.func.0 as usize];
+                        functions.push((inner, is_generated));
+                    }
+                    _ => {}
+                }
+            }
+            match block.terminal {
+                Terminal::ForOf {
+                    test: head,
+                    fallthrough,
+                    ..
+                }
+                | Terminal::ForIn {
+                    init: head,
+                    fallthrough,
+                    ..
+                } if is_generated && !is_loop_generated(function, head) => {
+                    left_out_until = Some(fallthrough);
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+/// `OutlineFunctions` moves a function expression that has no name and captures nothing out of the
+/// function that it is in, and codegen generates each of those, wherever it was. One that is an
+/// operand of `fbt` stays, which is not looked at here.
+fn is_outlined(function: &HirFunction) -> bool {
+    function.id.is_none() && function.context.is_empty()
+}
+
+/// Whether upstream's codegen makes a loop of a `for..of` or a `for..in` with this head. Of any
+/// other it records the Todo "Support non-trivial for..of inits" and generates neither the head
+/// nor the body.
+///
+/// It takes a head of two instructions whose second is not a store to a context variable. The
+/// instructions are those of the sequence that `BuildReactiveFunction` makes of the head: in a
+/// `try` each is a block of its own, and a value of several blocks is an instruction more.
+fn is_loop_generated(function: &HirFunction, head: BlockId) -> bool {
+    let mut count = 0;
+    let mut last = None;
+    let mut id = head;
+    loop {
+        let Some(block) = function.body.blocks.get(&id) else {
+            return true;
+        };
+        count += block.instructions.len();
+        last = block.instructions.last().or(last);
+        match block.terminal {
+            Terminal::MaybeThrow { continuation, .. } => id = continuation,
+            Terminal::Branch { .. } | Terminal::Goto { .. } => break,
+            _ => return false,
+        }
+    }
+    let is_context_store = last.is_some_and(|it| {
+        matches!(
+            function.instructions[it.0 as usize].value,
+            InstructionValue::StoreContext { .. }
+        )
+    });
+    count == 2 && !is_context_store
 }

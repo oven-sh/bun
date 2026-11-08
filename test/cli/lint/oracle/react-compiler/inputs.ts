@@ -697,12 +697,15 @@ export const ESLINT_RULES = [
   "react-hooks/component-hook-factories",
 ];
 
-/** An `eslint.config.js`. It only names the plugin and typescript-eslint's parser, which are built in to `bun lint`. */
-export const eslintConfig = `export default [
+/**
+ * An `eslint.config.js` with `rules` on. It only names the plugin and typescript-eslint's parser, which are built in to
+ * `bun lint`.
+ */
+export const eslintConfigOf = (rules: readonly string[]) => `export default [
   {
     files: ["**/*.{js,jsx,ts,tsx}"],
     plugins: { "react-hooks": { meta: { name: "eslint-plugin-react-hooks" } } },
-    rules: ${JSON.stringify(Object.fromEntries(ESLINT_RULES.map(rule => [rule, "error"])))},
+    rules: ${JSON.stringify(Object.fromEntries(rules.map(rule => [rule, "error"])))},
     languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
     linterOptions: { reportUnusedDisableDirectives: "off" },
   },
@@ -710,9 +713,72 @@ export const eslintConfig = `export default [
 ];
 `;
 
+export const eslintConfig = eslintConfigOf(ESLINT_RULES);
+
 const extraDependency = (parameters: string) => `function Component(${parameters}) {
   const value = useMemo(() => [a], [a, b]);
   return <div>{value}</div>;
+}
+`;
+
+/**
+ * The plugin's compiler keeps the node of a JSX spread child, and its code generation throws on that node. Nothing that
+ * the function has recorded is reported then. Each of these reads a ref during render, which is recorded.
+ */
+const spreadChild = `import { useEffect, useMemo, useRef, useState } from "react";
+
+export function Live({ list }: { list: number[] }) {
+  const ref = useRef(null);
+  const value = ref.current;
+  return <ul>{...list}{value}</ul>;
+}
+
+export function AfterReturn({ list }: { list: number[] }) {
+  const ref = useRef(null);
+  const value = ref.current;
+  return <ul>{value}</ul>;
+  <ul>{...list}</ul>;
+}
+
+export function InAnUnusedCallback({ list }: { list: number[] }) {
+  const ref = useRef(null);
+  const value = ref.current;
+  const render = () => <ul>{...useMemo(() => list, [list])}</ul>;
+  return <ul>{value}</ul>;
+}
+
+export function SetsStateInAnEffect({ list }: { list: number[] }) {
+  const ref = useRef(null);
+  const value = ref.current;
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    setCount(1);
+  }, []);
+  return <ul>{...list}{count}{value}</ul>;
+}
+
+export function FailsInAPass(props: { q: () => any; list: number[] }) {
+  const ref = useRef(null);
+  const value = ref.current;
+  let a = [];
+  let b = [];
+  ({ a, b } = props.q());
+  const read = () => a;
+  return <ul onClick={read}>{...props.list}{b}{value}</ul>;
+}
+`;
+
+/** Reads a ref during render, and has a JSX spread child in a `for-of` loop with this head. */
+export const spreadChildInLoop = (head: string) => `import { useRef } from "react";
+
+export function List({ rows }) {
+  const ref = useRef(null);
+  const value = ref.current;
+  const items = [];
+  for (${head} of rows) {
+    items.push(<li>{...cells}</li>);
+  }
+  return <ul>{items}{value}</ul>;
 }
 `;
 
@@ -752,6 +818,16 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   const value = ref.current;
   return <div>{value}</div>;
 });
+`,
+  "spread-child.tsx": spreadChild,
+  // espree doesn't parse a spread child, so no rule runs.
+  "spread-child.jsx": `import { useRef } from "react";
+
+export function Live({ list }) {
+  const ref = useRef(null);
+  const value = ref.current;
+  return <ul>{...list}{value}</ul>;
+}
 `,
 };
 

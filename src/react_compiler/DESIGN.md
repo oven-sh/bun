@@ -137,6 +137,12 @@ makes a `bun_ast` tree of the linter's own syntax tree, without a visit pass. In
 an index into a table of ranges, so that what is reported has an end, and
 `Host::is_module_level` says what is bound outside of the function.
 
+Upstream runs codegen in that mode too, and what its codegen does decides what is reported. `lint.rs` has
+one such case, `spread_child_reaches_codegen`: upstream's codegen fails on the node of a JSX spread child with an
+error that is not the compiler's, and then nothing that the function recorded is reported. It does not have the Todo
+that codegen records for a `for..of` or a `for..in` with a head that it does not support, nor the invariants of
+codegen.
+
 ### Bail-out semantics
 
 Any `bun_ast` node the port cannot lower (bundler-only synthetics: `ESpecial`,
@@ -156,8 +162,9 @@ factory call, and `lower_jsx_call` reads each child as an expression. `JsxExpres
 TypeScript does the same (`lowerJsxElement`, and the default arm of `lowerExpression`). Upstream's Rust port lowers
 the operand in place of the spread (`Expression::SpreadElement`, `JSXChild::JSXSpreadChild`,
 `PatternLike::RestElement`), so the runtime gets the list itself as one child. A sync must not bring those arms back.
-oxlint's compiler lowers the operand too, so `bun lint` hands the operand over in place of a spread child
-(`src/lint/react_compiler/convert.rs`), and no spread of its tree reaches this Todo.
+oxlint's compiler lowers the operand too, so for oxlint's rules `bun lint` hands the operand over in place of a
+spread child (`src/lint/react_compiler/convert.rs`), and no spread of that tree reaches this Todo. For the rules of
+eslint-plugin-react-hooks under a config of ESLint it hands the spread over, and the Todo is the plugin's.
 
 ## Hook placement
 

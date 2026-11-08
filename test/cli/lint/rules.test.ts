@@ -10,7 +10,10 @@ afterAll(endChildren);
 
 const env = { ...bunEnv, AGENT: "0", CLAUDECODE: undefined, GITHUB_ACTIONS: undefined };
 
-/** Returns `line:column rule message` for each report from a rule whose name starts with `prefix`, file by file. */
+/**
+ * Returns `line:column rule message` for each report from a rule whose name starts with `prefix`, file by file. With
+ * an empty prefix that's every message: a parse error has the rule `null`.
+ */
 async function lint(files: Record<string, string>, prefix: string, args: string[] = ["."]) {
   using dir = tempDir("bun-lint-rules", files);
   await using proc = spawn({
@@ -26,7 +29,7 @@ async function lint(files: Record<string, string>, prefix: string, args: string[
     JSON.parse(stdout);
   return results
     .flatMap(it => it.messages)
-    .filter(it => it.ruleId?.startsWith(prefix))
+    .filter(it => (it.ruleId ?? "").startsWith(prefix))
     .map(it => `${it.line}:${it.column} ${it.ruleId} ${it.message}`);
 }
 
@@ -104,6 +107,96 @@ test.concurrent("`>` and `}` in JSX text are parse errors, worded like espree's"
     ].map(it => `1:16 ${it}`),
   );
   expect(exitCode).toBe(1);
+});
+
+// Each error is what ESLint 10.12.0 reports. acorn-jsx has no spread child, after the `...` of an attribute it reads one
+// expression, and before ES2015 acorn has no `...` token. Without a config of ESLint there's no parser to match, so a
+// file with a spread child or with a sequence after the `...` is linted.
+test.concurrent("a JSX spread that acorn-jsx doesn't parse is a parse error, worded like espree's", async () => {
+  const config = `export default [
+    { files: ["*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } },
+    { files: ["es2015-*.jsx"], languageOptions: { ecmaVersion: 2015, sourceType: "script" } },
+    { files: ["es5-*.jsx"], languageOptions: { ecmaVersion: 5, sourceType: "script" } },
+  ];\n`;
+  const child = "null Parsing error: Unexpected token ...";
+  const comma = "null Parsing error: Unexpected token ,";
+  const dot = "null Parsing error: Unexpected token .";
+  const shorthand = "null Parsing error: Shorthand property assignments are valid only in destructuring patterns";
+  const cases: [name: string, code: string, error?: string, isOneWithoutConfig?: boolean][] = [
+    ["0.jsx", "export const a = b => <a>{...b}</a>;", `1:27 ${child}`],
+    ["1.jsx", "export const a = (b, c) => <>{/* all */ ...b}{...c}</>;", `1:41 ${child}`],
+    ["2.jsx", "export const a = (b, c) => <a {...b, c} />;", `1:36 ${comma}`],
+    ["3.jsx", "export const a = (b, c, d) => <a {...(b, c), d} />;", `1:44 ${comma}`],
+    ["4.jsx", "export const a = (b, c, d) => <a {...b, c}>{...d}</a>;", `1:39 ${comma}`],
+    ["5.jsx", "export const a = (b, c, d) => <a {...(b, c)} e={c, d}>{b, c}{[...d]}</a>;"],
+    // acorn reports an error in the expression before it gets to the comma.
+    ["6.jsx", "export const a = (b, c) => <a {...{ b = 1 }, c} />;", `1:39 ${shorthand}`, true],
+    ["es2015-0.jsx", "module.exports = function (b) { return <a {...b} />; };"],
+    ["es5-0.jsx", "module.exports = function (b) { return <a {...b} />; };", `1:44 ${dot}`],
+    ["es5-1.jsx", "module.exports = function (b, c) { return <a {...b, c} />; };", `1:47 ${dot}`],
+    ["es5-2.jsx", "module.exports = function (b) { return <a>{...b}</a>; };", `1:44 ${dot}`],
+  ];
+  const files = Object.fromEntries(cases.map(([name, code]) => [name, code + "\n"]));
+  const [withConfig, withoutConfig] = await Promise.all([
+    lint({ "eslint.config.mjs": config, ...files }, ""),
+    lint(files, ""),
+  ]);
+  expect({ withConfig, withoutConfig }).toEqual({
+    withConfig: cases.flatMap(([, , error]) => error ?? []),
+    withoutConfig: cases.flatMap(([, , error, isOneWithoutConfig]) => (isOneWithoutConfig && error) || []),
+  });
+});
+
+// With types on, the type checker parses the files.
+test.concurrent("a JSX spread that acorn-jsx doesn't parse is a parse error in a run with types too", async () => {
+  const config = `export default [{
+    files: ["*.jsx"],
+    plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+    languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+    rules: { "@typescript-eslint/no-floating-promises": "error" },
+  }];\n`;
+  const files = {
+    "eslint.config.mjs": config,
+    "tsconfig.json": `{ "compilerOptions": { "allowJs": true, "jsx": "preserve", "noEmit": true }, "include": ["*.jsx"] }`,
+    "a.jsx": "export const a = b => <a>{...b}</a>;\n",
+    "b.jsx": "export const a = (b, c) => <a {...b, c} />;\n",
+    "c.jsx": "export async function later() {}\nlater();\n",
+  };
+  expect(await lint(files, "", ["--type-aware", "."])).toEqual([
+    "1:27 null Parsing error: Unexpected token ...",
+    "1:36 null Parsing error: Unexpected token ,",
+    expect.stringMatching(/^2:1 @typescript-eslint\/no-floating-promises /),
+  ]);
+});
+
+// What the `import` rules know about a file is cached by how the importer's config parses it. `a.mjs` has no config:
+// its report shows that the rule runs for it. With an oxlint config, `import/no-deprecated` reads that cache.
+test.concurrent("only an importer with an ESLint config gets the parse error of a JSX spread child", async () => {
+  const config = `export default [{
+    plugins: { import: { meta: { name: "eslint-plugin-import" } } },
+    languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+    settings: { "import/extensions": [".mjs", ".jsx"] },
+    rules: { "import/default": "error" },
+  }];\n`;
+  const oxlintrc = {
+    plugins: ["import"],
+    settings: { "import/extensions": [".mjs", ".jsx"] },
+    rules: { "import/no-deprecated": "error" },
+  };
+  const files = {
+    "bunfig.toml": `[lint.rules]\n"import/default" = "error"\n\n[lint.parserOptions.ecmaFeatures]\njsx = true\n`,
+    "list.jsx": "export default items => <ul>{...items}</ul>;\n",
+    "none.mjs": "export const none = 1;\n",
+    "a.mjs": `import list from "./list.jsx";\nimport none from "./none.mjs";\nexport default [list, none];\n`,
+    "with-eslint/eslint.config.mjs": config,
+    "with-eslint/b.mjs": `import list from "../list.jsx";\nexport default list;\n`,
+    "with-oxlint/.oxlintrc.json": JSON.stringify(oxlintrc),
+    "with-oxlint/c.mjs": `import list from "../list.jsx";\nexport default list;\n`,
+  };
+  expect(await lint(files, "")).toEqual([
+    `2:8 import/default No default export found in imported module "./none.mjs".`,
+    "1:18 import/default Parse errors in imported module '../list.jsx': Unexpected token ... (1:30)",
+  ]);
 });
 
 test.concurrent(

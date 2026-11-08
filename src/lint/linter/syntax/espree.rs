@@ -15,7 +15,8 @@ pub(super) mod editions;
 
 use super::{Stage, SyntaxError};
 use crate::ast::{
-    Expr, ExprTag, File, Func, Handle, Node, Param, Pat, PatTag, Stmt, StmtKind, StmtTag, VarKind,
+    Expr, ExprKind, ExprTag, File, Func, Handle, Node, Param, Pat, PatTag, Stmt, StmtKind, StmtTag,
+    VarKind,
 };
 use crate::language::SourceType;
 use crate::semantic::{Declaration, Scope, ScopeKind};
@@ -479,6 +480,7 @@ pub(super) fn first_error<'a>(
     checks.keywords_as_identifiers();
     checks.parameters();
     checks.early_errors();
+    checks.jsx_spreads();
     if checks.is_whole {
         checks.redeclarations();
     }
@@ -1154,6 +1156,37 @@ impl<'a, 'c> Checks<'a, 'c> {
             .min()
         {
             self.fail(first, "Unexpected token <");
+        }
+    }
+
+    /// acorn-jsx has no spread child, `<a>{...b}</a>`. After the `...` of an attribute it reads one expression, so
+    /// `<a {...b, c} />` stops at the comma. It reports an error in that expression first, so this runs after the
+    /// checks for those.
+    fn jsx_spreads(&mut self) {
+        let file = self.file;
+        if file.hir.jsx.is_empty() || !file.language().reads_jsx_spreads_like_acorn() {
+            return;
+        }
+        for spread in file.exprs_of_kind(ExprTag::Spread) {
+            if spread.jsx_container_span().is_some() {
+                let dots = spread.span().start;
+                if self.token_at(dots) == b"..." {
+                    self.unexpected(dots);
+                }
+            }
+        }
+        for sequence in early::sequences_in_spread_attributes(file) {
+            let mut first = sequence;
+            while let ExprKind::Binary { left, .. } = first.kind()
+                && early::is_sequence(left)
+            {
+                first = left;
+            }
+            // The parser makes a sequence of adjacent elements, which has no comma.
+            let comma = first.operator_span().map(|it| it.start);
+            if let Some(comma) = comma.filter(|&at| self.token_at(at) == b",") {
+                self.unexpected(comma);
+            }
         }
     }
 

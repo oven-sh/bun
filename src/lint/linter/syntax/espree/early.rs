@@ -6,7 +6,7 @@
 
 use super::{Checks, Tops};
 use crate::ast::{
-    BinOp, Chain, Class, Expr, ExprKind, ExprTag, FnKind, Func, Handle, KeyKind, Member,
+    BinOp, Chain, Class, Expr, ExprKind, ExprTag, File, FnKind, Func, Handle, KeyKind, Member,
     MemberKind, Node, Param, PatElem, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, StmtTag,
     UnOp, VarKind,
 };
@@ -55,6 +55,32 @@ fn has_lone_surrogate(source: &[u8]) -> bool {
         at += len;
     }
     is_after_high
+}
+
+/// `b, c` without parentheses around it.
+pub(super) fn is_sequence(it: Expr) -> bool {
+    let is_comma = matches!(
+        it.kind(),
+        ExprKind::Binary {
+            op: BinOp::Comma,
+            ..
+        }
+    );
+    is_comma && !it.is_parenthesized()
+}
+
+/// The `b, c` of each `<a {...b, c} />`.
+pub(super) fn sequences_in_spread_attributes<'a>(
+    file: &'a File<'a>,
+) -> impl Iterator<Item = Expr<'a>> + use<'a> {
+    (file.hir.props.iter().enumerate()).filter_map(move |(i, raw)| {
+        if raw.kind != PropKind::Spread {
+            return None;
+        }
+        let attribute = Prop::from_raw(file, i as u32);
+        let argument = attribute.value()?;
+        (attribute.is_jsx_attribute() && is_sequence(argument)).then_some(argument)
+    })
 }
 
 impl<'a> Checks<'a, '_> {
@@ -204,18 +230,10 @@ impl<'a> Checks<'a, '_> {
         }
     }
 
-    /// `<a>{b, c}</a>`, `<a b={c, d} />`, `<a {...b, c} />`. acorn-jsx accepts these.
+    /// `<a>{b, c}</a>`, `<a b={c, d} />`, `<a {...b, c} />`. acorn-jsx accepts the first two. For the third see
+    /// [`Checks::jsx_spreads`].
     fn sequences_in_jsx(&mut self) {
         let file = self.file;
-        let is_sequence = |it: Expr<'a>| {
-            matches!(
-                it.kind(),
-                ExprKind::Binary {
-                    op: BinOp::Comma,
-                    ..
-                }
-            ) && !it.is_parenthesized()
-        };
         let message = "Sequence expressions cannot be directly nested inside JSX";
         for &(id, ..) in file.hir.jsx_expressions {
             let it = Expr::from_raw(file, id.0);
@@ -226,14 +244,8 @@ impl<'a> Checks<'a, '_> {
         if file.hir.jsx.is_empty() {
             return;
         }
-        for (i, raw) in file.hir.props.iter().enumerate() {
-            let prop = Prop::from_raw(file, i as u32);
-            if raw.kind == PropKind::Spread
-                && prop.is_jsx_attribute()
-                && let Some(value) = prop.value().filter(|it| is_sequence(*it))
-            {
-                self.fail(value.span().start, message);
-            }
+        for sequence in sequences_in_spread_attributes(file) {
+            self.fail(sequence.span().start, message);
         }
     }
 

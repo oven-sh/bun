@@ -587,6 +587,15 @@ impl LanguageOptions {
         }
     }
 
+    /// True if the file gets espree's errors for the JSX spreads that acorn-jsx doesn't read: a spread child,
+    /// `<a>{...b}</a>`, and a sequence after the `...` of an attribute, `<a {...b, c} />`. Without a config there's no
+    /// ESLint to match, so such a file is linted.
+    pub fn reads_jsx_spreads_like_acorn(&self) -> bool {
+        self.parser == Parser::Espree
+            && self.rejects_what_parser_rejects
+            && !self.has_no_foreign_config
+    }
+
     /// ESLint's `scopeManager.isGlobalReturn()`: there's a function scope between the global scope and the file's code.
     /// With Babel's parser, `"commonjs"` by itself doesn't create one, so `const { Symbol } = a;` at the top level
     /// defines the global variable.

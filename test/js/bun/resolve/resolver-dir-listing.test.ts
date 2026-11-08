@@ -120,28 +120,6 @@ describe("startup does not list directories", () => {
     const { stdout, stderr, exitCode } = await run([bunExe(), join(dir, "other/../x//y.js")], String(dir));
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: join(dir, "x/y.js") + "\n", stderr: "", exitCode: 0 });
   });
-
-  // Compiling copies the whole executable, which a debug build makes slow.
-  test.concurrent(
-    "a compiled executable reads no directory listing",
-    async () => {
-      using dir = tempDir("no-listing-compiled", {
-        "app.js": `console.log("compiled");\n${countListings}`,
-        "a/b/.keep": "",
-      });
-      const outfile = join(dir, "app" + (isWindows ? ".exe" : ""));
-      const build = await run([bunExe(), "build", "--compile", "app.js", "--outfile", outfile], String(dir));
-      expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-      const { stdout, stderr, exitCode } = await run([outfile], join(dir, "a/b"));
-      expect({ ...splitListings(stdout), stderr, exitCode }).toEqual({
-        output: "compiled\n",
-        listings: 0,
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    120_000,
-  );
 });
 
 describe("DirInfo markers without a listing", () => {

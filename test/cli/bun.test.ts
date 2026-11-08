@@ -185,6 +185,7 @@ describe("bun", () => {
       expect(stdout.toString()).not.toBeEmpty();
     });
 
+    // The fixture is a shell script with a mode bit; Windows has neither.
     test.skipIf(isWindows)("getcompletes b lists the executables in node_modules/.bin", () => {
       using dir = tempDir("getcompletes-bin", {
         "package.json": JSON.stringify({ name: "test" }),

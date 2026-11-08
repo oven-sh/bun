@@ -1879,6 +1879,34 @@ impl<'a> Resolver<'a> {
         if cache.kind != Fs::file_system::EntryKind::File {
             return ResultUnion::NotFound;
         }
+        // A case-insensitive filesystem matched the path as typed. The module
+        // key is the spelling on disk, the one every other resolve gives.
+        let mut on_disk = bun_paths::path_buffer_pool::get();
+        let abs_path: &[u8] = if cfg!(any(target_os = "macos", windows)) && cache.symlink.is_empty()
+        {
+            let mut z = bun_paths::path_buffer_pool::get();
+            let len = abs_path.len();
+            if len >= z.len() {
+                return ResultUnion::NotFound;
+            }
+            z[..len].copy_from_slice(abs_path);
+            z[len] = 0;
+            let Ok(file) = bun_sys::open(
+                bun_core::ZStr::from_buf(&z[..], len),
+                bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
+                0,
+            ) else {
+                return ResultUnion::NotFound;
+            };
+            let real = bun_sys::get_fd_path(file, &mut on_disk).map(|p| p.len());
+            let _ = bun_sys::close(file);
+            match real {
+                Ok(n) => &on_disk[..n],
+                Err(_) => return ResultUnion::NotFound,
+            }
+        } else {
+            abs_path
+        };
         let Ok(abs_path) = self.fs_ref().dirname_store.append_slice(abs_path) else {
             return ResultUnion::NotFound;
         };
@@ -5015,6 +5043,27 @@ impl<'a> Resolver<'a> {
                     }
                     cached_dir_entry_result =
                         rfs!().entries.get_or_put(dir_path).expect("unreachable");
+                } else if !open_dir.is_valid() {
+                    // A permission-denied ancestor is an empty directory to
+                    // every reader.
+                    let read = rfs!().entries.put(
+                        &mut cached_dir_entry_result,
+                        Fs::file_system::real_fs::EntriesOption::Entries(
+                            // SAFETY: leaked for the life of the process like every
+                            // other listing in this map.
+                            unsafe {
+                                &mut *bun_core::heap::into_raw(Box::new(
+                                    Fs::file_system::DirEntry::init(dir_path, self.generation),
+                                ))
+                            },
+                        ),
+                    )?;
+                    // SAFETY: `put` returned the live slot.
+                    if let Fs::file_system::real_fs::EntriesOption::Entries(entries) =
+                        unsafe { &*read }
+                    {
+                        listing = Some(std::ptr::from_ref(&**entries));
+                    }
                 } else if !has_stale_listing {
                     rfs!().entries.put(
                         &mut cached_dir_entry_result,

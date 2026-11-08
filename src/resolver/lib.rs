@@ -720,6 +720,7 @@ pub mod fs {
         })
     }
 
+    // Relaxed: a statistic for tests, read after the fact.
     static READDIR_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
     /// How many directory listings this process has read into the cache
@@ -1144,7 +1145,9 @@ pub mod fs {
                         EntriesOption::Unlisted(u) => unlisted = Some(*u),
                         cached => return Ok(cached),
                     }
-                } else if cache_result.status == bun_alloc::ItemStatus::NotFound && generation == 0
+                } else if cache_result.status == bun_alloc::ItemStatus::NotFound
+                    && generation == 0
+                    && maybe_handle.is_none()
                 {
                     return Ok(temp_entries_option_write(EntriesOption::Err(
                         dir_entry::Err {
@@ -1160,7 +1163,10 @@ pub mod fs {
                 Some(h) => h,
                 None => match self.open_dir(dir) {
                     Ok(h) => h,
-                    Err(err) => return self.read_directory_error(dir, err),
+                    Err(err) => {
+                        Self::close_unlisted_fd(unlisted);
+                        return self.read_directory_error(dir, err);
+                    }
                 },
             };
 
@@ -1198,6 +1204,7 @@ pub mod fs {
             {
                 Ok(e) => e,
                 Err(err) => {
+                    Self::close_unlisted_fd(unlisted);
                     if let Some(existing) = in_place {
                         // SAFETY: see above.
                         unsafe { (*existing).data.clear() };
@@ -1521,6 +1528,7 @@ pub mod fs {
                     let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), unlisted.dir) {
                         Ok(h) => h,
                         Err(err) => {
+                            Self::close_unlisted_fd(Some(unlisted));
                             return self.read_directory_error(unlisted.dir, err.into()).ok();
                         }
                     };
@@ -1536,7 +1544,10 @@ pub mod fs {
                         &mut (),
                     ) {
                         Ok(e) => e,
-                        Err(err) => return self.read_directory_error(unlisted.dir, err).ok(),
+                        Err(err) => {
+                            Self::close_unlisted_fd(Some(unlisted));
+                            return self.read_directory_error(unlisted.dir, err).ok();
+                        }
                     };
                     new_entry.fd = unlisted.fd;
                     // SAFETY: slot is exclusively owned under `entries_mutex`.
@@ -1583,6 +1594,15 @@ pub mod fs {
             }
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
             Some(unsafe { &*result_ptr })
+        }
+
+        /// The fd a placeholder kept open, when its slot becomes an error.
+        fn close_unlisted_fd(unlisted: Option<Unlisted>) {
+            if let Some(unlisted) = unlisted
+                && unlisted.fd.is_valid()
+            {
+                let _ = bun_sys::close(unlisted.fd);
+            }
         }
 
         /// Kind of `name` in the directory open as `fd`, following symlinks.

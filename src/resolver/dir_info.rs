@@ -223,10 +223,13 @@ impl DirInfo {
         self.tsconfig_json.map(arena_ref)
     }
 
+    /// Caller must not hold `entries_mutex`: a placeholder slot is rewritten
+    /// in place under it.
     pub fn get_file_descriptor(&self) -> Fd {
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
-            return fs::FileSystem::instance()
-                .fs
+            let rfs = &mut fs::FileSystem::instance().fs;
+            let _lock = rfs.entries_mutex.lock_guard();
+            return rfs
                 .entries
                 .at_index(self.entries)
                 .map_or(Fd::INVALID, |e| e.fd());

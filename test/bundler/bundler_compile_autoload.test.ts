@@ -6,6 +6,28 @@ import { itBundled } from "./expectBundled";
 // those at once SIGTERMs on the linux lanes. expectBundled already forces
 // backend:"api" cases to it.serial, so only the CLI cases would overlap.
 describe("bundler", () => {
+  // The autoload of .env, package.json and tsconfig.json must not read the
+  // listing of the cwd or of any ancestor: startup would scale with the
+  // number of files next to the executable's working directory.
+  itBundled("compile/AutoloadReadsNoDirectoryListing", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { getCounters } from "bun:internal-for-testing";
+        console.log("listings", getCounters().readdir);
+      `,
+    },
+    runtimeFiles: {
+      "/.env": `TEST_VAR=from_dotenv`,
+      "/package.json": `{ "name": "app" }`,
+      "/tsconfig.json": `{}`,
+    },
+    run: {
+      stdout: "listings 0",
+      setCwd: true,
+    },
+  });
+
   // Test that .env files are loaded by default in standalone executables
   itBundled("compile/AutoloadDotenvDefault", {
     compile: true,

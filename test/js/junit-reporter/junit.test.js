@@ -908,6 +908,7 @@ describe("junit reporter", () => {
         "1 | const = ;",
         "          ^",
         'error: Expected identifier but found "="',
+        "",
         "1 | const = ;",
         "          ^",
         "error: This constant must be initialized",
@@ -927,7 +928,8 @@ describe("junit reporter", () => {
         ...$,
         ...($.message !== undefined && { message: withoutImporter($.message) }),
         text: _.split("\n")
-          .filter(line => line !== "" && !/^ +at /.test(line))
+          .slice(0, -1)
+          .filter(line => !/^ +at /.test(line))
           .map(withoutImporter),
       });
       return await Promise.all(
@@ -989,6 +991,7 @@ describe("junit reporter", () => {
               "1 | --> a legacy comment",
               "    ^",
               'warn: Treating "-->" as the start of a legacy HTML single-line comment',
+              "",
               "2 | const half;",
               "          ^",
               'error: The constant "half" must be initialized',
@@ -1059,12 +1062,14 @@ describe("junit reporter", () => {
       expect(cases).toEqual({
         "build.test.js": [unhandled(unexpected)],
         "transpiler.test.js": [unhandled(twoErrorsFailure)],
-        "any.test.js": [unhandled({ ...missing, text: [cannotFind, "error: Cannot find module './nowhere-too'"] })],
+        "any.test.js": [unhandled({ ...missing, text: [cannotFind, "", "error: Cannot find module './nowhere-too'"] })],
         // An Error among the errors gives the type and message. The text has every error.
-        "nested.test.js": [unhandled({ type: "TypeError", message: "after", text: [cannotFind, "TypeError: after"] })],
+        "nested.test.js": [
+          unhandled({ type: "TypeError", message: "after", text: [cannotFind, "", "TypeError: after"] }),
+        ],
         // The ResolveMessage does not fill in what the Error leaves empty.
-        "no-message.test.js": [unhandled({ type: "TypeError", text: ["TypeError", cannotFind] })],
-        "no-name.test.js": [unhandled({ type: "Error", text: ["error", cannotFind] })],
+        "no-message.test.js": [unhandled({ type: "TypeError", text: ["TypeError", "", cannotFind] })],
+        "no-name.test.js": [unhandled({ type: "Error", text: ["error", "", cannotFind] })],
         "describe.test.js": [unhandled({ ...missing, text: [cannotFind] })],
         "twice.test.js": [unhandled({ ...missing, text: [cannotFind] }), unhandled({ ...missing, text: [cannotFind] })],
         "reentrant.test.js": [
@@ -1129,6 +1134,25 @@ describe("junit reporter", () => {
           });
           test("after a hook", () => {});
         `,
+        "hook-two.js": twoErrors,
+        "first-error.test.js": `
+          import { afterEach, test } from "bun:test";
+          afterEach(() => {
+            throw new TypeError("later");
+          });
+          test("rejects before a hook throws", async () => {
+            await import("./hook-two.js");
+          });
+        `,
+        "empty-message.test.js": `
+          import { afterEach, test } from "bun:test";
+          afterEach(async () => {
+            await import("./nowhere");
+          });
+          test("throws before a hook rejects", () => {
+            throw new Error();
+          });
+        `,
       };
       const [{ cases, counted, exitCode }] = await reports(files, [[]]);
 
@@ -1143,10 +1167,21 @@ describe("junit reporter", () => {
           { name: "fails on every attempt", failure: [aggregate], rerunFailure: [aggregate] },
           {
             name: "rejects with a ResolveMessage and an Error",
-            failure: [{ type: "TypeError", message: "after", text: [cannotFind, "TypeError: after"] }],
+            failure: [{ type: "TypeError", message: "after", text: [cannotFind, "", "TypeError: after"] }],
           },
         ],
         "hook.test.js": [{ name: "after a hook", failure: [{ ...missing, text: [cannotFind] }] }],
+        // The first error names the failure. The error of the hook is in the text after it.
+        "first-error.test.js": [
+          {
+            name: "rejects before a hook throws",
+            failure: [{ ...twoErrorsFailure, text: [...twoErrorsFailure.text, "", "TypeError: later"] }],
+          },
+        ],
+        // The ResolveMessage of the hook does not fill in the message that the Error left empty.
+        "empty-message.test.js": [
+          { name: "throws before a hook rejects", failure: [{ type: "Error", text: ["Error", "", cannotFind] }] },
+        ],
       });
       expect({ counted, exitCode }).toEqual({ counted: 0, exitCode: 1 });
     });

@@ -51,9 +51,11 @@ fn stringify_impl(
 
     let mut stringifier = Stringifier::init(global, space_value, roots)?;
 
-    stringifier
-        .find_anchors_and_aliases(global, value, ValueOrigin::Root)
-        .map_err(|err| err.to_js_error(global))?;
+    if stringifier.aliases {
+        stringifier
+            .find_anchors_and_aliases(global, value, ValueOrigin::Root)
+            .map_err(|err| err.to_js_error(global))?;
+    }
 
     stringifier
         .stringify(global, value)
@@ -76,8 +78,8 @@ struct Stringifier<'a> {
     prop_names: StringHashMap<usize>,
 
     space: Space,
-    /// With `aliases: false` a repeated object is written in full, and `known_collections` holds
-    /// only the path from the root to the object being walked, so a hit there is a cycle.
+    /// With `aliases: false` there is no first pass. A repeated object is written in full, and
+    /// `known_collections` holds only the path from the root to the object being written.
     aliases: bool,
 }
 
@@ -268,14 +270,6 @@ impl<'a> Stringifier<'a> {
 
         let object_entry = self.known_collections.get_or_put(unwrapped)?;
         if object_entry.found_existing {
-            if !self.aliases {
-                return Err(global
-                    .throw_type_error(format_args!(
-                        "YAML.stringify cannot serialize a cyclic object with aliases: false"
-                    ))
-                    .into());
-            }
-
             // this will become an alias. increment counters here because
             // now the anchor/alias is confirmed used.
 
@@ -326,28 +320,25 @@ impl<'a> Stringifier<'a> {
 
                 self.find_anchors_and_aliases(global, item, ValueOrigin::ArrayItem)?;
             }
-        } else {
-            // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-            let iter = JSPropertyIterator::init(
-                global,
-                unwrapped.to_object(global)?,
-                JSPropertyIteratorOptions {
-                    skip_empty_name: false,
-                    include_value: true,
-                    ..Default::default()
-                },
-            )?;
-
-            while let Some((prop_name, value)) = iter.next()? {
-                if value.is_undefined() || value.is_symbol() || value.is_function() {
-                    continue;
-                }
-                self.find_anchors_and_aliases(global, value, ValueOrigin::PropValue(&prop_name))?;
-            }
+            return Ok(());
         }
 
-        if !self.aliases {
-            self.known_collections.remove(&unwrapped);
+        // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
+        let iter = JSPropertyIterator::init(
+            global,
+            unwrapped.to_object(global)?,
+            JSPropertyIteratorOptions {
+                skip_empty_name: false,
+                include_value: true,
+                ..Default::default()
+            },
+        )?;
+
+        while let Some((prop_name, value)) = iter.next()? {
+            if value.is_undefined() || value.is_symbol() || value.is_function() {
+                continue;
+            }
+            self.find_anchors_and_aliases(global, value, ValueOrigin::PropValue(&prop_name))?;
         }
 
         Ok(())
@@ -364,7 +355,7 @@ impl<'a> Stringifier<'a> {
         &mut self,
         global: &JSGlobalObject,
         unwrapped: JSValue,
-        mut after_key: bool,
+        after_key: bool,
     ) -> Result<(), StringifyError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
@@ -427,6 +418,32 @@ impl<'a> Stringifier<'a> {
 
         debug_assert!(unwrapped.is_object());
 
+        if self.aliases {
+            return self.stringify_collection(global, unwrapped, after_key);
+        }
+
+        // Without aliases there is no first pass. `known_collections` is the path from the root to
+        // here, so a hit is a cycle, which YAML cannot write without an alias.
+        if self.known_collections.get_or_put(unwrapped)?.found_existing {
+            return Err(global
+                .throw_type_error(format_args!(
+                    "YAML.stringify cannot serialize a cyclic object with aliases: false"
+                ))
+                .into());
+        }
+        self.known_collection_roots.append(unwrapped);
+        let result = self.stringify_collection(global, unwrapped, after_key);
+        self.known_collections.remove(&unwrapped);
+        result
+    }
+
+    /// `unwrapped` is an object. Writes it, with an anchor or as an alias when the first pass marked it.
+    fn stringify_collection(
+        &mut self,
+        global: &JSGlobalObject,
+        unwrapped: JSValue,
+        mut after_key: bool,
+    ) -> Result<(), StringifyError> {
         let has_anchor = self
             .known_collections
             .get(&unwrapped)

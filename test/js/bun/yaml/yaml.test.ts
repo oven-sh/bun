@@ -3881,7 +3881,7 @@ config:
         expect(YAML.stringify(obj, null, { indent: "\t" })).toBe(YAML.stringify(obj, null, "\t"));
         expect(YAML.stringify(obj, null, {})).toBe(YAML.stringify(obj));
         expect(YAML.stringify(obj, null, { indent: 0 })).toBe(YAML.stringify(obj));
-        expect(YAML.stringify(obj, null, { indent: new Number(2) })).toBe(YAML.stringify(obj, null, 2));
+        expect(YAML.stringify(obj, null, { indent: new Number(2) as any })).toBe(YAML.stringify(obj, null, 2));
       });
 
       test("aliases: false writes a shared object in full", () => {
@@ -3932,14 +3932,33 @@ config:
           "YAML.stringify cannot serialize a cyclic object with aliases: false",
         );
 
+        const cycleError = {
+          name: "TypeError",
+          message: "YAML.stringify cannot serialize a cyclic object with aliases: false",
+        };
         const a: any = { name: "a" };
         const b = { name: "b", a };
         a.b = b;
-        expect(() => YAML.stringify({ root: a }, null, { aliases: false })).toThrow(TypeError);
+        expect(() => YAML.stringify({ root: a }, null, { aliases: false })).toThrow(
+          expect.objectContaining(cycleError),
+        );
 
         const arr: any[] = [1];
         arr.push(arr);
-        expect(() => YAML.stringify(arr, null, { aliases: false })).toThrow(TypeError);
+        expect(() => YAML.stringify(arr, null, { aliases: false })).toThrow(expect.objectContaining(cycleError));
+
+        // Without aliases there is one pass, so a getter runs once and a cycle it returns is caught.
+        let reads = 0;
+        const lazy: any = {
+          get child() {
+            reads++;
+            return reads > 1 ? lazy : { count: reads };
+          },
+        };
+        expect(YAML.stringify(lazy, null, { aliases: false })).toBe("{child: {count: 1}}");
+        expect(reads).toBe(1);
+        expect(() => YAML.stringify(lazy, null, { aliases: false })).toThrow(expect.objectContaining(cycleError));
+        expect(reads).toBe(2);
 
         // the same value keeps its anchor by default
         expect(YAML.stringify(self, null, 2)).toBe("&root\nx: 1\nself:\n  *root");
@@ -3953,9 +3972,19 @@ config:
       });
 
       test("aliases must be a boolean", () => {
-        expect(() => YAML.stringify({ a: 1 }, null, { aliases: "false" } as any)).toThrow(TypeError);
-        expect(() => YAML.stringify({ a: 1 }, null, { aliases: 0 } as any)).toThrow(TypeError);
-        expect(() => YAML.stringify({ a: 1 }, null, { aliases: null } as any)).toThrow(TypeError);
+        for (const [aliases, type] of [
+          ["false", "string"],
+          [0, "number"],
+          [null, "object"],
+        ]) {
+          expect(() => YAML.stringify({ a: 1 }, null, { aliases } as any)).toThrow(
+            expect.objectContaining({
+              name: "TypeError",
+              code: "ERR_INVALID_ARG_TYPE",
+              message: `The "aliases" property must be of type boolean, got ${type}`,
+            }),
+          );
+        }
       });
     });
 

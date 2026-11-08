@@ -1237,9 +1237,8 @@ impl FakeTimers {
         self.drives.iter_mut().find(|drive| drive.id == id)
     }
 
-    /// The drive of the step that is running, looked up again after a callback. It is there: a drive leaves `drives` mid-step only when `installs` changes, and `run_ticks` or `fire` has ended the step then.
-    fn running_drive(&mut self, id: u32) -> Option<&mut AsyncDrive> {
-        let drive = self.drive_mut(id);
+    /// Wraps the lookup of a running step's own drive after one of its callbacks. The drive is there: one leaves `drives` mid-step only when `installs` changes, and `run_ticks` or `fire` has ended the step then.
+    fn of_running_step<T>(drive: Option<T>) -> Option<T> {
         debug_assert!(drive.is_some());
         drive
     }
@@ -1302,8 +1301,8 @@ impl FakeTimers {
     /// Returns `None` once no timer is left in range and the clock is at its end.
     fn next_of_tick(&mut self, global: &JSGlobalObject, id: u32) -> Option<*mut EventLoopTimer> {
         let now = self.now;
-        let drive = self.running_drive(id)?;
-        let Drive::Tick(Some(remaining)) = drive.drive else {
+        let index = Self::of_running_step(self.drives.iter().position(|drive| drive.id == id))?;
+        let Drive::Tick(Some(remaining)) = self.drives[index].drive else {
             return None;
         };
         let until = plus(now, remaining);
@@ -1313,10 +1312,11 @@ impl FakeTimers {
         };
         // SAFETY: just unlinked, live until it is fired.
         let at = unsafe { (*timer).next };
-        let left = until.duration(if at.greater(&now) { &at } else { &now });
-        if let Some(drive) = self.running_drive(id) {
-            drive.drive = Drive::Tick(Some(left));
-        }
+        self.drives[index].drive = Drive::Tick(Some(until.duration(if at.greater(&now) {
+            &at
+        } else {
+            &now
+        })));
         Some(timer)
     }
 
@@ -1386,7 +1386,9 @@ impl FakeTimers {
                     // SAFETY: as above.
                     let none_left = unsafe { (*all).fake_timers.is_empty() };
                     // SAFETY: as above.
-                    let Some(drive) = (unsafe { (*all).fake_timers.running_drive(id) }) else {
+                    let Some(drive) =
+                        Self::of_running_step(unsafe { (*all).fake_timers.drive_mut(id) })
+                    else {
                         return Ok(None);
                     };
                     if steps == 1 || none_left || drive.thrown.has() {

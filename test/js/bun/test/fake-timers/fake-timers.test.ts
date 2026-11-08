@@ -3892,6 +3892,9 @@ describe.each([
       } catch (error) {
         thrown = error;
       }
+      // As above: a step that an Async function posted before its clock went away runs in these turns.
+      await oneLoopTurn();
+      await oneLoopTurn();
       return { thrown, ...newClock(ran) };
     }
     const thrownAndUntouched = { thrown: new Error("boom"), ...untouched };

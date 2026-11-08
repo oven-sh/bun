@@ -256,16 +256,6 @@ function getLazy<T>(initializer: () => T) {
 const observerCounts = new Map<string, number>();
 const kObservers = new Set<NodeEntryObserver>();
 
-/** Entry types routed through this JS-side registry instead of the native observer. */
-const kNodeEntryTypes = new Set<string>();
-// Not `new Set([...])`: that reads the array iterator while this module first loads, and script can replace it.
-kNodeEntryTypes.$add("net");
-kNodeEntryTypes.$add("dns");
-kNodeEntryTypes.$add("http");
-kNodeEntryTypes.$add("http2");
-kNodeEntryTypes.$add("function");
-kNodeEntryTypes.$add("quic");
-
 function hasObserver(type: string) {
   return (observerCounts.get(type) ?? 0) > 0;
 }
@@ -491,7 +481,6 @@ export default {
   startPerf,
   stopPerf,
   enqueueNodeEntry,
-  kNodeEntryTypes,
   NodeEntryObserver,
   PerformanceNodeEntry,
 

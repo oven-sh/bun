@@ -1,6 +1,5 @@
 // Hardcoded module "node:perf_hooks"
 const {
-  kNodeEntryTypes,
   NodeEntryObserver,
   enqueueNodeEntry,
   hasObserver,
@@ -12,6 +11,12 @@ const { validateFunction, validateInteger, validateObject } = require("internal/
 const createRecordable = $bindgen("histogram.bind.ts", "createRecordable");
 const createInterval = $bindgen("histogram.bind.ts", "createInterval");
 const isHistogram = $bindgen("histogram.bind.ts", "isHistogram");
+
+/**
+ * Entry types routed through the registry of internal/shared instead of the native observer. The list is here, with its one
+ * reader: `new Set([...])` reads the array iterator, and internal/shared loads with nearly every module.
+ */
+const kNodeEntryTypes = new Set(["net", "dns", "http", "http2", "function", "quic"]);
 
 const NumberMAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 const kInt64Max = 2n ** 63n - 1n;

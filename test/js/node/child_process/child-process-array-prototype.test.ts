@@ -12,7 +12,7 @@ describe("what a script stored on Array.prototype", () => {
     "ipc-child.cjs": `process.on("message", message => process.send("child got " + message, () => process.disconnect()));`,
     // Prints the same under Node v26.12.1, in each of the three orders.
     "replaced-functions.cjs": /* js */ `
-      const order = process.argv[2];
+      const [order, calls_] = process.argv.slice(2);
       const windows = process.platform === "win32";
       const echo = windows ? process.execPath : "/bin/echo";
       const echoed = (...words) => (windows ? [__dirname + "\\\\echo.cjs", ...words] : words);
@@ -71,7 +71,7 @@ describe("what a script stored on Array.prototype", () => {
         return new Promise(resolve => child.on("close", () => resolve(out)));
       }
 
-      async function useAll(cp) {
+      function useSync(cp) {
         const result = {};
         result.spawnSync = String(watch(() => cp.spawnSync(echo, echoed("intended", "last"), { env })).stdout);
         const printsVariable = windows ? "echo %REPLACED_ARRAY_FUNCTIONS%" : "echo $REPLACED_ARRAY_FUNCTIONS";
@@ -92,6 +92,11 @@ describe("what a script stored on Array.prototype", () => {
         } catch (error) {
           result.twoIpcSlots = error.code;
         }
+        return result;
+      }
+
+      async function useAsync(cp) {
+        const result = {};
         // The call is not watched while the functions are replaced: execFile() sets the encoding of its streams, and
         // setEncoding() of Node calls slice().
         result.execFile = await new Promise(resolve => {
@@ -120,6 +125,7 @@ describe("what a script stored on Array.prototype", () => {
       }
 
       (async () => {
+        const use = calls_ === "the calls that wait for the child" ? useSync : useAsync;
         let cp;
         if (order === "before node:child_process loads") {
           install();
@@ -127,15 +133,15 @@ describe("what a script stored on Array.prototype", () => {
         } else if (order === "only while node:child_process loads and is first used") {
           install();
           cp = require("node:child_process");
-          await useAll(cp);
+          await use(cp);
           restore();
           watching = true;
         } else if (order === "after the first use of node:child_process") {
           cp = require("node:child_process");
-          await useAll(cp);
+          await use(cp);
           install();
         } else throw new Error("unknown order: " + order);
-        const result = await useAll(cp);
+        const result = await use(cp);
         watching = false;
         restore();
         console.log(stringify({ result, calls }));
@@ -181,10 +187,12 @@ describe("what a script stored on Array.prototype", () => {
         windows ? process.execPath : "/bin/echo",
         windows ? [__dirname + "\\\\echo.cjs", "a", "b", "c"] : ["a", "b", "c"],
       );
-      exec("echo the command ran", (error, stdout) => {
+      const child = exec("echo the command ran", (error, stdout) => {
         delete Array.prototype[2];
-        process.stdout.write(String(sync.stdout) + (error ? String(error) : stdout));
+        // cmd.exe ends its line with "\\r\\n".
+        process.stdout.write(String(sync.stdout).trim() + "\\n" + (error ? String(error) : stdout.trim()) + "\\n" + stdio + "\\n");
       });
+      const stdio = "child.stdio[2] is child.stderr: " + (child.stdio[2] === child.stderr && child.stdio.length === 3);
     `,
     "throwing-iterator.cjs": /* js */ `
       const windows = process.platform === "win32";
@@ -230,23 +238,32 @@ describe("what a script stored on Array.prototype", () => {
     "outlives.cjs": `process.stdin.on("end", () => process.stdout.write("the child outlived spawn()\\n")).resume();`,
     "throws-after-the-child-started.cjs": /* js */ `
       const cp = require("node:child_process");
+      const { writeSync } = require("node:fs");
       const env = { ...process.env };
-      const stdio = ["pipe", "inherit", "ignore"];
+      // The child holds this process's stdout, and prints there once its stdin ends.
+      const stdio = ["pipe", "inherit", "pipe"];
+      const waits = process.platform === "win32" ? [process.execPath, __dirname + "\\\\outlives.cjs"] : ["/bin/sh", "-c", "read line; echo 'the child outlived spawn()'"];
       const realNextTick = process.nextTick;
-      // spawn() calls process.nextTick() once the child runs.
-      process.nextTick = () => {
-        throw new Error("process.nextTick was called");
-      };
+      if (process.argv[2] === "process.nextTick throws once") {
+        // spawn() calls process.nextTick() once the child runs.
+        process.nextTick = () => {
+          throw new Error("process.nextTick was called");
+        };
+      } else {
+        // The modules of the streams cannot load under this iterator, and it stays: what fails in spawn() fails again in
+        // whatever touches the streams later.
+        Array.prototype[Symbol.iterator] = function () {
+          throw new Error("the array iterator was called");
+        };
+      }
       let threw = false;
       try {
-        // The child holds this process's stdout, and prints there once its stdin ends.
-        if (process.platform === "win32") cp.spawn(process.execPath, [__dirname + "\\\\outlives.cjs"], { env, stdio });
-        else cp.spawn("/bin/sh", ["-c", "read line; echo 'the child outlived spawn()'"], { env, stdio });
+        cp.spawn(waits[0], waits.slice(1), { env, stdio });
       } catch {
         threw = true;
       }
       process.nextTick = realNextTick;
-      process.stdout.write(threw ? "spawn() threw\\n" : "spawn() returned\\n");
+      writeSync(1, threw ? "spawn() threw\\n" : "spawn() returned\\n");
     `,
   };
 
@@ -258,45 +275,48 @@ describe("what a script stored on Array.prototype", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
-      // A process that waits for a child that nothing can reach any more would wait for good.
-      timeout: 40_000,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
   const ranToItsEnd = { stderr: "", exitCode: 0, signalCode: null };
-  // A debug build takes some seconds for each of these: one starts up to 22 children.
-  const timeout = 60_000;
 
-  it.concurrent.each([
+  const results = {
+    "the calls that wait for the child": {
+      spawnSync: "intended last\n",
+      shell: "in the environment",
+      ...(isWindows ? {} : { shellWithArgs: "intended last\n" }),
+      execFileSync: "intended last\n",
+      nullByte:
+        "ERR_INVALID_ARG_VALUE: The argument 'args[1]' must be a string without null bytes. Received 'l\\x00ast'",
+      twoIpcSlots: "ERR_IPC_ONE_PIPE",
+    },
+    "the calls that return a child": {
+      execFile: isWindows ? "3 of 4: undefined last\n" : "3 of 4: intended undefined last\n",
+      fork: "child got a message",
+      spawn: "intended last\n",
+      spawnWithFourthPipe: "intended last\n",
+      spawnWithAHole: isWindows ? "3 of 4: undefined last\n" : "3 of 4: intended undefined last\n",
+      envPairs: "a=b=c",
+    },
+  };
+  const orders = [
     "before node:child_process loads",
     "only while node:child_process loads and is first used",
     "after the first use of node:child_process",
-  ])(
-    "functions replaced %s: every child gets what was passed, and none of the functions is called",
-    async order => {
-      const result = {
-        spawnSync: "intended last\n",
-        shell: "in the environment",
-        ...(isWindows ? {} : { shellWithArgs: "intended last\n" }),
-        execFileSync: "intended last\n",
-        nullByte:
-          "ERR_INVALID_ARG_VALUE: The argument 'args[1]' must be a string without null bytes. Received 'l\\x00ast'",
-        twoIpcSlots: "ERR_IPC_ONE_PIPE",
-        execFile: isWindows ? "3 of 4: undefined last\n" : "3 of 4: intended undefined last\n",
-        fork: "child got a message",
-        spawn: "intended last\n",
-        spawnWithFourthPipe: "intended last\n",
-        spawnWithAHole: isWindows ? "3 of 4: undefined last\n" : "3 of 4: intended undefined last\n",
-        envPairs: "a=b=c",
-      };
-      expect(await run("replaced-functions.cjs", order)).toEqual({
-        stdout: JSON.stringify({ result, calls: {} }) + "\n",
-        ...ranToItsEnd,
-      });
-    },
-    timeout,
-  );
+  ];
+
+  describe.each(Object.keys(results) as (keyof typeof results)[])("%s", which => {
+    it.concurrent.each(orders)(
+      "functions replaced %s: every child gets what was passed, and none of the functions is called",
+      async order => {
+        expect(await run("replaced-functions.cjs", order, which)).toEqual({
+          stdout: JSON.stringify({ result: results[which], calls: {} }) + "\n",
+          ...ranToItsEnd,
+        });
+      },
+    );
+  });
 
   // The stdio list is read by index now. map() left a hole where the list has one, and so does the loop.
   it("a hole in the stdio list is no pipe", async () => {
@@ -319,24 +339,19 @@ describe("what a script stored on Array.prototype", () => {
     expect({ code: error?.code, cmd: error?.cmd }).toEqual({ code: 3, cmd: `${bunExe()} -e process.exit(3) original` });
   });
 
-  it.concurrent(
-    "spies that a test file restored: the spawns of a later test file work",
-    async () => {
-      const { stderr, exitCode } = await run("test", "./a.test.js", "./b.test.js");
-      expect(stderr).toContain(" 3 pass\n 0 fail\n");
-      expect(exitCode).toBe(0);
-    },
-    timeout,
-  );
+  it.concurrent("spies that a test file restored: the spawns of a later test file work", async () => {
+    const { stderr, exitCode } = await run("test", "./a.test.js", "./b.test.js");
+    expect(stderr).toContain(" 3 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
 
-  // Node throws a TypeError here. Before, the shell ran the command "undefined".
-  it.concurrent(
-    "a setter on an index of Array.prototype: the commands run (#42723)",
-    async () => {
-      expect(await run("index-setter.cjs")).toEqual({ stdout: "a b c\nthe command ran\n", ...ranToItsEnd });
-    },
-    timeout,
-  );
+  // Node throws a TypeError here. Before, the shell ran the command "undefined" and child.stdio had a hole.
+  it.concurrent("a setter on an index of Array.prototype: the commands run (#42723)", async () => {
+    expect(await run("index-setter.cjs")).toEqual({
+      stdout: "a b c\nthe command ran\nchild.stdio[2] is child.stderr: true\n",
+      ...ranToItsEnd,
+    });
+  });
 
   // Node reads the array iterator on these paths and throws before it starts a child.
   it.concurrent.each(["3", "4"])(
@@ -348,7 +363,6 @@ describe("what a script stored on Array.prototype", () => {
         ...ranToItsEnd,
       });
     },
-    timeout,
   );
 
   it.concurrent(
@@ -359,14 +373,16 @@ describe("what a script stored on Array.prototype", () => {
         ...ranToItsEnd,
       });
     },
-    timeout,
   );
 
-  it.concurrent(
-    "spawn() that throws after the child started leaves no child behind",
-    async () => {
-      expect(await run("throws-after-the-child-started.cjs")).toEqual({ stdout: "spawn() threw\n", ...ranToItsEnd });
+  // Without the fix the process waits for a child that nothing can reach, until the test runner stops it.
+  it.concurrent.each(["process.nextTick throws once", "the modules of the streams cannot load"])(
+    "spawn() that throws after the child started leaves no child and throws nothing later: %s",
+    async why => {
+      expect(await run("throws-after-the-child-started.cjs", why)).toEqual({
+        stdout: "spawn() threw\n",
+        ...ranToItsEnd,
+      });
     },
-    timeout,
   );
 });

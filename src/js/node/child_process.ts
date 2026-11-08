@@ -1407,7 +1407,8 @@ class ChildProcess extends EventEmitter {
   #createStdioObject() {
     const opts = this.#stdioOptions;
     const length = opts.length;
-    let result = new Array(length);
+    // Direct writes: a setter on an index of Array.prototype would take an ordinary store into an empty slot.
+    let result = $newArrayWithSize<StdioStream | null | undefined>(length);
     for (let i = 0; i < length; i++) {
       const element = opts[i];
 
@@ -1415,21 +1416,21 @@ class ChildProcess extends EventEmitter {
         return undefined;
       }
       if (element !== "pipe" && element !== "socket-fd") {
-        result[i] = null;
+        $putByValDirect(result, i, null);
         continue;
       }
       switch (i) {
         case 0:
-          result[i] = this.stdin;
+          $putByValDirect(result, i, this.stdin);
           continue;
         case 1:
-          result[i] = this.stdout;
+          $putByValDirect(result, i, this.stdout);
           continue;
         case 2:
-          result[i] = this.stderr;
+          $putByValDirect(result, i, this.stderr);
           continue;
         default:
-          result[i] = this.#getBunSpawnIo(i, false);
+          $putByValDirect(result, i, this.#getBunSpawnIo(i, false));
           continue;
       }
     }
@@ -1527,6 +1528,9 @@ class ChildProcess extends EventEmitter {
 
     const cmd = spawnCommand(file, spawnargs);
     let started: $Bindgen.Subprocess | undefined;
+    // Set when this throws after the child started. The caller gets no ChildProcess then, so its exit reports to nobody:
+    // what failed here would fail there again, where nothing can catch it.
+    let abandoned = false;
 
     try {
       started = this.#handle = Bun.spawn({
@@ -1539,6 +1543,7 @@ class ChildProcess extends EventEmitter {
         gid: options.gid,
         cgroup: options.cgroup,
         onExit: (handle, exitCode, signalCode, err) => {
+          if (abandoned) return;
           this.#handle = handle as unknown as $Bindgen.Subprocess;
           this.pid = this.#handle!.pid;
           $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
@@ -1595,6 +1600,7 @@ class ChildProcess extends EventEmitter {
     } catch (ex) {
       if (started !== undefined) {
         // The child runs, and the caller gets no ChildProcess: nothing could wait for the child or stop it.
+        abandoned = true;
         started.kill("SIGKILL");
         throw ex;
       }

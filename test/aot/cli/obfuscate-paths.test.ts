@@ -191,8 +191,9 @@ const ways: Record<string, { held: string[]; prints: string | RegExp; files: Rec
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { ask } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), ask());\n',
       "quietFolder/quietBystander.ts": "export const quiet = (n: number) => n + 1;\n",
-      // require() hands over a module whose awaits all wait for settled promises. This one is not settled yet.
-      "seenFolder/awaits.mjs": "export const waited = await new Promise(resolve => setTimeout(resolve, 20, 1));\n",
+      // require() hands over a module whose awaits all wait for settled promises. A job settles this one later.
+      "seenFolder/awaits.mjs":
+        "export const waited = await new Promise(resolve => queueMicrotask(() => resolve(1)));\n",
       "seenFolder/seenSubject.ts":
         'export const ask = () => { try { return require("./awaits.mjs"); } catch (e: any) { return e.name + ": " + e.message; } };\n',
     },

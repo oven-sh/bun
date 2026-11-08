@@ -6244,6 +6244,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__letImportsHeldGetFilesThemselves
         auto* mock = dynamicDowncast<JSModuleMock>(waiting.second.get());
         if (!mock || mock->state != JSModuleMock::State::NotCalled || !JSC::AOT::isImportHeldThatAsksForMockOf(globalObject, JSC::AOT::ModuleID(waiting.first)))
             continue;
+        // The load in flight of a mock that is a file of a `__mocks__` folder has the name of that file already, and gets it.
+        if (JSValue manualMock = mock->factory.get(); manualMock && manualMock.isString())
+            continue;
         if (!givesFileItself)
             givesFileItself = JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionModuleMockGivesFileItself, ImplementationVisibility::Private);
         mock->factory.set(vm, mock, givesFileItself);

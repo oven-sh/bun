@@ -1191,7 +1191,7 @@ fn find_specifier(
     );
     let is_followed = found.as_ref().is_some_and(|found| {
         let mut names = found.alternatives.iter();
-        names.all(|it| matches!(it, ImportSpecifier::Constant(_)))
+        found.is_out_of_data_file || names.all(|it| matches!(it, ImportSpecifier::Constant(_)))
     });
     if !is_followed {
         let written = find_names_as_written(inputs, &alternatives.written_names, argument);
@@ -1203,7 +1203,9 @@ fn find_specifier(
     };
     if found.is_out_of_data_file {
         let names = found.alternatives.iter().filter_map(|it| match *it {
-            ImportSpecifier::Constant(name) => Some((name, argument, false)),
+            ImportSpecifier::Constant(name) => {
+                Some((name, argument, found.may_be_changed_by_others))
+            }
             _ => None,
         });
         alternatives.names_out_of_data_files.extend(names);

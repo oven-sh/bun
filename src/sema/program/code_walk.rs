@@ -584,10 +584,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             context.let_no_guess_in(Some(&file));
             return false;
         }
-        if program_rules_out_guesses(context, state) {
-            context.let_no_guess_in(None);
-            return false;
-        }
         let held_back = context.take_guesses_held_back();
         let added = held_back.iter();
         let added = added.filter_map(|path| context.add_entry_point(path));

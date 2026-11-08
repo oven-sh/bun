@@ -685,22 +685,10 @@ pub(super) fn program_rules_out_guesses(
     let is_of_program = find_files_of_program(context, state);
     let is_sure = find_files_reached(context, state, |load| !load.may_be_left_out);
     let files = state.files.iter().zip(is_of_program).zip(is_sure);
-    let mut files = files.filter(|it| it.0.1).map(|it| (it.0.0, it.1));
-    files.any(|(file, is_sure)| match is_sure {
-        true => names_unknown_file_where_nothing_is_written(file),
-        false => {
-            names_unknown_file(file, &|_| true) || is_typescript_file_name(file.target.key.path)
-        }
+    let mut guessed = files.filter(|it| it.0.1 && !it.1).map(|it| it.0.0);
+    guessed.any(|file| {
+        names_unknown_file(file, &|_| true) || is_typescript_file_name(file.target.key.path)
     })
-}
-
-fn names_unknown_file_where_nothing_is_written(file: &WalkedFile<'_, '_>) -> bool {
-    let analysis = file.parsed.as_ref().map(|it| &it.code.analyzed.analysis);
-    let guessed = analysis
-        .into_iter()
-        .flat_map(|it| it.names_out_of_data_files);
-    let guessed: FxHashSet<ExprId> = guessed.filter(|it| it.2).map(|it| it.1).collect();
-    names_unknown_file_at(file, &|site| !guessed.contains(&site.specifier_node))
 }
 
 fn reach(

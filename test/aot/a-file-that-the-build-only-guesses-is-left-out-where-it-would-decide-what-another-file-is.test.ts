@@ -2,8 +2,8 @@
 // require, module, exports, import or export in it is what its first loader makes of it, and a guess says nothing about who comes first. So a guess enters a program only when all
 // that is sure has been found, and only if no file of the program leaves what it is to its loader. Where such a file comes in with the guesses, all guesses go again.
 // And a guess comes in whole or not at all: a guessed file that loads under a name nobody can read, or whose own loads would have to be looked for in turn (a further guess, a name
-// handed to a helper, a Worker's start, a name out of a data file), would run and find them missing, and a `catch` around them would hide it. The same holds for a file of the
-// program behind the guessed load. And a guessed file never stops a build, so none of them is TypeScript, which the build would have to check.
+// handed to a helper, a Worker's start, a name out of a data file), would run and find them missing, and a `catch` around them would hide it. And a guessed
+// file never stops a build, so none of them is TypeScript, which the build would have to check.
 // What a guessed file may name is a short list: what it declares or imports itself, the language's own built-ins (none that runs a text), console, and require, module and exports.
 // And it holds no handler: no `try`, nothing asynchronous. What fails in it is then not hidden by it.
 // In these the load then fails aloud, as it does without the guess, and the build has pointed at it (TS100064) and said why the written files are not there (TS100089). A case that starts to answer as `bun <file>` is a gain: move it to
@@ -202,16 +202,6 @@ const cases: Record<string, { files: Record<string, string>; plain: string; miss
       "inner.cjs": `exports.word = "real";\n`,
       "first.cjs": `let said;\ntry {\n  const host = (() => {}).constructor("return Bun")();\n  said = host.resolveSync([..."sjc.renni/."].reverse().join(""), ".").endsWith("inner.cjs") ? "real" : "other";\n} catch {\n  said = "fallback";\n}\nexports.said = said;\n`,
       "main.mjs": `const table = { first: "./first.cjs" };\nexport const seen = JSON.stringify(table);\nfunction load(go) {\n  if (!go) return;\n  return import.meta.require(table.first);\n}\nload(false);\nconsole.log("SAID", load(true).said);\n`,
-    },
-    plain: "SAID real\n",
-    missing: "./first.cjs",
-    said: "",
-  },
-  "the program itself goes on to a name that nobody can read, and catches": {
-    files: {
-      "inner.cjs": `exports.word = "real";\n`,
-      "first.cjs": `exports.said = "first";\n`,
-      "main.mjs": `const table = { first: "./first.cjs" };\nexport const seen = JSON.stringify(table);\nfunction load(go) {\n  if (!go) return;\n  return import.meta.require(table.first);\n}\nload(false);\nload(true);\nlet said;\ntry {\n  said = import.meta.require(atob("Li9pbm5lci5janM=")).word;\n} catch {\n  said = "fallback";\n}\nconsole.log("SAID", said);\n`,
     },
     plain: "SAID real\n",
     missing: "./first.cjs",

@@ -325,6 +325,7 @@ struct Follower<'i, 'a, 's> {
     asked_of_own_exports: Option<&'i AskedOfOwnExports>,
     takes_all_as_written: bool,
     has_read_data_file: Cell<bool>,
+    has_read_what_others_may_change: Cell<bool>,
     kept_as_written: FxHashSet<SymbolId>,
     unchecked: Vec<SymbolId>,
     not_kept_as_written: FxHashSet<SymbolId>,
@@ -367,6 +368,7 @@ pub(super) struct Found {
     pub(super) start_at_own_directory: bool,
     pub(super) resolved_form: Option<ResolvedForm>,
     pub(super) is_out_of_data_file: bool,
+    pub(super) may_be_changed_by_others: bool,
 }
 
 impl<'i, 'a, 's> Follower<'i, 'a, 's> {
@@ -385,6 +387,7 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             asked_of_own_exports: None,
             takes_all_as_written: false,
             has_read_data_file: Cell::new(false),
+            has_read_what_others_may_change: Cell::new(false),
             kept_as_written: FxHashSet::default(),
             unchecked: Vec::new(),
             not_kept_as_written: FxHashSet::default(),
@@ -603,6 +606,7 @@ fn find_alternatives_with(mut follower: Follower<'_, '_, '_>, argument: ExprId) 
         start_at_own_directory,
         resolved_form,
         is_out_of_data_file: follower.has_read_data_file.get(),
+        may_be_changed_by_others: follower.has_read_what_others_may_change.get(),
     })
 }
 
@@ -2336,11 +2340,15 @@ impl Follower<'_, '_, '_> {
         if !self.names_an_export(target) {
             return false;
         }
-        if !self.reaches_exports_by_their_name_alone(target) {
-            return false;
+        let is_reached_by_name_alone = self.reaches_exports_by_their_name_alone(target);
+        if is_reached_by_name_alone {
+            asked.0.borrow_mut().push(key);
         }
-        asked.0.borrow_mut().push(key);
-        !hir.exports_that_others_touch.contains(&key)
+        if !is_reached_by_name_alone || hir.exports_that_others_touch.contains(&key) {
+            self.has_read_data_file.set(true);
+            self.has_read_what_others_may_change.set(true);
+        }
+        true
     }
 
     fn names_an_export(&self, target: ExprId) -> bool {

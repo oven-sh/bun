@@ -19,6 +19,7 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/WeakMapImpl.h>
 #include <JavaScriptCore/WeakMapImplInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -27,6 +28,7 @@
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/ObjectPrototypeInlines.h>
 #include <JavaScriptCore/RegExpPrototype.h>
@@ -355,6 +357,14 @@ static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object
 
 static constexpr unsigned descriptorAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Accessor;
 
+// What getOwnPropertyStorage() gives for a property, and what putOwnPropertyStorage() takes. No storage: there is no own property.
+struct SlotContent {
+    JSValue storage;
+    unsigned attributes { 0 };
+};
+
+static SlotContent whatStandsFor(JSGlobalObject*, JSObject* target, const Identifier& key, SlotContent, InternalFieldTuple* stubLink);
+
 static void putOwnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName key, const PropertyDescriptor& descriptor)
 {
     JSValue storage = descriptor.isAccessorDescriptor() ? GetterSetter::create(globalObject->vm(), globalObject, descriptor.getter(), descriptor.setter()) : descriptor.value();
@@ -456,6 +466,11 @@ public:
     static constexpr unsigned SpyAttributeAccessor = 1 << 29;
     // isOpaqueProperty() was true at install time, so restore the same way.
     static constexpr unsigned SpyAttributeOpaque = 1 << 28;
+    // The spy is restored. It still says what it had replaced, to a spy, a stub or a fake timer that kept the spy as what that one replaced.
+    static constexpr unsigned SpyAttributeRestored = 1 << 27;
+    // m_spyOriginal is an InternalFieldTuple: what the spy replaced, and the link to the vi.stubGlobal() stub that put it there.
+    static constexpr unsigned SpyAttributeOverStub = 1 << 26;
+    static constexpr unsigned spyAttributeMask = SpyAttributeESModuleNamespace | SpyAttributeAccessor | SpyAttributeOpaque | SpyAttributeRestored | SpyAttributeOverStub;
 
     JSString* jsName()
     {
@@ -863,7 +878,39 @@ public:
     // `original` is getOwnPropertyStorage() of the replaced property, or empty if the target had no own one.
     void didInstall(JSObject* target, const Identifier& key, JSValue original, unsigned attributes);
 
-    bool isRestoredSpy() const { return isSpy && !m_spyTarget; }
+    bool isRestoredSpy() const { return isSpy && (!m_spyTarget || (m_spyAttributes & SpyAttributeRestored)); }
+    JSObject* installedOn() const { return m_spyAttributes & SpyAttributeRestored ? nullptr : m_spyTarget.get(); }
+    bool wasRestoredOn(JSObject* target, const Identifier& key) const
+    {
+        return (m_spyAttributes & SpyAttributeRestored) && m_spyTarget.get() == target && m_spyIdentifier == key;
+    }
+    // Its restore takes only its own accessor off the property, and leaves a value that is there alone.
+    bool isAccessorSpyOn(JSObject* target, const Identifier& key) const
+    {
+        return (m_spyAttributes & SpyAttributeAccessor) && installedOn() == target && m_spyIdentifier == key;
+    }
+    InternalFieldTuple* stubLink() const
+    {
+        if (!(m_spyAttributes & SpyAttributeOverStub))
+            return nullptr;
+        return uncheckedDowncast<InternalFieldTuple>(uncheckedDowncast<InternalFieldTuple>(m_spyOriginal.get())->getInternalField(1));
+    }
+    SlotContent replaced() const
+    {
+        JSValue original = m_spyOriginal.get();
+        if (m_spyAttributes & SpyAttributeOverStub)
+            original = uncheckedDowncast<InternalFieldTuple>(original)->getInternalField(0);
+        return { original, m_spyAttributes & ~spyAttributeMask };
+    }
+    void setStubLink(JSGlobalObject* globalObject, InternalFieldTuple* link)
+    {
+        auto& vm = this->vm();
+        auto* pair = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
+        pair->putInternalField(vm, 0, m_spyOriginal.get());
+        pair->putInternalField(vm, 1, link);
+        m_spyOriginal.set(vm, this, pair);
+        m_spyAttributes |= SpyAttributeOverStub;
+    }
 
     // Puts the spied-on property back as it was; that can throw (a module namespace export, an indexed slot).
     void clearSpy(JSGlobalObject* globalObject, bool shouldReset = true)
@@ -874,7 +921,7 @@ public:
             RETURN_IF_EXCEPTION(scope, );
         }
 
-        if (auto* target = m_spyTarget.get()) {
+        if (auto* target = installedOn()) {
             this->putBackOriginal(globalObject, target);
             if (scope.exception()) [[unlikely]] {
                 // It's still installed, so keep it where restoreAllMocks() finds it.
@@ -949,10 +996,7 @@ private:
 
     void didUninstall()
     {
-        m_spyTarget.clear();
-        m_spyOriginal.clear();
-        m_spyIdentifier = JSC::Identifier();
-        m_spyAttributes = 0;
+        m_spyAttributes |= SpyAttributeRestored;
         leave(List::Spies);
     }
 
@@ -1013,11 +1057,13 @@ private:
                 return;
         }
 
+        SlotContent toPut = whatStandsFor(globalObject, target, identifier, replaced(), stubLink());
+        RETURN_IF_EXCEPTION(scope, );
         // Behind the lookup above: the global of a node:vm context asks its sandbox, which may be a Proxy.
         ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
         scope.release();
-        if (original) {
-            putOwnPropertyStorage(globalObject, target, identifier, original, attributes & ~(SpyAttributeAccessor | SpyAttributeOpaque), isOpaque);
+        if (toPut.storage) {
+            putOwnPropertyStorage(globalObject, target, identifier, toPut.storage, toPut.attributes, isOpaque);
         } else if (!isOpaque && target->inherits<NodeVMGlobalObject>()) {
             // NodeVMGlobalObject::deleteProperty() deletes from the contextified object, where the spy never was.
             DeletePropertySlot slot;
@@ -1158,6 +1204,221 @@ void JSMockFunction::didInstall(JSObject* target, const Identifier& key, JSValue
     m_spyAttributes = attributes;
     if (original)
         m_spyOriginal.set(vm(), this, original);
+    else
+        m_spyOriginal.clear();
+}
+
+// The spy whose mock, or whose accessor, is `content`.
+static JSMockFunction* spyOf(SlotContent content)
+{
+    if (!content.storage || !content.storage.isCell())
+        return nullptr;
+    if (auto* mock = dynamicDowncast<JSMockFunction>(content.storage.asCell()))
+        return mock;
+    auto* accessor = dynamicDowncast<GetterSetter>(content.storage.asCell());
+    if (!accessor)
+        return nullptr;
+    for (JSObject* half : { accessor->getter(), accessor->setter() }) {
+        if (auto* bound = dynamicDowncast<JSBoundFunction>(half))
+            half = bound->boundThis().getObject();
+        if (auto* mock = half ? dynamicDowncast<JSMockFunction>(half) : nullptr; mock && mock->isAccessorOf(accessor))
+            return mock;
+    }
+    return nullptr;
+}
+
+static SlotContent contentOfDescriptor(JSGlobalObject* globalObject, const PropertyDescriptor& descriptor)
+{
+    JSValue storage = descriptor.isAccessorDescriptor() ? GetterSetter::create(globalObject->vm(), globalObject, descriptor.getter(), descriptor.setter()) : descriptor.value();
+    return { storage, descriptor.attributes() & descriptorAttributes };
+}
+
+// vi.unstubAllGlobals() drops the whole stubbedGlobals map. A spy or a fake timer that was put over a stub keeps this link: that map, and what the stub had replaced.
+static bool isStubRemoved(Zig::GlobalObject* globalObject, InternalFieldTuple* link)
+{
+    return globalObject->mockModule.stubbedGlobals.get() != link->getInternalField(0);
+}
+
+// A spy, a stub or a fake timer on `target[key]` kept `content` as what it replaced and is about to put it back.
+// A restored spy and the value of a removed stub are not what the property had any more: what those had replaced is.
+static SlotContent whatStandsFor(JSGlobalObject* lexicalGlobalObject, JSObject* target, const Identifier& key, SlotContent content, InternalFieldTuple* stubLink)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    // Each step is an older owner of the property.
+    for (unsigned steps = 0; steps < 64; ++steps) {
+        if (stubLink && isStubRemoved(globalObject, stubLink)) {
+            JSValue saved = stubLink->getInternalField(1);
+            stubLink = nullptr;
+            if (!saved.isObject())
+                return {};
+            PropertyDescriptor descriptor;
+            toPropertyDescriptor(globalObject, saved, descriptor);
+            RETURN_IF_EXCEPTION(scope, {});
+            content = contentOfDescriptor(globalObject, descriptor);
+            continue;
+        }
+        auto* spy = spyOf(content);
+        if (!spy || !spy->wasRestoredOn(target, key))
+            break;
+        stubLink = spy->stubLink();
+        content = spy->replaced();
+    }
+    return content;
+}
+
+static void putContent(JSGlobalObject* globalObject, JSObject* object, const Identifier& key, SlotContent content)
+{
+    ThroughLockOfBuiltins throughLock(globalObject->vm(), false);
+    if (content.storage)
+        putOwnPropertyStorage(globalObject, object, key, content.storage, content.attributes, false);
+    else
+        JSCell::deleteProperty(object, globalObject, key);
+}
+
+extern "C" bool Bun__FakeTimers__isFake(JSC::JSGlobalObject*, JSC::EncodedJSValue value);
+
+// The link to keep for a spy or a fake timer that covers `covered` on the global `key`, or null. Another spy and a fake timer are not a stub's value.
+static InternalFieldTuple* stubLinkFor(Zig::GlobalObject* globalObject, const Identifier& key, SlotContent covered)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue map = globalObject->mockModule.stubbedGlobals.get();
+    if (!map || !covered.storage || spyOf(covered))
+        return nullptr;
+    auto* stubbed = uncheckedDowncast<JSMap>(map);
+    JSValue stubKey = identifierToJSValue(vm, key);
+    bool isStubbed = stubbed->has(globalObject, stubKey);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!isStubbed || Bun__FakeTimers__isFake(globalObject, JSValue::encode(covered.storage)))
+        return nullptr;
+    JSValue saved = stubbed->get(globalObject, stubKey);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* link = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
+    link->putInternalField(vm, 0, stubbed);
+    link->putInternalField(vm, 1, saved);
+    return link;
+}
+
+// vi.unstubAllGlobals() is about to put `descriptor` back on the global `key`. True if a restored spy is in it, and what that spy had replaced is on the global now.
+bool putBackForStub(Zig::GlobalObject* globalObject, const Identifier& key, const PropertyDescriptor& descriptor)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    SlotContent kept = contentOfDescriptor(globalObject, descriptor);
+    if (!spyOf(kept))
+        return false;
+    SlotContent toPut = whatStandsFor(globalObject, globalObject, key, kept, nullptr);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (toPut.storage == kept.storage)
+        return false;
+    RELEASE_AND_RETURN(scope, (putContent(globalObject, globalObject, key, toPut), true));
+}
+
+// What useFakeTimers() and useRealTimers() call. None runs script or throws: they read and write own properties of the global, `process`, `Date` and `performance`.
+
+extern "C" uint32_t Bun__FakeTimers__apiOfGlobal(const BunString* name);
+
+// The bit of each fake timer function whose global is stubbed, and bit 31 if a spy may be live.
+extern "C" uint32_t JSMock__sharersOfFakes(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto& mocks = globalObject->mockModule;
+    uint32_t sharers = mocks.activeSpies ? 1u << 31 : 0;
+    JSValue stubbed = mocks.stubbedGlobals.get();
+    if (!stubbed)
+        return sharers;
+    auto* entries = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), uncheckedDowncast<JSMap>(stubbed), IterationKind::Entries);
+    while (true) {
+        auto [name, saved] = entries->nextWithAdvance(vm);
+        if (!name)
+            return sharers;
+        if (auto* impl = name.isString() ? asString(name)->tryGetValueImpl() : nullptr) {
+            BunString string = Bun::toString(impl);
+            sharers |= Bun__FakeTimers__apiOfGlobal(&string);
+        }
+    }
+}
+
+// A fake timer function is about to replace `owner[name]`, whose value is `original`. Returns what the fake timers keep beside it if a test can take
+// `original` back while the clock is on: `original` itself for a spy, or an entry with the link to the stub that put it there, or with the accessor of the spy.
+extern "C" JSC::EncodedJSValue JSMock__entryOfFake(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue original, bool isStubbed)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue value = JSValue::decode(original);
+    JSObject* target = asObject(JSValue::decode(owner));
+    auto* spy = value.isCell() ? dynamicDowncast<JSMockFunction>(value.asCell()) : nullptr;
+    if (!spy && !isStubbed)
+        return {};
+    auto key = Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy));
+    JSValue kept = value;
+    // The property's getter returns this spy. The fake would put the spy there as a value, which the spy's restore leaves alone.
+    if (spy && spy->isAccessorSpyOn(target, key)) {
+        unsigned attributes = 0;
+        JSValue storage = getOwnPropertyStorage(globalObject, target, key, attributes);
+        if (!scope.exception() && storage && storage.inherits<GetterSetter>())
+            kept = storage;
+    }
+    InternalFieldTuple* link = nullptr;
+    if (!scope.exception() && isStubbed && target == globalObject)
+        link = stubLinkFor(globalObject, key, { kept, 0 });
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return {};
+    }
+    if (!link && kept == value)
+        return spy ? original : JSC::EncodedJSValue {};
+    auto* entry = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
+    entry->putInternalField(vm, 0, kept);
+    entry->putInternalField(vm, 1, link ? JSValue(link) : jsUndefined());
+    return JSValue::encode(entry);
+}
+
+static SlotContent whatFakeStandsFor(Zig::GlobalObject* globalObject, JSObject* target, const Identifier& key, JSValue entry, unsigned attributes)
+{
+    auto* pair = dynamicDowncast<InternalFieldTuple>(entry);
+    JSValue original = pair ? pair->getInternalField(0) : entry;
+    auto* link = pair ? dynamicDowncast<InternalFieldTuple>(pair->getInternalField(1)) : nullptr;
+    if (original.inherits<GetterSetter>())
+        attributes |= PropertyAttribute::Accessor;
+    return whatStandsFor(globalObject, target, key, { original, attributes }, link);
+}
+
+// The value that the fake with this entry stands for once it is uninstalled: what useFakeTimers() reads for it, and what the end of a test file puts in its place.
+extern "C" JSC::EncodedJSValue JSMock__valueOfFakeEntry(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue entry)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    SlotContent content = whatFakeStandsFor(globalObject, asObject(JSValue::decode(owner)), Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy)), JSValue::decode(entry), 0);
+    if (scope.exception()) [[unlikely]]
+        (void)scope.tryClearException();
+    // Empty for an accessor: the fake timers keep values.
+    if (content.attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))
+        return {};
+    return JSValue::encode(content.storage ? content.storage : jsUndefined());
+}
+
+// useRealTimers() is about to put the original of a fake back on `owner[name]`. True if that is a restored spy or the value of a removed stub, and what those had replaced is there now.
+extern "C" bool JSMock__putBackForFake(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue entry)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSObject* target = asObject(JSValue::decode(owner));
+    auto key = Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy));
+    auto* pair = dynamicDowncast<InternalFieldTuple>(JSValue::decode(entry));
+    JSValue original = pair ? pair->getInternalField(0) : JSValue::decode(entry);
+    unsigned attributes = 0;
+    target->getDirect(vm, key, attributes);
+    SlotContent toPut = whatFakeStandsFor(globalObject, target, key, JSValue::decode(entry), attributes & (PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    // The caller puts a value back. An accessor goes back here.
+    bool isForCaller = !scope.exception() && toPut.storage == original && !original.inherits<GetterSetter>();
+    if (!scope.exception() && !isForCaller)
+        putContent(globalObject, target, key, toPut);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return false;
+    }
+    return !isForCaller;
 }
 
 const ClassInfo JSMockFunctionPrototype::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockFunctionPrototype) };
@@ -1243,7 +1504,7 @@ __attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObjec
     }
     for (size_t i = 0; i < spiesOfPreload.size(); ++i) {
         auto* spy = uncheckedDowncast<JSMockFunction>(spiesOfPreload.at(i));
-        if (spy->m_spyTarget)
+        if (spy->installedOn())
             spy->enter(List::Spies);
     }
 
@@ -2865,6 +3126,11 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC
 
 extern "C" void Bun__FakeTimers__setSystemTime(JSC::JSGlobalObject* globalObject, double ms);
 
+extern "C" bool JSMock__isMock(JSC::EncodedJSValue value)
+{
+    return dynamicDowncast<JSMockFunction>(JSValue::decode(value));
+}
+
 extern "C" bool JSMock__isRestoredSpy(JSC::EncodedJSValue value)
 {
     auto* mock = dynamicDowncast<JSMockFunction>(JSValue::decode(value));
@@ -3202,6 +3468,12 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         }
 
         mock->didInstall(object, propertyKey, isOwn ? value : JSValue(), spyAttributes);
+        if (object == globalObject && globalObject->mockModule.stubbedGlobals) [[unlikely]] {
+            auto* link = stubLinkFor(globalObject, propertyKey, mock->replaced());
+            RETURN_IF_EXCEPTION(scope, {});
+            if (link)
+                mock->setStubLink(globalObject, link);
+        }
         return JSValue::encode(mock);
     }
 
@@ -3284,6 +3556,12 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     RETURN_IF_EXCEPTION(scope, {});
 
     mock->didInstall(object, propertyKey, storage, spyAttributes | JSMockFunction::SpyAttributeAccessor | (isOpaque ? JSMockFunction::SpyAttributeOpaque : 0));
+    if (object == globalObject && globalObject->mockModule.stubbedGlobals) [[unlikely]] {
+        auto* link = stubLinkFor(globalObject, propertyKey, mock->replaced());
+        RETURN_IF_EXCEPTION(scope, {});
+        if (link)
+            mock->setStubLink(globalObject, link);
+    }
     return JSValue::encode(mock);
 }
 

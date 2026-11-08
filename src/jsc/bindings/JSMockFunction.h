@@ -25,6 +25,9 @@ JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool
 // `key` is null unless there are module mocks.
 void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import, const String& key);
 
+// vi.unstubAllGlobals() is about to put `descriptor` back on the global `name`. True if a restored spy is in it, and what that spy had replaced is on the global now.
+bool putBackForStub(Zig::GlobalObject*, const JSC::Identifier& name, const JSC::PropertyDescriptor& descriptor);
+
 // Wrapper to scope a bunch of GlobalObject properties related to mocks
 class JSMockModule final {
 public:

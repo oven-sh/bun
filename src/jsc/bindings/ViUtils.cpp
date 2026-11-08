@@ -98,6 +98,13 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
     PropertyDescriptor descriptor;
     toPropertyDescriptor(globalObject, original, descriptor);
     RETURN_IF_EXCEPTION(scope, );
+    // A spy is an InternalFunction, or a half of an accessor.
+    if (descriptor.isAccessorDescriptor() || (descriptor.value().isCell() && descriptor.value().asCell()->type() == InternalFunctionType)) {
+        bool isBack = putBackForStub(defaultGlobalObject(globalObject), name, descriptor);
+        RETURN_IF_EXCEPTION(scope, );
+        if (isBack)
+            return;
+    }
     scope.release();
     target->methodTable()->defineOwnProperty(target, globalObject, name, descriptor, true);
 }

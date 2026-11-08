@@ -115,9 +115,10 @@ for (const name of ["bun:sqlite", "ws", "bun:jsc"]) {
   const toldAsOneProgram = casesIn(asOneProgram, orders);
   test(`require("${name}") in every order of require, import and mock`, async () => {
     const plain = toldAsOneProgram(await asOneProgram.ran());
-    // The object that the factory made is the answer, marked `__esModule` or not. The namespace object that an import got first is not.
+    // The object that the factory made is the answer, marked `__esModule` or not, loaded before or not. The namespace object that an
+    // import got first is not.
     const lastAnswerOf = (order: string) => plain[orders.indexOf(order)].split(" ").at(-1);
-    expect(["ra", "ib", "ia"].map(lastAnswerOf)).toEqual(["R=A1", "R=B1", "R=A1"]);
+    expect(["ra", "ib", "ia", "b"].map(lastAnswerOf)).toEqual(["R=A1", "R=B1", "R=A1", "R=B0"]);
     expect(plain.filter(line => !line.includes(": pass "))).toEqual([]);
     expect(toldAsOneProgram(await asOneProgram.ran(["--debug-aot"]))).toEqual(asImageAnswers(plain, name));
   });

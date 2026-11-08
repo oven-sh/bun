@@ -3804,7 +3804,8 @@ impl RunCommand {
                                     path_buf[..value.dir.len()].copy_from_slice(value.dir);
                                     dir_slice_len = value.dir.len();
                                     if !strings::ends_with_char_or_is_zero_length(value.dir, SEP) {
-                                        dir_slice_len = value.dir.len() + 1;
+                                        path_buf[dir_slice_len] = SEP;
+                                        dir_slice_len += 1;
                                     }
                                     has_copied = true;
                                 }

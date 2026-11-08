@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isRoot, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir } from "harness";
 import { chmodSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -23,49 +23,116 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
   return { stdout, stderr, exitCode };
 }
 
-/** The program's output and the directories the debug build listed, from its `BUN_DEBUG_Fs` log on stdout. */
-function splitFsLog(stdout: string): { output: string; listed: string[] } {
+/** The count of directory listings this process read, via `bun:internal-for-testing`. */
+const countListings = `import { getCounters } from "bun:internal-for-testing"; console.log("listings", getCounters().readdir);`;
+
+/** Program output, with the `listings N` line taken out. */
+function splitListings(stdout: string): { output: string; listings: number } {
   const lines = stdout.split("\n");
+  const line = lines.find(l => l.startsWith("listings "));
   return {
-    output: lines.filter(line => !line.startsWith("[fs] ")).join("\n"),
-    listed: lines
-      .filter(line => line.startsWith("[fs] readdir("))
-      .map(line => line.slice(line.indexOf(", ") + 2, line.indexOf(") = "))),
+    output: lines.filter(l => !l.startsWith("listings ")).join("\n"),
+    listings: line === undefined ? -1 : Number(line.slice("listings ".length)),
   };
 }
 
-const fsLog = { BUN_DEBUG_Fs: "1", BUN_DEBUG_QUIET_LOGS: "1" };
-
-describe.skipIf(!isDebug)("startup does not list directories", () => {
+describe("startup does not list directories", () => {
   test.concurrent("bun -e reads no directory listing", async () => {
     using dir = tempDir("no-listing-eval", {
       "a/b/c/.keep": "",
       "a/package.json": JSON.stringify({ name: "a" }),
       "a/b/tsconfig.json": "{}",
     });
-    const { stdout, exitCode } = await run([bunExe(), "-e", "console.log('ok')"], join(dir, "a/b/c"), fsLog);
-    expect({ ...splitFsLog(stdout), exitCode }).toEqual({ output: "ok\n", listed: [], exitCode: 0 });
+    const { stdout, stderr, exitCode } = await run([bunExe(), "-e", countListings], join(dir, "a/b/c"));
+    expect({ ...splitListings(stdout), stderr, exitCode }).toEqual({ output: "", listings: 0, stderr: "", exitCode: 0 });
   });
 
   test.concurrent("running a script reads no directory listing", async () => {
     using dir = tempDir("no-listing-run", {
-      "a/b/c/script.js": `console.log(import.meta.path === process.argv[1] ? "same" : import.meta.path);`,
+      "a/b/c/script.js": `console.log(import.meta.path === process.argv[1] ? "same" : import.meta.path);\n${countListings}`,
       "a/package.json": JSON.stringify({ name: "a" }),
     });
     const script = join(dir, "a/b/c/script.js");
-    const { stdout, exitCode } = await run([bunExe(), script], join(dir, "a/b"), fsLog);
-    expect({ ...splitFsLog(stdout), exitCode }).toEqual({ output: "same\n", listed: [], exitCode: 0 });
+    const { stdout, stderr, exitCode } = await run([bunExe(), script], join(dir, "a/b"));
+    expect({ ...splitListings(stdout), stderr, exitCode }).toEqual({
+      output: "same\n",
+      listings: 0,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test.concurrent("a relative import lists only the importing directory", async () => {
     using dir = tempDir("one-listing-import", {
-      "a/b/c/index.js": `import { dep } from "./dep"; console.log(dep);`,
+      "a/b/c/index.js": `import { dep } from "./dep"; console.log(dep);\n${countListings}`,
       "a/b/c/dep.js": `export const dep = "dep";`,
     });
-    const cwd = join(dir, "a/b/c");
-    const { stdout, exitCode } = await run([bunExe(), "index.js"], cwd, fsLog);
-    expect({ ...splitFsLog(stdout), exitCode }).toEqual({ output: "dep\n", listed: [cwd + "/"], exitCode: 0 });
+    const { stdout, stderr, exitCode } = await run([bunExe(), "index.js"], join(dir, "a/b/c"));
+    expect({ ...splitListings(stdout), stderr, exitCode }).toEqual({
+      output: "dep\n",
+      listings: 1,
+      stderr: "",
+      exitCode: 0,
+    });
   });
+
+  test.concurrent("a bare import lists node_modules and the package, not .bin", async () => {
+    using dir = tempDir("one-listing-bare-import", {
+      "index.js": `import { v } from "pkg"; console.log(v);\n${countListings}`,
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "main.js" }),
+      "node_modules/pkg/main.js": `export const v = "from pkg";`,
+      "node_modules/.bin/.keep": "",
+      "node_modules/other/index.js": "",
+    });
+    const { stdout, stderr, exitCode } = await run([bunExe(), "index.js"], String(dir));
+    expect({ ...splitListings(stdout), stderr, exitCode }).toEqual({
+      output: "from pkg\n",
+      listings: 2,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a directory or file name that contains '..' still avoids the listing", async () => {
+    using dir = tempDir("no-listing-dotdot", {
+      "a..b/z..js": `console.log(import.meta.path);\n${countListings}`,
+    });
+    const script = join(dir, "a..b/z..js");
+    const { stdout, stderr, exitCode } = await run([bunExe(), script], String(dir));
+    expect({ ...splitListings(stdout), stderr, exitCode }).toEqual({
+      output: script + "\n",
+      listings: 0,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("an entry path with a '..' segment runs as its normalized path", async () => {
+    using dir = tempDir("entry-dotdot-segment", {
+      "x/y.js": `console.log(import.meta.path);`,
+      "other/.keep": "",
+    });
+    const { stdout, stderr, exitCode } = await run([bunExe(), join(dir, "other/../x//y.js")], String(dir));
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: join(dir, "x/y.js") + "\n", stderr: "", exitCode: 0 });
+  });
+
+  // Compiling copies the whole executable, which a debug build makes slow.
+  test.concurrent("a compiled executable reads no directory listing", async () => {
+    using dir = tempDir("no-listing-compiled", {
+      "app.js": `console.log("compiled");\n${countListings}`,
+      "a/b/.keep": "",
+    });
+    const outfile = join(dir, "app" + (isWindows ? ".exe" : ""));
+    const build = await run([bunExe(), "build", "--compile", "app.js", "--outfile", outfile], String(dir));
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const { stdout, stderr, exitCode } = await run([outfile], join(dir, "a/b"));
+    expect({ ...splitListings(stdout), stderr, exitCode }).toEqual({
+      output: "compiled\n",
+      listings: 0,
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 120_000);
 });
 
 describe("DirInfo markers without a listing", () => {

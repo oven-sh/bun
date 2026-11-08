@@ -457,7 +457,7 @@ bun_output::declare_scope!(PackageManager, hidden);
 pub struct PackageManager {
     pub(crate) cache_directory: Option<bun_sys::Dir>,
     pub(crate) cache_directory_path: ZBox, // owned; process lifetime via the leaked singleton
-    /// The project directory, interned in `DirnameStore`.
+    /// The project directory, interned in `DirnameStore`, without a trailing separator.
     pub root_dir: &'static [u8],
     /// `root_dir` had a `node_modules` entry when the manager was created.
     pub root_dir_has_node_modules: bool,

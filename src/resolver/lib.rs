@@ -733,6 +733,14 @@ pub mod fs {
         })
     }
 
+    static READDIR_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+    /// How many directory listings this process has read into the cache
+    /// (`bun:internal-for-testing` `getCounters().readdir`).
+    pub fn readdir_count() -> u32 {
+        READDIR_COUNT.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
     // Modeled as
     // an unbounded `&mut DirEntry` so resolver match arms (`Entries(entries) =>
     // entries.dir`) auto-deref. The backing storage is the BSSMap singleton;
@@ -747,7 +755,7 @@ pub mod fs {
 
     #[derive(Clone, Copy)]
     pub struct Unlisted {
-        /// Interned in `DirnameStore`, with a trailing separator.
+        /// Interned in `DirnameStore`.
         pub dir: &'static [u8],
         /// The open directory when the resolver keeps fds (`store_fd`).
         pub fd: Fd,
@@ -1016,6 +1024,7 @@ pub mod fs {
             handle: Fd,
             iterator: &mut I,
         ) -> crate::CrateResult<DirEntry> {
+            READDIR_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
 
@@ -1189,12 +1198,8 @@ pub mod fs {
                 unsafe { (*existing).dir }
             } else if let Some(unlisted) = unlisted {
                 unlisted.dir
-            } else if !had_handle {
-                DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
             } else {
-                // Intern into DirnameStore so the cache entry never dangles —
-                // `append_slice` is a bump-pointer copy, cost is bounded.
-                DirnameStore::instance().append_slice(dir)?
+                DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
             };
 
             // Cache miss: read the directory entries

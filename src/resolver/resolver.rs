@@ -1848,8 +1848,9 @@ impl<'a> Resolver<'a> {
 
     /// Resolve the program's entry point, an absolute path to a file, with one
     /// `stat` of that path (node's `tryFile`) instead of a listing of its
-    /// directory. `NotFound` when `path` is not a regular file, so the caller
-    /// falls back to [`resolve_and_auto_install`](Self::resolve_and_auto_install).
+    /// directory. `NotFound` when `path` is a directory or does not exist, so
+    /// the caller falls back to
+    /// [`resolve_and_auto_install`](Self::resolve_and_auto_install).
     pub fn resolve_entry_point(
         &mut self,
         path: &[u8],
@@ -1857,13 +1858,14 @@ impl<'a> Resolver<'a> {
     ) -> ResultUnion<'static> {
         if self.standalone_module_graph.is_some()
             || !bun_paths::is_absolute(path)
-            || strings::index_of(path, b"..").is_some()
             || strings::index_of_char(path, 0).is_some()
         {
             return ResultUnion::NotFound;
         }
-        let mut normalizer = ResolvePath::PosixToWinNormalizer::default();
-        let abs_path = normalizer.resolve(self.fs_ref().top_level_dir(), path);
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(abs_path) = self.fs_ref().abs_buf_checked(&[path], &mut buf[..]) else {
+            return ResultUnion::NotFound;
+        };
         let name = Fs::PathName::init(abs_path);
         if name.dir.is_empty() || name.filename.is_empty() {
             return ResultUnion::NotFound;
@@ -4975,14 +4977,17 @@ impl<'a> Resolver<'a> {
             let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
                 .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
-            // Only a package directory is listed here: the resolve that follows
-            // probes its entries anyway.
-            let in_node_modules = open_dir.is_valid()
-                && (strings::without_trailing_slash(bun_paths::basename(dir_path))
-                    == b"node_modules"
-                    || parent_dir_ptr.is_some_and(|parent| {
-                        parent.is_node_modules() || parent.is_inside_node_modules()
-                    }));
+            // A package path is listed here: `load_as_file_or_directory` probes
+            // the entries of `node_modules`, a scope and a package root right
+            // after this. A dot directory (`.bin`, `.bun`, `.pnpm`) is not.
+            let is_package_path = open_dir.is_valid() && {
+                let base = strings::without_trailing_slash(bun_paths::basename(dir_path));
+                !base.starts_with(b".")
+                    && (base == b"node_modules"
+                        || parent_dir_ptr.is_some_and(|parent| {
+                            parent.is_node_modules() || parent.is_inside_node_modules()
+                        }))
+            };
 
             let mut listing: Option<*const Fs::file_system::DirEntry> = None;
             let mut has_stale_listing = false;
@@ -4997,7 +5002,7 @@ impl<'a> Resolver<'a> {
             }
 
             if listing.is_none() {
-                if in_node_modules {
+                if is_package_path {
                     let read = rfs!().read_directory_locked(
                         dir_path,
                         Some(open_dir),

@@ -1525,8 +1525,6 @@ class ChildProcess extends EventEmitter {
 
     const cmd = spawnCommand(file, spawnargs);
     let started: $Bindgen.Subprocess | undefined;
-    // Set when this throws after the child started. The caller gets no ChildProcess then, so the exit reports to nobody.
-    let abandoned = false;
 
     try {
       started = this.#handle = Bun.spawn({
@@ -1539,7 +1537,6 @@ class ChildProcess extends EventEmitter {
         gid: options.gid,
         cgroup: options.cgroup,
         onExit: (handle, exitCode, signalCode, err) => {
-          if (abandoned) return;
           this.#handle = handle as unknown as $Bindgen.Subprocess;
           this.pid = this.#handle!.pid;
           $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
@@ -1595,8 +1592,7 @@ class ChildProcess extends EventEmitter {
       }
     } catch (ex) {
       if (started !== undefined) {
-        // The child runs, and nothing could wait for it or stop it.
-        abandoned = true;
+        // The child runs, and the caller gets no ChildProcess: nothing could wait for the child or stop it.
         started.kill("SIGKILL");
         started.unref();
         throw ex;

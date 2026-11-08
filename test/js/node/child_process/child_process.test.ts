@@ -1894,6 +1894,11 @@ describe("what a script stored on Array.prototype", () => {
         } catch (error) {
           result.nullByte = error.code + ": " + error.message;
         }
+        try {
+          watch(() => cp.spawn(echo, [], { env, stdio: ["ignore", "ignore", "ignore", "ipc", "ipc"] }));
+        } catch (error) {
+          result.twoIpcSlots = error.code;
+        }
         // The call is not watched while the functions are replaced: execFile() sets the encoding of its streams, and
         // setEncoding() of Node calls slice().
         result.execFile = await new Promise(resolve => {
@@ -2084,6 +2089,7 @@ describe("what a script stored on Array.prototype", () => {
         execFileSync: "intended last\n",
         nullByte:
           "ERR_INVALID_ARG_VALUE: The argument 'args[1]' must be a string without null bytes. Received 'l\\x00ast'",
+        twoIpcSlots: "ERR_IPC_ONE_PIPE",
         execFile: isWindows ? "3 of 4: undefined last\n" : "3 of 4: intended undefined last\n",
         fork: "child got a message",
         spawn: "intended last\n",
@@ -2098,6 +2104,15 @@ describe("what a script stored on Array.prototype", () => {
     },
     timeout,
   );
+
+  // The stdio list is read by index now. map() left a hole where the list has one, and so does the loop.
+  it("a hole in the stdio list is no pipe", async () => {
+    const child = spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: [, "pipe", "pipe"] });
+    expect([child.stdin, typeof child.stdout, child.stdio.length]).toEqual([null, "object", 3]);
+    child.stdout!.resume();
+    child.stderr!.resume();
+    await once(child, "close");
+  });
 
   it.concurrent(
     "spies that a test file restored: the spawns of a later test file work",

@@ -791,9 +791,12 @@ extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 
 static std::optional<ASCIILiteral> builtinModuleOfOriginalKey(const String& key)
 {
-    if (!key.is8Bit() || !key.endsWith("?actual"_s))
+    if (!key.is8Bit())
         return std::nullopt;
-    int index = ModuleLoader__builtinAliasIndex(key.span8().data(), key.length() - "?actual"_s.length());
+    String name = withoutOriginalModuleQuery(key);
+    if (name.isEmpty() || name.length() == key.length())
+        return std::nullopt;
+    int index = ModuleLoader__builtinAliasIndex(name.span8().data(), name.length());
     if (index < 0)
         return std::nullopt;
     return Bun::builtinModuleKeys[index];
@@ -5276,9 +5279,6 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 
         return result;
     }
-
-    if (auto builtin = Zig::builtinModuleOfOriginalKey(specifierString))
-        *specifier = Bun::toStringView(*builtin);
 
     if (Zig::isModuleMockEvaluatorKey(specifierString)) {
         auto& vm = JSC::getVM(globalObject);

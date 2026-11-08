@@ -641,6 +641,47 @@ extern "C" void Bun__onFulfillAsyncModule(
     }
 }
 
+// True for a key that ends in "?actual" or "&actual". Every module that is not a builtin gets here, so it reads the key's own bytes and makes no String.
+static ALWAYS_INLINE bool endsWithOriginalModuleQuery(const BunString* key)
+{
+    static constexpr auto query = "?actual"_s;
+    if (key->tag != BunStringTag::WTFStringImpl || !key->impl.wtf->is8Bit())
+        return false;
+    auto characters = key->impl.wtf->span8();
+    if (characters.size() <= query.length() || characters.back() != query[query.length() - 1])
+        return false;
+    auto tail = characters.last(query.length());
+    return (tail[0] == '?' || tail[0] == '&') && WTF::equalSpans(tail.subspan(1), query.span8().subspan(1));
+}
+
+// The name of the builtin that `key` is the original of (originalModuleKey() in BunPlugin.cpp), held by `original`. Null for any other key.
+static NEVER_INLINE const BunString* builtinOfOriginalModuleKey(Zig::GlobalObject* globalObject, const BunString* key, BunString& original)
+{
+    String keyString = key->toWTFString(BunString::ZeroCopy);
+    auto builtin = Bun::builtinModuleOfOriginalKey(keyString);
+    if (!builtin)
+        return nullptr;
+    // A virtual module or a mock that is registered under this very key is runVirtualModule()'s to serve.
+    if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules; virtualModules && virtualModules->contains(keyString))
+        return nullptr;
+    original = Bun::toStringView(*builtin);
+    return &original;
+}
+
+// Not gated on isBunTest or on a registered mock: a factory asks for the original of a builtin before its mock is registered, after Bun.plugin.clearAll(), and outside `bun test`.
+static ALWAYS_INLINE bool fetchBuiltinModuleOrItsOriginal(void* bunVM, Zig::GlobalObject* globalObject, const BunString*& specifier, BunString& original, bool isCommonJSRequire, ErrorableResolvedSource* res)
+{
+    if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, isCommonJSRequire, res))
+        return true;
+    if (!endsWithOriginalModuleQuery(specifier)) [[likely]]
+        return false;
+    const BunString* builtin = builtinOfOriginalModuleKey(globalObject, specifier, original);
+    if (!builtin)
+        return false;
+    specifier = builtin;
+    return Bun__fetchBuiltinModule(bunVM, globalObject, specifier, isCommonJSRequire, res);
+}
+
 BuiltinModule fetchBuiltinModuleWithoutResolution(
     Zig::GlobalObject* globalObject,
     const BunString* specifier,
@@ -650,13 +691,8 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
     void* bunVM = globalObject->bunVM();
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    BunString original;
     if (globalObject->onLoadPlugins.hasVirtualModules() && isBunTest) [[unlikely]] {
-        // The file of a running factory gets this key for the builtin that it mocks.
-        if (auto builtin = Bun::builtinModuleOfOriginalKey(specifier->toWTFString(BunString::ZeroCopy))) {
-            original = Bun::toStringView(*builtin);
-            specifier = &original;
-        } else if (JSValue moduleMock = Bun::findModuleMock(globalObject, specifier); moduleMock && !Bun::hasModuleMockUnsettledAsyncFactory(moduleMock.getObject())) {
+        if (JSValue moduleMock = Bun::findModuleMock(globalObject, specifier); moduleMock && !Bun::hasModuleMockUnsettledAsyncFactory(moduleMock.getObject())) {
             JSC::JSPromise* pending = Bun::runModuleMock(globalObject, moduleMock.getObject(), specifier->toWTFString(BunString::ZeroCopy), true);
             RETURN_IF_EXCEPTION(scope, {});
             JSC::JSObject* result = pending ? nullptr : Bun::resultOfModuleMock(moduleMock.getObject());
@@ -669,7 +705,8 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
             return { Kind::Exports, exports };
         }
     }
-    if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, true, res)) {
+    BunString original;
+    if (fetchBuiltinModuleOrItsOriginal(bunVM, globalObject, specifier, original, true, res)) {
         if (!res->success) [[unlikely]] {
             throwException(scope, res->result.err, globalObject);
             RELEASE_AND_RETURN(scope, {});
@@ -1265,7 +1302,9 @@ static JSValue fetchESMSourceCode(
         }
     }
 
-    if (!pluginContents && Bun__fetchBuiltinModule(bunVM, globalObject, specifier, false, res)) {
+    const BunString* builtinKey = specifier;
+    BunString original;
+    if (!pluginContents && fetchBuiltinModuleOrItsOriginal(bunVM, globalObject, builtinKey, original, false, res)) {
         if (!res->success) [[unlikely]] {
             throwException(scope, res->result.err, globalObject);
             auto* exception = scope.exception();
@@ -1291,7 +1330,7 @@ static JSValue fetchESMSourceCode(
             }
         }
 
-        auto moduleKey = specifier->toWTFString(BunString::ZeroCopy);
+        auto moduleKey = builtinKey->toWTFString(BunString::ZeroCopy);
 
         // bun:wrap and a few other builtins return real JS source (not a
         // synthetic generator). Their providers are identical across globals,

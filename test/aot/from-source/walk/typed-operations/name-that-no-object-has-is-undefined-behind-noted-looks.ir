@@ -1,0 +1,16 @@
+# the negative of name-that-no-object-has-is-undefined-behind-looks.ir: the same read outside of every loop. The looks would cost what the closed read costs, so none is asked for,
+# nobody has noted the guard of the name, and the read stays as it is written
+# f1 = once
+# -- source: name-that-no-object-has-is-undefined-behind-noted-looks.ts
+# declare function sink(...values: unknown[]): void;
+# class Shape { side = 2; }
+# const moved = new Shape();
+# Object.setPrototypeOf(moved, { extra: 5 });
+# function once(shape: Shape) { return (shape as any).extra === undefined ? shape.side : 0; }
+# sink(once(new Shape()), once(moved));
+# -- end of source
+# RUN: walk f1 mechanisms=all-Inlining
+# CHECK-LABEL: code f1:Body
+# CHECK: = PropGet {{*}}key="extra"
+# RUN(NEVER): walk f1 mechanisms=all-Inlining
+# NEVER-NOT: = AreMembersUnchanged

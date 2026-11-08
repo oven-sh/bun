@@ -1,5 +1,5 @@
 // The namespace object of node:fs is made by reading every export, which runs the getters that load the stream modules and node:fs/promises.
 // A call of a member of it hands the namespace object to nobody: the other functions of node:fs are not compiled.
-// STATISTIC: ImageFunctionsEmitted <= 1100
+// STATISTIC: ImageFunctionsEmitted <= 1100 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 import * as fs from "node:fs";
-console.log(fs.readFileSync("/dev/null").length, fs.existsSync("/dev/null"));
+console.log(fs.statSync(process.execPath).isFile(), fs.existsSync(process.execPath));

@@ -1,0 +1,20 @@
+# Unseen code has `go` and may hand it anything as `f`. The arrow is written into the frame, and the stub of the call asks the word of whatever arrives: that of `run` says that it only calls its first argument, that of `later` does not.
+# f1 = run, f2 = later, f3 = go
+# -- source: closure-whose-callee-nobody-knows-is-left-to-the-stub-of-its-call.ts
+# declare function sink(...values: unknown[]): void;
+# let held: (() => number) | undefined;
+# function run(job: () => number): number { let t = 0; for (let i = 0; i < 2; i++) t += job(); return t; }
+# function later(job: () => number): number { held = job; return 1; }
+# function go(f: (job: () => number) => number, k: number) { const t = f(() => k); return t + 1; }
+# sink(go, run, later, () => held);
+# -- end of source
+# RUN: bytes f3 mechanisms=all-Inlining
+# CHECK: Call Stub CallValueLending
+# RUN(NEVER): bytes f3 mechanisms=all-Inlining
+# NEVER-NOT: NewSlimClosure.
+# RUN(WORDS): plan units mechanisms=all
+# WORDS: unit f1:GenericCallEntry {{*}}only-calls=0
+# RUN(KEEPS): plan units mechanisms=all
+# KEEPS-NOT: unit f2:GenericCallEntry {{*}}only-calls
+# RUN(WITHHELD): bytes f3 mechanisms=all-Inlining-CellsInFrames
+# WITHHELD: NewSlimClosure

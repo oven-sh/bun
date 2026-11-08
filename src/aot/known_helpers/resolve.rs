@@ -2,8 +2,9 @@ use super::find::{BindingValues, Certainty, HeldFunction, KnownReference};
 use super::{Helper, KnownHelpers, Shape};
 use crate::modules::{
     ExportBinding, ExportLookup, ImportBinding, ModuleGraph, ModuleRef, SiteAnswer,
+    find_name_stored_as_module_exports,
 };
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, BindingKind, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{BinOp, Chain, ExprId, ExprKind, MemberKey, NodeData};
@@ -163,10 +164,20 @@ pub fn resolve_callee(
     let mut callee = hir.skip_type_assertions(callee);
     while let ExprKind::Binary {
         op: BinOp::Comma,
+        left,
         right,
-        ..
     } = hir[callee].kind
     {
+        if !matches!(
+            hir[hir.skip_type_assertions(left)].kind,
+            ExprKind::Number(_)
+                | ExprKind::String(_)
+                | ExprKind::True
+                | ExprKind::False
+                | ExprKind::Null
+        ) {
+            return None;
+        }
         callee = hir.skip_type_assertions(right);
     }
     if let ExprKind::Ident(_) = hir[callee].kind {
@@ -179,7 +190,10 @@ pub fn resolve_callee(
                 None if bound.binding_kind(symbol) == BindingKind::Import => {
                     resolve_import(input, input.modules.import_binding(file, symbol))
                 }
-                None => None,
+                None => {
+                    let required = find_required_file(input, file, callee)?;
+                    predict_exports(input, ModuleRef::File(required))
+                }
             },
             Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => None,
         };
@@ -189,6 +203,10 @@ pub fn resolve_callee(
     };
     if let Some(binding) = input.modules.member_binding(file, callee) {
         return resolve_import(input, binding);
+    }
+    if name == known::default {
+        let required = find_file_required_behind_wrapper(input, file, object)?;
+        return predict_exports(input, ModuleRef::File(required));
     }
     if !input.helpers.is_binding_name(name) {
         return None;
@@ -232,6 +250,32 @@ pub fn resolve_reference(
     })
 }
 
+pub fn resolve_loaded_reference(
+    input: &ResolveInput<'_, '_>,
+    file: FileId,
+    reference: KnownReference,
+) -> Option<(FileId, HeldFunction)> {
+    let KnownReference::Loaded { symbol, helper } = reference else {
+        return None;
+    };
+    let (hir, bound) = (input.files.hir(file), input.files.bound(file));
+    let loaded = match bound.binding_initializer(hir, symbol) {
+        BindingInitializer::Expression(value) => {
+            let mut value = hir.skip_type_assertions(value);
+            if let Some((object, MemberKey::Name(known::default))) = hir.member_key(value) {
+                value = hir.skip_type_assertions(object);
+            }
+            let required = find_required_file(input, file, value)?;
+            predict_exports(input, ModuleRef::File(required))?
+        }
+        _ => resolve_import(input, input.modules.import_binding(file, symbol))?,
+    };
+    let [held] = loaded.functions[..] else {
+        return None;
+    };
+    (loaded.helper(input.helpers)? == helper).then_some((loaded.file, held))
+}
+
 pub fn resolve_private_field_call(
     input: &ResolveInput<'_, '_>,
     file: FileId,
@@ -249,6 +293,13 @@ pub fn resolve_private_field_call(
         return None;
     }
     let callee = resolve_callee(input, file, site.callee)?;
+    let modules = input.modules;
+    let may_be_replaced = callee.file != file
+        && (modules.reaches_mock(file) || modules.may_be_mocked(ModuleRef::File(callee.file)));
+    let callee = match may_be_replaced {
+        true => callee.predicted(),
+        false => callee,
+    };
     let helper = callee.helper(input.helpers)?;
     let shape = callee.shape_of(input.helpers, *callee.functions.first()?)?;
     let of_field = PrivateFieldCall {
@@ -286,24 +337,30 @@ pub fn resolve_private_field_call(
     }
 }
 
+fn find_constant_text<'a>(
+    input: &ResolveInput<'a, '_>,
+    file: FileId,
+    expression: ExprId,
+) -> Option<&'a [u8]> {
+    let decisions = &input.files.analysis(file).decisions;
+    match decisions.constant(input.files.hir(file), expression) {
+        FoldedValue::Constant(Constant::String(text)) => Some(input.files.atoms.bytes(text)),
+        _ => None,
+    }
+}
+
 fn find_member_kind(
     input: &ResolveInput<'_, '_>,
     file: FileId,
     kind: ExprId,
 ) -> Option<PrivateMemberKind> {
-    let decisions = &input.files.analysis(file).decisions;
-    let folded = decisions.constant(input.files.hir(file), kind);
-    let FoldedValue::Constant(Constant::String(kind)) = folded else {
-        return None;
-    };
-    match input.files.atoms.bytes(kind) {
+    match find_constant_text(input, file, kind)? {
         b"f" => Some(PrivateMemberKind::Field),
         b"m" => Some(PrivateMemberKind::Method),
         _ => None,
     }
 }
 
-// Code of another file can run while the file of the variable has not started.
 fn resolve_variable(input: &ResolveInput<'_, '_>, variable: Sym) -> Option<KnownCallee> {
     let values = input.helpers.binding(variable.file, variable.id)?;
     Some(KnownCallee {
@@ -320,6 +377,7 @@ fn resolve_import(input: &ResolveInput<'_, '_>, binding: ImportBinding) -> Optio
             predict_member(input, export.module, export.name)
         }
         ImportBinding::NamespaceRead { module, name } => predict_member(input, module, name),
+        ImportBinding::Exports { module } => predict_exports(input, module),
         _ => None,
     }
 }
@@ -348,12 +406,14 @@ fn resolve_export(input: &ResolveInput<'_, '_>, file: FileId, name: Atom) -> Opt
     None
 }
 
-// Only a prediction: callers guard the value with IsClosureOf.
 fn predict_member(
     input: &ResolveInput<'_, '_>,
     module: ModuleRef,
     name: Atom,
 ) -> Option<KnownCallee> {
+    if name == known::default {
+        return predict_exports(input, module);
+    }
     let file = match module {
         ModuleRef::File(file) => file,
         _ => return None,
@@ -365,6 +425,41 @@ fn predict_member(
     let mut bindings = input.helpers.file(file)?.bindings();
     let (_, values) = bindings.find(|&(symbol, _)| bound.symbol(symbol).name == name)?;
     Some(KnownCallee::new(file, values).predicted())
+}
+
+fn predict_exports(input: &ResolveInput<'_, '_>, module: ModuleRef) -> Option<KnownCallee> {
+    let ModuleRef::File(file) = module else {
+        return None;
+    };
+    input.helpers.file(file)?;
+    let stored = find_name_stored_as_module_exports(input.files, file)?;
+    Some(KnownCallee::new(file, input.helpers.binding(file, stored)?).predicted())
+}
+
+fn find_file_required_behind_wrapper(
+    input: &ResolveInput<'_, '_>,
+    file: FileId,
+    holder: ExprId,
+) -> Option<FileId> {
+    if let Some(required) = find_required_file(input, file, holder) {
+        return Some(required);
+    }
+    let (hir, bound) = (input.files.hir(file), input.files.bound(file));
+    let Binding::Symbol(symbol) = bound.binding(hir.skip_type_assertions(holder)) else {
+        return None;
+    };
+    let BindingInitializer::Expression(value) = bound.binding_initializer(hir, symbol) else {
+        return None;
+    };
+    let ExprKind::Call(site) = hir[hir.skip_type_assertions(value)].kind else {
+        return None;
+    };
+    let site = hir[site];
+    let only = (site.args.len() == 1).then(|| hir.id_at::<ExprId>(site.args, 0))?;
+    match hir[hir.skip_type_assertions(only)].kind {
+        ExprKind::Call(_) => find_required_file(input, file, only),
+        _ => None,
+    }
 }
 
 fn find_required_file(

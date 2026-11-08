@@ -15,7 +15,8 @@
 // and pins in ./everyday-pins.<os>-<arch>.json what each of them takes that has no pin yet.
 // --keep leaves the programs' sources in the folder. Each --build-flag goes to every `bun build --compile --aot`: with --against, what an option of the compiler is worth.
 // --in-a-very-large-program compiles every idiom as its text would be compiled inside a very large program, where little counts as code that runs often, and lets the loop
-// of an idiom of ./everyday find turn() at run time, under the JIT too. --write-behind then rewrites ./behind-the-jit-in-a-very-large-program.<os>-<arch>.json alone.
+// of an idiom of ./everyday find turn() at run time, under the JIT too: turn() is a function of its own that nothing marks as running often (./everyday-idioms.ts).
+// --write-behind then rewrites ./behind-the-jit-in-a-very-large-program.<os>-<arch>.json alone. --in-a-cold-function-of-a-very-large-program is another spelling of it.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
@@ -48,9 +49,10 @@ const { values: options } = parseArgs({
     keep: { type: "string" },
     "build-flag": { type: "string", multiple: true, default: [] },
     "in-a-very-large-program": { type: "boolean", default: false },
+    "in-a-cold-function-of-a-very-large-program": { type: "boolean", default: false },
   },
 });
-const inVeryLargeProgram = options["in-a-very-large-program"];
+const inVeryLargeProgram = options["in-a-very-large-program"] || options["in-a-cold-function-of-a-very-large-program"];
 const behindPath = inVeryLargeProgram ? behindInVeryLargeProgramPath : behindByDefaultPath;
 const folder = options.keep ? resolve(options.keep) : mkdtempSync(join(tmpdir(), "idioms-against-the-jit-"));
 mkdirSync(folder, { recursive: true });
@@ -127,7 +129,7 @@ if (options["write-behind"]) {
       if (listed.has(row.name) && row.name.startsWith("everyday-"))
         pins[row.name] ??= { typed: rounded(row.typed.instructions), untyped: rounded(row.untyped.instructions) };
     const sorted = Object.fromEntries(Object.entries(pins).sort(([a], [b]) => (a < b ? -1 : 1)));
-    writeFileSync(everydayPinsPath, JSON.stringify(sorted, null, 2) + "\n");
+    writeFileSync(everydayPinsPath, `{\n${Object.keys(sorted).map(name => `${JSON.stringify(name)}: ${JSON.stringify(sorted[name])}`).join(",\n")}\n}\n`);
   }
 }
 
@@ -205,12 +207,12 @@ for (const row of collectsMore.slice(0, Number(options.rows))) console.log(line(
 const holdsMore = whole.filter(row => most(row, cost => cost.peakMegabytes) > 1.3 * row.jit.peakMegabytes + 8);
 console.log(`\n${holdsMore.length} hold over 1.3 times what the JIT holds\n${heading}`);
 for (const row of holdsMore.slice(0, Number(options.rows))) console.log(line(row));
-const grows = (cost: Cost) => cost.peakMegabytes > 1.5 * cost.peakMegabytesOfAQuarter + 8;
+const grows = (cost: Cost) => cost.peakMegabytes > 1.5 * cost.peakMegabytesOfShortRun + 8;
 const growsWithTurns = whole.filter(row => (grows(row.typed) || grows(row.untyped)) && !grows(row.jit));
 console.log(
-  `\n${growsWithTurns.length} hold more the longer they run, and under the JIT do not: most MB resident at a quarter of the turns > at all of them: typed, untyped, JIT`,
+  `\n${growsWithTurns.length} hold more the longer they run, and under the JIT do not: most MB resident in the short run of a reading > in the long one: typed, untyped, JIT`,
 );
 for (const row of growsWithTurns.slice(0, Number(options.rows)))
   console.log(
-    `  ${[row.typed, row.untyped, row.jit].map(cost => `${cost.peakMegabytesOfAQuarter.toFixed(0).padStart(5)} > ${cost.peakMegabytes.toFixed(0).padStart(5)}`).join("  |")}  ${row.name}`,
+    `  ${[row.typed, row.untyped, row.jit].map(cost => `${cost.peakMegabytesOfShortRun.toFixed(0).padStart(5)} > ${cost.peakMegabytes.toFixed(0).padStart(5)}`).join("  |")}  ${row.name}`,
   );

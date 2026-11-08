@@ -266,8 +266,6 @@ export interface CodegenOutputs {
   /** What src/builtin_sources/archive.S `.incbin`s. Undefined in a graph without an engine. */
   builtinSourcesArchive?: string;
 
-  /** What the bundled text of src/js calls the functions that it does not call as src/js does. */
-  bundledNamesOfModules: string;
   /** The bundled text of src/runtime.bun.js. */
   bundledHelpers: string;
 
@@ -305,7 +303,6 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources, engi
     cppAll: [],
     internalModulesAsm: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.S"),
     internalModulesBin: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.bin"),
-    bundledNamesOfModules: resolve(cfg.codegenDir, "bundled_names_of_modules.txt"),
     bundledHelpers: resolve(cfg.codegenDir, "runtime.out.js"),
     rootInstall,
   };
@@ -558,7 +555,8 @@ function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
     outputs: [out],
     rule: "esbuild",
     inputs: [src],
-    implicitInputs: [o.rootInstall],
+    // runtime.bun.js re-exports it.
+    implicitInputs: [resolve(cfg.cwd, "src", "runtime.js"), o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -815,6 +813,10 @@ function emitJsModules({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
   // ($makeErrorWithCode(N, ...)); without this dep an ErrorCode.ts edit leaves
   // stale error numbers in the JS bundles while the C++ enum regenerates.
   const errorCodeInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.ts");
+  // internal-module-registry-scanner.ts reads the native module ids from this file.
+  const nativeModuleListInput = resolve(cfg.cwd, "src", "jsc", "modules", "NativeModuleList.h");
+  // replacements.ts reads the native globals' names from this file.
+  const globalObjectTableInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ZigGlobalObject.lut.txt");
   // replacements.ts bakes js_classes.ts indices into every bundled module ($inherits(N, ...)).
   const jsClassesInput = resolve(cfg.cwd, "src", "jsc", "bindings", "js_classes.ts");
   // bundle-modules.ts hashes this header's entries into the builtins section (engineStamp).
@@ -841,7 +843,6 @@ function emitJsModules({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
     resolve(cfg.codegenDir, "generated_builtin_module_key_index.rs"),
     o.internalModulesAsm,
     o.internalModulesBin,
-    o.bundledNamesOfModules,
   ];
   // generated.d.ts from bundle-modules.ts, WebCoreJSBuiltins.d.ts from the bundle-functions.ts it calls.
   const types = [resolve(cfg.typesDir, "generated.d.ts"), resolve(cfg.typesDir, "WebCoreJSBuiltins.d.ts")];
@@ -855,6 +856,8 @@ function emitJsModules({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
       ...sources.jsCodegen,
       extraInput,
       errorCodeInput,
+      nativeModuleListInput,
+      globalObjectTableInput,
       jsClassesInput,
       builtinNamesInput,
     ],

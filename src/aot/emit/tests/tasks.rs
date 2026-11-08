@@ -1,15 +1,10 @@
-use super::{
-    create_full_program, create_numbered_functions, create_program_with_variables, create_tasks,
-    write_task,
-};
+use super::{create_full_program, create_program_with_variables, create_tasks, write_task};
 use crate::builtins::RuntimeFunction;
-use crate::emit::functions::{self, create_function_tasks};
+use crate::emit::functions::{self, create_tasks_for_shared_functions};
 use crate::emit::layout::{Source, Task};
-use crate::emit::tables::{create_table_tasks, write_strings};
+use crate::emit::tables::{StringsOfTask, create_table_tasks, write_strings};
 use crate::ir::generated::String as StringRecord;
-use crate::ir::generated::{
-    Function, ModuleFailure, ProgramList, RuntimeFunctionEntry, TypeSite, Variable,
-};
+use crate::ir::generated::{ModuleFailure, ProgramList, RuntimeFunctionEntry, TypeSite, Variable};
 use crate::ir::{ListCounts, Program, SectionWriter, StringTable};
 
 fn measure(task: &Task<'_, '_>) -> ListCounts {
@@ -20,7 +15,6 @@ fn measure(task: &Task<'_, '_>) -> ListCounts {
             counts[ProgramList::Bytes as usize] = strings.byte_len() as u64;
         }
         Source::Table(table) => table.measure(&mut counts),
-        Source::Functions(slice) => functions::measure(slice.iter(), &mut counts),
         Source::SharedFunctions(slice) => {
             functions::measure(slice.iter().map(|function| &**function), &mut counts);
         }
@@ -32,16 +26,6 @@ fn measured_lists(task: &Task<'_, '_>) -> Vec<ProgramList> {
     let counts = measure(task);
     let lists = ProgramList::ALL.into_iter();
     lists.filter(|&list| counts[list as usize] > 0).collect()
-}
-
-fn function_slices<'t>(tasks: &'t [Task<'_, '_>]) -> Vec<&'t [Function]> {
-    let slices = tasks.iter().map(|task| match &task.source {
-        Source::Functions(slice) => slice.as_slice(),
-        Source::Strings(_) | Source::Table(_) | Source::SharedFunctions(_) => {
-            panic!("a function task holds functions")
-        }
-    });
-    slices.collect()
 }
 
 #[test]
@@ -83,7 +67,7 @@ fn empty_tables_have_no_task() {
     };
     assert!(matches!(strings.source, Source::Strings(_)));
     assert!(measured_lists(types).contains(&ProgramList::Types));
-    assert!(create_function_tasks(Vec::new()).is_empty());
+    assert!(create_tasks_for_shared_functions(Vec::new()).is_empty());
 }
 
 #[test]
@@ -98,27 +82,38 @@ fn large_table_is_chunked() {
 }
 
 #[test]
-fn slices_hold_256_functions() {
-    let tasks = create_function_tasks(create_numbered_functions(600));
-    let lengths: Vec<usize> = function_slices(&tasks)
-        .into_iter()
-        .map(<[Function]>::len)
-        .collect();
-    assert_eq!(lengths, [256, 256, 88]);
-}
+fn strings_are_chunked_and_lie_in_the_program_as_in_the_table() {
+    let mut program = Program::new();
+    for length in 0..130 {
+        program.strings.intern("x".repeat(length).as_bytes());
+    }
+    let tasks = create_table_tasks(&program);
+    let counts = tasks.iter().map(measure);
+    let counts = counts
+        .map(|counts| [ProgramList::Strings, ProgramList::Bytes].map(|list| counts[list as usize]));
+    let counts: Vec<[u64; 2]> = counts.filter(|counts| counts[0] > 0).collect();
+    assert_eq!(counts, [[64, 2016], [64, 6112], [2, 257]]);
 
-#[test]
-fn function_ids_follow_slice_order() {
-    let tasks = create_function_tasks(create_numbered_functions(600));
-    let functions = function_slices(&tasks).into_iter().flatten();
-    assert!(functions.map(|function| function.position).eq(0..600));
+    let mut sections = SectionWriter::new([0; ProgramList::COUNT]);
+    for task in &tasks {
+        write_task(task, &mut sections);
+    }
+    assert_eq!(sections.blobs().concat(), program.strings.bytes());
+    let words = sections.words_of(ProgramList::Strings);
+    let ranges: Vec<(u32, u32)> = words
+        .chunks_exact(StringRecord::WORDS)
+        .map(|words| StringRecord::from_words(words).expect("the words are a string record"))
+        .map(|record| (record.offset, record.length))
+        .collect();
+    let expected: Vec<(u32, u32)> = (0..130).map(|length| ((0..length).sum(), length)).collect();
+    assert_eq!(ranges, expected);
 }
 
 #[test]
 fn measure_equals_write() {
     let mut program = create_full_program();
     let tasks = create_tasks(&mut program);
-    assert_eq!(tasks.len(), 15);
+    assert_eq!(tasks.len(), 20);
     for task in &tasks {
         let mut sections = SectionWriter::new([0; ProgramList::COUNT]);
         write_task(task, &mut sections);
@@ -136,7 +131,7 @@ fn string_offsets_are_program_wide() {
     first_indices[ProgramList::Bytes as usize] = 100;
     let mut sections = SectionWriter::new(first_indices);
 
-    write_strings(&strings, &mut sections);
+    write_strings(&StringsOfTask::all_of(&strings), &mut sections);
 
     let words = sections.words_of(ProgramList::Strings);
     let ranges: Vec<(u32, u32)> = words

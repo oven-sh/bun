@@ -53,97 +53,82 @@ for (const [name, v] of [["the top-level class", T] as [string, any], ...values]
 
 // GENERATED: make H C once negated
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_1]]}] results=[{type=undefined|null|[[f_2]] site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewObject layout=[[L_4]]
-// CHECK-NEXT: v2 = NewObject layout=[[L_5]]
-// CHECK-NEXT: v3 = NewClassToken layout=[[L_6]]
-// CHECK-NEXT: v4 = NewClosure v0, v3 function=[[f_7]]
-// CHECK-NEXT: v5 = NewClass v4 layout=[[L_6]]
-// CHECK-NEXT: v6 = NewClosure v0 function=[[f_8]]
-// CHECK-NEXT: v7 = NewClosure v0 function=[[f_9]]
-// CHECK-NEXT: v8 = NewClosure function=[[f_10]]
-// CHECK-NEXT: v9 = NewClosure v0 function=[[f_11]]
-// CHECK-NEXT: v10 = NewClosure function=[[f_12]]
-// CHECK-NEXT: v11 = NewClosure v2, v5 function=[[f_13]]
-// CHECK-NEXT: DefineMethod v5, v11 layout=[[L_6]] side=Static key="once"
-// CHECK-NEXT: v13 = NewClosure v5, v6 function=[[f_14]]
-// CHECK-NEXT: DefineMethod v5, v13 layout=[[L_6]] side=Static index=1 key="inCondition"
-// CHECK-NEXT: v15 = NewClosure v5, v6 function=[[f_15]]
-// CHECK-NEXT: DefineMethod v5, v15 layout=[[L_6]] side=Static index=2 key="negated"
-// CHECK-NEXT: v17 = NewClosure v2, v5 function=[[f_16]]
-// CHECK-NEXT: DefineMethod v5, v17 layout=[[L_6]] side=Static index=3 key="inLoop"
-// CHECK-NEXT: v19 = NewClosure v1, v2, v5 function=[[f_17]]
-// CHECK-NEXT: DefineMethod v5, v19 layout=[[L_6]] side=Static index=4 key="caught"
-// CHECK-NEXT: v21 = NewClosure v2, v5 function=[[f_18]]
-// CHECK-NEXT: DefineMethod v5, v21 layout=[[L_6]] side=Static index=5 key="narrowed"
-// CHECK-NEXT: v23 = NewClosure v2, v5, v6 function=[[f_19]]
-// CHECK-NEXT: DefineMethod v5, v23 layout=[[L_6]] side=Static index=6 key="both"
-// CHECK-NEXT: v25 = FinishClass v5 layout=[[L_6]]
-// CHECK-NEXT: v26 = Convert v25 declared={type=[[f_7]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: PutEnvironmentField v1, v26 layout=[[L_4]]
-// CHECK-NEXT: v28 = Convert v25 declared={type=function flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v29 = CallDirect v2, v0, v26, v5, v3, v6, v7, v8, v9, v10, v28 function=[[f_20]]
-// CHECK-NEXT: v30 = Convert v25 declared={type=undefined|null|[[f_2]] site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v30
+// CHECK-NEXT: v1 = NewObject layout=[[L_1]]
+// CHECK-NEXT: v2 = NewObject layout=[[L_2]]
+// CHECK-NEXT: v3 = NewClassToken layout=[[L_3]]
+// CHECK-NEXT: v4 = NewClosure v0, v3 function=[[f_4]]
+// CHECK-NEXT: v5 = NewClass v4 layout=[[L_3]]
+// CHECK-NEXT: v6 = NewClosure v0 function=[[f_5]]
+// CHECK-NEXT: v7 = NewClosure v0 function=[[f_6]]
+// CHECK-NEXT: v8 = NewClosure function=[[f_7]]
+// CHECK-NEXT: v9 = NewClosure v0 function=[[f_8]]
+// CHECK-NEXT: v10 = NewClosure function=[[f_9]]
+// CHECK-NEXT: v11 = NewClosure v2, v5 function=[[f_10]]
+// CHECK-NEXT: DefineMethod v5, v11 layout=[[L_3]] side=Static key="once"
+// CHECK-NEXT: v13 = NewClosure v5, v6 function=[[f_11]]
+// CHECK-NEXT: DefineMethod v5, v13 layout=[[L_3]] side=Static index=1 key="inCondition"
+// CHECK-NEXT: v15 = NewClosure v5, v6 function=[[f_12]]
+// CHECK-NEXT: DefineMethod v5, v15 layout=[[L_3]] side=Static index=2 key="negated"
+// CHECK-NEXT: v17 = NewClosure v2, v5 function=[[f_13]]
+// CHECK-NEXT: DefineMethod v5, v17 layout=[[L_3]] side=Static index=3 key="inLoop"
+// CHECK-NEXT: v19 = NewClosure v1, v2, v5 function=[[f_14]]
+// CHECK-NEXT: DefineMethod v5, v19 layout=[[L_3]] side=Static index=4 key="caught"
+// CHECK-NEXT: v21 = NewClosure v2, v5 function=[[f_15]]
+// CHECK-NEXT: DefineMethod v5, v21 layout=[[L_3]] side=Static index=5 key="narrowed"
+// CHECK-NEXT: v23 = NewClosure v2, v5, v6 function=[[f_16]]
+// CHECK-NEXT: DefineMethod v5, v23 layout=[[L_3]] side=Static index=6 key="both"
+// CHECK-NEXT: v25 = FinishClass v5 layout=[[L_3]]
+// CHECK-NEXT: v26 = Convert v25 declared={type=[[f_4]] flags=[IsFromCompiler]}
+// CHECK-NEXT: PutEnvironmentField v1, v26 layout=[[L_1]]
+// CHECK-NEXT: v28 = Convert v25 declared={type=function flags=[IsFromCompiler]}
+// CHECK-NEXT: v29 = CallDirect v2, v0, v26, v5, v3, v6, v7, v8, v9, v10, v28 function=[[f_17]]
+// CHECK-NEXT: Return v25
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="H"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_21]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_18]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_22]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_22]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_19]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_19]]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] captures=[{type=number site=[[w_1]]}, {type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_2]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] captures=[{type=number variableName="n"}, {type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_20]]] {
 // CHECK-NEXT: b0(v0: number, v1: classtoken, v2: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetConstructPrototype v2 layout=[[L_6]]
-// CHECK-NEXT: v4 = NewObject v3 layout=[[L_6]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_6]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v6 = CallDirect v0, v1, v5 function=[[f_23]]
+// CHECK-NEXT: v3 = GetConstructPrototype v2 layout=[[L_3]]
+// CHECK-NEXT: v4 = NewObject v3 layout=[[L_3]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]]}
+// CHECK-NEXT: v6 = CallDirect v0, v1, v5 function=[[f_21]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="once"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env [[L_5]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|[[f_24]] site=[[w_25]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=[[w_26]]}] {
-// CHECK-NEXT: b0(v0: env [[L_5]], v1: function, v2: undefined|null|[[f_24]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|[[f_22]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_2]], v1: function, v2: undefined|null|[[f_22]]):
 // CHECK-NEXT: v3 = Call v2 calleeName="f"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v5 = TypeTest v4 testedType=object
-// CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b2(v6):
-// CHECK-NEXT: v7 = StrictEq v6, v1
-// CHECK-NEXT: Branch v7 -> taken b3(), notTaken b4(v7)
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v8 = GetEnvironmentField v0 layout=[[L_5]]
-// CHECK-NEXT: v9 = TypeTest v8 testedType=absent
-// CHECK-NEXT: v10 = LogicalNot v9
-// CHECK-NEXT: Jump -> next b4(v10)
+// CHECK-NEXT: v4 = TypeTest v3 testedType=object
+// CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b4(| 0)
+// CHECK-NEXT: b1(v5):
+// CHECK-NEXT: v6 = StrictEq v5, v1
+// CHECK-NEXT: Branch v6 -> taken b2(), notTaken b3(v6)
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v7 = GetEnvironmentField v0 layout=[[L_2]]
+// CHECK-NEXT: v8 = TypeTest v7 testedType=absent
+// CHECK-NEXT: v9 = LogicalNot v8
+// CHECK-NEXT: Jump -> next b3(v9)
+// CHECK-NEXT: b3(v10):
+// CHECK-NEXT: Return v10
 // CHECK-NEXT: b4(v11):
-// CHECK-NEXT: v12 = Convert v11 declared={type=boolean site=[[w_26]]}
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: b5(v13) frequency=Unlikely:
-// CHECK-NEXT: v14 = PropHas v13 key="#field"
+// CHECK-NEXT: v12 = PropHas v11 key="#field"
 // CHECK-NEXT: Unreachable
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="negated"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=function flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean site=[[w_27]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=function flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v4 = RequireObject v3 runtimeError=PrivateStaticTestOfNonObject
-// CHECK-NEXT: v5 = StrictEq v4, v0
-// CHECK-NEXT: v6 = ToBoolean v5
-// CHECK-NEXT: v7 = LogicalNot v6
-// CHECK-NEXT: v8 = Convert v7 declared={type=boolean site=[[w_27]]}
-// CHECK-NEXT: Return v8
+// CHECK-NEXT: v3 = RequireObject v2 runtimeError=PrivateStaticTestOfNonObject
+// CHECK-NEXT: v4 = StrictEq v3, v0
+// CHECK-NEXT: v5 = ToBoolean v4
+// CHECK-NEXT: v6 = LogicalNot v5
+// CHECK-NEXT: Return v6
 // CHECK-NEXT: }

@@ -3,24 +3,31 @@ mod evaluated_text;
 mod imports;
 mod mention_use;
 mod mentions;
+mod module_cache;
 mod module_objects;
 mod module_values;
 mod paths;
 mod resolver;
 mod runtime_dialect;
+mod stores_behind_tests;
 #[cfg(test)]
 mod tests;
-mod walked_texts;
+mod unnamed_uses;
+mod written_members;
 
 pub use self::imports::find_module_export;
-pub use self::module_values::commonjs_variable_builtin;
+pub use self::module_cache::{KeyOfModuleCache, is_module_cache, is_table_of_loaders};
+pub use self::module_values::{
+    commonjs_variable_builtin, reads_what_wrapper_hands_in, redeclares_what_wrapper_hands_in,
+};
 pub use self::resolver::FileFacts;
+pub use self::runtime_dialect::set_natives;
 use super::names::BuiltinNames;
 use super::runtime_uses::RuntimeUses;
 use super::table::{
     self, BuiltinId, Intrinsic, Mutability, Platforms, RuntimeFunction, RuntimeModule,
 };
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{Binding, Bound, CommonJsVariable, SymbolId};
 use bun_sema::fold::Decisions;
 use bun_sema::hir::{self, Chain, ExprId, ExprKind, MemberKey, NodeData};
@@ -28,6 +35,7 @@ use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::module_format::ModuleFormat;
 use core::ops::Range;
 use smallvec::SmallVec;
+use std::sync::{Arc, OnceLock};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum SourceDialect {
@@ -42,7 +50,6 @@ pub struct BuiltinPath {
 }
 
 impl BuiltinPath {
-    // A locked number, accessor or data property stays a read, which the engine folds: no operation names one.
     pub fn locked_builtin(self) -> Option<BuiltinId> {
         let is_locked = self.mutability == Mutability::AlwaysLocked;
         (is_locked && table::is_legal_builtin_constant(self.id)).then_some(self.id)
@@ -81,15 +88,11 @@ pub enum ModuleExport {
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleObjectOwner {
-    /// `module`.
     OwnFile,
-    /// `require.main` and `process.mainModule`: the file that the process, or the Worker, has started with.
     EntryPoint,
-    /// A file that `parent` or an element of `children` leads to, or a binding that something has stored a module object into.
     Related,
 }
 
-/// A member of a module object whose value the record of the module has.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleField {
     Id,
@@ -100,30 +103,28 @@ pub enum ModuleField {
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleObjectUse {
-    /// `module.id`, `require.main.filename`: a plain read off what is that object in every run.
     Field(ModuleField),
-    /// `!require.main`: only whether there is an object.
     Tested,
-    /// `!module.parent`: only whether there is a parent.
     ParentTested,
-    /// `module.parent` as a value: the objects of the files that request the owner.
     Parent,
-    /// `module.children`, read or stored: the objects of the files that the owner requires.
     Children,
-    /// The object is held, compared, stored into, or asked for a member that is none of the above.
     Object,
-    /// The object, or the list of them, goes where nothing follows it. Whoever gets it reads any member, `parent` and `children` among them.
     HandedOn,
-    /// `process` goes where nothing follows it. Whoever gets it may read `mainModule` there.
     HolderHandedOn,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ModuleObjectMention {
-    /// The member for `Field`, `ParentTested`, `Parent` and `Children`, else what stands for the object.
     pub expr: ExprId,
     pub owner: ModuleObjectOwner,
     pub object_use: ModuleObjectUse,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct SpyCall {
+    pub call: ExprId,
+    pub object: ExprId,
+    pub name: Option<Atom>,
 }
 
 pub struct ImportTargets {
@@ -139,6 +140,9 @@ impl ImportTargets {
     }
 
     fn module_at(&self, site: ImportSiteKind) -> Option<RuntimeModule> {
+        if self.targets.last().is_none_or(|last| last.0 < site) {
+            return None;
+        }
         let at = self.targets.binary_search_by_key(&site, |target| target.0);
         at.ok().and_then(|at| self.targets[at].1)
     }
@@ -155,15 +159,25 @@ impl ImportTargets {
     }
 }
 
+pub const LOADED_BELOW_VITEST: &[u8] = b"%loaded-below-vitest";
+pub const LOADED_BY_WORKER: &[u8] = b"%loaded-by-worker";
+pub const GLOBALS_LEFT_ALONE: &[u8] = b"%globals-left-alone";
+pub const BUN_OF_TEST_FILE: &[u8] = b"%bun";
+
 pub struct ResolveInput<'a, 's> {
     pub hir: &'a hir::File<'s>,
     pub bound: &'a Bound<'s>,
     pub decisions: &'a Decisions<'s>,
+    pub atoms: &'a Interner<'s>,
     pub module_format: ModuleFormat,
     pub targets: &'a ImportTargets,
     pub names: &'a BuiltinNames,
     pub platform: Platforms,
     pub dialect: SourceDialect,
+    pub replaced: &'a [u32],
+    pub runs_tests: bool,
+    pub holds_language: bool,
+    pub is_text_asked: bool,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -197,6 +211,12 @@ impl CommonJsBuiltins {
     }
 }
 
+struct WhereHooksOfInstanceofExist {
+    uses: RuntimeUses,
+    loads_unknown_modules: bool,
+    hands_on_loader_of_paths: bool,
+}
+
 #[derive(Default)]
 pub struct ResolvedBuiltins {
     exprs: Box<[(ExprId, Resolved)]>,
@@ -206,33 +226,103 @@ pub struct ResolvedBuiltins {
     commonjs: CommonJsBuiltins,
     evaluated_texts: Box<[EvaluatedText]>,
     module_object_mentions: Box<[ModuleObjectMention]>,
+    may_store_path_of_main_module: bool,
     stores_with_module_exports: Box<[ExprId]>,
+    replaced_members: Box<[BuiltinId]>,
+    opened_holders: Box<[BuiltinId]>,
+    names_added: Box<[(BuiltinId, Atom)]>,
+    spy_calls: Box<[SpyCall]>,
+    hands_spy_on: bool,
+    hands_mock_on: bool,
+    resets_modules: bool,
+    stores_loader_functions: bool,
+    process_reaches_code_on_its_prototypes: bool,
+    inspects_prototype_chain_of_process: bool,
+    method_that_hands_out_global_object_may_come_out: bool,
+    tables_of_loaders_written: Box<[ExprId]>,
+    unlocked: OnceLock<Arc<[u32]>>,
     mentioned: Box<[BuiltinId]>,
     #[cfg(test)]
     exposed: Box<[BuiltinId]>,
     uses: RuntimeUses,
-    guessed_uses: RuntimeUses,
     loads_unknown_modules: bool,
+    hands_on_loader_of_paths: bool,
+    where_hooks_of_instanceof_exist: Option<Box<WhereHooksOfInstanceofExist>>,
+    hooks_of_instanceof_may_exist: OnceLock<()>,
+    can_come_by_hook_of_instanceof: bool,
+    keys_taken_out_of_module_cache: Box<[KeyOfModuleCache]>,
+    loses_sight_of_module_cache: bool,
+    hands_module_cache_on: bool,
+    names_plugin: bool,
+    reaches_module_cache: bool,
 }
 
 impl ResolvedBuiltins {
+    pub fn unlock(&self, members: Arc<[u32]>) {
+        debug_assert!(members.is_sorted_by(|left, right| left < right));
+        let is_first_list = self.unlocked.set(members).is_ok();
+        assert!(is_first_list, "a second list would be dropped");
+    }
+
+    fn apply_unlocked_list(&self, mut path: BuiltinPath) -> BuiltinPath {
+        if let Some(members) = self.unlocked.get()
+            && members.binary_search(&(path.id as u32)).is_ok()
+        {
+            path.mutability = path.mutability.min(Mutability::ConstantUnlessWritten);
+        }
+        path
+    }
+
+    pub fn for_each_locked_builtin(&self, mut take: impl FnMut(BuiltinId)) {
+        let of_exprs = self.exprs.iter().filter_map(|entry| match entry.1 {
+            Resolved::Builtin(path) | Resolved::DynamicGlobal(path) => Some(path),
+            Resolved::Intrinsic(_) => None,
+        });
+        let of_symbols = self.symbols.iter().map(|entry| entry.1);
+        for path in of_exprs.chain(of_symbols) {
+            if let Some(builtin) = self.apply_unlocked_list(path).locked_builtin() {
+                take(builtin);
+            }
+        }
+    }
+
+    pub fn is_unlocked(&self, place: BuiltinId) -> bool {
+        let Some(members) = self.unlocked.get() else {
+            return false;
+        };
+        let is_listed = |id: BuiltinId| members.binary_search(&(id as u32)).is_ok();
+        is_listed(table::canonical_id(place)) || is_listed(place)
+    }
+
+    #[inline]
     pub fn of_expr(&self, expr: ExprId) -> Option<Resolved> {
         let index = expr.idx();
         let word = *self.expr_bits.get(index / 64)?;
         if word & (1 << (index % 64)) == 0 {
             return None;
         }
+        self.find_listed_expr(expr)
+    }
+
+    #[inline(never)]
+    fn find_listed_expr(&self, expr: ExprId) -> Option<Resolved> {
         let at = self.exprs.binary_search_by_key(&expr, |entry| entry.0);
-        at.ok().map(|at| self.exprs[at].1)
+        at.ok().map(|at| match self.exprs[at].1 {
+            Resolved::Builtin(path) => Resolved::Builtin(self.apply_unlocked_list(path)),
+            Resolved::DynamicGlobal(path) => {
+                Resolved::DynamicGlobal(self.apply_unlocked_list(path))
+            }
+            Resolved::Intrinsic(intrinsic) => Resolved::Intrinsic(intrinsic),
+        })
     }
 
-    /// `of_expr` resolves the value of `(f(), Object.keys)` and `(f(), module).exports` too. Whatever stands in for an expression, or drops it, asks this one.
+    #[inline]
     pub fn of_pure_expr(&self, expr: ExprId) -> Option<Resolved> {
+        let resolved = self.of_expr(expr)?;
         let has_side_effects = self.exprs_with_side_effects.binary_search(&expr).is_ok();
-        self.of_expr(expr).filter(|_| !has_side_effects)
+        (!has_side_effects).then_some(resolved)
     }
 
-    /// `Object.keys` gives `[Object.keys, Object]`. It answers only for a free name and for named, non-optional member reads on one.
     pub fn global_path(
         &self,
         hir: &hir::File<'_>,
@@ -269,6 +359,7 @@ impl ResolvedBuiltins {
         }
     }
 
+    #[inline]
     pub fn builtin_of_expression(&self, expr: ExprId) -> Option<BuiltinId> {
         match self.of_expr(expr)? {
             Resolved::Builtin(path) => Some(path.id),
@@ -279,11 +370,13 @@ impl ResolvedBuiltins {
 
     pub fn of_symbol(&self, symbol: SymbolId) -> Option<BuiltinPath> {
         let at = self.symbols.binary_search_by_key(&symbol, |entry| entry.0);
-        at.ok().map(|at| self.symbols[at].1)
+        at.ok()
+            .map(|at| self.apply_unlocked_list(self.symbols[at].1))
     }
 
     pub fn commonjs_variable(&self, variable: CommonJsVariable) -> Option<BuiltinPath> {
-        self.commonjs.get(variable)
+        let path = self.commonjs.get(variable)?;
+        Some(self.apply_unlocked_list(path))
     }
 
     pub fn evaluated_text(&self, call: ExprId) -> Option<&EvaluatedText> {
@@ -296,7 +389,6 @@ impl ResolvedBuiltins {
         &self.evaluated_texts
     }
 
-    /// In the order of the expressions.
     pub fn module_object_mentions(&self) -> &[ModuleObjectMention] {
         &self.module_object_mentions
     }
@@ -309,13 +401,80 @@ impl ResolvedBuiltins {
         Some(mentions[at])
     }
 
-    /// Whether `target` is the name `exports` in `exports = module.exports = value` as a statement of the body of a CommonJS file: from there on both name the one value, so the store needs no parameter to go to.
+    pub fn may_store_path_of_main_module(&self) -> bool {
+        self.may_store_path_of_main_module
+    }
+
     pub fn is_stored_with_module_exports(&self, target: ExprId) -> bool {
         self.stores_with_module_exports.contains(&target)
     }
 
+    pub fn replaced_members(&self) -> &[BuiltinId] {
+        &self.replaced_members
+    }
+
+    pub fn opened_holders(&self) -> &[BuiltinId] {
+        &self.opened_holders
+    }
+
+    pub fn names_added(&self) -> &[(BuiltinId, Atom)] {
+        &self.names_added
+    }
+
+    pub fn spy_calls(&self) -> &[SpyCall] {
+        &self.spy_calls
+    }
+
+    pub fn tables_of_loaders_written(&self) -> &[ExprId] {
+        &self.tables_of_loaders_written
+    }
+
+    pub fn process_reaches_code_on_its_prototypes(&self) -> bool {
+        self.process_reaches_code_on_its_prototypes
+    }
+
+    pub fn inspects_prototype_chain_of_process(&self) -> bool {
+        self.inspects_prototype_chain_of_process
+    }
+
+    pub fn method_that_hands_out_global_object_may_come_out(&self) -> bool {
+        self.method_that_hands_out_global_object_may_come_out
+    }
+
+    pub fn stores_loader_functions(&self) -> bool {
+        self.stores_loader_functions
+    }
+
+    pub fn hands_spy_on(&self) -> bool {
+        self.hands_spy_on
+    }
+
+    pub fn hands_mock_on(&self) -> bool {
+        self.hands_mock_on
+    }
+
+    pub fn resets_modules(&self) -> bool {
+        self.resets_modules
+    }
+
     pub fn mentioned(&self) -> &[BuiltinId] {
         &self.mentioned
+    }
+
+    pub fn mentions_evaluator(&self) -> bool {
+        let evaluators =
+            table::BuiltinFlags::EVALUATES_TEXT | table::BuiltinFlags::RUNS_UNSEEN_CODE;
+        let loads_by_name = [
+            BuiltinId::ModuleRequire,
+            BuiltinId::ImportMetaRequire,
+            BuiltinId::ProcessGetBuiltinModule,
+        ]
+        .map(table::canonical_id);
+        self.mentioned.iter().any(|&id| {
+            let is_of_vm = table::entry(table::root_of(id)).module == Some(RuntimeModule::NodeVm);
+            (is_of_vm || table::entry(id).flags.intersects(evaluators))
+                && !loads_by_name.contains(&table::canonical_id(id))
+        })
     }
 
     #[cfg(test)]
@@ -323,25 +482,74 @@ impl ResolvedBuiltins {
         &self.exposed
     }
 
-    pub fn uses(&self) -> &RuntimeUses {
-        &self.uses
+    fn find_what_holds_where_hooks_exist(&self) -> Option<&WhereHooksOfInstanceofExist> {
+        self.hooks_of_instanceof_may_exist.get()?;
+        self.where_hooks_of_instanceof_exist.as_deref()
     }
 
-    /// `MentionedUses::guessed` of a file of the program.
-    pub fn guessed_uses(&self) -> &RuntimeUses {
-        &self.guessed_uses
+    pub fn can_come_by_hook_of_instanceof(&self) -> bool {
+        self.can_come_by_hook_of_instanceof
+    }
+
+    pub fn hands_builtins_to_hooks_of_instanceof(&self) -> bool {
+        self.where_hooks_of_instanceof_exist.is_some()
+    }
+
+    pub fn note_that_hooks_of_instanceof_may_exist(&self) {
+        self.hooks_of_instanceof_may_exist.get_or_init(|| ());
+    }
+
+    pub fn uses(&self) -> &RuntimeUses {
+        match self.find_what_holds_where_hooks_exist() {
+            Some(held) => &held.uses,
+            None => &self.uses,
+        }
+    }
+
+    pub fn into_uses(self) -> RuntimeUses {
+        self.uses
     }
 
     pub fn loads_unknown_modules(&self) -> bool {
-        self.loads_unknown_modules
+        match self.find_what_holds_where_hooks_exist() {
+            Some(held) => held.loads_unknown_modules,
+            None => self.loads_unknown_modules,
+        }
+    }
+
+    pub fn hands_on_loader_of_paths(&self) -> bool {
+        match self.find_what_holds_where_hooks_exist() {
+            Some(held) => held.hands_on_loader_of_paths,
+            None => self.hands_on_loader_of_paths,
+        }
+    }
+
+    pub fn keys_taken_out_of_module_cache(&self) -> &[KeyOfModuleCache] {
+        &self.keys_taken_out_of_module_cache
+    }
+
+    pub fn reaches_module_cache(&self) -> bool {
+        self.reaches_module_cache
+    }
+
+    pub fn loses_sight_of_module_cache(&self) -> bool {
+        self.loses_sight_of_module_cache
+    }
+
+    pub fn hands_module_cache_on(&self) -> bool {
+        self.hands_module_cache_on
+    }
+
+    pub fn names_plugin(&self) -> bool {
+        self.names_plugin
     }
 
     pub fn loaded_modules(&self) -> impl Iterator<Item = RuntimeModule> + '_ {
-        self.uses.modules.iter().copied()
+        self.uses().modules.iter().copied()
     }
 
     pub fn called_functions(&self) -> impl Iterator<Item = RuntimeFunction> + '_ {
-        self.uses.functions.iter().copied()
+        self.uses().functions.iter().copied()
     }
 }
 
@@ -349,7 +557,6 @@ pub fn resolve_file(input: &ResolveInput<'_, '_>) -> ResolvedBuiltins {
     resolver::run(input, None, None)
 }
 
-/// The built-ins of a part of a file: the code in these ranges of positions, which are in order and do not overlap.
 pub fn resolve_within(
     input: &ResolveInput<'_, '_>,
     ranges: &[Range<u32>],

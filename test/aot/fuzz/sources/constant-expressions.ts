@@ -1,4 +1,4 @@
-// Expressions that the compiler can work out while it builds, in every language and at every seed.
+// A list of programs from ../generators/constant-expressions.ts, which describes them.
 import { program } from "../generators/constant-expressions";
 import { family } from "../family";
 

@@ -1,3 +1,6 @@
+use std::sync::atomic::AtomicUsize;
+
+use bstr::ByteSlice;
 use bun_ast::{Loc, Log};
 use bun_builtin_sources::Archive;
 use bun_options_types::aot_options::AotOptions;
@@ -6,24 +9,25 @@ use bun_sema::hir::FileKind;
 use bun_sema::hir_from_data::DataModule;
 use bun_sema::module_format::DeclaredModuleType;
 use bun_sema::program::HostModuleId;
-use bun_sema::resolve::{CodeOptions, ParseOptions, TranspileSettings};
+use bun_sema::resolve::{CodeOptions, ParseOptions, TranspileSettings, find_file_plainly};
 use bun_sema::session::Session;
 
 use super::*;
-use crate::builtins::{
-    BuiltinId, BuiltinPath, EvaluatedText, EvaluatedTextForm, Mutability, RuntimeModule,
+use crate::builtins::RuntimeModule;
+use crate::compile::testing::{
+    TemporaryDirectory, default_settings, lower_program_with_provider, with_loaded_build,
+    with_loaded_test_run,
 };
-use crate::compile::testing::{TemporaryDirectory, default_settings, lower_program_with_provider};
+use crate::diagnostic_codes::Code;
 use crate::diagnostics::Diagnostics;
 use crate::engine::ExecutableIdentity;
 use crate::load::host_platform;
 use crate::load::runtime_modules::HOST_VALUE_MODULE;
 use crate::load::source_provider::{
-    DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest,
+    DataFailure, DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest,
     WithoutServices,
 };
 use crate::options::{LoadOptions, PathOptions, RemovableOptions};
-use crate::statistics::LimitValues;
 
 const MAIN: &[u8] = b"/project/main.ts";
 const TEMPLATE: &[u8] = b"/project/hello.tmpl";
@@ -37,10 +41,21 @@ const VIRTUAL_DATA: &[u8] = b"data";
 const TYPESCRIPT_TEXT: &[u8] = b"export const n: number = 1;";
 const ERASED: &[u8] = b"/project/erased.tsx";
 const ERASED_TEXT: &[u8] = b"export const n = 1;";
+const ASSET: &[u8] = b"/project/logo.png";
+const DEFERRED_ASSET: &[u8] = b"/project/deferred.png";
+const ASSET_FROM_PLUGIN: &[u8] = b"smaller";
+const PAGE: &[u8] = b"/project/page.html";
+const DEFERRED_BUNDLE: &[u8] = b"/project/deferred-bundle.js";
+const STILL_DEFERRED: &[u8] = b"/project/still-deferred.ts";
+const STILL_DEFERRED_ASSET: &[u8] = b"/project/still-deferred.png";
+const BUNDLED_COMMONJS_TEXT: &str = "// @bun @bun-cjs\n\
+    (function(exports, require, module, __filename, __dirname) {module.exports = 1;})";
 
 #[derive(Default)]
 struct ScriptedProvider {
     calls: Guarded<Vec<String>>,
+    looked_for: Guarded<Vec<Vec<u8>>>,
+    name_checks: AtomicUsize,
 }
 
 impl ScriptedProvider {
@@ -77,13 +92,22 @@ impl SourceProvider for ScriptedProvider {
         })
     }
 
+    fn find_file(&self, host: &dyn Host, search: &FileSearch<'_>) -> FoundCode {
+        self.looked_for.lock().push(search.specifier.to_vec());
+        find_file_plainly(host, search)
+    }
+
     fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
         self.record_call("load", request.module.path);
         let (text, loader): (&'static [u8], Loader) = match request.module.path {
             TEMPLATE | VIRTUAL_CONFIG => (TYPESCRIPT_TEXT, Loader::Ts),
             DATA | VIRTUAL_DATA => (b"{\"a\":1}", Loader::Json),
             ERASED | b"/project/erased.js" => (ERASED_TEXT, Loader::Js),
-            NEVER_LOADED | DEFERRED_TEMPLATE => return Ok(Loaded::Deferred),
+            ASSET => (ASSET_FROM_PLUGIN, Loader::File),
+            NEVER_LOADED | DEFERRED_TEMPLATE | DEFERRED_ASSET | DEFERRED_BUNDLE
+            | STILL_DEFERRED | STILL_DEFERRED_ASSET => {
+                return Ok(Loaded::Deferred);
+            }
             b"/project/failed.ts" => {
                 log.add_error_fmt(None, Loc::EMPTY, format_args!("the plugin failed"));
                 return Err(Failed);
@@ -102,14 +126,21 @@ impl SourceProvider for ScriptedProvider {
     }
 
     fn finish_deferred_loads(&self, _log: &mut Log) -> Vec<DeferredLoad> {
-        let template = Loaded::Source {
-            contents: Cow::Borrowed(TYPESCRIPT_TEXT),
-            loader: Loader::Ts,
+        let from_plugin = |text: &'static [u8], loader: Loader| Loaded::Source {
+            contents: Cow::Borrowed(text),
+            loader,
             is_from_plugin: true,
         };
         let answers = [
             (NEVER_LOADED, Loaded::NotFound),
-            (DEFERRED_TEMPLATE, template),
+            (DEFERRED_TEMPLATE, from_plugin(TYPESCRIPT_TEXT, Loader::Ts)),
+            (DEFERRED_ASSET, from_plugin(ASSET_FROM_PLUGIN, Loader::File)),
+            (
+                DEFERRED_BUNDLE,
+                from_plugin(BUNDLED_COMMONJS_TEXT.as_bytes(), Loader::Js),
+            ),
+            (STILL_DEFERRED, Loaded::Deferred),
+            (STILL_DEFERRED_ASSET, Loaded::Deferred),
         ];
         answers
             .into_iter()
@@ -121,18 +152,28 @@ impl SourceProvider for ScriptedProvider {
             .collect()
     }
 
+    fn set_embedded_contents(&self, file: &SourceFile<'_>, _log: &mut Log) -> Result<(), Failed> {
+        let embedded = [file.path, b" = ", file.contents].concat();
+        self.record_call("set_embedded_contents", &embedded);
+        Ok(())
+    }
+
     fn parse_data<'s>(
         &self,
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
         log: &mut Log,
-    ) -> Result<DataModule<'s>, Failed> {
+    ) -> Result<DataModule<'s>, DataFailure> {
         self.record_call("parse_data", file.path);
-        WithoutServices.parse_data(file, arena, atoms, log)
+        match file.loader {
+            Loader::Html => Ok(DataModule::Page),
+            _ => WithoutServices.parse_data(file, arena, atoms, log),
+        }
     }
 
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+        self.name_checks.fetch_add(1, Ordering::Relaxed);
         WithoutServices.check_embedded_files(log)
     }
 }
@@ -167,8 +208,13 @@ impl<'s> Fixture<'_, 's> {
     }
 
     fn parse(&self, path: &[u8], loader: HostLoader) -> ParsedCode<'s> {
+        self.parse_text(path, loader, &self.read_code(path))
+    }
+
+    fn parse_text(&self, path: &[u8], loader: HostLoader, text: &[u8]) -> ParsedCode<'s> {
         let settings = default_settings();
         let request = CodeParseRequest {
+            package_module_type: DeclaredModuleType::Unknown,
             path,
             loader,
             options: ParseOptions::default(),
@@ -176,8 +222,8 @@ impl<'s> Fixture<'_, 's> {
             settings: &settings,
             declared_module_type: DeclaredModuleType::Unknown,
         };
-        let (arena, text) = (self.session.arena(), self.read_code(path));
-        self.host.parse_code(arena, &request, &text, &self.atoms)
+        let arena = self.session.arena();
+        self.host.parse_code(arena, &request, text, &self.atoms)
     }
 
     fn read_code(&self, path: &[u8]) -> Cow<'static, [u8]> {
@@ -194,6 +240,37 @@ impl<'s> Fixture<'_, 's> {
     fn take_messages(&self) -> Vec<Vec<u8>> {
         take_messages(self.messages)
     }
+
+    fn take_refusal(&self, code: Code) -> Vec<u8> {
+        let mut messages = self.take_messages();
+        let texts: Vec<&BStr> = messages.iter().map(BStr::new).collect();
+        let prefix = format!("TS{}: ", code.number());
+        assert!(
+            texts.len() == 1 && texts[0].starts_with(prefix.as_bytes()),
+            "{texts:?}"
+        );
+        messages.remove(0)
+    }
+
+    fn assert_refused_as_still_deferred(&self, path: &[u8]) {
+        let message = self.take_refusal(Code::UnsupportedOption);
+        for named in [path, b"still defers"] {
+            assert!(message.contains_str(named), "{}", BStr::new(&message));
+        }
+    }
+
+    fn parse_failure_of(&self, path: &[u8]) -> Option<Vec<u8>> {
+        let parsed = self.parse(path, BY_NAME);
+        payload_of(&parsed).parse_failure.clone()
+    }
+
+    fn finish_asset_reads(&self, paths: &[&[u8]]) {
+        assert!(self.host.start_background_reads(paths));
+        for path in paths {
+            self.host.read_in_background(path);
+        }
+        self.host.finish_background_reads();
+    }
 }
 
 pub(crate) fn take_messages(messages: &LoadMessages) -> Vec<Vec<u8>> {
@@ -205,14 +282,28 @@ pub(crate) fn take_messages(messages: &LoadMessages) -> Vec<Vec<u8>> {
     messages.map(|message| message.data.text.to_vec()).collect()
 }
 
-fn with_host<R>(files: &[(&str, &str)], then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
+fn in_memory_files_of(files: &[(&str, &str)]) -> Vec<(Vec<u8>, Vec<u8>)> {
     let in_memory_file = |(name, text): &(&str, &str)| {
         let path = format!("/project/{name}").into_bytes();
         (path, text.as_bytes().to_vec())
     };
     let mut in_memory_files: Vec<(Vec<u8>, Vec<u8>)> = files.iter().map(in_memory_file).collect();
     in_memory_files.sort_unstable();
-    with_host_under(AotOptions::default(), b"/project", in_memory_files, then)
+    in_memory_files
+}
+
+fn with_host<R>(files: &[(&str, &str)], then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
+    let files = in_memory_files_of(files);
+    with_host_under(AotOptions::default(), b"/project", files, then)
+}
+
+fn with_test_run_host<R>(files: &[(&str, &str)], then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
+    let aot = AotOptions {
+        runs_tests: true,
+        runs_in_place: true,
+        ..AotOptions::default()
+    };
+    with_host_under(aot, b"/project", in_memory_files_of(files), then)
 }
 
 fn with_host_under<R>(
@@ -223,6 +314,7 @@ fn with_host_under<R>(
 ) -> R {
     let mut load = LoadOptions::new(root.to_vec());
     load.in_memory_files = in_memory_files;
+    load.runs_tests = aot.runs_tests;
     load.externals.packages = vec![b"claimed-package".to_vec(), b"react".to_vec()];
     load.loaders.push((b".vue".to_vec(), Loader::Tsx));
     load.loaders.sort_by(|a, b| a.0.cmp(&b.0));
@@ -239,6 +331,7 @@ fn with_host_under<R>(
             module_prefix: b"/$bunfs/root/".to_vec(),
             root_directory: root.to_vec(),
             entry_point_names: entry_points.to_vec(),
+            entry_point_file_names: Vec::new(),
         },
         removable: RemovableOptions::default(),
         lists_modules: false,
@@ -251,7 +344,6 @@ fn with_host_under<R>(
     let builtin_names = BuiltinNames::new(&atoms);
     let runtime_modules = RuntimeModules::new(Archive::embedded(), false);
     let messages = LoadMessages::default();
-    let limits = LimitValues::for_host();
     let host = LoadHost::new(LoadHostInput {
         disk: &disk,
         provider: &provider,
@@ -260,7 +352,6 @@ fn with_host_under<R>(
         messages: &messages,
         builtin_names: &builtin_names,
         platform: host_platform(),
-        limits: &limits,
     });
     then(&Fixture {
         host: &host,
@@ -275,6 +366,7 @@ fn loader_request<'a>(path: &'a [u8], settings: &'a TranspileSettings) -> Loader
     LoaderRequest {
         path,
         kind: CodeImportKind::Import,
+        is_linked_by_bundler: true,
         type_attribute: None,
         embed_attribute: None,
         settings,
@@ -328,6 +420,21 @@ fn resolve_code_takes_first_claim() {
         assert_eq!(fixture.resolve(b"./nothing", MAIN), unclaimed);
         assert_eq!(fixture.take_calls().len(), 6);
     });
+}
+
+#[cfg(unix)]
+#[test]
+fn file_named_as_in_the_executable_is_looked_for_under_its_native_path() {
+    with_host_under(
+        AotOptions::default(),
+        b"/C:/project",
+        Vec::new(),
+        |fixture| {
+            fixture.resolve(b"file:///$bunfs/root/job.mjs", b"/\0/C:/project/main.ts");
+            let looked_for = fixture.provider.looked_for.lock();
+            assert_eq!(*looked_for, [b"/C:/project/job.mjs".to_vec()]);
+        },
+    );
 }
 
 #[test]
@@ -473,10 +580,11 @@ fn loader_follows_attribute_options_and_entry_points() {
     with_host(&[], |fixture| {
         let host = fixture.host;
         let (by_name, named) = (HostLoaderKind::ByName, HostLoaderKind::Loader);
-        let cases: [(&[u8], Option<&[u8]>, HostLoaderKind); 10] = [
+        let cases: [(&[u8], Option<&[u8]>, HostLoaderKind); 11] = [
             (b"/project/a.ts", None, by_name),
             (b"/project/a.ts", Some(b""), by_name),
-            (b"/project/a.txt", Some(b"text"), by_name),
+            (b"/project/a.txt", Some(b"text"), named(Loader::Text)),
+            (b"/project/a.ts", Some(b"ts"), named(Loader::Ts)),
             (b"/project/a.ts", Some(b"text"), named(Loader::Text)),
             (b"/project/a.ts", Some(b"json"), named(Loader::Json)),
             (b"/project/a.ts", Some(b"no-such-loader"), by_name),
@@ -496,9 +604,7 @@ fn loader_follows_attribute_options_and_entry_points() {
 
         let macro_loader = loader_of(host, b"/project/m.ts", Some(b"macro"));
         assert_eq!(macro_loader, BY_NAME);
-        let messages = fixture.take_messages();
-        assert_eq!(messages.len(), 1);
-        assert!(messages[0].ends_with(b"a macro import was followed as code: /project/m.ts"));
+        fixture.take_refusal(Code::MacrosDisabled);
     });
 }
 
@@ -517,6 +623,28 @@ fn type_attributes_are_classified() {
         assert_eq!(classify(Some(b"nonsense")), (Some(by_name), 0));
         assert_eq!(classify(Some(b"")), (Some(by_name), 0));
     });
+}
+
+#[test]
+#[should_panic(expected = "Macros are disabled")]
+fn macro_import_stops_build() {
+    let main = "import { answer } from \"./answer.ts\" with { type: \"macro\" };\n\
+        console.log(answer());";
+    let files = [
+        ("main.ts", main),
+        ("answer.ts", "export function answer() { return 42; }"),
+    ];
+    with_loaded_build(&files, &default_settings(), |_, _| {});
+}
+
+#[test]
+#[should_panic(expected = "Macros are disabled")]
+fn macro_tag_stops_build() {
+    let main = "import { answer } from \"./answer.ts\" with { type: \"macro\" };\n\
+        console.log(answer`text`);";
+    let answer = "export function answer(texts: TemplateStringsArray) { return texts.length; }";
+    let files = [("main.ts", main), ("answer.ts", answer)];
+    with_loaded_build(&files, &default_settings(), |_, _| {});
 }
 
 #[test]
@@ -582,7 +710,6 @@ fn empty_module_stands_in_place_of_text_that_is_no_program_where_code_runs_in_pl
             assert_eq!(payload_of(&parsed).kind, SourceKind::Program);
         }
         assert_eq!(failure_of(b"/project/program.so"), None);
-        // The name says that it is TypeScript: the build reports what is wrong with it.
         assert_eq!(failure_of(b"/project/wrong.ts"), None);
         let wrong = parse_as_required(fixture, b"/project/wrong.ts");
         assert!(!wrong.hir.diagnostics.is_empty());
@@ -590,20 +717,29 @@ fn empty_module_stands_in_place_of_text_that_is_no_program_where_code_runs_in_pl
 }
 
 #[test]
-fn executable_carries_text_that_is_no_program() {
+fn executable_carries_text_that_only_its_name_calls_a_program() {
     with_texts_that_only_their_load_calls_programs(false, |fixture| {
-        let read_as = |path: &[u8]| {
+        let carried = fixture.parse(b"/project/prose", BY_NAME);
+        let source = payload_of(&carried);
+        assert_eq!(source.parse_failure, None);
+        assert_eq!(
+            (source.kind, source.loader),
+            (SourceKind::Data, Loader::File)
+        );
+        let required = parse_as_required(fixture, b"/project/library.so");
+        let source = payload_of(&required);
+        let said = source.parse_failure.as_deref();
+        assert_eq!(said, Some(&b"Invalid character. (1:1)"[..]));
+        assert_eq!(source.kind, SourceKind::Program);
+        for path in [&b"/project/program.so"[..], b"/project/wrong.ts"] {
             let parsed = parse_as_required(fixture, path);
             let source = payload_of(&parsed);
             assert_eq!(source.parse_failure, None);
-            (source.kind, source.loader)
-        };
-        let carried = (SourceKind::Data, Loader::File);
-        assert_eq!(read_as(b"/project/library.so"), carried);
-        assert_eq!(read_as(b"/project/prose"), carried);
-        let code = (SourceKind::Program, Loader::Ts);
-        assert_eq!(read_as(b"/project/program.so"), code);
-        assert_eq!(read_as(b"/project/wrong.ts"), code);
+            assert_eq!(
+                (source.kind, source.loader),
+                (SourceKind::Program, Loader::Ts)
+            );
+        }
     });
 }
 
@@ -641,14 +777,13 @@ fn plugin_loader_decides_language() {
         let source = payload_of(&template);
         let expected = (SourceKind::Program, Loader::Ts);
         assert_eq!((source.kind, source.loader), expected);
-        assert!(source.is_from_plugin && source.plugin_module.is_none());
+        assert!(source.plugin_module.is_none());
         assert_eq!(host.script_kind(TEMPLATE), Some(ScriptKind::Ts));
 
         let data = fixture.parse(DATA, BY_NAME);
         let source = payload_of(&data);
         let expected = (SourceKind::Data, Loader::Json);
         assert_eq!((source.kind, source.loader), expected);
-        assert!(source.is_from_plugin);
         assert_eq!(host.script_kind(DATA), None);
         let calls = [
             "load /project/hello.tmpl",
@@ -660,7 +795,6 @@ fn plugin_loader_decides_language() {
         let declarations = fixture.parse(b"/project/types.d.ts", BY_NAME);
         assert_eq!(declarations.hir.kind, FileKind::Declaration);
         assert!(declarations.hir.source_len > 0);
-        assert!(!payload_of(&declarations).is_from_plugin);
         let library = b"/bundled:///libs/lib.es5.d.ts";
         assert!(!host.read_source(library).is_empty());
         assert!(fixture.take_calls().is_empty());
@@ -679,7 +813,6 @@ fn typed_file_keeps_its_text_beside_javascript_from_a_plugin() {
         assert!(code.hir.is_js && !code.hir.has_errors);
         let source = payload_of(&code);
         assert_eq!(source.loader, Loader::Js);
-        assert!(source.is_from_plugin);
         let javascript = to_host_loader(Loader::Js, ERASED);
         assert_ne!(javascript, BY_NAME);
         let in_place = host.loader_of_code_in_place_of_typed_file(ERASED);
@@ -736,8 +869,9 @@ fn every_tree_has_a_payload() {
             let source = payload_of(&parsed);
             let name = BStr::new(path);
             assert_eq!((source.kind, source.loader), (kind, loader), "{name}");
-            assert!(!source.is_from_plugin && source.plugin_module.is_none());
-            assert!(source.web_assembly.is_none() && !source.is_page);
+            assert!(source.plugin_module.is_none());
+            assert!(source.web_assembly.is_none());
+            assert_eq!(source.byte_count, fixture.read_code(path).len(), "{name}");
         }
         let messages = fixture.take_messages();
         assert_eq!(messages.len(), 1);
@@ -757,7 +891,6 @@ fn plugin_module_name_is_in_the_payload() {
             path: Box::from(VIRTUAL_CONFIG),
         };
         assert_eq!(source.plugin_module.as_ref(), Some(&expected));
-        assert!(source.is_from_plugin);
         let typescript = (SourceKind::Program, Loader::Ts);
         assert_eq!((source.kind, source.loader), typescript);
     });
@@ -805,40 +938,6 @@ fn entry_point_with_unknown_name_that_is_not_text_is_a_file() {
         assert_eq!(kind_of(b"with.dots.in-its-name"), Some(tsx));
         assert_eq!(kind_of(b"main.ts"), Some(HostLoaderKind::ByName));
         assert!(fixture.take_messages().is_empty());
-    });
-}
-
-#[test]
-fn evaluated_text_is_served_as_javascript() {
-    with_host(&[], |fixture| {
-        let host = fixture.host;
-        let text = EvaluatedText {
-            call: ExprId(3),
-            form: EvaluatedTextForm::FunctionBody,
-            callee: BuiltinPath {
-                id: BuiltinId::Function,
-                mutability: Mutability::ConstantUnlessWritten,
-            },
-            texts: [fixture.atoms.intern(b"return this")].into_iter().collect(),
-        };
-        let path = host.evaluated_texts.add(MAIN, 3, &text, &fixture.atoms);
-        let path = path.expect("the text is a function body");
-        assert!(host.is_file(&path));
-        assert_eq!(host.realpath(&path), path);
-        assert_eq!(host.script_kind(&path), None);
-        assert_eq!(loader_of(host, &path, Some(b"text")), BY_NAME);
-        let expected = b"(function anonymous(\n) {\nreturn this\n})";
-        assert_eq!(host.read(&path).as_deref(), Some(&expected[..]));
-
-        let parsed = fixture.parse(&path, BY_NAME);
-        assert!(parsed.hir.is_js && !parsed.hir.has_errors);
-        let source = payload_of(&parsed);
-        let javascript = (SourceKind::EvaluatedText, Loader::Js);
-        assert_eq!((source.kind, source.loader), javascript);
-        assert!(!host.is_plugin_source(&path));
-        assert!(fixture.take_calls().is_empty());
-
-        assert!(!host.is_file(b"/$bun/text/%2fproject%2fmain.ts/4.cjs"));
     });
 }
 
@@ -973,8 +1072,410 @@ fn deferred_read_gets_text_and_loader_of_plugin() {
         let parsed = fixture.parse(DEFERRED_TEMPLATE, BY_NAME);
         assert_eq!(parsed.hir.kind, FileKind::Ts);
         assert!(!parsed.hir.has_errors);
-        assert!(payload_of(&parsed).is_from_plugin);
         assert!(host.take_unreadable().is_empty());
         assert_eq!(fixture.take_calls(), ["load /project/deferred.tmpl"]);
+        assert!(fixture.take_messages().is_empty());
     });
+}
+
+#[test]
+fn code_that_stays_deferred_is_refused() {
+    with_host(&[], |fixture| {
+        let host = fixture.host;
+        let read = host.read_code(STILL_DEFERRED);
+        assert!(matches!(read, CodeRead::Deferred));
+        assert!(fixture.take_messages().is_empty());
+
+        assert!(host.finish_deferred_reads().is_empty());
+        assert!(host.take_unreadable().is_empty());
+        fixture.assert_refused_as_still_deferred(STILL_DEFERRED);
+    });
+}
+
+#[test]
+fn asset_contents_come_from_plugin_or_disk() {
+    with_host(&[("plain.png", "as on disk")], |fixture| {
+        fixture.finish_asset_reads(&[ASSET, b"/project/plain.png"]);
+        let calls = [
+            "load /project/logo.png",
+            "load /project/plain.png",
+            "set_embedded_contents /project/logo.png = smaller",
+            "set_embedded_contents /project/plain.png = as on disk",
+        ];
+        assert_eq!(fixture.take_calls(), calls);
+        assert!(fixture.host.take_unreadable().is_empty());
+        assert!(fixture.take_messages().is_empty());
+    });
+}
+
+#[test]
+fn assets_of_a_later_round_join_those_of_an_earlier_round() {
+    with_host(&[("plain.png", "as on disk")], |fixture| {
+        let host = fixture.host;
+        let plain: &[u8] = b"/project/plain.png";
+        assert!(host.start_background_reads(&[plain]));
+        assert!(host.start_background_reads(&[ASSET, plain]));
+        assert_eq!(host.background_reads(), [ASSET, plain]);
+        host.finish_background_reads();
+        let calls = [
+            "load /project/logo.png",
+            "set_embedded_contents /project/logo.png = smaller",
+            "load /project/plain.png",
+            "set_embedded_contents /project/plain.png = as on disk",
+        ];
+        assert_eq!(fixture.take_calls(), calls);
+        assert!(fixture.take_messages().is_empty());
+    });
+}
+
+#[test]
+fn deferred_asset_read_is_finished_in_place() {
+    with_host(&[], |fixture| {
+        fixture.finish_asset_reads(&[DEFERRED_ASSET]);
+        let calls = [
+            "load /project/deferred.png",
+            "set_embedded_contents /project/deferred.png = smaller",
+        ];
+        assert_eq!(fixture.take_calls(), calls);
+        assert!(fixture.host.take_unreadable().is_empty());
+        assert!(fixture.take_messages().is_empty());
+    });
+}
+
+#[test]
+fn asset_that_stays_deferred_is_refused() {
+    with_host(&[], |fixture| {
+        fixture.finish_asset_reads(&[STILL_DEFERRED_ASSET]);
+        assert_eq!(fixture.take_calls(), ["load /project/still-deferred.png"]);
+        assert!(fixture.host.take_unreadable().is_empty());
+        fixture.assert_refused_as_still_deferred(STILL_DEFERRED_ASSET);
+    });
+}
+
+#[test]
+fn asset_loaded_by_plugin_with_another_loader_is_refused() {
+    for path in [TEMPLATE, DEFERRED_TEMPLATE] {
+        with_host(&[], |fixture| {
+            fixture.finish_asset_reads(&[path]);
+            let message = fixture.take_refusal(Code::UnsupportedOption);
+            for named in [path, b"--loader .tmpl:ts"] {
+                assert!(message.contains_str(named), "{}", BStr::new(&message));
+            }
+        });
+    }
+}
+
+#[test]
+fn missing_asset_is_unreadable() {
+    with_host(&[], |fixture| {
+        let missing: [&[u8]; 2] = [b"/project/missing.png", NEVER_LOADED];
+        fixture.finish_asset_reads(&missing);
+        let mut unreadable = fixture.host.take_unreadable();
+        unreadable.sort_unstable();
+        unreadable.dedup();
+        assert_eq!(unreadable, missing);
+        assert!(fixture.take_messages().is_empty());
+    });
+}
+
+#[test]
+fn names_of_embedded_files_are_checked_without_any_background_read() {
+    with_host(&[], |fixture| {
+        fixture.host.finish_background_reads();
+        assert_eq!(fixture.provider.name_checks.load(Ordering::Relaxed), 1);
+    });
+}
+
+#[test]
+fn body_of_bundled_commonjs_is_parsed() {
+    let files = [
+        ("bundled.js", BUNDLED_COMMONJS_TEXT),
+        ("transpiled.js", "// @bun\nexport {};"),
+    ];
+    with_host(&files, |fixture| {
+        fixture.parse(b"/project/transpiled.js", BY_NAME);
+        assert!(fixture.take_messages().is_empty());
+        let bundled = fixture.parse(b"/project/bundled.js", BY_NAME);
+        assert_eq!(bundled.hir.fns.len(), 0);
+        assert_eq!(bundled.hir.ids(bundled.hir.body).len(), 1);
+        assert!(fixture.take_messages().is_empty());
+    });
+}
+
+#[test]
+fn file_marked_as_bundled_commonjs_without_the_function_is_refused() {
+    let files = [("bare.js", "// @bun @bun-cjs\nmodule.exports = 1;")];
+    with_host(&files, |fixture| {
+        fixture.parse(b"/project/bare.js", BY_NAME);
+        fixture.take_refusal(Code::UnsupportedOption);
+    });
+}
+
+#[test]
+fn bundled_commonjs_that_is_not_loaded_as_code_is_accepted() {
+    with_host(&[("bundled.js", BUNDLED_COMMONJS_TEXT)], |fixture| {
+        let (host, path) = (fixture.host, &b"/project/bundled.js"[..]);
+        let text = fixture.parse(path, loader_of(host, path, Some(b"text")));
+        assert_eq!(payload_of(&text).kind, SourceKind::Data);
+        assert_eq!(&*host.read_source(path), BUNDLED_COMMONJS_TEXT.as_bytes());
+        assert!(fixture.take_messages().is_empty());
+    });
+}
+
+#[test]
+fn body_of_deferred_bundled_commonjs_is_parsed() {
+    with_host(&[], |fixture| {
+        let host = fixture.host;
+        let read = host.read_code(DEFERRED_BUNDLE);
+        assert!(matches!(read, CodeRead::Deferred));
+        assert!(fixture.take_messages().is_empty());
+
+        let texts = host.finish_deferred_reads();
+        let text = Cow::Borrowed(BUNDLED_COMMONJS_TEXT.as_bytes());
+        assert_eq!(texts, [(DEFERRED_BUNDLE.to_vec(), text)]);
+        let bundled = fixture.parse_text(DEFERRED_BUNDLE, BY_NAME, &texts[0].1);
+        assert_eq!(bundled.hir.fns.len(), 0);
+        assert!(fixture.take_messages().is_empty());
+    });
+}
+
+#[test]
+fn method_named_glob_of_another_object_is_loaded() {
+    let main = "const own = { meta: { glob: (pattern: string) => pattern } };\n\
+        console.log(own.meta.glob(\"./pages/*.ts\"));";
+    with_loaded_build(&[("main.ts", main)], &default_settings(), |_, _| {});
+}
+
+#[test]
+fn html_import_in_executable_waits_for_its_bundle() {
+    with_host(&[("page.html", "<p></p>")], |fixture| {
+        let host = fixture.host;
+        assert!(!host.leaves_to_run_time(PAGE));
+        assert!(!host.is_read_by_plugin(PAGE));
+        let page = fixture.parse(PAGE, loader_of(host, PAGE, None));
+        let source = payload_of(&page);
+        let expected = (SourceKind::Data, Loader::Html);
+        assert_eq!((source.kind, source.loader), expected);
+        assert!(matches!(page.host_values, [(_, HostValue::Deferred)]));
+        assert!(fixture.take_messages().is_empty());
+
+        let text = fixture.parse(PAGE, loader_of(host, PAGE, Some(b"text")));
+        let source = payload_of(&text);
+        let expected = (SourceKind::Data, Loader::Text);
+        assert_eq!((source.kind, source.loader), expected);
+        assert!(fixture.take_messages().is_empty());
+    });
+}
+
+#[test]
+fn html_import_in_place_is_refused() {
+    let aot = AotOptions {
+        runs_in_place: true,
+        ..AotOptions::default()
+    };
+    let files = in_memory_files_of(&[("page.html", "<p></p>")]);
+    with_host_under(aot, b"/project", files, |fixture| {
+        fixture.parse(PAGE, loader_of(fixture.host, PAGE, None));
+        let message = fixture.take_refusal(Code::UnsupportedOption);
+        assert!(message.contains_str(PAGE), "{}", BStr::new(&message));
+    });
+}
+
+#[test]
+fn html_import_in_test_run_is_left_to_run_time() {
+    with_test_run_host(&[("page.html", "<p></p>")], |fixture| {
+        let host = fixture.host;
+        assert!(host.leaves_to_run_time(PAGE));
+        fixture.parse(PAGE, loader_of(host, PAGE, None));
+        assert!(fixture.take_messages().is_empty());
+    });
+}
+
+#[test]
+fn page_not_named_as_one_fails_where_a_test_run_loads_it() {
+    let files = [("fragment.txt", "<p></p>"), ("page.html", "<p></p>")];
+    with_test_run_host(&files, |fixture| {
+        let as_page = to_host_loader_of_attribute(Loader::Html);
+        let fragment = fixture.parse(b"/project/fragment.txt", as_page);
+        let source = payload_of(&fragment);
+        let expected = (SourceKind::Data, Loader::Html);
+        assert_eq!((source.kind, source.loader), expected);
+        let said = source.parse_failure.as_deref();
+        assert_eq!(said, Some(PAGE_NOT_NAMED_AS_ONE));
+        assert_eq!(fixture.parse_failure_of(PAGE), None);
+        assert!(fixture.take_messages().is_empty());
+    });
+}
+
+#[test]
+#[should_panic(expected = "a query string works on an import of code")]
+fn query_string_require_in_executable_stops_build() {
+    let files = [
+        ("main.cjs", "require(\"./lib.cjs?again\");"),
+        ("lib.cjs", "exports.a = 1;"),
+    ];
+    lower_program_with_provider(&files, &default_settings(), &ScriptedProvider::default());
+}
+
+#[test]
+fn query_string_import_in_test_run_is_left_to_run_time() {
+    with_test_run_host(&[("lib.ts", "export {};")], |fixture| {
+        match fixture.resolve(b"./lib.ts?again", MAIN) {
+            HostResolution::External { specifier, kind } => {
+                assert_eq!(kind, ExternalKind::UncompiledCode);
+                assert!(specifier.ends_with(b"?again"), "{}", BStr::new(&specifier));
+            }
+            other => panic!("expected uncompiled code, got {other:?}"),
+        }
+        let unclaimed = HostResolution::Unclaimed;
+        assert_eq!(fixture.resolve(b"./lib.ts", MAIN), unclaimed);
+        assert!(fixture.take_messages().is_empty());
+    });
+}
+
+#[test]
+fn test_file_that_is_no_program_fails_where_it_is_loaded() {
+    let files = [("main.ts", "this is no program")];
+    with_test_run_host(&files, |fixture| {
+        let parsed = fixture.parse(MAIN, BY_NAME);
+        assert!(parsed.hir.diagnostics.is_empty() && parsed.hir.has_module_syntax);
+        let source = payload_of(&parsed);
+        assert_eq!(source.kind, SourceKind::Program);
+        let said = source.parse_failure.as_deref();
+        assert_eq!(said, Some(&b"';' expected. (1:6)"[..]));
+    });
+    with_host(&files, |fixture| {
+        let parsed = fixture.parse(MAIN, BY_NAME);
+        assert!(!parsed.hir.diagnostics.is_empty());
+        assert_eq!(payload_of(&parsed).parse_failure, None);
+    });
+}
+
+#[test]
+fn blank_json_fails_where_a_test_run_loads_it() {
+    let files = [("blank.json", " \n"), ("empty.json", "{}")];
+    let (blank, empty): (&[u8], &[u8]) = (b"/project/blank.json", b"/project/empty.json");
+    with_test_run_host(&files, |fixture| {
+        let said = fixture.parse_failure_of(blank);
+        let expected = &b"JSON Parse error: Unexpected EOF"[..];
+        assert_eq!(said.as_deref(), Some(expected));
+        assert_eq!(fixture.parse_failure_of(empty), None);
+    });
+    with_host(&files, |fixture| {
+        assert_eq!(fixture.parse_failure_of(blank), None);
+    });
+}
+
+#[test]
+fn json_that_json_parse_refuses_fails_where_a_test_run_loads_it() {
+    let files = [
+        ("hexadecimal.json", "{\"n\": 0x10}"),
+        ("two.json", "{\"a\": 1} {\"b\": 2}"),
+        ("quotes.json", "{'a': 1}"),
+        ("tsconfig.json", "{\"n\": 0x10}"),
+        ("strict.json", " {\"n\": [16, 1e3, \"\\u0041\"]}\n"),
+    ];
+    let refused = Some(&b"JSON Parse error: Unable to parse JSON string"[..]);
+    let path_of = |name: &str| [b"/project/", name.as_bytes()].concat();
+    with_test_run_host(&files, |fixture| {
+        for name in ["hexadecimal.json", "two.json", "quotes.json"] {
+            let said = fixture.parse_failure_of(&path_of(name));
+            assert_eq!(said.as_deref(), refused, "{name}");
+        }
+        let said = fixture.parse_failure_of(&path_of("tsconfig.json"));
+        assert_ne!(said.as_deref(), refused);
+        assert_eq!(fixture.parse_failure_of(&path_of("strict.json")), None);
+    });
+    with_host(&files, |fixture| {
+        for (name, _) in files {
+            let said = fixture.parse_failure_of(&path_of(name));
+            assert_ne!(said.as_deref(), refused, "{name}");
+        }
+    });
+}
+
+fn describe_file_of_test_run(name: &str, text: &str) -> String {
+    let files = [
+        (name, text),
+        ("config.js", "export const mode = 1;"),
+        (
+            "reads.js",
+            "import { mode } from './config.js'; export const seen = mode;",
+        ),
+    ];
+    with_loaded_test_run(&files, &default_settings(), |_, loaded| {
+        let project = loaded.project(crate::load::ProjectId::Application);
+        let files = project.loaded.files();
+        let path = format!("/project/{name}");
+        let file = files.by_path.get(path.as_bytes());
+        let tree = files.hir(file.expect("the file is in the program"));
+        let statements = tree.ids(tree.body).map(|it| match tree[it].kind {
+            hir::StmtKind::Import(import) => {
+                format!("import {}", BStr::new(files.atoms.bytes(tree[import].spec)))
+            }
+            hir::StmtKind::Var(_) => "declaration".to_string(),
+            hir::StmtKind::Expr(_) => "expression".to_string(),
+            _ => "statement".to_string(),
+        });
+        let statements = statements.collect::<Vec<String>>().join(" | ");
+        let count = |is_counted: &dyn Fn(hir::ExprKind) -> bool| {
+            let expressions = tree.exprs.iter();
+            expressions.filter(|it| is_counted(it.kind)).count()
+        };
+        let is_made = |name| files.atoms.bytes(name).starts_with(b"%");
+        let made = count(&|kind| matches!(kind, hir::ExprKind::Ident(name) if is_made(name)));
+        let loads = count(&|kind| matches!(kind, hir::ExprKind::ImportCall { .. }));
+        format!("{statements} | {made} made | {loads} import()")
+    })
+}
+
+#[test]
+fn a_test_run_leaves_a_file_under_the_mark_as_it_is_written() {
+    let rows = [
+        (
+            "typeof jest; expect(1);",
+            "expression | expression | 0 made | 0 import()",
+        ),
+        (
+            "import { vi } from 'bun:test'; import { seen } from './reads.js'; vi.mock('./config.js', () => ({ mode: 2 })); seen;",
+            "import bun:test | import ./reads.js | expression | expression | 0 made | 0 import()",
+        ),
+        (
+            "import { jest } from 'bun:test'; import './reads.js'; jest.mock('./config.js', () => ({ mode: 2 }));",
+            "import bun:test | import ./reads.js | expression | 0 made | 0 import()",
+        ),
+        (
+            "import { vi } from 'bun:test'; import './reads.js'; const made = vi.hoisted(() => 1);",
+            "import bun:test | import ./reads.js | declaration | 0 made | 0 import()",
+        ),
+        (
+            "import { vi } from 'bun:test'; vi.doMock(import('./config.js'), () => ({ mode: 2 }));",
+            "import bun:test | expression | 0 made | 1 import()",
+        ),
+        (
+            "import { assert } from 'vitest'; assert;",
+            "import vitest | expression | 0 made | 0 import()",
+        ),
+    ];
+    for (text, as_written) in rows {
+        for mark in [
+            "// @bun\n",
+            "// @bun @bytecode\n",
+            "#!/usr/bin/env bun\n// @bun\n",
+        ] {
+            let described = describe_file_of_test_run("a.test.js", &format!("{mark}{text}"));
+            assert_eq!(described, as_written, "{mark}{text}");
+        }
+        for no_mark in ["", "\n// @bun\n", "/* @bun */\n"] {
+            let described = describe_file_of_test_run("a.test.js", &format!("{no_mark}{text}"));
+            assert_ne!(described, as_written, "{no_mark}{text}");
+        }
+    }
+    let as_written = "expression | expression | 0 made | 0 import()";
+    let head = "(function(exports, require, module, __filename, __dirname) {";
+    let marked = format!("// @bun @bun-cjs\n{head}typeof jest; expect(1);}})");
+    let described = describe_file_of_test_run("a.test.cjs", &marked);
+    assert_eq!(described, as_written);
+    let described = describe_file_of_test_run("a.test.cjs", "typeof jest; expect(1);");
+    assert_ne!(described, as_written);
 }

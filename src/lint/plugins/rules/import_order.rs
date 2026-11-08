@@ -115,27 +115,27 @@ struct Entry<'a> {
     is_multiline: bool,
 }
 
-const OUT_OF_ORDER: Message = Message::new(
+const OUT_OF_ORDER: &Message = &Message::new(
     "",
     "`{{second}}` {{secondKind}} should occur {{order}} {{firstKind}} of `{{first}}`",
 );
-const EMPTY_LINE_BETWEEN_GROUPS: Message = Message::new(
+const EMPTY_LINE_BETWEEN_GROUPS: &Message = &Message::new(
     "",
     "There should be at least one empty line between import groups",
 );
-const NO_EMPTY_LINE_WITHIN_GROUP: Message =
-    Message::new("", "There should be no empty line within import group");
-const NO_EMPTY_LINE_BETWEEN_GROUPS: Message =
-    Message::new("", "There should be no empty line between import groups");
-const EMPTY_LINE_BEFORE_MULTILINE: Message = Message::new(
+const NO_EMPTY_LINE_WITHIN_GROUP: &Message =
+    &Message::new("", "There should be no empty line within import group");
+const NO_EMPTY_LINE_BETWEEN_GROUPS: &Message =
+    &Message::new("", "There should be no empty line between import groups");
+const EMPTY_LINE_BEFORE_MULTILINE: &Message = &Message::new(
     "",
     "There should be at least one empty line between this import and the multi-line import that follows it",
 );
-const EMPTY_LINE_AFTER_MULTILINE: Message = Message::new(
+const EMPTY_LINE_AFTER_MULTILINE: &Message = &Message::new(
     "",
     "There should be at least one empty line between this multi-line import and the import that follows it",
 );
-const NO_EMPTY_LINES_BETWEEN_SINGLE_LINES: Message = Message::new(
+const NO_EMPTY_LINES_BETWEEN_SINGLE_LINES: &Message = &Message::new(
     "",
     "There should be no empty lines between this single-line import and the single-line import that follows it",
 );
@@ -768,12 +768,12 @@ impl Order {
                 true => current.rank == previous.rank,
                 false => !is_start_of_distinct_group,
             };
-            let add = |message: Message| {
+            let add = |message: &'static Message| {
                 let end = end_with_comments(file, previous.root);
                 cx.report(previous.node, message)
                     .fix(|fixer| fixer.insert_after(Span::empty(end), "\n"));
             };
-            let remove = |message: Message| {
+            let remove = |message: &'static Message| {
                 let start = end_of_line_with_comments(file, previous.root);
                 let end = start_of_line_with_comments(file, current.root);
                 let is_blank =

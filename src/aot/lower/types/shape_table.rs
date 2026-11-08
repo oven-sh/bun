@@ -1,17 +1,17 @@
 use bun_sema::check::aot::{
-    BuiltinShape, BuiltinTypeClass, Denotation, KeptFact, MemberName, ObjectOrigin, PrimitiveKinds,
-    ShapeKind, TupleElement, TupleElementKind,
+    BuiltinShape, BuiltinTypeClass, Denotation, MemberName, PrimitiveKinds, ShapeKind,
+    TupleElement, TupleElementKind,
 };
-use rustc_hash::FxHashSet;
 use smallvec::{SmallVec, smallvec};
 
-use super::shape_edges::collect_edges;
 use super::{EdgeKind, MapChild, TypeEdge};
 use crate::builtins::id::BuiltinClass;
 use crate::builtins::table::{class_data, contents_index};
 use crate::builtins::{builtin_class_of, type_name_of};
 use crate::ir::generated::{MAX_TRACKED_INTEGER, NameClass};
-use crate::ir::{LayoutId, Mapped, Primitives, Type, TypeFlags, TypeId, TypeTable, classify_name};
+use crate::ir::{
+    LayoutId, Mapped, Primitives, Type, TypeFlags, TypeId, TypeRef, TypeTable, classify_name,
+};
 use crate::lower::{CheckerTypeId, FileLowering};
 
 const ACCEPTED_PRIMITIVE_TYPES: [(PrimitiveKinds, TypeId); 5] = [
@@ -27,24 +27,12 @@ impl FileLowering<'_, '_, '_, '_> {
         let Ok(shape) = self.queries.type_shape(ty) else {
             return Mapped::UNKNOWN;
         };
+        self.types.positions.begin_mapping_shape();
         let mut mapped = match shape.kind {
-            ShapeKind::Anything(_)
-            | ShapeKind::TypeVariable {
-                parameter: None,
-                constraint: None,
-            } => Mapped::UNKNOWN,
-            ShapeKind::TypeVariable {
-                parameter: Some(parameter),
-                constraint,
-            } => {
-                let layout = self.type_parameter_layout(parameter);
-                if let Some(constraint) = constraint {
-                    self.record_type_flow(ty, constraint, 0);
-                }
-                self.intern_checked(Type::layout(layout))
+            ShapeKind::Anything(_) | ShapeKind::TypeVariable { constraint: None } => {
+                Mapped::UNKNOWN
             }
             ShapeKind::TypeVariable {
-                parameter: None,
                 constraint: Some(constraint),
             } => self.map_child(children, EdgeKind::Transparent, constraint),
             ShapeKind::Never => Mapped::checked(TypeTable::NEVER),
@@ -101,7 +89,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 match (layout, self.requires_field(ty)) {
                     (Some(_), true) => {
                         let mapped = self.add_accepted_builtin_classes(ty, mapped);
-                        self.add_accepted_class_constructors(ty, mapped)
+                        match shape.trust.is_trusted() {
+                            true => self.add_accepted_class_constructors(ty, mapped),
+                            false => mapped,
+                        }
                     }
                     (Some(_), false) => Mapped::expected(mapped.ty),
                     (None, _) => mapped,
@@ -110,11 +101,12 @@ impl FileLowering<'_, '_, '_, '_> {
             ShapeKind::Union(members) => self.map_union(members, children),
             ShapeKind::Int32 { .. } => Mapped::checked(TypeTable::INT32),
         };
+        self.types.positions.end_mapping_shape();
         if !shape.trust.is_trusted() {
             mapped = Mapped::expected(mapped.ty);
         }
         let types = &mut self.fragment.types;
-        if holds_reference(types.get(mapped.ty)) {
+        if holds_reference(&types.get(mapped.ty)) {
             mapped.ty = types.with_nullish(mapped.ty);
         }
         mapped
@@ -133,7 +125,6 @@ impl FileLowering<'_, '_, '_, '_> {
         Mapped::checked(self.fragment.types.intern(ty))
     }
 
-    // No test looks at the contents of a container, so what is only expected of them leaves the class checked.
     fn intern_class(&mut self, class: BuiltinClass, contents: &[Mapped]) -> Mapped {
         let contents: SmallVec<[TypeId; 2]> = contents.iter().map(|mapped| mapped.ty).collect();
         self.intern_checked(Type::class(class, &contents))
@@ -148,6 +139,11 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    fn holds_numbers(&self, ty: TypeId) -> bool {
+        let ty = self.fragment.types.get(ty);
+        ty.flags.contains(TypeFlags::HAS_INTEGERS) || ty.primitives.contains(Primitives::NUMBER)
+    }
+
     fn is_numeric_enum_member(&mut self, ty: CheckerTypeId) -> bool {
         match self.queries.type_shape(ty) {
             Ok(shape) => matches!(shape.kind, ShapeKind::NumericEnumMember(_)),
@@ -159,10 +155,12 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut mapped_members: SmallVec<[Mapped; 4]> = SmallVec::with_capacity(members.len() + 1);
         let mut enum_member_count = 0;
         for &member in members {
-            mapped_members.push(self.map_child(children, EdgeKind::Transparent, member));
-            enum_member_count += usize::from(self.is_numeric_enum_member(member));
+            let mapped = self.map_child(children, EdgeKind::Transparent, member);
+            mapped_members.push(mapped);
+            let is_enum_member =
+                self.holds_numbers(mapped.ty) && self.is_numeric_enum_member(member);
+            enum_member_count += usize::from(is_enum_member);
         }
-        // TypeScript lets every number into a type that lists members of a numeric enum, and `a | b` of two flags is no member.
         if enum_member_count > 1 {
             mapped_members.push(Mapped::checked(TypeTable::INT32));
         }
@@ -216,7 +214,6 @@ impl FileLowering<'_, '_, '_, '_> {
             true => Mapped::checked(TypeTable::FUNCTION),
             false => self.intern_class(builtin_class, &contents),
         };
-        // A view is also the type of objects that are no instances of the class.
         let denoted = match class.denotation {
             Denotation::Exact => whole,
             Denotation::View => Mapped::expected(whole.ty),
@@ -226,7 +223,7 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn map_object(&mut self, ty: CheckerTypeId, layout: Option<LayoutId>) -> Mapped {
         let layout_type = match layout {
-            Some(layout) => self.fragment.types.intern(Type::layout(layout)),
+            Some(layout) => self.fragment.types.intern_layout(layout),
             None => TypeTable::OBJECT,
         };
         self.add_accepted_primitives(ty, Mapped::checked(layout_type))
@@ -246,7 +243,6 @@ impl FileLowering<'_, '_, '_, '_> {
         widened
     }
 
-    // A layout tells objects apart by their fields. Every object is of a type that requires none, so its layout is only expected.
     fn requires_field(&mut self, ty: CheckerTypeId) -> bool {
         let Ok(members) = self.queries.member_presence(ty) else {
             return true;
@@ -295,155 +291,54 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut widened = mapped;
         for &class in classes {
             let function_type = self.find_class_function_type(class);
-            let constructor = self.fragment.types.intern(Type::function(function_type));
+            let constructor = self.fragment.types.intern_function(function_type);
             widened.ty = self.fragment.types.union(widened.ty, constructor);
         }
         widened
     }
 
-    fn is_seen_alike_in_every_file(
-        &mut self,
-        ty: CheckerTypeId,
-        pending: &mut Vec<CheckerTypeId>,
-    ) -> bool {
-        let Ok(shape) = self.queries.type_shape(ty) else {
-            return false;
-        };
-        match shape.kind {
-            ShapeKind::Object => match self.queries.object_origin(ty) {
-                ObjectOrigin::ObjectLiteral { .. } => false,
-                // The layout of an interface has edges to the layouts of what it extends.
-                ObjectOrigin::Symbol(interface) => {
-                    match self.queries.declared_base_types(interface) {
-                        Ok(bases) => {
-                            pending.extend(bases);
-                            true
-                        }
-                        Err(_) => false,
-                    }
-                }
-                _ => true,
-            },
-            ShapeKind::AnyObject
-            | ShapeKind::ClassConstructor(_)
-            | ShapeKind::Class(_)
-            | ShapeKind::TypeVariable {
-                parameter: Some(_), ..
-            } => false,
-            ShapeKind::Anything(_)
-            | ShapeKind::TypeVariable {
-                parameter: None, ..
-            }
-            | ShapeKind::Never
-            | ShapeKind::Undefined
-            | ShapeKind::Null
-            | ShapeKind::Boolean
-            | ShapeKind::BooleanLiteral(_)
-            | ShapeKind::Number
-            | ShapeKind::NumberLiteral(_)
-            | ShapeKind::NumericEnumMember(_)
-            | ShapeKind::BigInt
-            | ShapeKind::BigIntLiteral { .. }
-            | ShapeKind::String
-            | ShapeKind::StringLiteral(_)
-            | ShapeKind::TemplateLiteral { .. }
-            | ShapeKind::Symbol
-            | ShapeKind::Function(_)
-            | ShapeKind::Array { .. }
-            | ShapeKind::Tuple { .. }
-            | ShapeKind::Builtin { .. }
-            | ShapeKind::Union(_)
-            | ShapeKind::Int32 { .. } => true,
-        }
-    }
-
-    fn walk_alike_types(&mut self, root: CheckerTypeId, tables: &mut AlikeWalkTables) -> bool {
-        let AlikeWalkTables {
-            visited,
-            pending,
-            reached,
-        } = tables;
-        let fact = KeptFact::IsMappedAlikeInEveryFile;
-        let unstable_answers = self.queries.count_unstable_answers();
-        visited.insert(root);
-        pending.push(root);
-        while let Some(ty) = pending.pop() {
-            match self.find_known_fact(ty, fact) {
-                Some(true) => continue,
-                Some(false) => return false,
-                None => {}
-            }
-            if !self.is_seen_alike_in_every_file(ty, reached) {
-                return false;
-            }
-            reached.extend(collect_edges(self, ty).iter().map(|edge| edge.target));
-            pending.extend(reached.drain(..).filter(|&target| visited.insert(target)));
-        }
-        for &ty in visited.iter() {
-            self.keep_fact(ty, fact, true, unstable_answers);
-        }
-        true
-    }
-
-    fn holds_every_number(&mut self, ty: CheckerTypeId) -> bool {
-        let Ok(shape) = self.queries.type_shape(ty) else {
-            return false;
-        };
-        if let ShapeKind::Union(members) = shape.kind {
-            return members
-                .iter()
-                .any(|&member| self.holds_every_number(member));
-        }
-        matches!(shape.kind, ShapeKind::Number)
+    fn holds_no_number_outside_int32(&mut self, ty: CheckerTypeId) -> bool {
+        let mapped = self.map_type_at(ty).ty;
+        let mapped = self.fragment.types.get(mapped);
+        let int32 = i64::from(i32::MIN)..=i64::from(i32::MAX);
+        !mapped.primitives.contains(Primitives::NUMBER)
+            && mapped.integer_range().is_none_or(|(minimum, maximum)| {
+                int32.contains(&minimum) && int32.contains(&maximum)
+            })
     }
 }
 
-// `undefined` and `null` are members of every type that holds a reference.
-fn holds_reference(ty: &Type) -> bool {
+fn holds_reference(ty: &TypeRef<'_>) -> bool {
+    let TypeRef {
+        primitives,
+        flags,
+        opaque,
+        environment,
+        minimum: _,
+        maximum: _,
+        strings,
+        layouts,
+        classes,
+        builtins,
+        functions,
+    } = *ty;
+    if !functions.is_empty()
+        || !layouts.is_empty()
+        || !classes.is_empty()
+        || !strings.is_empty()
+        || !builtins.is_empty()
+        || opaque.is_some()
+        || environment.is_some()
+    {
+        return true;
+    }
     let raw_primitives = Primitives::NUMBER | Primitives::BOOLEAN | Primitives::NULLISH;
-    let raw_part = Type {
-        primitives: ty.primitives & raw_primitives,
-        flags: ty.flags & TypeFlags::HAS_INTEGERS,
-        minimum: ty.minimum,
-        maximum: ty.maximum,
-        ..Type::default()
-    };
-    *ty != raw_part
+    primitives != primitives & raw_primitives || flags != flags & TypeFlags::HAS_INTEGERS
 }
 
 fn is_function_class(class: BuiltinClass) -> bool {
     core::iter::successors(Some(class), |&class| class_data(class).parent)
         .any(|class| class == BuiltinClass::Function)
-}
-
-pub(super) fn has_layout_in_every_value(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-) -> bool {
-    file.requires_field(ty)
-        && matches!(file.queries.accepted_builtins(ty), Ok([]))
-        && matches!(file.queries.accepted_class_constructors(ty), Ok([]))
-}
-
-/// Empty between two walks, which use their memory one after the other.
-#[derive(Default)]
-pub(super) struct AlikeWalkTables {
-    visited: FxHashSet<CheckerTypeId>,
-    pending: Vec<CheckerTypeId>,
-    reached: Vec<CheckerTypeId>,
-}
-
-pub(super) fn is_mapped_alike_in_every_file(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    root: CheckerTypeId,
-) -> bool {
-    let mut tables = core::mem::take(&mut file.types.alike_walk);
-    let is_alike = file.walk_alike_types(root, &mut tables);
-    tables.visited.clear();
-    tables.pending.clear();
-    tables.reached.clear();
-    file.types.alike_walk = tables;
-    is_alike
 }
 
 pub(super) fn lists_int32(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> bool {
@@ -452,45 +347,14 @@ pub(super) fn lists_int32(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTy
     };
     match shape.kind {
         ShapeKind::Int32 { .. } => true,
-        // `int32 | number` holds every number: there is nothing to prove.
         ShapeKind::Union(members) => {
             members.iter().any(|&member| lists_int32(file, member))
-                && !members
-                    .iter()
-                    .any(|&member| file.holds_every_number(member))
+                && file.holds_no_number_outside_int32(ty)
         }
         _ => false,
     }
 }
 
-// Nothing, where the type lists no number.
-fn find_whether_numbers_are_integers(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-) -> Option<bool> {
-    match file.queries.type_shape(ty).ok()?.kind {
-        ShapeKind::Int32 { .. } => Some(true),
-        ShapeKind::Number => Some(false),
-        ShapeKind::NumberLiteral(value) | ShapeKind::NumericEnumMember(value) => {
-            Some(number_literal_type(value).integer_range().is_some())
-        }
-        ShapeKind::Union(members) => members
-            .iter()
-            .filter_map(|&member| find_whether_numbers_are_integers(file, member))
-            .reduce(|all, member| all && member),
-        _ => None,
-    }
-}
-
-// An `int32`, the members of a numeric enum and literals: the build takes each for an `int32` where one is declared.
-pub(super) fn lists_only_integers(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-) -> bool {
-    find_whether_numbers_are_integers(file, ty) == Some(true)
-}
-
-// TypeScript's `0` is also the type of `-0`. Whoever writes the type means the integer: a `-0` that arrives is treated as any value outside the type of its position.
 fn number_literal_type(value: f64) -> Type {
     let integer = value as i64;
     let is_tracked = integer as f64 == value
@@ -531,7 +395,7 @@ mod tests {
             Type::primitives(optional_number),
         ];
         for ty in raw_types {
-            assert!(!holds_reference(&ty), "{ty:?}");
+            assert!(!holds_reference(&TypeRef::of(&ty)), "{ty:?}");
         }
     }
 
@@ -548,7 +412,7 @@ mod tests {
             Type::class(BuiltinClass::Array, &[TypeTable::NUMBER]),
         ];
         for ty in reference_types {
-            assert!(holds_reference(&ty), "{ty:?}");
+            assert!(holds_reference(&TypeRef::of(&ty)), "{ty:?}");
         }
     }
 }

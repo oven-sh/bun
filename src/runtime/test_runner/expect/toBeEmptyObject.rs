@@ -4,6 +4,7 @@ use super::Expect;
 use super::throw;
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_be_empty_object(
         &self,
         this_value: JsWrapper<'_, Self>,

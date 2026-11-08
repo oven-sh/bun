@@ -11,6 +11,38 @@ listen(new Worker("data:application/javascript," + encodeURIComponent(text)));
 //// computed-path
 //@ file cwd/w.js "postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)"
 listen(new Worker(process.cwd() + "/w.js"));
+//// computed-path-of-code-from-disk
+//@ alone
+//@ build --aot-allow-code-from-disk
+//@ file cwd/w.js "postMessage([1, 2].map(n => n * 2).join() + ' ' + typeof HTMLRewriter + ' ' + require('node:path').posix.join('a', 'b'))"
+listen(new Worker(process.cwd() + "/w.js"));
+//// computed-path-of-code-from-disk-uses-removed-api
+//@ alone
+//@ build --aot-allow-code-from-disk
+//@ trimmed-says Bun.color was removed by --trim
+//@ file cwd/w.js "postMessage(Bun.color('red', 'hex'))"
+listen(new Worker(process.cwd() + "/w.js"));
+//// text-made-at-run-time
+//@ alone
+listen(new Worker("data:application/javascript," + encodeURIComponent(Buffer.from("postMessage([1, 2].map(n => n * 2).join() + ' ' + typeof HTMLRewriter + ' ' + eval('1 + 1'))").toString())));
+//// text-made-at-run-time-names-what-the-program-names
+//@ alone
+console.log(Bun.color("blue", "hex"));
+listen(new Worker(URL.createObjectURL(new Blob([Buffer.from(text).toString()], { type: "application/javascript" }))));
+//// computed-path-of-json
+//@ file cwd/w.json "{ \"a\": 1 }"
+{
+  const worker = new Worker(process.cwd() + "/w.json");
+  listen(worker);
+  worker.addEventListener("close", event => console.log("close", event.code));
+}
+//// computed-path-of-text
+//@ file cwd/w.txt "not code"
+{
+  const worker = new Worker(process.cwd() + "/w.txt");
+  listen(worker);
+  worker.addEventListener("close", event => console.log("close", event.code));
+}
 //// worker-threads-eval
 //@ alone
 import { Worker as NodeWorker } from "node:worker_threads";
@@ -20,8 +52,14 @@ worker.on("error", error => console.log("error", error.message.replace(/blob:[-0
 //// globalThis-Worker
 //@ alone
 listen(new globalThis.Worker("data:application/javascript," + encodeURIComponent(text)));
+//// name-made-at-run-time
+//@ alone
+listen(new globalThis[["Wor", "ker"].join("")]("data:application/javascript," + encodeURIComponent(Buffer.from("postMessage('ran ' + (1 + 1))").toString())));
+//// global-object-handed-back
+//@ alone
+listen(new (new CustomEvent("unknown", { detail: globalThis }).detail.Worker)("data:application/javascript," + encodeURIComponent(Buffer.from("postMessage('ran ' + (1 + 1))").toString())));
 //// Reflect-construct
-//@ trimmed-says it isn't in this executable
+//@ trimmed-says Bun.color was removed by --trim
 listen(Reflect.construct(Worker, ["data:application/javascript," + encodeURIComponent(text)]));
 //// alias
 //@ alone

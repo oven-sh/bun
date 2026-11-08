@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""regexps-and-near-matches.py <seed> [<patterns>]: random LITERAL regular expressions out of a grammar (literals of 1 to 20 characters, classes, negated classes, ranges, escapes \\d \\w \\s \\b \\B, dot, alternations, greedy and lazy quantifiers, counted ones, capturing | named | non-capturing groups, back references, ^ $ with and without m, lookahead and lookbehind, flags g i m s u y in every mix) against subjects made to NEARLY match: the pattern's own literals cut short, shifted to every alignment, in the other case, split by a newline, 8-bit and 16-bit (one letter beyond Latin-1 anywhere turns the whole subject), with surrogate pairs, empty, and 300 characters long. Asked by exec (in a loop with lastIndex), test, match, matchAll, replace (with $1 $& $<name> and a function), split, search. Every line as plain Bun's."""
+"""regexps-and-near-matches.py <seed> [<patterns>]: Random literal regular expressions from a grammar (literals of 1 to
+20 characters, classes, ranges, escapes, dot, alternations, greedy and lazy quantifiers, groups, lookarounds), each
+with subjects that match or nearly match.
+"""
 import random, sys, json
 seed = int(sys.argv[1]); count = int(sys.argv[2]) if len(sys.argv) > 2 else 60
 R = random.Random(seed)

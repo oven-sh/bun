@@ -291,14 +291,10 @@ impl IOWriter {
 
     /// Stash the interpreter backref so async poll callbacks can drive
     /// `Yield::run`. Idempotent.
-    ///
-    /// # Safety
-    /// `interp` must be null or point to the live owning `Interpreter` (which
-    /// owns the IO struct holding this `Rc`) and outlive it; single-threaded.
+    /// `interp` must outlive this writer (it owns the IO struct that holds this `Rc`).
     #[inline]
-    pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
-        // SAFETY: caller contract above.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable(interp) };
+    pub(crate) fn set_interp(&self, interp: &Interpreter) {
+        self.state().interp = Some(bun_ptr::ParentRef::new(interp));
     }
 
     #[inline]

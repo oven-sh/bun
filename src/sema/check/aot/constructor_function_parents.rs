@@ -1,6 +1,7 @@
 use super::answers::{
     CheckedType, ClassDeclaration, ClassMember, ClassMemberSource, ClassParent, ClassRef,
-    ClassShape, FunctionRef, GaveUp, MemberName, ObjectMemberKind, PositionTypes,
+    ClassShape, FunctionRef, GaveUp, MemberForm, MemberName, ObjectMemberKind, PositionTypes,
+    QueryLimit,
 };
 use super::prototype_links::{LinkEnd, PrototypeLink, PrototypeLinks, list_in};
 use super::queries::Queries;
@@ -15,13 +16,9 @@ use crate::node::NodeData;
 use crate::program::{FileId, Sym};
 use crate::session::Arena;
 use crate::types::{TypeData, TypeId};
-use crate::util::{FxHashMap, FxHashSet};
-use smallvec::{SmallVec, smallvec};
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
+use smallvec::SmallVec;
 use std::rc::Rc;
-
-const MAX_NESTED_FOLLOWED_CALLS: usize = 8;
-const MAX_CHAIN_OF_PARENTS: usize = 64;
-const MAX_FUNCTIONS_GIVEN_THIS: usize = 32;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 struct FunctionLink {
@@ -53,7 +50,7 @@ impl<'s> LinkedFunctions<'s> {
             let parent = link.parent.and_then(LinkEnd::as_parent);
             of_functions.push(FunctionLink { child, parent });
         }
-        of_functions.sort_by_key(|link| link.child);
+        of_functions.shared_sort_by_key(|link| link.child);
         ends.sort_unstable();
         ends.dedup();
         LinkedFunctions {
@@ -143,7 +140,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub fn constructor_function_parent(&mut self, function: FunctionRef) -> Option<ClassParent> {
         let parent = self.find_linked_parent(function)?;
         let mut ancestor = parent;
-        for _ in 0..MAX_CHAIN_OF_PARENTS {
+        for _ in 0..self.limit(QueryLimit::ConstructorParentsFollowed) {
             let above = match ancestor {
                 ClassParent::Declared(ClassDeclaration::Function(linked)) => {
                     self.find_linked_parent(linked)
@@ -156,6 +153,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 None => return Some(parent),
             }
         }
+        self.note_walk_ended_by(QueryLimit::ConstructorParentsFollowed);
         None
     }
 
@@ -165,22 +163,20 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         (parent != ClassParent::Declared(ClassDeclaration::Class(class))).then_some(parent)
     }
 
-    pub fn constructed_declaration(&mut self, file: FileId, callee: ExprId) -> Option<ClassParent> {
-        self.end_finder(file).find_parent(callee)
-    }
-
     pub fn library_declarations_of_type(&mut self, ty: TypeId) -> SmallVec<[ClassDeclaration; 1]> {
-        let parts: SmallVec<[TypeId; 2]> = match self.c.data(ty) {
-            TypeData::Intersection(parts) => parts.iter().copied().collect(),
-            _ => smallvec![ty],
+        let parts = match self.c.data(ty) {
+            TypeData::Intersection(parts) => &parts[..],
+            _ => std::slice::from_ref(&ty),
         };
-        let origins = parts.into_iter().map(|part| self.object_origin(part));
-        let origins: SmallVec<[ObjectOrigin; 2]> = origins.collect();
-        let declarations = origins.into_iter().filter_map(|origin| match origin {
-            ObjectOrigin::Symbol(class) => self.find_library_declaration_of_class(class),
-            _ => None,
-        });
-        declarations.collect()
+        let mut declarations = SmallVec::new();
+        for &part in parts {
+            if let ObjectOrigin::Symbol(class) = self.object_origin(part)
+                && let Some(declaration) = self.find_library_declaration_of_class(class)
+            {
+                declarations.push(declaration);
+            }
+        }
+        declarations
     }
 
     fn find_library_declaration_of_class(&self, class: Sym) -> Option<ClassDeclaration> {
@@ -219,6 +215,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return false;
         };
         !shape.names_stored_in_prototype.is_empty() || self.is_end_of_prototype_link(function)
+    }
+
+    pub fn stores_into_instances_or_prototype_object(&mut self, function: FunctionRef) -> bool {
+        let has_members = self
+            .constructor_function_shape(function)
+            .is_some_and(|shape| !shape.members.is_empty());
+        has_members || self.is_prototype_object_used(function)
     }
 
     pub(super) fn is_end_of_prototype_link(&mut self, function: FunctionRef) -> bool {
@@ -272,9 +275,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if let Some(known) = followed.links_of_parameters.get(&function) {
             return Some(Rc::clone(known));
         }
-        if followed.in_progress.len() == MAX_NESTED_FOLLOWED_CALLS
-            || followed.in_progress.contains(&function)
+        if followed.in_progress.contains(&function) {
+            return None;
+        }
+        if followed.in_progress.len() as u64
+            >= self.limit(QueryLimit::HelpersFollowedToPrototypeLink)
         {
+            self.note_walk_ended_by(QueryLimit::HelpersFollowedToPrototypeLink);
             return None;
         }
         followed.in_progress.push(function);
@@ -305,6 +312,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Some(links)
     }
 
+    pub(super) fn passes_this_on_in_front_of(
+        &mut self,
+        function: FunctionRef,
+        source: ClassMemberSource,
+    ) -> bool {
+        let of_file = self.prototype_links(function.file);
+        let calls = of_file.calls_passing_this_of(function.function);
+        let hir = self.c.hir(function.file);
+        let position = find_position(hir, source);
+        calls.iter().any(|&(_, call)| hir[call.call].pos < position)
+    }
+
     pub(super) fn complete_constructor_function_shape(
         &mut self,
         function: FunctionRef,
@@ -329,9 +348,16 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let hir = self.c.hir(function.file);
         if own.is_none() {
+            if !can_be_constructor_function(&hir[function.function]) {
+                return None;
+            }
             let is_prototype_object_used =
                 !literals.is_empty() || self.is_end_of_prototype_link(function);
-            if !is_prototype_object_used || !can_be_constructor_function(&hir[function.function]) {
+            if !is_prototype_object_used
+                && !(self.hands_this_on(function)
+                    && self.is_held_by_name_or_returned(function)
+                    && self.is_used_like_constructor(function))
+            {
                 return None;
             }
         }
@@ -366,7 +392,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         for &(_, literal) in literals {
             self.add_copied_members(function.file, literal, &mut members);
         }
-        members.by_position.sort_by_key(|&(position, _)| position);
+        members
+            .by_position
+            .shared_sort_by_key(|&(position, _)| position);
         let names_stored_in_prototype = self.list(&members.names_stored_in_prototype);
         let members = Vec::from_iter(members.by_position.into_iter().map(|(_, member)| member));
         let shape: &'c ClassShape<'c> = self.arena.alloc(ClassShape {
@@ -385,7 +413,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         given_this: &mut Vec<FunctionRef>,
         fields: &mut Vec<ClassMember>,
     ) {
-        if given_this.len() == MAX_FUNCTIONS_GIVEN_THIS || given_this.contains(&function) {
+        if given_this.contains(&function) {
+            return;
+        }
+        if given_this.len() as u64 >= self.limit(QueryLimit::FunctionsGivenThis) {
+            self.note_walk_ended_by(QueryLimit::FunctionsGivenThis);
             return;
         }
         given_this.push(function);
@@ -470,9 +502,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 name,
                 kind,
                 source: ClassMemberSource::PrototypeStore(property.value),
+                is_made_at_birth: false,
                 types: PositionTypes::unwritten(checked),
                 is_static: false,
                 is_optional: true,
+                form: MemberForm::default(),
             };
             members.add(hir[property.value].pos, member);
         }

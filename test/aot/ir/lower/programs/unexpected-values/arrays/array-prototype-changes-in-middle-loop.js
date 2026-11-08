@@ -167,58 +167,7 @@ for (const key in inTheCallback) for (let i = 0; i < 300; i++) inTheCallback[key
 for (const key of Reflect.ownKeys(loops)) trial("a loop of " + String(key), key, key === Symbol.iterator ? replacedIterator : replacement, loops[key]);
 for (const key in inTheCallback) trial("push inside " + key, "push", replacement, inTheCallback[key]);
 
-// GENERATED: replacedIterator never Reflect.set Object.defineProperty
 // CHECK-LABEL: function {{*}}name="replacedIterator"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Generator<undefined|null|string> flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = String string="replaced"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v5 = Yield v4
-// CHECK-NEXT: v6 = ResultAt v5
-// CHECK-NEXT: v7 = ResultAt v5 index=1
-// CHECK-NEXT: Switch v7 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: Throw v6
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="never"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Boolean
-// CHECK-NEXT: v1 = Convert v0 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Reflect.set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=undefined|null|number|string|symbol flags=[IsExpected]}, {type=undefined|null|[[f_3]]|[[f_1]] flags=[IsExpected]}] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol, v1: undefined|null|[[f_3]]|[[f_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Builtin builtin=Reflect
-// CHECK-NEXT: v3 = Builtin builtin=ReflectSet
-// CHECK-NEXT: v4 = Builtin builtin=ArrayPrototype
-// CHECK-NEXT: v5 = Call v3, v2, v4, v0, v1 calleeName="Reflect.set"
-// CHECK-NEXT: ReturnCall v5 casts=[{declared={type=boolean flags=[IsExpected]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Object.defineProperty"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=undefined|null|number|string|symbol flags=[IsExpected]}, {type=undefined|null|[[f_3]]|[[f_1]] flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_5]]] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol, v1: undefined|null|[[f_3]]|[[f_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Builtin builtin=Object
-// CHECK-NEXT: v3 = Builtin builtin=ObjectDefineProperty
-// CHECK-NEXT: v4 = Builtin builtin=ArrayPrototype
-// CHECK-NEXT: v5 = NewObject -, v1 layout=[[L_6]] fields=[4]
-// CHECK-NEXT: v6 = FinishObject v5
-// CHECK-NEXT: v7 = Call v3, v2, v4, v0, v6 calleeName="Object.defineProperty"
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }

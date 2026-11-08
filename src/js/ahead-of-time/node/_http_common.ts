@@ -6,11 +6,6 @@
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js
 const { checkIsHttpToken } = require("internal/validators");
 const FreeList = require("internal/freelist");
-const http = require("internal/http");
-// A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
-const kIncomingMessage: typeof http.kIncomingMessage = http.kIncomingMessage;
-const kSkipPendingData: typeof http.kSkipPendingData = http.kSkipPendingData;
-const kHeaderSource: typeof http.kHeaderSource = http.kHeaderSource;
 
 interface HTTPParserConstructor {
   new (): $Node.HTTPParser;
@@ -48,6 +43,11 @@ interface HTTPParserBinding {
 
 const { methods, allMethods, HTTPParser } = process.binding("http_parser") as HTTPParserBinding;
 const incoming = require("node:_http_incoming");
+const http = require("internal/http");
+// A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
+const kIncomingMessage: typeof http.kIncomingMessage = http.kIncomingMessage;
+const kSkipPendingData: typeof http.kSkipPendingData = http.kSkipPendingData;
+const kHeaderSource: typeof http.kHeaderSource = http.kHeaderSource;
 
 const { IncomingMessage, readStart, readStop } = incoming;
 
@@ -68,20 +68,23 @@ let lenientHeaderCharRegex: RegExp | undefined;
  */
 function checkInvalidHeaderChar(val: $Node.HttpHeaderValue | Buffer, lenient: boolean = false) {
   // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
-  if (typeof val === "string" && val.length <= 32) {
+  if (!CAN_REPLACE_BUILT_INS && typeof val === "string" && val.length <= 32) {
     const length = val.length;
-    if (lenient) {
-      for (let i = 0; i < length; i++) {
-        const code = val.charCodeAt(i);
-        if (code === 0x00 || code === 0x0a || code === 0x0d || code > 0xff) return true;
+    // A value that is refused goes on to the exec, which leaves what it matched in the properties of RegExp. One that passes matches nothing there.
+    walk: {
+      if (lenient) {
+        for (let i = 0; i < length; i++) {
+          const code = val.charCodeAt(i);
+          if (code === 0x00 || code === 0x0a || code === 0x0d || code > 0xff) break walk;
+        }
+      } else {
+        for (let i = 0; i < length; i++) {
+          const code = val.charCodeAt(i);
+          if (code < 0x20 ? code !== 0x09 : code === 0x7f || code > 0xff) break walk;
+        }
       }
-    } else {
-      for (let i = 0; i < length; i++) {
-        const code = val.charCodeAt(i);
-        if (code < 0x20 ? code !== 0x09 : code === 0x7f || code > 0xff) return true;
-      }
+      return false;
     }
-    return false;
   }
   if (lenient) {
     // eslint-disable-next-line no-control-regex

@@ -51,7 +51,12 @@ import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
 import { cap, checkAscii, low, writeIfNotChanged } from "./helpers";
 import { beginGuardedBody, endGuardedBody, removableFeatures } from "./removable-entry-points.ts";
-import { applyGlobalReplacements, define } from "./replacements";
+import {
+  applyGlobalReplacements,
+  assertNoDestructuredGlobalThis,
+  assertNoStoredFunctionBehindComma,
+  define,
+} from "./replacements";
 
 const PARALLEL = false;
 const KEEP_TMP = true;
@@ -314,6 +319,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
 
   for (const fn of functions) {
     const tmpFile = path.join(TMP_DIR, `${basename}.${fn.name}.ts`);
+    assertNoStoredFunctionBehindComma(fn.source, `${basename}.ts (${fn.name})`);
 
     // not sure if this optimization works properly in jsc builtins
     // const useThis = fn.usesThis;
@@ -351,6 +357,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       throw new Error("expected one output");
     }
     let output = (await build.outputs[0].text()).replaceAll("// @bun\n", "");
+    assertNoDestructuredGlobalThis(output, `${basename}.ts (${fn.name})`);
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
@@ -517,7 +524,7 @@ static JSC::FunctionExecutable* ${linkFromText}(JSC::VM& vm)
 JSC::BuiltinCode ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& vm)
 {
 #if ENABLE(AOT)
-    if (JSC::AOT::hasBuiltinFunction(vm, ${idOf(basename, fn.name)}))
+    if (JSC::AOT::Image::isRegistered() && JSC::AOT::hasBuiltinFunction(vm, ${idOf(basename, fn.name)}))
         return { nullptr, ${idOf(basename, fn.name)}, ${linkFromText} };
 #endif
     return { ${linkFromText}(vm), 0 };

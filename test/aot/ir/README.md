@@ -22,7 +22,7 @@ The driver is `src/aot/tests/ir_tests.rs`, with `src/aot/tests/support/`.
 | --- | --- |
 | `commands/` | the commands `lower`, `link` and `emit`, and the option words |
 | `lower/<construct family>/` | lowering, one folder per family of constructs |
-| `lower/programs/<topic>/` | whole programs, each held to what its entry module lowers to today. Their `tsconfig.json` is the one of `test/aot/parallel` |
+| `lower/programs/<topic>/` | whole programs: each lowers, reports no diagnostic that it does not list, counts what its `STATISTIC` lines say and has the functions that its labels name. Their `tsconfig.json` is the one of `test/aot/parallel` |
 
 - A test file ends in `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs` or `.cjs`. A declaration file (`.d.ts`, `.d.mts`, `.d.cts`)
   is not a test, and neither is a `package.json` or a `tsconfig.json`.
@@ -47,10 +47,11 @@ cargo test -p bun_aot --test ir_tests lower
 | Variable | Effect |
 | --- | --- |
 | `TESTAOT=<testaot>` | the engine reads, types and verifies what each run emits. CI sets it |
+| `AOT_IR_REQUIRES_ENGINE=1` | a run that the engine did not verify fails its area. `bun run rust:test` sets it whenever `TESTAOT` is set, so CI has it |
 | `AOT_IR_FILTER=<text>` | runs only the files whose path contains the text |
 | `AOT_IR_OUTPUT=<folder>` | writes what each run printed to `<folder>/<path below test/aot/ir>.<PREFIX>.txt`, followed by its diagnostics and statistics as `DIAGNOSTIC:` and `STATISTIC:` lines. A run that failed outright writes `FAILED: <why>` |
 | `AOT_IR_JOBS=<n>` | runs n files at a time. The default is one per core |
-| `AOT_IR_UPDATE=1` | writes the check lines below each `GENERATED` line anew from what the runs print, then judges the file as it stands then |
+| `AOT_IR_UPDATE=1` | where the check lines of a file no longer hold, or none are written yet, writes the lines below its `GENERATED` line anew from what the runs print, then judges the file as it stands then. A file whose lines hold is left as it is |
 
 What the tests print:
 
@@ -58,6 +59,7 @@ What the tests print:
 | --- | --- |
 | `FAIL <file>:<line>: <why>` | the expectation on that line does not hold. The test fails |
 | `SKIP <file>:<line>: <command>: TESTAOT is not set` | the check lines were compared, but the engine did not see the output |
+| `SKIP <file>:<line>: <command>: TESTAOT was built from another schema` | the same: the tool reads nothing that these tests emit |
 | `SKIP <area>: the engine verified none of <n> runs: ..` | the same for the area, on stderr, so it shows in a passing run too |
 
 The test program starts `AOT_IR_JOBS` copies of itself, hands each one file after another, and prints their `FAIL` lines. A file whose
@@ -73,12 +75,13 @@ Every command does the same work, and they differ only in what they print:
 3. It serializes the program and passes the bytes to `$TESTAOT print --wire`, which reads, types and verifies them.
    - The engine prints the program as it read it. That text must equal the front end's, line by line.
    - If the engine reports diagnostics instead, the `DIAGNOSTIC` lines decide.
+   - A tool that was built from another state of the schema is as good as none: the run is listed as `SKIP`.
    - A tool that cannot be started, or that fails in any other way, fails the run.
 
 | Command | Prints |
 | --- | --- |
 | `lower` | the functions of the entry module, in id order |
-| `link` | the program: a line per record (`signature`, `layout`, `variable`, `module`, .., `entry`), and every function with its body |
+| `link` | the program: a line per record (`layout`, `variable`, `module`, .., `entry`), and every function with its body |
 | `emit` | the same as `link` |
 
 No command takes an argument. A program that does not build is not a failure by itself: the output is empty, and the `DIAGNOSTIC`
@@ -88,10 +91,12 @@ The driver builds with the options and the services of `bun build --compile --ao
 (`bun_bundler::aot::testing`): an import leads to the file that it leads to there, and a `tsconfig.json` and a `package.json` say what
 they say there. Each file has a process of its own, as a build has. The build differs from `bun compile` in these ways:
 
-- **Every export of the entry point counts as read.** In a product build link drops an export that the host does not read, and
-  with it a function that only the export keeps.
+- **Every export of the entry point counts as read.** In a product build an export that the host does not read counts as read by
+  nobody, and a function that only the export keeps has no body.
 - **No flag of the command line is set**, and nothing of JavaScriptCore is linked: no text is a URL, no macro and no plugin runs, and
-  the engine's parser of regular expressions refuses nothing.
+  the engine's parser of regular expressions refuses nothing. Nobody says that a pattern cannot be built either, so every literal lowers
+  to `NewRegExp`: what the others lower to is held by `test/aot/regexp-literal-forms.test.ts`, which asks a Bun that has the engine,
+  and what they answer by programs (`test/aot/parallel/regexp`).
 - **Bun's own modules are not loaded**, unless `builtin-modules` says otherwise. `node:path` is a value of the host, not a module with source. The program has the test's
   modules and the compiler's library (`/$bun/js/prelude/*.ts`).
 - **It runs on one thread**, unless `threads=` says otherwise.
@@ -126,11 +131,12 @@ directive. Any other name in capitals before a `:` is an error, so a mistyped di
 - **`RUN`.** A file has at least one. Runs with the same options print one build. A prefix is capitals and digits, and it is not the name of
   a directive. A prefix needs at least one check line, or a `SAME` that names it.
 - **`OPTIONS`, `DIAGNOSTIC` and `STATISTIC`** apply to every `RUN` in the file, `OPTIONS(<prefix>)` to the runs of that prefix.
-- **`OPTIONS`** takes `erase-types`, `builtin-modules`, `platform=darwin | linux | windows`, `type-errors=silent`, `type-errors=log` and
-  `threads=<n>`. `platform=` turns what the table of built-ins says by platform: which built-ins, exports of Bun's modules and code of
+- **`OPTIONS`** takes `erase-types`, `builtin-modules`, `entry-points-run-again`, `runs-in-place`, `runs-tests`, `discards-first-visits`, `platform=darwin | linux | windows` and `threads=<n>`.
+  `discards-first-visits` is `--aot-testing=DiscardsFirstVisits`: every file is visited, the visit is thrown away, and the file is visited again. With `SAME` it holds a build to what it prints without the word.
+  `runs-tests` is how `bun test --aot` builds: in place, and each entry point is a test file.
+  `runs-in-place` is how `bun run --aot` and `bun test --aot` build: no executable, and where the bundle of `bun build --compile` and `bun run` part, the answer of `bun run`.
+  `entry-points-run-again` is what `bun test --aot --rerun-each` builds its test files with. `platform=` turns what the table of built-ins says by platform: which built-ins, exports of Bun's modules and code of
   the run time a program has. Paths, and `process.platform` written out, stay those of the machine that runs the test. The engine's option words are unknown here.
-  How a mismatch is reported is a policy of the engine, so `type-errors=` changes one thing in the IR: only with `log` does a type
-  site have the text of its type, which only the log prints.
 - **`DIAGNOSTIC`** takes one of these names. With a count, the diagnostic must be reported that many times.
   - `TS<number>`: the code of a diagnostic of TypeScript or of the front end (`src/aot/diagnostic_codes.rs`). `TS0` is not a code.
   - `Build` or `Resolve`: a build error or a resolve error, which have no code.
@@ -140,8 +146,9 @@ directive. Any other name in capitals before a `:` is an error, so a mistyped di
   of its sections. A name may be listed once for each place. Then every report of that name must stand at a listed place.
 - **A warning is a diagnostic too.** A diagnostic that no line lists fails the run, so a test whose build warns needs the line: an
   unresolved `require()` is `// DIAGNOSTIC: TS100150`.
-- **`STATISTIC`** names a statistic as the schema does: `ProgramBytes`, `FunctionsLowered`, and `<LimitID>Hits` for how often a limit was
-  hit (`MaxNestingDepthHits`). One that was not counted reads as 0, and so does every statistic of the engine.
+- **`STATISTIC`** names a statistic as the schema does (`aot/ir/schema/statistics.def` in WebKit): `ProgramBytes`, `FunctionsLowered`,
+  `SourceFilesChecked`, and `<Stage>Nanoseconds` for the time of a stage (`LowerNanoseconds`). One that was not counted reads as 0, and
+  so does every statistic of the engine.
 - **`FILE`** begins a section, which runs to the next `FILE`, to `GENERATED` or to the end. A file with sections is a tree in one
   file: the driver writes each section to its path in a temporary folder and builds there. What stands before the first `FILE` is
   written nowhere. A directive inside a section is a comment of that file too, so none can stand in a `package.json`. A tree without
@@ -151,7 +158,6 @@ directive. Any other name in capitals before a `:` is an error, so a mistyped di
 - **`SAME`**: the two runs print the same text and report the same diagnostics at the same places.
 - **`GENERATED`** is the last directive of a file. Every line below it is a check line that `AOT_IR_UPDATE=1` has written: for each
   `RUN`, each named function whole, or with `*` every function that the run prints. Nobody edits those lines. See "Writing a test".
-- **`FORM`** is for the engine's tests, and an error here.
 
 ## Patterns
 
@@ -178,24 +184,30 @@ The engine's tests have the same check lines and patterns. `aot/tests/README.md`
 
 ## Writing a test
 
-- **Export what the test looks at**, or use it in something exported. Link keeps what an export or the module body reaches and drops
-  the rest, so a function that nothing reaches is not printed.
+- **Export what the test looks at**, or use it in something exported. A function at the top level that no export and no module body
+  reaches is printed without its body: it makes the error `LeftOutOfExecutable` and throws it. So is a member under a private name
+  that nothing refers to, and every member of a class that nothing gets hold of. A member under any other key stays with its class.
+  Link drops nothing: what a file defines is in the program.
 - **Enter a function with a label**: `// CHECK-LABEL: function {{*}}name="add"`. Where a variable is needed, `function [[add]] name="add"`.
 - **To hold a whole function to what is printed today**, write the source, the `RUN` and `// GENERATED: add` as the last line, and run
   `AOT_IR_UPDATE=1 AOT_IR_FILTER=<file> cargo test -p bun_aot --test ir_tests`. A generated block enters the function with a label and
   has a `-NEXT` for every line. Positions in the source are left out, and an id that is counted over the whole program (`f7`, `g1`, `m1`,
-  `L3`, `w2`) is a variable, so the block does not move when the library grows. When the front end prints something else, the same
-  command writes the blocks anew, and the diff is what to read.
-- **Bind ids** in a line written by hand, never write `v12`, `b3` or `f7`.
+  `L3`, `w2`, `d2`) is a variable, so the block does not move when the library grows. The folder of the tests and the temporary folder of a
+  tree are `{{*}}`: they are others on the next machine and in the next run. When the front end prints something else, the same command,
+  also without a filter, writes anew the blocks that no longer hold, and the diff is what to read.
+- **Bind ids** in a line written by hand, never write `v12`, `b3` or `f7`. Inside brackets a variable needs something in front of it:
+  `supertypes=[[[x]]]` does not parse, `supertypes=[{{*}}[[x]]]` does, and allows entries in front.
 - **The printer omits a field that has its zero value** (`role=Source`, `kind=Plain`). A pattern cannot name one: a positive line with it
   never matches, and a `-NOT` with it always passes.
 - **A `-NOT` stops at the positive lines around it.** To check that something appears nowhere in a function, give the function a block
   with no positive line, or put the `-NOT` on both sides of the only one.
 - **`link` prints the source of each module** in `functionText`, with the directives in it. The check lines do not see that text: it
-  is hidden before they are matched. `path=".../link-imported-function"` still contains the word `function`. Begin the pattern with
+  is hidden before they are matched. `textOfQuotes="..."` of a `module` line is not: it holds the texts of calls. `path=".../link-imported-function"` still contains the word `function`. Begin the pattern with
   the record's keyword and id: `module [[m]] path=`, `variable [[g]] name="x"`.
-- **Keep the source free of type errors**, unless the test expects one: a type error in a `.ts` file stops the build. A `.ts` file is
-  checked and its written types are tested at run time. In a `.js` file nothing written is tested.
+- **A type error in a `.ts` file stops the build**, as errors of grammar and the front end's own codes do: the checker goes through each
+  file of the program before it is lowered. A test that needs one says `// @ts-expect-error` in front of the line, or lists it:
+  `// DIAGNOSTIC: TS2322`. The written types of a `.ts` file are tested at run time all the same. In a `.js` file nothing written is
+  tested, and no type error is reported.
 - **A rule gets a positive and a negative case**, in one file or in neighbors.
 
 | What it tests | Where |
@@ -203,5 +215,5 @@ The engine's tests have the same check lines and patterns. `aot/tests/README.md`
 | A lowering rule | `lower/<construct family>/`, with `// RUN: lower`, or `// RUN: link` where a check names a record |
 | A command or an option word of this driver | `commands/` |
 | The directives and the matcher | the unit tests in `src/aot/tests/` |
-| A rule of the IR, a pass or an analysis of the engine | `aot/tests/` in WebKit |
-| A whole program and its output | `test/aot/programs` |
+| A rule of the IR, or a stage of the engine (facts, plan, walk, machine) | `aot/tests/` in WebKit |
+| A whole program and its output | `test/aot/parallel` |

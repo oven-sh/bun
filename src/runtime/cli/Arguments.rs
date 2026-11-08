@@ -2996,7 +2996,7 @@ fn parse_build_command_options(
 
     if let Some(outdir) = args.option(b"--outdir") {
         if !outdir.is_empty() {
-            ctx.bundler_options.outdir = outdir.into();
+            ctx.bundler_options.outdir = options::fold_output_dir(outdir).into();
         }
     } else if let Some(outfile) = args.option(b"--outfile") {
         if !outfile.is_empty() {

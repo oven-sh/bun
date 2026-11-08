@@ -1326,6 +1326,8 @@ pub struct BundleOptions<'a> {
     pub(crate) origin: bun_url::OwnedURL,
     pub(crate) output_dir_handle: Option<Dir>,
 
+    /// Stored through [`fold_output_dir`] by each place that parses the option: the writer hands
+    /// this text to the OS, and the other readers join it as text.
     pub output_dir: Box<[u8]>,
     pub root_dir: Box<[u8]>,
 
@@ -2139,6 +2141,84 @@ pub(crate) mod bundle_options_defaults {
         pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
             b".mjs", b".jsx", b".mts", b".js", b".cjs", b".tsx", b".ts", b".cts", b".json",
         ];
+    }
+}
+
+/// Folds each `..` of `outdir` that follows a named segment, as text, like `path.resolve`.
+/// The writer opens `outdir` through the OS, which follows a symlink before it applies `..`.
+/// The paths that a build reports are joined from the same text.
+pub fn fold_output_dir(outdir: &[u8]) -> Cow<'_, [u8]> {
+    const SEPARATORS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+    let mut after_name = false;
+    let folds = strings::tokenize_any(outdir, SEPARATORS).any(|segment| match segment {
+        b"." => false,
+        b".." => after_name,
+        _ => {
+            after_name = true;
+            false
+        }
+    });
+    if !folds {
+        return Cow::Borrowed(outdir);
+    }
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let folded = bun_paths::resolve_path::join_z_buf_checked::<bun_paths::platform::Auto>(
+        &mut buf.0[..],
+        &[outdir],
+    );
+    match folded {
+        Some(folded) => Cow::Owned(folded.as_bytes().to_vec()),
+        None => Cow::Borrowed(outdir),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn fold_output_dir_folds_dotdot_only_after_a_named_segment() {
+    for same in [
+        &b""[..],
+        b".",
+        b"..",
+        b"dist",
+        b"./dist",
+        b"dist/",
+        b"a//b/./c",
+        b"../x",
+        b"./../x",
+        b"../../x",
+        b"a..b/c",
+        b".../x",
+        b"..x/y",
+        b"/abs/dist",
+        b"/../x",
+    ] {
+        let folded = fold_output_dir(same);
+        assert!(
+            matches!(folded, Cow::Borrowed(_)) && &*folded == same,
+            "{:?} must come back as the same slice",
+            bstr::BStr::new(same)
+        );
+    }
+
+    assert_eq!(&*fold_output_dir(b"a/../b"), b"b");
+    assert_eq!(&*fold_output_dir(b"a/./../b"), b"b");
+    assert_eq!(&*fold_output_dir(b"a//../b"), b"b");
+    assert_eq!(&*fold_output_dir(b".../../b"), b"b");
+    // Never empty: an empty `outdir` means a build that writes no files.
+    assert_eq!(&*fold_output_dir(b"link/.."), b".");
+    #[cfg(not(windows))]
+    {
+        assert_eq!(&*fold_output_dir(b"link/../"), b"./");
+        assert_eq!(&*fold_output_dir(b"a/b/../c"), b"a/c");
+        assert_eq!(&*fold_output_dir(b"a/b/../c/"), b"a/c/");
+        // A relative path stays relative and keeps the `..` that nothing precedes.
+        assert_eq!(&*fold_output_dir(b"a/../../b"), b"../b");
+        assert_eq!(&*fold_output_dir(b"../a/../b"), b"../b");
+        assert_eq!(&*fold_output_dir(b"/a/../b"), b"/b");
+        assert_eq!(&*fold_output_dir(b"/a/../../b"), b"/b");
+        // `\` is a byte of a name, not a separator.
+        assert_eq!(&*fold_output_dir(br"we\ird/../x"), b"x");
+        assert!(matches!(fold_output_dir(br"a\..\b"), Cow::Borrowed(_)));
     }
 }
 

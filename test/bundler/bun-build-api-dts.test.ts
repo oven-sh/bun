@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "fs";
+import { readdirSync, readFileSync, symlinkSync } from "fs";
 import { tempDir } from "harness";
 import { join } from "path";
 
@@ -99,6 +99,22 @@ export { join };
     });
     expect(built.logs).toEqual([]);
     expect(filesIn(join(root, "out"))).toEqual([...WRITTEN, "index.js.map"].sort());
+  });
+
+  test("an outdir with '..' after a symlink: every file is in the folder that outputs name", async () => {
+    using dir = tempDir("build-api-dts-outdir-dotdot", { ...project, "real/inner/keep": "" });
+    const root = String(dir);
+    symlinkSync(join(root, "real/inner"), join(root, "link"), "junction");
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: join(root, "link") + "/../out",
+      tsconfig: join(root, "tsconfig.json"),
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    expect(filesIn(join(root, "out"))).toEqual(WRITTEN);
+    expect(described(root, built.outputs).map(([path]) => path)).toEqual(WRITTEN.map(name => "/out/" + name));
+    expect(readdirSync(join(root, "real"))).toEqual(["inner"]);
   });
 
   test("a type error fails the build", async () => {

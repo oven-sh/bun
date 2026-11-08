@@ -1069,7 +1069,8 @@ pub(crate) mod js_bundler {
 
             let mut has_out_dir = false;
             if let Some(slice) = config.get_optional_slice(global_this, b"outdir")? {
-                this.outdir.append_slice_exact(slice.slice())?;
+                this.outdir
+                    .append_slice_exact(&options::fold_output_dir(slice.slice()))?;
                 has_out_dir = true;
                 drop(slice);
             }

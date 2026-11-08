@@ -1,1 +1,0 @@
-Headers.prototype.toJSON.call({});

@@ -5,8 +5,17 @@ import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harne
 import { join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
 import { built, spawned, withoutDebugInformation } from "../harness/commands";
-import { withSteadyCollections } from "../harness/counted-run";
 import { beforeAll, describe, test } from "../supported";
+
+// Collections come by bytes allocated and run on the program's own thread.
+// With the collector's own threads on, counts differ by some percent from run to run.
+const withSteadyCollections = {
+  BUN_GC_TIMER_DISABLE: "1",
+  BUN_JSC_percentCPUPerMBForEdenTimer: "0",
+  BUN_JSC_percentCPUPerMBForFullTimer: "0",
+  BUN_JSC_useConcurrentGC: "0",
+  BUN_JSC_numberOfGCMarkers: "1",
+};
 
 const root = join(import.meta.dir, "options-spread-over-what-a-literal-already-holds");
 const iterations = 400_000;

@@ -9,10 +9,8 @@ use crate::ir::{
 use crate::lower::scope::{self, BindingRef, DeadZone, LocalBinding, ScopeSlot};
 use crate::lower::{FileLowering, FunctionLowering};
 
-// The environments of a file are numbered by their scopes.
 const FIRST_PACK: u32 = 1 << 31;
 
-// A closure has room for so many captures.
 fn find_pack_layout(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) -> Option<LayoutId> {
     let number = file.scopes.packed_captures(key)?;
     let layout = file.fragment.declare_layout(LayoutKey::Environment {
@@ -47,7 +45,6 @@ fn find_pack_layout(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) -
     Some(layout)
 }
 
-/// At the entry of every function.
 pub(crate) fn unpack_captures(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) {
     let Some(layout) = find_pack_layout(lowering.file, lowering.key) else {
         return;
@@ -60,7 +57,7 @@ pub(crate) fn unpack_captures(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    fn get_capture(&self, index: usize) -> ValueId {
+    pub(in crate::lower) fn get_capture(&self, index: usize) -> ValueId {
         match self.scopes.unpacked_captures.get(index) {
             Some(&value) => value,
             None => self.builder.capture(index as u32),
@@ -102,7 +99,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> SmallVec<[ValueId; 4]> {
         let captures: CaptureList = SmallVec::from_slice(self.file.scopes.captures(key));
         let mut values = SmallVec::with_capacity(captures.len());
-        for capture in captures {
+        for &capture in captures.iter() {
             values.push(match capture {
                 Capture::Environment(scope) => self.get_environment(scope),
                 Capture::Value(binding) if self.file.is_entry_capture(key, binding) => {
@@ -121,6 +118,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(in crate::lower) fn find_captured_value(&self, capture: Capture) -> Option<ValueId> {
         let captures = self.file.scopes.captures(self.key);
+        if captures.is_empty() {
+            return None;
+        }
         let index = captures.binary_search(&capture).ok()?;
         Some(self.get_capture(index))
     }
@@ -139,7 +139,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let name = self.file.bound.symbol(symbol).name;
                 self.get_binding(Binding::Symbol(symbol), name)
             }
-            // Another closure shares the place, which holds nothing until `super(..)` returns.
             BindingRef::Slot(_, ScopeSlot::This) if reads_location => self.get_this(),
             BindingRef::Symbol(_) | BindingRef::Slot(..) => self.get_stored(binding),
         }
@@ -166,7 +165,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 let environment = self.fragment.types.intern(Type::environment(layout));
                 DeclaredType::from_compiler(environment).into()
             }
-            // The declaration of a variable may be left out with the function. What fills a slot never is.
             Capture::Value(BindingRef::Symbol(_)) if is_left_out => DeclaredType::untyped().into(),
             Capture::Value(binding) => {
                 let name = self.written_name(binding);

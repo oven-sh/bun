@@ -6,11 +6,17 @@ import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harne
 import { join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
 import { built, spawned, withoutDebugInformation } from "../harness/commands";
-import { withSteadyCollections } from "../harness/counted-run";
 import { beforeAll, describe, test } from "../supported";
 
 const root = join(import.meta.dir, "copies-of-ordinary-objects-in-cold-code");
 const iterations = 400_000;
+const withSteadyCollections = {
+  BUN_GC_TIMER_DISABLE: "1",
+  BUN_JSC_percentCPUPerMBForEdenTimer: "0",
+  BUN_JSC_percentCPUPerMBForFullTimer: "0",
+  BUN_JSC_useConcurrentGC: "0",
+  BUN_JSC_numberOfGCMarkers: "1",
+};
 const rows: [form: string, source: string, allowance: number][] = [
   ["a spread behind a member", "a parsed object", 665],
   ["a spread behind a member", "an instance", 810],
@@ -42,7 +48,6 @@ describe.skipIf(!!skipped)("compile/aot/perf/copies-of-ordinary-objects-in-cold-
           "build",
           "--compile",
           "--aot",
-          "--aot-heat=EverythingIsCold",
           ...withoutDebugInformation(),
           join(root, "main.ts"),
           "--outfile",

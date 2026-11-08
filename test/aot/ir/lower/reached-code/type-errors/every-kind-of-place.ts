@@ -1,4 +1,5 @@
 // RUN: lower
+// OPTIONS: builtin-modules
 // DIAGNOSTIC: TS2339 row000.ts:2
 // DIAGNOSTIC: TS2339 row001.ts:2
 // DIAGNOSTIC: TS2339 row002.ts:2

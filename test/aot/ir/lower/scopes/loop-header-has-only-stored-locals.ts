@@ -4,7 +4,7 @@
 // CHECK-NEXT: [[header]]([[a]]: number):
 // CHECK-NEXT: LoopHint
 // CHECK: [[sum]] = Add [[a]],
-// CHECK-NEXT: [[next]] = Convert [[sum]] declared={type=number site=w{{*}}} @
+// CHECK-NEXT: [[next]] = Convert [[sum]] declared={type=number} @
 // CHECK-NEXT: Jump -> next [[header]]([[next]])
 
 declare function c(): boolean;

@@ -1,0 +1,4 @@
+[define]
+"config.mode" = "mode"
+"import.meta.env.MODE" = "mode"
+"LEVEL" = "settings.level"

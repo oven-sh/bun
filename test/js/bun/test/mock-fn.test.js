@@ -5483,7 +5483,7 @@ if (isBun) {
       );
     });
 
-    describe("the end of a test file", () => {
+    describe.concurrent("the end of a test file", () => {
       const runTestFiles = async (files, flags = []) => {
         const { bunEnv, bunExe, tempDir } = require("harness");
         using dir = tempDir("mock-fn-end-of-file", files);

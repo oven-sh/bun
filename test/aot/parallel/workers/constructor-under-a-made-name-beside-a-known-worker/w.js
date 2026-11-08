@@ -1,1 +1,0 @@
-postMessage("known worker ran");

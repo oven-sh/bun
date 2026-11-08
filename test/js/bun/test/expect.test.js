@@ -190,6 +190,26 @@ describe("expect()", () => {
           expect(text.split("\n").filter(line => line === "error: boom")).toHaveLength(1);
         });
 
+        test("has the value that the promise resolved to, after .resolves", async () => {
+          let text;
+          try {
+            await expect(Promise.resolve({ a: undefined })).resolves.toBe(ANY({}));
+          } catch (e) {
+            text = stripVTControlCharacters(/** @type {any} */ (e).message);
+          }
+          expect(text).toMatchInlineSnapshot(`
+            "expect(received).toBe(expected)
+
+            If this test should pass, replace "toBe" with "toEqual"
+
+            Expected: {}
+            Received: {
+              a: undefined,
+            }
+            "
+          `);
+        });
+
         test("has no hint when the values are not deep-equal", () => {
           expect(message(() => expect({ a: 1 }).toBe({ a: 2 }))).toMatchInlineSnapshot(`
             "expect(received).toBe(expected)

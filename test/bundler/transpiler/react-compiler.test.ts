@@ -4427,7 +4427,13 @@ describe("bundler", () => {
     },
     reactCompiler: true,
     backend: "cli",
-    external: ["@tanstack/react-virtual", "react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    external: [
+      "@tanstack/react-virtual",
+      "react",
+      "react/compiler-runtime",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ],
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out).toContain("const virtualizer = useWindowVirtualizer({ count });");

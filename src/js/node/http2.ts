@@ -404,6 +404,7 @@ let priorityWeightDeprecationWarned = false;
 // Marks a client stream created from a received PUSH_PROMISE: its response HEADERS fire 'push'.
 const kPush = Symbol("pushStream");
 const kNeverAnnounced = Symbol("neverAnnounced");
+const kReleaseStreamSlot = Symbol("releaseStreamSlot");
 const kReceivedGoaway = Symbol("receivedGoaway");
 // The error code carried by a received GOAWAY; like Node's state.goawayCode it
 // takes precedence over the destroy code when streams are torn down.
@@ -2150,6 +2151,9 @@ enum StreamState {
   EndedBeforeHeaders = 1 << 11, // 100000000000 = 2048
   // The native side closed the stream (the peer's RST_STREAM, a protocol error), not destroy().
   ClosedByNative = 1 << 12, // 1000000000000 = 4096
+  // The peer's RST_STREAM(NO_ERROR) closed the stream. The native side has forgotten its id, and the
+  // Http2Stream can live on until its reader has drained it.
+  ResetByPeer = 1 << 13, // 10000000000000 = 8192
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2309,6 +2313,24 @@ function markStreamClosed(stream: Http2Stream) {
 
     markWritableDone(stream);
   }
+}
+// Node's closeStream(stream, NGHTTP2_NO_ERROR, kNoRstStream), in its order:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2009-L2049
+function closeStreamResetByPeer(stream: Http2Stream) {
+  const status = stream[bunHTTP2StreamStatus];
+  // A stream that close(code) closed keeps its code.
+  if ((status & StreamState.Closed) !== 0) return;
+  stream[bunHTTP2StreamStatus] = status | StreamState.Closed | StreamState.ResetByPeer;
+  stream.rstCode = NGHTTP2_NO_ERROR;
+  if (!stream._writableState.ending && !stream[kPush]) {
+    if (!stream[kAborted]) {
+      stream[kAborted] = true;
+      stream.emit("aborted");
+    }
+    stream.end();
+  }
+  publishStreamCloseChannel(stream);
+  markWritableDone(stream);
 }
 function rstNextTick(this: Http2Session, id: number, rstCode: number) {
   const session = this;
@@ -2716,7 +2738,8 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
 
     let rstCode = this.rstCode;
     if (!rstCode) {
-      if (err != null) {
+      // Like node, a stream that the peer's reset closed keeps its code.
+      if (err != null && (this[bunHTTP2StreamStatus] & StreamState.ResetByPeer) === 0) {
         if (err.code === "ABORT_ERR") {
           // Enables using AbortController to cancel requests with RST code 8.
           rstCode = NGHTTP2_CANCEL;
@@ -2767,7 +2790,7 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
       (this[bunHTTP2StreamStatus] & StreamState.ResetScheduled) === 0 &&
       // A cleanly closed stream the native side already freed has nothing to send:
       // the deferred rstStream would be a guaranteed no-op host call per request.
-      (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
+      (rstCode !== 0 || (this[bunHTTP2StreamStatus] & (StreamState.NativeClosed | StreamState.ResetByPeer)) === 0)
     ) {
       setImmediate(rstNextTick.bind(session, this.#id, rstCode));
     }
@@ -2825,7 +2848,15 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
           callback();
           return;
         }
-        if ((status & StreamState.EndedByClose) !== 0) {
+        if ((status & (StreamState.EndedByClose | StreamState.ResetByPeer)) !== 0) {
+          if ((status & StreamState.ResetByPeer) !== 0) {
+            // There is nothing to send, and no stream in the native side to send it on.
+            this[bunHTTP2WaitForTrailers] = false;
+            // After destroy() in an 'aborted' listener, closeStreamResetByPeer() completes it, with no 'finish'.
+            if (this._readableState.destroyed) this[bunHTTP2StreamFinal] = callback;
+            else callback();
+            return;
+          }
           // Like node, RST_STREAM ends these streams, not END_STREAM, which would tell the peer that the body is
           // complete: one that waits for trailers (node's onStreamTrailers returns on a closed stream), and one with
           // a write still in flight when close() returned, unless the code is CANCEL.
@@ -3515,7 +3546,7 @@ class ServerHttp2Stream extends Http2Stream {
   }
 
   respondWithFile(path: string | Buffer | URL, headers?: HeadersObject | null, options?: FileResponseOptions) {
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3576,7 +3607,7 @@ class ServerHttp2Stream extends Http2Stream {
         throw err;
       }
     }
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3693,7 +3724,7 @@ class ServerHttp2Stream extends Http2Stream {
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
   }
   respond(headers?: HeadersObject | any[] | null, options?: any) {
-    if (this.destroyed || this.session === undefined) {
+    if (this.destroyed || this.closed || this.session === undefined) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
 
@@ -3936,15 +3967,22 @@ function emitStreamErrorNT(
         error_instance = error;
       }
     }
-    if (destroy && error === NGHTTP2_NO_ERROR && stream.readable) {
-      // Like node's onStreamClose: the readable ends first, and 'end' destroys the stream.
-      stream.once("end", destroySelfOnEnd);
-      endInboundHalf(stream);
-      if (stream instanceof ServerHttp2Stream && !stream.readableDidRead && stream.readableFlowing === null)
-        stream.resume();
-      else stream.read(0);
-      if (destroy_self) self!.destroy();
-      return;
+    if (destroy && error === NGHTTP2_NO_ERROR && !stream.destroyed) {
+      // Like node's onStreamClose: the stream closes first. If it can still be read, its readable ends next, and
+      // 'end' destroys the stream.
+      closeStreamResetByPeer(stream);
+      // An 'aborted' listener can destroy the stream.
+      if (!stream.destroyed && stream.readable) {
+        stream.once("end", destroySelfOnEnd);
+        endInboundHalf(stream);
+        if (stream instanceof ServerHttp2Stream && !stream.readableDidRead && stream.readableFlowing === null)
+          stream.resume();
+        else stream.read(0);
+        if (stream instanceof ClientHttp2Stream) (self as ClientHttp2Session)[kReleaseStreamSlot](stream);
+        // After the stream's 'end' and 'close'.
+        if (destroy_self) setImmediate(destroyIfNotDestroyedNT, self!);
+        return;
+      }
     }
     if (stream.readable) {
       stream.resume(); // we have a error we consume and close
@@ -5255,9 +5293,7 @@ class ClientHttp2Session extends Http2Session {
       }
       const pushedStream = new ClientHttp2Stream(pushId, self, headers);
       pushedStream[kPush] = true;
-      pushedStream.once("close", () => {
-        self.#reservedStreamsCount--;
-      });
+      pushedStream.once("close", self.#releaseReservedSlot);
       self.#connections++;
       self.#parser?.setStreamContext(pushId, pushedStream);
       if (onClientStreamCreatedChannel.hasSubscribers) {
@@ -6538,10 +6574,24 @@ class ClientHttp2Session extends Http2Session {
   // stream closes, then tries to submit queued requests.
   #trackActiveRequest(req: ClientHttp2Stream) {
     this.#activeRequestCount++;
-    req.once("close", () => {
-      this.#activeRequestCount--;
-      this.#flushPendingRequests();
-    });
+    req.once("close", this.#releaseRequestSlot);
+  }
+  // One function per session: while it is a 'close' listener of a stream, that stream holds its slot.
+  #releaseRequestSlot = () => {
+    this.#activeRequestCount--;
+    this.#flushPendingRequests();
+  };
+  #releaseReservedSlot = () => {
+    this.#reservedStreamsCount--;
+  };
+  // A stream that the peer reset no longer counts against a limit (RFC 9113 5.1.2). Unread data can delay its
+  // 'close' without end.
+  [kReleaseStreamSlot](stream: ClientHttp2Stream) {
+    const release = stream[kPush] ? this.#releaseReservedSlot : this.#releaseRequestSlot;
+    if (stream.listenerCount("close", release) !== 0) {
+      stream.removeListener("close", release);
+      release();
+    }
   }
 
   // Submits requests queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit while slots

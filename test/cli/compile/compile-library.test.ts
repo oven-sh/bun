@@ -991,6 +991,9 @@ export function heads(x: number): number {
   for (const value of undefined as any) x += value;
   return x;
 }
+export function checked(on = true satisfies true, none = undefined satisfies undefined): boolean {
+  return on && none === undefined;
+}
 `,
   };
 
@@ -1001,7 +1004,7 @@ export function heads(x: number): number {
     using dir = tempDir("library-typed-file-respelled", library(respelled));
     const built = await bun(String(dir), "compile", "--library", "src/index.ts", ...flags);
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(typedFile(dir).match(/(void 0|![01]|NaN)\)?( as \w+|!)+/g)).toEqual([
+    expect(typedFile(dir).match(/(void 0|![01]|NaN)\)?( as \w+| satisfies \w+|!)+/g)).toEqual([
       "void 0 as any",
       "!0 as any",
       "!1 as any",
@@ -1015,6 +1018,8 @@ export function heads(x: number): number {
       "void 0) as any",
       "void 0 as any",
       "void 0 as any",
+      "!0 satisfies true",
+      "void 0 satisfies undefined",
     ]);
     const javascript = readFileSync(join(String(dir), "dist/index.js"), "utf8");
     const code = (text: string) => text.replace(/\s+/g, "");

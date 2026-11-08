@@ -300,6 +300,35 @@ describe("vi.stubGlobal", () => {
     expect(fetch).toBe(original);
   });
 
+  test("a spy over the stub does not put the stub back after the test assigned over the spy", () => {
+    const original = fetch;
+    vi.stubGlobal("fetch", () => "stub");
+    const spy = jest.spyOn(globalThis, "fetch");
+    const assigned = (() => "assigned") as unknown as typeof fetch;
+    globalThis.fetch = assigned;
+    try {
+      vi.unstubAllGlobals();
+      expect(fetch).toBe(assigned);
+      spy.mockRestore();
+      expect(fetch).toBe(original);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("a second vi.stubGlobal() of the name goes over the spies that were made since", () => {
+    const original = fetch;
+    const spies = [jest.spyOn(globalThis, "fetch")];
+    vi.stubGlobal("fetch", () => "first");
+    spies.push(jest.spyOn(globalThis, "fetch"));
+    vi.stubGlobal("fetch", () => "second");
+    spies.push(jest.spyOn(globalThis, "fetch"));
+    vi.unstubAllGlobals();
+    expect(fetch).toBe(spies[2]);
+    const seen = spies.map(spy => (spy.mockRestore(), fetch));
+    expect(seen).toEqual([spies[2], spies[2], original]);
+  });
+
   test("the originals survive garbage collection", () => {
     try {
       Object.defineProperty(globalThis, "viUtilsDescriptor", { value: { marker: "original" }, configurable: true });

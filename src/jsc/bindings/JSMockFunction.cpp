@@ -1139,14 +1139,16 @@ public:
         Own,
         // useRealTimers() and the next useFakeTimers(), which take the fake off whatever is over it.
         RealTimers,
+        // vi.stubGlobal() of a stubbed name that has other layers over it. The stub goes on top again, and nothing is put back.
+        Moved,
     };
     struct Layer {
         Kind kind;
         // The JSMockFunction or the fake function. Nothing for the other kinds.
         JSValue owner;
-        // What it put on the property, known once another layer lands on it.
+        // What it put on the property. A stub knows it from vi.stubGlobal(), the others once another layer lands on them.
         SlotContent content;
-        bool isCovered { false };
+        bool hasContent { false };
     };
 
     SlotContent base;
@@ -1174,7 +1176,7 @@ public:
         isOverUninstalledFake = intAt(elements, 2);
         for (unsigned i = headerLength; i < elements->length(); i += layerLength) {
             JSValue owner = elements->get(i + 1);
-            layers.append({ static_cast<Kind>(intAt(elements, i)), owner.isNull() ? JSValue() : owner, contentAt(elements, i + 2), !(intAt(elements, i + 3) & notCovered) });
+            layers.append({ static_cast<Kind>(intAt(elements, i)), owner.isNull() ? JSValue() : owner, contentAt(elements, i + 2), !(intAt(elements, i + 3) & noContent) });
         }
     }
 
@@ -1192,7 +1194,7 @@ public:
         for (auto& layer : layers) {
             elements.append(jsNumber(static_cast<int32_t>(layer.kind)));
             elements.append(layer.owner ? layer.owner : jsNull());
-            appendContent(layer.content, layer.isCovered ? 0 : notCovered);
+            appendContent(layer.content, layer.hasContent ? 0 : noContent);
         }
         auto* saved = elements.hasOverflowed() ? nullptr : JSCellButterfly::tryCreateFromArgList(vm, elements);
         if (!saved) [[unlikely]] {
@@ -1217,7 +1219,7 @@ public:
     {
         if (!layers.isEmpty() && isContentOf(layers.last(), content)) {
             layers.last().content = content;
-            layers.last().isCovered = true;
+            layers.last().hasContent = true;
             return;
         }
         layers.append({ Kind::Value, JSValue(), content, true });
@@ -1226,6 +1228,11 @@ public:
     void add(Kind kind, JSValue owner)
     {
         layers.append({ kind, owner, {}, false });
+    }
+
+    void addStub(JSValue value)
+    {
+        layers.append({ Kind::Stub, JSValue(), { value, 0 }, true });
     }
 
     // A spy doesn't join when it is made. The stub or fake that lands on it, or is undone under it, finds it on the property.
@@ -1245,7 +1252,7 @@ public:
     {
         switch (layer.kind) {
         case Kind::Stub:
-            return false;
+            return !layer.hasContent || layer.content.storage == content.storage;
         case Kind::Spy:
             return spyOf(content) == layer.owner.asCell();
         case Kind::Fake:
@@ -1280,7 +1287,7 @@ private:
     static constexpr unsigned layerLength = 4;
     // Beside the property attributes, which end at bit 17.
     static constexpr int32_t noProperty = 1 << 20;
-    static constexpr int32_t notCovered = 1 << 21;
+    static constexpr int32_t noContent = 1 << 21;
 
     static int32_t intAt(JSCellButterfly* elements, unsigned index)
     {
@@ -1290,7 +1297,7 @@ private:
     static SlotContent contentAt(JSCellButterfly* elements, unsigned index)
     {
         int32_t meta = intAt(elements, index + 1);
-        return { meta & noProperty ? JSValue() : elements->get(index), static_cast<unsigned>(meta & ~(noProperty | notCovered)) };
+        return { meta & noProperty ? JSValue() : elements->get(index), static_cast<unsigned>(meta & ~(noProperty | noContent)) };
     }
 };
 
@@ -1394,9 +1401,15 @@ static InstalledFake fakeOf(Zig::GlobalObject* globalObject, JSObject* object, c
     return { fake, JSValue::decode(original), JSValue::decode(layers) ? uncheckedDowncast<InternalFieldTuple>(JSValue::decode(layers)) : nullptr };
 }
 
+// useRealTimers() took the fake from under these layers. They are on the property again once it holds what the top one put there.
+static bool isOffProperty(const PropertyLayers& record, SlotContent content)
+{
+    return record.isOverUninstalledFake && !PropertyLayers::isContentOf(record.layers.last(), content);
+}
+
 static void adoptSpyWithoutRecord(JSObject* object, const Identifier& key, PropertyLayers& record, InternalFieldTuple* cell, SlotContent content)
 {
-    if (auto* spy = liveSpyOn(content, object, key); spy && !spy->isLayered() && !record.isOverUninstalledFake) {
+    if (auto* spy = liveSpyOn(content, object, key); spy && !spy->isLayered() && !isOffProperty(record, spy->covered())) {
         record.adopt(spy);
         spy->setLayers(cell);
     }
@@ -1409,7 +1422,6 @@ static InternalFieldTuple* layersForLanding(Zig::GlobalObject* globalObject, JSO
     auto [fake, fakeOriginal, fakeLayers] = fakeOf(globalObject, object, key);
     auto* spy = liveSpyOn(content, object, key);
 
-    // An owner whose record is over an uninstalled fake is off the property, and so is that record.
     InternalFieldTuple* candidates[] = {
         fakeLayers,
         stub && stub.inherits<InternalFieldTuple>() ? uncheckedDowncast<InternalFieldTuple>(stub) : nullptr,
@@ -1419,7 +1431,7 @@ static InternalFieldTuple* layersForLanding(Zig::GlobalObject* globalObject, JSO
         if (!cell)
             continue;
         PropertyLayers record(cell);
-        if (record.isOverUninstalledFake)
+        if (isOffProperty(record, content))
             continue;
         adoptSpyWithoutRecord(object, key, record, cell, content);
         record.save(globalObject, cell);
@@ -1469,13 +1481,13 @@ static void removeFromLayers(Zig::GlobalObject* globalObject, JSObject* object, 
         RELEASE_AND_RETURN(scope, record.save(globalObject, cell));
 
     std::optional<SlotContent> toPut;
-    if (index == record.layers.size() - 1) {
+    if (index == record.layers.size() - 1 && undo != PropertyLayers::Undo::Moved) {
         toPut = record.under(index);
         record.layers.removeLast();
     } else if (undo == PropertyLayers::Undo::RealTimers) {
         // As before, what is over the fake keeps standing on it: its own undo puts the uninstalled fake back.
         PropertyLayers over;
-        over.base = record.layers[index].isCovered ? record.layers[index].content : SlotContent { owner, record.base.attributes };
+        over.base = record.layers[index].hasContent ? record.layers[index].content : SlotContent { owner, record.base.attributes };
         over.isOverUninstalledFake = true;
         over.layers.appendRange(record.layers.begin() + index + 1, record.layers.end());
         if (over.hasOwners()) {
@@ -1494,12 +1506,6 @@ static void removeFromLayers(Zig::GlobalObject* globalObject, JSObject* object, 
                 count++;
         }
         record.layers.removeAt(index, count);
-        // vi.unstubAllGlobals() always takes the stub's value off the property.
-        if (kind == PropertyLayers::Kind::Stub && !record.isOverUninstalledFake && !record.layers.isEmpty()) {
-            auto& top = record.layers.last();
-            if (!PropertyLayers::isContentOf(top, content))
-                toPut = top.isCovered ? top.content : SlotContent { top.owner, record.base.attributes };
-        }
     }
     while (!record.layers.isEmpty() && record.layers.last().kind == PropertyLayers::Kind::Value)
         record.layers.removeLast();
@@ -1528,51 +1534,77 @@ static void removeSpyFromLayers(JSGlobalObject* globalObject, JSObject* target, 
     removeFromLayers(defaultGlobalObject(globalObject), target, key, spy->layers(), PropertyLayers::Kind::Spy, spy, PropertyLayers::Undo::Own);
 }
 
-// vi.stubGlobal(): for a name that isn't stubbed yet (no `stub`), returns the record to keep in stubbedGlobals, if it shares one.
-JSValue layersOfStubbedGlobal(Zig::GlobalObject* globalObject, const Identifier& key, JSValue stub)
+// vi.stubGlobal() of a name that isn't stubbed: returns the record to keep in stubbedGlobals, if the stub shares the global with a spy or a fake.
+JSValue layersOfStubbedGlobal(Zig::GlobalObject* globalObject, const Identifier& key, JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSObject* object = globalObject;
-    if (!(stub && stub.inherits<InternalFieldTuple>()) && !mayBeSpy(globalObject, key) && !fakeOf(globalObject, object, key).fake)
+    if (!mayBeSpy(globalObject, key) && !fakeOf(globalObject, object, key).fake)
         return {};
     SlotContent content = contentOf(globalObject, object, key);
     RETURN_IF_EXCEPTION(scope, {});
-    auto* cell = layersForLanding(globalObject, object, key, content, stub);
+    auto* cell = layersForLanding(globalObject, object, key, content, JSValue());
     RETURN_IF_EXCEPTION(scope, {});
-    // A name that is stubbed already has its layer, in this record or over an uninstalled fake.
-    if (!cell || stub)
+    if (!cell)
         return {};
     PropertyLayers record(cell);
     record.cover(content);
-    record.add(PropertyLayers::Kind::Stub, JSValue());
+    record.addStub(value);
     record.save(globalObject, cell);
     RETURN_IF_EXCEPTION(scope, {});
     return cell;
 }
 
-// vi.unstubAllGlobals(): true if the name needs nothing more. `stub` is what stubbedGlobals held for it.
-bool removeStubbedGlobalFromLayers(Zig::GlobalObject* globalObject, const Identifier& key, JSValue stub)
+// vi.stubGlobal() of a stubbed name whose entry is a record. True if the stub left the record: the caller then stubs the name as if for the first time.
+bool restubInLayers(Zig::GlobalObject* globalObject, const Identifier& key, JSValue stub, JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSObject* object = globalObject;
-    if (stub.inherits<InternalFieldTuple>()) {
-        removeFromLayers(globalObject, object, key, uncheckedDowncast<InternalFieldTuple>(stub), PropertyLayers::Kind::Stub, JSValue(), PropertyLayers::Undo::Own);
-        RETURN_IF_EXCEPTION(scope, true);
-        return true;
-    }
-    // A fake shares a record with the stub from the start, so only a spy can be over this one.
-    if (!mayBeSpy(globalObject, key))
-        return false;
+    auto* cell = uncheckedDowncast<InternalFieldTuple>(stub);
+    PropertyLayers record(cell);
     SlotContent content = contentOf(globalObject, object, key);
-    RETURN_IF_EXCEPTION(scope, true);
-    auto* spy = liveSpyOn(content, object, key);
-    if (!spy || spy->isLayered())
-        return false;
-    // The spy stays, and now covers what the stub did.
-    SlotContent covered = contentOfDescriptor(globalObject, stub);
-    RETURN_IF_EXCEPTION(scope, true);
-    spy->setCovered(covered);
-    return true;
+    RETURN_IF_EXCEPTION(scope, false);
+    // On top of what the property holds, the stub only gets a new value.
+    if (record.layers.last().kind == PropertyLayers::Kind::Stub && !isOffProperty(record, content)) {
+        record.layers.last().content = { value, 0 };
+        record.layers.last().hasContent = true;
+        RELEASE_AND_RETURN(scope, (record.save(globalObject, cell), false));
+    }
+    RELEASE_AND_RETURN(scope, (removeFromLayers(globalObject, object, key, cell, PropertyLayers::Kind::Stub, JSValue(), PropertyLayers::Undo::Moved), true));
+}
+
+// vi.unstubAllGlobals() of a name whose entry is a record.
+void removeStubbedGlobalFromLayers(Zig::GlobalObject* globalObject, const Identifier& key, JSValue stub)
+{
+    removeFromLayers(globalObject, globalObject, key, uncheckedDowncast<InternalFieldTuple>(stub), PropertyLayers::Kind::Stub, JSValue(), PropertyLayers::Undo::Own);
+}
+
+// A spy that lands on a stubbed global shares the stub's record from the start, so the unstub finds it after the program assigns over it too.
+static void layersOfSpyOnStubbedGlobal(Zig::GlobalObject* globalObject, const Identifier& key, JSMockFunction* spy)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = globalObject;
+    auto* stubbed = stubbedGlobalsOf(globalObject, object);
+    JSValue stubKey = identifierToJSValue(vm, key);
+    bool isStubbed = stubbed->has(globalObject, stubKey);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!isStubbed)
+        return;
+    JSValue stub = stubbed->get(globalObject, stubKey);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!stub.inherits<InternalFieldTuple>()) {
+        SlotContent content = contentOf(globalObject, object, key);
+        RETURN_IF_EXCEPTION(scope, );
+        RELEASE_AND_RETURN(scope, void(layersForLanding(globalObject, object, key, content, stub)));
+    }
+    auto* cell = uncheckedDowncast<InternalFieldTuple>(stub);
+    PropertyLayers record(cell);
+    if (isOffProperty(record, spy->covered()))
+        return;
+    record.adopt(spy);
+    spy->setLayers(cell);
+    RELEASE_AND_RETURN(scope, record.save(globalObject, cell));
 }
 
 static InternalFieldTuple* layersOfFake(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& key, JSValue fake, JSValue original, bool wasLayered, bool isStubbed, JSValue& base)
@@ -3786,6 +3818,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         }
 
         mock->didInstall(object, propertyKey, isOwn ? value : JSValue(), spyAttributes);
+        if (object == globalObject && globalObject->mockModule.stubbedGlobals) [[unlikely]] {
+            layersOfSpyOnStubbedGlobal(globalObject, propertyKey, mock);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         return JSValue::encode(mock);
     }
 
@@ -3868,6 +3904,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     RETURN_IF_EXCEPTION(scope, {});
 
     mock->didInstall(object, propertyKey, storage, spyAttributes | JSMockFunction::SpyAttributeAccessor | (isOpaque ? JSMockFunction::SpyAttributeOpaque : 0));
+    if (object == globalObject && globalObject->mockModule.stubbedGlobals) [[unlikely]] {
+        layersOfSpyOnStubbedGlobal(globalObject, propertyKey, mock);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     return JSValue::encode(mock);
 }
 

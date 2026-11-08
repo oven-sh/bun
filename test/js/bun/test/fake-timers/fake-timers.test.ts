@@ -3248,6 +3248,36 @@ describe("a spy or stub that is undone under the fake clock", () => {
     expect(setTimeout).toBe(saved.setTimeout);
   });
 
+  test("vi.unstubAllGlobals() takes off a stub that was put on again after useRealTimers()", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("setTimeout", () => {});
+    vi.spyOn(globalThis, "setTimeout");
+    vi.useRealTimers();
+    expect(setTimeout).toBe(saved.setTimeout);
+    vi.stubGlobal("setTimeout", () => {});
+    vi.unstubAllGlobals();
+    expect(setTimeout).toBe(saved.setTimeout);
+  });
+
+  test("a stub that is back on the global after useRealTimers() is under the next fake clock", () => {
+    const stub = (() => {}) as unknown as typeof setTimeout;
+    vi.useFakeTimers();
+    vi.stubGlobal("setTimeout", stub);
+    const spy = vi.spyOn(globalThis, "setTimeout");
+    vi.useRealTimers();
+    spy.mockRestore();
+    expect(setTimeout).toBe(stub);
+    vi.useFakeTimers();
+    const fake = setTimeout;
+    vi.unstubAllGlobals();
+    expect(setTimeout).toBe(fake);
+    vi.useRealTimers();
+    expect(setTimeout).not.toBe(stub);
+    vi.useFakeTimers();
+    vi.useRealTimers();
+    expect(setTimeout).toBe(saved.setTimeout);
+  });
+
   test("a function assigned over the fake stays when the spy under the fake is restored", () => {
     const dateNow = Date.now;
     const spies = [jest.spyOn(globalThis, "setTimeout"), jest.spyOn(Date, "now")];

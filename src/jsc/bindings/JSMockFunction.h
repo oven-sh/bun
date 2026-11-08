@@ -25,9 +25,10 @@ JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool
 // `key` is null unless there are module mocks.
 void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import, const String& key);
 
-// `stub` is the name's entry in stubbedGlobals: what the stub replaced, or the PropertyLayers record it shares with a spy or a fake timer.
-JSC::JSValue layersOfStubbedGlobal(Zig::GlobalObject*, const JSC::Identifier& name, JSC::JSValue stub);
-bool removeStubbedGlobalFromLayers(Zig::GlobalObject*, const JSC::Identifier& name, JSC::JSValue stub);
+// A name's entry in stubbedGlobals is what the stub replaced, or the PropertyLayers record that the stub shares with a spy or a fake timer.
+JSC::JSValue layersOfStubbedGlobal(Zig::GlobalObject*, const JSC::Identifier& name, JSC::JSValue value);
+bool restubInLayers(Zig::GlobalObject*, const JSC::Identifier& name, JSC::JSValue record, JSC::JSValue value);
+void removeStubbedGlobalFromLayers(Zig::GlobalObject*, const JSC::Identifier& name, JSC::JSValue record);
 
 // Wrapper to scope a bunch of GlobalObject properties related to mocks
 class JSMockModule final {

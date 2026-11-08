@@ -637,7 +637,7 @@ extern "C" fn Bun__FakeTimers__setLayers(
     };
     replaced.original = Strong::create(base, global);
     replaced.was_shared = true;
-    Bun__FakeTimers__setOriginal(global, originals, fake, base);
+    Bun__FakeTimers__setOriginal(global, originals, fake, stands_for(originals, base));
     if !layers.is_empty() {
         replaced.layers.set(global, layers);
         return;
@@ -1051,7 +1051,7 @@ impl FakeTimers {
                     *original = Strong::create(base, global);
                     // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
                     let originals = unsafe { (*timer_all()).fake_timers.originals(global) };
-                    Bun__FakeTimers__setOriginal(global, originals, fake.get(), base);
+                    Bun__FakeTimers__setOriginal(global, originals, fake.get(), stands_for(originals, base));
                 }
             }
             api.put(global, fake.get());
@@ -1681,6 +1681,11 @@ impl FakeTimers {
         });
         self.post_auto_step();
     }
+}
+
+/// What a fake that replaced `base` stands for once it is uninstalled. `base` can be an uninstalled fake that a stub put back.
+fn stands_for(originals: JSValue, base: JSValue) -> JSValue {
+    original_of(originals, base).unwrap_or(base)
 }
 
 fn original_of(originals: JSValue, value: JSValue) -> Option<JSValue> {

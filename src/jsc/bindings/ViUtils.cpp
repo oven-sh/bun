@@ -91,13 +91,8 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
 
     auto name = propertyKeyOf(globalObject, key);
     RETURN_IF_EXCEPTION(scope, );
-    auto& mocks = defaultGlobalObject(globalObject)->mockModule;
-    if (original.inherits<InternalFieldTuple>() || mocks.activeSpies) {
-        bool isDone = removeStubbedGlobalFromLayers(defaultGlobalObject(globalObject), name, original);
-        RETURN_IF_EXCEPTION(scope, );
-        if (isDone)
-            return;
-    }
+    if (original.inherits<InternalFieldTuple>())
+        RELEASE_AND_RETURN(scope, removeStubbedGlobalFromLayers(defaultGlobalObject(globalObject), name, original));
     if (original.isUndefined()) {
         scope.release();
         JSCell::deleteProperty(target, globalObject, name);
@@ -130,18 +125,22 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
     JSMap* originals = ensureMap(vm, globalObject, globalObject->mockModule.stubbedGlobals);
     bool isRemembered = hasOriginal(globalObject, originals, key);
     RETURN_IF_EXCEPTION(scope, );
-    JSValue original;
     // Only a spy or a fake timer can share the global with the stub.
-    if (globalObject->mockModule.activeSpies || globalObject->mockModule.hasUsedFakeTimers) {
-        JSValue remembered;
-        if (isRemembered) {
-            remembered = originals->get(globalObject, key);
+    bool mayShare = globalObject->mockModule.activeSpies || globalObject->mockModule.hasUsedFakeTimers;
+    if (isRemembered && mayShare) {
+        JSValue remembered = originals->get(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, );
+        if (remembered.inherits<InternalFieldTuple>()) {
+            isRemembered = !restubInLayers(globalObject, name, remembered, value);
             RETURN_IF_EXCEPTION(scope, );
         }
-        original = layersOfStubbedGlobal(globalObject, name, remembered);
-        RETURN_IF_EXCEPTION(scope, );
     }
     if (!isRemembered) {
+        JSValue original;
+        if (mayShare) {
+            original = layersOfStubbedGlobal(globalObject, name, value);
+            RETURN_IF_EXCEPTION(scope, );
+        }
         PropertyDescriptor descriptor;
         bool exists = !original && target->getOwnPropertyDescriptor(globalObject, name, descriptor);
         RETURN_IF_EXCEPTION(scope, );

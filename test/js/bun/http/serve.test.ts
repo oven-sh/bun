@@ -5609,6 +5609,29 @@ describe("requests pipelined in one read", () => {
     expect(parseResponses(reply)).toEqual([{ status: "HTTP/1.1 200 OK", body: "done" }]);
   });
 
+  it("serves the rest of the read before a graceful stop() from a handler closes the connection", async () => {
+    const ran: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        const { pathname } = new URL(req.url);
+        ran.push(pathname);
+        // As above: stop() runs in the server's read of the connection, after the response to /stop completed.
+        if (pathname === "/stop") req.text().catch(() => server.stop());
+        return new Response(pathname);
+      },
+    });
+    const reply = await exchange(
+      plain(server.port!),
+      "POST /stop HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello" + get("/b") + get("/c"),
+    );
+    expect({ ran, bodies: parseResponses(reply).map(response => response.body) }).toEqual({
+      ran: ["/stop", "/b", "/c"],
+      bodies: ["/stop", "/b", "/c"],
+    });
+  });
+
   // RFC 9112 9.6: a response that carries Connection: close is the last one on its connection.
   // The request head does not show that, so the parser latch for a Connection: close request
   // ("does not dispatch a pipelined request after Connection: close") does not cover it.

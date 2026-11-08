@@ -1,4 +1,5 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
+import { socketFaultInjection } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import {
   bunEnv,
@@ -1582,8 +1583,8 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
 
   // The tests below need a request body that the handler did not read, or a response that the client did not
   // read. serve-idle-connections-fixture.ts brings one connection into each state and prints what it saw, one
-  // result for each scenario. Its idleTimeout is 255 seconds: a connection that only the idle timer closes
-  // fails the test by its time limit.
+  // result for each scenario. Its idleTimeout is 255 seconds, and it waits 2 seconds for a stop() or a close:
+  // `stopped: false` or `closed: false` means that only the idle timer would have closed the connection.
   type IdleScenario = { scenario: string; tls?: boolean; chunked?: boolean; stopFirst?: boolean };
   async function runIdleFixture(...scenarios: IdleScenario[]) {
     await using proc = Bun.spawn({
@@ -1604,33 +1605,40 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
   // The handler answers an upload at its head, a 401 or a 413 for example. The server reads the rest of the body
   // after the response, in two reads or more.
   test("closeIdleConnections() closes a connection whose unread request body ended after the response", async () => {
-    expect(await runIdleFixture({ scenario: "sweepAfterBody" }, { scenario: "sweepAfterBody", chunked: true })).toEqual(
-      {
-        stderr: "",
-        out: [
-          { swept: 1, closed: true },
-          { swept: 1, closed: true },
-        ],
-        exitCode: 0,
-      },
-    );
-  });
-
-  test("stop() closes a connection whose unread request body ended after the response", async () => {
-    expect(await runIdleFixture({ scenario: "stopAfterBody" }, { scenario: "stopAfterBody", tls: true })).toEqual({
+    expect(
+      await runIdleFixture(
+        { scenario: "sweepAfterBody" },
+        { scenario: "sweepAfterBody", chunked: true },
+        { scenario: "sweepAfterBody", tls: true },
+      ),
+    ).toEqual({
       stderr: "",
       out: [
-        { stopped: true, closed: true },
-        { stopped: true, closed: true },
+        { swept: 1, closed: true },
+        { swept: 1, closed: true },
+        { swept: 1, closed: true },
       ],
       exitCode: 0,
     });
   });
 
-  test("stop() closes a connection whose unread request body still arrives after the response", async () => {
-    expect(await runIdleFixture({ scenario: "stopDuringBody" })).toEqual({
+  test("stop() closes a connection whose unread request body ended after the response", async () => {
+    expect(await runIdleFixture({ scenario: "stopAfterBody" })).toEqual({
       stderr: "",
       out: [{ stopped: true, closed: true }],
+      exitCode: 0,
+    });
+  });
+
+  // stop() closes a connection when its response is complete. It does not wait for the rest of a request body:
+  // not when the response ends after stop(), and not when stop() comes after the response.
+  test("stop() closes a connection whose unread request body still arrives", async () => {
+    expect(await runIdleFixture({ scenario: "stopBeforeResponse" }, { scenario: "stopDuringBody" })).toEqual({
+      stderr: "",
+      out: [
+        { answers: 1, stopped: true, closed: true },
+        { stopped: true, closed: true },
+      ],
       exitCode: 0,
     });
   });
@@ -1644,9 +1652,14 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
   });
 
   test("closeIdleConnections() leaves a connection whose request body still arrives after the response", async () => {
-    expect(await runIdleFixture({ scenario: "sweepDuringBody" })).toEqual({
+    expect(
+      await runIdleFixture({ scenario: "sweepDuringBody" }, { scenario: "sweepDuringBody", chunked: true }),
+    ).toEqual({
       stderr: "",
-      out: [{ sweptDuringBody: 0, servedNext: true, sweptAfterBody: 1, closed: true }],
+      out: [
+        { sweptDuringBody: 0, servedNext: true, sweptAfterBody: 1, closed: true },
+        { sweptDuringBody: 0, servedNext: true, sweptAfterBody: 1, closed: true },
+      ],
       exitCode: 0,
     });
   });
@@ -1664,31 +1677,59 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     });
   });
 
-  // A direct stream can end while the socket still holds its bytes: the client did not read them yet.
+  // A direct stream can end while the socket still holds its bytes: the client did not read them yet. Such a
+  // response counts as in flight. stop() resolves when the client has read it.
   test("stop() and closeIdleConnections() send a finished response in full before the connection closes", async () => {
     expect(await runIdleFixture({ scenario: "unsentResponse" }, { scenario: "unsentResponse", tls: true })).toEqual({
       stderr: "",
       out: [
-        { swept: 0, received: "all", stopped: true },
-        { swept: 0, received: "all", stopped: true },
+        { swept: 0, stoppedBeforeRead: false, received: "all", stopped: true },
+        { swept: 0, stoppedBeforeRead: false, received: "all", stopped: true },
       ],
       exitCode: 0,
     });
   });
 
+  // The kernel took one byte of the response. The TLS layer holds the rest as ciphertext, and the send buffer of
+  // the connection is empty.
+  test.skipIf(!socketFaultInjection.available() || isWindows)(
+    "stop() and closeIdleConnections() send the part of a finished response that the TLS layer holds",
+    async () => {
+      expect(await runIdleFixture({ scenario: "spilledResponse", tls: true })).toEqual({
+        stderr: "",
+        out: [{ swept: 0, received: "all", stopped: true }],
+        exitCode: 0,
+      });
+    },
+  );
+
   test("closeIdleConnections() closes a connection that sent bytes after an answered CONNECT", async () => {
-    expect(await runIdleFixture({ scenario: "connectBytes" })).toEqual({
+    expect(await runIdleFixture({ scenario: "connectBytes" }, { scenario: "connectBytes", tls: true })).toEqual({
       stderr: "",
-      out: [{ swept: 1, closed: true }],
+      out: [
+        { swept: 1, closed: true },
+        { swept: 1, closed: true },
+      ],
       exitCode: 0,
     });
   });
 
-  // The server is still in its read of the connection: it has not parsed the request body that follows the head.
+  // The server is still in its read of the connection. With a chunked body the parser has not entered the body
+  // when the handler runs, so only "this connection is being read" tells that the connection is busy.
   test("closeIdleConnections() from a handler leaves the connection whose read it runs in", async () => {
-    expect(await runIdleFixture({ scenario: "sweepInRead" })).toEqual({
+    expect(
+      await runIdleFixture(
+        { scenario: "sweepInRead" },
+        { scenario: "sweepInRead", chunked: true },
+        { scenario: "sweepInRead", tls: true },
+      ),
+    ).toEqual({
       stderr: "",
-      out: [{ sweptInRead: 0, sweptAfterRead: 1, closed: true }],
+      out: [
+        { sweptInRead: 0, sweptAfterRead: 1, closed: true },
+        { sweptInRead: 0, sweptAfterRead: 1, closed: true },
+        { sweptInRead: 0, sweptAfterRead: 1, closed: true },
+      ],
       exitCode: 0,
     });
   });

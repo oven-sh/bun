@@ -2,6 +2,7 @@
 // then reports what a graceful stop() or closeIdleConnections() does with it. No handler reads a request body.
 // usage: bun serve-idle-connections-fixture.ts '[{"scenario":"sweepAfterBody","chunked":true}]' '{"cert":..,"key":..}'
 // It prints the results as one JSON array, in the order of the scenarios.
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import net from "node:net";
 import tls from "node:tls";
 
@@ -15,8 +16,21 @@ const serverTls: { cert: string; key: string } = JSON.parse(process.argv[3]);
 const MAX_READ = 524288;
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+// Resolves to false when the condition does not hold in time. The servers here have an idleTimeout of 255
+// seconds, so a close that takes that long did not come from stop() or from closeIdleConnections().
 async function until(condition: () => boolean) {
-  while (!condition()) await tick();
+  const deadline = Date.now() + 2000;
+  while (!condition()) {
+    if (Date.now() > deadline) return false;
+    await tick();
+  }
+  return true;
+}
+// Whether the promise resolves in that time.
+function settles(promise: Promise<unknown>) {
+  let settled = false;
+  promise.then(() => (settled = true));
+  return until(() => settled);
 }
 // The responses that arrived in full.
 const answers = (conn: Conn) => conn.text.split("\r\n\r\nok").length - 1;
@@ -24,9 +38,12 @@ const answers = (conn: Conn) => conn.text.split("\r\n\r\nok").length - 1;
 const send = (conn: Conn, bytes: string | Buffer) =>
   new Promise<void>(resolve => conn.socket.write(bytes, () => resolve()));
 
-// The body bytes of one chunked response, from its chunk sizes.
-function chunkedBodyBytes(raw: Buffer) {
-  let at = raw.indexOf("\r\n\r\n") + 4;
+// The body bytes of one response, from its chunk sizes or from the end of its head.
+function bodyBytes(raw: Buffer) {
+  const headEnd = raw.indexOf("\r\n\r\n");
+  if (headEnd === -1) return 0;
+  let at = headEnd + 4;
+  if (!/^transfer-encoding: chunked$/im.test(raw.toString("latin1", 0, headEnd))) return raw.length - at;
   let total = 0;
   for (;;) {
     const lineEnd = raw.indexOf("\r\n", at);
@@ -40,7 +57,7 @@ function chunkedBodyBytes(raw: Buffer) {
 async function run(options: Options) {
   const held = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();
-  let streamed = 0;
+  let responseBytes = 0;
   let sweptInRead: number | undefined;
 
   const server = Bun.serve({
@@ -64,13 +81,21 @@ async function run(options: Options) {
               let written: number | Promise<number>;
               do {
                 written = controller.write(chunk);
-                streamed += chunk.length;
-              } while (typeof written === "number" && streamed < 256 * chunk.length);
+                responseBytes += chunk.length;
+              } while (typeof written === "number" && responseBytes < 256 * chunk.length);
               controller.close();
               held.resolve();
             },
           }),
         );
+      }
+      if (req.url.endsWith("/spill")) {
+        // From here on each send() takes one byte. The TLS layer accepts the whole response and keeps what the
+        // kernel did not take, so the response ends with an empty send buffer and most of its bytes not sent.
+        fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
+        responseBytes = 65536;
+        held.resolve();
+        return new Response(Buffer.alloc(responseBytes, "x"));
       }
       if (req.url.endsWith("/sweep")) {
         // The response ends before anything reads the body. That rejects this read inside the server's read of
@@ -106,25 +131,27 @@ async function run(options: Options) {
     await until(() => conn.closed);
   }
 
-  // A POST with the body bytes "a", "b" and "c". The handler answers it at the head.
-  const upload = options.chunked
-    ? {
-        head: "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n",
-        middle: "1\r\nb\r\n",
-        end: "1\r\nc\r\n0\r\n\r\n",
-      }
-    : { head: "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\na", middle: "b", end: "c" };
+  // A POST to `path` with the body bytes "a", "b" and "c", in three parts.
+  const upload = (path: string) =>
+    options.chunked
+      ? {
+          head: `POST ${path} HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n`,
+          middle: "1\r\nb\r\n",
+          end: "1\r\nc\r\n0\r\n\r\n",
+        }
+      : { head: `POST ${path} HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\na`, middle: "b", end: "c" };
 
-  // Sends the upload up to `last`. The server reads each part after the head in a read of its own, after the
-  // response.
+  // Sends an upload that the handler answers at its head, up to `last`. The server reads each part after the head
+  // in a read of its own, after the response.
   async function answeredUpload(conn: Conn, last: "head" | "middle" | "end") {
-    await send(conn, upload.head);
+    const { head, middle, end } = upload("/");
+    await send(conn, head);
     await until(() => answers(conn) === 1);
     if (last === "head") return;
-    await send(conn, upload.middle);
+    await send(conn, middle);
     await barrier();
     if (last === "middle") return;
-    await send(conn, upload.end);
+    await send(conn, end);
     await barrier();
   }
 
@@ -134,25 +161,35 @@ async function run(options: Options) {
       const conn = await dial();
       await answeredUpload(conn, "end");
       const swept = server.closeIdleConnections();
-      if (swept) await until(() => conn.closed);
-      return { swept, closed: conn.closed };
+      return { swept, closed: swept ? await until(() => conn.closed) : conn.closed };
     },
 
     async stopAfterBody() {
       const conn = await dial();
       await answeredUpload(conn, "end");
-      await server.stop();
-      await until(() => conn.closed);
-      return { stopped: true, closed: true };
+      const stopped = await settles(server.stop());
+      return { stopped, closed: stopped ? await until(() => conn.closed) : conn.closed };
     },
 
     // One read after the response, and the body has not ended. The client never sends the rest.
     async stopDuringBody() {
       const conn = await dial();
       await answeredUpload(conn, "middle");
-      await server.stop();
-      await until(() => conn.closed);
-      return { stopped: true, closed: true };
+      const stopped = await settles(server.stop());
+      return { stopped, closed: stopped ? await until(() => conn.closed) : conn.closed };
+    },
+
+    // stop() comes while the response is pending. The response then ends, and the client never sends the rest of
+    // the body.
+    async stopBeforeResponse() {
+      const conn = await dial();
+      await send(conn, upload("/hold").head);
+      await settles(held.promise);
+      const stopping = server.stop();
+      release.resolve();
+      const stopped = await settles(stopping);
+      const closed = stopped ? await until(() => conn.closed) : conn.closed;
+      return { answers: answers(conn), stopped, closed };
     },
 
     // The rest of the body takes the server two reads or more, however the bytes arrive.
@@ -163,9 +200,8 @@ async function run(options: Options) {
       await until(() => answers(conn) === 1);
       await send(conn, rest);
       await barrier();
-      await server.stop();
-      await until(() => conn.closed);
-      return { stopped: true, closed: true };
+      const stopped = await settles(server.stop());
+      return { stopped, closed: stopped ? await until(() => conn.closed) : conn.closed };
     },
 
     // Right after the response, the body has not ended. Then it ends, and a second request follows.
@@ -173,40 +209,39 @@ async function run(options: Options) {
       const conn = await dial();
       await answeredUpload(conn, "head");
       const sweptDuringBody = server.closeIdleConnections();
-      await send(conn, upload.middle + upload.end + "GET /next HTTP/1.1\r\nHost: x\r\n\r\n");
+      const { middle, end } = upload("/");
+      await send(conn, middle + end + "GET /next HTTP/1.1\r\nHost: x\r\n\r\n");
       await until(() => answers(conn) === 2 || conn.closed);
       const servedNext = answers(conn) === 2;
       const sweptAfterBody = server.closeIdleConnections();
-      if (sweptAfterBody) await until(() => conn.closed);
-      return { sweptDuringBody, servedNext, sweptAfterBody, closed: conn.closed };
+      return { sweptDuringBody, servedNext, sweptAfterBody, closed: await until(() => conn.closed) };
     },
 
     // A part of the next request's head arrives while the response is pending.
     async nextHead() {
       const conn = await dial();
       await send(conn, "GET /hold HTTP/1.1\r\nHost: x\r\n\r\n");
-      await held.promise;
+      await settles(held.promise);
       await send(conn, "GET /next HTTP/1.1\r\nHost: x\r\n");
       await barrier();
       let swept: number | undefined;
-      let stopped: Promise<void>;
+      let stopping: Promise<void>;
       if (options.stopFirst) {
-        stopped = server.stop();
+        stopping = server.stop();
         release.resolve();
         await until(() => answers(conn) === 1);
       } else {
         release.resolve();
         await until(() => answers(conn) === 1);
         swept = server.closeIdleConnections();
-        stopped = server.stop();
+        stopping = server.stop();
       }
       // The rest of the head.
       await send(conn, "\r\n");
       await until(() => answers(conn) === 2 || conn.closed);
       const servedNext = answers(conn) === 2;
-      await stopped;
-      await until(() => conn.closed);
-      return { swept, servedNext, stopped: true, closed: true };
+      const stopped = await settles(stopping);
+      return { swept, servedNext, stopped, closed: stopped ? await until(() => conn.closed) : conn.closed };
     },
 
     // The response has ended for the server, and the client has not read it.
@@ -215,15 +250,41 @@ async function run(options: Options) {
       const conn = await dial(chunk => chunks.push(chunk));
       conn.socket.pause();
       await send(conn, "GET /stream HTTP/1.1\r\nHost: x\r\n\r\n");
-      await held.promise;
+      await settles(held.promise);
       await until(() => server.pendingRequests === 0);
       const swept = server.closeIdleConnections();
-      const stopped = server.stop();
+      let stoppedBeforeRead = false;
+      const stopping = server.stop().then(() => (stoppedBeforeRead = true));
+      await tick();
+      const result = { swept, stoppedBeforeRead };
       conn.socket.resume();
       await until(() => conn.closed);
-      await stopped;
-      const bodyBytes = chunkedBodyBytes(Buffer.concat(chunks));
-      return { swept, received: bodyBytes === streamed ? "all" : `${bodyBytes} of ${streamed}`, stopped: true };
+      const received = bodyBytes(Buffer.concat(chunks));
+      return {
+        ...result,
+        received: received === responseBytes ? "all" : `${received} of ${responseBytes}`,
+        stopped: await settles(stopping),
+      };
+    },
+
+    // TLS, and a build with fault injection. The response has ended, the send buffer is empty, and the kernel has
+    // taken one byte of the ciphertext.
+    async spilledResponse() {
+      const chunks: Buffer[] = [];
+      const conn = await dial(chunk => chunks.push(chunk));
+      await send(conn, "GET /spill HTTP/1.1\r\nHost: x\r\n\r\n");
+      await settles(held.promise);
+      await until(() => server.pendingRequests === 0);
+      const swept = server.closeIdleConnections();
+      const stopping = server.stop();
+      fault.clear();
+      await until(() => conn.closed);
+      const received = bodyBytes(Buffer.concat(chunks));
+      return {
+        swept,
+        received: received === responseBytes ? "all" : `${received} of ${responseBytes}`,
+        stopped: await settles(stopping),
+      };
     },
 
     // Bun.serve answers a CONNECT like any request. What the client sends after it is not a request.
@@ -234,26 +295,27 @@ async function run(options: Options) {
       await send(conn, "x");
       await barrier();
       const swept = server.closeIdleConnections();
-      if (swept) await until(() => conn.closed);
-      return { swept, closed: conn.closed };
+      return { swept, closed: swept ? await until(() => conn.closed) : conn.closed };
     },
 
     // The handler's closeIdleConnections() runs inside the server's read of the connection, after the response
-    // ended.
+    // ended. The whole request is in that read. With chunked framing the parser has not entered the body yet.
     async sweepInRead() {
       const conn = await dial();
-      await send(conn, "POST /sweep HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello");
+      const { head, middle, end } = upload("/sweep");
+      await send(conn, head + middle + end);
       await until(() => answers(conn) === 1 && sweptInRead !== undefined);
       const sweptAfterRead = server.closeIdleConnections();
-      if (sweptAfterRead) await until(() => conn.closed);
-      return { sweptInRead, sweptAfterRead, closed: conn.closed };
+      return { sweptInRead, sweptAfterRead, closed: sweptAfterRead ? await until(() => conn.closed) : conn.closed };
     },
   };
 
-  const result = await scenarios[options.scenario]();
-  // A build that left the connection open must not keep this process alive.
-  await server.stop(true);
-  return result;
+  try {
+    return await scenarios[options.scenario]();
+  } finally {
+    // A build that left the connection open must not keep this process alive.
+    await server.stop(true);
+  }
 }
 
 const results: object[] = [];

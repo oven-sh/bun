@@ -1590,6 +1590,8 @@ pub mod rare {
     pub const TYPE_PARAMETER_MODIFIER: u32 = 1 << 8;
     /// A function has a `"use strict"` directive that does not count.
     pub const DROPPED_STRICT_DIRECTIVE: u32 = 1 << 14;
+    /// `{...a}` among the children of a JSX element.
+    pub const JSX_SPREAD_CHILD: u32 = 1 << 15;
     /// `T?`, `?T`, `T!` or `!T` as a type, outside a comment.
     pub const JSDOC_TYPE: u32 = 1 << 9;
     /// A type predicate: `a is T`, `asserts a`.

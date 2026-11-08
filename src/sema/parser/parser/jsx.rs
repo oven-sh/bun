@@ -880,6 +880,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             // The missing expression is positioned at the opening brace.
             self.add_expr(ExprKind::Missing, open, open)
         } else if self.eat(T::DotDotDot) {
+            self.f.rare_syntax |= rare::JSX_SPREAD_CHILD;
             let operand = self.jsx_expression();
             self.finish_expr(ExprKind::Spread(operand), element)
         } else {

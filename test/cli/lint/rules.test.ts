@@ -10,7 +10,10 @@ afterAll(endChildren);
 
 const env = { ...bunEnv, AGENT: "0", CLAUDECODE: undefined, GITHUB_ACTIONS: undefined };
 
-/** Returns `line:column rule message` for each report from a rule whose name starts with `prefix`, file by file. */
+/**
+ * Returns `line:column rule message` for each report from a rule whose name starts with `prefix`, file by file. With
+ * an empty prefix that's every message: a parse error has the rule `null`.
+ */
 async function lint(files: Record<string, string>, prefix: string, args: string[] = ["."]) {
   using dir = tempDir("bun-lint-rules", files);
   await using proc = spawn({
@@ -26,7 +29,7 @@ async function lint(files: Record<string, string>, prefix: string, args: string[
     JSON.parse(stdout);
   return results
     .flatMap(it => it.messages)
-    .filter(it => it.ruleId?.startsWith(prefix))
+    .filter(it => (it.ruleId ?? "").startsWith(prefix))
     .map(it => `${it.line}:${it.column} ${it.ruleId} ${it.message}`);
 }
 
@@ -104,6 +107,20 @@ test.concurrent("`>` and `}` in JSX text are parse errors, worded like espree's"
     ].map(it => `1:16 ${it}`),
   );
   expect(exitCode).toBe(1);
+});
+
+// What ESLint 10.12.0 reports. Bun runs such a file, so without a config of ESLint it's linted.
+test.concurrent("a JSX spread child is a parse error, worded like espree's, only with an ESLint config", async () => {
+  const config = `export default [{ files: ["*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`;
+  const files = { "a.jsx": "export const list = items => <ul>{/* all */ ...items}</ul>;\n" };
+  const [withConfig, withoutConfig] = await Promise.all([
+    lint({ "eslint.config.mjs": config, ...files }, ""),
+    lint(files, ""),
+  ]);
+  expect({ withConfig, withoutConfig }).toEqual({
+    withConfig: ["1:45 null Parsing error: Unexpected token ..."],
+    withoutConfig: [],
+  });
 });
 
 test.concurrent(

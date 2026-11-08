@@ -1144,6 +1144,9 @@ impl<'a, 'c> Checks<'a, 'c> {
     }
 
     fn jsx(&mut self) {
+        if self.file.has_rare_syntax(hir::rare::JSX_SPREAD_CHILD) {
+            self.jsx_spread_children();
+        }
         if self.file.language().jsx || self.file.hir.jsx.is_empty() {
             return;
         }
@@ -1154,6 +1157,23 @@ impl<'a, 'c> Checks<'a, 'c> {
             .min()
         {
             self.fail(first, "Unexpected token <");
+        }
+    }
+
+    /// `<a>{...b}</a>`: acorn-jsx expects an expression after the `{`. Without a config of ESLint there's no parser to
+    /// match, and Bun runs such a file.
+    #[cold]
+    fn jsx_spread_children(&mut self) {
+        let file = self.file;
+        if file.language().has_no_foreign_config {
+            return;
+        }
+        let spreads = file.hir.jsx_expressions.iter().filter_map(|&(id, ..)| {
+            let child = Expr::from_raw(file, id.0);
+            (child.tag() == ExprTag::Spread).then(|| child.span().start)
+        });
+        if let Some(first) = spreads.min() {
+            self.unexpected(first);
         }
     }
 

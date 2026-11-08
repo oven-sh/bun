@@ -3206,21 +3206,12 @@ describe.concurrent("util.inspect() of a mocked module", () => {
       {
         "dep.ts": `export const a = "real-a";`,
         "other.ts": `export const a = "other-a";`,
-        "cycle.ts": `import { formatted, printed } from "./prints-cycle"; export const a = "real-a"; export { formatted, printed };`,
-        "prints-cycle.ts": `
-          import util from "node:util";
-          import * as ns from "./cycle";
-          export const printed = util.inspect(ns, { breakLength: Infinity });
-          export const formatted = util.format("%s", ns);
-        `,
         "constructor.test.ts": `
           import { expect, test, vi } from "bun:test";
           import util from "node:util";
           import * as ns from "./dep";
-          import * as cycle from "./cycle";
 
           vi.mock("./dep", () => import("./other"));
-          vi.mock("./cycle", async importOriginal => ({ ...(await importOriginal()) }));
 
           test("a mocked module whose factory did not return it", () => {
             expect(() => ns.constructor).toThrow('No "constructor" export is defined on the mock of "./dep".');
@@ -3230,6 +3221,27 @@ describe.concurrent("util.inspect() of a mocked module", () => {
             expect(() => ns.toString).toThrow('No "toString" export is defined on the mock of "./dep".');
             expect(util.format("%s", ns)).toEndWith("{ a: 'other-a' }");
           });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("prints a mocked module before its factory has returned", async () => {
+    await expectFixturesToPass(
+      {
+        "cycle.ts": `import { formatted, printed } from "./prints-cycle"; export const a = "real-a"; export { formatted, printed };`,
+        "prints-cycle.ts": `
+          import util from "node:util";
+          import * as ns from "./cycle";
+          export const printed = util.inspect(ns, { breakLength: Infinity });
+          export const formatted = util.format("%s", ns);
+        `,
+        "cycle.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import * as cycle from "./cycle";
+
+          vi.mock("./cycle", async importOriginal => ({ ...(await importOriginal()) }));
 
           test("a mocked module that is printed before its factory has returned", () => {
             expect(cycle.printed).toEndWith("{  }");
@@ -3237,7 +3249,7 @@ describe.concurrent("util.inspect() of a mocked module", () => {
           });
         `,
       },
-      2,
+      1,
     );
   });
 

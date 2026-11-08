@@ -1244,8 +1244,9 @@ function getKeys(value, showHidden: boolean) {
     // and modify this logic as needed.
     try {
       keys = ObjectKeys(value);
-    } catch (err) {
-      assert(isNativeError(err) && err.name === "ReferenceError" && isModuleNamespaceObject(value));
+    } catch {
+      // In a compiled run, Object.keys() of a module that re-exports from a mocked module calls the getters of the factory's object, which can throw any error.
+      assert(isModuleNamespaceObject(value));
       keys = ObjectGetOwnPropertyNames(value);
     }
     if (symbols.length !== 0) {

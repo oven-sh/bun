@@ -275,8 +275,13 @@ describe("top-level using in a bundle for bun", () => {
   // The bundle has to print what the files print when bun runs them as they are.
   const printsUnbundled = (entry: string, stdout: string) => async (api: BundlerTestBundleAPI) => {
     await using proc = Bun.spawn({ cmd: [bunExe(), api.join(entry)], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [unbundled] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(unbundled.trim()).toBe(stdout);
+    const [unbundled, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The report of a run that fails has its stderr.
+    expect({ stdout: unbundled.trim(), exitCode, stderr: exitCode ? stderr : "" }).toEqual({
+      stdout,
+      exitCode: 0,
+      stderr: "",
+    });
   };
   const usingInEsmWrapper = {
     "/entry.js": `
@@ -392,6 +397,29 @@ describe("top-level using in a bundle for bun", () => {
       { file: "/out/entry2.js", stdout: "dep-end\nres-disposed\nentry2 res res" },
     ],
     onAfterBundle: printsUnbundled("/entry.js", "dep-end\nres-disposed\nentry res res"),
+  });
+  // `await using` makes the wrapper an async function. A function reads "a",
+  // and the module exports "b".
+  itBundled("using/InEsmWrapperAwaitUsing", {
+    files: {
+      "/entry.js": `
+        const m = await import("./dep.js");
+        console.log(m.fn(), m.b.name);
+      `,
+      "/dep.js": `
+        await using a = { name: "a", async [Symbol.asyncDispose]() { console.log("a-disposed"); } };
+        await using b = { name: "b", async [Symbol.asyncDispose]() { console.log("b-disposed"); } };
+        export function fn() { return a.name; }
+        export { b };
+        console.log("dep-end");
+      `,
+    },
+    target: "bun",
+    run: { stdout: "dep-end\nb-disposed\na-disposed\na b" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("await using a2 = a = {");
+      return printsUnbundled("/entry.js", "dep-end\nb-disposed\na-disposed\na b")(api);
+    },
   });
   itBundled("using/InEsmWrapperDirectEval", {
     files: {

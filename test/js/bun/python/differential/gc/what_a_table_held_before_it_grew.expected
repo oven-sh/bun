@@ -1,0 +1,108 @@
+status: 0
+script: ef32817d9ac171ba
+---
+imports
+  finalized c
+  collected
+  exec() has returned
+assignments
+  finalized c
+  collected
+  exec() has returned
+1 names
+  finalized c
+  collected
+  exec() has returned
+2 names
+  finalized c
+  collected
+  exec() has returned
+3 names
+  finalized c
+  collected
+  exec() has returned
+5 names
+  finalized c
+  collected
+  exec() has returned
+8 names
+  finalized c
+  collected
+  exec() has returned
+13 names
+  finalized c
+  collected
+  exec() has returned
+21 names
+  finalized c
+  collected
+  exec() has returned
+34 names
+  finalized c
+  collected
+  exec() has returned
+55 names
+  finalized c
+  collected
+  exec() has returned
+200 names
+  finalized c
+  collected
+  exec() has returned
+a connection
+  warned ResourceWarning
+  collected
+  exec() has returned
+a connection, in a namespace that begins empty
+  warned
+  collected
+a dict
+  finalized c
+  collected
+  exec() has returned
+a dict, the value replaced
+  finalized c
+  collected
+  exec() has returned
+a dict, the key
+  finalized c
+  collected
+  exec() has returned
+a dict that gets a key that is no str
+  finalized c
+  collected
+  exec() has returned
+the attributes of an instance
+  finalized c
+  collected
+  exec() has returned
+the attributes of a class
+  finalized c
+  collected
+  exec() has returned
+a set
+  finalized c
+  collected
+  exec() has returned
+a set that shrinks
+  finalized c
+  collected
+  exec() has returned
+a deque
+  finalized c
+  collected
+  exec() has returned
+6000 3000 ['0', 0, '1', 1] ['2999', 2999] 4498500 (2999,)
+  finalized p
+  finalized shared
+  finalized q
+8 True [0, 1, 2, 3, 4]
+8 set True
+9 True [0, 1, 2, 3, 4]
+9 set True
+20 True [0, 1, 2, 3, 4]
+20 set True
+100 True [0, 1, 2, 3, 4]
+100 set True
+1000 True [0, 1, 2, 3, 4]
+1000 set True

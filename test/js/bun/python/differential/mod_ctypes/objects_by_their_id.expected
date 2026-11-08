@@ -1,0 +1,48 @@
+status: 0
+script: 6c6a6a0705386400
+---
+str True
+str True
+str True
+str True
+str True
+str True
+str True
+str True
+str True
+str True
+str True
+bytes True
+bytearray True
+int True
+int True
+int True
+float True
+NoneType True
+bool True
+tuple True
+tuple True
+list True
+dict True
+set True
+C True
+type True
+builtin_function_or_method True
+module True
+complex True
+frozenset True
+range True
+ellipsis True
+NotImplementedType True
+type True
+object True
+function True
+mappingproxy True
+list_iterator True
+memoryview True
+True
+True
+True True
+True True
+True True
+True False True

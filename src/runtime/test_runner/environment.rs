@@ -217,10 +217,7 @@ pub(crate) fn is_in_preload() -> bool {
     VirtualMachine::get().is_in_preload
 }
 
-/// Without `--isolate`, the `vi.stubGlobal()` stubs of a preload stay from file to file. Each keeps what it replaced on
-/// the global, which is only right for the names the global had at that time. So environment.ts takes them off before it
-/// changes the names of a window on the global (`on` is false), and puts them on what is there afterwards.
-/// `covered_stubs` is what the last call returned: see `vi_utils::move_stubs_of_preloads`.
+/// Takes a preload's `vi.stubGlobal()` stubs off the global (`on` is false) while environment.ts moves a window's names.
 pub(crate) fn move_replacements(
     cx: &mut JsScope<'_>,
     on: bool,

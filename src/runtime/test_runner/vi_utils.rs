@@ -87,8 +87,6 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global:
 }
 
 /// Takes the `vi.stubGlobal()` stubs of the preloads off the global, or makes them again over what it has now.
-/// `covered_stubs` is undefined, or the map that an earlier call made of it: the records of the stubs that a preload put
-/// something over, like a spy, for as long as that is not on the global.
 pub(crate) fn move_stubs_of_preloads(
     global: &JSGlobalObject,
     on: bool,

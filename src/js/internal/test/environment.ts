@@ -478,11 +478,9 @@ function putBack(key: string, original: PropertyDescriptor | undefined) {
 // and defined again a few times. So the last file's names stay until a file needs another environment.
 let left: { environment: Environment; teardown(isLoadingFileAgain: boolean): unknown; leave(): unknown } | undefined;
 
-// Without --isolate. A preload's vi.stubGlobal() stubs stay from file to file, and each keeps what it replaced on
-// globalThis. So they come off before a window's names move, and go on what globalThis has afterwards.
+// Without --isolate, a preload's vi.stubGlobal() stubs keep what they replaced, so they come off while a window's names move.
 let areReplacementsOff = false;
-// What a preload put over its stub, like a spy, stays on globalThis, and moves with the window like any other property.
-// This keeps what that stub replaced, until the spy is on globalThis again.
+// What each stub that a preload put a spy (or the like) over replaced, until that spy is on globalThis again.
 let coveredStubs: unknown;
 
 function takeOffReplacements() {

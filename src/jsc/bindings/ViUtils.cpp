@@ -142,9 +142,7 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
     RELEASE_AND_RETURN(scope, didStub(globalObject, globalObject->mockModule.globalsOfPreload, key, value));
 }
 
-// What a preload put over its stub (a spy, an assignment, fake timers) stays, and the test environment moves it like any
-// other property of globalThis. Only the record of the stub comes off. `coveredStubs` keeps it, as a descriptor of what
-// covers the stub plus `original`, until stubGlobalOfPreload finds that property on globalThis again.
+// What a preload put over its stub (a spy, fake timers) stays. The stub's record waits in `coveredStubs` until that property is on globalThis again.
 static void unstubGlobalOfPreload(Zig::GlobalObject* globalObject, JSMap* originals, JSMap*& coveredStubs, JSValue key, JSValue stub)
 {
     auto& vm = getVM(globalObject);
@@ -501,8 +499,7 @@ extern "C" void ViUtils__stubWhatPreloadStubbed(Zig::GlobalObject* globalObject)
     }
 }
 
-// The test environment is about to change the names that globalThis has. A name then moves with what the stub replaced.
-// `coveredStubs` is a JSMap or undefined. It becomes a JSMap when the first record goes into it.
+// Before the test environment moves names on globalThis. `coveredStubs` is a JSMap or undefined, and becomes a JSMap with the first record.
 extern "C" void ViUtils__unstubGlobalsOfPreload(Zig::GlobalObject* globalObject, JSC::EncodedJSValue* coveredStubs)
 {
     JSC::JSValue stubs = globalObject->mockModule.globalsOfPreload.get();

@@ -454,7 +454,7 @@ When passing an existing `Terminal` object:
 
 ## Blocking API (`Bun.spawnSync()`)
 
-`Bun.spawnSync` is the blocking equivalent of `Bun.spawn`. It supports the same inputs and parameters and returns a `SyncSubprocess` object, which differs from `Subprocess` in a few ways.
+`Bun.spawnSync` is the blocking equivalent of `Bun.spawn`. It takes the same command and most of the same options, and returns a `SyncSubprocess` object, which differs from `Subprocess` in a few ways.
 
 1. The returned object contains a `success` property that indicates whether the process exited with a zero exit code.
 2. The `stdout` and `stderr` properties are instances of `Buffer` instead of `ReadableStream`.
@@ -466,6 +466,15 @@ const proc = Bun.spawnSync(["echo", "hello"]);
 console.log(proc.stdout.toString());
 // => "hello\n"
 ```
+
+`Bun.spawnSync` blocks until the process exits. The options that depend on callbacks or streams while the process runs work only with `Bun.spawn`:
+
+| Option                        | With `Bun.spawnSync`                                                           |
+| ----------------------------- | ------------------------------------------------------------------------------ |
+| `onExit`                      | Bun never calls it. Read `exitCode` and `signalCode` from the returned object. |
+| `ipc`                         | Bun never calls it, and the subprocess gets no IPC channel.                    |
+| A `ReadableStream` as `stdin` | `Bun.spawnSync` throws a `TypeError`.                                          |
+| `terminal`                    | `Bun.spawnSync` throws a `TypeError`.                                          |
 
 As a rule of thumb, the asynchronous `Bun.spawn` API is better for HTTP servers and apps, and `Bun.spawnSync` is better for building command-line tools.
 
@@ -533,8 +542,8 @@ namespace SpawnOptions {
       exitCode: number | null,
       signalCode: NodeJS.Signals | number | null,
       error?: ErrorLike,
-    ): void | Promise<void>;
-    ipc?(message: any, subprocess: Subprocess): void;
+    ): void | Promise<void>; // Bun.spawn only (spawnSync never calls it)
+    ipc?(message: any, subprocess: Subprocess): void; // Bun.spawn only (spawnSync never calls it)
     serialization?: "json" | "advanced";
     windowsHide?: boolean;
     windowsVerbatimArguments?: boolean;
@@ -554,7 +563,7 @@ namespace SpawnOptions {
     | null // equivalent to "ignore"
     | undefined // to use default
     | BunFile
-    | ArrayBufferView
+    | ArrayBufferView // not implemented: throws a TypeError unless the view is empty
     | number;
 
   type Writable =
@@ -566,7 +575,7 @@ namespace SpawnOptions {
     | BunFile
     | ArrayBufferView
     | number
-    | ReadableStream
+    | ReadableStream // Bun.spawn only (spawnSync throws)
     | Blob
     | Response
     | Request;

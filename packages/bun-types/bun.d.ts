@@ -8193,6 +8193,9 @@ declare module "bun" {
        *
        * An alternative is `await subprocess.exited`.
        *
+       * {@link spawnSync} never calls this callback. Read `exitCode` and
+       * `signalCode` from the object it returns.
+       *
        * @example
        *
        * ```ts
@@ -8238,6 +8241,8 @@ declare module "bun" {
        *   first.
        * - Only runs when {@link ipc} is enabled and runs at most once per
        *   subprocess.
+       * - {@link spawnSync} opens no IPC channel, so it never calls this
+       *   callback.
        * - If the child becomes a zombie (exited but not yet reaped), the IPC is
        *   already closed, and this callback will fire (or may already have
        *   fired).
@@ -8265,6 +8270,8 @@ declare module "bun" {
        * respectively. This is the same API that Node.js exposes when `child_process.fork()` is used.
        *
        * This is only compatible with processes that are other `bun` instances.
+       *
+       * {@link spawnSync} opens no IPC channel and never calls this callback.
        */
       ipc?(
         message: any,

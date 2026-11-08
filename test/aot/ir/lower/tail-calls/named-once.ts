@@ -12,11 +12,14 @@
 // CHECK-NOT: ReturnCall
 // CHECK: Return [[first]]
 // CHECK-LABEL: function {{*}}name="returnsFunction"
+// CHECK: NewClosure function=[[ofConst]]
+// CHECK-LABEL: function {{*}}name="returnsFunctionOfBranch"
 // CHECK: NewClosure function=[[unnamed]]
 // CHECK-LABEL: function {{*}}name="returnsFunctionOfVar"
-// CHECK: NewClosure function=[[named]]
+// CHECK: NewClosure function=[[ofVar]]
+// CHECK: function [[ofConst]] name="made"
 // CHECK: function [[unnamed]] module=
-// CHECK: function [[named]] name="made"
+// CHECK: function [[ofVar]] name="made"
 
 declare function call(n: number): unknown;
 declare function loose(n: number): any;
@@ -50,6 +53,11 @@ export function notTheLast(n: number) {
 
 export function returnsFunction() {
   const made = function () {};
+  return made;
+}
+
+export function returnsFunctionOfBranch(n: number) {
+  const made = n ? function () {} : null;
   return made;
 }
 

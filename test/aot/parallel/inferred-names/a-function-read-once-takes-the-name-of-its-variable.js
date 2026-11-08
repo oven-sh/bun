@@ -21,6 +21,13 @@ row("a frame", () => { const q = () => frame(new Error()); const top = q(); retu
 row("an instance", () => { const Q = class {}; return new Q().constructor.name; });
 row("a bound function", () => { const q = () => {}; return q.bind(null).name; });
 
+// The `return` behind the declaration reads the variable and nothing else.
+row("a returned function", () => nameOf((() => { const q = function () {}; return q; })()));
+row("a returned arrow", () => nameOf((() => { let q = () => {}; return q; })()));
+row("a returned class", () => nameOf((() => { const Q = class {}; return Q; })()));
+row("a returned function behind a second variable", () => nameOf((() => { const a = function () {}; const b = a; return b; })()));
+row("a returned function of a branch", () => nameOf((() => { const q = row ? function () {} : 0; return q; })()));
+
 // A read in a place that names a function gives no second name.
 row("a property", () => { const q = () => {}; const o = { k: q }; return o.k.name; });
 row("an assignment", () => { let sink; const q = () => {}; sink = q; return sink.name; });

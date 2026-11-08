@@ -2,8 +2,8 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingStability, Decl, SymbolId};
 use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{
-    ClassId, ExprId, ExprKind, Flags, FnBody, FnId, IdList, NodeData, PatId, PatKind, StmtId,
-    StmtKind, VarDeclId, VarKind,
+    ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, IdList, NodeData, PatId, PatKind,
+    StmtId, StmtKind, VarDeclId, VarKind,
 };
 use bun_sema::program::Sym;
 use smallvec::SmallVec;
@@ -36,6 +36,22 @@ impl FileLowering<'_, '_, '_, '_> {
                 Some(symbol)
             }
             _ => None,
+        }
+    }
+
+    /// Whether plain Bun leaves the `let` or `const` of `initializer` in front of a `return` of its name, because the declaration gives the `name`.
+    fn is_named_by_its_declaration(&mut self, initializer: ExprId) -> bool {
+        let hir = self.hir;
+        match hir[initializer].kind {
+            ExprKind::Fn(function) => match hir[function].kind {
+                FnKind::Arrow => true,
+                FnKind::Expr => hir[function].name.is_none(),
+                _ => false,
+            },
+            ExprKind::Class(class) => {
+                hir[class].name.is_none() || self.has_standard_class_decorators(class)
+            }
+            _ => false,
         }
     }
 
@@ -98,7 +114,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let (hir, bound) = (self.hir, self.bound);
         let initializer = self.skip_type_syntax(hir[first].init);
         if matches!(hir[initializer].kind, ExprKind::Ident(_))
-            || self.is_class_named_by_its_declaration(initializer)
+            || self.is_named_by_its_declaration(initializer)
         {
             return None;
         }

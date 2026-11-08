@@ -2094,6 +2094,18 @@ impl PreferOptionalChain {
                 Some(last_operand) => cx.state.compare_nodes(last_operand.compared_name, last_validated.compared_name),
             };
             match result {
+                // `foo === undefined || foo.bar === null` doesn't merge to `foo?.bar === null`: for an undefined `foo`
+                // the chain is true and `undefined === null` isn't. A pair `=== null || === undefined` merges to
+                // `== null`, which is fine. tsgolint decides this by type, in `validateOrChainForReporting` above.
+                Subset
+                    if !is_oxlint
+                        && operator == BinOp::Or
+                        && operand.comparison_type == T::StrictEqualNull
+                        && !operand.has_complementary_check
+                        && sub_chain.operands.iter().any(|it| it.comparison_type == T::StrictEqualUndefined) =>
+                {
+                    self.maybe_report_then_reset(cx, node, operator, &mut sub_chain, validated_operands);
+                }
                 Subset => sub_chain.push(operand),
                 Invalid => {
                     let was_chain =

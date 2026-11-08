@@ -3480,9 +3480,11 @@ __attribute__((minsize)) static JSValue replaceProperty(Zig::GlobalObject* globa
         if (property.isOwn) {
             property.value = env->get(globalObject, propertyKey);
             RETURN_IF_EXCEPTION(scope, {});
-            // TZ is an own accessor of process.env even when the variable is not set. Deleting it puts the zone back.
-            if (property.value.isUndefined())
-                property.isOwn = false;
+            // process.env holds strings. Its accessor for an unset TZ reads undefined: the variable does not exist, as in Node.
+            if (property.value.isUndefined()) {
+                throwVMError(globalObject, scope, makeString("Property `"_s, keyForMessage, "` does not exist in the provided object"_s));
+                return {};
+            }
         }
     }
 

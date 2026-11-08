@@ -299,11 +299,7 @@ const tests: Record<Kind, typeof common> = {
 };
 
 const combinations = roads.length * turns.length * loops.length * places.length * elsewhere.length * tests.value.length;
-const laidOut = [[], ["--aot-limit=MaxWarmCodeValues:1"], ["--aot-heat=everything-is-hot"]];
-export const programs = laidOut.length * combinations;
-
-/** The build flags of the program with that index. */
-export const flagsOf = (index: number): string[] => laidOut[Math.floor(index / combinations)];
+export const programs = combinations;
 
 function caseOf(thing: Thing, position: number, combination: number): string {
   const take = <T>(from: T[]): T => {

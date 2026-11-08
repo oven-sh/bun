@@ -5,7 +5,7 @@
 import { expect } from "bun:test";
 import { readFileSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { join, sep } from "path";
+import { dirname, join, sep } from "path";
 import { built, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
@@ -126,7 +126,7 @@ const pattern = (text: string) => text.replace(/[\\$.]/g, "\\$&");
 // What plain Bun prints, with the build's folder replaced by the root of the executable's own files.
 const inExecutable = (text: string, app: string) =>
   text
-    .replaceAll(join(app, "..", "above.ts"), () => under("_.._", "above.ts"))
+    .replaceAll(join(app, "..", "above.ts"), () => [dirname(root), "_.._", "_.._", "above.ts"].join(sep))
     .replaceAll(app, () => root)
     .replaceAll(JSON.stringify(app).slice(1, -1), () => JSON.stringify(root).slice(1, -1));
 

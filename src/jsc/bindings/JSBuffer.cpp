@@ -1973,8 +1973,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
                 if (outer->buffer == castedThis)
                     return JSValue::encode(jsNontrivialString(vm, "[Circular]"_s));
             }
-            const BufferBeingInspected inspected { castedThis, s_bufferBeingInspected };
-            SetForScope innermost(s_bufferBeingInspected, &inspected);
+            const BufferBeingInspected thisBuffer { castedThis, s_bufferBeingInspected };
 
             any = true;
             if (data.size() > 0) {
@@ -1988,6 +1987,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
                 result.append(": "_s);
                 auto value = castedThis->get(globalObject, ident);
                 RETURN_IF_EXCEPTION(scope, {});
+                // Not around the read above: a getter that prints this Buffer starts a print of its own.
+                SetForScope whileTheValueIsPrinted(s_bufferBeingInspected, &thisBuffer);
                 auto inspected = Bun__inspect_singleline_show_hidden(globalObject, value, showHidden).transferToWTFString();
                 RETURN_IF_EXCEPTION(scope, {});
                 result.append(inspected);

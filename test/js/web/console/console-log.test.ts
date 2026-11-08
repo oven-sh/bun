@@ -517,6 +517,11 @@ describe("non-enumerable keys", () => {
         const inAValue = Buffer.from("b");
         inAValue.holder = { back: inAValue };
         console.log(inAValue);
+        // A getter that prints its Buffer starts a print of its own, which is no way back.
+        let printed = false;
+        const printsItself = Buffer.from("c");
+        Object.defineProperty(printsItself, "hex", { get() { if (!printed) { printed = true; console.log(this); } return "63"; }, enumerable: true });
+        console.log(printsItself);
         Object.prototype.showHidden = true;
         console.log(buf);`),
     ).toEqual({
@@ -527,6 +532,8 @@ describe("non-enumerable keys", () => {
         "<Buffer 61, self: [Circular]>",
         "<Buffer 61, self: [Circular]>",
         "<Buffer 62, holder: { back: [Circular] }>",
+        `<Buffer 63, hex: "63">`,
+        `<Buffer 63, hex: "63">`,
         "<Buffer 61 62, prop: { shown: 1 }>",
         "",
       ].join("\n"),

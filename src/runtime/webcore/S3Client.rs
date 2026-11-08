@@ -200,6 +200,20 @@ where
             writer.write_str("\n")?;
         }
 
+        if credentials.sse_customer_key.is_some() {
+            formatter.write_indent(writer)?;
+            writer.write_str(pfmt!("<r>sse<d>:<r> ", ENABLE_ANSI_COLORS))?;
+            writer.write_str("{ ")?;
+            writer.write_str(pfmt!(
+                "type: \"<r><b>customer<r>\", algorithm: \"<r><b>AES256<r>\", key: \"<r><b>[REDACTED]<r>\"",
+                ENABLE_ANSI_COLORS
+            ))?;
+            writer.write_str(" }")?;
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+
+            writer.write_str("\n")?;
+        }
+
         if let Some(acl_value) = acl {
             formatter.write_indent(writer)?;
             writer.write_str(pfmt!("<r>acl<d>:<r> \"", ENABLE_ANSI_COLORS))?;

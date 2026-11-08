@@ -554,6 +554,31 @@ const exists = await client.exists("my-file.txt");
 // const exists = await client.file("my-file.txt").exists();
 ```
 
+### Server-side encryption with a customer key (SSE-C)
+
+To store and read objects with [SSE-C](https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerSideEncryptionCustomerKeys.html), pass the `sse` option. Bun sends the `x-amz-server-side-encryption-customer-algorithm`, `-key` and `-key-MD5` headers on every request that reads or writes an object, including multipart uploads, and signs them. The key is the 256-bit key, as 32 bytes or as the base64 of 32 bytes. Bun computes the MD5.
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={7}
+const key = crypto.getRandomValues(new Uint8Array(32));
+
+const client = new Bun.S3Client({
+  accessKeyId: "your-access-key",
+  secretAccessKey: "your-secret-key",
+  bucket: "my-bucket",
+  sse: { type: "customer", algorithm: "AES256", key },
+});
+
+await client.write("secret.txt", "Hello World!");
+const text = await client.file("secret.txt").text();
+
+// The option also works per file
+const file = client.file("other.txt", { sse: { type: "customer", key } });
+```
+
+A presigned URL for an object that uses SSE-C signs the three headers. The caller of the URL must send them. The key is never part of the URL. `new Response(s3File)` throws for such a file, because a redirected client cannot send the headers.
+
+Amazon S3 only accepts SSE-C over HTTPS.
+
 ## `S3File`
 
 Calling `file()` on an `S3Client` instance, or `s3.file()`, returns an `S3File`. Like `Bun.file()`, `S3File` instances are lazy: they don't refer to something that necessarily exists at the time of creation. That's why all the methods that don't involve network requests are fully synchronous.

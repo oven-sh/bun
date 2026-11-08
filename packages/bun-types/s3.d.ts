@@ -405,9 +405,49 @@ declare module "bun" {
     requestPayer?: boolean;
 
     /**
+     * Server-side encryption with a customer-provided key (SSE-C).
+     *
+     * When set, every request that reads or writes an object sends the
+     * `x-amz-server-side-encryption-customer-algorithm`, `-key` and `-key-MD5`
+     * headers and signs them. Presigned URLs sign the three headers too, so the
+     * caller of the URL must send them. The key itself is never put in a URL.
+     *
+     * `key` is the 256-bit key, as 32 bytes or as the base64 of 32 bytes.
+     * Amazon S3 only accepts SSE-C over HTTPS.
+     *
+     * @see https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerSideEncryptionCustomerKeys.html
+     *
+     * @example
+     * ```ts
+     * const client = new Bun.S3Client({
+     *   bucket: "my-bucket",
+     *   sse: { type: "customer", algorithm: "AES256", key: crypto.getRandomValues(new Uint8Array(32)) },
+     * });
+     * await client.write("secret.txt", "hello");
+     * const text = await client.file("secret.txt").text();
+     * ```
+     */
+    sse?: S3CustomerEncryptionOptions;
+
+    /**
      * @deprecated The size of the internal buffer in bytes. Defaults to 5 MiB. Use `partSize` and `queueSize` instead.
      */
     highWaterMark?: number;
+  }
+
+  /**
+   * Server-side encryption with a customer-provided key (SSE-C).
+   */
+  interface S3CustomerEncryptionOptions {
+    type: "customer";
+    /**
+     * The only algorithm S3 accepts for SSE-C. Defaults to `"AES256"`.
+     */
+    algorithm?: "AES256";
+    /**
+     * The 256-bit key: 32 bytes, or the base64 of 32 bytes.
+     */
+    key: Uint8Array | ArrayBuffer | string;
   }
 
   /**

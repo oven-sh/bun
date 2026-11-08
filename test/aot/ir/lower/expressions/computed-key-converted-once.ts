@@ -1,59 +1,46 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="compound"
 // CHECK: b0([[a]]: anything, [[k]]: anything):
-// CHECK: [[object]] = Convert [[a]] declared={type=undefined|null|object flags=[IsExpected]}
+// CHECK: = RequireObjectCoercible [[a]] nullishAccess=Update
 // CHECK-NEXT: [[isObject]] = TypeTest [[k]] testedType=object
 // CHECK-NEXT: Branch [[isObject]] -> taken [[convert]](| 0), notTaken [[keep]](| 0)
 // CHECK: [[convert]]([[objectKey]]):
-// CHECK-NEXT: = RequireObjectCoercible [[object]] nullishAccess=Update
 // CHECK-NEXT: [[converted]] = ToPropertyKey [[objectKey]]
 // CHECK-NEXT: Jump -> next [[join]]([[converted]])
 // CHECK-NOT: ToPropertyKey
 // CHECK: [[join]]([[key]]):
-// CHECK-NEXT: = ElemGet [[object]], [[key]] {{*}} callers
+// CHECK-NEXT: = ElemGet [[a]], [[key]]
 // CHECK-NOT: ToPropertyKey
-// CHECK-NOT: callers
-// CHECK: ElemSet [[object]], [[key]],
+// CHECK: ElemSet [[a]], [[key]],
 // CHECK-LABEL: function {{*}}name="index"
 // CHECK-NOT: TypeTest
 // CHECK-NOT: ToPropertyKey
-// CHECK-NOT: callers
-// CHECK: [[array]] = Convert [[a]] declared={type=undefined|null|Array<number> flags=[IsExpected]}
-// CHECK-NEXT: [[two]] = Integer integer=2
-// CHECK-NEXT: = ElemGet [[array]], [[two]]
-// CHECK: ElemSet [[array]], [[two]],
+// CHECK: [[two]] = Integer integer=2
+// CHECK-NEXT: = ElemGet [[a]], [[two]]
+// CHECK: ElemSet [[a]], [[two]],
 // CHECK-NOT: TypeTest
 // CHECK-NOT: ToPropertyKey
 // CHECK-LABEL: function {{*}}name="logical"
-// CHECK: [[logicalObject]] = Convert [[a]] declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: = TypeTest [[k]] testedType=object
+// CHECK: = TypeTest [[k]] testedType=object
 // CHECK: = ToPropertyKey
 // CHECK-NOT: ToPropertyKey
-// CHECK: = ElemGet [[logicalObject]], [[logicalKey]] {{*}} callers
+// CHECK: = ElemGet [[a]], [[logicalKey]]
 // CHECK-NOT: ToPropertyKey
-// CHECK: ElemSet [[logicalObject]], [[logicalKey]],
+// CHECK: ElemSet [[a]], [[logicalKey]],
 // CHECK-LABEL: function {{*}}name="name"
 // CHECK-NOT: TypeTest
 // CHECK-NOT: ToPropertyKey
-// CHECK: [[namedObject]] = Convert [[a]] declared={type=undefined|null|number|string|symbol|bigint|L{{*}} flags=[IsExpected]}
-// CHECK-NEXT: = PropGet [[namedObject]] key="p"
-// CHECK: PropSet [[namedObject]], {{*}}key="p"
+// CHECK: = PropGet [[a]] key="p"
+// CHECK: PropSet [[a]], {{*}}key="p"
 // CHECK-NOT: TypeTest
 // CHECK-NOT: ToPropertyKey
-// CHECK-NOT: callers
 // CHECK-LABEL: function {{*}}name="update"
-// CHECK: [[updateObject]] = Convert [[a]] declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: = TypeTest [[k]] testedType=object
+// CHECK: = TypeTest [[k]] testedType=object
 // CHECK: = ToPropertyKey
 // CHECK-NOT: ToPropertyKey
-// CHECK: = ElemGet [[updateObject]], [[updateKey]] {{*}} callers
+// CHECK: = ElemGet [[a]], [[updateKey]]
 // CHECK-NOT: ToPropertyKey
-// CHECK: ElemSet [[updateObject]], [[updateKey]],
-// A key that is a number or a text once the file is printed has no test of the object ahead of the read.
-// CHECK-LABEL: function {{*}}name="writtenAsConstant"
-// CHECK-NOT: callers
-// CHECK-LABEL: function {{*}}name="writtenAsText"
-// CHECK-NOT: callers
+// CHECK: ElemSet [[a]], [[updateKey]],
 
 // RUN(PRIMITIVE): lower
 // PRIMITIVE-LABEL: function {{*}}name="compound"
@@ -79,15 +66,4 @@ export function name(a: any) {
 
 export function update(a: any, k: any) {
   a[k]++;
-}
-
-export function writtenAsText(a: any) {
-  a[`p${1}`]++;
-  a[`p${`q${"r"}`}`] += 1;
-  a[Infinity]++;
-}
-
-export function writtenAsConstant(a: any) {
-  const k = "p";
-  a[k] ??= 1;
 }

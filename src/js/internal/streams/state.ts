@@ -104,6 +104,7 @@ interface Internals {
         push: $Node.Readable["push"];
         resume: $Node.Readable["resume"];
         removeAllListeners: $Node.Readable["removeAllListeners"];
+        removeListener?: $Node.Readable["removeListener"];
       }
     | undefined;
   destroyMethods:
@@ -144,6 +145,8 @@ interface Internals {
     ((this: $Node.IncomingMessage, chunk: Buffer | undefined, isLast: boolean, aborted: number) => void) | undefined;
   takeRequestCloseTick: ((request: $Node.IncomingMessage) => boolean) | undefined;
   destroyEndedRequest: ((state: ReadableState, stream: $Node.Readable) => boolean) | undefined;
+  /** Only in what was compiled ahead of time. */
+  makeObjectReadable?: (highWaterMark: number) => $Node.Readable;
 }
 
 type WritableAccessorName =

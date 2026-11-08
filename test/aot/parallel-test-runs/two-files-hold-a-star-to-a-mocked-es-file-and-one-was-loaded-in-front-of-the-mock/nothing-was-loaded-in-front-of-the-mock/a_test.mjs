@@ -1,0 +1,6 @@
+import { test, vi } from "bun:test";
+test("the namespace of the barrel under the mock", async () => {
+  vi.doMock("./tools.mjs", () => ({ kept: 10, both: "mock", added: 3 }));
+  const user = await import("./user.mjs");
+  console.log("SAID", user.look());
+});

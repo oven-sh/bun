@@ -2360,12 +2360,51 @@ impl<'a> Resolver<'a> {
 
             if let Some(custom_paths) = self.custom_dir_paths {
                 bun_core::hint::cold();
-                return self.check_package_path_in_custom_dirs(
-                    custom_paths,
-                    import_path,
-                    kind,
-                    global_cache,
-                );
+                let mut relative_in_cwd = false;
+                for custom_path in custom_paths {
+                    let custom_utf8 = custom_path.to_utf8();
+                    // From each folder in its turn. From a folder on disk: the disk, as in an executable built without --aot, then what the executable
+                    // holds there. From a folder of the executable: the executable first, as for a file of it that imports.
+                    let given = custom_utf8.slice();
+                    if !bun_paths::is_absolute(given) {
+                        match self.look_from_relative_folder(
+                            given,
+                            import_path,
+                            kind,
+                            global_cache,
+                            &mut relative_in_cwd,
+                        ) {
+                            Some(answer) => return answer,
+                            None => continue,
+                        }
+                    }
+                    let is_of_executable =
+                        ::bun_options_types::standalone_path::is_bun_standalone_file_path(given);
+                    if is_of_executable
+                        && let Some(answer) =
+                            self.look_in_executable_from_given_folder(given, import_path, kind)
+                    {
+                        return answer;
+                    }
+                    let on_disk = self.folder_on_disk_of_given_folder(given);
+                    match self.check_package_path(&on_disk, import_path, kind, global_cache) {
+                        ResultUnion::Success(res) => return ResultUnion::Success(res),
+                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
+                        ResultUnion::Failure(p) => return ResultUnion::Failure(p),
+                        ResultUnion::NotFound => {}
+                    }
+                    if !is_of_executable
+                        && let Some(answer) =
+                            self.look_in_executable_from_given_folder(given, import_path, kind)
+                    {
+                        return answer;
+                    }
+                }
+                // Every folder missed. A relative folder installs only through this search, from the project of the cwd.
+                if relative_in_cwd {
+                    let cwd = self.fs_ref().top_level_dir();
+                    return self.check_package_path(cwd, import_path, kind, global_cache);
+                }
             } else {
                 match self.check_package_path(source_dir, import_path, kind, global_cache) {
                     ResultUnion::Success(res) => return ResultUnion::Success(res),
@@ -2425,65 +2464,28 @@ impl<'a> Resolver<'a> {
         Some((path, in_cwd))
     }
 
-    /// Node's search of `Module._nodeModulePaths(entry)` per `paths` entry, for a bare request.
+    /// The search from one relative folder of `paths`, which Node reads as `path.resolve(folder)`. `None`: it has no answer, and the search goes on.
     #[cold]
     #[inline(never)]
-    fn check_package_path_in_custom_dirs<'r>(
+    fn look_from_relative_folder<'r>(
         &mut self,
-        custom_paths: &[bun_core::String],
+        folder: &[u8],
         import_path: &'r [u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
-    ) -> ResultUnion<'r> {
-        let mut entry_in_cwd = false;
-        for custom_path in custom_paths {
-            let custom_utf8 = custom_path.to_utf8();
-            let entry = custom_utf8.slice();
-            if bun_paths::is_absolute(entry) {
-                // From each folder in its turn. From a folder on disk: the disk, as in an executable built without --aot, then what the executable
-                // holds there. From a folder of the executable: the executable first, as for a file of it that imports.
-                let is_of_executable =
-                    ::bun_options_types::standalone_path::is_bun_standalone_file_path(entry);
-                if is_of_executable
-                    && let Some(answer) =
-                        self.look_in_executable_from_given_folder(entry, import_path, kind)
-                {
-                    return answer;
-                }
-                let on_disk = self.folder_on_disk_of_given_folder(entry);
-                match self.check_package_path(&on_disk, import_path, kind, global_cache) {
-                    ResultUnion::NotFound => {}
-                    found => return found,
-                }
-                if !is_of_executable
-                    && let Some(answer) =
-                        self.look_in_executable_from_given_folder(entry, import_path, kind)
-                {
-                    return answer;
-                }
-                continue;
-            }
-            // A relative entry is a folder on disk, and the executable holds a package for no relative folder: the disk alone is asked.
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let Some((dir, in_cwd)) = self.custom_dir(entry, &mut buf) else {
-                continue;
-            };
-            entry_in_cwd |= in_cwd;
-            // A relative entry installs nothing, and a search under `force` always ends in an install.
-            if global_cache == GlobalCache::force {
-                continue;
-            }
-            match self.check_package_path(dir, import_path, kind, GlobalCache::disable) {
+        is_in_cwd: &mut bool,
+    ) -> Option<ResultUnion<'r>> {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let (on_disk, in_cwd) = self.custom_dir(folder, &mut buf)?;
+        *is_in_cwd |= in_cwd;
+        // A relative folder installs nothing, and a search under `force` always ends in an install.
+        if global_cache != GlobalCache::force {
+            match self.check_package_path(on_disk, import_path, kind, GlobalCache::disable) {
                 ResultUnion::NotFound => {}
-                found => return found,
+                found => return Some(found),
             }
         }
-        // Every entry missed. A relative entry installs only through this search, from the project of the cwd.
-        if entry_in_cwd {
-            let cwd = self.fs_ref().top_level_dir();
-            return self.check_package_path(cwd, import_path, kind, global_cache);
-        }
-        ResultUnion::NotFound
+        self.look_in_executable_from_given_folder(on_disk, import_path, kind)
     }
 
     pub(crate) fn check_relative_path(

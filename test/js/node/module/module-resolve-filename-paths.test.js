@@ -271,10 +271,16 @@ test("a non-string options.paths entry throws the error of path.resolve(entry)",
     expect([
       errorOf(() => Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: [dir, null] })),
       errorOf(() => require.resolve("resolve-test-pkg", { paths: [dir, null] })),
-      // The request can be an object that converts to a string, or an absolute path.
-      errorOf(() => Module._resolveFilename(new String("resolve-test-pkg"), fakeParent, false, { paths: [0] })),
+      // An absolute request does not use the entries. Node checks them all the same.
       errorOf(() => Module._resolveFilename(join(dir, "target.js"), fakeParent, false, { paths: [dir, dir, 5] })),
-    ]).toEqual([invalid("null"), invalid("null"), invalid("type number (0)"), invalid("type number (5)")]);
+    ]).toEqual([invalid("null"), invalid("null"), invalid("type number (5)")]);
+
+    // A request object that converts to a string gets no path either. Node 26.12 names the request
+    // in the message, and Node 26.3 names the entry, so only the code is the same.
+    const request = new String("resolve-test-pkg");
+    expect(errorOf(() => Module._resolveFilename(request, fakeParent, false, { paths: [0] })).split(":")[0]).toBe(
+      "ERR_INVALID_ARG_TYPE",
+    );
   } finally {
     cleanup();
   }

@@ -997,6 +997,16 @@ describe("junit reporter", () => {
           const missing = await import("./nowhere").catch(error => error);
           throw new AggregateError([new AggregateError([missing], "inner"), new TypeError("after")], "outer");
         `,
+        "no-message.test.js": `
+          const missing = await import("./nowhere").catch(error => error);
+          throw new AggregateError([new TypeError(), missing], "outer");
+        `,
+        "no-name.test.js": `
+          const missing = await import("./nowhere").catch(error => error);
+          const error = new Error();
+          error.name = "";
+          throw new AggregateError([error, missing], "outer");
+        `,
         "describe.test.js": `
           import { describe } from "bun:test";
           describe("group", async () => {
@@ -1032,6 +1042,9 @@ describe("junit reporter", () => {
         "nested.test.js": [
           unhandled({ type: "TypeError", message: "after", errors: [cannotFind, "TypeError: after"] }),
         ],
+        // The ResolveMessage does not fill in what the Error leaves empty.
+        "no-message.test.js": [unhandled({ type: "TypeError", errors: [cannotFind] })],
+        "no-name.test.js": [unhandled({ type: "Error", errors: [cannotFind] })],
         "describe.test.js": [unhandled({ ...missing, errors: [cannotFind] })],
         "twice.test.js": [
           unhandled({ ...missing, errors: [cannotFind] }),
@@ -1042,7 +1055,7 @@ describe("junit reporter", () => {
           unhandled({ type: "RangeError", message: "member", errors: ["RangeError: member"] }),
         ],
       });
-      expect({ counted, exitCode }).toEqual({ counted: 9, exitCode: 1 });
+      expect({ counted, exitCode }).toEqual({ counted: 11, exitCode: 1 });
     });
 
     it("from a preload, fails every test file", async () => {

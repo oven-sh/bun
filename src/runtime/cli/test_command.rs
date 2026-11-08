@@ -1068,7 +1068,12 @@ impl TestFailure {
     /// Fold in a `ZigException` that `print_error_instance_body` has already
     /// populated. A test can throw more than once (body, then `afterEach`);
     /// the first name/message win and every stack is appended.
-    pub(crate) fn record(slot: &mut Option<TestFailure>, exception: &jsc::ZigException<'_>) {
+    /// `names_failure`: this exception may give the name and the message, where they are still empty.
+    fn record(
+        slot: &mut Option<TestFailure>,
+        exception: &jsc::ZigException<'_>,
+        names_failure: bool,
+    ) {
         let failure = slot.get_or_insert_default();
         let name = exception.name.to_utf8();
         let raw_message = exception.message.to_utf8();
@@ -1078,14 +1083,14 @@ impl TestFailure {
         let is_assertion = strings::has_prefix_comptime(&message, b"expect(")
             && (name.slice().is_empty() || strings::eql(name.slice(), b"Error"));
 
-        if failure.name.is_empty() {
+        if names_failure && failure.name.is_empty() {
             if is_assertion {
                 failure.name.extend_from_slice(b"AssertionError");
             } else {
                 failure.name.extend_from_slice(name.slice());
             }
         }
-        if failure.message.is_empty() {
+        if names_failure && failure.message.is_empty() {
             failure.message.extend_from_slice(&message);
         }
 
@@ -1144,14 +1149,19 @@ impl TestFailure {
     }
 
     /// A module that can't be found or parsed throws a `ResolveMessage` or a `BuildMessage`, alone or as members of an
-    /// `AggregateError`. They are printed as log messages, with no `ZigException`.
+    /// `AggregateError`. They are printed as log messages, with no `ZigException`. `names_failure`: as for `record`.
     #[optimize(size)]
-    fn record_log_message(slot: &mut Option<TestFailure>, class: &[u8], msg: &bun_ast::Msg) {
+    fn record_log_message(
+        slot: &mut Option<TestFailure>,
+        class: &[u8],
+        msg: &bun_ast::Msg,
+        names_failure: bool,
+    ) {
         let failure = slot.get_or_insert_default();
-        if failure.name.is_empty() {
+        if names_failure && failure.name.is_empty() {
             failure.name.extend_from_slice(class);
         }
-        if failure.message.is_empty() {
+        if names_failure && failure.message.is_empty() {
             failure.message.extend_from_slice(&msg.data.text);
         }
         if !failure.body.is_empty() {
@@ -1174,18 +1184,28 @@ enum Headline {
 
 /// What the error printer writes to while `BunTest::on_uncaught_exception` prints one error.
 pub(crate) struct FailureCapture {
-    /// The running sequence's `failure` or a local of `on_uncaught_exception`. Both outlive the capture.
+    /// The running sequence's `failure` or a local of `on_uncaught_exception`.
     slot: *mut Option<TestFailure>,
-    /// What gave the failure its name and message, when it was an error of this report.
+    /// The highest rank among the errors of this report so far.
     headline: Option<Headline>,
 }
 
 impl FailureCapture {
-    /// `slot` has to stay valid for as long as the capture is in use.
-    pub(crate) fn new(slot: *mut Option<TestFailure>) -> Self {
+    /// # Safety
+    /// `slot` must be valid until the capture is dropped, with no reference to it held across a call of the error
+    /// printer.
+    pub(crate) unsafe fn new(slot: *mut Option<TestFailure>) -> Self {
         Self {
             slot,
             headline: None,
+        }
+    }
+
+    /// The error was an uncaught exception or an unhandled rejection while a test was running.
+    pub(crate) fn mark_uncaught(&self) {
+        // SAFETY: per `new`. The error printer has returned.
+        if let Some(failure) = unsafe { &mut *self.slot } {
+            failure.uncaught = true;
         }
     }
 
@@ -1195,7 +1215,8 @@ impl FailureCapture {
         // SAFETY: `ctx` is the `FailureCapture` that `on_uncaught_exception` installed for the duration of one
         // `print_error` call; single-threaded, no other borrow live.
         let this = unsafe { &mut *ctx.cast::<FailureCapture>() };
-        // SAFETY: see `slot`. Only this thunk reads or writes the slot while the error prints.
+        // SAFETY: per `new`. This `&mut` ends with the call, which runs no JS. A report that starts inside this
+        // print has its own capture, which can write the same slot between two calls of this one.
         let slot = unsafe { &mut *this.slot };
         let rank = match printed {
             PrintedError::Exception(_) => Headline::Exception,
@@ -1207,23 +1228,32 @@ impl FailureCapture {
                 }
             }
         };
-        match slot.as_mut() {
-            Some(failure) if !failure.name.is_empty() || !failure.message.is_empty() => {
-                if this.headline.is_some_and(|held| held < rank) {
-                    failure.name.clear();
-                    failure.message.clear();
-                    this.headline = Some(rank);
-                }
-            }
-            _ => this.headline = Some(rank),
-        }
+        let failure = slot.get_or_insert_default();
+        // A name or message that an earlier report gave is never replaced.
+        let held = *this.headline.get_or_insert(
+            if failure.name.is_empty() && failure.message.is_empty() {
+                rank
+            } else {
+                Headline::Exception
+            },
+        );
+        let names_failure = if held < rank {
+            failure.name.clear();
+            failure.message.clear();
+            this.headline = Some(rank);
+            true
+        } else {
+            held == rank
+        };
         match printed {
-            PrintedError::Exception(exception) => TestFailure::record(slot, exception),
+            PrintedError::Exception(exception) => {
+                TestFailure::record(slot, exception, names_failure)
+            }
             PrintedError::BuildMessage(msg) => {
-                TestFailure::record_log_message(slot, b"BuildMessage", msg)
+                TestFailure::record_log_message(slot, b"BuildMessage", msg, names_failure)
             }
             PrintedError::ResolveMessage(msg) => {
-                TestFailure::record_log_message(slot, b"ResolveMessage", msg)
+                TestFailure::record_log_message(slot, b"ResolveMessage", msg, names_failure)
             }
         }
     }

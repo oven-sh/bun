@@ -1607,7 +1607,6 @@ impl BunTest {
                 | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
         );
 
-        let is_reporting_uncaught = self.is_reporting_uncaught;
         let mut unhandled_failure: Option<TestFailure> = None;
         let mut capture: Option<FailureCapture> = 'capture: {
             let Some(reporter) = self.reporter else {
@@ -1619,18 +1618,13 @@ impl BunTest {
             if !reporter.jest.test_options.reporters.junit {
                 None
             } else if is_unhandled {
-                Some(FailureCapture::new(&raw mut unhandled_failure))
+                // SAFETY: `unhandled_failure` outlives `capture`, and is next read after the print.
+                Some(unsafe { FailureCapture::new(&raw mut unhandled_failure) })
             } else {
                 self.execution
                     .get_current_and_valid_execution_sequence(user_data)
-                    .map(|(sequence, _)| {
-                        // Before the print, so that it holds whatever the printer reports of the error.
-                        if is_reporting_uncaught {
-                            sequence.failure.get_or_insert_default().uncaught = true;
-                        }
-                        // `sequence.failure` is in `execution.sequences`, a boxed slice that lives until the file is done.
-                        FailureCapture::new(&raw mut sequence.failure)
-                    })
+                    // SAFETY: `sequence.failure` is in `execution.sequences`, a boxed slice that lives until the file is done.
+                    .map(|(sequence, _)| unsafe { FailureCapture::new(&raw mut sequence.failure) })
             }
         };
 
@@ -1658,11 +1652,15 @@ impl BunTest {
         print_error(vm, global_this, exception, None);
         (vm.on_print_error, vm.on_print_error_ctx) = outer_capture;
 
-        if is_unhandled && capture.is_some() {
-            // The error is counted above, so it is recorded, with or without what the printer reported of it.
-            // SAFETY: `capture` is `Some`, so the reporter is; the same provenance as above.
-            unsafe { &mut *self.reporter.unwrap().as_ptr() }
-                .record_unhandled_error(self.file_id, unhandled_failure);
+        if let Some(capture) = &capture {
+            if is_unhandled {
+                // The error is counted above, so it is recorded, with or without what the printer reported of it.
+                // SAFETY: `capture` is `Some`, so the reporter is; the same provenance as above.
+                unsafe { &mut *self.reporter.unwrap().as_ptr() }
+                    .record_unhandled_error(self.file_id, unhandled_failure);
+            } else if self.is_reporting_uncaught {
+                capture.mark_uncaught();
+            }
         }
 
         if is_unhandled {

@@ -44,11 +44,10 @@ const withoutAnswersOfImage = (told: string[]) =>
   told.map(line => {
     const order = line.split(":")[0];
     if (!isAnsweredByImageWithDefault(order)) return line;
-    // What the imports before the mock got is compared still.
-    const importsBeforeMock = [...order.split("b")[0]].filter(step => step === "i").length;
+    // What the imports got, before and after the mock, is compared still.
     return line
       .split(" ")
-      .slice(0, 2 + importsBeforeMock)
+      .filter((answer, index) => index < 2 || /^[iI]=/.test(answer))
       .join(" ");
   });
 

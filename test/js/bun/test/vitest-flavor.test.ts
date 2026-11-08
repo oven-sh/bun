@@ -2838,22 +2838,6 @@ describe.concurrent("a callback that throws synchronously", () => {
           queueMicrotask(() => { throw new Error("thrown by a job of an async callback"); });
           skip();
         });
-        test("is skipped by a job", ({ skip }) => {
-          queueMicrotask(() => skip());
-          throw new Error("hidden");
-        });
-        test.fails("is skipped by a job and is expected to fail", ({ skip }) => {
-          queueMicrotask(() => skip());
-          throw new Error("expected");
-        });
-        test("skips again after a job got what skip() threw", ({ skip }) => {
-          try {
-            skip();
-          } catch (error) {
-            queueMicrotask(() => { throw error; });
-          }
-          skip();
-        });
         test.fails("is expected to fail", () => {
           queueMicrotask(() => { throw new Error("thrown by a job of test.fails"); });
           throw new Error("expected");
@@ -2870,9 +2854,6 @@ describe.concurrent("a callback that throws synchronously", () => {
       results: [
         "(skip) skips",
         "(skip) skips in an async callback",
-        "(skip) is skipped by a job",
-        "(skip) is skipped by a job and is expected to fail",
-        "(skip) skips again after a job got what skip() threw",
         "(pass) is expected to fail",
         "(pass) the next test",
       ],
@@ -2883,6 +2864,66 @@ describe.concurrent("a callback that throws synchronously", () => {
       ],
       betweenTests: 3,
       exitCode: 1,
+    });
+  });
+
+  // Every skip() of a file throws the same error. Outside the callback of its test it can only reach the runner unhandled.
+  test("what skip() threw is not an error of its test, and not of a test that runs later", async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe } from "vitest";
+        test("is skipped by a job", ({ skip }) => {
+          queueMicrotask(() => skip());
+          throw new Error("hidden");
+        });
+        test.fails("is skipped by a job and is expected to fail", ({ skip }) => {
+          queueMicrotask(() => skip());
+          throw new Error("expected");
+        });
+        test("skips again after a job got what skip() threw", ({ skip }) => {
+          try {
+            skip();
+          } catch (error) {
+            queueMicrotask(() => {
+              console.log("a job throws what skip() threw");
+              throw error;
+            });
+          }
+          skip();
+        });
+        describe.concurrent("in a concurrent group", () => {
+          test("is skipped by a job", ({ skip }) => {
+            queueMicrotask(() => skip());
+            throw new Error("hidden");
+          });
+          test("waits", async () => {
+            await new Promise(resolve => setImmediate(resolve));
+          });
+        });
+        test("is skipped after a wait by a call that it does not await", async ({ skip }) => {
+          const skipsAfterAWait = async () => {
+            await new Promise(resolve => setImmediate(resolve));
+            skip();
+          };
+          skipsAfterAWait();
+          await new Promise(resolve => setImmediate(resolve));
+        });
+        test("the next test", () => {});
+      `,
+    });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: ["a job throws what skip() threw"],
+      results: [
+        "(skip) is skipped by a job",
+        "(skip) is skipped by a job and is expected to fail",
+        "(skip) skips again after a job got what skip() threw",
+        "(skip) in a concurrent group > is skipped by a job",
+        "(pass) in a concurrent group > waits",
+        "(skip) is skipped after a wait by a call that it does not await",
+        "(pass) the next test",
+      ],
+      errors: [],
+      exitCode: 0,
     });
   });
 

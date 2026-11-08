@@ -97,6 +97,8 @@ pub(crate) struct Execution {
     /// The entry whose callback is on the stack, which `get_current_state_data()` can't name in a concurrent group.
     /// Cleared before the call's microtasks drain, because those can resume other tests in the group.
     pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
+    /// What `skip()` of a test context throws. One per file, so `is_skip_error` knows it wherever it surfaces.
+    skip_error: Option<Strong>,
 }
 
 pub(crate) struct ConcurrentGroup {
@@ -169,8 +171,6 @@ pub(crate) struct ExecutionSequence {
     pub(crate) expect_assertions: ExpectAssertions,
     pub(crate) maybe_skip: bool,
     pub(crate) context: Option<Strong>,
-    /// What `skip()` of the context threw to end this attempt.
-    pub(crate) skip_error: Option<Strong>,
     /// Matchers the active entry called that still wait on a promise. The entry can't end until they've run.
     pub(crate) pending_matchers: u32,
     /// The active entry's callback is done, and only `pending_matchers` keeps the entry open.
@@ -205,7 +205,6 @@ impl ExecutionSequence {
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
             context: None,
-            skip_error: None,
             pending_matchers: 0,
             callback_done: false,
             counted_snapshots: Vec::new(),
@@ -228,10 +227,9 @@ impl ExecutionSequence {
         ScopeMode::Normal
     }
 
-    pub(crate) fn is_skip_error(&self, value: JSValue) -> bool {
-        self.skip_error
-            .as_ref()
-            .is_some_and(|error| value == error.get() || value.to_error() == Some(error.get()))
+    /// The test called `skip()` of its context, so it hides what its callbacks throw.
+    pub(crate) fn called_skip(&self) -> bool {
+        self.result == Result::Skip && self.context.is_some()
     }
 
     pub(crate) fn context(
@@ -434,7 +432,23 @@ impl Execution {
             sequences: Box::default(),
             group_index: 0,
             on_stack: core::cell::Cell::new(None),
+            skip_error: None,
         }
+    }
+
+    pub(crate) fn skip_error(&mut self, global: &JSGlobalObject) -> JSValue {
+        self.skip_error
+            .get_or_insert_with(|| {
+                let error = global.create_error_instance(format_args!("test is skipped; abort execution"));
+                Strong::create(error, global)
+            })
+            .get()
+    }
+
+    pub(crate) fn is_skip_error(&self, value: JSValue) -> bool {
+        self.skip_error
+            .as_ref()
+            .is_some_and(|error| value == error.get() || value.to_error() == Some(error.get()))
     }
 
     // `groups` / `sequences` are `Box<[T]>` and drop automatically — no explicit Drop impl needed.
@@ -722,7 +736,6 @@ impl Execution {
             // Only report the final result after all retries/repeats are done
             Execution::on_sequence_completed(buntest, sequence);
             sequence.context = None;
-            sequence.skip_error = None;
 
             // No more retries or repeats; mark sequence as complete
             // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.
@@ -943,7 +956,7 @@ impl Execution {
         };
 
         sequence.maybe_skip = true;
-        if sequence.result == Result::Skip && sequence.context.is_some() {
+        if sequence.called_skip() {
             // Vitest reports a test that called `skip()` as skipped, whatever it throws.
             return HandleUncaughtExceptionResult::HideError;
         }

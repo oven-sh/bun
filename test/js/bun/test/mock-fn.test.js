@@ -4458,21 +4458,23 @@ if (isBun) {
 
       test.each(flavors)("%s: stays what it is, unless the test changes it", (_, isVitest, fn, spyOn) => {
         const mocks = () => [fn(), fn(Date), spyOn({ key: three() }, "key")];
+        const steps = {
+          "mockImplementation()": mocked => mocked.mockImplementation((a, b) => {}),
+          "mockClear()": mocked => mocked.mockClear(),
+          "mockReset()": mocked => mocked.mockReset(),
+          "mockRestore()": mocked => mocked.mockRestore(),
+        };
+        const afterEachStep = mocked =>
+          Object.fromEntries(Object.entries(steps).map(([name, step]) => (step(mocked), [name, mocked.length])));
         for (const mocked of mocks()) {
-          const length = mocked.length;
-          mocked.mockImplementation((a, b) => {});
-          mocked.mockReset();
-          mocked.mockRestore();
-          expect(mocked.length).toBe(length);
+          const { length } = mocked;
+          expect(afterEachStep(mocked)).toEqual(each(steps, length));
         }
         // New mocks, so that the spy is still in place when the test restores it.
         for (const mocked of mocks()) {
           if (isVitest) {
             mocked.length = 11;
-            mocked.mockClear();
-            mocked.mockReset();
-            mocked.mockRestore();
-            expect(mocked.length).toBe(11);
+            expect(afterEachStep(mocked)).toEqual(each(steps, 11));
           } else {
             expect(() => {
               mocked.length = 11;

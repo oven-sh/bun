@@ -2751,6 +2751,78 @@ describe.concurrent("a repeated resolution", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Main keeps the NODE_PATH of process start. #47589 makes the call change what the resolver searches.
+  test("is what the resolver answers after Module._initPaths()", async () => {
+    using dir = tempDir("repeated-resolution-init-paths", {
+      "libS/pkg/index.js": `module.exports = "libS";`,
+      "libA/pkg/index.js": `module.exports = "libA";`,
+      "app/main.cjs": `
+        const path = require("node:path");
+        const repeated = () => require.resolve("pkg");
+        // A specifier with a query is never kept, so the resolver answers this one.
+        const resolver = () => require.resolve("pkg?resolver").replace("?resolver", "");
+        const out = [repeated() === resolver(), repeated() === resolver(), repeated() === resolver()];
+        const root = path.dirname(__dirname);
+        process.env.NODE_PATH = path.join(root, "libA") + path.delimiter + path.join(root, "libS");
+        require("node:module")._initPaths();
+        out.push(repeated() === resolver(), repeated() === resolver());
+        console.log(JSON.stringify(out));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "app/main.cjs"],
+      env: { ...bunEnv, NODE_PATH: join(String(dir), "libS") },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([true, true, true, true, true]);
+    expect(exitCode).toBe(0);
+  });
+
+  // As above, for the list that `bun test --isolate` takes back between two files.
+  test("is what the resolver answers in the next --isolate file after Module._initPaths()", async () => {
+    using dir = tempDir("repeated-resolution-isolate", {
+      "libA/pkg/index.js": `module.exports = "libA";`,
+      "same.cjs": `
+        const where = specifier => {
+          try {
+            return require.resolve(specifier).replace("?resolver", "");
+          } catch (error) {
+            return error.code;
+          }
+        };
+        // A specifier with a query is never kept, so the resolver answers the second one.
+        module.exports = () => where("pkg") === where("pkg?resolver");
+      `,
+      "a.test.cjs": `
+        const same = require("./same.cjs");
+        test("lists libA", () => {
+          process.env.NODE_PATH = require("node:path").join(__dirname, "libA");
+          require("node:module")._initPaths();
+          expect([same(), same(), same()]).toEqual([true, true, true]);
+        });
+      `,
+      "b.test.cjs": `
+        const same = require("./same.cjs");
+        test("has no list", () => {
+          expect([same(), same(), same()]).toEqual([true, true, true]);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.cjs", "./b.test.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toContain(" 2 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test("from a relative source follows process.chdir()", async () => {
     const { stdout, stderr, exitCode } = await run({
       "a/package.json": `{ "name": "a" }`,

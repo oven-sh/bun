@@ -121,6 +121,47 @@ try {
 }
 ```
 
+### `Bun.YAML.stringify()`
+
+Convert a JavaScript value into a YAML string. The arguments follow `JSON.stringify`: the second argument is reserved for a replacer, and the third is the indentation. Without it, Bun writes flow-style (single-line) YAML.
+
+```ts
+import { YAML } from "bun";
+
+YAML.stringify({ name: "app", ports: [80, 443] });
+// {name: app,ports: [80,443]}
+
+YAML.stringify({ name: "app", ports: [80, 443] }, null, 2);
+// name: app
+// ports:
+//   - 80
+//   - 443
+```
+
+#### Options
+
+The third argument can also be an object. `indent` takes the same values as the number or string form.
+
+An object that appears more than once in the input is written once with an `&anchor`, and every later occurrence is an `*alias`. This keeps object identity and lets a cyclic value round-trip. Some YAML consumers, such as OpenAPI tools, do not accept aliases. Pass `aliases: false` to write every occurrence in full. With `aliases: false`, a cyclic value throws a `TypeError`.
+
+```ts
+const schema = { type: "string" };
+const doc = { name: schema, email: schema };
+
+YAML.stringify(doc, null, 2);
+// name:
+//   &name
+//   type: string
+// email:
+//   *name
+
+YAML.stringify(doc, null, { indent: 2, aliases: false });
+// name:
+//   type: string
+// email:
+//   type: string
+```
+
 ---
 
 ## Module Import

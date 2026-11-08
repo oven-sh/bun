@@ -12,6 +12,8 @@ use bun_jsc::{
 };
 use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
 
+use super::stringify_options::{Space, StringifyOptions};
+
 pub(crate) fn stringify<'a>(
     cx: &mut JsScope<'a>,
     value: JsLocal<'a>,
@@ -74,38 +76,9 @@ struct Stringifier<'a> {
     prop_names: StringHashMap<usize>,
 
     space: Space,
-}
-
-enum Space {
-    Minified,
-    Number(u32),
-    Str(bun_core::String),
-}
-
-impl Space {
-    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
-        let space = space_value.unwrap_boxed_primitive(global)?;
-        if space.is_number() {
-            // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
-            // toInt32() wraps large values and Infinity to 0, which is wrong.
-            let num_f = space.as_number();
-            if num_f.is_nan() || num_f < 1.0 {
-                // handles NaN, -Infinity, 0, negatives
-                return Ok(Space::Minified);
-            }
-            return Ok(Space::Number(if num_f > 10.0 { 10 } else { num_f as u32 }));
-        }
-
-        if space.is_string() {
-            let str = space.to_bun_string(global)?;
-            if str.length() == 0 {
-                return Ok(Space::Minified);
-            }
-            return Ok(Space::Str(str));
-        }
-
-        Ok(Space::Minified)
-    }
+    /// With `aliases: false` a repeated object is written in full, and `known_collections` holds
+    /// only the path from the root to the object being walked, so a hit there is a cycle.
+    aliases: bool,
 }
 
 pub(crate) struct AnchorAlias {
@@ -208,6 +181,9 @@ impl<'a> Stringifier<'a> {
         // root anchor/alias
         prop_names.put(b"root", 0)?;
 
+        let options = StringifyOptions::init(global, space_value)?;
+        let aliases = options.boolean(global, "aliases")?.unwrap_or(true);
+
         Ok(Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
@@ -217,7 +193,8 @@ impl<'a> Stringifier<'a> {
             known_collection_roots,
             array_item_counter: 0,
             prop_names,
-            space: Space::init(global, space_value)?,
+            space: options.space,
+            aliases,
         })
     }
 
@@ -259,6 +236,14 @@ impl<'a> Stringifier<'a> {
 
         let object_entry = self.known_collections.get_or_put(unwrapped)?;
         if object_entry.found_existing {
+            if !self.aliases {
+                return Err(global
+                    .throw_type_error(format_args!(
+                        "YAML.stringify cannot serialize a cyclic object with aliases: false"
+                    ))
+                    .into());
+            }
+
             // this will become an alias. increment counters here because
             // now the anchor/alias is confirmed used.
 
@@ -309,25 +294,28 @@ impl<'a> Stringifier<'a> {
 
                 self.find_anchors_and_aliases(global, item, ValueOrigin::ArrayItem)?;
             }
-            return Ok(());
+        } else {
+            // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
+            let iter = JSPropertyIterator::init(
+                global,
+                unwrapped.to_object(global)?,
+                JSPropertyIteratorOptions {
+                    skip_empty_name: false,
+                    include_value: true,
+                    ..Default::default()
+                },
+            )?;
+
+            while let Some((prop_name, value)) = iter.next()? {
+                if value.is_undefined() || value.is_symbol() || value.is_function() {
+                    continue;
+                }
+                self.find_anchors_and_aliases(global, value, ValueOrigin::PropValue(&prop_name))?;
+            }
         }
 
-        // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-        let iter = JSPropertyIterator::init(
-            global,
-            unwrapped.to_object(global)?,
-            JSPropertyIteratorOptions {
-                skip_empty_name: false,
-                include_value: true,
-                ..Default::default()
-            },
-        )?;
-
-        while let Some((prop_name, value)) = iter.next()? {
-            if value.is_undefined() || value.is_symbol() || value.is_function() {
-                continue;
-            }
-            self.find_anchors_and_aliases(global, value, ValueOrigin::PropValue(&prop_name))?;
+        if !self.aliases {
+            self.known_collections.remove(&unwrapped);
         }
 
         Ok(())

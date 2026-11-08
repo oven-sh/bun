@@ -1360,6 +1360,7 @@ declare module "bun" {
      * @param replacer Reserved; must be `undefined` or `null`
      * @param space Indentation for element-only content, as in `JSON.stringify`:
      * a number of spaces (at most 10) or a string (its first 10 characters).
+     * An object here is a {@link StringifyOptions}: `{ indent: 2 }`.
      * An element with any text child is written on one line so character data
      * is unchanged.
      * @returns The XML, or `undefined` if `value` is `undefined`, a function, or a symbol
@@ -1375,8 +1376,27 @@ declare module "bun" {
      * // '<p class="x">Hi <b>!</b></p>'
      * ```
      */
-    function stringify(value: NodeInput | Document, replacer?: undefined | null, space?: string | number): string;
-    function stringify(value: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
+    function stringify(
+      value: NodeInput | Document,
+      replacer?: undefined | null,
+      space?: string | number | StringifyOptions,
+    ): string;
+    function stringify(
+      value: unknown,
+      replacer?: undefined | null,
+      space?: string | number | StringifyOptions,
+    ): string | undefined;
+
+    /**
+     * Options for {@link stringify}, passed as its third argument in place of `space`.
+     */
+    interface StringifyOptions {
+      /**
+       * A number for how many spaces each level of indentation gets, or a string used as indentation.
+       * Same meaning as the `space` argument of `JSON.stringify`.
+       */
+      indent?: number | string;
+    }
   }
 
   /**
@@ -1534,6 +1554,25 @@ declare module "bun" {
     ): unknown;
 
     /**
+     * Options for {@link stringify}, passed as its third argument in place of `space`.
+     */
+    export interface StringifyOptions {
+      /**
+       * A number for how many spaces each level of indentation gets, or a string used as indentation.
+       * Same meaning as the `space` argument of `JSON.stringify`.
+       */
+      indent?: number | string;
+      /**
+       * Whether an object that appears more than once in the input is written once with an
+       * `&anchor` and then as `*alias`. With `false`, every occurrence is written in full, and a
+       * cyclic input throws a `TypeError`.
+       *
+       * @default true
+       */
+      aliases?: boolean;
+    }
+
+    /**
      * Convert a JavaScript value into a YAML string. Strings are double quoted if they contain keywords, non-printable or
      * escaped characters, or if a YAML parser would parse them as numbers. Anchors and aliases are inferred from objects, allowing cycles.
      *
@@ -1545,6 +1584,7 @@ declare module "bun" {
      *              Without this parameter, outputs flow-style (single-line) YAML.
      *              With this parameter, outputs block-style (multi-line) YAML.
      *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
+     *              An object here is a {@link StringifyOptions}: `{ indent: 2, aliases: false }`.
      * @returns A string containing the YAML document.
      *
      * @example
@@ -1568,11 +1608,23 @@ declare module "bun" {
      * const cycle = {};
      * cycle.obj = cycle;
      * console.log(YAML.stringify(cycle, null, 2));
-     * // &1
-     * // obj: *1
+     * // &root
+     * // obj: *root
+     *
+     * // A shared object is written in full instead of as an alias
+     * const shared = { type: "string" };
+     * console.log(YAML.stringify({ a: shared, b: shared }, null, { indent: 2, aliases: false }));
+     * // a:
+     * //   type: string
+     * // b:
+     * //   type: string
      * ```
      */
-    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
+    export function stringify(
+      input: unknown,
+      replacer?: undefined | null,
+      space?: string | number | StringifyOptions,
+    ): string;
   }
 
   /**
@@ -2117,6 +2169,7 @@ declare module "bun" {
      * @param replacer Not supported.
      * @param space A number for how many spaces each level of indentation gets, or a string used as indentation.
      *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
+     *              An object here is a {@link StringifyOptions}: `{ indent: 2 }`.
      * @returns A JSON5 string, or `undefined` if the input is `undefined`, a function, or a symbol.
      *
      * @example
@@ -2133,7 +2186,22 @@ declare module "bun" {
      * // }
      * ```
      */
-    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
+    export function stringify(
+      input: unknown,
+      replacer?: undefined | null,
+      space?: string | number | StringifyOptions,
+    ): string | undefined;
+
+    /**
+     * Options for {@link stringify}, passed as its third argument in place of `space`.
+     */
+    export interface StringifyOptions {
+      /**
+       * A number for how many spaces each level of indentation gets, or a string used as indentation.
+       * Same meaning as the `space` argument of `JSON.stringify`.
+       */
+      indent?: number | string;
+    }
   }
 
   /**

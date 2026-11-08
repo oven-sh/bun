@@ -18,6 +18,8 @@ use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::xml::{self, XML};
 
+use super::stringify_options::{Space, StringifyOptions};
+
 pub(crate) fn parse<'a>(
     cx: &mut JsScope<'a>,
     input: StringOrJsBytes<'a>,
@@ -146,7 +148,7 @@ pub(crate) fn stringify<'a>(
         stack_check: StackCheck::init(),
         builder: wtf::StringBuilder::init(),
         indent: 0,
-        space: Space::init(global, space_value)?,
+        space: StringifyOptions::init(global, space_value)?.space,
         visiting: HashMap::default(),
     };
 
@@ -208,38 +210,6 @@ impl From<JsError> for StringifyError {
 }
 
 type StringifyResult<T> = Result<T, StringifyError>;
-
-enum Space {
-    Minified,
-    Number(u32),
-    Str(bun_core::String),
-}
-
-impl Space {
-    /// Same interpretation as `JSON.stringify`'s `space`.
-    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
-        let space = space_value.unwrap_boxed_primitive(global)?;
-        if space.is_number() {
-            let n = space.as_number();
-            if n.is_nan() || n < 1.0 {
-                return Ok(Space::Minified);
-            }
-            return Ok(Space::Number(if n > 10.0 { 10 } else { n as u32 }));
-        }
-        if space.is_string() {
-            let str = space.to_bun_string(global)?;
-            if str.length() == 0 {
-                return Ok(Space::Minified);
-            }
-            return Ok(Space::Str(str));
-        }
-        Ok(Space::Minified)
-    }
-
-    fn is_pretty(&self) -> bool {
-        !matches!(self, Space::Minified)
-    }
-}
 
 /// How a JS value is written as element content or an attribute value.
 enum Scalar {

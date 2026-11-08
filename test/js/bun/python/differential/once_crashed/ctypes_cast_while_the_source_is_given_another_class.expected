@@ -1,0 +1,20 @@
+status: 0
+oracle: none
+---
+--- the metaclass of the type of the result has a property __class__
+0
+dict True
+b'AAAAAAAA'
+0
+--- the class of the source has one, which acts when it is asked the second time
+True c_char_p
+dict True
+b'BBBBBBBB'
+0
+--- the source is resized there: the result points to where it was
+0
+dict True
+b'CCCCCCCC'
+0
+--- of a simple type all is as it was: the result keeps what the source keeps
+bytes True b'S'

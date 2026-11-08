@@ -423,12 +423,78 @@ fn mutabilities_of(files: &Files<'_>, name: &str, builtin: BuiltinId) -> Vec<Mut
 
 #[test]
 fn each_form_of_a_name_finds_the_file_that_the_worker_starts_from() {
-    let forms: [(&str, &str, &[&str], &[&str]); 7] = [
+    let forms: [(&str, &str, &[&str], &[&str]); 18] = [
         (
             "src/start.ts",
             r#"new Worker("./w.ts");"#,
             &["AsWritten ./w.ts"],
             &["w.ts"],
+        ),
+        (
+            "src/start.ts",
+            r#"new Worker(Bun.fileURLToPath(new URL("./w.ts", import.meta.url)));"#,
+            &["FromOwnFolder ./w.ts"],
+            &["src/w.ts"],
+        ),
+        (
+            "src/start.ts",
+            r#"const path = Bun.fileURLToPath(new URL("./w.ts", import.meta.url)); new Worker(path);"#,
+            &["FromOwnFolder ./w.ts"],
+            &["src/w.ts"],
+        ),
+        (
+            "src/start.ts",
+            r#"new Worker(Bun.fileURLToPath(import.meta.resolve("./w.ts")));"#,
+            &["FromOwnFolder ./w.ts"],
+            &["src/w.ts"],
+        ),
+        (
+            "src/start.ts",
+            r#"new Worker(Bun.pathToFileURL(import.meta.dir + "/w.ts"));"#,
+            &["Resolved(UrlObject) ./w.ts"],
+            &["src/w.ts"],
+        ),
+        (
+            "src/start.ts",
+            r#"import { Worker } from "node:worker_threads"; new Worker(Bun.fileURLToPath(new URL("./w.ts", import.meta.url)));"#,
+            &["FromOwnFolder ./w.ts"],
+            &["src/w.ts"],
+        ),
+        (
+            "src/start.ts",
+            r#"import { fileURLToPath } from "bun"; new Worker(fileURLToPath(new URL("./w.ts", import.meta.url)));"#,
+            &["FromOwnFolder ./w.ts"],
+            &["src/w.ts"],
+        ),
+        (
+            "src/start.ts",
+            r#"new Worker(URL.parse("./w.ts", import.meta.url));"#,
+            &["Resolved(UrlObject) ./w.ts"],
+            &["src/w.ts"],
+        ),
+        (
+            "src/start.ts",
+            r#"new Worker(Bun.resolveSync("./w.ts", import.meta.dir));"#,
+            &["Resolved(Path) ./w.ts"],
+            &["src/w.ts"],
+        ),
+        (
+            "src/start.ts",
+            r#"new Worker(await Bun.resolve("./w.ts", import.meta.dir));"#,
+            &["Resolved(Path) ./w.ts"],
+            &["src/w.ts"],
+        ),
+        (
+            "src/start.ts",
+            r#"new Worker(import.meta.resolveSync("./w.ts"));"#,
+            &["Resolved(Path) ./w.ts"],
+            &["src/w.ts"],
+        ),
+        (
+            "src/start.cjs",
+            r#"new Worker(require.resolve("./w.ts", { paths: [__dirname] }));"#,
+            &["Resolved(Path) ./w.ts"],
+            &["src/w.ts"],
         ),
         (
             "src/start.ts",
@@ -1448,6 +1514,58 @@ fn file_whose_path_is_written_elsewhere_counts_where_a_start_is_out_of_sight() {
             "Resolved(Url) ./lib/w.ts",
         ),
         (r#""./lib/w.ts""#, "AsWritten ./lib/w.ts"),
+        (
+            r#"Bun.fileURLToPath(new URL("./lib/w.ts", import.meta.url))"#,
+            "FromOwnFolder ./lib/w.ts",
+        ),
+        (
+            r#"Bun.pathToFileURL(import.meta.dir + "/lib/w.ts")"#,
+            "FromOwnFolder ./lib/w.ts",
+        ),
+        (
+            r#"require("bun").fileURLToPath(new URL("./lib/w.ts", import.meta.url))"#,
+            "FromOwnFolder ./lib/w.ts",
+        ),
+        (
+            r#"Bun.fileURLToPath(import.meta.resolve("./lib/w.ts"))"#,
+            "Resolved(Url) ./lib/w.ts",
+        ),
+        (
+            r#"normalize(join(import.meta.dir, "lib", "w.ts"))"#,
+            "FromOwnFolder ./lib/w.ts",
+        ),
+        (
+            r#"toNamespacedPath(join(import.meta.dir, "lib/w.ts"))"#,
+            "FromOwnFolder ./lib/w.ts",
+        ),
+        (
+            r#"URL.parse(new URL("./lib/w.ts", import.meta.url))"#,
+            "FromOwnFolder ./lib/w.ts",
+        ),
+        (
+            r#"URL.parse("./lib/w.ts", import.meta.url)"#,
+            "FromOwnFolder ./lib/w.ts",
+        ),
+        (
+            r#"Bun.resolveSync("./lib/w.ts", import.meta.dir)"#,
+            "Resolved(Path) ./lib/w.ts",
+        ),
+        (
+            r#"Bun.resolveSync("./lib/w.ts", __dirname)"#,
+            "Resolved(Path) ./lib/w.ts",
+        ),
+        (
+            r#"await Bun.resolve("./lib/w.ts", import.meta.dirname)"#,
+            "Resolved(Path) ./lib/w.ts",
+        ),
+        (
+            r#"import.meta.resolveSync("./lib/w.ts")"#,
+            "Resolved(Path) ./lib/w.ts",
+        ),
+        (
+            r#"require.resolve("./lib/w.ts", { paths: [import.meta.dir] })"#,
+            "Resolved(Path) ./lib/w.ts",
+        ),
     ];
     let pools = [
         ("new Worker(entry)", "lib/w.ts MayStartWorker"),
@@ -1456,7 +1574,7 @@ fn file_whose_path_is_written_elsewhere_counts_where_a_start_is_out_of_sight() {
     for (path, described) in paths {
         for (start, found) in pools {
             let main = format!(
-                "import {{ join, resolve }} from \"node:path\";\nimport {{ start }} from \"./pool.ts\";\nstart({path});\n"
+                "import {{ join, normalize, resolve, toNamespacedPath }} from \"node:path\";\nimport {{ start }} from \"./pool.ts\";\nstart({path});\n"
             );
             let pool = format!("export const start = (entry: string) => {start};\n");
             let project = executable(&[
@@ -1512,6 +1630,17 @@ fn own_file_counts_where_something_else_than_a_built_in_function_gets_it() {
         ("const { url } = import.meta;\nstart(url);", true),
         ("start(import.meta);", true),
         ("start(pathToFileURL(import.meta.filename).href);", true),
+        ("start(Bun.fileURLToPath(import.meta.url));", true),
+        ("start(Bun.pathToFileURL(import.meta.path).href);", true),
+        ("start(URL.parse(import.meta.url));", true),
+        ("start(normalize(import.meta.path));", true),
+        ("start(URL.parse(\"./none.ts\", import.meta.url));", false),
+        (
+            "start(Bun.resolveSync(\"./none.ts\", import.meta.dir));",
+            false,
+        ),
+        ("start(import.meta.resolveSync(\"./none.ts\"));", false),
+        ("start(Bun.file(import.meta.path));", false),
         ("Promise.resolve(import.meta.url).then(start);", true),
         (
             "start(import.meta.dir, import.meta.main, import.meta.env);",
@@ -1534,6 +1663,14 @@ fn own_file_counts_where_something_else_than_a_built_in_function_gets_it() {
             false,
         ),
         (
+            "const own = Bun.fileURLToPath(import.meta.url);\nstart(own);",
+            true,
+        ),
+        (
+            "const own = Bun.fileURLToPath(import.meta.url);\nstart(dirname(own));",
+            false,
+        ),
+        (
             "const own = import.meta.path;\nstart(own + \".map\", own.length, `${own}#made`);",
             false,
         ),
@@ -1544,7 +1681,7 @@ fn own_file_counts_where_something_else_than_a_built_in_function_gets_it() {
     ];
     for (code, is_taken) in rows {
         let job = format!(
-            "import {{ dirname }} from \"node:path\";\nimport {{ fileURLToPath, pathToFileURL }} from \"node:url\";\nimport {{ start }} from \"./pool.ts\";\n{code}\n"
+            "import {{ dirname, normalize }} from \"node:path\";\nimport {{ fileURLToPath, pathToFileURL }} from \"node:url\";\nimport {{ start }} from \"./pool.ts\";\n{code}\n"
         );
         let pool =
             "export const start = (...given: unknown[]) => new Worker(given[0] as string);\n";

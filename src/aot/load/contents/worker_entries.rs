@@ -14,7 +14,8 @@ use bun_sema::hir::{
     PropKey, PropKind, StmtId, StmtKind, UnOp,
 };
 use bun_sema::import_sites::{
-    ENCODERS, Encoder, ImportSiteKind, ImportSpecifier, ResolvedForm, is_exported,
+    ENCODERS, Encoder, FILE_CALLS, FileCall, ImportSiteKind, ImportSpecifier, ResolvedForm,
+    is_exported,
 };
 use bun_sema::program::HostModuleId;
 use bun_sema::resolve::{
@@ -72,7 +73,14 @@ struct WorkerBuiltins {
     object_url_maker: Option<BuiltinId>,
     raw_text_maker: Option<BuiltinId>,
     paths: Option<RuntimeModule>,
-    urls: Option<RuntimeModule>,
+    file_calls: [FileCallOfLibrary; FILE_CALLS.len()],
+}
+
+struct FileCallOfLibrary {
+    module: Option<RuntimeModule>,
+    member_of_global: Option<BuiltinId>,
+    name: &'static [u8],
+    call: FileCall,
 }
 
 fn worker_builtins() -> &'static WorkerBuiltins {
@@ -103,7 +111,18 @@ fn worker_builtins() -> &'static WorkerBuiltins {
             object_url_maker: object_url_maker.map(table::canonical_id),
             raw_text_maker: raw_text_maker.map(table::canonical_id),
             paths: table::module_by_specifier(b"node:path"),
-            urls: table::module_by_specifier(b"node:url"),
+            file_calls: FILE_CALLS.map(|(holder, name, call)| {
+                let mut specifiers = holder.specifiers().iter();
+                let member = (holder.global().and_then(find_global))
+                    .zip(table::find_name(name))
+                    .and_then(|(holder, name)| table::own_member(holder, name));
+                FileCallOfLibrary {
+                    module: specifiers.find_map(|it| table::module_by_specifier(it)),
+                    member_of_global: member.map(table::canonical_id),
+                    name,
+                    call,
+                }
+            }),
         }
     })
 }
@@ -201,6 +220,14 @@ fn is_plain_relative_path(text: &[u8]) -> bool {
         && !begins_with_scheme(text)
 }
 
+fn keeps_file_given(function: FileCall, sees_backslashes: Option<bool>) -> bool {
+    match function {
+        FileCall::PathOfUrl | FileCall::UrlOfPath | FileCall::Url | FileCall::SamePath => true,
+        FileCall::SamePathWithoutBackslashes => sees_backslashes == Some(false),
+        FileCall::PathFoundFromFolder | FileCall::PromiseOfPathFoundFromFolder => false,
+    }
+}
+
 pub(super) fn is_url_with_code(text: &[u8]) -> bool {
     let Some(written) = text.strip_prefix(b"data:") else {
         return false;
@@ -294,10 +321,50 @@ impl ContentsScan<'_, '_> {
         else {
             return;
         };
-        if hir[written].args.len() == 1 && is_relative_path(atoms.bytes(name)) {
+        let arguments = hir[written].args;
+        let asks_from_own_file = match arguments.len() {
+            1 => true,
+            2 if form == ResolvedForm::Path => {
+                self.lists_own_folder_as_paths(hir.id_at(arguments, 1))
+            }
+            _ => false,
+        };
+        if asks_from_own_file && is_relative_path(atoms.bytes(name)) {
             let form = WorkerNameForm::Resolved(form);
             self.add_name_written_elsewhere(call, site.specifier_node, site.specifier, form);
         }
+    }
+
+    fn lists_own_folder_as_paths(&self, options: ExprId) -> bool {
+        let hir = self.request.hir;
+        let ExprKind::Object(properties) = hir[hir.skip_type_assertions(options)].kind else {
+            return false;
+        };
+        let mut properties = properties.iter().map(|property| hir[property]);
+        let (Some(paths), None) = (properties.next(), properties.next()) else {
+            return false;
+        };
+        let ExprKind::Array(folders) = hir[hir.skip_type_assertions(paths.value)].kind else {
+            return false;
+        };
+        matches!(
+            (paths.kind, paths.key),
+            (PropKind::Init, PropKey::Name(known::paths))
+        ) && folders.len() == 1
+            && self.names_own_folder(hir.id_at(folders, 0))
+    }
+
+    fn names_own_folder(&self, expression: ExprId) -> bool {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        let expression = hir.skip_type_assertions(expression);
+        let dirname = CommonJsVariable::Dirname;
+        if matches!(hir[expression].kind, ExprKind::Ident(_)) {
+            return bound.binding(expression) == Binding::CommonJs(dirname)
+                && self.find_source_path(expression, dirname).is_some();
+        }
+        matches!(hir.member_key(expression), Some((object, MemberKey::Name(known::meta_dir | known::meta_dirname)))
+            if matches!(hir[hir.skip_type_assertions(object)].kind, ExprKind::ImportMeta))
+            && !bound.import_meta_may_be_modified()
     }
 
     pub(super) fn look_at_relative_path(&mut self, expression: ExprId, text: Atom) {
@@ -341,6 +408,9 @@ impl ContentsScan<'_, '_> {
             {
                 self.look_at_own_file_held(mention, true);
             }
+            ExprKind::Ident(known::dirname) if self.names_own_folder(mention) => {
+                self.look_at_name_found_from_own_folder(mention);
+            }
             ExprKind::ImportMeta => self.look_at_import_meta(mention),
             _ => {}
         }
@@ -362,14 +432,91 @@ impl ContentsScan<'_, '_> {
             _ => None,
         };
         match member {
+            Some((read, object, MemberKey::Name(known::url))) if object == meta => {
+                self.look_at_own_file_held(read, true);
+                self.look_at_name_joined_to_own_url(read);
+            }
             Some((
                 read,
                 object,
-                MemberKey::Name(known::url | known::meta_filename | known::path)
-                | MemberKey::Computed(_),
+                MemberKey::Name(known::meta_filename | known::path) | MemberKey::Computed(_),
             )) if object == meta => self.look_at_own_file_held(read, true),
+            Some((read, object, MemberKey::Name(known::meta_dir | known::meta_dirname)))
+                if object == meta && self.names_own_folder(read) =>
+            {
+                self.look_at_name_found_from_own_folder(read);
+            }
+            Some((read, object, MemberKey::Name(known::resolveSync))) if object == meta => {
+                self.look_at_name_found_from_own_file(read);
+            }
             Some((_, object, _)) if object == meta => {}
             _ => self.look_at_own_file_held(meta, false),
+        }
+    }
+
+    fn find_call_that_looks_from(&self, place: ExprId) -> Option<(ExprId, CallId)> {
+        let hir = self.request.hir;
+        let (made, call) = self.find_call_given(place)?;
+        let arguments = hir[call].args;
+        let is_second_of_two =
+            arguments.len() == 2 && hir.skip_type_assertions(hir.id_at(arguments, 1)) == place;
+        (is_second_of_two && matches!(hir[made].kind, ExprKind::Call(_))).then_some((made, call))
+    }
+
+    fn look_at_name_joined_to_own_url(&mut self, base: ExprId) {
+        let hir = self.request.hir;
+        let Some((made, call)) = self.find_call_that_looks_from(base) else {
+            return;
+        };
+        if self.find_file_call(hir[call].callee) == Some(FileCall::Url)
+            && let Some((name_node, name)) = self.find_file_named_by_own_url(call)
+        {
+            let name = ImportSpecifier::Constant(name);
+            let form = WorkerNameForm::FromOwnFolder;
+            self.add_name_written_elsewhere(made, name_node, name, form);
+        }
+    }
+
+    fn look_at_name_found_from_own_folder(&mut self, folder: ExprId) {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        let Some((made, call)) = self.find_call_that_looks_from(folder) else {
+            return;
+        };
+        let path = match self.find_file_call(hir[call].callee) {
+            Some(FileCall::PathFoundFromFolder) => made,
+            Some(FileCall::PromiseOfPathFoundFromFolder) => match bound.parent_of_expr(made) {
+                Parent::Expr(above) if matches!(hir[above].kind, ExprKind::Await(_)) => above,
+                _ => return,
+            },
+            _ => return,
+        };
+        self.add_name_found_by_resolver(path, hir.id_at(hir[call].args, 0));
+    }
+
+    fn look_at_name_found_from_own_file(&mut self, callee: ExprId) {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        let Parent::Expr(made) = bound.parent_of_expr(callee) else {
+            return;
+        };
+        let ExprKind::Call(call) = hir[made].kind else {
+            return;
+        };
+        let arguments = hir[call].args;
+        if hir[call].callee == callee
+            && arguments.len() == 1
+            && !bound.import_meta_may_be_modified()
+        {
+            self.add_name_found_by_resolver(made, hir.id_at(arguments, 0));
+        }
+    }
+
+    fn add_name_found_by_resolver(&mut self, path: ExprId, name_node: ExprId) {
+        let atoms = self.request.atoms;
+        let name = self.find_constant_text(name_node);
+        if let Some(name) = name.filter(|&name| is_relative_path(atoms.bytes(name))) {
+            let name = ImportSpecifier::Constant(name);
+            let form = WorkerNameForm::Resolved(ResolvedForm::Path);
+            self.add_name_written_elsewhere(path, name_node, name, form);
         }
     }
 
@@ -517,12 +664,41 @@ impl ContentsScan<'_, '_> {
 
     fn spells_same_file(&self, call: CallId) -> bool {
         let hir = self.request.hir;
-        let callee = hir.skip_type_assertions(hir[call].callee);
-        let urls = worker_builtins().urls;
-        let export = urls.and_then(|urls| self.find_export_named(callee, urls));
+        let sees_backslashes = self.input.sees_backslashes;
+        let keeps_file = |function: FileCall| keeps_file_given(function, sees_backslashes);
         hir[call].args.len() == 1
-            && (matches!(export, Some(known::fileURLToPath | known::pathToFileURL))
+            && (self
+                .find_file_call(hir[call].callee)
+                .is_some_and(keeps_file)
                 || self.find_constructor_called(call) == Some(Constructor::Url))
+    }
+
+    fn find_file_call(&self, callee: ExprId) -> Option<FileCall> {
+        let &FinishedFile { hir, atoms, .. } = self.request;
+        let callee = hir.skip_type_assertions(callee);
+        let builtin = self.find_builtin_that_may_be_named(callee);
+        let builtin = builtin.map(table::canonical_id);
+        let mut read_off: Option<(RuntimeModule, Option<Atom>)> = None;
+        for row in &worker_builtins().file_calls {
+            if builtin.is_some() && row.member_of_global == builtin {
+                return Some(row.call);
+            }
+            let Some(module) = row.module else {
+                continue;
+            };
+            let export = match read_off {
+                Some((read, export)) if read == module => export,
+                _ => {
+                    let export = self.find_export_named(callee, module);
+                    read_off = Some((module, export));
+                    export
+                }
+            };
+            if export.is_some_and(|export| atoms.bytes(export) == row.name) {
+                return Some(row.call);
+            }
+        }
+        None
     }
 
     pub(super) fn look_at_name_of_worker_constructor(&mut self, expression: ExprId) {
@@ -1535,6 +1711,50 @@ mod tests {
         assert_eq!(find_file_named_as_in_executable(&paths, 0, written), None);
         assert_eq!(find(b"/project/lib/w.js"), None);
         assert_eq!(find(b"./lib/w.js"), None);
+    }
+
+    #[test]
+    fn function_that_is_given_a_file_keeps_it_where_it_answers_with_the_same_file() {
+        for sees_backslashes in [Some(false), Some(true), None] {
+            for function in [
+                FileCall::PathOfUrl,
+                FileCall::UrlOfPath,
+                FileCall::Url,
+                FileCall::SamePath,
+            ] {
+                assert!(keeps_file_given(function, sees_backslashes), "{function:?}");
+            }
+            for function in [
+                FileCall::PathFoundFromFolder,
+                FileCall::PromiseOfPathFoundFromFolder,
+            ] {
+                assert!(
+                    !keeps_file_given(function, sees_backslashes),
+                    "{function:?}"
+                );
+            }
+        }
+        let namespaced = FileCall::SamePathWithoutBackslashes;
+        assert!(keeps_file_given(namespaced, Some(false)));
+        assert!(!keeps_file_given(namespaced, Some(true)));
+        assert!(!keeps_file_given(namespaced, None));
+    }
+
+    #[test]
+    fn every_function_that_answers_with_a_file_is_found_in_the_library() {
+        for (row, (holder, ..)) in worker_builtins().file_calls.iter().zip(FILE_CALLS) {
+            let name = bstr::BStr::new(row.name);
+            assert_eq!(
+                row.member_of_global.is_some(),
+                holder.global().is_some(),
+                "{holder:?} {name}"
+            );
+            assert_eq!(
+                row.module.is_some(),
+                !holder.specifiers().is_empty(),
+                "{holder:?} {name}"
+            );
+        }
     }
 
     #[test]

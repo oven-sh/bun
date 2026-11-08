@@ -7,7 +7,7 @@ use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
     BinOp, Branches, CallId, ExprId, ExprKind, MemberKey, NodeData, PropKey, PropKind,
 };
-use bun_sema::import_sites::{ImportSpecifier, find_values_of_parameter};
+use bun_sema::import_sites::{FileCall, ImportSpecifier, find_values_of_parameter};
 use bun_sema::resolve::FinishedFile;
 use bun_sema::util::FxHashSet;
 
@@ -394,7 +394,9 @@ impl ContentsScan<'_, '_> {
         if let Some(function) = self.find_export_of(known.paths, callee) {
             return self.find_path_made(function, call, names);
         }
-        if let Some(function) = self.find_export_of(known.urls, callee) {
+        if let Some(function @ (FileCall::PathOfUrl | FileCall::UrlOfPath)) =
+            self.find_file_call(callee)
+        {
             return self.find_text_made_of_url(function, call, names);
         }
         match hir.member_key(callee) {
@@ -431,7 +433,7 @@ impl ContentsScan<'_, '_> {
 
     fn find_text_made_of_url(
         &self,
-        function: &[u8],
+        function: FileCall,
         call: CallId,
         names: &mut Vec<SymbolId>,
     ) -> Option<Vec<u8>> {
@@ -439,11 +441,13 @@ impl ContentsScan<'_, '_> {
         let sees_backslashes = self.input.sees_backslashes?;
         let given = self.find_text(hir.ids(hir[call].args).next()?, names)?;
         match function {
-            b"fileURLToPath" => {
+            FileCall::PathOfUrl => {
                 let path = read_file_url(&given)?;
                 Some(with_separators_of_host(&path, sees_backslashes))
             }
-            b"pathToFileURL" => write_file_url(&without_separators_of_run(given, sees_backslashes)),
+            FileCall::UrlOfPath => {
+                write_file_url(&without_separators_of_run(given, sees_backslashes))
+            }
             _ => None,
         }
     }
@@ -485,8 +489,7 @@ impl ContentsScan<'_, '_> {
         let makes_url = match hir[self.find_value_under_name(url)].kind {
             ExprKind::New(call) => self.find_constructor_called(call) == Some(Constructor::Url),
             ExprKind::Call(call) => {
-                let function = self.find_export_of(worker_builtins().urls, hir[call].callee);
-                function.is_some_and(|function| function == b"pathToFileURL")
+                self.find_file_call(hir[call].callee) == Some(FileCall::UrlOfPath)
             }
             _ => false,
         };

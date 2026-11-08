@@ -323,6 +323,37 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test.concurrent(
+    "should give every --retry attempt of a test its own state",
+    async () => {
+      const { lines, verdicts, exitCode } = observed(await runTests(["32-retry.js"], {}, ["--retry", "1"]));
+      expect(lines).toEqual([
+        "subtests: attempt 1 child runs=1",
+        "subtests: attempt 2 child runs=2",
+        "a subtest that fails on every attempt: it runs on the second attempt",
+        "t.after(): hook of attempt 1 runs=1",
+        "t.after(): hook of attempt 2 runs=2",
+        "tags: attempt 1 declared",
+        "tags: attempt 2 declared",
+      ]);
+      expect(verdicts).toEqual([
+        "(pass) t.plan() (attempt 2)",
+        "(pass) subtests (attempt 2)",
+        "(fail) a subtest that fails on every attempt (attempt 2)",
+        "(pass) t.after() (attempt 2)",
+        "(pass) tags (attempt 2)",
+        "(pass) expectFailure option (attempt 2)",
+        "(fail) plan option that is never met (attempt 2)",
+        "(fail) fails, is not skipped (attempt 2)",
+        "(skip) is skipped",
+        "(fail) fails, is not expected to (attempt 2)",
+        "(pass) is expected to fail",
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {
@@ -342,6 +373,24 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     new Response(stderrStream).text(),
   ]);
   return { exitCode, stdout, stderr };
+}
+
+// The lines a fixture logged with its "OBS " prefix, and the verdict that `bun test` printed for each test.
+function observed({ exitCode, stdout, stderr }: Awaited<ReturnType<typeof runTests>>) {
+  const lines = linesOf(stdout)
+    .filter(line => line.startsWith("OBS "))
+    .map(line => line.slice(4));
+  const verdicts = linesOf(stderr)
+    .filter(line => /^\((pass|fail|skip|todo)\) /.test(line))
+    .map(line => line.replace(/ \[[\d.]+m?s\]$/, ""));
+  return { lines, verdicts, exitCode };
+}
+
+function linesOf(text: string) {
+  return text
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => line !== "");
 }
 
 describe("node:test mock", () => {

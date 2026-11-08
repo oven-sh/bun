@@ -1647,6 +1647,18 @@ class TestNode {
     return this.#suiteCtx;
   }
 
+  // A --retry attempt runs on a node of its own: what the declaration parsed, and nothing that a run wrote.
+  nextAttempt(todo: string | boolean): TestNode {
+    const next = new TestNode(this.name, this.parent, kDefaultOptions, false, false);
+    next.options = this.options;
+    next.ownTags = this.ownTags;
+    next.filePath = this.filePath;
+    next.expectFailure = this.expectFailure;
+    if (todo !== false) next.todoFlag = true;
+    if (typeof todo === "string") next.message = todo;
+    return next;
+  }
+
   // True while user code reached from this node should treat new tests as
   // inline subtests instead of bun:test registrations.
   isRunning(): boolean {
@@ -2558,10 +2570,14 @@ function currentCollectionParent(): TestNode {
   return getRootNode();
 }
 
-function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = false) {
+// `todo`: the todo directive of the declaration (its message, or true), which t.todo() and t.skip() overwrite.
+function createTopLevelTestRunner(current: TestNode, fn: TestFn, declaredTodo = false, todo: string | boolean = false) {
   // bun:test invokes this with a `done` callback because the function declares
   // one parameter.
   return (done: (error?: unknown) => void) => {
+    // bun:test calls this again for each --retry attempt. One that it ended in its body stays on its node.
+    if (current.finished) current = current.nextAttempt(todo);
+    const node = current;
     // Under plain bun:test a describe.todo scope already handles its children's
     // todo verdict (FailBecauseTodoPassed under --todo), so don't override when
     // the flag was only inherited; under a run() child the suite registers as a
@@ -2654,14 +2670,15 @@ function addTest(
       // The test.todo() spelling carries the directive in `mode`, not in the
       // options, so the node has to be marked for the runner to report it.
       node.todoFlag = true;
-      const runner = createTopLevelTestRunner(node, fn);
+      const runner = createTopLevelTestRunner(node, fn, false, node.message ?? true);
       if (passOptions !== undefined) test(name, runner, passOptions);
       else test(name, runner);
       return Promise.resolve(undefined);
     }
     const register = effectiveMode === "todo" ? test.todo : test.skip;
     // Node runs todo bodies; bun:test only does so under --todo.
-    const body = effectiveMode === "todo" ? createTopLevelTestRunner(node, fn, true) : kDefaultFunction;
+    const body =
+      effectiveMode === "todo" ? createTopLevelTestRunner(node, fn, true, node.message ?? true) : kDefaultFunction;
     if (passOptions !== undefined) {
       register(name, body, passOptions);
     } else {

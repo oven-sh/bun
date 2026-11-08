@@ -290,6 +290,7 @@ static bool isJSFunctionOrCompiledCallee(JSObject* object)
 }
 
 JSObject* processEnvOfImportMetaEnvForTests(JSGlobalObject*, JSObject*);
+JSValue processEnvValueOfImportMetaEnvForTests(JSGlobalObject*, PropertyName, JSValue);
 
 // Script never sees what putDirect() stores on a Proxy, or on a node:vm global for a key that the contextified object has.
 static bool isModuleNamespace(JSObject* object)
@@ -499,6 +500,8 @@ public:
     static constexpr unsigned SpyAttributeOpaque = 1 << 28;
     // The replacement was assigned, as `object[key] = value`, because the object has its own put(). The restore assigns too.
     static constexpr unsigned SpyAttributeAssigned = 1 << 27;
+    // Replaced through import.meta.env, which converts a Vite boolean on the way to process.env. The target is the process.env of that time.
+    static constexpr unsigned SpyAttributeImportMetaEnv = 1 << 26;
 
     JSString* jsName()
     {
@@ -921,6 +924,8 @@ public:
             return false;
         unsigned attributes = m_spyAttributes;
         if (attributes & SpyAttributeAssigned) {
+            if (attributes & SpyAttributeImportMetaEnv)
+                value = processEnvValueOfImportMetaEnvForTests(globalObject, m_spyIdentifier, value);
             assignProperty(globalObject, target, m_spyIdentifier, value);
             return true;
         }
@@ -1086,10 +1091,6 @@ private:
         }
 
         if (attributes & SpyAttributeAssigned) {
-            // The original of an import.meta.env variable is the string process.env holds, which import.meta.env's put() would convert.
-            if (JSObject* env = processEnvOfImportMetaEnvForTests(globalObject, target))
-                target = env;
-            RETURN_IF_EXCEPTION(scope, );
             if (original) {
                 scope.release();
                 assignProperty(globalObject, target, identifier, original);
@@ -3471,9 +3472,10 @@ __attribute__((minsize)) static JSValue replaceProperty(Zig::GlobalObject* globa
         throwVMError(globalObject, scope, makeString("Property `"_s, keyForMessage, "` does not exist in the provided object"_s));
         return {};
     }
-    // import.meta.env converts Vite's variables and gives the ones process.env lacks a default. The original is what process.env holds.
+    // import.meta.env converts Vite's variables and gives the ones process.env lacks a default. The original is what process.env holds, and the spy is installed there: a test may put another object in place of process.env before the restore.
     JSObject* env = processEnvOfImportMetaEnvForTests(globalObject, object);
     RETURN_IF_EXCEPTION(scope, {});
+    JSObject* installTarget = env ? env : object;
     if (env) {
         PropertySlot envSlot(env, PropertySlot::InternalMethodType::GetOwnProperty);
         property.isOwn = env->getOwnPropertySlotInline(globalObject, propertyKey, envSlot);
@@ -3524,7 +3526,7 @@ __attribute__((minsize)) static JSValue replaceProperty(Zig::GlobalObject* globa
         return {};
     }
 
-    if (auto* existing = findReplacedProperty(globalObject, object, propertyKey)) {
+    if (auto* existing = findReplacedProperty(globalObject, installTarget, propertyKey)) {
         // The write may run script that adds to or removes from the vector behind `existing`.
         JSValue existingHandle = existing->handle.get();
         auto* existingMock = uncheckedDowncast<JSMockFunction>(existing->mock.get());
@@ -3535,7 +3537,7 @@ __attribute__((minsize)) static JSValue replaceProperty(Zig::GlobalObject* globa
 
     // A shadow of an inherited property is a new own property, which an object that is not extensible refuses.
     if (!property.isOwn && !isNamespace) {
-        bool isExtensible = object->isExtensible(globalObject);
+        bool isExtensible = installTarget->isExtensible(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (!isExtensible) {
             throwTypeError(globalObject, scope, makeString("Cannot replace the `"_s, keyForMessage, "` property because the object is not extensible"_s));
@@ -3543,10 +3545,10 @@ __attribute__((minsize)) static JSValue replaceProperty(Zig::GlobalObject* globa
         }
     }
 
-    // An assignment refuses a read-only property. import.meta.env has no storage of its own, so it is always assigned.
-    bool isAssigned = !isNamespace && !property.isOpaque && (env || !(attributes & PropertyAttribute::ReadOnly)) && object->structure()->typeInfo().overridesPut();
+    // An assignment refuses a read-only property. import.meta.env has no storage of its own, so its process.env is always assigned.
+    bool isAssigned = env || (!isNamespace && !property.isOpaque && !(attributes & PropertyAttribute::ReadOnly) && object->structure()->typeInfo().overridesPut());
 #if ENABLE(AOT)
-    if (object->structure()->mayHaveImmutableProperties())
+    if (!env && object->structure()->mayHaveImmutableProperties())
         isAssigned = false;
 #endif
 
@@ -3565,6 +3567,8 @@ __attribute__((minsize)) static JSValue replaceProperty(Zig::GlobalObject* globa
         spyAttributes |= JSMockFunction::SpyAttributeOpaque;
     if (isAssigned)
         spyAttributes |= JSMockFunction::SpyAttributeAssigned;
+    if (env)
+        spyAttributes |= JSMockFunction::SpyAttributeImportMetaEnv;
 
     if (!mock) {
         mock = createMockFunction(vm, globalObject, false);
@@ -3572,7 +3576,9 @@ __attribute__((minsize)) static JSValue replaceProperty(Zig::GlobalObject* globa
         mock->isReplacedProperty = true;
     }
     if (isAssigned) {
-        assignProperty(globalObject, object, propertyKey, value);
+        if (env)
+            value = processEnvValueOfImportMetaEnvForTests(globalObject, propertyKey, value);
+        assignProperty(globalObject, installTarget, propertyKey, value);
         RETURN_IF_EXCEPTION(scope, {});
     } else {
         ThroughLockOfBuiltins throughLock(vm, property.isOpaque);
@@ -3580,7 +3586,7 @@ __attribute__((minsize)) static JSValue replaceProperty(Zig::GlobalObject* globa
             putOwnPropertyStorage(globalObject, object, propertyKey, value, attributes, property.isOpaque);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    mock->didInstall(object, propertyKey, property.isOwn ? original : JSValue(), spyAttributes);
+    mock->didInstall(installTarget, propertyKey, property.isOwn ? original : JSValue(), spyAttributes);
 
     if (!handle) {
         handle = createReplacedPropertyHandle(globalObject, mock, object, propertyKey);

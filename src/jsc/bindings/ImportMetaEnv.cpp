@@ -205,6 +205,14 @@ bool ImportMetaEnv::getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* 
     return getOwnPropertySlot(object, globalObject, Identifier::from(getVM(globalObject), index), slot);
 }
 
+// What process.env stores for a write of `value` to import.meta.env: a Vite boolean becomes "1" or "".
+static JSValue processEnvValueOfImportMetaEnv(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value)
+{
+    if (isBoolean(viteVariableNamed(propertyName)))
+        return value.toBoolean(globalObject) ? getVM(globalObject).smallStrings.singleCharacterString('1') : jsEmptyString(getVM(globalObject));
+    return value;
+}
+
 bool ImportMetaEnv::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     auto& vm = getVM(globalObject);
@@ -215,8 +223,7 @@ bool ImportMetaEnv::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName
 
     JSObject* env = uncheckedDowncast<ImportMetaEnv>(cell)->processEnv(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    if (isBoolean(viteVariableNamed(propertyName)))
-        value = value.toBoolean(globalObject) ? vm.smallStrings.singleCharacterString('1') : jsEmptyString(vm);
+    value = processEnvValueOfImportMetaEnv(globalObject, propertyName, value);
     PutPropertySlot envSlot(env, slot.isStrictMode());
     RELEASE_AND_RETURN(scope, env->methodTable()->put(env, globalObject, propertyName, value, envSlot));
 }
@@ -291,6 +298,11 @@ JSObject* processEnvOfImportMetaEnvForTests(JSGlobalObject* globalObject, JSObje
 {
     auto* env = dynamicDowncast<ImportMetaEnv>(object);
     return env ? env->processEnv(globalObject) : nullptr;
+}
+
+JSValue processEnvValueOfImportMetaEnvForTests(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value)
+{
+    return processEnvValueOfImportMetaEnv(globalObject, propertyName, value);
 }
 
 }

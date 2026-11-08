@@ -2614,6 +2614,30 @@ describe("spyOn", () => {
       }
     });
 
+    test.skipIf(process.env.DEV !== undefined)(
+      "import.meta.env replaces and restores the process.env of the time it was called",
+      () => {
+        // As in beforeEach(() => (process.env = { ...process.env })) with afterEach(() => (process.env = saved)).
+        const env = process.env;
+        const copy = { ...process.env, VALUE: "a" };
+        process.env = copy;
+        let value, dev;
+        try {
+          value = jest.replaceProperty(import.meta.env, "VALUE", "b");
+          dev = jest.replaceProperty(import.meta.env, "DEV", false);
+          expect([copy.VALUE, copy.DEV, import.meta.env.DEV]).toEqual(["b", "", false]);
+        } finally {
+          process.env = env;
+        }
+        // The copy is gone from process.env, so the handles still write to the copy.
+        dev.replaceValue(true);
+        expect([copy.DEV, "DEV" in env]).toEqual(["1", false]);
+        value.restore();
+        dev.restore();
+        expect([copy.VALUE, "DEV" in copy, "VALUE" in env, "DEV" in env]).toEqual(["a", false, false, false]);
+      },
+    );
+
     test("through a Proxy", () => {
       const target = { value: 1 };
       const traps = [];

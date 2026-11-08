@@ -2247,9 +2247,16 @@ describe.concurrent("--react-compiler", () => {
 
   // The parser makes a function that a block declares a `let` that holds a function without a name. The compiler moves
   // one that captures nothing to module level, where its rest parameter had no name: the component was left as written.
+  // What says that it is compiled is that it asks for a memo cache: under --aot its text is the file as it is written.
   test("a component with a rest parameter in a function that a block declares is compiled", async () => {
     const result = await compiled(
       {
+        "node_modules/react/compiler-runtime.js": `
+          export const c = size => {
+            globalThis.memoCaches = (globalThis.memoCaches ?? 0) + 1;
+            return Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          };
+        `,
         "src/InABlock.tsx": `
           export function InABlock({ items }) {
             if (items.length > 0) {
@@ -2265,9 +2272,8 @@ describe.concurrent("--react-compiler", () => {
           import { expect, test } from "bun:test";
           import { InABlock } from "./src/InABlock";
           test("which are compiled", () => {
-            const all = { InABlock };
-            ${printCompiled}
             expect(InABlock({ items: [1, 2] }).props.title).toBe(2);
+            console.log("compiled: " + (globalThis.memoCaches === 1 ? "InABlock" : ""));
           });
         `,
       },

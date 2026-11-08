@@ -2017,8 +2017,8 @@ describe("bundler", () => {
   // is dead code the function is compiled, and a memo block that declares the function has to assign it: a declaration
   // in the block would shadow the `let` outside of it (facebook/react#37833). `BeforeDeclaration` needs the declaration.
   //
-  // An assignment is not hoisted, so the function is left as written when another function is declared below it and
-  // referenced above it (`IndirectEarlyCall`, `CallsALaterFunction`), and when its own early reference is live
+  // An assignment is not hoisted, so the function is left as written when a function that is declared below it is
+  // referenced above it or in it (`IndirectEarlyCall`, `CallsALaterFunction`), and when its own early reference is live
   // (`LiveEarlyReference`). `InRemovedBranchingCatch` is left as written only while the parser keeps the `const` in its
   // `try`: with `minify.syntax`, and always at runtime, the `try` is empty and the function is compiled.
   for (const minifySyntax of [false, true] as const) {
@@ -2049,6 +2049,14 @@ describe("bundler", () => {
               return p.a;
             }
             return <button onClick={helper}>{x}</button>;
+          }
+          function InFoldedBranch(p) {
+            const DEBUG = false;
+            if (DEBUG) helper();
+            function helper() {
+              return p.a;
+            }
+            return <button onClick={helper}>{p.a}</button>;
           }
           function InRemovedCatch(p) {
             try {
@@ -2119,6 +2127,7 @@ describe("bundler", () => {
             UnusedClosure: render(UnusedClosure, { a: 1 }),
             CalledAfter: render(CalledAfter, { a: 2 }),
             ValueBetween: render(ValueBetween, { a: 1, b: 2 }),
+            InFoldedBranch: render(InFoldedBranch, { a: 8 }),
             InRemovedCatch: render(InRemovedCatch, { a: 3 }),
             InRemovedBranchingCatch: render(InRemovedBranchingCatch, { a: 4 }),
             IndirectEarlyCall: render(IndirectEarlyCall, { a: 2 }),
@@ -2148,6 +2157,7 @@ describe("bundler", () => {
           UnusedClosure: ["function", 1, [5]],
           CalledAfter: ["function", 3, [6]],
           ValueBetween: ["function", [2], [9]],
+          InFoldedBranch: ["function", 8, [5]],
           InRemovedCatch: ["function", 3, [5]],
           InRemovedBranchingCatch: ["function", "4!", minifySyntax ? [6] : []],
           IndirectEarlyCall: ["function", 2, []],

@@ -4721,50 +4721,49 @@ describe("bundler", () => {
       },
       reactCompiler: true,
       backend: "cli",
+      // `bun lint` has a port of upstream's discovery of its own, which test/cli/lint checks against the plugin. Its
+      // `react-hooks/immutability` reports the write to `p` where `Cell` is a component on its own, so it says for each
+      // row what upstream claims. A row that is in the wrong list above fails here. The plugin reports nothing for a
+      // file that has a decorator, so those rows are not in the file.
+      async onAfterBundle() {
+        const marked = `const Cell = p => {\n p.marker = 2;\n return <i x={p.x}>{b}</i>; };`;
+        const linted = rows.filter(([row]) => !row.includes("@d("));
+        const source = [prelude.trim().replaceAll("\n", " "), ...linted.map(([row]) => row.replace(cell, marked))].join(
+          "\n",
+        );
+        using dir = tempDir("react-compiler-lint-claims", {
+          "rows.tsx": source,
+          "eslint.config.js": `
+            export default [{
+              files: ["**/*.tsx"],
+              plugins: { "react-hooks": { meta: { name: "eslint-plugin-react-hooks" } } },
+              rules: { "react-hooks/immutability": "error" },
+              languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+            }];
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "lint", "-f", "json", "rows.tsx"],
+          cwd: String(dir),
+          env: { ...bunEnv, AGENT: "0" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        if (!stdout.startsWith("[")) throw new Error(`No report (exit ${exitCode}): ${stderr}`);
+        const [{ messages }] = JSON.parse(stdout) as [{ messages: { ruleId: string; line: number }[] }];
+        // Each row is three lines after the one line of the prelude, and the write to `p` is on the second.
+        const alone = new Set(
+          messages.filter(it => it.ruleId === "react-hooks/immutability").map(it => (it.line - 3) / 3),
+        );
+        expect({ cellAlone: linted.filter((_, row) => alone.has(row)).map(nameOf), exitCode }).toEqual({
+          cellAlone: [...asUpstream.filter(([, sizes]) => String(sizes) === "2"), ...onlyBunClaims].map(nameOf),
+          exitCode: 1,
+        });
+      },
       run: {
         stdout: JSON.stringify(Object.fromEntries(rows.map(([, sizes], i) => [names[i], sizes]))),
       },
-    });
-
-    // `bun lint` has a port of upstream's discovery of its own, which test/cli/lint checks against the plugin. Its
-    // `react-hooks/immutability` reports the write to `p` where `Cell` is a component on its own, so it says for each
-    // row what upstream claims. A row that is in the wrong list above fails here. The plugin reports nothing for a
-    // file that has a decorator, so those rows are not in the file.
-    test("react-compiler/WhereAHookCallOrJsxMakesAComponent, as bun lint claims", async () => {
-      const marked = `const Cell = p => {\n p.marker = 2;\n return <i x={p.x}>{b}</i>; };`;
-      const linted = rows.filter(([row]) => !row.includes("@d("));
-      const source = [prelude.trim().replaceAll("\n", " "), ...linted.map(([row]) => row.replace(cell, marked))].join(
-        "\n",
-      );
-      using dir = tempDir("react-compiler-lint-claims", {
-        "rows.tsx": source,
-        "eslint.config.js": `
-          export default [{
-            files: ["**/*.tsx"],
-            plugins: { "react-hooks": { meta: { name: "eslint-plugin-react-hooks" } } },
-            rules: { "react-hooks/immutability": "error" },
-            languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
-          }];
-        `,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "lint", "-f", "json", "rows.tsx"],
-        cwd: String(dir),
-        env: { ...bunEnv, AGENT: "0" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      if (!stdout.startsWith("[")) throw new Error(`No report (exit ${exitCode}): ${stderr}`);
-      const [{ messages }] = JSON.parse(stdout) as [{ messages: { ruleId: string; line: number }[] }];
-      // Each row is three lines after the one line of the prelude, and the write to `p` is on the second.
-      const alone = new Set(
-        messages.filter(it => it.ruleId === "react-hooks/immutability").map(it => (it.line - 3) / 3),
-      );
-      expect({ cellAlone: linted.filter((_, row) => alone.has(row)).map(nameOf), exitCode }).toEqual({
-        cellAlone: [...asUpstream.filter(([, sizes]) => String(sizes) === "2"), ...onlyBunClaims].map(nameOf),
-        exitCode: 1,
-      });
     });
   }
 

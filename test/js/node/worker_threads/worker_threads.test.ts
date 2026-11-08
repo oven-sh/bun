@@ -1132,15 +1132,16 @@ test("MessagePort.hasRef() reports actual loop-ref state", () => {
 });
 
 // In a node worker only parentPort receives what the parent posts; the global
-// scope is not a channel there (as in node). A worker that listens on both must
-// see one delivery, not two. The global scope has no addEventListener of its own
-// in a node worker, but EventTarget.prototype's still takes it as the receiver.
-test("a parent message reaches parentPort only, not a listener on the global scope, in a node worker", async () => {
+// scope is not a channel there (as in node). The node shim of Emscripten's
+// pthread glue hands parentPort's messages to `self.onmessage` itself, so a
+// second delivery to the global scope handled every message twice (#25860).
+test("a parent message reaches parentPort only: a worker that hands it to self.onmessage sees it once", async () => {
   const w = new Worker(
     `const { parentPort } = require("node:worker_threads");
      let count = 0;
-     parentPort.on("message", () => { count++; });
-     EventTarget.prototype.addEventListener.call(globalThis, "message", () => { count += 100; });
+     globalThis.self = globalThis;
+     parentPort.on("message", data => onmessage({ data }));
+     self.onmessage = () => { count++; };
      parentPort.on("message", () => setImmediate(() => parentPort.postMessage(count)));`,
     { eval: true },
   );
@@ -1148,6 +1149,58 @@ test("a parent message reaches parentPort only, not a listener on the global sco
   const [count] = await once(w, "message");
   await w.terminate();
   expect(count).toBe(1);
+});
+
+// The global object of a node worker is no EventTarget either: with the names
+// gone, EventTarget.prototype's methods were the last way to put a 'message'
+// listener on a scope that nothing feeds, and such a listener kept the thread
+// alive. Node throws ERR_INVALID_THIS there. A global that inherits from an
+// EventTarget (the `web-worker` package sets such a prototype, #11005) uses it.
+test("the global of a node worker is not an EventTarget, and it can inherit from one", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("node:worker_threads");
+     const results = {};
+     for (const method of ["addEventListener", "removeEventListener", "dispatchEvent"]) {
+       try {
+         EventTarget.prototype[method].call(globalThis, method === "dispatchEvent" ? new Event("message") : "message", () => {});
+         results[method] = "no error";
+       } catch (error) {
+         results[method] = error.name;
+       }
+     }
+     class Scope extends EventTarget {}
+     Object.setPrototypeOf(globalThis, new Scope());
+     const heard = [];
+     globalThis.addEventListener("message", event => heard.push(event.data));
+     globalThis.dispatchEvent(new MessageEvent("message", { data: "to the inherited target" }));
+     results.heard = heard;
+     results.isScope = globalThis instanceof Scope;
+     parentPort.postMessage(results);`,
+    { eval: true },
+  );
+  const [[results], [exitCode]] = await Promise.all([once(w, "message"), once(w, "exit")]);
+  expect({ results, exitCode }).toEqual({
+    results: {
+      addEventListener: "TypeError",
+      removeEventListener: "TypeError",
+      dispatchEvent: "TypeError",
+      heard: ["to the inherited target"],
+      isScope: true,
+    },
+    exitCode: 0,
+  });
+});
+
+// A realm made inside a node worker is a realm of that worker: its global has no scope either.
+test("a ShadowRealm inside a node worker has no Web Worker globals", async () => {
+  const names = ["self", "postMessage", "addEventListener", "removeEventListener", "dispatchEvent", "onmessage", "onerror"];
+  const w = new Worker(
+    `const { parentPort } = require("node:worker_threads");
+     parentPort.postMessage(new ShadowRealm().evaluate(${JSON.stringify(`${JSON.stringify(names)}.filter(name => name in globalThis).join()`)}));`,
+    { eval: true },
+  );
+  const [[present], [exitCode]] = await Promise.all([once(w, "message"), once(w, "exit")]);
+  expect({ present, exitCode }).toEqual({ present: "", exitCode: 0 });
 });
 
 // Node defines none of the Web Worker globals in a worker_threads worker. Bun

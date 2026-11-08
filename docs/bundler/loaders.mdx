@@ -81,7 +81,7 @@ const pkg = {
 pkg.name;
 ```
 
-If you pass a `.json` file as an entrypoint to the bundler, Bun converts it to a `.js` module. The default export is the parsed value. When that value is an object, each top-level key that is a valid identifier is also a named export, except `__esModule`.
+If you pass a `.json` file as an entrypoint to the bundler, Bun converts it to a `.js` module. The default export is the parsed value. When that value is an object, each top-level key that is a valid identifier is also a named export, except `default` and `__esModule`.
 
 <CodeGroup>
 
@@ -159,7 +159,7 @@ var config = {
 config.logLevel;
 ```
 
-If you pass a `.toml` file as an entrypoint, Bun converts it to a `.js` module. The default export is the parsed object. Each top-level key that is a valid identifier is also a named export, except `__esModule`.
+If you pass a `.toml` file as an entrypoint, Bun converts it to a `.js` module. The default export is the parsed object. Each top-level key that is a valid identifier is also a named export, except `default` and `__esModule`.
 
 <CodeGroup>
 
@@ -210,7 +210,7 @@ var config = {
 };
 ```
 
-If you pass a `.yaml` or `.yml` file as an entrypoint, Bun converts it to a `.js` module. The default export is the parsed value. When that value is an object, each top-level key that is a valid identifier is also a named export, except `__esModule`.
+If you pass a `.yaml` or `.yml` file as an entrypoint, Bun converts it to a `.js` module. The default export is the parsed value. When that value is an object, each top-level key that is a valid identifier is also a named export, except `default` and `__esModule`.
 
 <CodeGroup>
 
@@ -268,7 +268,7 @@ var doc = {
 };
 ```
 
-If you pass a `.xml` file as an entrypoint, Bun converts it to a `.js` module. The default export is the parsed object. The root element's name is also a named export when it is a valid identifier other than `__esModule`.
+If you pass a `.xml` file as an entrypoint, Bun converts it to a `.js` module. The default export is the parsed object. The root element's name is also a named export when it is a valid identifier other than `default` or `__esModule`.
 
 <CodeGroup>
 
@@ -325,12 +325,15 @@ If you pass a `.txt` file as an entrypoint, Bun converts it to a `.js` module th
 
 <CodeGroup>
 
-```txt Input
+```txt file.txt
 Hello, world!
 ```
 
 ```js Output
-export default "Hello, world!";
+// file.txt
+var file_default = `Hello, world!
+`;
+export { file_default as default };
 ```
 
 </CodeGroup>
@@ -528,5 +531,6 @@ If `publicPath` is set, the import uses its value as a prefix to construct an ab
 
 <Note>
   The value of `naming.asset` determines the location and file name of the copied file. The default is
-  `[name]-[hash].[ext]`. Set it to `[name].[ext]` to keep the original file name.
+  `[name]-[hash].[ext]`. Set it to `[name].[ext]` to keep the original file name. Without `[hash]`, two assets with the
+  same base name get the same output path, and one overwrites the other.
 </Note>

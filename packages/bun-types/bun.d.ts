@@ -8139,7 +8139,9 @@ declare module "bun" {
        * via {@link Subprocess.stdio} is owned by the caller and is never
        * closed by the subprocess. Use this when you wrap the fd in
        * something that will close it itself (e.g. `net.connect({fd})`).
-       * On Windows it behaves the same as `"pipe"`.
+       * On Windows it behaves the same as `"pipe"`. {@link spawnSync} throws
+       * for `"socket-fd"`: the object it returns has no `stdio` to hand the
+       * fd over.
        *
        * @default ["ignore", "pipe", "inherit"] for `spawn`
        * ["ignore", "pipe", "pipe"] for `spawnSync`

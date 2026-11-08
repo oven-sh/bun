@@ -341,7 +341,7 @@ pub struct VirtualMachine {
 
     pub rare_data: Option<Box<RareData>>,
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
-    /// Made by the first resolution it can hold.
+    /// Made by the first resolution that can use it.
     pub(crate) resolution_memo: Option<Box<crate::resolution_memo::ResolutionMemo>>,
     pending_internal_promise: crate::strong::Optional,
     pub pending_internal_promise_reported_at: u32,
@@ -5885,17 +5885,19 @@ impl VirtualMachine {
             && specifier.length() <= bun_paths::MAX_PATH_BYTES
             && source.length() <= bun_paths::MAX_PATH_BYTES;
         let mut memo_answer = None;
-        if can_use_memo {
-            if let Some(path) = jsc_vm
-                .resolution_memo
-                .as_deref_mut()
-                .and_then(|memo| memo.get(specifier, source, memo_kind, memo_epoch))
-            {
-                if !bun_core::Environment::CI_ASSERT {
-                    return Ok(Ok(path));
+        let mut keeps_answer = false;
+        if can_use_memo && let Some(memo) = jsc_vm.resolution_memo() {
+            use crate::resolution_memo::Lookup;
+            match memo.get(specifier, source, memo_kind, memo_epoch) {
+                Lookup::Kept(path) => {
+                    if !bun_core::Environment::CI_ASSERT {
+                        return Ok(Ok(path));
+                    }
+                    // With assertions on, the resolver runs as well, and it has to agree.
+                    memo_answer = Some(path);
                 }
-                // With assertions on, the resolver runs as well, and it has to agree.
-                memo_answer = Some(path);
+                Lookup::Repeated => keeps_answer = true,
+                Lookup::New => {}
             }
         }
 
@@ -6078,7 +6080,7 @@ impl VirtualMachine {
             )?));
         }
 
-        if can_use_memo {
+        if keeps_answer {
             jsc_vm.remember_resolution(
                 specifier,
                 source,
@@ -6097,7 +6099,25 @@ impl VirtualMachine {
         Ok(Ok(bun_core::String::clone_utf8(result.path)))
     }
 
-    /// Out of line: most resolutions only leave a tag here.
+    /// The memo, made by the first resolution that can use it.
+    #[inline]
+    fn resolution_memo(&mut self) -> Option<&mut crate::resolution_memo::ResolutionMemo> {
+        if self.resolution_memo.is_none() {
+            self.start_resolution_memo();
+        }
+        self.resolution_memo.as_deref_mut()
+    }
+
+    #[cold]
+    fn start_resolution_memo(&mut self) {
+        if !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RESOLUTION_MEMO::get()
+            .unwrap_or(false)
+        {
+            self.resolution_memo = Some(Default::default());
+        }
+    }
+
+    /// Out of line: most resolutions that the memo does not answer are the first of their pair.
     #[cold]
     #[inline(never)]
     fn remember_resolution(
@@ -6120,14 +6140,12 @@ impl VirtualMachine {
             || resolves_against_cwd
             || plugin_can_answer
             || can_auto_install
-            || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RESOLUTION_MEMO::get()
-                .unwrap_or(false)
         {
             return;
         }
-        self.resolution_memo
-            .get_or_insert_with(Default::default)
-            .put(specifier, source, kind, epoch, result.path);
+        if let Some(memo) = self.resolution_memo.as_deref_mut() {
+            memo.put(specifier, source, kind, epoch, result.path);
+        }
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {

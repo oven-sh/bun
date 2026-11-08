@@ -47,6 +47,16 @@ const _: () = assert!(size_of::<Bucket>() == 64);
 /// 64 KB.
 const BUCKET_BITS: u32 = 10;
 
+/// What the memo has for a pair.
+pub enum Lookup {
+    /// The resolved path.
+    Kept(String),
+    /// No answer. The pair was resolved just before, or its entry is from an older epoch: `put` the new answer.
+    Repeated,
+    /// No answer, and the bucket remembers the pair from now on. Also for a string that is not WTF-backed: the key is the two impls.
+    New,
+}
+
 pub struct ResolutionMemo {
     buckets: Box<[Bucket]>,
     /// The high half of the epoch of every entry.
@@ -82,30 +92,40 @@ impl ResolutionMemo {
         epoch as u32
     }
 
-    /// The resolved path. `None` when either string is not WTF-backed: the key is the two impls.
-    pub fn get(
-        &mut self,
-        specifier: &String,
-        source: &String,
-        kind: Kind,
-        epoch: u64,
-    ) -> Option<String> {
-        let (specifier, source) = (specifier.as_wtf_impl()?, source.as_wtf_impl()?);
+    pub fn get(&mut self, specifier: &String, source: &String, kind: Kind, epoch: u64) -> Lookup {
+        let (Some(specifier), Some(source)) = (specifier.as_wtf_impl(), source.as_wtf_impl())
+        else {
+            return Lookup::New;
+        };
         let epoch = self.low_half(epoch);
         let (index, tag) = slot(specifier, source, kind);
         let Bucket(ways) = &mut self.buckets[index];
-        let way = ways
+        if let Some(way) = ways
             .iter()
-            .position(|way| way.epoch == epoch && way.holds(tag, specifier, source, kind))?;
-        if way != 0 {
-            swap_entries(ways);
+            .position(|way| way.holds(tag, specifier, source, kind))
+        {
+            if way != 0 {
+                swap_entries(ways);
+            }
+            return match &ways[0].entry {
+                Some(entry) if ways[0].epoch == epoch => {
+                    self.hits += 1;
+                    Lookup::Kept(String::retain_wtf_impl(entry.path.get()))
+                }
+                _ => Lookup::Repeated,
+            };
         }
-        let path = String::retain_wtf_impl(ways[0].entry.as_ref()?.path.get());
-        self.hits += 1;
-        Some(path)
+        // An entry starts at the second resolution of a pair, so a one-off evicts nothing.
+        let missed = (tag as u8).max(1); // 0: the bucket saw nothing yet
+        if ways.iter().any(|way| way.missed == missed) {
+            return Lookup::Repeated;
+        }
+        ways[1].missed = ways[0].missed;
+        ways[0].missed = missed;
+        Lookup::New
     }
 
-    /// `epoch` is the one read before the resolver ran. The specifier has no `?query`.
+    /// After `Lookup::Repeated`, with the same `epoch`. The specifier has no `?query`.
     pub fn put(
         &mut self,
         specifier: &String,
@@ -121,7 +141,7 @@ impl ResolutionMemo {
         let epoch = self.low_half(epoch);
         let (index, tag) = slot(specifier, source, kind);
         let Bucket(ways) = &mut self.buckets[index];
-        // An entry from an older epoch: the pair is a repeat, and most often the answer is the same.
+        // An entry from an older epoch: most often the answer is the same.
         if let Some(way) = ways
             .iter()
             .position(|way| way.holds(tag, specifier, source, kind))
@@ -138,13 +158,6 @@ impl ResolutionMemo {
                 return;
             }
         } else {
-            // An entry starts at the second resolution of a pair, so a one-off evicts nothing.
-            let missed = (tag as u8).max(1); // 0: the bucket saw nothing yet
-            if ways.iter().all(|way| way.missed != missed) {
-                ways[1].missed = ways[0].missed;
-                ways[0].missed = missed;
-                return;
-            }
             // Over the less recently used.
             swap_entries(ways);
         }

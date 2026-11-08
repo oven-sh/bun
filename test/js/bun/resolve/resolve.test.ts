@@ -2899,6 +2899,55 @@ describe.concurrent("a repeated resolution", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("is answered without the resolver while a plugin is registered", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "child.cjs": `module.exports = 1;`,
+      "main.cjs": `
+        const { resolutionMemoHits } = require("bun:internal-for-testing");
+        Bun.plugin({
+          name: "loads .data",
+          setup(build) {
+            build.onResolve({ filter: /\\.data$/ }, args => ({ path: args.path, namespace: "data" }));
+            build.onLoad({ filter: /\\.data$/, namespace: "data" }, () => ({ contents: "", loader: "js" }));
+          },
+        });
+        const before = resolutionMemoHits();
+        for (let i = 0; i < 5; i++) require.resolve("./child.cjs");
+        console.log([3, 4].includes(resolutionMemoHits() - before));
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Windows has no ":" in a file name.
+  test.skipIf(isWindows)("is the name itself once an onLoad plugin serves its namespace", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "node_modules/virtual:pkg/index.js": `module.exports = "file";`,
+      "main.cjs": `
+        const path = require("node:path");
+        const where = () => {
+          const resolved = require.resolve("virtual:pkg");
+          return path.isAbsolute(resolved) ? path.relative(__dirname, resolved) : resolved;
+        };
+        const out = [where(), where(), where(), where()];
+        Bun.plugin({
+          name: "virtual",
+          setup(build) {
+            build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({ contents: "", loader: "js" }));
+          },
+        });
+        out.push(where(), where());
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const file = "node_modules/virtual:pkg/index.js";
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([file, file, file, file, "virtual:pkg", "virtual:pkg"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("gives each pair its own answer when entries replace each other", async () => {
     const { stdout, stderr, exitCode } = await run({
       "main.cjs": `

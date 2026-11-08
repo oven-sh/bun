@@ -5878,15 +5878,12 @@ impl VirtualMachine {
         let memo_kind =
             crate::resolution_memo::Kind::new(mode.is_esm(), IS_A_FILE_PATH, global_cache);
         let memo_epoch = bun_resolver::resolution_epoch::get();
-        let can_use_memo = !global.has_plugins()
-            && !jsc_vm.macro_mode
+        let can_use_memo = !jsc_vm.macro_mode
             && jsc_vm.transpiler.resolver.custom_dir_paths.is_none()
             && jsc_vm.transpiler.resolver.package_manager.is_none()
             // Longer than a path: a `data:` URL. The memo would hash all of it, and keep it.
             && specifier.length() <= bun_paths::MAX_PATH_BYTES
-            && source.length() <= bun_paths::MAX_PATH_BYTES
-            && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RESOLUTION_MEMO::get()
-                .unwrap_or(false);
+            && source.length() <= bun_paths::MAX_PATH_BYTES;
         let mut memo_answer = None;
         if can_use_memo {
             if let Some(path) = jsc_vm
@@ -5924,12 +5921,14 @@ impl VirtualMachine {
             return Ok(Ok(specifier.clone()));
         }
 
-        // (One letter is a Windows drive.)
         if global.has_plugins()
-            && ModuleLoader::on_load_namespace_and_path(&specifier_utf8)
-                .is_some_and(|(namespace, _)| namespace.len() > 1)
+            && names_an_on_load_namespace(&specifier_utf8)
             && global.has_on_load(&specifier_utf8)?
         {
+            debug_assert!(
+                memo_answer.is_none(),
+                "the resolution memo answers \"{specifier}\", which an onLoad serves"
+            );
             return Ok(Ok(specifier.clone()));
         }
 
@@ -6086,6 +6085,7 @@ impl VirtualMachine {
                 memo_kind,
                 memo_epoch,
                 &result,
+                specifier_utf8.slice(),
                 normalize_source(source_utf8.slice()),
             );
         }
@@ -6107,15 +6107,21 @@ impl VirtualMachine {
         kind: crate::resolution_memo::Kind,
         epoch: u64,
         result: &ResolveFunctionResult<'_>,
+        specifier_utf8: &[u8],
         source_path: &[u8],
     ) {
         let resolves_against_cwd = !bun_paths::is_absolute(source_path);
+        // An `onLoad` can serve such a name itself, also one that is registered later.
+        let plugin_can_answer = names_an_on_load_namespace(specifier_utf8);
         // This resolution can be the one that made the package manager.
         let can_auto_install = self.transpiler.resolver.package_manager.is_some();
         if !result.found_by_resolver
             || !result.query_string.is_empty()
             || resolves_against_cwd
+            || plugin_can_answer
             || can_auto_install
+            || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RESOLUTION_MEMO::get()
+                .unwrap_or(false)
         {
             return;
         }
@@ -8426,6 +8432,12 @@ impl Drop for OnResolveScope<'_> {
         self.vm.is_in_on_resolve.set(self.was_in_on_resolve);
         self.vm.as_mut().transpiler.resolver.custom_dir_paths = self.custom_dir_paths;
     }
+}
+
+/// Whether `specifier` is `namespace:path` with a namespace that an `onLoad` can serve. One letter is a Windows drive.
+fn names_an_on_load_namespace(specifier: &[u8]) -> bool {
+    ModuleLoader::on_load_namespace_and_path(specifier)
+        .is_some_and(|(namespace, _)| namespace.len() > 1)
 }
 
 /// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.

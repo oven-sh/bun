@@ -75,8 +75,8 @@ public:
 
     // True until the first test starts. A preload, or a beforeAll() of one, can only run before that.
     bool preloadMayBeRunning { true };
-    // True if spyOn() put a spy on an accessor in this test file. The fake timers then look for one on each function that they replace.
-    bool hasSpyOnAccessor { false };
+    // True if spyOn() put a spy on the accessor of a function that the fake timers replace, in this test file. The fake timers then look for it.
+    bool hasSpyOnAccessorOfFakeTimer { false };
 
     // Called by GlobalObject::visitChildren
     template<typename Visitor>

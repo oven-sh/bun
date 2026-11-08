@@ -1325,6 +1325,8 @@ static void putContent(JSGlobalObject* globalObject, JSObject* object, const Ide
 }
 
 extern "C" bool Bun__FakeTimers__isFake(JSC::JSGlobalObject*, JSC::EncodedJSValue value);
+// The bits of the fake timer functions whose property has this name, on the global object or on another object.
+extern "C" uint32_t Bun__FakeTimers__apisOfProperty(const BunString* name, bool isOnGlobal);
 
 // The link to keep for a spy or a fake timer that covers `covered` on the global `key`, or null. Another spy and a fake timer are not a stub's value.
 static InternalFieldTuple* stubLinkFor(Zig::GlobalObject* globalObject, const Identifier& key, SlotContent covered)
@@ -1376,14 +1378,12 @@ bool putBackForStub(Zig::GlobalObject* globalObject, const Identifier& key, cons
 
 // What useFakeTimers() and useRealTimers() call. None runs script or throws: they read and write own properties of the global, `process`, `Date` and `performance`.
 
-extern "C" uint32_t Bun__FakeTimers__apiOfGlobal(const BunString* name);
-
-// The bit of each fake timer function whose global is stubbed, bit 31 if a spy may be live, and bit 30 if one may be on an accessor.
+// The bit of each fake timer function whose global is stubbed, bit 31 if a spy may be live, and bit 30 if one may be on the accessor of such a function.
 extern "C" uint32_t JSMock__sharersOfFakes(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto& mocks = globalObject->mockModule;
-    uint32_t sharers = mocks.activeSpies ? (1u << 31) | (mocks.hasSpyOnAccessor ? 1u << 30 : 0) : 0;
+    uint32_t sharers = mocks.activeSpies ? (1u << 31) | (mocks.hasSpyOnAccessorOfFakeTimer ? 1u << 30 : 0) : 0;
     JSValue stubbed = mocks.stubbedGlobals.get();
     if (!stubbed)
         return sharers;
@@ -1394,26 +1394,30 @@ extern "C" uint32_t JSMock__sharersOfFakes(Zig::GlobalObject* globalObject)
             return sharers;
         if (auto* impl = name.isString() ? asString(name)->tryGetValueImpl() : nullptr) {
             BunString string = Bun::toString(impl);
-            sharers |= Bun__FakeTimers__apiOfGlobal(&string);
+            sharers |= Bun__FakeTimers__apisOfProperty(&string, true);
         }
     }
 }
 
 // A fake timer function is about to replace `owner[name]`, whose value is `original`. Returns what the fake timers keep beside it if a test can take
 // `original` back while the clock is on: `original` itself for a spy, or an entry with the accessor that has the spy, or with the link to the stub that put `original` there.
-extern "C" JSC::EncodedJSValue JSMock__entryOfFake(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue original, bool isStubbed)
+extern "C" JSC::EncodedJSValue JSMock__entryOfFake(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue original, bool isStubbed, bool mayBeOnAccessor)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue value = JSValue::decode(original);
+    if (!isStubbed && !mayBeOnAccessor && !(value.isCell() && value.asCell()->inherits<JSMockFunction>()))
+        return {};
     JSObject* target = asObject(JSValue::decode(owner));
     auto key = Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy));
     SlotContent kept { value, 0 };
     // An accessor that has a spy goes back as it is. The fake would put back what its getter returned, which the spy's restore leaves alone.
-    unsigned attributes = 0;
-    JSValue storage = getOwnPropertyStorage(globalObject, target, key, attributes);
-    if (!scope.exception() && storage && storage.inherits<GetterSetter>() && lastSpyIn({ storage, attributes }, target, key))
-        kept.storage = storage;
+    if (mayBeOnAccessor) {
+        unsigned attributes = 0;
+        JSValue storage = getOwnPropertyStorage(globalObject, target, key, attributes);
+        if (!scope.exception() && storage && storage.inherits<GetterSetter>() && lastSpyIn({ storage, attributes }, target, key))
+            kept.storage = storage;
+    }
     bool isOfSpy = keepSpiesIn(kept, target, key);
     InternalFieldTuple* link = nullptr;
     if (!scope.exception() && isStubbed && target == globalObject)
@@ -1558,13 +1562,13 @@ __attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObjec
                 firstException = exception;
         }
     }
-    globalObject->mockModule.hasSpyOnAccessor = false;
+    globalObject->mockModule.hasSpyOnAccessorOfFakeTimer = false;
     for (size_t i = 0; i < spiesOfPreload.size(); ++i) {
         auto* spy = uncheckedDowncast<JSMockFunction>(spiesOfPreload.at(i));
         if (!spy->installedOn())
             continue;
         spy->enter(List::Spies);
-        globalObject->mockModule.hasSpyOnAccessor |= spy->restoresOnlyItsAccessor();
+        globalObject->mockModule.hasSpyOnAccessorOfFakeTimer |= spy->restoresOnlyItsAccessor();
     }
 
     // Must run after restoring spies, since a Proxy trap may call a mock.
@@ -3185,11 +3189,6 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC
 
 extern "C" void Bun__FakeTimers__setSystemTime(JSC::JSGlobalObject* globalObject, double ms);
 
-extern "C" bool JSMock__isMock(JSC::EncodedJSValue value)
-{
-    return dynamicDowncast<JSMockFunction>(JSValue::decode(value));
-}
-
 extern "C" bool JSMock__isRestoredSpy(JSC::EncodedJSValue value)
 {
     auto* mock = dynamicDowncast<JSMockFunction>(JSValue::decode(value));
@@ -3617,7 +3616,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     mock->didInstall(object, propertyKey, storage, spyAttributes | JSMockFunction::SpyAttributeAccessor | (isOpaque ? JSMockFunction::SpyAttributeOpaque : 0));
     if (keepSpiesIn(mock->replaced(), object, propertyKey))
         mock->didReplaceSpy();
-    globalObject->mockModule.hasSpyOnAccessor = true;
+    if (!propertyKey.isSymbol()) {
+        BunString name = Bun::toString(propertyKey.impl());
+        if (Bun__FakeTimers__apisOfProperty(&name, object == globalObject))
+            globalObject->mockModule.hasSpyOnAccessorOfFakeTimer = true;
+    }
     if (object == globalObject && globalObject->mockModule.stubbedGlobals) [[unlikely]] {
         auto* link = stubLinkFor(globalObject, propertyKey, mock->replaced());
         RETURN_IF_EXCEPTION(scope, {});

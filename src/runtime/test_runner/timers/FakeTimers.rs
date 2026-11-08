@@ -11,8 +11,8 @@ use crate::generated_bindgen::fake_timers as generated;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{
-    JSFunction, JSGlobalObject, JSHostFn, JSPromiseStrong, JSValue, JsError, JsResult, Strong,
-    StrongOptional,
+    JSFunction, JSGlobalObject, JSHostFn, JSPromiseStrong, JSType, JSValue, JsError, JsResult,
+    Strong, StrongOptional,
 };
 
 // JSMock C++ bindings (fake timers are only used by bun:test, so these stay local).
@@ -20,10 +20,9 @@ unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
     safe fn JSMock__isRestoredSpy(value: JSValue) -> bool;
-    safe fn JSMock__isMock(value: JSValue) -> bool;
     // A spy or a `vi.stubGlobal()` value that a fake replaces can be undone while the clock is on. See `FakeTimers::retractable`.
-    /// The bit of each `Api` whose global is stubbed, bit 31 if a spy may be live, and `SPY_ON_ACCESSOR` if one may be on an accessor.
-    /// Zero: no fake replaces a spy or a stub.
+    /// The bit of each `Api` whose global is stubbed, bit 31 if a spy may be live, and `SPY_ON_ACCESSOR` if one may be on the
+    /// accessor of a function that the fake timers replace. Zero: no fake replaces a spy or a stub.
     safe fn JSMock__sharersOfFakes(global: &JSGlobalObject) -> u32;
     safe fn JSMock__entryOfFake(
         global: &JSGlobalObject,
@@ -31,6 +30,7 @@ unsafe extern "C" {
         name: &bun_core::String,
         original: JSValue,
         is_stubbed: bool,
+        may_be_on_accessor: bool,
     ) -> JSValue;
     safe fn JSMock__valueOfFakeEntry(
         global: &JSGlobalObject,
@@ -942,14 +942,12 @@ impl FakeTimers {
 
     /// What `useFakeTimers()` keeps for `original` if a test can take it back while the clock is on, else empty.
     #[cold]
-    fn entry_of_fake(
-        global: &JSGlobalObject,
-        api: Api,
-        original: JSValue,
-        is_stubbed: bool,
-    ) -> JSValue {
+    fn entry_of_fake(global: &JSGlobalObject, api: Api, original: JSValue, sharers: u32) -> JSValue {
         let name = bun_core::String::static_(api.property());
-        JSMock__entryOfFake(global, api.owner(global), &name, original, is_stubbed)
+        let is_stubbed = sharers & (1 << api as u32) != 0;
+        let may_be_on_accessor = sharers & SPY_ON_ACCESSOR != 0;
+        let owner = api.owner(global);
+        JSMock__entryOfFake(global, owner, &name, original, is_stubbed, may_be_on_accessor)
     }
 
     /// Everything that can throw runs before any state changes. Returns drives to settle, like `uninstall`.
@@ -1038,12 +1036,11 @@ impl FakeTimers {
                                 .unwrap_or(installed)
                         }
                     };
-                    if sharers != 0 {
-                        let is_stubbed = sharers & (1 << api as u32) != 0;
-                        if is_stubbed || sharers & SPY_ON_ACCESSOR != 0 || JSMock__isMock(original)
-                        {
-                            entry = Self::entry_of_fake(global, api, original, is_stubbed);
-                        }
+                    // A spy is an `InternalFunction`, or is on an accessor.
+                    if sharers & (1 << api as u32 | SPY_ON_ACCESSOR) != 0
+                        || (sharers != 0 && original.js_type() == JSType::InternalFunction)
+                    {
+                        entry = Self::entry_of_fake(global, api, original, sharers);
                     }
                     original
                 }
@@ -1661,13 +1658,16 @@ extern "C" fn Bun__FakeTimers__isFake(_global: &JSGlobalObject, value: JSValue) 
     originals.is_some_and(|originals| original_of(originals, value).is_some())
 }
 
-/// For `JSMock__sharersOfFakes`: the bit of the function whose property has this name, or 0.
+/// The bits of the functions whose property has this name, on the global object or on another object.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__FakeTimers__apiOfGlobal(name: &bun_core::String) -> u32 {
+extern "C" fn Bun__FakeTimers__apisOfProperty(name: &bun_core::String, is_on_global: bool) -> u32 {
     Api::FUNCTIONS
         .iter()
-        .find(|api| name.eq_ascii(api.property().as_bytes()))
-        .map_or(0, |api| 1 << *api as u32)
+        .filter(|api| {
+            is_on_global != matches!(api, Api::NextTick | Api::Date | Api::Performance)
+                && name.eq_ascii(api.property().as_bytes())
+        })
+        .fold(0, |bits, api| bits | 1 << *api as u32)
 }
 
 fn original_of(originals: JSValue, value: JSValue) -> Option<JSValue> {

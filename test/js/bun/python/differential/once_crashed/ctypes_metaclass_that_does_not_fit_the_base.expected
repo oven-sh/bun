@@ -1,0 +1,53 @@
+status: 0
+oracle: none
+---
+20 {(<class 'ctypes.c_int'>, <built-in function len>)}
+Structure with what Structure knows | Structure 16
+Structure with what Union knows | Structure 16
+Structure with what Array knows | Structure 20
+Structure with what Pointer knows | Structure 8
+Structure with what Simple knows | Structure 4
+Structure with what Func knows | Structure 8
+Union with what Structure knows | Union 16
+Union with what Union knows | Union 16
+Union with what Array knows | Union 20
+Union with what Pointer knows | Union 8
+Union with what Simple knows | Union 4
+Union with what Func knows | Union 8
+Array with what Structure knows | Array 16 2 IndexError: invalid index IndexError: invalid index TypeError: abstract class IndexError: invalid index []
+Array with what Union knows | Array 16 2 IndexError: invalid index IndexError: invalid index TypeError: abstract class IndexError: invalid index []
+Array with what Array knows | Array 20 5 0 None [1, 0] None [1, 2, 0, 0, 0]
+Array with what Pointer knows | Array 8 1 IndexError: invalid index IndexError: invalid index IndexError: invalid index ValueError: Can only assign sequence of same size []
+Array with what Simple knows | Array 4 0 IndexError: invalid index IndexError: invalid index TypeError: abstract class ValueError: Can only assign sequence of same size []
+Array with what Func knows | Array 8 1 IndexError: invalid index IndexError: invalid index TypeError: abstract class ValueError: Can only assign sequence of same size []
+Pointer with what Structure knows | Cannot create instance: has no _type_
+Pointer with what Union knows | Cannot create instance: has no _type_
+Pointer with what Array knows | _Pointer 20 False ValueError: NULL pointer access ValueError: NULL pointer access
+Pointer with what Pointer knows | _Pointer 8 False ValueError: NULL pointer access ValueError: NULL pointer access
+Pointer with what Simple knows | _Pointer 4 ValueError: the memory of the instance is too small ValueError: the memory of the instance is too small ValueError: the memory of the instance is too small
+Pointer with what Func knows | Cannot create instance: has no _type_
+Simple with what Structure knows | _SimpleCData 16 TypeError: abstract class TypeError: abstract class
+Simple with what Union knows | _SimpleCData 16 TypeError: abstract class TypeError: abstract class
+Simple with what Array knows | _SimpleCData 20 TypeError: abstract class TypeError: abstract class
+Simple with what Pointer knows | _SimpleCData 8 TypeError: abstract class TypeError: abstract class
+Simple with what Simple knows | _SimpleCData 4 0 None
+Simple with what Func knows | _SimpleCData 8 TypeError: abstract class TypeError: abstract class
+Func with what Structure knows | CFuncPtr 16 <built-in function len> <class 'ctypes.c_int'> (<class 'ctypes.c_int'>,)
+Func with what Union knows | CFuncPtr 16 <built-in function len> <class 'ctypes.c_int'> (<class 'ctypes.c_int'>,)
+Func with what Array knows | CFuncPtr 20 <built-in function len> <class 'ctypes.c_int'> (<class 'ctypes.c_int'>,)
+Func with what Pointer knows | CFuncPtr 8 <built-in function len> <class 'ctypes.c_int'> (<class 'ctypes.c_int'>,)
+Func with what Simple knows | CFuncPtr 4 <built-in function len> <class 'ctypes.c_int'> (<class 'ctypes.c_int'>,)
+Func with what Func knows | CFuncPtr 8 <built-in function len> <class 'ctypes.c_int'> (<class 'ctypes.c_int'>,)
+--- a base that is none of ctypes
+list | [] | TypeError: the instances of 'X' are no ctypes data | TypeError: the instances of 'X' are no ctypes data | TypeError: the instances of 'X' are no ctypes data | TypeError: the instances of 'X' are no ctypes data
+dict | {} | TypeError: the instances of 'X' are no ctypes data | TypeError: the instances of 'X' are no ctypes data | TypeError: the instances of 'X' are no ctypes data | TypeError: the instances of 'X' are no ctypes data
+int | 0 | TypeError: the instances of 'X' are no ctypes data | TypeError: the instances of 'X' are no ctypes data | TypeError: the instances of 'X' are no ctypes data | TypeError: the instances of 'X' are no ctypes data
+str | '' | TypeError: the instances of 'X' are no ctypes data | TypeError: the instances of 'X' are no ctypes data | TypeError: the instances of 'X' are no ctypes data | TypeError: the instances of 'X' are no ctypes data
+object | made | TypeError: the instances of 'X' are no ctypes data | TypeError: the instances of 'X' are no ctypes data | TypeError: the instances of 'X' are no ctypes data | TypeError: the instances of 'X' are no ctypes data
+--- the methods of one metaclass, on a class that another one knows about
+TypeError: 'T' is no structure and no union 4 T(0)
+TypeError: 'T' is no structure and no union 20 0
+TypeError: abstract class True True
+TypeError: abstract class b'\x00\x00\x00\x00\x00\x00\x00\x00' TypeError: expected T instance instead of int
+TypeError: abstract class
+TypeError: abstract class

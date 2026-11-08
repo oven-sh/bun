@@ -1,0 +1,34 @@
+status: 0
+script: 4d6a1db7c9437f97
+---
+an array, from_param A | A
+an array, from_param c_int | CArgObject
+an array, from_param c_int * 2 | c_int_Array_2
+an array, from_param pointer | LP_c_int
+an array, from_param None | None
+an array, from_param 5 | TypeError expected A instance instead of int
+an array, from_param c_long | TypeError expected A instance instead of c_long
+an array, its own from_param | A
+a structure, from_param S | TypeError cannot convert argument: POINTER _type_ type is not set
+a structure, from_param None | None
+a structure, from_param 5 | TypeError cannot convert argument: POINTER _type_ type is not set
+a structure, set_type | None
+a structure, _type_ | <class 'ctypes.c_int'>
+a structure, a field | 4
+a structure, sizeof | 4
+a structure, set_type 5 | TypeError _type_ must be a type
+a structure with a type, from_param S | S
+a structure with a type, from_param c_int | CArgObject
+a structure with a type, from_param None | None
+a structure with a type, from_param 5 | TypeError expected S instance instead of int
+a union, set_type | None
+a union, _type_ | <class 'ctypes.c_int'>
+a union, sizeof | 8
+a function, from_param 5 | TypeError cannot convert argument: POINTER _type_ type is not set
+a function, set_type | None
+a function, _type_ | <class 'ctypes.c_int'>
+a function, called | TypeError cannot construct instance of this class: no argtypes
+a simple type, from_param I | TypeError isinstance() arg 2 must be a type, a tuple of types, or a union
+a simple type, from_param None | None
+a simple type, from_param 5 | TypeError isinstance() arg 2 must be a type, a tuple of types, or a union
+a simple type, _fields_ after an instance | AttributeError _fields_ is final

@@ -1454,7 +1454,8 @@ fn function_text_holds_what_an_enum_and_a_name_of_a_namespace_are_in_code() {
     let expected = BStr::new(
         "function area() {\n    \
         let Inner; ((Inner) => [Inner[Inner[\"A\"] = 7] = \"A\", Inner[Inner[\"B\"] = 8] = \"B\", Inner[\"c-d\"] = \"s\", \
-        Inner[Inner[\"C\"] = f()] = \"C\", Inner[Inner[\"D\"] = Inner.A + f()] = \"D\", ])(Inner ||= {});\n    \
+        typeof (Inner[\"C\"] = f()) !== \"string\" && (Inner[Inner[\"C\"]] = \"C\"), \
+        typeof (Inner[\"D\"] = Inner.A + f()) !== \"string\" && (Inner[Inner[\"D\"]] = \"D\"), ])(Inner ||= {});\n    \
         ;((Inner) => [Inner[Inner[\"E\"] = (-1)] = \"E\" ])(Inner ||= {});\n    \
         Box.side++;\n    return [{ side: Box.side }, Box.side * (Box.side), Inner];\n  }",
     );

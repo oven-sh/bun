@@ -1,16 +1,13 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Decl, InitialState, SymbolId};
-use bun_sema::check::aot::ShapeKind;
 use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{BinOp, EnumId, EnumMemberId, ExprId, ExprKind, UnOp};
 use bun_sema::program::Sym;
 use bun_sema::types::EnumValue;
 use smallvec::SmallVec;
 
-use crate::lower::{CheckerTypeId, FileLowering};
+use crate::lower::FileLowering;
 use crate::modules::{ImportBinding, KnownObjects, Validity};
-
-const MAX_DEPTH_OF_UNION_MEMBERS: u32 = 8;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub(super) enum EnumMemberValue {
@@ -233,73 +230,13 @@ impl FileLowering<'_, '_, '_, '_> {
             Some(TranspilerConstant::Known(
                 Constant::Undefined | Constant::Null | Constant::Boolean(_) | Constant::BigInt(_),
             ))
-            | None => {
-                let mut known = self.find_known_primitive(initializer);
-                if known == KnownPrimitive::Unknown {
-                    known = self.find_typed_primitive(initializer);
+            | None => match self.find_known_primitive(initializer) {
+                KnownPrimitive::String => EnumMemberValue::ComputedString(initializer),
+                KnownPrimitive::Null | KnownPrimitive::Undefined | KnownPrimitive::NotString => {
+                    EnumMemberValue::Computed(initializer)
                 }
-                match known {
-                    KnownPrimitive::String => EnumMemberValue::ComputedString(initializer),
-                    KnownPrimitive::Null
-                    | KnownPrimitive::Undefined
-                    | KnownPrimitive::NotString => EnumMemberValue::Computed(initializer),
-                    KnownPrimitive::Unknown => EnumMemberValue::ComputedUnknown(initializer),
-                }
-            }
-        }
-    }
-
-    /// The primitive of the initializer's checked type, as tsc decides it.
-    fn find_typed_primitive(&mut self, initializer: ExprId) -> KnownPrimitive {
-        match self.queries.expression_type(initializer) {
-            Ok(ty) => self.find_primitive_of_type(ty, 0),
-            Err(_) => KnownPrimitive::Unknown,
-        }
-    }
-
-    fn find_primitive_of_type(&mut self, ty: CheckerTypeId, depth: u32) -> KnownPrimitive {
-        if depth > MAX_DEPTH_OF_UNION_MEMBERS {
-            return KnownPrimitive::Unknown;
-        }
-        let Ok(shape) = self.queries.type_shape(ty) else {
-            return KnownPrimitive::Unknown;
-        };
-        if !shape.trust.is_trusted() {
-            return KnownPrimitive::Unknown;
-        }
-        match shape.kind {
-            ShapeKind::String | ShapeKind::StringLiteral(_) | ShapeKind::TemplateLiteral { .. } => {
-                KnownPrimitive::String
-            }
-            ShapeKind::Undefined => KnownPrimitive::Undefined,
-            ShapeKind::Null => KnownPrimitive::Null,
-            ShapeKind::Boolean
-            | ShapeKind::BooleanLiteral(_)
-            | ShapeKind::Number
-            | ShapeKind::NumberLiteral(_)
-            | ShapeKind::NumericEnumMember(_)
-            | ShapeKind::BigInt
-            | ShapeKind::BigIntLiteral { .. } => KnownPrimitive::NotString,
-            ShapeKind::Int32 { base } => self.find_primitive_of_type(base, depth + 1),
-            ShapeKind::Union(members) => {
-                let mut found = None;
-                for &member in members {
-                    let primitive = self.find_primitive_of_type(member, depth + 1);
-                    found = Some(match found {
-                        None => primitive,
-                        Some(KnownPrimitive::Unknown) => return KnownPrimitive::Unknown,
-                        Some(earlier) if earlier == primitive => earlier,
-                        Some(earlier)
-                            if earlier.is_known_not_string() && primitive.is_known_not_string() =>
-                        {
-                            KnownPrimitive::NotString
-                        }
-                        Some(_) => return KnownPrimitive::Unknown,
-                    });
-                }
-                found.unwrap_or(KnownPrimitive::Unknown)
-            }
-            _ => KnownPrimitive::Unknown,
+                KnownPrimitive::Unknown => EnumMemberValue::ComputedUnknown(initializer),
+            },
         }
     }
 
@@ -419,13 +356,9 @@ impl FileLowering<'_, '_, '_, '_> {
             (false, true) => self.find_known_primitive(first),
             (false, false) => {
                 let first = self.find_known_primitive(first);
-                let second = self.find_known_primitive(second);
-                if first == second {
-                    first
-                } else if first.is_known_not_string() && second.is_known_not_string() {
-                    KnownPrimitive::NotString
-                } else {
-                    KnownPrimitive::Unknown
+                match first == self.find_known_primitive(second) {
+                    true => first,
+                    false => KnownPrimitive::Unknown,
                 }
             }
         }

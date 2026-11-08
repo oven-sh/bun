@@ -1062,21 +1062,28 @@ pub fn prune_installed_package(root_dir: &Dir) -> bun_sys::Maybe<()> {
 }
 
 /// `published_files` exits on an ignore file it cannot read, which is right for `bun pm pack` but
-/// not for an install, so pruning checks first and leaves such a package whole.
+/// not for an install, so pruning reads them the same way first and leaves such a package whole.
 fn has_unreadable_ignore_file(dir: &Dir, dir_subpath: &[u8]) -> bool {
+    for kind in [IgnorePatternsKind::Npmignore, IgnorePatternsKind::Gitignore] {
+        match dir.open_file(<&str>::from(kind).as_bytes(), bun_sys::O::RDONLY, 0) {
+            Ok(file) => {
+                let read = file.read_to_end();
+                let _ = file.close();
+                if read.is_err() {
+                    return true;
+                }
+                break;
+            }
+            Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
+            Err(_) => return true,
+        }
+    }
     let mut subdirs: Vec<Vec<u8>> = Vec::new();
     let mut iter = DirIterator::iterate(Fd::from_std_dir(dir));
     while let Some(entry) = next_dir_entry(&mut iter, dir_subpath) {
         let name = entry.name.slice_u8();
-        match entry.kind {
-            bun_sys::FileKind::File => {}
-            _ if name == b".npmignore" || name == b".gitignore" => return true,
-            bun_sys::FileKind::Directory => {
-                if name != b"node_modules" {
-                    subdirs.push(name.to_vec());
-                }
-            }
-            _ => {}
+        if entry.kind == bun_sys::FileKind::Directory && name != b"node_modules" {
+            subdirs.push(name.to_vec());
         }
     }
     subdirs.into_iter().any(|name| {
@@ -1194,10 +1201,10 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
             .collect();
         let mut parts: Vec<&[u8]> = Vec::new();
         let mut inside = !raw.starts_with(b"/");
-        for part in raw.split(|&c| c == b'/') {
+        for part in strings::split(&raw, b"/") {
             match part {
                 b"" | b"." => {}
-                b".." => inside = false,
+                b".." => inside = parts.pop().is_some() && inside,
                 part => parts.push(part),
             }
         }
@@ -1228,9 +1235,27 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
                 b"/index.node",
                 b"/package.json",
             ];
-            for suffix in SUFFIXES {
-                let entry = [&main[..], suffix].concat();
-                if bin_kind_without_following_symlinks(root_path, &entry) != bun_sys::FileKind::File {
+            let mut candidates: Vec<Vec<u8>> = SUFFIXES
+                .iter()
+                .map(|suffix| [&main[..], suffix].concat())
+                .collect();
+            // `main: "src/index.js"` can be served by `src/index.ts`.
+            const SUBSTITUTES: [(&[u8], &[&[u8]]); 4] = [
+                (b".js", &[b".ts", b".tsx"]),
+                (b".jsx", &[b".tsx"]),
+                (b".mjs", &[b".mts"]),
+                (b".cjs", &[b".cts"]),
+            ];
+            for (from, tos) in SUBSTITUTES {
+                if let Some(stem) = main.strip_suffix(from) {
+                    for to in tos {
+                        candidates.push([stem, to].concat());
+                    }
+                }
+            }
+            for entry in candidates {
+                if bin_kind_without_following_symlinks(root_path, &entry) != bun_sys::FileKind::File
+                {
                     continue;
                 }
                 for (i, &c) in entry.iter().enumerate() {

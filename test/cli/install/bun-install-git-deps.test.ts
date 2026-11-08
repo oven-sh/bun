@@ -1650,6 +1650,8 @@ test.concurrent(
     expect(second.exitCode).toBe(0);
     expect(tree()).toEqual(expected);
     expect(readdirSync(join(cache, entry))).toContain(".bun-tag");
+    expect(existsSync(join(cache, entry, "src", "a.js"))).toBe(false);
+    expect(existsSync(join(cache, entry, "docs", "guide.md"))).toBe(false);
   },
 );
 
@@ -1698,6 +1700,62 @@ test.concurrent("a git dependency with a directory named .npmignore installs who
   expect(installOutput(stdout).at(-1)).toBe("1 package installed");
   expect(exitCode).toBe(0);
   expect(treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag")).toContain("index.js");
+  expect(treeOf(join(project, "node_modules", "demo-lib"))).toContain("sub/.npmignore/keep.txt");
+});
+
+test.concurrent("a git dependency keeps the TypeScript file behind a main with parent segments", async () => {
+  using dir = tempDir("git-dep-published-files-main-js", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "js-main",
+      files: {
+        "package.json": JSON.stringify({
+          name: "demo-lib",
+          version: "1.0.0",
+          main: "src/../lib/index.js",
+          files: ["dist"],
+        }),
+        "lib/index.ts": "export {};\n",
+        "dist/b.js": "b\n",
+      },
+    },
+  ]);
+  const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#js-main` });
+  const { stdout, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(installOutput(stdout).at(-1)).toBe("1 package installed");
+  expect(exitCode).toBe(0);
+  expect(treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag")).toEqual([
+    "dist",
+    "dist/b.js",
+    "lib",
+    "lib/index.ts",
+    "package.json",
+  ]);
+});
+
+test.concurrent("a .npmignore file wins over a .gitignore directory in a git dependency", async () => {
+  using dir = tempDir("git-dep-npmignore-precedence", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "precedence",
+      files: {
+        "package.json": JSON.stringify({ name: "demo-lib", version: "1.0.0" }),
+        ".npmignore": "junk.txt\n",
+        ".gitignore/keep.txt": "x\n",
+        "junk.txt": "junk\n",
+        "index.js": "module.exports = 1;\n",
+      },
+    },
+  ]);
+  const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#precedence` });
+  const { stdout, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(installOutput(stdout).at(-1)).toBe("1 package installed");
+  expect(exitCode).toBe(0);
+  const tree = treeOf(join(project, "node_modules", "demo-lib"));
+  expect(tree).toContain("index.js");
+  expect(tree).not.toContain("junk.txt");
 });
 
 test.concurrent(

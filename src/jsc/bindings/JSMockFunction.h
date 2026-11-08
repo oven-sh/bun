@@ -70,8 +70,7 @@ public:
     // A JSMap from the promises given to didStartDynamicImport() to their keys. Settled ones get swept.
     JSC::WriteBarrier<JSC::Unknown> dynamicImports;
 
-    // The mock behind each jest.replaceProperty() that is not restored yet, and the `Replaced` handle it returned.
-    // The target holds the replacement value and not the mock, so nothing else roots the mock until it is restored.
+    // The mock behind each jest.replaceProperty() that is not restored yet, and its `Replaced` handle. Nothing else roots that mock.
     struct ReplacedProperty {
         JSC::Strong<JSC::JSObject> mock;
         JSC::Strong<JSC::JSObject> handle;

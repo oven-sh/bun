@@ -359,15 +359,14 @@ static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object
 
 static constexpr unsigned descriptorAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Accessor;
 
-// `object[key] = value` in strict mode: what an object's own put() makes of it, such as process.env's conversion to a string.
+// `object[key] = value` in strict mode, so the object's own put() runs (process.env converts to a string).
 static void assignProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName key, JSValue value)
 {
     PutPropertySlot slot(object, true);
     object->methodTable()->put(object, globalObject, key, value, slot);
 }
 
-// True if `object` is a module namespace object. Its exports are replaced in the module that declares them.
-// `callframe` is that of the spyOn() or replaceProperty() call, for the message of a compiled executable that refuses.
+// True if `object` is a module namespace object, whose exports are replaced in the module that declares them.
 static bool replaceExportOfNamespace(JSGlobalObject* globalObject, JSC::CallFrame* callframe, JSObject* object, const Identifier& propertyKey, JSValue replacement)
 {
     if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
@@ -3082,7 +3081,7 @@ enum class SpyAccess : uint8_t {
 // The object a spy or a replacement goes on, and what `key` is there.
 struct SpiedProperty {
     JSObject* object { nullptr };
-    // Set when `isEasy` and the property exists: a data property's value, read without running script unless the object is opaque.
+    // A data property's value, when `isEasy` and the property exists.
     JSValue value;
     // Filled when the property is not a plain data property, or the object is opaque.
     PropertyDescriptor descriptor;
@@ -3090,12 +3089,11 @@ struct SpiedProperty {
     bool hasValue { false };
     bool isOwn { false };
     bool isOpaque { false };
-    // A data property or a missing one, spied as a value. Otherwise an accessor, a custom property, or a getter or setter spy.
+    // A data property or a missing one, spied as a value.
     bool isEasy { false };
 };
 
-// Some objects stand for another one (a GlobalProxy, a node:vm global, a mocked module's namespace): the spy goes on that one.
-// `function` names the caller in error messages.
+// Resolves the object that stands in for `object` (a GlobalProxy, a node:vm global, a mocked module's namespace) and describes `propertyKey` there.
 __attribute__((minsize)) static void resolveSpiedProperty(Zig::GlobalObject* globalObject, JSObject* object, const Identifier& propertyKey, SpyAccess access, ASCIILiteral function, SpiedProperty& result)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3409,9 +3407,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     return JSValue::encode(mock);
 }
 
-// The `Replaced` handle of jest.replaceProperty(): `{ restore, replaceValue }`, bound to the mock that remembers the original.
-// Both work when destructured. The target and the key travel as bound arguments, so that replaceValue() can install the
-// replacement again after a restore.
+// `{ restore, replaceValue }`, bound to the mock so that both work when destructured. The bound target and key let replaceValue() install the replacement again after a restore.
 static JSObject* createReplacedPropertyHandle(Zig::GlobalObject* globalObject, JSMockFunction* mock, JSObject* target, const Identifier& propertyKey)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3443,10 +3439,8 @@ static JSMockModule::ReplacedProperty* findReplacedProperty(Zig::GlobalObject* g
     return nullptr;
 }
 
-// jest.replaceProperty(object, key, value): Jest 30's checks, in its order and with its messages. A function is for spyOn(), an accessor for spyOn(..., "get" | "set").
-// Jest assigns the value. So does this on an object with a put() of its own, such as process.env, a typed array or import.meta.env.
-// On any other object the value is defined with the attributes the property has, so a read-only data property can be replaced too.
-// `mock` and `handle` are those of an earlier replacement that was restored, whose replaceValue() installs it again. Returns the handle.
+// jest.replaceProperty(object, key, value), with Jest 30's checks and messages. Returns the handle.
+// `mock` and `handle` are those of a restored replacement that replaceValue() installs again.
 __attribute__((minsize)) static JSValue replaceProperty(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe, JSObject* target, const Identifier& propertyKey, JSValue value, JSMockFunction* mock, JSObject* handle)
 {
     auto& vm = JSC::getVM(globalObject);

@@ -357,29 +357,72 @@ impl<'a> Parser<'a, '_> {
         self.expect(expr, ExprTag::EObject)?;
         let obj = expr.data.e_object().expect("infallible: variant checked");
         let properties = obj.properties.slice();
-        let valid_count = properties
-            .iter()
-            .filter(|p| matches!(p.value.as_ref().unwrap().data, ExprData::EString(_)))
-            .count();
-        let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
-        let mut values: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
+        let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(properties.len());
+        let mut values: Vec<Box<[u8]>> = Vec::with_capacity(properties.len());
         for prop in properties {
-            let ExprData::EString(v) = &prop
-                .value
-                .as_ref()
-                .expect("infallible: prop has value")
-                .data
-            else {
-                continue;
-            };
-            let ExprData::EString(k) = &prop.key.as_ref().expect("infallible: prop has key").data
-            else {
-                continue;
-            };
-            keys.push(estring_to_owned(k, self.bump));
-            values.push(estring_to_owned(v, self.bump));
+            let key = prop.key.as_ref().expect("infallible: prop has key");
+            let value = prop.value.as_ref().expect("infallible: prop has value");
+            match (&key.data, &value.data) {
+                (ExprData::EString(k), ExprData::EString(v)) => {
+                    keys.push(estring_to_owned(k, self.bump));
+                    values.push(estring_to_owned(v, self.bump));
+                }
+                _ => self.warn_ignored_define(expr, key, value),
+            }
         }
         Ok(api::StringMap { keys, values })
+    }
+
+    /// Says that `key` of the `define` table is skipped, because `value` is not a string.
+    #[cold]
+    fn warn_ignored_define(&mut self, table: &Expr, key: &Expr, value: &Expr) {
+        let name = bun_core::fmt::escape_control_chars(key.as_string(self.bump).unwrap_or(b""));
+
+        // The TOML parser gives a table that a dotted key or a header made the position of its
+        // key: `process.env.NODE_ENV = "..."` makes a table with the name `process`.
+        let mut dotted: Vec<u8> = Vec::new();
+        let mut nested = (value.loc == key.loc)
+            .then(|| value.data.e_object())
+            .flatten();
+        while let Some(object) = nested {
+            let Some(first) = object.properties.slice().first() else {
+                break;
+            };
+            let Some(segment) = first.key.as_ref().and_then(|it| it.as_string(self.bump)) else {
+                break;
+            };
+            dotted.push(b'.');
+            dotted.extend_from_slice(segment);
+            nested = first.value.as_ref().and_then(|it| it.data.e_object());
+        }
+
+        // An inline table and the object of a JSON file start at their brace. A table that a
+        // `[define]` header made does not, and it takes every key up to the next header.
+        let below_header = usize::try_from(table.loc.start)
+            .ok()
+            .and_then(|at| self.source.contents.get(at))
+            .is_some_and(|byte| *byte != b'{');
+
+        // No excerpt: the line can hold a secret that the redactor does not recognize.
+        let (source, loc) = (self.source, value.loc);
+        let mut warn =
+            |args: core::fmt::Arguments<'_>| self.log.add_warning_fmt_no_excerpt(source, loc, args);
+        if !dotted.is_empty() {
+            warn(format_args!(
+                "ignoring define \"{name}\": TOML reads a dotted key as nested tables, quote the key like \"{name}{}\"",
+                bun_core::fmt::escape_control_chars(&dotted)
+            ));
+        } else if below_header {
+            warn(format_args!(
+                "ignoring define \"{name}\": expected string but received {}. Keys below [define] are defines: write it as a string, or move it above the first [header]",
+                value.data.tag_name()
+            ));
+        } else {
+            warn(format_args!(
+                "ignoring define \"{name}\": expected string but received {}, write it as a string like \"true\" or \"'text'\"",
+                value.data.tag_name()
+            ));
+        }
     }
 
     // `cmd` is a runtime arg rather than a const generic —

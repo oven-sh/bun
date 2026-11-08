@@ -115,6 +115,30 @@ describe.concurrent("bun build --dts", () => {
     );
   });
 
+  test.each([
+    ["without a minify flag", [], "undefined"],
+    ["--minify-syntax", ["--minify-syntax"], "void 0"],
+  ])("%s: a default that is a cast keeps its cast", async (_, flags, printed) => {
+    using dir = tempDir("build-dts-default-cast", {
+      ...project,
+      "src/index.ts": `export function pick(index: number = undefined as any): number {
+  return index ?? 1;
+}
+export function keep(index: number = null as any): number {
+  return index ?? 1;
+}
+console.log(pick(3), keep(4));
+`,
+    });
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts", ...flags);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8").match(/^function .*$/gm)).toEqual([
+      `function pick(index: number = ${printed} as any): number {`,
+      "function keep(index: number = null as any): number {",
+    ]);
+    expect(readFileSync(join(String(dir), "out/index.js"), "utf8")).toContain(`function pick(index = ${printed}) {`);
+  });
+
   test("a statement that never runs is left out", async () => {
     using dir = tempDir("build-dts-dead", {
       ...project,

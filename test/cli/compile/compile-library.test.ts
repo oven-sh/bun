@@ -965,6 +965,167 @@ export function literal(which: "plain" | "loud"): { done: true } {
     },
   );
 
+  const respelled = {
+    "src/index.ts": `export function parameter(index: number = undefined as any): number {
+  return index ?? 1;
+}
+export const arrow = (on: number = true as any, off: number = false as any): number => on + off;
+export function patterns({ a = undefined as any }: { a?: number }, [b = undefined!]: number[]): number {
+  return a + b;
+}
+export class Late {
+  field: number = undefined as any;
+  static shared: number = <any>undefined;
+  #hidden: boolean = true as const;
+  constructor(public property: number = undefined as unknown as number) {}
+  hidden(fallback: string = (0 / 0) as any): string {
+    return this.#hidden ? fallback : "";
+  }
+}
+export class Extended extends (undefined as any) {}
+export function heads(x: number): number {
+  switch (undefined as any) {
+    case x:
+      return 1;
+  }
+  for (const value of undefined as any) x += value;
+  return x;
+}
+`,
+  };
+
+  test.each([
+    ["--minify-syntax", ["--minify-syntax"]],
+    ["--minify-syntax --minify-whitespace", ["--minify-syntax", "--minify-whitespace"]],
+  ])("%s keeps the cast of a constant that it writes in another form", async (_, flags) => {
+    using dir = tempDir("library-typed-file-respelled", library(respelled));
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", ...flags);
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir).match(/(void 0|![01]|NaN)\)?( as \w+|!)+/g)).toEqual([
+      "void 0 as any",
+      "!0 as any",
+      "!1 as any",
+      "void 0 as any",
+      "void 0)!",
+      "void 0 as any",
+      "void 0 as any",
+      "!0 as true",
+      "void 0 as unknown as number",
+      "NaN as any",
+      "void 0) as any",
+      "void 0 as any",
+      "void 0 as any",
+    ]);
+    const javascript = readFileSync(join(String(dir), "dist/index.js"), "utf8");
+    const code = (text: string) => text.replace(/\s+/g, "");
+    const erased = new Bun.Transpiler({ loader: "ts", target: "node" }).transformSync(typedFile(dir));
+    expect(code(erased)).toBe(code(new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(javascript)));
+  });
+
+  const held = {
+    "src/ns.ts": `export const value: unknown = "v";
+export class Base {}
+export let flag: unknown = true;
+export let count: unknown = 1;
+export const list: unknown = [1];
+export const record: unknown = {};
+export const kind: unknown = "k";
+export const pair: string[] = ["a"];
+export const grid: string[][] = [["a"]];
+`,
+    "src/index.ts": `import * as ns from "./ns";
+declare function use(...values: unknown[]): void;
+export function parameter(p: string = ns.value as any): string {
+  return p;
+}
+export function branch(on: boolean, p: string = on ? (ns.value as string) : (ns.kind as string)): string {
+  return p;
+}
+export const arrow = (p: string = ns.value as any): string => p;
+export function property({ a = ns.value as any }: { a?: string }): string {
+  return a;
+}
+export function element([a = ns.value as any]: string[]): string {
+  return a;
+}
+export function nested({ a: { b = ns.value as any } = ns.record as any }: { a?: { b?: string } }): string {
+  return b;
+}
+export class Owner extends (ns.Base as typeof ns.Base) {
+  field: string = ns.value as any;
+  static shared: string = ns.value as any;
+  constructor(public property: string = ns.value as any) {
+    super();
+  }
+}
+export function heads(x: number): number {
+  if (ns.flag as boolean) x++;
+  while (ns.flag as boolean) break;
+  do x++;
+  while (ns.flag as boolean);
+  for (let i = 0; ns.flag as boolean; ns.count as number) break;
+  for (const value of ns.list as number[]) x += value;
+  for (const key in ns.record as object) use(key);
+  switch (ns.kind as string) {
+    case ns.value as any:
+      x++;
+  }
+  return x;
+}
+`,
+  };
+
+  test.each([
+    ["without a minify flag", []],
+    ["--minify-syntax", ["--minify-syntax"]],
+  ])(
+    "%s: a member of a namespace import keeps its cast where a parameter, a pattern, a class or a statement holds it",
+    async (_, flags) => {
+      using dir = tempDir("library-typed-file-held", library(held));
+      const built = await bun(String(dir), "compile", "--library", "src/index.ts", ...flags);
+      expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+      expect(typedFile(dir).match(/\w+ as (typeof \w+|\w+(\[\])?)/g)).toEqual([
+        "value as any",
+        "value as string",
+        "kind as string",
+        "value as any",
+        "value as any",
+        "value as any",
+        "value as any",
+        "record as any",
+        "Base as typeof Base",
+        "value as any",
+        "value as any",
+        "value as any",
+        "flag as boolean",
+        "flag as boolean",
+        "flag as boolean",
+        "flag as boolean",
+        "count as number",
+        "list as number[]",
+        "record as object",
+        "kind as string",
+        "value as any",
+      ]);
+    },
+  );
+
+  test("a default in a pattern inside a pattern keeps its cast, and the default of that pattern does not take it", async () => {
+    using dir = tempDir("library-typed-file-held-inside", {
+      ...library(held),
+      "src/index.ts": `import * as ns from "./ns";
+export function inside([[a = ns.value as string] = ns.pair as string[]]: string[][] = ns.grid as string[][]): string {
+  return a;
+}
+`,
+    });
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir).match(/^function .*$/gm)).toEqual([
+      "function inside([[a = value as string] = pair]: string[][] = grid as string[][]): string {",
+    ]);
+  });
+
   test("--minify-whitespace puts each statement of the .aot.ts file on its own line", async () => {
     using dir = tempDir(
       "library-typed-file-lines",

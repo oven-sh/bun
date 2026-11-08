@@ -52,7 +52,7 @@ Bundlers solve several problems:
 <Note>
   By default, `bun build` does not check types. Pass [`--check`](/runtime/check#check-before-you-run-build-or-test), or
   `check: true` to `Bun.build`, to type check the entry points and everything they import. Pass [`--dts`](#dts), or
-  `dts: true`, to type check and write `.d.ts` files without running `tsc`.
+  `dts: true`, to type check and generate `.d.ts` files without running `tsc`.
 </Note>
 
 ## Basic example
@@ -332,7 +332,7 @@ for (const res of result.outputs) {
   new Response(res);
 
   // Can be written manually, but you should use `outdir` in this case.
-  Bun.write(path.join("out", res.path), res);
+  await Bun.write(path.join("out", res.path), res);
 }
 ```
 

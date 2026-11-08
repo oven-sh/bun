@@ -111,6 +111,7 @@ pub fn load_program<'s>(
     let finds_entry_points = matches!(request.entry_points, EntryPoints::WrittenAndFound(..));
     let config_path = project.config_path.clone();
     let found_entry_paths: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
+    let guessed_entry_paths: Guarded<FxHashSet<Vec<u8>>> = Guarded::new(FxHashSet::default());
     let list_with_found = || {
         let found = found_entry_paths.lock();
         if !config_path.is_empty() || !found.iter().any(|path| is_typescript_file_name(path)) {
@@ -141,9 +142,25 @@ pub fn load_program<'s>(
     let find_entry_points = |code: &dyn CodeView<'_>| match request.entry_points {
         EntryPoints::WrittenAndFound(_, find) => {
             let found = find(code);
+            let sure = found.named_by.iter();
+            let sure = sure.filter(|(_, load)| !load.is_some_and(|load| load.may_be_left_out));
+            let sure: FxHashSet<&[u8]> = sure.map(|(path, _)| &path[..]).collect();
+            let named: FxHashSet<&[u8]> = found.named_by.iter().map(|it| &it.0[..]).collect();
             let mut paths = found_entry_paths.lock();
+            let mut guessed = guessed_entry_paths.lock();
             paths.retain(|path| !found.dropped.contains(path));
-            paths.extend_from_slice(&found.paths);
+            for path in &found.paths {
+                match named.contains(&path[..]) && !sure.contains(&path[..]) {
+                    true => drop(guessed.insert(path.clone())),
+                    false => paths.push(path.clone()),
+                }
+            }
+            for (path, _) in &found.named_by {
+                if sure.contains(&path[..]) && guessed.remove(path) {
+                    paths.push(path.clone());
+                }
+            }
+            drop(guessed);
             drop(paths);
             found
         }

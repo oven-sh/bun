@@ -1931,16 +1931,25 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `addTypesToIntersection`, `addTypeToIntersection`. Preserves the order, which matters for overloads, and only
     /// removes duplicates. Returns `found` plus what the types add.
-    fn add_types_to_intersection(
+    fn add_types_to_intersection<const IS_LONG: bool>(
         &mut self,
         set: &mut Flat,
+        members: &mut FxHashSet<TypeId>,
         mut found: MembersByFlags,
         types: &[TypeId],
     ) -> MembersByFlags {
         for &ty in types {
             let ty = self.regular(ty);
             if let TypeData::Intersection(inner) = self.data(ty) {
-                found = self.add_types_to_intersection(set, found, inner);
+                found = if IS_LONG {
+                    self.add_types_to_intersection::<true>(set, members, found, inner)
+                } else if inner.len() > set.inline_size() {
+                    members.clear();
+                    members.extend(set.iter().copied());
+                    self.add_types_to_intersection::<true>(set, members, found, inner)
+                } else {
+                    self.add_types_to_intersection::<false>(set, members, found, inner)
+                };
                 continue;
             }
             // Only the first of the types that count as `{}` is added.
@@ -1968,7 +1977,11 @@ impl<'p, 's> Checker<'p, 's> {
                 if member != ty {
                     found.includes |= tf::INCLUDES_MISSING_TYPE;
                 }
-                if !set.contains(&member) {
+                let is_new = match IS_LONG {
+                    true => members.insert(member),
+                    false => !set.contains(&member),
+                };
+                if is_new {
                     set.push(member);
                 }
                 found.add(one);
@@ -2051,7 +2064,11 @@ impl<'p, 's> Checker<'p, 's> {
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
         let mut set = Flat::with_capacity(types.len());
-        let found = self.add_types_to_intersection(&mut set, MembersByFlags::default(), types);
+        let (mut members, found) = (FxHashSet::default(), MembersByFlags::default());
+        let found = match types.len() > set.inline_size() {
+            true => self.add_types_to_intersection::<true>(&mut set, &mut members, found, types),
+            false => self.add_types_to_intersection::<false>(&mut set, &mut members, found, types),
+        };
         let includes = found.includes;
         if includes & tf::NEVER != 0 {
             return if set.contains(&TypeId::SILENT_NEVER) {

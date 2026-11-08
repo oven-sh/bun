@@ -1,0 +1,37 @@
+# An answer for a value or a getter among the extra properties of a compiled object is filed under the structure of the OBJECT and loaded off the hidden object at an offset that the hidden object's structure gave.
+# The two go together because the structure of the object names that of its hidden object, and every road that changes the hidden object derives the structure of the object anew. Where the slot of such a read is made and where an answer is filed that is held.
+# The first run: properties come, go and come back by the roads of the language, a fresh place reads behind each: every answer is that of the language.
+# The last two runs are the red control: a door left open on purpose gives the hidden object another structure and tells nobody: the next filing, of a value or of a getter, ends the process.
+# f1 = make, f2 = depthFirst, f3 = depthNext, f4 = depthLast, f5 = girthFirst, f6 = girthNext
+# -- source: where-an-answer-among-extra-properties-is-filed-a-hidden-object-of-another-structure-ends-the-process.ts
+# declare function register(...handed: unknown[]): void;
+# class Shelf { width: number; constructor(width: number) { this.width = width; } }
+# function make(width: number): Shelf { return new Shelf(width); }
+# function depthFirst(shelf: any): unknown { return shelf.depth; }
+# function depthNext(shelf: any): unknown { return shelf.depth; }
+# function depthLast(shelf: any): unknown { return shelf.depth; }
+# function girthFirst(shelf: any): unknown { return shelf.girth; }
+# function girthNext(shelf: any): unknown { return shelf.girth; }
+# register(make, depthFirst, depthNext, depthLast, girthFirst, girthNext);
+# -- end of source
+# OPTIONS: mechanisms=all
+# RUN: run-in-shell globalThis.register = (make, depthFirst, depthNext, depthLast, girthFirst, girthNext) => { const shelves = [make(1), make(2), make(3)]; const sum = read => { let total = 0; for (let turn = 0; turn < 300; turn++) for (const shelf of shelves) total += read(shelf) ?? 1000; return total; }; for (const shelf of shelves) { shelf.depth = shelf.width * 10; Object.defineProperty(shelf, "girth", { get() { return this.width * 100; }, configurable: true, enumerable: true }); } print(aotPlaceOfProperty(shelves[0], "depth"), sum(depthFirst), sum(girthFirst)); for (const shelf of shelves) shelf.height = 5; print(sum(depthNext), sum(girthNext)); for (const shelf of shelves) delete shelf.depth; print(sum(depthLast)); };
+# REQUIRES: entries-of-bun
+# CHECK: extra property 18000 180000
+# CHECK-NEXT: 18000 180000
+# CHECK-NEXT: 900000
+# CHECK-NEXT: exited with 0
+# RUN(VALUE): run-in-shell globalThis.register = (make, depthFirst, depthNext) => { const shelves = [make(1), make(2), make(3)]; const sum = read => { let total = 0; for (let turn = 0; turn < 300; turn++) for (const shelf of shelves) total += read(shelf); return total; }; for (const shelf of shelves) shelf.depth = shelf.width * 10; print(sum(depthFirst)); for (const shelf of shelves) print(aotAddExtraPropertyUnseen(shelf, "height", 5)); print("read", sum(depthNext)); };
+# REQUIRES(VALUE): entries-of-bun
+# VALUE: 18000
+# VALUE-COUNT-3: true
+# VALUE-NOT: read
+# VALUE: AOT: the properties that an object holds beside its fields are not laid out as the structure of the object says. This is a bug in Bun.
+# VALUE: crashed with
+# RUN(GETTER): run-in-shell globalThis.register = (make, depthFirst, depthNext, depthLast, girthFirst, girthNext) => { const shelves = [make(1), make(2), make(3)]; const sum = read => { let total = 0; for (let turn = 0; turn < 300; turn++) for (const shelf of shelves) total += read(shelf); return total; }; for (const shelf of shelves) Object.defineProperty(shelf, "girth", { get() { return this.width * 100; }, configurable: true, enumerable: true }); print(sum(girthFirst)); for (const shelf of shelves) print(aotAddExtraPropertyUnseen(shelf, "height", 5)); print("read", sum(girthNext)); };
+# REQUIRES(GETTER): entries-of-bun
+# GETTER: 180000
+# GETTER-COUNT-3: true
+# GETTER-NOT: read
+# GETTER: AOT: the properties that an object holds beside its fields are not laid out as the structure of the object says. This is a bug in Bun.
+# GETTER: crashed with

@@ -20,8 +20,9 @@
 # (globalThis as any).answer = sum(+input, +input);
 # -- end of source
 # The compiler before this one: 3 instructions, 0 of them patches.
-# When the bound was taken: steps: operations 11, patches 4, moves 10, unlikely or rare 0.
-# RUN(X64): steps most:21 f1 mechanisms=all-Inlining
+# When the bound was taken: steps: operations 11, patches 4, moves 12, unlikely or rare 0. Two of the moves are the pushes that lay a and b into their slots. They stand for two saved registers,
+# whose pushes, pops and first moves are no steps: with the registers the function has 10 moves and 98 bytes, with the slots 12 moves and 84 bytes.
+# RUN(X64): steps most:23 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
-# X64-NEXT: steps: at most 21
+# X64-NEXT: steps: at most 23

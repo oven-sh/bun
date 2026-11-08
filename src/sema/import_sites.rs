@@ -38,11 +38,11 @@ pub use macro_calls::{macro_callee, macro_import_symbols};
 pub use made_requires::{
     ExportedRequire, OwnRequire, find_base_that_a_call_made_of_own_file, find_exported_requires,
     find_holder_of_require_made_for_choice, find_other_values_of_own_require, find_own_require,
-    find_result_expression, holds_import_meta_require, is_call_of_create_require,
-    is_create_require_behind_get_builtin_module, is_create_require_called_through_call,
-    is_made_require, is_require_made_for_own_file, may_be_modified,
-    may_call_have_made_base_of_require, may_call_have_made_path, may_require_get_members,
-    may_still_be_undefined,
+    find_result_expression, gives_first_argument_to_own_require, holds_import_meta_require,
+    is_call_of_create_require, is_create_require_behind_get_builtin_module,
+    is_create_require_called_through_call, is_made_require, is_require_made_for_own_file,
+    may_be_modified, may_call_have_made_base_of_require, may_call_have_made_path,
+    may_require_get_members, may_still_be_undefined,
 };
 pub(crate) use made_requires::{find_imported_export, names_own_file, settled_symbol};
 pub use parameters::{
@@ -196,7 +196,7 @@ pub(crate) struct ImportScan<'s> {
     pub asked_of_other_files: &'s [(Atom, Atom)],
     pub asked_of_data_files: &'s [(Atom, Atom)],
     pub asked_of_own_exports: &'s [Atom],
-    pub names_out_of_data_files: &'s [(Atom, ExprId)],
+    pub names_out_of_data_files: &'s [(Atom, ExprId, bool)],
     pub keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],
     pub first_call_site: u32,
     pub sites_by_kind: &'s [u32],

@@ -857,6 +857,10 @@ impl ModuleGraph {
     }
 
     pub fn may_run_before(&self, importer: ModuleRef, exporter: ModuleRef) -> bool {
+        self.half(importer) || self.may_run_before_on_one_ring(importer, exporter)
+    }
+
+    pub fn may_run_before_on_one_ring(&self, importer: ModuleRef, exporter: ModuleRef) -> bool {
         let order = &self.plan.order;
         let component =
             |module: ModuleRef| Some(order.component_of[order.numbers.number_of(module)?]);
@@ -1253,7 +1257,9 @@ impl ModuleGraph {
         (self.plan.final_requests, self.plan.final_ranges) =
             self.settle_requests(prefixes, &data_files, in_parallel);
         steps.end("plan: requests");
-        self.plan.is_every_require_seen = self.plan.names_way_to_module_objects.contains(&true);
+        self.plan.is_every_require_seen = self.plan.names_way_to_module_objects.contains(&true)
+            || self.plan.may_mock_every_module
+            || self.plan.may_be_mocked.contains(&true);
         self.plan.is_finished = true;
     }
 

@@ -5,7 +5,8 @@ use std::mem::take;
 use bun_ast::Loader;
 use bun_core::strings;
 use bun_sema::atom::{Atom, known};
-use bun_sema::hir::{ExprKind, StmtKind};
+use bun_sema::bind::{Binding, CodeUnit};
+use bun_sema::hir::{ExprKind, Flags, StmtKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, ResolvedForm};
 use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files, NamingLoad};
 use bun_sema::resolve::{CodeHost, CodeOptions, Host, is_declaration_file_name, to_path};
@@ -18,6 +19,8 @@ use super::load_names::find_files_followed_further_than_bundler;
 use super::worker_entries::{
     PlaceOfName, WorkerNameForm, WorkerStart, read_file_url, source_path_of,
 };
+use crate::builtins::ResolvedBuiltins;
+use crate::builtins::table::{self, BuiltinFlags, BuiltinId, Origin};
 use crate::compile::EntryPointPaths;
 use crate::load::externals::contains;
 use crate::load::host::LoadHost;
@@ -136,7 +139,63 @@ struct FoundSoFar {
     code_of_levels: Vec<(usize, Vec<u8>, Vec<u8>)>,
     reach_in_front_of_drop: Vec<Vec<u8>>,
     entry_points: Vec<(Vec<u8>, FoundEntryPoint)>,
+    merely_guessed: FxHashSet<Vec<u8>>,
     names_written: Vec<EntryPointPaths>,
+}
+
+fn names_only_what_reaches_no_file(
+    code: &dyn CodeView<'_>,
+    file: FileId,
+    builtins: &ResolvedBuiltins,
+) -> bool {
+    let reaches_beyond_file = BuiltinFlags::EVALUATES_TEXT
+        | BuiltinFlags::RUNS_UNSEEN_CODE
+        | BuiltinFlags::LOADS_MODULE_BY_NAME
+        | BuiltinFlags::IS_GLOBAL_OBJECT;
+    let is_held_by = |id: BuiltinId, holder: BuiltinId| {
+        let mut holders = std::iter::successors(Some(id), |&id| table::entry(id).holder);
+        holders.any(|id| id == holder)
+    };
+    let may_be_named = |&id: &BuiltinId| {
+        let id = table::canonical_id(id);
+        match table::entry(id).origin {
+            Origin::Engine => {
+                !table::entry(id).flags.intersects(reaches_beyond_file)
+                    && !is_held_by(id, BuiltinId::Promise)
+            }
+            Origin::Host => {
+                let of_module = [
+                    BuiltinId::ModuleRequire,
+                    BuiltinId::ModuleObject,
+                    BuiltinId::ModuleObjectExports,
+                ];
+                of_module.contains(&id) || is_held_by(id, BuiltinId::Console)
+            }
+        }
+    };
+    let hir = code.hir(file);
+    let mut sites = code.analysis(file).import_sites.iter();
+    let holds_handler = hir.stmts.iter().any(|it| {
+        matches!(
+            it.kind,
+            StmtKind::Try { .. } | StmtKind::ForOf { is_await: true, .. }
+        )
+    }) || hir.fns.iter().any(|it| it.flags.contains(Flags::ASYNC))
+        || hir
+            .exprs
+            .iter()
+            .any(|it| matches!(it.kind, ExprKind::Await(_)))
+        || sites.any(|site| matches!(site.kind, ImportSiteKind::ImportCall(_)));
+    !holds_handler
+        && !builtins.hands_on_loader_of_paths()
+        && !builtins.loads_unknown_modules()
+        && builtins.loaded_modules().next().is_none()
+        && builtins.mentioned().iter().all(may_be_named)
+        && (code.bound(file).ident_bindings().iter()).all(|&(name, binding)| match binding {
+            Binding::Symbol(_) | Binding::CommonJs(_) => true,
+            Binding::Arguments(unit) => unit != CodeUnit::File,
+            Binding::Free => builtins.builtin_of_expression(name).is_some(),
+        })
 }
 
 struct FileFinders<'f> {
@@ -355,7 +414,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         let mut sought: FxHashSet<(Atom, bool)> = FxHashSet::default();
         for &file in code.compiled_files() {
             let analysis = code.analysis(file);
-            for &(name, argument) in analysis.names_out_of_data_files {
+            for &(name, argument, is_guess) in analysis.names_out_of_data_files {
                 let mut sites = analysis.import_sites.iter();
                 let site = sites.find(|site| site.specifier_node == argument);
                 let requires = site.and_then(|site| match site.kind {
@@ -363,7 +422,13 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                     ImportSiteKind::ImportCall(_) => Some(false),
                     _ => None,
                 });
-                mentions.push(Mention {
+                let ways: &[Option<bool>] = match (requires, is_guess) {
+                    (None, true) => &[Some(true), Some(false)],
+                    (Some(true), _) => &[Some(true)],
+                    (Some(false), _) => &[Some(false)],
+                    (None, false) => &[None],
+                };
+                mentions.extend(ways.iter().map(|&requires| Mention {
                     named: Named::ByName(Question {
                         file_name: code.file_name(file).to_vec(),
                         read_as: match requires {
@@ -371,16 +436,18 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                             Some(false) | None => ReadAs::Import,
                         },
                         names: vec![(code.atoms().bytes(name).to_vec(), None)],
-                        is_guess: false,
+                        is_guess,
                     }),
                     because: FoundBecause::NamedByData,
                     started_at: None,
                     named_by: requires.map(|requires| NamingLoad {
                         file,
+                        written_in: file,
                         requires,
-                        is_guess: false,
+                        is_guess,
+                        may_be_left_out: is_guess,
                     }),
-                });
+                }));
             }
             if let Some(source) = parsed_source_in(code, file) {
                 let contents = &source.contents;
@@ -397,27 +464,33 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 (held.texts).extend_from_slice(&contents.texts_behind_object_urls);
                 sought.extend(contents.names.sought_from_unknown_folders.iter().copied());
                 let arms = contents.names.written_arms_of_unknown_names.iter();
-                let arms = arms.map(|&(name, requires)| (name, requires, false));
+                let arms = arms.map(|&(name, requires)| (name, requires, false, false));
                 let guessed = contents.names.guessed_arms.iter();
-                let arms = arms.chain(guessed.map(|&name| (name, true, true)));
-                mentions.extend(arms.map(|(name, requires, is_guess)| Mention {
-                    named: Named::ByName(Question {
-                        file_name: code.file_name(file).to_vec(),
-                        read_as: match requires {
-                            true => ReadAs::Require,
-                            false => ReadAs::Import,
-                        },
-                        names: vec![(code.atoms().bytes(name).to_vec(), None)],
-                        is_guess,
+                let arms = arms.chain(guessed.map(|&name| (name, true, true, false)));
+                let called_first = contents.names.arms_of_makers_called_first.iter();
+                let arms = arms.chain(called_first.map(|&name| (name, true, false, true)));
+                mentions.extend(
+                    arms.map(|(name, requires, is_guess, is_called_first)| Mention {
+                        named: Named::ByName(Question {
+                            file_name: code.file_name(file).to_vec(),
+                            read_as: match requires {
+                                true => ReadAs::Require,
+                                false => ReadAs::Import,
+                            },
+                            names: vec![(code.atoms().bytes(name).to_vec(), None)],
+                            is_guess,
+                        }),
+                        because: FoundBecause::WrittenInArm,
+                        started_at: None,
+                        named_by: Some(NamingLoad {
+                            file,
+                            written_in: file,
+                            requires,
+                            is_guess: is_guess || is_called_first,
+                            may_be_left_out: is_guess,
+                        }),
                     }),
-                    because: FoundBecause::WrittenInArm,
-                    started_at: None,
-                    named_by: Some(NamingLoad {
-                        file,
-                        requires,
-                        is_guess,
-                    }),
-                }));
+                );
                 for load in &contents.names.under_parameters {
                     let under_name = loads.entry((load.property, load.place)).or_default();
                     if under_name.last() != Some(&(file, load.requires)) {
@@ -487,8 +560,10 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                     started_at: None,
                     named_by: Some(NamingLoad {
                         file,
+                        written_in: caller,
                         requires,
                         is_guess,
+                        may_be_left_out: false,
                     }),
                 });
             }
@@ -947,6 +1022,40 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         let found = &mut *found;
         let Options { aot, paths, .. } = self.input.options;
         let mut mentions = self.collect_mentions(code, found);
+        if code.is_only_asked_whether_more_is_named() {
+            let told: FxHashSet<&[u8]> = found.entry_points.iter().map(|it| &it.0[..]).collect();
+            let begun_at = code.entry_points().iter();
+            let begun_at: FxHashSet<Vec<u8>> = begun_at
+                .map(|&file| self.key_of(code.file_name(file)))
+                .collect();
+            let is_known = |key: Vec<u8>| told.contains(&key[..]) || begun_at.contains(&key);
+            let settled = self.input.host.levels_above_root();
+            let lies_above_folders =
+                settled.is_some_and(|levels| count_levels_above_root(code, paths) > levels);
+            let guessed = code.files_that_guesses_alone_bring().iter();
+            let reaches_beyond_what_is_read = !guessed
+                .filter_map(|&file| Some((file, parsed_source_in(code, file)?)))
+                .all(|(file, source)| {
+                    names_only_what_reaches_no_file(code, file, &source.builtins)
+                });
+            return EntryPointsFound {
+                is_more_named: lies_above_folders
+                    || reaches_beyond_what_is_read
+                    || mentions.iter().any(|mention| match &mention.named {
+                        Named::ByName(_) => true,
+                        Named::File { path, .. } => {
+                            let key = self.key_of(path);
+                            found.merely_guessed.contains(&key) || !is_known(key)
+                        }
+                        Named::Url { url: name, .. }
+                        | Named::Text {
+                            text: EntryText { name, .. },
+                            ..
+                        } => !found.texts_in_program.contains(name),
+                    }),
+                ..EntryPointsFound::default()
+            };
+        }
         if !aot.runs_in_place {
             let deepest = count_folders(&paths.root_directory) + 2;
             let mut held = self.mention_code_that_holds_paths_above_root(code, found, deepest);
@@ -1097,11 +1206,19 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 found.asked.insert(question, keys_of_answer);
             }
         }
-        if further.is_empty() {
+        let guessed_before = found.merely_guessed.len();
+        (found.merely_guessed).extend(further.iter().map(|it| it.0.clone()));
+        for (path, load) in &loads {
+            if !load.is_some_and(|load| load.may_be_left_out) {
+                found.merely_guessed.remove(&self.key_of(path));
+            }
+        }
+        if further.is_empty() && found.merely_guessed.len() == guessed_before {
             return EntryPointsFound {
                 paths: Vec::new(),
                 dropped: Vec::new(),
                 named_by: loads,
+                is_more_named: false,
             };
         }
         further.shared_sort_unstable();
@@ -1112,6 +1229,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             found.entry_points.push((key, entry_point));
         }
         let source_paths: Vec<Vec<u8>> = (found.entry_points.iter())
+            .filter(|it| !found.merely_guessed.contains(&it.0))
             .map(|it| &it.1.source_path)
             .filter(|path| !is_name_of_text(path))
             .cloned()
@@ -1121,6 +1239,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             paths,
             dropped: Vec::new(),
             named_by: loads,
+            is_more_named: false,
         }
     }
 

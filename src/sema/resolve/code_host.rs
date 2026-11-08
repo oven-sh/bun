@@ -55,6 +55,8 @@ pub trait CodeHost: Host {
         false
     }
 
+    fn note_guesses_left_out(&self, _file_whose_loader_decides_its_kind: Option<&[u8]>) {}
+
     fn is_code(&self, _path: &[u8]) -> bool {
         true
     }

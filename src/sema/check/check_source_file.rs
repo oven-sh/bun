@@ -377,7 +377,8 @@ impl<'s> Checker<'_, 's> {
 
     /// `checkTypeParameters`: 2300 2706.
     fn check_type_parameters(&mut self, file: FileId, type_params: Span<TypeParamId>) {
-        let (hir, symbols) = (self.hir(file), &self.bound(file).type_param_symbol);
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let symbols = &bound.type_param_symbol;
         let mut seen_default = false;
         for (index, tp) in type_params.iter().enumerate() {
             self.check_type_parameter(file, tp);
@@ -395,7 +396,10 @@ impl<'s> Checker<'_, 's> {
             }
             let symbol = symbols[tp.idx()];
             let mut earlier = type_params.iter().take(index);
-            if symbol.is_some() && earlier.any(|it| symbols[it.idx()] == symbol) {
+            if symbol.is_some()
+                && bound.symbol(symbol).decls.len() > 1
+                && earlier.any(|it| symbols[it.idx()] == symbol)
+            {
                 self.report_on_declaration_name(file, Decl::TypeParam(tp), 2300);
             }
         }

@@ -171,6 +171,7 @@ pub(crate) struct LoadHost<'a> {
     outfile: Option<Vec<u8>>,
     other_products: Vec<Vec<u8>>,
     files_left_out_by_patterns: Guarded<FxHashSet<FileLeftOutByPattern>>,
+    guesses_left_out: Guarded<Option<Option<Vec<u8>>>>,
     found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
     has_found_entry_points: AtomicBool,
     may_store_path_of_main_module: AtomicBool,
@@ -378,6 +379,7 @@ impl<'a> LoadHost<'a> {
                 .map(|path| from_native(path))
                 .collect(),
             files_left_out_by_patterns: Guarded::new(FxHashSet::default()),
+            guesses_left_out: Guarded::new(None),
             found_entry_point_paths: Guarded::new(Vec::new()),
             has_found_entry_points: AtomicBool::new(false),
             may_store_path_of_main_module: AtomicBool::new(false),
@@ -401,6 +403,10 @@ impl<'a> LoadHost<'a> {
             reads_in_background_after_load: true,
             ..self
         }
+    }
+
+    pub(crate) fn guesses_left_out(&self) -> Option<Option<Vec<u8>>> {
+        self.guesses_left_out.lock().clone()
     }
 
     pub(crate) fn files_left_out_by_patterns(&self) -> Vec<FileLeftOutByPattern> {
@@ -1181,6 +1187,11 @@ impl CodeHost for LoadHost<'_> {
     fn stands_for_text_that_cannot_be_read(&self, payload: &HostPayload) -> bool {
         let source = payload.downcast_ref::<ParsedSource>();
         source.is_some_and(|it| it.parse_failure.is_some())
+    }
+
+    fn note_guesses_left_out(&self, file_whose_loader_decides_its_kind: Option<&[u8]>) {
+        let file = file_whose_loader_decides_its_kind.map(<[u8]>::to_vec);
+        self.guesses_left_out.lock().get_or_insert(file);
     }
 
     fn note_file_left_out(

@@ -14,6 +14,7 @@
 // The programs are drawn here, so nothing is needed but Bun. Where `unshare` can make a network of its own, the drivers run in one that reaches nothing: a drawn program may name any host.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { withoutInstallingPackages } from "../../harness/without-installing-packages";
 import { writeProgram, type Program } from "../runners";
 
 const drawn = "--group 1 --ordinary-scenes 100 --milliseconds 1000 --ends-early 100 --minifies 25";
@@ -66,6 +67,7 @@ if (!out || !(kind in kinds)) {
 }
 
 for (const folder of ["finds", "logs", "work"]) mkdirSync(join(out, folder), { recursive: true });
+withoutInstallingPackages(join(out, "work"));
 // Each driver gets a network of its own, so that no drawn program reaches anything and no two meet on a port. The loopback of a new network is down: a program that serves itself would be refused
 // in both ways of running it, and that is the same answer.
 // It also gets process ids of its own, and all that it started ends with it: a driver that is stopped in the middle of a program that never ends would leave that program running for good.

@@ -1,5 +1,5 @@
 // STATISTIC: SharedCallsWhoseSilentMembersSleep >= 1
-// STATISTIC: SharedCallsWhoseSleepersWereWoken >= 1
+// STATISTIC: SharedCallsWhoseSleepersWereWoken = 0
 class Base { constructor(n) { this.n = n; } }
 class A extends Base { a() { return "a" + this.n; } }
 class B extends Base { b() { return "b" + this.n; } }

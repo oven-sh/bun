@@ -5,11 +5,15 @@
 // # RUN(THREE): allocate f1:Body mechanisms=all
 // # REQUIRES(THREE): x86_64 as-written
 // # THREE: reload {{*}} -> r12
-// # THREE-NEXT: = Patch
+// # THREE-NOT: Jump
+// # THREE-NOT: Branch
+// # THREE: = Patch
 // # RUN(WHILE): allocate f3:Body mechanisms=all
 // # REQUIRES(WHILE): x86_64 as-written
 // # WHILE: reload {{*}} -> r12
-// # WHILE-NEXT: = Patch
+// # WHILE-NOT: Jump
+// # WHILE-NOT: Branch
+// # WHILE: = Patch
 // # No turn, one turn, many; a way out in the first turn and in the last; a callee that throws out of the loop and one that makes so much that the collector runs while the values lie in their slots alone;
 // # callees that read `this` and every argument; the library's own loops.
 // # RUN: run-in-shell $SHELL

@@ -9,6 +9,7 @@ import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import "../../harness/without-installing-packages";
 
 const { values: options } = parseArgs({
   options: { bun: { type: "string" }, programs: { type: "string" }, jobs: { type: "string", default: "8" } },

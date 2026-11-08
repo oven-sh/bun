@@ -323,6 +323,7 @@ struct Follower<'i, 'a, 's> {
     asked_of_data_files: &'i AskedOfDataFiles,
     asked_of_other_files: Option<&'i AskedOfDataFiles>,
     asked_of_own_exports: Option<&'i AskedOfOwnExports>,
+    takes_all_as_written: bool,
     has_read_data_file: Cell<bool>,
     kept_as_written: FxHashSet<SymbolId>,
     unchecked: Vec<SymbolId>,
@@ -382,6 +383,7 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             asked_of_data_files,
             asked_of_other_files: None,
             asked_of_own_exports: None,
+            takes_all_as_written: false,
             has_read_data_file: Cell::new(false),
             kept_as_written: FxHashSet::default(),
             unchecked: Vec::new(),
@@ -467,6 +469,24 @@ pub(super) fn find_alternatives(
     follower.asked_of_other_files = asked_of_other_files;
     follower.asked_of_own_exports = asked_of_own_exports;
     find_alternatives_with(follower, argument)
+}
+
+pub(super) fn find_names_as_written(
+    inputs: &ScanInputs<'_, '_>,
+    written_names: &WrittenNames,
+    argument: ExprId,
+) -> Vec<Atom> {
+    let asked = AskedOfDataFiles::default();
+    let mut follower = Follower::new(inputs, written_names, &asked, false, Folder::OfFile);
+    follower.takes_all_as_written = true;
+    let found = find_alternatives_with(follower, argument);
+    let written = found.iter().flat_map(|it| it.alternatives.iter());
+    written
+        .filter_map(|it| match *it {
+            ImportSpecifier::Constant(name) => Some(name),
+            _ => None,
+        })
+        .collect()
 }
 
 pub(super) struct PathAroundParameter {
@@ -793,9 +813,9 @@ impl Follower<'_, '_, '_> {
             true => count_layers_that_can_be_changed(&values),
             false => 0,
         };
-        (0..layers)
-            .all(|below| self.asks_who_takes(e, below))
-            .then_some(values)
+        let is_as_written =
+            self.takes_all_as_written || (0..layers).all(|below| self.asks_who_takes(e, below));
+        is_as_written.then_some(values)
     }
 
     fn values_of_kind(&mut self, e: ExprId) -> Option<Values> {
@@ -1226,8 +1246,9 @@ impl Follower<'_, '_, '_> {
         };
         self.variables_in_progress.pop();
         let values = close_over_itself(symbol, values?)?;
-        let is_as_written =
-            !values.iter().any(Held::can_be_changed) || self.take_as_kept_as_written(symbol);
+        let is_as_written = self.takes_all_as_written
+            || !values.iter().any(Held::can_be_changed)
+            || self.take_as_kept_as_written(symbol);
         is_as_written.then_some(values)
     }
 
@@ -2315,14 +2336,11 @@ impl Follower<'_, '_, '_> {
         if !self.names_an_export(target) {
             return false;
         }
-        let is_reached_by_name_alone = self.reaches_exports_by_their_name_alone(target);
-        if is_reached_by_name_alone {
-            asked.0.borrow_mut().push(key);
+        if !self.reaches_exports_by_their_name_alone(target) {
+            return false;
         }
-        if !is_reached_by_name_alone || hir.exports_that_others_touch.contains(&key) {
-            self.has_read_data_file.set(true);
-        }
-        true
+        asked.0.borrow_mut().push(key);
+        !hir.exports_that_others_touch.contains(&key)
     }
 
     fn names_an_export(&self, target: ExprId) -> bool {

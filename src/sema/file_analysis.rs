@@ -45,7 +45,7 @@ pub struct FileAnalysis<'s> {
     pub asked_of_other_files: &'s [(Atom, Atom)],
     pub asked_of_data_files: &'s [(Atom, Atom)],
     pub asked_of_own_exports: &'s [Atom],
-    pub names_out_of_data_files: &'s [(Atom, ExprId)],
+    pub names_out_of_data_files: &'s [(Atom, ExprId, bool)],
     keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],
     pub jsx_imports: JsxImportSet,
     pub unused_import_symbols: &'s [SymbolId],

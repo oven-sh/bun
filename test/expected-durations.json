@@ -264,6 +264,14 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/a-file-that-the-build-only-guesses-is-left-out-where-it-would-decide-what-another-file-is.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-file-that-threw-is-named-where-a-mock-is-laid-over-a-file-that-a-refused-load-left-unlinked.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-file-that-threw-under-the-loader-of-a-package-runs-again.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -1440,6 +1448,30 @@
     "default": 5700,
     "asan": 22800
   },
+  "aot/everyday-mocks-1.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-mocks-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-mocks-3.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-mocks-4.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-mocks-5.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-mocks-6.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/explain-guards.test.ts": {
     "default": 3300,
     "asan": 13200
@@ -1696,6 +1728,10 @@
     "default": 5500,
     "asan": 22000
   },
+  "aot/mock-factories.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/mock-factory-awaits.test.ts": {
     "default": 2900,
     "asan": 11600
@@ -1844,9 +1880,25 @@
     "default": 18400,
     "asan": 73600
   },
+  "aot/mocks-from-one-test-file-to-the-next-1.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mocks-from-one-test-file-to-the-next-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mocks-from-one-test-file-to-the-next-3.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/mocks-in-run-text.test.ts": {
     "default": 2000,
     "asan": 8000
+  },
+  "aot/mocks-laid-twice.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/modules-above-an-evicted-file-are-checked-once.test.ts": {
     "default": 4500,
@@ -1923,6 +1975,22 @@
   "aot/pages-64k.test.ts": {
     "default": 300,
     "asan": 1200
+  },
+  "aot/parallel-test-runs/a-face-that-a-mock-call-alone-evaluated/a-getter-that-counts-is-read-once-and-the-second-test-file-imports/a.test.js": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/parallel-test-runs/a-face-that-a-mock-call-alone-evaluated/a-getter-that-counts-is-read-once-and-the-second-test-file-imports/b.test.js": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/parallel-test-runs/a-face-that-a-mock-call-alone-evaluated/a-getter-that-throws-at-its-second-read-is-read-once/a.test.js": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/parallel-test-runs/a-face-that-a-mock-call-alone-evaluated/a-getter-that-throws-at-its-second-read-is-read-once/b.test.js": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/parallel-test-runs/the-modules-are-reset-under-a-mock-of-a-commonjs-file-that-had-run/a-require-behind-the-reset-and-the-end-runs-the-file-anew/a.test.mjs": {
     "default": 60000,

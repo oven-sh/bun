@@ -40,7 +40,7 @@ mkdirSync(finds, { recursive: true });
 type Run = { worlds: Map<string, string>; end: string; stderr: string };
 async function run(more: string[]): Promise<Run> {
   const child = Bun.spawn({
-    cmd: [bun, "test", "--isolate", ...more, "./p"],
+    cmd: [bun, "test", "--no-install", "--isolate", ...more, "./p"],
     cwd: folder,
     env: { ...process.env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0", NO_COLOR: "1" },
     stdin: "ignore",

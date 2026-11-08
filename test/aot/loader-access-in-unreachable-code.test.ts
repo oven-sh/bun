@@ -72,11 +72,7 @@ async function expectNoGrowth(forms: Record<string, string>, atMost: number, goa
 
 // What is used or stays for the program with the door and not for the plain one. It is asked by name and not by the size of the executable: what stays is cut out of Bun's own code by pages,
 // 64 KB each on arm64 under Linux, so the bytes say how many pages the code of a feature touches, which moves with every change to that code. The names are the same on every platform.
-// TODO: nothing should stay: nothing reaches the function.
-const staysForDoorThatNothingReaches = [
-  "kept what compiled code calls for errors that compiled code makes and throws: used",
-  "kept what compiled code calls for modules that throw, are mocked or are loaded again: used",
-];
+// Nothing stays: nothing reaches the function, so it isn't made either.
 test("a door in a function that nothing reaches brings no built-in module along", async () => {
   const staysAnyway = await keptWith(double);
   for (const [name, lib] of Object.entries(notReached)) {
@@ -86,7 +82,7 @@ test("a door in a function that nothing reaches brings no built-in module along"
       name,
       stdout: "42\n",
       exitCode: 0,
-      stays: staysForDoorThatNothingReaches,
+      stays: [],
     });
   }
 }, 240_000);

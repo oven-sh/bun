@@ -43,7 +43,7 @@ const ways: [string, string, string, string][] = [
     "",
     "orDefault(undefined, v)",
   ],
-  ["behind-a-comma", "", "", "(0, v)"],
+  ["behind-a-comma", "", "", "(0AS, v)"],
   ["out-of-a-list", "", "", "[v][0]"],
   ["out-of-a-record", "", "", "({ k: v }).k"],
   ["out-of-an-arrow-called-at-once", "", "", "(() => v)()"],

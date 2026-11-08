@@ -1,6 +1,6 @@
 use super::alternatives::{
     AskedOfDataFiles, AskedOfOwnExports, Folder, WrittenNames, find_alternatives,
-    find_path_around_parameter, find_texts_of_key,
+    find_names_as_written, find_path_around_parameter, find_texts_of_key,
 };
 use super::changed_files::find_operands_that_name_changed_files;
 use super::made_requires::{
@@ -788,7 +788,7 @@ pub(super) struct ScannedCalls {
     pub(super) asked_of_other_files: Vec<(Atom, Atom)>,
     pub(super) asked_of_data_files: Vec<(Atom, Atom)>,
     pub(super) asked_of_own_exports: Vec<Atom>,
-    pub(super) names_out_of_data_files: Vec<(Atom, ExprId)>,
+    pub(super) names_out_of_data_files: Vec<(Atom, ExprId, bool)>,
     pub(super) keys_stored_in_caches: Vec<(ExprId, ImportSpecifier)>,
     pub(super) module_require_objects: Vec<ExprId>,
     pub(super) requires_of_other_files: Vec<(u32, ResolvedFrom)>,
@@ -1148,7 +1148,7 @@ struct FoundAlternatives {
     asked_of_data_files: AskedOfDataFiles,
     asked_of_other_files: AskedOfDataFiles,
     asked_of_own_exports: AskedOfOwnExports,
-    names_out_of_data_files: Vec<(Atom, ExprId)>,
+    names_out_of_data_files: Vec<(Atom, ExprId, bool)>,
 }
 
 fn call_specifier(
@@ -1189,12 +1189,21 @@ fn find_specifier(
         reads_other_files.then_some(&alternatives.asked_of_other_files),
         Some(&alternatives.asked_of_own_exports),
     );
+    let is_followed = found.as_ref().is_some_and(|found| {
+        let mut names = found.alternatives.iter();
+        names.all(|it| matches!(it, ImportSpecifier::Constant(_)))
+    });
+    if !is_followed {
+        let written = find_names_as_written(inputs, &alternatives.written_names, argument);
+        let written = written.into_iter().map(|name| (name, argument, true));
+        alternatives.names_out_of_data_files.extend(written);
+    }
     let Some(found) = found else {
         return folded;
     };
     if found.is_out_of_data_file {
         let names = found.alternatives.iter().filter_map(|it| match *it {
-            ImportSpecifier::Constant(name) => Some((name, argument)),
+            ImportSpecifier::Constant(name) => Some((name, argument, false)),
             _ => None,
         });
         alternatives.names_out_of_data_files.extend(names);

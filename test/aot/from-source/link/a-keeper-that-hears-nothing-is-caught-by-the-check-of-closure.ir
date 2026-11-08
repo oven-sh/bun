@@ -14,7 +14,7 @@
 # all[2].late = who;
 # print(said());
 # -- end of source
-# Nobody declares the name, so every member sleeps; a store by name on one of them wakes them. THE RED CONTROL OF THE NET IN THE CHECK OF CLOSURE: with a keeper that hears nothing on purpose, and the net in every build passed over, the check wakes every sleeper and sees the callee's parameters climb. As the program is built, the check prints nothing.
+# Nobody declares the name, so every member sleeps; a store by name on one of them wakes them. THE RED CONTROL OF THE NET IN THE CHECK OF CLOSURE: with a keeper that hears nothing on purpose, the check wakes every sleeper and sees the callee's parameters climb. As the program is built, the check prints nothing.
 # RUN(COUNT): compile SharedCallsWhoseSilentMembersSleep SharedCallsWhoseSleepersWereWoken mechanisms=all
 # COUNT: statistic SharedCallsWhoseSilentMembersSleep 1
 # COUNT: statistic SharedCallsWhoseSleepersWereWoken 1
@@ -23,7 +23,7 @@
 # ANSWERS: none,none,late of C1,none,none,none,
 # RUN(CLOSED): closure mechanisms=all
 # CLOSED-NOT: climbs
-# RUN(BREACH): closure testing=NobodyWakesSleepersOfSharedCalls,SleepersOfSharedCallsAreNotAskedAtRest mechanisms=all
+# RUN(BREACH): closure testing=NobodyWakesSleepersOfSharedCalls mechanisms=all
 # BREACH: newest first: f2.parameter0 climbs from nothing to L3
 # BREACH: oldest first: f2.parameter0 climbs from nothing to L3
 # BREACH: scattered: f2.parameter0 climbs from nothing to L3

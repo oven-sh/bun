@@ -96,6 +96,24 @@ const cases: Record<string, { files: Record<string, string>; said: string; leftO
     },
     said: "./setup.cjs function\nundefined\ndone",
   },
+  "a file that the program imports keeps its kind beside a module that such a text names": {
+    files: {
+      "package.json": "{}",
+      "main.cjs": `const make = given => name => given(name);\nconst load = make(require);\nif (process.argv.length > 9) load("./m.mjs");\nimport("./x.cjs").then(() => console.log("done"));\n`,
+      "m.mjs": `import "./x.cjs";\nexport default 1;\n`,
+      "x.cjs": sloppyOrStrict,
+    },
+    said: "undefined\ndone",
+  },
+  "a maker of the same file that hands the name on loads in front of the import() behind it": {
+    files: {
+      "package.json": "{}",
+      "main.cjs": `const make = given => name => given(name);\nconst load = make(require);\nload("./m.mjs");\nimport("./x.cjs").then(() => console.log("done"));\n`,
+      "m.mjs": `import "./x.cjs";\nexport default 1;\n`,
+      "x.cjs": sloppyOrStrict,
+    },
+    said: "object\ndone",
+  },
   "a function of a built-in module that only shares the helper's name: its text brings no package": {
     files: {
       "main.cjs": `const { basename } = require("node:path");\nconsole.log(basename("fake-big"), typeof require("tools").basename);\n`,

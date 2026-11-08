@@ -16,7 +16,7 @@ use bun_sema::hir::{
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, ends_in_call_that_reads_frame_of_caller,
     find_names_exported_for, find_parameter_named, find_values_of_parameter, find_written_arms,
-    is_name_read_by_transpiler, is_name_written_out,
+    gives_first_argument_to_own_require, is_name_read_by_transpiler, is_name_written_out,
 };
 use bun_sema::program::{CodeAnswer, CodeView, FileId, Files};
 use bun_sema::resolve::{
@@ -75,6 +75,7 @@ pub(crate) struct NamedLoads {
     pub sought_from_unknown_folders: Vec<(Atom, bool)>,
     pub written_arms_of_unknown_names: Vec<(Atom, bool)>,
     pub guessed_arms: Vec<Atom>,
+    pub arms_of_makers_called_first: Vec<Atom>,
     pub files_missing_at_build_at: Vec<u32>,
     pub data_missing_at_build_at: Vec<u32>,
     pub under_parameters: Vec<LoadUnderParameter>,
@@ -925,6 +926,22 @@ fn find_properties_called(
     }
 }
 
+fn stands_at_top_in_front_of_imports(request: &FinishedFile<'_, '_>, call: ExprId) -> bool {
+    let (hir, bound, analysis) = (request.hir, request.bound, request.analysis);
+    let (statement, stands_alone) = match bound.parent_of_expr(call) {
+        Parent::Stmt(statement) => (statement, matches!(hir[statement].kind, StmtKind::Expr(_))),
+        Parent::VarInit(declaration) => (bound.var_stmt[declaration.idx()], true),
+        _ => return false,
+    };
+    stands_alone
+        && bound.parent_of_stmt(statement) == Parent::File
+        && !analysis.decisions.is_dead_expr(call)
+        && analysis.import_sites.iter().all(|site| match site.kind {
+            ImportSiteKind::ImportCall(import) => hir[call].pos < hir[import].pos,
+            _ => true,
+        })
+}
+
 fn is_made_with_own_require(request: &FinishedFile<'_, '_>, callee: ExprId) -> bool {
     let (hir, bound) = (request.hir, request.bound);
     let made = match find_initial_value(request, callee) {
@@ -1145,7 +1162,14 @@ impl ContentsScan<'_, '_> {
         if is_made_with_own_require(request, callee)
             && let Some(text) = constant_text(request, hir.skip_type_assertions(argument))
         {
-            self.found.names.guessed_arms.push(text);
+            let decisions = &analysis.decisions;
+            let is_proven = stands_at_top_in_front_of_imports(request, expression)
+                && gives_first_argument_to_own_require(hir, bound, decisions, hir[call]);
+            let names = &mut self.found.names;
+            match is_proven {
+                true => names.arms_of_makers_called_first.push(text),
+                false => names.guessed_arms.push(text),
+            }
         }
         match resolve_loader_alias(hir, bound, &analysis.decisions, callee) {
             Some(LoaderAlias::Local) => {
@@ -1289,7 +1313,7 @@ impl ContentsScan<'_, '_> {
         names.loads_by_unknown_name |= builtins.loads_unknown_modules();
         names.loads_by_unknown_path |=
             builtins.hands_on_loader_of_paths() || !names.files_missing_at_build_at.is_empty();
-        for &(name, _) in request.analysis.names_out_of_data_files {
+        for &(name, ..) in request.analysis.names_out_of_data_files {
             let module = find_module(input, atoms, name);
             names.written_as_values.extend(module);
         }

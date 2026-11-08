@@ -27,7 +27,9 @@ use crate::load::{PerProject, ProjectId, Sources};
 use crate::modules::asks_for_original_beside_mock;
 use crate::statistics::{Stage, StepClock};
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
-use bun_sema::atom::Interner;
+use bun_paths::platform::Posix;
+use bun_paths::resolve_path::join_spill;
+use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::FoldInputs;
 use bun_sema::hir::{ExprId, ExprKind};
@@ -141,6 +143,43 @@ fn warn_of_files_left_out_by_patterns(
                     Diagnostic::new(code, Some(span), &[&list, cure]),
                 );
             }
+        }
+    }
+}
+
+fn warn_of_guesses_left_out(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+    host: &LoadHost<'_>,
+) {
+    let Some(file_whose_loader_decides_its_kind) = host.guesses_left_out() else {
+        return;
+    };
+    let why = match file_whose_loader_decides_its_kind {
+        Some(file) => [
+            &b"\""[..],
+            &host.display_path_of(&file),
+            b"\" doesn't say whether it's CommonJS or an ES module, so whichever load gets to it first decides, and nothing says when this one runs. Write `export {}` or `module.exports = {}` in that file",
+        ]
+        .concat(),
+        None => b"The build only brings such files along if nothing more hangs on them: no path in the program that it can't work out other than this kind, no TypeScript among them to check, none above the folders that the executable holds. Add the files as entry points".to_vec(),
+    };
+    let files = view.files();
+    let compiled = files.compiled_files().iter();
+    let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
+    for &file in files.compiled_files() {
+        let folder = host.directory_of(files.file_name(file));
+        let is_held =
+            |name: &[u8]| held.contains(join_spill::<Posix>(&mut Vec::new(), &[&folder[..], name]));
+        let guessed = files.analysis(file).names_out_of_data_files.iter();
+        let guessed = guessed.filter(|it| it.2 && !is_held(files.atoms().bytes(it.0)));
+        let guessed: Vec<(ExprId, Atom)> = guessed.map(|it| (it.1, it.0)).collect();
+        for of_site in guessed.chunk_by(|one, next| one.0 == next.0) {
+            let names: Vec<&[u8]> = of_site.iter().map(|it| files.atoms().bytes(it.1)).collect();
+            let span = Span::of_node(files.hir(file), file, NodeData::Expr(of_site[0].0));
+            let code = Code::FilesLeftOutByPattern;
+            let warning = Diagnostic::new(code, Some(span), &[&names.join(&b", "[..]), &why]);
+            diagnostics.add(Some(view), warning);
         }
     }
 }
@@ -637,6 +676,7 @@ impl<'a> Build<'a> {
         }
         if !options.aot.checks_only && !options.aot.runs_in_place {
             warn_of_files_left_out_by_patterns(&mut self.diagnostics, view, host);
+            warn_of_guesses_left_out(&mut self.diagnostics, view, host);
         }
         if !options.aot.checks_only {
             self.started_workers.code = code_of_workers(&contents);

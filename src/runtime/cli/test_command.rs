@@ -4154,6 +4154,19 @@ impl TestCommand {
                     }
                 }
 
+                // Under --aot a call of import() that asks for a mocked file waits in the run time for its text, by a task that would be lost here.
+                // `bun test` has a read under way in its place. A plain run holds no such call, so it does nothing here.
+                if bun_jsc::cpp::JSMock__hasImportsHeldForMockedFiles(global) {
+                    bun_jsc::cpp::JSMock__letImportsHeldGetFilesThemselves(global);
+                    let _ = vm.event_loop_ref().wait_at_top_level(|| {
+                        !bun_jsc::cpp::JSMock__hasImportsHeldForMockedFiles(global)
+                    });
+                    while prev_unhandled_count < vm.unhandled_error_counter {
+                        let _ = vm.global().handle_rejected_promises();
+                        prev_unhandled_count = vm.unhandled_error_counter;
+                    }
+                }
+
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
                 unsafe { (*el).tick_immediate_tasks(vm) };

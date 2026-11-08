@@ -12,6 +12,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { withoutInstallingPackages } from "../../harness/without-installing-packages";
 
 const { values: options } = parseArgs({
   options: {
@@ -29,6 +30,7 @@ const { values: options } = parseArgs({
 });
 const { bun, work, finds } = options as Record<string, string>;
 if (!work || !finds) throw new Error("Expected --work and --finds");
+withoutInstallingPackages(work);
 
 const upTo = (n: number, each: (at: number) => string, between = "\n") =>
   Array.from({ length: n }, (_, at) => each(at)).join(between);

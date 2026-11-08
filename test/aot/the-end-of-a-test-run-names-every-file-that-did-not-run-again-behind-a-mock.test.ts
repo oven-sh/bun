@@ -17,6 +17,11 @@ const commonJs = {
   "meter.cjs": `const { level } = require("./floor.cjs");\nexports.reading = "read " + level;\n`,
   "panel.cjs": `const { reading } = require("./meter.cjs");\nexports.show = () => reading;\n`,
 };
+// The build leaves the require() of an ES module or a data file that a mock may stand for to the run time.
+const commonJsAbove = (floor: string) => ({
+  "meter.cjs": `const { level } = require("./${floor}");\nexports.reading = "read " + level;\n`,
+  "panel.cjs": commonJs["panel.cjs"],
+});
 const lay = (file: string) => `  vi.doMock("./${file}", () => ({ level: "deep" }));\n`;
 // The test holds the door, so the second call reaches the panel by the require() in it and by nothing else.
 const door = { "door.cjs": `exports.show = () => require("./panel.cjs").show();\n` };
@@ -65,6 +70,33 @@ const runs = {
     files: {
       ...commonJs,
       "b.test.mjs": inTest(lay("floor.cjs") + ask("first", "panel.cjs")),
+      "z.test.mjs": inTest(ask("second", "panel.cjs")),
+    },
+    named: ["meter.cjs, while z.test.mjs ran", "panel.cjs, while z.test.mjs ran"],
+  },
+  "CommonJS files that require a mocked ES module": {
+    files: {
+      "floor.mjs": esModules["floor.mjs"],
+      ...commonJsAbove("floor.mjs"),
+      "b.test.mjs": inTest(lay("floor.mjs") + ask("first", "panel.cjs")),
+      "z.test.mjs": inTest(ask("second", "panel.cjs")),
+    },
+    named: ["meter.cjs, while z.test.mjs ran", "panel.cjs, while z.test.mjs ran"],
+  },
+  "an earlier test file loaded CommonJS files that require an ES module and the next one mocks it": {
+    files: {
+      "floor.mjs": esModules["floor.mjs"],
+      ...commonJsAbove("floor.mjs"),
+      "a.test.mjs": inTest(ask("earlier", "panel.cjs")),
+      "b.test.mjs": inTest(lay("floor.mjs") + ask("first", "panel.cjs")),
+    },
+    named: ["meter.cjs, while b.test.mjs ran", "panel.cjs, while b.test.mjs ran"],
+  },
+  "CommonJS files that require a mocked data file": {
+    files: {
+      "floor.json": `{ "level": "low" }\n`,
+      ...commonJsAbove("floor.json"),
+      "b.test.mjs": inTest(lay("floor.json") + ask("first", "panel.cjs")),
       "z.test.mjs": inTest(ask("second", "panel.cjs")),
     },
     named: ["meter.cjs, while z.test.mjs ran", "panel.cjs, while z.test.mjs ran"],

@@ -2090,6 +2090,7 @@ function runTests(
     cmd: [
       bun,
       "test",
+      "--no-install",
       ...flags,
       "--timeout=" + options["test-ends-within"],
       "--reporter=junit",

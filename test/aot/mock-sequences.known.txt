@@ -25,7 +25,6 @@
 ~ wavers one throws-over+over+over.js.late 3 over names:
 ~ wavers one throws-over+over+over.js.late 3 over values:
 late-rejection alone one+rejects-over+one.cjs.late 3 one held: SILENT | late real,real,real top none
-second-mock one added+reset+unmock.js.late 2 body the body: SILENT | runs behind 3 unmock
 second-mock one async+says+throws.js.late 3 throws names: loud | import threw boom 4 late threw boom 5 top none
 second-mock one async+throws+module.js.late 2 throws names: loud | import threw boom 4 late threw boom 5 top none
 plains-accident one async+throws+module.js.late 3 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module3","plain":"module3"} top none
@@ -51,7 +50,6 @@ second-mock one module+rejects+two.js.late 2 rejects names: loud | import threw 
 second-mock one module+rejects+two.js.late 3 two held: SILENT | late real,real,real top none
 plains-accident one module+rejects+two.js.late 3 two names: loud | import flag late flag threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
 second-mock one module+rejects+two.js.late 3 two values: loud | import two3 require two3 late threw No "plain" export is defined on the mock top none
-second-mock one module+reset+rejects.js.late 2 body the body: SILENT | runs behind 3 rejects
 body-awaits+ one one+rejects+single-over.js.required.awaits 1 body the body: SILENT | nothing
 body-awaits one one+rejects+single-over.js.required.awaits 2 rejects names: loud | nothing
 body-awaits one one+rejects+single-over.js.required.awaits 2 rejects values: loud | nothing
@@ -90,7 +88,7 @@ require-of-importer one rejects+one+unmock.cjs.required 1 rejects names: SILENT 
 require-of-importer one rejects+one+unmock.cjs.required 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
 require-of-importer one rejects+one+unmock.cjs.required 2 one held: SILENT | late real,real,real top none
 require-of-importer one rejects+one+unmock.cjs.required 3 unmock held: SILENT | late real,real,real top none
-require-of-importer one rejects+one+unmock.js.required 1 rejects names: loud | import threw tardy boom 2 late threw require() async module "user-late.js" is top none
+require-of-importer one rejects+one+unmock.js.required 1 rejects names: loud | import threw tardy boom 2 late threw tardy boom 3 top none
 require-of-importer one rejects+one+unmock.js.required 2 body the body: SILENT | nothing
 plains-accident one rejects+over+throws-over.cjs.late 2 over names: loud | import default+flag+plain late default+flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
 plains-accident one rejects+over+throws-over.cjs.late 2 over values: SILENT | import over2 require over2 late over2,real,over2 top none
@@ -99,13 +97,11 @@ late-rejection one rejects+reset+bare.cjs.late 2 reset names: loud | import thre
 late-rejection one rejects+reset+bare.cjs.late 2 reset values: loud | import threw tardy boom 5 require real late threw tardy boom 6 top none
 plains-accident one rejects+reset+bare.cjs.late 3 bare names: loud | import default+flag+plain late threw tardy boom 6 top none
 plains-accident one rejects+reset+bare.cjs.late 3 bare values: loud | import real require real late threw tardy boom 6 top none
-body-awaits one rejects-over+over+says.js.required.awaits 1 rejects-over names: loud | import threw tardy boom over 2 late threw require() async module "user-late.js" is top none
 body-awaits+ one rejects-over+over+says.js.required.awaits 1 says the factory: SILENT | runs in the call of 3 says
 names-the-original+ one string+one+throws.js.required 2 body the body: SILENT | runs behind 3 throws
 names-the-original one string+one+throws.js.required 3 throws names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
 names-the-original one string+one+throws.js.required 3 throws the call: loud | threw boom 1
 names-the-original one string+one+throws.js.required 3 throws values: SILENT | import real require real late real,real,real top none
-names-the-original+ one string+reset+one.js.late.awaits 2 body the body: SILENT | runs behind 3 one
 names-the-original+ one string+single+rejects.js.late 2 body the body: SILENT | runs behind 3 rejects
 names-the-original one string+single+rejects.js.late 3 rejects names: loud | import threw tardy boom 3 late threw tardy boom 4 top none
 plains-accident one throws+added+one.cjs.late 2 added names: loud | import added+flag+plain late added+flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
@@ -138,13 +134,6 @@ asks-for-the-original one throws-late+reset+single-actual.cjs.required 2 reset h
 asks-for-the-original+ one throws-late+reset+single-actual.cjs.required 2 reset names: loud | import threw overdue boom 5 over real late threw overdue boom 4 over real top none
 asks-for-the-original one throws-late+reset+single-actual.cjs.required 3 body the body: SILENT | runs behind 2 reset
 asks-for-the-original one throws-late+reset+single-actual.cjs.required 3 single-actual held: SILENT | late real,real,real top none
-asks-for-the-original one throws-late+unmock+restore.js.required 1 throws-late names: loud | import threw overdue boom 2 over real late threw require() async module "user-late.js" is top none
-asks-for-the-original one throws-late+unmock+restore.js.required 2 body the body: SILENT | nothing
-asks-for-the-original+ one throws-late+unmock+restore.js.required 2 unmock names: loud | nothing
-asks-for-the-original one throws-late+unmock+restore.js.required 2 unmock values: loud | nothing
-asks-for-the-original+ one throws-late+unmock+restore.js.required 3 restore held: loud | nothing
-asks-for-the-original+ one throws-late+unmock+restore.js.required 3 restore names: loud | nothing
-asks-for-the-original+ one throws-late+unmock+restore.js.required 3 restore values: loud | nothing
 second-mock one throws-over+one+throws-over.cjs.late 1 body the body: SILENT | nothing
 second-mock one throws-over+two+throws.cjs.late 1 body the body: SILENT | nothing
 second-mock one two+throws+throws.cjs.late 3 throws names: loud | import threw boom 8 late threw boom 7 top none

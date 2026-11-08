@@ -2,7 +2,11 @@ mod imported_constants;
 mod only_imported;
 
 use self::imported_constants::{NamesLookedUp, fold_files_that_import_constants_again};
-use self::only_imported::{LoadedBy, forget_files_that_another_loader_reads};
+use self::only_imported::{
+    LoadedBy, find_file_of_kind_that_loader_decides, find_files_of_program,
+    forget_files_that_another_loader_reads, leave_out_guesses_that_decide_formats,
+    let_all_guesses_go, program_rules_out_guesses,
+};
 use super::code_barrels::{
     BarrelRequests, NOT_LOADED, erase_imports_not_followed, erase_waiting_sites,
 };
@@ -541,7 +545,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let Some(find) = context.inputs.finds_entry_points else {
             return false;
         };
-        let found = find(&WalkedCode::new(context, state));
+        let found = find(&WalkedCode::new(context, state, false));
         let dropped = found.dropped.iter();
         let dropped = dropped.filter_map(|path| context.drop_found_entry_point(path));
         let dropped: Vec<CodeTarget<'r>> = dropped.collect();
@@ -549,18 +553,66 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             let index = state.index_of[&context.canonical_key(entry_point.key)];
             drop_parsed_file(state, index);
         }
-        let added: Vec<CodeTarget<'r>> = (found.paths.iter())
-            .filter_map(|path| context.add_entry_point(path))
-            .collect();
+        let sure = found.named_by.iter();
+        let sure = sure.filter(|(_, load)| !load.is_some_and(|load| load.may_be_left_out));
+        let sure: FxHashSet<&[u8]> = sure.map(|(path, _)| &path[..]).collect();
+        let named: FxHashSet<&[u8]> = found.named_by.iter().map(|it| &it.0[..]).collect();
+        let is_guess = |path: &[u8]| named.contains(path) && !sure.contains(path);
+        let mut added: Vec<CodeTarget<'r>> = Vec::new();
+        for path in &found.paths {
+            match is_guess(path) {
+                true => context.hold_back_guess(path),
+                false => added.extend(context.add_entry_point(path)),
+            }
+        }
+        let named_for_sure = found.named_by.iter().map(|it| &it.0[..]);
+        let named_for_sure = named_for_sure.filter(|path| sure.contains(path));
+        added.extend(named_for_sure.filter_map(|path| context.bring_back_entry_point(path)));
         let mut has_learned = false;
         for (path, load) in &found.named_by {
             has_learned |= context.note_load_that_names(path, *load);
         }
+        self.begin_at(state, added) || has_learned || !dropped.is_empty()
+    }
+
+    fn let_guesses_in(&self, state: &mut WalkState<'s, 'r>) -> bool {
+        let context = self.context;
+        if !context.holds_back_guesses() {
+            return false;
+        }
+        if let Some(file) = find_file_of_kind_that_loader_decides(context, state) {
+            context.let_no_guess_in(Some(&file));
+            return false;
+        }
+        if program_rules_out_guesses(context, state) {
+            context.let_no_guess_in(None);
+            return false;
+        }
+        let held_back = context.take_guesses_held_back();
+        let added = held_back.iter();
+        let added = added.filter_map(|path| context.add_entry_point(path));
+        self.begin_at(state, added.collect())
+    }
+
+    fn let_guesses_go_that_come_in_part(&self, state: &mut WalkState<'s, 'r>) -> bool {
+        let context = self.context;
+        let Some(find) = context.inputs.finds_entry_points else {
+            return false;
+        };
+        let entry_points = context.entry_points();
+        entry_points.iter().any(|it| context.is_mere_guess(it.key))
+            && (program_rules_out_guesses(context, state)
+                || find(&WalkedCode::new(context, state, true)).is_more_named)
+            && let_all_guesses_go(context, state, None)
+    }
+
+    fn begin_at(&self, state: &mut WalkState<'s, 'r>, added: Vec<CodeTarget<'r>>) -> bool {
+        let context = self.context;
         for &entry_point in &added {
             self.enqueue(state, entry_point, 0);
         }
         if added.is_empty() {
-            return has_learned || !dropped.is_empty();
+            return false;
         }
         let was_alone = context.entry_point_count() - added.len() <= 1;
         let may_answer_otherwise = match was_alone {
@@ -708,11 +760,14 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 || scan_importers_of_file_changers_again(context, &mut state)
                 || scan_askers_of_other_files_again(context, &mut state)
                 || scan_files_whose_exports_others_touch_again(&context.atoms, &mut state)
+                || leave_out_guesses_that_decide_formats(context, &mut state)
                 || forget_files_that_another_loader_reads(context, &mut state)
                 || finish_files(&mut state)
                 || self.follow_chosen_imports(&mut state)
                 || self.begin_at_found_entry_points(&mut state)
-                || forget_files_folded_with_main_module(context, &mut state);
+                || forget_files_folded_with_main_module(context, &mut state)
+                || self.let_guesses_in(&mut state)
+                || self.let_guesses_go_that_come_in_part(&mut state);
             if goes_on && !has_learned {
                 state.importers_of_requires = ImportersOfRequires::default();
             }
@@ -1146,21 +1201,31 @@ struct WalkedCode<'w, 's, 'r> {
     answers: Vec<OnceLock<(Vec<CodeAnswer<'s>>, Vec<CodeAnswer<'s>>)>>,
     entry_points: Vec<FileId>,
     compiled_files: Vec<FileId>,
+    sure_file_count: usize,
+    holds_guesses: bool,
 }
 
 impl<'w, 's, 'r> WalkedCode<'w, 's, 'r> {
     fn new(
         context: &CodeLoadContext<'_, 's, 'r>,
         state: &'w WalkState<'s, 'r>,
+        holds_guesses: bool,
     ) -> WalkedCode<'w, 's, 'r> {
         let files = &state.files[..];
-        let entry_points: Vec<u32> = (context.entry_points().iter())
-            .map(|it| state.index_of[&context.canonical_key(it.key)])
-            .collect();
+        let index_of = |it: &CodeTarget<'r>| state.index_of[&context.canonical_key(it.key)];
+        let (guessed, sure): (Vec<_>, Vec<_>) =
+            (context.entry_points().into_iter()).partition(|it| context.is_mere_guess(it.key));
+        let sure_count = sure.len();
+        let guessed = guessed.iter().filter(|_| holds_guesses);
+        let entry_points: Vec<u32> = sure.iter().chain(guessed).map(index_of).collect();
+        let mut sure_file_count = None;
         let mut compiled_files = Vec::with_capacity(files.len());
         let mut seen = vec![false; files.len()];
         let mut stack: Vec<(u32, usize)> = Vec::new();
-        for &root in &entry_points {
+        for (place, &root) in entry_points.iter().enumerate() {
+            if place == sure_count {
+                sure_file_count = Some(compiled_files.len());
+            }
             if !std::mem::replace(&mut seen[root as usize], true) {
                 stack.push((root, 0));
             }
@@ -1190,7 +1255,9 @@ impl<'w, 's, 'r> WalkedCode<'w, 's, 'r> {
             files,
             answers: files.iter().map(|_| OnceLock::new()).collect(),
             entry_points: entry_points.into_iter().map(FileId).collect(),
+            sure_file_count: sure_file_count.unwrap_or(compiled_files.len()),
             compiled_files,
+            holds_guesses,
         }
     }
 
@@ -1239,6 +1306,14 @@ impl<'s> CodeView<'s> for WalkedCode<'_, 's, '_> {
 
     fn compiled_files(&self) -> &[FileId] {
         &self.compiled_files
+    }
+
+    fn is_only_asked_whether_more_is_named(&self) -> bool {
+        self.holds_guesses
+    }
+
+    fn files_that_guesses_alone_bring(&self) -> &[FileId] {
+        &self.compiled_files[self.sure_file_count..]
     }
 
     fn host_payload(&self, file: FileId) -> Option<&(dyn std::any::Any + Send + Sync)> {
@@ -1918,11 +1993,14 @@ fn find_files_required_in_place_of_others<'r>(
         state.index_of.get(&key).copied()
     };
     let mut replacements = FxHashMap::default();
+    let is_of_program = find_files_of_program(context, state);
     for (imported, required) in context.resolver.files_required_in_place_of_others() {
         let Some((index, required)) = index_of(imported).zip(index_of(required)) else {
             continue;
         };
-        if state.files[index as usize].target.key.path == imported {
+        if is_of_program[required as usize]
+            && state.files[index as usize].target.key.path == imported
+        {
             replacements.insert(index, required);
         }
     }

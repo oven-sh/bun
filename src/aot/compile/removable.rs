@@ -160,6 +160,7 @@ pub(crate) struct Removable<'a, 's> {
     member_constants: RefCell<FxHashMap<EnumMemberId, Option<Primitive>>>,
     parents_above_long_chains: RefCell<FxHashMap<ExprId, Parent>>,
     is_value_taken: Cell<bool>,
+    is_below_void: Cell<bool>,
 }
 
 impl<'a, 's> Removable<'a, 's> {
@@ -193,6 +194,7 @@ impl<'a, 's> Removable<'a, 's> {
             member_constants: RefCell::default(),
             parents_above_long_chains: RefCell::default(),
             is_value_taken: Cell::new(false),
+            is_below_void: Cell::new(false),
         }
     }
 
@@ -208,6 +210,22 @@ impl<'a, 's> Removable<'a, 's> {
         let answer = ask();
         self.is_value_taken.set(before);
         answer
+    }
+
+    fn below_void<T>(&self, ask: impl FnOnce() -> T) -> T {
+        let before = self.is_below_void.replace(true);
+        let answer = ask();
+        self.is_below_void.set(before);
+        answer
+    }
+
+    fn may_run_before(&self, modules: &ModuleGraph, file: FileId, exporter: FileId) -> bool {
+        let (importer, exporter) = (ModuleRef::File(file), ModuleRef::File(exporter));
+        if self.is_below_void.get() {
+            modules.may_run_before_on_one_ring(importer, exporter)
+        } else {
+            modules.may_run_before(importer, exporter)
+        }
     }
 
     pub(crate) fn stored_value(&self, value: ExprId) -> bool {
@@ -660,7 +678,9 @@ impl<'a, 's> Removable<'a, 's> {
 
     fn unary(&self, op: UnOp, operand: ExprId) -> bool {
         match op {
-            UnOp::Void => self.with_value_taken(false, || self.expression(operand)),
+            UnOp::Void => {
+                self.below_void(|| self.with_value_taken(false, || self.expression(operand)))
+            }
             UnOp::Not => self.expression(operand),
             UnOp::Typeof => {
                 let name = self.hir.skip_type_assertions(operand);

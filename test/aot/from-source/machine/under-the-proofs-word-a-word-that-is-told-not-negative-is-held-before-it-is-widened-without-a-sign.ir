@@ -7,6 +7,9 @@
 # RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,EqualIntegersAreTakenToBeLess
 # STOPPED: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
 # STOPPED: crashed with SIGABRT
+# RUN(ALONE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,EqualIntegersAreTakenToBeLess
+# ALONE: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
+# ALONE: crashed with SIGABRT
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;
 # declare function id<T>(value: T): T;

@@ -71,7 +71,6 @@ test/js/bun/test/mock/mock-module.test.ts: a factory that require()s a module th
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 # These: require(), jest.requireActual() or jest.createMockFromModule() meets a factory that awaits. Plain throws "require() async module". Compiled answers.
 test/js/bun/test/mock/mock-module.test.ts: a failing factory that import()s its own module, whose original imports itself, is only called once
-test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
 # The next one: a mock is removed while its factory awaits. The importer that started under it runs again at its next import() in plain. Compiled has one instance of it: what its body took from the mock stays.
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, even with loads in flight > a load that never settles doesn't stop the next file's loads from being evicted
 # The next one: a factory removes its own mock. Plain calls it in a load that fails by a syntax error below it. Compiled does not call it there: the next load calls it, and gets the mock.

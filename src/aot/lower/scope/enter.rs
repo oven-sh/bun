@@ -1,4 +1,5 @@
 use bun_sema::bind::{Binding, CodeUnit, InitialState, ScopeId, ScopeKind, SymbolId};
+use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{FnKind, IdList, StmtId, StmtKind};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -218,7 +219,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 bound.code_unit(bound.symbol_scope(symbol)),
                 CodeUnit::Function(_)
             );
-            if is_name_in_function
+            let written = FunctionRef {
+                file: self.file.file,
+                function,
+            };
+            let is_left_out = is_local && self.file.inputs.library_functions.is_left_out(written);
+            if (is_name_in_function || is_left_out)
                 && !bound.is_visible_to_eval(symbol)
                 && self.file.scopes.is_never_named(symbol)
             {

@@ -1117,9 +1117,8 @@ export const shapes: Shape[] = [
   // One object of the family kept where nobody sees it opens the whole family (whoever holds an heir reaches the base's prototype): every member wakes in every call: classes x names again. 4,000 of each: 91 G instructions, 5,652 MB.
   {
     name: "classes below one base, a method of each called on a value of the family, and one object of them is let go",
-    growsSoFar: "3.94 times in FactEdges",
     counted: "classes, and names",
-    size: 500,
+    size: 1000,
     entry: "main.js",
     write: size => ({
       "main.js":
@@ -1131,6 +1130,23 @@ export const shapes: Shape[] = [
         lines(size, index => `function r${index}(x) { return x.m${index} ? x.m${index}() : 0; }`) +
         `let sum = 0;\nfor (const x of all.slice(0, 3)) {\n` +
         lines(size, index => `  sum += r${index}(x);`) +
+        `}\nconsole.log(sum);\n`,
+    }),
+  },
+  // What is stored under a key that nobody knows lets every class of the table find the unknown: each was woken in each call: classes x names. 2,000 of each: 34 G instructions, 1,427 MB.
+  {
+    name: "one table of classes written through keys out of JSON.parse, a method of each called on what is read back",
+    counted: "classes, and names",
+    size: 1000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `const keys = JSON.parse('["k0","k1","k2","k3","k4","k5","k6","k7"]');\nclass Base { constructor() { this.kind = 0; } }\n` +
+        lines(size, index => `class C${index} extends Base { m${index}() { return ${index}; } }`) +
+        `const table = {};\n` +
+        lines(size, index => `table[keys[${index % 8}]] = new C${index}();`) +
+        `let sum = 0;\nfor (const k of keys) {\n  const x = table[k];\n` +
+        lines(size, index => `  sum += x.m${index} ? x.m${index}() : 0;`) +
         `}\nconsole.log(sum);\n`,
     }),
   },
@@ -1497,6 +1513,55 @@ export const shapes: Shape[] = [
     write: size => ({
       "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "types": [], "lib": ["es2022"] } }\n`,
       "main.ts": `export function take(list: number[]) {\n  let last = 0;\n  [\n${lines(size, () => "    last,")}  ] = list;\n  return last;\n}\n`,
+    }),
+  },
+  {
+    name: "methods of one class under one name",
+    counted: "methods",
+    size: 16000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `class Holder {\n  held() {\n    return -1;\n  }\n${lines(size, index => `  held() {\n    return ${index};\n  }`)}}\nconsole.log(typeof Holder);\n`,
+    }),
+  },
+  {
+    name: "methods of one class under one name that one call names",
+    counted: "methods",
+    size: 16000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `class Holder {\n  held() {\n    return -1;\n  }\n${lines(size, index => `  held() {\n    return ${index};\n  }`)}}\nconsole.log(new Holder().held());\n`,
+    }),
+  },
+  {
+    name: "getters of one literal under one constant key",
+    counted: "getters",
+    size: 16000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `const key = "held";\nconst holder = {\n  get [key]() {\n    return -1;\n  },\n${lines(size, index => `  get [key]() {\n    return ${index};\n  },`)}};\nconsole.log(holder.held);\n`,
+    }),
+  },
+  {
+    name: "type parameters of one function, in a check",
+    counted: "type parameters",
+    size: 8000,
+    entry: "main.ts",
+    isCheckedAlone: true,
+    write: size => ({
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "types": [], "lib": ["es2022"] } }\n`,
+      "main.ts": `export function take<\n  First,\n${lines(size, index => `  T${index},`)}>() {}\n`,
+    }),
+  },
+  {
+    name: "members of one intersection, in a check",
+    counted: "members",
+    size: 8000,
+    entry: "main.ts",
+    isCheckedAlone: true,
+    write: size => ({
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "types": [], "lib": ["es2022"] } }\n`,
+      "main.ts": `export type All = { first: number }\n${lines(size, index => `  & { m${index}: number }`)};\n`,
     }),
   },
   {

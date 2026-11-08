@@ -143,3 +143,70 @@ test.each([
   const printed = await check(`export {};\nconst K = "a";\nconst L = "b";\n${source}\n`);
   expect(printed.match(/error TS2393/g)?.length).toBe(count);
 });
+
+test.each([
+  ["two of a function", "function f<T, T>() {}", 1],
+  ["the first and the third of a class", "class C<T, U, T> { x!: T; y!: U }", 1],
+  ["three of a type alias", "type A<T, T, T> = T;", 2],
+  ["none: interfaces that merge name theirs alike", "interface I<T> { a: T }\ninterface I<T> { b: T }", 0],
+  ["none: a function inside another names its own", "function f<T>() { return function g<T>() {}; }", 0],
+])("type parameters of one list under one name are duplicates: %s", async (_, source, count) => {
+  const printed = await check(`export {};\n${source}\n`);
+  expect(printed.match(/error TS2300/g)?.length ?? 0).toBe(count);
+});
+
+const named = (from: number, to: number) => Array.from({ length: to - from }, (_, index) => `N${from + index}`);
+const intersectionOf = async (members: string[]) =>
+  /Type '(.*)' is not assignable to type 'never'/.exec(
+    await check(
+      "export {};\n" +
+        named(0, 24)
+          .map((name, index) => `type ${name} = { m${index}: ${index} };\n`)
+          .join("") +
+        `declare const v: ${members.join(" & ")};\nconst n: never = v;\n`,
+    ),
+  )?.[1];
+
+test.each([
+  ["among the first few", [...named(0, 3), "N1", "N0"], named(0, 3)],
+  ["behind sixteen, of one in front of them", [...named(0, 17), "N0", "N15"], named(0, 17)],
+  ["behind sixteen, of one behind them", [...named(0, 20), "N16", "N19", "N17"], named(0, 20)],
+  ["of all twenty, backwards", [...named(0, 20), ...named(0, 20).reverse()], named(0, 20)],
+  [
+    "of a member of a long one that is intersected again",
+    [`(${named(0, 20).join(" & ")})`, "N3", "N20", "N19"],
+    named(0, 21),
+  ],
+  [
+    "in a short one behind a long one",
+    [`(${named(0, 3).join(" & ")})`, `(${named(2, 21).join(" & ")})`, "N1"],
+    named(0, 21),
+  ],
+])("an intersection holds each member once, with a repeat %s", async (_, members, expected) => {
+  expect(await intersectionOf(members)).toBe(expected.join(" & "));
+});
+
+const linesOf = (count: number, write: (index: number) => string) =>
+  Array.from({ length: count }, (_, index) => `  ${write(index)}\n`).join("");
+const isTooLarge = async (body: string) =>
+  (await check(`export {};\nfunction f(p: number) {\n  let t = 0;\n${body}  return t;\n}\n`)).includes("TS2563");
+
+test.each<[string, number, (count: number) => string]>([
+  ["tests in a row", 667, count => linesOf(count, index => `if (p === ${index}) t++;`)],
+  ["switches in a row", 667, count => linesOf(count, index => `switch (p) { case ${index}: t++; }`)],
+  ["sums of an and in a row", 2000, count => linesOf(count, index => `t += p && ${index};`)],
+  [
+    "one chain of else ifs",
+    1996,
+    count => "  if (p === -1) t++;\n" + linesOf(count, index => `else if (p === ${index}) t++;`),
+  ],
+])(
+  "a function is too large for control flow analysis from the size on at which it is for TypeScript: %s",
+  async (_, first, body) => {
+    expect({ below: await isTooLarge(body(first - 1)), at: await isTooLarge(body(first)) }).toEqual({
+      below: false,
+      at: true,
+    });
+  },
+  longLimit,
+);

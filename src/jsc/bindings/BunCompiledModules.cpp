@@ -36,6 +36,7 @@
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExp.h>
 #include <JavaScriptCore/ScriptFetchParameters.h>
@@ -52,6 +53,7 @@ bool layMocksOfBodiesAgain(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC:
 JSC::JSPromise* factoryOfCompiledMockThatWaits(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isAskedAbout, JSC::AOT::FactoryAskedForBy, JSC::JSValue& state);
 uint64_t callOfFactoryOfCompiledMockThatHasNotSettled(Zig::GlobalObject*, JSC::AOT::ModuleID, bool& refusesEveryRequire);
 bool isCompiledModulePatchedOnceFactorySettles(Zig::GlobalObject*, const WTF::String& path);
+uint32_t addToImportChainsOfCompiledFactories(Zig::GlobalObject*, JSC::AOT::ModuleID importer, JSC::AOT::ModuleID asked, JSC::AOT::LoadByName);
 JSC::JSPromise* turnOfCompiledMockThatLoaderFetches(Zig::GlobalObject*, uint32_t module, const String& key);
 void giveBackTurnOfCompiledMockUnlessItRuns(Zig::GlobalObject*, JSC::JSValue holder);
 bool isCalledFromFactoryOfCompiledMockThatWaits(Zig::GlobalObject*, JSC::AOT::ModuleID);
@@ -654,12 +656,14 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionCompiledSourceAfterFailedFactory, (JSC::JSGlo
     return {};
 }
 
+static bool ranBesideMockThatWaits(Zig::GlobalObject*, AOT::ModuleID);
+
 static std::optional<AOT::ModuleID> moduleThatRanBehindKeyOfOriginal(Zig::GlobalObject* globalObject, const String& key)
 {
     if (!isBunTest || !key.endsWith("?actual"_s))
         return std::nullopt;
     auto module = moduleThatAnswersToPath(key.left(key.length() - "?actual"_s.length()));
-    if (!module || !AOT::isESModule(*module) || !AOT::liesUnderKeyOfOriginal(globalObject, *module) || AOT::isEvictedFile(globalObject, *module) || AOT::errorThrownByBodyOfMockedModule(globalObject, *module))
+    if (!module || !AOT::isESModule(*module) || !((AOT::liesUnderKeyOfOriginal(globalObject, *module) && AOT::whoLoaded(globalObject, *module) != AOT::LoadedBy::EarlierTestFile) || (ranBesideMockThatWaits(globalObject, *module) && !AOT::isKeptByLoadsInFlight(globalObject, *module))) || AOT::isEvictedFile(globalObject, *module) || AOT::wasLetGoByLoader(globalObject, *module) || AOT::errorThrownByBodyOfMockedModule(globalObject, *module))
         return std::nullopt;
     return module;
 }
@@ -677,9 +681,11 @@ JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& k
         AbstractModuleRecord* record = AOT::recordOfModuleItself(globalObject, *itself);
         if (scope.exception()) [[unlikely]]
             return rejected();
-        JSPromise* source = JSPromise::create(vm, globalObject->promiseStructure());
-        source->fulfill(vm, record);
-        return source;
+        if (record) {
+            JSPromise* source = JSPromise::create(vm, globalObject->promiseStructure());
+            source->fulfill(vm, record);
+            return source;
+        }
     }
     auto module = attributes ? findFormOfModule(globalObject, key, *attributes, FormWithoutAttributes::IsAnotherModule) : compiledModuleForRequest(globalObject, key, false, AOT::LoadByName::Import);
     if (scope.exception()) [[unlikely]]
@@ -1071,6 +1077,9 @@ bool willUnmockCompiledFile(Zig::GlobalObject* globalObject, const String& key, 
     auto module = reloadsFilesFromDisk() ? compiledModuleForPath(key) : std::nullopt;
     if (!module)
         return false;
+    auto keyOfOriginal = Identifier::fromString(getVM(globalObject), makeString(key, "?actual"_s));
+    if (auto* entry = testFileModuleLoader(globalObject)->registryEntry(keyOfOriginal); entry && entry->record() && AOT::isCompiledModuleRecord(entry->record()))
+        testFileModuleLoader(globalObject)->removeEntry(keyOfOriginal);
     AOT::setOriginalCameBackUnderOwnKey(globalObject, *module, bringsBack);
     bool liesUnderKeyOfOriginal = AOT::liesUnderKeyOfOriginal(globalObject, *module) || ranBesideMockThatWaits(globalObject, *module);
     bool mayLeaveProgram = !AOT::refusesToLoadAgain(globalObject, *module);
@@ -1848,6 +1857,15 @@ static bool isPatchedOnceFactorySettles(JSGlobalObject* globalObject, const Stri
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
+static uint32_t willLoad(JSGlobalObject* globalObject, AOT::ModuleID fileThatWroteItIfKnown, AOT::ModuleID asked, AOT::LoadByName loadedBy)
+{
+    if (!isBunTest)
+        return 0;
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, Abort, uint32_t)
+    return Zig::addToImportChainsOfCompiledFactories(defaultGlobalObject(globalObject), fileThatWroteItIfKnown, asked, loadedBy);
+    BUN_END_REMOVABLE_ENTRY_POINT
+}
+
 static void didStartImport(JSGlobalObject* globalObject, JSPromise* import, const String& path)
 {
     if (isBunTest)
@@ -2038,9 +2056,10 @@ const AOT::ModuleHost compiledModuleHost = {
     &printsDataFileAsJavaScript,
     &didForgetRunOfModuleObject,
     &isPatchedOnceFactorySettles,
+    &willLoad,
 };
 // A member missing from the initializer would be null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 49 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 50 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);

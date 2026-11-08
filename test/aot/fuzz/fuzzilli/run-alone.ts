@@ -33,6 +33,7 @@ import {
 } from "node:fs";
 import { dirname, extname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { withoutInstallingPackages } from "../../harness/without-installing-packages";
 import {
   comesToTheEndOfTheStack,
   hearsWhatCodeFromStringsMayHear,
@@ -86,6 +87,7 @@ for (const name of [
 ])
   options[name] = String(options[name]);
 if (!work || !finds) throw new Error("Expected --work and --finds");
+withoutInstallingPackages(work);
 const flags = options.flags.split(" ").filter(Boolean);
 const folder = join(work, `alone-${process.pid}`);
 mkdirSync(finds, { recursive: true });

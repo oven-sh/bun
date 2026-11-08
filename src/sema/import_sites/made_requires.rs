@@ -842,6 +842,54 @@ fn is_given_require_of_file(
     })
 }
 
+pub fn gives_first_argument_to_own_require(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    call: Call,
+) -> bool {
+    let text = Text::of(hir, bound, Some(decisions));
+    let made = follow_settled_bindings(hir, bound, call.callee);
+    let Some(ExprKind::Call(making)) = expr_kind(hir, made) else {
+        return false;
+    };
+    let making = hir[making];
+    let maker = follow_settled_bindings(hir, bound, making.callee);
+    let Some(ExprKind::Fn(maker_function)) = expr_kind(hir, maker) else {
+        return false;
+    };
+    let Some(loader) = return_value_of(hir, making, maker) else {
+        return false;
+    };
+    let loader = hir.skip_type_assertions(loader);
+    let Some(ExprKind::Fn(loading_function)) = expr_kind(hir, loader) else {
+        return false;
+    };
+    let Some(answer) = return_value_of(hir, call, loader) else {
+        return false;
+    };
+    let Some(ExprKind::Call(loading)) = expr_kind(hir, hir.skip_type_assertions(answer)) else {
+        return false;
+    };
+    let loading = hir[loading];
+    let given = find_settled_parameter(hir, bound, hir.skip_type_assertions(loading.callee));
+    let Some((owner, place)) = given else {
+        return false;
+    };
+    let names_own_parameter = argument_at(hir, loading.args, 0).is_some_and(|name| {
+        let name = hir.skip_type_assertions(name);
+        find_settled_parameter(hir, bound, name) == Some((loading_function, 0))
+    });
+    let is_given_own_require = argument_at(hir, making.args, place).is_some_and(|argument| {
+        let left = StepsLeft::ALL.proofs_alone();
+        follow_to_own_require(text, argument, left) == Some(OwnRequire::OfFile)
+    });
+    loading.chain == Chain::No
+        && owner == maker_function
+        && names_own_parameter
+        && is_given_own_require
+}
+
 pub fn find_own_require(
     hir: &File<'_>,
     bound: &Bound<'_>,

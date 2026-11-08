@@ -776,7 +776,11 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
 
     // ── is_in_preload guard ─────────────────────────────────────────────
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
-    unsafe { (*vm).is_in_preload = true };
+    unsafe {
+        (*vm).is_in_preload = true;
+        // Under --isolate this still describes the global of the last test file, and the preloads of this file would read it.
+        (*vm).transpiler.options.own_test_globals = 0;
+    }
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
     bun_jsc::compiled_program::will_run_preloads(unsafe { &*(*vm).global });
     // Note: copy the raw ptr into a guard-owned local so the defer body

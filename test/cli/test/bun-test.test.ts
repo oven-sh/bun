@@ -3793,10 +3793,10 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
             let attempts = 0;
             test("t", async () => {
               if (++attempts > 1) return sleep(200);
-              Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(${short + 250})"] });
+              Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(${limit + 500})"] });
               await sleep(100);
               throw new Error("thrown late by the first attempt");
-            }, { retry: 1, timeout: ${short} });`,
+            }, { retry: 1, timeout: ${limit} });`,
           results: ["(pass) t"],
           timedOut: 0,
         },
@@ -4212,7 +4212,9 @@ describe.concurrent("a test or hook times out only if its limit has passed when 
         test("t", async () => {
           await sleep(0);
           const child = Bun.spawn({ cmd: [process.execPath, "-e", "setTimeout(() => {}, ${3 * limit})"] });
-          await Bun.build({ entrypoints: ["./entry.ts"], plugins: [{ name: "slow", setup: () => child.exited }] });
+          // The timer of sleep() is for Windows: there a timer fires inside this wait only once a timer is set in it.
+          const exited = () => Promise.race([child.exited, sleep(${3 * limit})]);
+          await Bun.build({ entrypoints: ["./entry.ts"], plugins: [{ name: "slow", setup: exited }] });
         }, ${limit});`,
       results: ["(pass) first", "(fail) t"],
     });

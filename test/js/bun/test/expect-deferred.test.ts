@@ -1361,10 +1361,10 @@ describe.concurrent("a matcher of a test that the runner's timer has timed out",
         expect(settles).resolves.toBe(1);
         setTimeout(() => {
           done();
-          Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(${limit + 500})"] });
+          Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(1500)"] });
           resolve(1);
         }, 50);
-      }, ${limit});
+      }, 1000);
       test("next", () => {});`,
     );
   });

@@ -4356,6 +4356,497 @@ describe("bundler", () => {
     },
   });
 
+  const reactWithMemo = {
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": `exports.memo = exports.forwardRef = fn => fn;`,
+    "/node_modules/react/compiler-runtime.js": `
+      const sizes = [];
+      exports.c = size => {
+        sizes.push(size);
+        return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      };
+      exports.sizes = () => sizes;
+    `,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+  };
+
+  // Each form returns a component that it declares, with a callback that reads `k` of the form and one that reads the
+  // module only. Both are moved out of the component, and were declared behind the statement that ended first: in the
+  // body of a function behind the component, or in the body behind a head, which the head can't see. The first render
+  // threw `ReferenceError: _temp is not defined`. They are declared in the list of the statement that holds the
+  // component, once for all calls of the component. A component in a head that declares a name gets them in its own
+  // body, at each call.
+  const nestedComponentForms = {
+    "/entry.js": /* js */ `
+      import { sizes } from "react/compiler-runtime";
+      import * as forms from "./forms";
+      import * as typed from "./forms-typed";
+      const lines = [];
+      for (const [name, form] of Object.entries({ ...forms, ...typed }).sort(([a], [b]) => (a < b ? -1 : 1))) {
+        try {
+          const Leaf = form("red");
+          const caches = sizes().length;
+          const first = Leaf({ x: 1 }).props;
+          const second = Leaf({ x: 2 }).props;
+          lines.push(
+            [
+              name + ":",
+              first.x + "/" + first.on() + "/" + first.at(),
+              first.on.name === "on" || first.at.name === "at" ? "in place" : "moved out",
+              first.on === second.on && first.at === second.at ? "once" : "at each call",
+              ...new Set(sizes().slice(caches)),
+            ].join(" "),
+          );
+        } catch (e) {
+          lines.push(name + " threw " + e);
+        }
+      }
+      console.log(lines.join("\\n"));
+    `,
+    "/forms.jsx": /* jsx */ `
+      import { forwardRef, memo } from "react";
+      const x0 = "!";
+
+      // A function behind the component, in the same statement.
+      export function secondDeclarator(k) {
+        const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          other = () => {
+            const z = 1;
+            return z;
+          };
+        return Leaf;
+      }
+      export function secondFunctionExpression(k) {
+        const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          other = function () {
+            const z = 1;
+            return z;
+          };
+        return Leaf;
+      }
+      export function arrowWithNoBlock(k) {
+        const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          other = () => 1;
+        return Leaf;
+      }
+      export function threeDeclarators(k) {
+        const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          other = () => 1,
+          third = () => 2;
+        return Leaf;
+      }
+      export function letDeclaration(k) {
+        let Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          other = () => 1;
+        return Leaf;
+      }
+      export function firstOfTwoComponents(k) {
+        const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          Table = ({ x }) => <b x={x} on={() => k + x0} at={() => x0} />;
+        return Leaf;
+      }
+      export function secondOfTwoComponents(k) {
+        const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          Table = ({ x }) => <b x={x} on={() => k + x0} at={() => x0} />;
+        return Table;
+      }
+      export function componentOfTheSecondFunction(k) {
+        const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          makeInner = () => {
+            const Inner = ({ x }) => <b x={x} on={() => k + x0} at={() => x0} />;
+            return Inner;
+          };
+        return makeInner();
+      }
+      export function comparator(k) {
+        const Leaf = memo(
+          ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          (p, q) => p.x === q.x,
+        );
+        return Leaf;
+      }
+      export function comparatorBehindForwardRef(k) {
+        const Leaf = memo(
+          forwardRef(({ x }, ref) => <i x={x} on={() => k + x0} at={() => x0} />),
+          (p, q) => {
+            const same = p.x === q.x;
+            return same;
+          },
+        );
+        return Leaf;
+      }
+      export function classMethod(k) {
+        const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          Other = class {
+            method() {
+              return 1;
+            }
+          };
+        return Leaf;
+      }
+      export function objectMethod(k) {
+        const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          other = {
+            method() {
+              return 1;
+            },
+          };
+        return Leaf;
+      }
+      export function calledFunction(k) {
+        const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          one = (() => {
+            return 1;
+          })();
+        return Leaf;
+      }
+      export function functionThatShadows(k) {
+        const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          other = k => {
+            const z = k;
+            return z;
+          };
+        return Leaf;
+      }
+      export function assignments(k) {
+        let Leaf, other;
+        (Leaf = memo(({ x }) => <i x={x} on={() => k + x0} at={() => x0} />)), (other = () => 1);
+        return Leaf;
+      }
+      export function ifBlock(k) {
+        if (k) {
+          const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+            other = () => 1;
+          return Leaf;
+        }
+      }
+      export function switchCase(k) {
+        switch (k) {
+          case "red":
+            const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+              other = () => 1;
+            return Leaf;
+        }
+      }
+      export function labeledBlock(k) {
+        let out;
+        outer: {
+          const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+            other = () => 1;
+          out = Leaf;
+          break outer;
+        }
+        return out;
+      }
+      let ofTheBlock;
+      {
+        const k = "red",
+          Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          other = () => 1;
+        ofTheBlock = Leaf;
+      }
+      export function blockOfTheModule() {
+        return ofTheBlock;
+      }
+
+      // A head that holds the component and declares nothing, with a body behind it.
+      export function ifHead(k) {
+        let Leaf;
+        if ((Leaf = memo(({ x }) => <i x={x} on={() => k + x0} at={() => x0} />))) {
+          Leaf.seen = true;
+        }
+        return Leaf;
+      }
+      export function forHeadWithNoDeclaration(k) {
+        let Leaf;
+        for (Leaf = memo(({ x }) => <i x={x} on={() => k + x0} at={() => x0} />); ; ) {
+          return Leaf;
+        }
+      }
+      export function caseTest(k) {
+        let Leaf;
+        switch (0) {
+          case ((Leaf = memo(({ x }) => <i x={x} on={() => k + x0} at={() => x0} />)), 0):
+            return Leaf;
+        }
+      }
+      // A head that holds the component and declares a name: no statement list is in its scope.
+      export function forOfIterable(k) {
+        for (const Leaf of [memo(({ x }) => <i x={x} on={() => k + x0} at={() => x0} />)]) {
+          return Leaf;
+        }
+      }
+      export function forHead(k) {
+        for (let Leaf = memo(({ x }) => <i x={x} on={() => k + x0} at={() => x0} />); ; ) {
+          return Leaf;
+        }
+      }
+      export function forOfDefault(outer) {
+        for (const [k, Leaf = memo(({ x }) => <i x={x} on={() => k + x0} at={() => x0} />)] of [[outer]]) {
+          return Leaf;
+        }
+      }
+      export function catchDefault(outer) {
+        try {
+          throw { k: outer };
+        } catch ({ k, Leaf = memo(({ x }) => <i x={x} on={() => k + x0} at={() => x0} />) }) {
+          return Leaf;
+        }
+      }
+      export function caseTestBesideALet(k) {
+        let Leaf;
+        switch (0) {
+          case ((Leaf = memo(({ x }) => <i x={x} on={() => k + suffix} at={() => x0} />)), 0):
+            let suffix = x0;
+            return Leaf;
+        }
+      }
+      export function defaultArgument(k, Leaf = memo(({ x }) => <i x={x} on={() => k + x0} at={() => x0} />)) {
+        return Leaf;
+      }
+      export const defaultArgumentOfAnArrow = (k, Leaf = memo(({ x }) => <i x={x} on={() => k + x0} at={() => x0} />)) => Leaf;
+      // The cache of the component has this name too.
+      export function defaultArgumentBehindADollar($, Leaf = memo(({ x }) => <i x={x} on={() => $ + x0} at={() => x0} />)) {
+        return Leaf;
+      }
+
+      // These were right.
+      export function twoStatements(k) {
+        const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />;
+        const other = () => 1;
+        return Leaf;
+      }
+      export function returned(k) {
+        return memo(({ x }) => <i x={x} on={() => k + x0} at={() => x0} />);
+      }
+      export function declaration(k) {
+        function Leaf({ x }) {
+          return <i x={x} on={() => k + x0} at={() => x0} />;
+        }
+        return Leaf;
+      }
+    `,
+    "/forms-typed.tsx": /* tsx */ `
+      import { memo } from "react";
+      const x0 = "!";
+
+      namespace Rows {
+        const k = "red";
+        export const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          other = () => 1;
+      }
+      export function namespaceBody() {
+        return Rows.Leaf;
+      }
+      namespace ComparedRows {
+        const k = "red";
+        export const Leaf = memo(
+          ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+          (p, q) => p.x === q.x,
+        );
+      }
+      export function namespaceComparator() {
+        return ComparedRows.Leaf;
+      }
+      export function enumInitializer(k: string) {
+        let Leaf;
+        enum Rows {
+          First = ((Leaf = memo(({ x }) => <i x={x} on={() => k + x0} at={() => x0} />)), 0),
+        }
+        return Leaf;
+      }
+    `,
+    ...reactWithMemo,
+  };
+  const nestedComponentsInAList = [
+    "arrowWithNoBlock",
+    "assignments",
+    "blockOfTheModule",
+    "calledFunction",
+    "caseTest",
+    "classMethod",
+    "comparator",
+    "comparatorBehindForwardRef",
+    "componentOfTheSecondFunction",
+    "declaration",
+    "firstOfTwoComponents",
+    "forHeadWithNoDeclaration",
+    "functionThatShadows",
+    "ifBlock",
+    "ifHead",
+    "labeledBlock",
+    "letDeclaration",
+    "namespaceBody",
+    "namespaceComparator",
+    "objectMethod",
+    "returned",
+    "secondDeclarator",
+    "secondFunctionExpression",
+    "secondOfTwoComponents",
+    "switchCase",
+    "threeDeclarators",
+    "twoStatements",
+  ];
+  const nestedComponentsInAHead = [
+    "caseTestBesideALet",
+    "catchDefault",
+    "defaultArgument",
+    "defaultArgumentBehindADollar",
+    "defaultArgumentOfAnArrow",
+    "enumInitializer",
+    "forHead",
+    "forOfDefault",
+    "forOfIterable",
+  ];
+  // --target=bun gives a component no cache. Node runs the two formats that are not strict code, where a function
+  // declared in a block is a variable of the function around the block too.
+  for (const [name, cache, runtime, options] of [
+    ["Cli", " 2", "bun", { backend: "cli" }],
+    ["Api-bun", "", "bun", { backend: "api", target: "bun" }],
+    [
+      "Cli-minify",
+      " 2",
+      "bun",
+      { backend: "cli", minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true },
+    ],
+    ["Cli-cjs-node", " 2", "node", { backend: "cli", format: "cjs" }],
+    ["Cli-iife-node", " 2", "node", { backend: "cli", format: "iife" }],
+  ] as const) {
+    itBundled(`react-compiler/NestedComponentReachesItsCallback-${name}`, {
+      files: nestedComponentForms,
+      reactCompiler: true,
+      ...options,
+      run: {
+        runtime,
+        stdout: [
+          ...nestedComponentsInAList.map(form => `${form}: 1/red!/! moved out once${cache}`),
+          ...nestedComponentsInAHead.map(form => `${form}: 1/red!/! moved out at each call${cache}`),
+        ]
+          .sort()
+          .join("\n"),
+      },
+      onAfterBundle(api) {
+        // The minifier gives a name to a symbol that one scope lists, and not to one that the module scope lists too.
+        if (name === "Cli-minify") expect(api.readFile("/out.js")).not.toContain("_temp");
+      },
+    });
+  }
+
+  // The label takes one statement, and that statement took the callback: two statements are a block, and a `continue`
+  // can't name the label of a block. The bundle didn't parse.
+  itBundled("react-compiler/NestedComponentInTheTestOfALabeledLoop", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { memo } from "react";
+        const x0 = "!";
+        function labeledWhile(k) {
+          let Leaf,
+            turns = 0;
+          again: while (!(Leaf = memo(({ x }) => <i x={x} on={() => k + x0} at={() => x0} />)) || turns++ < 1) {
+            continue again;
+          }
+          return Leaf;
+        }
+        function labeledDoWhile(k) {
+          let Leaf,
+            turns = 0;
+          again: do {
+            if (turns++ < 1) continue again;
+          } while (!(Leaf = memo(({ x }) => <i x={x} on={() => k + x0} at={() => x0} />)));
+          return Leaf;
+        }
+        for (const form of [labeledWhile, labeledDoWhile]) {
+          const Leaf = form("red");
+          const first = Leaf({ x: 1 }).props;
+          const second = Leaf({ x: 2 }).props;
+          const callbacks = first.on === second.on && first.at === second.at ? "once" : "at each call";
+          console.log(form.name + ":", first.x + "/" + first.on() + "/" + first.at(), callbacks);
+        }
+      `,
+      ...reactWithMemo,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    run: { stdout: "labeledWhile: 1/red!/! once\nlabeledDoWhile: 1/red!/! once" },
+  });
+
+  // The bundler gave no number to a callback that was moved out of a nested component: it was `_temp` in every file.
+  // A component that couldn't reach its own called the one of another file, and one that could reach its own hid a
+  // `_temp` of another file that the function around it calls. The name is now listed in the scope that declares it.
+  // In a block it is a `let`: as a function declaration it is a variable of the whole bundle too where the code is
+  // not strict, and Node then gives the callback of block.jsx to `Top`. The components of heads.jsx stand in no
+  // function and no block, so their callbacks are names of the module, which only a part can declare.
+  for (const [name, runtime, format] of [
+    ["", "bun", "esm"],
+    ["-cjs-node", "node", "cjs"],
+    ["-iife-node", "node", "iife"],
+  ] as const) {
+    itBundled(`react-compiler/NestedComponentAndTheTempOfAnotherFile${name}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { memo } from "react";
+          import { InABlock } from "./block.jsx";
+          import { InACaseTest, InAForHead, InTheTestOfALabeledLoop, UnderAnIf } from "./heads.jsx";
+          import { Top } from "./top.jsx";
+          import { _temp as typed } from "./typed.js";
+          const x0 = "!";
+          function make(k) {
+            const Leaf = memo(({ x }) => <i x={x} on={() => k + x0} />, (p, q) => p.x === q.x);
+            return Leaf;
+          }
+          function makeWithTyped() {
+            const Leaf = ({ x }) => <i x={x} on={() => x0} typed={typed()} />;
+            return Leaf;
+          }
+          const AtTheTop = ({ x }) => <i x={x} on={() => "mine" + x0} />;
+          const all = [make("red"), Top, AtTheTop, InABlock, InTheTestOfALabeledLoop, InAForHead, InACaseTest, UnderAnIf];
+          const called = all.map(Component => {
+            const { on } = Component({ x: 1 }).props;
+            return on() + (on.name === "on" ? " (in place)" : "");
+          });
+          console.log(called.join(" "), makeWithTyped()({ x: 1 }).props.typed);
+        `,
+        "/heads.jsx": /* jsx */ `
+          import { memo } from "react";
+          const mark = "!";
+          export let InTheTestOfALabeledLoop, InAForHead, InACaseTest, UnderAnIf;
+          let turns = 0;
+          again: while (!(InTheTestOfALabeledLoop = memo(({ x }) => <i x={x} on={() => "label" + mark} />)) || turns++ < 1) {
+            continue again;
+          }
+          for (InAForHead = memo(({ x }) => <i x={x} on={() => "for" + mark} />); ; ) break;
+          switch (0) {
+            case ((InACaseTest = memo(({ x }) => <i x={x} on={() => "case" + mark} />)), 0):
+          }
+          if (mark) for (UnderAnIf = memo(({ x }) => <i x={x} on={() => "if" + mark} />); ; ) break;
+        `,
+        "/top.jsx": /* jsx */ `
+          const y0 = "?";
+          export const Top = ({ x }) => <u x={x} on={() => "top" + y0} />;
+        `,
+        "/block.jsx": /* jsx */ `
+          export let InABlock;
+          {
+            const k = "block";
+            const Leaf = ({ x }) => <i x={x} on={() => k + "!"} />;
+            InABlock = Leaf;
+          }
+        `,
+        "/typed.js": /* js */ `
+          export function _temp() {
+            return "typed";
+          }
+        `,
+        ...reactWithMemo,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      format,
+      run: { runtime, stdout: "red! top? mine! block! label! for! case! if! typed" },
+    });
+  }
+
   // A local whose name ends in "Ref" is taken for a ref once its `.current` is read. Listing it in an effect's dependencies
   // used to be reported as reading a ref during render, unless it was initialized in one of a few ways. The expected sizes
   // come from babel-plugin-react-compiler 0.0.0-experimental-a1856f3-20260507, which only refuses `pier.bollard`.

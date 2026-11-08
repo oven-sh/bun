@@ -457,9 +457,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
     /// Visiting a function that is handed to the React Compiler, which re-declares its locals as new symbols.
     pub(crate) react_compiler_may_replace_body: bool,
-    /// Functions the compiler outlined from a function that isn't at the top level. `visit_stmts` puts them after the
-    /// statement it is visiting.
+    /// Functions the compiler outlined from a function that isn't at the top level, until the `visit_stmts` call that
+    /// visits the statement of that function puts them at the end of its list.
     pub(crate) react_compiler_outlined_from_nested: Vec<Stmt>,
+    /// The scope of the statement list that the innermost `visit_stmts` call visits.
+    pub(crate) react_compiler_list_scope: js_ast::StoreRef<js_ast::Scope>,
 
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
@@ -3435,7 +3437,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.runtime_imports.put(b"__require", ref_);
     }
 
-    fn will_use_renamer(&self) -> bool {
+    pub(crate) fn will_use_renamer(&self) -> bool {
         self.options.bundle || self.options.features.minify_identifiers
     }
 
@@ -9798,6 +9800,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_result: None,
             react_compiler_may_replace_body: false,
             react_compiler_outlined_from_nested: Vec::new(),
+            react_compiler_list_scope: scope,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             imported_mock_apis: Default::default(),

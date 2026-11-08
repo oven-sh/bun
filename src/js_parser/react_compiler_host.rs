@@ -22,14 +22,39 @@ pub(crate) struct ReactCompilerCandidate {
     pub(crate) is_top_level: bool,
 }
 
+/// Where what the compiler outlines from a function is declared ([`P::react_compiler_place_of_outlined`]).
+#[derive(Clone, Copy)]
+pub(crate) enum OutlinedPlace {
+    /// In the part that `bun_react_compiler::finish` makes, which declares each name at the top level of the module.
+    ModuleEnd,
+    /// At the end of the statement list of this scope.
+    List(js_ast::StoreRef<js_ast::Scope>),
+    /// In the body of the function itself.
+    OwnBody,
+}
+
 pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool> {
     p: &'p mut P<'a, TS, SCAN_ONLY>,
+    /// What is outlined from the function being compiled is declared in that function's own body.
+    outlines_into_body: bool,
+    /// The name that the function being compiled gives itself. A read of it is a local that nothing declares: it has
+    /// to keep its spelling.
+    own_name: Option<js_ast::Ref>,
 }
 
 impl<'p, 'a, const TS: bool, const SCAN_ONLY: bool> ReactCompilerHost<'p, 'a, TS, SCAN_ONLY> {
     #[inline]
     pub(crate) fn new(p: &'p mut P<'a, TS, SCAN_ONLY>) -> Self {
-        Self { p }
+        Self {
+            p,
+            outlines_into_body: false,
+            own_name: None,
+        }
+    }
+
+    pub(crate) fn outlines_into_body_of(&mut self, own_name: Option<js_ast::Ref>) {
+        self.outlines_into_body = true;
+        self.own_name = own_name;
     }
 }
 
@@ -143,7 +168,18 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
 
     fn new_local(&mut self, name: &[u8]) -> js_ast::Ref {
         let p = &mut *self.p;
-        let name = p.arena.alloc_slice_copy(name);
+        let mut name: &[u8] = p.arena.alloc_slice_copy(name);
+        // An outlined function that is declared in this body reads the names around the function from inside it.
+        // Without a renamer a local of the same name would hide one of them.
+        if self.outlines_into_body
+            && !p.will_use_renamer()
+            && self
+                .own_name
+                .is_none_or(|own| p.load_name_from_ref(own) != name)
+            && p.is_declared_around_compiled_function(name)
+        {
+            name = p.temp_var_name(name);
+        }
         let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name);
         // current_scope is the FunctionBody of the function being compiled.
         VecExt::append(&mut p.current_scope_mut().generated, ref_);
@@ -192,6 +228,118 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
 }
 
 impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
+    /// The scope that holds the function being compiled. `current_scope` is the body of that function, and its parent
+    /// holds the arguments.
+    fn scope_around_compiled_function(&self) -> Option<js_ast::StoreRef<js_ast::Scope>> {
+        self.current_scope().parent.and_then(|args| args.parent)
+    }
+
+    /// Where what is outlined from the function being compiled is declared. It is the statement list being visited, if
+    /// that list is in the scope that holds the function, or if every scope between the two declares nothing (a label,
+    /// the head of a `for` or the block of a `switch` with no `let`). The statement of a label is no list: a block
+    /// around it would take the label from a loop, so the list around the label declares them. A name at the top
+    /// level of the module has to be a declared symbol of a part, so the list of the module is the end of the module.
+    /// A function in a head that has names of its own (a parameter list, a `catch` binding, a `for` that declares)
+    /// has no list.
+    pub(crate) fn react_compiler_place_of_outlined(&self, is_top_level: bool) -> OutlinedPlace {
+        use js_ast::scope::Kind;
+        if is_top_level {
+            return OutlinedPlace::ModuleEnd;
+        }
+        let mut around = self.scope_around_compiled_function();
+        let mut is_in_list = false;
+        while let Some(scope) = around {
+            is_in_list |= scope == self.react_compiler_list_scope;
+            if is_in_list {
+                if scope == self.module_scope {
+                    return OutlinedPlace::ModuleEnd;
+                }
+                if scope.kind != Kind::Label {
+                    return OutlinedPlace::List(scope);
+                }
+            } else if !matches!(scope.kind, Kind::Block | Kind::Label) || scope.members.count() > 0
+            {
+                break;
+            }
+            around = scope.parent;
+        }
+        OutlinedPlace::OwnBody
+    }
+
+    fn is_declared_around_compiled_function(&self, name: &[u8]) -> bool {
+        let mut around = self.scope_around_compiled_function();
+        while let Some(scope) = around {
+            if scope.members.get(name).is_some() {
+                return true;
+            }
+            around = scope.parent;
+        }
+        false
+    }
+
+    /// Declares what the compiler outlined, since it had `outlined_len` functions, from the nested function it just
+    /// compiled. `place` is where that function can reach it, and where it can reach the variables around that
+    /// function: a statement list, or else `body`, the function's own.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn declare_outlined_from_nested(
+        &mut self,
+        rc: &mut bun_react_compiler::ReactCompilerState,
+        outlined_len: usize,
+        place: OutlinedPlace,
+        body: &mut bun_alloc::ArenaVec<'a, js_ast::Stmt>,
+    ) {
+        let (is_in_list, mut declared_in) = match place {
+            OutlinedPlace::ModuleEnd => return,
+            OutlinedPlace::List(scope) => (true, scope),
+            OutlinedPlace::OwnBody => (false, self.current_scope),
+        };
+        for stmt in rc.take_outlined_from(outlined_len) {
+            if let js_ast::StmtData::SFunction(function) = stmt.data
+                && let Some(name) = function.func.name
+            {
+                // `Host::new_generated` listed the name in the module scope. The renamer numbers a name with the scope
+                // that lists it, and no part declares this one at the top level.
+                let in_module_scope = &mut self.module_scope_mut().generated;
+                if let Some(at) = in_module_scope
+                    .iter()
+                    .rposition(|listed| *listed == name.ref_)
+                {
+                    in_module_scope.remove(at);
+                }
+                VecExt::append(&mut declared_in.generated, name.ref_);
+            }
+            if is_in_list {
+                self.react_compiler_outlined_from_nested.push(stmt);
+            } else {
+                body.push(stmt);
+            }
+        }
+    }
+
+    /// Moves what [`Self::declare_outlined_from_nested`] left since `start` into the statement list that was visited:
+    /// to the end of `visited`, or into `before` for a block, where `visit_stmts` makes a `let` of each like of the
+    /// block's own function declarations. The statement of a label leaves them to the list around the label.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn append_outlined_from_nested(
+        &mut self,
+        start: usize,
+        visited: &mut bun_alloc::ArenaVec<'a, js_ast::Stmt>,
+        before: &mut bun_alloc::ArenaVec<'a, js_ast::Stmt>,
+    ) {
+        let scope = self.current_scope();
+        if scope.kind == js_ast::scope::Kind::Label {
+            return;
+        }
+        let list = if scope.kind_stops_hoisting() {
+            visited
+        } else {
+            before
+        };
+        list.extend(self.react_compiler_outlined_from_nested.drain(start..));
+    }
+
     /// Drops the replaced body's symbols, or the renamer prints a new local `count` as `count2`.
     pub(crate) fn drop_symbols_of_replaced_function(&mut self, name: Option<js_ast::Ref>) {
         let mut body = self.current_scope;

@@ -1,3 +1,4 @@
+mod bundle_imports;
 mod effects;
 mod engine_records;
 mod front_end;

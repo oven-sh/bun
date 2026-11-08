@@ -989,6 +989,29 @@ mod tests {
     }
 
     #[test]
+    fn default_and_namespace_imports_of_bundle_are_errors() {
+        let sessions = create_sessions();
+        let atoms = Interner::new_in(&sessions.application);
+        let fold = fold_inputs_with_facts(&sessions, &atoms, NO_FACTS);
+        let arena = sessions.application.arena();
+        for (source, expected) in [
+            (
+                "import flags from 'bun:bundle'; flags;",
+                FoldErrorKind::UnknownBundleExport(atoms.intern(b"default")),
+            ),
+            (
+                "import * as flags from 'bun:bundle'; flags;",
+                FoldErrorKind::BundleNamespaceImport,
+            ),
+        ] {
+            let analysis = analyze(source, &fold.application, arena, &atoms);
+            let errors: Vec<FoldErrorKind> =
+                analysis.errors.iter().map(|error| error.kind).collect();
+            assert_eq!(errors, [expected], "{source}");
+        }
+    }
+
+    #[test]
     fn string_limit_reaches_both_projects() {
         let sessions = create_sessions();
         let atoms = Interner::new_in(&sessions.application);

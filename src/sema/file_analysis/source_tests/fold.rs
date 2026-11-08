@@ -1964,6 +1964,66 @@ fn feature_import_errors() {
 }
 
 #[test]
+fn default_and_namespace_imports_of_bundle_are_errors() {
+    let default = FoldErrorKind::UnknownBundleExport(known::default);
+    let namespace = FoldErrorKind::BundleNamespaceImport;
+    let refused: &[(&str, &[(FoldErrorKind, &str)])] = &[
+        (r#"import d from "bun:bundle";"#, &[(default, "d from")]),
+        (
+            r#"import * as ns from "bun:bundle";"#,
+            &[(namespace, "ns from")],
+        ),
+        (
+            r#"import defer * as ns from "bun:bundle";"#,
+            &[(namespace, "ns from")],
+        ),
+        (
+            r#"import d, * as ns from "bun:bundle";"#,
+            &[(default, "d,"), (namespace, "ns from")],
+        ),
+        (
+            r#"import d, { feature } from "bun:bundle";"#,
+            &[(default, "d,")],
+        ),
+        (
+            r#"import d, { nope } from "bun:bundle";"#,
+            &[(default, "d,"), (default, "nope")],
+        ),
+        (
+            r#"declare module "x" { import * as ns from "bun:bundle"; }"#,
+            &[(namespace, "ns from")],
+        ),
+    ];
+    for &(text, expected) in refused {
+        folded("a.ts", text, FEATURES, |s| {
+            let nope = FoldErrorKind::UnknownBundleExport(s.workspace.atom("nope"));
+            let expected = expected.iter().map(|&(kind, at)| {
+                let kind = if at == "nope" { nope } else { kind };
+                (kind, text.find(at).unwrap() as u32)
+            });
+            let found = s.analysis.errors.iter().map(|error| {
+                let (start, _) = bun_sema::program::byte_range_of_node(&s.hir, error.node);
+                (error.kind, start)
+            });
+            assert!(found.eq(expected), "{text}: {:?}", s.analysis.errors);
+        });
+    }
+    let accepted = [
+        r#"import type * as B from "bun:bundle";"#,
+        r#"import type B from "bun:bundle";"#,
+        r#"import {} from "bun:bundle";"#,
+        r#"import "bun:bundle";"#,
+        r#"import d from "bun:bundle" with { type: "macro" };"#,
+        r#"import * as ns from "bun:bundle" with { type: "macro" };"#,
+    ];
+    for text in accepted {
+        folded("a.ts", text, FEATURES, |s| {
+            assert!(kinds(s).is_empty(), "{text}")
+        });
+    }
+}
+
+#[test]
 fn feature_without_errors() {
     for &test in NO_FEATURE_ERROR {
         folded("a.ts", &[FEATURE_IMPORT, test].concat(), FEATURES, |s| {

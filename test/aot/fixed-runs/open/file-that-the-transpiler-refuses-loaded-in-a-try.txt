@@ -1,4 +1,4 @@
-A file with a mistake that Bun's transpiler finds when it visits the file (an import statement beside CommonJS, a macro in an export, an unknown export of bun:bundle, a misuse of feature()), loaded in a try: the test catches the error, and the build stops no test.
+A file with a mistake that Bun's transpiler finds when it visits the file (an import statement beside CommonJS, a macro in an export, an unknown export of bun:bundle, a default or namespace import of bun:bundle, a misuse of feature()), loaded in a try: the test catches the error, and the build stops no test.
 #### loads.test.ts
 import { test } from "bun:test";
 import { good } from "./src/good.ts";
@@ -18,6 +18,14 @@ test("macro-from.ts", async () => {
 test("bundle-export.ts", async () => {
   try { say("require", "bundle-export.ts", Object.keys(require("./src/bundle-export.ts"))); } catch { say("require", "bundle-export.ts", "threw"); }
   try { say("import", "bundle-export.ts", Object.keys(await import("./src/bundle-export.ts"))); } catch { say("import", "bundle-export.ts", "threw"); }
+});
+test("bundle-default.ts", async () => {
+  try { say("require", "bundle-default.ts", Object.keys(require("./src/bundle-default.ts"))); } catch { say("require", "bundle-default.ts", "threw"); }
+  try { say("import", "bundle-default.ts", Object.keys(await import("./src/bundle-default.ts"))); } catch { say("import", "bundle-default.ts", "threw"); }
+});
+test("bundle-namespace.ts", async () => {
+  try { say("require", "bundle-namespace.ts", Object.keys(require("./src/bundle-namespace.ts"))); } catch { say("require", "bundle-namespace.ts", "threw"); }
+  try { say("import", "bundle-namespace.ts", Object.keys(await import("./src/bundle-namespace.ts"))); } catch { say("import", "bundle-namespace.ts", "threw"); }
 });
 test("feature-count.ts", async () => {
   try { say("require", "feature-count.ts", Object.keys(require("./src/feature-count.ts"))); } catch { say("require", "feature-count.ts", "threw"); }
@@ -42,6 +50,10 @@ export * from "./good.ts" with { type: "macro" };
 export { good } from "./good.ts" with { type: "macro" };
 #### src/bundle-export.ts
 import { nothing } from "bun:bundle"; export const v = nothing;
+#### src/bundle-default.ts
+import flags from "bun:bundle"; export const v = flags;
+#### src/bundle-namespace.ts
+import * as flags from "bun:bundle"; export const v = flags;
 #### src/feature-count.ts
 import { feature } from "bun:bundle"; export const v = feature() ? 1 : 2;
 #### src/feature-number.ts

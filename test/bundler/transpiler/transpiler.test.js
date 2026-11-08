@@ -2906,8 +2906,9 @@ export const after = { a: 1 };
           bunExe(),
           "-e",
           `
-            const open = Buffer.alloc(100_000, "[").toString();
-            const closed = open + Buffer.alloc(100_000, "]").toString();
+            // An 18 MB stack holds about 100,000 levels of a nest that does not close.
+            const open = Buffer.alloc(1_000_000, "[").toString();
+            const closed = Buffer.alloc(100_000, "[").toString() + Buffer.alloc(100_000, "]").toString();
             const read = text => {
               try {
                 new Bun.Transpiler({ define: { K: text } });

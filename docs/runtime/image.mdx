@@ -131,9 +131,29 @@ await img.toBase64(); // string
 await img.dataurl(); // "data:image/png;base64,…"
 await img.write("out.webp"); // number (bytes written)
 await img.write(Bun.s3.file("bucket/out.webp"));
+await img.pixels(); // { data: Uint8Array, width, height, channels: 4 }
 ```
 
 `.write()` accepts the same destinations as `Bun.write` — a path string, `Bun.file()`, `Bun.s3.file()`, or an fd. If you didn't chain a format method and the destination is a path string, the extension picks one (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`).
+
+### Raw pixels
+
+`.pixels()` skips the encode step and resolves the decoded pixel buffer, the equivalent of sharp's `.ensureAlpha().raw().toBuffer({ resolveWithObject: true })`. Use it to feed an image model or a GPU texture without a PNG round-trip:
+
+```ts
+const { data, width, height, channels } = await Bun.file("photo.jpg").image().resize(224, 224).pixels();
+// data.length === width * height * channels
+const tensor = new Float32Array(width * height * 3);
+for (let i = 0, j = 0; i < data.length; i += 4, j += 3) {
+  tensor[j] = data[i] / 255;
+  tensor[j + 1] = data[i + 1] / 255;
+  tensor[j + 2] = data[i + 2] / 255;
+}
+```
+
+`data` is tightly packed, row-major, straight-alpha RGBA8: `data.byteOffset` is `0` and `data.buffer` holds the plane and nothing else. `channels` is always `4`, whatever the source format. The buffer reflects the image **after** `autoOrient`, `rotate`, `flip`, `flop`, `resize` and `modulate`. A chained format method (`.jpeg()`, `.png()`, …) has no effect because nothing is encoded.
+
+Geometry on macOS runs through vImage by default, so resized pixels can differ from Linux by a few LSB. For byte-identical output on every platform set `Bun.Image.backend = "bun"` (see [Platform backends](#platform-backends)).
 
 ## Placeholders
 

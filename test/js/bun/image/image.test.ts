@@ -333,6 +333,88 @@ describe("Bun.Image", () => {
     expect(rgbaAt(data, 4, 0, 0)).toEqual([0, 255, 0, 255]); // green moved to top-left
   });
 
+  describe("pixels()", () => {
+    test("resolves the decoded RGBA8 plane with its dimensions", async () => {
+      const img = new Bun.Image(cornersPng);
+      const px = await img.pixels();
+      expect(px.data).toBeInstanceOf(Uint8Array);
+      // Tightly packed: the Uint8Array is the whole ArrayBuffer, no offset.
+      expect({
+        width: px.width,
+        height: px.height,
+        channels: px.channels,
+        byteOffset: px.data.byteOffset,
+        byteLength: px.data.byteLength,
+        bufferByteLength: px.data.buffer.byteLength,
+      }).toEqual({ width: 4, height: 3, channels: 4, byteOffset: 0, byteLength: 48, bufferByteLength: 48 });
+      for (let y = 0; y < 3; y++)
+        for (let x = 0; x < 4; x++) expect(rgbaAt(px.data, 4, x, y)).toEqual(cornerPattern(x, y));
+      // Dimensions are published on the instance like every other terminal.
+      expect([img.width, img.height]).toEqual([4, 3]);
+    });
+
+    test("alpha is straight, not premultiplied", async () => {
+      const src = makePng(2, 1, x => (x === 0 ? [200, 100, 50, 0] : [200, 100, 50, 128]));
+      const { data } = await new Bun.Image(src).pixels();
+      expect([...data]).toEqual([200, 100, 50, 0, 200, 100, 50, 128]);
+    });
+
+    test("reflects the pipeline: rotate, flop, resize", async () => {
+      const rot = await new Bun.Image(cornersPng).rotate(90).pixels();
+      expect([rot.width, rot.height, rot.data.length]).toEqual([3, 4, 48]);
+      expect(rgbaAt(rot.data, 3, 2, 0)).toEqual([255, 0, 0, 255]);
+      expect(rgbaAt(rot.data, 3, 0, 3)).toEqual([255, 255, 255, 255]);
+
+      const flop = await new Bun.Image(cornersPng).flop().pixels();
+      expect(rgbaAt(flop.data, 4, 3, 0)).toEqual([255, 0, 0, 255]);
+
+      const big = await new Bun.Image(cornersPng).resize(8, 6, { filter: "nearest" }).pixels();
+      expect([big.width, big.height, big.data.length]).toEqual([8, 6, 192]);
+      expect(rgbaAt(big.data, 8, 0, 0)).toEqual([255, 0, 0, 255]);
+      expect(rgbaAt(big.data, 8, 7, 5)).toEqual([255, 255, 255, 255]);
+    });
+
+    test("a chained format setter is ignored: nothing is encoded", async () => {
+      // JPEG is lossy; identical bytes prove the plane never went through an encoder.
+      const plain = await new Bun.Image(gradientPng).pixels();
+      const viaJpeg = await new Bun.Image(gradientPng).jpeg({ quality: 1 }).pixels();
+      expect([...viaJpeg.data]).toEqual([...plain.data]);
+    });
+
+    test("decodes every input format the pipeline accepts", async () => {
+      const ref = await new Bun.Image(cornersPng).pixels();
+      const webp = await new Bun.Image(cornersPng).webp({ lossless: true }).bytes();
+      expect([...(await new Bun.Image(webp).pixels()).data]).toEqual([...ref.data]);
+      const jpeg = await new Bun.Image(gradientPng).jpeg({ quality: 100 }).bytes();
+      const j = await new Bun.Image(jpeg).pixels();
+      expect([j.width, j.height, j.data.length]).toEqual([16, 16, 1024]);
+      // Opaque source stays opaque.
+      expect(j.data.filter((_, i) => i % 4 === 3).every(a => a === 255)).toBe(true);
+    });
+
+    test("works on path, Bun.file() and Blob sources", async () => {
+      using dir = tempDir("image-pixels", {});
+      const p = join(String(dir), "src.png");
+      await Bun.write(p, cornersPng);
+      const ref = [...(await new Bun.Image(cornersPng).pixels()).data];
+      expect([...(await new Bun.Image(p).pixels()).data]).toEqual(ref);
+      const file = new Bun.Image(Bun.file(p));
+      expect([...(await file.pixels()).data]).toEqual(ref);
+      // Second terminal on the same instance reuses the bytes.
+      expect(await file.metadata()).toEqual({ width: 4, height: 3, format: "png" });
+      expect([...(await new Blob([cornersPng]).image().pixels()).data]).toEqual(ref);
+    });
+
+    test("rejects like the other terminals", async () => {
+      await expect(new Bun.Image(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9])).pixels()).rejects.toThrow(
+        /unrecognised|decode/i,
+      );
+      await expect(new Bun.Image(cornersPng, { maxPixels: 4 }).pixels()).rejects.toMatchObject({
+        code: "ERR_IMAGE_TOO_MANY_PIXELS",
+      });
+    });
+  });
+
   describe("resize", () => {
     test("downscale 16→8 with each filter yields correct dims", async () => {
       for (const filter of ["box", "bilinear", "lanczos3"] as const) {

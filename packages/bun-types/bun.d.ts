@@ -9835,6 +9835,22 @@ declare module "bun" {
       height: number;
       format: Format;
     }
+
+    /** Result of the {@link Image.pixels} terminal. */
+    interface Pixels {
+      /**
+       * Tightly packed, row-major, straight-alpha RGBA8. `data.byteOffset`
+       * is `0` and `data.byteLength === width * height * channels`, so
+       * `data.buffer` is the plane and nothing else.
+       */
+      data: Uint8Array<ArrayBuffer>;
+      /** Width of the plane, in pixels. */
+      width: number;
+      /** Height of the plane, in pixels. */
+      height: number;
+      /** Always `4`: the pipeline operates in RGBA. */
+      channels: 4;
+    }
   }
 
   /**
@@ -9844,7 +9860,7 @@ declare module "bun" {
    *
    * The constructor and every chainable method only *record* settings; the
    * decode → transform → encode pipeline runs on a worker thread when a
-   * terminal (`bytes`, `buffer`, `blob`, `toBase64`, `metadata`) is awaited.
+   * terminal (`bytes`, `buffer`, `blob`, `toBase64`, `metadata`, `pixels`) is awaited.
    *
    * Chainables overwrite (calling `.resize()` twice keeps the second). Order
    * of execution is fixed regardless of call order:
@@ -9990,6 +10006,23 @@ declare module "bun" {
     toBase64(): Promise<string>;
     /** Decode just enough to read width/height/format. */
     metadata(): Promise<Image.Metadata>;
+    /**
+     * Run the pipeline and return the decoded pixels instead of an encoded
+     * file: `{ data, width, height, channels: 4 }`. `data` is tightly packed
+     * row-major straight-alpha RGBA8 after `autoOrient`, `rotate`, `flip`,
+     * `flop`, `resize` and `modulate`. A chained format setter is ignored.
+     *
+     * The sharp equivalent is
+     * `.ensureAlpha().raw().toBuffer({ resolveWithObject: true })`.
+     *
+     * ```ts
+     * const { data, width, height } = await new Bun.Image("photo.jpg")
+     *   .resize(224, 224)
+     *   .pixels();
+     * // data.length === width * height * 4
+     * ```
+     */
+    pixels(): Promise<Image.Pixels>;
 
     /** Populated after the first awaited terminal; `-1` before. */
     readonly width: number;

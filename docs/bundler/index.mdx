@@ -50,8 +50,9 @@ Bundlers solve several problems:
 - **Full-stack Applications.** Bun's bundler can handle both server and client code in a single command, enabling optimized production builds and single-file executables. With build-time HTML imports, you can bundle your entire application — frontend assets and backend server — into a single deployable unit.
 
 <Note>
-  `bun build` checks types only when you pass [`--check`](/runtime/check#check-before-you-run-build-or-test), or `check:
-  true` to `Bun.build`. It does not generate type declarations. Use `tsc` to produce `.d.ts` files.
+  By default, `bun build` does not check types. Pass [`--check`](/runtime/check#check-before-you-run-build-or-test), or
+  `check: true` to `Bun.build`, to type check the entry points and everything they import. Pass [`--dts`](#dts), or
+  `dts: true`, to type check and write `.d.ts` files without running `tsc`.
 </Note>
 
 ## Basic example
@@ -317,6 +318,8 @@ The directory where output files are written.
 If you don't pass `outdir` to the JavaScript API, Bun does not write bundled code to disk. It returns the bundled files in an array of `BuildArtifact` objects. These objects are Blobs with extra properties; see [Outputs](#outputs).
 
 ```ts title="build.ts" icon="/icons/typescript.svg"
+import path from "node:path";
+
 const result = await Bun.build({
   entrypoints: ["./index.ts"],
 });
@@ -325,7 +328,7 @@ for (const res of result.outputs) {
   // Can be consumed as blobs
   await res.text();
 
-  // Bun sets Content-Type and Etag headers
+  // Bun sets the Content-Type header
   new Response(res);
 
   // Can be written manually, but you should use `outdir` in this case.
@@ -1389,23 +1392,25 @@ if (feature("DEBUG")) {
   </Tab>
 </Tabs>
 
-Bun replaces the `feature()` function with `true` or `false` at bundle time. When minification is also enabled, Bun eliminates the unreachable code:
+Call `feature()` in the condition of an `if` statement or of a ternary (`? :`). Bun replaces the call with `true` or `false` at bundle time and removes the code of the branch that can't run:
 
 ```ts title="Input" icon="/icons/typescript.svg"
 import { feature } from "bun:bundle";
 const mode = feature("PREMIUM") ? "premium" : "free";
+console.log(mode);
 ```
 
 ```js title="Output (with --feature PREMIUM --minify)" icon="/icons/javascript.svg"
-var mode = "premium";
+console.log("premium");
 ```
 
 ```js title="Output (without --feature PREMIUM, with --minify)" icon="/icons/javascript.svg"
-var mode = "free";
+console.log("free");
 ```
 
 **Key behaviors:**
 
+- `feature()` is valid only in the condition of an `if` statement or of a ternary. A call anywhere else, such as `const isPremium = feature("PREMIUM")`, is a build error
 - `feature()` requires a string literal argument — dynamic values are not supported
 - Bun completely removes the `bun:bundle` import from the output
 - Works with `bun build`, `bun run`, and `bun test`
@@ -1609,6 +1614,7 @@ interface BuildMetafile {
         original?: string; // Original specifier before resolution
         entryPoint?: string; // import() / require() split into another output file: the input that file was built from
         external?: boolean;
+        with?: Record<string, string>; // { type: "json" }, { type: "toml" } or { type: "text" } when the imported file has that loader
       }>;
       format?: "esm" | "cjs" | "json" | "css";
     };

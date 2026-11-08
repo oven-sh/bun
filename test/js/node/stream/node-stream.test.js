@@ -2498,4 +2498,66 @@ describe.concurrent("a built-in module uses what a program stored on node:stream
     });
     expect(exitCode).toBe(0);
   });
+
+  // A test may lay a stub under a name for a while. The fs streams cannot stand below it: their load fails while the
+  // stub lies there, and runs again once the class is back.
+  it.each([
+    ["an arrow function", "() => {}"],
+    ["an object", "{}"],
+  ])("%s under stream.Readable fails the load of the fs streams, which load again behind it", async (_, stub) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `{
+          const stream = require("node:stream");
+          const nodeFs = require("node:fs");
+          const Readable = stream.Readable;
+          stream.Readable = ${stub};
+          let whileStubbed;
+          try {
+            nodeFs.createWriteStream(require("node:os").devNull).destroy();
+            whileStubbed = "a stream";
+          } catch (error) {
+            whileStubbed = error.name;
+          }
+          stream.Readable = Readable;
+          const readStream = nodeFs.createReadStream(process.execPath);
+          console.log(JSON.stringify({ whileStubbed, afterwards: readStream instanceof Readable }));
+          readStream.destroy();
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: JSON.stringify({ whileStubbed: "TypeError", afterwards: true }) + "\n",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // node:stream sets its members on `Stream`, the function that every stream class stands on. node:http has loaded all
+  // of node:stream, so a program that freezes the chain of its classes can still load node:stream.
+  it("node:stream loads behind a frozen class chain of node:http", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `{
+          let above = require("node:http").ServerResponse;
+          for (; above !== Function.prototype; above = Object.getPrototypeOf(above)) Object.freeze(above);
+          console.log(typeof require("node:stream").Readable);
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "function\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });

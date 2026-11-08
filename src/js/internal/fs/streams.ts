@@ -1,6 +1,6 @@
 // process.stdout is a WriteStream: the Writable class and finished() load here, not node:stream, Readable or node:fs.
-// node:stream is `Stream` with its members. Where a program has loaded it, the classes here stand below what it has stored there.
 const { Stream } = require("internal/streams/legacy");
+// node:stream is `Stream` with its members: what a program has stored there, where node:stream is loaded. Else each loads alone.
 const ReadableOfProgram = $getByIdDirect(Stream, "Readable") as $Node.ReadableConstructor | undefined;
 const Writable: $Node.WritableConstructor = $getByIdDirect(Stream, "Writable") ?? require("internal/streams/writable");
 const finished: typeof Stream.finished =
@@ -351,24 +351,26 @@ function ReadStream(
   (ReadableOfProgram ?? require("internal/streams/readable")).$call(this, options);
   return this as unknown as void;
 }
-$toClass(ReadStream, "ReadStream");
+// Where node:stream is loaded, so is Readable: the class goes below what lies there now, and a stub there fails this load, which then runs again.
+$toClass(ReadStream, "ReadStream", ReadableOfProgram);
 const readStreamPrototype = ReadStream.prototype;
 
-// The class goes below Readable at its first use (`new`, `instanceof`, a read of `prototype`), so a WriteStream loads no Readable.
-Object.defineProperty(ReadStream, "prototype", {
-  get() {
-    const Readable = ReadableOfProgram ?? require("internal/streams/readable");
-    Object.setPrototypeOf(readStreamPrototype, Readable.prototype);
-    Object.setPrototypeOf(ReadStream, Readable);
-    Object.defineProperty(ReadStream, "prototype", { value: readStreamPrototype, writable: true });
-    return readStreamPrototype;
-  },
-  set(value) {
-    Object.defineProperty(ReadStream, "prototype", { value, writable: true });
-  },
-  enumerable: false,
-  configurable: true,
-});
+// Else the class goes below Readable at its first use (`new`, `instanceof`, a read of `prototype`), so a WriteStream loads no Readable.
+if (ReadableOfProgram === undefined)
+  Object.defineProperty(ReadStream, "prototype", {
+    get() {
+      const Readable = require("internal/streams/readable");
+      Object.setPrototypeOf(readStreamPrototype, Readable.prototype);
+      Object.setPrototypeOf(ReadStream, Readable);
+      Object.defineProperty(ReadStream, "prototype", { value: readStreamPrototype, writable: true });
+      return readStreamPrototype;
+    },
+    set(value) {
+      Object.defineProperty(ReadStream, "prototype", { value, writable: true });
+    },
+    enumerable: false,
+    configurable: true,
+  });
 
 Object.defineProperty(readStreamPrototype, "autoClose", {
   get(this: $Node.ReadStream) {

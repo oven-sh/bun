@@ -100,10 +100,8 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_close(Self::SSL_FLAG, self.as_raw())
     }
 
-    /// Close every HTTP connection that is idle (no request being received, no
-    /// response in flight or unsent). With `close_when_idle`, the graceful stop
-    /// of `Bun.serve`, a request body that still arrives behind its response
-    /// does not keep a connection, and connections that are busy right now are
+    /// Close every HTTP connection that is idle (`HttpResponse::isIdle`). With
+    /// `close_when_idle`, connections that are busy right now are additionally
     /// marked to close as soon as their in-flight work completes. Never touches
     /// WebSockets or the listen socket. Returns the number of connections closed.
     pub fn close_idle_connections(&mut self, close_when_idle: bool) -> usize {

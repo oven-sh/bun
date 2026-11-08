@@ -13,16 +13,21 @@
 // CHECK: PropSet [[enum]], [[red]] key="FromImport"
 // CHECK: [[importKey]] = ToPropertyKey
 // CHECK: ElemSet [[enum]], [[importKey]],
-// CHECK: = CheckInitialized {{*}}name="Shade"
-// CHECK: = PropGet {{*}}key="Dark"
-// CHECK: PropSet [[enum]], {{*}}key="FromHandedOn"
+// CHECK: [[dark]] = Integer @
+// CHECK: PropSet [[enum]], [[dark]] key="FromHandedOn"
 // CHECK: [[handedOnKey]] = ToPropertyKey
 // CHECK: ElemSet [[enum]], [[handedOnKey]],
+// CHECK: = CheckInitialized {{*}}name="Shade"
+// CHECK: = PropGet {{*}}key="Deep"
+// CHECK: PropSet [[enum]], {{*}}key="FromLength"
+// CHECK: [[lengthKey]] = ToPropertyKey
+// CHECK: ElemSet [[enum]], [[lengthKey]],
 // CHECK: = PropGet {{*}}key="Value"
 // CHECK: PropSet [[enum]], {{*}}key="FromAmbient"
 // CHECK: [[ambientKey]] = ToPropertyKey
 // CHECK: ElemSet [[enum]], [[ambientKey]],
 
+// `bun build` has `Color.Red` and `Shade.Dark` in place of the reads, whatever becomes of the objects. Only this build knows `Shade.Deep`, and `Object.keys` gets hold of the object of `Shade`, so that member is read from the object.
 import { Color, Shade } from "./imports/colors";
 
 declare enum Ambient {
@@ -37,6 +42,7 @@ export enum E {
   FromConst = base,
   FromImport = Color.Red,
   FromHandedOn = Shade.Dark,
+  FromLength = Shade.Deep,
   FromAmbient = Ambient.Value,
 }
 

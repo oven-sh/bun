@@ -1,0 +1,14 @@
+# -- source: main.js
+# const seen = [];
+# function* held(n) { const box = { lid: n, rim: 1 }; try { yield box.lid; box.rim += 1; yield box.lid + box.rim; } finally { seen.push(box.rim + box.lid); } }
+# function first(n, c) { let got = -1; for (const v of held(n)) { if (c) got = v; else got = -v; break; } return got; }
+# function each(n, job) { for (const v of held(n)) { if (v & 1) job(v); else job(-v); } }
+# function drive() { let sum = 0; for (let t = 0; t < 6; t++) { sum += first(t, t & 1); each(t, (v) => { sum += v; }); } return sum; }
+# print(drive());
+# print(seen.join());
+# -- end of source
+# testing=CheckProofsAtRunTime: the frame of the generator lies below the turn of its consumer: no value of the consumer names the generator's cells, which are younger than the copy of the consumer.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN(CALL): run-in-shell
+# CALL: 9
+# CALL: 1,2,2,3,3,4,4,5,5,6,6,7

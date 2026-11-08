@@ -1,3 +1,4 @@
-console.log("first begins");
-console.log("first got", Object.keys(require("./back.mjs")).join());
-console.log("first ends");
+const lines = (globalThis.lines ??= []);
+lines.push("first begins");
+lines.push("first got " + Object.keys(require("./back.mjs")).join());
+lines.push("first ends");

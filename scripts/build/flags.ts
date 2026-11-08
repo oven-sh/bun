@@ -82,8 +82,13 @@ export const cpuTargetFlags: Flag[] = [
   },
   {
     flag: ["-march=armv8-a+crc", "-mtune=ampere1"],
-    when: c => (c.linux || c.freebsd) && c.arm64 && c.abi !== "android",
+    when: c => (c.linux || c.freebsd) && c.arm64 && c.abi !== "android" && !c.hardened,
     desc: "ARM64 Linux/FreeBSD: ARMv8-A base + CRC, tuned for Ampere (Graviton-like)",
+  },
+  {
+    flag: "-march=armv8-a+crc",
+    when: c => c.linux && c.arm64 && c.abi !== "android" && c.hardened,
+    desc: "ARM64 Linux, hardened: ARMv8-A base + CRC. No -mtune: it keeps the fortified wrappers out of line",
   },
   {
     flag: ["-march=armv8-a+crc", "-mtune=cortex-a78"],
@@ -1080,6 +1085,7 @@ export const linkerFlags: Flag[] = [
     flag: c => (icfMode(c) === "safe" ? "/OPT:SAFEICF" : "/OPT:NOICF"),
     when: c => c.windows,
     desc: "Identical-code-folding (safe in release)",
+    toolchain: true,
   },
   {
     flag: c => [`/opt:lldlto=${ltoLevel(c)}`, `/opt:lldltocgo=${ltoLevel(c)}`],

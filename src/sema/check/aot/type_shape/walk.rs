@@ -98,27 +98,22 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 TypeShape::undeclared(ShapeKind::Anything(AnythingReason::Any))
             }
             TypeData::UniqueSymbol { symbol, .. } => self.shape_of_unique_symbol(*symbol),
-            TypeData::TypeParam(file, id, _) => {
+            TypeData::TypeParam(file, ..) => {
                 let kind = ShapeKind::TypeVariable {
                     constraint: self.c.constraint_of_type_param(ty),
-                    parameter: self.compiled_type_parameter(*file, *id),
                 };
                 TypeShape::declared(kind, self.file_trust(*file))
             }
-            TypeData::Marker(_) => TypeShape::undeclared(ShapeKind::TypeVariable {
-                constraint: None,
-                parameter: None,
-            }),
+            TypeData::Marker(_) => {
+                TypeShape::undeclared(ShapeKind::TypeVariable { constraint: None })
+            }
             TypeData::Cond { .. } | TypeData::IndexedAccess { .. } | TypeData::Keyof(_) => {
-                let constraint = match self.has_costly_base_constraint(ty) {
+                let constraint = match self.c.has_costly_base_constraint(ty) {
                     true => None,
                     false => self.c.base_constraint_of(ty),
                 };
                 let constraint = constraint.filter(|&constraint| constraint != ty);
-                TypeShape::undeclared(ShapeKind::TypeVariable {
-                    constraint,
-                    parameter: None,
-                })
+                TypeShape::undeclared(ShapeKind::TypeVariable { constraint })
             }
             TypeData::ThisParam(symbol) => {
                 return Ok(WalkStep::Continue(self.c.declared_type(*symbol)));

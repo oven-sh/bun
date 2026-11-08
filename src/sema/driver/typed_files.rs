@@ -37,8 +37,7 @@ enum Place {
     TypeArguments,
 }
 
-/// What the binding of a slot says about a default value. The output of a function can have it in the body, where the
-/// source has it in the parameter: `(a = 1)` as `(t0) { let a = t0 === undefined ? 1 : t0`.
+/// The output can have a default value in the function body: `(a = 1)` as `(t0) { let a = t0 === undefined ? 1 : t0`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Parameter {
     /// No parameter, or a pattern or a rest parameter without a default value: nothing that can take a `?`.
@@ -212,8 +211,7 @@ fn parse_as<'s>(
     }
 }
 
-/// Whether a parameter that starts at `at` can have a default value and no slot under `at`: it is a pattern, or `=`
-/// follows its name.
+/// Whether the parameter at `at` is a pattern or a name before `=`: it can have a default value and no slot.
 fn may_have_default_without_slot(text: &[u8], at: u32) -> bool {
     let at = at as usize;
     if matches!(text.get(at), Some(b'{' | b'[')) {
@@ -3323,9 +3321,7 @@ impl<'a> Transfer<'_, 'a, '_> {
         }
     }
 
-    /// The variable that holds a moved default value takes the annotation of the parameter, as the default value has
-    /// its type from there: `let a: T = t0 === undefined ? [] : t0`. Where a statement starts with the variable, the
-    /// source map has the place of the parameter for the statement and nothing for the name.
+    /// `let a: T = t0 === undefined ? [] : t0`. The source map has the parameter for such a statement, nothing for `a`.
     fn copy_to_moved_defaults(&mut self) {
         let (output_file, mappings) = (self.output.file, self.mappings);
         let annotations = &self.moved_defaults.annotations;
@@ -3672,8 +3668,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                     let declared = binding.and_then(|(place, key)| {
                         output_places.get(&(place, index as u32, key)).copied()
                     });
-                    // With `--minify-syntax` the variable of a moved default value has a mapping of its own and is
-                    // what `declared` is. The parameter takes the name too.
+                    // With `--minify-syntax`, `declared` is the variable of a moved default value. The parameter is typed too.
                     let moved = binding.and_then(|(_, key)| {
                         let unannotated = &self.moved_defaults.unannotated;
                         unannotated.get(&(index as u32, key)).copied()
@@ -4356,8 +4351,7 @@ pub struct ModuleTypes {
     pub enum_objects: Vec<u32>,
     pub exports: Vec<(Box<[u8]>, Target)>,
     pub constants: Vec<(u32, Box<[u8]>)>,
-    /// The type of each parameter that has a default value and no annotation, if the type names nothing: `number` for
-    /// `step = 1`. Only noted for a build that can move a default value out of the parameters.
+    /// The type of each parameter with a default value and no annotation, if it names nothing. See [`module_types`].
     pub parameters: Vec<(u32, Box<[u8]>)>,
     pub functions_returning_undefined: Vec<u32>,
     pub globals: Vec<u32>,
@@ -4481,8 +4475,7 @@ fn target_of_declaration(
     })
 }
 
-/// `notes_parameters`: whether the build can move the default value of a parameter into the function, as the React
-/// Compiler does. `ModuleTypes::parameters` is empty without it.
+/// `notes_parameters`: the build can move a default value into the function body, as the React Compiler does.
 pub fn module_types(
     checker: &mut Checker<'_, '_>,
     file: FileId,

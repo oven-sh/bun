@@ -1408,7 +1408,7 @@ class ChildProcess extends EventEmitter {
     const opts = this.#stdioOptions;
     const length = opts.length;
     // Direct writes: a setter on an index of Array.prototype would take an ordinary store into an empty slot.
-    let result = $newArrayWithSize<StdioStream | null | undefined>(length);
+    let result = $newArrayWithSize<any>(length);
     for (let i = 0; i < length; i++) {
       const element = opts[i];
 

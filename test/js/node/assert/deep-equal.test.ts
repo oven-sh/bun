@@ -2462,6 +2462,18 @@ const orderedPairs: OrderedPair[] = [
     strict: [true, true],
     loose: [true, true],
   },
+  // Known difference: a key that an Error has from its prototype is in the list that Bun takes for its keys. So an
+  // own key of that name and value on the other Error finds it there.
+  {
+    first: "an Error whose prototype has p and q",
+    second: "an Error of that class with a p of its own",
+    a: () => new ErrorWithInheritedKeys("m"),
+    b: () => Object.assign(new ErrorWithInheritedKeys("m"), { p: 1 }),
+    strict: [false, false],
+    loose: [false, false],
+    strictBug: ["reports equal", "reports equal"],
+    looseBug: ["reports equal", "reports equal"],
+  },
   // Each Error lists one key, and each has the key of the other: `message` hidden in the one, `name` from the
   // prototype of the other.
   {
@@ -4978,6 +4990,44 @@ describe("util.isDeepStrictEqual", () => {
             1,
           ],
           [key, 5],
+        ]);
+        assert.strictEqual(util.isDeepStrictEqual(first, second), equal);
+      }
+    });
+
+    // Here the first Map has the key that the second one gains before the key that both held from the start. Only
+    // that key was found in both Maps with equal values: the gained key still needs a partner.
+    test("a Map whose second operand gains a key of the first that comes before a key of both", () => {
+      type Change = (second: Map<object, unknown>, gained: object, both: object, last: object) => void;
+      const losesItsLastKey: Change = (second, gained, _, last) => (second.delete(last), second.set(gained, undefined));
+      const onlyGains: Change = (second, gained) => second.set(gained, 999);
+      const losesTheKeyOfBoth: Change = (second, gained, both) => (second.delete(both), second.set(gained, 999));
+      for (const [change, valueOfGained, last, valueOfLast, equal] of [
+        // The gained key takes the candidate that the getter took out of the second Map: undefined is the value of both.
+        [losesItsLastKey, undefined, { id: 2 }, undefined, true],
+        // The last candidate is a copy of the key of both, and no candidate is equal to the gained key.
+        [onlyGains, 1, { id: 3 }, 0, false],
+        [losesTheKeyOfBoth, 1, { id: 3 }, 0, false],
+      ] as const) {
+        const both = { id: 3 };
+        const gained = { id: 2 };
+        const second = new Map<object, unknown>([
+          [both, 0],
+          [{ id: 1 }, 0],
+          [last, valueOfLast],
+        ]);
+        const first = new Map<object, unknown>([
+          [
+            {
+              get id() {
+                change(second, gained, both, last);
+                return 1;
+              },
+            },
+            0,
+          ],
+          [gained, valueOfGained],
+          [both, 0],
         ]);
         assert.strictEqual(util.isDeepStrictEqual(first, second), equal);
       }

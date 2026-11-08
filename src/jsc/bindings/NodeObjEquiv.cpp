@@ -13,6 +13,7 @@
 #include <JavaScriptCore/OperationsInlines.h>
 #include <JavaScriptCore/SparseArrayValueMap.h>
 #include <algorithm>
+#include <wtf/HashSet.h>
 #include <wtf/Vector.h>
 
 namespace Bun {
@@ -550,6 +551,43 @@ bool setsEqual(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::J
     return true;
 }
 
+// The keys that `typeof` calls an object and that the walk of the second Map found in both Maps with equal values. Each is its own partner by identity: a key that the second Map holds only since a comparison ran code is none of them.
+struct SettledKeys {
+    JSC::MarkedArgumentBuffer list;
+    // The keys before `next` have met their key of the first Map.
+    size_t next { 0 };
+    // The keys from `next` on, once the first Map has one of them in another place and they are too many to scan.
+    UncheckedKeyHashSet<JSC::JSCell*> others;
+
+    bool hasMore() { return next < list.size(); }
+
+    bool take(JSC::JSValue key)
+    {
+        if (others.isEmpty()) {
+            if (list.at(next) == key) {
+                next += 1;
+                return true;
+            }
+            if (list.size() - next <= 16) {
+                for (size_t i = next + 1; i < list.size(); i++) {
+                    if (list.at(i) == key) {
+                        list.at(i) = list.at(next);
+                        next += 1;
+                        return true;
+                    }
+                }
+                return false;
+            }
+            for (size_t i = next; i < list.size(); i++)
+                others.add(list.at(i).asCell());
+        }
+        if (!others.remove(key.asCell()))
+            return false;
+        next += 1;
+        return true;
+    }
+};
+
 // Whether the entry of the second Map under `candidate` is a partner of the entry (key1, value1) of the first (#L873, #L884).
 static ALWAYS_INLINE bool isPartnerEntry(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSMap* map2, JSC::JSValue key1, JSC::JSValue value1, JSC::JSValue candidate, const CompareValues& compareValues)
 {
@@ -582,8 +620,7 @@ bool mapsEqual(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::J
     Candidates candidates;
     // The candidates that the first Map holds too, with another value.
     JSC::MarkedArgumentBuffer twins;
-    // How many keys that `typeof` calls an object the two Maps hold with equal values.
-    size_t settledObjectKeys = 0;
+    SettledKeys settled;
     auto* iterator2 = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map2, JSC::IterationKind::Entries);
     JSC::JSValue key2;
     JSC::JSValue value2;
@@ -601,7 +638,11 @@ bool mapsEqual(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::J
             bool valuesEqual = value1 == value2 || compareValues(value1, value2);
             RETURN_IF_EXCEPTION(scope, false);
             if (valuesEqual) {
-                settledObjectKeys += isObject;
+                if (isObject) {
+                    if (settled.list.isEmpty())
+                        settled.list.ensureCapacity(map2->size());
+                    settled.list.appendWithCrashOnOverflow(key2);
+                }
                 continue;
             }
             // Under a key that is an object, the entry can still be the partner of one under another key, as on node.
@@ -646,7 +687,7 @@ bool mapsEqual(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::J
     JSC::JSValue value1;
     while (iterator1->nextKeyValue(globalObject, key1, value1)) {
         bool isObject = isTypeofObject(key1);
-        if (!isObject || settledObjectKeys) {
+        if (!isObject || settled.hasMore()) {
             bool held = holds(globalObject, map2, key1);
             RETURN_IF_EXCEPTION(scope, false);
             if (!isObject) {
@@ -654,11 +695,9 @@ bool mapsEqual(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::J
                     continue;
                 return false;
             }
-            // The walk of the second Map settled a key that both Maps hold, unless it made it a candidate. The count is of the keys that it settled: a key that the second Map holds only since a comparison ran code is none of them.
-            if (held && !isTwin(key1)) {
-                settledObjectKeys -= 1;
+            // Its own partner is a key that the walk of the second Map settled and that the second Map still holds.
+            if (held && !isTwin(key1) && settled.take(key1))
                 continue;
-            }
         }
         bool hasPartner = claimCandidate(scope, candidates, [&](int64_t index) {
             return isPartnerEntry(globalObject, scope, map2, key1, value1, candidates.at(index), compareValues);

@@ -480,10 +480,8 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
                 });
                 (EvalBindingKind::PrivateAccessor, function, setter)
             }
-            // The brand says which objects have the name. Evaluated text reads and stores the value through a getter and a setter, as it does under `bun run`.
-            PrivateMembers::AutoAccessor(member)
-                if matches!(resolved.presence, PrivateHolder::Instance { .. }) =>
-            {
+            // The brand or the class says which objects have the name. Evaluated text reads and stores the value through a getter and a setter, as it does under `bun run`.
+            PrivateMembers::AutoAccessor(member) => {
                 let [function, setter] =
                     [AccessorFunction::Getter, AccessorFunction::Setter].map(|half| {
                         let id = class::declare_accessor_function(self.lowering.file, member, half);
@@ -492,7 +490,7 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
                     });
                 (EvalBindingKind::PrivateAccessor, function, setter)
             }
-            PrivateMembers::Field(member) | PrivateMembers::AutoAccessor(member) => {
+            PrivateMembers::Field(member) => {
                 match resolved.presence {
                     PrivateHolder::Instance { .. } => self.bindings.push(binding),
                     PrivateHolder::ClassObject => {

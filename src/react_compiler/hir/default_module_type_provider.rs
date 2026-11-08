@@ -362,22 +362,42 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
         })),
 
         "@tanstack/react-virtual" => Some(TypeConfig::Object(ObjectTypeConfig {
-            properties: Some(IndexMap::from([(
-                "useVirtualizer",
-                TypeConfig::Hook(HookTypeConfig {
-                    positional_params: Some(Vec::new()),
-                    rest_param: Some(Effect::Read),
-                    return_type: Box::new(TypeConfig::TypeReference(TypeReferenceConfig {
-                        name: BuiltInTypeRef::Any,
-                    })),
-                    return_value_kind: None,
-                    no_alias: None,
-                    aliasing: None,
-                    known_incompatible: Some(
-                        "TanStack Virtual's `useVirtualizer()` API returns functions that cannot be memoized safely",
-                    ),
-                }),
-            )])),
+            properties: Some(IndexMap::from([
+                (
+                    "useVirtualizer",
+                    TypeConfig::Hook(HookTypeConfig {
+                        positional_params: Some(Vec::new()),
+                        rest_param: Some(Effect::Read),
+                        return_type: Box::new(TypeConfig::TypeReference(TypeReferenceConfig {
+                            name: BuiltInTypeRef::Any,
+                        })),
+                        return_value_kind: None,
+                        no_alias: None,
+                        aliasing: None,
+                        known_incompatible: Some(
+                            "TanStack Virtual's `useVirtualizer()` API returns functions that cannot be memoized safely",
+                        ),
+                    }),
+                ),
+                // `useWindowVirtualizer()` wraps the same virtualizer instance as `useVirtualizer()`,
+                // so its return value is incompatible for the same reason.
+                (
+                    "useWindowVirtualizer",
+                    TypeConfig::Hook(HookTypeConfig {
+                        positional_params: Some(Vec::new()),
+                        rest_param: Some(Effect::Read),
+                        return_type: Box::new(TypeConfig::TypeReference(TypeReferenceConfig {
+                            name: BuiltInTypeRef::Any,
+                        })),
+                        return_value_kind: None,
+                        no_alias: None,
+                        aliasing: None,
+                        known_incompatible: Some(
+                            "TanStack Virtual's `useWindowVirtualizer()` API returns functions that cannot be memoized safely",
+                        ),
+                    }),
+                ),
+            ])),
         })),
 
         _ => None,

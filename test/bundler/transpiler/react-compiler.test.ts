@@ -4297,6 +4297,144 @@ describe("bundler", () => {
     },
   });
 
+  // `useVirtualizer` and `useWindowVirtualizer` of @tanstack/react-virtual return the same virtualizer on every render
+  // and change what is in it. A compiled function caches what it reads from the virtualizer for as long as the
+  // virtualizer is the same, which is for ever. So the compiler has a list of such hooks, and leaves a function that
+  // calls one as it is written. `useWindowVirtualizer` was not in the list (facebook/react#36912).
+  //
+  // Each function is rendered twice, with another count. The fake `c` keeps one memo cache for each function, so the
+  // second render shows what the first one cached. For the server nothing is cached: a function that is compiled for
+  // it has the initial state in place of its `useState` call.
+  const listWith = (name: string, hook: string) => `
+    export function ${name}({ count }) {
+      const [gap] = useState(0);
+      const virtualizer = ${hook}({ count });
+      return <ul style={{ height: virtualizer.getTotalSize(), gap }} />;
+    }
+  `;
+  const windowVirtualizerFiles = {
+    "/entry.jsx": /* jsx */ `
+      import { ImportedByAnotherName, List, Plain, ReadFromTheNamespace, useListStyle, WindowList } from "./Lists";
+
+      const all = { List, WindowList, ImportedByAnotherName, ReadFromTheNamespace, useListStyle, Plain };
+      const heights = {};
+      for (const [name, fn] of Object.entries(all)) {
+        globalThis.rendering = fn;
+        heights[name] = [1, 2].map(count => {
+          const rendered = fn({ count });
+          return (rendered.props?.style ?? rendered).height;
+        });
+      }
+      const compiled = Object.keys(all).filter(name => all[name].memoCache || !all[name].readsState);
+      console.log(JSON.stringify({ heights, compiled }));
+    `,
+    "/Lists.jsx": /* jsx */ `
+      import { useState } from "react";
+      import { useVirtualizer, useWindowVirtualizer, useWindowVirtualizer as useRows } from "@tanstack/react-virtual";
+      import * as Virtual from "@tanstack/react-virtual";
+      ${listWith("List", "useVirtualizer")}
+      ${listWith("WindowList", "useWindowVirtualizer")}
+      ${listWith("ImportedByAnotherName", "useRows")}
+      ${listWith("ReadFromTheNamespace", "Virtual.useWindowVirtualizer")}
+      export function useListStyle({ count }) {
+        const [gap] = useState(0);
+        const virtualizer = useWindowVirtualizer({ count });
+        return { height: virtualizer.getTotalSize(), gap };
+      }
+      // Calls neither hook: this one is compiled.
+      export function Plain({ count }) {
+        const [gap] = useState(0);
+        return <ul style={{ height: count * 10, gap }} />;
+      }
+    `,
+    "/node_modules/@tanstack/react-virtual/package.json": `{"name":"@tanstack/react-virtual","main":"./index.js"}`,
+    "/node_modules/@tanstack/react-virtual/index.js": `
+      const hook = () => {
+        const virtualizer = { options: null, getTotalSize: () => virtualizer.options.count * 10 };
+        return options => ((virtualizer.options = options), virtualizer);
+      };
+      exports.useVirtualizer = hook();
+      exports.useWindowVirtualizer = hook();
+    `,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": `exports.useState = initial => ((globalThis.rendering.readsState = true), [initial, () => {}]);`,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+    "/node_modules/react/compiler-runtime.js": `
+      const empty = Symbol.for("react.memo_cache_sentinel");
+      exports.c = size => (globalThis.rendering.memoCache ??= new Array(size).fill(empty));
+    `,
+  };
+  const onlyPlainIsCompiled = JSON.stringify({
+    heights: {
+      List: [10, 20],
+      WindowList: [10, 20],
+      ImportedByAnotherName: [10, 20],
+      ReadFromTheNamespace: [10, 20],
+      useListStyle: [10, 20],
+      Plain: [10, 20],
+    },
+    compiled: ["Plain"],
+  });
+  for (const target of ["browser", "bun"] as const) {
+    itBundled(`react-compiler/WindowVirtualizerIsNotCompiled-${target}`, {
+      files: windowVirtualizerFiles,
+      reactCompiler: true,
+      target,
+      backend: "cli",
+      run: { stdout: onlyPlainIsCompiled },
+    });
+  }
+  itBundled("react-compiler/WindowVirtualizerIsNotCompiled-bun-client", {
+    files: windowVirtualizerFiles,
+    reactCompiler: true,
+    reactCompilerOutputMode: "client",
+    target: "bun",
+    backend: "api",
+    run: { stdout: onlyPlainIsCompiled },
+  });
+  // `bun test` compiles a file when it loads it, and takes the hooks from node_modules as they are.
+  test("react-compiler/WindowVirtualizerIsNotCompiled-bun-test", async () => {
+    using dir = tempDir("react-compiler-window-virtualizer", {
+      ...Object.fromEntries(Object.entries(windowVirtualizerFiles).map(([path, text]) => [path.slice(1), text])),
+      "lists.test.jsx": `
+        import { test } from "bun:test";
+        import "./entry.jsx";
+        test("rendered", () => {});
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--react-compiler", "./lists.test.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.match(/\{"heights".*/)?.[0] ?? stderr).toBe(onlyPlainIsCompiled);
+    expect(exitCode).toBe(0);
+  });
+  // The only function of the file is left as written, so the file does not import the runtime of the compiler.
+  itBundled("react-compiler/WindowVirtualizerAloneNeedsNoRuntime", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useWindowVirtualizer } from "@tanstack/react-virtual";
+        export function WindowList({ count }) {
+          const virtualizer = useWindowVirtualizer({ count });
+          return <ul style={{ height: virtualizer.getTotalSize() }} />;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["@tanstack/react-virtual", "react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("const virtualizer = useWindowVirtualizer({ count });");
+      expect(out).not.toContain("react/compiler-runtime");
+    },
+  });
+
   // A callback that uses nothing from its component is moved out of it. It can still use variables of the function that
   // encloses the component, so it has to stay next to the component. Upstream only does that for function declarations.
   // It moves the rest to the end of the module, where calling them throws a ReferenceError.

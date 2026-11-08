@@ -19,6 +19,7 @@ use crate::hir::object_shape::ShapeRegistry;
 use crate::hir::object_shape::add_hook;
 use crate::hir::object_shape::default_mutating_hook;
 use crate::hir::object_shape::default_nonmutating_hook;
+use crate::hir::type_config::TypeConfig;
 use crate::hir::*;
 
 /// A variable rename from lowering: the binding at `declaration_start` position
@@ -686,7 +687,19 @@ impl Environment {
                     .find(|(k, _)| k.as_bytes() == module_name.slice())
                     .map(|(_, v)| v.clone())
             })
-            .or_else(|| module_str.and_then(default_module_type_provider));
+            .or_else(|| {
+                let mut config = module_str.and_then(default_module_type_provider)?;
+                // Without its row the hook is a custom hook, which freezes its arguments. A row without the message
+                // does not.
+                if !self.config.window_virtualizer_is_incompatible
+                    && module_name.slice() == b"@tanstack/react-virtual"
+                    && let TypeConfig::Object(object) = &mut config
+                    && let Some(properties) = &mut object.properties
+                {
+                    properties.shift_remove(&"useWindowVirtualizer");
+                }
+                Some(config)
+            });
 
         let module_type = module_config.map(|config| {
             let mut type_errors: Vec<String> = Vec::new();

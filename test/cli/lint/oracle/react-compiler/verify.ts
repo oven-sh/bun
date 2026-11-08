@@ -1,15 +1,15 @@
-// What a command that does what ESLint's `Linter.verify` does reports with the rules `react-hooks/*` of the React Compiler, as the
-// records of eslint.ts, for compare-eslint.ts.
+// Runs a command that emulates ESLint's `Linter.verify` with the React Compiler's `react-hooks/*` rules, and writes its
+// reports in the record format of eslint.ts, for compare-eslint.ts.
 //
 //   bun verify.ts <directory> <out.jsonl> --tool="<path> <arguments>" [--files-of=<jsonl>]
 //
-// The command gets the path of a file with an array of {code, filename, config, options} as its last argument and prints an array of
-// {messages, suppressedMessages}. The configuration says what that of eslint.ts says: the same rules are errors, `.ts` and `.tsx` are
-// TypeScript, the rest is JavaScript with JSX. The names of the files are absolute, since messages quote them; in the records they
-// are relative to <directory>, as in those of eslint.ts.
+// The command's last argument is the path of a file with an array of {code, filename, config, options}. It prints an
+// array of {messages, suppressedMessages}. The config matches the one in eslint.ts: the same rules are errors, `.ts`
+// and `.tsx` are TypeScript, and the rest is JavaScript with JSX. Filenames are absolute, because messages quote them.
+// In the records they're relative to <directory>, as in the records of eslint.ts.
 //
-// All inputs of <directory>, or with `--files-of` the files that the lines of that file name with "path", relative to <directory>.
-// The files are only read.
+// Lints every input in <directory>. With `--files-of`, lints only the "path" of each line in that file, relative to
+// <directory>. The inputs are never modified.
 
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -80,15 +80,15 @@ function flush() {
       console.log(`${path}: ${found?.error ?? "not linted"}`);
       return;
     }
-    const isRefused = found.messages.some(message => message.fatal);
-    if (isRefused) counts.refused++;
+    const hasParseError = found.messages.some(message => message.fatal);
+    if (hasParseError) counts.refused++;
     else {
       counts.messages += found.messages.length;
       if (found.messages.length > 0) counts.withMessages++;
     }
     writer.write({
       path,
-      parse: isRefused ? "error" : "ok",
+      parse: hasParseError ? "error" : "ok",
       messages: found.messages.map(message => plain(message, directory)),
       suppressed: (found.suppressedMessages ?? []).map(message => plain(message, directory)),
     } satisfies EslintRecord);

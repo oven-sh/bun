@@ -1,8 +1,8 @@
 import * as http from "node:http";
 
 const options = {
-  hostname: "www.example.com",
-  port: 80,
+  hostname: "127.0.0.1",
+  port: process.argv[2],
   path: "/",
   method: "GET",
   headers: {},

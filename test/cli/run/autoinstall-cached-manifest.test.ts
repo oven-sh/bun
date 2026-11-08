@@ -152,7 +152,7 @@ describe.concurrent("auto-install with the manifest in the cache", () => {
     expect(box.downloads).toEqual(["/pkg/-/pkg-1.0.0.tgz", "/pkg/-/pkg-2.0.0.tgz"]);
   });
 
-  test("downloads a package again that is gone from the cache", async () => {
+  test("downloads a package again if it's missing from the cache", async () => {
     using box = await sandbox("1.0.0");
     expect(await box.load("pkg")).toEqual(loaded("1.0.0"));
     for (const name of readdirSync(box.cache)) {

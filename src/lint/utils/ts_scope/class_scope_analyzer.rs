@@ -1,9 +1,9 @@
-//! typescript-eslint's `util/class-scope-analyzer/`: how often the members of each class are read
+//! typescript-eslint's `util/class-scope-analyzer/`: counts how often each class's members are read
 //! and written from inside the class.
 //!
-//! The members of all classes are one vector, in which each class has a range. Nothing is walked:
-//! the member accesses of the file are gone through, and only for one whose name is that of a
-//! tracked member is it looked up, by its position, which classes and functions it is in.
+//! The members of all classes are in one vector, where each class has a range. There's no AST walk.
+//! It iterates over the file's member accesses, and only when an access has a tracked member's name
+//! does it look up, by position, which classes and functions contain it.
 
 use super::estree::is_expression_statement;
 use super::{Variable, is_variable_declarator_definition};
@@ -28,17 +28,17 @@ use std::borrow::Cow;
 /// `["#a"]` are different members.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ExtractedName<'a> {
-    /// `codeName`: the name as a message shows it. That of `#a` includes the `#`.
+    /// `codeName`: the name as shown in a message. For `#a` it includes the `#`.
     pub code_name: Cow<'a, [u8]>,
     /// The name is a `PrivateIdentifier`.
     pub is_private: bool,
-    /// The range of `nameNode`. For `["a"]` it is that of the string, for a parameter property it
+    /// The span of `nameNode`. For `["a"]` it's the string's span. For a parameter property it
     /// includes the type annotation.
     pub name_span: Span,
 }
 
-/// typescript-eslint's `extractComputedName`: the name that a literal or a template without
-/// substitutions in brackets stands for.
+/// typescript-eslint's `extractComputedName`: the name for a literal or a template without
+/// substitutions in brackets.
 fn extract_computed_name(computed_name: Expr<'_>) -> Option<ExtractedName<'_>> {
     let code_name = match computed_name.kind() {
         ExprKind::String(value) => Cow::Borrowed(value.bytes()),
@@ -69,7 +69,7 @@ fn extract_name_for_key<'a>(file: &'a File<'a>, key: Key<'a>) -> Option<Extracte
         KeyKind::Computed(e) => return extract_computed_name(e),
         KeyKind::ComputedString(name) | KeyKind::ComputedNumber(name) => {
             let span = key.inner_span(file);
-            // Upstream takes the raw text of a template.
+            // Upstream uses a template's raw text.
             match file.slice(span).starts_with(b"`") {
                 true => (file.slice(span.shrink(1, 1)), span),
                 false => (name.bytes(), span),
@@ -87,8 +87,8 @@ fn extract_name_for_key<'a>(file: &'a File<'a>, key: Key<'a>) -> Option<Extracte
     })
 }
 
-/// typescript-eslint's `extractNameForMember`. `None` if it takes evaluating an expression to know
-/// the name.
+/// typescript-eslint's `extractNameForMember`. `None` if the name can't be known without evaluating
+/// an expression.
 pub fn extract_name_for_member(node: MemberNode<'_>) -> Option<ExtractedName<'_>> {
     match node {
         // `static constructor() {}`, which is a method in ESTree.
@@ -167,34 +167,34 @@ impl<'a> ClassMember<'a> {
         self.flags().contains(Flags::PRIVATE)
     }
 
-    /// It is read. For an accessor, which can have side effects, a write is a use too.
+    /// True if it's read. An accessor can have side effects, so a write also counts as a use.
     pub fn is_used(&self) -> bool {
         self.read_count > 0 || (self.write_count > 0 && self.is_accessor())
     }
 }
 
 /// typescript-eslint's `ClassScopeResult`. `members.instance` and `members.static` are a range of
-/// [`ClassMemberUsage::members`], told apart by [`ClassMember::is_static`]. Of the members with the
-/// same name, only the last is one.
+/// [`ClassMemberUsage::members`], distinguished by [`ClassMember::is_static`]. Of several members
+/// with the same name, only the last is kept.
 #[derive(Copy, Clone, Debug)]
 struct ClassScopeResult<'a> {
     /// `None` for an anonymous class.
     class_name: Option<Name<'a>>,
 }
 
-/// What typescript-eslint's `analyzeClassMemberUsage` returns.
+/// The result of typescript-eslint's `analyzeClassMemberUsage`.
 #[derive(Debug, Default)]
 pub struct ClassMemberUsage<'a> {
-    /// By `ClassId`.
+    /// Indexed by `ClassId`.
     classes: Vec<ClassScopeResult<'a>>,
     members: Vec<ClassMember<'a>>,
-    /// For each of `members`.
+    /// One for each of `members`.
     keys: Vec<MemberKey>,
-    /// Where they are in `members`, by the class and the key.
-    places: FxHashMap<(u32, MemberKey), u32>,
+    /// Maps a class and a key to an index in `members`.
+    indices: FxHashMap<(u32, MemberKey), u32>,
 }
 
-/// Upstream's `Key`, and which of the two maps of the class it is a key of.
+/// Upstream's `Key`, and which of the class's two maps it belongs to.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 struct MemberKey {
     name: Atom,
@@ -202,8 +202,8 @@ struct MemberKey {
     is_static: bool,
 }
 
-/// The name of a member that is written as an identifier, a string, a number or a private name
-/// without brackets, and whether it is a private name.
+/// The name of a member that's written as an identifier, a string, a number or a private name
+/// without brackets, and whether it's a private name.
 fn plain_name<'a>(node: MemberNode<'a>) -> Option<(Name<'a>, bool)> {
     match node {
         MemberNode::Member(member) => match member.key()?.kind() {
@@ -217,16 +217,16 @@ fn plain_name<'a>(node: MemberNode<'a>) -> Option<(Name<'a>, bool)> {
     }
 }
 
-/// A member of the class that is being added.
+/// A member of the class currently being added.
 struct Candidate<'a> {
     key: MemberKey,
     node: MemberNode<'a>,
-    /// Unless it has a [`plain_name`].
+    /// `None` if it has a [`plain_name`].
     name: Option<ExtractedName<'a>>,
 }
 
 impl<'a> ClassMemberUsage<'a> {
-    /// The members of all the classes.
+    /// The members of all classes.
     #[inline]
     pub fn members(&self) -> &[ClassMember<'a>] {
         &self.members
@@ -234,10 +234,10 @@ impl<'a> ClassMemberUsage<'a> {
 
     /// `members.static.get(key)` or `members.instance.get(key)`, as an index.
     fn find(&self, class: u32, key: MemberKey) -> Option<usize> {
-        self.places.get(&(class, key)).map(|&it| it as usize)
+        self.indices.get(&(class, key)).map(|&it| it as usize)
     }
 
-    /// What the constructor of upstream's `ClassScope` does. `candidates` is scratch space.
+    /// The constructor of upstream's `ClassScope`. `candidates` is scratch space.
     fn add_class(
         &mut self,
         class: Class<'a>,
@@ -246,8 +246,8 @@ impl<'a> ClassMemberUsage<'a> {
     ) {
         let file = class.file();
         candidates.clear();
-        // Where each is among the candidates.
-        let mut places: FxHashMap<MemberKey, usize> = FxHashMap::default();
+        // Maps a key to its index in `candidates`.
+        let mut indices: FxHashMap<MemberKey, usize> = FxHashMap::default();
         let mut add = |node: MemberNode<'a>, flags: Flags| {
             let (name, is_private, extracted) = match plain_name(node) {
                 Some((name, is_private)) => (name.atom(), is_private, None),
@@ -265,9 +265,10 @@ impl<'a> ClassMemberUsage<'a> {
                 node,
                 name: extracted,
             };
-            // As in a `Map`, the last with a key takes the place of the first.
-            let place = *places.entry(candidate.key).or_insert(candidates.len());
-            match candidates.get_mut(place) {
+            // As in a `Map`, a later entry with the same key replaces the first one and keeps its
+            // position.
+            let candidate_index = *indices.entry(candidate.key).or_insert(candidates.len());
+            match candidates.get_mut(candidate_index) {
                 Some(same) => *same = candidate,
                 None => {
                     candidates.push(candidate);
@@ -321,7 +322,7 @@ impl<'a> ClassMemberUsage<'a> {
             self.classes.len() as u32,
             self.keys.iter().enumerate().skip(first),
         );
-        self.places
+        self.indices
             .extend(keys.map(|(i, &key)| ((id, key), i as u32)));
         self.classes.push(ClassScopeResult {
             class_name: class.name().map(|name| name.name()),
@@ -331,8 +332,8 @@ impl<'a> ClassMemberUsage<'a> {
 
 // ───────────────────────────── references ─────────────────────────────
 
-/// What upstream's `countReference` counts as a write: `node`, the access to the member, is only
-/// assigned to. `a.b += 1` and `a.b++` are writes if nothing takes their value.
+/// True if upstream's `countReference` counts `node`, the member access, as a write: it's only
+/// assigned to. `a.b += 1` and `a.b++` are writes if their value is unused.
 fn is_write_only_usage(node: Expr) -> bool {
     let is_statement =
         |e: Expr| matches!(e.parent(), Node::Stmt(it) if is_expression_statement(it));
@@ -362,13 +363,13 @@ fn is_write_only_usage(node: Expr) -> bool {
 
 const NONE: u32 = u32::MAX;
 
-/// Upstream's `ThisScope`: a class, or what rebinds `this` in it.
+/// Upstream's `ThisScope`: a class, or something inside it that rebinds `this`.
 #[derive(Copy, Clone)]
 struct ThisScope {
-    /// What is written from `start` to `end` is in it.
+    /// It contains the source text from `start` to `end`.
     start: u32,
     end: u32,
-    /// The index of the scope around it.
+    /// The index of the enclosing scope.
     upper: u32,
     /// The class, for a `ClassScope`.
     class: u32,
@@ -377,12 +378,12 @@ struct ThisScope {
     is_static_this_context: bool,
 }
 
-/// The names of the tracked members.
+/// The tracked members' names.
 struct Names {
-    /// A bit for the low bits of each.
+    /// A Bloom-style filter: one bit per name, chosen by the atom's low bits.
     bits: [u64; 16],
     sorted: Vec<Atom>,
-    /// One is what a literal that is not a string can stand for: `0`, `true`, `/a/`.
+    /// True if a name could be written as a literal that isn't a string: `0`, `true`, `/a/`.
     has_literal: bool,
     has_public: bool,
 }
@@ -423,7 +424,7 @@ impl Names {
 struct Analyzer<'a> {
     file: &'a File<'a>,
     usage: ClassMemberUsage<'a>,
-    /// Sorted by `start`, so that a scope comes before those in it. Empty until it is needed.
+    /// Sorted by `start`, so a scope comes before the scopes nested in it. Empty until first use.
     scopes: Vec<ThisScope>,
 }
 
@@ -437,7 +438,7 @@ impl<'a> Analyzer<'a> {
         std::iter::successors(self.scope(scope), |it| self.scope(it.upper))
     }
 
-    /// The classes of the file, and the functions in them that are not arrow functions.
+    /// Collects the file's classes and the non-arrow functions in them.
     fn find_scopes(&mut self) {
         let file = self.file;
         let mut all: Vec<(Span, Result<Class<'a>, Func<'a>>)> = Vec::new();
@@ -446,7 +447,7 @@ impl<'a> Analyzer<'a> {
             Span::new(all.start.min(it.0.start), all.end.max(it.0.end))
         });
         for func in file.funcs().filter(|it| it.has_body() && !it.is_arrow()) {
-            // The name and the decorators of a method are not in it.
+            // A method's name and decorators aren't in its scope.
             let span = match func.kind() {
                 FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
                     func.span_from_params()
@@ -486,7 +487,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// The innermost scope that what is written at `at` is in.
+    /// The innermost scope that contains the offset `at`.
     fn scope_at(&mut self, at: u32) -> u32 {
         if self.scopes.is_empty() {
             self.find_scopes();
@@ -511,13 +512,13 @@ impl<'a> Analyzer<'a> {
         })
     }
 
-    /// The class that `this` belongs to in `scope`, and whether it is the class itself.
+    /// The class that `this` belongs to in `scope`, and whether `this` is the class itself.
     fn this_class(&self, scope: u32) -> Option<(u32, bool)> {
         let scope = self.scope(scope).filter(|it| it.this_context != NONE)?;
         Some((scope.this_context, scope.is_static_this_context))
     }
 
-    /// The class that an annotation `Foo` or `typeof Foo` names, and whether it is the class
+    /// The class that an annotation `Foo` or `typeof Foo` refers to, and whether it's the class
     /// itself.
     fn class_of_annotation(&self, scope: u32, ty: TypeNode<'a>) -> Option<(u32, bool)> {
         match ty.kind() {
@@ -533,7 +534,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// Upstream's `getObjectClass`, of the object of a member access in `scope`.
+    /// Upstream's `getObjectClass`, for the object of a member access in `scope`.
     fn get_object_class(&self, scope: u32, object: Expr<'a>) -> Option<(u32, bool)> {
         let name = match object.kind() {
             ExprKind::This => return self.this_class(scope),
@@ -582,7 +583,8 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `object.name`, `object["name"]`. `at` is in `node` and in nothing that is in it.
+    /// `object.name`, `object["name"]`. `at` is an offset in `node` that isn't in any of its
+    /// children.
     fn member_expression(&mut self, node: Expr<'a>, object: Expr<'a>, name: Atom, at: u32) {
         let scope = self.scope_at(at);
         if let Some((class, is_static)) = self.get_object_class(scope, object)
@@ -599,7 +601,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `#name` at `at`, in `parent` if that is an expression.
+    /// `#name` at `at`, in `parent` if that's an expression.
     fn private_identifier(&mut self, name: Atom, at: u32, parent: Option<Expr<'a>>) {
         let scope = self.scope_at(at);
         let contexts = self.chain(scope).map(|scope| scope.this_context);
@@ -645,7 +647,7 @@ impl<'a> Analyzer<'a> {
     }
 
     /// `thisContext` and `isStaticThisContext` of upstream's `IntermediateScope`, for a function
-    /// with a body or a static block that is directly in the scope `upper`.
+    /// with a body or a static block that's directly in the scope `upper`.
     fn this_of_function(&self, func: Func<'a>, upper: u32) -> (u32, bool) {
         let class = self.scope(upper).map_or(NONE, |scope| scope.class);
         if func.kind() == FnKind::StaticBlock {
@@ -676,15 +678,15 @@ impl<'a> Analyzer<'a> {
         (NONE, false)
     }
 
-    /// The `this` of `pattern = this`, if `this` is that.
+    /// Handles `this` if it's the right side of `pattern = this`.
     fn this_expression(&mut self, this: Expr<'a>) {
         let file = self.file;
-        let pat = match file.bound.expr_parent.get(this.id().idx()) {
-            Some(&Parent::VarInit(it)) => Some(VarDecl::new(file, it).pat()),
-            Some(&Parent::ParamDefault(it)) => Some(Param::new(file, it).pat()),
-            Some(&Parent::PatPropDefault(it)) => Some(PatProp::new(file, it).value()),
-            Some(&Parent::PatElemDefault(it)) => PatElem::new(file, it).pat(),
-            Some(&Parent::Expr(parent)) => {
+        let pat = match file.bound.parent_of_expr(this.id()) {
+            Parent::VarInit(it) => Some(VarDecl::new(file, it).pat()),
+            Parent::ParamDefault(it) => Some(Param::new(file, it).pat()),
+            Parent::PatPropDefault(it) => Some(PatProp::new(file, it).value()),
+            Parent::PatElemDefault(it) => PatElem::new(file, it).pat(),
+            Parent::Expr(parent) => {
                 if let Some((_, target, value)) = Expr::new(file, parent).as_assign()
                     && value == this
                     && let Some(props) = target.as_object()
@@ -702,14 +704,15 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// The key of the tracked members that are called `name`.
+    /// The key of the tracked members named `name`.
     fn name_of_literal(&self, name: &[u8]) -> Option<Atom> {
         let at = (self.usage.members.iter()).position(|it| *it.name.code_name == *name)?;
         Some(self.usage.keys.get(at)?.name)
     }
 }
 
-/// Whether `e` is the name after `typeof` in a type, or the start of it: no `MemberExpression`.
+/// True if `e` is the name after `typeof` in a type, or the start of that name. That isn't a
+/// `MemberExpression`.
 fn is_in_type_query(mut e: Expr) -> bool {
     let operands = e.file().bound.type_query_operands;
     if operands.is_empty() {
@@ -730,10 +733,9 @@ fn is_in_type_query(mut e: Expr) -> bool {
 
 /// typescript-eslint's `analyzeClassMemberUsage`.
 ///
-/// Only the members that `is_tracked` holds for are in the result and are counted: a rule that
-/// looks at private members passes `|member| member.is_private() || member.is_hash_private()`, and
-/// a file without any costs one pass over its classes. `is_tracked` is asked before
-/// `name.name_span` is known.
+/// Only members that `is_tracked` accepts are counted and returned. A rule that checks private
+/// members passes `|member| member.is_private() || member.is_hash_private()`, and a file without
+/// any only costs one pass over its classes. `is_tracked` is called before `name.name_span` is set.
 pub fn analyze_class_member_usage<'a>(
     file: &'a File<'a>,
     is_tracked: impl Fn(&ClassMember<'a>) -> bool,
@@ -758,15 +760,10 @@ pub fn analyze_class_member_usage<'a>(
     };
     let tag_of = |e: hir::ExprId| file.hir.exprs.get(e.idx()).map(|it| it.kind.tag());
     for e in file.exprs_of_kind(ExprTag::Dot) {
-        let Some(hir::ExprKind::Dot {
-            obj,
-            name,
-            name_pos,
-            ..
-        }) = e.try_raw().map(|it| it.kind)
-        else {
+        let Some(hir::ExprKind::Dot { obj, name, .. }) = e.try_raw().map(|it| it.kind) else {
             continue;
         };
+        let name_pos = file.hir.name_pos(e.id());
         if !names.contains(name) {
             continue;
         }
@@ -774,7 +771,7 @@ pub fn analyze_class_member_usage<'a>(
         if !is_private && !matches!(tag_of(obj), Some(ExprTag::This | ExprTag::Ident)) {
             continue;
         }
-        // The names of the tags of JSX are no `MemberExpression`s either.
+        // JSX tag names aren't `MemberExpression`s either.
         if e.is_jsx_tag_name() || is_in_type_query(e) {
             continue;
         }
@@ -790,7 +787,7 @@ pub fn analyze_class_member_usage<'a>(
             analyzer.private_identifier(name.atom(), e.span().start, e.parent().as_expr());
         }
     }
-    // Upstream leaves out only the keys of `MethodDefinition` and `PropertyDefinition`.
+    // Upstream only skips the keys of `MethodDefinition` and `PropertyDefinition`.
     for class in file.classes() {
         for member in class.members() {
             if member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)

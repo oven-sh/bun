@@ -1,0 +1,12 @@
+import { beforeEach, afterAll, describe } from "bun:test";
+import { check } from "../src/show";
+import { Shape } from "fake-shapes";
+import { Vec2 } from "fake-typed";
+import { runAll, callbacks } from "../src/store";
+const F = "36";
+let mine = 0;
+beforeEach(() => { mine++; });
+check(F, "what the preload made", () => { const p = globalThis.preloaded; return [p.runs, p.all, p.shape instanceof Shape, p.shape.describe(), Shape.isShape(p.shape), p.vec instanceof Vec2, p.vec.parts(), p.registered, callbacks.length, runAll(1), Shape.registry.get(p.shape.id) === p.shape]; });
+check(F, "hooks of the preload and of the file", () => [globalThis.preloaded.before, globalThis.preloaded.after, mine]);
+describe("nested", () => { beforeEach(() => { mine += 10; }); check(F, "nested hooks", () => [globalThis.preloaded.before, globalThis.preloaded.after, mine]); });
+afterAll(() => { console.log("RESULT|" + F + "|after all|-|" + [globalThis.preloaded.before, globalThis.preloaded.after, mine].join()); });

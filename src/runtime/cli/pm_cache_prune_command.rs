@@ -81,7 +81,7 @@ struct Prune {
 }
 
 impl Prune {
-    /// `prefix` is `dir` relative to the cache root: `` or `@scope/`.
+    /// `prefix` is `dir` relative to the cache root, which is either empty or `@scope/`.
     fn prune_dir(&mut self, dir: &Dir, prefix: &[u8], in_scope: bool) {
         let read_path: &[u8] = if prefix.is_empty() {
             &self.root
@@ -194,7 +194,8 @@ impl Prune {
 
         let display = [prefix, name].concat();
         if self.dry_run {
-            // No size: reading the directory would refresh the atime that made it a candidate.
+            // The size isn't printed, because reading the directory would refresh the atime that
+            // made it a candidate.
             bun_core::prettyln!("<r><red>-<r> {}", escape_control_chars(&display));
         } else {
             let size = match dir.open_at(name) {

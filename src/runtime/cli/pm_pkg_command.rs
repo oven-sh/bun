@@ -30,8 +30,13 @@ struct PackageJson {
     path: Box<[u8]>,
     root: Expr,
     contents: Box<[u8]>,
-    source: Source,
     indentation: bun_ast::Indentation,
+}
+
+impl PackageJson {
+    fn source(&self) -> Source<'_> {
+        Source::init_path_string(&self.path[..], &self.contents[..])
+    }
 }
 
 /// One step of a key path such as `contributors[0].name` or `keywords[]`.
@@ -39,9 +44,10 @@ struct PackageJson {
 struct Segment<'a> {
     /// An index when applied to an array, else a property name. Empty only for `[]` (append).
     name: &'a [u8],
-    /// `a[b]` rather than `a.b`: `files[0]=x` and `files[]=x` create an array, `config.0=x` an object.
+    /// True for `a[b]`, false for `a.b`. `files[0]=x` and `files[]=x` create an array, and
+    /// `config.0=x` creates an object.
     bracketed: bool,
-    /// Offset just past this segment in the key; errors name a value by `&key[..end]`.
+    /// The offset just past this segment in the key. Errors refer to a value as `&key[..end]`.
     end: usize,
 }
 
@@ -195,7 +201,6 @@ impl PmPkgCommand {
             path,
             root: result.root,
             contents,
-            source,
             indentation: result.indentation,
         }
     }
@@ -353,14 +358,16 @@ impl PmPkgCommand {
                     pkg_dir = cwd;
                 }
                 let mut buf = bun_paths::path_buffer_pool::get();
-                let full_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                    pkg_dir,
-                    &mut buf,
-                    &[bin_path],
-                );
+                // A path that's too long can't exist.
+                let full_path = path::resolve_path::join_abs_string_buf_z_checked::<
+                    path::platform::Auto,
+                >(pkg_dir, &mut buf[..], &[bin_path]);
 
-                if !bun_sys::exists_z(full_path) {
-                    bun_core::warn!("No bin file found at {}", bstr::BStr::new(bin_path));
+                if !full_path.is_some_and(bun_sys::exists_z) {
+                    bun_core::warn!(
+                        "No bin file found at {}",
+                        bun_core::fmt::EscapeControlChars(bstr::BStr::new(bin_path))
+                    );
                 }
             }
         }
@@ -396,7 +403,8 @@ impl PmPkgCommand {
     pub(crate) const EMPTY_BRACKETS: &'static str =
         "Empty brackets are not valid syntax for retrieving values.";
 
-    /// As in npm, a name that meets an array (`maintainers.name`) adds `maintainers[0].name`, ...
+    /// Like in npm, a name that's applied to an array (`maintainers.name`) returns
+    /// `maintainers[0].name`, and so on.
     pub(crate) fn query(
         root: Expr,
         key: &[u8],
@@ -409,7 +417,8 @@ impl PmPkgCommand {
         Self::query_in(root, &path, key, &mut Vec::new(), false, out)
     }
 
-    /// `label` spells the path walked so far; it names the value instead of `key` once an array was `expanded`.
+    /// `label` is the path walked so far. Once an array was `expanded`, the value is labeled with
+    /// it instead of `key`.
     fn query_in(
         value: Expr,
         path: &[Segment<'_>],
@@ -501,7 +510,8 @@ impl PmPkgCommand {
         Self::set_in_container(root, b"package.json", key, &path, expr)
     }
 
-    /// As in npm, only the final segment may replace a value; anything else in the way is an error.
+    /// Like in npm, only the final segment may replace a value. Any other value in the way is an
+    /// error.
     fn set_in_container(
         container: &mut Expr,
         container_name: &[u8],
@@ -602,8 +612,8 @@ impl PmPkgCommand {
         let source = Source::init_path_string(key, data);
         let mut log = Log::init();
         match json::parse_utf8_impl::<true>(&source, &mut log, cli_arena()) {
-            Ok(expr) => expr,
-            Err(_) => {
+            Ok(expr) if Self::has_only_json_literals(expr, data) => expr,
+            _ => {
                 let reason: &[u8] = log
                     .msgs
                     .iter()
@@ -621,7 +631,43 @@ impl PmPkgCommand {
         }
     }
 
-    /// Splices out an array element or removes a property; returns whether anything was removed.
+    /// The JSON parser also accepts JavaScript literals that are not valid JSON, which this
+    /// rejects: `010` (parsed as 8), `0x10`, `1_000`, `.5`, `5.`, `'text'`.
+    fn has_only_json_literals(root: Expr, source: &[u8]) -> bool {
+        let mut pending = vec![root];
+        while let Some(expr) = pending.pop() {
+            let text = &source[expr.loc.i()..];
+            let is_json = match &expr.data {
+                ExprData::EString(_) => text.starts_with(b"\""),
+                ExprData::ENumber(_) => {
+                    let end = strings::index_of_any(text, b",]} \t\r\n").unwrap_or(text.len());
+                    let text = text[..end].strip_prefix(b"-").unwrap_or(&text[..end]);
+                    let digits = text.iter().take_while(|c| c.is_ascii_digit()).count();
+                    let (int, rest) = text.split_at(digits);
+                    (int == b"0" || int.first().is_some_and(|&c| c != b'0'))
+                        && matches!(rest, [] | [b'e' | b'E', ..] | [b'.', b'0'..=b'9', ..])
+                        && !strings::contains_char(rest, b'_')
+                }
+                ExprData::EArray(array) => {
+                    pending.extend_from_slice(array.items.slice());
+                    true
+                }
+                ExprData::EObject(object) => {
+                    for prop in object.properties.slice() {
+                        pending.extend(prop.key.iter().chain(&prop.value));
+                    }
+                    true
+                }
+                _ => true,
+            };
+            if !is_json {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Splices out an array element or removes a property. Returns true if anything was removed.
     fn delete_in_container(container: &mut Expr, path: &[Segment<'_>]) -> bool {
         let [segment, rest @ ..] = path else {
             return false;
@@ -683,7 +729,7 @@ impl PmPkgCommand {
         if let Err(e) = js_printer::print_json(
             &mut writer,
             root,
-            &pkg.source,
+            &pkg.source(),
             js_printer::PrintJsonOptions {
                 indent: pkg.indentation,
                 mangled_props: None,

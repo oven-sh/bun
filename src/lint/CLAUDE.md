@@ -13,6 +13,8 @@ A linter that is compatible with ESLint and typescript-eslint: the same rule nam
 | `src/lint/{unicorn,react,jest}/rules/` | `bun_lint_unicorn`, ..    | oxlint's `unicorn` / `react`, `react-perf`, `jsx-a11y`, `nextjs` / `jest`, `vitest`: ports of oxlint's rules, found with its configuration and without any, not with ESLint's. In `jest/` also `bun:test`: the same rules for `bun test`, found with every configuration |
 | `src/lint/oxlint/`                     | `bun_lint_oxlint`         | What the ports of oxlint's rules share: its `ast_util`, its printer, its module records                                                                                                                                                                                  |
 | `src/lint/react_compiler/`             | `bun_lint_react_compiler` | The rules of the React Compiler, `react/*` of oxlint and `react-hooks/*` of the plugin for ESLint. `convert.rs` makes the tree of Bun's parser of one function, `src/react_compiler` compiles it, once per file. The rules are declared in `src/lint/react/rules/`       |
+| `src/lint/json/`                       | `bun_lint_json`           | `@eslint/json`'s languages and rules. See [Languages other than JavaScript](#languages-other-than-javascript)                                                                                                                                                            |
+| `src/lint/markdown/`                   | `bun_lint_markdown`       | `@eslint/markdown`'s languages and rules. They use the same tree that `bun fmt` prints (`src/format/markdown`), parsed by `src/md`. `listen.rs` lets a rule listen with upstream's selectors                                                                             |
 | `src/lint/conformance/`                | `bun_lint_conformance`    | Runs the test cases below, in `bun lint --run-eslint-tests` (debug and canary builds)                                                                                                                                                                                    |
 | `test/cli/lint/conformance/bundle.zst` |                           | Upstream test cases as JSON, with what real ESLint reports for each. See the README there                                                                                                                                                                                |
 
@@ -132,7 +134,7 @@ Read `rule.rs` (module docs) first, then `ast/mod.rs`. `eslint/rules/{no_debugge
 
 - File `no_foo_bar.rs`, struct `NoFooBar`, `Meta::eslint("no-foo-bar", ..)` / `Meta::typescript(..)`. `use bun_lint::prelude::*;`
 - The struct holds the parsed options and nothing else. It is shared by all threads. Per-file state is `type State<'a>`, returned by `start`, reached as `cx.state`. `no_state!();` writes both for a rule that keeps nothing and is for every file.
-- One `const NAME: Message = Message::new("messageId", "Text with {{placeholders}}.")` per upstream message, with upstream's `messageId` and text verbatim.
+- One `const NAME: &Message = &Message::new("messageId", "Text with {{placeholders}}.")` per upstream message, with upstream's `messageId` and text verbatim.
 - A message that does not tell what is wrong and what to do gets a hint: `.hint("One sentence.")` or `.hint_with(|| ..)` on the report, `.hints()` on `Meta`, and a case in `test/cli/lint/hints.test.ts`. `pretty` and `agent` print it under the message, no other format does, and never with a configuration of oxlint. It is Bun's own text: one line, about 90 characters, plain words. All work for it is in the closure, which runs only for a report that is shown.
 - `Meta` mirrors upstream `meta`: `kind`, `.fixable(..)`, `.has_suggestions()`, `.recommended()` / `.presets(..)`, `.requires_types()`, `.deprecated()`, `.extends_base_rule(..)`.
 - Options: apply upstream's `defaultOptions` / schema defaults by hand in `new`. `options.object(0)` is empty when missing, so every lookup falls back to the default.
@@ -203,6 +205,21 @@ Only one throw per file counts, so calling it from a listener that runs for ever
 - The clippy lints in `[workspace.lints.clippy]` are denied too. The ones that bite: `derive_partial_eq_without_eq`, `or_fun_call` (`.or_else(|| f())`, not `.or(f())`), `needless_pass_by_value`, `redundant_clone`, `trivially_copy_pass_by_ref`, `needless_collect`.
 - Comments: only what the next reader could not work out quickly. Never narrate the port, never reference ESLint line numbers. Naming the upstream helper a function corresponds to (`` /// ESLint's `isLoop` ``) is good.
 - Let-chains (`if let Some(x) = a && let Some(y) = b`) are available and preferred over nesting.
+
+## Languages other than JavaScript
+
+In an ESLint flat config, a file can have a `language` from a plugin: `json/jsonc`, `markdown/gfm`, `css/css`. `src/lint/languages.rs` is the whole interface between a language and the rest of the linter, and `src/lint/json` is the example to follow. Nothing outside a language's crate knows anything about the language.
+
+To add one:
+
+1. **The plugin**: add a line to `plugins!` in `rule.rs` with `Languages("<package>", "<version>")`, and with `Part` until all of its rules are ported. Add a line to `docs_directory` in `docs.rs`.
+2. **The language**: `impl Language` (`languages.rs`). `names` lists what can follow the `/` in `language`. `configure` is `validateLanguageOptions`. `parse` takes the text, without a byte order mark, and returns a tree and the comments. The tree can be any type that is `'static + Send + Sync`, so it stores offsets into the text, not slices of it. Each comment has its span and the span of the text between its delimiters. A comment that the source interrupts, like one that spans lines in a Markdown block quote, where each line starts with `> `, also gets a `JoinedComment`, which says which parts of the span aren't part of the comment. If `parse` returns syntax errors instead, no rule runs. Reject the same input as the plugin, except where the plugin's parser gets it wrong: there, follow the language's spec. The error message and its location come from Bun's parser. Don't port the plugin's. `line_breaks` says what counts as a line break.
+3. **The rules**: a crate with `bun_lint::rules! { .. }`, like every other. A rule sets `.languages(&["json/json", ..])` on its `Meta`, which is upstream's `meta.languages`. If upstream's `meta` has no `languages`, as in `@eslint/markdown`, it also sets `.on_in_any_language()`, because ESLint then allows the rule to be enabled for any file. The rule has `ON = On::new().finish()`, gets the tree in `start` with `file.tree::<Tree>()`, and walks it in `finish`. It reports spans with `cx.report(..)`. The `File` has the text and no JavaScript. Where two reports can start at the same position, `.listened_on(node)` and `.on_exit(true)` say which node upstream listens on.
+4. **The lists**: add the crate to `rule_sets!` and the language to `LANGUAGES` (`driver/rules.rs`), and its `RULES` to the two `Registry::new(..)` calls (`driver/run.rs`, `driver/for_tests.rs`).
+5. **The docs**: one page per rule, as for every rule. An example is a code block in the language (` ```jsonc `). It runs under an ESLint config with a stand-in for the package. `{"language": "gfm"}` in the marker sets the language where the code block's tag can't, and an example that contains a code block needs a longer fence. Add the plugin to `PLUGINS` and the languages to `FILES` in `src/codegen/lint-rule-docs.ts`.
+6. **The tests**: `test/cli/lint/conformance/extract-languages.ts` records upstream's cases, and `sync.ts --plugin <name>` adds them to the bundle. Add the plugin to `RECORDED` there, to `PLUGINS` in `conformance/lib.rs`, and to the pattern in `generate-schemas.mjs` that finds the schemas in the bundle.
+
+How a file is routed (`Route::Language`): Bun lints a file itself if the prefix of its `language` belongs to the package named in `plugins!`, `nativePluginRules` hasn't turned the plugin off, and every rule that's on for the file has the language in its `Meta::languages`. Otherwise the whole file goes to the `eslint` package (`Route::Eslint`). That also happens if a comment in the file turns on any other rule. If `eslint` isn't installed, the file is skipped and named in one warning (`Context::needs_eslint`), and the rest of the run goes on. The same goes for a block that a processor finds in a file: code that isn't linted is never skipped silently. Config comments (`eslint-disable`, `eslint rule: ..`), options, schemas, fixes, formats, `--stdin` and `--doctor` use the same code as for JavaScript. These rules only exist with an ESLint config: `bunfig.toml` and oxlint's config can't turn them on.
 
 ## ESTree → this API
 
@@ -308,7 +325,7 @@ The fixtures compare `line`, `column`, `endLine`, `endColumn`. `.span()` equals 
 - A method's function: `func.span_from_params()`.
 - `Identifier` with a type annotation (`a: T` in a declarator or a parameter): typescript-estree's range of the identifier includes `?` and the annotation. `pat.span()` does not: `param.binding_span()`, `var_decl.binding_span()`.
 - A parameter: ESTree has no parameter node. `a = 1` is an `AssignmentPattern` (`param.span_without_modifiers()`), `...a` a `RestElement`, otherwise it is the pattern.
-- JSDoc casts in `.js` (`/** @type {T} */ (e)`) are invisible: there is no `As` node, the parentheses belong to the operand.
+- JSDoc casts in `.js` (`/** @type {T} */ (e)`) are invisible: there is no `As` node, the parentheses belong to the operand. Its type is another matter. For tsgolint the cast is an `(e as T)`, so with an oxlint config and with none, `e.ty()` and `e.contextual_type()` are those of the cast. With an ESLint config they are those of `e`, as for typescript-eslint, which sees the cast only where it goes from one `ts.Node` to the next (`tsNode.initializer`): `e.ts_node_with_parentheses()`. `e.ts_node()` is always the `e` itself. A rule with types that looks at what an operand is (goes into a `&&`, knows a literal, walks up to a test) asks `e.with_jsdoc_cast()` first, which is the `As`.
 - `fn expr` for `ExprTag::Dot` is also called with JSX tag names (`<a.b />`, `expr.is_jsx_tag_name()`) and with the operand of a `typeof a.b` type, which are not `MemberExpression`s for ESLint. Conversely `extends a.b` of an interface and `implements a.b` are `TypeKind::Ref` here and `MemberExpression`s there.
 - `MemberKind::Constructor` also covers `static constructor() {}`, which ESLint calls a method.
 - A `Member`'s span includes its `;`, like ESTree's `PropertyDefinition`, and for interface members the `,` or `;`, like `TSPropertySignature`.
@@ -319,11 +336,9 @@ If the API lacks something you need (a position, a flag, a helper several rules 
 ## Testing
 
 ```sh
-cargo build --release -p bun_sema_standalone                         # bun-sema
 zstd -dc test/cli/lint/conformance/bundle.zst > /tmp/bundle.txt         # the test cases
 bun bd lint --run-eslint-tests /tmp/bundle.txt --rule=eqeqeq --verbose
 bun bd lint --run-eslint-tests /tmp/bundle.txt --report=/tmp/report
-target/release/bun-sema hir file.ts --print                          # the HIR of a file
 bun bd test test/cli/lint/conformance.test.ts                        # the test cases on `bun lint` itself, those with types too
 ```
 

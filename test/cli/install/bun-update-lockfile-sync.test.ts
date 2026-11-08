@@ -242,7 +242,7 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     },
   );
 
-  // The sibling is not in the registry. The range links it, and `latest` does not stand in for the range.
+  // The sibling isn't in the registry. The range links it, and `latest` doesn't replace the range.
   test.each([[[]], [["-r"]], [["pkg2"]]])(
     "bun update --latest %j leaves a range that links a workspace",
     async args => {
@@ -359,6 +359,30 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await expectInSync(dir, [""], { stderr: duplicateWarning() });
   });
 
+  // If there are two entries for one name, an install picks the second of each pair here.
+  test.each([
+    ["dependencies", "devDependencies"],
+    ["dependencies", "optionalDependencies"],
+    ["devDependencies", "optionalDependencies"],
+  ])(
+    "bun update --latest <name> with the name in %s and %s moves the entry an install picks",
+    async (other, picked) => {
+      const stderr = (rest = "") => (picked === "devDependencies" ? duplicateWarning(rest) : rest);
+      const declared = (version: string) =>
+        root({ [other]: { "no-deps": "^1.0.0" }, [picked]: { "no-deps": version } });
+      const dir = await setup({ "package.json": declared("~1.0.0") }, { stderr: stderr(SAVED) });
+      expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.1"]);
+      expect(await tryRun(dir, "", "update", "--latest", "no-deps")).toMatchObject({ exitCode: 0 });
+      expect(await pkg(dir)).toStrictEqual(declared("~2.0.0"));
+      expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
+      await install(dir, { frozen: true, stderr: stderr() });
+      // The same package.json resolves to what was locked.
+      await file(join(dir, "bun.lock")).delete();
+      await install(dir, { stderr: stderr(SAVED) });
+      expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
+    },
+  );
+
   test("bun update with the name in dependencies and devDependencies moves one group", async () => {
     const dir = await setup({ "package.json": inBothGroups("1.0.0") }, { stderr: duplicateWarning(SAVED) });
     await writePkg(dir, inBothGroups("~1.0.0"));
@@ -387,6 +411,55 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual({ "no-deps": "1.1.0" });
     await expectInSync(dir);
   });
+
+  // The peer range is published: an exact version there rejects every other version a consumer has.
+  test.each([
+    [["-E"], "1.0.10", "^1.0.0"],
+    [["-E", "-r"], "1.0.10", "^1.0.0"],
+    [["-E", "no-deps"], "^1.0.1", "^1.0.0"],
+    [["-E", "--latest"], "1.0.10", "^2.0.0"],
+    [["-E", "--latest", "no-deps"], "^1.0.1", "^2.0.0"],
+  ])("bun update %j does not pin a peerDependencies range", async (args, dependency, peer) => {
+    const library = (dependency: string, peer: string) =>
+      root({ dependencies: { "a-dep": dependency }, peerDependencies: { "no-deps": peer } });
+    const dir = await setup({ "package.json": library("1.0.1", "1.0.0") });
+    await reinstall(dir, library("^1.0.1", "^1.0.0"));
+    await run(dir, "update", ...args);
+    expect(await pkg(dir)).toStrictEqual(library(dependency, peer));
+    await expectInSync(dir);
+  });
+
+  test.each([">=1.0.0", "^1.0.0 || ^2.0.0", "*"].flatMap(range => [[], ["-r"]].map(args => [range, args] as const)))(
+    "bun update --latest leaves the peerDependencies range %s with args %j",
+    async (range, args) => {
+      const dir = await setup({ "package.json": root({ peerDependencies: { "no-deps": "1.0.0" } }) });
+      await reinstall(dir, root({ peerDependencies: { "no-deps": range } }));
+      const pkgBefore = await pkgText(dir);
+      expect((await run(dir, "update", "--latest", ...args)).stderr).toBe(SAVED);
+      expect(await pkgText(dir)).toBe(pkgBefore);
+      expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
+      await expectInSync(dir);
+    },
+  );
+
+  // A library tests against the catalog's version and lists the versions it supports by hand.
+  test.each([">=1.0.0", "^1.0.0 || ^2.0.0", "*"])(
+    "bun update --latest keeps the peerDependencies range %s when devDependencies uses catalog:",
+    async range => {
+      const library = { devDependencies: { "no-deps": "catalog:" }, peerDependencies: { "no-deps": range } };
+      for (const update of [
+        (dir: string) => run(dir, "update", "--latest", "-r"),
+        (dir: string) => runIn(dir, PKG1, "update", "--latest"),
+      ]) {
+        const dir = await setup(MONOREPO(library, { catalog: { "no-deps": "^1.0.0" } }));
+        expect((await update(dir)).stderr).toBe(SAVED);
+        expect(await pkg(dir, PKG1)).toMatchObject(library);
+        expect((await pkg(dir)).catalog).toStrictEqual({ "no-deps": "^2.0.0" });
+        expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
+        await expectInSync(dir);
+      }
+    },
+  );
 
   // Naming a workspace member used to rewrite the entry linking it to `workspace:*` (or, with --latest / an explicit
   // range, to send the name to the registry), and to add an entry to a root that did not declare the member.
@@ -1062,6 +1135,19 @@ describe.concurrent("catalogs", () => {
     await expectInSync(dir, ["", PKG1]);
   });
 
+  test.each([
+    [{}, []],
+    [{ devDependencies: { "no-deps": "catalog:" } }, []],
+    [{}, ["-r"]],
+  ])("install.exact does not pin a catalog range that a peer uses (also in %j, args %j)", async (groups, args) => {
+    const catalog = { "no-deps": "^1.1.0", "a-dep": "^1.0.1" };
+    const pkg1 = { dependencies: { "a-dep": "catalog:" }, peerDependencies: { "no-deps": "catalog:" }, ...groups };
+    const dir = await setup(MONOREPO(pkg1, { workspaces: { packages: ["packages/*"], catalog } }), { exact: true });
+    expect((await run(dir, "update", ...args)).stderr).toBe(SAVED);
+    await expectCatalog(dir, { "no-deps": "^1.1.0", "a-dep": "1.0.10" });
+    await expectInSync(dir, ["", PKG1]);
+  });
+
   test("bun update --latest keeps the = prefix of a catalog entry", async () => {
     const dir = await setup(CATALOG_REPO({ "no-deps": "=1.0.0" }));
     const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
@@ -1275,7 +1361,7 @@ describe.concurrent("$ref overrides", () => {
   });
 
   // For one-range-dep's no-deps row the rule wins over the root's npm: alias of that name. The alias is never overridden.
-  test("next to an npm: alias of its name the overridden row is re-resolved and the alias stays", async () => {
+  test("next to an npm: alias with its name, the overridden dependency is resolved again and the alias is kept", async () => {
     const overrides = { "no-deps": "$dep-with-tags" };
     const deps = (tags: string) =>
       root({

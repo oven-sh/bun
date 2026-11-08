@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("Bun.Cookie validation tests", () => {
   describe("expires validation", () => {
@@ -473,4 +474,45 @@ describe("cookie name parsing from Cookie header", () => {
     expect(await res.json()).toEqual({ host: null, raw: "attacker" });
     expect(res.status).toBe(200);
   });
+});
+
+test("throws when a cookie is too long to serialize, and Bun.serve responds without it", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // Each quote becomes %22.
+        const cookie = new Bun.Cookie("a", '"'.repeat(32 * 1024));
+        const map = new Bun.CookieMap();
+        map.set(cookie);
+        for (const serialize of [() => cookie.toString(), () => map.toSetCookieHeaders()]) {
+          try {
+            console.log("length", serialize().length);
+          } catch (e) {
+            console.log(e.name, e.message);
+          }
+        }
+        using server = Bun.serve({
+          port: 0,
+          development: false,
+          routes: {
+            "/": req => {
+              req.cookies.set(cookie);
+              return new Response("hello");
+            },
+          },
+        });
+        const res = await fetch(server.url);
+        console.log(res.status, res.headers.get("set-cookie"), await res.text());
+      `,
+    ],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("RangeError Out of memory\nRangeError Out of memory\n200 null hello\n");
+  expect(stderr).toContain("RangeError: Out of memory");
+  expect(exitCode).toBe(0);
 });

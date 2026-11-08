@@ -63,19 +63,26 @@ test("redacting highlighter still redacts values", () => {
   expect(out).toContain("*");
 });
 
-// The password of a URL is masked whatever the scheme is: dependency
+// The userinfo of a URL is masked whatever the scheme is: dependency
 // specifiers are `git+https://` and `git+ssh://` URLs as often as `https://`.
 test.each([
-  ["https://user:hunter2@host/repo.git", "https://user:*******@host/repo.git"],
-  ["git+https://user:hunter2@host/repo.git", "git+https://user:*******@host/repo.git"],
-  ["git+ssh://user:hunter2@host:22/repo.git", "git+ssh://user:*******@host:22/repo.git"],
+  ["https://user:hunter2@host/repo.git", "https://************@host/repo.git"],
+  ["git+https://user:hunter2@host/repo.git", "git+https://************@host/repo.git"],
+  ["git+ssh://user:hunter2@host:22/repo.git", "git+ssh://************@host:22/repo.git"],
+  ["https://hunter2@host/repo.git", "https://*******@host/repo.git"],
+  ["https://hunter2:@host/repo.git", "https://********@host/repo.git"],
   // The userinfo ends at the last `@` of the authority.
-  ["https://user:hun@ter2@host/repo.git", "https://user:********@host/repo.git"],
-  // scp-like: the `:` after the host is a path separator, not a password.
+  ["https://user:hun@ter2@host/repo.git", "https://*************@host/repo.git"],
+  ["https://us%20er:hun%20ter2@host/repo.git", "https://******************@host/repo.git"],
+  // The URL ends at a space: what follows it is not its host.
+  ["https://host failed for pkg@1.0.0", "https://host failed for pkg@1.0.0"],
+  ["https://host: pkg@1.0.0", "https://host: pkg@1.0.0"],
+  // The ssh account. scp-like: the `:` after the host is a path separator.
   ["git+ssh://git@host:org/repo.git", "git+ssh://git@host:org/repo.git"],
+  ["git+ssh://git@host/org/repo.git", "git+ssh://git@host/org/repo.git"],
   // No scheme, so nothing is treated as a URL.
   ["user:hunter2@host/repo.git", "user:hunter2@host/repo.git"],
-])("redacting highlighter masks the password in %p", (input, expected) => {
+])("redacting highlighter masks the userinfo in %p", (input, expected) => {
   expect(highlighterRedacted(`x = "${input}"`)).toContain(`"${expected}"`);
 });
 

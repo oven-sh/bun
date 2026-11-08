@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "path";
-import { bunEnv, bunExe, fakeNodeRun, tempDir } from "../../harness";
+import { bunEnv, bunExe, fakeNodeRun, isMacOS, isWindows, tempDir } from "../../harness";
 
 describe("fake node cli", () => {
   test("the node cli actually works", () => {
@@ -30,6 +30,26 @@ describe("fake node cli", () => {
       "node_modules/run/index.js": "console.log('fail')",
     });
     expect(fakeNodeRun(temp, "run").stdout).toBe("pass");
+  });
+  // A Windows command line is too short for a path longer than the path buffer.
+  test.skipIf(isWindows)("reports module not found for a relative script path longer than PATH_MAX", () => {
+    const long = Array(21).fill(Buffer.alloc(200, "a").toString()).join("/") + ".js";
+    using temp = tempDir("fake-node-long", {});
+    const { exitCode, stdout, stderr } = Bun.spawnSync({
+      cmd: [bunExe(), "--bun", "node", long],
+      cwd: String(temp),
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toBe("");
+    const path = join(String(temp), long);
+    // On macOS the lookup fails in a syscall, so the error is ENAMETOOLONG.
+    const expected = isMacOS
+      ? `error: ENAMETOOLONG while resolving '${path}' from 'bun:main'`
+      : `error: Module not found '${path}'`;
+    expect(stderr.toString().split("\n")[0]).toBe(expected);
+    expect(exitCode).toBe(1);
   });
   describe("entrypoint file extension picking", () => {
     // Bun supports JSX and TS, and node doesnt, so our behavior here differs a bit

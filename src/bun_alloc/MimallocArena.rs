@@ -17,11 +17,13 @@
 //! with the previous `Arena = bumpalo::Bump` alias.
 
 use core::alloc::{AllocError, Allocator, Layout};
+use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::ptr::{self, NonNull};
 #[cfg(debug_assertions)]
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::{AtomicUsize, Ordering, fence};
 
 use crate::mimalloc;
 
@@ -70,6 +72,81 @@ pub struct MimallocArena {
     /// Compiles out in release so the struct stays one pointer wide.
     #[cfg(debug_assertions)]
     owning_thread: AtomicU64,
+    /// For `lay`. A field, so it moves with the arena, `reset` forgets it, and no other arena can find it.
+    filling: OwnerCell,
+}
+
+/// The head of a chunk that `MimallocArena::lay` fills.
+#[repr(C, align(16))]
+pub struct ChunkOfBlocks {
+    /// The blocks in it that are in use, and one more while the arena fills it.
+    users: AtomicUsize,
+}
+
+impl ChunkOfBlocks {
+    /// Frees the chunk when nobody else uses it. On any thread.
+    ///
+    /// # Safety
+    /// Once for each block that `lay` has laid in the chunk, while the arena lives. The block is not touched again.
+    pub unsafe fn stop_using(chunk: NonNull<ChunkOfBlocks>) {
+        // SAFETY: the caller's use has kept the chunk alive until now.
+        if unsafe { chunk.as_ref() }
+            .users
+            .fetch_sub(1, Ordering::Release)
+            != 1
+        {
+            return;
+        }
+        fence(Ordering::Acquire);
+        // SAFETY: it is the block that `lay` allocated, and nobody uses it.
+        unsafe {
+            crate::basic::mi_free_checked(
+                chunk.as_ptr().cast(),
+                MimallocArena::BYTES_OF_CHUNK,
+                align_of::<ChunkOfBlocks>(),
+            );
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+struct Filling {
+    /// Null: none.
+    chunk: *mut ChunkOfBlocks,
+    /// In bytes, with the head.
+    used: usize,
+}
+
+impl Filling {
+    const NOTHING: Filling = Filling {
+        chunk: ptr::null_mut(),
+        used: 0,
+    };
+}
+
+/// What `lay` fills. The thread that allocates in the arena reads and writes it, and no other.
+struct OwnerCell(UnsafeCell<Filling>);
+
+// SAFETY: only `lay` and `reset` touch the cell. `lay` is an allocation, which by the arena's contract only the owning
+// thread makes (`assert_owning_thread()` in debug builds), and `reset` takes `&mut self`.
+unsafe impl Sync for OwnerCell {}
+
+impl OwnerCell {
+    fn new(filling: Filling) -> OwnerCell {
+        OwnerCell(UnsafeCell::new(filling))
+    }
+
+    #[inline]
+    fn get(&self) -> Filling {
+        // SAFETY: no other thread is at the cell: see `Sync`.
+        unsafe { *self.0.get() }
+    }
+
+    #[inline]
+    fn set(&self, filling: Filling) {
+        // SAFETY: as in `get`.
+        unsafe { *self.0.get() = filling };
+    }
 }
 
 // SAFETY: mimalloc heaps are not generally thread-safe for allocation from
@@ -98,14 +175,14 @@ impl Default for MimallocArena {
 impl MimallocArena {
     #[inline]
     pub fn new() -> Self {
-        // SAFETY: FFI call with no preconditions.
-        let heap = unsafe { mimalloc::mi_heap_new() };
+        let heap = mimalloc::mi_heap_new();
         let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         Self {
             heap,
             owns: true,
             #[cfg(debug_assertions)]
             owning_thread: AtomicU64::new(debug_thread_stamp()),
+            filling: OwnerCell::new(Filling::NOTHING),
         }
     }
 
@@ -121,9 +198,7 @@ impl MimallocArena {
     /// hot, short-lived path (e.g. `Bunfig::parse` on `bun -e ''` startup).
     #[inline]
     pub fn borrowing_default() -> Self {
-        // SAFETY: FFI call with no preconditions; `mi_heap_main()` returns the
-        // always-live process main heap (never null after mimalloc init).
-        let heap = unsafe { mimalloc::mi_heap_main() };
+        let heap = mimalloc::mi_heap_main();
         let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         Self {
             heap,
@@ -133,6 +208,7 @@ impl MimallocArena {
             // owning-thread assert is disabled by stamping 0 — see
             // `assert_owning_thread`.
             owning_thread: AtomicU64::new(0),
+            filling: OwnerCell::new(Filling::NOTHING),
         }
     }
 
@@ -199,8 +275,8 @@ impl MimallocArena {
         // are freed; replacing `self.heap` with a fresh heap restores the
         // invariant.
         unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
-        // SAFETY: FFI call with no preconditions.
-        let heap = unsafe { mimalloc::mi_heap_new() };
+        self.filling.set(Filling::NOTHING);
+        let heap = mimalloc::mi_heap_new();
         self.heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         // `&mut self` proves exclusive access; re-stamp the debug thread-lock
         // so an arena `Send`-moved to a worker and then reset there may
@@ -313,6 +389,60 @@ impl MimallocArena {
         // SAFETY: `self.heap_ptr()` is live (`mi_heap_new()` or
         // `mi_heap_main()`, see struct invariant).
         unsafe { heap_alloc_maybe_aligned(self.heap_ptr(), len, align) }
+    }
+
+    /// mimalloc gives a larger block a page of its own, as long as the block.
+    pub const LARGEST_LAID_BLOCK: usize = 512 << 10;
+    /// As long and as aligned as the pages that mimalloc keeps blocks of 64 KiB to 512 KiB in.
+    const BYTES_OF_CHUNK: usize = 4 << 20;
+
+    /// `size` bytes, aligned to 16, behind the block that was laid last, in a chunk that they share.
+    ///
+    /// For blocks of many sizes that die at about the same time. mimalloc keeps a page for each size class and thread, of
+    /// 4 MiB for blocks of 64 KiB and more: a few hundred such blocks on sixteen threads lie in as many pages, each a
+    /// quarter full. Where the system fills memory in pages of 2 MB the empty part is resident too.
+    ///
+    /// The memory goes back when `ChunkOfBlocks::stop_using` was called for every block of the chunk and the arena
+    /// fills another, or with the arena. By the thread that allocates in the arena.
+    /// None: the block is too long to share a chunk, or several threads may allocate in the arena.
+    pub fn lay(&self, size: usize) -> Option<(NonNull<u8>, NonNull<ChunkOfBlocks>)> {
+        if size > Self::LARGEST_LAID_BLOCK || !self.owns {
+            return None;
+        }
+        self.assert_owning_thread();
+        let size = size.next_multiple_of(align_of::<ChunkOfBlocks>());
+        let mut filling = self.filling.get();
+        if filling.chunk.is_null() || size > Self::BYTES_OF_CHUNK - filling.used {
+            let chunk = self.aligned_alloc(Self::BYTES_OF_CHUNK, align_of::<ChunkOfBlocks>());
+            #[expect(
+                clippy::cast_ptr_alignment,
+                reason = "asked for with the alignment of a ChunkOfBlocks on the line above"
+            )]
+            let chunk = NonNull::new(chunk.cast::<ChunkOfBlocks>())?;
+            // SAFETY: the block is long enough and aligned.
+            unsafe {
+                chunk.write(ChunkOfBlocks {
+                    users: AtomicUsize::new(1),
+                });
+            }
+            if let Some(full) = NonNull::new(filling.chunk) {
+                // SAFETY: the arena's own use, which ends here.
+                unsafe { ChunkOfBlocks::stop_using(full) };
+            }
+            filling = Filling {
+                chunk: chunk.as_ptr(),
+                used: size_of::<ChunkOfBlocks>(),
+            };
+        }
+        // SAFETY: the arena uses the chunk, so it is alive, and it has the room.
+        let (chunk, block) = unsafe {
+            let chunk = NonNull::new_unchecked(filling.chunk);
+            chunk.as_ref().users.fetch_add(1, Ordering::Relaxed);
+            (chunk, chunk.cast::<u8>().add(filling.used))
+        };
+        filling.used += size;
+        self.filling.set(filling);
+        Some((block, chunk))
     }
 
     /// `mi_heap_realloc_aligned` on this arena's heap.

@@ -4,7 +4,7 @@
 //!
 //! `Worker::create` / `initialize_transpiler` build the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
-//! bitwise struct copy); the self-referential `linker` backrefs are wired by
+//! bitwise struct copy); the self-referential `macro_context` is wired by
 //! `Transpiler::wire_after_move` once the value is at its final address.
 
 use core::mem::ManuallyDrop;
@@ -15,7 +15,7 @@ use bun_alloc::Arena as ThreadLocalArena;
 use bun_collections::{ArrayHashMap, MapEntry};
 use bun_core::{self, output as Output};
 use bun_sys::Fd;
-use bun_threading::{io_thread_pool, thread_pool as ThreadPoolLib};
+use bun_threading::{WaitGroup, io_thread_pool, thread_pool as ThreadPoolLib};
 
 use crate::cache::{Contents, Entry as CacheEntry};
 use crate::linker_context_mod::StmtList;
@@ -49,6 +49,10 @@ pub struct ThreadPool {
     // `wake_for_idle_events`) take `&self` — so the safe `Deref` projection is
     // sufficient and the per-read `unsafe { p.as_ref() }` disappears.
     pub(crate) io_pool: Option<bun_ptr::ParentRef<ThreadPoolLib::ThreadPool>>,
+    /// Tracks the `io_pool` tasks whose callbacks haven't returned. A callback's
+    /// last step schedules a parse on `worker_pool`, and that parse can finish
+    /// before the callback returns.
+    io_tasks_in_flight: WaitGroup,
     // Conditionally owned via `worker_pool_is_owned`.
     pub worker_pool: *mut ThreadPoolLib::ThreadPool,
     pub(crate) worker_pool_is_owned: bool,
@@ -63,7 +67,7 @@ pub struct ThreadPool {
     /// freed slot), so each pool draws a fresh `u64` from [`POOL_GENERATION`].
     pub(crate) generation: u64,
     // BACKREF (LIFETIMES.tsv row 170: ThreadPool.v2). `BundleV2` is generic
-    // over `'a`; erase to `'static` behind the raw pointer like ParseTask.ctx.
+    // over `'a`; erase to `'static` behind the raw pointer.
     pub(crate) v2: *const BundleV2<'static>,
 }
 
@@ -128,6 +132,7 @@ impl ThreadPool {
             } else {
                 None
             },
+            io_tasks_in_flight: WaitGroup::init(),
             // BACKREF: lifetime erased behind the raw pointer.
             v2: std::ptr::from_ref(v2).cast::<BundleV2<'static>>(),
             worker_pool_is_owned: false,
@@ -136,9 +141,24 @@ impl ThreadPool {
         }
     }
 
+    /// Blocks until every IO callback has returned.
+    pub(crate) fn wait_for_io_tasks(&self) {
+        self.io_tasks_in_flight.wait();
+    }
+
+    /// Marks one IO task as finished. `io_task_callback` calls this last.
+    ///
+    /// # Safety
+    /// `this` must have scheduled the task. `this` may be freed as soon as this
+    /// call unblocks [`Self::wait_for_io_tasks`].
+    pub(crate) unsafe fn finish_io_task(this: *const Self) {
+        // SAFETY: caller contract.
+        unsafe { WaitGroup::finish_raw(&raw const (*this).io_tasks_in_flight) };
+    }
+
     /// Explicit teardown (no Drop on
     /// `ThreadPool` because `Graph.pool` is `NonNull<ThreadPool>` and the arena
-    /// owns the storage).
+    /// owns the storage). Call [`Self::wait_for_io_tasks`] first.
     pub(crate) fn deinit(&mut self) {
         if self.worker_pool_is_owned {
             // SAFETY: worker_pool was heap-allocated in `init()` when owned.
@@ -257,6 +277,7 @@ impl ThreadPool {
                     ParseTaskStage::NeedsSourceCode => {
                         // io_pool is Some when uses_io_pool().
                         let io = self.io_pool_ref().unwrap();
+                        self.io_tasks_in_flight.add_one();
                         schedule_fn(
                             io,
                             ThreadPoolLib::Batch::from(&raw mut (*parse_task).io_task),
@@ -629,7 +650,7 @@ impl Worker {
             transpiler: Self::initialize_transpiler(log, ctx.transpiler(), arena_ref),
             other_transpiler: None,
         });
-        // Wire self-referential `linker`/`macro_context` now that `transpiler`
+        // Wire the self-referential `macro_context` now that `transpiler`
         // is at its final address inside `WorkerData`.
         data.transpiler.wire_after_move();
 

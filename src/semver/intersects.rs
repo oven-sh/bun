@@ -92,7 +92,9 @@ impl<'a> Interval<'a> {
         }
     }
 
-    /// The same versions, with one way to write a bound: `>1.MAX.MAX` is `>=2.0.0`, `<=1.MAX.MAX` and `<2.0.0` are `<2.0.0-0`, `>=0.0.0` is none.
+    /// Returns the same set of versions with each bound written in one canonical way: `>1.MAX.MAX`
+    /// becomes `>=2.0.0`, `<=1.MAX.MAX` and `<2.0.0` become `<2.0.0-0`, and `>=0.0.0` becomes no
+    /// bound.
     fn canonical(&self) -> Self {
         let mut out = *self;
         if let Some(lower) = &mut out.lower
@@ -135,7 +137,8 @@ impl<'a> Interval<'a> {
         out
     }
 
-    /// Whether everything between the bounds of `self` is between those of `other`.
+    /// Returns true if everything between the bounds of `self` is also between the bounds of
+    /// `other`.
     fn is_within(&self, other: &Interval<'_>) -> bool {
         let lower = match (self.lower, other.lower) {
             (_, None) => true,
@@ -162,7 +165,7 @@ impl<'a> Interval<'a> {
     /// whether `query` has such a comparator for each bound of `self` that is one.
     fn prereleases_can_satisfy(&self, query: &Query) -> bool {
         let lower = self.lower.filter(|it| it.version.tag.has_pre());
-        // Nothing is below `1.2.3-0`.
+        // No version is below `1.2.3-0`.
         let upper = self.upper.filter(|it| {
             it.version.tag.has_pre() && (it.inclusive || it.version.tag.pre.slice(it.buf) != b"0")
         });
@@ -190,7 +193,7 @@ fn is_last_patch(version: Version) -> bool {
     version.patch == u64::MAX && !version.tag.has_pre()
 }
 
-/// What follows `major.minor.MAX`, if anything does.
+/// Returns the version that follows `major.minor.MAX`, if there is one.
 fn after_last_patch(version: Version) -> Option<Version> {
     Some(match version.minor.checked_add(1) {
         Some(minor) => Version {
@@ -236,7 +239,8 @@ impl Group {
             .any(|version| self.admits(self_buf, version, other_buf))
     }
 
-    /// Whether some version satisfies both groups; an exact version goes through `satisfies`, two ranges compare bounds only.
+    /// Returns true if some version satisfies both groups. An exact version goes through
+    /// `satisfies`, and two ranges only compare their bounds.
     pub fn intersects(&self, self_buf: &[u8], other: &Group, other_buf: &[u8]) -> bool {
         if self.admits_an_exact_version_of(self_buf, other, other_buf)
             || other.admits_an_exact_version_of(other_buf, self, self_buf)
@@ -281,8 +285,9 @@ impl Group {
             })
     }
 
-    /// Whether every version that satisfies `self` satisfies `other`. As for npm's `subset`, each `||` alternative of `self`
-    /// has to be within a single alternative of `other`: `>=1` is not a subset of `1 || >=2`.
+    /// Returns true if every version that satisfies `self` also satisfies `other`. Like in npm's
+    /// `subset`, each `||` alternative of `self` has to be within a single alternative of `other`,
+    /// so `>=1` isn't a subset of `1 || >=2`.
     pub fn is_subset_of(&self, self_buf: &[u8], other: &Group, other_buf: &[u8]) -> bool {
         let mut a = Some(&self.head);
         'alternatives: while let Some(list_a) = a {
@@ -320,7 +325,8 @@ mod tests {
 
     #[test]
     fn is_subset_of() {
-        // What npm's `subset` says, but where noted: there a check of all versions agrees with this one.
+        // The expected values are what npm's `subset` returns, except where noted. In those cases,
+        // checking every version agrees with this implementation.
         let cases = [
             (">=16.0.0", ">=16.0.0", true),
             (">=16.0.0", ">=16.0.1", false),

@@ -1,0 +1,55 @@
+# -- source: ways-out-of-two-framed-parts-meet.ts
+# declare function print(...values: unknown[]): void;
+# class Holder {
+#     count = 0;
+#     constructor(public weight: number) {}
+# }
+# const seen: Holder[] = [];
+# function note(holder: Holder): void {
+#     for (let turn = 0; turn < holder.weight; ++turn)
+#         seen.push(holder);
+#     if (holder.weight > 3)
+#         holder.count += weigh(new Holder(holder.weight - 2), false, true, false);
+#     holder.count += seen.length;
+# }
+# function mark(holder: Holder): void {
+#     for (let turn = 0; turn < holder.weight; ++turn)
+#         seen.pop();
+#     if (holder.weight > 2)
+#         holder.count += weigh(new Holder(holder.weight - 2), true, false, true);
+#     holder.count -= seen.length;
+# }
+# function weigh(holder: Holder, isFirst: boolean, isKnown: boolean, isOld: boolean): number {
+#     if (isFirst) {
+#         if (isKnown)
+#             return 1;
+#         note(holder);
+#     } else {
+#         if (isOld)
+#             return 2;
+#         mark(holder);
+#     }
+#     return holder.count + holder.weight;
+# }
+# let sum = 0;
+# for (let turn = 0; turn < 40; ++turn)
+#     sum += weigh(new Holder(turn % 6), turn % 4 < 2, turn % 3 === 0, turn % 7 === 0);
+# print(sum);
+# -- end of source
+# each of the two ways of weigh() that call is a framed part of its own, and they meet in a block that the head of neither stands above: every edge into it comes out of a framed part.
+# holder lies in a callee-saved register on both. The edges move it to another register, ahead of the teardown, so the block holds nothing that asks for the frame,
+# and the two ways that return at once set up none
+# f3 = weigh
+# REQUIRES: x86_64 unsanitized-code
+# RUN: allocate f3:Body mechanisms=all
+# CHECK-LABEL: unit f3:Body
+# CHECK: usedCalleeSaves =
+# CHECK: headOfFramedPart =
+# CHECK: headOfFramedPart =
+# CHECK-NOT: needsFrameAheadOfFramedPart
+# RUN(FRAME): frame f3:Body mechanisms=all
+# FRAME-LABEL: unit f3:Body
+# FRAME: coverage = FramedPart
+# RUN(ANSWER): run-in-shell
+# ANSWER: 148
+# ANSWER-NEXT: exited with 0

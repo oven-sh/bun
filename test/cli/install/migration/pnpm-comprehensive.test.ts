@@ -933,7 +933,7 @@ packages:
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(normalizeBunSnapshot(stderr, tmpDir)).toMatchInlineSnapshot(`
-      "error: pnpm-lock.yaml is lockfileVersion 6.0, which bun cannot migrate
+      "error: cannot migrate pnpm-lock.yaml: unsupported lockfileVersion 6.0
       note: pnpm install --lockfile-only"
     `);
     expect(stdout).toBe("");

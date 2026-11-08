@@ -158,7 +158,7 @@ pub mod whatwg {
             URL__fromString(str).map(Self)
         }
         pub fn from_utf8(input: &[u8]) -> Option<Self> {
-            Self::from_string(&String::borrow_utf8(input))
+            Self::from_string(&bun_core::StringView::borrow_utf8(input))
         }
     }
 
@@ -1024,7 +1024,7 @@ thread_local! {
 }
 
 impl QueryStringMap {
-    pub fn get_name_count(&mut self) -> usize {
+    pub fn get_name_count(&self) -> usize {
         self.list.len()
         // if (this.name_count == null) {
         //     var count: usize = 0;

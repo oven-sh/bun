@@ -1,5 +1,5 @@
-// What happens when a rule throws instead of reporting, for example because a file named in its options is missing. A rule of a
-// JavaScript plugin throws for real. A native rule calls `cx.throw()`, which has to look the same.
+// Tests for rules that throw instead of reporting, for example because a file listed in their options is missing. A
+// JavaScript plugin's rule really throws. A native rule calls `cx.throw()`, which has to look the same.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { endChildren, spawn } from "../children";
@@ -64,7 +64,10 @@ const names = ["a.js", "no-identifier.js", "disabled.js"];
 
 type Diagnostic = { message: string; code?: string; severity: string; filename: string; labels: unknown[] };
 
-/** Every diagnostic as `file severity code: message`, sorted, without the stack frames: those are the engine's. */
+/**
+ * Returns every diagnostic as `file severity code: message`, sorted. Drops the stack frames, which depend on the
+ * engine.
+ */
 function diagnostics({ stdout, tidy }: Awaited<ReturnType<typeof lint>>) {
   return (JSON.parse(stdout).diagnostics as Diagnostic[])
     .map(it => `${it.filename} ${it.severity} ${it.code ?? "no code"}: ${tidy(it.message.replace(/\n {4}at .*/g, ""))}`)
@@ -122,7 +125,7 @@ describe.concurrent("with an oxlint config", () => {
       ["mini/own-class", "AllowanceError: no file"],
       ["mini/two-lines", "Error: line one\nline two"],
       ["mini/not-an-error", "Unknown error"],
-    ])("%s", async (rule, error) => {
+    ])("%s: prints the thrown value like oxlint", async (rule, error) => {
       const result = await lint({ ...files, ...withPlugin({ [rule]: "warn" }) }, ["-f", "json", "a.js"]);
       expect(diagnostics(result)).toEqual([failed("a.js", error), ...debuggers("a.js")]);
       expect(result.exitCode).toBe(1);
@@ -133,7 +136,7 @@ describe.concurrent("with an oxlint config", () => {
       [["--max-warnings", "0"], true],
       [["--deny-warnings"], true],
       [["--fix"], true],
-    ])("with %j", async (flags, hasWarnings) => {
+    ])("is still an error with %j", async (flags, hasWarnings) => {
       const config = withPlugin({ "mini/in-create": "warn" });
       const result = await lint({ ...files, ...config }, ["-f", "json", ...flags, "a.js"]);
       const found = diagnostics(result).map(it => it.replace(" error eslint", " warning eslint"));
@@ -142,12 +145,12 @@ describe.concurrent("with an oxlint config", () => {
     });
   });
 
-  // import/no-cycle makes `bun lint` look at these files a second time, when it knows all of them.
+  // import/no-cycle makes `bun lint` process these files a second time, once it has seen all of them.
   const cycle = (other: string) =>
     `import { it as other } from "./${other}";\nexport const it = (\n  <b c={other}>\n    <e />\n  </b>\n);\n`;
   const cycles = (...names: string[]) => names.map(it => `${it} warning import(no-cycle): Dependency cycle detected`);
 
-  test("the error of a JavaScript rule stays when a rule about several files is on too", async () => {
+  test("a JavaScript rule's error is still printed when a cross-file rule is on too", async () => {
     const config = oxlintrc(
       { "import/no-cycle": "warn", "mini/in-listener": "warn" },
       { plugins: ["import"], jsPlugins: ["./plugin.mjs"] },
@@ -184,13 +187,13 @@ describe.concurrent("with an oxlint config", () => {
       [["--quiet"], false],
       [["--max-warnings", "0"], true],
       [["--fix"], true],
-    ])("with %j", async (flags, hasWarnings) => {
+    ])("is still an error with %j", async (flags, hasWarnings) => {
       const result = await lint(project("warn"), ["-f", "json", ...flags, "a.jsx"]);
       expect(diagnostics(result)).toEqual([failed("a.jsx", rangeError), ...(hasWarnings ? debuggers("a.jsx") : [])]);
       expect(result.exitCode).toBe(1);
     });
 
-    test("the error stays when a rule about several files is on too", async () => {
+    test("is still an error when a cross-file rule is on too", async () => {
       const config = oxlintrc(
         { "import/no-cycle": "warn", "react/jsx-indent": ["warn", -1] },
         { plugins: ["import", "react"] },
@@ -202,7 +205,7 @@ describe.concurrent("with an oxlint config", () => {
       expect(result.exitCode).toBe(1);
     });
 
-    test("prints what a JavaScript rule that throws prints in every format", async () => {
+    test("prints the same as a JavaScript rule that throws, in every format", async () => {
       const formats = ["default", "stylish", "unix", "github", "checkstyle", "junit", "gitlab", "json"];
       const files = { "plugin.mjs": plugin, "a.jsx": element };
       const native = oxlintrc({ "react/jsx-indent": ["warn", -1] }, { plugins: ["react"] });
@@ -211,7 +214,7 @@ describe.concurrent("with an oxlint config", () => {
         const [a, b] = await Promise.all(
           [native, script].map(config => lint({ ...files, ...config }, ["-f", format, "a.jsx"])),
         );
-        // The fingerprint is a hash of the message, which has the path of the temporary directory in it.
+        // The fingerprint is a hash of the message, which contains the temporary directory's path.
         const timeless = (text: string) =>
           text.replace(/[\d.]+(?=m?s\b)|"start_time": [\d.]+|"fingerprint": "\w+"/g, "");
         expect({ format, stdout: timeless(a.tidy(a.stdout)), exitCode: a.exitCode }).toEqual({
@@ -223,9 +226,9 @@ describe.concurrent("with an oxlint config", () => {
     });
   });
 
-  // When a rule of a JavaScript plugin throws, oxlint has nothing from any rule of any JavaScript plugin for that file, and everything
-  // from its own rules.
-  describe("what the other rules found in the file", () => {
+  // When a JavaScript plugin's rule throws, oxlint drops that file's reports from every JavaScript plugin's rules, and
+  // keeps the reports from its own rules.
+  describe("the other rules' reports in the file", () => {
     const alpha = `
       const boom = where => { throw new Error("boom " + where); };
       const at = (name, where) => ({ create: () => ({ Identifier(node) { if (node.name === name) boom(where); } }) });
@@ -306,7 +309,7 @@ describe.concurrent("with an oxlint config", () => {
       "eslint(eqeqeq) 74+2",
       "eslint(no-debugger) 93+9",
     ];
-    const ofPlugins = [
+    const fromPlugins = [
       "alpha(start) 0+103",
       "alpha(vars) 10+23",
       "beta(calls) 34+10",
@@ -316,9 +319,9 @@ describe.concurrent("with an oxlint config", () => {
     ];
 
     // All of this is what oxlint 1.87 prints, in its order.
-    test("is all there when nothing throws", async () => {
+    test("are all printed when nothing throws", async () => {
       const result = await lint({ ...plugins, ...config({}), "a.js": code }, ["-f", "json", "a.js"]);
-      expect(inOrder(result)).toEqual(inFile("a.js", [...builtIn, ...ofPlugins]));
+      expect(inOrder(result)).toEqual(inFile("a.js", [...builtIn, ...fromPlugins]));
       expect(result.exitCode).toBe(0);
     });
 
@@ -330,14 +333,14 @@ describe.concurrent("with an oxlint config", () => {
       ["throws-in-before", "in before"],
       ["throws-in-after", "in after"],
       ["reports-then-throws", "after reporting"],
-    ])("alpha/%s: the built-in rules' findings stay, those of both plugins go", async (rule, where) => {
+    ])("alpha/%s: keeps the built-in rules' reports and drops both plugins' reports", async (rule, where) => {
       const files = { ...plugins, ...config({ [`alpha/${rule}`]: "warn" }), "a.js": code };
       const result = await lint(files, ["-f", "json", "a.js"]);
       expect(inOrder(result)).toEqual(inFile("a.js", [...builtIn, `Error: boom ${where}`]));
       expect(result.exitCode).toBe(1);
     });
 
-    test("the first throw counts", async () => {
+    test("only the first thrown error is printed", async () => {
       const files = {
         ...plugins,
         ...config({ "alpha/throws-late": "warn", "alpha/throws-early": "warn" }),
@@ -348,7 +351,7 @@ describe.concurrent("with an oxlint config", () => {
       expect(result.exitCode).toBe(1);
     });
 
-    test("another file keeps everything", async () => {
+    test("are all kept in another file", async () => {
       const files = { "a.js": code, "b.js": code.replace("late", "soon") };
       const result = await lint({ ...plugins, ...config({ "alpha/throws-late": "warn" }), ...files }, [
         "-f",
@@ -360,12 +363,12 @@ describe.concurrent("with an oxlint config", () => {
       ]);
       expect(inOrder(result)).toEqual([
         ...inFile("a.js", [...builtIn, "Error: boom late"]),
-        ...inFile("b.js", [...builtIn, ...ofPlugins]),
+        ...inFile("b.js", [...builtIn, ...fromPlugins]),
       ]);
       expect(result.exitCode).toBe(1);
     });
 
-    test("a comment that disables a plugin's rule is unused then", async () => {
+    test("a comment that disables a plugin's rule is then reported as unused", async () => {
       const disabled = `/* oxlint-disable alpha/vars, no-debugger */\n${code}`;
       const flags = ["-f", "json", "--report-unused-disable-directives", "a.js"];
       const kept = ["eslint(no-var) 55+3", "eslint(eqeqeq) 73+2", "eslint(no-var) 101+3", "eslint(eqeqeq) 119+2"];
@@ -387,7 +390,7 @@ describe.concurrent("with an oxlint config", () => {
       expect([fine.exitCode, thrown.exitCode, all.exitCode]).toEqual([0, 1, 1]);
     });
 
-    test("with a rule about several files", async () => {
+    test("are handled the same when a cross-file rule is on", async () => {
       const importing = (other: string) =>
         `import { it as other } from "./${other}";\nexport const it = other;\n${code}`;
       const files = { "a.js": importing("b.js"), "b.js": importing("a.js").replace("late", "soon") };
@@ -443,16 +446,16 @@ describe.concurrent("with an oxlint config", () => {
         });
         const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
         const found = inOrder({ stdout }).map(it => it.replace(/boom .*/, "boom"));
-        const left = builtIn.filter(it => !it.includes("no-var"));
-        expect(found.sort()).toEqual(inFile("a.js", [...left, "Error: boom"]).sort());
+        const remaining = builtIn.filter(it => !it.includes("no-var"));
+        expect(found.sort()).toEqual(inFile("a.js", [...remaining, "Error: boom"]).sort());
         expect(await Bun.file(`${dir}/a.js`).text()).toBe(code.replaceAll("var ", "const "));
         expect(exitCode).toBe(1);
       },
     );
 
-    // oxlint has neither react/jsx-indent, react/jsx-indent-props nor import/no-extraneous-dependencies. It could only run them as rules
-    // of a JavaScript plugin, so here they share the fate of those. The lists are what oxlint 1.87 prints for this file with the
-    // rules that it has.
+    // oxlint doesn't have react/jsx-indent, react/jsx-indent-props or import/no-extraneous-dependencies. It could only
+    // run them as a JavaScript plugin's rules, so `bun lint` treats them like those. The lists are what oxlint 1.87
+    // prints for this file with the rules that it does have.
     describe("native rules that oxlint doesn't have count as rules of a JavaScript plugin", () => {
       const element =
         'import x from "listed";\ndebugger;\nvar first = use(x);\nconst a = (\n  <b\n    c="d"\n  >\n    <e />\n  </b>\n);\ndebugger;\nvar second = use(a, first);\n';
@@ -505,7 +508,7 @@ describe.concurrent("with an oxlint config", () => {
         ["one of them throws", { "react/jsx-indent": ["warn", -1] }, "RangeError: Invalid count value: -1"],
         ["a JavaScript rule throws", { "alpha/throws-at-exit": "warn" }, "Error: boom at exit"],
         ["both throw", { "alpha/throws-at-exit": "warn", "react/jsx-indent": ["warn", -1] }, "Error: boom at exit"],
-      ])("%s: only the findings of oxlint's own rules stay", async (_, rules, error) => {
+      ])("%s: only the reports from oxlint's own rules are kept", async (_, rules, error) => {
         const result = await lint(project(rules), ["-f", "json", "a.jsx"]);
         expect(inOrder(result)).toEqual(inFile("a.jsx", [...own, error]));
         expect(result.exitCode).toBe(1);
@@ -536,15 +539,15 @@ describe.concurrent("with an ESLint config", () => {
     ["error", loading("error") + "real error"],
     ["type-error", loading("type-error") + "real type error"],
     ["empty-message", loading("empty-message")],
-    // ESLint changes the message of what it has caught, and these have none to change.
+    // ESLint rewrites the `message` of the value it caught, and these don't have one.
     ["string", "Cannot create property 'message' on string 'just a string'"],
     ["number", "Cannot create property 'message' on number '5'"],
     ["symbol", "Cannot create property 'message' on symbol 'Symbol(s)'"],
     ["undefined", "Cannot read properties of undefined (reading 'message')"],
     ["null", "Cannot read properties of null (reading 'message')"],
-  ])("a JavaScript rule that throws in create() ends the run: %s", async (name, said) => {
+  ])("a JavaScript rule that throws in create() ends the run: %s", async (name, message) => {
     const { stdout, stderr, exitCode } = await lint({ ...files, ...config(`create-throws-${name}`, "warn") }, names);
-    expect(stderr).toContain(`rror: ${said}\nOccurred while linting <dir>/a.js\n`);
+    expect(stderr).toContain(`rror: ${message}\nOccurred while linting <dir>/a.js\n`);
     expect(stderr).not.toContain("Rule:");
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
   });

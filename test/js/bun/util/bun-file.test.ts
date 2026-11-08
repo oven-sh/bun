@@ -155,3 +155,46 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
   });
   expect(exitCode).toBe(0);
 });
+
+test("Bun.file() copies a Uint8Array path", async () => {
+  using dir = tempDir("bun-file-buffer-path", { "a.txt": "a", "b.txt": "b" });
+  const path = new TextEncoder().encode(join(String(dir), "a.txt"));
+  const file = Bun.file(path);
+  path[path.length - "a.txt".length] = "b".charCodeAt(0);
+  expect({ name: file.name, text: await file.text() }).toEqual({ name: join(String(dir), "a.txt"), text: "a" });
+});
+
+test("a Uint8Array path can still be transferred after Bun.file()", async () => {
+  using dir = tempDir("bun-file-buffer-path", { "a.txt": "a" });
+  const path = new TextEncoder().encode(join(String(dir), "a.txt"));
+  const file = Bun.file(path);
+  path.buffer.transfer();
+  expect({ byteLength: path.byteLength, text: await file.text() }).toEqual({ byteLength: 0, text: "a" });
+});
+
+test.concurrent.each([
+  "Bun.file(path.slice())",
+  "s3.file(path.slice())",
+  'await Bun.write(path.slice(), new Blob(["x"]))',
+])("%s doesn't keep the Uint8Array path alive", async call => {
+  using dir = tempDir("bun-file-buffer-path", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const path = new TextEncoder().encode(require("path").join(process.argv[1], "x"));
+        const s3 = new Bun.S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "c" });
+        for (let i = 0; i < 200; i++) ${call};
+        Bun.gc(true);
+        console.log(require("bun:jsc").heapStats().objectTypeCounts.Uint8Array, path.length > 0);`,
+      String(dir),
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [live, pathIsAlive] = stdout.trim().split(" ");
+  expect(pathIsAlive).toBe("true");
+  expect(Number(live)).toBeWithin(1, 50);
+  expect(exitCode).toBe(0);
+});

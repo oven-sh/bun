@@ -1,6 +1,6 @@
-//! `postcss-selector-parser` 2.2.3 (`dist/tokenize.js`, `dist/parser.js`), and Prettier's
-//! `parse/parse-selector.js`.
+//! `postcss-selector-parser` 2.2.3 (`dist/tokenize.js`, `dist/parser.js`) and Prettier's `parse/parse-selector.js`.
 
+use super::misc::{ends_with_hex_escape, ends_with_unescaped_backslash};
 use crate::stack::Stack;
 use crate::text::{self, ByteSet};
 
@@ -17,7 +17,7 @@ enum TokenKind {
 }
 
 impl TokenKind {
-    /// By how much it changes the number of open parentheses.
+    /// How much it changes the number of open parentheses.
     fn nesting(self) -> i32 {
         match self {
             TokenKind::Control(b'(') => 1,
@@ -153,7 +153,7 @@ pub(crate) enum Namespace {
 /// A range of `Selectors::text`.
 pub(crate) type Span = (usize, usize);
 
-/// An index into `Selectors::nodes`. 0: there is none.
+/// An index into `Selectors::nodes`. 0 means none.
 pub(crate) type SelectorId = u32;
 
 #[derive(Debug, Copy, Clone)]
@@ -161,14 +161,14 @@ pub(crate) struct SelectorNode {
     pub(crate) kind: SelectorKind,
     pub(crate) value: Span,
     pub(crate) namespace: Option<Namespace>,
-    parent: SelectorId,
-    /// `nodes`: the first, the last, and how many there are.
+    pub(crate) parent: SelectorId,
+    /// `nodes`: the first child, the last child and the count.
     pub(crate) first_child: SelectorId,
     last_child: SelectorId,
     pub(crate) child_count: u32,
-    /// What follows in the `nodes` of the parent.
+    /// The next node in the parent's `nodes`.
     pub(crate) next_sibling: SelectorId,
-    /// Of an attribute.
+    /// Attribute only.
     pub(crate) attribute: Span,
     pub(crate) operator: Option<Span>,
     pub(crate) has_value: bool,
@@ -194,7 +194,7 @@ impl SelectorNode {
     }
 }
 
-/// The selectors that have been parsed, and what it takes to parse the next one.
+/// The parsed selectors, plus buffers that are reused to parse the next one.
 #[derive(Default)]
 pub(crate) struct Selectors {
     text: Vec<u8>,
@@ -203,7 +203,7 @@ pub(crate) struct Selectors {
 }
 
 struct Parser<'t> {
-    /// All of `Selectors::text`. What is parsed starts at `base`, which the positions of the tokens count from.
+    /// All of `Selectors::text`. The selector being parsed starts at `base`, and token positions are relative to that.
     css: &'t [u8],
     base: usize,
     tokens: &'t [Token],
@@ -238,7 +238,7 @@ impl<'t> Parser<'t> {
         &mut self.nodes[id as usize]
     }
 
-    /// `value`: a range of what is parsed.
+    /// `value` is a range relative to `base`.
     fn append(
         &mut self,
         parent: SelectorId,
@@ -326,10 +326,10 @@ impl<'t> Parser<'t> {
         {
             self.position += 1;
         }
-        // Without a `]`, the parser looks at a token that is not there.
+        // Without a `]`, the parser reads a token that doesn't exist and throws.
         let end = self.current_token()?.start;
         let string = &self.css[self.base + start..self.base + end];
-        // Where `string` starts in the text.
+        // The offset of `string` in the text.
         let start = self.base + start;
 
         // `str.split(/((?:[*~^$|]?=))([^]*)/)`
@@ -363,12 +363,19 @@ impl<'t> Parser<'t> {
             let value = &string[operator_end..];
             if !value.is_empty() {
                 // `parts[2].split(/(\s+i\s*?)$/)`
+                // The parser mistakes the `i` of `x\31 i`, which means `x1i`, and of `x\ i` for the flag.
                 let trimmed = bun_core::strings::trim_js_whitespace_end(value);
                 let before_flag = trimmed.strip_suffix(b"i").filter(|rest| {
-                    bun_core::strings::trim_js_whitespace_end(rest).len() < rest.len()
+                    let unflagged = bun_core::strings::trim_js_whitespace_end(rest);
+                    let is_escape =
+                        ends_with_unescaped_backslash(unflagged) || ends_with_hex_escape(unflagged);
+                    unflagged.len() + usize::from(is_escape) < rest.len()
                 });
                 let value_len = match before_flag {
-                    Some(rest) => bun_core::strings::trim_js_whitespace_end(rest).len(),
+                    Some(rest) => {
+                        let unflagged = bun_core::strings::trim_js_whitespace_end(rest);
+                        unflagged.len() + usize::from(ends_with_unescaped_backslash(unflagged))
+                    }
                     None => value.len(),
                 };
                 node.insensitive = before_flag.is_some();
@@ -388,7 +395,8 @@ impl<'t> Parser<'t> {
         while let Some(token) = self.token(self.position)
             && matches!(token.kind, TokenKind::Space | TokenKind::Combinator)
         {
-            // `a |b`: the parser takes the `|` for the combinator, and Prettier prints `a|b`. It stays as it is written.
+            // `a |b`: the parser treats the `|` as the combinator, and Prettier prints `a|b`. Failing here keeps the
+            // selector as written.
             if self.text_of(token) == b"|" {
                 return Err(ParseError);
             }
@@ -407,10 +415,10 @@ impl<'t> Parser<'t> {
             .is_some_and(|next| self.text_of(next) == b"|")
     }
 
-    /// At a `|`. In `a|b|c`, `b` is the namespace of `c`, and `a` is lost.
+    /// Called at a `|`. In `a|b|c`, `b` is the namespace of `c`, and `a` is dropped.
     fn namespace(&mut self) -> Result<(), ParseError> {
         loop {
-            // The parser takes whatever is before the `|` for the namespace: of `a,|b` Prettier prints `a, ,|b`.
+            // The parser uses whatever is before the `|` as the namespace: Prettier prints `a,|b` as `a, ,|b`.
             let before = match self.prev_token() {
                 Some(prev)
                     if prev.end > prev.start
@@ -421,7 +429,7 @@ impl<'t> Parser<'t> {
                 _ => Namespace::Empty,
             };
             let kind = self.next_token().ok_or(ParseError)?.kind;
-            // The parser stays where it is, and comes here again, without end.
+            // The parser wouldn't advance here and would loop forever.
             if !matches!(kind, TokenKind::Word | TokenKind::Control(b'*')) {
                 return Err(ParseError);
             }
@@ -470,8 +478,8 @@ impl<'t> Parser<'t> {
             {
                 balanced += token.kind.nesting();
                 self.position += 1;
-                // Everything up to here is added to the value. It follows what is there, unless
-                // that is nothing.
+                // Everything up to here is appended to the value. It's adjacent to the current value, unless that's
+                // empty.
                 let base = self.base;
                 let value = &mut self.node(last).value;
                 if value.0 == value.1 {
@@ -536,7 +544,7 @@ impl<'t> Parser<'t> {
         self.split_word(namespace, None)
     }
 
-    /// `pseudo_start`: the word follows the colons of a pseudo class, which start there.
+    /// `pseudo_start` is set if the word follows the colons of a pseudo-class, which start at that offset.
     fn split_word(
         &mut self,
         namespace: Option<Namespace>,
@@ -558,7 +566,7 @@ impl<'t> Parser<'t> {
             }
         }
         let word = &self.css[self.base + first.start..self.base + end];
-        // Where the next part starts behind `from`.
+        // Returns the start of the next part after `from`.
         let next_part = |from: usize| {
             (from + 1..word.len())
                 .find(|&at| {
@@ -603,9 +611,9 @@ fn has_comment(selector: &[u8]) -> bool {
     while let Some(&byte) = selector.get(at) {
         match byte {
             b'"' | b'\'' => match bun_core::strings::index_of_char_pos(selector, byte, at + 1) {
-                // There has to be something between the quotes.
+                // The regular expression needs at least one character between the quotes.
                 Some(close) if close > at + 1 => {
-                    // What is before and after the string ends up side by side.
+                    // Removing the string puts the text before and after it side by side.
                     if at > 0
                         && selector[at - 1] == b'/'
                         && matches!(selector.get(close + 1), Some(b'/' | b'*'))
@@ -624,7 +632,6 @@ fn has_comment(selector: &[u8]) -> bool {
 }
 
 impl Selectors {
-    /// Forgets all selectors.
     pub(crate) fn clear(&mut self) {
         self.text.clear();
         self.nodes.clear();

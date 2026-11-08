@@ -4,8 +4,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { longLimit, spawn } from "../children";
 
-// `bun check` follows TypeScript 7, which is a native program next to its `lib.*.d.ts`: `typescript7` in
-// test/package.json, beside the `typescript` that has the API in JavaScript. `TSC` is the path of another to compare with.
+// `bun check` follows TypeScript 7, a native executable that ships next to its `lib.*.d.ts` files. It's `typescript7`
+// in test/package.json, alongside the `typescript` package with the JavaScript API. Set `TSC` to compare with another
+// executable.
 function nativeTypeScript() {
   if (process.env.TSC) return process.env.TSC;
   try {
@@ -13,7 +14,7 @@ function nativeTypeScript() {
     const name = `@typescript/typescript-${process.platform}-${process.arch}`;
     return join(dirname(require.resolve(`${name}/package.json`, { paths })), "lib", isWindows ? "tsc.exe" : "tsc");
   } catch {
-    // There is none for this system.
+    // No native package for this platform.
   }
 }
 export const tsc = nativeTypeScript();
@@ -27,11 +28,14 @@ export const env = {
   NO_COLOR: "1",
 };
 
-/** What `cmd` prints, without the path of `root`. And how it ended, if it crashed: that prints nothing. */
+/**
+ * Returns the lines `cmd` prints, with `root` stripped from paths. A crash prints nothing, so it adds a line with the
+ * exit status.
+ */
 export async function linesOf(cmd: string[], cwd: string, root: string) {
   await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  // A crash of bun is a signal, and the exit code 3 on Windows. tsc exits with 4 if project references form a cycle.
+  // bun crashes with a signal, or with exit code 3 on Windows. tsc exits with 4 if project references form a cycle.
   const hasCrashed = proc.signalCode !== null || exitCode > (cmd[0] === bunExe() ? 2 : 5);
   const prefix = new RegExp(root.replaceAll("\\", "/").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
   return stdout
@@ -42,10 +46,10 @@ export async function linesOf(cmd: string[], cwd: string, root: string) {
 }
 
 /**
- * Whichever file is checked first enters each cycle: the variances of type parameters, recursive aliases, and functions
- * and constants without annotations, each through a ring of `n` modules. What tsc reports depends on `--checkers`.
+ * The file checked first enters each cycle: type parameter variances, recursive aliases, and functions and constants
+ * without annotations, each through a cycle of `n` modules. What tsc reports depends on `--checkers`.
  */
-export function modulesInRings(n: number) {
+export function modulesInCycles(n: number) {
   const files: Record<string, string> = {};
   for (let i = 0; i < n; i++) {
     const [a, b, d] = [(i + 1) % n, (i + 7) % n, (i * 3 + 2) % n];
@@ -59,7 +63,7 @@ export function modulesInRings(n: number) {
       `export function g${i}(x: number) { return ${i === 0 ? "x" : `{ k: ${i}, inner: g${Math.floor(i / 2)}(x) }`}; }`,
       `export class C${i}<A> { constructor(public v: A) {} map<B>(h: (a: A) => B): C${b}<B> { return new C${b}(h(this.v)); } }`,
       `export const v${i} = new C${a}(${i}).map(x => [x, v${d}] as const);`,
-      // `never` puts the types in the messages.
+      // Assigning to `never` makes the messages print the types.
       `const r${i}: never = f${d}(1);`,
       `const s${i}: never = g${b}(1);`,
       `const t${i}: T${a}<string> = null! as T${a}<unknown>;`,
@@ -72,58 +76,72 @@ export function modulesInRings(n: number) {
   return files;
 }
 
-/** `run` for each of `items`, a few at a time. */
-export async function inTurns<T>(items: T[], run: (item: T) => Promise<void>) {
+/** Calls `run` for each of `items`, a few at a time. */
+export async function inBatches<T>(items: T[], run: (item: T) => Promise<void>) {
   for (let at = 0; at < items.length; at += 6) await Promise.all(items.slice(at, at + 6).map(run));
 }
 
-/** `deep`: nested too deeply for the stack of a build that is not optimised, or too slow in one. */
-type Case = { files: Record<string, string>; build?: true; deep?: true };
+/**
+ * `deep`: nested too deeply for an unoptimized build's stack, or too slow in one.
+ * `theirs`: what TypeScript 7.1 reports, where `bun check` follows it and the installed tsc reports something else.
+ */
+type Case = { files: Record<string, string>; build?: true; deep?: true; theirs?: string[] };
+
+/** Returns the programs of differential-cases.json that this build and system can check, each written to `root`/name. */
+export async function writtenCases(root: string, isWanted: (it: Case, index: number) => boolean) {
+  const all: Record<string, Case> = await Bun.file(join(import.meta.dir, "differential-cases.json")).json();
+  return (
+    Object.entries(all)
+      .filter(([, it]) => !(it.deep && (isDebug || isASAN)))
+      .filter(([, it], index) => isWanted(it, index))
+      // Windows can't create a directory named `c:` or `w*d`.
+      .filter(([, it]) => !isWindows || !Object.keys(it.files).some(path => /[:*?"<>|]/.test(path)))
+      .filter(([name, it]) => {
+        try {
+          for (const path in it.files) {
+            mkdirSync(dirname(join(root, name, path)), { recursive: true });
+            writeFileSync(join(root, name, path), it.files[path]);
+          }
+          return true;
+        } catch (error) {
+          // APFS rejects a character that's newer than the system's Unicode tables.
+          if ((error as NodeJS.ErrnoException).code === "EILSEQ") return false;
+          throw error;
+        }
+      })
+  );
+}
 
 /**
- * Small programs about which `bun check` and tsc once said something else, each named after where it was found.
- * A program takes two processes, and a test file has three minutes: each file tests one part of `parts`.
+ * Small programs on which `bun check` and tsc once disagreed, each named after where it was found.
+ * A program takes two processes, and a test file has three minutes, so each file tests one of `parts` parts.
  */
 export function programsThatOnceDiffered(part: number, parts: number) {
   const tests = 4;
   for (let nth = 0; nth < tests; nth++) {
     test.skipIf(!tsc)(
-      `programs about which the two once differed, ${part * tests + nth + 1} of ${parts * tests}`,
+      `matches tsc on programs where the two once disagreed, ${part * tests + nth + 1} of ${parts * tests}`,
       async () => {
-        const all: Record<string, Case> = await Bun.file(join(import.meta.dir, "differential-cases.json")).json();
         using dir = tempDir("bun-check-differential", {});
         const root = String(dir);
-        const cases = Object.entries(all)
-          .filter(([, it]) => !(it.deep && (isDebug || isASAN)))
-          // A debug build checks a sample. It is always the same sample.
-          .filter((_, index) => index % (isDebug || isASAN ? 40 : 1) === 0)
-          .filter((_, index) => index % (parts * tests) === part * tests + nth)
-          // Windows cannot create a directory named `c:` or `w*d`.
-          .filter(([, it]) => !isWindows || !Object.keys(it.files).some(path => /[:*?"<>|]/.test(path)))
-          .filter(([name, it]) => {
-            try {
-              for (const path in it.files) {
-                mkdirSync(dirname(join(root, name, path)), { recursive: true });
-                writeFileSync(join(root, name, path), it.files[path]);
-              }
-              return true;
-            } catch (error) {
-              // APFS refuses a character that is newer than the Unicode tables of the system.
-              if ((error as NodeJS.ErrnoException).code === "EILSEQ") return false;
-              throw error;
-            }
-          });
+        // A debug build checks a sample, always the same one.
+        const every = isDebug || isASAN ? 40 : 1;
+        const cases = await writtenCases(
+          root,
+          (_, index) => index % every === 0 && (index / every) % (parts * tests) === part * tests + nth,
+        );
         const different: Record<string, object> = {};
-        await inTurns(cases, async ([name, it]) => {
+        await inBatches(cases, async ([name, it]) => {
           const cwd = join(root, name);
           const build = it.build ? ["-b"] : [];
-          // One thread divides the files in another way.
+          // One thread splits the files up differently.
           const [ours, onOneThread] = await Promise.all([
             linesOf([bunExe(), "check", ...build], cwd, root),
             linesOf([bunExe(), "check", ...build, "--threads=1"], cwd, root),
           ]);
-          // After them: `tsc -b` writes files.
-          const theirs = await linesOf([tsc!, ...build, "--pretty", "false", "--singleThreaded"], cwd, root);
+          // tsc runs last, because `tsc -b` writes files.
+          const theirs =
+            it.theirs ?? (await linesOf([tsc!, ...build, "--pretty", "false", "--singleThreaded"], cwd, root));
           if (!Bun.deepEquals(theirs, ours)) different[name] = { theirs, ours };
           else if (!Bun.deepEquals(theirs, onOneThread)) different[name] = { theirs, onOneThread };
         });

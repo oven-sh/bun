@@ -1,20 +1,22 @@
-//! Which cycles through the back edge of a loop also occur in TypeScript.
+//! Decides which cycles through a loop's back edge also occur in TypeScript.
 
 use super::*;
 use crate::bind::{Decl, Parent, PatParent};
 
 impl<'p, 's> Checker<'p, 's> {
-    /// Whether every query from `stack[i]` up is one TypeScript also makes, regardless of query
-    /// order: the type of a variable, a parameter, a property of a class or an element of a
-    /// pattern that is inferred from an initializer (`checkDeclarationInitializer`), of a variable
-    /// from what a `for` statement iterates (`checkRightHandSideOfForOf`), of a property from what
-    /// is assigned to it (`getWidenedTypeForAssignmentDeclaration`), the type of an expression,
-    /// whose operands
-    /// `checkExpression` checks, the return type of a function, or a call that is being resolved.
-    /// What TypeScript defers, the members of a class expression, is behind another query.
+    /// True if every query from `stack[i]` up is one TypeScript also makes, regardless of query order:
+    /// - the type of a variable, parameter, class property or pattern element inferred from an
+    ///   initializer (`checkDeclarationInitializer`)
+    /// - the type of a variable inferred from what a `for` statement iterates (`checkRightHandSideOfForOf`)
+    /// - the type of a property inferred from assignments to it (`getWidenedTypeForAssignmentDeclaration`)
+    /// - the type of an expression, whose operands `checkExpression` checks
+    /// - a function's return type
+    /// - a call that's being resolved
+    ///
+    /// What TypeScript defers (a class expression's members) is behind another query.
     pub(super) fn is_cycle_of_initializers(&self, i: usize) -> bool {
-        // An annotation is resolved where it is asked for, with the loop in progress: `typeof x`
-        // checks `x` uncached. A cycle through one that closes at a type resolution is tsgo's too.
+        // An annotation is resolved where it's requested, while the loop is in progress, and `typeof x` checks
+        // `x` uncached. So a cycle through an annotation that closes at a type resolution also occurs in tsgo.
         let closes_at_resolution = self.is_resolution(self.stack[i]);
         self.stack[i..].iter().all(|&q| match q {
             Query::Expr(..)
@@ -29,7 +31,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flags.intersects(SymFlags::VARIABLE)
                     || flags.intersects(SymFlags::ACCESSOR) && self.is_typed_by_getter_body(sym)
                     || match self.files().value_declaration(sym) {
-                        // Without an initializer: from the assignments in the constructor.
+                        // Without an initializer, the type comes from the assignments in the constructor.
                         Some((file, Decl::Member(m))) => {
                             let member = &self.hir(file)[m];
                             member.kind == MemberKind::Property
@@ -74,11 +76,11 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// Whether `getTypeOfAccessors` has the type of the accessor property `sym` from the body of its
-    /// getter (`getReturnTypeFromBody`): neither accessor has an annotation.
+    /// True if `getTypeOfAccessors` infers the type of the accessor property `sym` from its
+    /// getter's body (`getReturnTypeFromBody`), that is, neither accessor has an annotation.
     fn is_typed_by_getter_body(&self, sym: Sym) -> bool {
         let mut has_getter = false;
-        for (file, decl) in self.files().decls(sym) {
+        for (file, decl) in self.files().decls_of(sym) {
             let Decl::Member(m) = decl else { return false };
             let hir = self.hir(file);
             let member = &hir[m];
@@ -88,7 +90,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if hir[member.func]
                         .effective_set_accessor_type_annotation_node(hir)
                         .is_none() => {}
-                // `accessor x = e`: a property with an initializer, which has no function.
+                // `accessor x = e` is a property with an initializer and has no function.
                 MemberKind::Property if member.ty.is_none() && member.init.is_some() => {
                     has_getter = true;
                 }
@@ -98,13 +100,13 @@ impl<'p, 's> Checker<'p, 's> {
         has_getter
     }
 
-    /// Whether `d` is declared in the head of a `for (.. in ..)` or a `for (.. of ..)`: it has
-    /// its type from the expression of that statement, whatever is written after its name.
+    /// True if `d` is declared in the head of a `for (.. in ..)` or `for (.. of ..)`. Its type then
+    /// comes from the statement's expression, regardless of any annotation or initializer.
     fn is_variable_of_for_in_or_of(&self, file: FileId, d: VarDeclId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let stmt = bound.var_stmt[d.idx()];
         stmt.is_some()
-            && matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(parent)
+            && matches!(bound.parent_of_stmt(stmt), Parent::Stmt(parent)
                 if matches!(hir[parent].kind,
                     StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == stmt))
     }

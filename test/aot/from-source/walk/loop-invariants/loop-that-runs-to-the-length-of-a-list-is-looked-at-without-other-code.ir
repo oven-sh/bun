@@ -1,0 +1,14 @@
+# `for (let i = 0; i < list.length; i++)` over a list that is proven one, with nothing in the turn but a compare of numbers: the look at the loop counts on no other code, so what the turns leave alone is read in front of the loop: here the field of an object that the loop does not change
+# with the length typed as anything the relation may run code, and the read of the field stays in the turn
+# f1 = countsTurnsBelowTheLimit
+# -- source: loop-that-runs-to-the-length-of-a-list-is-looked-at-without-other-code.ts
+# declare function sink(...values: unknown[]): void;
+# class Limits { most: number; constructor(most: number) { this.most = most; } }
+# function countsTurnsBelowTheLimit(list: string[], limits: Limits) { let count = 0; for (let i = 0; i < list.length; i++) { if (i < limits.most) count++; } return count; }
+# sink(countsTurnsBelowTheLimit(["a", "b", "c"], new Limits(2)), countsTurnsBelowTheLimit);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}}key="most"
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = GetSlot {{*}}key="most"

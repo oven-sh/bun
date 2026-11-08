@@ -30,12 +30,13 @@ describe("minimum-release-age", () => {
   const daysAgo = (days: number) => new Date(currentTime - days * DAY_MS).toISOString();
 
   // Helper to create a minimal valid tarball
-  const createTarball = (name: string, version: string) => {
+  const createTarball = (name: string, version: string, fields: object = {}) => {
     const packageJson = JSON.stringify({
       name,
       version,
       description: "test package",
       main: "index.js",
+      ...fields,
     });
 
     // Create a simple tar structure (simplified for testing)
@@ -1642,7 +1643,7 @@ describe("minimum-release-age", () => {
         expect(resolved).toEqual({
           // Too recent for the gate, but listed.
           "excluded-package": "excluded-package@1.0.1",
-          // Not listed: still gated (3.0.0 is 1 day old).
+          // It isn't listed, so it's still gated (3.0.0 is 1 day old).
           "regular-package": "regular-package@2.1.0",
         });
         // Installing a listed version is not a downgrade, so only
@@ -1799,7 +1800,7 @@ describe("minimum-release-age", () => {
         expect(stderr.split(/\r?\n/).filter(line => line.includes("minimumReleaseAgeExcludes"))).toEqual(
           entries.map(
             entry =>
-              `warn: Ignoring minimumReleaseAgeExcludes entry "${entry}": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
+              `warn: ignoring minimumReleaseAgeExcludes entry "${entry}": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
           ),
         );
         // "excluded-package@" must not turn into a whole-package exemption, and
@@ -1882,7 +1883,7 @@ describe("minimum-release-age", () => {
             args: ["--minimum-release-age-excludes", "excluded-package@^1.0.0"],
           });
           expect(stderr.split(/\r?\n/).filter(line => line.includes("minimumReleaseAgeExcludes"))).toEqual([
-            `warn: Ignoring minimumReleaseAgeExcludes entry "excluded-package@^1.0.0": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
+            `warn: ignoring minimumReleaseAgeExcludes entry "excluded-package@^1.0.0": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
           ]);
           expect(resolved).toEqual({ "excluded-package": "excluded-package@1.0.0" });
           expect(exitCode).toBe(0);
@@ -2483,6 +2484,60 @@ describe("minimum-release-age", () => {
       expect(stdout).not.toContain("3.0.0");
       // Should show note about minimum release age
       expect(stdout.toLowerCase()).toContain("minimum release age");
+    });
+
+    // registry.npmjs.org has `hasInstallScript` only in the abbreviated document. The full one,
+    // which has the publish times, has the `scripts` of each version instead.
+    test.concurrent.each([
+      ["hoisted", "postinstall"],
+      ["isolated", "postinstall"],
+      ["hoisted", "preinstall"],
+      ["hoisted", "install"],
+    ])("reports a blocked script (%s linker, %s)", async (linker, script) => {
+      const name = "with-install-script";
+      const scripts = { test: "exit 1", [script]: "exit 1" };
+      // 0.9.0 has scripts too, but none that an install runs.
+      const published = { "0.9.0": { test: "exit 1" }, "1.0.0": scripts };
+      using registry = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const { pathname, origin } = new URL(req.url);
+          const abbreviated = req.headers.get("accept")?.includes("application/vnd.npm.install-v1+json");
+          const versions: Record<string, object> = {};
+          for (const [version, scripts] of Object.entries(published)) {
+            const tarball = `/${name}/-/${name}-${version}.tgz`;
+            if (pathname === tarball) return new Response(createTarball(name, version, { scripts }));
+            versions[version] = {
+              name,
+              version,
+              dist: { tarball: origin + tarball },
+              ...(!abbreviated ? { scripts } : version === "1.0.0" ? { hasInstallScript: true } : {}),
+            };
+          }
+          const time = { "0.9.0": daysAgo(40), "1.0.0": daysAgo(30) };
+          return Response.json({ name, "dist-tags": { latest: "1.0.0" }, versions, ...(abbreviated ? {} : { time }) });
+        },
+      });
+      using dir = tempDir("blocked-script", {
+        "package.json": JSON.stringify({ dependencies: { [name]: "1.0.0", quiet: `npm:${name}@0.9.0` } }),
+        ".npmrc": `registry=${registry.url}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--linker", linker, "--save-text-lockfile", "--minimum-release-age", "60"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("Blocked 1 postinstall");
+      const lockfile = (await Bun.file(join(String(dir), "bun.lock")).text()).split("\n");
+      expect(lockfile.find(line => line.includes(`"${name}@1.0.0"`))).toContain(`"hasInstallScript": true`);
+      expect(lockfile.find(line => line.includes(`"${name}@0.9.0"`))).not.toContain("hasInstallScript");
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -3688,7 +3743,8 @@ describe("minimum-release-age", () => {
           expect(exitCode).toBe(0);
         };
 
-        await installUntilManifestsCached(String(dir), 2, expectBoundToInstalledVersion);
+        const verbose = { args: ["--verbose"] };
+        await installUntilManifestsCached(String(dir), 2, expectBoundToInstalledVersion, verbose);
         const lockfile = await Bun.file(`${dir}/bun.lock`).text();
         expect(lockfile).toContain('"gated@1.0.0"');
 
@@ -3697,7 +3753,7 @@ describe("minimum-release-age", () => {
         // that binds peers to what the tree contains.
         await reResolve(String(dir));
         registry.requests.length = 0;
-        expectBoundToInstalledVersion(await install(String(dir)));
+        expectBoundToInstalledVersion(await install(String(dir), verbose));
         expect(registry.requests).toEqual([]);
         expect(await Bun.file(`${dir}/bun.lock`).text()).toBe(lockfile);
       },

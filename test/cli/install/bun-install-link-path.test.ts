@@ -91,7 +91,7 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
       }),
       "project/vendor/with-manifest/package.json": JSON.stringify({ name: "with-manifest", version: "1.2.3" }),
       "project/vendor/with-manifest/index.js": "module.exports = 'with';",
-      // As in yarn, the directory needs no package.json,
+      // Like in Yarn, the directory doesn't need a package.json,
       "project/vendor/no-manifest/index.js": "module.exports = 'without';",
       // nor a name that could be a package's.
       "project/vendor/~/index.js": "module.exports = 'tilde';",
@@ -133,7 +133,7 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
 
   test.concurrent.each([
     { title: "./dir", spec: () => "link:./lib/dep", target: "project/lib/dep", stored: "./lib/dep" },
-    // Not a package name, so a path. It is stored with `./` so that it reads back as one.
+    // It isn't a package name, so it's a path. It's stored with `./` so that it's read back as a path.
     { title: "dir/dir", spec: () => "link:lib/dep", target: "project/lib/dep", stored: "./lib/dep" },
     { title: "../dir", spec: () => "link:../sibling", target: "sibling", stored: "../sibling" },
     { title: "not normalized", spec: () => "link:./lib/x/../dep/", target: "project/lib/dep", stored: "./lib/dep" },
@@ -173,7 +173,7 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
 
     const { err, exitCode } = await bun(root, ["install"]);
     expect(errorLines(err)).toEqual([
-      'error: Could not find directory "./vendor/later" for linked dependency "later"',
+      'error: directory "./vendor/later" not found for linked dependency "later"',
       "error: later@link:./vendor/later failed to resolve",
     ]);
     expect(existsSync(join(root, "project", "bun.lock"))).toBe(false);
@@ -190,7 +190,7 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
     const root = String(dir);
 
     const { err, exitCode } = await bun(root, ["install"]);
-    expect(err).toContain('error: Could not find directory "./dep.js" for linked dependency "dep"');
+    expect(err).toContain('error: directory "./dep.js" not found for linked dependency "dep"');
     expect(existsSync(join(root, "project", "bun.lock"))).toBe(false);
     expect(exitCode).toBe(1);
   });
@@ -304,7 +304,7 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
 
     const { err, exitCode } = await bun(root, ["install"]);
     expect(err).not.toContain("error:");
-    // The link has no dependencies of its own; the copy keeps them.
+    // The link has no dependencies of its own, and the copy keeps them.
     const lock = await lockText(root);
     expect(lock).toContain(`"dual": ["dual@link:./vendor/dual", {}]`);
     expect(lock).toContain(`["dual@file:vendor/dual", { "dependencies": { "leaf": "file:../leaf" } }]`);
@@ -344,7 +344,7 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
     expect((await manifest()).dependencies).toBeUndefined();
     expect(await lockText(root)).not.toContain("link:");
     expect(entriesNamed(root, "dep")).toEqual([]);
-    // The link went, not what it pointed at.
+    // The link was removed, but not its target.
     expect(existsSync(join(root, "project", "vendor", "dep", "package.json"))).toBe(true);
     expect(removed.exitCode).toBe(0);
   });
@@ -493,14 +493,12 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
     expect((await bun(root, ["install"])).exitCode).toBe(0);
 
     const { err, exitCode } = await bun(root, ["patch", "dep"]);
-    expect(err).toContain(
-      "error: cannot patch dep: it is a link: dependency, and bun install never applies a patch to one",
-    );
+    expect(err).toContain('error: refusing to patch link: dependency "dep"');
     expectLinkTo(join(root, "project", "node_modules", "dep"), join(root, "project", "vendor", "dep"));
     expect(exitCode).not.toBe(0);
   });
 
-  test.skipIf(isWindows).concurrent("links the target's bin and leaves the mode of the file alone", async () => {
+  test.skipIf(isWindows).concurrent("links the target's bin and doesn't change the file's mode", async () => {
     using dir = tempDir("link-path-bin", {
       ...bunfig,
       "project/package.json": JSON.stringify({ name: "root", dependencies: { dep: "link:./vendor/dep" } }),
@@ -519,7 +517,7 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
   });
 });
 
-// Like `file:`, the specifier is packed as written. Whoever installs the package is told why it is refused.
+// Like `file:`, the specifier is packed as written. Whoever installs the package is told why it's refused.
 test.concurrent("bun pm pack keeps a link: path as written", async () => {
   using dir = tempDir("link-path-pack", {
     "project/package.json": pkg("packed", { dependencies: { dep: "link:./vendor/dep" } }),

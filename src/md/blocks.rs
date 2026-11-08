@@ -4,8 +4,6 @@ use crate::helpers;
 use crate::parser::{self, Parser};
 use crate::types::{self, BlockType, Container, Line, OFF, VerbatimLine};
 
-use core::mem::size_of;
-
 type BlockHeader = parser::BlockHeader;
 
 impl Parser<'_> {
@@ -281,13 +279,10 @@ impl Parser<'_> {
                         && self.current_block.is_none()
                         && self.last_header_opens_list_item
                     {
+                        // The line leaves the list item, so it gets back the indentation that the item consumed.
                         n_parents -= 1;
-                        line.indent = total_indent;
-                        if n_parents > 0 {
-                            line.indent -= line
-                                .indent
-                                .min(self.containers[(n_parents - 1) as usize].contents_indent);
-                        }
+                        line.indent =
+                            remaining_indent + self.containers[n_parents as usize].contents_indent;
                     }
                     self.last_list_item_starts_with_two_blank_lines = false;
                 }
@@ -1071,13 +1066,7 @@ impl Parser<'_> {
             }
 
             // Write accumulated lines to block_bytes
-            // SAFETY: VerbatimLine is POD; reinterpret slice as bytes for serialization
-            let line_bytes: &[u8] = unsafe {
-                core::slice::from_raw_parts(
-                    self.current_block_lines.as_ptr().cast::<u8>(),
-                    self.current_block_lines.len() * size_of::<VerbatimLine>(),
-                )
-            };
+            let line_bytes: &[u8] = bun_core::slice_as_bytes(&self.current_block_lines);
             // The block's lines land in `block_bytes` too (12 bytes per
             // line), not just its header, so this growth needs the same cap.
             parser::check_block_bytes_len(self.block_bytes.len() + line_bytes.len())?;

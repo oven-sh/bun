@@ -1,0 +1,20 @@
+A mock without a factory over a barrel of two stars, behind a mock of the leaf in an earlier test file.
+#### a.test.mjs
+import { test, mock } from "bun:test";
+test("a", async () => { mock.module("./leaf.mjs", () => ({ leaf: "mock leaf", f: () => "mock f", default: "mock default" })); console.log("| CASE a", (await import("./reader.mjs")).read()); });
+#### b.test.mjs
+import { test, vi } from "bun:test";
+test("b", async () => { vi.doMock("./barrel.mjs"); const space = await import("./barrel.mjs"); console.log("| CASE b", typeof space.f, String(space.f()), space.leaf, space.ofBarrel, Object.keys(space).join("+")); });
+#### barrel.mjs
+export * from "./dep.mjs"; export { default } from "./dep.mjs"; export const ofBarrel = "of barrel";
+#### dep.mjs
+export * from "./leaf.mjs"; export { default } from "./leaf.mjs"; export const real = "real";
+#### leaf.mjs
+export const leaf = "real leaf"; export function f() { return "real f"; } export default "real default";
+#### package.json
+{ "name": "p" }
+#### reader.mjs
+import d, { leaf, f, real, ofBarrel } from "./barrel.mjs"; import * as space from "./barrel.mjs"; export const read = () => [d, leaf, f(), real, ofBarrel, Object.keys(space).join("+")].join(",");
+#### z.test.mjs
+import { test } from "bun:test";
+test("z", async () => { console.log("| CASE z", (await import("./reader.mjs")).read()); });

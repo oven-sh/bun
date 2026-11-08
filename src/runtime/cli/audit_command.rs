@@ -11,7 +11,7 @@ use bun_install::audit_fix::{self, Advisory};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::reachable;
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
-use bun_install::package_manager_real::{ROOT_PACKAGE_JSON_PATH, install_with_manager};
+use bun_install::package_manager_real::install_with_manager;
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{
     CommandLineArguments, Dependency, LogLevel, PackageManager, PackageNameHash, Subcommand,
@@ -90,10 +90,12 @@ fn default_registry_href(pm: &PackageManager) -> &[u8] {
 
 fn report_bad_response(registry: &[u8], reason: &SkipReason) {
     Output::err_generic(
-        if matches!(reason, SkipReason::NotAdvisories) {
-            "{f} returned an audit response that is not a list of advisories"
-        } else {
-            "{f} returned a non-JSON audit response"
+        match reason {
+            SkipReason::NotAdvisories => {
+                "invalid audit response from {f}: not a list of advisories"
+            }
+            SkipReason::Empty => "empty audit response from {f}",
+            _ => "{f} returned a non-JSON audit response",
         },
         (bun_core::fmt::redacted_npm_url(registry),),
     );
@@ -208,11 +210,6 @@ impl AuditCommand {
             });
         }
 
-        if response_text.is_empty() {
-            print_no_vulnerabilities(&stats, audit_level);
-            return Ok(0);
-        }
-
         print_enhanced_audit_report(
             &response_text,
             pm,
@@ -257,8 +254,7 @@ impl AuditCommand {
 
         audit_fix::prepare_install(pm, &plan)?;
 
-        // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside `PackageManager::init`; only read thereafter.
-        let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
+        let root_package_json_path = pm.root_package_json_path;
         if let Err(e) = install_with_manager(pm, &mut *ctx, root_package_json_path, original_cwd) {
             InstallCommand::handle_error(crate::Error::from(e))?;
             Global::exit(1);
@@ -268,6 +264,9 @@ impl AuditCommand {
             Global::exit(1);
         }
 
+        // Audit the saved lockfile, which is what the next `bun audit` reads. The copy in memory
+        // can contain a package that was not saved.
+        pm.load_lockfile_from_cwd_or_exit("nothing to audit");
         let reaudit = audit_for_fix(pm, audit_level, ignore_list, false)?;
         if json_output {
             plan.unaudited = reaudit.unaudited;
@@ -378,6 +377,7 @@ struct PackageVersions {
 enum SkipReason {
     Status(u32),
     Send(&'static str),
+    Empty,
     NotJson,
     NotAdvisories,
 }
@@ -387,6 +387,7 @@ impl core::fmt::Display for SkipReason {
         match self {
             SkipReason::Status(status) => write!(f, "{status}"),
             SkipReason::Send(name) => f.write_str(name),
+            SkipReason::Empty => f.write_str("empty response"),
             SkipReason::NotJson => f.write_str("non-JSON response"),
             SkipReason::NotAdvisories => f.write_str("not a list of advisories"),
         }
@@ -585,20 +586,16 @@ fn audit_for_fix(
     let responses = send_audit_requests(pm, &collected, warn, false)?;
     let mut stats = responses.stats;
 
-    let vulnerabilities = if responses.response_text.is_empty() {
-        Vec::new()
-    } else {
-        match collect_vulnerabilities(
-            &responses.response_text,
-            audit_level,
-            ignore_list,
-            &mut stats,
-        )? {
-            Ok(vulnerabilities) => vulnerabilities,
-            Err(reason) => {
-                report_bad_response(default_registry_href(pm), &reason);
-                Global::exit(1);
-            }
+    let vulnerabilities = match collect_vulnerabilities(
+        &responses.response_text,
+        audit_level,
+        ignore_list,
+        &mut stats,
+    )? {
+        Ok(vulnerabilities) => vulnerabilities,
+        Err(reason) => {
+            report_bad_response(default_registry_href(pm), &reason);
+            Global::exit(1);
         }
     };
 
@@ -610,22 +607,15 @@ fn audit_for_fix(
 }
 
 fn is_empty_bulk_body(body: &[u8]) -> bool {
-    let body = body.trim_ascii();
-    body.is_empty()
-        || body
-            .strip_prefix(b"{")
-            .and_then(|rest| rest.strip_suffix(b"}"))
-            .is_some_and(|inner| inner.trim_ascii().is_empty())
+    (body.trim_ascii().strip_prefix(b"{"))
+        .and_then(|rest| rest.strip_suffix(b"}"))
+        .is_some_and(|inner| inner.trim_ascii().is_empty())
 }
 
 fn merge_bulk_bodies(bodies: &[Box<[u8]>]) -> Box<[u8]> {
     let mut non_empty = bodies.iter().filter(|body| !is_empty_bulk_body(body));
     let Some(first) = non_empty.next() else {
-        return bodies
-            .iter()
-            .find(|body| !body.trim_ascii().is_empty())
-            .cloned()
-            .unwrap_or_default();
+        return bodies.first().cloned().unwrap_or_default();
     };
     let Some(second) = non_empty.next() else {
         return first.clone();
@@ -687,13 +677,11 @@ fn send_audit_request(
     );
     // A registry URL that is not http(s) is a configuration error, not a registry without an audit endpoint.
     let mut is_fatal = registry.is_default;
-    let reason = match req.send_sync(&mut response_buf) {
+    // This POST is safe to retry, because it changes nothing on the registry.
+    let reason = match pm.send_with_retries(&mut req, &mut response_buf) {
         Ok(res) if res.status_code() >= 400 => SkipReason::Status(res.status_code()),
         Ok(_) => {
             let response = response_buf.list.as_slice();
-            if response.trim_ascii().is_empty() {
-                return Ok(Ok(Box::<[u8]>::from(response)));
-            }
             // Before the bodies are merged, so that the registry that sent this one is named.
             match collect_vulnerabilities(response, None, &[], &mut AuditStats::default())? {
                 Ok(_) => return Ok(Ok(Box::<[u8]>::from(response))),
@@ -710,7 +698,7 @@ fn send_audit_request(
         return Ok(Err(reason));
     }
     match reason {
-        SkipReason::NotJson | SkipReason::NotAdvisories => {
+        SkipReason::Empty | SkipReason::NotJson | SkipReason::NotAdvisories => {
             if echo_json && matches!(reason, SkipReason::NotAdvisories) {
                 let _ = Output::writer().write_all(response_buf.list.as_slice());
                 let _ = Output::writer().write_all(b"\n");
@@ -909,6 +897,12 @@ fn collect_vulnerabilities(
     ignore_list: &[&[u8]],
     stats: &mut AuditStats,
 ) -> Result<Result<Vec<VulnerabilityInfo>, SkipReason>, bun_alloc::AllocError> {
+    // An empty body (also from a 204 or 304) does not mean "no advisories", even though the parser
+    // would read it as `{}`.
+    if response_text.trim_ascii().is_empty() {
+        return Ok(Err(SkipReason::Empty));
+    }
+
     let source = bun_ast::Source::init_path_string(b"audit-response.json", response_text);
     let mut log = bun_ast::Log::init();
 
@@ -917,7 +911,8 @@ fn collect_vulnerabilities(
         Err(_) => return Ok(Err(SkipReason::NotJson)),
     };
 
-    // The bulk endpoint answers `{ [package name]: Advisory[] }`; anything else is not a clean audit.
+    // The bulk endpoint responds with `{ [package name]: Advisory[] }`. Any other response doesn't
+    // count as a clean audit.
     let ExprData::EObjectJSON(obj) = &parsed.root.data else {
         return Ok(Err(SkipReason::NotAdvisories));
     };

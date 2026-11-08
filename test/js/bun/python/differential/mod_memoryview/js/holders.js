@@ -36,6 +36,9 @@ check("generator", () => { const g = (function* () { const v = py.view(); yield 
 check("spread", () => [...[py.view()]]);
 check("frozen copy-on-write literal", () => Object.freeze([1, 2, py.view()]));
 check("Error cause", () => new Error("e", { cause: py.view() }));
+// Not in strict code: a parameter that has lost its name is still an item of `arguments`.
+check("parameter hidden by its namesake", () => new Function("a", "a", "(() => a); return arguments;")(py.view(), 1));
+check("parameter hidden by a function", () => new Function("a", "b", "function a() {} (() => b); return arguments;")(py.view(), 1));
 // What an object inherits from is reached through its structure.
 check("prototype", () => Object.create({ v: py.view() }));
 check("prototype given later", () => Object.setPrototypeOf({}, { v: py.view() }));

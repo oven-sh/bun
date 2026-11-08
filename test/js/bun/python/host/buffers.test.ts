@@ -1,6 +1,7 @@
 // Bytes: typed arrays, ArrayBuffer, DataView and Buffer in Python; bytes, bytearray and memoryview in JavaScript.
-import { isWindows } from "harness";
-import { program } from "./helpers";
+import { expect } from "bun:test";
+import { isASAN, isDebug, isWindows } from "harness";
+import { program, script } from "./helpers";
 
 const group = program();
 
@@ -1196,3 +1197,205 @@ def waits_for_a_thread():
     ]),
   ],
 );
+// A SharedArrayBuffer, and a file that is mapped twice, change while a function reads them: another thread writes there and asks nobody. So does a
+// bytearray that another thread of Python is having filled, and a bytes of which a raw stream has kept the view it was lent. What reads them reads
+// them once, or has a copy, or does not count on it that a second look finds what the first has found. (Nothing here depends on who is faster: a
+// build that is right passes however the threads fall. The rounds are as few as still end a release build that is not, in one case or another, in
+// ten runs of ten of either program. A debug build is ended by the first program as surely, by the second now and then. Each program runs in two
+// halves, side by side, so that none takes long on a machine that has much else to do.)
+const written = {
+  "race.py": `
+import binascii, marshal, _imp
+
+def function(a, b=1, *c, **d):
+    "Something for marshal to write."
+    return [a + b, c, d, "text", b"bytes", 1.5, (1, 2, 3), {4, 5}, lambda x: x * 2]
+
+same = b"a" * 20000
+pairs = b"ab" * 10000
+code = marshal.dumps(function.__code__)
+# Where the memory is: a SharedArrayBuffer, or a file that both threads have mapped, which to the engine is memory like any other. What is in it to begin with (a number: so many
+# bytes of anything). What the other thread writes there in turn (None: what was there), and where. What reads the memory meanwhile, how often, and what it may raise.
+cases = {
+    "bytes.replace": ("shared", 16, b"a", b"b", 0, 16, lambda u: same.replace(memoryview(u)[:1], b""), 30, ()),
+    "bytes.replace, longer": ("shared", 16, b"a", b"b", 0, 16, lambda u: same.replace(memoryview(u)[:2], b"xyz"), 30, ()),
+    "bytearray.replace": ("shared", 16, b"a", b"b", 0, 16, lambda u: bytearray(same).replace(memoryview(u)[:1], b""), 30, ()),
+    "bytes.replace, a file": ("file", 16, b"a", b"b", 0, 16, lambda u: same.replace(memoryview(u)[:1], b""), 30, ()),
+    "bytes.replace, a file, other places": ("file", 16, b"ab", b"ba", 0, 16, lambda u: pairs.replace(memoryview(u)[:2], b""), 100, ()),
+    "bytes.replace, a file, longer": ("file", 16, b"ab", b"ba", 0, 16, lambda u: pairs.replace(memoryview(u)[:2], b"xyz"), 100, ()),
+    "a2b_ascii85": ("shared", 4096, b"!", b"z", 0, 4096, lambda u: binascii.a2b_ascii85(u), 10000, ("Error", "SystemError")),
+    "a2b_ascii85, foldspaces": ("shared", 4096, b"!", b"y", 0, 4096, lambda u: binascii.a2b_ascii85(u, foldspaces=True), 10000, ("Error", "SystemError")),
+    "marshal.loads": ("shared", code, None, b"\\xff", 40, 300, lambda u: marshal.loads(u), 1000, ("ValueError",)),
+    "get_frozen_object": ("shared", code, None, b"\\xff", 40, 300, lambda u: _imp.get_frozen_object("x", u), 1000, ("ImportError", "ValueError")),
+    "marshal.loads, a float": ("shared", b"f\\xc8" + b"1" * 200, b"1", b"x", 2, 202, lambda u: marshal.loads(u), 1000, ("ValueError",)),
+}
+
+def names():
+    return list(cases)
+
+def setting(name):
+    return cases[name][:6]
+
+# What it raised that it may not raise.
+def read(name, u, share):
+    f, times, expected = cases[name][6:]
+    raised = set()
+    for _ in range(int(times * share)):
+        try:
+            f(u)
+        except Exception as e:
+            raised.add(type(e).__name__)
+    return sorted(raised - set(expected))
+`,
+  "main.mjs": `
+import { Worker } from "node:worker_threads";
+const race = await import("./race.py");
+const share = Number(process.argv[2]);
+for (const name of race.names()) {
+  if (name.includes("replace") !== (process.argv[3] === "replace")) continue;
+  const [where, initial, a, b, from, to] = race.setting(name);
+  const contents = typeof initial === "number" ? new Uint8Array(initial) : new Uint8Array(initial);
+  let u;
+  if (where === "file") {
+    await Bun.write("memory", contents);
+    u = Bun.mmap("memory", { shared: true });
+  } else {
+    u = new Uint8Array(new SharedArrayBuffer(contents.length));
+    u.set(contents);
+  }
+  const worker = new Worker(
+    \`
+    const { workerData: [memory, from, to, a, b] } = require("node:worker_threads");
+    const part = (memory ?? Bun.mmap("memory", { shared: true })).subarray(from, to);
+    const first = a ? part.map((_, i) => a[i % a.length]) : Uint8Array.from(part);
+    const second = Uint8Array.from(part, (_, i) => b[i % b.length]);
+    for (;;) {
+      part.set(second);
+      part.set(first);
+    }\`,
+    { eval: true, workerData: [where === "file" ? null : u, from, to, a && new Uint8Array(a), new Uint8Array(b)] },
+  );
+  // Until the other thread is at it.
+  const second = new Uint8Array(b)[0];
+  while (Atomics.load(u, from) !== second);
+  const raised = race.read(name, u, share);
+  await worker.terminate();
+  console.log(name, String(raised));
+}
+`,
+  "filled.py": `
+import io, os, sys, threading
+
+# A bytearray that another thread of Python is having filled: that waits in os.readinto() without the GIL, and the kernel writes. What is in it to begin with, what is
+# written there, what reads it meanwhile and how often. Nothing may be raised.
+filled = {
+    "bytearray.translate, being filled": (b"a", b"Z", lambda a: a.translate(None, b"a"), 100),
+    "bytearray.expandtabs, being filled": (b"a", b"\\t", lambda a: a.expandtabs(8), 60),
+    "bytearray.replace, being filled": (b"a", b"Z", lambda a: a.replace(b"a", b""), 10),
+    # A bytes, by way of the view that a raw stream was lent and has kept. These may end with a SystemError.
+    "bytes.translate, being filled": (b"a", b"Z", lambda b: b.translate(None, b"a"), 100),
+    "bytes.expandtabs, being filled": (b"a", b"\\t", lambda b: b.expandtabs(8), 60),
+    "bytes.replace, being filled": (b"a", b"Z", lambda b: b.replace(b"a", b""), 10),
+}
+
+class Keeps(io.RawIOBase):
+    def __init__(self, fill):
+        self.fill = fill
+
+    def readable(self):
+        return True
+
+    def readinto(self, view):
+        self.view = view
+        view[:] = self.fill * len(view)
+        return len(view)
+
+def read_filled(name, share):
+    first, second, f, times = filled[name]
+    piece = 65536
+    if name.startswith("bytes."):
+        raw = Keeps(first)
+        read, array = io.BufferedReader(raw, 16).read(16 * piece), raw.view
+    else:
+        read = array = bytearray(first * (16 * piece))
+    r, w = os.pipe()
+    begun, done = threading.Event(), threading.Event()
+    def write():
+        while not done.is_set():
+            os.write(w, second * piece)
+        os.close(w)
+    def fill():
+        while os.readinto(r, array):
+            begun.set()
+            array[:piece] = first * piece
+    threads = [threading.Thread(target=write), threading.Thread(target=fill)]
+    for thread in threads:
+        thread.start()
+    begun.wait()
+    raised = set()
+    for _ in range(max(int(times * share), 1)):
+        try:
+            f(read)
+        except Exception as e:
+            raised.add(type(e).__name__)
+    done.set()
+    for thread in threads:
+        thread.join()
+    os.close(r)
+    return sorted(raised - {"SystemError"} if name.startswith("bytes.") else raised)
+
+for name in filled:
+    if name.startswith(sys.argv[2]):
+        print(name, read_filled(name, float(sys.argv[1])))
+`,
+};
+for (const [title, program, half, printed] of [
+  [
+    "replace() of memory that a thread of JavaScript writes to",
+    "main.mjs",
+    "replace",
+    [
+      "bytes.replace ",
+      "bytes.replace, longer ",
+      "bytearray.replace ",
+      "bytes.replace, a file ",
+      "bytes.replace, a file, other places ",
+      "bytes.replace, a file, longer ",
+    ],
+  ],
+  [
+    "memory that a thread of JavaScript writes to while it is decoded",
+    "main.mjs",
+    "the rest",
+    ["a2b_ascii85 ", "a2b_ascii85, foldspaces ", "marshal.loads ", "get_frozen_object ", "marshal.loads, a float "],
+  ],
+  [
+    "a bytearray that the system fills for another thread of Python while it is read",
+    "filled.py",
+    "bytearray.",
+    [
+      "bytearray.translate, being filled []",
+      "bytearray.expandtabs, being filled []",
+      "bytearray.replace, being filled []",
+    ],
+  ],
+  [
+    "a bytes that the system fills for another thread of Python while it is read",
+    "filled.py",
+    "bytes.",
+    ["bytes.translate, being filled []", "bytes.expandtabs, being filled []", "bytes.replace, being filled []"],
+  ],
+] as const) {
+  script(
+    title,
+    written,
+    ({ stdout, stderr, exitCode }) => {
+      expect(stderr).toBe("");
+      // The name of each case, and what was raised that may not be.
+      expect(stdout.split("\n")).toEqual([...printed, ""]);
+      expect(exitCode).toBe(0);
+    },
+    undefined,
+    [program, isDebug || isASAN ? "0.1" : "1", half],
+  );
+}

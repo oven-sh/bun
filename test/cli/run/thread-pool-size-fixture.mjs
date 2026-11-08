@@ -1,6 +1,7 @@
-// Prints process.env.UV_THREADPOOL_SIZE and how many threads the pool has, once $BUSY_THREADS of them are each in a
-// read. A thread that takes a task first starts the next thread if the pool may have one more, so a pool that may
-// have more than $BUSY_THREADS has more by then. The directory it runs in holds more FIFOs named "fifo.." than that.
+// Prints process.env.UV_THREADPOOL_SIZE, how many threads of the pool are each in a read, and how many threads the
+// pool has, once $BUSY_THREADS of them are in a read. A thread that takes a task first starts the next thread if the
+// pool may have one more, so a pool that may have more than $BUSY_THREADS has more by then. The directory it runs in
+// holds more FIFOs named "fifo.." than that.
 import { closeSync, constants, openSync, promises, readdirSync, readFileSync } from "node:fs";
 
 export async function print() {
@@ -21,8 +22,8 @@ export async function print() {
     return writers;
   };
   const held = [];
-  // A pool with too few threads never gets there: its count is printed after two seconds.
-  const deadline = Date.now() + 2000;
+  // A pool with too few threads never gets there. Half a minute is far more than its threads take to start on a busy machine.
+  const deadline = Date.now() + 30_000;
   while (held.push(...open()) < +process.env.BUSY_THREADS && Date.now() < deadline) Bun.sleepSync(1);
 
   let threads = 0;
@@ -31,7 +32,7 @@ export async function print() {
       if (readFileSync(`/proc/self/task/${tid}/comm`, "utf8").startsWith("Bun Pool")) threads++;
     } catch {}
   }
-  console.log(JSON.stringify({ UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE, threads }));
+  console.log(JSON.stringify({ UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE, busy: held.length, threads }));
 
   held.forEach(closeSync);
   while (unread.size) {

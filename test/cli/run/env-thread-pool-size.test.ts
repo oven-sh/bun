@@ -70,6 +70,6 @@ describe.skipIf(!isLinux)("UV_THREADPOOL_SIZE from an env file sizes the thread 
     ["an empty value is no size", { args: ["--env-file=empty.env", "main.cjs"] }, "", cores],
     ["the env option of a Worker does not size the pool of the process", { args: ["worker.cjs"] }, "2", cores],
   ])("%s", async (_, run, size, threads) => {
-    expect(await pool(threads, run)).toEqual({ UV_THREADPOOL_SIZE: size, threads, exitCode: 0 });
+    expect(await pool(threads, run)).toEqual({ UV_THREADPOOL_SIZE: size, busy: threads, threads, exitCode: 0 });
   });
 });

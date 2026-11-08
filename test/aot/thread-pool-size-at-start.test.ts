@@ -28,7 +28,7 @@ test.skipIf(!isLinux)(
       WTF_numberOfProcessorCores: "4",
       BUSY_THREADS: "3",
     };
-    const expected = { stdout: `{"UV_THREADPOOL_SIZE":"3","threads":3}\n`, stderr: "", exitCode: 0 };
+    const expected = { stdout: `{"UV_THREADPOOL_SIZE":"3","busy":3,"threads":3}\n`, stderr: "", exitCode: 0 };
     expect(await run([bunExe(), "run", "main.mjs"], cwd, env)).toEqual(expected);
     const built = await run(
       [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],

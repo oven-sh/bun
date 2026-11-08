@@ -516,4 +516,26 @@ describe("rmdir with `recursive`", () => {
     }
     assert.deepStrictEqual(fs.readdirSync(dir), ["child.txt"]);
   });
+
+  // rm reads the own keys of its options, so it gets no `recursive` here.
+  test("an inherited `recursive` is no `recursive` for rm, in every form", { skip: !isBun }, async () => {
+    const options = Object.create({ recursive: true });
+    const callback = await viaCallback(cb => rmdir(dir, options, cb));
+    const promise = await rmdirPromise(dir, options).then(
+      () => null,
+      (err: unknown) => err,
+    );
+    let sync: unknown = null;
+    try {
+      rmdirSync(dir, options);
+    } catch (err) {
+      sync = err;
+    }
+    const expected = { code: "ERR_FS_EISDIR", syscall: "rm" };
+    assert.deepStrictEqual(
+      [callback, promise, sync].map(err => pick(err, "code", "syscall")),
+      [expected, expected, expected],
+    );
+    assert.deepStrictEqual(fs.readdirSync(dir), ["child.txt"]);
+  });
 });

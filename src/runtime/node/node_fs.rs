@@ -474,8 +474,7 @@ fn graph_may_answer_for(path: &[u8]) -> bool {
     standalone_module_graph().is_some_and(|graph| graph.may_answer_for(path))
 }
 
-/// What a compiled program holds at a path that the disk has failed `stat` or `lstat` for with `errno`.
-/// `path` is what the system call was given.
+/// What a compiled program holds at `path`, which the disk has failed `stat` or `lstat` for with `errno`.
 fn stat_behind_disk(errno: E, path: &[u8], written: &[u8]) -> Option<sys::Stat> {
     if !graph_may_answer_for(path) && (written == path || !graph_may_answer_for(written)) {
         return None;
@@ -8247,8 +8246,14 @@ impl NodeFS {
             return Ok(());
         }
 
-        // Node's rm() runs lstat() first. Here lstat() runs only when the removal fails.
         let dest = args.path.slice_z(&mut self.sync_error_buf);
+        // Node's rm() runs lstat() first. HFS+ lets unlink() remove a hard link to a directory, so macOS does too.
+        if cfg!(target_os = "macos")
+            && Syscall::lstat(dest).is_ok_and(|stat| sys::S::ISDIR(stat.st_mode as _))
+        {
+            return Err(is_directory());
+        }
+        // Elsewhere unlink() refuses every directory, and lstat() runs only when the removal fails.
         if let Err(err1) = sys::unlink(dest) {
             let e1 = err1.get_errno();
             if rm_target_is_directory(dest, args.path.slice(), e1) {

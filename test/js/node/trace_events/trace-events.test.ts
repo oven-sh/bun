@@ -51,18 +51,26 @@ test("every form of fs.rm emits one balanced lstat span", async () => {
       import fs from "node:fs";
       for (const tree of ["callback", "promise", "sync", "forced"]) fs.mkdirSync(tree + "/a", { recursive: true });
       for (const file of ["file.txt", "sync.txt"]) fs.writeFileSync(file, "");
+      const viaCallback = (...args) => new Promise(resolve => fs.rm(...args, resolve));
+
+      fs.rmSync("sync.txt");
+      fs.accessSync(".");
+      fs.rmSync("sync", { recursive: true });
+      fs.accessSync(".");
+      fs.rmSync("forced", { recursive: true, force: true });
+      fs.accessSync(".");
+
       try {
         fs.rm(123, () => {});
       } catch (err) {
         console.log("threw", err.code);
       }
-      fs.rmSync("sync.txt");
-      fs.rmSync("sync", { recursive: true });
-      fs.rmSync("forced", { recursive: true, force: true });
+      await fs.promises.access(".");
       await fs.promises.rm("promise", { recursive: true });
-      fs.rm("callback", { recursive: true }, first => {
-        fs.rm("file.txt", second => console.log("removed", first ?? second));
-      });
+      await fs.promises.access(".");
+      console.log("removed", await viaCallback("callback", { recursive: true }));
+      await fs.promises.access(".");
+      console.log("removed", await viaCallback("file.txt"));
     `,
   });
   const traceFile = join(String(dir), "node_trace.log");
@@ -84,16 +92,14 @@ test("every form of fs.rm emits one balanced lstat span", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const events = JSON.parse(readFileSync(traceFile, "utf8")).traceEvents;
-  const phases = (name: string) =>
-    events
-      .filter(e => e.name === name)
-      .map(e => e.ph)
-      .sort()
-      .join("");
-  expect({ stdout, async: phases("lstat"), sync: phases("fs.sync.lstat"), exitCode }).toEqual({
-    stdout: "threw ERR_INVALID_ARG_TYPE\nremoved null\n",
-    async: "bbbbeeee",
-    sync: "BBEE",
+  // A call to access() stands between two calls to rm, so "|" closes the spans of one call.
+  const spans = (lstat: string, access: string) =>
+    events.map(e => (e.name === lstat ? e.ph : e.name === access && "Bb".includes(e.ph) ? "|" : "")).join("");
+  const seen = { stdout, async: spans("lstat", "access"), sync: spans("fs.sync.lstat", "fs.sync.access"), exitCode };
+  expect(seen).toEqual({
+    stdout: "threw ERR_INVALID_ARG_TYPE\nremoved null\nremoved null\n",
+    async: "be|be|be|be",
+    sync: "BE|BE||",
     exitCode: 0,
   });
 });

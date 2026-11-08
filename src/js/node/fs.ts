@@ -64,24 +64,17 @@ function ownRmOptions(options) {
   return typeof options === "object" && options !== null ? { ...options } : options;
 }
 
-// Native rm answers EISDIR with the syscall "rm" for a directory that it refuses without `recursive`.
-// Node's error for that is ERR_FS_EISDIR.
+// Native rm answers a directory that it refuses without `recursive` with EISDIR from the syscall "rm".
 function rmError(err, path) {
   if (err?.code !== "EISDIR" || err.syscall !== "rm") return err;
-  return require("internal/fs/cp-sync").fsEisdirError({
-    code: "EISDIR",
-    message: "is a directory",
-    path,
-    syscall: "rm",
-    errno: $processBindingConstants.os.errno.EISDIR,
-  });
+  return require("internal/fs/cp-sync").fsRmEisdirError(path);
 }
 
 // guardCallback for rm without `recursive`: the same closure passes the error through rmError.
 function guardRmCallback(callback: (...args: any[]) => unknown, path) {
-  return function guarded(err?: unknown, value?: unknown) {
+  return function guarded(err?: unknown) {
     try {
-      return err == null ? callback(err, value) : callback(rmError(err, path));
+      return err == null ? callback.$apply(undefined, arguments) : callback(rmError(err, path));
     } catch (e) {
       reportUncaughtException(e);
     }
@@ -144,11 +137,9 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
       callback = options;
       options = undefined;
     }
-    callback = ensureCallback(callback);
-
     // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
-    if (options?.recursive) fs.rmCb(callback, path, ownRmOptions(options));
-    else fs.rmdirCb(callback, path, options);
+    if (options?.recursive) rm(path, options, callback);
+    else fs.rmdirCb(ensureCallback(callback), path, options);
   },
   copyFile = function copyFile(src, dest, mode, callback?) {
     if ($isCallable(mode)) {

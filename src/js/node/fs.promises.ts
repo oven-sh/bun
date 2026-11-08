@@ -405,15 +405,9 @@ const exports = {
     try {
       return await fs.rm(path, options);
     } catch (err: any) {
-      // Native rm answers EISDIR with the syscall "rm" for a directory that it refuses without `recursive`.
+      // Native rm answers a directory that it refuses without `recursive` with EISDIR from the syscall "rm".
       if (err?.code !== "EISDIR" || err.syscall !== "rm") throw err;
-      throw require("internal/fs/cp-sync").fsEisdirError({
-        code: "EISDIR",
-        message: "is a directory",
-        path,
-        syscall: "rm",
-        errno: $processBindingConstants.os.errno.EISDIR,
-      });
+      throw require("internal/fs/cp-sync").fsRmEisdirError(path);
     }
   },
   rmdir: async function rmdir(path, options) {

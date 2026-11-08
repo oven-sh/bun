@@ -273,6 +273,7 @@ describe.skipIf(isWindows)("cluster", () => {
       "port + 2 ** 32": "port",
       "String(port - 65536)": "port",
       "a port that the primary holds": "EADDRINUSE",
+      "1n": "a port that the system picks",
     };
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${JSON.stringify(bound)}\n`, stderr: "", exitCode: 0 });
   });
@@ -412,7 +413,8 @@ describe("bind()", () => {
     });
   });
 
-  test.each(["x", Infinity, -Infinity, 0.5, -0.5, 65536, "65536", 2 ** 53, () => {}])(
+  // 0n is falsy: Node's `port || 0` makes it 0 before the handle reads it. Every other BigInt throws (below).
+  test.each(["x", Infinity, -Infinity, 0.5, -0.5, 65536, "65536", 2 ** 53, () => {}, 0n])(
     "{ port: %p } listens on a port that the system picks",
     async port => {
       // No reuseAddr: a reader that gives this spelling any one port fails the second bind with EADDRINUSE.
@@ -479,11 +481,10 @@ describe("bind()", () => {
       ],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe("uncaughtException: TypeError\n");
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "uncaughtException: TypeError\n", stderr: "", exitCode: 0 });
   });
 });
 

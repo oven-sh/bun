@@ -6,6 +6,8 @@ import cluster from "node:cluster";
 import dgram from "node:dgram";
 
 if (cluster.isPrimary) {
+  // JSON cannot carry the BigInt of the last bind. The structured clone can.
+  cluster.setupPrimary({ serialization: "advanced" });
   // The primary is not a worker: this socket binds here, without reuseAddr.
   const held = dgram.createSocket("udp4");
   await new Promise<void>(resolve => held.bind(0, "127.0.0.1", resolve));
@@ -49,5 +51,8 @@ if (cluster.isPrimary) {
   }
   // A port that another socket holds is an error, not a bind of some other port.
   bound["a port that the primary holds"] = await bind(process.env.HELD_PORT, false);
+  // Node converts this port in the primary and throws there. Here the primary
+  // converts no port that can throw, so nothing that a worker sends ends it.
+  bound["1n"] = typeof (await bind(1n, false)) === "number" ? "a port that the system picks" : "no bind";
   process.send!(JSON.stringify(bound));
 }

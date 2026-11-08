@@ -1,0 +1,20 @@
+# `accounts[i]` tests for the hole itself and gives undefined in its place, so the check of what Link proves of the element does not ask for the empty word again. `byName.get(name)` hands over what lies in the table: its check still asks.
+# f1 = make, f2 = total, f3 = found
+# -- source: the-check-behind-a-read-that-tested-for-the-hole-does-not-ask-for-the-empty-word.ts
+# declare function print(value: unknown): void;
+# interface Account { balance: number }
+# function make(i: number): Account { return { balance: i }; }
+# function total(accounts: Account[]): number { let sum = 0; for (let i = 0; i < accounts.length; i++) sum += accounts[i].balance; return sum; }
+# function found(byName: Map<string, Account>, name: string): number { const account = byName.get(name); return account ? account.balance : -1; }
+# const list: Account[] = [make(1), make(2), make(3)];
+# const table = new Map<string, Account>(); table.set("a", make(4)); table.set("b", make(5));
+# print(total(list)); list[1] = make(20); print(total(list)); print(found(table, "a")); print(found(table, "z"));
+# -- end of source
+# RUN(LIST): walk f2 mechanisms=all
+# LIST-LABEL: code f2:Body
+# LIST: = GetArrayElement
+# LIST-NOT: typeWithoutProof=absent
+# LIST: = CheckProof {{*}} typeWithoutProof=anything source=Contents
+# RUN(TABLE): walk f3 mechanisms=all
+# TABLE-LABEL: code f3:Body
+# TABLE: = CheckProof {{*}} typeWithoutProof=absent|anything source=Contents

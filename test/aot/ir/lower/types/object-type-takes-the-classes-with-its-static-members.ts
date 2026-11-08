@@ -1,8 +1,8 @@
 // RUN: link
 // CHECK: layout [[pair]] module=[[entry]] {{*}}fields=[{key="a"
 // CHECK: layout [[other]] module=[[entry]] {{*}}fields=[{key="b"
-// CHECK: variable {{*}}name="x" module=[[entry]] declared={type=undefined|null|absent|[[pair]]|f{{*}} site=
-// CHECK: variable {{*}}name="y" module=[[entry]] declared={type=undefined|null|absent|[[other]] site=
+// CHECK: variable {{*}}name="x" module=[[entry]] declared={type=undefined|null|absent|[[pair]]|f{{*}}
+// CHECK: variable {{*}}name="y" module=[[entry]] declared={type=undefined|null|absent|[[other]]
 
 // A class with the static members `a` and `f` is a `{ a: number; f(): number }`. A class is a function and has no layout, so the object type lists the class beside its layout. No class has a static `b`.
 class WithStatic {

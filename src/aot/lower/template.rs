@@ -21,7 +21,6 @@ pub(in crate::lower) fn lower_template_literal(
     for substitution in hir.ids(exprs) {
         strings.extend(lowering.emit_cooked_string(parts.next()));
         let value = lowering.lower_expression(substitution);
-        lowering.set_position_to_last_recorded();
         strings.push(lowering.builder.to_string(value));
     }
     strings.extend(lowering.emit_cooked_string(parts.next()));
@@ -42,17 +41,7 @@ pub(in crate::lower) fn lower_tagged_template(
         unreachable!("lower_tagged_template takes a TaggedTemplate expression");
     };
     let site = hir[tagged];
-    // JSC records no position for a tag that it keeps in a register.
-    let tag = lowering.file.skip_type_syntax(site.callee);
-    let leaves_no_record = matches!(hir[tag].kind, ExprKind::Ident(_))
-        && lowering.file.find_printed_in_place(tag).is_none()
-        && lowering.is_kept_in_register(lowering.file.bound.binding(tag));
-    let were_suspended = lowering.builder.suspend_records(true);
-    if !leaves_no_record {
-        lowering.builder.suspend_records(were_suspended);
-    }
     let callee = lowering.lower_callee(site.callee, None, None);
-    lowering.builder.suspend_records(were_suspended);
     let template = hir.template_of(tagged);
     lowering.set_position(hir[template].pos);
     let parts = hir.template_parts(template);

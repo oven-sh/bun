@@ -1,4 +1,6 @@
-use bun_sema::bind::{Bound, CodeUnit, Decl, ScopeId, ScopeKind, SymbolId, is_among_parameters};
+use bun_sema::bind::{
+    Binding, Bound, CodeUnit, Decl, ScopeId, ScopeKind, SymbolId, is_among_parameters,
+};
 use bun_sema::hir::{self, FnKind};
 
 use super::{BindingRef, ScopeSlot};
@@ -26,17 +28,34 @@ pub(super) fn find_container_binding(
     from: ScopeId,
     container: SymbolId,
 ) -> SymbolId {
-    let names_container =
-        |binding: &SymbolId| bound.export_symbol_of_value_symbol_if_exported(*binding) == container;
     let found = scope_chain(bound, from).find_map(|scope| {
-        let binding = match bound.scopes[scope.idx()].kind {
-            ScopeKind::Module(module) => bound.declared_symbol(Decl::Module(module)).some(),
-            ScopeKind::Enum(declaration) => bound.declared_symbol(Decl::Enum(declaration)).some(),
-            _ => None,
+        let declaration = match bound.scopes[scope.idx()].kind {
+            ScopeKind::Module(module) => Decl::Module(module),
+            ScopeKind::Enum(declaration) => Decl::Enum(declaration),
+            _ => return None,
         };
-        binding.filter(names_container)
+        let binding = bound.declared_symbol(declaration).some()?;
+        let names_container = bound.export_symbol_of_value_symbol_if_exported(binding) == container
+            || bound.symbol_of_declaration(declaration) == container;
+        let parameter = bound.container_parameter(scope).some();
+        parameter.filter(|_| names_container)
     });
-    found.unwrap_or(container)
+    found.unwrap_or_else(|| bound.file_binding(container))
+}
+
+pub(super) fn find_binding_looked_for(
+    bound: &Bound<'_>,
+    from: ScopeId,
+    binding: Binding,
+) -> Binding {
+    let Binding::Symbol(symbol) = binding else {
+        return binding;
+    };
+    let container = bound.symbol(symbol).parent.some();
+    match container.filter(|&container| container != bound.file_symbol) {
+        Some(container) => Binding::Symbol(find_container_binding(bound, from, container)),
+        None => binding,
+    }
 }
 
 pub(super) fn scope_chain(bound: &Bound<'_>, from: ScopeId) -> impl Iterator<Item = ScopeId> {
@@ -44,19 +63,15 @@ pub(super) fn scope_chain(bound: &Bound<'_>, from: ScopeId) -> impl Iterator<Ite
     std::iter::successors(from.some(), parent_of)
 }
 
-/// A walk outwards over the objects that hold bindings made at run time.
 #[derive(Copy, Clone)]
 pub(super) struct ScopeObjectSearch {
     pub(super) start: ScopeId,
-    /// The first scope that is not searched.
     pub(super) until: ScopeId,
-    /// The scope of the binding that the name has where no object holds it.
     pub(super) declaring_scope: ScopeId,
-    /// The position of the code that searches.
     pub(super) pos: u32,
+    pub(super) asks_with_objects_alone: bool,
 }
 
-// A function has two objects. The inner one takes the variables of text evaluated in its body, the outer one those of text evaluated among its parameters. The parameters lie between the two.
 pub(super) fn for_each_scope_object(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -68,6 +83,7 @@ pub(super) fn for_each_scope_object(
         let kind = bound.scopes[scope.idx()].kind;
         match kind {
             ScopeKind::With(_) => visit(BindingRef::Slot(scope, ScopeSlot::WithObject)),
+            _ if search.asks_with_objects_alone => {}
             ScopeKind::Fn(function) => {
                 if !is_among_parameters(hir, function, from, search.pos) {
                     visit(BindingRef::Slot(scope, ScopeSlot::EvalVariables));

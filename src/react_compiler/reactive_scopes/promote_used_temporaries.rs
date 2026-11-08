@@ -942,12 +942,17 @@ fn promote_interposed_instruction(
                     consts.insert(property.identifier);
                 }
                 // Not in upstream: this one is a member call too, and a name for its callee takes the `this` away.
+                // A callee that writes, as `f()?.g` does, gets the name: `f()` has to stay in front of the statement.
                 InstructionValue::CallExpression {
                     callee,
                     bun_callee: crate::hir::BunCallee::Reference,
                     ..
                 } => {
-                    consts.insert(callee.identifier);
+                    if inline_temporary(callee, state, inter_state, env)
+                        .is_some_and(|temporary| temporary.effect != Effect::Write)
+                    {
+                        consts.insert(callee.identifier);
+                    }
                 }
                 InstructionValue::PropertyLoad { object, .. }
                 | InstructionValue::ComputedLoad { object, .. } => {

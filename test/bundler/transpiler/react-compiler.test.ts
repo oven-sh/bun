@@ -1476,6 +1476,11 @@ describe("bundler", () => {
     MemberOfRequireOptionalCall: ["return <b>{lib_1.who?.()}</b>;", "lib"],
     MemberOfNamespaceImport: ["return <b>{ns.who()}</b>;", "lib"],
     ParenthesizedOptionalMember: ["return <b>{(api?.who)()}</b>;", "api"],
+    // The callee calls `getApi`. It gets a name, so that call stays in front of the statement that the argument makes.
+    CalleeThatCallsThenArgument: [
+      'const r = (getApi()?.who)((() => { const y = second(n); return y; })()); return <b>{order.splice(0).join(" ") + " " + typeof r}</b>;',
+      "callee argument string",
+    ],
     // The plain build prints this one as `import_lib.who()` (#34733). The compiler leaves an import item that is
     // called as it is to the printer.
     DirectOfNamedImport: ["return <b>{who()}</b>;", "lib"],
@@ -1514,6 +1519,9 @@ describe("bundler", () => {
               const keys = { who: "who" };
               const log = [];
               const g = () => 1;
+              const order = [];
+              const getApi = () => (order.push("callee"), api);
+              const second = value => (order.push("argument"), value);
               const props = { n: 1, own: api, who: api.who };
 
               ${Object.entries(valueCallees)
@@ -1556,6 +1564,13 @@ describe("bundler", () => {
             const out = api.readFile("/out.js");
             // The compiler takes the pattern out of the parameters of each component that it compiles.
             expect(out.includes("({ n, own })")).toBe(!reactCompiler);
+            // One that takes `props` whole keeps its parameter. In client mode each compiled one reads a memo cache.
+            if (reactCompiler && target === "browser") {
+              for (const name of Object.keys(propsCallees)) {
+                const text = out.match(new RegExp(`^function ${name}\\(props\\) \\{\\n[^]*?^\\}`, "m"))?.[0];
+                expect(text).toContain("$[");
+              }
+            }
             // A call of an import is printed as it is written.
             expect(out).not.toMatch(/\(0, \$?use(Memo|Reducer)\)/);
           },
@@ -1634,17 +1649,25 @@ describe("bundler", () => {
   });
 
   // What is left: a member call whose callee gets a name loses its receiver. Each of these prints the second
-  // column without the compiler and `none` with it, for the target browser. Upstream 1.0.0 does the same.
+  // column without the compiler and `none` with it, for the target browser. Upstream 1.0.0 does the same for all
+  // but the last.
   // - `(own?.who)()` is a CallExpression in the HIR, and its callee is a dependency of the scope of the call:
   //   `const t1 = own?.who; ... t1()`.
   // - OptimizePropsMethodCalls makes a call of a value of `props[key]()`, and a computed load is no dependency
   //   path: `const t0 = props[key]; ... t0()`.
   // - A tag has no receiver in the HIR: `const t1 = own[key]; ... t1\`x\``.
+  // - A callee that calls gets a name when an argument makes a statement, so that its call stays in front.
+  //   Upstream 1.0.0 prints `const y = String(n); ... (Object(own)?.who)(y)`: the receiver stays and the order
+  //   does not.
   const memberCalleesThatGetAName: Record<string, CalleeRow> = {
     ParenthesizedOptionalMemberOfProp: ["function C({ n, own }) { return <b>{(own?.who)()}</b>; }", "api"],
     ParenthesizedOptionalIndexOfProp: ['function C({ n, own }) { return <b>{(own?.["who"])()}</b>; }', "api"],
     PropsMethodOfKey: ["function C(props) { return <b>{props[keys.who]()}</b>; }", "props"],
     MemberOfKeyTag: ["function C({ n, own }) { return <b>{own[keys.who]`x`}</b>; }", "api"],
+    MemberOfCallThenStatement: [
+      "function C({ n, own }) { return <b>{(Object(own)?.who)((() => { const y = String(n); return y; })())}</b>; }",
+      "api",
+    ],
   };
   itBundled("react-compiler/MemberCalleeThatGetsANameKeepsThis", {
     todo: true,

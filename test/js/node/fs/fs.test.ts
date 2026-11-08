@@ -3146,6 +3146,14 @@ describe("writeFileSync", () => {
     // open(2) masks the requested mode with the process umask (0o077 on
     // Android/Termux), so the expected value has to account for it.
     expect(stat.mode).toBe(isWindows ? 33206 : 33188 & ~process.umask());
+
+    if (!isWindows) {
+      // 0o644 masked by a 0o022 or 0o077 umask equals the 0o666 default masked
+      // the same way. A read-only mode still differs, so a dropped option fails.
+      const readOnly = `${tmpdirSync()}/writeFileSyncWithReadOnlyMode.txt`;
+      writeFileSync(readOnly, "bun", { mode: 0o444 });
+      expect(fs.statSync(readOnly).mode & 0o777).toBe(0o444 & ~process.umask());
+    }
   });
   it("returning Buffer works", () => {
     const buffer = new Buffer([

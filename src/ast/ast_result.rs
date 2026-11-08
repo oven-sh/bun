@@ -101,8 +101,7 @@ pub struct Ast<'a> {
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     pub has_commonjs_export_names: bool,
     pub has_import_meta: bool,
-    /// The module scope declares a `using` / `await using` that the parser did not lower.
-    /// The bundler reads it in `scope_top_level_using`.
+    /// The module scope has a `using` that the parser did not lower. See `scope_top_level_using`.
     pub has_top_level_using: bool,
     pub import_meta_ref: Ref,
     /// Output depends on more than the source text (macros, `import.meta.glob`), so don't cache it.

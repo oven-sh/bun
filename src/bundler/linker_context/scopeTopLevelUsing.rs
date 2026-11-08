@@ -1,18 +1,4 @@
-//! The parser keeps a top-level `using` as it is written when the target runs it natively. The
-//! resource is disposed when the scope that the linker prints the declaration in ends, and the
-//! binding exists only in that scope.
-//!
-//! An unwrapped file prints into the one scope that all unwrapped files of its chunk share. That
-//! scope ends with the chunk, so such a file gets a scope that ends with the file: its statements,
-//! from the first `using` on, print as one block.
-//!
-//! For a file with an `__esm` wrapper the scope is the closure. Function declarations, values that
-//! run no code, and the namespace object of the file print outside it.
-//!
-//! A binding that a statement outside the scope reads gets a second symbol here. Its declaration
-//! prints as `using inner = binding = value`, and `binding` is declared outside the scope.
-//!
-//! Runs after the part ranges of every chunk are final and before the renamers: it makes symbols.
+//! Scopes a top-level `using` to its module and keeps its binding readable outside. See README.md.
 
 use crate::mal_prelude::*;
 use bun_alloc::Arena as Bump;
@@ -26,8 +12,7 @@ use crate::linker_context_mod::debug;
 use crate::options::Format;
 use crate::{Chunk, IndexInt, LinkerContext, Part, PartRange, WrapKind};
 
-/// A top-level `using` binding that a statement outside its scope reads, to the symbol that its
-/// declaration binds inside the scope.
+/// A top-level `using` binding read outside its scope, to the symbol its declaration binds.
 pub(crate) type ScopedUsingBindings = HashMap<Ref, Ref>;
 
 const NO_PART: u32 = u32::MAX;
@@ -39,8 +24,7 @@ fn is_using_declaration(stmt: &Stmt) -> bool {
 /// Does `stmt` stay at chunk scope when it follows the first `using` of an unwrapped file?
 fn leaves_block(stmt: &Stmt) -> bool {
     match &stmt.data {
-        // A function has its value before any statement runs. A class that runs no code where it
-        // is defined can have it before the block, as it has it before the `__esm` closure.
+        // A function, or a class that runs no code, has its value before any statement runs.
         StmtData::SFunction(_) => true,
         StmtData::SClass(class) => class.class.can_be_moved(),
         // Not a statement of a block.
@@ -49,8 +33,7 @@ fn leaves_block(stmt: &Stmt) -> bool {
     }
 }
 
-/// Does the hoist loop of `generate_code_for_file_in_chunk_js` print `stmt`, or a value in it,
-/// outside the `__esm` closure?
+/// Does the `__esm` hoist loop print `stmt`, or a value in it, outside the closure?
 fn leaves_esm_closure(stmt: &Stmt) -> bool {
     match &stmt.data {
         StmtData::SFunction(_) => true,
@@ -113,8 +96,7 @@ pub(crate) fn scope_top_level_using(
         ast_flags.len()
     ];
     let mut blocks = 0;
-    // A library build also writes the bundle with its types, from the declarations as they are
-    // written: it prints as it did.
+    // A library build writes typed output from the declarations as written: no block.
     if !c.options.is_library {
         for &file in &files_with_using {
             if wraps[file as usize].wrap == WrapKind::None {
@@ -139,8 +121,7 @@ pub(crate) fn scope_top_level_using(
             WrapKind::None if files[file as usize].has_block => {
                 top_level_using_bindings(c, file, &mut read_outside)
             }
-            // An unwrapped file without a block prints as it did. A `__commonJS` closure holds
-            // every statement of its file.
+            // No block, or a `__commonJS` closure that holds every statement: prints as it did.
             WrapKind::None | WrapKind::Cjs => continue,
         }
         files[file as usize].symbols = (symbols.len() as u32, read_outside.len() as u32);
@@ -200,12 +181,7 @@ fn first_using_part(c: &LinkerContext, file: IndexInt) -> u32 {
         .map_or(NO_PART, |index| index as u32)
 }
 
-/// Joins the ranges of each unwrapped file of the chunk, from the range that holds its first
-/// `using` to its last range, into one range. The printer puts a block in that range.
-///
-/// A file that no other file follows keeps its ranges: the scope of the chunk ends where the
-/// file ends. So does a file with a range of another file after its `using`: a block cannot hold
-/// the statements of two ranges.
+/// Joins the ranges of each unwrapped file, from its first `using` to its last range, for one block.
 fn block_files_of_chunk(js: &mut JavaScriptChunk, files: &mut [FileState]) {
     let ranges: &[PartRange] = &js.parts_in_chunk_in_order;
     let mut has_using = false;
@@ -271,8 +247,7 @@ fn top_level_using_bindings(c: &LinkerContext, file: IndexInt, bindings: &mut Ve
     }
 }
 
-/// The top-level `using` bindings of `file` that a statement printed outside its `__esm` closure
-/// reads.
+/// The top-level `using` bindings of `file` that a statement outside its `__esm` closure reads.
 fn using_bindings_read_outside_closure(
     c: &LinkerContext,
     file: IndexInt,
@@ -290,8 +265,7 @@ fn using_bindings_read_outside_closure(
 
     let mut bindings: Vec<Ref> = Vec::new();
     top_level_using_bindings(c, file, &mut bindings);
-    // A direct `eval` can name any binding. The functions that the React Compiler outlines are
-    // in a part of their own, and the part of the component records what they read.
+    // A direct `eval` can name any binding, and a React Compiler part records no reads.
     if c.graph.ast.items_module_scope()[file as usize].contains_direct_eval
         || live_parts().any(|part| part.tag == PartTag::ReactCompiler)
     {
@@ -320,8 +294,7 @@ fn using_bindings_read_outside_closure(
 }
 
 impl LinkerContext<'_> {
-    /// `using res = v` as `using inner = res = v`, for each binding that a statement outside the
-    /// scope reads. `declare_outside` declares `res` there and gives the reference to assign.
+    /// Prints `using res = v` as `using inner = res = v`. `declare_outside` declares `res` there.
     #[cold]
     pub(crate) fn bind_using_inside_scope(
         &self,
@@ -376,8 +349,7 @@ impl LinkerContext<'_> {
         )
     }
 
-    /// Puts the statements of an unwrapped file, from its first top-level `using` on, in a block.
-    /// What the block would hide from the rest of the chunk becomes a `var`.
+    /// Puts the statements from the first top-level `using` on in a block. What it hides becomes a `var`.
     #[cold]
     pub(crate) fn scope_using_in_block(&self, stmts: &mut Vec<Stmt>, bump: &Bump) {
         let Some(first_using) = stmts.iter().position(is_using_declaration) else {

@@ -349,6 +349,25 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    // The echo lists the members of the prototype of a native object. `.not`, `.resolves` and `.rejects` are three of them.
+    test("the echo of an expect() reads none of its modifiers", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        `const { expect } = require("bun:test"); 0`,
+        "const kept = expect(1)",
+        "kept.toBe(1)",
+        ".exit",
+      ]);
+      expect({
+        echo: outputs[1]?.split("\n").filter(line => !line.includes("[Function: ")),
+        others: [outputs[0], outputs[2]],
+      }).toEqual({
+        echo: ["Expect {", "  not: [Getter],", "  rejects: [Getter],", "  resolves: [Getter],", "}"],
+        others: ["0", "undefined"],
+      });
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("special variables", () => {

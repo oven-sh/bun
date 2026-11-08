@@ -1,4 +1,6 @@
-import { describe, expect, it } from "bun:test";
+import { Glob } from "bun";
+import { describe, expect, expectTypeOf, it } from "bun:test";
+import { readFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -9,9 +11,12 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
+import { SocketAddress } from "net";
 import { join } from "path";
 import util from "util";
 import vm from "vm";
+import { ClassType } from "../../../../src/codegen/bindgen-lib-internal.ts";
+import * as expectSchema from "../../../../src/runtime/test_runner/expect.bind.ts";
 it("prototype", () => {
   const prototypes = [
     Request.prototype,
@@ -1493,6 +1498,78 @@ describe("own non-enumerable properties are not printed", () => {
     }
     expect(Bun.inspect(new Foo())).toBe("Foo {\n  field: 1,\n  getter: [Getter],\n  method: [Function: method],\n}");
     expect(Bun.inspect(new TextDecoder())).toContain('encoding: "utf-8"');
+  });
+});
+
+describe("native getters of the prototype", () => {
+  it("are read as data", () => {
+    expect(Bun.inspect(new TextDecoder())).toBe(
+      'TextDecoder {\n  decode: [Function: decode],\n  encoding: "utf-8",\n  fatal: false,\n  ignoreBOM: false,\n}',
+    );
+    // These are not enumerable.
+    expect(Bun.inspect(new SocketAddress({ address: "127.0.0.1", port: 80 }))).toBe(
+      'SocketAddress {\n  address: "127.0.0.1",\n  addrfamily: 2,\n  family: "ipv4",\n  flowlabel: 0,\n  port: 80,\n  toJSON: [Function: toJSON],\n}',
+    );
+  });
+
+  // `expect(1).not` is a step of a chain: to read it changes `expect(1)`, or makes one more object with the same getter.
+  it.each([
+    ["Expect", () => expect(1), ["not", "rejects", "resolves"]],
+    ["ExpectStatic", () => expect.not, ["not", "rejectsTo", "resolvesTo"]],
+    [
+      "ExpectTypeOf",
+      () => expectTypeOf(),
+      [
+        "asserts",
+        "branded",
+        "constructorParameters",
+        "guards",
+        "instance",
+        "items",
+        "not",
+        "parameters",
+        "resolves",
+        "returns",
+        "thisParameter",
+      ],
+    ],
+  ])("one of %s that answers another instance is named and not read", (name, make, getters) => {
+    const value = make();
+    // Depth 0 first: if the walk reads a getter after all, this fails on one line and not on a print that has no end.
+    const shallow = Bun.inspect(value, { depth: 0 });
+    const lines = shallow.split("\n");
+    expect(lines.filter(line => !line.includes("[Function: "))).toEqual([
+      `${name} {`,
+      ...getters.map(getter => `  ${getter}: [Getter],`),
+      "}",
+    ]);
+    let members = 0;
+    for (const _ in value) members++;
+    expect(lines.length).toBe(members + 2);
+    expect(Bun.inspect(value, { depth: 2 })).toBe(shallow);
+    expect(Bun.inspect(value)).toBe(shallow);
+  });
+
+  // The walk that prints an object knows these three classes by name: `hasOnlyChainGetters` in src/jsc/bindings/bindings.cpp.
+  it("no other class declares a `getter: b.self`, and these declare no other getter", () => {
+    const classes = Object.entries(expectSchema).filter(([, type]) => type instanceof ClassType);
+    const chains = classes.filter(([, type]) => type.getters.some(getter => getter.type === type));
+    expect(chains.map(([name]) => name).sort()).toEqual(["Expect", "ExpectStatic", "ExpectTypeOf"]);
+    // The walk asks for the class and not for the name of the getter.
+    expect(
+      chains.flatMap(([name, type]) =>
+        type.getters.filter(getter => getter.type !== type).map(getter => `${name}.${getter.name}`),
+      ),
+    ).toEqual([]);
+
+    const root = join(import.meta.dir, "..", "..", "..", "..");
+    const schemas = Array.from(new Glob("src/**/*.bind.ts").scanSync({ cwd: root }), file =>
+      file.replaceAll("\\", "/"),
+    );
+    expect(schemas.length).toBeGreaterThan(100);
+    expect(schemas.filter(file => /getter:\s*b\.self(?![\w.])/.test(readFileSync(join(root, file), "utf8")))).toEqual([
+      "src/runtime/test_runner/expect.bind.ts",
+    ]);
   });
 });
 

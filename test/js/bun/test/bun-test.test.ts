@@ -128,3 +128,66 @@ test.concurrent("runs the next test after a retried test rejects with a value th
     exitCode: 1,
   });
 });
+
+// console.log prints the members of the prototype of a native object, and the modifiers are three of them.
+test.concurrent("console.log of an expect() reads none of its modifiers", async () => {
+  using dir = tempDir("test-print-expect", {
+    "print.test.js": `
+      import * as bun from "bun:test";
+      import * as vitest from "vitest";
+
+      const outcome = fn => { try { fn(); return "passes"; } catch { return "fails"; } };
+
+      for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+        test(name, () => {
+          const kept = expect(1);
+          console.log(kept);
+          console.log(name, "kept:", outcome(() => kept.toBe(1)), outcome(() => kept.toBe(2)), outcome(() => kept.not.toBe(2)));
+          const negated = expect(1).not;
+          console.log(negated);
+          console.log(name, "negated:", outcome(() => negated.toBe(2)), outcome(() => negated.toBe(1)));
+        });
+
+        test(name + ": a promise is not a string", () => {
+          const promise = Promise.reject(new Error("boom"));
+          promise.catch(() => {});
+          const kept = expect(promise);
+          console.log(kept);
+          kept.toBeString();
+        });
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "print.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const printed = ["Expect {", "  not: [Getter],", "  rejects: [Getter],", "  resolves: [Getter],", "}"];
+  expect({
+    stdout: stdout
+      .split("\n")
+      .slice(1)
+      .filter(line => line && !line.includes("[Function: ")),
+    results: stderr.match(/^\((?:pass|fail)\) .*$/gm)?.map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+    exitCode,
+  }).toEqual({
+    stdout: ["bun", "vitest"].flatMap(name => [
+      ...printed,
+      `${name} kept: passes fails passes`,
+      ...printed,
+      `${name} negated: passes fails`,
+      ...printed,
+    ]),
+    results: [
+      "(pass) bun",
+      "(fail) bun: a promise is not a string",
+      "(pass) vitest",
+      "(fail) vitest: a promise is not a string",
+    ],
+    exitCode: 1,
+  });
+});

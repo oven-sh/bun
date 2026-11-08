@@ -130,14 +130,54 @@ impl Drop for WalkedDir {
     }
 }
 
-pub fn iterate_included_project_tree(
+/// What a walk does at a directory or ignore file it cannot read.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OnUnreadable {
+    /// For `bun pm pack`, which would otherwise pack files that were meant to be left out.
+    Crash,
+    /// For an install, which then keeps the package whole.
+    Stop,
+}
+
+impl OnUnreadable {
+    fn fail(self, crash: impl FnOnce() -> !) -> WalkError {
+        if self == OnUnreadable::Crash {
+            crash();
+        }
+        WalkError::Unreadable
+    }
+}
+
+enum WalkError {
+    Alloc(AllocError),
+    Unreadable,
+}
+
+impl From<AllocError> for WalkError {
+    fn from(err: AllocError) -> Self {
+        WalkError::Alloc(err)
+    }
+}
+
+impl WalkError {
+    /// For a walk with `OnUnreadable::Crash`, which exits instead of returning `Unreadable`.
+    fn into_alloc(self) -> AllocError {
+        match self {
+            WalkError::Alloc(err) => err,
+            WalkError::Unreadable => unreachable!("OnUnreadable::Crash exits instead"),
+        }
+    }
+}
+
+fn walk_included_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
     includes: &[Pattern],
     excludes: &[Pattern],
     root_dir: &Dir,
     log_level: LogLevel,
-) -> Result<(), AllocError> {
+    on_unreadable: OnUnreadable,
+) -> Result<(), WalkError> {
     let mut dirs = vec![DirInfo(Dir::from_fd(root_dir.fd), Box::default(), 1)];
     let mut included_dirs: Vec<DirInfo> = Vec::new();
 
@@ -147,7 +187,7 @@ pub fn iterate_included_project_tree(
         let dir = &dir.0;
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(dir));
-        while let Some(entry) = next_dir_entry(&mut dir_iter, &dir_subpath) {
+        while let Some(entry) = walk_dir_entry(&mut dir_iter, &dir_subpath, on_unreadable)? {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }
@@ -220,7 +260,7 @@ pub fn iterate_included_project_tree(
                 continue;
             }
             // TODO: do not traverse directories whose files a pattern all excludes (`!test/**`)
-            let subdir = open_subdir(dir, entry_name, &entry_subpath);
+            let subdir = walk_subdir(dir, entry_name, &entry_subpath, on_unreadable)?;
             let subdir = DirInfo(subdir, entry_subpath.as_bytes().into(), dir_depth + 1);
             if included {
                 included_dirs.push(subdir);
@@ -232,12 +272,13 @@ pub fn iterate_included_project_tree(
 
     // for each included dir, traverse its entries, exclude any with `negate_no_match`.
     for included_dir_info in included_dirs {
-        iterate_project_tree(
+        walk_project_tree(
             pack_queue,
             bins,
             Some(excludes),
             included_dir_info,
             log_level,
+            on_unreadable,
         )?;
     }
 
@@ -295,21 +336,41 @@ pub fn fail_open_dir(err: crate::Error, subpath: &[u8]) -> ! {
 /// Opens a directory that the walk listed, so every failure is fatal. If it was replaced by a
 /// symlink in the meantime, the symlink isn't followed.
 pub fn open_subdir(dir: &Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
+    try_open_subdir(dir, entry_name)
+        .unwrap_or_else(|err| fail_open_dir(err.into(), entry_subpath.as_bytes()))
+}
+
+fn try_open_subdir(dir: &Dir, entry_name: &[u8]) -> bun_sys::Maybe<Dir> {
     let opts = bun_sys::OpenDirOptions {
         iterate: true,
         // On Windows this would open the link itself instead of failing.
         no_follow: cfg!(not(windows)),
     };
     dir.open_dir(entry_name, opts)
-        .unwrap_or_else(|err| fail_open_dir(err.into(), entry_subpath.as_bytes()))
+}
+
+fn walk_subdir(
+    dir: &Dir,
+    entry_name: &[u8],
+    entry_subpath: &ZStr,
+    on_unreadable: OnUnreadable,
+) -> Result<Dir, WalkError> {
+    try_open_subdir(dir, entry_name).map_err(|err| {
+        on_unreadable.fail(|| fail_open_dir(err.into(), entry_subpath.as_bytes()))
+    })
 }
 
 /// Returns `None` if the directory doesn't exist. If it exists but can't be opened, that's fatal.
 pub fn open_dir_if_present(root_dir: &Dir, subpath: &ZStr) -> Option<Dir> {
+    try_open_dir_if_present(root_dir, subpath)
+        .unwrap_or_else(|err| fail_open_dir(err.into(), subpath.as_bytes()))
+}
+
+fn try_open_dir_if_present(root_dir: &Dir, subpath: &ZStr) -> bun_sys::Maybe<Option<Dir>> {
     match root_dir.open_dir(subpath.as_bytes(), ITERABLE) {
-        Ok(dir) => Some(dir),
-        Err(err) if is_absent(err.get_errno()) => None,
-        Err(err) => fail_open_dir(err.into(), subpath.as_bytes()),
+        Ok(dir) => Ok(Some(dir)),
+        Err(err) if is_absent(err.get_errno()) => Ok(None),
+        Err(err) => Err(err),
     }
 }
 
@@ -319,11 +380,18 @@ pub fn next_dir_entry(
     iter: &mut DirIterator::WrappedIterator,
     dir_subpath: &[u8],
 ) -> Option<DirIterator::IteratorResult> {
+    try_next_dir_entry(iter).unwrap_or_else(|err| fail_read_dir(err, dir_subpath))
+}
+
+fn try_next_dir_entry(
+    iter: &mut DirIterator::WrappedIterator,
+) -> bun_sys::Maybe<Option<DirIterator::IteratorResult>> {
     #[cfg_attr(windows, allow(unused_mut))] // The Windows iterator always knows the kind.
     let mut entry = match iter.next() {
-        Ok(entry) => entry?,
-        Err(err) if err.get_errno() == bun_sys::E::ENOENT => return None,
-        Err(err) => fail_read_dir(err, dir_subpath),
+        Ok(Some(entry)) => entry,
+        Ok(None) => return Ok(None),
+        Err(err) if err.get_errno() == bun_sys::E::ENOENT => return Ok(None),
+        Err(err) => return Err(err),
     };
     #[cfg(not(windows))]
     if entry.kind == bun_sys::FileKind::Unknown {
@@ -331,10 +399,19 @@ pub fn next_dir_entry(
             Ok(stat) => entry.kind = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
             // Removed since it was listed. No walk packs an `Unknown`.
             Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
-            Err(err) => fail_read_dir(err, dir_subpath),
+            Err(err) => return Err(err),
         }
     }
-    Some(entry)
+    Ok(Some(entry))
+}
+
+fn walk_dir_entry(
+    iter: &mut DirIterator::WrappedIterator,
+    dir_subpath: &[u8],
+    on_unreadable: OnUnreadable,
+) -> Result<Option<DirIterator::IteratorResult>, WalkError> {
+    try_next_dir_entry(iter)
+        .map_err(|err| on_unreadable.fail(|| fail_read_dir(err, dir_subpath)))
 }
 
 #[cold]
@@ -368,6 +445,25 @@ pub fn iterate_project_tree(
     root_dir: DirInfo,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
+    walk_project_tree(
+        pack_queue,
+        bins,
+        files_excludes,
+        root_dir,
+        log_level,
+        OnUnreadable::Crash,
+    )
+    .map_err(WalkError::into_alloc)
+}
+
+fn walk_project_tree(
+    pack_queue: &mut PackQueue,
+    bins: &[BinInfo],
+    files_excludes: Option<&[Pattern]>,
+    root_dir: DirInfo,
+    log_level: LogLevel,
+    on_unreadable: OnUnreadable,
+) -> Result<(), WalkError> {
     let root_depth = root_dir.2;
     let mut ignores: Vec<IgnorePatterns> = Vec::new();
 
@@ -392,12 +488,12 @@ pub fn iterate_project_tree(
             ignores.pop();
         }
 
-        if let Some(patterns) = IgnorePatterns::read_from_disk(dir, dir_depth) {
+        if let Some(patterns) = IgnorePatterns::read_from_disk(dir, dir_depth, on_unreadable)? {
             ignores.push(patterns);
         }
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(dir));
-        while let Some(entry) = next_dir_entry(&mut dir_iter, &dir_subpath) {
+        while let Some(entry) = walk_dir_entry(&mut dir_iter, &dir_subpath, on_unreadable)? {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }
@@ -437,7 +533,7 @@ pub fn iterate_project_tree(
                     })?;
                 }
             } else if !is_listed_bin(bins, BinType::Dir, &entry_subpath_) {
-                let subdir = open_subdir(dir, entry_name, &entry_subpath_);
+                let subdir = walk_subdir(dir, entry_name, &entry_subpath_, on_unreadable)?;
                 dirs.push((
                     DirInfo(subdir, entry_subpath_.as_bytes().into(), dir_depth + 1),
                     entries_inherit,
@@ -739,6 +835,25 @@ pub fn published_files(
     bump: &bun_alloc::Arena,
     log_level: LogLevel,
 ) -> Result<(PackQueue, Vec<BinInfo>), AllocError> {
+    select_published_files(
+        root_dir,
+        root_path,
+        json_root,
+        bump,
+        log_level,
+        OnUnreadable::Crash,
+    )
+    .map_err(WalkError::into_alloc)
+}
+
+fn select_published_files(
+    root_dir: &Dir,
+    root_path: &[u8],
+    json_root: &Expr,
+    bump: &bun_alloc::Arena,
+    log_level: LogLevel,
+    on_unreadable: OnUnreadable,
+) -> Result<(PackQueue, Vec<BinInfo>), WalkError> {
     let mut pack_queue = PackQueue::default();
     let bins = get_package_bins(json_root);
 
@@ -751,8 +866,11 @@ pub fn published_files(
                 })?;
             }
             BinType::Dir if kind == bun_sys::FileKind::Directory => {
-                if let Some(bin_dir) = open_dir_if_present(root_dir, &bin.path) {
-                    iterate_project_tree(
+                let bin_dir = try_open_dir_if_present(root_dir, &bin.path).map_err(|err| {
+                    on_unreadable.fail(|| fail_open_dir(err.into(), bin.path.as_bytes()))
+                })?;
+                if let Some(bin_dir) = bin_dir {
+                    walk_project_tree(
                         &mut pack_queue,
                         &[],
                         None,
@@ -764,6 +882,7 @@ pub fn published_files(
                                 .count(),
                         ),
                         log_level,
+                        on_unreadable,
                     )?;
                 }
             }
@@ -772,12 +891,13 @@ pub fn published_files(
     }
 
     let Some(files) = json_root.get(b"files") else {
-        iterate_project_tree(
+        walk_project_tree(
             &mut pack_queue,
             &bins,
             None,
             DirInfo(Dir::from_fd(root_dir.fd), Box::default(), 1),
             log_level,
+            on_unreadable,
         )?;
         return Ok((pack_queue, bins));
     };
@@ -810,13 +930,14 @@ pub fn published_files(
         }
     }
 
-    iterate_included_project_tree(
+    walk_included_project_tree(
         &mut pack_queue,
         &bins,
         &includes,
         &excludes,
         root_dir,
         log_level,
+        on_unreadable,
     )?;
     Ok((pack_queue, bins))
 }
@@ -964,7 +1085,11 @@ impl IgnorePatterns {
     }
 
     /// ignore files are always ignored, don't need to worry about opening or reading twice
-    fn read_from_disk(dir: &Dir, dir_depth: usize) -> Option<IgnorePatterns> {
+    fn read_from_disk(
+        dir: &Dir,
+        dir_depth: usize,
+        on_unreadable: OnUnreadable,
+    ) -> Result<Option<IgnorePatterns>, WalkError> {
         let mut opened: Option<(File, IgnorePatternsKind)> = None;
         for kind in [IgnorePatternsKind::Npmignore, IgnorePatternsKind::Gitignore] {
             match dir.open_file(<&str>::from(kind).as_bytes(), bun_sys::O::RDONLY, 0) {
@@ -973,15 +1098,22 @@ impl IgnorePatterns {
                     break;
                 }
                 Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
-                Err(err) => Self::ignore_file_fail(dir, kind, "open", err),
+                Err(err) => {
+                    return Err(
+                        on_unreadable.fail(|| Self::ignore_file_fail(dir, kind, "open", err))
+                    );
+                }
             }
         }
-        let (ignore_file, ignore_kind) = opened?;
+        let Some((ignore_file, ignore_kind)) = opened else {
+            return Ok(None);
+        };
 
-        let contents = ignore_file
-            .read_to_end()
-            .unwrap_or_else(|err| Self::ignore_file_fail(dir, ignore_kind, "read", err));
+        let read = ignore_file.read_to_end();
         let _ = ignore_file.close();
+        let contents = read.map_err(|err| {
+            on_unreadable.fail(|| Self::ignore_file_fail(dir, ignore_kind, "read", err))
+        })?;
 
         let mut patterns: Vec<Pattern> = Vec::new();
         let mut has_rel_path = false;
@@ -999,12 +1131,12 @@ impl IgnorePatterns {
             patterns.push(parsed);
         }
 
-        (!patterns.is_empty()).then(|| IgnorePatterns {
+        Ok((!patterns.is_empty()).then(|| IgnorePatterns {
             list: patterns.into_boxed_slice(),
             kind: ignore_kind,
             depth: dir_depth,
             has_rel_path,
-        })
+        }))
     }
 }
 
@@ -1059,48 +1191,6 @@ pub fn prune_to_published_files(root_dir: &Dir) -> bun_sys::Maybe<()> {
 /// without such scripts, which the cache already holds pruned.
 pub fn prune_installed_package(root_dir: &Dir) -> bun_sys::Maybe<()> {
     prune(root_dir, true)
-}
-
-/// `published_files` exits on an ignore file it cannot read, which is right for `bun pm pack` but
-/// not for an install, so pruning reads them the same way first and leaves such a package whole.
-fn has_unreadable_ignore_file(dir: &Dir, dir_subpath: &[u8]) -> bool {
-    for kind in [IgnorePatternsKind::Npmignore, IgnorePatternsKind::Gitignore] {
-        match dir.open_file(<&str>::from(kind).as_bytes(), bun_sys::O::RDONLY, 0) {
-            Ok(file) => {
-                let read = file.read_to_end();
-                let _ = file.close();
-                if read.is_err() {
-                    return true;
-                }
-                break;
-            }
-            Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
-            Err(_) => return true,
-        }
-    }
-    let mut subdirs: Vec<Vec<u8>> = Vec::new();
-    let mut iter = DirIterator::iterate(Fd::from_std_dir(dir));
-    while let Some(entry) = next_dir_entry(&mut iter, dir_subpath) {
-        let name = entry.name.slice_u8();
-        if entry.kind == bun_sys::FileKind::Directory && name != b"node_modules" {
-            subdirs.push(name.to_vec());
-        }
-    }
-    subdirs.into_iter().any(|name| {
-        let subpath = [dir_subpath, b"/", &name[..]].concat();
-        dir.open_dir(
-            &name,
-            bun_sys::OpenDirOptions {
-                iterate: true,
-                no_follow: cfg!(not(windows)),
-            },
-        )
-        .is_ok_and(|subdir| {
-            let found = has_unreadable_ignore_file(&subdir, &subpath);
-            subdir.close();
-            found
-        })
-    })
 }
 
 fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> {
@@ -1163,19 +1253,6 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
         }
     }
 
-    let walk_check = root_dir.open_dir(
-        b".",
-        bun_sys::OpenDirOptions {
-            iterate: true,
-            no_follow: false,
-        },
-    )?;
-    let unreadable = has_unreadable_ignore_file(&walk_check, b"");
-    walk_check.close();
-    if unreadable {
-        return Ok(());
-    }
-
     let select_dir = root_dir.open_dir(
         b".",
         bun_sys::OpenDirOptions {
@@ -1183,7 +1260,15 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
             no_follow: false,
         },
     )?;
-    let selected = published_files(&select_dir, root_path, json, bump, LogLevel::Silent);
+    // A package with a directory or ignore file that cannot be read stays whole.
+    let selected = select_published_files(
+        &select_dir,
+        root_path,
+        json,
+        bump,
+        LogLevel::Silent,
+        OnUnreadable::Stop,
+    );
     select_dir.close();
     let Ok((queue, _bins)) = selected else {
         return Ok(());
@@ -1239,10 +1324,11 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
                 .iter()
                 .map(|suffix| [&main[..], suffix].concat())
                 .collect();
-            // `main: "src/index.js"` can be served by `src/index.ts`.
+            // `main: "src/index.js"` can be served by `src/index.ts`, as in the resolver's
+            // `rewritten_file_extensions`.
             const SUBSTITUTES: [(&[u8], &[&[u8]]); 4] = [
-                (b".js", &[b".ts", b".tsx"]),
-                (b".jsx", &[b".tsx"]),
+                (b".js", &[b".ts", b".tsx", b".mts"]),
+                (b".jsx", &[b".ts", b".tsx", b".mts"]),
                 (b".mjs", &[b".mts"]),
                 (b".cjs", &[b".cts"]),
             ];
@@ -1277,7 +1363,7 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
         keep_files.insert(path.to_vec());
     }
 
-    fn is_empty_dir(dir: &Dir, name: &[u8], subpath: &[u8]) -> bool {
+    fn is_empty_dir(dir: &Dir, name: &[u8]) -> bool {
         let Ok(subdir) = dir.open_dir(
             name,
             bun_sys::OpenDirOptions {
@@ -1288,7 +1374,7 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
             return false;
         };
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&subdir));
-        let empty = next_dir_entry(&mut iter, subpath).is_none();
+        let empty = matches!(try_next_dir_entry(&mut iter), Ok(None));
         subdir.close();
         empty
     }
@@ -1303,7 +1389,7 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
         let mut descend: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(dir));
-        while let Some(entry) = next_dir_entry(&mut iter, dir_subpath) {
+        while let Some(entry) = try_next_dir_entry(&mut iter)? {
             let name = entry.name.slice_u8();
             if dir_subpath.is_empty()
                 && (name == b"package.json" || name == b"node_modules" || name == b".bun-tag")
@@ -1321,7 +1407,7 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
                 }
                 bun_sys::FileKind::File if keep_files.contains(&subpath) => {}
                 // An empty folder is what a submodule leaves behind, and it stays.
-                bun_sys::FileKind::Directory if is_empty_dir(dir, name, &subpath) => {}
+                bun_sys::FileKind::Directory if is_empty_dir(dir, name) => {}
                 _ => remove.push(name.to_vec()),
             }
         }
@@ -1358,15 +1444,28 @@ fn prune(root_dir: &Dir, installed_without_scripts: bool) -> bun_sys::Maybe<()> 
 }
 
 /// Applies `prune_to_published_files` to a Git or GitHub cache entry that an older Bun stored
-/// whole. Pruning an entry that is already pruned changes nothing.
+/// whole. Pruning an entry that is already pruned changes nothing. An entry with symlinks, which
+/// older versions checked out as links, stays whole: pruning would remove a link that `main` or a
+/// kept file is reached through.
 pub fn prune_cached_entry(cache_dir: Fd, entry: &[u8]) {
-    let Ok(dir) = Dir::borrow(&cache_dir).open_dir(
-        entry,
-        bun_sys::OpenDirOptions {
-            iterate: true,
-            no_follow: cfg!(not(windows)),
-        },
-    ) else {
+    let open = || {
+        Dir::borrow(&cache_dir).open_dir(
+            entry,
+            bun_sys::OpenDirOptions {
+                iterate: true,
+                no_follow: cfg!(not(windows)),
+            },
+        )
+    };
+    let Ok(check) = open() else {
+        return;
+    };
+    let has_no_links = crate::git_runner::has_no_links(&check);
+    check.close();
+    if !has_no_links {
+        return;
+    }
+    let Ok(dir) = open() else {
         return;
     };
     let _ = prune_to_published_files(&dir);

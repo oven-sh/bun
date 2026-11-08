@@ -1655,6 +1655,35 @@ test.concurrent(
   },
 );
 
+// Older versions of Bun checked symlinks out as links, and `main` can be one.
+test.concurrent.skipIf(isWindows)("a cache entry from an older Bun that has symlinks is not pruned", async () => {
+  using dir = tempDir("git-dep-published-files-cache-link", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "linked-main",
+      files: {
+        "package.json": JSON.stringify({ name: "demo-lib", version: "1.0.0", main: "entry.js", files: ["dist"] }),
+        "dist/b.js": "module.exports = 'b';\n",
+      },
+    },
+  ]);
+  const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#linked-main` });
+  const cache = join(root, "cache");
+  expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+
+  const entry = readdirSync(cache).find(name => name.startsWith("@G@"))!;
+  symlinkSync("dist/b.js", join(cache, entry, "entry.js"));
+  mkdirSync(join(cache, entry, "src"));
+  writeFileSync(join(cache, entry, "src", "a.js"), "a\n");
+  rmSync(join(project, "node_modules"), { recursive: true });
+  const second = await runInstall(project, cache, {});
+  expect(installOutput(second.stdout).at(-1)).toBe("1 package installed");
+  expect(second.exitCode).toBe(0);
+  expect(readdirSync(join(cache, entry)).sort()).toEqual([".bun-tag", "dist", "entry.js", "package.json", "src"]);
+  expect(readFileSync(join(project, "node_modules", "demo-lib", "entry.js"), "utf8")).toBe("module.exports = 'b';\n");
+});
+
 test.concurrent("a git dependency keeps a normalized extensionless TypeScript main that files leaves out", async () => {
   using dir = tempDir("git-dep-published-files-main", {});
   const root = String(dir);
@@ -1682,25 +1711,81 @@ test.concurrent("a git dependency keeps a normalized extensionless TypeScript ma
   ]);
 });
 
+// An ignore file that the selection would read but cannot leaves the package whole. One in a folder
+// that "files" leaves out is never read.
 test.concurrent("a git dependency with a directory named .npmignore installs whole instead of crashing", async () => {
   using dir = tempDir("git-dep-npmignore-dir", {});
   const root = String(dir);
+  const pkg = (extra: object) => JSON.stringify({ name: "demo-lib", version: "1.0.0", ...extra });
   const bare = await makeSharedRepo(root, [
     {
       branch: "ignore-dir",
+      files: { "package.json": pkg({}), "sub/.npmignore/keep.txt": "x\n", "index.js": "module.exports = 1;\n" },
+    },
+    {
+      branch: "nested-node-modules",
       files: {
-        "package.json": JSON.stringify({ name: "demo-lib", version: "1.0.0" }),
-        "sub/.npmignore/keep.txt": "x\n",
+        "package.json": pkg({}),
+        "sub/node_modules/x/.npmignore/keep.txt": "x\n",
         "index.js": "module.exports = 1;\n",
       },
     },
+    {
+      branch: "outside-files",
+      files: { "package.json": pkg({ files: ["dist"] }), "sub/.npmignore/keep.txt": "x\n", "dist/a.js": "a\n" },
+    },
   ]);
-  const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#ignore-dir` });
+  const url = `git+${pathToFileURL(bare)}`;
+
+  const results: Record<string, string[]> = {};
+  for (const branch of ["ignore-dir", "nested-node-modules", "outside-files"]) {
+    const project = writeProject(join(root, branch), { "demo-lib": `${url}#${branch}` });
+    const { stdout, exitCode } = await runInstall(project, join(root, `cache-${branch}`), {});
+    expect(installOutput(stdout).at(-1)).toBe("1 package installed");
+    expect(exitCode).toBe(0);
+    results[branch] = treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag");
+  }
+
+  expect(results).toEqual({
+    "ignore-dir": ["index.js", "package.json", "sub", "sub/.npmignore", "sub/.npmignore/keep.txt"],
+    "nested-node-modules": [
+      "index.js",
+      "package.json",
+      "sub",
+      "sub/node_modules",
+      "sub/node_modules/x",
+      "sub/node_modules/x/.npmignore",
+      "sub/node_modules/x/.npmignore/keep.txt",
+    ],
+    "outside-files": ["dist", "dist/a.js", "package.json"],
+  });
+});
+
+test.concurrent("a git dependency keeps the .mts file behind a .js main that files leaves out", async () => {
+  using dir = tempDir("git-dep-published-files-main-mts", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "mts-main",
+      files: {
+        "package.json": JSON.stringify({ name: "demo-lib", version: "1.0.0", main: "lib/index.js", files: ["dist"] }),
+        "lib/index.mts": "export {};\n",
+        "lib/other.mts": "export {};\n",
+        "dist/b.js": "b\n",
+      },
+    },
+  ]);
+  const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#mts-main` });
   const { stdout, exitCode } = await runInstall(project, join(root, "cache"), {});
   expect(installOutput(stdout).at(-1)).toBe("1 package installed");
   expect(exitCode).toBe(0);
-  expect(treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag")).toContain("index.js");
-  expect(treeOf(join(project, "node_modules", "demo-lib"))).toContain("sub/.npmignore/keep.txt");
+  expect(treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag")).toEqual([
+    "dist",
+    "dist/b.js",
+    "lib",
+    "lib/index.mts",
+    "package.json",
+  ]);
 });
 
 test.concurrent("a git dependency keeps the TypeScript file behind a main with parent segments", async () => {
@@ -1755,6 +1840,7 @@ test.concurrent("a .npmignore file wins over a .gitignore directory in a git dep
   expect(exitCode).toBe(0);
   const tree = treeOf(join(project, "node_modules", "demo-lib"));
   expect(tree).toContain("index.js");
+  expect(tree).toContain("package.json");
   expect(tree).not.toContain("junk.txt");
 });
 

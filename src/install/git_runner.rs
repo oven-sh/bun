@@ -715,7 +715,7 @@ fn is_own_clone(repo: &bun_sys::Dir) -> bool {
 
 /// Returns whether `dir` contains no symlink at any depth. `dir` must be a handle that has not
 /// been listed before, because a listing continues where the previous one on the handle stopped.
-fn has_no_links(dir: &bun_sys::Dir) -> bool {
+pub(crate) fn has_no_links(dir: &bun_sys::Dir) -> bool {
     use bun_sys::{EntryKind, O};
     // The folders still to list, as paths relative to `dir`. This is a work list instead of
     // recursion because folders can be nested arbitrarily deep.

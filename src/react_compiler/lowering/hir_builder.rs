@@ -777,6 +777,10 @@ impl<'h> HirBuilder<'h> {
         self.current.kind
     }
 
+    pub(crate) fn current_block_id(&self) -> BlockId {
+        self.current.id
+    }
+
     pub(crate) fn build(
         mut self,
     ) -> Result<(HIR, HirVec<Instruction>, IndexMap<Ref, IdentifierId>), CompilerError> {

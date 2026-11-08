@@ -863,49 +863,72 @@ describe("bundler", () => {
 
   // `(a?.b)()` calls `b` with `this === a`. The compiler read `a?.b` into a temporary and called the temporary, with no
   // `this`. Where the temporary got no name, the memo block of the call was keyed on `b`, so a second receiver with the
-  // same method got the result of the first. babel-plugin-react-compiler 1.0.0 does both.
+  // same method got the result of the first. babel-plugin-react-compiler 1.0.0 does both. With a statement in an
+  // argument, Bun 1.4.3 and 1.4.4 also did the first where the plugin and Bun 1.4.2 do not, and for every target.
   for (const [mode, options] of [
     ["Browser", { target: "browser", backend: "cli" }],
     ["Bun", { target: "bun", backend: "cli" }],
     ["BunInClientMode", { target: "bun", backend: "api", reactCompilerOutputMode: "client" }],
   ] as const) {
     // The bun target has no memo blocks, unless the build asks for them.
-    const memoized = mode !== "Bun";
-    // Each component, what it renders for the receivers A, A and B, and how often each of those renders calls the method
-    // when a memo block holds the call. A and B have the same method, so a block that is keyed on the method never runs
-    // for B.
-    const rows = [
-      ["Child", "A A B", "1 0 1"],
-      ["Declared", "A A B", "1 0 1"],
-      ["Computed", "A A B", "1 0 1"],
-      ["LongerChain", "A.a A.a B.a", "1 0 1"],
-      ["TwoLinks", "A.a A.a B.a", "1 0 1"],
-      ["ChainOfAMember", "A A B", "1 0 1"],
-      ["Argument", "A1 A1 B1", "1 0 1"],
-      ["TwoParentheses", "A A B", "1 0 1"],
-      ["As", "A A B", "1 0 1"],
-      ["NonNull", "A A B", "1 0 1"],
-      ["NonNullInside", "A A B", "1 0 1"],
-      ["Satisfies", "A A B", "1 0 1"],
-      // The method is read before the arguments run, also when an argument holds a statement.
-      ["StatementInAnArgument", "A1 A1 B1", "1 0 1"],
-      ["ArgumentReplacesTheMethod", "A A B", "1 0 1"],
+    const hasMemoBlocks = mode !== "Bun";
+    // What a component renders for the receivers A, A and B, and how often each of those renders calls the method: in a
+    // build with memo blocks, and in one without. A and B have the same methods, so a memo block that is keyed on the
+    // method never runs for B.
+    const compiled = (rendered: string, calls = "1 0 1"): [string, string] => [
+      `${rendered}, calls ${calls}, memoized`,
+      `${rendered}, calls 1 1 1`,
+    ];
+    const rows: [component: string, withMemoBlocks: string, without: string][] = [
+      ["Child", ...compiled("A A B")],
+      ["Declared", ...compiled("A A B")],
+      ["Computed", ...compiled("A A B")],
+      ["LongerChain", ...compiled("A.a A.a B.a")],
+      ["TwoLinks", ...compiled("A.a A.a B.a")],
+      ["ChainOfAMember", ...compiled("A A B")],
+      ["Argument", ...compiled("A1 A1 B1")],
+      ["TwoParentheses", ...compiled("A A B")],
+      ["As", ...compiled("A A B")],
+      ["NonNull", ...compiled("A A B")],
+      ["NonNullInside", ...compiled("A A B")],
+      ["Satisfies", ...compiled("A A B")],
+      // `(a?.b)(...)` reads the method before the arguments run, also when an argument holds a statement.
+      ["StatementInAnArgument", ...compiled("A1 A1 B1")],
+      ["ArgumentReplacesTheMethod", ...compiled("A A B")],
+      // The object of the callee is a link of the chain, and it is made in the loop.
+      ["InAForIn", ...compiled("A A B")],
+      ["InADoWhile", ...compiled("A A B", "1 1 1")],
+      ["InAWhile", ...compiled("A A B")],
+      ["InAFor", ...compiled("A A B")],
       // A result that is joined to a string has no memo block, as for `api.who() + "!"`.
-      ["Joined", "A! A! B!", "1 1 1"],
-      ["InATernary", "A A B", "1 0 1"],
-      ["InAnArrow", "A A B", "1 0 1"],
-      ["PropsAsReceiver", "props A props A props B", "1 0 1"],
+      ["Joined", ...compiled("A! A! B!", "1 1 1")],
+      ["InATernary", ...compiled("A A B")],
+      ["InAnArrow", ...compiled("A A B")],
+      ["MemoThatListsTheReceiver", ...compiled("A A B")],
+      // The compiler leaves a function as written when it cannot keep a `useMemo` or a `useCallback` as the source has
+      // it: one that lists the method and not the receiver, and one in the arguments. So it does for `api?.who(...)`.
+      ["MemoThatListsTheMethod", "A A B, calls 1 1 1, as written", "A A B, calls 1 1 1"],
+      ["MemoInAnArgument", "A1 A1 B1, calls 1 1 1, as written", "A1 A1 B1, calls 1 1 1"],
+      ["CallbackInAnArgument", "A1 A1 B1, calls 1 1 1, as written", "A1 A1 B1, calls 1 1 1"],
+      // `counter.n++` in the arguments is a statement that the value of the call cannot hold, with or without memo blocks.
+      ["UpdateInAnArgument", "A0 A0 B0, calls 1 1 1, as written", "A0 A0 B0, calls 1 1 1, as written"],
+      // A method of the props object is taken for a function that does not read `this`, so its memo block is keyed on
+      // the method. `(props?.who)()` does what `props.who()` does.
+      ["PropsMember", "props A props A props A, calls 1 0 0, memoized", "props A props A props B, calls 1 1 1"],
+      ["PropsAsReceiver", "props A props A props A, calls 1 0 0, memoized", "props A props A props B, calls 1 1 1"],
       // These three read the method into a value, so they call it with no `this`.
-      ["AfterAComma", "no this no this no this", "1 0 0"],
-      ["InANullishOperand", "no this no this no this", "1 0 0"],
-      ["FromAVariable", "no this no this no this", "1 0 0"],
-      ["OptionalCall", "A A B", "1 0 1"],
-      ["OptionalCallOfAChain", "A A B", "1 0 1"],
-      ["MemberInParentheses", "A A B", "1 0 1"],
+      ["AfterAComma", ...compiled("no this no this no this", "1 0 0")],
+      ["InANullishOperand", ...compiled("no this no this no this", "1 0 0")],
+      ["FromAVariable", ...compiled("no this no this no this", "1 0 0")],
+      ["OptionalCall", ...compiled("A A B")],
+      ["OptionalCallOfAChain", ...compiled("A A B")],
+      ["MemberInParentheses", ...compiled("A A B")],
     ];
     itBundled(`react-compiler/CalleeInParenthesesWithAnOptionalChainKeepsItsReceiver-${mode}`, {
       files: {
         "/entry.tsx": /* tsx */ `
+          import { useCallback, useMemo } from "react";
+
           let calls = 0;
           class Api {
             name: string;
@@ -918,6 +941,10 @@ describe("bundler", () => {
               calls++;
               return (this === undefined ? "no this" : this.name) + suffix;
             }
+          }
+          function who() {
+            calls++;
+            return this === undefined ? "no this" : this.name;
           }
           function other() {
             return "other";
@@ -943,9 +970,62 @@ describe("bundler", () => {
             const copy = { name: api.name, who: api.who };
             return <b>{(copy?.who)((() => { copy.who = other; return ""; })())}</b>;
           }
+          function InAForIn({ api }) {
+            let last;
+            for (const key in { one: 1 }) {
+              const box = { api };
+              last = (box?.api.who)();
+            }
+            return <b>{last}</b>;
+          }
+          function InADoWhile({ api }) {
+            let last;
+            do {
+              const box = { api };
+              last = (box?.api.who)();
+            } while (false);
+            return <b>{last}</b>;
+          }
+          function InAWhile({ api }) {
+            let last;
+            while (true) {
+              const box = { api };
+              last = (box?.api.who)();
+              if (last) break;
+            }
+            return <b>{last}</b>;
+          }
+          function InAFor({ api }) {
+            let last;
+            for (;;) {
+              const box = { api };
+              last = (box?.api.who)();
+              if (last) break;
+            }
+            return <b>{last}</b>;
+          }
           function Joined({ api }) { return <b>{(api?.who)() + "!"}</b>; }
           function InATernary({ api, method }) { return <b>{method ? (api?.who)() : 0}</b>; }
           function InAnArrow({ api }) { const read = () => (api?.who)(); return <b>{read()}</b>; }
+          function MemoThatListsTheReceiver({ api }) {
+            const value = useMemo(() => (api?.who)(), [api]);
+            return <b>{value}</b>;
+          }
+          function MemoThatListsTheMethod({ api }) {
+            const value = useMemo(() => (api?.who)(), [api?.who]);
+            return <b>{value}</b>;
+          }
+          function MemoInAnArgument({ api, n }) {
+            return <b>{(api?.who)(useMemo(() => { if (!n) return 0; return n; }, [n]))}</b>;
+          }
+          function CallbackInAnArgument({ api, n }) {
+            return <b>{(api?.who)(useCallback(() => n, [n])())}</b>;
+          }
+          function UpdateInAnArgument({ api }) {
+            const counter = { n: 0 };
+            return <b>{(api?.who)(counter.n++)}</b>;
+          }
+          function PropsMember(props) { return <b>{props.who()}</b>; }
           function PropsAsReceiver(props) { return <b>{(props?.who)()}</b>; }
 
           function AfterAComma({ api }) { return <b>{(0, api?.who)()}</b>; }
@@ -958,7 +1038,6 @@ describe("bundler", () => {
 
           const propsOf = (name: string) => {
             const api = new Api(name);
-            const who = function () { calls++; return this === undefined ? "no this" : this.name; };
             return { api, box: { api }, method: "who", n: 1, name: "props " + name, who };
           };
           const A = propsOf("A"), B = propsOf("B");
@@ -970,8 +1049,10 @@ describe("bundler", () => {
               rendered.push(Component(props));
               counts.push(calls);
             }
-            const memoized = /\\$\\d*\\[\\d+\\]/.test(String(Component)) ? ", memoized" : "";
-            console.log(Component.name + ": " + rendered.join(" ") + ", calls " + counts.join(" ") + memoized);
+            // A compiled function has a memo cache, or at least its parameter pattern in its body.
+            const text = String(Component);
+            const state = /\\$\\d*\\[\\d+\\]/.test(text) ? ", memoized" : /^function \\w+\\(\\{/.test(text) ? ", as written" : "";
+            console.log(Component.name + ": " + rendered.join(" ") + ", calls " + counts.join(" ") + state);
           }
 
           globalThis.component = "null";
@@ -984,7 +1065,10 @@ describe("bundler", () => {
           console.log("a receiver that is null: " + forNull);
         `,
         "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
-        "/node_modules/react/index.js": ``,
+        "/node_modules/react/index.js": /* js */ `
+          export const useMemo = compute => compute();
+          export const useCallback = callback => callback;
+        `,
         "/node_modules/react/jsx-runtime.js": `export const jsx = (type, props) => props.children, jsxs = jsx;`,
         "/node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => props.children;`,
         // One cache for each component, for all of its renders.
@@ -1002,15 +1086,11 @@ describe("bundler", () => {
       run: {
         stdout: [
           ...rows.map(
-            ([name, rendered, calls]) => `${name}: ${rendered}, calls ${memoized ? calls + ", memoized" : "1 1 1"}`,
+            ([component, withMemoBlocks, without]) => `${component}: ${hasMemoBlocks ? withMemoBlocks : without}`,
           ),
           // The chain is printed inside the call, so the engine decides what a call of `undefined` does.
           "a receiver that is null: threw TypeError",
         ].join("\n"),
-      },
-      onAfterBundle(api) {
-        // Without a memo cache, a function shows that it was compiled in its parameter: the pattern is in the body.
-        if (!memoized) expect(api.readFile("/out.js")).not.toMatch(/function \w+\(\{/);
       },
     });
   }

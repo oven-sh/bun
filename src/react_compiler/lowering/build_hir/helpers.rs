@@ -1353,7 +1353,7 @@ pub(super) fn lower_optional_member_callee_call(
     let place = build_temporary_place(builder, loc);
 
     let sequence_block = builder.try_enter(BlockKind::Sequence, |builder, _block_id| {
-        let (receiver, value) = lower_optional_member_expression_impl(builder, &call.target, None)?;
+        let (receiver, value) = lower_optional_member_callee(builder, &call.target)?;
         // The property of a `MethodCall` always gets a scope, with the range of the instruction that makes it.
         // No instruction makes the chain's value: two blocks store it. So this loads it, which
         // `lower_value_to_temporary` does not do for a temporary.
@@ -1408,6 +1408,55 @@ pub(super) fn lower_optional_member_callee_call(
         continuation_block,
     );
     Ok(InstructionValue::LoadLocal { place, loc })
+}
+
+/// The object and the value of the callee of `(a?.b)()`, for a use after the chain: both are set on the path where
+/// the chain goes on and on the path where it stops.
+fn lower_optional_member_callee(
+    builder: &mut HirBuilder,
+    callee: &Expr,
+) -> Result<(Place, Place), CompilerError> {
+    if optional_chain_of(member_object(callee)).is_none() {
+        // The object is lowered before the chain can stop.
+        return lower_optional_member_expression_impl(builder, callee, None);
+    }
+    // The object is a link of the chain, as `a?.b` is in `(a?.b.c)()`. Its place is stored only where the chain
+    // goes on. So the block for where the chain stops is made here, and stores `undefined` into it too.
+    let alternate = builder.reserve(BlockKind::Value);
+    let (object, value) =
+        lower_optional_member_expression_impl(builder, callee, Some(alternate.id))?;
+    let continuation_id = builder.current_block_id();
+    let loc = value.loc;
+    builder.try_enter_reserved(alternate, |builder| {
+        let undefined = lower_value_to_temporary(
+            builder,
+            InstructionValue::Primitive {
+                value: PrimitiveValue::Undefined,
+                loc,
+            },
+        )?;
+        for place in [&value, &object] {
+            lower_value_to_temporary(
+                builder,
+                InstructionValue::StoreLocal {
+                    lvalue: LValue {
+                        kind: InstructionKind::Const,
+                        place: place.clone(),
+                    },
+                    value: undefined.clone(),
+                    type_annotation: None,
+                    loc,
+                },
+            )?;
+        }
+        Ok(Terminal::Goto {
+            block: continuation_id,
+            variant: GotoVariant::Break,
+            id: EvaluationOrder(0),
+            loc,
+        })
+    })?;
+    Ok((object, value))
 }
 
 fn lower_optional_call_expression_impl(

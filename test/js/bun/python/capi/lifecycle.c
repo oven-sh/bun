@@ -442,6 +442,26 @@ PyObject *new_node_untracked(long id)
     return object;
 }
 
+/* An instance of the type (a Stubborn) that only C has seen, and that it lets go of at once. It holds itself, or a list that holds it. */
+long drop_one_that_holds_itself(PyObject *type, long id, long through_a_list)
+{
+    PyObject *object = ((allocfunc)PyType_GetSlot((PyTypeObject *)type, Py_tp_alloc))((PyTypeObject *)type, 0);
+    if (!object)
+        return -1;
+    node_of(object)->id = id;
+    /* Either way the reference that tp_alloc returned goes into the ring. */
+    if (!through_a_list) {
+        node_of(object)->first = object;
+        return 0;
+    }
+    PyObject *list = PyList_New(1);
+    if (!list)
+        return -1;
+    PyList_SetItem(list, 0, object);
+    node_of(object)->first = list;
+    return 0;
+}
+
 void track(PyObject *object) { PyObject_GC_Track(object); }
 long is_tracked(PyObject *object) { return PyObject_GC_IsTracked(object); }
 PyObject *type_by_c(PyObject *object) { return Py_NewRef((PyObject *)Py_TYPE(object)); }

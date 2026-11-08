@@ -307,9 +307,8 @@ print(take_events(), count(gc.get_objects()))
 
 print("== a tp_clear that lets go of nothing is called once, and gc.collect() comes to an end")
 Stubborn = declare("make_stubborn_type", py_object)()
+# (C makes it, and nobody else has ever had it: what ctypes makes of an argument may lie about for a while.)
+drop_one_that_holds_itself = declare("drop_one_that_holds_itself", c_long, py_object, c_long, c_long)
 for through_a_list in (True, False):
-    stubborn = Stubborn()
-    set_id(stubborn, 30)
-    set_first(stubborn, [stubborn] if through_a_list else stubborn)
-    del stubborn
+    drop_one_that_holds_itself(Stubborn, 30, through_a_list)
     print(*(gc.collect() and None or take_events() for _ in range(3)))

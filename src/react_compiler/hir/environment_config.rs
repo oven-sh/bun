@@ -103,9 +103,7 @@ pub struct EnvironmentConfig {
     /// `React.useMemo` is React's if `React` is imported from React, under whatever name. To upstream it is if the name
     /// is `React`, wherever that comes from.
     pub react_is_known_by_its_module: bool,
-    /// `(a?.b)()` calls `b` as a method of `a`, with `this === a`. To upstream it is a call of the value of `a?.b`,
-    /// with no `this`. `bun lint` turns this off until the compilers in oxlint and in eslint-plugin-react-hooks lower
-    /// it as a method call too: what they report depends on it.
+    /// `(a?.b)()` is a method call of `a`. Upstream calls a value, so `bun lint` has this off until its linters change.
     pub optional_member_callees_keep_their_receiver: bool,
     /// For `validate_exhaustive_*_dependencies`: the dependencies that are inferred are in the order of their bytes.
     /// Upstream's are in that of `localeCompare`: `a`, `A`, `b`.

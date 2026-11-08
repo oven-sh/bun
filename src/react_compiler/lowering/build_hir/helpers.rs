@@ -1337,11 +1337,7 @@ pub(super) fn lower_optional_call_expression(
     lower_optional_call_expression_impl(builder, expr, None)
 }
 
-/// Unlike upstream: `(a?.b)(args)` calls `b` with `this === a`. Upstream reads `a?.b` into a value and calls that.
-/// The chain, the arguments and the call are one value block. A memo block that holds the call then holds the
-/// chain too, so the chain has no name and prints inside the call.
-///
-/// Not inlined: what calls it calls itself along the source.
+/// Unlike upstream, `(a?.b)(args)` is a `MethodCall` of `a`, in one value block with the chain and the arguments.
 #[inline(never)]
 pub(super) fn lower_optional_member_callee_call(
     builder: &mut HirBuilder,
@@ -1354,9 +1350,7 @@ pub(super) fn lower_optional_member_callee_call(
 
     let sequence_block = builder.try_enter(BlockKind::Sequence, |builder, _block_id| {
         let (receiver, value) = lower_optional_member_callee(builder, &call.target)?;
-        // The property of a `MethodCall` always gets a scope, with the range of the instruction that makes it.
-        // No instruction makes the chain's value: two blocks store it. So this loads it, which
-        // `lower_value_to_temporary` does not do for a temporary.
+        // The property of a `MethodCall` gets a scope from the instruction that makes it: here, this load.
         let property = build_temporary_place(builder, value.loc);
         builder.push(Instruction {
             id: EvaluationOrder(0),
@@ -1410,8 +1404,7 @@ pub(super) fn lower_optional_member_callee_call(
     Ok(InstructionValue::LoadLocal { place, loc })
 }
 
-/// The object and the value of the callee of `(a?.b)()`, for a use after the chain: both are set on the path where
-/// the chain goes on and on the path where it stops.
+/// The object and the value of the callee of `(a?.b)()`, both set where the chain goes on and where it stops.
 fn lower_optional_member_callee(
     builder: &mut HirBuilder,
     callee: &Expr,
@@ -1420,8 +1413,7 @@ fn lower_optional_member_callee(
         // The object is lowered before the chain can stop.
         return lower_optional_member_expression_impl(builder, callee, None);
     }
-    // The object is a link of the chain, as `a?.b` is in `(a?.b.c)()`. Its place is stored only where the chain
-    // goes on. So the block for where the chain stops is made here, and stores `undefined` into it too.
+    // The object is a link of the chain (`a?.b` in `(a?.b.c)()`), so only this block stores it where the chain stops.
     let alternate = builder.reserve(BlockKind::Value);
     let (object, value) =
         lower_optional_member_expression_impl(builder, callee, Some(alternate.id))?;

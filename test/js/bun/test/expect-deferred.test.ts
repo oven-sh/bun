@@ -2114,9 +2114,9 @@ describe.concurrent("expect.poll()", () => {
         import * as vitest from "vitest";
         // "TypeError" is the one that toHaveProperty() throws for undefined in Vitest, and no other.
         const ofMatcher = error => error instanceof TypeError && error.message.includes("expects to receive a valid object");
-        const outcome = error => (ofMatcher(error) ? "TypeError" : "fails");
-        const direct = call => { try { call(); return "passes"; } catch (error) { return outcome(error); } };
-        const settle = matcher => matcher.then(() => "passes", outcome);
+        const outcome = error => [ofMatcher(error) ? "TypeError" : "fails", error.message];
+        const direct = call => { try { call(); return ["passes"]; } catch (error) { return outcome(error); } };
+        const settle = matcher => matcher.then(() => ["passes"], outcome);
         for (const [module, { expect, test }] of Object.entries({ vitest, bun })) {
           test(module, async () => {
             const poll = value => expect.poll(() => value, { interval: 1, timeout: 50 });
@@ -2127,13 +2127,16 @@ describe.concurrent("expect.poll()", () => {
               '.not.toMatchObject({ a: 1 }) on "text"': [direct(() => expect("text").not.toMatchObject({ a: 1 })), poll("text").not.toMatchObject({ a: 1 })],
               'toEqual(["a", undefined]) on ["a"]': [direct(() => expect(["a"]).toEqual(["a", undefined])), poll(["a"]).toEqual(["a", undefined])],
             };
-            for (const [rule, [called, polled]] of Object.entries(rules)) {
-              console.log(module + ": " + rule + ": " + called + ", polled: " + (await settle(polled)));
+            for (const [rule, [[called, message], polling]] of Object.entries(rules)) {
+              const [polled, messageOfPolled] = await settle(polling);
+              // A polled matcher that fails rejects with the error of the matcher.
+              const same = messageOfPolled === message ? "" : ", with another message";
+              console.log(module + ": " + rule + ": " + called + ", polled: " + polled + same);
             }
             // This matcher waits for the promise, and then runs again.
             const later = () => ({ "a.b": Promise.resolve().then(() => 1) });
             const waited = expect.poll(later, { interval: 1, timeout: 50 }).toHaveProperty("a.b", expect.resolvesTo.any(Number));
-            console.log(module + ": a matcher that waits for a promise, polled: " + (await settle(waited)));
+            console.log(module + ": a matcher that waits for a promise, polled: " + (await settle(waited))[0]);
           });
         }
       `,
@@ -2161,32 +2164,39 @@ describe.concurrent("expect.poll()", () => {
         import { describe, expect, test } from "vitest";
         // "TypeError" is the one that toHaveProperty() throws for undefined in Vitest, and no other.
         const ofMatcher = error => error instanceof TypeError && error.message.includes("expects to receive a valid object");
-        const outcome = error => (ofMatcher(error) ? "TypeError" : "fails");
-        const called = call => { try { call(); return "passes"; } catch (error) { return outcome(error); } };
-        const settle = matcher => matcher.then(() => "passes", outcome);
-        // A TypeError in Vitest. It passes in Jest.
-        const both = async expect => [
-          called(() => expect(undefined).not.toHaveProperty("a")),
-          await settle(expect.poll(() => undefined, { interval: 1, timeout: 50 }).not.toHaveProperty("a")),
-        ];
+        const outcome = error => [ofMatcher(error) ? "TypeError" : "fails", error.message];
+        const called = call => { try { call(); return ["passes"]; } catch (error) { return outcome(error); } };
+        const settle = matcher => matcher.then(() => ["passes"], outcome);
+        const options = { interval: 1, timeout: 50 };
+        // Two matchers. Vitest: a TypeError, and it passes. Jest: it passes, and it fails.
+        const both = async expect => {
+          const ofExpect = [called(() => expect(undefined).not.toHaveProperty("a")), called(() => expect("abc1").toContain(1))];
+          const ofPoll = [
+            await settle(expect.poll(() => undefined, options).not.toHaveProperty("a")),
+            await settle(expect.poll(() => "abc1", options).toContain(1)),
+          ];
+          // A polled matcher that fails rejects with the error of the matcher.
+          const same = ofPoll.every(([, message], i) => message === ofExpect[i][1]) ? "" : ", with another message";
+          return ofExpect.map(([how]) => how).join(" and ") + ", polled: " + ofPoll.map(([how]) => how).join(" and ") + same;
+        };
         test("serial", async ({ expect: ofContext }) => {
-          console.log("serial test, expect of its context: " + (await both(ofContext)).join(", polled: "));
+          console.log("serial test, expect of its context: " + (await both(ofContext)));
         });
         describe.concurrent("one group", () => {
           test("first", async ({ expect: ofContext }) => {
             await 1;
-            console.log("concurrent test, expect of its context: " + (await both(ofContext)).join(", polled: "));
+            console.log("concurrent test, expect of its context: " + (await both(ofContext)));
             // The runner can't tell which of the two tests calls the expect of the module, so that one follows Jest.
-            console.log("concurrent test, expect of the module: " + (await both(expect)).join(", polled: "));
+            console.log("concurrent test, expect of the module: " + (await both(expect)));
           });
           test("second", async () => { await 1; });
         });
       `,
     });
     expect(stdout).toEqual([
-      "serial test, expect of its context: TypeError, polled: TypeError",
-      "concurrent test, expect of its context: TypeError, polled: TypeError",
-      "concurrent test, expect of the module: passes, polled: passes",
+      "serial test, expect of its context: TypeError and passes, polled: TypeError and passes",
+      "concurrent test, expect of its context: TypeError and passes, polled: TypeError and passes",
+      "concurrent test, expect of the module: passes and fails, polled: passes and fails",
     ]);
     expect(exitCode).toBe(0);
   });

@@ -685,3 +685,186 @@ def again_and_again():
       ["u = array()\na = Bytes.from_buffer_copy(u)\ntransferred(u), a[0]", "((65536, 0), 17)"],
     ],
   );
+
+// A type written in C++ gives its memory without running code of the program, in a view that nothing else has. What a class has as __buffer__ may be any function written in C++.
+held(
+  "whose __buffer__() it is, and whether to ask for a buffer runs code",
+  {
+    setup: `
+import collections, gc, typing, warnings
+from array import array as Array
+from node import crypto
+def views_of(exporter):
+    found = []
+    for o in gc.get_objects():
+        try:
+            if type(o) is memoryview and o.obj is exporter: found.append(o)
+        except ValueError: pass
+    return found
+def a_buffer_method_of_another_type():
+    b = bytearray(b"ab"); view = memoryview(b)
+    class Gets(dict): __buffer__ = dict.get
+    struct.unpack_from("<B", Gets({flags: view for flags in range(0x400)}))
+    return bytes(view), [found is view for found in views_of(b)]
+def twice_the_same_and_not_the_same():
+    "b''.join() asks each item for its bytes twice, if that runs no code of the program. dict.get() calls the __eq__() of a key."
+    asked = []
+    class Key:
+        def __init__(self, answers): self.answers = answers
+        def __hash__(self): return 0
+        def __eq__(self, other): return bool(asked) and self.answers()
+    class Gets(dict): __buffer__ = dict.get
+    def once_only():
+        asked.append(None)
+        return len(asked) == 2
+    gets = Gets({Key(once_only): memoryview(b"a"), Key(lambda: True): memoryview(b"b" * 64)})
+    asked.append(None)
+    return b"".join([gets, b""])
+def times_code_runs_in_join(make):
+    "An item that runs code when it is asked for its bytes is asked once: the code may make another item longer."
+    calls = []; item = make(lambda: calls.append(None))
+    return b"".join([item, b"o", memoryview(b"")]), len(calls)
+def in_a_pickle_buffer(called):
+    class Told(bytearray):
+        def __release_buffer__(self, view): called()
+    return pickle.PickleBuffer(Told(b"x"))
+def a_type_written_in_C_that_is_given_methods():
+    calls = []
+    def buffer(self, flags):
+        calls.append("get")
+        return memoryview(b"x")
+    struct.error.__buffer__ = buffer
+    struct.error.__release_buffer__ = lambda self, view: calls.append("release")
+    try:
+        joined = b"".join([struct.error(), b"o"])
+        try: struct.pack_into("<B", struct.error(), 0, 1)
+        except TypeError as error: return joined, calls, str(error).split(",")[0]
+    finally: del struct.error.__buffer__, struct.error.__release_buffer__
+def a_method_written_in_C_that_calls_the_program(view):
+    "typing.Generic.__class_getitem__() returns what a function of typing.py returns."
+    class Generic(typing.Generic[typing.TypeVar("T")]): pass
+    before = typing._generic_class_getitem; said = None
+    typing.Generic.__buffer__ = typing.Generic.__dict__["__class_getitem__"]
+    typing._generic_class_getitem = lambda cls, flags: view
+    try: struct.pack_into("<2s", Generic(), 0, b"ZZ")
+    except TypeError as error: said = str(error).split(",")[0]
+    finally:
+        typing._generic_class_getitem = before
+        del typing.Generic.__buffer__
+    return bytes(view), said
+def behind_the_back_of_a_type():
+    "mappingproxy | x hands the namespace itself to x.__ror__()."
+    class Door:
+        def __ror__(self, namespace): return namespace
+    namespace = collections.defaultdict.__dict__ | Door()
+    constant = bytes(4); said = None
+    namespace["__buffer__"] = dict.get
+    try:
+        class Gets(collections.defaultdict): pass
+        struct.pack_into("<2s", Gets(None, {flags: memoryview(constant) for flags in range(0x400)}), 0, b"ZZ")
+    except TypeError as error: said = str(error).split(",")[0]
+    finally: del namespace["__buffer__"]
+    return constant, said
+def the_host_takes(*objects):
+    "Where it has begun its work, what runs code of the program when it is asked for its memory is no buffer."
+    def takes(o):
+        try: return bool(crypto.createHash("md5").update(o))
+        except TypeError: return False
+    return [takes(o) for o in objects]
+class Plain(bytearray): pass
+class Told(bytearray):
+    def __release_buffer__(self, view): pass
+class Gets(dict): __buffer__ = dict.get
+class Key:
+    "In the namespace of a class. It is asked whether it equals a name that is looked for, if it hashes like that."
+    asked = 0
+    def __init__(self, name): self.name = name
+    def __hash__(self): return hash(self.name)
+    def __eq__(self, other):
+        Key.asked += 1
+        return False
+def keys_are_asked(use):
+    # A class of its own each time: what a key has answered may be remembered.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        o = type("HasSuchKeys", (bytearray,), {Key("__buffer__"): 1, Key("__release_buffer__"): 2})(b"x")
+    Key.asked = 0
+    return use(o), Key.asked
+def resized_after_a_view_was_dropped(o):
+    def drops(): memoryview(o)
+    drops(); o.extend(b"y")
+    return bytes(o)
+def behind_the_back_of_ctypes():
+    "A function of ctypes has the __buffer__() of all data of ctypes, not what is found under that name."
+    class Door:
+        def __ror__(self, namespace): return namespace
+    namespace = ctypes.Structure.__mro__[1].__dict__ | Door()
+    calls = []; before = namespace["__buffer__"]
+    def buffer(self, flags):
+        calls.append(flags)
+        return memoryview(b"")
+    namespace["__buffer__"] = buffer
+    try: return len(bytes(ctypes.CFUNCTYPE(None)(lambda: None))) == ctypes.sizeof(ctypes.c_void_p), calls
+    finally: namespace["__buffer__"] = before
+class Gives:
+    def __buffer__(self, flags): return memoryview(b"a")
+def first_of_very_many(*firsts):
+    "Twelve million buffers of 192 bytes are more than a vector takes."
+    items = [b"a"] * 12_000_000; said = []
+    for items[0] in firsts:
+        try: said.append(len(b"".join(items)))
+        except MemoryError: said.append("MemoryError")
+    return said
+`,
+  },
+  [
+    ["a_buffer_method_of_another_type()", "(b'ab', [True])"],
+    ["twice_the_same_and_not_the_same()", "b'a'"],
+    ["times_code_runs_in_join(in_a_pickle_buffer)", "(b'xo', 1)"],
+    [
+      "a_type_written_in_C_that_is_given_methods()",
+      "(b'xo', ['get', 'release', 'get'], 'pack_into() argument 2 must be read-write bytes-like object')",
+    ],
+    ...["memoryview(bytes(4))", "memoryview(bytearray(4))[::-1]"].map((view): [string, string] => [
+      `a_method_written_in_C_that_calls_the_program(${view})`,
+      "(b'\\x00\\x00\\x00\\x00', 'pack_into() argument 2 must be read-write bytes-like object')",
+    ]),
+    [
+      "behind_the_back_of_a_type()",
+      "(b'\\x00\\x00\\x00\\x00', 'pack_into() argument 2 must be read-write bytes-like object')",
+    ],
+    [
+      "the_host_takes(b'x', bytearray(b'x'), Plain(b'x'), Array('B', b'x'), memoryview(Told(b'x')), pickle.PickleBuffer(Plain(b'x')), (ctypes.c_char * 1)())",
+      "[True, True, True, True, True, True, True]",
+    ],
+    [
+      "the_host_takes(Told(b'x'), pickle.PickleBuffer(Told(b'x')), pickle.PickleBuffer(pickle.PickleBuffer(Told(b'x'))), Gets({flags: memoryview(b'x') for flags in range(0x400)}))",
+      "[False, False, False, False]",
+    ],
+    ["behind_the_back_of_ctypes()", "(True, [])"],
+    // A key that is no str is not asked.
+    ...[
+      ["lambda o: b''.join([o, b'o'])", "b'xo'"],
+      ["lambda o: struct.unpack_from('<B', o)", "(120,)"],
+      ["lambda o: bytes(memoryview(o))", "b'x'"],
+      ["lambda o: bytes(pickle.PickleBuffer(o))", "b'x'"],
+      ["resized_after_a_view_was_dropped", "b'xy'"],
+      ["lambda o: the_host_takes(o, pickle.PickleBuffer(o))", "[True, True]"],
+    ].map(([use, result]): [string, string] => [`keys_are_asked(${use})`, `(${result}, 0)`]),
+    // Memory that another thread can make longer between two looks at it. The host looks once.
+    [
+      "shared = js.SharedArrayBuffer(1, maxByteLength=2)\nthe_host_takes(*map(pickle.PickleBuffer, (shared, js.Uint8Array(shared), js.DataView(shared), js.Uint8Array(shared, 0, 1), js.Uint8Array(js.SharedArrayBuffer(1)), js.Uint8Array(js.ArrayBuffer(1, maxByteLength=2)))))",
+      "[True, True, True, True, True, True]",
+    ],
+    [
+      "u = js.Uint8Array(js.SharedArrayBuffer(2, maxByteLength=4)).fill(0x61)\nb'-'.join([u, b'b', u, memoryview(u)])",
+      "b'aa-b-aa-aa'",
+    ],
+    // join() looks once as well, and holds a buffer of each item, as where an item runs code. By this it shows: there is no room for so many. (CPython joins
+    // them: DEFERRED.md, bytes.join() of very many items.)
+    [
+      "shared = js.SharedArrayBuffer(1, maxByteLength=2)\nfirst_of_very_many(js.Uint8Array(shared), pickle.PickleBuffer(shared), Gives())",
+      "['MemoryError', 'MemoryError', 'MemoryError']",
+    ],
+  ],
+);

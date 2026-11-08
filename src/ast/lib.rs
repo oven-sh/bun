@@ -704,10 +704,11 @@ impl Location {
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
             let mut line_text_start_column = 0;
-            // The key that marks a secret can be far from the error, so a redacted line is not cut at its end.
-            let is_too_long = full_line.len() > MAX_WHOLE_LINE_LEN && !redact_sensitive_information;
+            let is_too_long = full_line.len() > MAX_WHOLE_LINE_LEN;
             // An error in the last 80 bytes of a shorter line keeps the whole line: bake's overlay pads by `column`.
-            if is_too_long || full_line.len() > EXCERPT_LEN_AFTER + offset_in_line {
+            let has_more_after = full_line.len() > EXCERPT_LEN_AFTER + offset_in_line;
+            // The key that marks a secret can be far from the error, so a redacted line is never cut.
+            if !redact_sensitive_information && (is_too_long || has_more_after) {
                 let kept = excerpt_range(full_line, offset_in_line);
                 if kept.start > 0 {
                     // Same counter as `column_count`, over the kept bytes only.
@@ -3441,6 +3442,15 @@ mod excerpt_tests {
         let mut line = vec![b'a'; 1000];
         line.push(b']');
         assert_eq!(kept(&located(&line, 1000, true)), (&line[..], 0));
+    }
+
+    #[test]
+    fn a_redacted_line_is_not_cut_around_a_mid_line_error() {
+        let line = [&[b'a'; 150][..], b"]", &[b'b'; 150]].concat();
+        assert_eq!(kept(&located(&line, 150, true)), (&line[..], 0));
+        // The same error at the start of a line of more than 1,000 bytes.
+        let long = [&b"]"[..], &[b'b'; 1200]].concat();
+        assert_eq!(kept(&located(&long, 0, true)), (&long[..], 0));
     }
 
     #[test]

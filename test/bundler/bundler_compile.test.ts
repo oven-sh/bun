@@ -2061,7 +2061,7 @@ describe("compile warns for a native addon that the executable loads from disk",
 
   test("CMakeLists.txt with build/, nested under another package", async () => {
     const nested = Object.fromEntries(
-      Object.entries(cmakeaddon).map(([file, text]) => [join("node_modules", "outer", file), text]),
+      Object.entries(cmakeaddon).map(([file, text]) => ["node_modules/outer/" + file, text]),
     );
     using dir = tempDir("compile-addon-cmake", {
       ...nested,

@@ -1,13 +1,11 @@
 // RUN(BASE): lower
 // BASE-LABEL: function {{*}}name="ReturnsValue" {{*}}kind=BaseConstructor
 // BASE: [[allocated]] = NewObject {{*}}layout=[[layout]] @
-// BASE-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]] flags=[IsFromCompiler]}
+// BASE-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]]}
 // BASE: [[isObject]] = TypeTest {{*}}testedType=object
-// BASE-NEXT: Branch [[isObject]] -> taken [[object]](| 0), notTaken [[other]](| 0)
+// BASE-NEXT: Branch [[isObject]] -> taken [[object]](| 0), notTaken [[join]]([[this]])
 // BASE: [[object]]([[result]]):
 // BASE-NEXT: Jump -> next [[join]]([[result]])
-// BASE: [[other]]({{*}}):
-// BASE-NEXT: Jump -> next [[join]]([[this]])
 // BASE-NOT: TypeTest
 // BASE-LABEL: function {{*}}name="FallsOff" {{*}}kind=BaseConstructor
 // BASE: [[undefined]] = Undefined

@@ -1,0 +1,11 @@
+jest.mock() of a CommonJS file beside a __mocks__ folder, and the first load is a written require().
+#### package.json
+{ "name": "mock-folder-require" }
+#### src/__mocks__/old.cjs
+exports.who = "manual old";
+#### src/old.cjs
+exports.who = "real old";
+#### written.test.ts
+import { jest, test } from "bun:test";
+jest.mock("./src/old.cjs");
+test("a written require()", () => console.error("| CASE", require("./src/old.cjs").who));

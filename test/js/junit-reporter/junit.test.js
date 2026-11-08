@@ -908,7 +908,7 @@ describe("junit reporter", () => {
 
     // Runs `bun test` on `files`, once for each list of arguments in `runs`. For each run, `cases` has, for each
     // file, each <testcase>: its name and, for each failure element, the attributes and the first line of each error
-    // in its text. `counted` is the N of the console's "N errors".
+    // in its text. `counted` is the N of the console's "N errors", and `stderr` is the console.
     async function reports(files, runs, env = {}) {
       await using tmpDir = tempDir("junit-aggregate", { "package.json": "{}", ...files });
       // A ResolveMessage names the importer by its path.
@@ -943,7 +943,7 @@ describe("junit reporter", () => {
               ),
             }));
           }
-          return { xml, cases, counted: Number(/^ *(\d+) errors?$/m.exec(stderr)?.[1] ?? 0), exitCode };
+          return { xml, cases, stderr, counted: Number(/^ *(\d+) errors?$/m.exec(stderr)?.[1] ?? 0), exitCode };
         }),
       );
     }
@@ -984,7 +984,11 @@ describe("junit reporter", () => {
       });
       expect(serial.xml).toContain("two-errors.test.js:1:7");
       expect({ counted: serial.counted, exitCode: serial.exitCode }).toEqual({ counted: 5, exitCode: 1 });
-      expect(parallel).toEqual(serial);
+      expect({ xml: parallel.xml, counted: parallel.counted, exitCode: parallel.exitCode }).toEqual({
+        xml: serial.xml,
+        counted: 5,
+        exitCode: 1,
+      });
     });
 
     it("is one failed test case with every error when a rejection or reportError() has it", async () => {
@@ -1159,16 +1163,12 @@ describe("junit reporter", () => {
       };
       // Without JSC's own limit of 5 MB, the recursion takes the whole stack of the thread.
       const env = { BUN_JSC_maxPerThreadStackUsage: String(2 ** 30) };
-      const [{ xml, cases, counted, exitCode }] = await reports(files, [[]], env);
-      expect(cases["deep.test.js"]).toEqual([
-        { name: "(unhandled error)", failure: [expect.anything()] },
-        { name: "runs" },
-      ]);
-      // Where the printer gave up the failure has no detail, and where it did not, that of the TypeError.
-      expect([
-        { type: "Error", errors: [] },
-        { type: "TypeError", message: "deep", errors: ["TypeError: deep"] },
-      ]).toContainEqual(cases["deep.test.js"][0].failure[0]);
+      const [{ xml, cases, stderr, counted, exitCode }] = await reports(files, [[]], env);
+      // The failure has what the console has: no detail where the printer gave up, and the TypeError where it did not.
+      const failure = stderr.includes("TypeError: deep")
+        ? { type: "TypeError", message: "deep", errors: ["TypeError: deep"] }
+        : { type: "Error", errors: [] };
+      expect(cases["deep.test.js"]).toEqual([{ name: "(unhandled error)", failure: [failure] }, { name: "runs" }]);
       expect(xml).toContain(
         '<testsuite name="deep.test.js" file="deep.test.js" tests="2" assertions="0" failures="1" skipped="0">',
       );

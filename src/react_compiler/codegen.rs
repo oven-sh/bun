@@ -96,7 +96,7 @@ enum WellKnown {
     Underscore,
     MemoCacheSentinel,
     EarlyReturnSentinel,
-    Reflect,
+    Function,
 }
 
 impl WellKnown {
@@ -2325,8 +2325,9 @@ fn codegen_base_instruction_value(
 // =============================================================================
 
 /// Not in upstream: the call of a method that PromoteUsedTemporaries read ahead of a statement, as
-/// `Reflect.apply(method, receiver, [...args])`. `method.call(receiver, ...args)` reads `call` of the method,
-/// which a member call does not: a proxy or a method with a `call` of its own answers that read.
+/// `Function.prototype.call.call(method, receiver, ...args)`. `method.call(receiver, ...args)` reads `call` of the
+/// method, which a member call does not: a proxy or a method with a `call` of its own answers that read.
+/// `Reflect.apply(method, receiver, [...args])` makes an array for each call, and JavaScriptCore does not inline it.
 fn codegen_explicit_receiver_call(
     cx: &mut Context,
     method: Expr,
@@ -2334,19 +2335,19 @@ fn codegen_explicit_receiver_call(
     args: &[PlaceOrSpread],
     loc: Loc,
 ) -> Result<Expr, CompilerError> {
-    let reflect = cx.cg.well_known_global(WellKnown::Reflect, b"Reflect");
+    let function = cx.cg.well_known_global(WellKnown::Function, b"Function");
     // `find_symbol` of the host sees what the file and the body of the function declare, not a nested block.
     let is_global = cx
         .cg
         .host
         .symbols()
-        .get(reflect.inner_index() as usize)
+        .get(function.inner_index() as usize)
         .is_some_and(|symbol| symbol.kind == bun_ast::symbol::Kind::Unbound)
         && !cx.env.identifiers.iter().any(|identifier| {
             identifier
                 .name
                 .as_ref()
-                .is_some_and(|name| name.value() == b"Reflect")
+                .is_some_and(|name| name.value() == b"Function")
         });
     if !is_global {
         return Err(method_call_property_err(receiver.loc, method));
@@ -2362,29 +2363,28 @@ fn codegen_explicit_receiver_call(
         };
         cx.cg.host.record_usage(local.ref_);
     }
-    let arguments = Expr::init(
-        E::Array {
-            items: codegen_arguments(cx, args)?,
-            ..Default::default()
-        },
-        loc,
-    );
-    let mut apply_args: ExprNodeList = AstAlloc::vec_with_capacity(3);
-    apply_args.push(method);
-    apply_args.push(this_value);
-    apply_args.push(arguments);
+    let mut call_args: ExprNodeList = AstAlloc::vec_with_capacity(args.len() + 2);
+    call_args.push(method);
+    call_args.push(this_value);
+    for arg in args {
+        call_args.push(codegen_argument(cx, arg)?);
+    }
+    let mut target = Expr::init_identifier(function, loc);
+    for name in [b"prototype".as_slice(), b"call", b"call"] {
+        target = Expr::init(
+            E::Dot {
+                target,
+                name: StoreStr::new(name),
+                name_loc: loc,
+                ..Default::default()
+            },
+            loc,
+        );
+    }
     Ok(Expr::init(
         E::Call {
-            target: Expr::init(
-                E::Dot {
-                    target: Expr::init_identifier(reflect, loc),
-                    name: StoreStr::new(b"apply"),
-                    name_loc: loc,
-                    ..Default::default()
-                },
-                loc,
-            ),
-            args: apply_args,
+            target,
+            args: call_args,
             ..Default::default()
         },
         loc,

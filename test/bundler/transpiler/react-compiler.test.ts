@@ -4290,7 +4290,7 @@ describe("bundler", () => {
         // The names of the temporaries are normalized.
         expect(
           functions
-            .filter(({ body }) => !body.includes("Reflect.apply("))
+            .filter(({ body }) => !body.includes("Function.prototype.call.call("))
             .map(({ name, body }) => {
               const call = body.match(/\b(?:items|out)\.push\(t\d+\)|\bfns\[t\d+\]\(t\d+\)|\bt\d+\.who\(""\)/);
               return name + ": " + call?.[0].replace(/\bt\d+\b/g, "t");
@@ -4339,9 +4339,9 @@ describe("bundler", () => {
     });
   }
 
-  // The call with the receiver given is `Reflect.apply(method, receiver, [...])`.
-  // A function that can see another `Reflect` is left as it is written.
-  itBundled("react-compiler/MethodReadAheadOfAStatementNeedsTheGlobalReflect", {
+  // The call with the receiver given is `Function.prototype.call.call(method, receiver, ...)`.
+  // A function that can see another `Function` is left as it is written.
+  itBundled("react-compiler/MethodReadAheadOfAStatementNeedsTheGlobalFunction", {
     files: {
       "/entry.jsx": /* jsx */ `
         import { ShadowedInTheFile } from "./shadowed";
@@ -4353,29 +4353,29 @@ describe("bundler", () => {
           return this.name + ":new";
         }
         function ShadowedInTheBody(p) {
-          const Reflect = { apply: () => "the Reflect of the body" };
+          const Function = { prototype: { call: { call: () => "the Function of the body" } } };
           const o = { name: p.name, who };
-          return <div>{o.who((() => { o.who = other; return ""; })()) + " " + typeof Reflect}</div>;
+          return <div>{o.who((() => { o.who = other; return ""; })()) + " " + typeof Function}</div>;
         }
         function ShadowedInABlock(p) {
           const o = { name: p.name, who };
           let out = "";
           if (p.name) {
-            const Reflect = { apply: () => "the Reflect of the block" };
-            out = o.who((() => { o.who = other; return ""; })()) + " " + typeof Reflect;
+            const Function = { prototype: { call: { call: () => "the Function of the block" } } };
+            out = o.who((() => { o.who = other; return ""; })()) + " " + typeof Function;
           }
           return <div>{out}</div>;
         }
         function UsesTheGlobal(p) {
           const o = { name: p.name, who };
-          return <div>{o.who((() => { o.who = other; return ""; })()) + " " + Reflect.ownKeys(o)}</div>;
+          return <div>{o.who((() => { o.who = other; return ""; })()) + " " + typeof Function}</div>;
         }
         for (const Form of [ShadowedInTheFile, ShadowedInTheBody, ShadowedInABlock, UsesTheGlobal]) {
           console.log(Form.name + "=" + Form({ name: "A" }).props.children);
         }
       `,
       "/shadowed.jsx": /* jsx */ `
-        const Reflect = { apply: () => "the Reflect of the file" };
+        const Function = { prototype: { call: { call: () => "the Function of the file" } } };
         function who() {
           return this.name + ":old";
         }
@@ -4384,7 +4384,7 @@ describe("bundler", () => {
         }
         export function ShadowedInTheFile(p) {
           const o = { name: p.name, who };
-          return <div>{o.who((() => { o.who = other; return ""; })()) + " " + typeof Reflect.apply}</div>;
+          return <div>{o.who((() => { o.who = other; return ""; })()) + " " + typeof Function}</div>;
         }
       `,
       "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
@@ -4408,10 +4408,10 @@ describe("bundler", () => {
     },
     run: {
       stdout: `
-        ShadowedInTheFile=A:old function
+        ShadowedInTheFile=A:old object
         ShadowedInTheBody=A:old object
         ShadowedInABlock=A:old object
-        UsesTheGlobal=A:old name,who
+        UsesTheGlobal=A:old function
       `,
     },
   });

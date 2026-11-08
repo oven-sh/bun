@@ -339,6 +339,14 @@ test.concurrent.each([
   ],
   ["a DataView", (bytes: Uint8Array<ArrayBuffer>) => new DataView(bytes.buffer)],
   ["a Uint16Array", (bytes: Uint8Array<ArrayBuffer>) => new Uint16Array(bytes.buffer)],
+  [
+    "a part of a larger buffer",
+    (bytes: Uint8Array<ArrayBuffer>) => {
+      const larger = new Uint8Array(bytes.length + 8).fill(0x61);
+      larger.set(bytes, 4);
+      return larger.subarray(4, 4 + bytes.length);
+    },
+  ],
 ])("a password and a hash can be %s", async (_, wrap) => {
   const bytesOf = (text: string) => wrap(new TextEncoder().encode(text)) as Bun.StringOrBuffer;
   const options = { algorithm: "bcrypt", cost: 4 } as const;
@@ -350,6 +358,35 @@ test.concurrent.each([
     other: await password.verify(bytesOf("abce"), hashed),
     sync: password.verifySync(bytesOf("abcd"), bytesOf(password.hashSync(bytesOf("abcd"), options))),
   }).toEqual({ string: true, password: true, hash: true, other: false, sync: true });
+});
+
+test.concurrent("verifySync() takes a hash in memory that another thread is writing", async () => {
+  const script = `
+    const { Worker } = require("node:worker_threads");
+    // Of a version that is refused, so that each call only parses.
+    const text = "$argon2id$v=18$m=8,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA";
+    const hash = new Uint8Array(new SharedArrayBuffer(text.length));
+    hash.set(Buffer.from(text));
+    new Worker(
+      \`const hash = require("node:worker_threads").workerData;
+        for (;;) {
+          hash[10] = 0x80;
+          hash[10] = 0x76;
+        }\`,
+      { eval: true, workerData: hash },
+    );
+    while (Atomics.load(hash, 10) !== 0x80);
+    for (let i = 0; i < ${isDebug ? 1000 : 5000}; i++) {
+      try {
+        Bun.password.verifySync("password", hash);
+      } catch {}
+    }
+    console.log("done");
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "done\n", exitCode: 0 });
 });
 
 test.concurrent("bcrypt uses the SHA-512 of passwords longer than 72 characters", async () => {

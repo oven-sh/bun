@@ -1,4 +1,3 @@
-// Alone: what an executable leaves out goes by all that it holds
 const Module = require("node:module");
 const path = require("node:path");
 const original = Module._resolveFilename;

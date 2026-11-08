@@ -16,7 +16,7 @@ export const Blob = b.class({
   rustTraits: ["crate::webcore::blob::BlobExt"],
   estimatedSize: true,
   types: [table.viewType("Blob"), table.viewType("bun.BunFile"), table.exactType("$Bindgen.Blob")],
-  lockedObjects: ["prototype"],
+  lockedMembers: ["prototype"],
   construct: { args: { parts: b.any, options: b.any }, ...js, length: 0 },
   internalFields: ["stream"],
   proto: {
@@ -29,7 +29,14 @@ export const Blob = b.class({
     image: { ...js, args: { options: b.any }, returns: b.any.returning("Image"), passThis: true, length: 0 },
     json: { ...method, typedResultForm: { form: "ParsedBody", source: "this" } },
     lastModified: { getter: b.f64 },
-    name: { getter: b.any.returning("string", "undefined", "null"), setter: true, cache: true, passThis: true, ...js },
+    /** `file.name = new String("a")` keeps the object. */
+    name: {
+      getter: b.any.returning("string", "String", "undefined", "null"),
+      setter: true,
+      cache: true,
+      passThis: true,
+      ...js,
+    },
     size: { getter: b.f64 },
     slice: {
       ...js,

@@ -52,7 +52,7 @@ const needTheCli = [
   ["--help", "-h"],
   ["--help", "-bh"],
   ["--aot", "--aot"],
-  ["--aot-log-type-mismatches", "--aot-log-type-mismatches"],
+  ["--aot-allow-code-from-disk", "--aot-allow-code-from-disk"],
   ["--help", "--smol --title=-h --help"],
 ];
 const needAFeature = [...needEveryRuntimeFeature, ...needTheCli];

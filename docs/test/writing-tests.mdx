@@ -404,7 +404,7 @@ Use these specifiers to format the test title:
 | `%$`       | Number of the test case (index + 1) |
 | `%%`       | Single percent sign (%)             |
 
-Each specifier accepts any value and converts it the way `util.format` does. For example, `%s` prints `1` for `1` and `null` for `null`. Objects and arrays are printed on one line.
+Each specifier accepts any value and converts it the way `util.format` does. For example, `%s` prints `1` for `1` and `null` for `null`. Objects and arrays are printed on one line. An array shows at most 100 items: an array of the numbers 0 to 119 ends with `98, 99, ... 20 more items ]`. `%j` prints every item.
 
 When a row is an object, `$name` and `$user.name` print its properties, and `$#` prints the test case's index. If the row has no `name` property, `$name` is left as is.
 
@@ -496,7 +496,7 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | --------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------- |
 | Test or hook callback's parameter                         | a `done` callback that Bun waits for | the [test context](#test-context)                                    |
 | `test.each` callback's extra parameter                    | a `done` callback                    | `undefined`                                                          |
-| Values in a `test.each` title                             | printed in full: `{ a: "x" }`        | printed as in Vitest: `{ a: 'x' }`, `[ 0, 1, …(118) ]`               |
+| Values in a `test.each` title                             | Bun's format: `{ a: "x" }`           | printed as in Vitest: `{ a: 'x' }`, `[ 0, 1, …(118) ]`               |
 | `beforeAll` and `afterAll` callback parameters            | `(done)`                             | `({}, suite)`                                                        |
 | `afterEach` and `afterAll` hooks in the same scope        | run in registration order            | run in reverse registration order                                    |
 | Function returned by `beforeEach` or `beforeAll`          | ignored                              | runs after the matching `afterEach` / `afterAll` hooks               |

@@ -343,11 +343,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut flags = prop.flags;
         flags.insert(Flags::Property::IsMethod);
-        // The source has nothing of the pair but its name, so nothing else of it has a position.
-        let getter = self.accessor_getter(AccessorStorage::Private(storage), bun_ast::Loc::EMPTY);
-        let setter = self.accessor_setter(AccessorStorage::Private(storage), bun_ast::Loc::EMPTY);
+        // The source has nothing of the pair, so nothing of it has a position: no line of the file runs when it is called.
+        let loc = bun_ast::Loc::EMPTY;
+        let ref_ = accessor.ref_;
+        let name = self.new_expr(E::PrivateIdentifier { ref_ }, loc);
+        let getter = self.accessor_getter(AccessorStorage::Private(storage), loc);
+        let setter = self.accessor_setter(AccessorStorage::Private(storage), loc);
         [(PropertyKind::Get, getter), (PropertyKind::Set, setter)].map(|(kind, value)| Property {
-            key: Some(key),
+            key: Some(name),
             value: Some(value),
             kind,
             flags,

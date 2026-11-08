@@ -1197,6 +1197,211 @@ console.log(finish().join());
   expect(exitCode).toBe(0);
 });
 
+// What the collections of gc.collect() find, and those of the main thread as it ends, is for the caller to make. The thread that made the objects is not told, though the finalizers let go of the GIL, or
+// really wait: to start a thread is to wait for an event. It sits in recv(), where it does not look for garbage by itself, as it would in a wait for another thread: so it comes only if it is told.
+// (In CPython the thread that drops an object finalizes it: so this is not among the tests that are compared with it.)
+for (const where of ["gc.collect()", "the end of the main thread"]) {
+  for (const [what, how] of [
+    ["200 objects", "do nothing else"],
+    ["200 objects", "write"],
+    ["200 objects", "sleep"],
+    ["200 objects", "start a thread"],
+    ["a chain of 200", "read a file"],
+    ["a cycle of 200", "read a file"],
+    ["one object", "do nothing else"],
+  ]) {
+    if (what === "a cycle of 200" && where !== "gc.collect()") continue; // Cyclic garbage is not finalized before the callbacks of atexit, as in CPython.
+    it(`${where} makes the calls that are owed by a thread that sits in a system call: ${what}, whose finalizers ${how}`, async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "main.py": `
+import atexit, gc, os, socket, threading, time
+
+where, what, how = ${JSON.stringify(where)}, ${JSON.stringify(what)}, ${JSON.stringify(how)}
+names = []; null = os.open(os.devnull, os.O_WRONLY); a, b = socket.socketpair(); ready = []
+class Node:
+    def __init__(self, next=None): self.next = next
+    def __del__(self):
+        if how == "write": os.write(null, b"x")
+        elif how == "sleep": time.sleep(0.001)
+        elif how == "start a thread": threading.Thread(target=int).start()
+        elif how == "read a file":
+            with open(__file__, "rb", buffering=0) as f: f.read(64)
+        names.append(threading.current_thread().name)
+def work():
+    if what == "200 objects": x = [Node() for i in range(200)]
+    elif what == "one object": x = Node()
+    else:
+        x = last = Node()
+        for i in range(199): x = Node(x)
+        if what == "a cycle of 200": last.next = x
+        del last
+    del x
+    ready.append(1); a.recv(1)
+gc.collect()  # So that no collection of the engine's own is under way, or due, when the thread drops them: that would hand them out, and tell the thread.
+threading.Thread(target=work, daemon=True, name="maker").start()
+while not ready: pass  # (In a wait the main thread would look for garbage by itself after a while, and hand out what it finds.)
+def report(): print(len(names), sorted(set(names)), flush=True)
+if where == "gc.collect()": gc.collect(); report()
+else: atexit.register(report)
+`,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe(`${what === "one object" ? 1 : 200} ['MainThread']\n`);
+      expect(exitCode).toBe(0);
+    });
+  }
+}
+
+// The rest of what gc.collect() has found is still the caller's when the handler of a signal raises out of it: it makes it at its next safe point. A thread makes X, hands it on, takes a plain lock and goes on
+// with it until X's finalizer has begun. The main thread drops X and calls gc.collect(); a timer's signal falls into the collection. In the thread itself X's finalizer would never get the lock.
+// (In CPython no handler is called between a collection and its finalizers: so this is not among the tests that are compared with it.)
+it("what the handler of a signal raises out of gc.collect() does not leave the rest to a thread that has a lock in its hand", async () => {
+  const { stdout, stderr, exitCode } = await run({
+    "main.py": `
+import faulthandler, gc, signal, threading
+
+faulthandler.dump_traceback_later(60, exit=True)
+class Stop(Exception): pass
+armed = False
+def handler(*_):
+    global armed
+    if armed:
+        armed = False; signal.setitimer(signal.ITIMER_REAL, 0)
+        raise Stop
+signal.signal(signal.SIGALRM, handler)
+lock = threading.Lock(); box = []; holds = []; begun = []; log = []
+class X:
+    def __del__(self):
+        log.append("X begins in " + threading.current_thread().name); begun.append(1)
+        with lock: log.append("X has the lock")
+def work():
+    box.append(X())
+    with lock:
+        holds.append(1)
+        while not begun: pass
+        log.append("the thread lets go of the lock")
+ballast = [[i] for i in range(400000)]  # So that the collection takes many times as long as the timer's interval.
+thread = threading.Thread(target=work, name="maker"); thread.start()
+while not holds: pass
+box.clear()
+signal.setitimer(signal.ITIMER_REAL, 0.001, 0.001)
+try:
+    armed = True  # (No call: signals are looked at behind every call. So no handler finds this before the collection.)
+    gc.collect(); log.append("gc.collect() has returned")
+except Stop: log.append("gc.collect() was left")
+thread.join()
+print(log, flush=True)
+`,
+  });
+  expect(stderr).toBe("");
+  expect(stdout).toBe("['gc.collect() was left', 'X begins in MainThread', 'the thread lets go of the lock', 'X has the lock']\n");
+  expect(exitCode).toBe(0);
+});
+
+// What other collections have handed out comes first: it was found earlier. When nothing can move any more, what gc.collect() has found and not begun goes back to the threads that made the objects, among
+// what they owe already, in the order in which all of it was queued.
+// (In CPython each of these is finalized where it is dropped: so this is not among the tests that are compared with it.)
+it("what gc.collect() gives back at a standstill goes among what the thread owes already, in the order in which it was queued", async () => {
+  const { stdout, stderr, exitCode } = await run({
+    "main.py": `
+import faulthandler, gc, sys, threading, weakref
+
+faulthandler.dump_traceback_later(60, exit=True)
+never = threading.Event(); let = threading.Event(); done = threading.Event(); log = []; begun = []; box = {}; refs = []
+up = [threading.Event() for _ in range(3)]
+class N:
+    def __init__(self, what): self.what = what
+    def __del__(self):
+        log.append(self.what)
+        if self.what == "c1": begun.append(1); let.wait()
+        elif self.what == "e": let.set()
+        elif len(log) == 7: done.set()
+class O: pass
+def f(r):
+    log.append("f")
+    del box["c4"]; gc.get_objects()  # One more is handed out, behind what gc.collect() has found.
+    done.wait()
+def make(what):
+    if what == "o": box[what] = O(); refs.append(weakref.ref(box[what], f))
+    else: box[what] = N(what)
+def work(i):
+    for what in (("o",), ("c1", "c2", "c3", "d", "c4"), ("e",))[i]: make(what)
+    up[i].set(); never.wait()
+for i in range(3): threading.Thread(target=work, args=(i,), daemon=True).start(); up[i].wait()
+# The main thread drops all of it, so that no thread goes to sleep with something dropped, which it would look for by itself after a while.
+for what in ("c1", "c2", "c3"): del box[what]; gc.get_objects()  # Collections that only hand out, one for each: their thread begins c1, which waits.
+while not begun: pass
+sys.setswitchinterval(5)  # From here on a thread goes on until it waits.
+del box["o"], box["d"], box["e"]
+gc.collect()  # It makes c2 and c3, which their thread has not come to. It finds f, d and e, and begins f, a callback, which waits: nothing can move any more.
+print(log, flush=True)
+`,
+  });
+  expect(stderr).toBe("");
+  expect(stdout).toBe("['c1', 'c2', 'c3', 'f', 'e', 'd', 'c4']\n");
+  expect(exitCode).toBe(0);
+});
+
+// A slot is freed by the finalizer of a callback that the program has dropped, and within a finalizer no other is called: there is nothing to be had from a collection there, and none is made. (That none
+// is made cannot be seen from here. A build with assertions stops if one is: whoever collects for this makes the calls of other threads, and gc.collect(), which has called the finalizer, does so already.)
+it("a finalizer that finds the table of ctypes' callbacks full is told so", async () => {
+  const { stdout, stderr, exitCode } = await run({
+    "main.py": `
+import ctypes, gc
+
+F = ctypes.CFUNCTYPE(ctypes.c_int)
+keep = [F(lambda: 0) for _ in range(512)]
+log = []
+class N:
+    def __del__(self):
+        try: F(lambda: 0); log.append("made")
+        except MemoryError as e: log.append(str(e))
+n = N(); del n
+gc.collect()
+print(log, flush=True)
+del keep[0]
+F(lambda: 0)  # Anywhere else the collector is asked, and finds the one that has been dropped.
+print("made", flush=True)
+`,
+  });
+  expect(stderr).toBe("");
+  expect(stdout).toBe("['too many ctypes callbacks are alive']\nmade\n");
+  expect(exitCode).toBe(0);
+});
+
+
+// The call that has called process.exit() never returns, and within a call that is owed no other is made: so nothing more is finalized; the callbacks of atexit are called. (A build with assertions
+// stops if the steps of the exit that make the calls of other threads are gone through here: gc.collect(), which has called the finalizer, makes them already.)
+it("process.exit() in a finalizer that gc.collect() runs", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "m.py": `
+import atexit, gc
+
+atexit.register(lambda: print("a callback of atexit", flush=True))
+class N:
+    def __init__(self, leave): self.leave = leave
+    def __del__(self): print("the finalizer begins", flush=True); self.leave()
+class Other:
+    def __del__(self): print("another finalizer", flush=True)
+def run(leave):
+    kept = Other(); n = N(leave); dropped = Other()
+    del n, dropped
+    gc.collect()
+    print("gc.collect() has returned", flush=True)
+`,
+      "main.js": `
+import { run } from "./m.py";
+process.on("exit", code => console.log("exit", code));
+run(() => { console.log("process.exit()"); process.exit(3); });
+`,
+    },
+    "main.js",
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe("the finalizer begins\nprocess.exit()\na callback of atexit\nexit 3\n");
+  expect(exitCode).toBe(3);
+});
 // With no other thread the GIL is not given up: the thread sleeps inside the VM, and what gets it out when the host ends what runs is the engine's own signal. A thread that waits also looks by
 // itself, less and less often: some four times in the first two seconds, and then not for two seconds or more. So the end comes after two seconds, and is not to take until the next look.
 for (const wait of ["threading.Event().wait(1000)", "lock.acquire(timeout=1000)", "queue.Queue().get(timeout=1000)"]) {
@@ -1657,3 +1862,145 @@ test("a thread", () => { expect(String(m.thread())).toBe("joined") });
   expect(stderr).toContain(" 0 fail\n");
   expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
 });
+
+// What a collection has found dead no later collection marks. A cell with a destructor that a collection finds dead while a thread of Python's has the VM is left unswept for the main thread, while what it
+// refers to is swept. The first eight cells of a class are allocations of their own, which used to be taken for alive as long as they had not been swept: by the scan of the stacks, and by ctypes.
+// Two kinds of run say nothing. `precise` is false: a collection had left an empty block, and the class took that for its first cells. `freed` is not 0: an allocation of that kind reads as alive again
+// once it has been freed, and a full collection on the main thread, between its next turn and its look, frees them all; `freed` counts those that nothing can have brought back.
+async function runUntilItSaysSomething(files: Record<string, string>) {
+  for (let attempt = 1; ; attempt++) {
+    const result = await run(files, "main.js");
+    if (attempt === 10 || !/"precise":false|"freed":[1-9]/.test(result.stdout)) return result;
+  }
+}
+
+it("a word on a stack does not bring back an object of the host's that is dead and not yet swept", async () => {
+  const { stdout, stderr, exitCode } = await runUntilItSaysSomething({
+    "lib.py": `
+import ctypes, gc, sys, threading
+
+collected, looked = threading.Event(), threading.Event()
+
+def collect_with_words_on_the_stack(objects, kept, dropped):
+    kept = [int(address) for address in str(kept).split()]
+    dropped = [int(address) for address in str(dropped).split()]
+    # Until the other thread lets go of them the objects are held, so that no collection on the main thread (one of the engine's own, or that of a thread that has waited for 50 ms) finds them dead and sweeps.
+    held = list(objects)
+    objects.clear()
+    del objects
+    sys.setswitchinterval(1000)     # The main thread, which is sent for to sweep, gets no turn between the two collections.
+    def call(addresses, then):
+        if not addresses:
+            return then()
+        # The address is the argument of a function of C that is still running when the stacks are scanned. (PYFUNCTYPE: the GIL is not let go of.)
+        ctypes.PYFUNCTYPE(None, ctypes.c_void_p)(lambda pointer: call(addresses[1:], then))(addresses[0])
+    def other():
+        # The first collection finds dead all but those whose addresses are on the stack by then, and they stay there until the main thread has looked.
+        call(kept, lambda: (held.clear(), gc.collect(), call(dropped, gc.collect), collected.set(), looked.wait()))
+    thread = threading.Thread(target=other); thread.start(); collected.wait()
+    return thread
+
+def let_go(thread):
+    looked.set(); thread.join()
+`,
+    "main.js": `
+import { jscInternals } from "bun:internal-for-testing";
+const objects = [];
+function make(count) {
+  return Array.from({ length: count }, () => {
+    const immediate = setImmediate(() => {});
+    clearImmediate(immediate);
+    objects.push(immediate);
+    return { address: jscInternals.rawCellAddress(immediate), weak: new WeakRef(immediate) };
+  });
+}
+const addresses = group => group.map(x => x.address).join(" ");
+// Before anything else: a class whose first cell is made while a collection has left an empty block takes that block.
+const kept = make(2), dropped = make(3), without = make(3);
+const precise = [...kept, ...dropped, ...without].every(x => x.address & 8n);
+const { collect_with_words_on_the_stack, let_go } = await import("./lib.py");
+await new Promise(resolve => setTimeout(resolve, 1)); // A WeakRef keeps what it refers to until the job is over.
+const thread = collect_with_words_on_the_stack(objects, addresses(kept), addresses(dropped));
+try {
+  // A WeakRef is cleared by the collection that finds the object dead.
+  const wasFoundDead = x => x.weak.deref() === undefined;
+  const isMarkedAllTheSame = x => precise && wasFoundDead(x) && jscInternals.isLiveCellAtRawAddress(x.address);
+  console.log(JSON.stringify({
+    precise,
+    keptByWord: kept.filter(x => !wasFoundDead(x)).length,
+    foundDead: dropped.some(wasFoundDead) && without.some(wasFoundDead),
+    broughtBack: dropped.filter(isMarkedAllTheSame).length,
+    freed: without.filter(isMarkedAllTheSame).length,
+  }));
+} finally {
+  let_go(thread);
+}
+`,
+  });
+  expect(stderr).toBe("");
+  expect(stdout).toBe('{"precise":true,"keptByWord":2,"foundDead":true,"broughtBack":0,"freed":0}\n');
+  expect(exitCode).toBe(0);
+}, 180_000);
+
+it("ctypes does not take the bits of an object of the host's that is dead and not yet swept for an object", async () => {
+  const { stdout, stderr, exitCode } = await runUntilItSaysSomething({
+    "lib.py": `
+import ctypes, gc, sys, threading
+
+def ask_for_the_objects_at(objects, addresses, alive):
+    addresses, alive = [int(address) for address in str(addresses).split()], int(alive)
+    # Until the other thread lets go of them the objects are held, so that no collection on the main thread (one of the engine's own, or that of a thread that has waited for 50 ms) finds them dead and sweeps.
+    held = list(objects)
+    objects.clear()
+    del objects
+    sys.setswitchinterval(1000)     # The main thread, which is sent for to sweep, gets no turn before the other thread has ended.
+    given, answers = [], []
+    def other():
+        del held[alive:]
+        gc.collect()                # This finds them dead.
+        for index, address in enumerate(addresses):
+            try:
+                given.append(ctypes.cast(address, ctypes.py_object).value)
+                answers.append("itself" if index < alive and given[-1] is held[index] else "something")
+            except ValueError:
+                answers.append("nothing")
+        gc.collect()                # This marks what the list refers to.
+    thread = threading.Thread(target=other); thread.start(); thread.join()
+    return " ".join(answers)
+`,
+    "main.js": `
+import { jscInternals } from "bun:internal-for-testing";
+const objects = [];
+function make(count) {
+  return Array.from({ length: count }, () => {
+    const immediate = setImmediate(() => {});
+    clearImmediate(immediate);
+    objects.push(immediate);
+    return { address: jscInternals.rawCellAddress(immediate), weak: new WeakRef(immediate) };
+  });
+}
+// Before anything else: a class whose first cell is made while a collection has left an empty block takes that block.
+const alive = make(2), dropped = make(3), without = make(3);
+const precise = [...alive, ...dropped, ...without].every(x => x.address & 8n);
+const { ask_for_the_objects_at } = await import("./lib.py");
+await new Promise(resolve => setTimeout(resolve, 1)); // A WeakRef keeps what it refers to until the job is over.
+const answers = String(ask_for_the_objects_at(objects, [...alive, ...dropped].map(x => x.address).join(" "), alive.length)).split(" ");
+// A WeakRef is cleared by the collection that finds the object dead.
+const wasFoundDead = x => x.weak.deref() === undefined;
+const isMarkedAllTheSame = x => precise && wasFoundDead(x) && jscInternals.isLiveCellAtRawAddress(x.address);
+console.log(JSON.stringify({
+  precise,
+  alive: answers.slice(0, alive.length).join(" "),
+  foundDead: dropped.some(wasFoundDead) && without.some(wasFoundDead),
+  givenOut: dropped.filter((x, index) => wasFoundDead(x) && answers[alive.length + index] !== "nothing").length,
+  broughtBack: dropped.filter(isMarkedAllTheSame).length,
+  freed: without.filter(isMarkedAllTheSame).length,
+}));
+`,
+  });
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    '{"precise":true,"alive":"itself itself","foundDead":true,"givenOut":0,"broughtBack":0,"freed":0}\n',
+  );
+  expect(exitCode).toBe(0);
+}, 180_000);

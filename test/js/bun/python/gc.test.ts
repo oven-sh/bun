@@ -901,3 +901,77 @@ print(log)
   expect(stdout).toBe("lists given that lead to the object that waits: 0\n['finalized']\n");
   expect(exitCode).toBe(0);
 });
+
+// Where objects with finalizers hold one another at exit, the circle is opened where the names lead into it. For circles of more than 64 cells that has a bound, which no test would reach: so it can be lowered
+// (-X finalization_order_looks=N, or the same in sys._xoptions).
+const atExit = (looks: string, program: string) => `
+import os, random, sys
+if ${JSON.stringify(looks)}: sys._xoptions["finalization_order_looks"] = ${JSON.stringify(looks)}
+class N:
+    def __init__(self, name): self.name = name; self.knows = []
+    def __del__(self): os.write(1, (str(self.name) + " ").encode())
+${program}
+`;
+const listOf100 = `
+def make():
+    nodes = [N(i) for i in range(100)]
+    for a, b in zip(nodes, nodes[1:]): a.knows.append(b); b.knows.append(a)
+    return [nodes[-1]]
+entered_at_the_youngest = make()
+`;
+const numbers = (order: number[]) => order.join(" ") + " ";
+
+test.concurrent("at exit a list of 100 objects with links both ways goes from where the names lead into it", async () => {
+  const { stdout, stderr, exitCode } = await run(atExit("", listOf100));
+  expect(stderr).toBe("");
+  expect(stdout).toBe(numbers(Array.from({ length: 100 }, (_, i) => 99 - i)));
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("at exit a circle of more than 64 cells for which there are no looks goes in the order of making", async () => {
+  for (const looks of ["0", "500"]) {
+    const { stdout, stderr, exitCode } = await run(atExit(looks, listOf100));
+    expect(stderr).toBe("");
+    expect(stdout).toBe(numbers(Array.from({ length: 100 }, (_, i) => i)));
+    expect(exitCode).toBe(0);
+  }
+});
+
+test.concurrent("at exit a small circle is opened whatever looks there are", async () => {
+  // Two that know each other, in a list with a name: the younger goes first, as a writer goes before its raw file. Beside them the list of 100.
+  const { stdout, stderr, exitCode } = await run(
+    atExit("0", `
+older = N("older"); younger = N("younger"); older.knows.append(younger); younger.knows.append(older)
+both = [older, younger]; del older, younger
+` + listOf100),
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe("younger older " + numbers(Array.from({ length: 100 }, (_, i) => i)));
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("at exit, with whatever looks: each object once, and behind what holds it and is in no circle with it", async () => {
+  // A tangle, in which the searches give up: 100 objects, each knows the next and three at random, and has a child of its own. With few looks neighbouring degrees of nearness count as one.
+  const tangle = `
+def make():
+    random.seed(1)
+    nodes = [N(i) for i in range(100)]
+    for i, n in enumerate(nodes): n.knows += [nodes[(i + 1) % 100]] + random.sample(nodes, 3) + [N(1000 + i)]
+    return [nodes[-1]]
+entered_at_the_youngest = make()
+`;
+  const orders = new Map<string, string>();
+  for (const looks of ["", "100000", "20000", "10000", "7000", "5000", "3500", "2500", "1500", "0"]) {
+    const { stdout, stderr, exitCode } = await run(atExit(looks, tangle));
+    expect(stderr).toBe("");
+    const order = stdout.trim().split(" ").map(Number);
+    expect(order.toSorted((a, b) => a - b)).toEqual([...Array.from({ length: 100 }, (_, i) => i), ...Array.from({ length: 100 }, (_, i) => 1000 + i)]);
+    for (let i = 0; i < 100; ++i) expect(order.indexOf(1000 + i)).toBeGreaterThan(order.indexOf(i));
+    expect(exitCode).toBe(0);
+    orders.set(looks, stdout);
+  }
+  // Enough is as good as all. With none: the order of making. (The children were made last.)
+  expect(orders.get("100000")).toBe(orders.get("")!);
+  expect(orders.get("0")).toBe(numbers([...Array.from({ length: 100 }, (_, i) => i), ...Array.from({ length: 100 }, (_, i) => 1000 + i)]));
+  expect(orders.get("0")).not.toBe(orders.get("")!);
+});

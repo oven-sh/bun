@@ -255,3 +255,43 @@ def hello(): return "hello"
   expect(result.stderr).toBe("");
   expect(result.exitCode).toBe(0);
 });
+
+test.concurrent("what has a name in a module without a function, which JavaScript holds when the program ends", async () => {
+  // Nothing with a finalizer leads to the namespace of that module: the classes lie in another.
+  const result = await run({
+    "kinds.py": `
+import io, os
+def say(*words): os.write(1, (" ".join(map(str, words)) + "\\n").encode())
+class Raw(io.RawIOBase):
+    def writable(self): return True
+    def write(self, data): say("raw write", bytes(data)); return len(data)
+    def close(self): say("raw close"); super().close()
+class T:
+    def __init__(self, name, *holds): self.name = name; self.holds = holds
+    def __del__(self): say(self.name)
+`,
+    "m.py": `
+import io, kinds
+child_with_a_name = kinds.T("child with a name"); its_holder = kinds.T("its holder", child_with_a_name)
+raw = kinds.Raw(); writer = io.BufferedWriter(raw); raw.owner = writer; del raw; writer.write(b"abc")
+holder = kinds.T("holder", kinds.T("child"))
+`,
+    "main.js": `
+      import * as m from "./m.py";
+      globalThis.kept = m;
+      console.log("imported");
+    `,
+  });
+  expect(result.stdout.split("\n")).toEqual([
+    "imported",
+    "child with a name",
+    "its holder",
+    "raw write b'abc'",
+    "raw close",
+    "holder",
+    "child",
+    "",
+  ]);
+  expect(result.stderr).toBe("");
+  expect(result.exitCode).toBe(0);
+});

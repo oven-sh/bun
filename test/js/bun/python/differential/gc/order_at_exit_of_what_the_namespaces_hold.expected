@@ -1,5 +1,5 @@
 status: 0
-script: 8b2ea4d8727a4e6d
+script: 717695bc95ab06c0
 ---
 a writer over a raw file of the program: status 0: end: Raw.write b'xyz' Raw.close
 text over a writer over a raw file of the program: status 0: end: Raw.write b'xyz' Raw.close
@@ -9,6 +9,7 @@ the raw file has a name too, and the earlier one: status 0: end: Raw.close
 three, one in the other: status 0: end: holder child grandchild
 six, one in the other: status 0: end: 0 1 2 3 4 5
 two names: status 0: end: a b
+sys._xoptions is gone: status 0: end: t
 the name of the child is deleted: status 0: end: holder child
 the child has a name: status 0: end: child holder
 the child has a name and was made later: status 0: end: holder child
@@ -35,6 +36,37 @@ a child that knows its parent, and an older registry that holds the child: statu
 two cycles, one holds the other: status 0: end: top d c a b
 a ring of four entered at the third: status 0: end: r3 r2 r1 r4
 a writer and another over one raw file that knows both: status 0: end: Raw.write b'xyz' Raw.close other
+the child is in a list that has a name: status 0: end: parent child
+the child is in a list that has a name and was made later: status 0: end: parent child
+the child is in a dict that has a name: status 0: end: parent child
+the child is in a plain object that has a name: status 0: end: parent child
+the child is deep in a list that has a name: status 0: end: parent child
+an older list that has a name holds the raw file too: status 0: end: Raw.write b'xyz' Raw.close
+a holder of the writer and a younger holder of the raw file, which knows its writer: status 0: end: Raw.write b'xyz' Raw.close
+the same, the holder of the writer is the younger and has the earlier name: status 0: end: Raw.write b'xyz' Raw.close
+two in lists hold one another, the list of the younger has the earlier name: status 0: end: b a
+the writer is an attribute of a plain object with a name, and an older object holds the raw file, which knows its writer: status 0: end: x Raw.write b'xyz' Raw.close
+the writer is in a list with a name, and an older object holds the raw file, which knows its writer: status 0: end: x Raw.write b'xyz' Raw.close
+the writer and the other holder of the raw file are in lists: status 0: end: x Raw.write b'xyz' Raw.close
+the parent holds a list with a name that holds the child: status 0: end: parent child
+the parent holds a list, in a list with a name, that holds the child: status 0: end: parent child
+a registry in a plain object with a name holds parent and child, which know the registry: status 0: end: parent child
+the same with a writer and its raw file: status 0: end: Raw.write b'xyz' Raw.close
+an owner holds a holder of the raw file, and behind that a list with the writer: status 0: end: app x Raw.write b'xyz' Raw.close
+inside a circle: the owner leads to the raw file by one that knows the owner, and to the writer by a list: status 0: end: app a Raw.write b'xyz' Raw.close
+raw files in one list, their writers in a list with an earlier name; the raw file knows its writer: status 0: end: Raw.write b'xyz' Raw.close
+a raw file and its writer in one list; the raw file knows its writer: status 0: end: Raw.write b'xyz' Raw.close
+a parent, and a child that was given the parent, in one list: status 0: end: child parent
+a child, and a parent that was given the child, which knows the parent, in one list: status 0: end: parent child
+an object that refers to itself: status 0: end: a
+an object that refers to itself, and a holder of it: status 0: end: b a
+an object that refers to itself, a holder of it, and what it holds: status 0: end: b a c
+a holder of a list with a raw file and its writer; the raw file knows its writer: status 0: end: x Raw.write b'xyz' Raw.close
+a holder of the older of two that hold one another: status 0: end: x a b
+four, one in the other, in a list; the last knows the third and the second, the second the first: status 0: end: a b c d
+a list holds two, and the younger knows the list: status 0: end: b a
+a chain of twelve with links both ways, entered at the youngest: status 0: end: 11 10 9 8 7 6 5 4 3 2 1 0
+a generator hands on to one whose finally writes to a writer: status 0: end: Raw.write b'xyz' Raw.close
 two writers over one raw file: status 0: end: Raw.write b'aaa' Raw.close
 the second holder is made later: status 0: end: a b child
 two holders of a list: status 0: end: a b child
@@ -50,7 +82,39 @@ a closure in an object: status 0: end: holder child
 a deque: status 0: end: 0 1 2
 a deque and a list: status 0: end: in the deque in the list
 a generator and the program share an object: status 0: end: shared b z
+an older object in a cycle of lists below a holder with a name: status 0: end: doc res
+the same, the holder is in a list with a name: status 0: end: doc res
+an older object hangs off a cycle of lists below a holder with a name: status 0: end: doc res
+a younger object in a cycle of lists below a holder with a name: status 0: end: doc res
+a raw file in a cycle of lists that the owner of its writer holds: status 0: end: own Raw.write b'xyz' Raw.close
+a document over a tree of plain nodes with links to the parents; a leaf has an older resource that knows its node: status 0: end: doc res
+the same, the resource does not know its node: status 0: end: doc res
+two lists that hold one another, each with a holder of its own and an older object: status 0: end: a b c1 c2
+two hold one list of a cycle of lists in which an object is that holds an older one: status 0: end: d1 d2 res old
+two hold one list of a cycle of lists off which an object hangs that holds an older one: status 0: end: d1 d2 res old
+one document over two cycles of lists, in each an older object: status 0: end: doc r1 r2
+a document over a chain of a hundred plain nodes with links back; the last has an older resource that knows its node: status 0: end: doc res
+the same, every tenth node has an older resource that knows its node: status 0: end: doc r0 r1 r2 r3 r4 r5 r6 r7 r8 r9
+a doubly linked list of seventy objects; the last holds a cycle of lists that leads back to it, off which hangs an object older than the last: status 0: end: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 res
+two such circles: the resource of the last of seventy plain nodes holds a doubly linked list of a hundred objects that were made from the last to the first: status 0: end: doc res 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99
+no looks: a list with a name holds one of a ring of seventy objects; off the thirty-sixth hangs an older one: status 0: end: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 old 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69
+a cycle of lists that nothing holds refers to the older of two objects that know each other: status 0: end: x y
 a program without a function: a cycle entered at the holder: status 0: holder child
 a program without a function: the child in a cycle has a name: status 0: child holder
 a program without a function: what hangs off a cycle: status 0: holder child
+a program without a function: off a cycle of lists with names hangs an object that holds an older one: status 0: x y
+a program without a function: in a cycle of lists with names is an object that holds an older one: status 0: x y
+a program without a function: a raw file that knows its writer: status 0: Raw.write b'xyz' Raw.close
+a program without a function: a writer and its raw file: status 0: Raw.write b'xyz' Raw.close
+a program without a function: the raw file has the name, and knows its writer, which nothing else holds: status 0: Raw.close
+a program without a function: a holder of a list with a raw file and its writer: status 0: x Raw.write b'xyz' Raw.close
+a program without a function: a holder of the older of two that hold one another: status 0: x a b
+a program without a function: an object that refers to itself, a holder of it, and what it holds: status 0: b a c
+a program without a function: a writer with a name leads to two that know one another, the second of which knows the first writer: status 0: h a b
+a program without a function: a writer in a list leads to two that know one another: status 0: h a b
+a program without a function: a raw file and its writer in one list: status 0: Raw.write b'xyz' Raw.close
 a program with a function, and modules with functions: status 0: m1 m2 main.holder main.child
+a program with a function, and three modules with functions: status 0: m1 m2 m3 main.holder main.child
+a program with a function, and modules with functions, the first of which is put last: status 0: m1 m2 main.holder main.child
+a program with a function, and modules, the last of which has no function: status 0: m1 m2 without_function main.holder main.child
+a suspended generator in the last module: status 0: the finally of the generator

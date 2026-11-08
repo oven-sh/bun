@@ -1,0 +1,190 @@
+status: 0
+script: 3f6cd611ca821a71
+---
+collect_beside_two_that_owe: status 0
+    G finalized
+    F finalized
+    gc.collect() has returned
+collect_beside_two_that_owe_the_other_way_round: status 0
+    G finalized
+    F finalized
+    gc.collect() has returned
+collect_finds_what_two_have_dropped: status 0
+    G finalized
+    F finalized
+    gc.collect() has returned
+collect_finds_what_two_have_dropped_the_other_way_round: status 0
+    G finalized
+    F finalized
+    gc.collect() has returned
+collect_beside_two_that_owe_and_a_deep_chain: status 0
+    G finalized
+    F finalized
+    gc.collect() has returned
+collect_finds_what_two_have_dropped_and_a_deep_chain: status 0
+    G finalized
+    F finalized
+    gc.collect() has returned
+collect_finds_what_two_have_dropped_beside_a_thread_that_ends: status 0
+    G finalized
+    F finalized
+    gc.collect() has returned
+collect_beside_two_that_owe_the_first_polls: status 0
+    G finalized
+    F finalized
+    gc.collect() has returned
+collect_beside_two_that_owe_the_first_spins: status 0
+    G finalized
+    F finalized
+    gc.collect() has returned
+exit_finds_what_two_have_dropped_and_a_deep_chain: status 0
+    G finalized
+    atexit callback
+exit_beside_two_that_owe: status 0
+    G finalized
+    atexit callback
+exit_finds_what_two_have_dropped: status 0
+    G finalized
+    atexit callback
+exit_finds_what_two_have_dropped_the_other_way_round: status 0
+    G finalized
+    atexit callback
+collect_waits_for_what_is_dropped_meanwhile: status 0
+    Y finalized
+    Blocks finalized
+    gc.collect() has returned
+exit_waits_for_what_is_dropped_meanwhile: status 0
+    Y finalized
+    Blocks finalized
+    atexit callback
+exit_beside_a_daemon_inside_collect: status 0
+    X finalized
+    atexit callback
+collect_polls_for_what_falls_due_later: status 0
+    Y finalized
+    Slow finalized
+    gc.collect() has returned
+collect_spins_for_what_falls_due_later: status 0
+    Y finalized
+    Slow finalized
+    gc.collect() has returned
+collect_reads_a_pipe_for_what_falls_due_later: status 0
+    Y finalized
+    Slow finalized
+    gc.collect() has returned
+exit_polls_for_what_falls_due_later: status 0
+    Y finalized
+    Slow finalized
+    atexit callback
+exit_spins_for_what_falls_due_later: status 0
+    Y finalized
+    Slow finalized
+    atexit callback
+exit_reads_a_pipe_for_what_falls_due_later: status 0
+    Y finalized
+    Slow finalized
+    atexit callback
+collect_beside_a_maker_with_a_lock_others_write: status 0
+    ['X begins in MainThread', 'the thread lets go of the lock', 'X has the lock']
+collect_beside_a_maker_with_a_lock_others_read_a_file: status 0
+    ['X begins in MainThread', 'the thread lets go of the lock', 'X has the lock']
+collect_beside_a_maker_with_a_lock_others_sleep: status 0
+    ['X begins in MainThread', 'the thread lets go of the lock', 'X has the lock']
+collect_beside_a_maker_with_a_lock_others_start_a_thread: status 0
+    ['X begins in MainThread', 'the thread lets go of the lock', 'X has the lock']
+exit_beside_a_maker_with_a_lock_others_write: status 0
+    ['X begins in MainThread', 'the thread lets go of the lock', 'X has the lock']
+exit_beside_a_maker_with_a_lock_others_read_a_file: status 0
+    ['X begins in MainThread', 'the thread lets go of the lock', 'X has the lock']
+exit_beside_a_maker_with_a_lock_others_sleep: status 0
+    ['X begins in MainThread', 'the thread lets go of the lock', 'X has the lock']
+exit_beside_a_maker_with_a_lock_others_start_a_thread: status 0
+    ['X begins in MainThread', 'the thread lets go of the lock', 'X has the lock']
+collect_beside_an_idle_maker_of_finalizers_that_start_a_thread: status 0
+    50 of 50
+exit_beside_an_idle_maker_of_finalizers_that_start_a_thread: status 0
+    50 of 50
+chain_each_sleeps: status 0
+    begun while another was running: 0 | order: [0, 1, 2, 3, 4, 5]
+chain_each_works: status 0
+    begun while another was running: 0 | order: [0, 1, 2, 3, 4, 5]
+chain_each_sleeps_handed_out_before: status 0
+    begun while another was running: 0 | order: [0, 1, 2, 3, 4, 5]
+chain_each_works_handed_out_before: status 0
+    begun while another was running: 0 | order: [0, 1, 2, 3, 4, 5]
+cycle_each_sleeps: status 0
+    begun while another was running: 0 | order: [5, 4, 3, 2, 1, 0]
+cycle_each_works: status 0
+    begun while another was running: 0 | order: [5, 4, 3, 2, 1, 0]
+callback_in_the_middle_of_a_cycle: status 0
+    ['del 0', 'callback', 'del 1', 'del 2']
+callback_in_the_middle_of_a_chain: status 0
+    ['del 0', 'callback', 'del 1', 'del 2', 'del 3', 'del 4', 'del 5']
+out_of_descriptors_beside_two_that_owe_the_first_waits: status 0
+    G finalized
+    F finalized
+    os.open() raises OSError 24
+out_of_descriptors_beside_two_that_owe_the_first_polls: status 0
+    G finalized
+    F finalized
+    os.open() raises OSError 24
+out_of_descriptors_beside_two_that_owe_the_first_spins: status 0
+    G finalized
+    F finalized
+    os.open() raises OSError 24
+callbacks_for_two_objects_handed_out_before: status 0
+    gc.collect() has returned
+callbacks_for_two_objects_found: status 0
+    gc.collect() has returned
+callbacks_for_one_object: status 0
+    ['a3', 'a2', 'a1']
+    ['a3', 'a2', 'a1', 'b2', 'b1']
+callbacks_for_several_objects: status 0
+    b1 a1 a2 | a2 a1 b1
+    b1 b2 a1 a2 a3 | a3 a2 a1 b2 b1
+    c1 c2 b1 b2 a1 a2 | a2 a1 b2 b1 c2 c1
+references_of_two_threads_to_one_object: status 0
+    [5, 4, 3, 2, 1, 0]
+callbacks_that_fall_due_in_the_middle: status 0
+    a2 p1 a1
+    a2 p1 a1 b2 b1
+    a2 p1 q1 a1
+    a2 p2 p1 q1 a1
+    a2 p2 r1 p1 q1 a1
+    a3 p2 r2 r1 s1 p1 a2 t1 a1 b1
+    a1 p1 c1
+    a1 p1 r1 c2 c1
+    callback x callback del 1 del 2
+callbacks_of_an_idle_thread_that_fall_due_in_the_middle: status 0
+    a2 p1 a1
+    a2 p1 a1 b2 b1
+    a2 p1 q1 a1
+    a2 p2 p1 q1 a1
+    a2 p2 r1 p1 q1 a1
+    a3 p2 r2 r1 s1 p1 a2 t1 a1 b1
+    a1 p1 c1
+    a1 p1 r1 c2 c1
+a_callback_waits_for_what_has_fallen_due_before_it: status 0
+    a2 p1 q1 a1 b1
+    a2 p2 r1 p1 q1 a1
+    a1 p1 c1
+an_older_finalizer_and_a_younger_callback: status 0
+    x callback
+the_order_of_the_other_threads: status 0
+    f0 x y
+cyclic_garbage_of_several_makers: status 0
+    c1 c2 c3 c4
+    c1 c2 c3 c4 c5 c6
+    c1 c2 c3 c4 c5 c6 c7 c8
+exit_makes_a_call_that_drops_what_an_idle_thread_has_a_later_reference_to: status 0
+    a2 x a1
+exit_gives_back_much: status 0
+    all but one at the most are over: True
+exit_polls_after_a_give_back: status 0
+    ['F begins', 'F ends', 'G begins', 'P begins', 'P ends', 'Y'] []
+exit_waits_after_a_give_back: status 0
+    ['F begins', 'F ends', 'G begins', 'P begins', 'P ends', 'Y'] []
+exit_makes_a_chain_after_a_give_back: status 0
+    ['F begins', 'F ends', 'G begins', 'P begins', 'P ends'] [0, 1, 2, 3, 4, 5]
+the_thread_whose_group_is_in_another_hand_ends: status 0
+    A0 (T has ended) A1 A2 A3 A4 A5 u

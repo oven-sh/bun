@@ -1397,11 +1397,12 @@ test.concurrent.each([
   ["an accessor", `Object.defineProperty(Error, "stackTraceLimit", { get: () => 10 });`],
   ["deleted", `delete Error.stackTraceLimit;`],
 ])("Error.appendStackTrace does not crash when stackTraceLimit is %s", async (_, setup) => {
-  // An error made under such a limit has no frames, so appendStackTrace captures them first.
+  // An error made under such a limit has no frames, so appendStackTrace captures them first. The capture
+  // has a limit of 0, so the destination gets a trace with no frame, and its stack is the header alone.
   const src = `${setup}
     const source = new Error("source"), destination = new Error("destination");
     Error.appendStackTrace(source, destination);
-    console.log(typeof destination.stack);`;
+    console.log(destination.stack);`;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
     env: bunEnv,
@@ -1409,7 +1410,10 @@ test.concurrent.each([
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: "undefined", signalCode: null });
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({
+    stdout: "Error: destination",
+    signalCode: null,
+  });
   expect(exitCode).toBe(0);
 });
 
@@ -2232,14 +2236,14 @@ describe("an error with no frame has a stack of its header", () => {
   });
 
   test("a runtime error thrown under a limit of 0", () => {
-    const stack = withLimit(0, () => {
+    const error = withLimit(0, () => {
       try {
         null.x;
       } catch (e) {
-        return e.stack;
+        return e;
       }
     });
-    expect(stack).toBe("TypeError: null is not an object (evaluating 'null.x')");
+    expect(error.stack).toBe(`TypeError: ${error.message}`);
   });
 
   test("Error.prepareStackTrace is called with an empty array of call sites", () => {

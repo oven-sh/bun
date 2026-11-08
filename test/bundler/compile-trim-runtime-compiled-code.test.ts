@@ -223,7 +223,10 @@ function removedFeaturesOf(executable: Build) {
         stderr: `error: BUN_INSPECT_PRELOAD ${runsOnlyCompiledCode}\n`,
         exitCode: 1,
       });
-      expect(await startedWith({ BUN_OPTIONS: "--config=own.toml" })).toEqual(saysHello);
+      expect(await startedWith({ BUN_OPTIONS: "--config=own.toml" })).toEqual({
+        ...saysHello,
+        stderr: `warn: "preload" in own.toml is ignored by this executable because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code\n`,
+      });
       expect(await startedWith({ BUN_INSPECT_PRELOAD: "./preloaded.js" })).toEqual(saysHello);
     });
 

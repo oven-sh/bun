@@ -34,6 +34,8 @@ pub struct PrinterOptions<'a> {
     /// A mapping of pseudo classes to replace with class names that can be applied
     /// from JavaScript. Useful for polyfills, for example.
     pub pseudo_classes: Option<PseudoClasses<'a>>,
+    /// The indent of the output, for text that goes inside a block.
+    pub indent: u32,
 }
 
 impl<'a> PrinterOptions<'a> {
@@ -51,6 +53,7 @@ impl<'a> PrinterOptions<'a> {
             },
             analyze_dependencies: None,
             pseudo_classes: None,
+            indent: 0,
         }
     }
 }
@@ -293,7 +296,7 @@ impl<'a> Printer<'a> {
                 column: 1,
             },
             symbols,
-            indent_amt: 0,
+            indent_amt: options.indent,
             line: 0,
             col: 0,
             vendor_prefix: css::VendorPrefix::default(),

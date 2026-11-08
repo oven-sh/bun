@@ -1,0 +1,64 @@
+# A slim closure that is given a property, frozen or moved below another object gets storage of its own at that moment, through the run time: 946 instructions for `f = () => a; f.tag = 1` where a full closure takes 153.
+# So a function is given full closures where reached code does one of those to a value that holds its closures and no others. Reading `name` and `length`, calling, and looking for a name change nothing.
+# It is an expectation: what unseen code does, or what is done through a value that may hold closures of several functions, is not in it, and costs time alone. Without a word of Link every one of these is slim.
+# -- source: closures-changed.ts
+# declare function use(...values: unknown[]): void;
+# function makeAll(a: number) {
+#   const onlyCalled = () => a;
+#   const onlyRead = () => a + 1;
+#   use(onlyRead.name, onlyRead.length, onlyRead.call(null), "x" in onlyRead);
+#   const stored: any = () => a + 2;
+#   stored.tag = 1;
+#   const storedUnderSymbol: any = () => a + 3;
+#   storedUnderSymbol[Symbol.iterator] = 1;
+#   const defined = () => a + 4;
+#   Object.defineProperty(defined, "x", { value: 1 });
+#   const copiedInto = () => a + 5;
+#   Object.assign(copiedInto, { x: 1 });
+#   const frozen = () => a + 6;
+#   Object.freeze(frozen);
+#   const movedBelow = () => a + 7;
+#   Object.setPrototypeOf(movedBelow, null);
+#   const deletedFrom: any = () => a + 8;
+#   delete deletedFrom.name;
+#   const namesItself: any = () => namesItself.tag + a;
+#   namesItself.tag = 9;
+#   use(onlyCalled, onlyRead, stored, storedUnderSymbol, defined, copiedInto, frozen, movedBelow, deletedFrom, namesItself);
+# }
+# makeAll(1);
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK: function f2 cycle=
+# CHECK: function f3 cycle=
+# CHECK: function f4 closures-changed
+# CHECK: function f5 closures-changed
+# CHECK: function f6 closures-changed
+# CHECK: function f7 closures-changed
+# CHECK: function f8 closures-changed
+# CHECK: function f9 closures-changed
+# CHECK: function f10 closures-changed
+# CHECK: function f11 closures-changed
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: NewClosure {{*}}function=f2 closureForm=Slim
+# ALL: NewClosure {{*}}function=f3 closureForm=Slim
+# ALL: NewClosure {{*}}function=f4 traits=
+# ALL: NewClosure {{*}}function=f5 traits=
+# ALL: NewClosure {{*}}function=f6 traits=
+# ALL: NewClosure {{*}}function=f7 traits=
+# ALL: NewClosure {{*}}function=f8 traits=
+# ALL: NewClosure {{*}}function=f9 traits=
+# ALL: NewClosure {{*}}function=f10 traits=
+# ALL: NewClosure {{*}}function=f11 traits=
+# RUN(NONE): walk f1 mechanisms=none
+# NONE-LABEL: code f1:Body
+# NONE: NewClosure {{*}}function=f2 closureForm=Slim
+# NONE: NewClosure {{*}}function=f3 closureForm=Slim
+# NONE: NewClosure {{*}}function=f4 closureForm=Slim
+# NONE: NewClosure {{*}}function=f5 closureForm=Slim
+# NONE: NewClosure {{*}}function=f6 closureForm=Slim
+# NONE: NewClosure {{*}}function=f7 closureForm=Slim
+# NONE: NewClosure {{*}}function=f8 closureForm=Slim
+# NONE: NewClosure {{*}}function=f9 closureForm=Slim
+# NONE: NewClosure {{*}}function=f10 closureForm=Slim
+# NONE: NewClosure {{*}}function=f11 closureForm=Slim

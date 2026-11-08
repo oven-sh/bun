@@ -1,7 +1,6 @@
 // RUN: link
-// STATISTIC: BuiltinTypesDegradedToViews = 1
 // CHECK: variable {{*}}name="counts" module=[[entry]] declared={type=undefined|null|absent|Map<undefined|null|string, number> flags=[IsExpected, OmitsNull]}
-// CHECK: variable {{*}}name="names" module=[[entry]] declared={type=undefined|null|absent|Set<undefined|null|string> site=
+// CHECK: variable {{*}}name="names" module=[[entry]] declared={type=undefined|null|absent|Set<undefined|null|string>
 
 /// <reference path="./imports/registry.d.ts" />
 

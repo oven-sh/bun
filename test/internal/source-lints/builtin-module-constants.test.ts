@@ -40,8 +40,8 @@ function declaredConstants() {
 
 test("a constant that several built-in modules declare has one value", () => {
   const constants = declaredConstants();
-  expect(constants.get("HEADER_DATE")).toEqual(
-    new Map([["1 << 0", ["ahead-of-time/node/_http_outgoing.ts", "ahead-of-time/node/_http_server.ts"]]]),
+  expect(constants.get("ESCAPE_CODE_TIMEOUT")).toEqual(
+    new Map([["500", ["internal/readline/emitKeypressEvents.ts", "internal/readline/interface.ts"]]]),
   );
 
   const differing: Record<string, string[]> = {};

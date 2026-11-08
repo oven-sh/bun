@@ -3439,8 +3439,7 @@ static JSMockModule::ReplacedProperty* findReplacedProperty(Zig::GlobalObject* g
     return nullptr;
 }
 
-// jest.replaceProperty(object, key, value), with Jest 30's checks and messages. Returns the handle.
-// `mock` and `handle` are those of a restored replacement that replaceValue() installs again.
+// jest.replaceProperty(object, key, value) with Jest 30's checks. Returns the handle, or the given one when replaceValue() installs a restored `mock` again.
 __attribute__((minsize)) static JSValue replaceProperty(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe, JSObject* target, const Identifier& propertyKey, JSValue value, JSMockFunction* mock, JSObject* handle)
 {
     auto& vm = JSC::getVM(globalObject);

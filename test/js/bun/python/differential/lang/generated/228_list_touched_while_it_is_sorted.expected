@@ -1,0 +1,909 @@
+status: 0
+script: 5d70215e14aea5ee
+source: 8cfec455e817141f
+---
+count [count=1, name='nothing', act=function] => 1
+name [count=1, name='nothing', act=function] => nothing
+| result [count=1, name='nothing', act=function] => sorted
+| seen [count=1, name='nothing', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='nothing', act=function] => True
+count [count=1, name='append + pop', act=function] => 1
+name [count=1, name='append + pop', act=function] => append + pop
+| result [count=1, name='append + pop', act=function] => list modified during sort
+| seen [count=1, name='append + pop', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='append + pop', act=function] => True
+count [count=1, name='insert + del', act=function] => 1
+name [count=1, name='insert + del', act=function] => insert + del
+| result [count=1, name='insert + del', act=function] => list modified during sort
+| seen [count=1, name='insert + del', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='insert + del', act=function] => True
+count [count=1, name='extend + clear', act=function] => 1
+name [count=1, name='extend + clear', act=function] => extend + clear
+| result [count=1, name='extend + clear', act=function] => list modified during sort
+| seen [count=1, name='extend + clear', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='extend + clear', act=function] => True
+count [count=1, name='+= and del [:]', act=function] => 1
+name [count=1, name='+= and del [:]', act=function] => += and del [:]
+| result [count=1, name='+= and del [:]', act=function] => list modified during sort
+| seen [count=1, name='+= and del [:]', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='+= and del [:]', act=function] => True
+count [count=1, name='x[:] = [1]; x[:] = []', act=function] => 1
+name [count=1, name='x[:] = [1]; x[:] = []', act=function] => x[:] = [1]; x[:] = []
+| result [count=1, name='x[:] = [1]; x[:] = []', act=function] => list modified during sort
+| seen [count=1, name='x[:] = [1]; x[:] = []', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='x[:] = [1]; x[:] = []', act=function] => True
+count [count=1, name='100 items and clear', act=function] => 1
+name [count=1, name='100 items and clear', act=function] => 100 items and clear
+| result [count=1, name='100 items and clear', act=function] => list modified during sort
+| seen [count=1, name='100 items and clear', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='100 items and clear', act=function] => True
+count [count=1, name='append', act=function] => 1
+name [count=1, name='append', act=function] => append
+| result [count=1, name='append', act=function] => list modified during sort
+| seen [count=1, name='append', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='append', act=function] => True
+count [count=1, name='clear', act=function] => 1
+name [count=1, name='clear', act=function] => clear
+| result [count=1, name='clear', act=function] => sorted
+| seen [count=1, name='clear', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='clear', act=function] => True
+count [count=1, name='reverse', act=function] => 1
+name [count=1, name='reverse', act=function] => reverse
+| result [count=1, name='reverse', act=function] => sorted
+| seen [count=1, name='reverse', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='reverse', act=function] => True
+count [count=1, name='sort', act=function] => 1
+name [count=1, name='sort', act=function] => sort
+| result [count=1, name='sort', act=function] => sorted
+| seen [count=1, name='sort', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='sort', act=function] => True
+count [count=1, name='sort with a key', act=function] => 1
+name [count=1, name='sort with a key', act=function] => sort with a key
+| result [count=1, name='sort with a key', act=function] => sorted
+| seen [count=1, name='sort with a key', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='sort with a key', act=function] => True
+count [count=1, name='append + pop, sort', act=function] => 1
+name [count=1, name='append + pop, sort', act=function] => append + pop, sort
+| result [count=1, name='append + pop, sort', act=function] => list modified during sort
+| seen [count=1, name='append + pop, sort', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='append + pop, sort', act=function] => True
+count [count=1, name='append + pop, sort with a key', act=function] => 1
+name [count=1, name='append + pop, sort with a key', act=function] => append + pop, sort with a key
+| result [count=1, name='append + pop, sort with a key', act=function] => list modified during sort
+| seen [count=1, name='append + pop, sort with a key', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='append + pop, sort with a key', act=function] => True
+count [count=1, name='100 items and clear, sort with a key', act=function] => 1
+name [count=1, name='100 items and clear, sort with a key', act=function] => 100 items and clear, sort with a key
+| result [count=1, name='100 items and clear, sort with a key', act=function] => list modified during sort
+| seen [count=1, name='100 items and clear, sort with a key', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='100 items and clear, sort with a key', act=function] => True
+count [count=1, name='append, sort with a key, pop', act=function] => 1
+name [count=1, name='append, sort with a key, pop', act=function] => append, sort with a key, pop
+| result [count=1, name='append, sort with a key, pop', act=function] => list modified during sort
+| seen [count=1, name='append, sort with a key, pop', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='append, sort with a key, pop', act=function] => True
+count [count=1, name='extend by nothing', act=function] => 1
+name [count=1, name='extend by nothing', act=function] => extend by nothing
+| result [count=1, name='extend by nothing', act=function] => sorted
+| seen [count=1, name='extend by nothing', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='extend by nothing', act=function] => True
+count [count=1, name='*= 2', act=function] => 1
+name [count=1, name='*= 2', act=function] => *= 2
+| result [count=1, name='*= 2', act=function] => sorted
+| seen [count=1, name='*= 2', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='*= 2', act=function] => True
+count [count=1, name='x[:] = []', act=function] => 1
+name [count=1, name='x[:] = []', act=function] => x[:] = []
+| result [count=1, name='x[:] = []', act=function] => sorted
+| seen [count=1, name='x[:] = []', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='x[:] = []', act=function] => True
+count [count=1, name='copy', act=function] => 1
+name [count=1, name='copy', act=function] => copy
+| result [count=1, name='copy', act=function] => sorted
+| seen [count=1, name='copy', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='copy', act=function] => True
+count [count=1, name='len', act=function] => 1
+name [count=1, name='len', act=function] => len
+| result [count=1, name='len', act=function] => sorted
+| seen [count=1, name='len', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='len', act=function] => True
+count [count=1, name='repr', act=function] => 1
+name [count=1, name='repr', act=function] => repr
+| result [count=1, name='repr', act=function] => sorted
+| seen [count=1, name='repr', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=1, name='repr', act=function] => True
+count [count=3, name='nothing', act=function] => 3
+name [count=3, name='nothing', act=function] => nothing
+| result [count=3, name='nothing', act=function] => sorted
+| seen [count=3, name='nothing', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='nothing', act=function] => True
+count [count=3, name='nothing', act=function] => 3
+name [count=3, name='nothing', act=function] => nothing
+in a comparison | result [count=3, name='nothing', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='nothing', act=function] => True
+count [count=3, name='append + pop', act=function] => 3
+name [count=3, name='append + pop', act=function] => append + pop
+| result [count=3, name='append + pop', act=function] => list modified during sort
+| seen [count=3, name='append + pop', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='append + pop', act=function] => True
+count [count=3, name='append + pop', act=function] => 3
+name [count=3, name='append + pop', act=function] => append + pop
+in a comparison | result [count=3, name='append + pop', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='append + pop', act=function] => True
+count [count=3, name='insert + del', act=function] => 3
+name [count=3, name='insert + del', act=function] => insert + del
+| result [count=3, name='insert + del', act=function] => list modified during sort
+| seen [count=3, name='insert + del', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='insert + del', act=function] => True
+count [count=3, name='insert + del', act=function] => 3
+name [count=3, name='insert + del', act=function] => insert + del
+in a comparison | result [count=3, name='insert + del', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='insert + del', act=function] => True
+count [count=3, name='extend + clear', act=function] => 3
+name [count=3, name='extend + clear', act=function] => extend + clear
+| result [count=3, name='extend + clear', act=function] => list modified during sort
+| seen [count=3, name='extend + clear', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='extend + clear', act=function] => True
+count [count=3, name='extend + clear', act=function] => 3
+name [count=3, name='extend + clear', act=function] => extend + clear
+in a comparison | result [count=3, name='extend + clear', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='extend + clear', act=function] => True
+count [count=3, name='+= and del [:]', act=function] => 3
+name [count=3, name='+= and del [:]', act=function] => += and del [:]
+| result [count=3, name='+= and del [:]', act=function] => list modified during sort
+| seen [count=3, name='+= and del [:]', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='+= and del [:]', act=function] => True
+count [count=3, name='+= and del [:]', act=function] => 3
+name [count=3, name='+= and del [:]', act=function] => += and del [:]
+in a comparison | result [count=3, name='+= and del [:]', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='+= and del [:]', act=function] => True
+count [count=3, name='x[:] = [1]; x[:] = []', act=function] => 3
+name [count=3, name='x[:] = [1]; x[:] = []', act=function] => x[:] = [1]; x[:] = []
+| result [count=3, name='x[:] = [1]; x[:] = []', act=function] => list modified during sort
+| seen [count=3, name='x[:] = [1]; x[:] = []', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='x[:] = [1]; x[:] = []', act=function] => True
+count [count=3, name='x[:] = [1]; x[:] = []', act=function] => 3
+name [count=3, name='x[:] = [1]; x[:] = []', act=function] => x[:] = [1]; x[:] = []
+in a comparison | result [count=3, name='x[:] = [1]; x[:] = []', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='x[:] = [1]; x[:] = []', act=function] => True
+count [count=3, name='100 items and clear', act=function] => 3
+name [count=3, name='100 items and clear', act=function] => 100 items and clear
+| result [count=3, name='100 items and clear', act=function] => list modified during sort
+| seen [count=3, name='100 items and clear', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='100 items and clear', act=function] => True
+count [count=3, name='100 items and clear', act=function] => 3
+name [count=3, name='100 items and clear', act=function] => 100 items and clear
+in a comparison | result [count=3, name='100 items and clear', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='100 items and clear', act=function] => True
+count [count=3, name='append', act=function] => 3
+name [count=3, name='append', act=function] => append
+| result [count=3, name='append', act=function] => list modified during sort
+| seen [count=3, name='append', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='append', act=function] => True
+count [count=3, name='append', act=function] => 3
+name [count=3, name='append', act=function] => append
+in a comparison | result [count=3, name='append', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='append', act=function] => True
+count [count=3, name='clear', act=function] => 3
+name [count=3, name='clear', act=function] => clear
+| result [count=3, name='clear', act=function] => sorted
+| seen [count=3, name='clear', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='clear', act=function] => True
+count [count=3, name='clear', act=function] => 3
+name [count=3, name='clear', act=function] => clear
+in a comparison | result [count=3, name='clear', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='clear', act=function] => True
+count [count=3, name='reverse', act=function] => 3
+name [count=3, name='reverse', act=function] => reverse
+| result [count=3, name='reverse', act=function] => sorted
+| seen [count=3, name='reverse', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='reverse', act=function] => True
+count [count=3, name='reverse', act=function] => 3
+name [count=3, name='reverse', act=function] => reverse
+in a comparison | result [count=3, name='reverse', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='reverse', act=function] => True
+count [count=3, name='sort', act=function] => 3
+name [count=3, name='sort', act=function] => sort
+| result [count=3, name='sort', act=function] => sorted
+| seen [count=3, name='sort', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='sort', act=function] => True
+count [count=3, name='sort', act=function] => 3
+name [count=3, name='sort', act=function] => sort
+in a comparison | result [count=3, name='sort', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='sort', act=function] => True
+count [count=3, name='sort with a key', act=function] => 3
+name [count=3, name='sort with a key', act=function] => sort with a key
+| result [count=3, name='sort with a key', act=function] => sorted
+| seen [count=3, name='sort with a key', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='sort with a key', act=function] => True
+count [count=3, name='sort with a key', act=function] => 3
+name [count=3, name='sort with a key', act=function] => sort with a key
+in a comparison | result [count=3, name='sort with a key', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='sort with a key', act=function] => True
+count [count=3, name='append + pop, sort', act=function] => 3
+name [count=3, name='append + pop, sort', act=function] => append + pop, sort
+| result [count=3, name='append + pop, sort', act=function] => list modified during sort
+| seen [count=3, name='append + pop, sort', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='append + pop, sort', act=function] => True
+count [count=3, name='append + pop, sort', act=function] => 3
+name [count=3, name='append + pop, sort', act=function] => append + pop, sort
+in a comparison | result [count=3, name='append + pop, sort', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='append + pop, sort', act=function] => True
+count [count=3, name='append + pop, sort with a key', act=function] => 3
+name [count=3, name='append + pop, sort with a key', act=function] => append + pop, sort with a key
+| result [count=3, name='append + pop, sort with a key', act=function] => list modified during sort
+| seen [count=3, name='append + pop, sort with a key', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='append + pop, sort with a key', act=function] => True
+count [count=3, name='append + pop, sort with a key', act=function] => 3
+name [count=3, name='append + pop, sort with a key', act=function] => append + pop, sort with a key
+in a comparison | result [count=3, name='append + pop, sort with a key', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='append + pop, sort with a key', act=function] => True
+count [count=3, name='100 items and clear, sort with a key', act=function] => 3
+name [count=3, name='100 items and clear, sort with a key', act=function] => 100 items and clear, sort with a key
+| result [count=3, name='100 items and clear, sort with a key', act=function] => list modified during sort
+| seen [count=3, name='100 items and clear, sort with a key', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='100 items and clear, sort with a key', act=function] => True
+count [count=3, name='100 items and clear, sort with a key', act=function] => 3
+name [count=3, name='100 items and clear, sort with a key', act=function] => 100 items and clear, sort with a key
+in a comparison | result [count=3, name='100 items and clear, sort with a key', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='100 items and clear, sort with a key', act=function] => True
+count [count=3, name='append, sort with a key, pop', act=function] => 3
+name [count=3, name='append, sort with a key, pop', act=function] => append, sort with a key, pop
+| result [count=3, name='append, sort with a key, pop', act=function] => list modified during sort
+| seen [count=3, name='append, sort with a key, pop', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='append, sort with a key, pop', act=function] => True
+count [count=3, name='append, sort with a key, pop', act=function] => 3
+name [count=3, name='append, sort with a key, pop', act=function] => append, sort with a key, pop
+in a comparison | result [count=3, name='append, sort with a key, pop', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='append, sort with a key, pop', act=function] => True
+count [count=3, name='extend by nothing', act=function] => 3
+name [count=3, name='extend by nothing', act=function] => extend by nothing
+| result [count=3, name='extend by nothing', act=function] => sorted
+| seen [count=3, name='extend by nothing', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='extend by nothing', act=function] => True
+count [count=3, name='extend by nothing', act=function] => 3
+name [count=3, name='extend by nothing', act=function] => extend by nothing
+in a comparison | result [count=3, name='extend by nothing', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='extend by nothing', act=function] => True
+count [count=3, name='*= 2', act=function] => 3
+name [count=3, name='*= 2', act=function] => *= 2
+| result [count=3, name='*= 2', act=function] => sorted
+| seen [count=3, name='*= 2', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='*= 2', act=function] => True
+count [count=3, name='*= 2', act=function] => 3
+name [count=3, name='*= 2', act=function] => *= 2
+in a comparison | result [count=3, name='*= 2', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='*= 2', act=function] => True
+count [count=3, name='x[:] = []', act=function] => 3
+name [count=3, name='x[:] = []', act=function] => x[:] = []
+| result [count=3, name='x[:] = []', act=function] => sorted
+| seen [count=3, name='x[:] = []', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='x[:] = []', act=function] => True
+count [count=3, name='x[:] = []', act=function] => 3
+name [count=3, name='x[:] = []', act=function] => x[:] = []
+in a comparison | result [count=3, name='x[:] = []', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='x[:] = []', act=function] => True
+count [count=3, name='copy', act=function] => 3
+name [count=3, name='copy', act=function] => copy
+| result [count=3, name='copy', act=function] => sorted
+| seen [count=3, name='copy', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='copy', act=function] => True
+count [count=3, name='copy', act=function] => 3
+name [count=3, name='copy', act=function] => copy
+in a comparison | result [count=3, name='copy', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='copy', act=function] => True
+count [count=3, name='len', act=function] => 3
+name [count=3, name='len', act=function] => len
+| result [count=3, name='len', act=function] => sorted
+| seen [count=3, name='len', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='len', act=function] => True
+count [count=3, name='len', act=function] => 3
+name [count=3, name='len', act=function] => len
+in a comparison | result [count=3, name='len', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='len', act=function] => True
+count [count=3, name='repr', act=function] => 3
+name [count=3, name='repr', act=function] => repr
+| result [count=3, name='repr', act=function] => sorted
+| seen [count=3, name='repr', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=3, name='repr', act=function] => True
+count [count=3, name='repr', act=function] => 3
+name [count=3, name='repr', act=function] => repr
+in a comparison | result [count=3, name='repr', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=3, name='repr', act=function] => True
+count [count=64, name='nothing', act=function] => 64
+name [count=64, name='nothing', act=function] => nothing
+| result [count=64, name='nothing', act=function] => sorted
+| seen [count=64, name='nothing', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='nothing', act=function] => True
+count [count=64, name='nothing', act=function] => 64
+name [count=64, name='nothing', act=function] => nothing
+in a comparison | result [count=64, name='nothing', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='nothing', act=function] => True
+count [count=64, name='append + pop', act=function] => 64
+name [count=64, name='append + pop', act=function] => append + pop
+| result [count=64, name='append + pop', act=function] => list modified during sort
+| seen [count=64, name='append + pop', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='append + pop', act=function] => True
+count [count=64, name='append + pop', act=function] => 64
+name [count=64, name='append + pop', act=function] => append + pop
+in a comparison | result [count=64, name='append + pop', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='append + pop', act=function] => True
+count [count=64, name='insert + del', act=function] => 64
+name [count=64, name='insert + del', act=function] => insert + del
+| result [count=64, name='insert + del', act=function] => list modified during sort
+| seen [count=64, name='insert + del', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='insert + del', act=function] => True
+count [count=64, name='insert + del', act=function] => 64
+name [count=64, name='insert + del', act=function] => insert + del
+in a comparison | result [count=64, name='insert + del', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='insert + del', act=function] => True
+count [count=64, name='extend + clear', act=function] => 64
+name [count=64, name='extend + clear', act=function] => extend + clear
+| result [count=64, name='extend + clear', act=function] => list modified during sort
+| seen [count=64, name='extend + clear', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='extend + clear', act=function] => True
+count [count=64, name='extend + clear', act=function] => 64
+name [count=64, name='extend + clear', act=function] => extend + clear
+in a comparison | result [count=64, name='extend + clear', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='extend + clear', act=function] => True
+count [count=64, name='+= and del [:]', act=function] => 64
+name [count=64, name='+= and del [:]', act=function] => += and del [:]
+| result [count=64, name='+= and del [:]', act=function] => list modified during sort
+| seen [count=64, name='+= and del [:]', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='+= and del [:]', act=function] => True
+count [count=64, name='+= and del [:]', act=function] => 64
+name [count=64, name='+= and del [:]', act=function] => += and del [:]
+in a comparison | result [count=64, name='+= and del [:]', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='+= and del [:]', act=function] => True
+count [count=64, name='x[:] = [1]; x[:] = []', act=function] => 64
+name [count=64, name='x[:] = [1]; x[:] = []', act=function] => x[:] = [1]; x[:] = []
+| result [count=64, name='x[:] = [1]; x[:] = []', act=function] => list modified during sort
+| seen [count=64, name='x[:] = [1]; x[:] = []', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='x[:] = [1]; x[:] = []', act=function] => True
+count [count=64, name='x[:] = [1]; x[:] = []', act=function] => 64
+name [count=64, name='x[:] = [1]; x[:] = []', act=function] => x[:] = [1]; x[:] = []
+in a comparison | result [count=64, name='x[:] = [1]; x[:] = []', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='x[:] = [1]; x[:] = []', act=function] => True
+count [count=64, name='100 items and clear', act=function] => 64
+name [count=64, name='100 items and clear', act=function] => 100 items and clear
+| result [count=64, name='100 items and clear', act=function] => list modified during sort
+| seen [count=64, name='100 items and clear', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='100 items and clear', act=function] => True
+count [count=64, name='100 items and clear', act=function] => 64
+name [count=64, name='100 items and clear', act=function] => 100 items and clear
+in a comparison | result [count=64, name='100 items and clear', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='100 items and clear', act=function] => True
+count [count=64, name='append', act=function] => 64
+name [count=64, name='append', act=function] => append
+| result [count=64, name='append', act=function] => list modified during sort
+| seen [count=64, name='append', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='append', act=function] => True
+count [count=64, name='append', act=function] => 64
+name [count=64, name='append', act=function] => append
+in a comparison | result [count=64, name='append', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='append', act=function] => True
+count [count=64, name='clear', act=function] => 64
+name [count=64, name='clear', act=function] => clear
+| result [count=64, name='clear', act=function] => sorted
+| seen [count=64, name='clear', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='clear', act=function] => True
+count [count=64, name='clear', act=function] => 64
+name [count=64, name='clear', act=function] => clear
+in a comparison | result [count=64, name='clear', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='clear', act=function] => True
+count [count=64, name='reverse', act=function] => 64
+name [count=64, name='reverse', act=function] => reverse
+| result [count=64, name='reverse', act=function] => sorted
+| seen [count=64, name='reverse', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='reverse', act=function] => True
+count [count=64, name='reverse', act=function] => 64
+name [count=64, name='reverse', act=function] => reverse
+in a comparison | result [count=64, name='reverse', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='reverse', act=function] => True
+count [count=64, name='sort', act=function] => 64
+name [count=64, name='sort', act=function] => sort
+| result [count=64, name='sort', act=function] => sorted
+| seen [count=64, name='sort', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='sort', act=function] => True
+count [count=64, name='sort', act=function] => 64
+name [count=64, name='sort', act=function] => sort
+in a comparison | result [count=64, name='sort', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='sort', act=function] => True
+count [count=64, name='sort with a key', act=function] => 64
+name [count=64, name='sort with a key', act=function] => sort with a key
+| result [count=64, name='sort with a key', act=function] => sorted
+| seen [count=64, name='sort with a key', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='sort with a key', act=function] => True
+count [count=64, name='sort with a key', act=function] => 64
+name [count=64, name='sort with a key', act=function] => sort with a key
+in a comparison | result [count=64, name='sort with a key', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='sort with a key', act=function] => True
+count [count=64, name='append + pop, sort', act=function] => 64
+name [count=64, name='append + pop, sort', act=function] => append + pop, sort
+| result [count=64, name='append + pop, sort', act=function] => list modified during sort
+| seen [count=64, name='append + pop, sort', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='append + pop, sort', act=function] => True
+count [count=64, name='append + pop, sort', act=function] => 64
+name [count=64, name='append + pop, sort', act=function] => append + pop, sort
+in a comparison | result [count=64, name='append + pop, sort', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='append + pop, sort', act=function] => True
+count [count=64, name='append + pop, sort with a key', act=function] => 64
+name [count=64, name='append + pop, sort with a key', act=function] => append + pop, sort with a key
+| result [count=64, name='append + pop, sort with a key', act=function] => list modified during sort
+| seen [count=64, name='append + pop, sort with a key', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='append + pop, sort with a key', act=function] => True
+count [count=64, name='append + pop, sort with a key', act=function] => 64
+name [count=64, name='append + pop, sort with a key', act=function] => append + pop, sort with a key
+in a comparison | result [count=64, name='append + pop, sort with a key', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='append + pop, sort with a key', act=function] => True
+count [count=64, name='100 items and clear, sort with a key', act=function] => 64
+name [count=64, name='100 items and clear, sort with a key', act=function] => 100 items and clear, sort with a key
+| result [count=64, name='100 items and clear, sort with a key', act=function] => list modified during sort
+| seen [count=64, name='100 items and clear, sort with a key', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='100 items and clear, sort with a key', act=function] => True
+count [count=64, name='100 items and clear, sort with a key', act=function] => 64
+name [count=64, name='100 items and clear, sort with a key', act=function] => 100 items and clear, sort with a key
+in a comparison | result [count=64, name='100 items and clear, sort with a key', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='100 items and clear, sort with a key', act=function] => True
+count [count=64, name='append, sort with a key, pop', act=function] => 64
+name [count=64, name='append, sort with a key, pop', act=function] => append, sort with a key, pop
+| result [count=64, name='append, sort with a key, pop', act=function] => list modified during sort
+| seen [count=64, name='append, sort with a key, pop', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='append, sort with a key, pop', act=function] => True
+count [count=64, name='append, sort with a key, pop', act=function] => 64
+name [count=64, name='append, sort with a key, pop', act=function] => append, sort with a key, pop
+in a comparison | result [count=64, name='append, sort with a key, pop', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='append, sort with a key, pop', act=function] => True
+count [count=64, name='extend by nothing', act=function] => 64
+name [count=64, name='extend by nothing', act=function] => extend by nothing
+| result [count=64, name='extend by nothing', act=function] => sorted
+| seen [count=64, name='extend by nothing', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='extend by nothing', act=function] => True
+count [count=64, name='extend by nothing', act=function] => 64
+name [count=64, name='extend by nothing', act=function] => extend by nothing
+in a comparison | result [count=64, name='extend by nothing', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='extend by nothing', act=function] => True
+count [count=64, name='*= 2', act=function] => 64
+name [count=64, name='*= 2', act=function] => *= 2
+| result [count=64, name='*= 2', act=function] => sorted
+| seen [count=64, name='*= 2', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='*= 2', act=function] => True
+count [count=64, name='*= 2', act=function] => 64
+name [count=64, name='*= 2', act=function] => *= 2
+in a comparison | result [count=64, name='*= 2', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='*= 2', act=function] => True
+count [count=64, name='x[:] = []', act=function] => 64
+name [count=64, name='x[:] = []', act=function] => x[:] = []
+| result [count=64, name='x[:] = []', act=function] => sorted
+| seen [count=64, name='x[:] = []', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='x[:] = []', act=function] => True
+count [count=64, name='x[:] = []', act=function] => 64
+name [count=64, name='x[:] = []', act=function] => x[:] = []
+in a comparison | result [count=64, name='x[:] = []', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='x[:] = []', act=function] => True
+count [count=64, name='copy', act=function] => 64
+name [count=64, name='copy', act=function] => copy
+| result [count=64, name='copy', act=function] => sorted
+| seen [count=64, name='copy', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='copy', act=function] => True
+count [count=64, name='copy', act=function] => 64
+name [count=64, name='copy', act=function] => copy
+in a comparison | result [count=64, name='copy', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='copy', act=function] => True
+count [count=64, name='len', act=function] => 64
+name [count=64, name='len', act=function] => len
+| result [count=64, name='len', act=function] => sorted
+| seen [count=64, name='len', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='len', act=function] => True
+count [count=64, name='len', act=function] => 64
+name [count=64, name='len', act=function] => len
+in a comparison | result [count=64, name='len', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='len', act=function] => True
+count [count=64, name='repr', act=function] => 64
+name [count=64, name='repr', act=function] => repr
+| result [count=64, name='repr', act=function] => sorted
+| seen [count=64, name='repr', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=64, name='repr', act=function] => True
+count [count=64, name='repr', act=function] => 64
+name [count=64, name='repr', act=function] => repr
+in a comparison | result [count=64, name='repr', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=64, name='repr', act=function] => True
+count [count=65, name='nothing', act=function] => 65
+name [count=65, name='nothing', act=function] => nothing
+| result [count=65, name='nothing', act=function] => sorted
+| seen [count=65, name='nothing', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='nothing', act=function] => True
+count [count=65, name='nothing', act=function] => 65
+name [count=65, name='nothing', act=function] => nothing
+in a comparison | result [count=65, name='nothing', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='nothing', act=function] => True
+count [count=65, name='append + pop', act=function] => 65
+name [count=65, name='append + pop', act=function] => append + pop
+| result [count=65, name='append + pop', act=function] => list modified during sort
+| seen [count=65, name='append + pop', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='append + pop', act=function] => True
+count [count=65, name='append + pop', act=function] => 65
+name [count=65, name='append + pop', act=function] => append + pop
+in a comparison | result [count=65, name='append + pop', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='append + pop', act=function] => True
+count [count=65, name='insert + del', act=function] => 65
+name [count=65, name='insert + del', act=function] => insert + del
+| result [count=65, name='insert + del', act=function] => list modified during sort
+| seen [count=65, name='insert + del', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='insert + del', act=function] => True
+count [count=65, name='insert + del', act=function] => 65
+name [count=65, name='insert + del', act=function] => insert + del
+in a comparison | result [count=65, name='insert + del', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='insert + del', act=function] => True
+count [count=65, name='extend + clear', act=function] => 65
+name [count=65, name='extend + clear', act=function] => extend + clear
+| result [count=65, name='extend + clear', act=function] => list modified during sort
+| seen [count=65, name='extend + clear', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='extend + clear', act=function] => True
+count [count=65, name='extend + clear', act=function] => 65
+name [count=65, name='extend + clear', act=function] => extend + clear
+in a comparison | result [count=65, name='extend + clear', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='extend + clear', act=function] => True
+count [count=65, name='+= and del [:]', act=function] => 65
+name [count=65, name='+= and del [:]', act=function] => += and del [:]
+| result [count=65, name='+= and del [:]', act=function] => list modified during sort
+| seen [count=65, name='+= and del [:]', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='+= and del [:]', act=function] => True
+count [count=65, name='+= and del [:]', act=function] => 65
+name [count=65, name='+= and del [:]', act=function] => += and del [:]
+in a comparison | result [count=65, name='+= and del [:]', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='+= and del [:]', act=function] => True
+count [count=65, name='x[:] = [1]; x[:] = []', act=function] => 65
+name [count=65, name='x[:] = [1]; x[:] = []', act=function] => x[:] = [1]; x[:] = []
+| result [count=65, name='x[:] = [1]; x[:] = []', act=function] => list modified during sort
+| seen [count=65, name='x[:] = [1]; x[:] = []', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='x[:] = [1]; x[:] = []', act=function] => True
+count [count=65, name='x[:] = [1]; x[:] = []', act=function] => 65
+name [count=65, name='x[:] = [1]; x[:] = []', act=function] => x[:] = [1]; x[:] = []
+in a comparison | result [count=65, name='x[:] = [1]; x[:] = []', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='x[:] = [1]; x[:] = []', act=function] => True
+count [count=65, name='100 items and clear', act=function] => 65
+name [count=65, name='100 items and clear', act=function] => 100 items and clear
+| result [count=65, name='100 items and clear', act=function] => list modified during sort
+| seen [count=65, name='100 items and clear', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='100 items and clear', act=function] => True
+count [count=65, name='100 items and clear', act=function] => 65
+name [count=65, name='100 items and clear', act=function] => 100 items and clear
+in a comparison | result [count=65, name='100 items and clear', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='100 items and clear', act=function] => True
+count [count=65, name='append', act=function] => 65
+name [count=65, name='append', act=function] => append
+| result [count=65, name='append', act=function] => list modified during sort
+| seen [count=65, name='append', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='append', act=function] => True
+count [count=65, name='append', act=function] => 65
+name [count=65, name='append', act=function] => append
+in a comparison | result [count=65, name='append', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='append', act=function] => True
+count [count=65, name='clear', act=function] => 65
+name [count=65, name='clear', act=function] => clear
+| result [count=65, name='clear', act=function] => sorted
+| seen [count=65, name='clear', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='clear', act=function] => True
+count [count=65, name='clear', act=function] => 65
+name [count=65, name='clear', act=function] => clear
+in a comparison | result [count=65, name='clear', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='clear', act=function] => True
+count [count=65, name='reverse', act=function] => 65
+name [count=65, name='reverse', act=function] => reverse
+| result [count=65, name='reverse', act=function] => sorted
+| seen [count=65, name='reverse', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='reverse', act=function] => True
+count [count=65, name='reverse', act=function] => 65
+name [count=65, name='reverse', act=function] => reverse
+in a comparison | result [count=65, name='reverse', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='reverse', act=function] => True
+count [count=65, name='sort', act=function] => 65
+name [count=65, name='sort', act=function] => sort
+| result [count=65, name='sort', act=function] => sorted
+| seen [count=65, name='sort', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='sort', act=function] => True
+count [count=65, name='sort', act=function] => 65
+name [count=65, name='sort', act=function] => sort
+in a comparison | result [count=65, name='sort', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='sort', act=function] => True
+count [count=65, name='sort with a key', act=function] => 65
+name [count=65, name='sort with a key', act=function] => sort with a key
+| result [count=65, name='sort with a key', act=function] => sorted
+| seen [count=65, name='sort with a key', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='sort with a key', act=function] => True
+count [count=65, name='sort with a key', act=function] => 65
+name [count=65, name='sort with a key', act=function] => sort with a key
+in a comparison | result [count=65, name='sort with a key', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='sort with a key', act=function] => True
+count [count=65, name='append + pop, sort', act=function] => 65
+name [count=65, name='append + pop, sort', act=function] => append + pop, sort
+| result [count=65, name='append + pop, sort', act=function] => list modified during sort
+| seen [count=65, name='append + pop, sort', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='append + pop, sort', act=function] => True
+count [count=65, name='append + pop, sort', act=function] => 65
+name [count=65, name='append + pop, sort', act=function] => append + pop, sort
+in a comparison | result [count=65, name='append + pop, sort', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='append + pop, sort', act=function] => True
+count [count=65, name='append + pop, sort with a key', act=function] => 65
+name [count=65, name='append + pop, sort with a key', act=function] => append + pop, sort with a key
+| result [count=65, name='append + pop, sort with a key', act=function] => list modified during sort
+| seen [count=65, name='append + pop, sort with a key', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='append + pop, sort with a key', act=function] => True
+count [count=65, name='append + pop, sort with a key', act=function] => 65
+name [count=65, name='append + pop, sort with a key', act=function] => append + pop, sort with a key
+in a comparison | result [count=65, name='append + pop, sort with a key', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='append + pop, sort with a key', act=function] => True
+count [count=65, name='100 items and clear, sort with a key', act=function] => 65
+name [count=65, name='100 items and clear, sort with a key', act=function] => 100 items and clear, sort with a key
+| result [count=65, name='100 items and clear, sort with a key', act=function] => list modified during sort
+| seen [count=65, name='100 items and clear, sort with a key', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='100 items and clear, sort with a key', act=function] => True
+count [count=65, name='100 items and clear, sort with a key', act=function] => 65
+name [count=65, name='100 items and clear, sort with a key', act=function] => 100 items and clear, sort with a key
+in a comparison | result [count=65, name='100 items and clear, sort with a key', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='100 items and clear, sort with a key', act=function] => True
+count [count=65, name='append, sort with a key, pop', act=function] => 65
+name [count=65, name='append, sort with a key, pop', act=function] => append, sort with a key, pop
+| result [count=65, name='append, sort with a key, pop', act=function] => list modified during sort
+| seen [count=65, name='append, sort with a key, pop', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='append, sort with a key, pop', act=function] => True
+count [count=65, name='append, sort with a key, pop', act=function] => 65
+name [count=65, name='append, sort with a key, pop', act=function] => append, sort with a key, pop
+in a comparison | result [count=65, name='append, sort with a key, pop', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='append, sort with a key, pop', act=function] => True
+count [count=65, name='extend by nothing', act=function] => 65
+name [count=65, name='extend by nothing', act=function] => extend by nothing
+| result [count=65, name='extend by nothing', act=function] => sorted
+| seen [count=65, name='extend by nothing', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='extend by nothing', act=function] => True
+count [count=65, name='extend by nothing', act=function] => 65
+name [count=65, name='extend by nothing', act=function] => extend by nothing
+in a comparison | result [count=65, name='extend by nothing', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='extend by nothing', act=function] => True
+count [count=65, name='*= 2', act=function] => 65
+name [count=65, name='*= 2', act=function] => *= 2
+| result [count=65, name='*= 2', act=function] => sorted
+| seen [count=65, name='*= 2', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='*= 2', act=function] => True
+count [count=65, name='*= 2', act=function] => 65
+name [count=65, name='*= 2', act=function] => *= 2
+in a comparison | result [count=65, name='*= 2', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='*= 2', act=function] => True
+count [count=65, name='x[:] = []', act=function] => 65
+name [count=65, name='x[:] = []', act=function] => x[:] = []
+| result [count=65, name='x[:] = []', act=function] => sorted
+| seen [count=65, name='x[:] = []', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='x[:] = []', act=function] => True
+count [count=65, name='x[:] = []', act=function] => 65
+name [count=65, name='x[:] = []', act=function] => x[:] = []
+in a comparison | result [count=65, name='x[:] = []', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='x[:] = []', act=function] => True
+count [count=65, name='copy', act=function] => 65
+name [count=65, name='copy', act=function] => copy
+| result [count=65, name='copy', act=function] => sorted
+| seen [count=65, name='copy', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='copy', act=function] => True
+count [count=65, name='copy', act=function] => 65
+name [count=65, name='copy', act=function] => copy
+in a comparison | result [count=65, name='copy', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='copy', act=function] => True
+count [count=65, name='len', act=function] => 65
+name [count=65, name='len', act=function] => len
+| result [count=65, name='len', act=function] => sorted
+| seen [count=65, name='len', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='len', act=function] => True
+count [count=65, name='len', act=function] => 65
+name [count=65, name='len', act=function] => len
+in a comparison | result [count=65, name='len', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='len', act=function] => True
+count [count=65, name='repr', act=function] => 65
+name [count=65, name='repr', act=function] => repr
+| result [count=65, name='repr', act=function] => sorted
+| seen [count=65, name='repr', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=65, name='repr', act=function] => True
+count [count=65, name='repr', act=function] => 65
+name [count=65, name='repr', act=function] => repr
+in a comparison | result [count=65, name='repr', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=65, name='repr', act=function] => True
+count [count=200, name='nothing', act=function] => 200
+name [count=200, name='nothing', act=function] => nothing
+| result [count=200, name='nothing', act=function] => sorted
+| seen [count=200, name='nothing', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='nothing', act=function] => True
+count [count=200, name='nothing', act=function] => 200
+name [count=200, name='nothing', act=function] => nothing
+in a comparison | result [count=200, name='nothing', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='nothing', act=function] => True
+count [count=200, name='append + pop', act=function] => 200
+name [count=200, name='append + pop', act=function] => append + pop
+| result [count=200, name='append + pop', act=function] => list modified during sort
+| seen [count=200, name='append + pop', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='append + pop', act=function] => True
+count [count=200, name='append + pop', act=function] => 200
+name [count=200, name='append + pop', act=function] => append + pop
+in a comparison | result [count=200, name='append + pop', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='append + pop', act=function] => True
+count [count=200, name='insert + del', act=function] => 200
+name [count=200, name='insert + del', act=function] => insert + del
+| result [count=200, name='insert + del', act=function] => list modified during sort
+| seen [count=200, name='insert + del', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='insert + del', act=function] => True
+count [count=200, name='insert + del', act=function] => 200
+name [count=200, name='insert + del', act=function] => insert + del
+in a comparison | result [count=200, name='insert + del', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='insert + del', act=function] => True
+count [count=200, name='extend + clear', act=function] => 200
+name [count=200, name='extend + clear', act=function] => extend + clear
+| result [count=200, name='extend + clear', act=function] => list modified during sort
+| seen [count=200, name='extend + clear', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='extend + clear', act=function] => True
+count [count=200, name='extend + clear', act=function] => 200
+name [count=200, name='extend + clear', act=function] => extend + clear
+in a comparison | result [count=200, name='extend + clear', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='extend + clear', act=function] => True
+count [count=200, name='+= and del [:]', act=function] => 200
+name [count=200, name='+= and del [:]', act=function] => += and del [:]
+| result [count=200, name='+= and del [:]', act=function] => list modified during sort
+| seen [count=200, name='+= and del [:]', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='+= and del [:]', act=function] => True
+count [count=200, name='+= and del [:]', act=function] => 200
+name [count=200, name='+= and del [:]', act=function] => += and del [:]
+in a comparison | result [count=200, name='+= and del [:]', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='+= and del [:]', act=function] => True
+count [count=200, name='x[:] = [1]; x[:] = []', act=function] => 200
+name [count=200, name='x[:] = [1]; x[:] = []', act=function] => x[:] = [1]; x[:] = []
+| result [count=200, name='x[:] = [1]; x[:] = []', act=function] => list modified during sort
+| seen [count=200, name='x[:] = [1]; x[:] = []', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='x[:] = [1]; x[:] = []', act=function] => True
+count [count=200, name='x[:] = [1]; x[:] = []', act=function] => 200
+name [count=200, name='x[:] = [1]; x[:] = []', act=function] => x[:] = [1]; x[:] = []
+in a comparison | result [count=200, name='x[:] = [1]; x[:] = []', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='x[:] = [1]; x[:] = []', act=function] => True
+count [count=200, name='100 items and clear', act=function] => 200
+name [count=200, name='100 items and clear', act=function] => 100 items and clear
+| result [count=200, name='100 items and clear', act=function] => list modified during sort
+| seen [count=200, name='100 items and clear', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='100 items and clear', act=function] => True
+count [count=200, name='100 items and clear', act=function] => 200
+name [count=200, name='100 items and clear', act=function] => 100 items and clear
+in a comparison | result [count=200, name='100 items and clear', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='100 items and clear', act=function] => True
+count [count=200, name='append', act=function] => 200
+name [count=200, name='append', act=function] => append
+| result [count=200, name='append', act=function] => list modified during sort
+| seen [count=200, name='append', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='append', act=function] => True
+count [count=200, name='append', act=function] => 200
+name [count=200, name='append', act=function] => append
+in a comparison | result [count=200, name='append', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='append', act=function] => True
+count [count=200, name='clear', act=function] => 200
+name [count=200, name='clear', act=function] => clear
+| result [count=200, name='clear', act=function] => sorted
+| seen [count=200, name='clear', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='clear', act=function] => True
+count [count=200, name='clear', act=function] => 200
+name [count=200, name='clear', act=function] => clear
+in a comparison | result [count=200, name='clear', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='clear', act=function] => True
+count [count=200, name='reverse', act=function] => 200
+name [count=200, name='reverse', act=function] => reverse
+| result [count=200, name='reverse', act=function] => sorted
+| seen [count=200, name='reverse', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='reverse', act=function] => True
+count [count=200, name='reverse', act=function] => 200
+name [count=200, name='reverse', act=function] => reverse
+in a comparison | result [count=200, name='reverse', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='reverse', act=function] => True
+count [count=200, name='sort', act=function] => 200
+name [count=200, name='sort', act=function] => sort
+| result [count=200, name='sort', act=function] => sorted
+| seen [count=200, name='sort', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='sort', act=function] => True
+count [count=200, name='sort', act=function] => 200
+name [count=200, name='sort', act=function] => sort
+in a comparison | result [count=200, name='sort', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='sort', act=function] => True
+count [count=200, name='sort with a key', act=function] => 200
+name [count=200, name='sort with a key', act=function] => sort with a key
+| result [count=200, name='sort with a key', act=function] => sorted
+| seen [count=200, name='sort with a key', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='sort with a key', act=function] => True
+count [count=200, name='sort with a key', act=function] => 200
+name [count=200, name='sort with a key', act=function] => sort with a key
+in a comparison | result [count=200, name='sort with a key', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='sort with a key', act=function] => True
+count [count=200, name='append + pop, sort', act=function] => 200
+name [count=200, name='append + pop, sort', act=function] => append + pop, sort
+| result [count=200, name='append + pop, sort', act=function] => list modified during sort
+| seen [count=200, name='append + pop, sort', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='append + pop, sort', act=function] => True
+count [count=200, name='append + pop, sort', act=function] => 200
+name [count=200, name='append + pop, sort', act=function] => append + pop, sort
+in a comparison | result [count=200, name='append + pop, sort', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='append + pop, sort', act=function] => True
+count [count=200, name='append + pop, sort with a key', act=function] => 200
+name [count=200, name='append + pop, sort with a key', act=function] => append + pop, sort with a key
+| result [count=200, name='append + pop, sort with a key', act=function] => list modified during sort
+| seen [count=200, name='append + pop, sort with a key', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='append + pop, sort with a key', act=function] => True
+count [count=200, name='append + pop, sort with a key', act=function] => 200
+name [count=200, name='append + pop, sort with a key', act=function] => append + pop, sort with a key
+in a comparison | result [count=200, name='append + pop, sort with a key', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='append + pop, sort with a key', act=function] => True
+count [count=200, name='100 items and clear, sort with a key', act=function] => 200
+name [count=200, name='100 items and clear, sort with a key', act=function] => 100 items and clear, sort with a key
+| result [count=200, name='100 items and clear, sort with a key', act=function] => list modified during sort
+| seen [count=200, name='100 items and clear, sort with a key', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='100 items and clear, sort with a key', act=function] => True
+count [count=200, name='100 items and clear, sort with a key', act=function] => 200
+name [count=200, name='100 items and clear, sort with a key', act=function] => 100 items and clear, sort with a key
+in a comparison | result [count=200, name='100 items and clear, sort with a key', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='100 items and clear, sort with a key', act=function] => True
+count [count=200, name='append, sort with a key, pop', act=function] => 200
+name [count=200, name='append, sort with a key, pop', act=function] => append, sort with a key, pop
+| result [count=200, name='append, sort with a key, pop', act=function] => list modified during sort
+| seen [count=200, name='append, sort with a key, pop', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='append, sort with a key, pop', act=function] => True
+count [count=200, name='append, sort with a key, pop', act=function] => 200
+name [count=200, name='append, sort with a key, pop', act=function] => append, sort with a key, pop
+in a comparison | result [count=200, name='append, sort with a key, pop', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='append, sort with a key, pop', act=function] => True
+count [count=200, name='extend by nothing', act=function] => 200
+name [count=200, name='extend by nothing', act=function] => extend by nothing
+| result [count=200, name='extend by nothing', act=function] => sorted
+| seen [count=200, name='extend by nothing', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='extend by nothing', act=function] => True
+count [count=200, name='extend by nothing', act=function] => 200
+name [count=200, name='extend by nothing', act=function] => extend by nothing
+in a comparison | result [count=200, name='extend by nothing', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='extend by nothing', act=function] => True
+count [count=200, name='*= 2', act=function] => 200
+name [count=200, name='*= 2', act=function] => *= 2
+| result [count=200, name='*= 2', act=function] => sorted
+| seen [count=200, name='*= 2', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='*= 2', act=function] => True
+count [count=200, name='*= 2', act=function] => 200
+name [count=200, name='*= 2', act=function] => *= 2
+in a comparison | result [count=200, name='*= 2', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='*= 2', act=function] => True
+count [count=200, name='x[:] = []', act=function] => 200
+name [count=200, name='x[:] = []', act=function] => x[:] = []
+| result [count=200, name='x[:] = []', act=function] => sorted
+| seen [count=200, name='x[:] = []', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='x[:] = []', act=function] => True
+count [count=200, name='x[:] = []', act=function] => 200
+name [count=200, name='x[:] = []', act=function] => x[:] = []
+in a comparison | result [count=200, name='x[:] = []', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='x[:] = []', act=function] => True
+count [count=200, name='copy', act=function] => 200
+name [count=200, name='copy', act=function] => copy
+| result [count=200, name='copy', act=function] => sorted
+| seen [count=200, name='copy', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='copy', act=function] => True
+count [count=200, name='copy', act=function] => 200
+name [count=200, name='copy', act=function] => copy
+in a comparison | result [count=200, name='copy', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='copy', act=function] => True
+count [count=200, name='len', act=function] => 200
+name [count=200, name='len', act=function] => len
+| result [count=200, name='len', act=function] => sorted
+| seen [count=200, name='len', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='len', act=function] => True
+count [count=200, name='len', act=function] => 200
+name [count=200, name='len', act=function] => len
+in a comparison | result [count=200, name='len', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='len', act=function] => True
+count [count=200, name='repr', act=function] => 200
+name [count=200, name='repr', act=function] => repr
+| result [count=200, name='repr', act=function] => sorted
+| seen [count=200, name='repr', act=function] => [0]
+x == list(range(1, count + 1)) + [0] [count=200, name='repr', act=function] => True
+count [count=200, name='repr', act=function] => 200
+name [count=200, name='repr', act=function] => repr
+in a comparison | result [count=200, name='repr', act=function] => sorted
+| [i.value for i in x] == list(range(1, count + 1)) + [0] [count=200, name='repr', act=function] => True
+KeyError e => 3
+x => [3, 1, 2]
+[3, 1, 2, 4]

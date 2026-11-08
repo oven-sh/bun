@@ -1,0 +1,92 @@
+status: 0
+oracle: none
+---
+--- the length and the room of a list, while it is sorted
+1 nothing | [0, 0] [0, False] | sorted | 1 True
+1 clear | [0, 0] [0, False] | sorted | 1 True
+1 reverse | [0, 0] [0, False] | sorted | 1 True
+1 sort | [0, 0] [0, False] | sorted | 1 True
+1 sort with a key | [0, 0] [0, False] | sorted | 1 True
+1 extend by nothing | [0, 0] [0, False] | sorted | 1 True
+1 copy | [0, 0] [0, False] | sorted | 1 True
+1 append + pop | [0, 0] [0, True] | list modified during sort | 1 True
+1 100 items and clear | [0, 0] [0, True] | list modified during sort | 1 True
+3 nothing | [0, 0] [0, False] | sorted | 3 True
+3 clear | [0, 0] [0, False] | sorted | 3 True
+3 reverse | [0, 0] [0, False] | sorted | 3 True
+3 sort | [0, 0] [0, False] | sorted | 3 True
+3 sort with a key | [0, 0] [0, False] | sorted | 3 True
+3 extend by nothing | [0, 0] [0, False] | sorted | 3 True
+3 copy | [0, 0] [0, False] | sorted | 3 True
+3 append + pop | [0, 0] [0, True] | list modified during sort | 3 True
+3 100 items and clear | [0, 0] [0, True] | list modified during sort | 3 True
+64 nothing | [0, 0] [0, False] | sorted | 64 True
+64 clear | [0, 0] [0, False] | sorted | 64 True
+64 reverse | [0, 0] [0, False] | sorted | 64 True
+64 sort | [0, 0] [0, False] | sorted | 64 True
+64 sort with a key | [0, 0] [0, False] | sorted | 64 True
+64 extend by nothing | [0, 0] [0, False] | sorted | 64 True
+64 copy | [0, 0] [0, False] | sorted | 64 True
+64 append + pop | [0, 0] [0, True] | list modified during sort | 64 True
+64 100 items and clear | [0, 0] [0, True] | list modified during sort | 64 True
+65 nothing | [0, 0] [0, False] | sorted | 65 True
+65 clear | [0, 0] [0, False] | sorted | 65 True
+65 reverse | [0, 0] [0, False] | sorted | 65 True
+65 sort | [0, 0] [0, False] | sorted | 65 True
+65 sort with a key | [0, 0] [0, False] | sorted | 65 True
+65 extend by nothing | [0, 0] [0, False] | sorted | 65 True
+65 copy | [0, 0] [0, False] | sorted | 65 True
+65 append + pop | [0, 0] [0, True] | list modified during sort | 65 True
+65 100 items and clear | [0, 0] [0, True] | list modified during sort | 65 True
+200 nothing | [0, 0] [0, False] | sorted | 200 True
+200 clear | [0, 0] [0, False] | sorted | 200 True
+200 reverse | [0, 0] [0, False] | sorted | 200 True
+200 sort | [0, 0] [0, False] | sorted | 200 True
+200 sort with a key | [0, 0] [0, False] | sorted | 200 True
+200 extend by nothing | [0, 0] [0, False] | sorted | 200 True
+200 copy | [0, 0] [0, False] | sorted | 200 True
+200 append + pop | [0, 0] [0, True] | list modified during sort | 200 True
+200 100 items and clear | [0, 0] [0, True] | list modified during sort | 200 True
+2000 nothing | [0, 0] [0, False] | sorted | 2000 True
+2000 clear | [0, 0] [0, False] | sorted | 2000 True
+2000 reverse | [0, 0] [0, False] | sorted | 2000 True
+2000 sort | [0, 0] [0, False] | sorted | 2000 True
+2000 sort with a key | [0, 0] [0, False] | sorted | 2000 True
+2000 extend by nothing | [0, 0] [0, False] | sorted | 2000 True
+2000 copy | [0, 0] [0, False] | sorted | 2000 True
+2000 append + pop | [0, 0] [0, True] | list modified during sort | 2000 True
+2000 100 items and clear | [0, 0] [0, True] | list modified during sort | 2000 True
+--- what JS does to it
+3 nothing | sorted | [0] True None
+3 push + pop | ValueError: list modified during sort | [0] True None
+3 a[0] = 1; a.length = 0 | ValueError: list modified during sort | [0] True None
+3 a.length = 5; a.length = 0 | ValueError: list modified during sort | [0] True None
+3 unshift + shift | ValueError: list modified during sort | [0] True None
+3 splice in and out | ValueError: list modified during sort | [0] True None
+3 a[1000000] = 1; a.length = 0 | ValueError: list modified during sort | [0] True None
+3 push | ValueError: list modified during sort | [0] True None
+3 sort | sorted | [0] True None
+3 a.length = 0 | sorted | [0] True None
+3 a.x = 1 | sorted | [0] True 1
+3 100 items; a.length = 0 | sorted | [0] True None
+200 nothing | sorted | [0] True None
+200 push + pop | ValueError: list modified during sort | [0] True None
+200 a[0] = 1; a.length = 0 | ValueError: list modified during sort | [0] True None
+200 a.length = 5; a.length = 0 | ValueError: list modified during sort | [0] True None
+200 unshift + shift | ValueError: list modified during sort | [0] True None
+200 splice in and out | ValueError: list modified during sort | [0] True None
+200 a[1000000] = 1; a.length = 0 | ValueError: list modified during sort | [0] True None
+200 push | ValueError: list modified during sort | [0] True None
+200 sort | sorted | [0] True None
+200 a.length = 0 | sorted | [0] True None
+200 a.x = 1 | sorted | [0] True 1
+200 100 items; a.length = 0 | sorted | [0] True None
+--- the key gives the array a prototype with an index that cannot be written
+ValueError: list modified during sort | [1,2,3] 3 ["0","1","2","length"] 3 [1, 2, 3]
+[1,2,3,8] 4 ["0","1","2","3","length"] 4
+--- the key has JS give Array.prototype an accessor for an index: every array of the realm gets other storage
+ValueError: list modified during sort | [1, 2, 3, 4, 5] 5
+[1, 2, 3, 4, 5, 8, 9] 7
+[1, 2, 3, 4, 5, 8, 9, 1, 2] 9
+[1, 1, 2, 2, 3, 4, 5, 8, 9]
+[9, 8, 5, 4, 3, 2, 2, 1, 1]

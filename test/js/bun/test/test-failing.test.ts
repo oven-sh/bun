@@ -141,7 +141,7 @@ describe.concurrent("test.failing and test.fails", () => {
   });
   const modifiers = ["failing", "fails"];
 
-  test.serial("don't take a matcher that other code calls", async () => {
+  test("don't take a matcher that other code calls", async () => {
     const result = await runTests(`
       expect.extend({ async toBeLater(received, expected) { return { pass: (await received) === expected, message: () => "a custom matcher" }; } });
       const wentOn = [];
@@ -293,7 +293,7 @@ describe.concurrent("test.failing and test.fails", () => {
     });
   });
 
-  test.serial("take a matcher that their own code calls, also after an await", async () => {
+  test("take a matcher that their own code calls, also after an await", async () => {
     // This run never loads node:async_hooks, so nothing but the runner turns async context tracking on.
     const result = await runTests(`
       import { aroundAll, beforeEach } from "bun:test";
@@ -583,11 +583,12 @@ describe.concurrent("test.failing and test.fails", () => {
           test.fails("runs when the timer fires", () => called.promise);
         });
         describe("expect.poll() of a test in a concurrent group", () => {
-          const taken = Promise.withResolvers(), called = Promise.withResolvers(), ending = Promise.withResolvers();
-          let polls = 0;
+          const taken = Promise.withResolvers(), called = Promise.withResolvers(), ended = Promise.withResolvers();
           test("leaves a promise callback behind", () => {
             taken.promise.then(expect => {
-              expect.poll(() => ++polls, { timeout: 60_000, interval: 1 }).toBe("of a test that ends before its group");
+              const slowly = { timeout: 60_000, interval: 1 };
+              expect.poll(() => 1, slowly).toBe("of a test that ends before its group");
+              expect.poll(() => 1, slowly).toBe("handled").catch(ended.resolve);
               called.resolve();
             });
           });
@@ -595,28 +596,20 @@ describe.concurrent("test.failing and test.fails", () => {
             test.fails("hands out its expect and ends", async ({ expect }) => {
               taken.resolve(expect);
               await called.promise;
-              ending.resolve();
               throw new Error("expected");
             });
-            test("runs on", async () => {
-              await ending.promise;
-              for (let i = 0; i < 3; i++) await later();
-              const before = polls;
-              for (let i = 0; i < 5; i++) await later();
-              console.log("polls while the group runs on:", polls - before);
-            });
+            test("runs on until the polls have ended", () => ended.promise);
           });
         });
       `,
     });
-    expect(result.stdout).toEqual(["polls while the group runs on: 0"]);
     expect(failures(result)).toEqual({
       results: [
         "(pass) a matcher > leaves a timer behind",
         "(fail) a matcher > runs when the timer fires",
         "(pass) expect.poll() of a test in a concurrent group > leaves a promise callback behind",
         "(pass) expect.poll() of a test in a concurrent group > the group > hands out its expect and ends",
-        "(pass) expect.poll() of a test in a concurrent group > the group > runs on",
+        "(pass) expect.poll() of a test in a concurrent group > the group > runs on until the polls have ended",
       ],
       errors: [
         'Expected: "of a test that ends before its group"',
@@ -686,8 +679,7 @@ describe.concurrent("test.failing and test.fails", () => {
   });
 
   // On its own: a debug build takes over a second longer to start with --isolate=modules, and longer beside other runs.
-  // --isolate=modules alone costs a debug build more than a second.
-  test.serial("bun test --isolate=modules: both hold, fixtures in the file's graph", { timeout: 15_000 }, async () => {
+  test.serial("bun test --isolate=modules: both hold, and their fixtures run in the file's module graph", async () => {
     const result = await run(["test", "--isolate=modules", "./a.test.js", "./b.test.js"], {
       "a.test.js": prelude + bothKinds.source,
       "b.test.js": `

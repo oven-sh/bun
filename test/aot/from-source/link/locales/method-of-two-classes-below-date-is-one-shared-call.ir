@@ -1,0 +1,13 @@
+# a call by name on the objects of a family is one shared call, which the first caller makes. If the method that it finds above the classes were listed at that caller alone, the second call, with a locale that nobody knows, would be looked at by nobody
+# f1 = first, f2 = second
+# -- source: method-of-two-classes-below-date-is-one-shared-call.ts
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# class Day extends Date {}
+# class Night extends Date {}
+# function first(when: Day | Night) { return when.toLocaleDateString("de"); }
+# function second(when: Day | Night) { return when.toLocaleDateString(input); }
+# sink(first(new Day(0)), first(new Night(0)), second(new Day(0)), second(new Night(0)));
+# -- end of source
+# RUN: locales
+# CHECK: locale unknown DatePrototypeToLocaleDateString

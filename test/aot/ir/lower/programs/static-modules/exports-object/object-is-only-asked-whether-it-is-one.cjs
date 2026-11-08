@@ -34,62 +34,46 @@ this && (exports.c = 3);
 // CHECK: function {{*}}
 // CHECK: module=[[m_0]] kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = NewObject layout=[[L_1]]
 // CHECK-NEXT: v1 = FinishObject v0
 // CHECK-NEXT: PutModuleVariable v1 variable=[[g_2]]
 // CHECK-NEXT: EvaluateModule module=[[m_3]] referrer=[[m_0]] [isBare, isCallOfRequire]
-// CHECK-NEXT: v4 = Boolean boolean=true
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: EvaluateModule module=[[m_4]] referrer=[[m_0]] [isBare, isCallOfRequire]
+// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]] flags=[IsExpected]}
+// CHECK-NEXT: EvaluateModule module=[[m_6]] referrer=[[m_0]] [isBare, isCallOfRequire]
 // CHECK-NEXT: v7 = Boolean boolean=true
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: EvaluateModule module=[[m_5]] referrer=[[m_0]] [isBare, isCallOfRequire]
-// CHECK-NEXT: v10 = Boolean boolean=true
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v12 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v13 = PropGet v12 key="console" [isFreeName]
-// CHECK-NEXT: v14 = Convert v13 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v15 = PropGet v14 key="log"
-// CHECK-NEXT: v16 = Convert v15 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v17 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v18 = Convert v17 declared={type=1 flags=[IsExpected]}
-// CHECK-NEXT: v19 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v21 = GetModuleVariable variable=[[g_8]]
-// CHECK-NEXT: v22 = Convert v21 declared={type=2 flags=[IsExpected]}
-// CHECK-NEXT: v23 = GetModuleVariable variable=[[g_9]]
-// CHECK-NEXT: v24 = Convert v23 declared={type=3 flags=[IsExpected]}
-// CHECK-NEXT: v25 = Call v16, v14, v18, v20, v22, v24 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v26 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v27 = PropGet v26 key="console" [isFreeName]
-// CHECK-NEXT: v28 = Convert v27 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v29 = PropGet v28 key="log"
-// CHECK-NEXT: v30 = Convert v29 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v31 = GetModuleVariable variable=[[g_10]]
-// CHECK-NEXT: v32 = Convert v31 declared={type=1 flags=[IsExpected]}
-// CHECK-NEXT: v33 = GetModuleVariable variable=[[g_11]]
-// CHECK-NEXT: v34 = Convert v33 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: EvaluateModule module=[[m_7]] referrer=[[m_0]] [isBare, isCallOfRequire]
+// CHECK-NEXT: v9 = Boolean boolean=true
+// CHECK-NEXT: v10 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v11 = PropGet v10 key="console" [isFreeName]
+// CHECK-NEXT: v12 = Convert v11 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v13 = PropGet v12 key="log"
+// CHECK-NEXT: v14 = Convert v13 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v15 = PropGet v5 key="a"
+// CHECK-NEXT: v16 = PropGet v5 key="log"
+// CHECK-NEXT: v17 = PropGet v5 key="b"
+// CHECK-NEXT: v18 = PropGet v5 key="c"
+// CHECK-NEXT: v19 = Call v14, v12, v15, v16, v17, v18 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v20 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v21 = PropGet v20 key="console" [isFreeName]
+// CHECK-NEXT: v22 = Convert v21 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v23 = PropGet v22 key="log"
+// CHECK-NEXT: v24 = Convert v23 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v25 = GetModuleVariable variable=[[g_8]]
+// CHECK-NEXT: v26 = GetModuleVariable variable=[[g_9]]
+// CHECK-NEXT: v27 = GetModuleVariable variable=[[g_10]]
+// CHECK-NEXT: v28 = GetModuleVariable variable=[[g_11]]
+// CHECK-NEXT: v29 = Call v24, v22, v25, v26, v27, v28 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v30 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v31 = PropGet v30 key="console" [isFreeName]
+// CHECK-NEXT: v32 = Convert v31 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v33 = PropGet v32 key="log"
+// CHECK-NEXT: v34 = Convert v33 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
 // CHECK-NEXT: v35 = GetModuleVariable variable=[[g_12]]
-// CHECK-NEXT: v36 = Convert v35 declared={type=2 flags=[IsExpected]}
-// CHECK-NEXT: v37 = GetModuleVariable variable=[[g_13]]
-// CHECK-NEXT: v38 = Convert v37 declared={type=3 flags=[IsExpected]}
-// CHECK-NEXT: v39 = Call v30, v28, v32, v34, v36, v38 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v40 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v41 = PropGet v40 key="console" [isFreeName]
-// CHECK-NEXT: v42 = Convert v41 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v43 = PropGet v42 key="log"
-// CHECK-NEXT: v44 = Convert v43 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v45 = GetModuleVariable variable=[[g_14]]
-// CHECK-NEXT: v46 = Convert v45 declared={type=1 flags=[IsExpected]}
-// CHECK-NEXT: v47 = GetModuleVariable variable=[[g_15]]
-// CHECK-NEXT: v48 = Convert v47 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v49 = GetModuleVariable variable=[[g_16]]
-// CHECK-NEXT: v50 = Convert v49 declared={type=2 flags=[IsExpected]}
-// CHECK-NEXT: v51 = GetModuleVariable variable=[[g_17]]
-// CHECK-NEXT: v52 = Convert v51 declared={type=3 flags=[IsExpected]}
-// CHECK-NEXT: v53 = Call v44, v42, v46, v48, v50, v52 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v54 = Undefined
-// CHECK-NEXT: Return v54
+// CHECK-NEXT: v36 = GetModuleVariable variable=[[g_13]]
+// CHECK-NEXT: v37 = GetModuleVariable variable=[[g_14]]
+// CHECK-NEXT: v38 = GetModuleVariable variable=[[g_15]]
+// CHECK-NEXT: v39 = Call v34, v32, v35, v36, v37, v38 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v40 = Undefined
+// CHECK-NEXT: Return v40
 // CHECK-NEXT: }

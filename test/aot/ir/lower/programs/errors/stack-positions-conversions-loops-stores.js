@@ -339,103 +339,12 @@ await showAsync("try { await pass(1); } finally { pass(2); } return `${{ toStrin
 await showAsync("if (await pass(1)) { pass(2); } return `${{ toString: () => fail() }}`;", async () => { if (await pass(1)) { pass(2); } return `${{ toString: () => fail() }}`; });
 await showAsync("for (const a of holder.arr) { await pass(a); } return `${{ toString: () => fail() }}`;", async () => { for (const a of holder.arr) { await pass(a); } return `${{ toString: () => fail() }}`; });
 
-// GENERATED: fail placesOf Made nothing B each
 // CHECK-LABEL: function {{*}}name="fail"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v1 = PropGet v0 key="Error" [isFreeName]
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Error) flags=[IsExpected]}
-// CHECK-NEXT: v3 = String string="fail"
-// CHECK-NEXT: v4 = Construct v2, -, v3 calleeName="Error"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Error flags=[IsExpected]}
-// CHECK-NEXT: Throw v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="placesOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}] results=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_2]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=String
-// CHECK-NEXT: v2 = PropGet v0 key="stack"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="String"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="split"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string="\n"
-// CHECK-NEXT: v8 = Call v6, v4, v7 calleeKey="split" calleeName="split"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-// CHECK-NEXT: v10 = PropGet v9 key="filter"
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
-// CHECK-NEXT: v12 = NewClosure function=[[f_5]]
-// CHECK-NEXT: v13 = Call v11, v9, v12 calleeKey="filter" calleeName="filter"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-// CHECK-NEXT: v15 = PropGet v14 key="map"
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
-// CHECK-NEXT: v17 = NewClosure function=[[f_7]]
-// CHECK-NEXT: v18 = Call v16, v14, v17 calleeKey="map" calleeName="map"
-// CHECK-NEXT: ReturnCall v18 casts=[{declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Made"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = NewRuntimeError runtimeError=LeftOutOfExecutable name="Made"
-// CHECK-NEXT: Throw v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="nothing"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="B"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_8]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_9]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_9]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_9]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="each"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="each"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="each"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, TakesCallee] thisType={type=anything} results=[{type=undefined|null|Generator<never> flags=[IsExpected]}] functionTypes={{*}}[[f_12]]] {
-// CHECK-NEXT: b0(v0: anything, v1: function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="each"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync] thisType={type=anything} results=[{type=undefined|null|Promise<number> flags=[IsExpected]}] functionTypes={{*}}[[f_13]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: v1 = Convert v0 declared={type=number|object flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

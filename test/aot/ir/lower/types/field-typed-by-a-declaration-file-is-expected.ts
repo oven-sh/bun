@@ -1,8 +1,8 @@
 // RUN: link
 // CHECK: layout {{*}}kind=Instance name="Holder" {{*}}fields=[{key="given" declared={type=undefined|null|[[declared]] flags=[IsExpected]} flags=[IsRequired]}]
-// CHECK: layout [[declared]] name="Declared"
-// CHECK: layout {{*}}name="Options" {{*}}fields=[{key="given" declared={type=undefined|null|[[declared]] flags=[IsExpected]} flags=[IsRequired]}, {key="own" declared={type=number} flags=[IsRequired]}]
-// CHECK: function {{*}}name="make" {{*}}parameters=[{type=undefined|null|[[declared]] flags=[IsExpected]}]
+// CHECK: layout [[options]] {{*}}fields=[{key="given" declared={type=undefined|null|[[declared]] flags=[IsExpected]} flags=[IsRequired]}, {key="own" declared={type=number} flags=[IsRequired]}]
+// CHECK: layout [[declared]] fields=[{key="x"
+// CHECK: function {{*}}name="make" {{*}}parameters=[{type=undefined|null|[[declared]] flags=[IsExpected]}] results=[{type=undefined|null|[[options]] flags=
 
 /// <reference path="./imports/shapes.d.ts" />
 

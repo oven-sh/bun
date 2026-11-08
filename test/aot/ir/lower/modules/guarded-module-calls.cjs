@@ -15,15 +15,17 @@
 
 // RUN(MODULE): lower
 // MODULE-LABEL: function {{*}}name="loadThroughModule"
-// MODULE-NOT: ModuleObject
-// MODULE: [[specifier]] = String string="./imports/common.cjs"
-// MODULE: [[expected]] = ModuleBuiltin builtin=ModuleRequire module=m
+// MODULE: [[module]] = Convert {{*}}declared={type=builtin(ModuleObject) flags=[IsExpected]}
+// MODULE-NEXT: [[read]] = PropGet [[module]] key="require"
+// MODULE-NEXT: [[callee]] = Convert [[read]] declared={type=builtin(ModuleRequire) flags=[IsExpected]}
+// MODULE-NEXT: [[specifier]] = String string="./imports/common.cjs"
+// MODULE-NEXT: [[expected]] = ModuleBuiltin builtin=ModuleRequire module=m
 // MODULE-NEXT: [[same]] = StrictEq [[callee]], [[expected]]
 // MODULE-NEXT: Branch [[same]] -> taken [[matched]](), notTaken [[other]](| 0)
 // MODULE: [[matched]]():
 // MODULE: EvaluateModule module=m
 // MODULE: [[other]]([[replaced]]):
-// MODULE-NEXT: = Call [[replaced]], -, [[specifier]] calleeName="require"
+// MODULE-NEXT: = Call [[replaced]], [[module]], [[specifier]] calleeName="module.require"
 
 // RUN(NATIVE): lower
 // NATIVE-LABEL: function {{*}}name="native"

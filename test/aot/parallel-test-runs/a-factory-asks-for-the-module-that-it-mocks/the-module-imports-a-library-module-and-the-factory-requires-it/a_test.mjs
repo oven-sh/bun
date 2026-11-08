@@ -1,0 +1,1 @@
+import { test, vi } from "bun:test"; vi.mock("./dep.mjs", () => ({ ...import.meta.require("./dep.mjs"), extra: 1 })); test("t", async () => { const d = await import("./dep.mjs"); console.log("| " + d.get() + " " + typeof new d.Bus().on + " " + d.extra); });

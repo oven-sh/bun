@@ -1834,6 +1834,186 @@ describe("bundler", () => {
     },
   });
 
+  // `Array.of(a, b)` holds its arguments, as `[a, b]` does. To upstream it only reads them, so a store through an
+  // element of the array was no store to the argument: the argument kept a memo block of its own and the store ran in
+  // every render. Each component renders several times on one memo cache and has to render what the plain build
+  // renders. `*` marks a render that got the `list` of the render before it, so each line also shows what is memoized.
+  const arrayOfOutput = `
+    IndexRead [2,{"n":2}] [2,{"n":2}]* [2,{"n":2}]* [6,{"n":6}]
+    OfGlobalThis [2,{"n":2}] [2,{"n":2}]* [2,{"n":2}]* [6,{"n":6}]
+    OfAsAFunction [2,{"n":2}] [2,{"n":2}]* [2,{"n":2}]* [6,{"n":6}]
+    Destructured [2,{"n":2}] [2,{"n":2}]* [2,{"n":2}]* [6,{"n":6}]
+    ForOf [2,{"n":2}] [2,{"n":2}]* [2,{"n":2}]* [6,{"n":6}]
+    InAFunction [2,{"n":2}] [2,{"n":2}]* [2,{"n":2}]* [6,{"n":6}]
+    ArrayThatEscapes [2,[[1,1],1]] [2,[[1,1],1]]* [2,[[1,2],2]] [2,[[1,3],3]]
+    ArgumentBesideASpread [4,{"n":4}] [4,{"n":4}]* [4,{"n":4}]* [8,{"n":8}]
+    SpreadOfAGenerator ["1,1,2",[1,1,2]] ["2,1,2",[2,1,2]] ["2,1,2",[2,1,2]]* ["3,1,2",[3,1,2]]
+    OneOfTwoCallees [2,null] [2,null] [2,null] [1,null]
+    StoreToTheArray ["2:1",{"a":1}] ["2:1",{"a":1}]* ["2:1",{"a":1}]* ["2:2",{"a":2}]
+    StoreToTheLiteral ["2:1",{"a":1}] ["2:1",{"a":1}]* ["2:1",{"a":1}]* ["2:2",{"a":2}]
+  `;
+  for (const [name, reactCompiler, backend] of [
+    ["plain", false, "cli"],
+    ["compiled", true, "cli"],
+    ["compiled-api", true, "api"],
+  ] as const) {
+    itBundled(`react-compiler/ArrayOfHoldsItsArguments-${name}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { render } from "react";
+
+          // The first eight store through an element of the array, which is a store to the argument.
+          function IndexRead({ n }) {
+            const x = { n };
+            const w = Array.of(x);
+            const y = w[0];
+            y.n = y.n + 1;
+            return <div label={x.n} list={x} />;
+          }
+
+          function OfGlobalThis({ n }) {
+            const x = { n };
+            const w = globalThis.Array.of(x);
+            const y = w[0];
+            y.n = y.n + 1;
+            return <div label={x.n} list={x} />;
+          }
+
+          // Not a method call: the callee is Array.of itself.
+          function OfAsAFunction({ n }) {
+            const x = { n };
+            const of = Array.of;
+            const w = of(x);
+            const y = w[0];
+            y.n = y.n + 1;
+            return <div label={x.n} list={x} />;
+          }
+
+          function Destructured({ n }) {
+            const x = { n };
+            const [, y] = Array.of(n, x);
+            y.n = y.n + 1;
+            return <div label={x.n} list={x} />;
+          }
+
+          function ForOf({ n }) {
+            const x = { n };
+            for (const item of Array.of(x)) item.n = item.n + 1;
+            return <div label={x.n} list={x} />;
+          }
+
+          function InAFunction({ n }) {
+            const x = { n };
+            const make = () => Array.of(x);
+            const y = make()[0];
+            y.n = y.n + 1;
+            return <div label={x.n} list={x} />;
+          }
+
+          // The memo block of the array runs again for a new m, so x has to be made again with it.
+          function ArrayThatEscapes({ n, m }) {
+            const x = [n];
+            const w = Array.of(x, m);
+            w[0].push(m);
+            return <div label={x.length} list={w} />;
+          }
+
+          function* countFrom(n) {
+            yield n;
+            yield n + 1;
+          }
+          function ArgumentBesideASpread({ n }) {
+            const x = { n };
+            const w = Array.of(x, ...countFrom(n));
+            const y = w[0];
+            y.n = y.n + w.length;
+            return <div label={x.n} list={x} />;
+          }
+
+          // The call uses the generator up, so the generator has to be made again with the array.
+          function SpreadOfAGenerator({ n, m }) {
+            const numbers = countFrom(n);
+            const w = Array.of(m, ...numbers);
+            return <div label={w.join(",")} list={w} />;
+          }
+
+          // The callee has the type of Array.of, and can be the function that returns what it captures.
+          function OneOfTwoCallees({ n, other }) {
+            const cache = [{ n }];
+            const make = other ? Array.of : () => cache;
+            const w = make({ n });
+            const y = w[0];
+            y.n = y.n + 1;
+            return <div label={cache[0].n} />;
+          }
+
+          // A store to the array is no store to what it holds: x keeps a memo block of its own, as it does for [x].
+          function StoreToTheArray({ a, b }) {
+            const x = { a };
+            const w = Array.of(x);
+            w.push(b);
+            return <div label={w.length + ":" + x.a} list={x} />;
+          }
+
+          function StoreToTheLiteral({ a, b }) {
+            const x = { a };
+            const w = [x];
+            w.push(b);
+            return <div label={w.length + ":" + x.a} list={x} />;
+          }
+
+          function run(Component, ...renders) {
+            let previous;
+            const results = renders.map(props => {
+              const { label, list } = render(Component, props);
+              const hit = list && list === previous ? "*" : "";
+              previous = list;
+              return JSON.stringify([label, list]) + hit;
+            });
+            console.log(Component.name + " " + results.join(" "));
+          }
+
+          const one = { n: 1 };
+          const five = { n: 5 };
+          run(IndexRead, one, one, one, five);
+          run(OfGlobalThis, one, one, one, five);
+          run(OfAsAFunction, one, one, one, five);
+          run(Destructured, one, one, one, five);
+          run(ForOf, one, one, one, five);
+          run(InAFunction, one, one, one, five);
+          run(ArrayThatEscapes, { n: 1, m: 1 }, { n: 1, m: 1 }, { n: 1, m: 2 }, { n: 1, m: 3 });
+          run(ArgumentBesideASpread, one, one, one, five);
+          run(SpreadOfAGenerator, { n: 1, m: 1 }, { n: 1, m: 2 }, { n: 1, m: 2 }, { n: 1, m: 3 });
+          const local = { n: 1, other: false };
+          run(OneOfTwoCallees, local, local, local, { n: 1, other: true });
+          const a1b2 = { a: 1, b: 2 };
+          run(StoreToTheArray, { a: 1, b: 1 }, a1b2, a1b2, { a: 2, b: 2 });
+          run(StoreToTheLiteral, { a: 1, b: 1 }, a1b2, a1b2, { a: 2, b: 2 });
+        `,
+        // One memo cache per component, kept between renders, as a fiber keeps it.
+        "/node_modules/react/index.js": /* js */ `
+          const fibers = new Map();
+          let current;
+          exports.render = (Component, ...args) => {
+            current = fibers.get(Component);
+            if (!current) fibers.set(Component, (current = { cache: null }));
+            return Component(...args);
+          };
+          exports.memoCache = size =>
+            (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+        `,
+        "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      },
+      reactCompiler,
+      target: "browser",
+      backend,
+      run: { stdout: reactCompiler ? arrayOfOutput : arrayOfOutput.replaceAll("*", "") },
+    });
+  }
+
   // The parser turns `<div children="x">y</div>` into
   // `jsx("div", { children: "x", children: "y" })`: the JSX children are the
   // last property, so they replace every earlier `children` key. It also

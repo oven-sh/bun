@@ -5,6 +5,7 @@ use core::cell::Cell;
 use core::ffi::c_uint;
 use core::ptr::NonNull;
 
+use bun_collections::HashMap;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::call_frame::CallerSrcLoc;
@@ -82,12 +83,12 @@ pub(crate) struct Unclaimed {
     of_file: u32,
     /// When the file stops waiting after its tests have run. `EPOCH` means never.
     deadline: Option<Timespec>,
-    /// One record for each matcher that failed in a test or hook, in the order of the groups. The runner shows each once.
-    failures: Vec<Failure>,
+    /// The matchers that failed in a test or hook, by the address of their error object and by attempt. The runner shows one report for each.
+    failures: HashMap<(usize, Attempt), Failed>,
 }
 
 /// One attempt of a sequence: a test with its hooks.
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 struct Attempt {
     group_index: usize,
     sequence_index: usize,
@@ -110,22 +111,14 @@ impl Attempt {
     }
 }
 
-/// The error of one failed matcher, which its promise rejects with, and the attempt whose entry called the matcher.
-struct Failure {
-    of: Attempt,
-    /// Weak, because only its identity is read.
+/// The matchers of one attempt that failed with one error object, which their promises reject with.
+#[derive(Default)]
+struct Failed {
+    /// Weak, because only its identity is read. It is empty once the error is collected: another object can have its address then.
     error: Weak<()>,
-    is_reported: bool,
-}
-
-impl Failure {
-    fn matches(&self, of: Attempt, value: JSValue) -> bool {
-        self.of == of
-            && self
-                .error
-                .get()
-                .is_some_and(|error| value == error || value.to_error() == Some(error))
-    }
+    matchers: u32,
+    /// For how many of them the runner has shown a report.
+    shown: u32,
 }
 
 impl Unclaimed {
@@ -142,53 +135,51 @@ impl Unclaimed {
         if !error.is_object() {
             return;
         }
-        self.failures.push(Failure {
-            of,
-            error: Weak::create_passive(error, global),
-            is_reported: false,
-        });
+        let failed = self.failures.entry((error.encoded(), of)).or_default();
+        // The object that had this address before can be collected, and its matchers go then.
+        if failed.error.get().is_none() {
+            *failed = Failed {
+                error: Weak::create_passive(error, global),
+                matchers: 0,
+                shown: 0,
+            };
+        }
+        failed.matchers += 1;
     }
 
-    /// The records of a group and of later groups. The runner never goes back to a group, so they are the last ones.
-    fn failures_since(&self, group_index: usize) -> core::ops::RangeFrom<usize> {
-        self.failures
-            .partition_point(|failure| failure.of.group_index < group_index)..
+    /// The error object that `value` reports, and what its matchers in the attempt that `entry` is or was part of are kept under.
+    fn failure_key(
+        &self,
+        entry: &RefDataValue,
+        value: JSValue,
+    ) -> Option<(JSValue, (usize, Attempt))> {
+        // No matcher failed in most files. Then nothing asks what `value` is.
+        if self.failures.is_empty() {
+            return None;
+        }
+        let error = value.to_error().unwrap_or(value);
+        Some((error, (error.encoded(), Attempt::of(entry)?)))
     }
 
-    /// How many matchers of the attempt that `entry` is or was part of failed with `value`, and how many are not shown yet.
-    fn failures_with(&self, entry: &RefDataValue, value: JSValue) -> (usize, usize) {
-        let Some(of) = Attempt::of(entry) else {
-            return (0, 0);
-        };
-        self.failures[self.failures_since(of.group_index)]
-            .iter()
-            .filter(|failure| failure.matches(of, value))
-            .fold((0, 0), |(all, not_shown), failure| {
-                (all + 1, not_shown + usize::from(!failure.is_reported))
-            })
-    }
-
-    /// `value` is the error of a matcher that failed in the attempt that `entry` is or was part of.
-    pub(crate) fn is_failure(&self, entry: &RefDataValue, value: JSValue) -> bool {
-        self.failures_with(entry, value).0 > 0
-    }
-
-    /// `value` is such an error, and the runner has shown one report for each matcher that failed with it.
+    /// `value` is the error of a matcher that failed in the attempt that `entry` is or was part of, and each such matcher has its report.
     pub(crate) fn was_reported(&self, entry: &RefDataValue, value: JSValue) -> bool {
-        matches!(self.failures_with(entry, value), (1.., 0))
+        self.failure_key(entry, value)
+            .and_then(|(error, key)| Some((error, self.failures.get(&key)?)))
+            .is_some_and(|(error, failed)| {
+                failed.error.get() == Some(error) && failed.shown == failed.matchers
+            })
     }
 
     /// The runner shows `value` now. If a matcher failed with it, this is the one report of that matcher.
     pub(crate) fn mark_reported(&mut self, entry: &RefDataValue, value: JSValue) {
-        let Some(of) = Attempt::of(entry) else {
+        let Some((error, key)) = self.failure_key(entry, value) else {
             return;
         };
-        let since = self.failures_since(of.group_index);
-        let not_shown = self.failures[since]
-            .iter_mut()
-            .find(|failure| !failure.is_reported && failure.matches(of, value));
-        if let Some(failure) = not_shown {
-            failure.is_reported = true;
+        if let Some(failed) = self.failures.get_mut(&key)
+            && failed.error.get() == Some(error)
+            && failed.shown < failed.matchers
+        {
+            failed.shown += 1;
         }
     }
 

@@ -1586,7 +1586,13 @@ impl BunTest {
             return;
         }
 
-        if report == Report::Once
+        // An error that the runner charges to no running entry is an error between tests, whatever matcher failed with it.
+        let is_of_entry = report == Report::Once
+            && matches!(
+                handle_status,
+                HandleUncaughtExceptionResult::ShowHandledError | HandleUncaughtExceptionResult::HideError
+            );
+        if is_of_entry
             && exception.is_some_and(|exception| self.unclaimed.was_reported(user_data, exception))
         {
             return;
@@ -1604,7 +1610,7 @@ impl BunTest {
         let Some(exception) = exception else {
             return; // the exception should not be visible (eg m_terminationException)
         };
-        if report == Report::Once {
+        if is_of_entry {
             self.unclaimed.mark_reported(user_data, exception);
         }
 
@@ -1915,7 +1921,7 @@ impl bun_event_loop::Taskable for RunTestsTask {
 /// Whether `BunTest::on_uncaught_exception` counts a report as the one of a failed matcher (`Unclaimed::was_reported`).
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Report {
-    /// Yes: it is dropped if each matcher that failed with this error in the attempt has its report, and is one of them if not.
+    /// Yes, if the runner charges it to a running entry: it is dropped if each matcher that failed with this error in the attempt has its report, and is one of them if not.
     Once,
     /// No: `expect.soft()` and a matcher that its group or file gives up on report an error that no promise rejects with.
     Always,

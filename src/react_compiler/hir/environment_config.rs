@@ -111,8 +111,11 @@ pub struct EnvironmentConfig {
     /// Upstream computes that effect and only uses it to refuse a spread into a hook. It had the rule until the
     /// inference was written again (`InferReferenceEffects`, 19.1.0).
     pub spread_arguments_run_iterators: bool,
-    /// A regular expression literal is an object: a call or a store can change it, so they are in its memo block, and
-    /// what is read from it can depend on a prop. To upstream it is a primitive. It was an object there in 19.1.0.
+    /// A regular expression literal, and what `new String(x)`, `new Number(x)` or `new Boolean(x)` makes, is an
+    /// object: a call or a store can change it, so they are in its memo block, and what is read from it can depend
+    /// on a prop. To upstream the literal is a primitive and `new` makes what the call without it returns. Both
+    /// were objects there in 19.1.0. Still primitives here: the value of `a.b = []`, and `new` of a function
+    /// expression.
     pub objects_are_not_primitives: bool,
     /// A tagged template has the effects of a call of its tag with the template object as the argument: it returns
     /// what the signature of the tag says, or a mutable object, and it can change what the tag captures. To upstream

@@ -2406,6 +2406,11 @@ fn compute_signature_for_instruction(
             let sig = get_function_call_signature(env, callee.identifier)
                 .ok()
                 .flatten();
+            // Not in upstream: `new String(x)` makes an object, whatever the signature says that `String(x)` returns.
+            let sig = sig.filter(|sig| {
+                !env.config.objects_are_not_primitives
+                    || sig.return_value_kind != ValueKind::Primitive
+            });
             effects.push(AliasingEffect::Apply(Rc::new(ApplyEffect {
                 receiver: callee.clone(),
                 function: callee.clone(),

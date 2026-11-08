@@ -1149,13 +1149,14 @@ fn promote_late_method(
                     .id
             }),
         },
-        in_call: crate::hir::visitors::operands(call, &env.functions)
-            .map(declaration_of)
-            .collect(),
+        in_call: IdBitSet::with_ids(env.identifiers.len()),
         is_mutated: false,
         load: None,
         is_receiver_a_local: false,
     };
+    for operand in crate::hir::visitors::operands(call, &env.functions) {
+        behind.in_call.insert(declaration_of(operand));
+    }
     behind.walk(before);
     let Behind {
         is_mutated,

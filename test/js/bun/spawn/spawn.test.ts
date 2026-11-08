@@ -13,6 +13,7 @@ import {
   isPosix,
   isRoot,
   isWindows,
+  setuidDeniedCodes,
   shellExe,
   tempDir,
   tmpdirSync,
@@ -1886,7 +1887,7 @@ describe("uid/gid", () => {
     } catch (e) {
       thrown = e;
     }
-    expect(thrown?.code).toBe("EPERM");
+    expect(setuidDeniedCodes).toContain(thrown?.code);
   });
 });
 

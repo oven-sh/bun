@@ -4,13 +4,13 @@ import fs from "fs";
 import {
   bunEnv,
   bunExe,
-  isAndroid,
   isLinux,
   isPosix,
   isRoot,
   isWindows,
   nodeExe,
   runBunInstall,
+  setuidDeniedCodes,
   shellExe,
   tempDir,
   tls as tlsCert,
@@ -1370,24 +1370,22 @@ describe("uid/gid options", () => {
   it.skipIf(isWindows || isRoot)("spawn with a uid the process cannot set throws EPERM synchronously", () => {
     // Node defers only EACCES/EAGAIN/EMFILE/ENFILE/ENOENT to the 'error'
     // event; EPERM is thrown synchronously from spawn().
-    // Android's seccomp policy denies setuid/setgid to unprivileged apps, so
-    // the child reports ENOSYS there instead of EPERM. Node does the same.
-    const expectedCodes = isAndroid ? ["EPERM", "ENOSYS"] : ["EPERM"];
-    const expectedErrnos = expectedCodes.map(code => -os.constants.errno[code as keyof typeof os.constants.errno]);
+    // On Android the child reports ENOSYS instead (see setuidDeniedCodes).
     let thrown: any;
     try {
       spawn("id", [], { uid: 0 });
     } catch (e) {
       thrown = e;
     }
-    expect(expectedCodes).toContain(thrown?.code);
-    expect(expectedErrnos).toContain(thrown?.errno);
+    expect(setuidDeniedCodes).toContain(thrown?.code);
+    expect(thrown?.errno).toBe(-os.constants.errno[thrown.code as "EPERM" | "ENOSYS"]);
     expect(thrown?.syscall).toBe("spawn");
 
     const r = spawnSync("id", [], { uid: 0, encoding: "utf8" });
-    expect(expectedCodes).toContain((r.error as NodeJS.ErrnoException | undefined)?.code);
-    expect(expectedErrnos).toContain((r.error as NodeJS.ErrnoException | undefined)?.errno);
-    expect((r.error as NodeJS.ErrnoException | undefined)?.syscall).toBe("spawnSync id");
+    const error = r.error as NodeJS.ErrnoException | undefined;
+    expect(setuidDeniedCodes).toContain(error?.code);
+    expect(error?.errno).toBe(-os.constants.errno[error!.code as "EPERM" | "ENOSYS"]);
+    expect(error?.syscall).toBe("spawnSync id");
     expect(r.stdout == null).toBe(true);
   });
 

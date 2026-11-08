@@ -37,13 +37,17 @@ const orders = [
 ];
 const ordersInLayers = "ra rb rs ha wb rbw rabr ia ib it ibw iarb irb ris a b arb rad iard".split(" ");
 
-// The image answers require() of a mock that was laid over a module which an import alone had loaded with the `default` of an
-// object marked `__esModule`: `b`, and `t` where the exports of the module say `__esModule`, as bun:sqlite's do. Plain Bun answers the
-// object itself. Until the engine follows, that is what the image is expected to say.
-const asImageAnswers = (told: string[], exportsAreMarked: boolean) =>
+// The image answers require() of a mock that was laid over a module of code which an import alone had loaded with the `default` of
+// an object marked `__esModule`: `b`, and `t` where the exports of the module say `__esModule`, as bun:sqlite's do. Plain Bun answers
+// the object itself, and so does the host for a module of native code, which is its own. Until the engine follows, that is what the
+// image is expected to say.
+const asImageAnswers = (told: string[], name: string) =>
   told.map(line => {
     const order = line.split(":")[0];
-    const isAnsweredWithDefault = /^[ia]*i[ia]*b/.test(order) || (exportsAreMarked && /^[ia]*t/.test(order));
+    const isOfCode = name !== "bun:jsc";
+    const exportsAreMarked = name === "bun:sqlite";
+    const isAnsweredWithDefault =
+      (isOfCode && /^[ia]*i[ia]*b/.test(order)) || (exportsAreMarked && /^[ia]*t/.test(order));
     if (!isAnsweredWithDefault) return line;
     return line
       .split(" ")
@@ -115,17 +119,13 @@ for (const name of ["bun:sqlite", "ws", "bun:jsc"]) {
     const lastAnswerOf = (order: string) => plain[orders.indexOf(order)].split(" ").at(-1);
     expect(["ra", "ib", "ia"].map(lastAnswerOf)).toEqual(["R=A1", "R=B1", "R=A1"]);
     expect(plain.filter(line => !line.includes(": pass "))).toEqual([]);
-    expect(toldAsOneProgram(await asOneProgram.ran(["--debug-aot"]))).toEqual(
-      asImageAnswers(plain, name === "bun:sqlite"),
-    );
+    expect(toldAsOneProgram(await asOneProgram.ran(["--debug-aot"]))).toEqual(asImageAnswers(plain, name));
   });
 
   const toldInLayers = casesIn(inLayers, ordersInLayers);
   test(`require("${name}") where each test file is an image of its own`, async () => {
     const plain = toldInLayers(await inLayers.ran());
     expect(plain.filter(line => !line.includes(": pass "))).toEqual([]);
-    expect(toldInLayers(await inLayers.ran(["--debug-aot"], "TestRunLayers:0"))).toEqual(
-      asImageAnswers(plain, name === "bun:sqlite"),
-    );
+    expect(toldInLayers(await inLayers.ran(["--debug-aot"], "TestRunLayers:0"))).toEqual(asImageAnswers(plain, name));
   });
 }

@@ -108,7 +108,6 @@ test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the cycle is first loaded by vi.importActual() of the mocked module
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the mock's exports are ready when the importer's top-level code uses them
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the original re-exports a module that is not evaluated yet
-test/js/bun/test/mock/mock-module.test.ts: require() of a mock whose factory's object is marked __esModule > its named exports too, when an import loaded the module first
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
 test/js/bun/test/mock/mock-module.test.ts: resetModules > a module that is still evaluating, and the running test file
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate"]

@@ -12,8 +12,10 @@ use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdBitSet;
 use crate::collections::IdMap;
+use crate::hir::AliasingEffect;
 use crate::hir::ArrayElement;
 use crate::hir::DeclarationId;
+use crate::hir::EvaluationOrder;
 use crate::hir::FunctionId;
 use crate::hir::IdentifierId;
 use crate::hir::IdentifierName;
@@ -21,6 +23,7 @@ use crate::hir::InstructionKind;
 use crate::hir::InstructionValue;
 use crate::hir::JsxAttribute;
 use crate::hir::JsxTag;
+use crate::hir::MutableRangeId;
 use crate::hir::ObjectPropertyOrSpread;
 use crate::hir::ParamPattern;
 use crate::hir::Place;
@@ -35,6 +38,7 @@ use crate::hir::ScopeId;
 use crate::hir::environment::Environment;
 use crate::hir::is_primitive_type;
 use crate::hir::visitors::Places;
+use crate::reactive_scopes::visitors::ReactiveFunctionVisitor;
 
 // =============================================================================
 // State
@@ -586,6 +590,8 @@ fn visit_hir_function_for_promotion(func_id: FunctionId, state: &mut State, env:
 enum Effect {
     None,
     Read,
+    /// A read that runs an iterator. Only `promote_late_method` tells it from `Read`.
+    Iterate,
     Write,
 }
 
@@ -595,10 +601,11 @@ struct Temporary {
     effect: Effect,
 }
 
-/// Positions of the last statement that reads and of the last statement that writes.
+/// Positions of the last statement that reads, that runs an iterator, and that writes.
 #[derive(Clone, Copy, Default)]
 struct Statements {
     read: u32,
+    iterate: u32,
     write: u32,
 }
 
@@ -613,6 +620,8 @@ struct InterState<'a> {
     /// fbt wants these inside the macro call: they stay inline and their operands get the names.
     inline_macro_operands: &'a HashSet<IdentifierId>,
     operands_of_macro_operands: IdMap<DeclarationId, Places>,
+    /// The last operand that kept its place as a const while a statement behind it can mutate an object.
+    late_const: Option<IdentifierId>,
 }
 
 impl<'a> InterState<'a> {
@@ -624,6 +633,7 @@ impl<'a> InterState<'a> {
             value_block_statements: None,
             inline_macro_operands,
             operands_of_macro_operands: IdMap::new(),
+            late_const: None,
         }
     }
 
@@ -647,6 +657,10 @@ impl<'a> InterState<'a> {
         match effect {
             Effect::None => {}
             Effect::Read => statements.read = self.position,
+            Effect::Iterate => {
+                statements.read = self.position;
+                statements.iterate = self.position;
+            }
             Effect::Write => statements.write = self.position,
         }
     }
@@ -656,6 +670,10 @@ impl<'a> InterState<'a> {
         match temporary.effect {
             Effect::None => {}
             Effect::Read => statements.read = statements.read.max(temporary.position),
+            Effect::Iterate => {
+                statements.read = statements.read.max(temporary.position);
+                statements.iterate = statements.iterate.max(temporary.position);
+            }
             Effect::Write => statements.write = statements.write.max(temporary.position),
         }
     }
@@ -666,9 +684,14 @@ impl<'a> InterState<'a> {
         let write = self.statements.write.max(in_value_block.write);
         match temporary.effect {
             Effect::None => false,
-            Effect::Read => write > temporary.position,
+            Effect::Read | Effect::Iterate => write > temporary.position,
             Effect::Write => read.max(write) > temporary.position,
         }
+    }
+
+    /// A statement of the block behind the temporary runs an iterator. `promote_late_method` is for a block only.
+    fn iterates_behind(&self, temporary: Temporary) -> bool {
+        temporary.effect != Effect::None && self.statements.iterate > temporary.position
     }
 
     fn enter_value_block(&mut self) -> Option<Statements> {
@@ -694,10 +717,18 @@ fn promote_interposed_block(
         return;
     }
 
-    for stmt in block {
+    for (index, stmt) in block.iter().enumerate() {
         match stmt {
             ReactiveStatement::Instruction(instr) => {
-                promote_interposed_instruction(instr, state, inter_state, consts, globals, env);
+                promote_interposed_instruction(
+                    instr,
+                    &block[..index],
+                    state,
+                    inter_state,
+                    consts,
+                    globals,
+                    env,
+                );
             }
             ReactiveStatement::Scope(scope) => {
                 // The memo block compares its dependencies first, and what writes must not print in it: it may not run.
@@ -756,7 +787,15 @@ fn promote_interposed_place(
     let Some(temporary) = inline_temporary(place, state, inter_state, env) else {
         return Effect::None;
     };
-    if !inter_state.conflicts(temporary) || consts.contains(place.identifier) {
+    let conflicts = inter_state.conflicts(temporary);
+    if !conflicts && !inter_state.iterates_behind(temporary) {
+        return temporary.effect;
+    }
+    if consts.contains(place.identifier) {
+        inter_state.late_const = Some(place.identifier);
+        return temporary.effect;
+    }
+    if !conflicts {
         return temporary.effect;
     }
     if inter_state
@@ -882,7 +921,7 @@ fn instruction_effect(
                 .iter()
                 .any(|element| matches!(element, ArrayElement::Spread(_))) =>
         {
-            Effect::Read
+            Effect::Iterate
         }
         InstructionValue::ObjectExpression { properties, .. }
             if properties
@@ -903,8 +942,10 @@ fn instruction_effect(
 }
 
 /// Returns the effect of the expression that the instruction prints as.
+/// `before` holds the statements of the block in front of the instruction. A value block has none.
 fn promote_interposed_instruction(
     instr: &ReactiveInstruction,
+    before: &[ReactiveStatement],
     state: &mut State,
     inter_state: &mut InterState<'_>,
     consts: &mut IdBitSet<IdentifierId>,
@@ -956,7 +997,14 @@ fn promote_interposed_instruction(
                 }
                 _ => {}
             }
-            promote_interposed_value(&instr.value, state, inter_state, consts, globals, env)
+            let effect =
+                promote_interposed_value(&instr.value, state, inter_state, consts, globals, env);
+            if let InstructionValue::MethodCall { property, .. } = iv
+                && inter_state.late_const == Some(property.identifier)
+            {
+                promote_late_method(iv, before, state, inter_state, consts, globals, env);
+            }
+            effect
         }
         _ => {
             let outer = inter_state.enter_value_block();
@@ -1020,6 +1068,7 @@ fn promote_interposed_value(
             for instr in instructions {
                 effect = effect.max(promote_interposed_instruction(
                     instr,
+                    &[],
                     state,
                     inter_state,
                     consts,
@@ -1057,6 +1106,240 @@ fn promote_interposed_value(
         ReactiveValue::OptionalExpression { value: inner, .. } => {
             promote_interposed_value(inner, state, inter_state, consts, globals, env)
         }
+    }
+}
+
+/// Not in upstream. Codegen prints the property of a MethodCall inside the call, so that the call has its
+/// receiver. So the method is read behind every statement between its load and the call. When such a statement
+/// can mutate the receiver, the property gets a name here, and codegen calls it with the receiver given.
+/// A statement that writes stands there in most member calls. Only the mutation analysis tells the few that can.
+#[cold]
+fn promote_late_method(
+    call: &InstructionValue,
+    before: &[ReactiveStatement],
+    state: &mut State,
+    inter_state: &mut InterState<'_>,
+    consts: &IdBitSet<IdentifierId>,
+    globals: &IdBitSet<IdentifierId>,
+    env: &mut Environment,
+) {
+    let InstructionValue::MethodCall {
+        receiver, property, ..
+    } = call
+    else {
+        return;
+    };
+    let Some(temporary) = inline_temporary(property, state, inter_state, env) else {
+        return;
+    };
+    let declaration_of =
+        |place: &Place| env.identifiers[place.identifier.0 as usize].declaration_id;
+    let mut behind = Behind {
+        property: declaration_of(property),
+        receiver: declaration_of(receiver),
+        state,
+        inter_state,
+        mutations: Mutations {
+            env,
+            consts,
+            globals,
+            receiver: env.enable_memoization().then(|| {
+                env.identifiers[receiver.identifier.0 as usize]
+                    .mutable_range
+                    .id
+            }),
+        },
+        in_call: crate::hir::visitors::operands(call, &env.functions)
+            .map(declaration_of)
+            .collect(),
+        is_mutated: false,
+        load: None,
+        is_receiver_a_local: false,
+    };
+    behind.walk(before);
+    let Behind {
+        is_mutated,
+        load,
+        is_receiver_a_local,
+        ..
+    } = behind;
+    let Some(load) = load else {
+        return;
+    };
+    // Without memoization every mutation counts. The receiver still has the range in which something mutates it.
+    let mutated_until = env.identifiers[receiver.identifier.0 as usize]
+        .mutable_range
+        .end;
+    if is_mutated && mutated_until.0 > load.id.0 + 1 {
+        promote_identifier(property.identifier, state, env);
+        inter_state.promoted(temporary);
+        env.explicit_receiver_calls.insert(property.identifier);
+        // The call prints the receiver again. Only the name of a local can print twice.
+        if !is_receiver_a_local
+            && let Some(temporary) = inline_temporary(receiver, state, inter_state, env)
+        {
+            promote_identifier(receiver.identifier, state, env);
+            inter_state.promoted(temporary);
+        }
+    } else if let ReactiveValue::Instruction(load @ InstructionValue::ComputedLoad { .. }) =
+        &load.value
+    {
+        // The method stays in the call, and the key with it. The key is an operand like any other.
+        let operands = crate::hir::visitors::each_instruction_value_operand(load, env);
+        promote_interposed_operands(operands, state, inter_state, consts, env);
+    }
+}
+
+/// What prints between the load of a method and its call, read from the call back to the load.
+struct Behind<'a, 'b> {
+    property: DeclarationId,
+    receiver: DeclarationId,
+    state: &'b State,
+    inter_state: &'b InterState<'b>,
+    mutations: Mutations<'b>,
+    /// The temporaries that print inside the call. They run behind the read of the method in the source too.
+    in_call: IdBitSet<DeclarationId>,
+    is_mutated: bool,
+    load: Option<&'a ReactiveInstruction>,
+    is_receiver_a_local: bool,
+}
+
+impl<'a> Behind<'a, '_> {
+    /// Goes back to the load, and then on to what defines the receiver. Returns true at the end of the search.
+    fn walk(&mut self, statements: &'a [ReactiveStatement]) -> bool {
+        if !self.mutations.env.has_stack() {
+            return true;
+        }
+        for statement in statements.iter().rev() {
+            let is_at_the_end = match statement {
+                ReactiveStatement::Instruction(instruction) => self.instruction(instruction),
+                // A pruned scope prints its statements in the block around it.
+                ReactiveStatement::PrunedScope(scope) => self.walk(&scope.instructions),
+                ReactiveStatement::Scope(scope) => {
+                    if self.load.is_none() {
+                        self.mutations.visit_scope(scope, &mut self.is_mutated);
+                    }
+                    false
+                }
+                ReactiveStatement::Terminal(terminal) => {
+                    if self.load.is_none() {
+                        self.mutations
+                            .visit_terminal(terminal, &mut self.is_mutated);
+                    }
+                    false
+                }
+            };
+            if is_at_the_end {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn instruction(&mut self, instruction: &'a ReactiveInstruction) -> bool {
+        let env = self.mutations.env;
+        let declaration_id = instruction
+            .lvalue
+            .as_ref()
+            .map(|lvalue| env.identifiers[lvalue.identifier.0 as usize].declaration_id);
+        if self.load.is_some() {
+            if declaration_id != Some(self.receiver) {
+                return false;
+            }
+            self.is_receiver_a_local = matches!(
+                &instruction.value,
+                ReactiveValue::Instruction(InstructionValue::LoadLocal { place, .. })
+                    if matches!(
+                        env.identifiers[place.identifier.0 as usize].name,
+                        Some(IdentifierName::Named(_))
+                    )
+            );
+            return true;
+        }
+        if declaration_id == Some(self.property) {
+            self.load = Some(instruction);
+            return false;
+        }
+        if let Some(lvalue) = &instruction.lvalue
+            && declaration_id.is_some_and(|id| self.in_call.contains(id))
+            && inline_temporary(lvalue, self.state, self.inter_state, env).is_some()
+        {
+            Operands(env).visit_value(instruction.id, &instruction.value, &mut self.in_call);
+            return false;
+        }
+        self.mutations
+            .visit_instruction(instruction, &mut self.is_mutated);
+        false
+    }
+}
+
+/// The operands of a value, by declaration.
+struct Operands<'a>(&'a Environment);
+
+impl ReactiveFunctionVisitor for Operands<'_> {
+    type State = IdBitSet<DeclarationId>;
+
+    fn env(&self) -> &Environment {
+        self.0
+    }
+
+    fn visit_place(&self, _id: EvaluationOrder, place: &Place, operands: &mut Self::State) {
+        operands.insert(self.0.identifiers[place.identifier.0 as usize].declaration_id);
+    }
+}
+
+/// Sets its state when a statement can mutate the receiver of a method call.
+struct Mutations<'a> {
+    env: &'a Environment,
+    consts: &'a IdBitSet<IdentifierId>,
+    globals: &'a IdBitSet<IdentifierId>,
+    /// The values that are mutated together have one mutable range. A memo block mutates only what it declares,
+    /// so what is in a memo block has another range. `None` without memoization: there no two values share a range.
+    receiver: Option<MutableRangeId>,
+}
+
+impl Mutations<'_> {
+    fn reaches(&self, place: &Place) -> bool {
+        self.receiver.is_none_or(|receiver| {
+            self.env.identifiers[place.identifier.0 as usize]
+                .mutable_range
+                .id
+                == receiver
+        })
+    }
+}
+
+impl ReactiveFunctionVisitor for Mutations<'_> {
+    type State = bool;
+
+    fn env(&self) -> &Environment {
+        self.env
+    }
+
+    fn visit_instruction(&self, instruction: &ReactiveInstruction, is_mutated: &mut bool) {
+        if let Some(effects) = &instruction.effects {
+            *is_mutated |= effects.iter().any(|effect| match effect {
+                AliasingEffect::Mutate { value, .. }
+                | AliasingEffect::MutateConditionally { value }
+                | AliasingEffect::MutateTransitive { value }
+                | AliasingEffect::MutateTransitiveConditionally { value } => self.reaches(value),
+                _ => false,
+            });
+        }
+        if !matches!(instruction.value, ReactiveValue::Instruction(_)) {
+            self.traverse_value(instruction.id, &instruction.value, is_mutated);
+        }
+    }
+
+    /// The last instruction of a value block has no record of its effects. It can mutate what it uses.
+    fn visit_value(&self, id: EvaluationOrder, value: &ReactiveValue, is_mutated: &mut bool) {
+        let ReactiveValue::Instruction(iv) = value else {
+            return self.traverse_value(id, value, is_mutated);
+        };
+        let operands = crate::hir::visitors::each_instruction_value_operand(iv, self.env);
+        *is_mutated |= instruction_effect(iv, &operands, self.consts, self.globals, self.env)
+            >= Effect::Iterate
+            && operands.iter().any(|operand| self.reaches(operand));
     }
 }
 

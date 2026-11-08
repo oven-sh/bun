@@ -96,10 +96,11 @@ enum WellKnown {
     Underscore,
     MemoCacheSentinel,
     EarlyReturnSentinel,
+    Reflect,
 }
 
 impl WellKnown {
-    const COUNT: usize = 6;
+    const COUNT: usize = 7;
 }
 
 /// Host-side state shared across nested function-expression codegen so the
@@ -1940,14 +1941,19 @@ fn codegen_base_instruction_value(
             Ok(maybe_wrap_hook_call(cx, call_expr, callee.identifier))
         }
         InstructionValue::MethodCall {
-            receiver: _,
+            receiver,
             property,
             args,
             ..
         } => {
             let member_expr = codegen_place_to_expression(cx, property)?;
             if !matches!(member_expr.data, ExprData::EDot(_) | ExprData::EIndex(_)) {
-                return Err(method_call_property_err(property.loc, member_expr));
+                if !cx.env.explicit_receiver_calls.contains(property.identifier) {
+                    return Err(method_call_property_err(property.loc, member_expr));
+                }
+                let call_expr =
+                    codegen_explicit_receiver_call(cx, member_expr, receiver, args, loc)?;
+                return Ok(maybe_wrap_hook_call(cx, call_expr, property.identifier));
             }
             let arguments = codegen_arguments(cx, args)?;
             let call_expr = Expr::init(
@@ -2317,6 +2323,73 @@ fn codegen_base_instruction_value(
 // =============================================================================
 // Function expression codegen
 // =============================================================================
+
+/// Not in upstream: the call of a method that PromoteUsedTemporaries read ahead of a statement, as
+/// `Reflect.apply(method, receiver, [...args])`. `method.call(receiver, ...args)` reads `call` of the method,
+/// which a member call does not: a proxy or a method with a `call` of its own answers that read.
+fn codegen_explicit_receiver_call(
+    cx: &mut Context,
+    method: Expr,
+    receiver: &Place,
+    args: &[PlaceOrSpread],
+    loc: Loc,
+) -> Result<Expr, CompilerError> {
+    let reflect = cx.cg.well_known_global(WellKnown::Reflect, b"Reflect");
+    // `find_symbol` of the host sees what the file and the body of the function declare, not a nested block.
+    let is_global = cx
+        .cg
+        .host
+        .symbols()
+        .get(reflect.inner_index() as usize)
+        .is_some_and(|symbol| symbol.kind == bun_ast::symbol::Kind::Unbound)
+        && !cx.env.identifiers.iter().any(|identifier| {
+            identifier
+                .name
+                .as_ref()
+                .is_some_and(|name| name.value() == b"Reflect")
+        });
+    if !is_global {
+        return Err(method_call_property_err(receiver.loc, method));
+    }
+    let this_value = codegen_place_to_expression(cx, receiver)?;
+    // The read of the method printed the receiver once. PromoteUsedTemporaries leaves only a local without a name.
+    if cx.env.identifiers[receiver.identifier.0 as usize]
+        .name
+        .is_none()
+    {
+        let ExprData::EIdentifier(local) = this_value.data else {
+            return Err(method_call_property_err(receiver.loc, this_value));
+        };
+        cx.cg.host.record_usage(local.ref_);
+    }
+    let arguments = Expr::init(
+        E::Array {
+            items: codegen_arguments(cx, args)?,
+            ..Default::default()
+        },
+        loc,
+    );
+    let mut apply_args: ExprNodeList = AstAlloc::vec_with_capacity(3);
+    apply_args.push(method);
+    apply_args.push(this_value);
+    apply_args.push(arguments);
+    Ok(Expr::init(
+        E::Call {
+            target: Expr::init(
+                E::Dot {
+                    target: Expr::init_identifier(reflect, loc),
+                    name: StoreStr::new(b"apply"),
+                    name_loc: loc,
+                    ..Default::default()
+                },
+                loc,
+            ),
+            args: apply_args,
+            ..Default::default()
+        },
+        loc,
+    ))
+}
 
 fn codegen_function_expression(
     cx: &mut Context,

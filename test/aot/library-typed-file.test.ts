@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { cpSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, test } from "./with-compiler";
 
@@ -54,12 +54,8 @@ async function spawned(cmd: string[], cwd: string, env: Record<string, string | 
 // app.ts, index.aot.ts and version.aot.ts are compiled with their types, and the build has nothing to say about them.
 const USED = { said: [], typedFiles: 3, exitCode: 0, signal: null, stdout: "7 1.2.3\n" };
 
-async function install(root: string) {
-  const built = await spawned(
-    [bunExe(), "compile", "--library", "src/index.ts", "src/version.ts"],
-    join(root, "library"),
-    env,
-  );
+async function install(root: string, args = ["src/index.ts", "src/version.ts"]) {
+  const built = await spawned([bunExe(), "compile", "--library", ...args], join(root, "library"), env);
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   cpSync(join(root, "library/dist"), join(root, "app/node_modules/shapes"), { recursive: true });
 }
@@ -113,7 +109,17 @@ describe.concurrent("a program compiled against a package that bun compile --lib
 export const shape: Shape = { kind: "square", size: 1 };
 `,
       // The bundle calls the fallback `shape`, and so each parameter `shape` of a function that reads it `shape2`. It reads the
-      // global `document` too, and so calls a parameter of that name `document2`.
+      // global `document` too, and so calls a parameter of that name `document2`: that one is in a package which the bundle
+      // takes from its TypeScript, and the build knows the types of no such file.
+      "library/packages/titles/package.json": JSON.stringify({
+        name: "titles",
+        version: "1.0.0",
+        exports: "./index.ts",
+      }),
+      "library/packages/titles/index.ts": `export function isTitle(document: unknown): document is string {
+  return typeof document === "string";
+}
+`,
       "library/src/guards.ts": `import { shape as fallback } from "./fallback";
 import type { Shape } from "./index";
 export function isShape(shape: unknown): shape is Shape {
@@ -137,9 +143,7 @@ export function isSameShape(shape: unknown, other: typeof shape): shape is Shape
 export function isSizeOf(shape: unknown, size: unknown): size is number {
   return isShape(shape) && size === shape.size && fallback.size > 0;
 }
-export function isTitle(document: unknown): document is string {
-  return typeof document === "string";
-}
+export { isTitle } from "titles";
 export const title: string = typeof document === "undefined" ? "none" : document.title;
 `,
       "library/src/index.ts": library["library/src/index.ts"] + `export * from "./guards";\n`,
@@ -163,9 +167,16 @@ console.log(
 );
 `,
     });
+    mkdirSync(join(String(dir), "library/node_modules"));
+    symlinkSync(
+      join(String(dir), "library/packages/titles"),
+      join(String(dir), "library/node_modules/titles"),
+      "junction",
+    );
     await install(String(dir));
     const typed = readFileSync(join(String(dir), "app/node_modules/shapes/index.aot.ts"), "utf8");
     expect(typed.match(/\(\w+: [^)]+\): (?:asserts \w+(?: is \S+)?|\w+ is \S+)/g)).toEqual([
+      "(document2: unknown): document2 is string",
       "(shape2: unknown): shape2 is Shape",
       "(shape2: unknown): shape2 is number",
       '(shape2: unknown): shape2 is Shape["kind"]',
@@ -173,9 +184,58 @@ console.log(
       "(shape2: Shape | undefined): asserts shape2",
       "(shape2: unknown, other: typeof shape2): shape2 is Shape",
       "(shape2: unknown, size: unknown): size is number",
-      "(document2: unknown): document2 is string",
     ]);
     expect(await compile(String(dir))).toEqual({ ...USED, stdout: "4 3.0 6 circle 4 2 3 1 none 1.2.3\n" });
+  });
+
+  // The React Compiler prints `(value = "none")` as `(t0) { let value = t0 === undefined ? "none" : t0`.
+  test("a type guard whose parameter the React Compiler renames is written into an .aot.ts file that compiles", async () => {
+    using dir = tempDir("aot-library-typed-file-compiled-guard", {
+      ...library,
+      "library/tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx: "react-jsx" },
+      }),
+      "library/src/guards.tsx": `export function useIsString(value: unknown = "none", label: string = "x"): value is string {
+  "use memo";
+  return typeof value === "string" && label.length > 0;
+}
+export function useAssertedString(value: unknown = "none", label: string = "x"): asserts value is string {
+  "use memo";
+  if (typeof value !== "string" || label.length === 0) throw new TypeError("not a string");
+}
+export function useIsSecondString(label: string = "x", value: unknown): value is string {
+  "use memo";
+  return typeof value === "string" && label.length > 0;
+}
+`,
+      "library/src/index.ts": library["library/src/index.ts"] + `export * from "./guards";\n`,
+      "app/app.ts": `import { total, useAssertedString, useIsSecondString, useIsString } from "shapes";
+import { version } from "shapes/version";
+const [first, second, third]: unknown[] = ["guarded", "asserted", "second"];
+useAssertedString(second, "b");
+console.log(
+  useIsString(first, "b") ? first.length : -1,
+  second.toUpperCase(),
+  useIsSecondString("b", third) ? third.length : -1,
+  total([]),
+  version,
+);
+`,
+    });
+    await install(String(dir), ["src/index.ts", "src/version.ts", "--react-compiler"]);
+    const typed = readFileSync(join(String(dir), "app/node_modules/shapes/index.aot.ts"), "utf8");
+    // The name of each parameter, and the return type: a change to the annotation of a parameter is none to this case.
+    const hooks = [...typed.matchAll(/^function (use\w+)\((.*)\): (.*) \{$/gm)].map(([, hook, parameters, returns]) => [
+      hook,
+      parameters.split(", ").map(parameter => /^\w+/.exec(parameter)![0]),
+      returns,
+    ]);
+    expect(hooks).toEqual([
+      ["useIsString", ["t0", "t1"], "t0 is string"],
+      ["useAssertedString", ["t0", "t1"], "asserts t0 is string"],
+      ["useIsSecondString", ["t0", "value"], "value is string"],
+    ]);
+    expect(await compile(String(dir))).toEqual({ ...USED, stdout: "7 ASSERTED 6 0 1.2.3\n" });
   });
 
   test("a namespace that holds nothing but types is written into an .aot.ts file that compiles", async () => {

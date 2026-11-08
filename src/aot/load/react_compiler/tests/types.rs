@@ -1,7 +1,7 @@
 use bstr::BStr;
 use bun_ast::runtime::ReactCompilerMode;
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
-use bun_sema::hir::{Flags, Func, Keyword, Param, TypeNodeId, TypeNodeKind};
+use bun_sema::hir::{ExprKind, Flags, Func, Keyword, Param, TypeNodeId, TypeNodeKind};
 use bun_sema::program::{FileId, FileRole};
 use bun_sema_driver::{Diagnostic, check_whole_files, decide_roles};
 
@@ -358,7 +358,19 @@ fn caller_of_compiled_type_guard_narrows() {
         &default_settings(),
         ReactCompilerMode::Client,
         |project| {
-            assert!(Tree::new(project, "guards.tsx").has_compiled_components());
+            let tree = Tree::new(project, "guards.tsx");
+            let hir = tree.hir();
+            let declared = ["useIsString", "useAssertedString", "useAssertedGiven"];
+            let declared = declared.map(|name| tree.function_named(name));
+            let assigned = ["useIsNumber", "useIsBoolean"].map(|name| {
+                match hir[tree.declaration_named(name).init].kind {
+                    ExprKind::Fn(function) => function,
+                    _ => panic!("{name} is not a function"),
+                }
+            });
+            for function in declared.into_iter().chain(assigned) {
+                assert!(hir[function].flags.contains(Flags::REPLACED_BODY));
+            }
         },
     );
     assert_both_modes_report(&files, &[]);

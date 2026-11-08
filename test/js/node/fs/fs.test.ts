@@ -3140,7 +3140,7 @@ describe("writeFileSync", () => {
     expect(readFileSync(path, "utf8")).toBe("File written successfully");
   });
   it("write file with mode, issue #3740", () => {
-    const dir = tmpdirSync();
+    using dir = tempDir("writeFileSyncWithMode", {});
     const path = `${dir}/writeFileSyncWithMode.txt`;
     writeFileSync(path, "bun", { mode: 33188 });
     const stat = fs.statSync(path);

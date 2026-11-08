@@ -404,9 +404,11 @@ Use these specifiers to format the test title:
 | `%$`       | Number of the test case (index + 1) |
 | `%%`       | Single percent sign (%)             |
 
-Each specifier accepts any value and converts it the way `util.format` does. For example, `%s` prints `1` for `1` and `null` for `null`. Objects and arrays are printed on one line. An array shows at most 100 items: an array of the numbers 0 to 119 ends with `98, 99, ... 20 more items ]`. `%j` prints every item.
+Each specifier accepts any value and converts it the way `util.format` does. For example, `%s` prints `1` for `1` and `null` for `null`. Objects and arrays are printed on one line.
 
 When a row is an object, `$name` and `$user.name` print its properties, and `$#` prints the test case's index. If the row has no `name` property, `$name` is left as is.
+
+In a `test.each` or `describe.each` title, an array shows at most 100 items. An array of the numbers 0 to 119 ends with `98, 99, ... 20 more items ]`. When `test` or `describe` comes from `"vitest"`, the title follows [Vitest's format](#importing-from-vitest) instead. `%j` prints every item of an array that `JSON.stringify()` accepts.
 
 #### Examples
 

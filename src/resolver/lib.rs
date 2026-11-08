@@ -443,18 +443,6 @@ pub mod fs {
             RealFS::get_default_temp_dir()
         }
 
-        /// Returns the cached
-        /// `*EntriesOption` slot owned by the resolver's BSSMap singleton
-        /// (process-lifetime).
-        #[inline]
-        pub fn read_directory(
-            &mut self,
-            dir: &[u8],
-            generation: Generation,
-            store_fd: bool,
-        ) -> crate::CrateResult<&'static EntriesOption> {
-            self.fs.read_directory(dir, None, generation, store_fd)
-        }
     }
 
     // ── PathName / Path ──────────────────────────────────────────────────

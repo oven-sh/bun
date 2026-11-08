@@ -570,11 +570,6 @@ impl DirEntry {
         Some(EntryLookup { entry: result_ptr })
     }
 
-    /// True if a cached entry exists for the given already-lowercase name.
-    pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
-        Self::debug_assert_entries_mutex_held();
-        self.data.contains_key(query_lower)
-    }
 }
 
 // `data` drops itself and `dir` is interned in DirnameStore (see the comment

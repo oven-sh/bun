@@ -240,6 +240,11 @@ shutil.rmtree(directory)
       "[crc(x) == want for x in (array.array('B', b'abc'), memoryview(b'xabcx')[1:4], memoryview(js.Uint8Array([97, 98, 99])), Exporter())]",
       "[True, True, True, True]",
     ],
+    // Of memory of JS that can be made longer or shorter.
+    [
+      "[crc(memoryview(js.Uint8Array(memory(3, maxByteLength=4)).fill(0x61))) == crc('aaa') for memory in (js.ArrayBuffer, js.SharedArrayBuffer)]",
+      "[True, True]",
+    ],
     [
       "fs.writeFileSync(path, 'abc')\nwith open(path, 'r+b') as f:\n    with mmap.mmap(f.fileno(), 0) as m:\n        same = crc(m) == want\nsame",
       "True",

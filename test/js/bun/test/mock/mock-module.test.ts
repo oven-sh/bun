@@ -3009,6 +3009,44 @@ describe.concurrent("a mocked module's exports are read from the object the fact
       5,
     );
   });
+
+  // Its importers are linked to the module's own variables, so the exports of the mock are copied into those.
+  test.each(["mock.module", "jest.mock", "jest.doMock", "vi.mock"])(
+    "unless the module is already imported: %s() copies each export into it once",
+    async call => {
+      await expectFixturesToPass(
+        {
+          ...dep,
+          "imported.test.ts": `
+            import { expect, jest, mock, test, vi } from "bun:test";
+            import def, { flag, plain } from "./dep";
+            import * as ns from "./dep";
+            import { read } from "./reader";
+
+            test("the module is updated in place", () => {
+              const state = { value: "first", reads: 0 };
+              ${call}("./dep", () => ({
+                get flag() {
+                  state.reads++;
+                  return state.value;
+                },
+              }));
+              state.value = "second";
+
+              // The getter ran when the module was updated. The names that the factory left out keep their values.
+              expect([flag, ns.flag, def, plain]).toEqual(["first", "first", "real-default", "real-plain"]);
+              expect(read()).toEqual(["first", "first", "real-default", "real-plain", "real-fn"]);
+              expect(state.reads).toBe(1);
+
+              expect(() => { ns.flag = "written"; }).toThrow(TypeError);
+              expect(flag).toBe("first");
+            });
+          `,
+        },
+        1,
+      );
+    },
+  );
 });
 
 describe.concurrent("a factory that returns a module namespace object", () => {

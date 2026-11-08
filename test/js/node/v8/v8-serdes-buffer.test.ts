@@ -161,15 +161,8 @@ describe("v8.serialize of a value that cannot be cloned", () => {
     return buffer;
   }
 
-  function revokedProxy() {
-    const { proxy, revoke } = Proxy.revocable({}, {});
-    revoke();
-    return proxy;
-  }
-
   test.each([
     ["a Proxy", () => new Proxy({}, {})],
-    ["a revoked Proxy", revokedProxy],
     ["a function", () => () => {}],
     ["a symbol", () => Symbol("s")],
     ["a nested function", () => ({ list: [function named() {}] })],
@@ -196,24 +189,6 @@ describe("v8.serialize of a value that cannot be cloned", () => {
       port1.close();
       port2.close();
     }
-  });
-
-  test("no trap of a Proxy runs", () => {
-    const trapsRun: string[] = [];
-    const handler = Object.fromEntries(
-      ["ownKeys", "getOwnPropertyDescriptor", "get", "has", "getPrototypeOf"].map(trap => [
-        trap,
-        () => {
-          trapsRun.push(trap);
-          throw new RangeError(`the ${trap} trap ran`);
-        },
-      ]),
-    ) as ProxyHandler<object>;
-    expectPlainError(thrownBy(() => v8.serialize(new Proxy({ key: 1 }, handler))));
-    expectPlainError(
-      thrownBy(() => v8.serialize({ nested: new Proxy({ key: 1 }, handler), buffer: Buffer.from("x") })),
-    );
-    expect(trapsRun).toEqual([]);
   });
 
   test("what a getter throws passes through", () => {

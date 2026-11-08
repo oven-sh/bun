@@ -83,6 +83,12 @@ static void didStub(Zig::GlobalObject* globalObject, WriteBarrier<Unknown>& stub
         JSC__JSMap__set(ensureMap(getVM(globalObject), globalObject, stubsOfPreload), globalObject, JSValue::encode(key), JSValue::encode(stub));
 }
 
+// A spy is an InternalFunction, or a half of an accessor.
+static bool mayBeSpy(const PropertyDescriptor& descriptor)
+{
+    return descriptor.isAccessorDescriptor() || (descriptor.value().isCell() && descriptor.value().asCell()->type() == InternalFunctionType);
+}
+
 static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValue key, JSValue original)
 {
     auto& vm = getVM(globalObject);
@@ -98,8 +104,7 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
     PropertyDescriptor descriptor;
     toPropertyDescriptor(globalObject, original, descriptor);
     RETURN_IF_EXCEPTION(scope, );
-    // A spy is an InternalFunction, or a half of an accessor.
-    if (descriptor.isAccessorDescriptor() || (descriptor.value().isCell() && descriptor.value().asCell()->type() == InternalFunctionType)) {
+    if (mayBeSpy(descriptor)) {
         bool isBack = putBackForStub(defaultGlobalObject(globalObject), name, descriptor);
         RETURN_IF_EXCEPTION(scope, );
         if (isBack)
@@ -139,6 +144,8 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
             RETURN_IF_EXCEPTION(scope, );
             object->setPrototypeDirect(vm, jsNull());
             original = object;
+            if (mayBeSpy(descriptor))
+                willKeepForStub(globalObject, name, descriptor);
         }
         JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(original));
         RETURN_IF_EXCEPTION(scope, );

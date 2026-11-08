@@ -3877,9 +3877,10 @@ declare module "bun" {
      * executable can't do something, such as load native code: `remove: ["native-code"]`.
      *
      * Two features go against this. After `"sql"`, a read of `Bun.sql` or `Bun.SQL` throws the
-     * error, so `typeof Bun.sql` throws too. After `"intl"`, some `Intl` calls in compiled code
-     * print the feature and end the process with exit code 70, and no `catch` runs. One of them
-     * is `new Intl.NumberFormat("en").format(n)`.
+     * error. So `typeof Bun.sql` throws, and a file with `import { sql } from "bun"` doesn't
+     * load, unless TypeScript drops the import as unused. After `"intl"`, some `Intl` calls in
+     * compiled code print the feature and end the process with exit code 70, and no `catch`
+     * runs. One of them is `new Intl.NumberFormat("en").format(n)`.
      *
      * A name can't be in both `allow` and `remove`.
      */

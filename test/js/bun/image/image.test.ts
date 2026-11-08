@@ -399,8 +399,11 @@ describe("Bun.Image", () => {
       const ref = [...(await new Bun.Image(cornersPng).pixels()).data];
       expect([...(await new Bun.Image(p).pixels()).data]).toEqual(ref);
       const file = new Bun.Image(Bun.file(p));
+      // Concurrent calls each chain their own read; later calls reuse the
+      // bytes the first read stored on the instance.
+      const planes = await Promise.all([file.pixels(), file.pixels(), file.pixels()]);
+      expect(planes.map(px => [...px.data])).toEqual([ref, ref, ref]);
       expect([...(await file.pixels()).data]).toEqual(ref);
-      // Second terminal on the same instance reuses the bytes.
       expect(await file.metadata()).toEqual({ width: 4, height: 3, format: "png" });
       expect([...(await new Blob([cornersPng]).image().pixels()).data]).toEqual(ref);
     });

@@ -255,14 +255,13 @@ fn evaluate_phi(phi: &Phi, constants: &Constants, zeros_keep_their_sign: bool) -
                     if !js_strict_equal(a, b) {
                         return None;
                     }
-                    // Not in upstream: the flag. `bun lint` merges the two, as the compilers of its pinned tools do.
-                    if zeros_keep_their_sign {
-                        // Strict equality alone would merge 0 and -0, which are not
-                        // interchangeable. Keep rejecting NaN as before.
-                        if let (PrimitiveValue::Number(a), PrimitiveValue::Number(b)) = (a, b) {
-                            if a.value().is_sign_negative() != b.value().is_sign_negative() {
-                                return None;
-                            }
+                    // Strict equality alone would merge 0 and -0, which are not interchangeable. Keep rejecting NaN as before.
+                    if let (PrimitiveValue::Number(a), PrimitiveValue::Number(b)) = (a, b) {
+                        // Not in upstream: the flag. `bun lint` merges the two, as the compilers of its pinned tools do.
+                        if zeros_keep_their_sign
+                            && a.value().is_sign_negative() != b.value().is_sign_negative()
+                        {
+                            return None;
                         }
                     }
                 }

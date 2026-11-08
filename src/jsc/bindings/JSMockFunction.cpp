@@ -3539,8 +3539,7 @@ __attribute__((minsize)) static JSValue replaceProperty(Zig::GlobalObject* globa
         }
     }
 
-    // An assignment refuses a read-only property, and a locked built-in takes a direct store only, under the lock.
-    // import.meta.env has no storage of its own, so it is always assigned.
+    // An assignment refuses a read-only property. import.meta.env has no storage of its own, so it is always assigned.
     bool isAssigned = !isNamespace && !property.isOpaque && (env || !(attributes & PropertyAttribute::ReadOnly)) && object->structure()->typeInfo().overridesPut();
 #if ENABLE(AOT)
     if (object->structure()->mayHaveImmutableProperties())

@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/react-compiler-type-guards.test.ts": {
+    "default": 5600,
+    "asan": 22400
+  },
   "aot/a-database-asked-for-by-a-path-made-of-the-own-folder-is-not-refused.test.ts": {
     "default": 60000,
     "asan": 240000

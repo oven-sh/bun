@@ -129,6 +129,16 @@ fn function_record(text: &str, function: &str, mode: ReactCompilerMode) -> Func 
     })
 }
 
+fn guarded_parameter(name: &str, text: &str, function: &str, mode: ReactCompilerMode) -> String {
+    with_tree(name, text, mode, |tree| {
+        let hir = tree.hir();
+        match hir[hir[tree.function_named(function)].ret].kind {
+            TypeNodeKind::Predicate { param, .. } => tree.name_text(param),
+            _ => panic!("{function} has no type predicate"),
+        }
+    })
+}
+
 #[test]
 fn file_stays_checked() {
     let files = [("main.tsx", HELLO)];
@@ -260,6 +270,145 @@ fn default_before_required_parameter_accepts_undefined() {
     assert!(compiled[0].is_any && !written[0].is_any);
     assert_eq!(compiled[1].record.ty, written[1].record.ty);
     assert!(!compiled[1].is_any);
+}
+
+const GUARD: &str = "export function useIsString(value: unknown = 'none', label: string = 'x'): value is string {\n\
+                     'use memo';\n\
+                     return typeof value === 'string' && label.length > 0;\n\
+                     }\n";
+
+#[test]
+fn type_predicate_names_the_compiled_parameter() {
+    let written = function_record(GUARD, "useIsString", ReactCompilerMode::Disabled);
+    let compiled = function_record(GUARD, "useIsString", ReactCompilerMode::Client);
+    assert!(compiled.flags.contains(Flags::REPLACED_BODY));
+    assert!(compiled.ret.is_some());
+    assert_eq!(compiled.ret, written.ret);
+    let parameters = parameters_of(GUARD, "useIsString", ReactCompilerMode::Client);
+    assert_eq!(parameters[0].name.as_deref(), Some("t0"));
+    let guarded = |mode| guarded_parameter("main.tsx", GUARD, "useIsString", mode);
+    assert_eq!(guarded(ReactCompilerMode::Disabled), "value");
+    assert_eq!(guarded(ReactCompilerMode::Client), "t0");
+}
+
+#[test]
+fn type_predicate_of_a_parameter_that_keeps_its_name_stays_as_written() {
+    let text = "export function useIsString(value: unknown, label: string = 'x'): value is string {\n\
+                'use memo';\n\
+                return typeof value === 'string' && label.length > 0;\n\
+                }\n";
+    let parameters = parameters_of(text, "useIsString", ReactCompilerMode::Client);
+    assert_eq!(parameters[0].name.as_deref(), Some("value"));
+    assert_ne!(parameters[1].name.as_deref(), Some("label"));
+    let guarded = guarded_parameter("main.tsx", text, "useIsString", ReactCompilerMode::Client);
+    assert_eq!(guarded, "value");
+}
+
+#[test]
+fn jsdoc_type_predicate_names_the_compiled_parameter() {
+    let text = "/**\n\
+                 * @param {unknown} [value]\n\
+                 * @returns {value is string}\n\
+                 */\n\
+                export function useIsString(value = 'none') {\n\
+                'use memo';\n\
+                return typeof value === 'string';\n\
+                }\n";
+    let guarded = |mode| guarded_parameter("main.jsx", text, "useIsString", mode);
+    assert_eq!(guarded(ReactCompilerMode::Disabled), "value");
+    assert_eq!(guarded(ReactCompilerMode::Client), "t0");
+}
+
+#[test]
+fn caller_of_compiled_type_guard_narrows() {
+    let guards = [
+        GUARD,
+        "export function useAssertedString(value: unknown = 'none'): asserts value is string {\n\
+         'use memo';\n\
+         if (typeof value !== 'string') throw new TypeError('not a string');\n\
+         }\n\
+         export function useAssertedGiven(value: string | undefined = 'none'): asserts value {\n\
+         'use memo';\n\
+         if (!value) throw new TypeError('not given');\n\
+         }\n\
+         export const useIsNumber = (value: unknown = 0): value is number => {\n\
+         'use memo';\n\
+         return typeof value === 'number';\n\
+         };\n\
+         export const useIsBoolean = function (value: unknown = false): value is boolean {\n\
+         'use memo';\n\
+         return typeof value === 'boolean';\n\
+         };\n",
+    ]
+    .concat();
+    let main = "import { useAssertedGiven, useAssertedString, useIsBoolean, useIsNumber, useIsString } from './guards';\n\
+                const [first, second, third, fourth]: unknown[] = ['a', 1, true, 'b'];\n\
+                const given: string | undefined = ['c'].pop();\n\
+                export const length = useIsString(first, 'x') ? first.length : 0;\n\
+                export const fixed = useIsNumber(second) ? second.toFixed(1) : '';\n\
+                export const flag = useIsBoolean(third) ? third.valueOf() : false;\n\
+                useAssertedString(fourth);\n\
+                export const upper = fourth.toUpperCase();\n\
+                useAssertedGiven(given);\n\
+                export const size = given.length;\n\
+                export const guard: (value: unknown, label?: string) => value is string = useIsString;\n";
+    let files = with_react_package(&[("main.ts", main), ("guards.tsx", guards.as_str())]);
+    with_project(
+        &files,
+        &default_settings(),
+        ReactCompilerMode::Client,
+        |project| {
+            assert!(Tree::new(project, "guards.tsx").has_compiled_components());
+        },
+    );
+    assert_both_modes_report(&files, &[]);
+}
+
+#[test]
+fn type_guard_beside_a_compiled_parameter_of_its_name() {
+    let guard = "export function useSecond(first: number = 1, t0: unknown): t0 is string {\n\
+                 'use memo';\n\
+                 return typeof t0 === 'string' && first > 0;\n\
+                 }\n";
+    let parameters = parameters_of(guard, "useSecond", ReactCompilerMode::Client);
+    assert_eq!(parameters[0].name.as_deref(), Some("t0"));
+    let guarded = guarded_parameter("main.tsx", guard, "useSecond", ReactCompilerMode::Client);
+    assert_ne!(guarded, "t0");
+    assert_eq!(parameters[1].name.as_deref(), Some(guarded.as_str()));
+
+    let head = "import { useSecond } from './guard';\n\
+                const count: number | undefined = [1].pop();\n\
+                const value: unknown = 'x';\n";
+    let narrowed = "export const length = useSecond(count, value) ? value.length : 0;\n";
+    let main = [head, narrowed].concat();
+    let files = with_react_package(&[("main.ts", main.as_str()), ("guard.tsx", guard)]);
+    assert_both_modes_report(&files, &[]);
+    let not_narrowed = "export const fixed = useSecond(count, value) ? count.toFixed(1) : '';\n";
+    let main = [head, not_narrowed].concat();
+    let files = with_react_package(&[("main.ts", main.as_str()), ("guard.tsx", guard)]);
+    assert_both_modes_report(&files, &[(18048, "/project/main.ts".to_owned(), 4)]);
+}
+
+#[test]
+fn overload_signature_over_a_compiled_type_guard_narrows() {
+    let guard = "export function useIsString(value: unknown): value is string;\n\
+                 export function useIsString(value: unknown = 'none'): value is string {\n\
+                 'use memo';\n\
+                 return typeof value === 'string';\n\
+                 }\n";
+    let main = "import { useIsString } from './guard';\n\
+                const value: unknown = 'x';\n\
+                export const length = useIsString(value) ? value.length : 0;\n";
+    let files = with_react_package(&[("main.ts", main), ("guard.tsx", guard)]);
+    with_project(
+        &files,
+        &default_settings(),
+        ReactCompilerMode::Client,
+        |project| {
+            assert!(Tree::new(project, "guard.tsx").has_compiled_components());
+        },
+    );
+    assert_both_modes_report(&files, &[]);
 }
 
 #[test]

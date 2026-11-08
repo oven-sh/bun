@@ -2676,6 +2676,34 @@ fn link(
                 edit.2 = [&outer_scope[..], b".", &edit.2].concat();
             }
         }
+        if let Some(module) = module.as_ref().filter(|module| {
+            index < mapped && module.syntax.file.rare_syntax & rare::TYPE_PREDICATE != 0
+        }) {
+            let (syntax, file) = (&module.syntax, module.syntax.file);
+            for (id, function) in (0u32..).zip(file.fns.iter()) {
+                if !Syntax::has_javascript(function) {
+                    continue;
+                }
+                let Some(parameter) = file.predicate_parameter(FnId(id)) else {
+                    continue;
+                };
+                let predicate = &file[function.ret];
+                let at = match predicate.kind {
+                    TypeNodeKind::Predicate { asserts: true, .. } => {
+                        syntax.after_trivia(predicate.pos + b"asserts".len() as u32)
+                    }
+                    _ => predicate.pos,
+                };
+                if let Some(new) = generated
+                    .get(&(index as u32, file[file[parameter].pat].pos))
+                    .map(|&offset| output.word(offset))
+                    .filter(|new| *new != syntax.word(at))
+                {
+                    let place = edits.partition_point(|edit| edit.0 < at);
+                    edits.insert(place, (at, syntax.token_end(at), new.to_vec()));
+                }
+            }
+        }
         all_edits.push(edits);
     }
 

@@ -330,6 +330,7 @@ impl<'a, 's> TreeWriter<'a, 's> {
         if self.function.has_unknown_symbol {
             return Err(UnsupportedNode("symbol without a name"));
         }
+        self.rebind_type_predicate(original.ret, original.params, params);
         self.add_body_start(function);
         let is_async = compiled.flags.contains(flags::Function::IsAsync);
         let is_generator = compiled.flags.contains(flags::Function::IsGenerator);

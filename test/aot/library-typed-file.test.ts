@@ -106,6 +106,78 @@ describe.concurrent("a program compiled against a package that bun compile --lib
     expect(await compile(String(dir))).toEqual(USED);
   });
 
+  test("a type guard whose parameter the bundle renames is written into an .aot.ts file that compiles", async () => {
+    using dir = tempDir("aot-library-typed-file-renamed-guard", {
+      ...library,
+      "library/src/fallback.ts": `import type { Shape } from "./index";
+export const shape: Shape = { kind: "square", size: 1 };
+`,
+      // The bundle calls the fallback `shape`, and so each parameter `shape` of a function that reads it `shape2`. It reads the
+      // global `document` too, and so calls a parameter of that name `document2`.
+      "library/src/guards.ts": `import { shape as fallback } from "./fallback";
+import type { Shape } from "./index";
+export function isShape(shape: unknown): shape is Shape {
+  return typeof shape === "object" && shape !== null && "size" in shape && fallback.size > 0;
+}
+export const isSize = (shape: unknown): shape is number => typeof shape === "number" && fallback.size > 0;
+export class Guards {
+  isKind(shape: unknown): shape is Shape["kind"] {
+    return (shape === "circle" || shape === "square") && fallback.size > 0;
+  }
+}
+export function assertShape(shape: unknown): asserts shape is Shape {
+  if (!isShape(shape) || fallback.size < 0) throw new TypeError("not a shape");
+}
+export function assertGiven(shape: Shape | undefined): asserts shape {
+  if (!shape || fallback.size < 0) throw new TypeError("not given");
+}
+export function isSameShape(shape: unknown, other: typeof shape): shape is Shape {
+  return isShape(shape) && other === shape && fallback.size > 0;
+}
+export function isSizeOf(shape: unknown, size: unknown): size is number {
+  return isShape(shape) && size === shape.size && fallback.size > 0;
+}
+export function isTitle(document: unknown): document is string {
+  return typeof document === "string";
+}
+export const title: string = typeof document === "undefined" ? "none" : document.title;
+`,
+      "library/src/index.ts": library["library/src/index.ts"] + `export * from "./guards";\n`,
+      "app/app.ts": `import { assertGiven, assertShape, Guards, isSameShape, isShape, isSize, isSizeOf, isTitle, title, total, type Shape } from "shapes";
+import { version } from "shapes/version";
+const [first, second, third, fourth, fifth, sixth]: unknown[] = [{ kind: "square", size: 2 }, 3, "circle", { kind: "circle", size: 1 }, "t", 2];
+const given: Shape | undefined = [{ kind: "square", size: 4 } satisfies Shape].pop();
+assertShape(fourth);
+assertGiven(given);
+console.log(
+  isShape(first) ? total([first]) : -1,
+  isSize(second) ? second.toFixed(1) : "",
+  new Guards().isKind(third) ? third.length : -1,
+  fourth.kind,
+  given.size,
+  isSameShape(first, first) ? first.size : -1,
+  isSizeOf(first, sixth) ? sixth + 1 : -1,
+  isTitle(fifth) ? fifth.length : -1,
+  title,
+  version,
+);
+`,
+    });
+    await install(String(dir));
+    const typed = readFileSync(join(String(dir), "app/node_modules/shapes/index.aot.ts"), "utf8");
+    expect(typed.match(/\(\w+: [^)]+\): (?:asserts \w+(?: is \S+)?|\w+ is \S+)/g)).toEqual([
+      "(shape2: unknown): shape2 is Shape",
+      "(shape2: unknown): shape2 is number",
+      '(shape2: unknown): shape2 is Shape["kind"]',
+      "(shape2: unknown): asserts shape2 is Shape",
+      "(shape2: Shape | undefined): asserts shape2",
+      "(shape2: unknown, other: typeof shape2): shape2 is Shape",
+      "(shape2: unknown, size: unknown): size is number",
+      "(document2: unknown): document2 is string",
+    ]);
+    expect(await compile(String(dir))).toEqual({ ...USED, stdout: "4 3.0 6 circle 4 2 3 1 none 1.2.3\n" });
+  });
+
   test("a namespace that holds nothing but types is written into an .aot.ts file that compiles", async () => {
     using dir = tempDir("aot-library-typed-file-namespace-of-types", {
       ...library,

@@ -146,9 +146,9 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   // if true, while the stream is own()ed it will not
   let forceUnref = false;
 
-  function own() {
-    // After EOF there is nothing left to read: no acquisition path ('readable'
-    // listeners, resume(), ref(), an explicit read()) may take the reader back.
+  // Takes the native reader and refs the event loop. The caller has checked `destroyed`.
+  function acquire() {
+    // After EOF there is nothing left to read.
     if (stream_reachedEof) return;
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
@@ -161,9 +161,15 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     }
   }
 
+  function own() {
+    if (!stream.destroyed) acquire();
+  }
+
   function disown() {
     $debug("unref();");
     source?.setFlowing?.(false);
+    // A stream that nobody holds keeps its ref for the next reader of Bun.stdin.stream().
+    if (!reader && !native.locked) return;
 
     if (reader) {
       // releaseLock() rejects any in-flight internalRead() with a TypeError; that
@@ -175,12 +181,18 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     source?.updateRef?.(false);
   }
 
+  const socketLike = isTTY || fdType !== BunProcessStdinFdType.file;
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
-  const stream: StdinStream = new ReadStream(null, { fd, autoClose: false });
+  const stream: StdinStream = new ReadStream(null, socketLike ? { fd } : { fd, autoClose: false });
+  if (socketLike) {
+    // Node builds these kinds as a net.Socket, which is constructed from the start. The first read and a first-tick destroy() then wait on no listener that removeAllListeners() can drop.
+    stream._readableState.constructed = true;
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L415: with emitClose off, finished() settles on 'end'. _destroy emits 'close'.
+    stream._readableState.emitClose = false;
+  }
 
   const originalOn = stream.on;
 
-  let stream_destroyed = false;
   let stream_reachedEof = false;
   stream.addListener = stream.on = function (this: StdinStream, event: $Node.EventName, listener: $Node.Listener) {
     // Streams don't generally required to present any data when only
@@ -200,16 +212,25 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
 
   stream.fd = fd;
 
-  // The descriptor belongs to the process: reading resumes after 'end' (see the
-  // 'resume' handler) and children inherit it. Destroying stdin, which the
-  // 'end' handler below does, must not close it.
+  function destroyAfterEnd() {
+    stream.destroy();
+  }
+
+  function emitClose(hadError: boolean) {
+    stream.emit("close", hadError);
+  }
+
+  // fd 0 belongs to the process and children inherit it, so it stays open. The reader is released here and not from a listener, which removeAllListeners() drops.
   stream._destroy = function (this: StdinStream, err: Error | null, cb: $Node.ErrorCallback) {
+    disown();
     cb(err);
+    // A net.Socket emits 'close' when its handle closes, also after an 'error' that nothing handled: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L346-L350.
+    if (socketLike) process.nextTick(emitClose, !!err);
   };
 
   // tty.ReadStream is supposed to extend from net.Socket.
   // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
-  if (isTTY || fdType !== BunProcessStdinFdType.file) {
+  if (socketLike) {
     stream.ref = function (this: StdinStream) {
       forceUnref = false;
       own();
@@ -230,7 +251,9 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
 
   const originalResume = stream.resume;
   stream.resume = function (this: StdinStream) {
-    own();
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/readable.js#L1245. Readable.prototype.resume here is narrower.
+    if (this.destroyed) return this;
+    acquire();
     return originalResume.$call(this);
   };
 
@@ -240,7 +263,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     // An explicit read() must acquire the native reader: _read() without one only
     // records needsInternalReadRefresh, which own() replays. Owning afterwards so a
     // throwing size never refs stdin; read(0) kicks never own (pause() relies on it).
-    if (size !== 0 && reader === undefined && !stream_destroyed) {
+    if (size !== 0 && reader === undefined) {
       own();
     }
     return ret;
@@ -305,16 +328,6 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   }
   stream._read = triggerRead;
 
-  stream.on("resume", () => {
-    // After EOF, _undestroy() would clear `ended` and 'end' would never be emitted.
-    if (stream_reachedEof) return;
-    if (stream.isPaused()) return; // fake resume
-    $debug('on("resume");');
-    own();
-    stream._undestroy();
-    stream_destroyed = false;
-  });
-
   stream._readableState.reading = false;
 
   stream.on("pause", () => {
@@ -327,26 +340,12 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     });
   });
 
-  // The stream is created with autoClose: false so autoDestroy is off; match
-  // Node by destroying stdin once 'end' has emitted ('close' follows 'end').
-  stream.on("end", () => {
-    if (!stream_destroyed) {
-      stream_destroyed = true;
-      process.nextTick(() => {
-        stream.destroy();
-      });
-    }
-  });
-
-  stream.on("close", () => {
-    if (!stream_destroyed) {
-      stream_destroyed = true;
-      process.nextTick(() => {
-        stream.destroy();
-        disown();
-      });
-    }
-  });
+  if (!socketLike) {
+    // Node does not destroy file stdin after 'end'. Bun does, and 'close' follows. An emit('end') by the user has readableEnded false.
+    stream.on("end", () => {
+      if (stream.readableEnded) process.nextTick(destroyAfterEnd);
+    });
+  }
 
   return stream;
 }

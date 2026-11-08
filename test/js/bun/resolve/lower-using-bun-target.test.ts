@@ -273,16 +273,18 @@ describe("top-level using in a bundle for bun", () => {
   const disposable = (name: string, log = "console.log") =>
     `{ name: "${name}", [Symbol.dispose]() { ${log}("${name}-disposed"); } }`;
   // The bundle has to print what the files print when bun runs them as they are.
-  const printsUnbundled = (entry: string, stdout: string) => async (api: BundlerTestBundleAPI) => {
-    await using proc = Bun.spawn({ cmd: [bunExe(), api.join(entry)], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [unbundled, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // The report of a run that fails has its stderr.
-    expect({ stdout: unbundled.trim(), exitCode, stderr: exitCode ? stderr : "" }).toEqual({
-      stdout,
-      exitCode: 0,
-      stderr: "",
-    });
-  };
+  const printsUnbundled =
+    (entry: string, stdout: string, exitCode = 0) =>
+    async (api: BundlerTestBundleAPI) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), api.join(entry)], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [unbundled, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The report of a run that ends with another exit code has its stderr.
+      expect({ stdout: unbundled.trim(), exitCode: exited, stderr: exited === exitCode ? "" : stderr }).toEqual({
+        stdout,
+        exitCode,
+        stderr: "",
+      });
+    };
   const usingInEsmWrapper = {
     "/entry.js": `
       const m = await import("./dep.js");
@@ -836,7 +838,7 @@ describe("top-level using in a bundle for bun", () => {
       error: "error: dispose failed",
       stdout: "a-end\na-disposed",
     },
-    onAfterBundle: printsUnbundled("/entry.js", "a-end\na-disposed"),
+    onAfterBundle: printsUnbundled("/entry.js", "a-end\na-disposed", 1),
   });
 
   // A later module that ends the process does not skip the disposal.

@@ -2274,6 +2274,27 @@ describe("ReadableStream for a File that fails to open", () => {
       ? {}
       : { directory: [() => file(import.meta.dir).stream(), expect.objectContaining({ code: "EISDIR" })] }),
   };
+  // Bun.readableStreamToText(), ToJSON(), stream.text(), stream.json() and new Response(stream).text()
+  // rejected up to 1.3.14 and threw at the call from 1.4.0.
+  const promiseConsumers = {
+    "stream.text()": stream => stream.text(),
+    "stream.json()": stream => stream.json(),
+    "stream.bytes()": stream => stream.bytes(),
+    "stream.blob()": stream => stream.blob(),
+    "stream.pipeTo()": stream => stream.pipeTo(new WritableStream()),
+    "stream.pipeThrough().getReader().read()": stream => stream.pipeThrough(new TransformStream()).getReader().read(),
+    "Bun.readableStreamToText()": stream => readableStreamToText(stream),
+    "Bun.readableStreamToJSON()": stream => Bun.readableStreamToJSON(stream),
+    "Bun.readableStreamToBlob()": stream => Bun.readableStreamToBlob(stream),
+    "Bun.readableStreamToBytes()": stream => readableStreamToBytes(stream),
+    "Bun.readableStreamToArrayBuffer()": stream => readableStreamToArrayBuffer(stream),
+    "Bun.readableStreamToArray()": stream => readableStreamToArray(stream),
+    "Bun.readableStreamToFormData()": stream => Bun.readableStreamToFormData(stream),
+    "new Response(stream).text()": stream => new Response(stream).text(),
+    "new Response(stream).json()": stream => new Response(stream).json(),
+    "new Response(stream).bytes()": stream => new Response(stream).bytes(),
+    "new Response(stream).arrayBuffer()": stream => new Response(stream).arrayBuffer(),
+  };
 
   describe.each(Object.entries(doors))("%s", (label, [makeStream, expected]) => {
     it("getReader() returns a reader whose read() rejects", async () => {
@@ -2297,27 +2318,21 @@ describe("ReadableStream for a File that fails to open", () => {
     });
 
     it("promise-returning consumers reject instead of throwing", async () => {
-      let result;
-      expect(() => {
-        result = makeStream().text();
-      }).not.toThrow();
-      await expect(result).rejects.toEqual(expected);
-      expect(() => {
-        result = makeStream().pipeTo(new WritableStream());
-      }).not.toThrow();
-      await expect(result).rejects.toEqual(expected);
-      expect(() => {
-        result = makeStream().pipeThrough(new TransformStream()).getReader().read();
-      }).not.toThrow();
-      await expect(result).rejects.toEqual(expected);
-      expect(() => {
-        result = new Response(makeStream()).bytes();
-      }).not.toThrow();
-      await expect(result).rejects.toEqual(expected);
-      expect(() => {
-        result = readableStreamToArrayBuffer(makeStream());
-      }).not.toThrow();
-      await expect(result).rejects.toEqual(expected);
+      const outcomes = {};
+      for (const [name, consume] of Object.entries(promiseConsumers)) {
+        let promise;
+        try {
+          promise = consume(makeStream());
+        } catch (e) {
+          outcomes[name] = `threw at the call: ${e.code ?? e.message}`;
+          continue;
+        }
+        outcomes[name] = await promise.then(
+          () => "resolved",
+          error => error,
+        );
+      }
+      expect(outcomes).toEqual(Object.fromEntries(Object.keys(promiseConsumers).map(name => [name, expected])));
     });
 
     it("Readable.fromWeb() after the failed start emits the error", async () => {

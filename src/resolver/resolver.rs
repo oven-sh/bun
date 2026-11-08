@@ -1879,10 +1879,9 @@ impl<'a> Resolver<'a> {
         if cache.kind != Fs::file_system::EntryKind::File {
             return ResultUnion::NotFound;
         }
-        // A case-insensitive filesystem matched the path as typed. The module
-        // key is the spelling on disk, the one every other resolve gives. A
-        // path that differs in more than case (a symlinked directory, a
-        // mapped drive) stays as typed, like `load_as_file` keeps it.
+        // On a case-insensitive filesystem the module key is the spelling on
+        // disk, as `load_as_file` gives it; a path that differs in more than
+        // case stays as typed.
         let mut on_disk = bun_paths::path_buffer_pool::get();
         let abs_path: &[u8] = if cfg!(any(target_os = "macos", windows))
             && cache.symlink.is_empty()

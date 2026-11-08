@@ -1597,8 +1597,7 @@ pub mod fs {
             Some(unsafe { &*result_ptr })
         }
 
-        /// A placeholder whose listing failed: its slot, still indexed by a
-        /// `DirInfo`, becomes the error, and the fd it kept open is closed once.
+        /// The slot, still indexed by a `DirInfo`, becomes the error; its fd closes once.
         fn fail_unlisted(unlisted: Option<(*mut EntriesOption, Unlisted)>, err: crate::Error) {
             let Some((slot, unlisted)) = unlisted else {
                 return;

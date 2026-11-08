@@ -648,7 +648,7 @@ describe("css", () => {
 
 // `bun build --no-bundle` links no other file. A url() prints as written, and
 // `composes .. from` compiles to nothing, like a local `composes`.
-test.each([
+test.concurrent.each([
   ["css-module/NoBundleKeepsUrl", `.card { background: url(./img.png) }`, `background: url("./img.png");`],
   [
     "css-module/NoBundleDropsComposesFrom",

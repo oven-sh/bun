@@ -1,0 +1,18 @@
+# -- source: closures-over-two-scopes-in-one-literal-are-all-made-and-the-object-keeps-no-scope.ts
+# declare function print(...values: unknown[]): void;
+# type Pair = { first: () => number; second: () => number };
+# function make(k: number): () => number { let n = k; return () => n++; }
+# function both(a: number, b: number): Pair { return { first: make(a), second: make(b) }; }
+# function run(pairs: Pair[]): number { let total = 0; for (let i = 0; i < pairs.length; i++) total += pairs[i].first() * 1000 + pairs[i].second(); return total; }
+# const pairs: Pair[] = [];
+# for (let i = 0; i < 3; i++) pairs.push(both(i, 100 + i));
+# print(run(pairs), run(pairs));
+# -- end of source
+# Where an object has the scope, every closure in a slot that may hold a mark is one over that scope: whoever calls through the slot leans on it. Here each field has a scope of its own.
+# So no closure stays unmade, and the allocation lists no scope: an object without one has every such closure in its slot, and the call reads what that closure captures.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: closureForm=Deferred
+# CHECK: = NewObject {{*}}layout=L0 fields=[0, 1]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3303 6306

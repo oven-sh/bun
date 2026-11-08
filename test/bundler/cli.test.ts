@@ -1175,7 +1175,7 @@ describe.concurrent("bun build --no-bundle keeps css url() references as written
   test("a malformed url() is still an error", async () => {
     expect(await transpileCss(".x { background: url(a b) }")).toEqual({
       stdout: "",
-      stderr: expect.stringContaining("Unexpected token"),
+      stderr: "error: Unexpected token: url(a b) parsing\n",
       exitCode: 1,
     });
   });

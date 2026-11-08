@@ -1409,7 +1409,7 @@ impl<'a> SpawnArgs<'a> {
             line[len] = 0;
             let line: &'a [u8] = line;
 
-            if key == b"PATH" {
+            if sh::env_map::name_eql(key, b"PATH") {
                 self.path = &line[b"PATH=".len()..len];
             }
 

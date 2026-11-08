@@ -29,18 +29,20 @@ impl ArrayHashContext<EnvStr> for EnvMapContext {
     }
 
     fn eql(&self, a: &EnvStr, b: &EnvStr, _b_index: usize) -> bool {
-        #[cfg(windows)]
-        {
-            // Must be length-checked: "PATH" must NOT match "PATHEXT".
-            return bun_core::strings::eql_case_insensitive_asciii_check_length(
-                a.slice(),
-                b.slice(),
-            );
-        }
-        #[cfg(not(windows))]
-        {
-            a.slice() == b.slice()
-        }
+        name_eql(a.slice(), b.slice())
+    }
+}
+
+/// Whether `a` and `b` name the same variable. Names are ASCII-case-insensitive on Windows.
+pub(crate) fn name_eql(a: &[u8], b: &[u8]) -> bool {
+    #[cfg(windows)]
+    {
+        // Must be length-checked: "PATH" must NOT match "PATHEXT".
+        return bun_core::strings::eql_case_insensitive_asciii_check_length(a, b);
+    }
+    #[cfg(not(windows))]
+    {
+        a == b
     }
 }
 
@@ -220,7 +222,7 @@ impl VarTable {
     ) -> impl core::iter::Iterator<Item = (&'a EnvStr, &'a EnvStr)> {
         let (names, values): (&[EnvStr], &[EnvStr]) =
             prefixes.map_or((&[], &[]), |p| (p.map.keys(), p.map.values()));
-        let replaced = move |name: &EnvStr| names.iter().any(|p| EnvMapContext.eql(p, name, 0));
+        let replaced = move |name: &EnvStr| names.iter().any(|p| name_eql(p.slice(), name.slice()));
         self.map
             .iter()
             .filter_map(move |(name, var)| match var {

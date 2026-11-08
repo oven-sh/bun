@@ -1508,9 +1508,16 @@ booga"
         )
         .join("\n");
 
-      const sh = Bun.spawnSync({ cmd: ["sh", "-c", script], env, stderr: "inherit" });
-      const bun = await $`${{ raw: script }}`.env(env).quiet().nothrow();
-      expect(bun.stdout.toString().split("\n")).toEqual(sh.stdout.toString().split("\n"));
+      await using sh = Bun.spawn({ cmd: ["sh", "-c", script], env, stdout: "pipe", stderr: "pipe" });
+      const [expected, shStderr, shExitCode, bun] = await Promise.all([
+        sh.stdout.text(),
+        sh.stderr.text(),
+        sh.exited,
+        $`${{ raw: script }}`.env(env).quiet().nothrow(),
+      ]);
+      expect({ shStderr, shExitCode }).toEqual({ shStderr: "", shExitCode: 0 });
+      expect(bun.stdout.toString().split("\n")).toEqual(expected.split("\n"));
+      expect({ stderr: bun.stderr.toString(), exitCode: bun.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     });
 
     TestBuilder.command`A=1 $EMPTY; echo "[$A]"`
@@ -1532,8 +1539,7 @@ booga"
       expect(exitCode).toBe(0);
     });
 
-    // Windows: the command lookup matches the key PATH byte for byte and the inherited key is spelled Path (#42049).
-    test.todoIf(isWindows)("a plain assignment to PATH is used by command lookup", async () => {
+    test("a plain assignment to PATH is used by command lookup", async () => {
       using dir = tempDir(
         "shell-path-assign",
         isWindows
@@ -1541,8 +1547,10 @@ booga"
           : { "onlyintool": "#!/bin/sh\necho from-onlyintool\n" },
       );
       if (!isWindows) chmodSync(join(String(dir), "onlyintool"), 0o755);
+      // cmd.exe runs a .cmd file, so Windows keeps the rest of the PATH.
+      const path = isWindows ? `${dir};${process.env.PATH}` : String(dir);
 
-      const { stdout, stderr, exitCode } = await $`PATH=${String(dir)}; onlyintool`.quiet().nothrow();
+      const { stdout, stderr, exitCode } = await $`PATH=${path}; onlyintool`.quiet().nothrow();
       expect(stderr.toString()).toBe("");
       expect(stdout.toString().trim()).toBe("from-onlyintool");
       expect(exitCode).toBe(0);

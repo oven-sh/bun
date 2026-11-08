@@ -377,6 +377,7 @@ impl<'a> Parser<'a, '_> {
         let properties = obj.properties.slice();
         let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(properties.len());
         let mut values: Vec<Box<[u8]>> = Vec::with_capacity(properties.len());
+        let mut table_in_header = None;
         for prop in properties {
             let key = prop.key.as_ref().expect("infallible: prop has key");
             let value = prop.value.as_ref().expect("infallible: prop has value");
@@ -385,7 +386,7 @@ impl<'a> Parser<'a, '_> {
                     keys.push(estring_to_owned(k, self.bump));
                     values.push(estring_to_owned(v, self.bump));
                 }
-                _ => self.warn_ignored_define(expr, key, value),
+                _ => self.warn_ignored_define(expr, &mut table_in_header, key, value),
             }
         }
         Ok(api::StringMap { keys, values })
@@ -393,7 +394,13 @@ impl<'a> Parser<'a, '_> {
 
     /// Says that `key` of the `define` table is skipped, because `value` is not a string.
     #[cold]
-    fn warn_ignored_define(&mut self, table: &Expr, key: &Expr, value: &Expr) {
+    fn warn_ignored_define(
+        &mut self,
+        table: &Expr,
+        table_in_header: &mut Option<bool>,
+        key: &Expr,
+        value: &Expr,
+    ) {
         use bun_core::fmt::escape_control_chars;
         let name = key.as_string(self.bump).unwrap_or(b"");
         // No excerpt in these warnings: the line can hold a secret the redactor does not know.
@@ -436,7 +443,8 @@ impl<'a> Parser<'a, '_> {
         }
 
         // A header takes every key up to the next header, but not a key of a header itself.
-        let below_header = is_in_header(source, table.loc) && !is_in_header(source, key.loc);
+        let below_header = *table_in_header.get_or_insert_with(|| is_in_header(source, table.loc))
+            && !is_in_header(source, key.loc);
         let name = escape_control_chars(name);
         let received = value.data.tag_name();
         if below_header {
@@ -444,7 +452,7 @@ impl<'a> Parser<'a, '_> {
                 source,
                 value.loc,
                 format_args!(
-                    "ignoring define \"{name}\": expected string but received {received}. Keys below [define] are defines: write it as a string, or move it above the first [header]"
+                    "ignoring define \"{name}\": expected string but received {received}. Keys below a define header are defines: write it as a string, or move it above the first [header]"
                 ),
             );
         } else {

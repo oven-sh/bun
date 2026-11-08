@@ -57,7 +57,7 @@ describe.concurrent("a define value that is not a string", () => {
     expect.stringMatching(new RegExp(`^ +at .*${file.replace(".", "\\.")}:${position}$`)),
   ];
   const belowHeader = (received: string) =>
-    `expected string but received ${received}. Keys below [define] are defines: write it as a string, or move it above the first [header]`;
+    `expected string but received ${received}. Keys below a define header are defines: write it as a string, or move it above the first [header]`;
   const notString = (received: string) =>
     `expected string but received ${received}, write it as a string like "true" or "'text'"`;
   const DOTTED = "TOML reads a dotted key as nested tables, quote the whole key";
@@ -72,6 +72,7 @@ describe.concurrent("a define value that is not a string", () => {
     // A top-level key below the header is an entry of the table.
     [`[define]\nL = "1"\npreload = ["./preload.js"]`, "preload", belowHeader("array"), "3:11"],
     [`[define]\nL = "1"\ntelemetry = false`, "telemetry", belowHeader("boolean"), "3:13"],
+    [`[define]\nL = "1"\n[serve.static.define]\nK = 1`, "K", belowHeader("number"), "4:5"],
     // No header made these tables.
     [`define = { L = "1", K = false }`, "K", notString("boolean"), "1:25"],
     [`define.L = "1"\ndefine.K = false`, "K", notString("boolean"), "2:12"],
@@ -118,10 +119,10 @@ describe.concurrent("a define value that is not a string", () => {
   });
 
   test("a line of a JSON config that starts with [ is not a header", async () => {
-    const config = `{ "zz":\n[1], "define": { "K": false, "L": "1" } }\n`;
+    const config = `{ "zz":\n[1], "define": {\n"K": false, "L": "1" } }\n`;
     expect(await run({ "config.json": config }, ["--config=./config.json", "k.js"])).toEqual({
       stdout: "no K 1\n",
-      stderr: ignored("config.json", "K", notString("boolean"), "2:23"),
+      stderr: ignored("config.json", "K", notString("boolean"), "3:6"),
       exitCode: 0,
     });
   });

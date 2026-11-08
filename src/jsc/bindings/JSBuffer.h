@@ -97,13 +97,6 @@ private:
 JSC_DECLARE_HOST_FUNCTION(constructSlowBuffer);
 JSC::JSObject* createBufferPrototype(JSC::VM&, JSC::JSGlobalObject*);
 bool isInspectFunctionOfBuffer(JSC::JSValue);
-
-// The Buffers whose extra values that function is printing on this thread, innermost first. Each value has a formatter of its own, which knows none of them.
-struct BufferBeingInspected {
-    JSC::JSArrayBufferView* buffer;
-    const BufferBeingInspected* outer;
-};
-extern thread_local const BufferBeingInspected* bufferBeingInspected;
 JSC::Structure* createBufferStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 JSC::JSObject* createBufferConstructor(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* bufferPrototype);
 JSC::EncodedJSValue jsBufferToStringFromBytes(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, std::span<const uint8_t> bytes, BufferEncodingType encoding);

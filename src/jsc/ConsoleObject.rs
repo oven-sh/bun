@@ -3284,7 +3284,7 @@ pub mod formatter {
     // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining
     // params are by-value `JSValue`/scalars → `safe fn`.
     unsafe extern "C" {
-        /// C++ helper (`UtilInspect.cpp`) — invokes a user-supplied
+        /// C++ helper (`bindings.cpp`) — invokes a user-supplied
         /// `[util.inspect.custom]` function with the synthesized `(depth, opts,
         /// inspect)` argument shape. Only called from `print_as`.
         safe fn JSC__JSValue__callCustomInspectFunction(
@@ -3293,18 +3293,8 @@ pub mod formatter {
             this: JSValue,
             depth: u32,
             max_depth: u32,
-            flags: u8,
+            colors: bool,
         ) -> JSValue;
-    }
-
-    bitflags::bitflags! {
-        /// `Bun::CustomInspectFlag` in UtilInspect.cpp.
-        #[derive(Copy, Clone)]
-        struct CustomInspectFlags: u8 {
-            const COLORS = 1 << 0;
-            /// Only the inspect method of `Buffer` is told. It lists its own keys itself.
-            const SHOW_HIDDEN = 1 << 2;
-        }
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -3907,12 +3897,6 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
         ) -> JsResult<()> {
-            let mut flags = CustomInspectFlags::empty();
-            flags.set(CustomInspectFlags::COLORS, C);
-            flags.set(
-                CustomInspectFlags::SHOW_HIDDEN,
-                self.hidden_keys == HiddenKeys::List,
-            );
             // Call custom inspect function. Will return the error if there is
             // one; we'll need to pass the callback through to the "this" value
             // in here.
@@ -3923,7 +3907,7 @@ pub mod formatter {
                     self.custom_formatted_object.this,
                     u32::from(self.max_depth.saturating_sub(self.depth)),
                     u32::from(self.max_depth),
-                    flags.bits(),
+                    C,
                 )
             })?;
             // Strings are printed directly, otherwise we recurse.

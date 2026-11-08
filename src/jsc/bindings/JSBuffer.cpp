@@ -50,7 +50,6 @@
 #include <wtf/MathExtras.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
-#include <wtf/SetForScope.h>
 #include <wtf/URL.h>
 #include <wtf/text/Base64.h>
 #include <wtf/text/WTFString.h>
@@ -1913,8 +1912,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_indexOfBody(JSC::JSGlobalOb
     return JSC::JSValue::encode(jsNumber(index));
 }
 
-thread_local const BufferBeingInspected* bufferBeingInspected = nullptr;
-
 static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1964,12 +1961,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
         RETURN_IF_EXCEPTION(scope, {});
 
         if (array.size() > 0) {
-            for (auto* outer = bufferBeingInspected; outer; outer = outer->outer) {
-                if (outer->buffer == castedThis)
-                    return JSValue::encode(jsNontrivialString(vm, "[Circular]"_s));
-            }
-            const BufferBeingInspected thisBuffer { castedThis, bufferBeingInspected };
-
             any = true;
             if (data.size() > 0) {
                 result.append(',');
@@ -1982,8 +1973,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
                 result.append(": "_s);
                 auto value = castedThis->get(globalObject, ident);
                 RETURN_IF_EXCEPTION(scope, {});
-                // Not around the read above: a getter that prints this Buffer starts a print of its own.
-                SetForScope whileTheValueIsPrinted(bufferBeingInspected, &thisBuffer);
                 auto inspected = Bun__inspect_singleline_show_hidden(globalObject, value, showHidden).transferToWTFString();
                 RETURN_IF_EXCEPTION(scope, {});
                 result.append(inspected);

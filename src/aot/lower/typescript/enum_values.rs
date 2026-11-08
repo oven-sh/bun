@@ -1,13 +1,13 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, Decl, SymbolId};
+use bun_sema::bind::{Binding, Decl, InitialState, SymbolId};
 use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{BinOp, EnumId, EnumMemberId, ExprId, ExprKind, UnOp};
 use bun_sema::program::Sym;
 use bun_sema::types::EnumValue;
 use smallvec::SmallVec;
 
-use crate::lower::{FileLowering, expression};
-use crate::modules::{KnownObjects, Validity};
+use crate::lower::FileLowering;
+use crate::modules::{ImportBinding, KnownObjects, Validity};
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub(super) enum EnumMemberValue {
@@ -44,26 +44,56 @@ impl KnownPrimitive {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    /// The value that stands in the place of a read of a member of an enum.
     pub(in crate::lower) fn find_enum_member_read(&mut self, access: ExprId) -> Option<Constant> {
         if let Some(&read) = self.enum_member_reads.get(&access) {
             return Some(read);
         }
-        let read = self.compute_enum_member_read(access)?;
+        let (read, validity) = self.find_known_member_read(access)?;
         self.enum_member_reads.insert(access, read);
+        if validity == Validity::Always && self.is_value_written_by_bundling(access) {
+            self.values_written_in_place.get_mut().push((access, read));
+        }
         Some(read)
     }
 
-    fn compute_enum_member_read(&mut self, access: ExprId) -> Option<Constant> {
-        if let Ok(Some(value)) = self.queries.constant_enum_access(access) {
-            return Some(to_constant(value));
-        }
-        let members = KnownObjects {
-            files: self.queries.files(),
-            graph: self.inputs.modules,
-            known: &self.modules.known_member_values,
-            limits: self.inputs.limits,
+    pub(in crate::lower) fn find_member_of_loaded_module(&self, access: ExprId) -> Option<ExprId> {
+        let (member, root) = self.find_member_and_root(access)?;
+        let is_imported = self.symbol_named_by(root).is_some_and(|name| {
+            let binding = self.inputs.modules.import_binding(self.file, name);
+            matches!(binding, ImportBinding::Namespace { .. })
+        });
+        (!is_imported).then_some(member)
+    }
+
+    fn is_value_written_by_bundling(&self, access: ExprId) -> bool {
+        let Some((_, root)) = self.find_member_and_root(access) else {
+            return true;
         };
+        self.symbol_named_by(root)
+            .is_some_and(|name| self.bound.initial_state(name) != InitialState::Undefined)
+    }
+
+    fn find_member_and_root(&self, access: ExprId) -> Option<(ExprId, ExprId)> {
+        let (hir, modules) = (self.hir, self.inputs.modules);
+        let member = self.skip_type_syntax(hir.member_key(access)?.0);
+        let mut root = self.skip_type_syntax(hir.member_key(member)?.0);
+        if modules.member_binding(self.file, member).is_none()
+            && modules.member(self.file, member).is_none()
+        {
+            return None;
+        }
+        while let Some((object, _)) = hir.member_key(root) {
+            root = self.skip_type_syntax(object);
+        }
+        Some((member, root))
+    }
+
+    fn find_known_member_read(&self, access: ExprId) -> Option<(Constant, Validity)> {
+        let members = KnownObjects::new(
+            self.queries.files(),
+            self.inputs.modules,
+            &self.modules.known_member_values,
+        );
         let read = members.find_read(self.file, access)?;
         let is_valid = match read.validity {
             Validity::Always => true,
@@ -72,17 +102,28 @@ impl FileLowering<'_, '_, '_, '_> {
                 left_out.is_object_never_handed_on(read.object.file, read.object.id)
             }
         };
-        is_valid.then_some(read.value)
+        is_valid.then_some((read.value, read.validity))
     }
 
-    /// The value that stands in the place of a name that is imported from a module of data.
+    pub(in crate::lower) fn find_signed_enum_member(&self, expression: ExprId) -> Option<Constant> {
+        let members = KnownObjects::new(
+            self.queries.files(),
+            self.inputs.modules,
+            &self.modules.known_member_values,
+        );
+        let number = members.find_signed_member_in_place(self.file, expression)?;
+        let number = Constant::Number(number);
+        let mut written = self.values_written_in_place.borrow_mut();
+        written.push((self.hir.skip_type_assertions(expression), number));
+        Some(number)
+    }
+
     pub(in crate::lower) fn find_data_variable_read(&self, symbol: SymbolId) -> Option<Constant> {
-        let members = KnownObjects {
-            files: self.queries.files(),
-            graph: self.inputs.modules,
-            known: &self.modules.known_member_values,
-            limits: self.inputs.limits,
-        };
+        let members = KnownObjects::new(
+            self.queries.files(),
+            self.inputs.modules,
+            &self.modules.known_member_values,
+        );
         let named = Sym {
             file: self.file,
             id: symbol,
@@ -90,14 +131,12 @@ impl FileLowering<'_, '_, '_, '_> {
         members.find_data_variable(named).map(|found| found.1)
     }
 
-    /// The value that stands in the place of a read out of the object of a module of data.
     pub(in crate::lower) fn find_data_member_read(&mut self, access: ExprId) -> Option<Constant> {
-        let members = KnownObjects {
-            files: self.queries.files(),
-            graph: self.inputs.modules,
-            known: &self.modules.known_member_values,
-            limits: self.inputs.limits,
-        };
+        let members = KnownObjects::new(
+            self.queries.files(),
+            self.inputs.modules,
+            &self.modules.known_member_values,
+        );
         let read = members.find_data_read(self.file, access)?;
         let left_out = self.inputs.library_functions.left_out_declarations();
         left_out
@@ -135,20 +174,25 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn find_transpiler_constant(&mut self, member: EnumMemberId) -> Option<TranspilerConstant> {
-        match self.queries.enum_member_value(member) {
-            Ok(constant) => {
-                let constant =
-                    constant.filter(|constant| !constant.reads_other_file_or_variable)?;
-                Some(match (constant.value, constant.rests_on_inexact_power) {
-                    (value, false) => TranspilerConstant::Known(to_constant(value)),
-                    (EnumValue::Number(_), true) => TranspilerConstant::NumberLeftToRunTime,
-                    (EnumValue::String(_), true) => TranspilerConstant::StringLeftToRunTime,
-                })
+        let members = KnownObjects::new(
+            self.queries.files(),
+            self.inputs.modules,
+            &self.modules.known_member_values,
+        );
+        if let Some(value) = members.find_value_in_place(self.file, member) {
+            return Some(TranspilerConstant::Known(value));
+        }
+        let constant = self.queries.enum_member_value(member).ok().flatten()?;
+        let is_left_to_run_time =
+            constant.rests_on_inexact_power && !constant.reads_other_file_or_variable;
+        match constant.value {
+            EnumValue::Number(_) if is_left_to_run_time => {
+                Some(TranspilerConstant::NumberLeftToRunTime)
             }
-            Err(_) => {
-                let initializer = self.hir[member].init.some()?;
-                expression::find_constant(self, initializer).map(TranspilerConstant::Known)
+            EnumValue::String(_) if is_left_to_run_time => {
+                Some(TranspilerConstant::StringLeftToRunTime)
             }
+            EnumValue::Number(_) | EnumValue::String(_) => None,
         }
     }
 
@@ -284,13 +328,6 @@ impl FileLowering<'_, '_, '_, '_> {
             [Decl::EnumMember(member)] => self.find_transpiler_constant(member),
             _ => None,
         }
-    }
-}
-
-fn to_constant(value: EnumValue) -> Constant {
-    match value {
-        EnumValue::String(text) => Constant::String(text),
-        EnumValue::Number(bits) => Constant::Number(f64::from_bits(bits)),
     }
 }
 

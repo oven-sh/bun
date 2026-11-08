@@ -1,5 +1,5 @@
 // A literal of small integers that only code of the program holds is stored as 32-bit integers, and whoever reads it by its own name counts on that without a test. The same array also lies in a position of type `number[]` which something that is no array reaches through `any`: a variable, a captured variable, a field, a result, an element. The code behind that position counts on doubles, and may turn the storage into doubles the first time it meets the integers. Nothing of it can be seen: every line is plain Bun's.
-// STATISTIC: IntegerArrayConversionsPlaced >= 1
+// An earlier compiler turned the storage of such a list into doubles where a test for doubles failed, and counted that: IntegerArrayConversionsPlaced >= 1. Nothing is converted now: a list is asked for integers, then for doubles.
 const n = process.argv.length & 1;
 function sum(xs: number[]): number {
   let s = 0;

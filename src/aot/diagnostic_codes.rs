@@ -28,26 +28,28 @@ macro_rules! diagnostic_codes {
     };
 }
 
-// A new code takes the next free number of its section. The number of a deleted line goes into `RETIRED_NUMBERS`, and no code takes a number of `UserDiagnosticKind::code`.
 diagnostic_codes! {
-    Legacy 100001..=100049 {
-        PackageCompiledWithoutTypes = 100009, Warning, "'{0}' has {1} (the first at {2}), so {3} of its {4} files are compiled without their types. They still work, but run slower.";
-        FileCompiledWithoutTypes = 100010, Warning, "'{0}' has {1} (the first at {2}), so it is compiled without its types. It still works, but runs slower.";
-    }
     Build 100050..=100099 {
         UnsupportedOption = 100050, Error, "--aot does not support {0}";
         MacroArgumentNotConstant = 100051, Error, "This macro argument isn't known at build time";
-        MacroInNodeModules = 100052, Error, "For security reasons, macros cannot be run from node_modules.";
         MacrosDisabled = 100053, Error, "Macros are disabled";
         EmbeddedFileNameCollision = 100054, Error, "Two files with different contents would be embedded as \"{0}\": \"{1}\" and \"{2}\"";
         ProgramTooLarge = 100055, Error, "The program is too large to compile: its IR is {0} bytes, and the limit is 4 GB";
         FileNestedTooDeeply = 100060, Error, "The code in \"{0}\" is nested too deeply to be compiled";
         OutputNotWritten = 100061, Error, "Cannot write \"{0}\": {1}";
-        ShadowRealmIsAbsent = 100076, Warning, "A compiled program has no ShadowRealm. This throws a ReferenceError when it runs";
-        WorkerFileNotCompiled = 100071, Warning, "This Worker may start from an embedded file that isn't compiled, and then it fails to load: {0}. Add the file as an entry point, or pass its import straight to new Worker()";
-        WorkerTextNotCompiled = 100072, Warning, "The code that this Worker starts from can't be compiled, so the Worker fails to load";
-        TestedFilesCompiledWithoutTypes = 100075, Warning, "Files with type errors are compiled without their types: {0} in this run. They still work, but run slower.";
-        EntryPointsCompiledTogether = 100074, Warning, "{0} entry points are compiled as one program: at most {1} can be compiled separately. It still works, but code that several entry points share may run slower.";
+        ShadowRealmIsAbsent = 100076, Warning, "A compiled program has no ShadowRealm. This throws a ReferenceError if it runs";
+        ModulesLoadAgainUncompiled = 100078, Warning, "What loads again after resetModules() runs from source, not compiled. The tests still work, but from there on they don't test compiled code";
+        EveryFileMayLoadAgain = 100079, Warning, "{0}. After that any file of this test run may load again, so the whole run is compiled for that, and not as an executable is. The tests still work, but they don't test the code that ships";
+        LoaderFunctionNotAsked = 100080, Warning, "A compiled program calls {0} only for a path that it computes when it runs. Every import, and every require() of a constant path, is resolved at build time and doesn't ask it. If the program depends on this hook, build it with --no-aot";
+        WorkerFileNotCompiled = 100081, Warning, "This Worker may start from a file that isn't compiled, and then it fails to load: {0}. Add the file as an entry point, or write its path as new URL(\"./file\", import.meta.url)";
+        WorkerStartedFromUnknownValue = 100082, Warning, "The build can't tell which file this Worker starts from. If that file isn't an entry point, the Worker fails to load";
+        WorkerTextNotCompiled = 100084, Warning, "This Worker may start from code in a text: a data: or blob: URL, or the text of a Worker with eval: true. That code isn't compiled, so it runs in the interpreter. To compile it, move it to a file and write the path as new URL(\"./file\", import.meta.url)";
+        FolderNamedAsParentIsSpelled = 100085, Error, "Two files would have the path \"{0}\" in the executable: \"{1}\" and \"{2}\". A folder above that of the entry point is written \"_.._\" there, so no folder beside it can have that name";
+        WorkerFilesGoByOnePath = 100086, Warning, "In the executable \"{0}\" is all that is left of the paths of two files: \"{1}\" and \"{2}\". A \"..\" above the root of the executable takes nothing away, so nothing tells the two apart, and a Worker that starts from either fails to load. Pass both files to the build as entry points";
+        FilesLeftOutByPattern = 100089, Warning, "The executable doesn't embed {0}, which this path may name. {1}";
+        DataFilesFoundByPattern = 100088, Note, "This path isn't a constant, so the executable embeds every file that it may name. These aren't code: {0}";
+
+
     }
     Fold 100100..=100149 {
         FeatureArgumentCount = 100100, Error, "feature() requires exactly one string argument";
@@ -74,7 +76,7 @@ diagnostic_codes! {
         InvalidPackageTarget = 100156, Error, "The package target for \"{0}\" is not valid";
         InvalidPackageConfiguration = 100157, Error, "The package.json that \"{0}\" resolves through is not valid";
         UnsupportedDirectoryImport = 100158, Error, "\"{0}\" is a directory, which cannot be imported";
-        QueryStringInSpecifier = 100159, Error, "bun compile does not support a query string in an import path: \"{0}\"";
+        QueryStringInSpecifier = 100159, Error, "bun compile can't load \"{0}\": a query string works on an import of code, not in require(), on a data file, or as ?raw or ?url. Drop the query. Under bun run --aot, --aot-allow-code-from-disk loads it as bun run does";
         EntryPointNotFound = 100160, Error, "Entry point \"{0}\" was not found";
         EntryPointIsBuiltinModule = 100161, Error, "Cannot use \"{0}\" as an entry point: it resolves to a builtin module";
         EntryPointIsExternal = 100162, Error, "The entry point \"{0}\" cannot be marked as external";
@@ -89,11 +91,8 @@ diagnostic_codes! {
         NestedTooDeeply = 100301, Error, "This code is nested more than {0} levels deep.";
         FunctionIntrospection = 100302, Warning, "'{0}' is always null on a compiled function.";
         InvalidRuntimeSource = 100305, Error, "Bun's own source cannot be compiled: {0}";
-        RefusedByTranspiler = 100306, Error, "{0}";
         InvalidRegExp = 100307, Error, "{0}";
         LibraryFileHasTopLevelCode = 100501, Error, "A library file can only declare functions and types";
-        JsxKeyIgnored = 100510, Warning, "\"key\" prop ignored. Must be a string, number or symbol.";
-        JsxKeyAfterSpread = 100511, Warning, "\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.";
         InvalidRegExpFlags = 100515, Error, "Invalid flags \"{0}\" in regular expression";
     }
     Builtins 100700..=100749 {}
@@ -101,8 +100,9 @@ diagnostic_codes! {
 
 #[cfg(test)]
 pub const RETIRED_NUMBERS: &[u32] = &[
-    100013, 100015, 100017, 100021, 100033, 100034, 100056, 100059, 100062, 100063, 100065, 100067,
-    100068, 100069, 100070, 100109, 100120, 100300, 100303, 100304, 100500, 100502, 100513, 100519,
+    100009, 100010, 100013, 100015, 100017, 100021, 100033, 100034, 100052, 100056, 100059, 100062,
+    100063, 100065, 100067, 100068, 100069, 100070, 100071, 100072, 100074, 100075, 100077, 100109,
+    100120, 100300, 100303, 100304, 100306, 100500, 100502, 100510, 100511, 100513, 100519,
 ];
 
 impl Code {
@@ -143,6 +143,17 @@ mod tests {
     fn has_consecutive_placeholders(template: &str) -> bool {
         let numbers = placeholders(template);
         numbers.iter().copied().eq(0..numbers.len())
+    }
+
+    #[test]
+    fn no_message_says_that_the_code_it_points_at_runs() {
+        for code in Code::ALL {
+            let template = code.template();
+            assert!(
+                !(template.contains("throws") && template.contains("when it runs")),
+                "{code:?} may point at code behind a test that is false: \"if it runs\"",
+            );
+        }
     }
 
     #[test]
@@ -219,10 +230,6 @@ mod tests {
         assert_eq!(
             BStr::new(&Code::ExportNotFound.message(&["./a.ts", "b"])),
             "No matching export in \"./a.ts\" for import \"b\""
-        );
-        assert_eq!(
-            BStr::new(&Code::JsxKeyAfterSpread.message(&["unused"])),
-            Code::JsxKeyAfterSpread.template()
         );
     }
 }

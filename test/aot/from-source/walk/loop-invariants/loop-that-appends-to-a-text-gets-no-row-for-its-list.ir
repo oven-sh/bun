@@ -1,0 +1,12 @@
+# two loops in a row append what they read out of a list to one text: the text lies in its builder round the first loop and enters the second so. No row of tests for the list stands in front of either loop, and each is built once
+# It was "an edge hands a text in its builder to a parameter that holds no builder": the loop was built twice for the list alone
+# the function does not get out, so its list is proven one and no guess at its type has the loops built twice (where one has, the walk stops to this day, without this unit too: live-stops/two-loops-built-twice-append-to-one-text.ir)
+# f1 = joinsTwice
+# -- source: loop-that-appends-to-a-text-gets-no-row-for-its-list.ts
+# declare function sink(...values: unknown[]): void;
+# function joinsTwice(list: number[]): string { let text = ""; for (let i = 0; i <= list.length; i++) text += list[i] + ","; for (let i = -2; i < list.length; i++) text += list[i] + ";"; return text; }
+# sink(joinsTwice([1, 2, 3, 4]), joinsTwice([0.5, 1.5]), joinsTwice([]));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = HasArrayStorage

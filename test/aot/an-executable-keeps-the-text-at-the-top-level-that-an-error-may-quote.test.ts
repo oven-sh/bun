@@ -1,14 +1,16 @@
 // An error at the top level of a file quotes what failed, so an executable keeps the text of the statements there. It keeps no more than that: no comment between
 // statements, no function that nobody enters, no statement that only names data.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { compileCommand } from "./harness/flags";
 import { beforeAll, describe, test } from "./supported";
 
-const inStatement = "a comment inside the statement that fails";
+const statementThatFails = `console.log("key" in holder.none)`;
+const inBlockAroundIt = "a comment in the block around the statement that fails";
 const betweenStatements = "a comment between two statements";
 const inFunctionNobodyEnters = "a comment in a function that nobody enters";
 const longText = "a long text at the top level of the file";
@@ -20,8 +22,8 @@ let text = "${longText}";
 export const table = [1, { deep: ["${inTable}"] }, null] as const;
 function nobodyEnters() { /* ${inFunctionNobodyEnters} */ return holder.none.x; }
 try {
-  // ${inStatement}
-  console.log("key" in holder.none);
+  // ${inBlockAroundIt}
+  ${statementThatFails};
 } catch (error) {
   console.log((error as Error).message);
 }
@@ -68,16 +70,24 @@ describe("compile/aot/an executable keeps the text at the top level that an erro
   test("its bytes hold the statement that may fail and nothing else of the top level a second time", () => {
     const bytes = readFileSync(path("with-text"));
     expect({
-      inStatement: count(bytes, inStatement),
+      statementThatFails: count(bytes, statementThatFails),
+      inBlockAroundIt: count(bytes, inBlockAroundIt),
       betweenStatements: count(bytes, betweenStatements),
       inFunctionNobodyEnters: count(bytes, inFunctionNobodyEnters),
       longText: count(bytes, longText),
       inTable: count(bytes, inTable),
-    }).toEqual({ inStatement: 1, betweenStatements: 0, inFunctionNobodyEnters: 0, longText: 1, inTable: 1 });
+    }).toEqual({
+      statementThatFails: 1,
+      inBlockAroundIt: 0,
+      betweenStatements: 0,
+      inFunctionNobodyEnters: 0,
+      longText: 1,
+      inTable: 1,
+    });
   });
 
   test("built without the text of functions it holds none of it", async () => {
-    expect(count(readFileSync(path("without-text")), inStatement)).toBe(0);
+    expect(count(readFileSync(path("without-text")), statementThatFails)).toBe(0);
     const run = await spawned([path("without-text")], root, bunEnv);
     expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({
       stdout: `null is not an Object.\n${longText} ${inTable}\n`,

@@ -4,8 +4,7 @@ use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
 use bun_aot::engine::{ExecutableIdentity, TargetImageForm};
 use bun_aot::options::{
-    Externals, FilesThatTestsLoad, LoadOptions, OpenedName, Options, PathOptions, RemovableOptions,
-    ReplacedExport, ReplacedModule, WaysBetweenModuleObjects,
+    Externals, LoadOptions, Options, PathFilter, PathOptions, RemovableOptions,
 };
 use bun_ast::{Loader, Loc, Log};
 use bun_core::strings;
@@ -58,10 +57,6 @@ pub(crate) fn options_from_bundler<'r>(
     let (true, Some(entry_points), Some(paths)) = (is_supported, entry_points, paths) else {
         return None;
     };
-    let mut load = load_options(input);
-    if input.aot.host_runs_files_from_disk {
-        load.stand_in_for_files_from_disk = entry_points.last().cloned();
-    }
     Some(Options {
         aot: input.aot,
         executable_identity: input.executable_identity,
@@ -69,17 +64,20 @@ pub(crate) fn options_from_bundler<'r>(
         entry_points,
         code: code_options(input),
         typescript_libs: input.typescript_libs,
-        load,
+        load: load_options(input),
         paths,
         removable: RemovableOptions {
             ignores_pure_annotations: input.bundle_options.ignore_dce_annotations,
             jsx_has_side_effects: input.bundle_options.jsx.side_effects,
+            has_no_bundle: input.aot.runs_tests || input.aot.runs_in_place,
+            is_told_to_minify_syntax: input.bundle_options.minify_syntax
+                && !input.bundle_options.is_library,
         },
         lists_modules: input.bundle_options.metafile,
-        // An obfuscated executable shows no name, and its source map has the names as they are written.
+        // An obfuscated executable shows no name.
         minifies_identifiers: input.bundle_options.minify_identifiers
             && !input.bundle_options.keep_names
-            && !input.aot.obfuscates,
+            && !input.aot.hides_names(),
     })
 }
 
@@ -217,16 +215,13 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
     code.ignores_declared_side_effects = options.ignore_dce_annotations;
     // As `bun run` and `bun test` transpile the same files.
     code.transpiles_by_working_directory = input.aot.runs_in_place;
-    code.types_stop_at_entry_points = input.aot.is_part_of_test_files;
     code.allows_es_module_mark = input.aot.checks_only || input.aot.runs_tests;
-    code.main_modules_beside_entry_points = (input.aot.main_modules_beside_entry_points.iter())
-        .map(|path| from_native(path))
+    code.entry_points_that_run_first = (paths_of_preloads(input).iter())
+        .map(|path| from_argument(&code.working_directory, path))
         .collect();
-    code.entry_points_only_imported_from_above =
-        (input.aot.entry_points_only_imported_from_above.iter())
-            .map(|path| from_native(path))
-            .collect();
-    code.tsconfig_override = (options.tsconfig_override.as_ref())
+    let tsconfig_override = options.tsconfig_override.as_ref();
+    code.tsconfig_override = tsconfig_override
+        .or(input.aot.missing_tsconfig_override.as_ref())
         .map(|path| from_argument(&code.working_directory, path));
 
     let orders = &options.extension_order;
@@ -273,100 +268,33 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         .map(|(extension, &loader)| (extension.to_vec(), loader))
         .collect();
     loaders.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
-    let replaced = &input.aot.replaced_by_tests;
-    // The programs above call what this one exports, and its build does not see them.
-    let is_below_other_programs = input.aot.shares_realms && !input.aot.is_part_of_test_files;
     LoadOptions {
         project_root: without_trailing_slash_windows_path(input.working_directory).to_vec(),
         loaders,
         externals: externals(options),
         react_compiler: options.react_compiler,
-        runs_macros: !options.no_macros,
+        react_compiler_filter: options.react_compiler_filter.map(PathFilter),
         in_memory_files: in_memory_files(input),
         in_memory_file_keys: in_memory_file_keys(input),
         entry_texts: Vec::new(),
         omits_builtin_modules: input.aot.omits_builtin_modules,
         runs_tests: input.aot.runs_tests,
         has_globals_of_vitest: input.aot.has_globals_of_vitest,
-        takes_runtime_as_any: false,
-        errors_with_bun_types: None,
-        library_code_lacked: Default::default(),
-        keeps_library_code_without_names: false,
-        // Code that a test loads from disk may read it, and no build sees that code. The engine's word comes a front end and a flow analysis later.
-        reads_main_module_without_its_name: input.aot.runs_tests,
-        stores_path_of_main_module: false,
-        stores_loader_functions: replaced.stores_loader_functions,
-        // Bun's own code reads `parent` of objects that nobody knows, and a program that other programs import from hands its module
-        // objects out. So with all of that code the engine always finds this, a front end and a flow analysis later.
-        ways_read_out_of_sight: WaysBetweenModuleObjects {
-            parent: input.aot.library_runs_compiled_alone,
-            children: false,
-        },
-        ways_named_that_nobody_reads: Default::default(),
-        replaced_exports: sorted(
-            replaced
-                .exports
-                .iter()
-                .map(|(module, name)| ReplacedExport {
-                    module: ReplacedModule::File(module.clone()),
-                    name: name.clone(),
-                }),
-        ),
-        mocked_modules: sorted(replaced.modules.iter().cloned().map(ReplacedModule::File)),
-        // A name that no file spells finds any file of the program. Where the host alone runs what the build has not seen it finds the entry points, and flow says
-        // which of their objects a spy meets.
-        mocks_any_module: replaced.any_module
-            || (replaced.spy_may_meet_module_that_no_file_spells
-                && !input.aot.host_runs_files_from_disk),
-        every_export_is_asked_for: is_below_other_programs,
-        handed_on_modules: sorted(
-            (replaced.handed_on_modules.iter().cloned()).map(ReplacedModule::File),
-        ),
-        hands_on_any_module: replaced.hands_on_any_module,
-        spies_on_unknown_objects: replaced.spies_on_unknown_objects,
-        names_spied_on_unknown_objects: replaced.names_spied_on_unknown_objects.clone(),
-        names_spied_in_text: Vec::new(),
-        modules_replaced_in_text: Vec::new(),
-        evicted_modules: sorted(
-            replaced
-                .evicted_modules
-                .iter()
-                .cloned()
-                .map(ReplacedModule::File),
-        ),
-        // Where the host alone runs what the build has not seen, the stand-in spells the queries of the test files, and the build reads them there.
-        evicts_any_module: replaced.evicts_any_module
-            || (replaced.names_file_with_query && !input.aot.host_runs_files_from_disk),
-        files_that_tests_load: {
-            let files = |paths: &[Vec<u8>]| sorted(paths.iter().cloned().map(ReplacedModule::File));
-            FilesThatTestsLoad {
-                by_statements: files(&replaced.files_imported_by_statements),
-                by_calls: files(&replaced.files_imported_by_calls),
-                by_require: files(&replaced.files_required),
-                where_throws_are_caught: files(&replaced.files_required_where_throws_are_caught),
-            }
-        },
-        replaced_builtins: sorted(replaced.builtins.iter().copied()),
-        opened_names: sorted(
-            replaced
-                .names_added_to_builtins
-                .iter()
-                .map(|(holder, name)| OpenedName {
-                    holder: *holder,
-                    name: name.clone(),
-                }),
-        ),
-        left_to_loader: Vec::new(),
-        loads_below_files_left_to_loader: Vec::new(),
-        stand_in_for_files_from_disk: None,
+        // Nobody reads the test files ahead of the build, so any of them may import it. A file that they share asks as it loads.
+        entry_point_imports_vitest: input.aot.runs_tests,
+        replaced_builtins: sorted_unique(input.aot.replaced_by_tests.builtins.iter().copied()),
+        test_files: follow_links(input, input.aot.replaced_by_tests.test_files.clone()),
+        paths_of_preloads: paths_of_preloads(input),
     }
 }
 
-fn sorted<T: Ord>(items: impl Iterator<Item = T>) -> Vec<T> {
-    let mut items: Vec<T> = items.collect();
-    items.shared_sort_unstable();
-    items.dedup();
-    items
+fn paths_of_preloads(input: &OptionsInput<'_, '_, '_>) -> Vec<Vec<u8>> {
+    (input.aot.replaced_by_tests.preloads.iter())
+        .flat_map(|preload| {
+            let absolute = absolute_path(input.working_directory, preload);
+            real_file_path(&absolute).into_iter().chain([absolute])
+        })
+        .collect()
 }
 
 fn in_memory_files(input: &OptionsInput<'_, '_, '_>) -> Vec<(Vec<u8>, Vec<u8>)> {
@@ -447,10 +375,22 @@ fn path_options(
 ) -> Option<PathOptions> {
     let root_directory = root_directory(input, entry_points, log)?;
     let entry_point_names = entry_point_names(input, entry_points, &root_directory, log)?;
+    // A program that runs in place has the paths of its files on disk, and no other names.
+    let entry_point_file_names = match input.aot.runs_in_place {
+        true => Vec::new(),
+        false => embedded_entry_point_names(
+            input.bundle_options,
+            input.working_directory,
+            entry_points,
+            &root_directory,
+            log,
+        )?,
+    };
     Some(PathOptions {
         module_prefix: input.module_prefix.to_vec(),
         root_directory,
         entry_point_names,
+        entry_point_file_names,
     })
 }
 
@@ -621,7 +561,7 @@ fn entry_point_names(
 }
 
 /// The names of the entry points' files in the executable, which are those that `bun build --compile` gives them: the resolver looks for an entry point under `.js` whatever the extension of its source was, and tools read the list.
-pub(crate) fn embedded_entry_point_names(
+fn embedded_entry_point_names(
     options: &BundleOptions<'_>,
     working_directory: &[u8],
     entry_points: &[Vec<u8>],

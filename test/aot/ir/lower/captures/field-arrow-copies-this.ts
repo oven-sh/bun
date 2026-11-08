@@ -6,10 +6,10 @@
 // CHECK: [[object]] = Convert [[this]] declared={type=object flags=[IsFromCompiler, IsClaim]}
 // CHECK-NOT: = NewObject
 // CHECK: [[closure]] = NewClosure [[this]] function=
-// CHECK-NEXT: [[onClick]] = Convert [[closure]] declared={type=undefined|null|f{{*}} site=w{{*}}}
-// CHECK-NEXT: PropDefine [[object]], [[onClick]] key="onClick"
+// CHECK-NEXT: [[typed]] = Convert [[closure]] declared={type=undefined|null|f{{*}} flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PropDefine [[object]], [[typed]] key="onClick"
 // CHECK-LABEL: function {{*}}name="onClick"
-// CHECK: captures=[{type=[[instance]] flags=[IsFromCompiler] variableName="this"}] thisType
+// CHECK: captures=[{type=[[instance]] variableName="this"}] thisType
 
 // RUN(ENVIRONMENTS): lower
 // ENVIRONMENTS-NOT: env L

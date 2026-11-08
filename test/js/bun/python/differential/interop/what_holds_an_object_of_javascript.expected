@@ -1,0 +1,33 @@
+status: 0
+oracle: none
+---
+an object: kept track of: True
+    a list: it is among the referents: True; the holder is among its referrers: True
+    a tuple: it is among the referents: True; the holder is among its referrers: True
+    a dict: it is among the referents: True; the holder is among its referrers: True
+    an instance: it is among the referents: False; the holder is among its referrers: True
+    the cell of a closure: it is among the referents: False; the holder is among its referrers: True
+a Map: kept track of: True
+    a list: it is among the referents: True; the holder is among its referrers: True
+    a tuple: it is among the referents: True; the holder is among its referrers: True
+    a dict: it is among the referents: True; the holder is among its referrers: True
+    an instance: it is among the referents: False; the holder is among its referrers: True
+    the cell of a closure: it is among the referents: False; the holder is among its referrers: True
+a function: kept track of: True
+    a list: it is among the referents: True; the holder is among its referrers: True
+    a tuple: it is among the referents: True; the holder is among its referrers: True
+    a dict: it is among the referents: True; the holder is among its referrers: True
+    an instance: it is among the referents: False; the holder is among its referrers: True
+    the cell of a closure: it is among the referents: False; the holder is among its referrers: True
+an instance of a class of Python that derives from Map: kept track of: True
+    a list: it is among the referents: True; the holder is among its referrers: True
+    a tuple: it is among the referents: True; the holder is among its referrers: True
+    a dict: it is among the referents: True; the holder is among its referrers: True
+    an instance: it is among the referents: False; the holder is among its referrers: True
+    the cell of a closure: it is among the referents: False; the holder is among its referrers: True
+an instance of Python, for comparison: kept track of: True
+    a list: it is among the referents: True; the holder is among its referrers: True
+    a tuple: it is among the referents: True; the holder is among its referrers: True
+    a dict: it is among the referents: True; the holder is among its referrers: True
+    an instance: it is among the referents: True; the holder is among its referrers: True
+    the cell of a closure: it is among the referents: True; the holder is among its referrers: True

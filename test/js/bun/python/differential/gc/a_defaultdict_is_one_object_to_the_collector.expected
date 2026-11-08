@@ -1,0 +1,17 @@
+status: 0
+script: 231cf8ae3c0b87de
+---
+collected: with a factory 1 | without 1 | a plain dict 1 | a tree of four, made by a lambda 7
+saved: ['defaultdict']
+L        the defaultdict refers to ['L', 'type'] | to the factory itself: True | is named its referrer: True | the factory is among all objects: True
+D        the defaultdict refers to ['D', 'type'] | to the factory itself: True | is named its referrer: True | the factory is among all objects: True
+S        the defaultdict refers to ['S', 'type'] | to the factory itself: True | is named its referrer: True | the factory is among all objects: True
+T        the defaultdict refers to ['T', 'type'] | to the factory itself: True | is named its referrer: True | the factory is among all objects: True
+list     the defaultdict refers to ['list', 'type'] | to the factory itself: True | is named its referrer: True | the factory is among all objects: True
+dict     the defaultdict refers to ['dict', 'type'] | to the factory itself: True | is named its referrer: True | the factory is among all objects: True
+tuple    the defaultdict refers to ['tuple', 'type'] | to the factory itself: True | is named its referrer: True | the factory is among all objects: True
+Callable the defaultdict refers to ['Callable', 'type'] | to the factory itself: True | is named its referrer: True | the factory is among all objects: True
+type     the defaultdict refers to ['type', 'type'] | to the factory itself: True | is named its referrer: False | the factory is among all objects: False
+str      the defaultdict refers to ['str', 'type'] | to the factory itself: True | is named its referrer: False | the factory is among all objects: False
+who refers to what the factories hold: ['D', 'L', 'S', 'T', 'dict', 'list', 'tuple']
+tuples of one type among all objects: 0

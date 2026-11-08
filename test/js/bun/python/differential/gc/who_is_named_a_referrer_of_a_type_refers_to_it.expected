@@ -1,0 +1,76 @@
+status: 0
+script: d68ee5abf5b7d652
+---
+asked about tuple
+   defaultdict(list)                                is named: False refers: False
+   defaultdict()                                    is named: False refers: False
+   sys.flags                                        is named: False refers: False
+   os.stat()                                        is named: False refers: False
+   time.localtime()                                 is named: False refers: False
+   sys.version_info                                 is named: False refers: False
+   (tuple, [])                                      is named: True  refers: True
+   (1, [])                                          is named: False refers: False
+asked about ReferenceType
+   a set that is weakly referred to                 is named: False refers: False
+   a set                                            is named: False refers: False
+   a frozenset that is                              is named: False refers: False
+   an OrderedDict that is                           is named: False refers: False
+   an instance of a list subclass that is           is named: False refers: False
+   of a dict subclass                               is named: False refers: False
+   of a class                                       is named: False refers: False
+   [weakref.ref]                                    is named: True  refers: True
+asked about list
+   [list]                                           is named: True  refers: True
+   [1]                                              is named: False refers: False
+   defaultdict(list)                                is named: True  refers: True
+   a list subclass with list in a slot              is named: True  refers: True
+   with an empty slot                               is named: False refers: False
+asked about SL
+   a list subclass with its class in a slot         is named: True  refers: True
+   with an empty slot                               is named: True  refers: True
+   [the class]                                      is named: True  refers: True
+asked about dict
+   {'k': dict}                                      is named: True  refers: True
+   {'k': 1}                                         is named: False refers: False
+   {dict: 1}                                        is named: True  refers: True
+   a dict subclass with dict as a value             is named: True  refers: True
+   an empty one                                     is named: False refers: False
+asked about set
+   {set}                                            is named: True  refers: True
+   {1}                                              is named: False refers: False
+asked about str
+   {s: 1}                                           is named: False refers: False
+   {'k': s}                                         is named: True  refers: True
+   {s: 1, 2: 3}                                     is named: True  refers: True
+   [s]                                              is named: True  refers: True
+   (s, [])                                          is named: True  refers: True
+   {s}                                              is named: True  refers: True
+   OrderedDict({s: 1})                              is named: True  refers: True
+   OrderedDict({1: s})                              is named: True  refers: True
+   OrderedDict({'k': 1})                            is named: False refers: False
+asked about str, X
+   {s: x}                                           is named: True  refers: True
+   {s: 1}                                           is named: False refers: False
+asked about str
+   a defaultdict with a str for a factory           is named: True  refers: True
+asked about int
+   (int, 'a')                                       is named: False refers: True
+   (int, [])                                        is named: True  refers: True
+   [int]                                            is named: True  refers: True
+asked about type
+   a metaclass                                      is named: True  refers: True
+   a class                                          is named: False refers: False
+   a class of that metaclass                        is named: False refers: False
+asked about M
+   a class of the metaclass                         is named: True  refers: True
+   the metaclass                                    is named: False refers: False
+asked about object
+   a class without a base                           is named: True  refers: True
+   a class that derives from it                     is named: False refers: False
+asked about X
+   a class that derives from it                     is named: True  refers: True
+   an instance                                      is named: True  refers: True
+of 2,000 defaultdicts with a factory, referrers of tuple: 0 | of list: 3
+the tuple of what is not kept track of: kept track of: False | among all objects: False
+how often a class refers to its base: 1 1 1 | to the base of its base: 0
+an OrderedDict refers to ["'a str made at run time 1'", "'k'", '1', 'X'] | ["'a str made at run time 1'", "'a str made at run time 1'", '1', '2', '2', 'X'] | []

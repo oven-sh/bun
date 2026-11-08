@@ -1,0 +1,158 @@
+status: 0
+script: f5cd522526dc9db0
+---
+attribute_of_a_dict_subclass                         found; the holder is come to from it
+attribute_of_a_dict_subclass_with_slots              found; the holder is come to from it
+attribute_of_a_list_subclass                         found; the holder is come to from it
+attribute_of_a_list_subclass_with_slots              found; the holder is come to from it
+attribute_of_a_set_subclass                          found; the holder is come to from it
+attribute_of_a_set_subclass_with_slots               found; the holder is come to from it
+attribute_of_a_frozenset_subclass                    found; the holder is come to from it
+attribute_of_a_frozenset_subclass_with_slots         found; the holder is come to from it
+attribute_of_a_tuple_subclass                        found; the holder is come to from it
+attribute_of_a_tuple_subclass_with_slots             found; the holder is come to from it
+attribute_of_a_int_subclass                          found; the holder is come to from it
+attribute_of_a_str_subclass                          found; the holder is come to from it
+attribute_of_a_str_subclass_with_slots               found; the holder is come to from it
+attribute_of_a_bytes_subclass                        found; the holder is come to from it
+attribute_of_a_float_subclass                        found; the holder is come to from it
+attribute_of_a_float_subclass_with_slots             found; the holder is come to from it
+attribute_of_a_OrderedDict_subclass                  found; the holder is come to from it
+attribute_of_a_OrderedDict_subclass_with_slots       found; the holder is come to from it
+attribute_of_a_defaultdict_subclass                  found; the holder is come to from it
+attribute_of_a_defaultdict_subclass_with_slots       found; the holder is come to from it
+attribute_of_a_deque_subclass                        found; the holder is come to from it
+attribute_of_a_deque_subclass_with_slots             found; the holder is come to from it
+attribute_of_a_Counter_subclass                      found; the holder is come to from it
+attribute_of_a_Counter_subclass_with_slots           found; the holder is come to from it
+attribute_of_a_bytearray_subclass                    found; the holder is come to from it
+attribute_of_a_bytearray_subclass_with_slots         found; the holder is come to from it
+attribute_of_a_Exception_subclass                    found; the holder is come to from it
+attribute_of_a_Exception_subclass_with_slots         found; the holder is come to from it
+attribute_of_a_partial_subclass                      found; the holder is come to from it
+attribute_of_a_partial_subclass_with_slots           found; the holder is come to from it
+attribute_of_a_ReferenceType_subclass                found; the holder is come to from it
+attribute_of_a_ReferenceType_subclass_with_slots     found; the holder is come to from it
+attribute_of_a_property_subclass                     found; the holder is come to from it
+attribute_of_a_property_subclass_with_slots          found; the holder is come to from it
+attribute_of_a_SimpleNamespace_subclass              found; the holder is come to from it
+attribute_of_a_SimpleNamespace_subclass_with_slots   found; the holder is come to from it
+attribute_of_a__local_subclass_with_slots            found; the holder is come to from it
+attribute_of_a_array_subclass                        found; the holder is come to from it
+attribute_of_a_array_subclass_with_slots             found; the holder is come to from it
+attribute_of_a_BytesIO_subclass                      found; the holder is come to from it
+attribute_of_a_BytesIO_subclass_with_slots           found; the holder is come to from it
+attribute_of_a_StringIO_subclass                     found; the holder is come to from it
+attribute_of_a_StringIO_subclass_with_slots          found; the holder is come to from it
+attribute_of_a_module_subclass                       found; the holder is come to from it
+attribute_of_a_module_subclass_with_slots            found; the holder is come to from it
+attribute_of_a_complex_subclass                      found; the holder is come to from it
+attribute_of_a_complex_subclass_with_slots           found; the holder is come to from it
+attribute_of_a_object_subclass                       found; the holder is come to from it
+attribute_of_a_object_subclass_with_slots            found; the holder is come to from it
+defaultdict_factory                                  found; the holder is come to from it
+ordered_dict_key                                     found; the holder is come to from it
+counter_key                                          found; the holder is come to from it
+chainmap                                             found; the holder is come to from it
+deque_item                                           found; the holder is come to from it
+simple_queue_item                                    found; the holder is come to from it
+property_getter                                      found; the holder is come to from it
+static_method                                        found; the holder is come to from it
+class_method                                         found; the holder is come to from it
+weakref_callback                                     found; the holder is come to from it
+weak_method                                          NOT FOUND; THE HOLDER IS NOT COME TO
+cell                                                 found; the holder is come to from it
+a_slice                                              found; the holder is come to from it
+generic_alias                                        found; the holder is come to from it
+typevar_bound                                        found; the holder is come to from it
+cycle_saved                                          found; the holder is come to from it
+repeat                                               found; the holder is come to from it
+chain                                                found; the holder is come to from it
+accumulate_function                                  found; the holder is come to from it
+accumulate_initial                                   found; the holder is come to from it
+groupby_key                                          found; the holder is come to from it
+tee_item                                             found; the holder is come to from it
+starmap_function                                     found; the holder is come to from it
+islice_of                                            NOT FOUND; THE HOLDER IS NOT COME TO
+product_pool                                         found; the holder is come to from it
+combinations_pool                                    found; the holder is come to from it
+zip_longest_fill                                     found; the holder is come to from it
+batched                                              NOT FOUND; THE HOLDER IS NOT COME TO
+pairwise_of                                          NOT FOUND; THE HOLDER IS NOT COME TO
+itemgetter                                           found; the holder is come to from it
+itemgetter_two                                       found; the holder is come to from it
+methodcaller_argument                                found; the holder is come to from it
+methodcaller_keyword                                 found; the holder is come to from it
+map_function                                         found; the holder is come to from it
+filter_function                                      found; the holder is come to from it
+zip_iterator                                         NOT FOUND; THE HOLDER IS NOT COME TO
+enumerate_iterator                                   NOT FOUND; THE HOLDER IS NOT COME TO
+callable_iterator                                    found; the holder is come to from it
+callable_iterator_sentinel                           found; the holder is come to from it
+list_iterator                                        found; the holder is come to from it
+tuple_iterator                                       found; the holder is come to from it
+dict_iterator                                        found; the holder is come to from it
+set_iterator                                         found; the holder is come to from it
+reversed_list                                        found; the holder is come to from it
+dict_view                                            found; the holder is come to from it
+a_super                                              found; the holder is come to from it
+partial_function                                     found; the holder is come to from it
+partial_method                                       found; the holder is come to from it
+cached_property                                      found; the holder is come to from it
+lru_wrapped                                          found; the holder is come to from it
+lru_key                                              found; the holder is come to from it
+lru_result_unbounded                                 found; the holder is come to from it
+cmp_to_key                                           found; the holder is come to from it
+cmp_key_object                                       found; the holder is come to from it
+singledispatch                                       found; the holder is come to from it
+contextvar_default                                   found; the holder is come to from it
+context_value                                        found; the holder is come to from it
+token_old_value                                      found; the holder is come to from it
+future_result                                        found; the holder is come to from it
+future_callback                                      found; the holder is come to from it
+future_two_callbacks                                 found; the holder is come to from it
+buffered_raw                                         found; the holder is come to from it
+text_wrapper_buffer                                  found; the holder is come to from it
+csv_reader                                           NOT FOUND; THE HOLDER IS NOT COME TO
+csv_writer                                           found; the holder is come to from it
+pickler_file                                         found; the holder is come to from it
+pickler_memo                                         found; the holder is come to from it
+unpickler_file                                       found; the holder is come to from it
+exception_argument                                   found; the holder is come to from it
+exception_cause                                      found; the holder is come to from it
+exception_group                                      found; the holder is come to from it
+stop_iteration_value                                 found; the holder is come to from it
+attribute_error_object                               found; the holder is come to from it
+mappingproxy_value                                   found; the holder is come to from it
+bound_method                                         found; the holder is come to from it
+method_wrapper                                       found; the holder is come to from it
+builtin_method                                       found; the holder is come to from it
+function_default                                     found; the holder is come to from it
+function_annotation                                  found; the holder is come to from it
+function_globals                                     found; the holder is come to from it
+class_base                                           found; the holder is come to from it
+class_attribute                                      found; the holder is come to from it
+module_attribute                                     found; the holder is come to from it
+thread_target                                        found; the holder is come to from it
+union_type                                           found; the holder is come to from it
+dynamic_class_attribute                              found; the holder is come to from it
+named as a referrer and does not refer to it: []
+attribute_of_a__local_subclass                       apart: x among its referents: False; its dict: False; it among the referrers of x: False; of its dict: False; its dict among the referrers of x: True
+local_attribute                                      apart: x among its referents: False; its dict: False; it among the referrers of x: False; of its dict: False; its dict among the referrers of x: True
+local_subclass_argument                              apart: x among its referents: False; its dict: False; it among the referrers of x: False; of its dict: False; its dict among the referrers of x: False
+local_subclass_keyword                               apart: x among its referents: False; its dict: False; it among the referrers of x: False; of its dict: False; its dict among the referrers of x: False
+referrers of tuple: fewer than 1000: True | of list: True
+os.stat() [('float', 3), ('int', 16), ('type', 1)]
+time.localtime() [('int', 10), ('str', 1), ('type', 1)]
+sys.flags [('bool', 2), ('int', 20)]
+the factory is a list: among the referents of the defaultdict: True; x among them: False; the defaultdict among the referrers of the factory: True; of x: False; the factory among the referrers of x: True; among all objects: True
+the factory is a tuple: among the referents of the defaultdict: True; x among them: False; the defaultdict among the referrers of the factory: True; of x: False; the factory among the referrers of x: True; among all objects: True
+the factory is a dict: among the referents of the defaultdict: True; x among them: False; the defaultdict among the referrers of the factory: True; of x: False; the factory among the referrers of x: True; among all objects: True
+the factory is a callable list: among the referents of the defaultdict: True; x among them: False; the defaultdict among the referrers of the factory: True; of x: False; the factory among the referrers of x: True; among all objects: True
+the factory is a str: among the referents of the defaultdict: True; x among them: False; the defaultdict among the referrers of the factory: True; of x: False; the factory among the referrers of x: False; among all objects: False
+property(property): its type among its referents: True; it among the referrers of its type: True
+map(map, []): its type among its referents: True; it among the referrers of its type: True
+staticmethod(staticmethod): its type among its referents: True; it among the referrers of its type: True
+slice(slice): its type among its referents: True; it among the referrers of its type: True
+property(len): its type among its referents: False; it among the referrers of its type: False
+the referrers of list.append: 1 | of int.__add__: 1

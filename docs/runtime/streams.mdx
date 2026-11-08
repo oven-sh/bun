@@ -252,7 +252,7 @@ sink.flush();
 // ArrayBuffer(2) [ 108, 111 ]
 ```
 
-The `.flush()` method returns the buffered data as an `ArrayBuffer` (or `Uint8Array` if `asUint8Array: true`) and clears the internal buffer.
+With `stream: true`, the `.flush()` method returns the buffered data as an `ArrayBuffer` (or `Uint8Array` if `asUint8Array: true`) and clears the internal buffer. Without `stream: true`, `.flush()` returns `0` and leaves the data in the buffer.
 
 To manually set the size of the internal buffer in bytes, pass a value for `highWaterMark`:
 
@@ -277,7 +277,7 @@ export class ArrayBufferSink {
   start(options?: {
     /**
      * On {@link ArrayBufferSink.end}, return the data as a `Uint8Array` instead of an `ArrayBuffer`.
-     * With `stream`, {@link ArrayBufferSink.flush} also returns a `Uint8Array`.
+     * With `stream: true`, {@link ArrayBufferSink.flush} also returns a `Uint8Array`.
      */
     asUint8Array?: boolean;
     /**
@@ -287,7 +287,7 @@ export class ArrayBufferSink {
     highWaterMark?: number;
     /**
      * On {@link ArrayBufferSink.flush}, return the written data as an `ArrayBuffer`.
-     * If `asUint8Array` is also set, return it as a `Uint8Array`.
+     * With `asUint8Array: true`, return it as a `Uint8Array`.
      * Writes restart from the beginning of the buffer.
      */
     stream?: boolean;
@@ -297,9 +297,9 @@ export class ArrayBufferSink {
   /**
    * Flush the internal buffer.
    *
-   * - If {@link ArrayBufferSink.start} was passed a `stream` option, this returns an `ArrayBuffer`.
-   * - If it was passed a `stream` option and `asUint8Array`, this returns a `Uint8Array`.
-   * - Otherwise, this returns `0` and leaves the data in the buffer.
+   * - If {@link ArrayBufferSink.start} was passed `stream: true`, this returns an `ArrayBuffer`.
+   * - If it was also passed `asUint8Array: true`, this returns a `Uint8Array` instead.
+   * - Without `stream: true`, this returns `0` and leaves the data in the buffer.
    *
    * This API might change later to separate Uint8ArraySink and ArrayBufferSink.
    */

@@ -2491,7 +2491,7 @@ declare module "bun" {
     start(options?: {
       /**
        * On {@link ArrayBufferSink.end}, return the data as a `Uint8Array` instead of an `ArrayBuffer`.
-       * With `stream`, {@link ArrayBufferSink.flush} also returns a `Uint8Array`.
+       * With `stream: true`, {@link ArrayBufferSink.flush} also returns a `Uint8Array`.
        */
       asUint8Array?: boolean;
       /**
@@ -2501,7 +2501,7 @@ declare module "bun" {
       highWaterMark?: number;
       /**
        * On {@link ArrayBufferSink.flush}, return the written data as an `ArrayBuffer`.
-       * If `asUint8Array` is also set, return it as a `Uint8Array`.
+       * With `asUint8Array: true`, return it as a `Uint8Array`.
        * Writes restart from the beginning of the buffer.
        */
       stream?: boolean;
@@ -2511,9 +2511,9 @@ declare module "bun" {
     /**
      * Flush the internal buffer.
      *
-     * - If {@link ArrayBufferSink.start} was passed a `stream` option, this returns an `ArrayBuffer`.
-     * - If it was passed a `stream` option and `asUint8Array`, this returns a `Uint8Array`.
-     * - Otherwise, this returns `0` and leaves the data in the buffer.
+     * - If {@link ArrayBufferSink.start} was passed `stream: true`, this returns an `ArrayBuffer`.
+     * - If it was also passed `asUint8Array: true`, this returns a `Uint8Array` instead.
+     * - Without `stream: true`, this returns `0` and leaves the data in the buffer.
      *
      * This API might change later to separate Uint8ArraySink and ArrayBufferSink.
      */

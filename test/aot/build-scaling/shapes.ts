@@ -34,8 +34,11 @@ export type Shape = {
   growsSoFarInInstructions?: string;
   /** The same for a growth in instructions that shows under musl alone. */
   growsSoFarInInstructionsUnderMusl?: string;
-  /** The same for a growth that shows in the code for arm64 on Linux alone. */
-  growsSoFarOnLinuxArm64?: string;
+  /**
+   * The shape keeps a value in the frame for each of what is counted, and its two sizes straddle a step in the bytes of arm64's code: a load or store reaches the first 32 KB of a frame by the
+   * offset in the instruction (4 bytes), the next 32 KB with one move in front of it (8) and the rest with two (12). There FunctionBytesEmitted is not judged; all else is.
+   */
+  frameOutgrowsOffsetsOfArm64?: true;
   /** How many times the memory twice the size may take, where the bound of all shapes lies within what one build wavers by. Instructions and counts keep the bound of all shapes. */
   mostGrowthInMemory?: number;
   /** How many times the instructions twice the size may take, where what the program means holds a square of its own. Memory and counts keep their bounds. */
@@ -1888,8 +1891,9 @@ export const shapes: Shape[] = [
     // from line k took k steps. The code generator finds dominators only where a value that is made behind the entry is read far below.
     name: "lines that each read an element of their own, return early if it says so and add its field to a sum, with a value from the start read at the end",
     counted: "lines",
-    // A line takes 490 bytes of code up to 1,250 lines and about 800 from 8,000 on: the further the code of the rare ways, which lies behind all the rest, the more of the branches to it take their long form.
-    growsSoFarOnLinuxArm64: "2.21 times in FunctionBytesEmitted",
+    // A line takes 12 bytes of the frame: 24,016 at 2,000 lines, 48,016 at 4,000. On arm64 its fourteen saves and as many reloads round the rare calls take 60 bytes each way at 1,000 lines and 168 at
+    // 8,000: 2.21 times the bytes. Past 2 MB of code the branches to the rare ways take their long form as well, some 30 bytes a line. Below the step the shape would no longer see its square.
+    frameOutgrowsOffsetsOfArm64: true,
     size: 2000,
     entry: "main.ts",
     write: size => ({
@@ -3347,8 +3351,9 @@ export const shapes: Shape[] = [
   {
     // The sums lie in an environment and the loop around carries a product for each loop inside. For each store into the environment the walk scanned every block of the loop around;
     // leaving each loop inside, the allocator searched back over all the blocks in front of it, and kept the list of each search. 9,600 loops took 58.8 G instructions and 5,873 MB.
-    // 600 loops: once the one function passes half a megabyte its bytes grow faster than its loops on arm64 for a while (2.15 times from 1,200 loops to 2,400, 2.30 to 4,800, 2.22 to 9,600;
-    // 2.00 throughout on x64). What is judged here rings at this size as well: 3.42 times the instructions.
+    // 600 loops: each loop takes 24 bytes of the frame. On arm64 a load or store reaches the first 32 KB of a frame by the offset in the instruction (4 bytes), the next 32 KB with one move
+    // in front of it (8) and the rest with two (12): from 1,365 loops on the bytes grow faster than the loops (2.15 times from 1,200 loops to 2,400, 2.30 to 4,800, 2.22 to 9,600) and then
+    // come back (2.08 to 19,200, 2.06 to 38,400): a step of two treads. On x64: 2.00 throughout. What is judged here rings at this size as well: 3.42 times the instructions.
     name: "loops in a row inside one loop under a try that each build a product of their own in front of the loop around",
     counted: "loops",
     size: 600,
@@ -4468,9 +4473,9 @@ console.log(typeof outmost.inner);
     name: "sums of unknown kind that one loop carries, each behind a branch that is never taken",
     counted: "sums",
     // No square. On arm64 a sum takes 137 machine operations and 40 spills at every size from 500 to 32,000, and one more sum takes 1,205 bytes of code up to 1,000 sums, 1,340 at 4,000, 1,710 up to 8,000 and 2,040
-    // from 12,000 on, level to 32,000 (1.98 times). The two steps of 380 fit a word of the frame, which takes two instructions past 32,760 bytes above the stack pointer and three past 65,535: read, not seen in the code.
-    // On x64 it takes 1,036 bytes throughout.
-    growsSoFarOnLinuxArm64: "2.30 times in FunctionBytesEmitted",
+    // from 12,000 on, level to 32,000 (1.98 times). The two steps of 380 are a word of the frame, which takes two instructions past 32,760 bytes above the stack pointer and three past 65,535: a sum takes
+    // 16 bytes of the frame, 63,888 at 4,000 sums and 127,888 at 8,000, and all of the rise lies in saves and reloads: 2.30 times the bytes. On x64 it takes 1,036 bytes throughout.
+    frameOutgrowsOffsetsOfArm64: true,
     size: 4000,
     entry: "main.cjs",
     write: size => ({

@@ -169,8 +169,7 @@ export const buildScaling = (part: number, parts: number) =>
       const growsSoFar =
         shape.growsSoFar ??
         (countsInstructionsHere ? shape.growsSoFarInInstructions : undefined) ??
-        (countsInstructionsHere && isMusl ? shape.growsSoFarInInstructionsUnderMusl : undefined) ??
-        (isLinux && process.arch === "arm64" ? shape.growsSoFarOnLinuxArm64 : undefined);
+        (countsInstructionsHere && isMusl ? shape.growsSoFarInInstructionsUnderMusl : undefined);
       (growsSoFar ? test.concurrent.failing : test.concurrent)(
         growsSoFar ? `${shape.name}: ${growsSoFar}; the bound is ${mostGrowth}` : shape.name,
         async () => {
@@ -243,6 +242,7 @@ export const buildScaling = (part: number, parts: number) =>
                   !countsOfWholePages.has(name) &&
                   !countsOfPadding.has(name) &&
                   !shape.counts?.includes(name) &&
+                  !(shape.frameOutgrowsOffsetsOfArm64 && process.arch === "arm64" && name === "FunctionBytesEmitted") &&
                   twice.counts[name] - none.counts[name] >= leastCountJudged &&
                   grownInCount(costs, name) > mostGrowth,
               );

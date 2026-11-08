@@ -6,7 +6,9 @@ use bun_sema::erasure::{
     PackedTypeRanges, ReplacedText, TypeRanges, find_type_ranges_beside_what_is_laid,
 };
 use bun_sema::fold::Constant;
-use bun_sema::hir::{ExprId, ExprKind, FnId, PropKind, StmtId, StmtKind, end_of_expr, start_of};
+use bun_sema::hir::{
+    ExprId, ExprKind, FnId, PropKind, StmtId, StmtKind, end_of_expr, find_transpiled_mark, start_of,
+};
 use bun_sema::module_format::list_this_of_file;
 use rustc_hash::FxHashMap;
 
@@ -18,6 +20,7 @@ use crate::diagnostic_codes::Code;
 use crate::diagnostics::Span;
 use crate::ir::FunctionKey;
 use crate::ir::generated::{ModuleKind, SourceRange};
+use crate::load::SourceKind;
 use crate::lower::FileLowering;
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -132,7 +135,9 @@ impl FileLowering<'_, '_, '_, '_> {
         ));
         let reads_back = self.inputs.options.reads_function_texts_back;
         let folded = decisions.as_folded_by_bun_run();
-        let lays_heads = self.inputs.options.embeds_function_text;
+        let is_of_program = self.inputs.sources.kind(self.file) == SourceKind::Program;
+        let is_printed_by_bun = is_of_program && find_transpiled_mark(&hir.text).is_none();
+        let lays_heads = self.inputs.options.embeds_function_text && is_printed_by_bun;
         let mut changes = None;
         let ranges = find_type_ranges_beside_what_is_laid(hir, replaced, |types, replaced| {
             if lays_heads {

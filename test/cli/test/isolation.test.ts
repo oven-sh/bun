@@ -3206,7 +3206,8 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
         import { expect, jest, test } from "bun:test";
         test("a", () => {
           jest.replaceProperty(target, "file", "replaced");
-          expect(target).toEqual({ loading: "replaced", hook: "replaced", file: "replaced" });
+          jest.replaceProperty(target, "loading", "replaced by a");
+          expect(target).toEqual({ loading: "replaced by a", hook: "replaced", file: "replaced" });
         });
       `,
       "b.test.ts": `

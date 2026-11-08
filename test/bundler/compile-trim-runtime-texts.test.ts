@@ -76,7 +76,14 @@ function whatIsCompressedIn(bytes: Buffer): Uint8Array[] {
   return contents;
 }
 
-const heldByWhatStays = ["exhaustive-deps", "rules-of-hooks", "use-memo", "Substitutions for pattern "];
+const heldByWhatStays = [
+  "exhaustive-deps",
+  "rules-of-hooks",
+  "use-memo",
+  "Substitutions for pattern ",
+  // jest.replaceProperty()'s message for a function, which the checker's message 2630 ends with too.
+  " because it is a function.",
+];
 const stillLeftOnLinux = [
   "error-message",
   "no-console",

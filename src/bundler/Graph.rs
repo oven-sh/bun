@@ -112,6 +112,8 @@ pub struct InputFile<'a> {
     pub unique_key_for_additional_file: Box<[u8], AstAlloc>,
     pub content_hash_for_additional_file: u64,
     pub flags: InputFileFlags,
+    /// The package.json the resolver attributed this file to. `None` for the runtime and virtual sources.
+    pub package_json: Option<&'static bun_resolver::PackageJSON>,
 }
 
 impl Default for InputFile<'_> {
@@ -125,6 +127,7 @@ impl Default for InputFile<'_> {
             unique_key_for_additional_file: AstAlloc::vec().into_boxed_slice(),
             content_hash_for_additional_file: 0,
             flags: InputFileFlags::default(),
+            package_json: None,
         }
     }
 }
@@ -142,6 +145,7 @@ bun_collections::multi_array_columns! {
         unique_key_for_additional_file: Box<[u8], AstAlloc>,
         content_hash_for_additional_file: u64,
         flags: InputFileFlags,
+        package_json: Option<&'static bun_resolver::PackageJSON>,
     }
 }
 

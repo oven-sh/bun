@@ -3044,6 +3044,7 @@ pub mod bv2_impl {
                 },
                 loader,
                 side_effects: result.primary_side_effects_data,
+                package_json: result.package_json,
                 ..Default::default()
             })?;
             // Arena-owned; freed on heap reset.
@@ -3129,6 +3130,7 @@ pub mod bv2_impl {
                 },
                 loader,
                 side_effects,
+                package_json: result.package_json,
                 ..Default::default()
             })?;
             // Arena-owned; freed on heap reset.
@@ -4011,6 +4013,7 @@ pub mod bv2_impl {
                 source: core::mem::take(source),
                 loader,
                 side_effects: loader.side_effects(),
+                package_json: resolve_result.package_json,
                 ..Default::default()
             })?;
             // `ParseTask::init` takes `bun_ast::Index`; both Index newtypes
@@ -4297,9 +4300,9 @@ pub mod bv2_impl {
         }
 
         /// `--compile` without `--aot`: warn once per reachable package that ships a native addon
-        /// (`prebuilds/` or `binding.gyp`) but embeds no `.node` file, so its loader (`node-gyp-build`,
-        /// `bindings`) reads the build machine's `node_modules` at run time. Every directory lookup
-        /// is a hit in the resolver's cache.
+        /// (`prebuilds/`, `binding.gyp` or `CMakeLists.txt` in its root) when none of its code loads
+        /// a `.node` file by a string literal. Its loader (`node-gyp-build`, `bindings`, ...) then
+        /// builds the path at run time from the inlined `__dirname` of the build machine.
         fn warn_unembedded_native_addons(
             &mut self,
             reachable_files: &[Index],
@@ -4308,38 +4311,57 @@ pub mod bv2_impl {
                 return Ok(());
             }
 
-            let sources = self.graph.input_files.items_source();
+            struct Package {
+                package_json: &'static _resolver::PackageJSON,
+                /// A JS file of the package is in the bundle (not only its `.node` or `package.json`).
+                has_code: bool,
+                /// A file of the package imports a `.node` file of the package by a string literal.
+                embedded: bool,
+            }
+
             let loaders = self.graph.input_files.items_loader();
-            // address of the resolver-owned `PackageJSON` -> (it, a `.node` file of it is embedded)
-            let mut packages: ArrayHashMap<usize, (&'static _resolver::PackageJSON, bool)> =
-                ArrayHashMap::new();
+            let package_jsons = self.graph.input_files.items_package_json();
+            let import_records = self.graph.ast.items_import_records();
+            let package_key =
+                |index: usize| package_jsons[index].map(|pj| core::ptr::from_ref(pj).addr());
+
+            let mut packages: ArrayHashMap<usize, Package> = ArrayHashMap::new();
             for source_index in reachable_files {
                 let index = source_index.get() as usize;
-                let path = &sources[index].path;
-                if !path.is_file() {
-                    continue;
-                }
-                let Some(package_json) = self
-                    .transpiler
-                    .resolver
-                    .read_dir_info_ignore_error(path.source_dir())
-                    .and_then(|dir| dir.enclosing_package_json)
-                else {
+                let Some(package_json) = package_jsons[index] else {
                     continue;
                 };
-                let embedded = loaders[index] == options::Loader::Napi;
                 let key = core::ptr::from_ref(package_json).addr();
+                let has_code = loaders[index].is_javascript_like();
+                let embedded = has_code
+                    && import_records[index].iter().any(|record| {
+                        record.source_index.is_valid()
+                            && loaders[record.source_index.get() as usize] == options::Loader::Napi
+                            && package_key(record.source_index.get() as usize) == Some(key)
+                    });
                 match packages.get_mut(&key) {
-                    Some(entry) => entry.1 |= embedded,
-                    None => packages.put(key, (package_json, embedded))?,
+                    Some(package) => {
+                        package.has_code |= has_code;
+                        package.embedded |= embedded;
+                    }
+                    None => packages.put(
+                        key,
+                        Package {
+                            package_json,
+                            has_code,
+                            embedded,
+                        },
+                    )?,
                 }
             }
 
             let generation = self.transpiler.resolver.generation;
-            for &(package_json, embedded) in packages.values() {
-                if embedded {
+            let top_level_dir = Fs::FileSystem::get().top_level_dir();
+            for package in packages.values() {
+                if !package.has_code || package.embedded {
                     continue;
                 }
+                let package_json = package.package_json;
                 let Some(root) = self
                     .transpiler
                     .resolver
@@ -4347,25 +4369,58 @@ pub mod bv2_impl {
                 else {
                     continue;
                 };
-                // (the directory the executable reads, with the platform's separator; the `--asset` path)
-                let (read_dir, asset): (&str, &str) = if root.has_entry(generation, b"prebuilds") {
-                    ("prebuilds", "prebuilds")
-                } else if root.has_entry(generation, b"binding.gyp") {
-                    (
-                        const_format::concatcp!("build", bun_paths::SEP_STR, "Release"),
-                        "build/Release",
-                    )
-                } else {
+                let has = |name: &'static [u8]| root.has_entry(generation, name);
+                let built_from_source = has(b"binding.gyp") || has(b"cmakelists.txt");
+                let prebuilt = has(b"prebuilds");
+                if !built_from_source && !prebuilt {
                     continue;
+                }
+                // The directory the loader reads, when the listing shows it: node-gyp and cmake-js
+                // write `build/`, prebuildify ships `prebuilds/`.
+                let addon_dir: Option<&str> = if built_from_source && has(b"build") {
+                    Some("build")
+                } else if prebuilt {
+                    Some("prebuilds")
+                } else {
+                    None
                 };
-                let sep = bun_paths::SEP_STR;
+
                 let name = bstr::BStr::new(&package_json.name);
-                let dir = bstr::BStr::new(package_json.source.path.name().dir);
-                self.transpiler.log_mut().add_warning_fmt(
+                let dir = package_json.source.path.name().dir;
+                let asset_note = match addon_dir {
+                    Some(addon_dir) => {
+                        let relative = bun_paths::resolve_path::relative(top_level_dir, dir);
+                        let sep = if relative.is_empty() {
+                            ""
+                        } else {
+                            bun_paths::SEP_STR
+                        };
+                        bun_ast::alloc_print(format_args!(
+                            "embed the addon with --asset {}{sep}{addon_dir} (needs --aot)",
+                            bstr::BStr::new(relative),
+                        ))
+                    }
+                    None => bun_ast::alloc_print(format_args!(
+                        "embed the directory that holds the .node file with --asset (needs --aot)"
+                    )),
+                };
+                let notes: Box<[bun_ast::Data]> = Box::new([
+                    bun_ast::range_data(None, bun_ast::Range::NONE, asset_note),
+                    bun_ast::range_data(
+                        None,
+                        bun_ast::Range::NONE,
+                        bun_ast::alloc_print(format_args!(
+                            "or load the .node file with a string literal require or import in the code of {name}, for example through a build plugin that rewrites its loader, so that it is embedded"
+                        )),
+                    ),
+                ]);
+                self.transpiler.log_mut().add_range_warning_fmt_with_notes(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    bun_ast::Range::NONE,
+                    notes,
                     format_args!(
-                        "{name} loads a native addon through a path built at run time, and no .node file from {dir} is embedded in the executable. The executable reads {dir}{sep}{read_dir} at run time and fails where that directory does not exist. Build with --aot and --asset node_modules/{name}/{asset}, or load the .node file with a string literal require so that it is embedded."
+                        "{name} ships a native addon, but no .node file from {} is embedded in the executable. The executable needs the build machine's copy at run time.",
+                        bstr::BStr::new(dir),
                     ),
                 );
             }
@@ -7261,6 +7316,7 @@ pub mod bv2_impl {
                     let mut new_input_file = crate::Graph::InputFile {
                         source: bun_ast::Source::init_empty_file(new_task.path.text),
                         side_effects: new_task.side_effects,
+                        package_json: new_task.package_json,
                         secondary_path: if let Some(secondary_path) =
                             &new_task.secondary_path_for_commonjs_interop
                         {

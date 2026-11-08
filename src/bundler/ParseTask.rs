@@ -113,6 +113,8 @@ pub struct ParseTask<'a> {
     // Borrows package_json (resolver arena); valid for the bundle pass.
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
+    /// The package.json the resolver attributed the file to. Copied into the `InputFile`.
+    pub(crate) package_json: Option<&'static _resolver::PackageJSON>,
     pub(crate) is_entry_point: bool,
 }
 
@@ -285,6 +287,7 @@ impl<'a> ParseTask<'a> {
             use_define_for_class_fields: resolve_result.flags.use_define_for_class_fields(),
             package_version,
             package_name,
+            package_json: resolve_result.package_json,
             known_target,
             // defaults:
             secondary_path_for_commonjs_interop: None,
@@ -341,6 +344,7 @@ impl Default for ParseTask<'_> {
             use_define_for_class_fields: true,
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
+            package_json: None,
             is_entry_point: false,
         }
     }
@@ -633,6 +637,7 @@ pub mod parse_worker {
             use_define_for_class_fields: true,
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
+            package_json: None,
             is_entry_point: false,
         };
         let source = Source {

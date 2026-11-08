@@ -1,0 +1,30 @@
+status: 0
+script: e63bd358b17aac4b
+source: e1472291006db94e
+---
+where [where='in the dict of the new class'] => in the dict of the new class
+| len(Key.acts) [where='in the dict of the new class'] => 0
+short(N.__bases__) [where='in the dict of the new class'] => ['F']
+short(N.__mro__) [where='in the dict of the new class'] => ['N', 'E', 'object']
+short(F.__mro__) [where='in the dict of the new class'] => ['F', 'Other', 'object']
+short(E.__subclasses__()) [where='in the dict of the new class'] => []
+short(F.__subclasses__()) [where='in the dict of the new class'] => ['N']
+   N.w: before [where='in the dict of the new class'] => 1
+; behind E.w = 2: N.w [where='in the dict of the new class'] => 2
+where [where='in the dict of the class that is named'] => in the dict of the class that is named
+| len(Key.acts) [where='in the dict of the class that is named'] => 0
+short(N.__bases__) [where='in the dict of the class that is named'] => ['F']
+short(N.__mro__) [where='in the dict of the class that is named'] => ['N', 'E', 'object']
+short(F.__mro__) [where='in the dict of the class that is named'] => ['F', 'Other', 'object']
+short(E.__subclasses__()) [where='in the dict of the class that is named'] => []
+short(F.__subclasses__()) [where='in the dict of the class that is named'] => ['N']
+   N.w: before [where='in the dict of the class that is named'] => 1
+; behind E.w = 2: N.w [where='in the dict of the class that is named'] => 2
+both bases taken away | short(N.__mro__) => ['N', 'E', 'object']
+short(E.__subclasses__()) => []
+| N.w: before => 1
+; behind E.w = 2: N.w => 2
+log => ['assigned']
+| F(): attempt(F) => TypeError: cannot create 'F' instances
+| N(): attempt(N) => N
+| a class made afterwards: attempt(type('N2', (F,), {})) => TypeError: cannot create 'N2' instances

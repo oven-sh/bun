@@ -1,0 +1,9 @@
+status: 0
+oracle: none
+---
+without a __dict__ | ['an old base is put under the class', "KeyError: 'the nested mro() raises'"]
+    ['G', 'First'] ['B', 'G', 'First', 'object'] | {'G': ['B'], 'First': ['B'], 'Second': []}
+    told by the bases that it has: 1 2
+with a __dict__ | ["TypeError: __bases__ assignment: 'G' object layout differs from 'First'"]
+    ['First', 'Second'] ['B', 'First', 'Second', 'object'] | {'G': [], 'First': ['B'], 'Second': ['B']}
+    told by the bases that it has: 2 2

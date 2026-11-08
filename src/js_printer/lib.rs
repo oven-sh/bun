@@ -1381,9 +1381,7 @@ pub struct Options<'a> {
 
     pub mangled_props: Option<&'a crate::MangledProps>,
 
-    /// No transpile reads this output: the module loader or an executable runs it, or `bun pm diff`
-    /// shows it. Any other output is a file that Bun can transpile later, so it gets no call that
-    /// reads as a direct `import.meta.glob()` call unless the parser marked that call.
+    /// Bun never transpiles this output again, so any call may read as a direct `import.meta.glob()` call.
     pub never_transpiled_again: bool,
 }
 
@@ -3267,8 +3265,7 @@ pub(crate) mod __gated_printer {
                     self.print(b"new.target");
                 }
                 ExprData::EImportMeta(_) => {
-                    // Bun replaces a direct `import.meta.glob()` call in every file it transpiles, so
-                    // only a call that the parser marked may read as one.
+                    // Bun replaces what reads as a direct `import.meta.glob()` call, so only a marked call may read as one.
                     let wrap = !self.options.never_transpiled_again
                         && self.call.is_some_and(|call| {
                             call.direct != E::DirectCall::ImportMetaGlob
@@ -3277,8 +3274,7 @@ pub(crate) mod __gated_printer {
                                 && matches!(call.target.data, ExprData::EDot(callee) if callee.target.loc == expr.loc)
                         });
                     if wrap {
-                        // `void 0`, because TypeScript reports a left operand that has no side effect (2695)
-                        // unless it is a `void`, and `bun build --dts` type checks this output.
+                        // Not `0`, which TypeScript reports (TS2695) in the `.aot.ts` file of `bun build --dts`.
                         self.print(b"(void 0,");
                         self.print_space();
                     }

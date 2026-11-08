@@ -1033,8 +1033,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             && !self.is_control_flow_dead
     }
 
-    /// Marks `call`, because the printer writes any other call of this shape so that no later transpile replaces
-    /// it. Returns the arguments if this parse replaces calls.
+    /// Marks `call` as direct for the printer, and returns its arguments if this parse replaces calls.
     /// Must run before `call` is visited, since `bun run` and `bun build` fold and inline different things into literals.
     #[cold]
     pub(crate) fn read_import_meta_glob_call(

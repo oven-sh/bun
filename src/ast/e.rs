@@ -287,8 +287,7 @@ impl Default for Call {
         }
     }
 }
-/// What the parser found a call to be before it visited it. The visit pass can build a call that
-/// looks the same, and the printer writes that one so that it doesn't read as this one.
+/// What the parser found a call to be before its visit pass, which can build calls of the same shape.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum DirectCall {
@@ -296,8 +295,7 @@ pub enum DirectCall {
     No,
     /// `eval(...)`, which can reach the variables around it.
     Eval,
-    /// `import.meta.glob(...)` in a file that doesn't assign `import.meta.glob`. Bun replaces this
-    /// call when it runs or bundles the file.
+    /// `import.meta.glob(...)` in a file that doesn't assign `import.meta.glob`: the call that Bun replaces.
     ImportMetaGlob,
 }
 #[repr(u8)]

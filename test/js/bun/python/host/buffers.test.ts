@@ -868,3 +868,109 @@ def first_of_very_many(*firsts):
     ],
   ],
 );
+
+// A function written in C++ makes a memoryview for itself, and counts on it that nothing else has it. The module gc finds what nothing refers to.
+held(
+  "views that functions make for themselves",
+  {
+    setup: `
+import re
+class Finds:
+    def __init__(self, exporter, value): self.exporter, self.value, self.found = exporter, value, []
+    def __index__(self):
+        self.found += views_of(self.exporter)
+        return self.value
+def of_a_buffer():
+    a = Array("B", bytes(64)); finds = Finds(a, 0xee)
+    struct.pack_into("<B", a, 0, finds)
+    a.append(1)
+    return len(finds.found), a[0], len(a)
+def of_holders():
+    "Who has one refers to the object whose memory it is."
+    b = bytearray(b"aaaa")
+    holders = [(struct.iter_unpack("<B", b), next), (re.compile(b"a").scanner(b), lambda scanner: scanner.search()), (pickle.PickleBuffer(b), bytes)]
+    first = [type(use(holder)) for holder, use in holders]
+    referents = [gc.get_referents(holder) for holder, use in holders]
+    return len(views_of(b)), [sum(type(o) is memoryview for o in found) for found in referents], [sum(o is b for o in found) for found in referents], [type(use(holder)) for holder, use in holders] == first
+def an_export_released_by_hand():
+    b = bytearray(4); m = memoryview(b); iterator = struct.iter_unpack("<B", m)
+    gc.get_referents(m)[0].__del__()
+    return next(iterator)
+def a_slice_that_is_being_made():
+    b = bytearray(64); m = memoryview(b); finds = Finds(b, 1)
+    part = m[finds:]
+    return [view is m for view in finds.found], len(part), len(views_of(b))
+def given_to_eq():
+    "The view that a typed array makes of itself to be compared goes to the __eq__() of the other."
+    kept = []
+    class Other:
+        def __buffer__(self, flags): raise BufferError
+        def __eq__(self, view):
+            kept.append(pickle.PickleBuffer(view))
+            return True
+    return js.Uint8Array(2) == Other(), bytes(kept[0])
+def a_scanner_that_is_being_made():
+    found = []
+    class Subject:
+        def __buffer__(self, flags):
+            found.extend(o for o in gc.get_objects() if type(o).__name__ == "SRE_Scanner")
+            return memoryview(b"aaa")
+    return re.compile(b"a").scanner(Subject()).search().span(), found
+Small = ctypes.c_uint8 * 64
+once = {}
+def hook(event, arguments):
+    action = once.pop(event, None)
+    if action: action()
+def with_a_hook(event, action, call):
+    # A hook cannot be taken away again. This one does what it is told once, and nothing from then on.
+    global hook
+    if hook: sys.addaudithook(hook)
+    hook = None
+    once[event] = action
+    try: return call()
+    except ValueError as error: return str(error)
+    finally: once.clear()
+def a_hook_looks_for_the_view(event, u):
+    found = []
+    a = with_a_hook(event, lambda: found.extend(views_of(u)), lambda: Small.from_buffer(u))
+    return len(found), [view is a._objects["ffffffff"] for view in views_of(u)]
+def lent_and_handed_on():
+    "To a thread that is using it when __release_buffer__() returns."
+    started, go, said, unraisable = threading.Event(), threading.Event(), [], []
+    class Separator(bytes):
+        def __len__(self):
+            started.set(); go.wait(10)
+            return 1
+    class Lends(bytearray):
+        def __release_buffer__(self, view):
+            if said: return
+            said.append(None)
+            self.thread = threading.Thread(target=lambda: said.append(view.hex(Separator(b":"))))
+            self.thread.start(); started.wait(10)
+    b = Lends(b"abc"); before = sys.unraisablehook
+    sys.unraisablehook = lambda report: unraisable.append(f"{report.err_msg}: {type(report.exc_value).__name__}: {report.exc_value}")
+    try: struct.unpack_from("<B", b)
+    finally: sys.unraisablehook = before
+    go.set(); b.thread.join(10)
+    return said[1], unraisable
+`,
+  },
+  [
+    ["of_a_buffer()", "(0, 238, 65)"],
+    // A view that the program has asked for is the program's.
+    ["a = Array('B', bytes(64))\nview = memoryview(a)\n[found is view for found in views_of(a)]", "[True]"],
+    ["of_holders()", "(0, [0, 0, 0], [1, 1, 1], True)"],
+    ["an_export_released_by_hand()", "!ValueError: operation forbidden on released memoryview object"],
+    ["a_slice_that_is_being_made()", "([True], 63, 2)"],
+    ["a_scanner_that_is_being_made()", "((0, 1), [])"],
+    ["given_to_eq()", "(True, b'\\x00\\x00')"],
+    ...["ctypes.cdata/buffer", "ctypes.cdata"].map((event): [string, string] => [
+      `a_hook_looks_for_the_view('${event}', ${event.endsWith("buffer") ? "js.Uint8Array(64)" : "bytearray(64)"})`,
+      "(0, [True])",
+    ]),
+    [
+      "lent_and_handed_on()",
+      "('61:62:63', ['Exception ignored in bf_releasebuffer of Lends: BufferError: memoryview has 1 exported buffer'])",
+    ],
+  ],
+);

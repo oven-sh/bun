@@ -1,9 +1,9 @@
 // RUN: link
-// CHECK: variable {{*}}name="a" module=[[entry]] declared={type=undefined|null|absent|[[arrow]] site=
-// CHECK: variable {{*}}name="b" module=[[entry]] declared={type=undefined|null|absent|[[overloads]] site=
-// CHECK: variable {{*}}name="c" module=[[entry]] declared={type=undefined|null|absent|[[class]] site=
-// CHECK: variable {{*}}name="d" module=[[entry]] declared={type=undefined|null|function|absent site=
-// CHECK: variable {{*}}name="e" module=[[entry]] declared={type=undefined|null|absent|[[withThis]] site=
+// CHECK: variable {{*}}name="a" module=[[entry]] declared={type=undefined|null|absent|[[arrow]]
+// CHECK: variable {{*}}name="b" module=[[entry]] declared={type=undefined|null|absent|[[overloads]]
+// CHECK: variable {{*}}name="c" module=[[entry]] declared={type=undefined|null|absent|[[class]]
+// CHECK: variable {{*}}name="d" module=[[entry]] declared={type=undefined|null|function|absent
+// CHECK: variable {{*}}name="e" module=[[entry]] declared={type=undefined|null|absent|[[withThis]]
 // CHECK: variable {{*}}name="f" module=[[entry]] declared={type=undefined|null|function|absent flags=[IsExpected, OmitsNull]}
 // CHECK: function {{*}}name="C" module=[[entry]] {{*}}functionTypes=[{{*}}[[class]]]
 // CHECK: function [[arrow]] module=[[entry]] role=Signature

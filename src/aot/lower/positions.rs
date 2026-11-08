@@ -1,6 +1,6 @@
 mod bindings;
 mod functions;
-mod sites;
+mod written;
 
 use std::rc::Rc;
 
@@ -10,19 +10,11 @@ use bun_sema::hir::{FnId, TypeNodeId};
 use bun_sema::program::Sym;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-pub(crate) use self::sites::add_type_site;
 use super::{CheckerTypeId, FileLowering, types};
-use crate::ir::generated::{TypeSite, TypeSiteKind};
 use crate::ir::{
-    DeclaredType, Mapped, PositionFlags, Primitives, StringId, Type, TypeId, TypeSiteId, TypeTable,
+    DeclaredType, LayoutKey, Mapped, PositionFlags, Primitives, Type, TypeId, TypeTable,
 };
 use crate::modules::ImportBinding;
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) struct SiteOrigin {
-    pub(crate) kind: TypeSiteKind,
-    pub(crate) position: u32,
-}
 
 pub(crate) struct FunctionPositions {
     pub(crate) this: DeclaredType,
@@ -40,19 +32,27 @@ struct NamedVariable {
 
 #[derive(Default)]
 pub(in crate::lower) struct PositionState {
-    annotations: FxHashMap<(TypeNodeId, TypeSiteKind), DeclaredType>,
-    /// By `SymbolId`.
+    annotations: FxHashMap<TypeNodeId, DeclaredType>,
     named_variables: Vec<Option<NamedVariable>>,
     variables: FxHashMap<Sym, DeclaredType>,
-    /// Each `const zero = 0` whose position is in `variables`.
     constant_zeros: FxHashSet<Sym>,
     functions: FxHashMap<FnId, Rc<FunctionPositions>>,
-    sites: FxHashMap<TypeSite, TypeSiteId>,
-    texts: FxHashMap<CheckerTypeId, StringId>,
-    // All instantiations of a generic class map to one IR type, so the type of a position does not say which one it is.
-    sources: FxHashMap<DeclaredType, CheckerTypeId>,
     listed_nullish: FxHashMap<CheckerTypeId, Primitives>,
+    built: FxHashMap<(u64, u8), DeclaredType>,
+    shapes_being_mapped: u32,
     has_int32_promise: bool,
+}
+
+impl PositionState {
+    #[inline]
+    pub(in crate::lower) fn begin_mapping_shape(&mut self) {
+        self.shapes_being_mapped += 1;
+    }
+
+    #[inline]
+    pub(in crate::lower) fn end_mapping_shape(&mut self) {
+        self.shapes_being_mapped -= 1;
+    }
 }
 
 const MAX_DEPTH_OF_LISTED_MEMBERS: u32 = 8;
@@ -66,15 +66,8 @@ struct PositionSource {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    fn map_source(
-        &mut self,
-        ty: CheckerTypeId,
-        origin: Option<SiteOrigin>,
-        is_annotation: bool,
-    ) -> PositionSource {
-        let position = origin.map_or(0, |origin| origin.position);
-        let mut mapped = self.map_type_at(ty, position);
-        // `x as never` silences the checker and says nothing about `x`.
+    fn map_source(&mut self, ty: CheckerTypeId, is_annotation: bool) -> PositionSource {
+        let mut mapped = self.map_type_at(ty);
         if mapped.ty == TypeTable::NEVER {
             mapped = Mapped::UNKNOWN;
         }
@@ -86,7 +79,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // Nobody asks where the position holds neither.
     fn find_listed_nullish_at(&mut self, ty: CheckerTypeId, mapped: TypeId) -> Primitives {
         let says_which = self.is_checked() && self.queries.files().options.strict_null_checks;
         let held = self.fragment.types.get(mapped).primitives;
@@ -101,7 +93,6 @@ impl FileLowering<'_, '_, '_, '_> {
         listed
     }
 
-    // Both, where the type says nothing against them.
     fn find_listed_nullish(&mut self, ty: CheckerTypeId, depth: u32) -> Primitives {
         if depth > MAX_DEPTH_OF_LISTED_MEMBERS {
             return Primitives::NULLISH;
@@ -115,9 +106,12 @@ impl FileLowering<'_, '_, '_, '_> {
         match shape.kind {
             ShapeKind::Undefined => Primitives::UNDEFINED,
             ShapeKind::Null => Primitives::NULL,
-            ShapeKind::Anything(_) | ShapeKind::TypeVariable { .. } | ShapeKind::Never => {
-                Primitives::NULLISH
-            }
+            ShapeKind::Anything(_)
+            | ShapeKind::TypeVariable { constraint: None }
+            | ShapeKind::Never => Primitives::NULLISH,
+            ShapeKind::TypeVariable {
+                constraint: Some(constraint),
+            } => self.find_listed_nullish(constraint, depth + 1),
             ShapeKind::Union(members) => {
                 let mut listed = Primitives::default();
                 for &member in members {
@@ -130,11 +124,13 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The type of a position that holds a reference lists `undefined` and `null` whatever the program has written, because nothing keeps them out.
     fn find_omitted_nullish(&self, source: PositionSource) -> PositionFlags {
         let held = self.fragment.types.get(source.mapped.ty).primitives;
         let omitted = (held & Primitives::NULLISH).without(source.listed_nullish);
         let mut flags = PositionFlags::default();
+        if omitted == Primitives::default() {
+            return flags;
+        }
         if omitted.contains(Primitives::NULL) {
             flags |= PositionFlags::OMITS_NULL;
         }
@@ -144,25 +140,25 @@ impl FileLowering<'_, '_, '_, '_> {
         flags
     }
 
-    fn choose_source(
-        &mut self,
-        types: PositionTypes,
-        origin: Option<SiteOrigin>,
-    ) -> Option<PositionSource> {
+    fn choose_source(&mut self, types: PositionTypes) -> Option<PositionSource> {
         let checked = types.checked.ok();
-        let checked = checked.map(|ty| self.map_source(ty, origin, false));
+        let checked = checked.map(|ty| self.map_source(ty, false));
         let Some(written) = types.written.written() else {
             return checked;
         };
-        let mut source = self.map_source(written, origin, true);
-        // What an annotation takes from declarations that nobody checked is left out of its written form.
+        let mut source = match checked {
+            Some(checked) if checked.ty == written => PositionSource {
+                is_annotation: true,
+                ..checked
+            },
+            _ => self.map_source(written, true),
+        };
         if source.mapped.ty == TypeTable::ANYTHING {
             return checked.map(|checked| PositionSource {
                 mapped: Mapped::expected(checked.mapped.ty),
                 ..checked
             });
         }
-        // `x?: number` is written `number`.
         if let Some(checked) = checked {
             let types = &mut self.fragment.types;
             let listed = types.get(checked.mapped.ty).primitives & Primitives::NULLISH;
@@ -175,119 +171,145 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(source)
     }
 
-    // Only who writes `int32` asks the build for the proof.
     fn find_promise(&mut self, source: PositionSource) -> PositionFlags {
         let is_tested = self.is_checked()
             && source.mapped.is_checked
             && source.mapped.ty != TypeTable::ANYTHING;
-        if !is_tested || !source.is_annotation || !types::lists_int32(self, source.ty) {
+        if !is_tested
+            || !source.is_annotation
+            || !self.queries.is_int32_written()
+            || !types::lists_int32(self, source.ty)
+        {
             return PositionFlags::default();
         }
-        // Without the proof the build of a program goes on where only the author of another package could give it.
         match self.is_in_dependency() {
             true => PositionFlags::IS_INT32_PROMISE | PositionFlags::IS_DECLARED_BY_DEPENDENCY,
             false => PositionFlags::IS_INT32_PROMISE,
         }
     }
 
-    fn finish_position(
-        &mut self,
-        source: PositionSource,
-        origin: Option<SiteOrigin>,
-        flags: PositionFlags,
-    ) -> DeclaredType {
+    fn finish_position(&mut self, source: PositionSource, flags: PositionFlags) -> DeclaredType {
         let mapped = match self.is_checked() {
             true => source.mapped,
             false => Mapped::expected(source.mapped.ty),
         };
-        let site = match origin {
-            Some(origin) if mapped.is_checked && mapped.ty != TypeTable::ANYTHING => {
-                let text = source.is_annotation.then_some(source.ty);
-                Some(add_type_site(self, origin, text))
-            }
-            Some(_) | None => None,
-        };
         self.types.positions.has_int32_promise |= flags.contains(PositionFlags::IS_INT32_PROMISE);
-        let declared = DeclaredType::new(mapped, site, flags);
-        if declared.site.is_some() {
-            let sources = &mut self.types.positions.sources;
-            sources.entry(declared).or_insert(source.ty);
-        }
-        declared
+        DeclaredType::new(mapped, None, flags)
     }
 
-    fn build_position_of_types(
-        &mut self,
-        types: PositionTypes,
-        origin: Option<SiteOrigin>,
-    ) -> DeclaredType {
-        let Some(source) = self.choose_source(types, origin) else {
+    fn build_position_anew(&mut self, types: PositionTypes) -> DeclaredType {
+        let Some(source) = self.choose_source(types) else {
             return DeclaredType::untyped();
         };
         let flags = self.find_promise(source) | self.find_omitted_nullish(source);
-        self.finish_position(source, origin, flags)
+        self.finish_position(source, flags)
     }
 
-    pub(in crate::lower) fn find_position_source(
-        &self,
-        position: DeclaredType,
-    ) -> Option<CheckerTypeId> {
-        self.types.positions.sources.get(&position).copied()
+    fn build_position_of_types(&mut self, types: PositionTypes) -> DeclaredType {
+        if self.types.positions.shapes_being_mapped != 0 {
+            return self.build_position_anew(types);
+        }
+        let (written, is_written) = match types.written {
+            WrittenType::Written(ty) => (ty.0, 1),
+            WrittenType::Unwritten | WrittenType::GaveUp(_) => (0, 0),
+        };
+        let (checked, is_checked) = match types.checked {
+            Ok(ty) => (ty.0, 2),
+            Err(_) => (0, 0),
+        };
+        let key = (
+            u64::from(written) << 32 | u64::from(checked),
+            is_written | is_checked,
+        );
+        if let Some(&position) = self.types.positions.built.get(&key) {
+            return position;
+        }
+        let unstable_answers_before = self.queries.count_unstable_answers();
+        let position = self.build_position_anew(types);
+        if self.queries.count_unstable_answers() == unstable_answers_before {
+            self.types.positions.built.insert(key, position);
+        }
+        position
     }
 
-    pub(crate) fn create_position(
-        &mut self,
-        types: PositionTypes,
-        origin: SiteOrigin,
-    ) -> DeclaredType {
-        self.build_position_of_types(types, Some(origin))
+    pub(crate) fn create_position(&mut self, types: PositionTypes) -> DeclaredType {
+        let position = self.build_position_of_types(types);
+        if !self.fragment.types.get(position.ty).layouts.is_empty() {
+            self.note_layouts_of_objects(position.ty);
+        }
+        position
+    }
+
+    pub(crate) fn create_written_position(&mut self, types: PositionTypes) -> DeclaredType {
+        match types.written.written() {
+            Some(_) => self.create_position(types),
+            None => DeclaredType::untyped(),
+        }
+    }
+
+    pub(crate) fn create_expected_position(&mut self, types: PositionTypes) -> DeclaredType {
+        let Some(source) = self.choose_source(types) else {
+            return DeclaredType::untyped();
+        };
+        let fragment = &self.fragment;
+        let layouts = &fragment.types.get(source.mapped.ty).layouts;
+        let names_classes_alone = layouts.iter().all(|&layout| {
+            matches!(
+                fragment.layout_key(layout),
+                LayoutKey::Class(_) | LayoutKey::ConstructorFunction(_) | LayoutKey::Library(_)
+            )
+        });
+        if !names_classes_alone {
+            return DeclaredType::untyped();
+        }
+        let source = PositionSource {
+            mapped: Mapped::expected(source.mapped.ty),
+            ..source
+        };
+        let flags = self.find_omitted_nullish(source);
+        self.finish_position(source, flags)
     }
 
     pub(crate) fn create_member_position(&mut self, types: PositionTypes) -> DeclaredType {
-        self.build_position_of_types(types, None)
+        self.build_position_of_types(types)
     }
 
-    // `a?: number` is written `number`, and holds `undefined` where it is left out.
     pub(crate) fn add_undefined(&mut self, position: DeclaredType) -> DeclaredType {
-        let ty = self.fragment.types.union(position.ty, TypeTable::UNDEFINED);
+        let types = &mut self.fragment.types;
+        let ty = match types
+            .get(position.ty)
+            .primitives
+            .contains(Primitives::UNDEFINED)
+        {
+            true => position.ty,
+            false => types.union(position.ty, TypeTable::UNDEFINED),
+        };
         let flags = position.flags.without(PositionFlags::OMITS_UNDEFINED);
-        let widened = DeclaredType {
+        DeclaredType {
             ty,
             flags,
             ..position
-        };
-        if let Some(source) = self.find_position_source(position) {
-            let sources = &mut self.types.positions.sources;
-            sources.entry(widened).or_insert(source);
         }
-        widened
     }
 
-    pub(crate) fn annotation_position(
-        &mut self,
-        annotation: TypeNodeId,
-        kind: TypeSiteKind,
-    ) -> DeclaredType {
+    pub(crate) fn annotation_position(&mut self, annotation: TypeNodeId) -> DeclaredType {
         if annotation.is_none() {
             return DeclaredType::untyped();
         }
-        if let Some(&position) = self.types.positions.annotations.get(&(annotation, kind)) {
+        if let Some(&position) = self.types.positions.annotations.get(&annotation) {
             return position;
         }
-        let origin = SiteOrigin {
-            kind,
-            position: self.hir[annotation].pos,
-        };
         let position = match self.queries.written_type(annotation) {
             WrittenType::Written(ty) => {
-                let source = self.map_source(ty, Some(origin), true);
+                let source = self.map_source(ty, true);
                 let flags = self.find_promise(source) | self.find_omitted_nullish(source);
-                self.finish_position(source, Some(origin), flags)
+                self.finish_position(source, flags)
             }
             WrittenType::Unwritten | WrittenType::GaveUp(_) => DeclaredType::untyped(),
         };
+        self.note_layouts_of_objects(position.ty);
         let memo = &mut self.types.positions.annotations;
-        memo.insert((annotation, kind), position);
+        memo.insert(annotation, position);
         position
     }
 
@@ -305,10 +327,11 @@ impl FileLowering<'_, '_, '_, '_> {
             _ => self.queries.canonical_symbol(self.file, symbol),
         };
         let position = self.variable_position(variable);
+        let is_replaceable = self.inputs.modules.is_replaceable(variable);
         let positions = &mut self.types.positions;
         let named = NamedVariable {
             position,
-            is_constant_zero: positions.constant_zeros.contains(&variable),
+            is_constant_zero: positions.constant_zeros.contains(&variable) && !is_replaceable,
         };
         let memo = &mut positions.named_variables;
         if memo.is_empty() {
@@ -324,7 +347,7 @@ impl FileLowering<'_, '_, '_, '_> {
         self.named_variable(symbol).position
     }
 
-    /// Whether the name stands for a `const zero = 0`, of this file or imported.
+    #[inline]
     pub(in crate::lower) fn is_constant_zero(&mut self, symbol: SymbolId) -> bool {
         self.named_variable(symbol).is_constant_zero
     }

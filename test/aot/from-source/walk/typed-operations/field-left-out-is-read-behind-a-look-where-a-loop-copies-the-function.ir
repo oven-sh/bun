@@ -1,0 +1,25 @@
+# -- source: field-left-out-is-read-behind-a-look-where-a-loop-copies-the-function.ts
+# declare function print(...values: unknown[]): void;
+# type Payload = { aborted?: boolean; count: number };
+# function calledInLoop(x: Payload): boolean { return x.aborted === true; }
+# function calledOutsideOfLoops(x: Payload): boolean { return x.aborted === true; }
+# const payloads: Payload[] = [];
+# for (let i = 0; i < 4; i++) payloads.push(i === 3 ? { aborted: true, count: i } : { count: i });
+# (globalThis as any).payloads = payloads;
+# let found = 0;
+# for (let i = 0; i < 4; i++) if (calledInLoop(payloads[i])) found++;
+# print(found, calledOutsideOfLoops(payloads[3]), calledOutsideOfLoops(payloads[0]));
+# -- end of source
+# The records have left, and three of the four leave the field out. The object itself is asked what has become of it, and behind its answer an empty slot is undefined: in a loop, and wherever the file is checked, so that somebody has written what the receiver is.
+# The two functions have one text, and their own bodies are one code, whoever calls them: a call in a loop enters the first alone. The loop of the module's body copies the first: the copy reads by the form as well.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlotOrUndefined {{*}}key="aborted"
+# RUN(ONCE): walk f2 mechanisms=all
+# ONCE-LABEL: code f2:Body
+# ONCE: = GetSlotOrUndefined {{*}}key="aborted"
+# RUN(COPY): walk f0 mechanisms=all
+# COPY-LABEL: code f0:Body
+# COPY: = GetSlotOrUndefined {{*}}key="aborted"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1 true false

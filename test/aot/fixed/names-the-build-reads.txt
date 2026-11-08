@@ -1,0 +1,136 @@
+#### names-out-of-patterns/main.cjs
+(async () => {
+  console.log("called-where-it-is-written:", await require("./called-where-it-is-written.cjs"));
+  console.log("a-pattern-in-a-pattern:", await require("./a-pattern-in-a-pattern.cjs"));
+  console.log("under-another-name:", await require("./under-another-name.cjs"));
+  console.log("the-second-parameter:", await require("./the-second-parameter.cjs"));
+  console.log("a-default-of-the-parameter:", await require("./a-default-of-the-parameter.cjs"));
+  console.log("the-function-hands-the-name-back:", await require("./the-function-hands-the-name-back.cjs"));
+  console.log("in-a-field:", await require("./in-a-field.cjs"));
+  console.log("in-a-method:", await require("./in-a-method.cjs"));
+  console.log("import:", await require("./import.cjs"));
+  console.log("the-name-is-stored-into:", await require("./the-name-is-stored-into.cjs"));
+  console.log("the-object-is-changed:", await require("./the-object-is-changed.cjs"));
+  console.log("a-getter:", await require("./a-getter.cjs"));
+  console.log("a-function-with-a-name:", await require("./a-function-with-a-name.cjs"));
+  console.log("two-calls:", await require("./two-calls.cjs"));
+})();
+// It is in the executable by a constant name.
+if (process.argv.length > 9) require("./lib/other.js");
+#### names-out-of-patterns/called-where-it-is-written.cjs
+module.exports = (async () => {
+const seen = (({ name }) => require(name))({ name: "./lib/called-where-it-is-written.js" }).name;
+return seen;
+})().catch(error => error.code ?? error.name);
+#### names-out-of-patterns/a-pattern-in-a-pattern.cjs
+module.exports = (async () => {
+const seen = (({ options: { name } }) => require(name))({ options: { name: "./lib/a-pattern-in-a-pattern.js" } }).name;
+return seen;
+})().catch(error => error.code ?? error.name);
+#### names-out-of-patterns/under-another-name.cjs
+module.exports = (async () => {
+const seen = (({ name: file }) => require(file))({ name: "./lib/under-another-name.js" }).name;
+return seen;
+})().catch(error => error.code ?? error.name);
+#### names-out-of-patterns/the-second-parameter.cjs
+module.exports = (async () => {
+const seen = ((first, { name }) => require(name))(1, { name: "./lib/the-second-parameter.js" }).name;
+return seen;
+})().catch(error => error.code ?? error.name);
+#### names-out-of-patterns/a-default-of-the-parameter.cjs
+module.exports = (async () => {
+const seen = (({ name } = { name: "./lib/a-default-of-the-parameter.js" }) => require(name))().name;
+return seen;
+})().catch(error => error.code ?? error.name);
+#### names-out-of-patterns/the-function-hands-the-name-back.cjs
+module.exports = (async () => {
+const seen = require((({ name }) => name)({ name: "./lib/the-function-hands-the-name-back.js" })).name;
+return seen;
+})().catch(error => error.code ?? error.name);
+#### names-out-of-patterns/in-a-field.cjs
+module.exports = (async () => {
+const seen = new (class { field = (({ name }) => require(name))({ name: "./lib/in-a-field.js" }).name; })().field;
+return seen;
+})().catch(error => error.code ?? error.name);
+#### names-out-of-patterns/in-a-method.cjs
+module.exports = (async () => {
+const seen = new (class { method() { return (({ name }) => require(name))({ name: "./lib/in-a-method.js" }).name; } })().method();
+return seen;
+})().catch(error => error.code ?? error.name);
+#### names-out-of-patterns/import.cjs
+module.exports = (async () => {
+const seen = (await (({ name }) => import(name))({ name: "./lib/import.js" })).default.name;
+return seen;
+})().catch(error => error.code ?? error.name);
+#### names-out-of-patterns/the-name-is-stored-into.cjs
+module.exports = (async () => {
+const seen = (({ name }) => { name = "./lib/other.js"; return require(name); })({ name: "./lib/the-name-is-stored-into.js" }).name;
+return seen;
+})().catch(error => error.code ?? error.name);
+#### names-out-of-patterns/the-object-is-changed.cjs
+module.exports = (async () => {
+const seen = (() => { const options = { name: "./lib/the-object-is-changed.js" }; options.name = "./lib/other.js"; return (({ name }) => require(name))(options).name; })();
+return seen;
+})().catch(error => error.code ?? error.name);
+#### names-out-of-patterns/a-getter.cjs
+module.exports = (async () => {
+const seen = (({ name }) => require(name))({ get name() { return "./lib/other.js"; } }).name;
+return seen;
+})().catch(error => error.code ?? error.name);
+#### names-out-of-patterns/a-function-with-a-name.cjs
+module.exports = (async () => {
+function load({ name }) { return require(name); }
+const seen = load({ name: "./lib/a-function-with-a-name.js" }).name;
+return seen;
+})().catch(error => error.code ?? error.name);
+#### names-out-of-patterns/two-calls.cjs
+module.exports = (async () => {
+function load({ name }) { return require(name); }
+const seen = load({ name: "./lib/two-calls.js" }).name + " " + load({ name: "./lib/other.js" }).name;
+return seen;
+})().catch(error => error.code ?? error.name);
+#### names-out-of-patterns/lib/called-where-it-is-written.js
+exports.name = "called-where-it-is-written";
+#### names-out-of-patterns/lib/a-pattern-in-a-pattern.js
+exports.name = "a-pattern-in-a-pattern";
+#### names-out-of-patterns/lib/under-another-name.js
+exports.name = "under-another-name";
+#### names-out-of-patterns/lib/the-second-parameter.js
+exports.name = "the-second-parameter";
+#### names-out-of-patterns/lib/a-default-of-the-parameter.js
+exports.name = "a-default-of-the-parameter";
+#### names-out-of-patterns/lib/the-function-hands-the-name-back.js
+exports.name = "the-function-hands-the-name-back";
+#### names-out-of-patterns/lib/in-a-field.js
+exports.name = "in-a-field";
+#### names-out-of-patterns/lib/in-a-method.js
+exports.name = "in-a-method";
+#### names-out-of-patterns/lib/import.js
+exports.name = "import";
+#### names-out-of-patterns/lib/the-name-is-stored-into.js
+exports.name = "the-name-is-stored-into";
+#### names-out-of-patterns/lib/the-object-is-changed.js
+exports.name = "the-object-is-changed";
+#### names-out-of-patterns/lib/a-getter.js
+exports.name = "a-getter";
+#### names-out-of-patterns/lib/a-function-with-a-name.js
+exports.name = "a-function-with-a-name";
+#### names-out-of-patterns/lib/two-calls.js
+exports.name = "two-calls";
+#### names-out-of-patterns/lib/other.js
+exports.name = "other";
+#### names-out-of-patterns prints
+called-where-it-is-written: called-where-it-is-written
+a-pattern-in-a-pattern: a-pattern-in-a-pattern
+under-another-name: under-another-name
+the-second-parameter: the-second-parameter
+a-default-of-the-parameter: a-default-of-the-parameter
+the-function-hands-the-name-back: the-function-hands-the-name-back
+in-a-field: in-a-field
+in-a-method: in-a-method
+import: import
+the-name-is-stored-into: other
+the-object-is-changed: other
+a-getter: other
+a-function-with-a-name: a-function-with-a-name
+two-calls: two-calls other

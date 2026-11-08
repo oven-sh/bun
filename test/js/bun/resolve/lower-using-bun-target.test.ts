@@ -397,7 +397,8 @@ describe("top-level using in a bundle for bun", () => {
     onAfterBundle: printsUnbundled("/entry.js", "dep-end\nres-disposed\nentry res res"),
   });
   // `await using` makes the wrapper an async function. A function reads "a",
-  // and the module exports "b".
+  // and the module exports "b". The disposer of "b" ends in a later task, so
+  // the order holds only if the module waits for it.
   itBundled("using/InEsmWrapperAwaitUsing", {
     files: {
       "/entry.js": `
@@ -406,7 +407,13 @@ describe("top-level using in a bundle for bun", () => {
       `,
       "/dep.js": `
         await using a = { name: "a", async [Symbol.asyncDispose]() { console.log("a-disposed"); } };
-        await using b = { name: "b", async [Symbol.asyncDispose]() { console.log("b-disposed"); } };
+        await using b = {
+          name: "b",
+          async [Symbol.asyncDispose]() {
+            await new Promise(resolve => setImmediate(resolve));
+            console.log("b-disposed");
+          },
+        };
         export function fn() { return a.name; }
         export { b };
         console.log("dep-end");

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 
 // A child gets the argv, the command line, the stdio and the environment that the caller passed, whatever a script stored on
@@ -307,6 +307,16 @@ describe("what a script stored on Array.prototype", () => {
     child.stdout!.resume();
     child.stderr!.resume();
     await once(child, "close");
+  });
+
+  // execFile() keeps a copy of the list for the message of a failure. That copy is made by index now, and in execFile() itself.
+  it("execFile() names the arguments as they were when it was called", async () => {
+    const args = ["-e", "process.exit(3)", "original"];
+    const { promise, resolve } = Promise.withResolvers<(Error & { code?: unknown; cmd?: string }) | null>();
+    execFile(bunExe(), args, { env: bunEnv }, error => resolve(error));
+    args[2] = "changed";
+    const error = await promise;
+    expect({ code: error?.code, cmd: error?.cmd }).toEqual({ code: 3, cmd: `${bunExe()} -e process.exit(3) original` });
   });
 
   it.concurrent(

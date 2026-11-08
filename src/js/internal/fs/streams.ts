@@ -76,7 +76,8 @@ declare global {
       flush?: boolean;
       open(): void;
       close(callback?: ErrorCallback): void;
-      [kFs]: StreamFs;
+      /** node:fs, or the `fs` option. Undefined on a WriteStream that writes through a FileSink. */
+      [kFs]: StreamFs | undefined;
       [kIsPerformingIO]: boolean;
       /** true: the path must be opened; a sink: a FileSink. */
       [kWriteStreamFastPath]?: undefined | true | FileSink;
@@ -415,7 +416,7 @@ function streamConstruct(this: FileStream, callback: ErrorCallback) {
       return;
     }
 
-    this[kFs].open!(this.path, this.flags, this.mode, (err, fd) => {
+    this[kFs]!.open!(this.path, this.flags, this.mode, (err, fd) => {
       if (err) {
         callback(err);
       } else {
@@ -443,7 +444,7 @@ readStreamPrototype._read = function (this: $Node.ReadStream, n: number) {
   const buf = Buffer.allocUnsafeSlow(n);
 
   this[kIsPerformingIO] = true;
-  this[kFs].read!(this.fd, buf, 0, n, this.pos, (er, bytesRead, buf) => {
+  this[kFs]!.read!(this.fd, buf, 0, n, this.pos, (er, bytesRead, buf) => {
     this[kIsPerformingIO] = false;
 
     // Tell ._destroy() that it's safe to close the fd now.
@@ -517,7 +518,7 @@ function close(stream: FileStream, err: Error | null | undefined, cb: ErrorCallb
   if (stream.fd == null) {
     cb(err);
   } else if (stream.flush) {
-    stream[kFs].fsync!(stream.fd, flushErr => {
+    stream[kFs]!.fsync!(stream.fd, flushErr => {
       closeAfterSync(stream, err || flushErr, cb);
     });
   } else {
@@ -526,7 +527,7 @@ function close(stream: FileStream, err: Error | null | undefined, cb: ErrorCallb
 }
 
 function closeAfterSync(stream: FileStream, err: Error | null | undefined, cb: ErrorCallback) {
-  stream[kFs].close!(stream.fd!, er => {
+  stream[kFs]!.close!(stream.fd!, er => {
     cb(er || err);
   });
   stream.fd = null;
@@ -549,9 +550,13 @@ function WriteStream(
   options.decodeStrings = true;
 
   let { fd, autoClose, fs: customFs, start, flush, windowsHandle } = options;
+  // A stream that writes through a FileSink never reads node:fs, and process.stdout does not load it.
+  const fsOf = () => customFs || (fastPath ? undefined : require("node:fs"));
   if (windowsHandle != null) {
     validateWindowsHandle(windowsHandle, fd, customFs);
+    this[kFs] = fsOf();
   } else if (fd == null) {
+    this[kFs] = fsOf();
     this.fd = null;
     // Internal $fastPath callers (writableFromFileSink) discard .path; do not
     // resolve it - path.resolve("") needs process.cwd(), which throws when
@@ -574,11 +579,12 @@ function WriteStream(
       validateInt32(fd, "fd", 0, 2147483647);
     }
     this.fd = fd as number;
+    this[kFs] = fsOf();
   } else if (typeof fd === "object" && FileHandle !== undefined && fd instanceof FileHandle) {
     if (options.fs) {
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
-    customFs = fileHandleStreamFs(fd);
+    this[kFs] = customFs = fileHandleStreamFs(fd);
     fd[kRef]();
     fd.on("close", this.close.bind(this));
     this.fd = fd = fd[kFd];
@@ -631,15 +637,10 @@ function WriteStream(
       fastWriter = Bun.file(fd as number).writer() as FileSink;
     } catch {
       fastPath = false;
+      this[kFs] = fsOf();
     }
   }
-
-  // A stream that writes through a FileSink never calls node:fs, and process.stdout does not load it.
-  if (customFs) this[kFs] = customFs;
-  else if (!fastPath) {
-    this[kFs] = require("node:fs");
-    $assert(this[kFs].write, "assuming user does not delete fs.write!");
-  }
+  $assert(fastPath || this[kFs]!.write, "assuming user does not delete fs.write!");
 
   // Enable fast path
   if (fastPath) {
@@ -690,7 +691,7 @@ function writeAll(
   cb: ErrorCallback,
   retries = 0,
 ) {
-  (IS_COMPILED_AHEAD_OF_TIME ? fileSystemOrThrow(this[kFs]) : this[kFs]).write!(
+  (IS_COMPILED_AHEAD_OF_TIME ? fileSystemOrThrow(this[kFs]) : this[kFs]!).write!(
     this.fd,
     data,
     0,
@@ -734,7 +735,7 @@ function writevAll(
   cb: ErrorCallback,
   retries = 0,
 ) {
-  this[kFs].writev!(this.fd, chunks, this.pos, (er, bytesWritten, buffers) => {
+  this[kFs]!.writev!(this.fd, chunks, this.pos, (er, bytesWritten, buffers) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {
       er = null;

@@ -1551,6 +1551,14 @@ test.concurrent('a git dependency keeps its "main" and the sources of its prepar
       files: { "package.json": pkg({ main: "lib/main.js", files: ["src"] }), "lib/main.js": "m\n", "src/a.js": "a\n" },
     },
     {
+      branch: "main-extensionless",
+      files: { "package.json": pkg({ main: "lib/entry", files: ["src"] }), "lib/entry.js": "m\n", "src/a.js": "a\n" },
+    },
+    {
+      branch: "main-directory",
+      files: { "package.json": pkg({ main: "lib", files: ["src"] }), "lib/index.js": "m\n", "src/a.js": "a\n" },
+    },
+    {
       branch: "main-npmignored",
       files: { "package.json": pkg({ main: "./lib/main.js" }), "lib/main.js": "m\n", ".npmignore": "lib\n" },
     },
@@ -1566,18 +1574,18 @@ test.concurrent('a git dependency keeps its "main" and the sources of its prepar
   const url = `git+${pathToFileURL(bare)}`;
 
   const results: Record<string, string[]> = {};
-  for (const branch of ["main-not-in-files", "main-npmignored", "prepare"]) {
+  for (const branch of ["main-not-in-files", "main-extensionless", "main-directory", "main-npmignored", "prepare"]) {
     const project = writeProject(join(root, branch), { "demo-lib": `${url}#${branch}` });
     expect((await runInstall(project, join(root, `cache-${branch}`), {})).exitCode).toBe(0);
-    results[branch] = treeOf(join(project, "node_modules", "demo-lib")).filter(
-      path => path !== ".bun-tag" && path !== "index.js",
-    );
+    results[branch] = treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag");
   }
 
   expect(results).toEqual({
     "main-not-in-files": ["lib", "lib/main.js", "package.json", "src", "src/a.js"],
-    "main-npmignored": ["lib", "lib/main.js", "package.json"],
-    prepare: ["dist", "dist/a.js", "package.json", "src", "src/a.js"],
+    "main-extensionless": ["lib", "lib/entry.js", "package.json", "src", "src/a.js"],
+    "main-directory": ["lib", "lib/index.js", "package.json", "src", "src/a.js"],
+    "main-npmignored": ["index.js", "lib", "lib/main.js", "package.json"],
+    prepare: ["dist", "dist/a.js", "index.js", "package.json", "src", "src/a.js"],
   });
 });
 

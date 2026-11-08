@@ -1130,17 +1130,35 @@ pub fn prune_to_published_files(root_dir: &Dir) -> bun_sys::Maybe<()> {
         while let Some(rest) = main.strip_prefix(b"./") {
             main = rest;
         }
+        let main = strings::without_trailing_slash(main);
         if !main.is_empty()
             && !main.starts_with(b"/")
             && !strings::contains_char(main, b'\\')
             && !strings::split(main, b"/").any(|part| part == b".." || part.is_empty())
         {
-            for (i, &c) in main.iter().enumerate() {
-                if c == b'/' {
-                    keep_dirs.insert(main[..i].to_vec());
+            const SUFFIXES: [&[u8]; 7] = [
+                b"",
+                b".js",
+                b".json",
+                b".node",
+                b"/index.js",
+                b"/index.json",
+                b"/index.node",
+            ];
+            let resolved = SUFFIXES.iter().find_map(|suffix| {
+                let candidate = [main, suffix].concat();
+                (bin_kind_without_following_symlinks(root_path, &candidate)
+                    == bun_sys::FileKind::File)
+                    .then_some(candidate)
+            });
+            if let Some(entry) = resolved {
+                for (i, &c) in entry.iter().enumerate() {
+                    if c == b'/' {
+                        keep_dirs.insert(entry[..i].to_vec());
+                    }
                 }
+                keep_files.insert(entry);
             }
-            keep_files.insert(main.to_vec());
         }
     }
     for path in queue.into_paths() {

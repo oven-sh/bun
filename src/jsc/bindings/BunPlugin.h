@@ -262,6 +262,7 @@ class GlobalObject;
 } // namespace Zig
 
 namespace JSC {
+class JSMap;
 class JSModuleNamespaceObject;
 class JSSourceCode;
 }
@@ -299,9 +300,12 @@ JSC::JSObject* objectHoldingExportOfCompiledModuleMock(JSC::JSGlobalObject*, JSC
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);
-// The loader is about to run the body of an ES module. Patches the modules that mocks waited for and that have loaded, except ES modules.
-void patchModulesThatHaveLoaded(Zig::GlobalObject*);
+// The loader is about to run the body of an ES module. Patches what that module imports, if a mock waited for it and it has loaded, except ES modules.
+void patchImportsThatHaveLoaded(Zig::GlobalObject*, JSC::JSModuleLoader*, JSC::JSValue moduleRecord);
 // The loader has run the body of an ES module, to the end or to its first await. Patches the module if a mock waited for that.
 void patchModuleWhoseBodyHasRun(Zig::GlobalObject*, JSC::JSModuleLoader*, JSC::JSValue moduleRecord);
+// The loader has made the record of the module under `key` of the module object that `requireMap` has for it. A mock that waits for
+// the module has no original in that record if the module object was the mock's.
+void didMakeRecordOfModuleObject(Zig::GlobalObject*, JSC::JSMap* requireMap, const JSC::Identifier& key);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

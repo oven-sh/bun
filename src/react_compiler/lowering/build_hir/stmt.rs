@@ -143,6 +143,7 @@ fn lower_block_statement_inner(
         if refs.seen.is_empty() {
             continue;
         }
+        let first_here = hoist.len();
         let mut k = 0;
         while k < decls.len() {
             let (decl_i, target, loc, kind) = decls[k];
@@ -165,6 +166,38 @@ fn lower_block_statement_inner(
             } else {
                 k += 1;
             }
+        }
+        // facebook/react#36541, not merged: a hoisted function can run the functions that it names.
+        let mut next = first_here;
+        while next < hoist.len() {
+            let (_, caller, _, kind) = hoist[next];
+            next += 1;
+            let Some(&caller_i) = refs.last_decl.get(&caller) else {
+                continue;
+            };
+            if kind != InstructionKind::HoistedFunction {
+                continue;
+            }
+            let mut named: SmallVec<[Ref; 8]> = SmallVec::new();
+            refs_in_stmt(builder, &body[caller_i], false, &mut |r, _| {
+                named.push(builder.resolve_ref(r));
+            });
+            let mut k = 0;
+            while k < decls.len() {
+                let (decl_i, target, loc, kind) = decls[k];
+                if kind == InstructionKind::HoistedFunction
+                    && decl_i >= i
+                    && named.contains(&target)
+                {
+                    hoist.push((i, target, loc, kind));
+                    decls.swap_remove(k);
+                } else {
+                    k += 1;
+                }
+            }
+        }
+        if decls.is_empty() {
+            break 'outer;
         }
     }
 

@@ -44,7 +44,12 @@ describe("startup does not list directories", () => {
       "a/b/tsconfig.json": "{}",
     });
     const { stdout, stderr, exitCode } = await run([bunExe(), "-e", countListings], join(dir, "a/b/c"));
-    expect({ ...splitListings(stdout), stderr, exitCode }).toEqual({ output: "", listings: 0, stderr: "", exitCode: 0 });
+    expect({ ...splitListings(stdout), stderr, exitCode }).toEqual({
+      output: "",
+      listings: 0,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test.concurrent("running a script reads no directory listing", async () => {
@@ -117,22 +122,26 @@ describe("startup does not list directories", () => {
   });
 
   // Compiling copies the whole executable, which a debug build makes slow.
-  test.concurrent("a compiled executable reads no directory listing", async () => {
-    using dir = tempDir("no-listing-compiled", {
-      "app.js": `console.log("compiled");\n${countListings}`,
-      "a/b/.keep": "",
-    });
-    const outfile = join(dir, "app" + (isWindows ? ".exe" : ""));
-    const build = await run([bunExe(), "build", "--compile", "app.js", "--outfile", outfile], String(dir));
-    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    const { stdout, stderr, exitCode } = await run([outfile], join(dir, "a/b"));
-    expect({ ...splitListings(stdout), stderr, exitCode }).toEqual({
-      output: "compiled\n",
-      listings: 0,
-      stderr: "",
-      exitCode: 0,
-    });
-  }, 120_000);
+  test.concurrent(
+    "a compiled executable reads no directory listing",
+    async () => {
+      using dir = tempDir("no-listing-compiled", {
+        "app.js": `console.log("compiled");\n${countListings}`,
+        "a/b/.keep": "",
+      });
+      const outfile = join(dir, "app" + (isWindows ? ".exe" : ""));
+      const build = await run([bunExe(), "build", "--compile", "app.js", "--outfile", outfile], String(dir));
+      expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { stdout, stderr, exitCode } = await run([outfile], join(dir, "a/b"));
+      expect({ ...splitListings(stdout), stderr, exitCode }).toEqual({
+        output: "compiled\n",
+        listings: 0,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
 });
 
 describe("DirInfo markers without a listing", () => {

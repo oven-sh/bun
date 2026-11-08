@@ -1023,22 +1023,6 @@ describe("expect.addEqualityTesters", () => {
     expect(seen.map(([, a, b]) => [a, b]).slice(1)).toEqual([[undefined, 2]]);
   });
 
-  test("a tester has no say about a key that only one of two arrays has in toMatchObject", () => {
-    const nothing = 192837465;
-    const isNothing = (value: unknown) => value === undefined || value === nothing;
-    expect.addEqualityTesters([
-      (a, b) => ((a === nothing || b === nothing) && isNothing(a) && isNothing(b) ? true : undefined),
-    ]);
-    // Where both arrays have the key, the tester takes the marker for undefined.
-    expect([nothing, 1]).toMatchObject([undefined, 1]);
-    expect([undefined, 1]).toMatchObject([nothing, 1]);
-    // A hole is no key. The marker is not undefined, so the arrays do not match, as in Jest and Vitest.
-    expect([nothing, 1]).not.toMatchObject([, 1]);
-    expect([, 1]).not.toMatchObject([nothing, 1]);
-    expect([nothing, , 1]).not.toMatchObject([, nothing, 1]);
-    expect(Object.assign([1], { x: nothing })).not.toMatchObject(Object.assign([1], { y: nothing }));
-  });
-
   test("asymmetric matchers come first", () => {
     seen.length = 0;
     expect(litre()).toEqual(expect.any(Volume));

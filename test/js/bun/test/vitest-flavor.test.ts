@@ -5363,14 +5363,6 @@ test.concurrent("arrays of different lengths can be equal in Jest and never in V
       "a hole": () => expect([, "a"]).toEqual([undefined, "a"]),
       "an undefined property": () => expect({ a: 1 }).toEqual({ a: 1, b: undefined }),
       "Bun.deepEquals": () => expect(Bun.deepEquals(["a"], ["a", undefined])).toBe(true),
-      // toMatchObject() compares the lengths in a test of either, and takes a hole for undefined in both.
-      "toMatchObject": () => expect(["a"]).toMatchObject(["a", undefined]),
-      "toMatchObject, a hole": () => expect([, "a"]).toMatchObject([undefined, "a"]),
-      // Vitest does not ask a matcher about a hole. Bun asks it in a test of either, as Jest does.
-      "a matcher opposite a hole": () => {
-        expect([, "a"]).toEqual([expect.not.stringContaining("b"), "a"]);
-        expect([, "a"]).toMatchObject([expect.not.stringContaining("b"), "a"]);
-      },
     };
     test("checks", () => {
       for (const [name, check] of Object.entries(checks)) {
@@ -5389,13 +5381,7 @@ test.concurrent("arrays of different lengths can be equal in Jest and never in V
     runTests({ "a.test.js": checks, "bunfig.toml": `[test]\nglobals = "vitest"\n` }),
     runTests({ "a.test.js": ofVitest, "b.test.js": ofBun }),
   ]);
-  const inBoth = [
-    "a hole",
-    "an undefined property",
-    "Bun.deepEquals",
-    "toMatchObject, a hole",
-    "a matcher opposite a hole",
-  ];
+  const inBoth = ["a hole", "an undefined property", "Bun.deepEquals"];
   const inJest = [
     "toEqual",
     "nested",

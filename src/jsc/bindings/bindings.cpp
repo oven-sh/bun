@@ -784,6 +784,9 @@ static NEVER_INLINE bool reconcileArrayKeys(JSGlobalObject* globalObject, ThrowS
             into.add(from[i]);
             if (into.size() == held)
                 continue;
+            // A private name is not reconciled: both arrays need it. Code compiled ahead of time lists no private field, and counts them to the same end.
+            if (from[i].isPrivateName())
+                return false;
             JSValue value = holder->get(globalObject, from[i]);
             RETURN_IF_EXCEPTION(scope, false);
             bool canBeAbsent = value.isUndefined() || (withMatchers && (Expect_isAsymmetricMatcher(JSValue::encode(value)) || asymmetricMatchMethod(globalObject, value)));

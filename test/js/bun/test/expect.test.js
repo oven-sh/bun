@@ -4012,6 +4012,13 @@ describe("expect()", () => {
         );
         expect(pairs).toBe(isBun ? 112 : 88);
         expect(differ).toEqual([]);
+        // The custom matcher is asked and passes, so its pairs above are not two errors that agree. Vitest does not ask it.
+        if (!isVitest) {
+          // @ts-expect-error
+          expect([, 1]).toEqual([expect.toBeNothing(), 1]);
+          // @ts-expect-error
+          expect([, 1]).toMatchObject([expect.toBeNothing(), 1]);
+        }
       });
 
       test("a getter of a key that only one array has is called", () => {
@@ -4119,6 +4126,93 @@ describe("expect()", () => {
           expect(message).toBe(
             'expect(received).toMatchObject(expected)\n\n  [\n    StringNotContaining "a",\n-   2,\n+   1,\n  ]\n\n- Expected  - 1\n+ Received  + 1\n',
           );
+        });
+
+        // Jest does not compare the lengths of two arrays here, and Vitest asks no matcher about a hole. Bun gives one answer in a test of either module.
+        test("does not depend on the module of the test", async () => {
+          const { bunEnv, bunExe, tempDir } = require("harness");
+          const checks = (/** @type {string} */ module) => `
+            import { expect, test } from "${module}";
+            const says = check => { try { check(); return "passes"; } catch { return "fails"; } };
+            test("checks", () => {
+              console.log(JSON.stringify({
+                "toEqual() of a longer array": says(() => expect(["a"]).toEqual(["a", undefined])),
+                "a hole": says(() => expect([, "a"]).toMatchObject([undefined, "a"])),
+                "a longer array": says(() => expect(["a"]).toMatchObject(["a", undefined])),
+                "a matcher opposite a hole": says(() => expect([, "a"]).toMatchObject([expect.not.stringContaining("b"), "a"])),
+              }));
+            });
+          `;
+          using dir = tempDir("expect-array-against-array", {
+            "of-bun.test.js": checks("bun:test"),
+            "of-vitest.test.js": checks("vitest"),
+          });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "test"],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          // toEqual() does depend on the module, which shows that the two files ran as tests of two modules.
+          const answers = (/** @type {string} */ toEqual) => ({
+            "toEqual() of a longer array": toEqual,
+            "a hole": "passes",
+            "a longer array": "fails",
+            "a matcher opposite a hole": "passes",
+          });
+          expect({
+            answers: stdout
+              .split("\n")
+              .filter(line => line.startsWith("{"))
+              .map(line => JSON.parse(line)),
+            stderr,
+            exitCode,
+          }).toMatchObject({ answers: [answers("passes"), answers("fails")], exitCode: 0 });
+        });
+
+        // A tester lasts until the end of its test file, so this one is added in a child.
+        test("a tester has no say about a key that only one array has", async () => {
+          const { bunEnv, bunExe } = require("harness");
+          const src = `
+            const { expect } = require("bun:test");
+            const nothing = 192837465;
+            const isNothing = value => value === undefined || value === nothing;
+            expect.addEqualityTesters([
+              (a, b) => ((a === nothing || b === nothing) && isNothing(a) && isNothing(b) ? true : undefined),
+            ]);
+            const says = check => { try { check(); return "passes"; } catch { return "fails"; } };
+            console.log(JSON.stringify({
+              "the marker, undefined": says(() => expect([nothing, 1]).toMatchObject([undefined, 1])),
+              "undefined, the marker": says(() => expect([undefined, 1]).toMatchObject([nothing, 1])),
+              "the marker, a hole": says(() => expect([nothing, 1]).toMatchObject([, 1])),
+              "a hole, the marker": says(() => expect([, 1]).toMatchObject([nothing, 1])),
+              "the marker and a hole, crossed": says(() => expect([nothing, , 1]).toMatchObject([, nothing, 1])),
+              "the marker under two names": says(() =>
+                expect(Object.assign([1], { x: nothing })).toMatchObject(Object.assign([1], { y: nothing })),
+              ),
+            }));
+          `;
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", src],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          // Where both arrays have the key, the tester takes the marker for undefined. A hole is no key, as in Jest and Vitest.
+          expect({ answers: stdout && JSON.parse(stdout), stderr, exitCode }).toMatchObject({
+            answers: {
+              "the marker, undefined": "passes",
+              "undefined, the marker": "passes",
+              "the marker, a hole": "fails",
+              "a hole, the marker": "fails",
+              "the marker and a hole, crossed": "fails",
+              "the marker under two names": "fails",
+            },
+            exitCode: 0,
+          });
         });
       }
     });

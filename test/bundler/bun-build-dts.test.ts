@@ -173,6 +173,36 @@ export function join(first: string, second: string): string {
     expect(typed).not.toContain("?: any");
   });
 
+  test("a function in an undecorated accessor #x is checked against the type of the accessor", async () => {
+    using dir = tempDir("build-dts-accessor-function", {
+      ...project,
+      "src/join.ts": `export class Mode {
+  accessor #pick: () => "idle" | "busy" = () => "idle";
+  accessor #fixed: (size: number) => string = size => size.toFixed(2);
+  accessor #late: string;
+  constructor() {
+    this.#late = this.#pick() + this.#fixed(1);
+  }
+  get late(): string {
+    return this.#late;
+  }
+}
+export function join(first: string, second: string): string {
+  return first + " " + second + new Mode().late;
+}
+`,
+    });
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
+    // The literal that names the function stands between it and the type of the field. Without the type, #pick returns a string, and the file is left out.
+    expect(typed).toContain('"#pick": (() => "idle") satisfies (() => "idle" | "busy")');
+    expect(typed).toContain('"#fixed": ((size) => size.toFixed(2)) satisfies ((size: number) => string)');
+    expect(typed).not.toContain(": any");
+    // The constructor stores through the setter, so the checker sees no value for the field (TS2564).
+    expect(typed).toContain("#late_accessor_storage!: string;");
+  });
+
   test("a build without it writes what it always did", async () => {
     using dir = tempDir("build-without-dts", project);
     const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out");

@@ -129,6 +129,40 @@ export function area(shape: Shape): Sizes.Size {
     expect(await compile(String(dir))).toEqual(USED);
   });
 
+  test("accessor #x fields are written into an .aot.ts file that compiles, also as a file of the program itself", async () => {
+    using dir = tempDir("aot-library-typed-file-accessor-fields", {
+      ...library,
+      "library/src/area.ts": `import type { Shape } from "./index";
+class Sizes {
+  first = #factor in this;
+  accessor #factor: number;
+  static accessor #made: number = 0;
+  accessor #pick: () => "circle" | "square" = () => "circle";
+  accessor #round: (size: number) => number = size => Math.round(size);
+  constructor(factor: number) {
+    this.#factor = factor;
+    Sizes.#made++;
+  }
+  of(shape: Shape): number {
+    const factor = shape.kind === this.#pick() ? this.#factor : 1;
+    return this.first && Sizes.#made > 0 ? this.#round(factor * shape.size ** 2) : 0;
+  }
+}
+export function area(shape: Shape): number {
+  return new Sizes(3).of(shape);
+}
+`,
+      // The checker keeps some of its findings to itself for a file under node_modules. This file is one of the program.
+      "library/importer.ts": `import { total } from "./dist/index.aot.ts";
+console.log(total([{ kind: "square", size: 2 }, { kind: "circle", size: 1 }]));
+`,
+    });
+    await install(String(dir));
+    expect(await compile(String(dir))).toEqual(USED);
+    const imported = await spawned([bunExe(), "--debug-aot", "importer.ts"], join(String(dir), "library"), env);
+    expect(imported).toEqual({ stdout: "7\n", stderr: "", exitCode: 0, signal: null });
+  });
+
   test("does not read index.js, so a change to it reaches plain Bun alone", async () => {
     using dir = tempDir("aot-library-typed-file-patched", library);
     await install(String(dir));

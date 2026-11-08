@@ -70,6 +70,7 @@ pub(crate) use crate::linker_context::post_process_css_chunk::post_process_css_c
 pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html_chunk;
 pub(crate) use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
 pub(crate) use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
+pub(crate) use crate::linker_context::scope_top_level_using::scope_top_level_using;
 
 pub struct LinkerContext<'a> {
     pub(crate) parse_graph: *mut Graph<'a>,
@@ -142,6 +143,9 @@ pub struct LinkerContext<'a> {
     pub(crate) inits_already_done: Option<AutoBitSet>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
+    /// See `scope_top_level_using`.
+    pub(crate) scoped_using_bindings:
+        crate::linker_context::scope_top_level_using::ScopedUsingBindings,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -182,6 +186,7 @@ impl<'a> LinkerContext<'a> {
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
             entry_point_part_indices: Vec::new(),
+            scoped_using_bindings: Default::default(),
         }
     }
 
@@ -903,6 +908,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         compute_cross_chunk_dependencies(self, &mut chunks)?;
+        scope_top_level_using(self, &mut chunks)?;
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();

@@ -233,6 +233,9 @@ pub mod linker_context {
     #[path = "renameSymbolsInChunk.rs"]
     pub(crate) mod rename_symbols_in_chunk;
 
+    #[path = "scopeTopLevelUsing.rs"]
+    pub(crate) mod scope_top_level_using;
+
     #[path = "writeOutputFilesToDisk.rs"]
     pub mod write_output_files_to_disk;
 

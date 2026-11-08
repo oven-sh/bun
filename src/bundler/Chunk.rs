@@ -1309,6 +1309,9 @@ pub struct JavaScriptChunk {
     pub(crate) files_in_chunk_order: Box<[IndexInt]>,
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
+    /// The symbols that `scope_top_level_using` made for files of this chunk.
+    pub(crate) scoped_using_symbols: Vec<Ref>,
+
     // for code splitting
     /// The other chunks with top-level side effects that the walk ordering
     /// this chunk reaches, in the order it finishes their first file with

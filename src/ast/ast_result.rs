@@ -101,6 +101,9 @@ pub struct Ast<'a> {
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     pub has_commonjs_export_names: bool,
     pub has_import_meta: bool,
+    /// The module scope declares a `using` / `await using` that the parser did not lower.
+    /// The bundler reads it in `scope_top_level_using`.
+    pub has_top_level_using: bool,
     pub import_meta_ref: Ref,
     /// Output depends on more than the source text (macros, `import.meta.glob`), so don't cache it.
     pub depends_on_more_than_source: bool,
@@ -148,6 +151,7 @@ impl<'a> Ast<'a> {
             ts_enums: Default::default(),
             has_commonjs_export_names: false,
             has_import_meta: false,
+            has_top_level_using: false,
             import_meta_ref: Ref::NONE,
             depends_on_more_than_source: false,
         }

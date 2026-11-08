@@ -270,6 +270,14 @@ impl Local {
             && self.is_export == other.is_export
             && self.origin.is_commonjs_export() == other.origin.is_commonjs_export()
     }
+
+    /// Whether the linker prints `decl` with its value above the `__esm` wrapper of its module.
+    pub fn value_can_leave_esm_wrapper(&self, decl: &G::Decl) -> bool {
+        // A `using` stays in its scope. A pattern runs getters or the iterator.
+        !self.kind.is_using()
+            && matches!(decl.binding.data, crate::binding::Data::BIdentifier(_))
+            && decl.value.is_some_and(|value| value.can_be_moved())
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]

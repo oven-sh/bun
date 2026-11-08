@@ -712,6 +712,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     // If this is true, then all top-level statements are wrapped in a try/catch
     pub(crate) will_wrap_module_in_try_catch_for_using: bool,
+    /// The module scope declares a `using` that is not lowered. See `Ast::has_top_level_using`.
+    pub(crate) has_top_level_using: bool,
 
     /// Used for react refresh, it must be able to insert `const _s = $RefreshSig$();`
     pub(crate) nearest_stmt_list: Option<NonNull<ListManaged<'a, Stmt>>>,
@@ -9419,6 +9421,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             commonjs_named_exports: core::mem::take(&mut self.commonjs_named_exports),
             has_commonjs_export_names: self.has_commonjs_export_names,
             has_import_meta: self.has_import_meta,
+            has_top_level_using: self.has_top_level_using,
 
             hashbang: hashbang.into(),
             export_default_alias_of_import: self.export_default_alias_of_import,
@@ -9849,6 +9852,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             top_level_enums: BumpVec::new_in(arena),
             scopes_in_order_for_enum: Default::default(),
             will_wrap_module_in_try_catch_for_using: false,
+            has_top_level_using: false,
             nearest_stmt_list: None,
             decorator_class_name: None,
 

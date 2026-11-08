@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { type BundlerTestBundleAPI, type BundlerTestInput, itBundled } from "../../../bundler/expectBundled";
 
 const source = `{
   using x = { [Symbol.dispose]() { console.log("sync disposed"); } };
@@ -259,5 +260,209 @@ export const result = handle.val;
 
     expect(stdout).toBe(expectedStdout);
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("top-level using in a bundle for bun", () => {
+  // `--target=bun` keeps `using` as it is written, inside the `__esm` wrapper of
+  // a module that `import()` or `require()` reaches. A function declaration, a
+  // value that runs no code and the namespace object print outside the wrapper.
+  // What they read of the `using` binding is a variable of the chunk.
+  const disposable = (name: string, log = "console.log") =>
+    `{ name: "${name}", [Symbol.dispose]() { ${log}("${name}-disposed"); } }`;
+  // The bundle has to print what the files print when bun runs them as they are.
+  const printsUnbundled = (entry: string, stdout: string) => async (api: BundlerTestBundleAPI) => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), api.join(entry)], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [unbundled] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(unbundled.trim()).toBe(stdout);
+  };
+  const usingInEsmWrapper = {
+    "/entry.js": `
+      const m = await import("./dep.js");
+      console.log(m.arrow(), m.fn(), new m.Reader().read(), m.default(), m.mixed(), m.other, m.f.name);
+    `,
+    // Each binding has one kind of reader, and only "f" is exported.
+    "/dep.js": `
+      using a = ${disposable("a")};
+      using b = ${disposable("b")};
+      using c = ${disposable("c")};
+      using d = ${disposable("d")};
+      using e = ${disposable("e")};
+      using f = ${disposable("f")};
+      export const arrow = () => a.name;
+      export function fn() { return b.name; }
+      export class Reader { read() { return c.name; } }
+      export default () => d.name;
+      export const mixed = () => e.name, other = [e.name].length;
+      export { f };
+      console.log("dep-end");
+    `,
+  };
+  const usingInEsmWrapperStdout =
+    "dep-end\nf-disposed\ne-disposed\nd-disposed\nc-disposed\nb-disposed\na-disposed\na b c d e 1 f";
+  for (const [name, options] of Object.entries({
+    "": {},
+    "Minify": { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true },
+    "NoTreeShaking": { treeShaking: false, backend: "api" },
+    "CLI": { backend: "cli" },
+  } satisfies Record<string, Partial<BundlerTestInput>>)) {
+    itBundled(`using/InEsmWrapperReadOutsideIt${name}`, {
+      files: usingInEsmWrapper,
+      target: "bun",
+      ...options,
+      run: { stdout: usingInEsmWrapperStdout },
+      onAfterBundle: printsUnbundled("/entry.js", usingInEsmWrapperStdout),
+    });
+  }
+  for (const [name, options] of Object.entries({
+    "esm": { format: "esm" },
+    "cjs": { format: "cjs" },
+    "bytecode": { format: "cjs", bytecode: true, outdir: "/out" },
+  } satisfies Record<string, Partial<BundlerTestInput>>)) {
+    itBundled(`using/InEsmWrapperReadOutsideItRequire-${name}`, {
+      files: {
+        "/entry.js": `
+          const r = require("./req.js");
+          console.log(r.fn(), r.default(), new r.Sub().read());
+        `,
+        // "Sub" runs code where it is defined, so it stays in the wrapper.
+        "/req.js": `
+          using a = ${disposable("a")};
+          using b = ${disposable("b")};
+          using c = ${disposable("c")};
+          class Base {}
+          export function fn() { return a.name; }
+          export default function () { return b.name; }
+          export class Sub extends Base { read() { return c.name; } }
+          console.log("req-end");
+        `,
+      },
+      target: "bun",
+      ...options,
+      run: { stdout: "req-end\nc-disposed\nb-disposed\na-disposed\na b c" },
+      onAfterBundle(api) {
+        expect(api.readFile("outdir" in options ? "/out/entry.js" : "/out.js")).toContain("using c = {");
+        return printsUnbundled("/entry.js", "req-end\nc-disposed\nb-disposed\na-disposed\na b c")(api);
+      },
+    });
+  }
+  // The entry point has a wrapper because "other.js" requires it. Its
+  // `export { res }` is a statement of the chunk.
+  itBundled("using/InEsmWrapperExportedFromEntry", {
+    files: {
+      "/entry.js": `
+        using res = ${disposable("res")};
+        export { res };
+        const other = require("./other.js");
+        console.log("entry-end", other.peek());
+      `,
+      "/other.js": `exports.peek = () => typeof require("./entry.js").res;`,
+    },
+    target: "bun",
+    run: { stdout: "entry-end object\nres-disposed" },
+    onAfterBundle: printsUnbundled("/entry.js", "entry-end object\nres-disposed"),
+  });
+  // One entry point imports "dep.js" and the other requires it, so it is a
+  // chunk of its own with a wrapper. The chunk exports the binding.
+  itBundled("using/InEsmWrapperExportedFromChunk", {
+    files: {
+      "/entry.js": `
+        const m = await import("./dep.js");
+        console.log("entry", m.fn(), m.res.name);
+      `,
+      "/entry2.js": `
+        const m = require("./dep.js");
+        console.log("entry2", m.fn(), m.res.name);
+      `,
+      "/dep.js": `
+        using res = ${disposable("res")};
+        export function fn() { return res.name; }
+        export { res };
+        console.log("dep-end");
+      `,
+    },
+    entryPoints: ["/entry.js", "/entry2.js"],
+    outdir: "/out",
+    target: "bun",
+    splitting: true,
+    run: [
+      { file: "/out/entry.js", stdout: "dep-end\nres-disposed\nentry res res" },
+      { file: "/out/entry2.js", stdout: "dep-end\nres-disposed\nentry2 res res" },
+    ],
+    onAfterBundle: printsUnbundled("/entry.js", "dep-end\nres-disposed\nentry res res"),
+  });
+  itBundled("using/InEsmWrapperDirectEval", {
+    files: {
+      "/entry.js": `
+        const m = await import("./dep.js");
+        console.log(m.peek());
+      `,
+      "/dep.js": `
+        using res = ${disposable("res")};
+        export function peek() { return eval("res.name"); }
+        console.log("dep-end");
+      `,
+    },
+    target: "bun",
+    run: { stdout: "dep-end\nres-disposed\nres" },
+    onAfterBundle: printsUnbundled("/entry.js", "dep-end\nres-disposed\nres"),
+  });
+  // What a component that the React Compiler compiled needs of React.
+  const reactStandIn = {
+    "/tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        jsx: "react-jsx",
+        paths: {
+          "react/jsx-runtime": ["./react/jsx-runtime.js"],
+          "react/jsx-dev-runtime": ["./react/jsx-runtime.js"],
+          "react/compiler-runtime": ["./react/render.js"],
+        },
+      },
+    }),
+    "/react/jsx-runtime.js": `
+      export const jsx = (type, props) =>
+        typeof type === "function" ? type(props) : "<" + type + ">" + props.children.join("") + "</" + type + ">";
+      export const jsxs = jsx;
+      export const jsxDEV = jsx;
+    `,
+    "/react/render.js": `
+      const caches = new Map();
+      let rendering;
+      export function render(component, props) {
+        rendering = component;
+        return component(props);
+      }
+      export function c(size) {
+        if (!caches.has(rendering)) caches.set(rendering, new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+        return caches.get(rendering);
+      }
+    `,
+  };
+  // The React Compiler moves the callback out of the component, into a
+  // function declaration of the module.
+  itBundled("using/InEsmWrapperReactCompiler", {
+    files: {
+      "/entry.jsx": `
+        import { render } from "./react/render.js";
+        const { Comp } = await import("./dep.jsx");
+        console.log(render(Comp, { a: 1 }));
+      `,
+      "/dep.jsx": `
+        using res = ${disposable("res")};
+        export const Comp = ({ a }) => {
+          const names = [1, 2].map(x => res.name + x);
+          return <b>{names.join(",")}{a}</b>;
+        };
+        console.log("dep-end");
+      `,
+      ...reactStandIn,
+    },
+    target: "bun",
+    reactCompiler: true,
+    run: { stdout: "dep-end\nres-disposed\n<b>res1,res21</b>" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("function _temp(");
+      return printsUnbundled("/entry.jsx", "dep-end\nres-disposed\n<b>res1,res21</b>")(api);
+    },
   });
 });

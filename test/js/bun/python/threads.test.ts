@@ -4,11 +4,11 @@ import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 // These builds take seconds to start Python, and half a minute to import asyncio.
 if (isDebug || isASAN) setDefaultTimeout(180_000);
 
-async function run(files: Record<string, string>, entry = "main.py") {
+async function run(files: Record<string, string>, entry = "main.py", env = bunEnv) {
   using dir = tempDir("python-threads", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), entry],
-    env: bunEnv,
+    env,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
@@ -1869,7 +1869,8 @@ test("a thread", () => { expect(String(m.thread())).toBe("joined") });
 // once it has been freed, and a full collection on the main thread, between its next turn and its look, frees them all; `freed` counts those that nothing can have brought back.
 async function runUntilItSaysSomething(files: Record<string, string>) {
   for (let attempt = 1; ; attempt++) {
-    const result = await run(files, "main.js");
+    // With --smol the first cells of a class are no allocations of their own.
+    const result = await run(files, "main.js", { ...bunEnv, BUN_OPTIONS: "" });
     if (attempt === 10 || !/"precise":false|"freed":[1-9]/.test(result.stdout)) return result;
   }
 }

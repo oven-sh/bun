@@ -950,9 +950,7 @@ impl TarballStream {
                     break 'insert_tag;
                 }
                 if let Some(dest) = &self.extraction.dest {
-                    let _ = crate::published_files::prune_to_published_files(bun_sys::Dir::borrow(
-                        dest,
-                    ));
+                    crate::published_files::prune_to_published_files(bun_sys::Dir::borrow(dest))?;
                 }
                 if bun_sys::File::openat(
                     self.extraction.dest.unwrap(),

@@ -756,7 +756,16 @@ pub fn published_files(
                         &mut pack_queue,
                         &[],
                         None,
-                        DirInfo(bin_dir, bin.path.as_bytes().into(), 2),
+                        DirInfo(
+                            bin_dir,
+                            bin.path.as_bytes().into(),
+                            1 + bin
+                                .path
+                                .as_bytes()
+                                .split(|&c| c == b'/')
+                                .filter(|s| !s.is_empty())
+                                .count(),
+                        ),
                         log_level,
                     )?;
                 }
@@ -1058,6 +1067,17 @@ pub fn prune_to_published_files(root_dir: &Dir) -> bun_sys::Maybe<()> {
     let json = &parsed.root;
     let bump = pack_bump();
 
+    // A trusted git dependency's `prepare` script runs after this and may build the published
+    // files from the ones this would remove.
+    if let Some(scripts) = json.get(b"scripts") {
+        if [&b"preprepare"[..], b"prepare", b"postprepare"]
+            .iter()
+            .any(|name| scripts.get(name).is_some())
+        {
+            return Ok(());
+        }
+    }
+
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let root_path: &[u8] = bun_sys::get_fd_path(Fd::from_std_dir(root_dir), &mut path_buf)?;
 
@@ -1080,6 +1100,27 @@ pub fn prune_to_published_files(root_dir: &Dir) -> bun_sys::Maybe<()> {
 
     let mut keep_files: HashSet<Vec<u8>> = HashSet::new();
     let mut keep_dirs: HashSet<Vec<u8>> = HashSet::new();
+    // The entry point stays even if `files` or an ignore file leaves it out.
+    if let Some(main) = json.get(b"main").and_then(|main| main.as_string(bump)) {
+        let mut main: &[u8] = main.as_ref();
+        while let Some(rest) = main.strip_prefix(b"./") {
+            main = rest;
+        }
+        if !main.is_empty()
+            && !main.starts_with(b"/")
+            && !main.contains(&b'\\')
+            && !main
+                .split(|&c| c == b'/')
+                .any(|part| part == b".." || part.is_empty())
+        {
+            for (i, &c) in main.iter().enumerate() {
+                if c == b'/' {
+                    keep_dirs.insert(main[..i].to_vec());
+                }
+            }
+            keep_files.insert(main.to_vec());
+        }
+    }
     for path in queue.into_paths() {
         let path = path.as_bytes();
         for (i, &c) in path.iter().enumerate() {

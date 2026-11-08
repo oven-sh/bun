@@ -1541,6 +1541,46 @@ test.concurrent('a git dependency installs only what "files" and .npmignore sele
   });
 });
 
+test.concurrent('a git dependency keeps its "main" and the sources of its prepare script', async () => {
+  using dir = tempDir("git-dep-published-files-main", {});
+  const root = String(dir);
+  const pkg = (extra: object) => JSON.stringify({ name: "demo-lib", version: "1.0.0", ...extra });
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "main-not-in-files",
+      files: { "package.json": pkg({ main: "lib/main.js", files: ["src"] }), "lib/main.js": "m\n", "src/a.js": "a\n" },
+    },
+    {
+      branch: "main-npmignored",
+      files: { "package.json": pkg({ main: "./lib/main.js" }), "lib/main.js": "m\n", ".npmignore": "lib\n" },
+    },
+    {
+      branch: "prepare",
+      files: {
+        "package.json": pkg({ files: ["dist"], scripts: { prepare: "echo build" } }),
+        "src/a.js": "a\n",
+        "dist/a.js": "a\n",
+      },
+    },
+  ]);
+  const url = `git+${pathToFileURL(bare)}`;
+
+  const results: Record<string, string[]> = {};
+  for (const branch of ["main-not-in-files", "main-npmignored", "prepare"]) {
+    const project = writeProject(join(root, branch), { "demo-lib": `${url}#${branch}` });
+    expect((await runInstall(project, join(root, `cache-${branch}`), {})).exitCode).toBe(0);
+    results[branch] = treeOf(join(project, "node_modules", "demo-lib")).filter(
+      path => path !== ".bun-tag" && path !== "index.js",
+    );
+  }
+
+  expect(results).toEqual({
+    "main-not-in-files": ["lib", "lib/main.js", "package.json", "src", "src/a.js"],
+    "main-npmignored": ["lib", "lib/main.js", "package.json"],
+    prepare: ["dist", "dist/a.js", "package.json", "src", "src/a.js"],
+  });
+});
+
 test.concurrent(
   "a failed prepare script of a git dependency explains that its devDependencies aren't installed",
   async () => {

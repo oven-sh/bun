@@ -637,6 +637,15 @@ pub fn bin_kind_without_following_symlinks(
     abs_workspace_path: &[u8],
     bin_path: &[u8],
 ) -> bun_sys::FileKind {
+    try_bin_kind_without_following_symlinks(abs_workspace_path, bin_path).unwrap_or_else(|err| {
+        fail_file(err, "stat", strings::without_trailing_slash(bin_path))
+    })
+}
+
+fn try_bin_kind_without_following_symlinks(
+    abs_workspace_path: &[u8],
+    bin_path: &[u8],
+) -> bun_sys::Maybe<bun_sys::FileKind> {
     // A trailing slash would make `lstat` resolve a symlink to a directory.
     let bin_path = strings::without_trailing_slash(bin_path);
     let mut spill: Vec<u8> = Vec::new();
@@ -650,17 +659,17 @@ pub fn bin_kind_without_following_symlinks(
         let stat = match bun_sys::lstat(abs_path) {
             Ok(stat) => stat,
             Err(err) if is_absent(err.get_errno()) => break,
-            Err(err) => fail_file(err, "stat", bin_path),
+            Err(err) => return Err(err),
         };
         let kind = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
         if end == bin_path.len() {
-            return kind;
+            return Ok(kind);
         }
         if kind != bun_sys::FileKind::Directory {
             break;
         }
     }
-    bun_sys::FileKind::Unknown
+    Ok(bun_sys::FileKind::Unknown)
 }
 
 /// `published_files` has already queued the bins, so the walks skip them.
@@ -858,7 +867,12 @@ fn select_published_files(
     let bins = get_package_bins(json_root);
 
     for bin in &bins {
-        let kind = bin_kind_without_following_symlinks(root_path, bin.path.as_bytes());
+        let kind = try_bin_kind_without_following_symlinks(root_path, bin.path.as_bytes())
+            .map_err(|err| {
+                on_unreadable.fail(|| {
+                    fail_file(err, "stat", strings::without_trailing_slash(bin.path.as_bytes()))
+                })
+            })?;
         match bin.ty {
             BinType::File if kind == bun_sys::FileKind::File => {
                 pack_queue.add(PackQueueItem {
@@ -1179,26 +1193,23 @@ fn bundles_dependencies(json: &Expr) -> bool {
 
 /// Removes everything from `root_dir` that `bun pm pack` would leave out of the tarball, so that a
 /// Git dependency has the same files as the same package from a registry. Does nothing if the
-/// package.json is missing or invalid. `node_modules` is kept, because it is only there when the
-/// package bundles its dependencies.
+/// package.json is missing or invalid, or the package has `prepare` scripts. `node_modules` is kept
+/// only if the package bundles its dependencies.
 pub fn prune_to_published_files(root_dir: &Dir) -> bun_sys::Maybe<()> {
     prune(root_dir, Target::Cache)
 }
 
-/// For the copy of a Git or GitHub dependency in `node_modules` or the store. The cache keeps whole
-/// the checkout of a package that has `prepare` scripts, so that a project that trusts the package
-/// can still build it, and an older Bun cached every checkout whole. The copy of a `trusted`
-/// package with such scripts stays whole. A copy with symlinks, which the symlink backend makes
-/// and older caches can hold, also stays whole, and so does its `node_modules`, which holds the
-/// package's nested dependencies.
-pub fn prune_installed_package(root_dir: &Dir, trusted: bool) -> bun_sys::Maybe<()> {
-    prune(root_dir, Target::Installed { trusted })
+/// For the copy of a Git or GitHub dependency in `node_modules` or the store, which an older Bun
+/// cached whole. A copy with symlinks, which the symlink backend makes and older caches can hold,
+/// stays whole, and so does its `node_modules`, which holds the package's nested dependencies.
+pub fn prune_installed_package(root_dir: &Dir) -> bun_sys::Maybe<()> {
+    prune(root_dir, Target::Installed)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Target {
     Cache,
-    Installed { trusted: bool },
+    Installed,
 }
 
 fn prune(root_dir: &Dir, target: Target) -> bun_sys::Maybe<()> {
@@ -1227,29 +1238,26 @@ fn prune(root_dir: &Dir, target: Target) -> bun_sys::Maybe<()> {
     }
     drop_shadowed_properties(root);
 
-    if matches!(target, Target::Cache) && !bundles_dependencies(json) {
+    // A `prepare` script may build the published files from the ones this would remove, including
+    // tools committed to `node_modules`. It runs after the checkout when the package is trusted, or
+    // later in the installed copy, after `bun pm trust`.
+    let has_prepare = json.get(b"scripts").is_some_and(|scripts| {
+        [&b"preprepare"[..], b"prepare", b"postprepare"]
+            .iter()
+            .any(|name| scripts.get(name).is_some())
+    });
+    if has_prepare {
+        return Ok(());
+    }
+
+    if target == Target::Cache && !bundles_dependencies(json) {
         match root_dir.delete_file_z(bun_core::zstr!("node_modules")) {
             Ok(()) => {}
             Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
             Err(_) => root_dir.delete_tree(b"node_modules")?,
         }
     }
-
-    // A trusted git dependency's `prepare` script runs after the checkout and may build the
-    // published files from the ones this would remove.
-    let has_prepare = json.get(b"scripts").is_some_and(|scripts| {
-        [&b"preprepare"[..], b"prepare", b"postprepare"]
-            .iter()
-            .any(|name| scripts.get(name).is_some())
-    });
-    let keep_whole = match target {
-        Target::Cache => has_prepare,
-        Target::Installed { trusted } => trusted && has_prepare,
-    };
-    if keep_whole {
-        return Ok(());
-    }
-    if matches!(target, Target::Installed { .. }) {
+    if target == Target::Installed {
         let check = root_dir.open_dir(
             b".",
             bun_sys::OpenDirOptions {
@@ -1309,8 +1317,10 @@ fn prune(root_dir: &Dir, target: Target) -> bun_sys::Maybe<()> {
         .and_then(|main| normalize_main(main.as_ref()))
     {
         for entry in main_candidates(&main) {
-            if bin_kind_without_following_symlinks(root_path, &entry) != bun_sys::FileKind::File {
-                continue;
+            match try_bin_kind_without_following_symlinks(root_path, &entry) {
+                Ok(bun_sys::FileKind::File) => {}
+                Ok(_) => continue,
+                Err(_) => return Ok(()),
             }
             for (i, &c) in entry.iter().enumerate() {
                 if c == b'/' {

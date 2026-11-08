@@ -1607,11 +1607,40 @@ test.concurrent.each(["hoisted", "isolated"])(
       "main-extensionless": ["lib", "lib/entry.js", "package.json", "src", "src/a.js"],
       "main-directory": ["lib", "lib/index.js", "package.json", "src", "src/a.js"],
       "main-npmignored": ["index.js", "lib", "lib/main.js", "package.json"],
-      prepare: ["dist", "dist/a.js", "package.json"],
+      prepare: ["dist", "dist/a.js", "index.js", "package.json", "src", "src/a.js"],
       trusted: ["dist", "dist/a.js", "dist/built.js", "index.js", "package.json", "src", "src/a.js"],
     });
   },
 );
+
+// The script runs in the installed copy, so that copy keeps the files it builds from.
+test.concurrent("bun pm trust can run the prepare script of a git dependency installed untrusted", async () => {
+  using dir = tempDir("git-dep-published-files-trust", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "prepare",
+      files: {
+        "package.json": JSON.stringify({
+          name: "demo-lib",
+          version: "1.0.0",
+          files: ["dist"],
+          scripts: { prepare: `"${bunExe()}" -e "require('fs').cpSync('src/a.js', 'dist/built.js')"` },
+        }),
+        "src/a.js": "a\n",
+        "dist/a.js": "a\n",
+      },
+    },
+  ]);
+  const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#prepare` });
+  const cache = join(root, "cache");
+  const install = await runInstall(project, cache, {});
+  expect(install.stdout).toContain("Blocked 1 postinstall");
+  expect(install.exitCode).toBe(0);
+  const trust = await runBun(project, cache, {}, "pm", "trust", "demo-lib");
+  expect(readFileSync(join(project, "node_modules", "demo-lib", "dist", "built.js"), "utf8")).toBe("a\n");
+  expect(trust.exitCode).toBe(0);
+});
 
 test.concurrent(
   'a git dependency follows the last duplicate "files" and prunes the copy of a cache entry from an older Bun',
@@ -1670,7 +1699,9 @@ test.concurrent.skipIf(isWindows)("the copy of a cache entry from an older Bun t
   ]);
   const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#linked-main` });
   const cache = join(root, "cache");
-  expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+  const first = await runInstall(project, cache, {});
+  expect(installOutput(first.stdout).at(-1)).toBe("1 package installed");
+  expect(first.exitCode).toBe(0);
 
   const entry = readdirSync(cache).find(name => name.startsWith("@G@"))!;
   symlinkSync("dist/b.js", join(cache, entry, "entry.js"));

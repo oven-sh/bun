@@ -1366,6 +1366,43 @@ for (const streaming of [true, false]) {
   });
 }
 
+// The script may run a tool committed to node_modules, so a package that has one keeps its files.
+it("keeps the committed node_modules of a GitHub dependency with a prepare script", async () => {
+  await setGithubRepository("published", "prepare-demo", "abc1234", ["main"], {
+    "package.json": JSON.stringify({
+      name: "prepare-demo",
+      version: "1.0.0",
+      files: ["dist"],
+      scripts: { prepare: "node node_modules/tool/cli.js" },
+    }),
+    "node_modules/tool/cli.js": "",
+    "dist/a.js": "",
+  });
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { "prepare-demo": "published/prepare-demo#main" } }),
+  );
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: githubEnv(),
+  });
+  expect(normalizeBunSnapshot(await stderr.text())).toMatchInlineSnapshot(`
+    "Resolving dependencies
+    Resolved, downloaded and extracted [2]
+    Saved lockfile"
+  `);
+  expect(await exited).toBe(0);
+  const installed = join(package_dir, "node_modules", "prepare-demo");
+  const tree = (await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: installed, dot: true, onlyFiles: true }))).sort();
+  expect(tree).toEqual([".bun-tag", "dist/a.js", "node_modules/tool/cli.js", "package.json"]);
+});
+
 it("should add dependency (GitHub)", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

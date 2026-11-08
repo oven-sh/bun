@@ -2500,8 +2500,7 @@ impl<'a> PackageInstaller<'a> {
                         },
                     )
                 {
-                    let _ =
-                        crate::published_files::prune_installed_package(&package_dir, is_trusted);
+                    let _ = crate::published_files::prune_installed_package(&package_dir);
                     package_dir.close();
                 }
 

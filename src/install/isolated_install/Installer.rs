@@ -1903,8 +1903,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Applies `files` and `.npmignore` to the copy of a Git or GitHub dependency. A trusted one
-    /// with `prepare` scripts keeps the checkout that they build from.
+    /// Applies `files` and `.npmignore` to the copy of a Git or GitHub dependency.
     fn prune_installed_copy(
         &self,
         entry_id: StoreEntryId,
@@ -1933,7 +1932,7 @@ impl<'a> Installer<'a> {
         };
         if let Ok(fd) = opened {
             let dir = sys::Dir::from_fd(fd);
-            let _ = crate::published_files::prune_installed_package(&dir, self.is_trusted(entry_id));
+            let _ = crate::published_files::prune_installed_package(&dir);
             dir.close();
         }
     }

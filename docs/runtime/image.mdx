@@ -153,7 +153,7 @@ for (let i = 0, j = 0; i < data.length; i += 4, j += 3) {
 
 `data` is tightly packed, row-major, straight-alpha RGBA8: `data.byteOffset` is `0` and `data.buffer` holds the plane and nothing else. `channels` is always `4`, whatever the source format. The buffer reflects the image **after** `autoOrient`, `rotate`, `flip`, `flop`, `resize` and `modulate`. A chained format method (`.jpeg()`, `.png()`, …) has no effect because nothing is encoded.
 
-Bun applies no colour transform. For JPEG, PNG and WebP the bytes are in the colour space the source's ICC profile describes, and the profile itself is not returned (the encode terminals embed it in the output file). Formats the system backend decodes (HEIC, AVIF, TIFF) arrive as sRGB because the OS decoder converts them. sharp's `.raw()` converts to sRGB by default, so for a Display P3 or Adobe RGB source the two differ.
+Bun applies no color transform. For JPEG, PNG and WebP the bytes are in the color space the source's ICC profile describes, and the profile itself is not returned (the encode terminals embed it in the output file). Formats the system backend decodes (HEIC, AVIF and TIFF, plus BMP and GIF on macOS and Windows) arrive in the color space the OS decoder returns. Bun does not read their profile and does not convert them. sharp's `.raw()` converts to sRGB by default, so for a Display P3 or Adobe RGB source the two differ.
 
 Geometry on macOS runs through vImage by default, so resized pixels can differ from Linux by a few LSB. For byte-identical output on every platform set `Bun.Image.backend = "bun"` (see [Platform backends](#platform-backends)).
 

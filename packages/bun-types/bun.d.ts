@@ -10014,7 +10014,9 @@ declare module "bun" {
      *
      * No colour transform is applied: the bytes are in the colour space of
      * the source's ICC profile, which is not returned. Formats the system
-     * backend decodes (HEIC, AVIF, TIFF) arrive as sRGB.
+     * backend decodes (HEIC, AVIF and TIFF, plus BMP and GIF on macOS and
+     * Windows) arrive in the colour space the OS decoder returns: Bun does
+     * not read their profile and does not convert them.
      *
      * The sharp equivalent is
      * `.ensureAlpha().raw().toBuffer({ resolveWithObject: true })`, except

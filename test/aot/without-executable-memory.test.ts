@@ -1,9 +1,20 @@
 import { describe, expect } from "bun:test";
-import { bunEnv, bunExe, isAndroid, isLinux, isMacOS, isWindows, libcPathForDlopen, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isAndroid,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isWindows,
+  libcPathForDlopen,
+  tempDir,
+} from "harness";
 import { copyFileSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isHardened, locksEnvironment } from "./hardened";
-import { built, unsupported, withoutCoreDump } from "./harness/commands";
+import { built, limitOfARun, limitWithASAN, slot, unsupported, withoutCoreDump } from "./harness/commands";
 import { afterAll, test } from "./harness/default-timeout";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
@@ -104,6 +115,9 @@ process.exit(exitCode[0]);
 `;
 const refuses = isWindows ? refusesOnWindows : refusesOnLinux;
 
+// Bun ends the children of a test that timed out only where the test ran alone. Here a command that hangs is ended at the limit that spawned() of the harness gives one, and what that leaves fails its test.
+const limitOfACommand = isASAN || isDebug ? limitWithASAN : limitOfARun;
+
 async function run(cmd: string[], cwd?: string) {
   await using proc = Bun.spawn({
     cmd,
@@ -111,6 +125,8 @@ async function run(cmd: string[], cwd?: string) {
     env: { ...bunEnv, ...(locksEnvironment ? { BUN_ENABLE_CRASH_REPORTING: "0" } : { BUN_CRASH_REPORT_URL: "" }) },
     stdout: "pipe",
     stderr: "pipe",
+    timeout: limitOfACommand,
+    killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
@@ -142,12 +158,9 @@ const directory = String(folder);
 async function compile(name: string, outfile: string, ...flags: string[]) {
   const executable = join(directory, outfile + (isWindows ? ".exe" : ""));
   const source = join(directory, name + ".ts");
-  built(
-    await run(
-      [bunExe(), "build", "--compile", ...flags, ...withoutDebugInformation, source, "--outfile", executable],
-      directory,
-    ),
-  );
+  const cmd = [bunExe(), "build", "--compile", ...flags, ...withoutDebugInformation, source, "--outfile", executable];
+  // On macOS the builds start before the tests, where `--max-concurrency` bounds nothing: a slot does.
+  built(await slot(() => run(cmd, directory)));
   return executable;
 }
 
@@ -175,9 +188,10 @@ function whereItIsRefused(executable: string, onLinux: "refuse" | "kill" = "kill
 // Only a run that prints `granted` and nothing else says so. Any other run is for the control to report.
 async function isRefusedNowhere() {
   if (!isMacOS || !isSupported) return false;
-  // The tests wait for this answer, so the other builds start beside that of the control. A build that fails is reported by the test that asks for it.
+  // The tests wait for this answer, so the other builds start behind that of the control. A build that fails is reported by the test that asks for it.
+  const executable = build(control);
   for (const name of names) build(name).catch(() => {});
-  return Bun.deepEquals(await whereItIsRefused(await build(control)), prints("granted\n"));
+  return Bun.deepEquals(await whereItIsRefused(await executable), prints("granted\n"));
 }
 const refusedNowhere = await isRefusedNowhere();
 if (refusedNowhere)

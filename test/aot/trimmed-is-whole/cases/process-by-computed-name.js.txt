@@ -1,0 +1,80 @@
+// Reads a property of process by a computed name.
+//@ args report binding dlopen
+const names = process.argv.slice(2);
+function show(value) { console.log(typeof value, typeof value === "function" ? value.name : Object.keys(value).sort().join()); }
+//// bracket-argv
+for (const name of names) show(process[name]);
+//// alias
+const p = process;
+for (const name of names) show(p[name]);
+//// globalThis-process
+for (const name of names) show(globalThis.process[name]);
+//// import-default
+import process2 from "node:process";
+for (const name of names) show(process2[name]);
+//// import-namespace
+import * as process2 from "node:process";
+for (const name of names) show(process2[name]);
+//// import-named
+import { report } from "node:process";
+show(report);
+//// require
+//@ ext cjs
+const p = require("node:process");
+for (const name of names) show(p[name]);
+//// require-bare
+//@ ext cjs
+const p = require("process");
+for (const name of names) show(p[name]);
+//// destructure
+const { report } = process;
+show(report);
+//// destructure-computed
+for (const name of names) { const { [name]: value } = process; show(value); }
+//// Reflect-get
+for (const name of names) show(Reflect.get(process, name));
+//// keys
+console.log(Object.keys(process).sort().join());
+//// ownKeys
+console.log(Reflect.ownKeys(process).map(String).sort().join());
+//// for-in
+const seen = [];
+for (const name in process) seen.push(name);
+console.log(seen.sort().join());
+//// entries
+for (const [name, value] of Object.entries(process)) if (names.includes(name)) show(value);
+//// in
+for (const name of names) console.log(name in process);
+//// parameter
+function read(object, name) { return object[name]; }
+for (const name of names) show(read(process, name));
+//// emitter-this
+process.once("ping", function () { for (const name of names) show(this[name]); });
+process.emit("ping");
+//// report-getReport
+console.log(typeof process.report.getReport().header.nodejsVersion);
+//// report-computed
+console.log(typeof process[names[0]].getReport().header.nodejsVersion);
+//// binding-literal
+try { console.log(Object.keys(process.binding("http_parser")).sort().join()); } catch (error) { console.log(error.name, error.message); }
+//// binding-computed-module
+//@ args http_parser
+try { console.log(Object.keys(process.binding(process.argv[2])).sort().join()); } catch (error) { console.log(error.name, error.message); }
+//// binding-each
+for (const name of ["async_wrap", "buffer", "cares_wrap", "config", "constants", "contextify", "crypto", "fs", "fs_event_wrap", "http_parser", "icu", "inspector", "js_stream", "natives", "os", "pipe_wrap", "process_wrap", "signal_wrap", "spawn_sync", "stream_wrap", "tcp_wrap", "tls_wrap", "tty_wrap", "udp_wrap", "url", "util", "uv", "v8", "zlib"]) {
+  try { console.log(name, Object.keys(process.binding(name)).length); } catch (error) { console.log(name, error.name, error.message); }
+}
+//// linkedBinding
+try { console.log(typeof process._linkedBinding); console.log(Object.keys(process._linkedBinding("http_parser")).length); } catch (error) { console.log(error.name, error.message); }
+//// console-log-process
+console.log(Object.keys(process).length > 20, Bun.inspect(process).length > 100);
+//// versions
+console.log(Object.keys(process.versions).sort().join());
+//// features
+console.log(JSON.stringify(process.features));
+//// config
+console.log(Object.keys(process.config).join());
+//// release
+console.log(Object.keys(process.release).join());
+//// allowedNodeEnvironmentFlags
+console.log(typeof process.allowedNodeEnvironmentFlags, process.allowedNodeEnvironmentFlags?.size);

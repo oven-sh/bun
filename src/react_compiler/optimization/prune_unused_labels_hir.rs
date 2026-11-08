@@ -14,7 +14,9 @@
 use crate::collections::IdMap;
 use crate::hir::{BlockId, BlockKind, GotoVariant, HirFunction, Terminal};
 
-pub(crate) fn prune_unused_labels_hir(func: &mut HirFunction) {
+pub(crate) fn prune_unused_labels_hir(
+    func: &mut HirFunction,
+) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
     // Phase 1: Identify label terminals whose body block immediately breaks
     // to the fallthrough, and both body and fallthrough are normal blocks.
     let mut merged: Vec<(BlockId, BlockId, BlockId)> = Vec::new(); // (label, next, fallthrough)
@@ -56,20 +58,20 @@ pub(crate) fn prune_unused_labels_hir(func: &mut HirFunction) {
         // Validate: no phis in next or fallthrough
         let next_phis_empty = func.body.blocks[next_id].phis.is_empty();
         let fallthrough_phis_empty = func.body.blocks[fallthrough_id].phis.is_empty();
-        assert!(
+        crate::diagnostics::invariant(
             next_phis_empty && fallthrough_phis_empty,
-            "Unexpected phis when merging label blocks"
-        );
+            "Unexpected phis when merging label blocks",
+        )?;
 
         // Validate: single predecessors
         let next_preds_ok = func.body.blocks[next_id].preds.len() == 1
             && func.body.blocks[next_id].preds.contains(original_label_id);
         let fallthrough_preds_ok = func.body.blocks[fallthrough_id].preds.len() == 1
             && func.body.blocks[fallthrough_id].preds.contains(next_id);
-        assert!(
+        crate::diagnostics::invariant(
             next_preds_ok && fallthrough_preds_ok,
-            "Unexpected block predecessors when merging label blocks"
-        );
+            "Unexpected block predecessors when merging label blocks",
+        )?;
 
         // Collect instructions from next and fallthrough
         let next_instructions = func.body.blocks[next_id].instructions.clone();
@@ -101,4 +103,5 @@ pub(crate) fn prune_unused_labels_hir(func: &mut HirFunction) {
             block.preds.insert(new);
         }
     }
+    Ok(())
 }

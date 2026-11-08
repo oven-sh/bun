@@ -116,7 +116,7 @@ impl DirectoryRoute {
             route: Some(RefPtr::from_this(this)),
             resp,
         };
-        if let Some(mut server) = this.server.get() {
+        if let Some(server) = this.server.get() {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
@@ -161,21 +161,16 @@ impl DirectoryRoute {
 
         let mut etag_buf = [0u8; 40];
         let etag = format_weak_etag(&mut etag_buf, size, last_modified_ms);
+        let last_modified_ms = (last_modified_ms > 0).then_some(last_modified_ms);
 
         let range = if method == Method::GET || method == Method::HEAD {
-            RangeRequest::from_request(&req, size)
+            RangeRequest::from_request(&req, size, Some(etag), last_modified_ms)
         } else {
             RangeRequest::Result::None
         };
 
-        let status_code = status_for_preconditions(
-            &req,
-            method,
-            200,
-            Some(etag),
-            (last_modified_ms > 0).then_some(last_modified_ms),
-            range,
-        );
+        let status_code =
+            status_for_preconditions(&req, method, 200, Some(etag), last_modified_ms, range);
 
         req.set_yield(false);
         write_any_status(resp, status_code);
@@ -294,7 +289,7 @@ impl DirectoryRoute {
         (bun_sys::S::ISREG(mode) && !had_trailing_slash).then_some(Subpath::File(file, stat, false))
     }
 
-    /// `openat2(RESOLVE_IN_ROOT|NO_MAGICLINKS)` on Linux, `openat` elsewhere.
+    /// Symlinks resolve as with `openat2(RESOLVE_IN_ROOT)`, whether or not the kernel has it. Windows follows them anywhere.
     fn open_beneath(&self, rel: &[u8]) -> Option<File> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let zrel = resolve_path::z(rel, &mut *buf);
@@ -306,9 +301,12 @@ impl DirectoryRoute {
         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
         #[cfg(windows)]
         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        let fd = bun_sys::openat2_in_root(self.root_fd.get(), zrel, flags, 0).ok()?;
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        #[cfg(not(windows))]
+        let fd = {
+            use bun_sys::beneath::{Symlinks, openat};
+            openat(self.root_fd.get(), zrel, flags, 0, Symlinks::FollowAsRoot).ok()?
+        };
+        #[cfg(windows)]
         let fd = bun_sys::openat(self.root_fd.get(), zrel, flags, 0).ok()?;
         // Windows `openat` returns a HANDLE; `FileResponseStream` needs a
         // libuv fd. `make_lib_uv_owned` is a no-op on POSIX.
@@ -359,7 +357,7 @@ impl DirectoryRoute {
         resp.clear_aborted();
         resp.clear_on_writable();
         resp.clear_timeout();
-        if let Some(mut server) = self.server.get() {
+        if let Some(server) = self.server.get() {
             server.on_static_request_complete();
         }
     }

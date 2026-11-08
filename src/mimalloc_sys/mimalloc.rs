@@ -1,4 +1,4 @@
-#![allow(non_camel_case_types, non_snake_case, clippy::missing_safety_doc)]
+#![allow(non_camel_case_types)]
 
 use core::ffi::{c_char, c_long, c_void};
 
@@ -17,6 +17,8 @@ unsafe extern "C" {
     /// No preconditions; returns null on failure.
     pub safe fn mi_zalloc(size: usize) -> *mut c_void;
     pub fn mi_usable_size(p: *const c_void) -> usize;
+    /// The size of the block that a request for `size` bytes gets. No preconditions.
+    pub safe fn mi_good_size(size: usize) -> usize;
 }
 
 pub type mi_output_fun = extern "C" fn(*const c_char, *mut c_void);
@@ -41,15 +43,16 @@ unsafe extern "C" {
     /// stop at its next page. A no-op on a thread that is not parked. No preconditions.
     pub safe fn mi_on_thread_idle_end();
     pub fn mi_stats_print_out(out: core::option::Option<mi_output_fun>, arg: *mut c_void);
-    pub fn mi_process_info(
-        elapsed_msecs: *mut usize,
-        user_msecs: *mut usize,
-        system_msecs: *mut usize,
-        current_rss: *mut usize,
-        peak_rss: *mut usize,
-        current_commit: *mut usize,
-        peak_commit: *mut usize,
-        page_faults: *mut usize,
+    /// No preconditions; writes a number through each argument that is not `None`.
+    pub safe fn mi_process_info(
+        elapsed_msecs: core::option::Option<&mut usize>,
+        user_msecs: core::option::Option<&mut usize>,
+        system_msecs: core::option::Option<&mut usize>,
+        current_rss: core::option::Option<&mut usize>,
+        peak_rss: core::option::Option<&mut usize>,
+        current_commit: core::option::Option<&mut usize>,
+        peak_commit: core::option::Option<&mut usize>,
+        page_faults: core::option::Option<&mut usize>,
     );
     /// No preconditions; returns null on failure.
     pub safe fn mi_malloc_aligned(size: usize, alignment: usize) -> *mut c_void;
@@ -64,9 +67,11 @@ bun_opaque::opaque_ffi! {
 }
 
 unsafe extern "C" {
-    pub fn mi_heap_new() -> *mut Heap;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_heap_new() -> *mut Heap;
     pub fn mi_heap_destroy(heap: *mut Heap);
-    pub fn mi_heap_main() -> *mut Heap;
+    /// No preconditions; returns the process's main heap, which is always live.
+    pub safe fn mi_heap_main() -> *mut Heap;
     pub fn mi_heap_malloc(heap: *mut Heap, size: usize) -> *mut c_void;
     fn mi_heap_zalloc(heap: *mut Heap, size: usize) -> *mut c_void;
     pub fn mi_heap_realloc(heap: *mut Heap, p: *mut c_void, newsize: usize) -> *mut c_void;
@@ -102,7 +107,8 @@ unsafe extern "C" {
         visitor: core::option::Option<mi_block_visit_fun>,
         arg: *mut c_void,
     ) -> bool;
-    pub fn mi_is_in_heap_region(p: *const c_void) -> bool;
+    /// No preconditions; looks the address up in the page map and never dereferences `p`.
+    pub safe fn mi_is_in_heap_region(p: *const c_void) -> bool;
 }
 
 // Named `Option` after mimalloc's `mi_option_t`; shadows `core::option::Option` in
@@ -154,6 +160,7 @@ pub enum Option {
     page_commit_on_demand = 40,
     page_max_reclaim = 41,
     page_cross_thread_max_reclaim = 42,
+    purge_holes = 56,
 }
 
 unsafe extern "C" {

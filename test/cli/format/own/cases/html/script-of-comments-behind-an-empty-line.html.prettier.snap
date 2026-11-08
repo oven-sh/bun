@@ -1,0 +1,15 @@
+------------------
+{ printWidth: 80 }
+------------------
+<script type="module">
+  /** @default codegen */
+</script>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<script type="module">
+  /** @default codegen */
+</script>
+
+===================== End =====================

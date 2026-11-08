@@ -86,6 +86,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "generator"_s, "number, string, ArrayBuffer, Buffer, TypedArray, or DataView"_s, generatorValue);
     }
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     ncrypto::DHPointer dh;
 
     if (sizeOrKey.isNumber()) {

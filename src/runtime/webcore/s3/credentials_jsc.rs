@@ -54,7 +54,6 @@ const ACL_ONE_OF: &str = "\"private\", \"public-read\", \"public-read-write\", \
 const STORAGE_CLASS_ONE_OF: &str = "\"STANDARD\", \"STANDARD_IA\", \"INTELLIGENT_TIERING\", \"EXPRESS_ONEZONE\", \
 \"ONEZONE_IA\", \"GLACIER\", \"GLACIER_IR\", \"REDUCED_REDUNDANCY\", \"OUTPOSTS\", \"DEEP_ARCHIVE\", \"SNOW\"";
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn get_credentials_with_options(
     this: &S3Credentials,
     default_options: MultiPartUploadOptions,

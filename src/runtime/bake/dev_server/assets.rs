@@ -29,30 +29,34 @@ pub(crate) struct Assets {
     pub(crate) needs_reindex: bool,
 }
 
-// SAFETY: `Assets` is only ever constructed as the `assets` field of
-// `DevServer` (which is `Box`-allocated and never moved post-init).
-bun_core::impl_field_parent! { Assets => DevServer.assets; fn owner; fn mut owner_mut; }
-
 impl Assets {
     pub(crate) fn get_hash(&self, path: &[u8]) -> Option<u64> {
         self.path_map
             .get(path)
             .map(|idx| self.files.keys()[idx.get_usize()])
     }
+}
 
+impl DevServer {
     /// When an asset is overwritten, it receives a new URL to get around
     /// browser caching. The old URL is immediately revoked.
     ///
     /// `abs_path` is not allocated. Ownership of `contents` is transferred to
     /// this function.
-    pub(crate) fn replace_path(
+    pub(crate) fn replace_asset_path(
         &mut self,
         abs_path: &[u8],
         mut contents: AnyBlob,
         mime_type: &MimeType,
         content_hash: u64,
     ) -> Result<EntryIndex, bun_alloc::AllocError> {
-        debug_assert!(self.owner().magic == Magic::Valid);
+        debug_assert!(self.magic == Magic::Valid);
+        let Self {
+            assets,
+            client_graph,
+            server,
+            ..
+        } = self;
         // Invariant: `files.count() == refs.len()`, re-checked before each
         // return below.
 
@@ -69,13 +73,12 @@ impl Assets {
             bstr::BStr::new(&*mime_type.value),
         );
 
-        let server = self.owner().server;
         debug_assert!(server.is_some());
 
         // `gop` holds key/value ptrs into `path_map` and cannot stay live
-        // across calls that take `&mut self`. Capture `index` /
+        // across calls that take `&mut Assets`. Capture `index` /
         // `found_existing` and re-derive the value slot at the end instead.
-        let gop = self.path_map.get_or_put(abs_path)?;
+        let gop = assets.path_map.get_or_put(abs_path)?;
         let path_index = gop.index;
         let found_existing = gop.found_existing;
         let existing_entry = if found_existing {
@@ -90,64 +93,63 @@ impl Assets {
             // `get_or_put` already boxed `abs_path` on insert, so no key
             // reassignment is needed — `insert_empty` is still called for its
             // side effect of registering the file in `client_graph`.
-            let owner = self.owner_mut();
-            // SAFETY: accessing disjoint field `client_graph` via parent ptr; `assets` (self) is
-            // not touched through `owner` for the duration of this borrow.
-            let _ =
-                unsafe { &mut (*owner).client_graph }.insert_empty(abs_path, FileKind::Unknown)?;
+            let _ = client_graph.insert_empty(abs_path, FileKind::Unknown)?;
         } else {
             let entry_index = existing_entry.unwrap();
             // When there is one reference to the asset, the entry can be
             // replaced in-place with the new asset.
-            if self.refs[entry_index.get_usize()] == 1 {
-                self.files.keys_mut()[entry_index.get_usize()] = content_hash;
-                self.files.values_mut()[entry_index.get_usize()] = StaticRoute::init_from_any_blob(
-                    contents,
-                    InitFromBytesOptions {
-                        mime_type: Some(mime_type),
-                        server,
-                        ..Default::default()
-                    },
-                );
+            if assets.refs[entry_index.get_usize()] == 1 {
+                assets.files.keys_mut()[entry_index.get_usize()] = content_hash;
+                assets.files.values_mut()[entry_index.get_usize()] =
+                    StaticRoute::init_from_any_blob(
+                        contents,
+                        InitFromBytesOptions {
+                            mime_type: Some(mime_type),
+                            server: *server,
+                            ..Default::default()
+                        },
+                    );
                 // `ArrayHashMap<u64, _>` keys the entry on the hash itself.
-                self.needs_reindex = true;
-                debug_assert_eq!(self.files.count(), self.refs.len());
+                assets.needs_reindex = true;
+                debug_assert_eq!(assets.files.count(), assets.refs.len());
                 return Ok(entry_index);
             } else {
-                self.refs[entry_index.get_usize()] -= 1;
-                debug_assert!(self.refs[entry_index.get_usize()] > 0);
+                assets.refs[entry_index.get_usize()] -= 1;
+                debug_assert!(assets.refs[entry_index.get_usize()] > 0);
             }
         }
 
-        self.reindex_if_needed()?;
-        let file_index = match self.files.entry(content_hash) {
+        assets.reindex_if_needed()?;
+        let file_index = match assets.files.entry(content_hash) {
             MapEntry::Vacant(vacant) => {
                 let file_index = vacant.index();
                 vacant.insert(StaticRoute::init_from_any_blob(
                     contents,
                     InitFromBytesOptions {
                         mime_type: Some(mime_type),
-                        server,
+                        server: *server,
                         ..Default::default()
                     },
                 ));
-                self.refs.push(1);
+                assets.refs.push(1);
                 file_index
             }
             MapEntry::Occupied(occupied) => {
                 let file_index = occupied.index();
-                self.refs[file_index] += 1;
+                assets.refs[file_index] += 1;
                 // Release the owned blob on the duplicate-content path.
                 contents.detach();
                 file_index
             }
         };
         let entry = EntryIndex::init(u32::try_from(file_index).expect("int cast"));
-        self.path_map.values_mut()[path_index] = entry;
-        debug_assert_eq!(self.files.count(), self.refs.len());
+        assets.path_map.values_mut()[path_index] = entry;
+        debug_assert_eq!(assets.files.count(), assets.refs.len());
         Ok(entry)
     }
+}
 
+impl Assets {
     pub(crate) fn unref_by_index(&mut self, index: EntryIndex, dec_count: u32) {
         debug_assert!(dec_count > 0);
         self.refs[index.get_usize()] -= dec_count;

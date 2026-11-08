@@ -1,0 +1,31 @@
+------------------
+{ printWidth: 80 }
+------------------
+a: 1
+# oxfmt-ignore
+b:    [1,   2]
+# prettier-ignore
+c:    [1,   2]
+d:
+  - 1
+  # oxfmt-ignore
+  - {e:   1}
+  # prettier-ignore
+  - {f:   1}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a: 1
+# oxfmt-ignore
+b:    [1,   2]
+# prettier-ignore
+c:    [1,   2]
+d:
+  - 1
+  # oxfmt-ignore
+  - {e:   1}
+  # prettier-ignore
+  - {f:   1}
+
+===================== End =====================

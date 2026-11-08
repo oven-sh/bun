@@ -30,7 +30,7 @@ test("request.cookies.set() should set websocket upgrade response cookie - issue
   // Use Bun.connect to send a WebSocket upgrade request and check response headers
   const socket = await Bun.connect({
     hostname: "localhost",
-    port: server.port,
+    port: server.port!,
     socket: {
       data(socket, data) {
         try {
@@ -101,7 +101,7 @@ test("request.cookies.set() should work with custom headers in upgrade - issue #
 
   const socket = await Bun.connect({
     hostname: "localhost",
-    port: server.port,
+    port: server.port!,
     socket: {
       data(socket, data) {
         try {

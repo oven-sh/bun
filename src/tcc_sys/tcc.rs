@@ -27,23 +27,39 @@ pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char
 // and `ENABLE_TINYCC` in `scripts/build/buildOptionsRs.ts`.
 macro_rules! tcc_externs {
     ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
-        #[cfg(not(any(target_os = "android", target_os = "freebsd")))]
-        unsafe extern "C" {
-            $($(#[$attr])* fn $name($($arg: $ty),*) $(-> $ret)?;)*
+        mod raw {
+            use super::*;
+
+            #[cfg(not(any(target_os = "android", target_os = "freebsd")))]
+            unsafe extern "C" {
+                $($(#[$attr])* pub(super) fn $name($($arg: $ty),*) $(-> $ret)?;)*
+            }
+            $(
+                #[cfg(any(target_os = "android", target_os = "freebsd"))]
+                #[allow(unused_variables, clippy::missing_safety_doc)]
+                pub(super) unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
+                    unreachable!(concat!(
+                        stringify!($name),
+                        " called but TinyCC is disabled on this target — keep the ",
+                        "ENABLE_TINYCC early-returns in bun_runtime::ffi in sync with this stub"
+                    ));
+                }
+            )*
         }
         $(
-            #[cfg(any(target_os = "android", target_os = "freebsd"))]
-            #[allow(unused_variables, clippy::missing_safety_doc)]
-            unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
-                unreachable!(concat!(
-                    stringify!($name),
-                    " called but TinyCC is disabled on this target — keep the ",
-                    "ENABLE_TINYCC early-returns in bun_runtime::ffi in sync with this stub"
-                ));
+            unsafe fn $name($($arg: $ty),*) $(-> $ret)? {
+                let _lock = LIBTCC_LOCK.lock();
+                // SAFETY: same contract as the libtcc function; the caller upholds it.
+                unsafe { raw::$name($($arg),*) }
             }
         )*
     };
 }
+
+/// The only lock around TinyCC's process globals: its own are compiled out
+/// (`CONFIG_TCC_SEMLOCK=0`, scripts/build/deps/tinycc.ts). Held across the
+/// error callback, which must not call into libtcc.
+static LIBTCC_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
 
 tcc_externs! {
     fn tcc_new() -> *mut TCCState;
@@ -132,10 +148,8 @@ pub struct ConfigErr<ErrCtx> {
     pub handler: unsafe extern "C" fn(*mut ErrCtx, *const c_char),
 }
 
-pub struct Config<ErrCtx> {
-    // Call sites pass both literals (default_tcc_options) and runtime strings
-    // (CompileC.flags / BUN_TCC_OPTIONS); kept as a raw ptr rather than a borrow.
-    pub options: Option<NonNull<ZStr>>,
+pub struct Config<'a, ErrCtx> {
+    pub options: Option<&'a ZStr>,
     pub output_type: OutputFormat,
     pub err: ConfigErr<ErrCtx>,
 }
@@ -149,7 +163,7 @@ impl State {
 
     /// Create and initialize a new TCC compilation context
     pub fn init<ErrCtx, const VALIDATE_OPTIONS: bool>(
-        config: &Config<ErrCtx>,
+        config: &Config<'_, ErrCtx>,
     ) -> Result<NonNull<State>, Error> {
         let state_ptr = State::new()?;
         // errdefer state.destroy() — State is an FFI handle without Drop, so use scopeguard.
@@ -164,8 +178,7 @@ impl State {
         // options, so this must be called after setOptions
         if !VALIDATE_OPTIONS {
             if let Some(options) = config.options {
-                // SAFETY: caller guarantees `options` outlives this init call.
-                match state.set_options(unsafe { options.as_ref() }) {
+                match state.set_options(options) {
                     Ok(()) => {}
                     Err(_) => {
                         if cfg!(debug_assertions) {
@@ -182,8 +195,7 @@ impl State {
 
         if VALIDATE_OPTIONS {
             if let Some(options) = config.options {
-                // SAFETY: caller guarantees `options` outlives this init call.
-                state.set_options(unsafe { options.as_ref() })?;
+                state.set_options(options)?;
             }
         }
 

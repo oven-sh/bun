@@ -129,7 +129,18 @@ impl Dict {
     }
 }
 
-pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+/// Everything in front of the first frame's LZW data.
+pub(crate) struct Frame<'a> {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    interlace: bool,
+    color_table: &'a [u8],
+    min_code: u8,
+    transparent: Option<u8>,
+    lzw_off: usize,
+}
+
+pub(crate) fn first_frame(bytes: &[u8]) -> Result<Frame<'_>, codecs::Error> {
     // ── header + LSD ───────────────────────────────────────────────────────
     if bytes.len() < 13 || !(&bytes[0..6] == b"GIF89a" || &bytes[0..6] == b"GIF87a") {
         return Err(codecs::Error::DecodeFailed);
@@ -203,7 +214,6 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
                 if w == 0 || h == 0 {
                     return Err(codecs::Error::DecodeFailed);
                 }
-                codecs::guard(w, h, max_pixels)?;
                 let ct: &[u8] = if has_lct {
                     if i + lct_size * 3 > bytes.len() {
                         return Err(codecs::Error::DecodeFailed);
@@ -223,12 +233,35 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
                 }
                 let min_code: u8 = bytes[i].clamp(2, 11);
                 i += 1;
-                return decode_frame(bytes, i, w, h, interlace, ct, min_code, trns);
+                return Ok(Frame {
+                    width: w,
+                    height: h,
+                    interlace,
+                    color_table: ct,
+                    min_code,
+                    transparent: trns,
+                    lzw_off: i,
+                });
             }
             _ => return Err(codecs::Error::DecodeFailed),
         }
     }
     Err(codecs::Error::DecodeFailed)
+}
+
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+    let frame = first_frame(bytes)?;
+    codecs::guard(frame.width, frame.height, max_pixels)?;
+    decode_frame(
+        bytes,
+        frame.lzw_off,
+        frame.width,
+        frame.height,
+        frame.interlace,
+        frame.color_table,
+        frame.min_code,
+        frame.transparent,
+    )
 }
 
 fn decode_frame(

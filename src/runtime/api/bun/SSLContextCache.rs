@@ -122,7 +122,7 @@ impl SSLContextCache {
         // file I/O / cert parsing and on Windows the system-CA load — none of
         // which has a reason to serialize, and holding a non-reentrant SRWLock
         // across an SSL_CTX_free that *did* tombstone would self-deadlock.
-        let ctx = opts.create_ssl_context(err)?;
+        let ctx = opts.create_ssl_context_with_digest(&d, err)?;
 
         let _guard = self.mutex.lock_guard();
 
@@ -216,10 +216,7 @@ impl SSLContextCache {
 /// whichever `SSL_CTX_free` took the refcount to zero, on that caller's
 /// thread; for the per-VM cache that's always the JS thread.
 // `ptr` is the ex_data slot value: null (CTX never went through the cache) or
-// a live `*Entry`; the deref is null-guarded. The C `CRYPTO_EX_free` ABI fixes
-// the parameter as `void*`, so the function cannot be marked `unsafe` or take a
-// reference — not_unsafe_ptr_arg_deref is a false positive here.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+// a live `*Entry`; the deref is null-guarded.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn bun_ssl_ctx_cache_on_free(
     parent: *mut c_void,

@@ -4301,7 +4301,7 @@ describe("bundler", () => {
   // inside a claimed one. So a function that opts out is left as written, with all that is inside it. A function
   // inside used to be compiled on its own, with a cache that the variables of the outer function are no inputs of.
   // babel-plugin-react-compiler 1.0.0 compiles nothing in these two files.
-  describe("react-compiler/AFunctionThatOptsOutIsLeftAsWritten", () => {
+  describe.concurrent("react-compiler/AFunctionThatOptsOutIsLeftAsWritten", () => {
     const files = {
       "entry.jsx": /* jsx */ `
         import { memo, useEffect, useState } from "react";
@@ -4523,6 +4523,7 @@ describe("bundler", () => {
           import { test } from "bun:test";
           import * as all from "./entry.jsx";
           test("which functions have a memo cache", () => {
+            console.log("exports: " + Object.keys(all).length);
             console.log("compiled: " + Object.keys(all).filter(name => /\\$\\d*\\[\\d+\\]/.test(String(all[name]))).join(" "));
           });
         `,
@@ -4535,10 +4536,37 @@ describe("bundler", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ compiled: stdout.match(/compiled: (.*)/)?.[1] ?? stderr, exitCode }).toEqual({
-        compiled: "",
-        exitCode: 0,
-      });
+      expect({
+        exports: stdout.match(/exports: (\d+)/)?.[1],
+        compiled: stdout.match(/compiled: (.*)/)?.[1] ?? stderr,
+        exitCode,
+      }).toEqual({ exports: "25", compiled: "", exitCode: 0 });
+    });
+  });
+
+  // Upstream's `ignoreUseNoForget` option compiles a function that opts out. Only a pragma of upstream's fixtures sets
+  // it here, and only a debug or ASAN build reads those pragmas.
+  test.skipIf(!isDebug && !isASAN)("react-compiler/IgnoreUseNoForget", async () => {
+    using dir = tempDir("react-compiler-ignore-use-no-forget", {
+      "entry.jsx": `// @ignoreUseNoForget
+        export function Component({ a }) {
+          "use no forget";
+          return <b v={a} />;
+        }
+      `,
+    });
+    const cacheSizes = async (reactCompilerParseTestPragmas: boolean) => {
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.jsx")],
+        external: ["*"],
+        reactCompiler: true,
+        reactCompilerParseTestPragmas,
+      } as Bun.BuildConfig);
+      return [...(await result.outputs[0].text()).matchAll(/_c\((\d+)\)/g)].map(m => +m[1]);
+    };
+    expect({ withThePragma: await cacheSizes(true), withNoPragma: await cacheSizes(false) }).toEqual({
+      withThePragma: [2],
+      withNoPragma: [],
     });
   });
 

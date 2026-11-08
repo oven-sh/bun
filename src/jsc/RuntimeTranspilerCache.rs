@@ -85,8 +85,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 50: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
-/// Version 52: The React Compiler compiles nothing nested in a function that opts out, and finds a
-/// component or hook by the hook calls and JSX in its parameters, object methods and classes too.
+/// Version 52: The React Compiler claims a function before it reads its opt-out, and reads more places for the claim.
 const EXPECTED_VERSION: u32 = 52;
 
 /// Source files smaller than this are not written to / read from the on-disk

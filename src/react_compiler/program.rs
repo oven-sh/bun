@@ -773,10 +773,7 @@ fn returns_non_node_in_stmt(stmt: &Stmt, result: &mut bool) {
     }
 }
 
-/// Upstream's `callsHooksOrCreatesJsx`: a hook call or JSX anywhere in the function, except in an arrow, a function
-/// expression or a function declaration nested in it. A method of an object or of a class is none of those.
-///
-/// Babel's traverse reaches a few places that upstream's Rust port does not read. Each is marked "Babel only".
+/// Upstream's `callsHooksOrCreatesJsx`. It reads methods and no nested function. "Babel only": not in its Rust port.
 fn calls_hooks_or_creates_jsx(host: &dyn Host, args: &[G::Arg], body: &[Stmt]) -> bool {
     calls_hooks_or_creates_jsx_in_stmts(host, body)
         || calls_hooks_or_creates_jsx_in_params(host, args)
@@ -820,8 +817,7 @@ fn calls_hooks_or_creates_jsx_in_pattern(host: &dyn Host, pattern: &ast::Binding
     }
 }
 
-/// A property of an object literal or a member of a class. Babel only, for an object literal: the computed key, the
-/// parameters of a method, and the default in `({ a = 1 } = b)`. Upstream's Rust port reads those of a class member.
+/// Babel only, for an object literal: the computed key, the parameters of a method and the default in `({ a = 1 } = b)`.
 fn calls_hooks_or_creates_jsx_in_property(host: &dyn Host, property: &G::Property) -> bool {
     if let Some(block) = property.class_static_block_ref() {
         return calls_hooks_or_creates_jsx_in_stmts(host, block.stmts.as_slice());
@@ -1112,9 +1108,7 @@ fn is_valid_component_params(host: &dyn Host, args: &[G::Arg], has_rest_arg: boo
 // Function type detection
 // -----------------------------------------------------------------------
 
-/// Upstream's `getReactFunctionType`, with the check of `findFunctionsToCompile` that `all` mode takes top-level
-/// functions only. `discover` calls it on the function as parsed and `maybe_compile_node` on it as visited, and the
-/// two answers can differ.
+/// Upstream's `getReactFunctionType` and its caller's `all`-mode check. Asked before and after the visit: answers can differ.
 #[allow(clippy::too_many_arguments)]
 fn get_react_function_type(
     host: &dyn Host,
@@ -1161,8 +1155,7 @@ fn get_component_or_hook_like(
     body: &[Stmt],
     in_react_hoc: bool,
 ) -> Option<ReactFunctionType> {
-    // Babel only: the callback of `memo()` / `forwardRef()` has no name, also in `const A = memo(() => {})`. Upstream's
-    // Rust port names it `A` and then holds it to the rules for a component of that name.
+    // Babel only: the callback of `memo()` / `forwardRef()` has no name, also in `const A = memo(() => {})`.
     let name = name.filter(|_| !in_react_hoc);
     if let Some(fn_name) = name {
         if is_component_name(fn_name) {
@@ -1318,8 +1311,6 @@ impl ReactCompilerState {
     /// (`ProgramContext::init_from_scope`, restricted-import validation) is
     /// deferred to the first `maybe_compile_*` call so the parser can set
     /// `p.react_compiler = Some(..)` without a `&mut p` borrow conflict.
-    ///
-    /// `source` is read for the fixture pragmas: [`Self::discover`] needs the compilation mode for the first function.
     #[inline(never)]
     pub fn new(
         options: ReactCompilerOptions,
@@ -1333,6 +1324,7 @@ impl ReactCompilerState {
             "ReactCompilerState::new opt_out={}",
             has_module_scope_opt_out
         );
+        // `discover` needs the mode that the fixture pragmas set, for the first function already.
         #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         let options = {
             let mut options = options;
@@ -1388,10 +1380,7 @@ impl ReactCompilerState {
         }
     }
 
-    /// Upstream's discovery for one function, asked before any of it is visited. `args` and `body` are as parsed.
-    ///
-    /// Upstream claims a function by its type alone and skips everything nested in a claimed function. It reads the
-    /// opt-out directive and the suppressions of a claimed function afterwards, so those functions are claimed too.
+    /// Upstream's discovery for one function, asked before its visit: the claim first, then the opt-out and suppressions.
     #[allow(clippy::too_many_arguments)]
     pub fn discover(
         &self,
@@ -1425,15 +1414,14 @@ impl ReactCompilerState {
         ) else {
             return Discovery::Search;
         };
-        // Upstream compiles these for their diagnostics and applies nothing. Nothing reports them here.
+        // Claimed, and upstream applies nothing: a suppression is an error, an opt-out is compiled for its diagnostics.
         if has_react_hooks_suppression
             || (!self.options.ignore_use_no_forget
                 && find_directive_disabling_memoization(&directives).is_some())
         {
             return Discovery::Skip;
         }
-        // Upstream's TypeScript gives up on a component with more than two parameters, which only the callback of
-        // `memo()` / `forwardRef()` can be. Its Rust port has no such invariant, and `bun lint` reports as that does.
+        // Upstream's TypeScript refuses more than two parameters. Checked here: `bun lint` shares the pipeline.
         if fn_type == ReactFunctionType::Component && args.len() > 2 {
             return Discovery::Skip;
         }
@@ -1593,8 +1581,7 @@ fn maybe_compile_node(
         return None;
     }
 
-    // `discover` claimed the function for what its body had as parsed. The visit pass can remove that: it drops a JSX
-    // element that nothing uses, and the compiler then can't see what the element froze.
+    // Asked again: the visit pass drops a JSX element that nothing uses, and with it what `discover` claimed.
     let body_directives = collect_body_directives(node.body().stmts.slice());
     let fn_type = get_react_function_type(
         &*host,

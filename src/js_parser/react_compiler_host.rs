@@ -233,9 +233,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
     /// class, and isn't inside a function it already claimed. The surrounding statement only gives the function its name.
     ///
     /// Consumes `react_compiler_candidate_name`, so that a function in a default argument can't pick it up, and sets
-    /// `react_compiler_search` for the visit.
-    ///
-    /// `None` without the compiler: nothing sets the name, the `memo()` flag or the search state then.
+    /// `react_compiler_search` for the visit. `None` without the compiler.
     #[inline]
     pub(crate) fn enter_react_compiler_candidate(
         &mut self,
@@ -246,6 +244,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         has_rest_arg: bool,
         body: &[js_ast::Stmt],
     ) -> Option<ReactCompilerCandidate> {
+        // Without the compiler nothing sets the name, the `memo()` flag or the search state.
         self.react_compiler.is_some().then(|| {
             self.discover_react_compiler_candidate(
                 is_method,

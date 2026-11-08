@@ -35,7 +35,7 @@ await listen("eval, what it sees", new NodeWorker(`${post}([__filename, __dirnam
 await listen("eval, sloppy", new NodeWorker(`x = 1; ${post}([x, (function () { return typeof this; })()])`, { eval: true }));
 await listen("eval, awaits", new NodeWorker(`${post}(await Promise.resolve(3))`, { eval: true }));
 await listen("eval, throws", new NodeWorker(`throw new RangeError("thrown")`, { eval: true }));
-await listen("eval: false", new NodeWorker(new URL("data:text/javascript,postMessage('eval: false')"), { eval: false }));
+await listen("eval: false", new NodeWorker(new URL("data:text/javascript,import { parentPort } from 'node:worker_threads'; parentPort.postMessage('eval: false')"), { eval: false }));
 await listen("blob, no type", new Worker(URL.createObjectURL(new Blob([`postMessage("no type")`]))));
 await listen("blob, an empty type", new Worker(URL.createObjectURL(new Blob([`postMessage("an empty type")`], { type: "" }))));
 await listen("blob, text/javascript", new Worker(URL.createObjectURL(new Blob([`postMessage("text/javascript")`], { type: "text/javascript" }))));

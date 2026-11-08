@@ -42,12 +42,12 @@ await listen("URL", new Worker(new URL("data:text/javascript,postMessage('a URL'
 await listen("URL with a space and a hash", new Worker(new URL("data:text/javascript,postMessage('a b#c?d')")));
 await listen("URL of non-ASCII", new Worker(new URL("data:text/javascript,postMessage('é')")));
 await listen("options", new Worker("data:text/javascript,postMessage('options ' + self.name)", { name: "named" }));
-await listen("node import", new NodeWorker(new URL("data:text/javascript,postMessage('node, imported')")));
-await listen("node namespace", new threads.Worker(new URL("data:text/javascript,postMessage('node, a namespace')")));
-await listen("node default", new defaultThreads.Worker(new URL("data:text/javascript,postMessage('node, the default')")));
-await listen("node destructured", new Destructured(new URL("data:text/javascript,postMessage('node, destructured')")));
-await listen("node required", new required.Worker(new URL("data:text/javascript,postMessage('node, required')")));
-await listen("node require().Worker", new (require("node:worker_threads").Worker)(new URL("data:text/javascript,postMessage('node, require().Worker')")));
+await listen("node import", new NodeWorker(new URL("data:text/javascript,import { parentPort } from 'node:worker_threads'; parentPort.postMessage('node, imported')")));
+await listen("node namespace", new threads.Worker(new URL("data:text/javascript,import { parentPort } from 'node:worker_threads'; parentPort.postMessage('node, a namespace')")));
+await listen("node default", new defaultThreads.Worker(new URL("data:text/javascript,import { parentPort } from 'node:worker_threads'; parentPort.postMessage('node, the default')")));
+await listen("node destructured", new Destructured(new URL("data:text/javascript,import { parentPort } from 'node:worker_threads'; parentPort.postMessage('node, destructured')")));
+await listen("node required", new required.Worker(new URL("data:text/javascript,import { parentPort } from 'node:worker_threads'; parentPort.postMessage('node, required')")));
+await listen("node require().Worker", new (require("node:worker_threads").Worker)(new URL("data:text/javascript,import { parentPort } from 'node:worker_threads'; parentPort.postMessage('node, require().Worker')")));
 await listen("node workerData", new NodeWorker(new URL("data:text/javascript,import { workerData, parentPort } from 'node:worker_threads'; parentPort.postMessage(workerData)"), { workerData: { a: 1 } }));
 await listen("twice 1", new Worker("data:text/javascript,postMessage('twice')"));
 await listen("twice 2", new Worker("data:text/javascript,postMessage('twice')"));

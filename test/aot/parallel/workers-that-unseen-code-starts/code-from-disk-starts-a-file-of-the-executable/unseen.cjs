@@ -7,3 +7,4 @@ module.exports = file => {
   worker.on("error", error => (said = "error: " + error.message));
   return new Promise(resolve => worker.on("exit", () => setImmediate(() => resolve(said + " | " + JSON.stringify(printed)))));
 };
+module.exports.post = message => require("node:worker_threads").parentPort.postMessage(message);

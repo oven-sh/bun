@@ -9,14 +9,15 @@ const files = {
     console.log("printed by the worker");
     let refused;
     try { process.chdir("/"); } catch (error) { refused = error.code; }
-    postMessage([21, refused]);`,
+    require("./unseen.cjs").post([21, refused]);`,
   "unseen.cjs": `
     module.exports = file => new Promise(resolve => {
       const { Worker } = require("node:worker_threads");
       const worker = new Worker(file);
       worker.on("message", resolve);
       worker.on("error", error => resolve(error.message));
-    });`,
+    });
+    module.exports.post = message => require("node:worker_threads").parentPort.postMessage(message);`,
   "by-a-name-made-at-run-time.mjs": `
     const start = (await import(process.argv[2])).default;
     console.log("worker", JSON.stringify(await start(process.argv[3])), typeof console.log);`,

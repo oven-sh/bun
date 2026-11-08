@@ -215,11 +215,7 @@ pub(crate) fn perform_security_scan_after_resolution(
         return Ok(None);
     }
 
-    let has_node_modules = bun_sys::lstatat(
-        bun_sys::Fd::cwd(),
-        &bun_core::ZBox::from_bytes(&[manager.root_dir, b"node_modules".as_slice()].concat()),
-    )
-    .is_ok();
+    let has_node_modules = manager.root_dir_has_node_modules;
     // A command that names the packages it adds or updates scans only those packages and `seeds`.
     // The install that wrote the lockfile and `node_modules` already scanned everything else.
     let scan_all = manager.update_requests.is_empty()

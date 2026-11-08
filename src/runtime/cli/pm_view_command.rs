@@ -70,10 +70,19 @@ pub(crate) fn view(
 
             // Try our best to get the package.json name they meant
             'from_package_json: {
-                let package_json_path = bun_core::ZBox::from_bytes(
-                    &[manager.root_dir, b"package.json".as_slice()].concat(),
-                );
-                let str = match bun_sys::File::open(&package_json_path, bun_sys::O::RDONLY, 0)
+                let mut path_buf = bun_paths::path_buffer_pool::get();
+                let Some(package_json_path) =
+                    bun_paths::resolve_path::join_abs_string_buf_z_checked::<
+                        bun_paths::platform::Auto,
+                    >(
+                        manager.root_dir,
+                        &mut path_buf[..],
+                        &[b"package.json".as_slice()],
+                    )
+                else {
+                    break 'from_package_json;
+                };
+                let str = match bun_sys::File::open(package_json_path, bun_sys::O::RDONLY, 0)
                     .and_then(|file| file.read_to_end())
                 {
                     Ok(str) => str,

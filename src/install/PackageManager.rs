@@ -459,6 +459,9 @@ pub struct PackageManager {
     pub(crate) cache_directory_path: ZBox, // owned; process lifetime via the leaked singleton
     /// The project directory, interned in `DirnameStore`, with a trailing separator.
     pub root_dir: &'static [u8],
+    /// Whether `root_dir` had a `node_modules` entry when the manager was created, before
+    /// any install created one.
+    pub root_dir_has_node_modules: bool,
     // allocator dropped per §Allocators (was `bun.default_allocator`). For the
     // handful of sites that allocated AST nodes via `Expr.allocate(manager.allocator, …)`
     // — i.e. nodes that must outlive `Expr.Data.Store.reset()` across workspace
@@ -1556,6 +1559,16 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 // allocate / get singleton
 // ──────────────────────────────────────────────────────────────────────────
 
+fn root_dir_has_node_modules(root_dir: &[u8]) -> bool {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+        root_dir,
+        &mut buf[..],
+        &[b"node_modules".as_slice()],
+    )
+    .is_some_and(|path| bun_sys::lstat(path).is_ok())
+}
+
 fn allocate_package_manager(
     options: Options,
     log: *mut bun_ast::Log,
@@ -1617,6 +1630,10 @@ fn allocate_package_manager(
         wr!(patch_task_fifo, PatchTaskFifo::init());
         wr!(log, log);
         wr!(root_dir, root_dir);
+        wr!(
+            root_dir_has_node_modules,
+            root_dir_has_node_modules(root_dir)
+        );
         wr!(ast_arena, bun_alloc::Arena::new());
         wr!(env, Some(bun_ptr::BackRef::new_mut(env)));
         wr!(
@@ -3131,6 +3148,7 @@ fn init_with_runtime_once(
         // directory, and `parse_with_json` makes them relative to the working directory.
         if manager.lockfile.packages.len() > 0 {
             manager.root_dir = FileSystem::get().dirname_store().append(project_dir)?;
+            manager.root_dir_has_node_modules = root_dir_has_node_modules(project_dir);
             // Auto-install ignores an override that points away from the registry, so it also drops
             // what such an override resolved to in the lockfile.
             use crate::lockfile_real::package::PackageColumns as _;

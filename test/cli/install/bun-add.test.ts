@@ -1327,6 +1327,40 @@ it.each([
   expect(exitCode).toBe(0);
 });
 
+for (const streaming of [true, false]) {
+  it(`installs only the published files of a GitHub dependency (${streaming ? "streaming" : "buffered"} extraction)`, async () => {
+    await setGithubRepository("published", "files-demo", "abc1234", ["main"], {
+      "package.json": JSON.stringify({ name: "files-demo", version: "1.0.0", main: "lib/main.js", files: ["src"] }),
+      "lib/main.js": "",
+      "src/a.js": "",
+      "docs/guide.md": "",
+      "node_modules/dep/index.js": "",
+      "readme.md": "",
+    });
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { "files-demo": "published/files-demo#main" } }),
+    );
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...githubEnv(), ...(streaming ? {} : { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }) },
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+    const installed = join(package_dir, "node_modules", "files-demo");
+    const tree = async (dir: string): Promise<string[]> =>
+      (await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: dir, dot: true, onlyFiles: true }))).sort();
+    expect(await tree(installed)).toEqual([".bun-tag", "lib/main.js", "package.json", "readme.md", "src/a.js"]);
+  });
+}
+
 it("should add dependency (GitHub)", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

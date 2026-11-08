@@ -759,10 +759,7 @@ pub fn published_files(
                         DirInfo(
                             bin_dir,
                             bin.path.as_bytes().into(),
-                            1 + bin
-                                .path
-                                .as_bytes()
-                                .split(|&c| c == b'/')
+                            1 + strings::split(bin.path.as_bytes(), b"/")
                                 .filter(|s| !s.is_empty())
                                 .count(),
                         ),
@@ -1037,8 +1034,15 @@ pub fn is_special_file_or_variant(filename: &[u8], name: &'static [u8]) -> bool 
     let Some((stem, extension)) = filename.split_at_checked(name.len()) else {
         return false;
     };
-    strings_eql(stem, name)
+    strings::eql_case_insensitive_ascii_check_length(stem, name)
         && (extension.is_empty() || (extension.len() > 1 && extension[0] == b'.'))
+}
+
+/// Either `true` or a non-empty list of names.
+fn bundles_dependencies(json: &Expr) -> bool {
+    json.get(b"bundleDependencies")
+        .or_else(|| json.get(b"bundledDependencies"))
+        .is_some_and(|field| field.as_bool() == Some(true) || field.as_array().is_some())
 }
 
 /// Removes everything from `root_dir` that `bun pm pack` would leave out of the tarball, so that a
@@ -1059,13 +1063,25 @@ pub fn prune_to_published_files(root_dir: &Dir) -> bun_sys::Maybe<()> {
         return Ok(());
     };
     let source = bun_ast::Source::init_path_string("package.json", &contents[..]);
-    let Ok(parsed) =
-        crate::bun_json::ParsedJson::parse_package_json(&source, &mut bun_ast::Log::init())
+    let bump = pack_bump();
+    let Ok(root) =
+        crate::bun_json::parse_package_json_utf8(&source, &mut bun_ast::Log::init(), bump)
     else {
         return Ok(());
     };
-    let json = &parsed.root;
-    let bump = pack_bump();
+    let json = &root;
+    if !json.is_object() {
+        return Ok(());
+    }
+    drop_shadowed_properties(root);
+
+    if !bundles_dependencies(json) {
+        match root_dir.delete_file_z(bun_core::zstr!("node_modules")) {
+            Ok(()) => {}
+            Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
+            Err(_) => root_dir.delete_tree(b"node_modules")?,
+        }
+    }
 
     // A trusted git dependency's `prepare` script runs after this and may build the published
     // files from the ones this would remove.
@@ -1093,8 +1109,16 @@ pub fn prune_to_published_files(root_dir: &Dir) -> bun_sys::Maybe<()> {
         }
     }
 
-    let Ok((queue, _bins)) = published_files(root_dir, root_path, json, bump, LogLevel::Silent)
-    else {
+    let select_dir = root_dir.open_dir(
+        b".",
+        bun_sys::OpenDirOptions {
+            iterate: true,
+            no_follow: false,
+        },
+    )?;
+    let selected = published_files(&select_dir, root_path, json, bump, LogLevel::Silent);
+    select_dir.close();
+    let Ok((queue, _bins)) = selected else {
         return Ok(());
     };
 
@@ -1108,10 +1132,8 @@ pub fn prune_to_published_files(root_dir: &Dir) -> bun_sys::Maybe<()> {
         }
         if !main.is_empty()
             && !main.starts_with(b"/")
-            && !main.contains(&b'\\')
-            && !main
-                .split(|&c| c == b'/')
-                .any(|part| part == b".." || part.is_empty())
+            && !strings::contains_char(main, b'\\')
+            && !strings::split(main, b"/").any(|part| part == b".." || part.is_empty())
         {
             for (i, &c) in main.iter().enumerate() {
                 if c == b'/' {
@@ -1207,4 +1229,42 @@ pub fn prune_to_published_files(root_dir: &Dir) -> bun_sys::Maybe<()> {
     let result = prune_dir(&walk_dir, b"", &keep_files, &keep_dirs);
     walk_dir.close();
     result
+}
+
+/// Applies `prune_to_published_files` to a Git or GitHub cache entry that an older Bun stored
+/// whole. Pruning an entry that is already pruned changes nothing.
+pub fn prune_cached_entry(cache_dir: Fd, entry: &[u8]) {
+    let Ok(dir) = Dir::borrow(&cache_dir).open_dir(
+        entry,
+        bun_sys::OpenDirOptions {
+            iterate: true,
+            no_follow: cfg!(not(windows)),
+        },
+    ) else {
+        return;
+    };
+    let _ = prune_to_published_files(&dir);
+    dir.close();
+}
+
+/// When an object has several properties with the same key, `JSON.parse` keeps the last one. This
+/// removes the earlier ones in place, so that all readers of the package.json agree.
+pub fn drop_shadowed_properties(json: Expr) {
+    let ExprData::EObject(mut object) = json.data else {
+        return;
+    };
+    let mut seen: StringHashMap<()> = StringHashMap::default();
+    // Built from the last property to the first, so that `pop` returns the flags in property order.
+    let mut is_last: Vec<bool> = (object.properties.slice().iter().rev())
+        .map(|property| {
+            let key = property.key.as_ref().and_then(Expr::as_utf8_string_literal);
+            key.is_none_or(|key| !bun_core::handle_oom(seen.get_or_put(key)).found_existing)
+        })
+        .collect();
+    object.properties.retain(|_| is_last.pop().unwrap_or(true));
+    for property in object.properties.slice() {
+        if let Some(value) = property.value {
+            drop_shadowed_properties(value);
+        }
+    }
 }

@@ -780,28 +780,6 @@ pub(crate) fn package_json_entry<'a>(
     }
 }
 
-/// When an object has several properties with the same key, `JSON.parse` keeps the last one. This
-/// removes the earlier ones in place, so that all readers of the package.json agree.
-pub(crate) fn drop_shadowed_properties(json: Expr) {
-    let ExprData::EObject(mut object) = json.data else {
-        return;
-    };
-    let mut seen: StringHashMap<()> = StringHashMap::default();
-    // Built from the last property to the first, so that `pop` returns the flags in property order.
-    let mut is_last: Vec<bool> = (object.properties.slice().iter().rev())
-        .map(|property| {
-            let key = property.key.as_ref().and_then(Expr::as_utf8_string_literal);
-            key.is_none_or(|key| !bun_core::handle_oom(seen.get_or_put(key)).found_existing)
-        })
-        .collect();
-    object.properties.retain(|_| is_last.pop().unwrap_or(true));
-    for property in object.properties.slice() {
-        if let Some(value) = property.value {
-            drop_shadowed_properties(value);
-        }
-    }
-}
-
 /// Applies the `publishConfig` of `package_json`, then rejects what `bun publish` cannot publish: a
 /// provenance request, a restricted package without a scope, or a private package.
 fn apply_publish_config(

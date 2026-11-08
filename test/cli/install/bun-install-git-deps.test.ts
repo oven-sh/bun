@@ -1582,6 +1582,41 @@ test.concurrent('a git dependency keeps its "main" and the sources of its prepar
 });
 
 test.concurrent(
+  'a git dependency follows the last duplicate "files" and prunes a cache entry from an older Bun',
+  async () => {
+    using dir = tempDir("git-dep-published-files-cache", {});
+    const root = String(dir);
+    const bare = await makeSharedRepo(root, [
+      {
+        branch: "dup",
+        files: {
+          "package.json": '{"name":"demo-lib","version":"1.0.0","files":["src"],"files":["dist"]}',
+          "src/a.js": "a\n",
+          "dist/b.js": "b\n",
+          "README": "readme\n",
+        },
+      },
+    ]);
+    const project = writeProject(join(root, "dup"), { "demo-lib": `git+${pathToFileURL(bare)}#dup` });
+    const cache = join(root, "cache");
+    expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+    const installed = join(project, "node_modules", "demo-lib");
+    const tree = () => treeOf(installed).filter(path => path !== ".bun-tag");
+    const expected = ["README", "dist", "dist/b.js", "package.json"];
+    expect(tree()).toEqual(expected);
+
+    const entry = readdirSync(cache).find(name => name.startsWith("@G@"))!;
+    mkdirSync(join(cache, entry, "src"), { recursive: true });
+    writeFileSync(join(cache, entry, "src", "a.js"), "a\n");
+    mkdirSync(join(cache, entry, "docs"), { recursive: true });
+    writeFileSync(join(cache, entry, "docs", "guide.md"), "docs\n");
+    rmSync(join(project, "node_modules"), { recursive: true });
+    expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+    expect(tree()).toEqual(expected);
+  },
+);
+
+test.concurrent(
   "a failed prepare script of a git dependency explains that its devDependencies aren't installed",
   async () => {
     using dir = tempDir("git-dep-prepare", {});

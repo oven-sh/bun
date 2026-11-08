@@ -80,6 +80,7 @@ BunTestAroundEach/0: it is not called: it reaches outside JavaScript
 BunTestBeforeAll/0: it is not called: it reaches outside JavaScript
 BunTestBeforeEach/0: it is not called: it reaches outside JavaScript
 BunTestDescribe/0: it is not called: it reaches outside JavaScript
+BunTestJestReplaceProperty/0: it is not called: it reaches outside JavaScript
 BunTestJestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestOnTestFinished/0: it is not called: it reaches outside JavaScript
 BunTestSpyOn/0: it is not called: it reaches outside JavaScript

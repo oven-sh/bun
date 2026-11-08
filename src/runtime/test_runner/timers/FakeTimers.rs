@@ -22,7 +22,8 @@ unsafe extern "C" {
     safe fn JSMock__isRestoredSpy(value: JSValue) -> bool;
     safe fn JSMock__isMock(value: JSValue) -> bool;
     // A spy or a `vi.stubGlobal()` value that a fake replaces can be undone while the clock is on. See `FakeTimers::retractable`.
-    /// The bit of each `Api` whose global is stubbed, and bit 31 if a spy may be live. Zero: no fake replaces a spy or a stub.
+    /// The bit of each `Api` whose global is stubbed, bit 31 if a spy may be live, and `SPY_ON_ACCESSOR` if one may be on an accessor.
+    /// Zero: no fake replaces a spy or a stub.
     safe fn JSMock__sharersOfFakes(global: &JSGlobalObject) -> u32;
     safe fn JSMock__entryOfFake(
         global: &JSGlobalObject,
@@ -556,6 +557,8 @@ impl Default for FakeTimers {
 
 /// The `run_step` id reserved for `TickMode::NextAsync`. No [`AsyncDrive`] gets it.
 const AUTO_STEP: u32 = 0;
+/// A bit of what `JSMock__sharersOfFakes` returns.
+const SPY_ON_ACCESSOR: u32 = 1 << 30;
 
 /// `jest.setSystemTime` (C++ `JSMock__jsSetSystemTime`) writes
 /// `globalObject->overridenDateNow` directly; rebase `date_now_offset` here so
@@ -1037,7 +1040,8 @@ impl FakeTimers {
                     };
                     if sharers != 0 {
                         let is_stubbed = sharers & (1 << api as u32) != 0;
-                        if is_stubbed || JSMock__isMock(original) {
+                        if is_stubbed || sharers & SPY_ON_ACCESSOR != 0 || JSMock__isMock(original)
+                        {
                             entry = Self::entry_of_fake(global, api, original, is_stubbed);
                         }
                     }

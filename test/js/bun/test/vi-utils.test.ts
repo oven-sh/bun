@@ -311,6 +311,56 @@ describe("vi.stubGlobal", () => {
     expect(spies.map(spy => (spy.mockRestore(), fetch))).toEqual([original, original, original]);
   });
 
+  // Two spies can be on one property: on its getter, on its setter, or on its value.
+  test.each<[string, PropertyDescriptor]>([
+    ["a function", { value: () => "original", writable: true }],
+    ["a getter and a setter", { get: () => "original", set() {} }],
+    ["a method that a getter returns", { get: () => Math.max, set() {} }],
+  ])("spies of %s that are restored under the stub are undone as without the stub", (_, property) => {
+    type Spy = ReturnType<typeof jest.spyOn>;
+    const accesses = [undefined, "get", "set"] as const;
+    /** The own descriptor after the calls, with each spy replaced by its index. */
+    const outcome = (first: number, second: number, restored: number[], isStubbed: boolean) => {
+      try {
+        Object.defineProperty(globalThis, "viUtilsSpied", { ...property, configurable: true });
+        let spies: Spy[];
+        try {
+          spies = [first, second].map(access => (jest.spyOn as any)(globalThis, "viUtilsSpied", accesses[access]));
+        } catch {
+          return "spyOn() throws";
+        }
+        if (isStubbed) vi.stubGlobal("viUtilsSpied", "stub");
+        for (const index of restored) spies[index].mockRestore();
+        if (isStubbed) vi.unstubAllGlobals();
+        const label = (value: any) => {
+          if (spies.includes(value)) return `spy ${spies.indexOf(value)}`;
+          // A spy of a method that a getter returns is installed as a bound getter that returns the spy.
+          const returned = typeof value === "function" && value.name.startsWith("bound ") && value();
+          return spies.includes(returned) ? `getter of spy ${spies.indexOf(returned)}` : value;
+        };
+        const descriptor = Object.getOwnPropertyDescriptor(globalThis, "viUtilsSpied");
+        return descriptor && Object.fromEntries(Object.entries(descriptor).map(([key, value]) => [key, label(value)]));
+      } finally {
+        vi.unstubAllGlobals();
+        jest.restoreAllMocks();
+        delete globalThis.viUtilsSpied;
+      }
+    };
+    const different: unknown[] = [];
+    for (const first of [0, 1, 2]) {
+      for (const second of [0, 1, 2].filter(access => access !== first)) {
+        for (const restored of [[0], [1], [0, 1], [1, 0]]) {
+          const withStub = outcome(first, second, restored, true);
+          // Without the stub, a restore that is not in the reverse order leaves the other spy behind.
+          const withoutStub = outcome(first, second, restored.toSorted().reverse(), false);
+          if (!Bun.deepEquals(withStub, withoutStub, true))
+            different.push({ first, second, restored, withStub, withoutStub });
+        }
+      }
+    }
+    expect(different).toEqual([]);
+  });
+
   test("the originals survive garbage collection", () => {
     try {
       Object.defineProperty(globalThis, "viUtilsDescriptor", { value: { marker: "original" }, configurable: true });

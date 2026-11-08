@@ -1,0 +1,201 @@
+status: 0
+oracle: none
+---
+--- plain | [3,1,2,5,4] wec,wec,wec,wec,wec
+sort() | None | [1,2,3,4,5] wec,wec,wec,wec,wec
+sort(key=) | None | [5,4,3,2,1] wec,wec,wec,wec,wec
+sort(reverse=True) | None | [5,4,3,2,1] wec,wec,wec,wec,wec
+the sort() of JS | None | [1,2,3,4,5] wec,wec,wec,wec,wec
+sorted() | [1, 2, 3, 4, 5] | [3,1,2,5,4] wec,wec,wec,wec,wec
+a comparison raises | ValueError: no order for 2 | [3,1,2,5,4] wec,wec,wec,wec,wec
+a key raises | ZeroDivisionError: division by zero | [3,1,2,5,4] wec,wec,wec,wec,wec
+how long the key finds it | [0] | [1,2,3,4,5] wec,wec,wec,wec,wec
+the key appends | ValueError: list modified during sort | [1,2,3,4,5] wec,wec,wec,wec,wec
+the key pops | IndexError: pop from empty list | [3,1,2,5,4] wec,wec,wec,wec,wec
+--- one item that cannot be deleted | [3,1,2,5,4] wec,we,wec,wec,wec
+sort() | None | [1,2,3,4,5] wec,we,wec,wec,wec
+sort(key=) | None | [5,4,3,2,1] wec,we,wec,wec,wec
+sort(reverse=True) | None | [5,4,3,2,1] wec,we,wec,wec,wec
+the sort() of JS | None | [1,2,3,4,5] wec,we,wec,wec,wec
+sorted() | [1, 2, 3, 4, 5] | [3,1,2,5,4] wec,we,wec,wec,wec
+a comparison raises | ValueError: no order for 2 | [3,1,2,5,4] wec,we,wec,wec,wec
+a key raises | ZeroDivisionError: division by zero | [3,1,2,5,4] wec,we,wec,wec,wec
+how long the key finds it | [5] | [1,2,3,4,5] wec,we,wec,wec,wec
+the key appends | ValueError: list modified during sort | [1,2,3,4,5,7] wec,we,wec,wec,wec,wec
+the key pops | ValueError: list modified during sort | [1,2,3,4] wec,we,wec,wec
+--- the first cannot be deleted | [3,1,2,5,4] we,wec,wec,wec,wec
+sort() | None | [1,2,3,4,5] we,wec,wec,wec,wec
+sort(key=) | None | [5,4,3,2,1] we,wec,wec,wec,wec
+sort(reverse=True) | None | [5,4,3,2,1] we,wec,wec,wec,wec
+the sort() of JS | None | [1,2,3,4,5] we,wec,wec,wec,wec
+sorted() | [1, 2, 3, 4, 5] | [3,1,2,5,4] we,wec,wec,wec,wec
+a comparison raises | ValueError: no order for 2 | [3,1,2,5,4] we,wec,wec,wec,wec
+a key raises | ZeroDivisionError: division by zero | [3,1,2,5,4] we,wec,wec,wec,wec
+how long the key finds it | [5] | [1,2,3,4,5] we,wec,wec,wec,wec
+the key appends | ValueError: list modified during sort | [1,2,3,4,5,7] we,wec,wec,wec,wec,wec
+the key pops | ValueError: list modified during sort | [1,2,3,4] we,wec,wec,wec
+--- the last cannot be deleted | [3,1,2,5,4] wec,wec,wec,wec,we
+sort() | None | [1,2,3,4,5] wec,wec,wec,wec,we
+sort(key=) | None | [5,4,3,2,1] wec,wec,wec,wec,we
+sort(reverse=True) | None | [5,4,3,2,1] wec,wec,wec,wec,we
+the sort() of JS | None | [1,2,3,4,5] wec,wec,wec,wec,we
+sorted() | [1, 2, 3, 4, 5] | [3,1,2,5,4] wec,wec,wec,wec,we
+a comparison raises | ValueError: no order for 2 | [3,1,2,5,4] wec,wec,wec,wec,we
+a key raises | ZeroDivisionError: division by zero | [3,1,2,5,4] wec,wec,wec,wec,we
+how long the key finds it | [5] | [1,2,3,4,5] wec,wec,wec,wec,we
+the key appends | ValueError: list modified during sort | [1,2,3,4,5,7] wec,wec,wec,wec,we,wec
+the key pops | JSTypeError: TypeError: Unable to delete property. | [3,1,2,5,4] wec,wec,wec,wec,we
+--- one item that cannot be written | [3,1,2,5,4] wec,wec,ec,wec,wec
+sort() | JSTypeError: TypeError: Attempted to assign to readonly property. | [1,2,2,5,4] wec,wec,ec,wec,wec
+sort(key=) | JSTypeError: TypeError: Attempted to assign to readonly property. | [5,4,2,5,4] wec,wec,ec,wec,wec
+sort(reverse=True) | JSTypeError: TypeError: Attempted to assign to readonly property. | [5,4,2,5,4] wec,wec,ec,wec,wec
+the sort() of JS | JSTypeError: TypeError: Attempted to assign to readonly property. | [1,2,2,5,4] wec,wec,ec,wec,wec
+sorted() | [1, 2, 3, 4, 5] | [3,1,2,5,4] wec,wec,ec,wec,wec
+a comparison raises | ValueError: no order for 2 | [3,1,2,5,4] wec,wec,ec,wec,wec
+a key raises | ZeroDivisionError: division by zero | [3,1,2,5,4] wec,wec,ec,wec,wec
+how long the key finds it | JSTypeError: TypeError: Attempted to assign to readonly property. | [1,2,2,5,4] wec,wec,ec,wec,wec
+the key appends | JSTypeError: TypeError: Attempted to assign to readonly property. | [1,2,2,5,4,7] wec,wec,ec,wec,wec,wec
+the key pops | JSTypeError: TypeError: Attempted to assign to readonly property. | [1,2,2,5] wec,wec,ec,wec
+--- one item that is not enumerable | [3,1,2,5,4] wec,wec,wc,wec,wec
+sort() | None | [1,2,3,4,5] wec,wec,wc,wec,wec
+sort(key=) | None | [5,4,3,2,1] wec,wec,wc,wec,wec
+sort(reverse=True) | None | [5,4,3,2,1] wec,wec,wc,wec,wec
+the sort() of JS | None | [1,2,3,4,5] wec,wec,wc,wec,wec
+sorted() | [1, 2, 3, 4, 5] | [3,1,2,5,4] wec,wec,wc,wec,wec
+a comparison raises | ValueError: no order for 2 | [3,1,2,5,4] wec,wec,wc,wec,wec
+a key raises | ZeroDivisionError: division by zero | [3,1,2,5,4] wec,wec,wc,wec,wec
+how long the key finds it | [5] | [1,2,3,4,5] wec,wec,wc,wec,wec
+the key appends | ValueError: list modified during sort | [1,2,3,4,5,7] wec,wec,wc,wec,wec,wec
+the key pops | ValueError: list modified during sort | [1,2,3,4] wec,wec,wc,wec
+--- one item with a getter and a setter | [3,1,2,5,4] wec,wec,gsec,wec,wec
+sort() | TypeError: '<' not supported between instances of 'NoneType' and 'int' | [3,1,2,5,4] wec,wec,gsec,wec,wec
+sort(key=) | None | [5,4,3,1,null] wec,wec,gsec,wec,wec
+sort(reverse=True) | TypeError: '<' not supported between instances of 'NoneType' and 'int' | [3,1,2,5,4] wec,wec,gsec,wec,wec
+the sort() of JS | None | [1,2,3,4,5] wec,wec,gsec,wec,wec
+sorted() | TypeError: '<' not supported between instances of 'NoneType' and 'int' | [3,1,2,5,4] wec,wec,gsec,wec,wec
+a comparison raises | TypeError: '<' not supported between instances of 'NoneType' and 'int' | [3,1,2,5,4] wec,wec,gsec,wec,wec
+a key raises | TypeError: unsupported operand type(s) for -: 'NoneType' and 'int' | [3,1,2,5,4] wec,wec,gsec,wec,wec
+how long the key finds it | TypeError: '<' not supported between instances of 'NoneType' and 'int' | [3,1,2,5,4] wec,wec,gsec,wec,wec
+the key appends | TypeError: '<' not supported between instances of 'NoneType' and 'int' | [3,1,2,5,4,7] wec,wec,gsec,wec,wec,wec
+the key pops | TypeError: '<' not supported between instances of 'NoneType' and 'int' | [3,1,2,5] wec,wec,gsec,wec
+--- one item with a getter only | [3,1,2,5,4] wec,wec,gec,wec,wec
+sort() | TypeError: '<' not supported between instances of 'NoneType' and 'int' | [3,1,2,5,4] wec,wec,gec,wec,wec
+sort(key=) | JSTypeError: TypeError: Attempted to assign to readonly property. | [5,4,2,5,4] wec,wec,gec,wec,wec
+sort(reverse=True) | TypeError: '<' not supported between instances of 'NoneType' and 'int' | [3,1,2,5,4] wec,wec,gec,wec,wec
+the sort() of JS | JSTypeError: TypeError: Attempted to assign to readonly property. | [1,2,2,5,4] wec,wec,gec,wec,wec
+sorted() | TypeError: '<' not supported between instances of 'NoneType' and 'int' | [3,1,2,5,4] wec,wec,gec,wec,wec
+a comparison raises | TypeError: '<' not supported between instances of 'NoneType' and 'int' | [3,1,2,5,4] wec,wec,gec,wec,wec
+a key raises | TypeError: unsupported operand type(s) for -: 'NoneType' and 'int' | [3,1,2,5,4] wec,wec,gec,wec,wec
+how long the key finds it | TypeError: '<' not supported between instances of 'NoneType' and 'int' | [3,1,2,5,4] wec,wec,gec,wec,wec
+the key appends | TypeError: '<' not supported between instances of 'NoneType' and 'int' | [3,1,2,5,4,7] wec,wec,gec,wec,wec,wec
+the key pops | TypeError: '<' not supported between instances of 'NoneType' and 'int' | [3,1,2,5] wec,wec,gec,wec
+--- sealed | [3,1,2,5,4] we,we,we,we,we
+sort() | None | [1,2,3,4,5] we,we,we,we,we
+sort(key=) | None | [5,4,3,2,1] we,we,we,we,we
+sort(reverse=True) | None | [5,4,3,2,1] we,we,we,we,we
+the sort() of JS | None | [1,2,3,4,5] we,we,we,we,we
+sorted() | [1, 2, 3, 4, 5] | [3,1,2,5,4] we,we,we,we,we
+a comparison raises | ValueError: no order for 2 | [3,1,2,5,4] we,we,we,we,we
+a key raises | ZeroDivisionError: division by zero | [3,1,2,5,4] we,we,we,we,we
+how long the key finds it | [5] | [1,2,3,4,5] we,we,we,we,we
+the key appends | JSTypeError: TypeError: Attempted to assign to readonly property. | [3,1,2,5,4] we,we,we,we,we
+the key pops | JSTypeError: TypeError: Unable to delete property. | [3,1,2,5,4] we,we,we,we,we
+--- frozen | [3,1,2,5,4] e,e,e,e,e
+sort() | JSTypeError: TypeError: Attempted to assign to readonly property. | [3,1,2,5,4] e,e,e,e,e
+sort(key=) | JSTypeError: TypeError: Attempted to assign to readonly property. | [3,1,2,5,4] e,e,e,e,e
+sort(reverse=True) | JSTypeError: TypeError: Attempted to assign to readonly property. | [3,1,2,5,4] e,e,e,e,e
+the sort() of JS | JSTypeError: TypeError: Attempted to assign to readonly property. | [3,1,2,5,4] e,e,e,e,e
+sorted() | [1, 2, 3, 4, 5] | [3,1,2,5,4] e,e,e,e,e
+a comparison raises | ValueError: no order for 2 | [3,1,2,5,4] e,e,e,e,e
+a key raises | ZeroDivisionError: division by zero | [3,1,2,5,4] e,e,e,e,e
+how long the key finds it | JSTypeError: TypeError: Attempted to assign to readonly property. | [3,1,2,5,4] e,e,e,e,e
+the key appends | JSTypeError: TypeError: Attempted to assign to readonly property. | [3,1,2,5,4] e,e,e,e,e
+the key pops | JSTypeError: TypeError: Attempted to assign to readonly property. | [3,1,2,5,4] e,e,e,e,e
+--- not extensible | [3,1,2,5,4] wec,wec,wec,wec,wec
+sort() | None | [1,2,3,4,5] wec,wec,wec,wec,wec
+sort(key=) | None | [5,4,3,2,1] wec,wec,wec,wec,wec
+sort(reverse=True) | None | [5,4,3,2,1] wec,wec,wec,wec,wec
+the sort() of JS | None | [1,2,3,4,5] wec,wec,wec,wec,wec
+sorted() | [1, 2, 3, 4, 5] | [3,1,2,5,4] wec,wec,wec,wec,wec
+a comparison raises | ValueError: no order for 2 | [3,1,2,5,4] wec,wec,wec,wec,wec
+a key raises | ZeroDivisionError: division by zero | [3,1,2,5,4] wec,wec,wec,wec,wec
+how long the key finds it | [5] | [1,2,3,4,5] wec,wec,wec,wec,wec
+the key appends | JSTypeError: TypeError: Attempted to assign to readonly property. | [3,1,2,5,4] wec,wec,wec,wec,wec
+the key pops | ValueError: list modified during sort | [1,2,3,4] wec,wec,wec,wec
+--- a length that cannot be written | [3,1,2,5,4] wec,wec,wec,wec,wec
+sort() | None | [1,2,3,4,5] wec,wec,wec,wec,wec
+sort(key=) | None | [5,4,3,2,1] wec,wec,wec,wec,wec
+sort(reverse=True) | None | [5,4,3,2,1] wec,wec,wec,wec,wec
+the sort() of JS | None | [1,2,3,4,5] wec,wec,wec,wec,wec
+sorted() | [1, 2, 3, 4, 5] | [3,1,2,5,4] wec,wec,wec,wec,wec
+a comparison raises | ValueError: no order for 2 | [3,1,2,5,4] wec,wec,wec,wec,wec
+a key raises | ZeroDivisionError: division by zero | [3,1,2,5,4] wec,wec,wec,wec,wec
+how long the key finds it | [5] | [1,2,3,4,5] wec,wec,wec,wec,wec
+the key appends | JSTypeError: TypeError: Attempted to assign to readonly property. | [3,1,2,5,4] wec,wec,wec,wec,wec
+the key pops | JSTypeError: TypeError: Attempted to assign to readonly property. | [3,1,2,5,4] wec,wec,wec,wec,wec
+--- sparse once | [3,1,2,5,4] wec,wec,wec,wec,wec
+sort() | None | [1,2,3,4,5] wec,wec,wec,wec,wec
+sort(key=) | None | [5,4,3,2,1] wec,wec,wec,wec,wec
+sort(reverse=True) | None | [5,4,3,2,1] wec,wec,wec,wec,wec
+the sort() of JS | None | [1,2,3,4,5] wec,wec,wec,wec,wec
+sorted() | [1, 2, 3, 4, 5] | [3,1,2,5,4] wec,wec,wec,wec,wec
+a comparison raises | ValueError: no order for 2 | [3,1,2,5,4] wec,wec,wec,wec,wec
+a key raises | ZeroDivisionError: division by zero | [3,1,2,5,4] wec,wec,wec,wec,wec
+how long the key finds it | [0] | [1,2,3,4,5] wec,wec,wec,wec,wec
+the key appends | ValueError: list modified during sort | [1,2,3,4,5] wec,wec,wec,wec,wec
+the key pops | IndexError: pop from empty list | [3,1,2,5,4] wec,wec,wec,wec,wec
+--- shifted | [3,1,2,5,4] wec,wec,wec,wec,wec
+sort() | None | [1,2,3,4,5] wec,wec,wec,wec,wec
+sort(key=) | None | [5,4,3,2,1] wec,wec,wec,wec,wec
+sort(reverse=True) | None | [5,4,3,2,1] wec,wec,wec,wec,wec
+the sort() of JS | None | [1,2,3,4,5] wec,wec,wec,wec,wec
+sorted() | [1, 2, 3, 4, 5] | [3,1,2,5,4] wec,wec,wec,wec,wec
+a comparison raises | ValueError: no order for 2 | [3,1,2,5,4] wec,wec,wec,wec,wec
+a key raises | ZeroDivisionError: division by zero | [3,1,2,5,4] wec,wec,wec,wec,wec
+how long the key finds it | [0] | [1,2,3,4,5] wec,wec,wec,wec,wec
+the key appends | ValueError: list modified during sort | [1,2,3,4,5] wec,wec,wec,wec,wec
+the key pops | IndexError: pop from empty list | [3,1,2,5,4] wec,wec,wec,wec,wec
+--- strings, one that cannot be deleted | ["c","a","b"] wec,we,wec
+sort() | None | ["a","b","c"] wec,we,wec
+sort(key=) | None | ["a","b","c"] wec,we,wec
+sort(reverse=True) | None | ["c","b","a"] wec,we,wec
+the sort() of JS | None | ["a","b","c"] wec,we,wec
+sorted() | ['a', 'b', 'c'] | ["c","a","b"] wec,we,wec
+a comparison raises | None | ["a","b","c"] wec,we,wec
+a key raises | TypeError: unsupported operand type(s) for -: 'str' and 'int' | ["c","a","b"] wec,we,wec
+how long the key finds it | [3] | ["a","b","c"] wec,we,wec
+the key appends | None | ["a","b","c"] wec,we,wec
+the key pops | None | ["a","b","c"] wec,we,wec
+--- doubles, one that cannot be deleted | [3.5,1.5,2.5] wec,we,wec
+sort() | None | [1.5,2.5,3.5] wec,we,wec
+sort(key=) | None | [3.5,2.5,1.5] wec,we,wec
+sort(reverse=True) | None | [3.5,2.5,1.5] wec,we,wec
+the sort() of JS | None | [1.5,2.5,3.5] wec,we,wec
+sorted() | [1.5, 2.5, 3.5] | [3.5,1.5,2.5] wec,we,wec
+a comparison raises | None | [1.5,2.5,3.5] wec,we,wec
+a key raises | None | [1.5,3.5,2.5] wec,we,wec
+how long the key finds it | [3] | [1.5,2.5,3.5] wec,we,wec
+the key appends | None | [1.5,2.5,3.5] wec,we,wec
+the key pops | None | [1.5,2.5,3.5] wec,we,wec
+--- empty, a length that cannot be written | [] 
+sort() | None | [] 
+sort(key=) | None | [] 
+sort(reverse=True) | None | [] 
+the sort() of JS | None | [] 
+sorted() | [] | [] 
+a comparison raises | None | [] 
+a key raises | None | [] 
+how long the key finds it | [] | [] 
+the key appends | None | [] 
+the key pops | None | [] 
+--- one item, which cannot be deleted | [1] we
+sort() | None | [1] we
+sort(key=) | None | [1] we
+sort(reverse=True) | None | [1] we
+the sort() of JS | None | [1] we
+sorted() | [1] | [1] we
+a comparison raises | None | [1] we
+a key raises | None | [1] we
+how long the key finds it | [1] | [1] we
+the key appends | None | [1] we
+the key pops | None | [1] we

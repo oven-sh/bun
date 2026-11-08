@@ -273,27 +273,54 @@ pub(super) mod ffi {
 use super::TLSSocket;
 use crate::node::StringOrBuffer;
 
+/// How the bytes of an SNI name or of an ALPN protocol become a JS string.
+#[derive(Clone, Copy)]
+enum NameDecode {
+    /// `getServername()` and `alpnProtocol` of a `Bun.listen()` or `Bun.connect()` socket.
+    Utf8,
+    /// `$servername()` and `$alpnProtocol()` of `node:tls`, one code unit per byte: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1359-L1373 and #L2100-L2124
+    OneByte,
+}
+
+impl NameDecode {
+    #[inline(always)]
+    fn to_js(self, global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
+        match self {
+            Self::Utf8 => bun_string_jsc::create_utf8_for_js(global, bytes),
+            Self::OneByte => BunString::clone_latin1(bytes).into_js(global),
+        }
+    }
+}
+
 impl TLSSocket {
-    pub(crate) fn get_servername(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
-            return Ok(JSValue::UNDEFINED);
-        };
+    fn servername_bytes(&self) -> Option<&[u8]> {
+        let ssl_ptr = self.socket.get().ssl()?;
 
         let servername = ffi::SSL_get_servername(
             boringssl::SSL::opaque_ref(ssl_ptr),
             ffi::TLSEXT_NAMETYPE_host_name,
         );
         if servername.is_null() {
-            return Ok(JSValue::UNDEFINED);
+            return None;
         }
         // SAFETY: SSL_get_servername returns a NUL-terminated C string owned by the SSL session.
-        let slice = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-        // A client reads back the name that it set, which it encoded as UTF-8.
-        if ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) == 0 {
-            return bun_string_jsc::create_utf8_for_js(cx.global(), slice);
+        Some(unsafe { bun_core::ffi::cstr(servername) }.to_bytes())
+    }
+
+    #[inline(always)]
+    fn servername(&self, global: &JSGlobalObject, decode: NameDecode) -> JsResult<JSValue> {
+        match self.servername_bytes() {
+            Some(name) => decode.to_js(global, name),
+            None => Ok(JSValue::UNDEFINED),
         }
-        // The peer's bytes, one code unit each: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1359-L1373
-        BunString::clone_latin1(slice).into_js(cx.global())
+    }
+
+    pub(crate) fn get_servername(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.servername(cx.global(), NameDecode::Utf8)
+    }
+
+    pub(crate) fn servername_one_byte(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.servername(cx.global(), NameDecode::OneByte)
     }
 
     pub(crate) fn set_servername(&self, cx: &mut JsScope<'_>, name: JsLocal<'_>) -> JsResult<()> {
@@ -989,14 +1016,11 @@ impl TLSSocket {
         Ok(result)
     }
 
-    pub(crate) fn get_alpn_protocol(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
+    fn alpn_selected(&self) -> Option<&[u8]> {
         let mut alpn_proto: *const u8 = core::ptr::null();
         let mut alpn_proto_len: u32 = 0;
 
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
-            return Ok(JSValue::FALSE);
-        };
+        let ssl_ptr = self.socket.get().ssl()?;
 
         ffi::SSL_get0_alpn_selected(
             boringssl::SSL::opaque_ref(ssl_ptr),
@@ -1004,19 +1028,33 @@ impl TLSSocket {
             &mut alpn_proto_len,
         );
         if alpn_proto.is_null() || alpn_proto_len == 0 {
-            return Ok(JSValue::FALSE);
+            return None;
         }
 
         // SAFETY: SSL_get0_alpn_selected guarantees alpn_proto points to alpn_proto_len bytes owned by the SSL.
-        let slice = unsafe { bun_core::ffi::slice(alpn_proto, alpn_proto_len as usize) };
-        if strings::eql(slice, b"h2") {
+        Some(unsafe { bun_core::ffi::slice(alpn_proto, alpn_proto_len as usize) })
+    }
+
+    #[inline(always)]
+    fn alpn_protocol(&self, global: &JSGlobalObject, decode: NameDecode) -> JsResult<JSValue> {
+        let Some(protocol) = self.alpn_selected() else {
+            return Ok(JSValue::FALSE);
+        };
+        if strings::eql(protocol, b"h2") {
             return Ok(global.common_strings().alpn_h2());
         }
-        if strings::eql(slice, b"http/1.1") {
+        if strings::eql(protocol, b"http/1.1") {
             return Ok(global.common_strings().alpn_http11());
         }
-        // One code unit per byte: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L2100-L2124
-        BunString::clone_latin1(slice).into_js(global)
+        decode.to_js(global, protocol)
+    }
+
+    pub(crate) fn get_alpn_protocol(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.alpn_protocol(cx.global(), NameDecode::Utf8)
+    }
+
+    pub(crate) fn alpn_protocol_one_byte(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.alpn_protocol(cx.global(), NameDecode::OneByte)
     }
 
     /// The session Node's `getSession()`/`getTLSTicket()` read: the one most

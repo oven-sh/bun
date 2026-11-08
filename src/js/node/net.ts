@@ -1065,7 +1065,7 @@ function onClientHandshake(
   self._securePending = false;
   self._secureEstablished = true;
   self[kVerifyError] = verifyError ?? null;
-  self.alpnProtocol = socket.alpnProtocol;
+  self.alpnProtocol = socket.$alpnProtocol();
   // Node has no try/catch around these emits; a listener throw reaches
   // InternalCallbackScope as uncaughtException. reportError mirrors that
   // without changing Bun.connect's handshake-throw-to-error-handler contract.
@@ -1716,7 +1716,7 @@ const ServerHandlers = {
       } else {
         err = require("internal/tls").tlsHandshakeError(verifyError);
       }
-      self.servername = socket.getServername();
+      self.servername = socket.$servername();
       self._hadError = true;
       // Node's onerror destroys *with* the error when the handshake never
       // finished, so 'close' reports hadError === true; the socket stays
@@ -1730,8 +1730,8 @@ const ServerHandlers = {
     self._securePending = false;
     self.secureConnecting = false;
     self._secureEstablished = !!success;
-    self.servername = socket.getServername() ?? false;
-    self.alpnProtocol = socket.alpnProtocol;
+    self.servername = socket.$servername() ?? false;
+    self.alpnProtocol = socket.$alpnProtocol();
     self[kVerifyError] = verifyError ?? null;
     // The native verifier reports a non-OK code when there is no peer certificate,
     // which is the normal case for plain TLS servers.

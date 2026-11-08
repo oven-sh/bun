@@ -39,6 +39,7 @@ using namespace JSC;
     macro(_events) \
     macro(abort) \
     macro(addAbortAlgorithmToSignal) \
+    macro(alpnProtocol) \
     macro(armedTimeout) \
     macro(arrayBuffer) \
     macro(asUint8Array) \
@@ -191,6 +192,7 @@ using namespace JSC;
     macro(sameSite) \
     macro(secure) \
     macro(self) \
+    macro(servername) \
     macro(setColumnNameTransform) \
     macro(sharedFd) \
     macro(signal) \

@@ -296,26 +296,21 @@ describe("tcp socket binaryType", () => {
   }
 });
 
-describe("TLS socket: the SNI name and the ALPN protocol", () => {
-  const units = (name: unknown) =>
-    typeof name === "string" ? Array.from(name, unit => unit.charCodeAt(0).toString(16)).join(" ") : name;
-
+// `node:tls` has readers of its own, which give one code unit for each byte, as Node does.
+describe("TLS socket: the SNI name and the ALPN protocol are decoded as UTF-8", () => {
   // What `read` gives for the socket of each end, when both handshakes are done.
-  async function bothEnds(
-    serverTLS: object,
-    clientTLS: object,
-    read: (socket: any) => unknown,
-    onClientOpen?: (socket: any) => void,
-  ) {
+  async function bothEnds(serverTLS: object, clientTLS: object, read: (socket: any) => unknown) {
     const seen: Record<string, unknown> = {};
     const both = Promise.withResolvers<void>();
     const handlers = (end: string): SocketHandler => ({
-      open: socket => (end === "client" ? onClientOpen?.(socket) : undefined),
+      // `success` is also false on a connection that stays open: the certificate is not for the name of the test.
       handshake(socket) {
-        seen[end] = units(read(socket));
+        seen[end] = read(socket);
         if ("server" in seen && "client" in seen) both.resolve();
       },
       data() {},
+      // A handshake that fails closes its socket.
+      close: () => both.reject(new Error(`the ${end} closed before both handshakes were done`)),
       error: (_socket, err) => both.reject(err),
       connectError: (_socket, err) => both.reject(err),
     });
@@ -330,34 +325,17 @@ describe("TLS socket: the SNI name and the ALPN protocol", () => {
     return seen;
   }
 
-  // A client sends its name as UTF-8. The server has the bytes, one code unit each, as in Node:
-  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1359-L1373
-  // The client has the string that it set.
-  it("getServername() of the server has one code unit for each byte that the client sent", async () => {
-    const seen = await bothEnds(tls, { serverName: "\u00e9.example" }, socket => socket.getServername());
-    expect(seen).toEqual({ server: "c3 a9 2e 65 78 61 6d 70 6c 65", client: "e9 2e 65 78 61 6d 70 6c 65" });
+  it("getServername() of each end is the name that the client set", async () => {
+    const name = "\u00e9.example";
+    const seen = await bothEnds(tls, { serverName: name }, socket => socket.getServername());
+    expect(seen).toEqual({ server: name, client: name });
   });
 
-  it("setServername() gives the client the same string back, and the server its UTF-8 bytes", async () => {
-    const name = "\u00fc.example";
-    const seen = await bothEnds(
-      tls,
-      {},
-      socket => socket.getServername(),
-      socket => socket.setServername(name),
-    );
-    expect(seen).toEqual({ server: "c3 bc 2e 65 78 61 6d 70 6c 65", client: units(name) });
-  });
-
-  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L2100-L2124
-  it.each([
-    ["not UTF-8", [0xff], "ff"],
-    ["not ASCII", [0xc3, 0xa9], "c3 a9"],
-  ])("alpnProtocol has one code unit for each byte of a protocol that is %s", async (_label, protocol, expected) => {
+  it("alpnProtocol of each end is the character that the bytes of the protocol encode", async () => {
     // Each protocol of the list follows its length.
-    const ALPNProtocols = Buffer.from([protocol.length, ...protocol]);
+    const ALPNProtocols = Buffer.from([2, 0xc3, 0xa9]);
     const seen = await bothEnds({ ...tls, ALPNProtocols }, { ALPNProtocols }, socket => socket.alpnProtocol);
-    expect(seen).toEqual({ server: expected, client: expected });
+    expect(seen).toEqual({ server: "\u00e9", client: "\u00e9" });
   });
 });
 

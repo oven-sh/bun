@@ -1177,7 +1177,6 @@ declare namespace $Node {
     readonly fd: number;
     readonly listener: ListenerHandle | undefined;
     readonly authorized: boolean;
-    readonly alpnProtocol: string | false | null;
     readonly localFamily: "IPv4" | "IPv6" | undefined;
     readonly localAddress: string | undefined;
     readonly localPort: number | undefined;
@@ -1210,9 +1209,13 @@ declare namespace $Node {
     reload(options: { socket: object }): void;
     upgradeTLS<T>(options: TLSUpgradeOptions<T>): [raw: SocketHandle<T>, tls: SocketHandle<T>];
 
+    /** `TLSSocket` only. One code unit per byte, as in Node: `alpnProtocol` and `getServername()` decode UTF-8, so `node:*` does not read them. */
+    $alpnProtocol(): string | false;
+    /** `TLSSocket` only. `undefined`: the handshake has no SNI name. */
+    $servername(): string | undefined;
+
     // On a `TCPSocket` the rest answers `undefined`, `null` or `false`.
     resumeSNI(context: unknown, isError: boolean): void;
-    getServername(): string | undefined;
     setServername(name: string): void;
     getSession(): Buffer | undefined;
     setSession(session: string | ArrayBufferView | ArrayBuffer): void;

@@ -96,6 +96,17 @@ function socket<SSL extends boolean>(ssl: SSL) {
       "@@dispose": { ...end, rustName: "end", length: 0 },
       endBuffered: { ...buffered, returns: b.any.returning("boolean"), privateSymbol: "end" },
       writeBuffered: { ...buffered, returns: b.any.returning("boolean", "number"), privateSymbol: "write" },
+      /** `node:tls` reads these in place of `alpnProtocol` and `getServername()`: one code unit per byte, as in Node. */
+      ...(ssl
+        ? {
+            alpnProtocolOneByte: {
+              ...js,
+              returns: b.any.returning("string", "boolean"),
+              privateSymbol: "alpnProtocol",
+            },
+            servernameOneByte: { ...js, returns: textIfOpen, privateSymbol: "servername" },
+          }
+        : {}),
     },
   });
 }

@@ -1326,8 +1326,7 @@ pub struct BundleOptions<'a> {
     pub(crate) origin: bun_url::OwnedURL,
     pub(crate) output_dir_handle: Option<Dir>,
 
-    /// Stored through [`fold_output_dir`] by each place that parses the option: the writer hands
-    /// this text to the OS, and the other readers join it as text.
+    /// Each place that parses the option stores it through [`fold_output_dir`].
     pub output_dir: Box<[u8]>,
     pub root_dir: Box<[u8]>,
 
@@ -2144,13 +2143,9 @@ pub(crate) mod bundle_options_defaults {
     }
 }
 
-/// Folds each `..` of `outdir` that follows a named segment, as text, like `path.resolve`.
-/// The writer opens `outdir` through the OS, which follows a symlink before it applies `..`.
-/// The paths that a build reports are joined from the same text.
-///
-/// Windows keeps the text: `bun_sys` folds `..` as text before each NT call, and leaves a
-/// `\\.\` device path as it is.
+/// Folds `..` after a named segment as text: the OS follows a symlink first, the path joins do not.
 pub fn fold_output_dir(outdir: &[u8]) -> Cow<'_, [u8]> {
+    // `bun_sys` folds `..` as text before each NT call, and keeps a `\\.\` device path as it is.
     if cfg!(windows) {
         return Cow::Borrowed(outdir);
     }

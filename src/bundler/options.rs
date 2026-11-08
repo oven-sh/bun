@@ -2147,10 +2147,15 @@ pub(crate) mod bundle_options_defaults {
 /// Folds each `..` of `outdir` that follows a named segment, as text, like `path.resolve`.
 /// The writer opens `outdir` through the OS, which follows a symlink before it applies `..`.
 /// The paths that a build reports are joined from the same text.
+///
+/// Windows keeps the text: `bun_sys` folds `..` as text before each NT call, and leaves a
+/// `\\.\` device path as it is.
 pub fn fold_output_dir(outdir: &[u8]) -> Cow<'_, [u8]> {
-    const SEPARATORS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+    if cfg!(windows) {
+        return Cow::Borrowed(outdir);
+    }
     let mut after_name = false;
-    let folds = strings::tokenize_any(outdir, SEPARATORS).any(|segment| match segment {
+    let folds = strings::tokenize_any(outdir, b"/").any(|segment| match segment {
         b"." => false,
         b".." => after_name,
         _ => {
@@ -2162,7 +2167,7 @@ pub fn fold_output_dir(outdir: &[u8]) -> Cow<'_, [u8]> {
         return Cow::Borrowed(outdir);
     }
     let mut buf = bun_paths::path_buffer_pool::get();
-    let folded = bun_paths::resolve_path::join_z_buf_checked::<bun_paths::platform::Auto>(
+    let folded = bun_paths::resolve_path::join_z_buf_checked::<bun_paths::platform::Posix>(
         &mut buf.0[..],
         &[outdir],
     );
@@ -2200,17 +2205,17 @@ fn fold_output_dir_folds_dotdot_only_after_a_named_segment() {
         );
     }
 
-    assert_eq!(&*fold_output_dir(b"a/../b"), b"b");
-    assert_eq!(&*fold_output_dir(b"a/./../b"), b"b");
-    assert_eq!(&*fold_output_dir(b"a//../b"), b"b");
-    assert_eq!(&*fold_output_dir(b".../../b"), b"b");
-    // Never empty: an empty `outdir` means a build that writes no files.
-    assert_eq!(&*fold_output_dir(b"link/.."), b".");
     #[cfg(not(windows))]
     {
-        assert_eq!(&*fold_output_dir(b"link/../"), b"./");
+        assert_eq!(&*fold_output_dir(b"a/../b"), b"b");
+        assert_eq!(&*fold_output_dir(b"a/./../b"), b"b");
+        assert_eq!(&*fold_output_dir(b"a//../b"), b"b");
+        assert_eq!(&*fold_output_dir(b".../../b"), b"b");
         assert_eq!(&*fold_output_dir(b"a/b/../c"), b"a/c");
         assert_eq!(&*fold_output_dir(b"a/b/../c/"), b"a/c/");
+        // Never empty: an empty `outdir` means a build that writes no files.
+        assert_eq!(&*fold_output_dir(b"link/.."), b".");
+        assert_eq!(&*fold_output_dir(b"link/../"), b"./");
         // A relative path stays relative and keeps the `..` that nothing precedes.
         assert_eq!(&*fold_output_dir(b"a/../../b"), b"../b");
         assert_eq!(&*fold_output_dir(b"../a/../b"), b"../b");

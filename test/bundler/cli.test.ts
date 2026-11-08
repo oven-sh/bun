@@ -493,7 +493,7 @@ test.each<[string, string[], string[]]>([
   }
 });
 
-test("an --outdir that is a file is named as it is opened, with '..' folded", async () => {
+test("an --outdir that is a file is named as it is opened", async () => {
   using dir = tempDir("build-outdir-is-a-file", {
     "entry.ts": `console.log("built");`,
     "blocked": "a file",
@@ -509,8 +509,8 @@ test("an --outdir that is a file is named as it is opened, with '..' folded", as
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("");
   expect(stderr).toStartWith("error: Failed to create output directory ");
-  expect(stderr).toContain('"blocked"');
-  expect(stderr).not.toContain("missing");
+  // Windows keeps the text of the option, and folds it before each NT call.
+  expect(stderr).toContain(isWindows ? 'missing/../blocked"' : '"blocked"');
   expect(exitCode).toBe(1);
   expect(fs.readdirSync(String(dir)).sort()).toEqual(["blocked", "entry.ts"]);
 });
